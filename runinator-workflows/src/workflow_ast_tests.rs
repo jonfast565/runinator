@@ -8,8 +8,6 @@ use runinator_models::json;
 use runinator_models::value::Value;
 use runinator_models::workflow_ast::{ConditionNode, WorkflowExpression};
 
-use crate::expressions::{evaluate_static_expression, parse_expression};
-
 // the canonical expression forms the lowerer produces (see runinator-wdl/src/lower/expr.rs). every
 // entry must satisfy `static(parse(v)) == v`.
 fn canonical_expressions() -> Vec<Value> {
@@ -56,10 +54,9 @@ fn canonical_expressions() -> Vec<Value> {
 #[test]
 fn canonical_expressions_round_trip() {
     for value in canonical_expressions() {
-        let parsed: WorkflowExpression = parse_expression(&value)
+        let parsed = WorkflowExpression::try_from(&value)
             .unwrap_or_else(|err| panic!("parse failed for {value}: {err}"));
-        let reserialized = evaluate_static_expression(parsed)
-            .unwrap_or_else(|err| panic!("serialize failed for {value}: {err}"));
+        let reserialized = Value::from(&parsed);
         assert_eq!(
             reserialized, value,
             "round-trip changed the value for {value}"
@@ -71,11 +68,30 @@ fn canonical_expressions_round_trip() {
 fn parse_is_idempotent_via_typed_form() {
     // static(parse(v)) is canonical, so re-parsing it yields an equal typed form.
     for value in canonical_expressions() {
-        let once = parse_expression(&value).expect("first parse");
-        let canonical = evaluate_static_expression(once.clone()).expect("serialize");
-        let twice = parse_expression(&canonical).expect("second parse");
+        let once = WorkflowExpression::try_from(&value).expect("first parse");
+        let canonical = Value::from(&once);
+        let twice = WorkflowExpression::try_from(&canonical).expect("second parse");
         assert_eq!(once, twice, "typed form not stable for {value}");
     }
+}
+
+#[test]
+fn canonical_compute_program_round_trips() {
+    // the `$let`/`$if`/`$return`/`$goto`/bare-expr forms lower/compute.rs emits; parsing then
+    // serializing (the now-relocated ComputeProgram -> Value) must reproduce the program verbatim.
+    let program = json!([
+        { "$let": "x", "value": { "$ref": { "params": ["n"] } } },
+        { "$if": { "value": { "$ref": { "let": ["x"] } }, "greater_than": 0 },
+          "then": [ { "$return": "pos" } ],
+          "else": [ { "$goto": "recover" } ] },
+        { "$call": "add", "args": [1, 2] }
+    ]);
+    let parsed = crate::compute::parse_program(&program).expect("parse program");
+    assert_eq!(
+        Value::from(&parsed),
+        program,
+        "compute program round-trip changed"
+    );
 }
 
 // the canonical condition forms the lowerer produces (see runinator-wdl/src/lower/expr.rs
@@ -132,11 +148,11 @@ fn unknown_condition_is_preserved_verbatim() {
 fn non_canonical_spellings_normalize() {
     // the `input` ref alias canonicalizes to `params`.
     let aliased = json!({ "$ref": { "input": ["a"] } });
-    let canonical = evaluate_static_expression(parse_expression(&aliased).unwrap()).unwrap();
+    let canonical = Value::from(&WorkflowExpression::try_from(&aliased).unwrap());
     assert_eq!(canonical, json!({ "$ref": { "params": ["a"] } }));
 
     // an explicit `$literal` unwraps to the bare value.
     let wrapped = json!({ "$literal": 5 });
-    let canonical = evaluate_static_expression(parse_expression(&wrapped).unwrap()).unwrap();
+    let canonical = Value::from(&WorkflowExpression::try_from(&wrapped).unwrap());
     assert_eq!(canonical, json!(5));
 }
