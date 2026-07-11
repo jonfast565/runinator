@@ -21,7 +21,7 @@ pub(super) async fn process_output_node<T: DatabaseImpl>(
     let params = runinator_workflows::parse_output_parameters(node)
         .map_err(|err| -> SendableError { Box::new(err) })?;
     let context = runtime_context(db, workflow_run, node_runs).await;
-    let data = runinator_workflows::resolve_value_refs(&params.data, &context)
+    let data = runinator_workflows::evaluate_expression(&params.data, &context)
         .map_err(|err| -> SendableError { Box::new(err) })?;
 
     // emit an automation event only when an event_type is declared.
@@ -51,7 +51,7 @@ pub(super) async fn process_output_node<T: DatabaseImpl>(
     // promote artifact items to run-level artifacts.
     let mut artifacts = Vec::new();
     for item in &params.items {
-        let resolved = runinator_workflows::resolve_value_refs(&item.source, &context)
+        let resolved = runinator_workflows::evaluate_expression(&item.source, &context)
             .map_err(|err| -> SendableError { Box::new(err) })?;
         for artifact_value in artifact_values(&resolved) {
             let new_artifact =

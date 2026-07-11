@@ -7,7 +7,7 @@ use runinator_models::workflows::{
 use crate::compute::call_pure;
 use crate::conditions::{evaluate_workflow_condition, validate_condition};
 use crate::errors::WorkflowValidationError;
-use crate::expressions::{parse_value_ref, resolve_value_refs};
+use crate::expressions::{evaluate_expression, parse_expression, parse_value_ref};
 use crate::keys::{COND_EQUALS, COND_EXISTS, COND_NOT_EQUALS, COND_VALUE};
 use crate::types::{
     ApprovalParameters, ArtifactItem, BranchPolicy, GateParameters, InputParameters,
@@ -16,7 +16,7 @@ use crate::types::{
     SwitchParameters, ToggleParameters, TryParameters, WaitParameters,
 };
 use runinator_models::orchestration::GateKind;
-use runinator_models::workflow_ast::WorkflowValueRef;
+use runinator_models::workflow_ast::{WorkflowExpression, WorkflowValueRef};
 
 pub fn parse_switch_parameters(
     node: &WorkflowNode,
@@ -66,7 +66,7 @@ pub fn parse_switch_parameters(
         .map(|value| parse_node_ref_value(value, Some(node), "switch.default"))
         .transpose()?;
     Ok(SwitchParameters {
-        value,
+        value: parse_expression(&value)?,
         cases,
         default,
     })
@@ -82,7 +82,11 @@ pub fn parse_toggle_parameters(
         .ok_or_else(|| invalid_parameters(node, "toggle.value is required"))?;
     let on = required_node_ref(object.get("on"), node, "toggle.on")?;
     let off = required_node_ref(object.get("off"), node, "toggle.off")?;
-    Ok(ToggleParameters { value, on, off })
+    Ok(ToggleParameters {
+        value: parse_expression(&value)?,
+        on,
+        off,
+    })
 }
 
 pub fn parse_percentage_parameters(
@@ -134,7 +138,7 @@ pub fn parse_percentage_parameters(
         .map(|value| parse_node_ref_value(value, Some(node), "percentage.default"))
         .transpose()?;
     Ok(PercentageParameters {
-        key,
+        key: parse_expression(&key)?,
         buckets,
         default,
     })
@@ -194,7 +198,7 @@ pub fn parse_map_parameters(node: &WorkflowNode) -> Result<MapParameters, Workfl
         ));
     }
     Ok(MapParameters {
-        items,
+        items: parse_expression(&items)?,
         target,
         concurrency,
     })
@@ -234,7 +238,10 @@ pub fn parse_output_parameters(
             let source = entry.get("source").cloned().ok_or_else(|| {
                 invalid_parameters(node, "output artifact item requires a source")
             })?;
-            items.push(ArtifactItem { name, source });
+            items.push(ArtifactItem {
+                name,
+                source: parse_expression(&source)?,
+            });
         }
         items
     } else {
@@ -242,7 +249,7 @@ pub fn parse_output_parameters(
     };
     Ok(OutputParameters {
         event_type,
-        data,
+        data: parse_expression(&data)?,
         items,
     })
 }
@@ -312,6 +319,10 @@ pub fn parse_signal_parameters(node: &WorkflowNode) -> SignalParameters {
         .get("correlation_key")
         .cloned()
         .unwrap_or(Value::Null);
+    // this parser is infallible; a malformed correlation key degrades to a literal (it would have
+    // errored at resolve time before, and the reducer's resolver already falls back to the raw value).
+    let correlation_key = WorkflowExpression::try_from(&correlation_key)
+        .unwrap_or_else(|_| WorkflowExpression::Literal(correlation_key));
     SignalParameters {
         name,
         correlation_key,
@@ -389,7 +400,7 @@ pub fn evaluate_toggle(
     context: &Value,
 ) -> Result<String, WorkflowValidationError> {
     let mut condition = Map::new();
-    condition.insert(COND_VALUE.into(), toggle.value.clone());
+    condition.insert(COND_VALUE.into(), Value::from(&toggle.value));
     let condition = WorkflowCondition::from_value(Value::Object(condition));
     let target = if evaluate_workflow_condition(&condition, context)? {
         &toggle.on
@@ -411,7 +422,7 @@ pub fn evaluate_percentage(
             .as_ref()
             .map(|target| target.as_str().to_string())
     };
-    let key = resolve_value_refs(&percentage.key, context)?;
+    let key = evaluate_expression(&percentage.key, context)?;
     let total: i64 = percentage.buckets.iter().map(|bucket| bucket.weight).sum();
     if key.is_null() || total <= 0 {
         return Ok(default());

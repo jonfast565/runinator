@@ -36,7 +36,7 @@ pub(super) async fn process_map_node<T: DatabaseImpl>(
         _ => {
             // first visit: resolve the item list and initialize the fan-out frame.
             let context = runtime_context(db, workflow_run, node_runs).await;
-            let items = runinator_workflows::resolve_value_refs(&params.items, &context)
+            let items = runinator_workflows::evaluate_expression(&params.items, &context)
                 .map_err(|err| -> SendableError { Box::new(err) })?;
             let items = items.as_array().cloned().unwrap_or_default();
             MapFrame {

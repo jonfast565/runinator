@@ -30,7 +30,7 @@ pub use conditions::{
 };
 pub use errors::{WorkflowTypeDiagnostic, WorkflowValidationError};
 pub use expressions::{
-    apply_input_defaults, resolve_value_refs, resolve_value_refs_pure,
+    apply_input_defaults, evaluate_expression, resolve_value_refs, resolve_value_refs_pure,
     resolve_value_refs_with_functions, validate_expression,
 };
 pub use functions::{FunctionTable, RuntimeFunction, intrinsic_catalog};

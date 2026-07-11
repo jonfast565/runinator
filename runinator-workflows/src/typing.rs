@@ -178,15 +178,17 @@ fn collection_node_output_type(
     node: &WorkflowNode,
     context: &TypeContext,
 ) -> Result<Option<WorkflowType>, WorkflowValidationError> {
-    let items = match node.kind {
-        WorkflowNodeKind::Loop => node.parameters.get("items"),
-        WorkflowNodeKind::Map => Some(&parse_map_parameters(node)?.items),
-        _ => None,
+    // loop items are resolved data (a raw `Value`); map items are a typed expression.
+    let items_type = match node.kind {
+        WorkflowNodeKind::Loop => match node.parameters.get("items") {
+            Some(items) => infer_value_type(items, context)?,
+            None => return Ok(None),
+        },
+        WorkflowNodeKind::Map => {
+            infer_expression_type(&parse_map_parameters(node)?.items, context)?
+        }
+        _ => return Ok(None),
     };
-    let Some(items) = items else {
-        return Ok(None);
-    };
-    let items_type = infer_value_type(items, context)?;
     let WorkflowType::Array(item_type) = items_type else {
         return Err(WorkflowValidationError::TypeError(format!(
             "node '{}' items must be an array, got {}",
@@ -231,7 +233,7 @@ fn validate_node_types(
         }
         WorkflowNodeKind::Switch => {
             let params = parse_switch_parameters(node)?;
-            infer_value_type(&params.value, context)?;
+            infer_expression_type(&params.value, context)?;
             for case in params.cases {
                 validate_condition_types(&case.condition.to_value(), context)?;
             }
@@ -239,12 +241,12 @@ fn validate_node_types(
         }
         WorkflowNodeKind::Toggle => {
             let params = parse_toggle_parameters(node)?;
-            infer_value_type(&params.value, context)?;
+            infer_expression_type(&params.value, context)?;
             Ok(())
         }
         WorkflowNodeKind::Percentage => {
             let params = parse_percentage_parameters(node)?;
-            infer_value_type(&params.key, context)?;
+            infer_expression_type(&params.key, context)?;
             Ok(())
         }
         WorkflowNodeKind::Loop => {
@@ -266,7 +268,7 @@ fn validate_node_types(
         }
         WorkflowNodeKind::Map => {
             let params = parse_map_parameters(node)?;
-            let ty = infer_value_type(&params.items, context)?;
+            let ty = infer_expression_type(&params.items, context)?;
             if !matches!(ty, WorkflowType::Array(_)) {
                 return Err(WorkflowValidationError::TypeError(format!(
                     "node '{}' map.items must be an array, got {}",

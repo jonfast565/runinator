@@ -58,6 +58,20 @@ pub fn validate_expression(value: &Value) -> Result<(), WorkflowValidationError>
     parse_expression(value).map(|_| ())
 }
 
+/// evaluate an already-typed expression against `context` with the pure standard library. the typed
+/// twin of [`resolve_value_refs`]: callers holding a `WorkflowExpression` (parsed once into a param
+/// struct) avoid re-parsing a `Value` on every evaluation.
+pub fn evaluate_expression(
+    expression: &WorkflowExpression,
+    context: &Value,
+) -> Result<Value, WorkflowValidationError> {
+    evaluate_expression_with(
+        expression,
+        context,
+        EvalEnv::lib_only(Some(&crate::compute::PureIntrinsics)),
+    )
+}
+
 /// like `resolve_value_refs`, but also resolving user-function calls from `functions`. used by the
 /// reducer when folding declarative expressions that may reference user-defined functions.
 pub fn resolve_value_refs_with_functions(

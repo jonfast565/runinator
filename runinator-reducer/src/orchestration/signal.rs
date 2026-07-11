@@ -93,14 +93,15 @@ async fn resolve_correlation_key<T: DatabaseImpl>(
     db: &T,
     workflow_run: &WorkflowRun,
     node_runs: &[WorkflowNodeRun],
-    raw: &Value,
+    expression: &runinator_models::workflow_ast::WorkflowExpression,
 ) -> Option<String> {
-    if raw.is_null() {
+    use runinator_models::workflow_ast::WorkflowExpression;
+    if matches!(expression, WorkflowExpression::Literal(Value::Null)) {
         return None;
     }
     let context = runtime_context(db, workflow_run, node_runs).await;
-    let resolved =
-        runinator_workflows::resolve_value_refs(raw, &context).unwrap_or_else(|_| raw.clone());
+    let resolved = runinator_workflows::evaluate_expression(expression, &context)
+        .unwrap_or_else(|_| Value::from(expression));
     if let Some(text) = resolved.as_str() {
         return Some(text.to_string());
     }

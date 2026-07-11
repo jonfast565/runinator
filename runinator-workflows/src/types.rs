@@ -1,5 +1,6 @@
 use runinator_models::orchestration::GateKind;
 use runinator_models::value::Value;
+use runinator_models::workflow_ast::WorkflowExpression;
 use runinator_models::workflows::{WorkflowCondition, WorkflowNodeRef};
 
 // the expression/ref/compute program ast now lives in `runinator_models::workflow_ast` so
@@ -32,7 +33,7 @@ pub struct SwitchCase {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SwitchParameters {
-    pub value: Value,
+    pub value: WorkflowExpression,
     pub cases: Vec<SwitchCase>,
     pub default: Option<WorkflowNodeRef>,
 }
@@ -40,7 +41,7 @@ pub struct SwitchParameters {
 /// a literal light switch: `value` truthiness routes to `on`, otherwise `off`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ToggleParameters {
-    pub value: Value,
+    pub value: WorkflowExpression,
     pub on: WorkflowNodeRef,
     pub off: WorkflowNodeRef,
 }
@@ -48,7 +49,7 @@ pub struct ToggleParameters {
 /// a weighted, hash-bucketed router: `hash(key) % total_weight` selects a bucket. sticky per key.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PercentageParameters {
-    pub key: Value,
+    pub key: WorkflowExpression,
     pub buckets: Vec<PercentageBucket>,
     pub default: Option<WorkflowNodeRef>,
 }
@@ -79,7 +80,7 @@ pub struct TryParameters {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct MapParameters {
-    pub items: Value,
+    pub items: WorkflowExpression,
     pub target: WorkflowNodeRef,
     pub concurrency: Option<i64>,
 }
@@ -93,7 +94,7 @@ pub struct RaceParameters {
 #[derive(Debug, Clone, PartialEq)]
 pub struct OutputParameters {
     pub event_type: Option<String>,
-    pub data: Value,
+    pub data: WorkflowExpression,
     /// artifact declarations: name/source pairs promoted to run-level by this output node.
     pub items: Vec<ArtifactItem>,
 }
@@ -102,7 +103,7 @@ pub struct OutputParameters {
 pub struct ArtifactItem {
     pub name: String,
     /// value-ref that resolves to an artifact descriptor (or array of them) at runtime.
-    pub source: Value,
+    pub source: WorkflowExpression,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -127,8 +128,8 @@ pub struct ApprovalParameters {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SignalParameters {
     pub name: String,
-    /// unresolved correlation-key value (often a ref); the reducer resolves it at park time.
-    pub correlation_key: Value,
+    /// unresolved correlation-key expression (often a ref); the reducer resolves it at park time.
+    pub correlation_key: WorkflowExpression,
 }
 
 #[derive(Debug, Clone, PartialEq)]
