@@ -21,6 +21,12 @@ services:
       COLLECTOR_OTLP_ENABLED: "true"
     ports:
       - "16686:16686"
+    # all-in-one keeps traces in memory; reserve a RAM floor so a busy trace buffer is not the
+    # first thing squeezed under host memory pressure. reservation is a soft floor, not a cap.
+    deploy:
+      resources:
+        reservations:
+          memory: 1g
 
   prometheus:
     image: prom/prometheus:v3.1.0
