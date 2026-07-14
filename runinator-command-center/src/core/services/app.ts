@@ -294,9 +294,21 @@ export function createAppService() {
         replicaCounts: response.counts,
       }));
     },
-    async runOperation<T>(label: string, operation: () => Promise<T>): Promise<T> {
-      store.setState((state) => ({ ...state, loading: true, opLabel: label, errorText: "" }));
-      const toastId = pushToast("loading", `${label}...`);
+    // `silent` runs the operation without flipping the global loading flag or the loading toast, so
+    // background refreshes (poll/event-driven) update in place instead of dimming the UI. error and
+    // backend-reachability handling still apply.
+    async runOperation<T>(
+      label: string,
+      operation: () => Promise<T>,
+      options?: { silent?: boolean },
+    ): Promise<T> {
+      const silent = options?.silent ?? false;
+
+      if (!silent) {
+        store.setState((state) => ({ ...state, loading: true, opLabel: label, errorText: "" }));
+      }
+
+      const toastId = silent ? null : pushToast("loading", `${label}...`);
 
       try {
         const result = await operation();
@@ -317,8 +329,13 @@ export function createAppService() {
         pushToast("error", message);
         throw error;
       } finally {
-        store.setState((state) => ({ ...state, loading: false, opLabel: "" }));
-        dismissToast(toastId);
+        if (!silent) {
+          store.setState((state) => ({ ...state, loading: false, opLabel: "" }));
+        }
+
+        if (toastId !== null) {
+          dismissToast(toastId);
+        }
       }
     },
     dispose() {

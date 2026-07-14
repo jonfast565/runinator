@@ -216,7 +216,8 @@ watch(
     }
 
     if (tab === "Runs") {
-      void workflows.fetchRecentWorkflowRuns();
+      // data is already cached from the initial load; refresh in place without dimming.
+      void workflows.fetchRecentWorkflowRuns({ background: true });
     }
 
     if (tab === "Replicas") {

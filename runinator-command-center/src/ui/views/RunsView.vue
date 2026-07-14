@@ -38,7 +38,7 @@
             </div>
           </div>
           <EmptyState
-            v-if="loadingRuns"
+            v-if="loadingRuns && !workflows.recentWorkflowRuns.length"
             compact
             loading
             title="Loading runs"
@@ -55,7 +55,11 @@
                 : 'Runs appear here once a workflow is executed. Run one from the Workflows tab.'
             "
           />
-          <div v-else class="table-scroll runs-table-scroll">
+          <div
+            v-else
+            class="table-scroll runs-table-scroll"
+            :class="{ 'is-refreshing': loadingRuns }"
+          >
             <RunTable
               :runs="workflows.recentWorkflowRuns"
               :selected-run-id="workflows.selectedWorkflowRunId"
@@ -331,6 +335,12 @@ const { chunks: logChunks, lastChunkAt: lastLogChunkAt } =
 
 .runs-table-scroll {
   flex: 1 1 auto;
+}
+
+/* dim the existing rows during a background refresh instead of swapping in a loading placeholder. */
+.runs-table-scroll.is-refreshing {
+  opacity: 0.6;
+  transition: opacity 120ms ease-out;
 }
 
 .runs-detail-shell {

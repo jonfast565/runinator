@@ -69,6 +69,12 @@ const { isMobile } = useBreakpoint();
 // switch to a stacked card layout on phones when the caller opts in via responsive="cards".
 const cardMode = computed(() => props.responsive === "cards" && isMobile.value);
 
+// only blank the table for a full loading panel on the first load (no rows yet). once we have
+// rows, a background refresh keeps the current rows mounted and dims them instead of tearing the
+// table down and rebuilding it, which reads as a flicker on every poll/event refresh.
+const showLoadingPanel = computed(() => props.loading && !props.rows.length);
+const refreshing = computed(() => props.loading && props.rows.length > 0);
+
 const emit = defineEmits<{ select: [row: Row] }>();
 
 const sortKey = ref(props.initialSortKey ?? "");
@@ -191,9 +197,9 @@ function compareValues(left: unknown, right: unknown): number {
   <div v-if="!columns" class="table-scroll">
     <slot />
   </div>
-  <div v-else class="data-table">
+  <div v-else class="data-table" :class="{ 'is-refreshing': refreshing }">
     <LoadingPanel
-      v-if="loading"
+      v-if="showLoadingPanel"
       compact
       :message="loadingMessage || 'Loading…'"
     />
@@ -310,6 +316,13 @@ function compareValues(left: unknown, right: unknown): number {
   min-height: 0;
   flex: 1;
   gap: 8px;
+}
+
+/* keep rows in place during a background refresh, just dimmed, instead of unmounting the table. */
+.data-table.is-refreshing .table-scroll,
+.data-table.is-refreshing .data-table-cards {
+  opacity: 0.6;
+  transition: opacity 120ms ease-out;
 }
 
 .th-inner {

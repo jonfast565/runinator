@@ -73,8 +73,8 @@ export function createWorkflowServices(inputDeps: WorkflowServiceDeps) {
   });
 
   const ctx = {
-    runOperation: <T>(label: string, operation: () => Promise<T>) =>
-      deps.app.runOperation(label, operation),
+    runOperation: <T>(label: string, operation: () => Promise<T>, options?: { silent?: boolean }) =>
+      deps.app.runOperation(label, operation, options),
     setStatus: (text: string) => {
       deps.app.setStatus(text);
     },

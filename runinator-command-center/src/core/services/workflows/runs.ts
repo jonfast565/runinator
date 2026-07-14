@@ -16,6 +16,7 @@ import type {
 import { asJsonValue } from "../../domain/json";
 import { coerceDebugFrame } from "../../domain/models/workflow-state";
 import { pretty } from "../../utils/format";
+import { mergeById } from "../../utils/merge";
 import { cloneJson, parseObject, parseRequiredJson, parseRequiredObject } from "../../utils/json";
 import { displayValue, isBlankValue } from "../../utils/values";
 import { createZip, type ZipEntry } from "../../utils/zip";
@@ -499,7 +500,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     const runs = (await host.ctx
       .runOperation("Loading workflow runs", () => fetchWorkflowRuns(workflowId))
       .catch(() => [])) as RunSummary[];
-    host.state.workflowRuns = runs;
+    host.state.workflowRuns = mergeById(host.state.workflowRuns, runs);
 
     if (!host.state.workflowRuns.some((run) => run.id === host.state.selectedWorkflowRunId)) {
       host.state.selectedWorkflowRunId = host.state.workflowRuns[0]?.id ?? null;
@@ -508,12 +509,16 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     host.notify();
   }
 
-  async function fetchRecentWorkflowRuns() {
+  async function fetchRecentWorkflowRuns(options?: { background?: boolean }) {
     console.info("[command-center] refreshing recent workflow runs");
+    // background refreshes (poll/event-driven) run silently so the table updates in place instead of
+    // dimming; user-initiated refreshes keep the loading indicator.
     const runs = (await host.ctx
-      .runOperation("Loading workflow runs", () => fetchWorkflowRuns())
+      .runOperation("Loading workflow runs", () => fetchWorkflowRuns(), {
+        silent: options?.background,
+      })
       .catch(() => [])) as RunSummary[];
-    host.state.workflowRuns = runs;
+    host.state.workflowRuns = mergeById(host.state.workflowRuns, runs);
     const previousRunId = host.state.selectedWorkflowRunId;
 
     if (host.state.selectedWorkflowRunId === null && host.state.workflowRuns.length > 0) {
@@ -551,7 +556,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     recentRunsRefreshing = true;
 
     try {
-      await fetchRecentWorkflowRuns();
+      await fetchRecentWorkflowRuns({ background: true });
     } finally {
       recentRunsRefreshing = false;
 

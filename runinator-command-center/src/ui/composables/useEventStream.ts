@@ -34,7 +34,7 @@ export function useEventStream() {
     }
 
     if (app.activeTab === "Runs") {
-      void workflows.fetchRecentWorkflowRuns();
+      void workflows.fetchRecentWorkflowRuns({ background: true });
     }
 
     if (workflows.selectedWorkflowRunId) {
