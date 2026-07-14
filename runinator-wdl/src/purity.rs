@@ -85,6 +85,13 @@ pub(crate) fn expr_is_effectful(expr: &Expr, registry: &FunctionRegistry) -> boo
         ExprKind::Neg(inner) | ExprKind::ToString(inner) | ExprKind::ToJson(inner) => {
             expr_is_effectful(inner, registry)
         }
+        // a cast is erased at runtime, so its effectfulness is exactly its inner expression's.
+        ExprKind::Cast { expr, .. } => expr_is_effectful(expr, registry),
+        // an application is effectful if the callee or any argument is.
+        ExprKind::Apply { callee, args } => {
+            expr_is_effectful(callee, registry)
+                || args.iter().any(|arg| expr_is_effectful(arg, registry))
+        }
         // the comparison intrinsic is pure, but either operand may itself be effectful.
         ExprKind::Compare { left, right, .. } => {
             expr_is_effectful(left, registry) || expr_is_effectful(right, registry)

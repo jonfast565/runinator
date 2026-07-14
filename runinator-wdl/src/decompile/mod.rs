@@ -529,15 +529,30 @@ impl<'a> Decompiler<'a> {
             return Ok(());
         }
         for trigger in triggers {
-            let cron = trigger
-                .get("cron")
-                .and_then(Value::as_str)
-                .ok_or_else(|| WdlError::Decompile("trigger missing cron expression".into()))?;
+            // `kind` selects the surface form; absent ⇒ cron for packs compiled before the field.
+            let is_chained = trigger.get("kind").and_then(Value::as_str) == Some("chained");
+            let mut text = if is_chained {
+                let target = trigger
+                    .get("target_workflow")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| WdlError::Decompile("chained trigger missing target".into()))?;
+                let keyword = match trigger.get("on").and_then(Value::as_str) {
+                    Some("failure") => "on_failure",
+                    Some("complete") => "on_complete",
+                    _ => "on_success",
+                };
+                format!("trigger {keyword} workflow {}", quote(target))
+            } else {
+                let cron = trigger
+                    .get("cron")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| WdlError::Decompile("trigger missing cron expression".into()))?;
+                format!("trigger cron {}", quote(cron))
+            };
             let params = trigger.get("parameters");
             let has_params = params
                 .and_then(Value::as_object)
                 .is_some_and(|object| !object.is_empty());
-            let mut text = format!("trigger cron {}", quote(cron));
             if has_params {
                 let rendered = self.expr(params.unwrap_or(&Value::Null))?;
                 text.push_str(&format!(" with {rendered}"));
@@ -545,11 +560,13 @@ impl<'a> Decompiler<'a> {
             if trigger.get("enabled").and_then(Value::as_bool) == Some(false) {
                 text.push_str(" disabled");
             }
-            if let (Some(start), Some(end)) = (
-                trigger.get("blackout_start").and_then(Value::as_str),
-                trigger.get("blackout_end").and_then(Value::as_str),
-            ) {
-                text.push_str(&format!(" blackout {} to {}", quote(start), quote(end)));
+            if !is_chained {
+                if let (Some(start), Some(end)) = (
+                    trigger.get("blackout_start").and_then(Value::as_str),
+                    trigger.get("blackout_end").and_then(Value::as_str),
+                ) {
+                    text.push_str(&format!(" blackout {} to {}", quote(start), quote(end)));
+                }
             }
             self.line(&text);
         }

@@ -147,3 +147,65 @@ These are footguns when creating new providers and workflow jobs, grounded in `r
 
 ### 6.7 Result-publish failures redeliver the whole action
 - If a job succeeds but `publish_status`/`flush` fails (`main.rs:636,680`), the delivery is nacked and the entire action re-runs — looping back to 6.1. Idempotency (6.1) is the mitigation here too.
+
+---
+
+## Tier 7 — Net-new product capabilities (2026-07-12 survey)
+
+Tiers 1–6 cover operational hardening, language completeness, UX polish, and authoring pitfalls. These are **new product features** rather than hardening of existing ones — capabilities the runtime does not have today. Each was confirmed against the current codebase as a genuine gap. Ordered by leverage; #7.1 (test harness) and #7.3 (webhook triggers) are the highest-value picks.
+
+### 7.1 Workflow test harness + dry-run simulation
+- **Owning crates:** `runinator-wdl`, `runinator-workflows`, `runinator-ctl`.
+- **Problem:** The only way to verify a workflow behaves is to run it live against real providers. There is no offline way to assert which branch a `condition`/`toggle`/`percentage` takes, or that outputs map correctly — the single biggest confidence gap for the WDL surface.
+- **Approach:** Add a `.wdlt` test format (or a `test { }` block in WDL) that mocks provider outputs and asserts on the branch taken and final outputs. Pair it with a **reducer dry-run mode** that walks the state machine with `task` nodes stubbed — no `ActionCommand`s published — so authors can preview the branch taken for given inputs. Expose as `runinatorctl workflows test pack/` for CI.
+- **Boundary note:** dry-run belongs in the reducer/`runinator-workflows` evaluation path, not the worker; mocked provider outputs must not touch the broker.
+
+### 7.2 AI-assisted WDL authoring in the command center
+- **Owning crates:** `runinator-command-center`, `runinator-provider-ai`.
+- **Problem:** Authoring WDL/graphs is manual; new users face a blank canvas.
+- **Approach:** Natural-language → WDL draft, generated against the live backend-driven node/edge/trigger **catalog metadata** (per memory `project_catalog_metadata_reactivity`). "Add a Slack notify after the approval fails" edits the draft graph in place. The catalog gives the model a constrained, validated tool surface so it emits well-formed graphs rather than free text. Draft stays the source of truth (per `project_cc_workflow_editing`).
+
+### 7.3 Inbound webhook *triggers* (start a run)
+- **Owning crates:** `runinator-ws` (`handlers/webhook.rs`, trigger materialization), `runinator-models` (triggers).
+- **Problem:** `handlers/webhook.rs` only *wakes/signals an already-parked run*; there is no way to **start** a new run from an inbound event. Triggers are cron-only today (`metadata.triggers`).
+- **Approach:** Add a `trigger webhook "..."` header declaration that mints a signed inbound URL to start a new run, with a payload-mapping expression into workflow inputs. Reuse the existing pack-managed-trigger materialization path (`metadata.managed_by = "wdl"`).
+- **Boundary note:** the trigger kind is a shared-contract change — thread through `runinator-models` triggers, ctl WDL compile, mappers, and the command-center trigger catalog.
+
+### 7.4 Workflow-to-workflow / event-driven chaining — ✅ implemented
+- **Problem:** Workflows are independent; there is no first-class "run B when A succeeds" without modeling B as a `subflow` child of A. (Investigation confirmed chaining does **not** replace subflows: subflow's default is synchronous with a return path, and its one real usage is a mid-run loop fan-out — so subflows were kept.)
+- **Done:** New `WorkflowTriggerKind::Chained` (+ `TriggerSourceKind::Chained`), declared on the source workflow as `trigger on_success | on_failure | on_complete workflow "<name>"` and materialized from `metadata.triggers` (each spec now carries a `kind`; absent ⇒ cron for back-compat). Firing is event-driven from the reducer's terminal settle (`runinator-reducer/src/orchestration/chaining.rs`, wired in `engine.rs` beside `maybe_wake_subflow_parent`), **not** the best-effort `events` channel. Exactly-once per (trigger, source-run) via the `workflow_trigger_firings` dedupe table (`db.try_record_trigger_firing`); cycle-bounded by a `chain_depth` cap (32); top-level-only (subflow/map children don't fan out chains). `on:"failure"` matches `Failed`/`TimedOut` but not a manual `Canceled`. Import validates the target resolves (`IMPORT_UNKNOWN_CHAINED_TARGET`). Full WDL surface (grammar/parse/lower/decompile/format idempotent + LSP) and the backend-driven trigger catalog + command-center TS/CodeMirror. Covered by WDL round-trip, DB round-trip/dedupe, and reducer integration tests (start-once, dedupe on re-drive, status selector, depth cap).
+
+### 7.5 Backfill + freeze/blackout windows
+- **Owning crate:** `runinator-ws` (trigger-firing loop), `runinator-ctl`.
+- **Problem:** No way to replay missed cron slots, and no way to suppress firing during a change freeze or holiday.
+- **Approach:** Backfill — `runinatorctl workflows backfill <wf> --from --to` synthesizes trigger firings for past/missed cron slots. Freeze windows — a calendar (change-freeze, holidays) the trigger-firing loop consults to defer firing until the window closes. Both localize to the trigger-firing loop.
+
+### 7.6 Run timeline / Gantt visualization
+- **Owning crate:** `runinator-command-center`.
+- **Problem:** `trace_id` and per-node timing exist post-1.1, but the only way to inspect a run's shape is reading logs.
+- **Approach:** Per-run timeline view: node durations, parked/waiting gaps, retries, and the critical path, rendered from the correlation data already persisted. Far higher debugging value than raw logs; no backend change required beyond exposing node timing already recorded.
+
+### 7.4a Pipelines view — visualize & author chains — ✅ implemented
+- **Problem:** #7.4 shipped the backend, but chains were only visible/editable one workflow at a time in the Settings modal — no way to see the pipeline DAG.
+- **Done:** New top-level **Pipelines** tab (left nav, ahead of Workflows) — a Vue Flow canvas with one node per workflow and one edge per `chained` trigger, labelled by selector. Interactive: drag between workflows to create a chain, click an edge to change `on` (success/failure/complete) or enable/disable, delete to remove — all through the existing trigger CRUD (`save_workflow_trigger`/`delete_workflow_trigger`). Reuses `autoArrangeWorkflowLayout` for positioning; data via `fetchWorkflows()` + a fan-out over `fetchWorkflowTriggers()`. New portable `pipeline-graph.ts` builder (unit-tested, flags unresolved target names), `services/pipeline`, a `pipeline` pinia store, and `PipelineNode`/`PipelineCanvas`/`PipelinesView`. Also fixed a bug from #7.4: the `chained` target field used the `subflow` widget (stores an **id**), but chaining resolves by **name** — switched to a `workflow_name` widget so both the canvas and the Settings modal write a resolvable name. Frontend-only except that one-line catalog widget change.
+
+### 7.7 AI cost & token accounting
+- **Owning crates:** `runinator-provider-ai`, `runinator-models` (result event), `runinator-database`.
+- **Problem:** `provider-ai` (claude_code) captures **no** token/cost usage. There is no hook to attribute AI spend per node/run/workflow.
+- **Approach:** Capture usage in the provider, thread it back on the `WorkflowResultEvent`, persist per node-run, and roll up per run/workflow in the command center.
+- **Boundary note:** adding usage to the result event is a `runinator-comm`/`runinator-models` contract change — thread through every broker backend, `mappers.rs`, and both DB backends.
+
+### 7.8 Pack environments + promotion
+- **Owning crates:** `runinator-ctl`, `runinator-ws` (packs), settings store.
+- **Problem:** `semver.rs` exists but there is no dev→staging→prod lifecycle; a pack imports with one fixed set of config/secret bindings.
+- **Approach:** Environment-scoped pack deployment with a diff/promote flow (`runinatorctl workflows promote <pack> staging→prod`) and per-environment config/secret binding, so the same compiled pack runs against different settings-store values per environment.
+
+---
+
+### Recommended sequencing (Tier 7)
+
+1. **7.1 (test harness)** — highest authoring-safety leverage, self-contained in the WDL/reducer evaluation path, no shared-contract churn.
+2. **7.3 (webhook triggers)** — highest reach; reuses the pack-managed-trigger path. **7.4 (chaining)** and **7.5 (backfill/freeze)** are natural follow-ons once trigger kinds are extensible.
+3. **7.6 (run timeline)** — pure frontend win on data already persisted.
+4. **7.7 (AI cost)** and **7.2 (AI authoring)** as the AI surface grows.
+5. **7.8 (environments)** once multi-env deployment is a real need.

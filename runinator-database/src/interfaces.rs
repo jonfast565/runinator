@@ -227,6 +227,15 @@ pub trait DatabaseImpl: Send + Sync + 'static {
         limit: i64,
     ) -> impl Future<Output = Result<Vec<WorkflowRun>, SendableError>> + Send;
 
+    /// Record a one-off trigger firing keyed on `(trigger_id, fire_key)`, returning `true` only when
+    /// this call inserted the row. used by workflow-to-workflow chaining to start a target at most
+    /// once per source run (the caller creates the run only when this returns `true`).
+    fn try_record_trigger_firing(
+        &self,
+        trigger_id: Uuid,
+        fire_key: String,
+    ) -> impl Future<Output = Result<bool, SendableError>> + Send;
+
     /// Create a new instance of a workflow.
     fn create_workflow_run(
         &self,
@@ -473,6 +482,17 @@ pub trait DatabaseImpl: Send + Sync + 'static {
     fn fetch_pending_ready_nodes(
         &self,
         now: DateTime<Utc>,
+        limit: i64,
+    ) -> impl Future<Output = Result<Vec<ReadyNodeRecord>, SendableError>> + Send;
+
+    /// Claim pending ready-node rows for wake announcement, stamping an announce lease of
+    /// `lease_seconds` past the later of `now` and each row's `ready_at`. A row is returned at most
+    /// once per lease window, so broker backends without in-flight dedupe do not accumulate
+    /// duplicate wakes; the lease expiring re-announces a wake that was lost in flight.
+    fn claim_ready_nodes_for_announce(
+        &self,
+        now: DateTime<Utc>,
+        lease_seconds: i64,
         limit: i64,
     ) -> impl Future<Output = Result<Vec<ReadyNodeRecord>, SendableError>> + Send;
 

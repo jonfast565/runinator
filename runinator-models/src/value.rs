@@ -12,6 +12,12 @@ use std::fmt;
 use serde::de::{self, Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde::ser::{Serialize, SerializeMap, SerializeSeq, Serializer};
 
+/// the reserved object key marking a value as an interpreted closure (a first-class lambda). a
+/// closure value is `{ "$closure": { "params": [..], "body": <expr>, "env": {..} } }`. the tag lives
+/// here so the type checker (which recognizes closure values) and the expression interpreter (which
+/// builds and applies them) share one definition.
+pub const CLOSURE_TAG: &str = "$closure";
+
 /// a dynamic json value. object keys are kept sorted (matching `serde_json`'s default ordering) so
 /// serialized output stays byte-identical to the previous `serde_json::Value` wire form.
 #[derive(Debug, Clone, PartialEq, Default)]

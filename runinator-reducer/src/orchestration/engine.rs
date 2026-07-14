@@ -60,6 +60,8 @@ pub async fn process_ready_node<T: DatabaseImpl>(
             // terminal state so the next waiter can acquire. no-op for runs holding no lease.
             if next_run.status.is_terminal() {
                 mutex::release_run_mutexes(db, next_run.id).await?;
+                // start any workflows chained to this one via on_success/on_failure/on_complete.
+                chaining::maybe_start_chained_workflows(db, &next_run).await?;
             }
             return Ok(disposition);
         }

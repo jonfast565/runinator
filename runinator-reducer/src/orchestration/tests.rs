@@ -1,6 +1,7 @@
 use super::action::{
-    TargetResolution, default_foreign_language_runtime, foreign_language_runtime,
-    has_dedicated_workers, replica_labels_match, target_for, target_for_labels,
+    TARGET_PARK_DEFAULT_TIMEOUT_SECONDS, TargetResolution, default_foreign_language_runtime,
+    foreign_language_runtime, has_dedicated_workers, replica_labels_match, target_for,
+    target_for_labels,
 };
 use super::assert::evaluate_assertions;
 use super::await_run::parse_await_mode;
@@ -13,7 +14,7 @@ use super::event_source::event_type_matches;
 use super::mutex::{holder_run_id, lease_is_expired, parse_mutex_params, record_is_held_by_other};
 use super::throttle::bucket_has_tokens;
 use super::transform::resolve_bindings;
-use super::transitions::{timed_out, timed_out_since_created};
+use super::transitions::{timed_out, timed_out_since_created, timed_out_since_created_or};
 use runinator_comm::ActionTarget;
 use runinator_models::{
     value::Value,
@@ -505,4 +506,36 @@ fn timed_out_since_created_catches_a_run_that_never_reached_running() {
     let run = node_run("wait", "waiting");
     assert!(!timed_out(&node, &run));
     assert!(timed_out_since_created(&node, &run));
+}
+
+#[test]
+fn target_park_times_out_even_without_a_configured_node_timeout() {
+    // an action node with no timeout of its own, parked because no worker matches its target.
+    let node: WorkflowNode = serde_json::from_value(serde_json::json!({
+        "id": "sync",
+        "kind": "action",
+    }))
+    .expect("node");
+    assert!(node.timeout_seconds.is_none());
+    // the config-driven check must stay blind (other node kinds park indefinitely by design), but
+    // the target park must trip its fallback deadline instead of holding the run forever.
+    let run = node_run("sync", "waiting");
+    assert!(!timed_out_since_created(&node, &run));
+    assert!(timed_out_since_created_or(
+        &node,
+        &run,
+        TARGET_PARK_DEFAULT_TIMEOUT_SECONDS
+    ));
+    // an explicit node timeout still wins over the fallback.
+    let node: WorkflowNode = serde_json::from_value(serde_json::json!({
+        "id": "sync",
+        "kind": "action",
+        "timeout_seconds": 1_000_000_000,
+    }))
+    .expect("node");
+    assert!(!timed_out_since_created_or(
+        &node,
+        &run,
+        TARGET_PARK_DEFAULT_TIMEOUT_SECONDS
+    ));
 }

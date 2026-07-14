@@ -64,6 +64,9 @@ fn type_refs_resolved(ty: &TypeExpr, named: &NamedTypes) -> bool {
                     .as_ref()
                     .is_none_or(|a| type_refs_resolved(a, named))
         }
+        TypeExpr::Function { params, ret } => {
+            params.iter().all(|p| type_refs_resolved(p, named)) && type_refs_resolved(ret, named)
+        }
     }
 }
 
@@ -131,6 +134,16 @@ pub(crate) fn lower_type_with(
                 .map(|variant| lower_type_with(variant, named))
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(RuninatorType::Union(variants))
+        }
+        TypeExpr::Function { params, ret } => {
+            let params = params
+                .iter()
+                .map(|param| lower_type_with(param, named))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(RuninatorType::Function {
+                params,
+                ret: Box::new(lower_type_with(ret, named)?),
+            })
         }
     }
 }

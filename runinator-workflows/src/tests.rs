@@ -1284,6 +1284,95 @@ fn typed_validation_rejects_higher_order_map_result_mismatch() {
 }
 
 #[test]
+fn typed_validation_infers_first_element_type() {
+    let mut wf = action_workflow(runinator_models::json!({
+        "config": { "$call": "first", "args": [ { "$ref": { "params": ["items"] } } ] }
+    }));
+    wf.input_type = RuninatorType::typed_structure([(
+        "items",
+        RuninatorField::required(RuninatorType::array(RuninatorType::String)),
+    )]);
+
+    validate_workflow_with_providers(&wf, &[check_provider(RuninatorType::String)])
+        .expect("first of string[] should resolve to string");
+    assert!(
+        validate_workflow_with_providers(&wf, &[check_provider(RuninatorType::Integer)]).is_err(),
+        "first of string[] should not satisfy an integer parameter"
+    );
+}
+
+#[test]
+fn typed_validation_infers_sort_preserves_element_type() {
+    let mut wf = action_workflow(runinator_models::json!({
+        "config": { "$call": "sort", "args": [ { "$ref": { "params": ["items"] } } ] }
+    }));
+    wf.input_type = RuninatorType::typed_structure([(
+        "items",
+        RuninatorField::required(RuninatorType::array(RuninatorType::String)),
+    )]);
+
+    validate_workflow_with_providers(
+        &wf,
+        &[check_provider(RuninatorType::array(RuninatorType::String))],
+    )
+    .expect("sort should preserve string[]");
+    assert!(
+        validate_workflow_with_providers(
+            &wf,
+            &[check_provider(RuninatorType::array(RuninatorType::Integer))]
+        )
+        .is_err(),
+        "sort of string[] should not satisfy an integer[] parameter"
+    );
+}
+
+#[test]
+fn typed_validation_infers_values_of_map() {
+    let mut wf = action_workflow(runinator_models::json!({
+        "config": { "$call": "values", "args": [ { "$ref": { "params": ["scores"] } } ] }
+    }));
+    wf.input_type = RuninatorType::typed_structure([(
+        "scores",
+        RuninatorField::required(RuninatorType::map(RuninatorType::Integer)),
+    )]);
+
+    validate_workflow_with_providers(
+        &wf,
+        &[check_provider(RuninatorType::array(RuninatorType::Integer))],
+    )
+    .expect("values of map<integer> should resolve to integer[]");
+}
+
+#[test]
+fn typed_validation_navigates_union_common_field() {
+    let mut wf = action_workflow(runinator_models::json!({
+        "config": { "$ref": { "params": ["u", "a"] } }
+    }));
+    // `u` is a union of two structs that both carry `a: integer`.
+    wf.input_type = RuninatorType::typed_structure([(
+        "u",
+        RuninatorField::required(RuninatorType::Union(vec![
+            RuninatorType::typed_structure([
+                ("a", RuninatorField::required(RuninatorType::Integer)),
+                ("b", RuninatorField::required(RuninatorType::String)),
+            ]),
+            RuninatorType::typed_structure([
+                ("a", RuninatorField::required(RuninatorType::Integer)),
+                ("c", RuninatorField::required(RuninatorType::Boolean)),
+            ]),
+        ])),
+    )]);
+
+    // `u.a` is integer in every variant, so it satisfies an integer parameter but not a string one.
+    validate_workflow_with_providers(&wf, &[check_provider(RuninatorType::Integer)])
+        .expect("union common field a resolves to integer");
+    assert!(
+        validate_workflow_with_providers(&wf, &[check_provider(RuninatorType::String)]).is_err(),
+        "union common field a is integer, not string"
+    );
+}
+
+#[test]
 fn typed_validation_requires_map_items_to_be_array() {
     let mut wf = workflow(runinator_models::json!({
         "start": "start",
@@ -1847,6 +1936,33 @@ fn node_kind_catalog_default_templates_deserialize_to_nodes() {
 }
 
 #[test]
+fn loop_and_map_items_field_is_typed_array() {
+    // the iterable of a loop/map advertises Array<Any> (not the bare Any it used to be) so the
+    // editor and wdl completion can flow the element type into the loop-body variable.
+    let catalog = node_kind_catalog();
+    for kind in [WorkflowNodeKind::Loop, WorkflowNodeKind::Map] {
+        let entry = catalog
+            .iter()
+            .find(|item| item.kind == kind)
+            .unwrap_or_else(|| panic!("missing catalog entry for {kind:?}"));
+        let items = entry
+            .fields
+            .iter()
+            .find(|f| f.field.param.name == "items")
+            .unwrap_or_else(|| panic!("{kind:?} needs an items field"));
+        assert_eq!(
+            items.field.param.ty,
+            runinator_models::types::RuninatorType::array(
+                runinator_models::types::RuninatorType::Any
+            ),
+            "{kind:?} items must be Array<Any>"
+        );
+        // the expression widget is kept: loops iterate an upstream reference, not a literal array.
+        assert_eq!(items.field.widget.as_deref(), Some("expression"));
+    }
+}
+
+#[test]
 fn trigger_catalog_covers_every_kind() {
     let catalog = trigger_kind_catalog();
     assert_eq!(catalog.len(), WorkflowTriggerKind::ALL.len());
@@ -2008,8 +2124,24 @@ fn trigger_catalog_default_configuration_round_trips() {
         .iter()
         .find(|item| item.kind == WorkflowTriggerKind::Manual)
         .unwrap();
+    let chained = catalog
+        .iter()
+        .find(|item| item.kind == WorkflowTriggerKind::Chained)
+        .unwrap();
 
     assert!(cron.default_configuration.get("cron").is_some());
+    assert_eq!(
+        chained.default_configuration.get("on"),
+        Some(&runinator_models::value::Value::from("success"))
+    );
+    assert!(
+        chained
+            .default_configuration
+            .get("target_workflow")
+            .is_some()
+    );
+    serde_json::to_string(&chained.default_configuration)
+        .expect("chained configuration serializes");
     assert_eq!(
         manual.default_configuration,
         runinator_models::value::Value::Object(Default::default())

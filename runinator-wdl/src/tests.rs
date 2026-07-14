@@ -2883,6 +2883,203 @@ fn compute_lambda_result_drives_higher_order_return_type() {
 }
 
 #[test]
+fn compute_first_recovers_element_type() {
+    // `first` of a string[] resolves to string, so assigning it to an integer local is an error.
+    let src = r#"
+        workflow "FirstTyped" v1 {
+            params { items: string[] }
+            compute {
+                let x: integer = std.collections.first(params.items)
+                return x
+            }
+        }
+    "#;
+    let (_, message) = expect_semantic(src);
+    assert!(message.contains("compute local 'x'"), "got: {message}");
+    assert!(
+        message.contains("expected integer, got string"),
+        "got: {message}"
+    );
+}
+
+#[test]
+fn compute_sort_preserves_element_type() {
+    // `sort` preserves the element type, so sorting a string[] and binding it to integer[] errors.
+    let src = r#"
+        workflow "SortTyped" v1 {
+            params { items: string[] }
+            compute {
+                let sorted: integer[] = std.collections.sort(params.items)
+                return sorted
+            }
+        }
+    "#;
+    let (_, message) = expect_semantic(src);
+    assert!(message.contains("compute local 'sorted'"), "got: {message}");
+    assert!(message.contains("string"), "got: {message}");
+}
+
+#[test]
+fn compute_at_struct_recovers_field_type_from_literal_key() {
+    // at(struct, "id") resolves to the field type when the key is a literal.
+    let src = r#"
+        workflow "AtStruct" v1 {
+            params { obj: { id: integer } }
+            compute {
+                let x: string = std.collections.at(params.obj, "id")
+                return x
+            }
+        }
+    "#;
+    let (_, message) = expect_semantic(src);
+    assert!(message.contains("compute local 'x'"), "got: {message}");
+    assert!(
+        message.contains("expected string, got integer"),
+        "got: {message}"
+    );
+}
+
+#[test]
+fn compute_pick_narrows_struct_to_named_keys() {
+    // pick keeps only the named keys, so the dropped field is unknown afterwards.
+    let src = r#"
+        workflow "Pick" v1 {
+            params { obj: { id: integer, secret: string } }
+            compute {
+                let picked = std.objects.pick(params.obj, ["id"])
+                return picked.secret
+            }
+        }
+    "#;
+    let (_, message) = expect_semantic(src);
+    assert!(message.contains("unknown field 'secret'"), "got: {message}");
+}
+
+#[test]
+fn run_context_field_is_typed_string() {
+    // run.run_id is a string; assigning it to an integer local is an error.
+    let src = r#"
+        workflow "RunCtx" v1 {
+            compute {
+                let x: integer = run.run_id
+                return x
+            }
+        }
+    "#;
+    let (_, message) = expect_semantic(src);
+    assert!(message.contains("compute local 'x'"), "got: {message}");
+    assert!(message.contains("string"), "got: {message}");
+}
+
+#[test]
+fn run_context_rejects_unknown_field() {
+    // the run context is closed to its known keys; `run.name` does not exist.
+    let src = r#"
+        workflow "RunCtx" v1 {
+            compute {
+                return run.name
+            }
+        }
+    "#;
+    let (_, message) = expect_semantic(src);
+    assert!(message.contains("unknown field 'name'"), "got: {message}");
+}
+
+#[test]
+fn typed_parse_json_adopts_annotated_shape() {
+    // a `let` annotation gives parse_json's `any` result a concrete shape, so a wrong downstream
+    // use is caught (x.id is integer, not string).
+    let src = r#"
+        workflow "P" v1 {
+            params { s: string }
+            compute {
+                let x: { id: integer } = std.encoding.parse_json(params.s)
+                let y: string = x.id
+                return y
+            }
+        }
+    "#;
+    let (_, message) = expect_semantic(src);
+    assert!(message.contains("compute local 'y'"), "got: {message}");
+    assert!(
+        message.contains("expected string, got integer"),
+        "got: {message}"
+    );
+}
+
+#[test]
+fn empty_array_adopts_annotated_element_type() {
+    // `[]` under a declaration resolves to the declared element type, so `first(x)` is that element.
+    let src = r#"
+        workflow "P" v1 {
+            compute {
+                let x: string[] = []
+                let y: integer = std.collections.first(x)
+                return y
+            }
+        }
+    "#;
+    let (_, message) = expect_semantic(src);
+    assert!(message.contains("compute local 'y'"), "got: {message}");
+    assert!(message.contains("string"), "got: {message}");
+}
+
+#[test]
+fn first_class_lambda_call_yields_result_type() {
+    // a lambda bound to a local infers a function type; calling it yields the body's result type,
+    // so assigning a string-returning lambda's result to an integer is an error.
+    let src = r#"
+        workflow "F" v1 {
+            compute {
+                let f = x => "hello"
+                let y: integer = f(2)
+                return y
+            }
+        }
+    "#;
+    let (_, message) = expect_semantic(src);
+    assert!(message.contains("compute local 'y'"), "got: {message}");
+    assert!(
+        message.contains("expected integer, got string"),
+        "got: {message}"
+    );
+}
+
+#[test]
+fn first_class_lambda_round_trips() {
+    // a let-bound lambda, applied by name and passed to a higher-order intrinsic, survives
+    // compile -> decompile -> compile.
+    assert_round_trips(
+        r#"
+        workflow "F" v1 {
+            params { xs: integer[] }
+            compute {
+                let double = x => std.math.mul(x, 2)
+                return std.collections.map(params.xs, double)
+            }
+        }
+    "#,
+    );
+}
+
+#[test]
+fn first_class_lambda_call_checks_arity() {
+    let src = r#"
+        workflow "F" v1 {
+            compute {
+                let f = x => x
+                return f(1, 2)
+            }
+        }
+    "#;
+    let (_, message) = expect_semantic(src);
+    assert!(
+        message.contains("'f' expects 1 argument(s), got 2"),
+        "got: {message}"
+    );
+}
+
+#[test]
 fn compute_predicate_lambda_must_return_boolean() {
     let src = r#"
         workflow "LambdaPredicate" v1 {
@@ -3615,6 +3812,184 @@ fn strict_subflow_requires_signature_and_types_state() {
 }
 
 #[test]
+fn detached_subflow_state_is_unavailable() {
+    // a detached subflow is fire-and-forget, so its `state` snapshot is never populated. even with
+    // the callee signature known, referencing a field off `.state` is an author-time error.
+    let child = r#"
+        workflow "Child" v1 returns { url: string } {
+            params { id: string }
+            console.run(command: params.id)
+        }
+    "#;
+    let options = CompileOptions {
+        workflow_signatures: workflow_signature_from_source(child).expect("child signature"),
+        ..CompileOptions::default()
+    };
+    let detached = r#"
+        workflow "Parent" v1 {
+            node child <- subflow("Child", params: { id: "RUNI-1" }, detached: true)
+            console.run(command: child.state.url)
+        }
+    "#;
+    let err = compile_str(detached, &options).unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("cannot access field 'url' on null"),
+        "{err}"
+    );
+
+    // the same reference against an awaited subflow types cleanly from the signature.
+    let awaited = r#"
+        workflow "Parent" v1 {
+            node child <- subflow("Child", params: { id: "RUNI-1" })
+            console.run(command: child.state.url)
+        }
+    "#;
+    compile_str(awaited, &options).expect("awaited subflow state resolves");
+}
+
+#[test]
+fn cast_lets_parse_json_adopt_a_shape() {
+    // parse_json is opaque (`any`); an `as` cast asserts a concrete shape, so field access off the
+    // result is typed and a wrong field is an author-time error.
+    let ok = r#"
+        workflow "Cast" v1 {
+            params { raw: string }
+            compute {
+                let data = std.encoding.parse_json(params.raw) as { id: integer }
+                return { id: data.id }
+            }
+        }
+    "#;
+    compile_str(ok, &CompileOptions::default()).expect("cast-typed field resolves");
+
+    let bad = r#"
+        workflow "Cast" v1 {
+            params { raw: string }
+            compute {
+                let data = std.encoding.parse_json(params.raw) as { id: integer }
+                return { id: data.missing }
+            }
+        }
+    "#;
+    let err = compile_str(bad, &CompileOptions::default()).unwrap_err();
+    assert!(err.to_string().contains("unknown field 'missing'"), "{err}");
+}
+
+#[test]
+fn cast_rejects_incompatible_concrete_value() {
+    // a cast is a type assertion, not a coercion: casting a concrete value to an incompatible type
+    // is a genuine mistake and is rejected (an opaque `any` inner would pass, which is the point).
+    let src = r#"
+        workflow "Cast" v1 {
+            compute {
+                let bad = 5 as string
+                return { out: bad }
+            }
+        }
+    "#;
+    let err = compile_str(src, &CompileOptions::default()).unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("cast expected string, got integer"),
+        "{err}"
+    );
+}
+
+#[test]
+fn cast_round_trips() {
+    // the cast is erased at lowering, so the compiled graph round-trips (the `as T` is author-time).
+    let src = r#"
+        workflow "Cast" v1 {
+            params { raw: string }
+            compute {
+                let data = std.encoding.parse_json(params.raw) as { id: integer }
+                return { id: data.id }
+            }
+        }
+    "#;
+    assert_round_trips(src);
+}
+
+#[test]
+fn function_type_annotation_checks_and_round_trips() {
+    // a `function<(A) -> R>` annotation binds the lambda's parameter to `A`, so the body checks
+    // against the annotation and a later application resolves.
+    let ok = r#"
+        workflow "Fn" v1 {
+            compute {
+                let inc: function<(integer) -> integer> = x => x + 1
+                return { out: inc(2) }
+            }
+        }
+    "#;
+    compile_str(ok, &CompileOptions::default()).expect("typed lambda binds and applies");
+    assert_round_trips(ok);
+
+    // a lambda whose body conflicts with the declared return type is rejected.
+    let bad = r#"
+        workflow "Fn" v1 {
+            compute {
+                let inc: function<(integer) -> integer> = x => "not a number"
+                return { out: inc(2) }
+            }
+        }
+    "#;
+    let err = compile_str(bad, &CompileOptions::default()).unwrap_err();
+    assert!(err.to_string().contains("compute local 'inc'"), "{err}");
+}
+
+#[test]
+fn applies_a_field_held_closure_and_round_trips() {
+    // a closure stored in an object field is applied with `(obj.f)(args)`; the parenthesized callee
+    // keeps it from re-parsing as a `obj.f(args)` method call, and it round-trips.
+    let src = r#"
+        workflow "Apply" v1 {
+            compute {
+                let ops = { inc: x => x + 1 }
+                return { out: (ops.inc)(5) }
+            }
+        }
+    "#;
+    compile_str(src, &CompileOptions::default()).expect("field-held closure applies");
+    assert_round_trips(src);
+}
+
+#[test]
+fn applies_an_index_held_closure_and_round_trips() {
+    // a closure stored in an array element is applied with `fns[0](args)`.
+    let src = r#"
+        workflow "Apply" v1 {
+            compute {
+                let fns = [x => x + 1, x => x + 2]
+                return { out: fns[0](10) }
+            }
+        }
+    "#;
+    compile_str(src, &CompileOptions::default()).expect("index-held closure applies");
+    assert_round_trips(src);
+}
+
+#[test]
+fn applied_closure_checks_arity() {
+    // applying a known-arity closure with the wrong argument count is an author-time error.
+    let src = r#"
+        workflow "Apply" v1 {
+            compute {
+                let ops = { inc: x => x + 1 }
+                return { out: (ops.inc)(1, 2) }
+            }
+        }
+    "#;
+    let err = compile_str(src, &CompileOptions::default()).unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("applied function expects 1 argument(s), got 2"),
+        "{err}"
+    );
+}
+
+#[test]
 fn round_trips_let_type_annotation() {
     let src = r#"
         workflow "Typed" v1 {
@@ -4286,6 +4661,75 @@ fn completes_loop_variable_fields_from_array_source() {
 }
 
 #[test]
+fn completes_prev_output_fields_after_action() {
+    // `prev` resolves to the source-order predecessor node's output type.
+    let labels = completion_labels(
+        r#"
+        workflow "Complete" v1 {
+            node tickets <- jira.search(base_url: "https://jira", token: "t", jql: "x")
+            emit "prev" { total: prev.<> }
+        }
+    "#,
+        "<>",
+    );
+    assert!(labels.contains(&"issues".to_string()));
+    assert!(labels.contains(&"total".to_string()));
+}
+
+#[test]
+fn prev_has_no_fields_at_first_node() {
+    // the first node has no predecessor, so `prev` stays opaque (Any) with no known fields.
+    let labels = completion_labels(
+        r#"
+        workflow "Complete" v1 {
+            emit "prev" { total: prev.<> }
+        }
+    "#,
+        "<>",
+    );
+    assert!(!labels.contains(&"issues".to_string()));
+    assert!(!labels.contains(&"total".to_string()));
+}
+
+#[test]
+fn prev_has_no_fields_after_control_flow() {
+    // after a loop, the predecessor is ambiguous, so `prev` falls back to Any.
+    let labels = completion_labels(
+        r#"
+        workflow "Complete" v1 {
+            node tickets <- jira.search(base_url: "https://jira", token: "t", jql: "x")
+            for item in tickets.issues limit 10 {
+                emit "ticket" { key: item.key }
+            }
+            emit "prev" { total: prev.<> }
+        }
+    "#,
+        "<>",
+    );
+    assert!(!labels.contains(&"issues".to_string()));
+    assert!(!labels.contains(&"total".to_string()));
+}
+
+#[test]
+fn completes_loop_variable_fields_from_prev_array() {
+    // `prev` typing composes with loop-variable element typing: iterating `prev.issues` binds the
+    // loop variable to the array element struct.
+    let labels = completion_labels(
+        r#"
+        workflow "Complete" v1 {
+            node tickets <- jira.search(base_url: "https://jira", token: "t", jql: "x")
+            for item in prev.issues limit 10 {
+                emit "ticket" { key: item.<> }
+            }
+        }
+    "#,
+        "<>",
+    );
+    assert!(labels.contains(&"key".to_string()));
+    assert!(labels.contains(&"fields".to_string()));
+}
+
+#[test]
 fn completes_provider_actions_in_incomplete_source() {
     let labels = completion_labels(
         r#"
@@ -4308,6 +4752,24 @@ fn suppresses_completion_inside_plain_string() {
         "<>",
     );
     assert!(labels.is_empty());
+}
+
+#[test]
+fn completes_map_result_element_fields() {
+    // completion infers a higher-order result element type (through namespace resolution), so the
+    // projected struct's fields are offered on the loop variable.
+    let labels = completion_labels(
+        r#"
+        workflow "Complete" v1 {
+            node tickets <- jira.search(base_url: "https://jira", token: "t", jql: "x")
+            for row in std.collections.map(tickets.issues, i => { title: i.key }) limit 10 {
+                emit "row" { t: row.<> }
+            }
+        }
+    "#,
+        "<>",
+    );
+    assert!(labels.contains(&"title".to_string()), "labels: {labels:?}");
 }
 
 #[test]
@@ -5149,6 +5611,68 @@ fn round_trips_cron_triggers() {
     let wdl = decompile(&def).expect("decompile");
     assert!(wdl.contains("trigger cron \"0 9 * * *\""), "{wdl}");
     assert!(wdl.contains("trigger cron \"*/5 * * * *\" with {"), "{wdl}");
+    let second = compile_str(&wdl, &CompileOptions::default()).expect("recompile");
+    assert_eq!(
+        def.definition.metadata.pointer("/triggers"),
+        second.definition.metadata.pointer("/triggers"),
+        "triggers diverged:\n{wdl}"
+    );
+}
+
+#[test]
+fn lowers_chained_triggers_into_metadata() {
+    let src = r#"
+        workflow "Deploy" v1 {
+            trigger on_success workflow "Smoke Tests"
+            trigger on_failure workflow "Rollback" with { reason: "deploy failed" }
+            trigger on_complete workflow "Notify" disabled
+            Console.run(command: "echo deploy")
+        }
+    "#;
+    let def = compile(src);
+    let triggers = def
+        .definition
+        .metadata
+        .pointer("/triggers")
+        .and_then(Value::as_array)
+        .expect("triggers in metadata");
+    assert_eq!(triggers.len(), 3);
+    assert_eq!(triggers[0].get("kind"), Some(&Value::from("chained")));
+    assert_eq!(triggers[0].get("on"), Some(&Value::from("success")));
+    assert_eq!(
+        triggers[0].get("target_workflow"),
+        Some(&Value::from("Smoke Tests"))
+    );
+    assert_eq!(triggers[0].get("enabled"), Some(&Value::from(true)));
+    assert_eq!(triggers[1].get("on"), Some(&Value::from("failure")));
+    assert_eq!(
+        triggers[1].pointer("/parameters/reason"),
+        Some(&Value::from("deploy failed"))
+    );
+    assert_eq!(triggers[2].get("on"), Some(&Value::from("complete")));
+    assert_eq!(triggers[2].get("enabled"), Some(&Value::from(false)));
+}
+
+#[test]
+fn round_trips_chained_triggers() {
+    let src = r#"
+        workflow "Deploy" v1 {
+            trigger on_success workflow "Smoke Tests"
+            trigger on_failure workflow "Rollback" with { reason: "deploy failed" } disabled
+            Console.run(command: "echo deploy")
+        }
+    "#;
+    let def = compile(src);
+    let wdl = decompile(&def).expect("decompile");
+    assert!(
+        wdl.contains(r#"trigger on_success workflow "Smoke Tests""#),
+        "{wdl}"
+    );
+    assert!(
+        wdl.contains(r#"trigger on_failure workflow "Rollback" with {"#),
+        "{wdl}"
+    );
+    assert!(wdl.contains("disabled"), "{wdl}");
     let second = compile_str(&wdl, &CompileOptions::default()).expect("recompile");
     assert_eq!(
         def.definition.metadata.pointer("/triggers"),

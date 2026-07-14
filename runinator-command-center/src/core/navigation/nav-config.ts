@@ -5,6 +5,7 @@ export const navSections: NavSection[] = [
     label: "Workspace",
     items: [
       { tab: "Dev", label: "Dev", icon: "debug", desktopOnly: true },
+      { tab: "Pipelines", label: "Pipelines", icon: "branch" },
       {
         tab: "Workflows",
         label: "Workflows",

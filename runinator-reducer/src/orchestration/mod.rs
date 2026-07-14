@@ -40,6 +40,7 @@ mod audit;
 mod await_run;
 mod barrier;
 mod basic;
+mod chaining;
 mod checkpoint;
 mod circuit_breaker;
 mod collect;

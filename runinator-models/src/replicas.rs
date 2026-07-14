@@ -251,6 +251,7 @@ pub enum TriggerSourceKind {
     Debug,
     Subflow,
     Map,
+    Chained,
 }
 
 impl TriggerSourceKind {
@@ -265,6 +266,7 @@ impl TriggerSourceKind {
             Self::Debug => "debug",
             Self::Subflow => "subflow",
             Self::Map => "map",
+            Self::Chained => "chained",
         }
     }
 }
@@ -283,6 +285,7 @@ impl TryFrom<&str> for TriggerSourceKind {
             "debug" => Ok(Self::Debug),
             "subflow" => Ok(Self::Subflow),
             "map" => Ok(Self::Map),
+            "chained" => Ok(Self::Chained),
             other => Err(format!("Unknown trigger source kind '{other}'")),
         }
     }

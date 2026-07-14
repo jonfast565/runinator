@@ -64,6 +64,9 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   function mirroredComputed<T>(selector: () => T) {
     return computed(() => {
       void state.value;
+      // graph builders derive node summaries/semantic handles from the catalog registry, which is
+      // populated asynchronously; track it so they refresh once metadata arrives after mount.
+      void catalogState.value.nodeKinds;
       return selector();
     });
   }
@@ -581,6 +584,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     removeWatchExpression: svc.runs.removeWatchExpression,
     fetchWorkflowRunsForSelected: svc.runs.fetchWorkflowRunsForSelected,
     fetchRecentWorkflowRuns: svc.runs.fetchRecentWorkflowRuns,
+    scheduleRecentWorkflowRunsRefresh: svc.runs.scheduleRecentWorkflowRunsRefresh,
     selectWorkflowRun: svc.runs.selectWorkflowRun,
     fetchWorkflowRunDetail: svc.runs.fetchWorkflowRunDetail,
     refreshWorkflowRunGates: svc.runs.refreshWorkflowRunGates,

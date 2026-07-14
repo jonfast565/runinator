@@ -96,15 +96,55 @@ pub struct TypeDecl {
     pub span: Span,
 }
 
-/// a header `trigger cron <schedule> (with <params>)?` declaration. `schedule` is a string
-/// expression (the cron expression); `params` is the optional run parameter object.
+/// which terminal state of the source workflow fires a chained trigger.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChainEvent {
+    Success,
+    Failure,
+    Complete,
+}
+
+impl ChainEvent {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ChainEvent::Success => "success",
+            ChainEvent::Failure => "failure",
+            ChainEvent::Complete => "complete",
+        }
+    }
+
+    /// the `on_<event> workflow` keyword this event renders as.
+    pub fn keyword(self) -> &'static str {
+        match self {
+            ChainEvent::Success => "on_success",
+            ChainEvent::Failure => "on_failure",
+            ChainEvent::Complete => "on_complete",
+        }
+    }
+}
+
+/// the kind-specific payload of a header trigger declaration.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TriggerDeclKind {
+    /// `trigger cron <schedule>`: `schedule` is a string expression (the cron expression), with an
+    /// optional blackout window.
+    Cron {
+        schedule: Expr,
+        blackout_start: Option<Expr>,
+        blackout_end: Option<Expr>,
+    },
+    /// `trigger on_<event> workflow <target>`: start `target` when this workflow run reaches the
+    /// matching terminal state.
+    Chained { event: ChainEvent, target: Expr },
+}
+
+/// a header `trigger ...` declaration. `params` is the optional run parameter object shared by both
+/// kinds; `kind` carries the cron schedule or the chaining target.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TriggerDecl {
-    pub schedule: Expr,
+    pub kind: TriggerDeclKind,
     pub params: Option<Expr>,
     pub enabled: bool,
-    pub blackout_start: Option<Expr>,
-    pub blackout_end: Option<Expr>,
     pub span: Span,
 }
 
@@ -665,6 +705,20 @@ pub enum ExprKind {
         params: Vec<String>,
         body: Box<Expr>,
     },
+    /// an `expr as Type` cast: an author-time type assertion. it is erased at lowering (the runtime
+    /// value is the inner expression's, unchanged), but it drives inference so an opaque value —
+    /// `parse_json(s)`, an empty `[]` — adopts the annotated shape at that position.
+    Cast {
+        expr: Box<Expr>,
+        ty: TypeExpr,
+    },
+    /// application of an arbitrary callee value to arguments (`(obj.f)(x)`, `fns[0](x)`). the callee
+    /// evaluates to a first-class closure. a bare `name(args)` stays a `Call`; this is only the
+    /// field/index/parenthesized-callee form.
+    Apply {
+        callee: Box<Expr>,
+        args: Vec<Expr>,
+    },
 }
 
 /// the relational operators available at expression level, each backed by a pure intrinsic.
@@ -708,6 +762,32 @@ impl CompareOp {
 pub enum StrPart {
     Lit(String),
     Expr(Expr),
+}
+
+/// the statically-known string keys an expression denotes, used to type key-driven intrinsics
+/// (`at`/`pick`/`omit`): a plain string literal yields one key, a literal array of string literals
+/// yields several, and anything else (interpolation, a reference, a non-string) yields `None`.
+pub(crate) fn static_string_keys(expr: &Expr) -> Option<Vec<String>> {
+    match &expr.kind {
+        ExprKind::Str(parts) => literal_string(parts).map(|key| vec![key]),
+        ExprKind::Array(items) => items
+            .iter()
+            .map(|item| match &item.kind {
+                ExprKind::Str(parts) => literal_string(parts),
+                _ => None,
+            })
+            .collect(),
+        _ => None,
+    }
+}
+
+/// the literal value of a string expression's parts, or `None` when it contains interpolation.
+fn literal_string(parts: &[StrPart]) -> Option<String> {
+    match parts {
+        [] => Some(String::new()),
+        [StrPart::Lit(text)] => Some(text.clone()),
+        _ => None,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -773,6 +853,12 @@ pub enum TypeExpr {
         additional: Option<Box<TypeExpr>>,
     },
     Union(Vec<TypeExpr>),
+    /// a first-class function type `function<(params) -> ret>`, the surface form of the type a
+    /// lambda infers. lowers to `RuninatorType::Function`.
+    Function {
+        params: Vec<TypeExpr>,
+        ret: Box<TypeExpr>,
+    },
 }
 
 // secrets (.wdls) -----------------------------------------------------------

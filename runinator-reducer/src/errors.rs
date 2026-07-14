@@ -61,6 +61,17 @@ pub const SUBFLOW_INVALID_ID: ErrorDescriptor = ErrorDescriptor::new(
     "Subflow references a non-existent workflow id",
 );
 
+pub const CHAIN_TARGET_UNRESOLVED: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI115",
+    "workflow.chain.target_unresolved",
+    "Chained trigger target workflow not found",
+);
+pub const CHAIN_DEPTH_EXCEEDED: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI116",
+    "workflow.chain.depth_exceeded",
+    "Chained workflow depth limit exceeded",
+);
+
 pub const COMPUTE_NODE_FAILED: ErrorDescriptor = ErrorDescriptor::new(
     "RUNI142",
     "workflow.compute.node_failed",
@@ -152,6 +163,8 @@ pub const DICTIONARY: &[ErrorDescriptor] = &[
     SUBFLOW_MISSING_ID,
     SUBFLOW_TARGET_MISSING,
     SUBFLOW_INVALID_ID,
+    CHAIN_TARGET_UNRESOLVED,
+    CHAIN_DEPTH_EXCEEDED,
     COMPUTE_NODE_FAILED,
     ARTIFACT_SOURCE_UNRESOLVED,
     FOREIGN_LANGUAGE_CONFIG_MISSING,

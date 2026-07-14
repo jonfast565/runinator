@@ -419,6 +419,21 @@ pub struct WorkflowContextHeader {
     pub state: Value,
 }
 
+impl WorkflowContextHeader {
+    /// the static type of the run context exposed to expressions under the `run` root. single source
+    /// for the front-end/runtime type checkers, kept in lockstep with this struct's wire shape: the
+    /// uuids serialize as strings and `state` is an arbitrary runtime blob.
+    pub fn runinator_type() -> crate::types::RuninatorType {
+        use crate::types::RuninatorType;
+        RuninatorType::structure([
+            ("run_id", RuninatorType::String),
+            ("workflow_id", RuninatorType::String),
+            // the run state blob is arbitrary and only known at runtime.
+            ("state", RuninatorType::Any),
+        ])
+    }
+}
+
 /// idempotency-key record stored for action nodes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActionIdempotencyRecord {

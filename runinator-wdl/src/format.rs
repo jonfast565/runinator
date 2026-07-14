@@ -191,15 +191,30 @@ impl Formatter {
     }
 
     fn trigger_decl(&mut self, trigger: &TriggerDecl) {
-        let schedule = format_expr(&trigger.schedule);
-        let mut text = format!("trigger cron {schedule}");
+        let mut text = match &trigger.kind {
+            TriggerDeclKind::Cron { schedule, .. } => {
+                format!("trigger cron {}", format_expr(schedule))
+            }
+            TriggerDeclKind::Chained { event, target } => {
+                format!(
+                    "trigger {} workflow {}",
+                    event.keyword(),
+                    format_expr(target)
+                )
+            }
+        };
         if let Some(params) = &trigger.params {
             text.push_str(&format!(" with {}", format_expr(params)));
         }
         if !trigger.enabled {
             text.push_str(" disabled");
         }
-        if let (Some(start), Some(end)) = (&trigger.blackout_start, &trigger.blackout_end) {
+        if let TriggerDeclKind::Cron {
+            blackout_start: Some(start),
+            blackout_end: Some(end),
+            ..
+        } = &trigger.kind
+        {
             text.push_str(&format!(
                 " blackout {} to {}",
                 format_expr(start),
@@ -1165,6 +1180,16 @@ fn format_binary(parts: &[Expr], sep: &str, prec: ExprPrec) -> String {
         .join(sep)
 }
 
+/// whether an apply callee needs its own parentheses. a key-terminated path (`obj.f` or a bare
+/// `f`) would re-parse as a method/prefix call when followed by `(`; an index-terminated path
+/// (`fns[0]`), a call result, or a nested apply re-parses unambiguously as an application.
+fn apply_callee_needs_parens(callee: &Expr) -> bool {
+    matches!(
+        &callee.kind,
+        ExprKind::Path(segs) if !matches!(segs.last(), Some(PathSeg::Index(_)))
+    )
+}
+
 fn format_expr_at(expr: &Expr, parent: ExprPrec) -> String {
     let (prec, text) = match &expr.kind {
         ExprKind::Null => (ExprPrec::Primary, "null".to_string()),
@@ -1297,6 +1322,28 @@ fn format_expr_at(expr: &Expr, parent: ExprPrec) -> String {
                 format!("({})", params.join(", "))
             };
             (ExprPrec::Lowest, format!("{head} => {}", format_expr(body)))
+        }
+        // `expr as Type` binds just below a ternary; the inner renders at compare level.
+        ExprKind::Cast { expr, ty } => (
+            ExprPrec::Ternary,
+            format!(
+                "{} as {}",
+                format_expr_at(expr, ExprPrec::Compare),
+                format_type(ty)
+            ),
+        ),
+        // `callee(args)` applies a value. `format_expr_at` already parenthesizes a sub-primary callee
+        // (lambda/ternary/operator); a key-terminated path callee (`obj.f`, `f`) additionally needs
+        // parentheses or the trailing `(` re-parses as a `obj.f(args)` method / prefix call.
+        ExprKind::Apply { callee, args } => {
+            let args = args.iter().map(format_expr).collect::<Vec<_>>().join(", ");
+            let callee_text = format_expr_at(callee, ExprPrec::Primary);
+            let callee_text = if apply_callee_needs_parens(callee) {
+                format!("({callee_text})")
+            } else {
+                callee_text
+            };
+            (ExprPrec::Primary, format!("{callee_text}({args})"))
         }
     };
 
@@ -1582,6 +1629,14 @@ pub(crate) fn format_type(ty: &TypeExpr) -> String {
             .map(format_type)
             .collect::<Vec<_>>()
             .join(" | "),
+        TypeExpr::Function { params, ret } => {
+            let params = params
+                .iter()
+                .map(format_type)
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("function<({params}) -> {}>", format_type(ret))
+        }
     }
 }
 

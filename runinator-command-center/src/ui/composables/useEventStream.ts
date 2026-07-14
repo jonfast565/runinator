@@ -65,7 +65,8 @@ export function useEventStream() {
     },
     refreshRecentRunsIfActive: () => {
       if (app.activeTab === "Runs") {
-        void workflows.fetchRecentWorkflowRuns();
+        // coalesce bursts of run-change events into a single trailing refetch.
+        workflows.scheduleRecentWorkflowRunsRefresh();
       }
     },
     refreshWorkflowRunIfSelected: (runId: string) => {

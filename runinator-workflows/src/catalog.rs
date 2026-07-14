@@ -406,7 +406,7 @@ fn node_kind_metadata(kind: WorkflowNodeKind) -> WorkflowNodeKindMetadata {
             supports_predicate_edges: false,
             fields: vec![
                 field(
-                    opt("items", RuninatorType::Any),
+                    opt("items", RuninatorType::array(RuninatorType::Any)),
                     FieldLocation::parameters(&["items"]),
                     Some("expression"),
                 ),
@@ -490,7 +490,7 @@ fn node_kind_metadata(kind: WorkflowNodeKind) -> WorkflowNodeKindMetadata {
             supports_predicate_edges: false,
             fields: vec![
                 field(
-                    opt("items", RuninatorType::Any),
+                    opt("items", RuninatorType::array(RuninatorType::Any)),
                     FieldLocation::parameters(&["items"]),
                     Some("expression"),
                 ),
@@ -1007,6 +1007,26 @@ fn trigger_kind_metadata(kind: WorkflowTriggerKind) -> WorkflowTriggerKindMetada
             description: "Fired on demand by a user or API call.".to_string(),
             fields: Vec::new(),
             default_configuration: json!({}),
+        },
+        WorkflowTriggerKind::Chained => WorkflowTriggerKindMetadata {
+            kind,
+            label: "Chained".to_string(),
+            icon: "link".to_string(),
+            description: "Starts a target workflow when this workflow run reaches a terminal state."
+                .to_string(),
+            fields: vec![
+                UiField::new(
+                    ParameterMetadata::required("target_workflow", RuninatorType::String)
+                        .with_description("Name of the workflow to start on completion."),
+                )
+                .with_widget("workflow_name"),
+                UiField::new(
+                    ParameterMetadata::required("on", RuninatorType::String).with_description(
+                        "Which terminal state fires the chain: `success`, `failure`, or `complete`.",
+                    ),
+                ),
+            ],
+            default_configuration: json!({ "on": "success", "target_workflow": "", "parameters": {} }),
         },
     }
 }

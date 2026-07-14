@@ -1,6 +1,6 @@
 import type { JsonRecord } from "../../json";
 
-export type WorkflowTriggerKind = "cron" | "manual";
+export type WorkflowTriggerKind = "cron" | "manual" | "chained";
 
 export interface WorkflowTrigger {
   id: string | null;

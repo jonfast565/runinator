@@ -80,7 +80,12 @@ version  = @{ "v" ~ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT+){0,2} }
 // checkpoint would miss. fires at most once per run.
 watch_decl = { "watch" ~ cond ~ "->" ~ target }
 
-trigger_decl = { "trigger" ~ "cron" ~ expr ~ ("with" ~ object)? ~ trigger_option* }
+// a `trigger cron "<expr>"` schedules this workflow; a `trigger on_success workflow "<name>"`
+// (or on_failure/on_complete) starts another workflow when this one reaches that terminal state.
+trigger_decl = { "trigger" ~ (cron_trigger | chained_trigger) }
+cron_trigger = { "cron" ~ expr ~ ("with" ~ object)? ~ trigger_option* }
+chained_trigger = { chain_event ~ "workflow" ~ expr ~ ("with" ~ object)? ~ trigger_disabled? }
+chain_event = { "on_success" | "on_failure" | "on_complete" }
 trigger_option = { trigger_disabled | trigger_blackout }
 trigger_disabled = { "disabled" }
 trigger_blackout = { "blackout" ~ expr ~ "to" ~ expr }
@@ -117,7 +122,10 @@ range_max    = { type_bound }
 type_bound   = { duration | number }
 type_postfix = { type_atom ~ array_suffix* }
 array_suffix = { "[" ~ "]" }
-type_atom    = { type_enum | type_map | type_struct | type_named }
+type_atom    = { type_enum | type_map | type_function | type_struct | type_named }
+// a first-class function type `function<(T, ...) -> R>`. lambdas infer this shape; the annotation
+// lets a `let`/user-`fn` parameter declare it (e.g. higher-order user functions).
+type_function = { "function" ~ "<" ~ "(" ~ (type_expr ~ ("," ~ type_expr)*)? ~ ")" ~ "->" ~ type_expr ~ ">" }
 type_enum    = { "enum" ~ "[" ~ enum_lit ~ ("," ~ enum_lit)* ~ ","? ~ "]" }
 enum_lit     = { string | number | boolean | null_lit }
 type_map     = { "map" ~ "<" ~ type_expr ~ ">" }
@@ -442,7 +450,11 @@ lambda        = { lambda_params ~ "=>" ~ expr }
 lambda_params = { ("(" ~ (ident ~ ("," ~ ident)*)? ~ ")") | ident }
 // a lazy conditional `cond ? a : b`, binding loosest below lambda; the branches are full
 // expressions so ternaries nest right-associatively. lowers to the runtime `$if` form.
-ternary_expr  = { compare_expr ~ ("?" ~ expr ~ ":" ~ expr)? }
+ternary_expr  = { cast_expr ~ ("?" ~ expr ~ ":" ~ expr)? }
+// an `expr as Type` cast, binding just below the ternary: an author-time type assertion that is
+// erased at lowering. `as` is only a cast token here; it never conflicts with the `import ... as`
+// header form. the target is a full `type_expr`, so `x as int | string` casts to the union.
+cast_expr     = { compare_expr ~ ("as" ~ type_expr)? }
 // a single, non-associative relational comparison binding looser than coalesce; `>=`/`<=` precede
 // `>`/`<` so the two-char forms win. each lowers to the matching pure intrinsic (`eq`/`lt`/...).
 compare_expr  = { coalesce_expr ~ (compare_op ~ coalesce_expr)? }
@@ -460,8 +472,12 @@ neg_expr      = { "-" ~ unary_expr }
 //   - `.key` — field access. on a path it folds into the path (one `$ref`); on any other value it
 //     lowers to the `at` intrinsic.
 //   - `[expr]` — index access (same fold/`at` rule). the key may be dynamic (`items[params.i]`).
+//   - `(args)` — apply-access: applies the preceding value as a first-class function/closure. it
+//     is how a field- or index-held closure is called: `(obj.f)(x)`, `fns[0](x)`. a bare `name(x)`
+//     is still a `lib_call` primary, so this only kicks in after a parenthesized/indexed/field value.
 postfix_expr  = { primary ~ access* }
-access        = { ("." ~ ident ~ "(" ~ (call_arg ~ ("," ~ call_arg)*)? ~ ")") | ("." ~ path_seg) | ("[" ~ expr ~ "]") }
+access        = { ("." ~ ident ~ "(" ~ (call_arg ~ ("," ~ call_arg)*)? ~ ")") | ("." ~ path_seg) | ("[" ~ expr ~ "]") | apply_access }
+apply_access  = { "(" ~ (call_arg ~ ("," ~ call_arg)*)? ~ ")" }
 
 primary = {
     paren_expr

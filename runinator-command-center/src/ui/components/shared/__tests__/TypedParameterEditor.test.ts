@@ -80,6 +80,22 @@ describe("TypedParameterEditor", () => {
     expect(html).not.toContain("placeholder");
   });
 
+  it("renders an enum type as a select of its allowed values, not a JSON editor", async () => {
+    const app = createSSRApp({
+      render: () =>
+        h(TypedValueEditor, {
+          modelValue: "all",
+          ty: { type: "enum", values: ["all", "any", "first_success"] },
+        }),
+    });
+
+    const html = await renderToString(app);
+
+    expect(html).toContain("enum-editor");
+    expect(html).toContain("first_success");
+    expect(html).not.toContain("json-editor-shell");
+  });
+
   it("uses the expression-aware value editor for generic WDL object literals", async () => {
     const app = createSSRApp({
       render: () =>

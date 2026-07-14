@@ -184,17 +184,24 @@ pub struct WorkflowBundle {
 pub enum WorkflowTriggerKind {
     Cron,
     Manual,
+    /// fire when a source workflow run reaches a terminal state (workflow-to-workflow chaining).
+    /// the trigger belongs to the source workflow; the target lives in `configuration`.
+    Chained,
 }
 
 impl WorkflowTriggerKind {
     /// every trigger kind in a stable, ui-facing order.
-    pub const ALL: [WorkflowTriggerKind; 2] =
-        [WorkflowTriggerKind::Cron, WorkflowTriggerKind::Manual];
+    pub const ALL: [WorkflowTriggerKind; 3] = [
+        WorkflowTriggerKind::Cron,
+        WorkflowTriggerKind::Manual,
+        WorkflowTriggerKind::Chained,
+    ];
 
     pub fn as_str(&self) -> &'static str {
         match self {
             WorkflowTriggerKind::Cron => "cron",
             WorkflowTriggerKind::Manual => "manual",
+            WorkflowTriggerKind::Chained => "chained",
         }
     }
 }
@@ -206,6 +213,7 @@ impl TryFrom<&str> for WorkflowTriggerKind {
         match value {
             "cron" => Ok(WorkflowTriggerKind::Cron),
             "manual" => Ok(WorkflowTriggerKind::Manual),
+            "chained" => Ok(WorkflowTriggerKind::Chained),
             other => Err(format!("Unknown workflow trigger kind '{other}'")),
         }
     }

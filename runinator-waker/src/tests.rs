@@ -43,6 +43,77 @@ fn config_parser_accepts_waker_and_broker_overrides() {
 }
 
 #[tokio::test]
+async fn due_wake_is_not_blocked_by_a_not_yet_due_wake() {
+    use runinator_broker::{Broker, WakeCommand, WakeMessage, WsIngressCommand};
+    use std::sync::Arc;
+
+    let broker: Arc<dyn Broker> = Arc::new(runinator_broker::in_memory::InMemoryBroker::new());
+    let now = chrono::Utc::now();
+
+    // a far-future wake delivered first, then a due wake queued behind it.
+    let future = WakeCommand::new(
+        uuid::Uuid::now_v7(),
+        uuid::Uuid::now_v7(),
+        "future".into(),
+        now + chrono::Duration::seconds(60),
+        uuid::Uuid::now_v7(),
+        uuid::Uuid::now_v7(),
+    );
+    let due = WakeCommand::new(
+        uuid::Uuid::now_v7(),
+        uuid::Uuid::now_v7(),
+        "due".into(),
+        now - chrono::Duration::seconds(1),
+        uuid::Uuid::now_v7(),
+        uuid::Uuid::now_v7(),
+    );
+    let due_run_id = due.workflow_run_id;
+    for command in [future, due] {
+        broker
+            .publish_wake(WakeMessage {
+                command,
+                dedupe_key: None,
+                enqueued_at: now,
+            })
+            .await
+            .unwrap();
+    }
+
+    let config = Config::try_parse_from(["runinator-waker"]).unwrap();
+    let notify = Arc::new(tokio::sync::Notify::new());
+    let loop_broker = Arc::clone(&broker);
+    let loop_notify = Arc::clone(&notify);
+    let handle =
+        tokio::spawn(async move { crate::waker_loop(loop_broker, loop_notify, &config).await });
+
+    // the due wake's drive must arrive while the future wake is still sleeping toward its due
+    // time; a serial waker would sit in that sleep and time this out.
+    let delivery = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        broker.receive_ingress("test"),
+    )
+    .await
+    .expect("due wake should be driven while the future wake sleeps")
+    .unwrap();
+    match &delivery.command {
+        WsIngressCommand::Drive {
+            workflow_run_id, ..
+        } => assert_eq!(*workflow_run_id, due_run_id),
+        other => panic!("expected a drive, got {other:?}"),
+    }
+    broker
+        .ack_ingress("test", delivery.delivery_id)
+        .await
+        .unwrap();
+
+    notify.notify_waiters();
+    tokio::time::timeout(std::time::Duration::from_secs(5), handle)
+        .await
+        .expect("waker loop should stop after shutdown")
+        .unwrap();
+}
+
+#[tokio::test]
 async fn spawn_liveness_is_disabled_for_a_blank_path() {
     let mut config = Config::try_parse_from(["runinator-waker"]).unwrap();
     config.liveness_file = String::new();

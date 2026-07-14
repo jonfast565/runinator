@@ -30,6 +30,12 @@ struct Env {
     type_policy: TypePolicy,
     workflow_signatures: HashMap<String, WorkflowSignature>,
     scope: Vec<(String, RuninatorType)>,
+    // best-effort output type of the source-order predecessor node, used to type `prev`.
+    // reset to `Any` at each block boundary, so ambiguous positions (first node, after a
+    // control-flow block, inside a nested block) stay opaque. note the first node of a workflow is
+    // deliberately not an error: `prev` there is the run's initial/prior payload (see the compute
+    // entry-node pattern), which is genuinely dynamic and stays `Any`.
+    prev: RuninatorType,
 }
 
 pub(super) fn analyze(
@@ -72,6 +78,7 @@ pub(super) fn analyze(
         workflow_signatures,
         scope: Vec::new(),
         node_outputs,
+        prev: RuninatorType::Any,
     };
     check_block(&workflow.body, &mut env, diagnostics);
 }
@@ -159,13 +166,20 @@ fn subflow_output_type(
     subflow: &SubflowStmt,
     signature: Option<&WorkflowSignature>,
 ) -> RuninatorType {
+    // a detached subflow is fire-and-forget: the parent never waits for it, so its output snapshot
+    // is never populated here. `state` is `Null` (referencing a field off it is a bug), not `Any`.
+    // an awaited subflow takes the callee signature's declared output; `Any` only when unknown.
     let state = if subflow.detached {
-        RuninatorType::Any
+        RuninatorType::Null
     } else {
         signature
             .map(|signature| signature.output.clone())
             .unwrap_or(RuninatorType::Any)
     };
+    // the echoed-back `parameters` are exactly what we passed in: the callee signature's input.
+    let parameters = signature
+        .map(|signature| signature.input.clone())
+        .unwrap_or(RuninatorType::Any);
     RuninatorType::structure([
         ("subflow_run_id", RuninatorType::String),
         ("subflow_workflow_id", RuninatorType::String),
@@ -173,14 +187,27 @@ fn subflow_output_type(
         ("reused", RuninatorType::Boolean),
         ("status", RuninatorType::String),
         ("state", state),
-        ("parameters", RuninatorType::Any),
+        ("parameters", parameters),
     ])
 }
 
 fn check_block(block: &Block, env: &mut Env, diagnostics: &mut Vec<Diagnostic>) {
+    // a block starts with no known predecessor; `prev` becomes concrete only after a straight-line
+    // producing node (action/subflow/typed label) runs earlier in the same block.
+    env.prev = RuninatorType::Any;
     for stmt in block {
         check_stmt(stmt, env, diagnostics);
+        env.prev = predecessor_output(stmt, env);
     }
+}
+
+/// the best-effort output type a straight-line successor would see as `prev`. reuses the
+/// precomputed `node_outputs` map, so only producing nodes (action/subflow/typed label) yield a
+/// concrete type; control-flow and effect-free nodes fall back to `Any`.
+fn predecessor_output(stmt: &Stmt, env: &Env) -> RuninatorType {
+    super::effective_id(stmt)
+        .and_then(|id| env.node_outputs.get(id).cloned())
+        .unwrap_or(RuninatorType::Any)
 }
 
 fn check_stmt(stmt: &Stmt, env: &mut Env, diagnostics: &mut Vec<Diagnostic>) {
@@ -469,16 +496,15 @@ fn check_iterable(
     diagnostics: &mut Vec<Diagnostic>,
 ) -> RuninatorType {
     let ty = infer_expr(items, env, diagnostics);
-    match ty {
-        RuninatorType::Array(element) => *element,
-        RuninatorType::Any | RuninatorType::Union(_) => RuninatorType::Any,
-        other => {
+    match &ty {
+        RuninatorType::Union(_) => ty.union_element_type().unwrap_or(RuninatorType::Any),
+        other => other.element_type().unwrap_or_else(|| {
             diagnostics.push(Diagnostic::error(
                 items.span,
                 format!("{label} expects an array, got {}", other.describe()),
             ));
             RuninatorType::Any
-        }
+        }),
     }
 }
 
@@ -595,24 +621,33 @@ fn check_expr(expr: &Expr, env: &Env, diagnostics: &mut Vec<Diagnostic>) {
                 cond.span,
                 diagnostics,
             );
-            let then_ty = infer_expr(then, env, diagnostics);
-            let els_ty = infer_expr(els, env, diagnostics);
-            if common_type(&then_ty, &els_ty).is_none() {
-                diagnostics.push(Diagnostic::error(
-                    expr.span,
-                    format!(
-                        "ternary branches have incompatible types {} and {}",
-                        then_ty.describe(),
-                        els_ty.describe()
-                    ),
-                ));
-            }
+            // disjoint branches are not an error: they unify to a union (see `infer_expr`).
+            check_expr(then, env, diagnostics);
+            check_expr(els, env, diagnostics);
         }
         ExprKind::Call {
             name, args, named, ..
         } => {
             if runinator_workflows::is_higher_order(name) {
                 let _ = infer_higher_order_call_type(name, args, env, expr.span, diagnostics);
+                return;
+            }
+            // a call to a local bound to a first-class lambda: check argument count (its parameter
+            // types are unconstrained `any`, so only arity is enforced).
+            if let Some(RuninatorType::Function { params, .. }) = function_local(name, env) {
+                if args.len() != params.len() {
+                    diagnostics.push(Diagnostic::error(
+                        expr.span,
+                        format!(
+                            "'{name}' expects {} argument(s), got {}",
+                            params.len(),
+                            args.len()
+                        ),
+                    ));
+                }
+                for arg in args.iter().chain(named.iter().map(|(_, value)| value)) {
+                    check_expr(arg, env, diagnostics);
+                }
                 return;
             }
             // check each positional argument against the intrinsic's declared parameter type,
@@ -636,6 +671,40 @@ fn check_expr(expr: &Expr, env: &Env, diagnostics: &mut Vec<Diagnostic>) {
         // a lambda body is checked permissively; its params type as `Any` (unknown reference heads
         // stay opaque), so no spurious diagnostics arise from the bound names.
         ExprKind::Lambda { body, .. } => check_expr(body, env, diagnostics),
+        // a cast asserts the inner value has the target type: check the inner expression, then that
+        // its inferred type is assignable to the target (opaque `any` values pass, which is the
+        // point — `parse_json(s) as T` and `[] as T[]` adopt `T` here).
+        ExprKind::Cast { expr: inner, ty } => {
+            check_expr(inner, env, diagnostics);
+            let declared = lower_type_with(ty, &env.named).unwrap_or(RuninatorType::Any);
+            let actual = infer_expr(inner, env, diagnostics);
+            check_assignable(&actual, &declared, "cast", expr.span, diagnostics);
+        }
+        // applying a callee value: check the callee and arguments, then that the callee is a function
+        // of matching arity. an opaque (`any`) callee stays permissive.
+        ExprKind::Apply { callee, args } => {
+            check_expr(callee, env, diagnostics);
+            for arg in args {
+                check_expr(arg, env, diagnostics);
+            }
+            match infer_expr(callee, env, diagnostics) {
+                RuninatorType::Function { params, .. } if params.len() != args.len() => {
+                    diagnostics.push(Diagnostic::error(
+                        expr.span,
+                        format!(
+                            "applied function expects {} argument(s), got {}",
+                            params.len(),
+                            args.len()
+                        ),
+                    ));
+                }
+                RuninatorType::Function { .. } | RuninatorType::Any => {}
+                other => diagnostics.push(Diagnostic::error(
+                    callee.span,
+                    format!("cannot apply a value of type {}", other.describe()),
+                )),
+            }
+        }
         // paths drive field-access diagnostics through inference.
         ExprKind::Path(_) => {
             let _ = infer_expr(expr, env, diagnostics);
@@ -665,10 +734,31 @@ fn check_compute_block(
         match line {
             ComputeLine::Let { name, ty, value } => {
                 check_expr(value, env, diagnostics);
-                let value_ty = infer_expr(value, env, diagnostics);
                 let declared = ty
                     .as_ref()
                     .map(|t| lower_type_with(t, &env.named).unwrap_or(RuninatorType::Any));
+                // for `let f: function<(A) -> R> = <lambda>`, bind the lambda's parameters to the
+                // declared parameter types so the body checks against the annotation (bidirectional),
+                // rather than typing every parameter `Any`.
+                let value_ty = match (&declared, &value.kind) {
+                    (
+                        Some(RuninatorType::Function {
+                            params: expected, ..
+                        }),
+                        ExprKind::Lambda { params, body },
+                    ) if params.len() == expected.len() => {
+                        let mut scoped = env.clone();
+                        for (param, param_ty) in params.iter().zip(expected.iter()) {
+                            scoped.scope.push((param.clone(), param_ty.clone()));
+                        }
+                        let ret = infer_expr(body, &scoped, diagnostics);
+                        RuninatorType::Function {
+                            params: expected.clone(),
+                            ret: Box::new(ret),
+                        }
+                    }
+                    _ => infer_expr(value, env, diagnostics),
+                };
                 if let Some(declared) = &declared {
                     check_assignable(
                         &value_ty,
@@ -783,7 +873,7 @@ fn infer_expr(expr: &Expr, env: &Env, diagnostics: &mut Vec<Diagnostic>) -> Runi
         ExprKind::ToString(_) => RuninatorType::String,
         ExprKind::ToJson(_) => RuninatorType::String,
         ExprKind::Coalesce(parts) => {
-            let mut resolved = None;
+            let mut resolved: Option<RuninatorType> = None;
             for part in parts {
                 let ty = infer_expr(part, env, diagnostics);
                 if ty == RuninatorType::Null {
@@ -791,7 +881,7 @@ fn infer_expr(expr: &Expr, env: &Env, diagnostics: &mut Vec<Diagnostic>) -> Runi
                 }
                 resolved = Some(match resolved {
                     None => ty,
-                    Some(existing) => common_type(&existing, &ty).unwrap_or(RuninatorType::Any),
+                    Some(existing) => existing.unify(&ty),
                 });
             }
             resolved.unwrap_or(RuninatorType::Null)
@@ -845,25 +935,65 @@ fn infer_expr(expr: &Expr, env: &Env, diagnostics: &mut Vec<Diagnostic>) -> Runi
         }
         // a relational comparison resolves to a boolean.
         ExprKind::Compare { .. } => RuninatorType::Boolean,
-        // a ternary resolves to its branches' common type, or `any` when they differ.
+        // a ternary resolves to its branches' common type, or a union when they differ.
         ExprKind::Ternary { then, els, .. } => {
             let then_ty = infer_expr(then, env, diagnostics);
             let els_ty = infer_expr(els, env, diagnostics);
-            common_type(&then_ty, &els_ty).unwrap_or(RuninatorType::Any)
+            then_ty.unify(&els_ty)
         }
         // a call's result type comes from the intrinsic signature or, for higher-order intrinsics,
         // from the collection and lambda argument types.
         ExprKind::Call { name, args, .. } => {
             if runinator_workflows::is_higher_order(name) {
                 infer_higher_order_call_type(name, args, env, expr.span, diagnostics)
+            } else if let Some(RuninatorType::Function { ret, .. }) = function_local(name, env) {
+                // a call to a local bound to a first-class lambda yields the function's result type.
+                (**ret).clone()
             } else {
-                runinator_workflows::intrinsic_signature(name)
-                    .and_then(|sig| sig.results.first().map(|result| result.ty.clone()))
-                    .unwrap_or(RuninatorType::Any)
+                // infer argument types into a throwaway sink (the check pass already validates the
+                // arguments) so the polymorphic intrinsics recover an argument-dependent result
+                // type before falling back to the catalog's declared (often `any`) result.
+                let mut sink = Vec::new();
+                let arg_types = args
+                    .iter()
+                    .map(|arg| infer_expr(arg, env, &mut sink))
+                    .collect::<Vec<_>>();
+                // extract any literal key(s) from the second argument for key-driven intrinsics.
+                let literal_keys = args.get(1).and_then(crate::ast::static_string_keys);
+                runinator_workflows::intrinsic_result_type(
+                    name,
+                    &arg_types,
+                    literal_keys.as_deref(),
+                )
+                .or_else(|| {
+                    runinator_workflows::intrinsic_signature(name)
+                        .and_then(|sig| sig.results.first().map(|result| result.ty.clone()))
+                })
+                .unwrap_or(RuninatorType::Any)
             }
         }
-        // a lambda carries no value type of its own.
-        ExprKind::Lambda { .. } => RuninatorType::Any,
+        // a lambda's value type: its parameters are unconstrained in a value position (`Any`) and
+        // its result is the body's type with the parameters in scope.
+        ExprKind::Lambda { params, body } => {
+            let mut scoped = env.clone();
+            for param in params {
+                scoped.scope.push((param.clone(), RuninatorType::Any));
+            }
+            let ret = infer_expr(body, &scoped, diagnostics);
+            RuninatorType::Function {
+                params: params.iter().map(|_| RuninatorType::Any).collect(),
+                ret: Box::new(ret),
+            }
+        }
+        // a cast's inferred type is exactly the asserted target: this is what lets an opaque inner
+        // value (`parse_json`, `[]`) resolve to a concrete shape at the cast position.
+        ExprKind::Cast { ty, .. } => lower_type_with(ty, &env.named).unwrap_or(RuninatorType::Any),
+        // applying a callee value yields the callee function's result type, or `Any` when the callee
+        // is opaque or not a function (the check pass reports a genuine non-function application).
+        ExprKind::Apply { callee, .. } => match infer_expr(callee, env, diagnostics) {
+            RuninatorType::Function { ret, .. } => *ret,
+            _ => RuninatorType::Any,
+        },
         // spreads are expanded before sema runs; treat as untyped if one is reached.
         ExprKind::Spread(_) => RuninatorType::Any,
     }
@@ -1005,35 +1135,19 @@ fn collection_item_type(
     diagnostics: &mut Vec<Diagnostic>,
 ) -> RuninatorType {
     match ty {
-        RuninatorType::Array(item) => (**item).clone(),
-        RuninatorType::Any | RuninatorType::Union(_) => RuninatorType::Any,
-        other => {
+        RuninatorType::Union(_) => ty.union_element_type().unwrap_or(RuninatorType::Any),
+        other => other.element_type().unwrap_or_else(|| {
             diagnostics.push(Diagnostic::error(
                 span,
                 format!("'{name}' expects an array, got {}", other.describe()),
             ));
             RuninatorType::Any
-        }
+        }),
     }
 }
 
 fn common_type(left: &RuninatorType, right: &RuninatorType) -> Option<RuninatorType> {
-    if left == right {
-        return Some(left.clone());
-    }
-    if let RuninatorType::Range { base, .. } = left {
-        return common_type(base, right);
-    }
-    if let RuninatorType::Range { base, .. } = right {
-        return common_type(left, base);
-    }
-    if matches!(left, RuninatorType::Any) || matches!(right, RuninatorType::Any) {
-        return Some(RuninatorType::Any);
-    }
-    if left.is_numeric() && right.is_numeric() {
-        return Some(RuninatorType::Number);
-    }
-    None
+    left.common_type(right)
 }
 
 fn numeric_result_type(
@@ -1055,6 +1169,15 @@ fn numeric_result_type(
     }
 }
 
+/// find a scope-local bound to a first-class function type (a lambda value), if any.
+fn function_local<'a>(name: &str, env: &'a Env) -> Option<&'a RuninatorType> {
+    env.scope
+        .iter()
+        .rev()
+        .find(|(local, ty)| local == name && matches!(ty, RuninatorType::Function { .. }))
+        .map(|(_, ty)| ty)
+}
+
 fn infer_lambda_type(
     name: &str,
     expr: Option<&Expr>,
@@ -1071,11 +1194,36 @@ fn infer_lambda_type(
         return RuninatorType::Any;
     };
     let ExprKind::Lambda { params, body } = &expr.kind else {
-        diagnostics.push(Diagnostic::error(
-            expr.span,
-            format!("'{name}' requires a lambda argument"),
-        ));
-        return RuninatorType::Any;
+        // a first-class function value passed by reference: use its declared result type when the
+        // arity matches; stay permissive for an opaque (`any`) reference.
+        let ty = infer_expr(expr, env, diagnostics);
+        return match ty {
+            RuninatorType::Function {
+                params: fn_params,
+                ret,
+            } => {
+                if fn_params.len() != bindings.len() {
+                    diagnostics.push(Diagnostic::error(
+                        expr.span,
+                        format!(
+                            "'{name}' expects a {}-parameter function, got {}",
+                            bindings.len(),
+                            fn_params.len()
+                        ),
+                    ));
+                    return RuninatorType::Any;
+                }
+                *ret
+            }
+            RuninatorType::Any => RuninatorType::Any,
+            _ => {
+                diagnostics.push(Diagnostic::error(
+                    expr.span,
+                    format!("'{name}' requires a lambda argument"),
+                ));
+                RuninatorType::Any
+            }
+        };
     };
     let required = bindings.len();
     if params.len() != required {
@@ -1116,7 +1264,17 @@ fn infer_path(
     if let Some(ty) = env.node_outputs.get(head) {
         return navigate(ty.clone(), rest, head, span, diagnostics);
     }
-    // prev/run/node references are opaque author-time.
+    // `prev` resolves to the source-order predecessor's output type when it is a producing node;
+    // it is `Any` at ambiguous positions (first node, after control flow, nested blocks).
+    if head == "prev" {
+        return navigate(env.prev.clone(), rest, head, span, diagnostics);
+    }
+    // `run` exposes the current run's metadata; its shape is single-sourced from the runtime header.
+    if head == "run" {
+        let run_type = runinator_models::workflow_state::WorkflowContextHeader::runinator_type();
+        return navigate(run_type, rest, head, span, diagnostics);
+    }
+    // a bare node reference with no recorded output shape is opaque author-time.
     RuninatorType::Any
 }
 
@@ -1128,9 +1286,26 @@ fn navigate(
     span: Span,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> RuninatorType {
-    for seg in segs {
-        if matches!(ty, RuninatorType::Any | RuninatorType::Union(_)) {
+    for (index, seg) in segs.iter().enumerate() {
+        // descending through an opaque `Any` cannot be narrowed further.
+        if matches!(ty, RuninatorType::Any) {
             return RuninatorType::Any;
+        }
+        // a union navigates the rest of the path on each variant and re-unions the results, so a
+        // segment valid on every variant keeps a concrete type instead of collapsing to `Any`.
+        // per-variant diagnostics are suppressed (a field may legitimately exist on only some
+        // variants); an unresolvable segment yields `Any` via `union_element_type`-style widening.
+        if let RuninatorType::Union(variants) = &ty {
+            let rest = &segs[index..];
+            let mut resolved: Option<RuninatorType> = None;
+            for variant in variants {
+                let navigated = navigate(variant.clone(), rest, root, span, &mut Vec::new());
+                resolved = Some(match resolved {
+                    None => navigated,
+                    Some(existing) => existing.unify(&navigated),
+                });
+            }
+            return resolved.unwrap_or(RuninatorType::Any);
         }
         match seg {
             PathSeg::Key(key) => match ty {

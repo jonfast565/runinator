@@ -213,6 +213,7 @@ import { computed, ref, watch } from "vue";
 import { useWorkflowsStore } from "../../../ui/adapters/pinia/workflows";
 import { useResourcesStore } from "../../../ui/adapters/pinia/resources";
 import { useAppStore } from "../../../ui/adapters/pinia/app";
+import { useCatalogMetadataStore } from "../../../ui/adapters/pinia/catalogMetadata";
 import { isApprovalWaitingStatus, type ApprovalAction } from "../../../core/utils/approvals";
 import { isInputWaitingStatus } from "../../../core/utils/inputs";
 import { statusClassForNode } from "../../../core/utils/status";
@@ -265,6 +266,7 @@ const props = defineProps<{
 const workflows = useWorkflowsStore();
 const resources = useResourcesStore();
 const app = useAppStore();
+const catalogMetadata = useCatalogMetadataStore();
 const submitting = ref(false);
 const inlineId = ref(props.id);
 const inlineValue = ref(props.data.inlineEdit?.value ?? "");
@@ -275,9 +277,19 @@ const signalError = ref("");
 const gateReasonDraft = ref("");
 
 const statusClass = computed(() => statusClassForNode(props.data.status));
-const kindIcon = computed(() => workflowNodeKindIcon(props.data.kind));
-const kindDescription = computed(() => workflowNodeKindDescription(props.data.kind));
-const kindLabel = computed(() => workflowNodeKindLabel(props.data.kind));
+// subscribe to the catalog so icon/label/description refresh once metadata loads after mount.
+const kindIcon = computed(() => {
+  void catalogMetadata.nodeKinds;
+  return workflowNodeKindIcon(props.data.kind);
+});
+const kindDescription = computed(() => {
+  void catalogMetadata.nodeKinds;
+  return workflowNodeKindDescription(props.data.kind);
+});
+const kindLabel = computed(() => {
+  void catalogMetadata.nodeKinds;
+  return workflowNodeKindLabel(props.data.kind);
+});
 const executionCount = computed(() =>
   Math.max(0, Math.floor(props.data.executionCount ?? 0)),
 );

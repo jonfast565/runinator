@@ -2,6 +2,7 @@ import type { IconName } from "../domain/icons";
 
 export type AppTab =
   | "Dev"
+  | "Pipelines"
   | "Workflows"
   | "Runs"
   | "Providers"

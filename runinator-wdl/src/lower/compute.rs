@@ -227,6 +227,13 @@ fn collect_locals_expr(expr: &Expr, out: &mut HashSet<String>) {
                 }
             }
         }
+        ExprKind::Apply { callee, args } => {
+            collect_locals_expr(callee, out);
+            for arg in args {
+                collect_locals_expr(arg, out);
+            }
+        }
+        ExprKind::Cast { expr, .. } => collect_locals_expr(expr, out),
         _ => {}
     }
 }

@@ -163,6 +163,17 @@ pub(super) fn timed_out_since_created(node: &WorkflowNode, run: &WorkflowNodeRun
     Utc::now() - run.created_at > chrono::Duration::seconds(timeout)
 }
 
+/// like `timed_out_since_created`, but falls back to `default_timeout_seconds` when the node
+/// declares no timeout — for parks that must not wait forever.
+pub(super) fn timed_out_since_created_or(
+    node: &WorkflowNode,
+    run: &WorkflowNodeRun,
+    default_timeout_seconds: i64,
+) -> bool {
+    let timeout = node.timeout_seconds.unwrap_or(default_timeout_seconds);
+    Utc::now() - run.created_at > chrono::Duration::seconds(timeout)
+}
+
 /// enqueue a delayed self ready node at a node's timeout deadline. the event-driven ready queue does
 /// not re-poll parked nodes, so a node that parks (approval/join/subflow) re-arms its own timeout so
 /// the timeout check fires even when no external wake-up arrives.
@@ -174,7 +185,28 @@ pub(super) async fn arm_node_timeout<T: DatabaseImpl>(
     let Some(timeout) = node.timeout_seconds else {
         return Ok(());
     };
-    let deadline = Utc::now() + chrono::Duration::seconds(timeout);
+    arm_node_timeout_in(db, workflow_run_id, node, timeout).await
+}
+
+/// like `arm_node_timeout`, but always arms, falling back to `default_timeout_seconds` when the
+/// node declares no timeout — for parks whose timeout check must fire even without one configured.
+pub(super) async fn arm_node_timeout_or<T: DatabaseImpl>(
+    db: &T,
+    workflow_run_id: Uuid,
+    node: &WorkflowNode,
+    default_timeout_seconds: i64,
+) -> Result<(), SendableError> {
+    let timeout = node.timeout_seconds.unwrap_or(default_timeout_seconds);
+    arm_node_timeout_in(db, workflow_run_id, node, timeout).await
+}
+
+async fn arm_node_timeout_in<T: DatabaseImpl>(
+    db: &T,
+    workflow_run_id: Uuid,
+    node: &WorkflowNode,
+    timeout_seconds: i64,
+) -> Result<(), SendableError> {
+    let deadline = Utc::now() + chrono::Duration::seconds(timeout_seconds);
     let event = NewOrchestrationEvent::new(
         workflow_run_id,
         Some(node.id.clone()),

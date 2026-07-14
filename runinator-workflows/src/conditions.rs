@@ -4,7 +4,7 @@ use runinator_models::workflows::{WorkflowCondition, WorkflowNode, WorkflowStatu
 
 use crate::compute::IntrinsicLibrary;
 use crate::errors::WorkflowValidationError;
-use crate::expressions::resolve_value_refs_with;
+use crate::expressions::{evaluate_expression_with, resolve_value_refs_with};
 use crate::functions::EvalEnv;
 use crate::keys::{
     COND_ALL, COND_ANY, COND_CONTAINS, COND_ENDS_WITH, COND_EQUALS, COND_EXISTS, COND_GREATER_THAN,
@@ -69,16 +69,16 @@ pub(crate) fn evaluate_condition_node(
         }
         ConditionNode::Not(inner) => Ok(!evaluate_condition_node(inner, context, env)?),
         ConditionNode::Compare { left, op, right } => {
-            let left = resolve_value_refs_with(left, context, env)?;
-            let right = resolve_value_refs_with(right, context, env)?;
+            let left = evaluate_expression_with(left, context, env)?;
+            let right = evaluate_expression_with(right, context, env)?;
             apply_compare(*op, &left, &right)
         }
         ConditionNode::Exists { left, expected } => {
-            let left = resolve_value_refs_with(left, context, env)?;
+            let left = evaluate_expression_with(left, context, env)?;
             Ok(*expected != left.is_null())
         }
         ConditionNode::Truthy { left } => {
-            let left = resolve_value_refs_with(left, context, env)?;
+            let left = evaluate_expression_with(left, context, env)?;
             Ok(is_truthy(&left))
         }
         // an unrecognized shape; the value evaluator errors on these too.

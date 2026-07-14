@@ -8,6 +8,7 @@ mod conditions;
 mod errors;
 mod expressions;
 mod functions;
+mod intrinsic_typing;
 mod keys;
 mod normalize;
 mod parameters;
@@ -34,6 +35,7 @@ pub use expressions::{
     resolve_value_refs_with_functions, validate_expression,
 };
 pub use functions::{FunctionTable, RuntimeFunction, intrinsic_catalog};
+pub use intrinsic_typing::intrinsic_result_type;
 pub use normalize::{normalize_definition, normalize_workflow};
 pub use parameters::{
     evaluate_percentage, evaluate_switch, evaluate_toggle, parse_approval_parameters,

@@ -163,6 +163,12 @@ pub enum RuninatorType {
         additional: Option<Box<RuninatorType>>,
     },
     Union(Vec<RuninatorType>),
+    /// a first-class lambda type: its parameter types and its result type. values of this type are
+    /// interpreted closures (an ast body plus a captured environment).
+    Function {
+        params: Vec<RuninatorType>,
+        ret: Box<RuninatorType>,
+    },
     #[default]
     Any,
 }
@@ -174,6 +180,69 @@ impl RuninatorType {
 
     pub fn map(values: RuninatorType) -> Self {
         Self::Map(Box::new(values))
+    }
+
+    /// the element type of an iterable: the inner type of an array, `Any` for `Any`
+    /// (an unknown collection yields unknown elements), and `None` for non-iterables.
+    pub fn element_type(&self) -> Option<RuninatorType> {
+        match self {
+            Self::Array(element) => Some((**element).clone()),
+            Self::Any => Some(Self::Any),
+            _ => None,
+        }
+    }
+
+    /// for a union of iterables, the deduped union of each variant's element type (so a
+    /// `union<array<A>, array<B>>` iterates as `union<A, B>` rather than collapsing to `Any`).
+    /// `None` when this is not a union, or when any variant is not iterable.
+    pub fn union_element_type(&self) -> Option<RuninatorType> {
+        let Self::Union(variants) = self else {
+            return None;
+        };
+        let mut elements = Vec::with_capacity(variants.len());
+        for variant in variants {
+            elements.push(variant.element_type()?);
+        }
+        Some(Self::dedupe_union(elements))
+    }
+
+    /// the least-upper-bound type shared by `self` and `other`, used to unify branch/coalesce
+    /// results and iterable elements: identical types unify to themselves, a `Range` unifies via
+    /// its base, `Any` absorbs, and two numerics widen to `Number`. `None` when there is none.
+    pub fn common_type(&self, other: &RuninatorType) -> Option<RuninatorType> {
+        if self == other {
+            return Some(self.clone());
+        }
+        if let Self::Range { base, .. } = self {
+            return base.common_type(other);
+        }
+        if let Self::Range { base, .. } = other {
+            return self.common_type(base);
+        }
+        if matches!(self, Self::Any) || matches!(other, Self::Any) {
+            return Some(Self::Any);
+        }
+        if self.is_numeric() && other.is_numeric() {
+            return Some(Self::Number);
+        }
+        None
+    }
+
+    /// unify two types into one: their common type when one exists, otherwise a flattened, deduped
+    /// union admitting both. used to type coalesce/ternary branches so disjoint branches widen to a
+    /// union rather than collapsing to `Any`.
+    pub fn unify(&self, other: &RuninatorType) -> RuninatorType {
+        if let Some(common) = self.common_type(other) {
+            return common;
+        }
+        let mut variants = Vec::new();
+        for ty in [self, other] {
+            match ty {
+                Self::Union(inner) => variants.extend(inner.iter().cloned()),
+                _ => variants.push(ty.clone()),
+            }
+        }
+        Self::dedupe_union(variants)
     }
 
     pub fn structure(fields: impl IntoIterator<Item = (impl Into<String>, RuninatorType)>) -> Self {
@@ -348,6 +417,9 @@ impl RuninatorType {
             Self::Union(variants) => crate::json!({
                 "anyOf": variants.iter().map(Self::to_json_schema).collect::<Vec<_>>(),
             }),
+            // a function has no JSON-schema shape; emit an opaque marker (it does not round-trip
+            // through json schema, only through the native-value form).
+            Self::Function { .. } => crate::json!({ "type": "function" }),
             Self::Any => Value::Bool(true),
         }
     }
@@ -366,6 +438,7 @@ impl RuninatorType {
             Self::Map(_) => "map",
             Self::Struct { .. } => "struct",
             Self::Union(_) => "union",
+            Self::Function { .. } => "function",
             Self::Any => "any",
         }
     }
@@ -520,6 +593,22 @@ impl RuninatorType {
                 Err(best_violation.unwrap_or_else(|| {
                     TypeViolation::new(path, self.describe(), actual_type(value))
                 }))
+            }
+            // a function value is an interpreted closure, recognized structurally by its tag; the
+            // param/return types cannot be checked against a runtime value beyond that.
+            Self::Function { .. } => {
+                if value
+                    .as_object()
+                    .is_some_and(|object| object.contains_key(crate::value::CLOSURE_TAG))
+                {
+                    Ok(())
+                } else {
+                    Err(TypeViolation::new(
+                        path,
+                        self.describe(),
+                        actual_type(value),
+                    ))
+                }
             }
             expected => Err(TypeViolation::new(
                 path,
@@ -743,6 +832,29 @@ impl RuninatorType {
                 Err(best_violation.unwrap_or_else(|| {
                     TypeViolation::new(path, expected.describe(), actual.describe())
                 }))
+            }
+            (
+                Self::Function {
+                    params: actual_params,
+                    ret: actual_ret,
+                },
+                Self::Function {
+                    params: expected_params,
+                    ret: expected_ret,
+                },
+            ) => {
+                if actual_params.len() != expected_params.len() {
+                    return Err(TypeViolation::new(
+                        path,
+                        expected.describe(),
+                        self.describe(),
+                    ));
+                }
+                // parameters are contravariant, the result is covariant.
+                for (actual_param, expected_param) in actual_params.iter().zip(expected_params) {
+                    expected_param.validate_assignable_to_at(actual_param, path)?;
+                }
+                actual_ret.validate_assignable_to_at(expected_ret, path)
             }
             (actual, expected) => Err(TypeViolation::new(
                 path,
@@ -993,6 +1105,30 @@ impl RuninatorType {
                 }
                 Ok(Self::Union(variants))
             }
+            "function" => {
+                let params = object
+                    .get("params")
+                    .and_then(Value::as_array)
+                    .map(|items| {
+                        items
+                            .iter()
+                            .cloned()
+                            .map(Self::from_native_value)
+                            .collect::<Result<Vec<_>, _>>()
+                    })
+                    .transpose()?
+                    .unwrap_or_default();
+                let ret = object
+                    .get("ret")
+                    .cloned()
+                    .map(Self::from_native_value)
+                    .transpose()?
+                    .unwrap_or(Self::Any);
+                Ok(Self::Function {
+                    params,
+                    ret: Box::new(ret),
+                })
+            }
             "object" => Ok(Self::from_json_schema(&Value::Object(object.clone()))),
             other => Err(format!("unknown type '{other}'")),
         }
@@ -1081,6 +1217,11 @@ impl RuninatorType {
             Self::Union(variants) => crate::json!({
                 "type": "union",
                 "variants": variants.iter().map(Self::to_native_value).collect::<Vec<_>>(),
+            }),
+            Self::Function { params, ret } => crate::json!({
+                "type": "function",
+                "params": params.iter().map(Self::to_native_value).collect::<Vec<_>>(),
+                "ret": ret.to_native_value(),
             }),
             Self::Any => crate::json!({ "type": "any" }),
         }

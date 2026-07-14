@@ -48,11 +48,21 @@
       </select>
     </template>
 
-    <!-- subflow select: shows available workflows. -->
+    <!-- subflow select: shows available workflows, stored by id. -->
     <template v-else-if="widget === 'subflow'">
       <select :value="stringModelValue" @change="emitString(($event.target as HTMLSelectElement).value)">
         <option value="">(none)</option>
         <option v-for="wf in workflows" :key="String(wf.id)" :value="String(wf.id)">
+          {{ wf.name }}
+        </option>
+      </select>
+    </template>
+
+    <!-- workflow_name select: shows available workflows, stored by name (chaining targets resolve by name). -->
+    <template v-else-if="widget === 'workflow_name'">
+      <select :value="stringModelValue" @change="emitString(($event.target as HTMLSelectElement).value)">
+        <option value="">(none)</option>
+        <option v-for="wf in workflows" :key="String(wf.id)" :value="wf.name">
           {{ wf.name }}
         </option>
       </select>

@@ -360,39 +360,59 @@ impl Lowerer {
         types::lower_type_with(type_expr, &self.named_types)
     }
 
-    /// lower header `trigger cron "..."` declarations into runtime trigger specs
-    /// (`[{ cron, parameters, enabled }]`). the cron expression must be a string literal.
+    /// lower header `trigger ...` declarations into runtime trigger specs. each spec carries a
+    /// `kind` (`"cron"` or `"chained"`) so materialization can branch; cron/chained string operands
+    /// must be string literals.
     fn lower_triggers(&self, triggers: &[TriggerDecl]) -> Result<Vec<Value>, WdlError> {
         let mut specs = Vec::with_capacity(triggers.len());
         for trigger in triggers {
-            let Value::String(cron) = self.lower_expr(&trigger.schedule)? else {
-                return Err(WdlError::lower(
-                    "trigger cron expression must be a string literal",
-                ));
-            };
             let parameters = match &trigger.params {
                 Some(params) => self.lower_expr(params)?,
                 None => Value::Object(Map::new()),
             };
             let mut spec = Map::new();
-            spec.insert("cron".into(), Value::String(cron));
             spec.insert("parameters".into(), parameters);
             spec.insert("enabled".into(), Value::Bool(trigger.enabled));
-            if let Some(start) = &trigger.blackout_start {
-                let Value::String(start) = self.lower_expr(start)? else {
-                    return Err(WdlError::lower(
-                        "trigger blackout start must be a string literal",
-                    ));
-                };
-                spec.insert("blackout_start".into(), Value::String(start));
-            }
-            if let Some(end) = &trigger.blackout_end {
-                let Value::String(end) = self.lower_expr(end)? else {
-                    return Err(WdlError::lower(
-                        "trigger blackout end must be a string literal",
-                    ));
-                };
-                spec.insert("blackout_end".into(), Value::String(end));
+            match &trigger.kind {
+                TriggerDeclKind::Cron {
+                    schedule,
+                    blackout_start,
+                    blackout_end,
+                } => {
+                    let Value::String(cron) = self.lower_expr(schedule)? else {
+                        return Err(WdlError::lower(
+                            "trigger cron expression must be a string literal",
+                        ));
+                    };
+                    spec.insert("kind".into(), Value::String("cron".into()));
+                    spec.insert("cron".into(), Value::String(cron));
+                    if let Some(start) = blackout_start {
+                        let Value::String(start) = self.lower_expr(start)? else {
+                            return Err(WdlError::lower(
+                                "trigger blackout start must be a string literal",
+                            ));
+                        };
+                        spec.insert("blackout_start".into(), Value::String(start));
+                    }
+                    if let Some(end) = blackout_end {
+                        let Value::String(end) = self.lower_expr(end)? else {
+                            return Err(WdlError::lower(
+                                "trigger blackout end must be a string literal",
+                            ));
+                        };
+                        spec.insert("blackout_end".into(), Value::String(end));
+                    }
+                }
+                TriggerDeclKind::Chained { event, target } => {
+                    let Value::String(target) = self.lower_expr(target)? else {
+                        return Err(WdlError::lower(
+                            "chained trigger target must be a string literal",
+                        ));
+                    };
+                    spec.insert("kind".into(), Value::String("chained".into()));
+                    spec.insert("on".into(), Value::String(event.as_str().into()));
+                    spec.insert("target_workflow".into(), Value::String(target));
+                }
             }
             specs.push(Value::Object(spec));
         }
@@ -1630,6 +1650,12 @@ fn type_expr_uses_declared_name(
                 || additional
                     .as_ref()
                     .is_some_and(|a| type_expr_uses_declared_name(a, named))
+        }
+        TypeExpr::Function { params, ret } => {
+            params
+                .iter()
+                .any(|param| type_expr_uses_declared_name(param, named))
+                || type_expr_uses_declared_name(ret, named)
         }
     }
 }

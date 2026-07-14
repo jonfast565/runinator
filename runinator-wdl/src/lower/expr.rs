@@ -118,6 +118,22 @@ impl Lowerer {
                 spec.insert("body".into(), body_value?);
                 Ok(single_key("$lambda", Value::Object(spec)))
             }
+            // a cast is a pure author-time type assertion: it is erased at lowering, emitting the
+            // inner expression's value unchanged.
+            ExprKind::Cast { expr, .. } => self.lower_expr(expr),
+            // applying a callee value lowers to `{ "$apply": <callee>, "args": [...] }`; the runtime
+            // evaluates the callee to a closure and applies it.
+            ExprKind::Apply { callee, args } => {
+                let callee = self.lower_expr(callee)?;
+                let args = args
+                    .iter()
+                    .map(|arg| self.lower_expr(arg))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let mut map = Map::new();
+                map.insert("$apply".into(), callee);
+                map.insert("args".into(), Value::Array(args));
+                Ok(Value::Object(map))
+            }
             // spreads are expanded by desugaring before lowering; one reaching here is a bug.
             ExprKind::Spread(name) => {
                 Err(WdlError::lower(format!("unexpanded spread '...{name}'")))

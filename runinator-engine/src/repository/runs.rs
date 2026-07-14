@@ -193,15 +193,23 @@ pub async fn publish_pending_action_dispatches<T: DatabaseImpl>(
     Ok(())
 }
 
+// how long a wake announcement stays leased in the database. a pending ready node is announced at
+// most once per window, so backends without broker-side dedupe (rabbitmq, kafka) do not accumulate
+// duplicate wakes; a wake lost in flight is re-announced once the lease lapses after its due time.
+const WAKE_ANNOUNCE_LEASE_SECONDS: i64 = 30;
+
 /// publish a wake for each ready node still pending drive. doubles as the durable backstop: the
-/// broker dedupes wakes already in flight, so re-announcing an undriven node is harmless.
+/// database announce lease bounds republishing to once per window per node, and backends with
+/// broker-side dedupe drop the remaining duplicates.
 pub async fn publish_pending_wakes<T: DatabaseImpl>(
     db: &T,
     broker: &dyn Broker,
     limit: i64,
 ) -> Result<(), SendableError> {
     let now = Utc::now();
-    let pending = db.fetch_pending_ready_nodes(now, limit).await?;
+    let pending = db
+        .claim_ready_nodes_for_announce(now, WAKE_ANNOUNCE_LEASE_SECONDS, limit)
+        .await?;
     for node in pending {
         let command = runinator_comm::WakeCommand::new(
             node.id,

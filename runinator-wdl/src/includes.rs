@@ -29,15 +29,23 @@ fn collect_workflow(
         }
     }
     for trigger in &workflow.triggers {
-        collect_expr(&trigger.schedule, source_dir, paths)?;
+        match &trigger.kind {
+            TriggerDeclKind::Cron {
+                schedule,
+                blackout_start,
+                blackout_end,
+            } => {
+                collect_expr(schedule, source_dir, paths)?;
+                for value in [blackout_start, blackout_end].into_iter().flatten() {
+                    collect_expr(value, source_dir, paths)?;
+                }
+            }
+            TriggerDeclKind::Chained { target, .. } => {
+                collect_expr(target, source_dir, paths)?;
+            }
+        }
         if let Some(params) = &trigger.params {
             collect_expr(params, source_dir, paths)?;
-        }
-        for value in [&trigger.blackout_start, &trigger.blackout_end]
-            .into_iter()
-            .flatten()
-        {
-            collect_expr(value, source_dir, paths)?;
         }
     }
     for alias in &workflow.aliases {
@@ -342,6 +350,13 @@ fn collect_expr(expr: &Expr, source_dir: &Path, paths: &mut Vec<PathBuf>) -> Res
             }
         }
         ExprKind::Lambda { body, .. } => collect_expr(body, source_dir, paths)?,
+        ExprKind::Cast { expr, .. } => collect_expr(expr, source_dir, paths)?,
+        ExprKind::Apply { callee, args } => {
+            collect_expr(callee, source_dir, paths)?;
+            for arg in args {
+                collect_expr(arg, source_dir, paths)?;
+            }
+        }
         ExprKind::Null
         | ExprKind::Bool(_)
         | ExprKind::Int(_)

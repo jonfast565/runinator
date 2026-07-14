@@ -69,6 +69,12 @@ pub enum WorkflowExpression {
         params: Vec<String>,
         body: Box<WorkflowExpression>,
     },
+    // application of an arbitrary callee value to arguments (`(obj.f)(x)`, `fns[0](x)`). the callee
+    // evaluates to a first-class closure; a plain named call keeps the leaner `Call` form.
+    Apply {
+        callee: Box<WorkflowExpression>,
+        args: Vec<WorkflowExpression>,
+    },
     // a lazy conditional: the condition is evaluated, then only the taken branch is evaluated. this
     // laziness lets a recursive function's base case terminate before the recursive branch runs.
     Cond {
@@ -174,8 +180,9 @@ impl CompareOp {
 }
 
 /// the typed form of a workflow condition: a boolean combinator tree over comparison leaves. leaf
-/// operands stay dynamic `Value` because they are expressions resolved against the run context at
-/// evaluation time (the expression tier), not static data.
+/// operands are typed `WorkflowExpression`s (they belong to the expression tier and are resolved
+/// against the run context at evaluation time); an operand that does not parse as an expression
+/// makes the whole leaf fall back to `Other` so `From` stays total and byte-identity holds.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConditionNode {
     All(Vec<ConditionNode>),
@@ -183,18 +190,18 @@ pub enum ConditionNode {
     Not(Box<ConditionNode>),
     /// `{ value: <left>, <op>: <right> }`.
     Compare {
-        left: Value,
+        left: WorkflowExpression,
         op: CompareOp,
-        right: Value,
+        right: WorkflowExpression,
     },
     /// `{ value: <left>, exists: <bool> }`.
     Exists {
-        left: Value,
+        left: WorkflowExpression,
         expected: bool,
     },
     /// `{ value: <left> }` — truthiness of the resolved left operand.
     Truthy {
-        left: Value,
+        left: WorkflowExpression,
     },
     /// any object shape the evaluator does not recognize; carried verbatim so loading never fails
     /// and serialization is byte-identical. evaluating it yields the same error the evaluator does.
@@ -222,17 +229,17 @@ impl From<&ConditionNode> for Value {
             ConditionNode::Not(inner) => single(COND_NOT, Value::from(inner.as_ref())),
             ConditionNode::Compare { left, op, right } => {
                 let mut map = Map::new();
-                map.insert(COND_VALUE.into(), left.clone());
-                map.insert(op.key().into(), right.clone());
+                map.insert(COND_VALUE.into(), Value::from(left));
+                map.insert(op.key().into(), Value::from(right));
                 Value::Object(map)
             }
             ConditionNode::Exists { left, expected } => {
                 let mut map = Map::new();
-                map.insert(COND_VALUE.into(), left.clone());
+                map.insert(COND_VALUE.into(), Value::from(left));
                 map.insert(COND_EXISTS.into(), Value::Bool(*expected));
                 Value::Object(map)
             }
-            ConditionNode::Truthy { left } => single(COND_VALUE, left.clone()),
+            ConditionNode::Truthy { left } => single(COND_VALUE, Value::from(left)),
             ConditionNode::Other(value) => value.clone(),
         }
     }
@@ -269,14 +276,17 @@ impl From<&Value> for ConditionNode {
         let Some(left) = ConditionNode::leaf_left(object) else {
             return ConditionNode::Other(value.clone());
         };
-        let left = left.clone();
+        // the leaf operands belong to the expression tier; an operand that does not parse as an
+        // expression means the whole leaf is preserved verbatim as `Other`, keeping `From` total.
+        let Ok(left) = WorkflowExpression::try_from(left) else {
+            return ConditionNode::Other(value.clone());
+        };
         for op in CompareOp::ORDER {
             if let Some(right) = object.get(op.key()) {
-                return ConditionNode::Compare {
-                    left,
-                    op,
-                    right: right.clone(),
+                let Ok(right) = WorkflowExpression::try_from(right) else {
+                    return ConditionNode::Other(value.clone());
                 };
+                return ConditionNode::Compare { left, op, right };
             }
         }
         if let Some(exists) = object.get(COND_EXISTS) {
@@ -316,6 +326,7 @@ pub const EXPR_NEG: &str = "$neg";
 pub const EXPR_CALL: &str = "$call";
 pub const EXPR_ARGS: &str = "args";
 pub const EXPR_LAMBDA: &str = "$lambda";
+pub const EXPR_APPLY: &str = "$apply";
 pub const LAMBDA_PARAMS: &str = "params";
 pub const LAMBDA_BODY: &str = "body";
 pub const EXPR_IF: &str = "$if";
@@ -483,6 +494,12 @@ impl From<&WorkflowExpression> for Value {
                 spec.insert(LAMBDA_BODY.into(), Value::from(body.as_ref()));
                 single(EXPR_LAMBDA, Value::Object(spec))
             }
+            WorkflowExpression::Apply { callee, args } => {
+                let mut map = Map::new();
+                map.insert(EXPR_APPLY.into(), Value::from(callee.as_ref()));
+                map.insert(EXPR_ARGS.into(), array(args));
+                Value::Object(map)
+            }
             WorkflowExpression::Cond {
                 condition,
                 then,
@@ -535,6 +552,25 @@ impl TryFrom<&Value> for WorkflowExpression {
                 };
                 Ok(WorkflowExpression::Call {
                     name: name.to_string(),
+                    args,
+                })
+            }
+            Value::Object(map) if map.contains_key(EXPR_APPLY) => {
+                if !map.keys().all(|key| key == EXPR_APPLY || key == EXPR_ARGS) {
+                    return Err(invalid(value));
+                }
+                let callee = map.get(EXPR_APPLY).ok_or_else(|| invalid(value))?;
+                let args = match map.get(EXPR_ARGS) {
+                    None => Vec::new(),
+                    Some(items) => items
+                        .as_array()
+                        .ok_or_else(|| invalid(value))?
+                        .iter()
+                        .map(WorkflowExpression::try_from)
+                        .collect::<Result<Vec<_>, _>>()?,
+                };
+                Ok(WorkflowExpression::Apply {
+                    callee: Box::new(WorkflowExpression::try_from(callee)?),
                     args,
                 })
             }

@@ -452,7 +452,7 @@ fn infer_expression_type(
             Ok(WorkflowType::String)
         }
         WorkflowExpression::Coalesce(items) => {
-            let mut resolved = None;
+            let mut resolved: Option<WorkflowType> = None;
             for item in items {
                 let ty = infer_expression_type(item, context)?;
                 if ty == WorkflowType::Null {
@@ -460,7 +460,7 @@ fn infer_expression_type(
                 }
                 resolved = Some(match resolved {
                     None => ty,
-                    Some(existing) => common_type(existing, ty).unwrap_or(WorkflowType::Any),
+                    Some(existing) => existing.unify(&ty),
                 });
             }
             Ok(resolved.unwrap_or(WorkflowType::Null))
@@ -534,19 +534,71 @@ fn infer_expression_type(
             if crate::is_higher_order(name) {
                 return infer_higher_order_type(name, args, context);
             }
+            // a call to a local bound to a first-class lambda yields the function's result type.
+            if let Some(WorkflowType::Function { ret, .. }) = function_local(name, context) {
+                return Ok((**ret).clone());
+            }
+            // recover an argument-dependent result type for the polymorphic intrinsics before
+            // falling back to the catalog's declared (often `any`) result type.
+            let arg_types = args
+                .iter()
+                .map(|arg| infer_expression_type(arg, context))
+                .collect::<Result<Vec<_>, _>>()?;
+            // extract any literal key(s) from the second argument for key-driven intrinsics.
+            let literal_keys = args.get(1).and_then(static_string_keys);
+            if let Some(ty) =
+                crate::intrinsic_result_type(name, &arg_types, literal_keys.as_deref())
+            {
+                return Ok(ty);
+            }
             Ok(crate::intrinsic_signature(name)
                 .and_then(|signature| signature.results.first().map(|result| result.ty.clone()))
                 .unwrap_or(WorkflowType::Any))
         }
-        // a lambda is only valid as a higher-order argument; it carries no value type of its own.
-        WorkflowExpression::Lambda { .. } => Ok(WorkflowType::Any),
+        // a lambda's value type: unconstrained parameters and the body's result type.
+        WorkflowExpression::Lambda { params, body } => {
+            let mut scoped = context.clone();
+            for param in params {
+                scoped.locals.push((param.clone(), WorkflowType::Any));
+            }
+            let ret = infer_expression_type(body, &scoped)?;
+            Ok(WorkflowType::Function {
+                params: params.iter().map(|_| WorkflowType::Any).collect(),
+                ret: Box::new(ret),
+            })
+        }
         // a conditional resolves to the common type of its branches (the condition is not typed here).
         WorkflowExpression::Cond {
             then, otherwise, ..
         } => {
             let then_ty = infer_expression_type(then, context)?;
             let otherwise_ty = infer_expression_type(otherwise, context)?;
-            Ok(common_type(then_ty, otherwise_ty).unwrap_or(WorkflowType::Any))
+            Ok(then_ty.unify(&otherwise_ty))
+        }
+        // applying a callee value: the callee must be a function; yield its declared result type,
+        // checking arity. an opaque (`any`) callee stays permissive.
+        WorkflowExpression::Apply { callee, args } => {
+            let callee_type = infer_expression_type(callee, context)?;
+            for arg in args {
+                infer_expression_type(arg, context)?;
+            }
+            match callee_type {
+                WorkflowType::Function { params, ret } => {
+                    if params.len() != args.len() {
+                        return Err(WorkflowValidationError::TypeError(format!(
+                            "applied function expects {} argument(s), got {}",
+                            params.len(),
+                            args.len()
+                        )));
+                    }
+                    Ok(*ret)
+                }
+                WorkflowType::Any => Ok(WorkflowType::Any),
+                other => Err(WorkflowValidationError::TypeError(format!(
+                    "cannot apply a value of type {}",
+                    other.describe()
+                ))),
+            }
         }
     }
 }
@@ -620,7 +672,9 @@ fn collection_item_type(
 ) -> Result<WorkflowType, WorkflowValidationError> {
     match ty {
         WorkflowType::Array(item) => Ok((**item).clone()),
-        WorkflowType::Any | WorkflowType::Union(_) => Ok(WorkflowType::Any),
+        // a union of iterables keeps its unioned element type; anything else opaque stays `any`.
+        WorkflowType::Union(_) => Ok(ty.union_element_type().unwrap_or(WorkflowType::Any)),
+        WorkflowType::Any => Ok(WorkflowType::Any),
         other => Err(WorkflowValidationError::TypeError(format!(
             "'{name}' requires an array, got {}",
             other.describe()
@@ -635,9 +689,18 @@ fn infer_lambda_type(
     context: &TypeContext,
 ) -> Result<WorkflowType, WorkflowValidationError> {
     let WorkflowExpression::Lambda { params, body } = expression else {
-        return Err(WorkflowValidationError::TypeError(format!(
-            "'{name}' requires a lambda argument"
-        )));
+        // a first-class function value passed by reference: use its result type when the arity
+        // matches, and stay permissive for an opaque (`any`) reference.
+        return match infer_expression_type(expression, context)? {
+            WorkflowType::Function {
+                params: fn_params,
+                ret,
+            } if fn_params.len() == bindings.len() => Ok(*ret),
+            WorkflowType::Any => Ok(WorkflowType::Any),
+            _ => Err(WorkflowValidationError::TypeError(format!(
+                "'{name}' requires a lambda argument"
+            ))),
+        };
     };
     let required = bindings.len();
     if params.len() != required {
@@ -700,11 +763,9 @@ fn resolve_ref_type(
         let Some((_, ty)) = context.locals.iter().rev().find(|(name, _)| name == head) else {
             return Ok(WorkflowType::Any);
         };
-        return resolve_path_type(ty, &reference.path[1..])
-            .cloned()
-            .ok_or_else(|| {
-                WorkflowValidationError::MissingRef(serialize_value_ref(reference).to_string())
-            });
+        return resolve_path_type(ty, &reference.path[1..]).ok_or_else(|| {
+            WorkflowValidationError::MissingRef(serialize_value_ref(reference).to_string())
+        });
     }
     let base = match &reference.source {
         WorkflowRefSource::Input => &context.input,
@@ -722,26 +783,35 @@ fn resolve_ref_type(
             })?
         }
     };
-    resolve_path_type(base, &reference.path)
-        .cloned()
-        .ok_or_else(|| {
-            WorkflowValidationError::MissingRef(serialize_value_ref(reference).to_string())
-        })
+    resolve_path_type(base, &reference.path).ok_or_else(|| {
+        WorkflowValidationError::MissingRef(serialize_value_ref(reference).to_string())
+    })
 }
 
-fn resolve_path_type<'a>(
-    base: &'a WorkflowType,
-    path: &[WorkflowPathSegment],
-) -> Option<&'a WorkflowType> {
-    let mut current = base;
-    for segment in path {
-        current = match (segment, current) {
+fn resolve_path_type(base: &WorkflowType, path: &[WorkflowPathSegment]) -> Option<WorkflowType> {
+    let mut current = base.clone();
+    for (index, segment) in path.iter().enumerate() {
+        current = match (segment, &current) {
             // an `any` base absorbs any path: drilling into the unknown stays unknown.
-            (_, WorkflowType::Any) => return Some(&WorkflowType::Any),
-            (WorkflowPathSegment::Key(key), WorkflowType::Struct { .. } | WorkflowType::Map(_)) => {
-                current.field(key)?
+            (_, WorkflowType::Any) => return Some(WorkflowType::Any),
+            // a union resolves the rest of the path on each variant and re-unions the results, so a
+            // field common to every variant keeps a concrete type instead of collapsing to `any`.
+            (_, WorkflowType::Union(variants)) => {
+                let rest = &path[index..];
+                let mut resolved: Option<WorkflowType> = None;
+                for variant in variants {
+                    let ty = resolve_path_type(variant, rest)?;
+                    resolved = Some(match resolved {
+                        None => ty,
+                        Some(existing) => existing.unify(&ty),
+                    });
+                }
+                return resolved;
             }
-            (WorkflowPathSegment::Index(_), WorkflowType::Array(item)) => item,
+            (WorkflowPathSegment::Key(key), WorkflowType::Struct { .. } | WorkflowType::Map(_)) => {
+                current.field(key)?.clone()
+            }
+            (WorkflowPathSegment::Index(_), WorkflowType::Array(item)) => (**item).clone(),
             _ => return None,
         };
     }
@@ -1038,20 +1108,33 @@ fn comparable_types(
 }
 
 fn common_type(left: WorkflowType, right: WorkflowType) -> Option<WorkflowType> {
-    if left == right {
-        return Some(left);
+    left.common_type(&right)
+}
+
+/// find a local bound to a first-class function type (a lambda value), if any.
+fn function_local<'a>(name: &str, context: &'a TypeContext) -> Option<&'a WorkflowType> {
+    context
+        .locals
+        .iter()
+        .rev()
+        .find(|(local, ty)| local == name && matches!(ty, WorkflowType::Function { .. }))
+        .map(|(_, ty)| ty)
+}
+
+/// the statically-known string keys a lowered expression denotes, used to type key-driven
+/// intrinsics (`at`/`pick`/`omit`): a string literal yields one key, a literal array of strings
+/// yields several, anything else yields `None`.
+fn static_string_keys(expr: &WorkflowExpression) -> Option<Vec<String>> {
+    match expr {
+        WorkflowExpression::Literal(Value::String(key)) => Some(vec![key.clone()]),
+        WorkflowExpression::Literal(Value::Array(items)) => items
+            .iter()
+            .map(|item| item.as_str().map(str::to_string))
+            .collect(),
+        _ => None,
     }
-    if left.is_numeric() && right.is_numeric() {
-        return Some(WorkflowType::Number);
-    }
-    None
 }
 
 fn workflow_context_type() -> WorkflowType {
-    WorkflowType::structure([
-        ("run_id", WorkflowType::String),
-        ("workflow_id", WorkflowType::String),
-        ("name", WorkflowType::String),
-        ("state", WorkflowType::Any),
-    ])
+    runinator_models::workflow_state::WorkflowContextHeader::runinator_type()
 }

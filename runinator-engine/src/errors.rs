@@ -15,6 +15,11 @@ pub const IMPORT_INVALID_TRIGGER_BLACKOUT: ErrorDescriptor = ErrorDescriptor::ne
     "workflow.import.invalid_trigger_blackout",
     "Trigger blackout datetime is invalid",
 );
+pub const IMPORT_UNKNOWN_CHAINED_TARGET: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI122",
+    "workflow.import.unknown_chained_target",
+    "Imported workflow chains to an unknown target workflow",
+);
 
 // debug, control, and replay.
 pub const DEBUG_NOT_FOUND: ErrorDescriptor = ErrorDescriptor::new(
@@ -83,6 +88,7 @@ pub const BACKGROUND_LOOP_EXITED: ErrorDescriptor = ErrorDescriptor::new(
 pub const DICTIONARY: &[ErrorDescriptor] = &[
     IMPORT_UNKNOWN_SUBFLOW,
     IMPORT_INVALID_TRIGGER_BLACKOUT,
+    IMPORT_UNKNOWN_CHAINED_TARGET,
     DEBUG_NOT_FOUND,
     DEBUG_DISABLED,
     DEBUG_TERMINAL,

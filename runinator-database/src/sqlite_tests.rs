@@ -366,6 +366,66 @@ async fn due_trigger_firing_is_idempotent_and_advances_next_execution() {
 }
 
 #[tokio::test]
+async fn chained_trigger_kind_round_trips_and_firing_dedupes() {
+    let path = std::env::temp_dir().join(format!(
+        "runinator-chained-trigger-{}.db",
+        Utc::now().timestamp_nanos_opt().unwrap()
+    ));
+    let db = SqliteDb::new(path.to_str().unwrap()).await.unwrap();
+    db.run_init_scripts(&Vec::new()).await.unwrap();
+
+    let workflow_id = db
+        .upsert_workflow(&workflow("chained-trigger-test"))
+        .await
+        .unwrap()
+        .id
+        .unwrap();
+    let trigger = db
+        .upsert_workflow_trigger(&WorkflowTrigger {
+            id: None,
+            workflow_id,
+            kind: WorkflowTriggerKind::Chained,
+            enabled: true,
+            configuration: runinator_models::json!({
+                "on": "success",
+                "target_workflow": "downstream",
+                "parameters": {}
+            }),
+            next_execution: None,
+            blackout_start: None,
+            blackout_end: None,
+            metadata: runinator_models::json!({ "managed_by": "wdl" }),
+            created_at: None,
+            updated_at: None,
+        })
+        .await
+        .unwrap();
+
+    // the kind must survive the mapper instead of falling back to Manual.
+    let refreshed = db
+        .fetch_workflow_trigger(trigger.id.unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(refreshed.kind, WorkflowTriggerKind::Chained);
+
+    // first firing records; a second with the same fire_key is a no-op (exactly-once).
+    let source_run = Uuid::now_v7().to_string();
+    let first = db
+        .try_record_trigger_firing(trigger.id.unwrap(), source_run.clone())
+        .await
+        .unwrap();
+    let second = db
+        .try_record_trigger_firing(trigger.id.unwrap(), source_run)
+        .await
+        .unwrap();
+    assert!(first, "first firing should insert");
+    assert!(!second, "duplicate firing must be ignored");
+
+    let _ = fs::remove_file(path);
+}
+
+#[tokio::test]
 async fn upsert_workflow_without_id_updates_existing_name() {
     let path = std::env::temp_dir().join(format!(
         "runinator-workflow-upsert-{}.db",
@@ -845,6 +905,94 @@ async fn terminal_run_status_settles_its_pending_ready_nodes() {
             .unwrap()
             .is_empty(),
         "terminal run should leave no pending ready nodes"
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn claim_ready_nodes_for_announce_leases_once_per_window() {
+    let path = std::env::temp_dir().join(format!(
+        "runinator-announce-lease-{}.db",
+        Utc::now().timestamp_nanos_opt().unwrap()
+    ));
+    let db = SqliteDb::new(path.to_str().unwrap()).await.unwrap();
+    db.run_init_scripts(&Vec::new()).await.unwrap();
+    let workflow_id = db
+        .upsert_workflow(&workflow("announce-lease-test"))
+        .await
+        .unwrap()
+        .id
+        .unwrap();
+    let snapshot = db.fetch_workflow(workflow_id).await.unwrap().unwrap();
+    let run = db
+        .create_workflow_run(
+            workflow_id,
+            snapshot,
+            runinator_models::json!({}),
+            runinator_models::json!({}),
+            None,
+            Default::default(),
+        )
+        .await
+        .unwrap();
+
+    let now = Utc::now();
+    // one already-due node and one future-dated node (an armed timeout).
+    let due_event = runinator_models::orchestration::NewOrchestrationEvent::new(
+        run.id,
+        Some("due".into()),
+        "local_target_poll",
+        runinator_models::json!({}),
+    );
+    let due = db
+        .enqueue_ready_node(due_event, "due".into(), now - Duration::seconds(1))
+        .await
+        .unwrap()
+        .unwrap();
+    let future_event = runinator_models::orchestration::NewOrchestrationEvent::new(
+        run.id,
+        Some("future".into()),
+        "node_timeout_rearm",
+        runinator_models::json!({}),
+    );
+    let future = db
+        .enqueue_ready_node(future_event, "future".into(), now + Duration::seconds(600))
+        .await
+        .unwrap()
+        .unwrap();
+
+    // the first pass announces both rows; every pass inside the lease window announces nothing,
+    // so a per-second publisher tick cannot flood a broker without in-flight dedupe.
+    let first = db
+        .claim_ready_nodes_for_announce(now, 30, 100)
+        .await
+        .unwrap();
+    assert_eq!(first.len(), 2);
+    let second = db
+        .claim_ready_nodes_for_announce(now, 30, 100)
+        .await
+        .unwrap();
+    assert!(second.is_empty(), "lease must suppress re-announcement");
+
+    // once the due node's lease lapses it is re-announced (the lost-wake backstop); the future
+    // node stays leased until ready_at + lease, so it is announced exactly once before it is due.
+    let third = db
+        .claim_ready_nodes_for_announce(now + Duration::seconds(31), 30, 100)
+        .await
+        .unwrap();
+    assert_eq!(
+        third.iter().map(|node| node.id).collect::<Vec<_>>(),
+        vec![due.id],
+        "only the due node's lease lapses inside its ready window"
+    );
+    let fourth = db
+        .claim_ready_nodes_for_announce(now + Duration::seconds(631), 30, 100)
+        .await
+        .unwrap();
+    assert!(
+        fourth.iter().any(|node| node.id == future.id),
+        "future node re-announces after ready_at + lease"
     );
 
     let _ = fs::remove_file(path);

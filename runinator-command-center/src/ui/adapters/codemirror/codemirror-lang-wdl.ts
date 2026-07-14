@@ -101,6 +101,9 @@ const MODIFIER_KW = new Set([
   "blackout",
   "to",
   "cron",
+  "on_success",
+  "on_failure",
+  "on_complete",
   "winner",
   "name",
   "meta",
@@ -717,6 +720,11 @@ const snippets = [
     label: "trigger cron",
     type: "keyword",
     detail: "cron trigger",
+  }),
+  snippetCompletion('trigger on_success workflow "${target}"', {
+    label: "trigger on_success",
+    type: "keyword",
+    detail: "chained trigger",
   }),
   snippetCompletion("watch ${condition} -> ${target}", {
     label: "watch",

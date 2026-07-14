@@ -20,6 +20,11 @@ pub struct Config {
     #[arg(long, default_value_t = 20)]
     pub max_wake_sleep_seconds: u64,
 
+    /// wakes handled concurrently by this replica, so a not-yet-due wake sleeping toward its due
+    /// time never head-of-line blocks a due wake behind it.
+    #[arg(long, default_value_t = 32)]
+    pub max_concurrent_wakes: usize,
+
     #[arg(long, default_value = "tcp")]
     pub broker_backend: String,
 
@@ -68,5 +73,6 @@ pub fn parse_config() -> Result<Config, SendableError> {
         config.waker_id = format!("waker-{}", Uuid::new_v4());
     }
     config.max_wake_sleep_seconds = config.max_wake_sleep_seconds.max(1);
+    config.max_concurrent_wakes = config.max_concurrent_wakes.max(1);
     Ok(config)
 }

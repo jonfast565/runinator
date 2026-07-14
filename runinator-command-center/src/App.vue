@@ -8,6 +8,7 @@
         web app.
       </div>
     </section>
+    <PipelinesView v-if="app.activeTab === 'Pipelines'" />
     <WorkflowsView v-show="app.activeTab === 'Workflows'" />
     <RunsView v-show="app.activeTab === 'Runs'" />
     <ProvidersView v-if="app.activeTab === 'Providers'" />
@@ -57,6 +58,7 @@ import ProvidersView from "./ui/views/ProvidersView.vue";
 import ReplicasView from "./ui/views/ReplicasView.vue";
 import DevView from "./ui/views/DevView.vue";
 import WorkflowsView from "./ui/views/WorkflowsView.vue";
+import PipelinesView from "./ui/views/PipelinesView.vue";
 import ApprovalsView from "./ui/views/ApprovalsView.vue";
 import ArtifactsView from "./ui/views/ArtifactsView.vue";
 import NotificationsView from "./ui/views/NotificationsView.vue";

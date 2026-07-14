@@ -164,6 +164,13 @@ fn collect_user_calls(expr: &Expr, registry: &FunctionRegistry, out: &mut BTreeS
             collect_user_calls(inner, registry, out)
         }
         ExprKind::Lambda { body, .. } => collect_user_calls(body, registry, out),
+        ExprKind::Cast { expr, .. } => collect_user_calls(expr, registry, out),
+        ExprKind::Apply { callee, args } => {
+            collect_user_calls(callee, registry, out);
+            for arg in args {
+                collect_user_calls(arg, registry, out);
+            }
+        }
         ExprKind::Object(entries) => {
             for (_, value) in entries {
                 collect_user_calls(value, registry, out);

@@ -14,8 +14,11 @@ export const useCatalogMetadataStore = defineStore("catalogMetadata", () => {
     loaded: computed(() => state.value.loaded),
     error: computed(() => state.value.error),
     fetchCatalogs: (force = false) => catalogMetadataService.fetchCatalogs(force),
-    nodeKind: (kind: string) => catalogMetadataService.nodeKind(kind),
-    triggerKind: (kind: string) => catalogMetadataService.triggerKind(kind),
-    enumOptions: (name: string) => catalogMetadataService.enumOptions(name),
+    // read the reactive mirror (not the service's getState) so lookups called inside a component
+    // computed establish a dependency and re-run when the catalog finishes loading.
+    nodeKind: (kind: string) => state.value.nodeKinds.find((entry) => entry.kind === kind),
+    triggerKind: (kind: string) => state.value.triggerKinds.find((entry) => entry.kind === kind),
+    enumOptions: (name: string) =>
+      state.value.enums.find((entry) => entry.name === name)?.options ?? [],
   };
 });

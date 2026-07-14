@@ -1311,6 +1311,32 @@ where
         Ok(runs)
     }
 
+    async fn try_record_trigger_firing(
+        &self,
+        trigger_id: Uuid,
+        fire_key: String,
+    ) -> Result<bool, SendableError> {
+        // insert-ignore on the unique (trigger_id, fire_key); a zero-row insert means another
+        // caller already recorded this firing, so the caller must not start a duplicate run.
+        let firing_sql = self.render(&queries::insert_ignore(
+            self.dialect(),
+            "workflow_trigger_firings",
+            "id, trigger_id, fire_key, scheduler_id, created_at",
+            "?, ?, ?, ?, ?",
+            "trigger_id, fire_key",
+            None,
+        ));
+        let insert = sqlx::query(&firing_sql)
+            .bind(Uuid::now_v7())
+            .bind(trigger_id)
+            .bind(fire_key.as_str())
+            .bind("chained")
+            .bind(Utc::now().timestamp())
+            .execute(self.pool())
+            .await?;
+        Ok(insert.affected() > 0)
+    }
+
     async fn create_workflow_run(
         &self,
         workflow_id: Uuid,
@@ -2402,6 +2428,80 @@ where
         .bind(limit.max(1))
         .fetch_all(self.pool())
         .await?;
+        rows.iter().map(mappers::row_to_ready_node).collect()
+    }
+
+    async fn claim_ready_nodes_for_announce(
+        &self,
+        now: DateTime<Utc>,
+        lease_seconds: i64,
+        limit: i64,
+    ) -> Result<Vec<ReadyNodeRecord>, SendableError> {
+        let columns = "id, source_event_id, workflow_run_id, node_id, status, ready_at, attempts, claimed_by, claimed_until, completed_at, created_at, updated_at";
+        let now_ts = now.timestamp();
+        let lease = lease_seconds.max(1);
+
+        // mysql has no UPDATE ... RETURNING, so it stamps a uniform `now + lease` and reads the
+        // rows back by that marker; future-dated rows are re-announced once per window there, a
+        // bounded duplication the waker tolerates.
+        if self.dialect() == SqlDialect::MySql {
+            let lease_ts = now_ts + lease;
+            sqlx::query(&self.render(
+                "UPDATE workflow_ready_nodes
+                 SET announced_until = ?, updated_at = ?
+                 WHERE id IN (
+                     SELECT id FROM (
+                         SELECT id FROM workflow_ready_nodes
+                         WHERE completed_at IS NULL
+                           AND (claimed_until IS NULL OR claimed_until <= ?)
+                           AND (announced_until IS NULL OR announced_until <= ?)
+                         ORDER BY ready_at, id
+                         LIMIT ?
+                     ) AS announceable
+                 )",
+            ))
+            .bind(lease_ts)
+            .bind(now_ts)
+            .bind(now_ts)
+            .bind(now_ts)
+            .bind(limit.max(1))
+            .execute(self.pool())
+            .await?;
+            let rows = sqlx::query(&self.render(&format!(
+                "SELECT {columns} FROM workflow_ready_nodes WHERE announced_until = ? AND completed_at IS NULL ORDER BY ready_at, id",
+            )))
+            .bind(lease_ts)
+            .fetch_all(self.pool())
+            .await?;
+            return rows.iter().map(mappers::row_to_ready_node).collect();
+        }
+
+        // stamp the lease past each row's ready_at so a not-yet-due row is announced once and the
+        // waker alone owns its timer; the lease only lapses (and re-announces) after the row is due.
+        let sql = self.render(&format!(
+            "UPDATE workflow_ready_nodes
+             SET announced_until = (CASE WHEN ready_at > ? THEN ready_at ELSE ? END) + ?, updated_at = ?
+             WHERE id IN (
+                 SELECT id FROM workflow_ready_nodes
+                 WHERE completed_at IS NULL
+                   AND (claimed_until IS NULL OR claimed_until <= ?)
+                   AND (announced_until IS NULL OR announced_until <= ?)
+                 ORDER BY ready_at, id
+                 LIMIT ?{skip}
+             )
+             RETURNING {columns}",
+            skip = queries::skip_locked(self.dialect()),
+        ));
+        let rows = sqlx::query(&sql)
+            .bind(now_ts)
+            .bind(now_ts)
+            .bind(lease)
+            .bind(now_ts)
+            .bind(now_ts)
+            .bind(now_ts)
+            .bind(limit.max(1))
+            .fetch_all(self.pool())
+            .await?;
         rows.iter().map(mappers::row_to_ready_node).collect()
     }
 

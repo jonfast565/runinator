@@ -168,6 +168,16 @@
       </div>
       <button type="button" @click="addRecordField">Add Entry</button>
     </div>
+    <select
+      v-else-if="typeKind === 'enum' && enumOptions.length"
+      class="enum-editor"
+      :value="enumSelectedIndex"
+      @change="selectEnumOption(Number(($event.target as HTMLSelectElement).value))"
+    >
+      <option v-for="(option, index) in enumOptions" :key="index" :value="index">
+        {{ enumOptionLabel(option) }}
+      </option>
+    </select>
     <div v-else-if="typeKind === 'union' && unionVariants.length" class="union-editor">
       <select
         :value="unionVariantIndex"
@@ -198,7 +208,12 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import type { JsonRecord, RuninatorField, RuninatorType } from "../../../core/domain/models";
+import type {
+  JsonRecord,
+  JsonValue,
+  RuninatorField,
+  RuninatorType,
+} from "../../../core/domain/models";
 import { pretty } from "../../../core/utils/format";
 import type { WorkflowExpressionEditorContext } from "../../../ui/adapters/codemirror/workflow-expression-completion";
 import { isWorkflowExpressionValue } from "../../../ui/adapters/codemirror/workflow-expression-completion";
@@ -272,6 +287,13 @@ const structAdditionalType = computed(() =>
 const additionalStructEntries = computed(() =>
   recordEntries.value.filter(([key]) => !structFieldNames.value.has(key)),
 );
+const enumOptions = computed<JsonValue[]>(() => (props.ty.type === "enum" ? props.ty.values : []));
+const enumSelectedIndex = computed(() => {
+  const match = enumOptions.value.findIndex(
+    (option) => JSON.stringify(option) === JSON.stringify(props.modelValue),
+  );
+  return match >= 0 ? match : 0;
+});
 const unionVariants = computed(() => (props.ty.type === "union" ? props.ty.variants : []));
 const unionVariantIndex = computed(() =>
   selectedUnionVariantIndex(props.modelValue, unionVariants.value),
@@ -465,6 +487,14 @@ function addRecordField() {
 function selectUnionVariant(index: number) {
   const variant = unionVariants.value[index];
   emitValue(defaultValueForType(variant));
+}
+
+function selectEnumOption(index: number) {
+  emitValue(enumOptions.value[index]);
+}
+
+function enumOptionLabel(option: JsonValue): string {
+  return typeof option === "string" ? option : JSON.stringify(option);
 }
 
 function splitLines(value: string): string[] {

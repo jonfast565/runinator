@@ -41,6 +41,7 @@ import type { WorkflowServiceHost } from "./host";
 const WORKFLOW_WDL_SYNC_DELAY_MS = 1500;
 const MAX_OPEN_RUN_TABS = 8;
 const WATCH_STORAGE_PREFIX = "runinator.watch.";
+const RECENT_RUNS_REFRESH_DEBOUNCE_MS = 300;
 
 export function createWorkflowRunService(host: WorkflowServiceHost) {
   const { deps, internal } = host;
@@ -533,6 +534,45 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     host.notify();
   }
 
+  // coalesce event-driven recent-runs refetches: a burst of workflow_run_changed events (many node
+  // transitions on one run) collapses into a single trailing fetch, and a fetch that arrives mid-flight
+  // re-arms once so the final state is never missed. manual refresh, tab activation, and the fallback
+  // poll still call fetchRecentWorkflowRuns directly for an immediate refresh.
+  let recentRunsRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+  let recentRunsRefreshing = false;
+  let recentRunsRefreshQueued = false;
+
+  async function runCoalescedRecentRunsRefresh() {
+    if (recentRunsRefreshing) {
+      recentRunsRefreshQueued = true;
+      return;
+    }
+
+    recentRunsRefreshing = true;
+
+    try {
+      await fetchRecentWorkflowRuns();
+    } finally {
+      recentRunsRefreshing = false;
+
+      if (recentRunsRefreshQueued) {
+        recentRunsRefreshQueued = false;
+        scheduleRecentWorkflowRunsRefresh();
+      }
+    }
+  }
+
+  function scheduleRecentWorkflowRunsRefresh() {
+    if (recentRunsRefreshTimer) {
+      clearTimeout(recentRunsRefreshTimer);
+    }
+
+    recentRunsRefreshTimer = setTimeout(() => {
+      recentRunsRefreshTimer = null;
+      void runCoalescedRecentRunsRefresh();
+    }, RECENT_RUNS_REFRESH_DEBOUNCE_MS);
+  }
+
   async function selectWorkflowRun(run: RunSummary) {
     openRunInTab(run.id);
     activateRunTab(run.id);
@@ -734,6 +774,29 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     host.notify();
   }
 
+  // keep the runs-list row in sync with a freshly streamed detail so the table reflects status,
+  // timing, and output changes immediately, without waiting on a separate recent-runs refetch.
+  function syncRunSummaryRow(run: RunSummary) {
+    const index = host.state.workflowRuns.findIndex((entry) => entry.id === run.id);
+
+    if (index === -1) {
+      return;
+    }
+
+    const next = host.state.workflowRuns.slice();
+    next[index] = {
+      ...next[index],
+      status: run.status,
+      started_at: run.started_at,
+      finished_at: run.finished_at,
+      output_json: run.output_json,
+      message: run.message,
+      active_node_id: run.active_node_id,
+      state: run.state,
+    };
+    host.state.workflowRuns = next;
+  }
+
   function applyWorkflowRunDetail(
     detail: WorkflowRunDetail | null,
     metadata:
@@ -762,6 +825,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
 
     if (detail) {
       internal.runDetailById.set(detail.run.id, detail);
+      syncRunSummaryRow(detail.run);
 
       if (!host.state.openRunIds.includes(detail.run.id)) {
         host.state.openRunIds = [...host.state.openRunIds, detail.run.id].slice(-MAX_OPEN_RUN_TABS);
@@ -895,5 +959,5 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     host.notify();
   }
 
-  return { isBreakpointed, getTransition, setTransition, runSelectedWorkflow, runSelectedWorkflowDebug, closeRunInput, confirmRunInput, launchWorkflowRun, stepSelectedWorkflowRun, continueSelectedWorkflowRun, cancelSelectedWorkflowRun, pauseSelectedWorkflowRun, resumeSelectedWorkflowRun, patchSelectedWorkflowRunDebug, toggleBreakpoint, runToCursor, skipCurrentNode, rerunCurrentNode, replaySelectedWorkflowRun, renameSelectedWorkflowRun, loadAllWatchExpressions, persistWatchExpressions, addWatchExpression, removeWatchExpression, fetchWorkflowRunsForSelected, fetchRecentWorkflowRuns, selectWorkflowRun, openRunInTab, activateRunTab, closeRunTab, fetchWorkflowRunDetail, setWorkflowRunDetail, selectWorkflowRunNode, clearWorkflowRunGates, workflowRunGateIds, workflowRunGateFingerprintForDetail, refreshWorkflowRunGates, syncWorkflowRunGatesForDetail, resolveWorkflowRunGate, applyWorkflowRunDetail, reapplyPendingBreakpointPatch, confirmPendingBreakpointPatch, clearPendingBreakpointPatch, applyBreakpointPatch, readBreakpoints, sameBreakpoints, updateSelectedWorkflowNodeDetail };
+  return { isBreakpointed, getTransition, setTransition, runSelectedWorkflow, runSelectedWorkflowDebug, closeRunInput, confirmRunInput, launchWorkflowRun, stepSelectedWorkflowRun, continueSelectedWorkflowRun, cancelSelectedWorkflowRun, pauseSelectedWorkflowRun, resumeSelectedWorkflowRun, patchSelectedWorkflowRunDebug, toggleBreakpoint, runToCursor, skipCurrentNode, rerunCurrentNode, replaySelectedWorkflowRun, renameSelectedWorkflowRun, loadAllWatchExpressions, persistWatchExpressions, addWatchExpression, removeWatchExpression, fetchWorkflowRunsForSelected, fetchRecentWorkflowRuns, scheduleRecentWorkflowRunsRefresh, selectWorkflowRun, openRunInTab, activateRunTab, closeRunTab, fetchWorkflowRunDetail, setWorkflowRunDetail, selectWorkflowRunNode, clearWorkflowRunGates, workflowRunGateIds, workflowRunGateFingerprintForDetail, refreshWorkflowRunGates, syncWorkflowRunGatesForDetail, resolveWorkflowRunGate, applyWorkflowRunDetail, reapplyPendingBreakpointPatch, confirmPendingBreakpointPatch, clearPendingBreakpointPatch, applyBreakpointPatch, readBreakpoints, sameBreakpoints, updateSelectedWorkflowNodeDetail };
 }

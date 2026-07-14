@@ -15,6 +15,9 @@ const DEFAULT_WAKE_QUEUE: &str = "runinator.wake";
 const DEFAULT_INGRESS_QUEUE: &str = "runinator.ingress";
 const DEFAULT_EVENT_EXCHANGE: &str = "runinator.events";
 const DEFAULT_CLIENT_ID: &str = "runinator";
+// bounds unacked deliveries per consumer so a queue backlog is spread across consumers instead of
+// being pushed wholesale to whichever subscribed first.
+const DEFAULT_PREFETCH_COUNT: u16 = 64;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RabbitMqBrokerConfig {
@@ -33,6 +36,9 @@ pub struct RabbitMqBrokerConfig {
     // fan-out exchange for UI events; each subscriber binds its own exclusive queue.
     pub event_exchange: String,
     pub client_id: String,
+    // per-consumer unacked delivery cap (basic.qos). without it rabbitmq pushes an entire backlog
+    // to the first consumers, which then hold every message unacked while draining serially.
+    pub prefetch_count: u16,
 }
 
 impl RabbitMqBrokerConfig {
@@ -47,7 +53,14 @@ impl RabbitMqBrokerConfig {
             ingress_queue: DEFAULT_INGRESS_QUEUE.into(),
             event_exchange: DEFAULT_EVENT_EXCHANGE.into(),
             client_id: DEFAULT_CLIENT_ID.into(),
+            prefetch_count: DEFAULT_PREFETCH_COUNT,
         }
+    }
+
+    /// override the per-consumer unacked delivery cap; 0 disables the limit.
+    pub fn with_prefetch_count(mut self, prefetch_count: u16) -> Self {
+        self.prefetch_count = prefetch_count;
+        self
     }
 
     /// override the fan-out exchange used for UI events.
@@ -172,6 +185,7 @@ impl RabbitMqBrokerInner {
             .create_channel()
             .await
             .map_err(rabbitmq_error("channel"))?;
+        apply_channel_qos(&channel, config).await?;
         declare_queue(&channel, &config.action_queue).await?;
         declare_queue(&channel, &config.targeted_action_queue).await?;
         declare_queue(&channel, &config.control_queue).await?;
@@ -214,6 +228,7 @@ impl RabbitMqBrokerInner {
             .create_channel()
             .await
             .map_err(rabbitmq_error("reconnect_channel"))?;
+        apply_channel_qos(&new_channel, config).await?;
         declare_queue(&new_channel, &config.action_queue).await?;
         declare_queue(&new_channel, &config.targeted_action_queue).await?;
         declare_queue(&new_channel, &config.control_queue).await?;
@@ -341,6 +356,24 @@ impl RabbitMqBrokerInner {
             .remove(&delivery_id)
             .ok_or(BrokerError::UnknownDelivery(delivery_id))
     }
+}
+
+// cap unacked deliveries per consumer on this channel; a zero prefetch leaves rabbitmq unlimited.
+#[cfg(feature = "rabbitmq")]
+async fn apply_channel_qos(
+    channel: &lapin::Channel,
+    config: &RabbitMqBrokerConfig,
+) -> Result<(), BrokerError> {
+    if config.prefetch_count == 0 {
+        return Ok(());
+    }
+    channel
+        .basic_qos(
+            config.prefetch_count,
+            lapin::options::BasicQosOptions::default(),
+        )
+        .await
+        .map_err(rabbitmq_error("basic_qos"))
 }
 
 #[cfg(feature = "rabbitmq")]

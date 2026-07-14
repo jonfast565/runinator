@@ -305,6 +305,13 @@ fn expand_expr(expr: &mut Expr, aliases: &AliasTable) -> Result<(), WdlError> {
             }
         }
         ExprKind::Lambda { body, .. } => expand_expr(body, aliases)?,
+        ExprKind::Cast { expr, .. } => expand_expr(expr, aliases)?,
+        ExprKind::Apply { callee, args } => {
+            expand_expr(callee, aliases)?;
+            for arg in args.iter_mut() {
+                expand_expr(arg, aliases)?;
+            }
+        }
         ExprKind::Str(parts) => {
             for part in parts.iter_mut() {
                 if let StrPart::Expr(part) = part {

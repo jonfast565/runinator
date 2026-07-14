@@ -50,6 +50,9 @@ pub(crate) struct CompletionContext {
     pub(crate) bindings: BTreeMap<String, RuninatorType>,
     pub(crate) scoped: BTreeMap<String, RuninatorType>,
     pub(crate) labels: BTreeSet<String>,
+    // best-effort output type of the source-order predecessor node, used to type `prev`. `Any`
+    // at ambiguous positions (first node, after a control-flow block, inside a nested block).
+    pub(crate) prev: RuninatorType,
     // namespace scope derived from the document's `import`s and `fn` definitions, mirroring
     // namespace resolution so bare/aliased completions only offer in-scope names.
     pub(crate) namespace: NamespaceScope,
@@ -426,6 +429,13 @@ fn construct_completion_items() -> Vec<WdlCompletionItem> {
             "keyword",
             "cron trigger",
             "trigger cron \"${cron}\" with { ${} }",
+            true,
+        ),
+        (
+            "trigger on_success",
+            "keyword",
+            "chained trigger",
+            "trigger on_success workflow \"${target}\"",
             true,
         ),
         (
@@ -832,6 +842,10 @@ pub(crate) fn root_type(name: &str, context: &CompletionContext) -> Option<Runin
     if name == "config" || name == "secret" {
         return Some(RuninatorType::Any);
     }
+    // `prev` resolves to the source-order predecessor's output type when it is a producing node.
+    if name == "prev" {
+        return Some(context.prev.clone());
+    }
     context
         .scoped
         .get(name)
@@ -906,9 +920,13 @@ pub(crate) fn completion_context(
         patched.push_str(&source[cursor..]);
         parse_document(&patched)
     });
-    let Ok(document) = document else {
+    let Ok(mut document) = document else {
         return CompletionContext::default();
     };
+    // best-effort: rewrite namespaced/aliased calls to their bare runtime form so expression-type
+    // inference (intrinsic and higher-order result typing) sees the same names sema does. errors
+    // (e.g. an unknown module mid-edit) leave the partially-resolved document, which is fine here.
+    let _ = crate::namespace::resolve(&mut document);
     let workflow = document.workflows.first();
     let input = workflow
         .and_then(|workflow| workflow.input.as_ref().and_then(|ty| lower_type(ty).ok()))
@@ -1031,12 +1049,21 @@ fn collect_block_context(
     providers: &[ProviderMetadata],
     context: &mut CompletionContext,
 ) {
+    // a block starts with no known predecessor; track the last straight-line producing node so a
+    // sibling that references `prev` sees its output type.
+    let mut prev = RuninatorType::Any;
     for stmt in block {
         if stmt.span.start <= cursor {
             record_statement_binding(stmt, providers, context);
         }
         if stmt.span.start <= cursor && cursor <= stmt.span.end {
+            // the cursor is inside this statement: `prev` is the previous sibling's output. set it
+            // before descending so a nested block can still override with its own local predecessor.
+            context.prev = prev.clone();
             collect_child_context(stmt, cursor, providers, context);
+        }
+        if stmt.span.end < cursor {
+            prev = statement_output_type(stmt, providers);
         }
     }
 }
@@ -1054,7 +1081,7 @@ fn collect_child_context(
                 return;
             }
             let item_type = infer_expr_type(&for_stmt.items, context)
-                .and_then(array_element_type)
+                .and_then(|ty| ty.element_type())
                 .unwrap_or(RuninatorType::Any);
             context.scoped.insert(for_stmt.var.clone(), item_type);
             collect_block_context(&for_stmt.body, cursor, providers, context);
@@ -1065,7 +1092,7 @@ fn collect_child_context(
                 return;
             }
             let item_type = infer_expr_type(&map_stmt.items, context)
-                .and_then(array_element_type)
+                .and_then(|ty| ty.element_type())
                 .unwrap_or(RuninatorType::Any);
             context.scoped.insert(map_stmt.var.clone(), item_type);
             collect_block_context(&map_stmt.body, cursor, providers, context);
@@ -1117,19 +1144,26 @@ fn record_statement_binding(
     let Some(id) = stmt.annotations.id.as_deref().or(stmt.label.as_deref()) else {
         return;
     };
-    let ty = if let Some(label_type) = &stmt.label_type {
-        lower_type(label_type).unwrap_or(RuninatorType::Any)
-    } else {
-        match &stmt.kind {
-            StmtKind::Action(action) => {
-                provider_action_output_type(providers, &action.provider, &action.function)
-                    .unwrap_or(RuninatorType::Any)
-            }
-            StmtKind::Subflow(_) => subflow_output_type(),
-            _ => RuninatorType::Any,
+    context
+        .bindings
+        .insert(id.to_string(), statement_output_type(stmt, providers));
+}
+
+/// the output type a straight-line successor would see as `prev`: the node's explicit `label_type`,
+/// else its provider action / subflow result shape, else `Any` for control-flow and effect-free
+/// nodes.
+fn statement_output_type(stmt: &Stmt, providers: &[ProviderMetadata]) -> RuninatorType {
+    if let Some(label_type) = &stmt.label_type {
+        return lower_type(label_type).unwrap_or(RuninatorType::Any);
+    }
+    match &stmt.kind {
+        StmtKind::Action(action) => {
+            provider_action_output_type(providers, &action.provider, &action.function)
+                .unwrap_or(RuninatorType::Any)
         }
-    };
-    context.bindings.insert(id.to_string(), ty);
+        StmtKind::Subflow(subflow) => subflow_output_type(subflow.detached),
+        _ => RuninatorType::Any,
+    }
 }
 
 pub(crate) fn provider_action_output_type(
@@ -1156,9 +1190,17 @@ fn infer_expr_type(expr: &Expr, context: &CompletionContext) -> Option<Runinator
         ExprKind::Compare { .. } => Some(RuninatorType::Boolean),
         ExprKind::Ternary { then, els, .. } => {
             let then_ty = infer_expr_type(then, context)?;
-            (Some(&then_ty) == infer_expr_type(els, context).as_ref()).then_some(then_ty)
+            let els_ty = infer_expr_type(els, context)?;
+            Some(then_ty.unify(&els_ty))
         }
         ExprKind::InlineCode { .. } => Some(RuninatorType::String),
+        // a cast reports its asserted target type, so completion off the cast offers that shape.
+        ExprKind::Cast { ty, .. } => lower_type(ty).ok(),
+        // applying a callee yields the callee function's result type, so completion can descend into it.
+        ExprKind::Apply { callee, .. } => match infer_expr_type(callee, context)? {
+            RuninatorType::Function { ret, .. } => Some(*ret),
+            _ => Some(RuninatorType::Any),
+        },
         ExprKind::Array(items) => {
             let item_type = items
                 .first()
@@ -1180,13 +1222,134 @@ fn infer_expr_type(expr: &Expr, context: &CompletionContext) -> Option<Runinator
         | ExprKind::Div(_)
         | ExprKind::Mod(_)
         | ExprKind::Neg(_) => Some(RuninatorType::Number),
-        ExprKind::Call { .. } => Some(RuninatorType::Any),
-        // a lambda carries no value type of its own.
-        ExprKind::Lambda { .. } => None,
+        ExprKind::Call { name, args, .. } => {
+            if runinator_workflows::is_higher_order(name) {
+                // recover the higher-order result from the collection + lambda body, falling back to
+                // `any` when the collection type or lambda shape is not statically determinable.
+                infer_higher_order_type(name, args, context).or(Some(RuninatorType::Any))
+            } else if let Some(RuninatorType::Function { ret, .. }) = function_local(name, context)
+            {
+                // a call to a local bound to a first-class lambda yields the function's result type.
+                Some((**ret).clone())
+            } else {
+                // mirror sema: recover an argument-dependent result for the polymorphic
+                // intrinsics, else the intrinsic's first declared result type, else `Any`.
+                let arg_types = args
+                    .iter()
+                    .map(|arg| infer_expr_type(arg, context).unwrap_or(RuninatorType::Any))
+                    .collect::<Vec<_>>();
+                let literal_keys = args.get(1).and_then(crate::ast::static_string_keys);
+                Some(
+                    runinator_workflows::intrinsic_result_type(
+                        name,
+                        &arg_types,
+                        literal_keys.as_deref(),
+                    )
+                    .or_else(|| {
+                        runinator_workflows::intrinsic_signature(name)
+                            .and_then(|sig| sig.results.first().map(|result| result.ty.clone()))
+                    })
+                    .unwrap_or(RuninatorType::Any),
+                )
+            }
+        }
+        // a lambda's value type: unconstrained parameters and the body's result type.
+        ExprKind::Lambda { params, body } => {
+            let mut scoped = context.clone();
+            for param in params {
+                scoped.scoped.insert(param.clone(), RuninatorType::Any);
+            }
+            let ret = infer_expr_type(body, &scoped).unwrap_or(RuninatorType::Any);
+            Some(RuninatorType::Function {
+                params: params.iter().map(|_| RuninatorType::Any).collect(),
+                ret: Box::new(ret),
+            })
+        }
         ExprKind::Path(segs) => infer_path_type(segs, context),
         // a spread carries no value type of its own; it is resolved by desugaring.
         ExprKind::Spread(_) => None,
     }
+}
+
+/// the result type of a higher-order intrinsic call, derived from the collection element type and
+/// the lambda body. mirrors sema's inference so autocomplete after a `map`/`filter`/... sees the
+/// same concrete type. `None` when the collection or lambda shape is not statically determinable.
+fn infer_higher_order_type(
+    name: &str,
+    args: &[Expr],
+    context: &CompletionContext,
+) -> Option<RuninatorType> {
+    let collection_type = infer_expr_type(args.first()?, context)?;
+    let item_type = higher_order_item_type(&collection_type)?;
+    match name {
+        "map" => Some(RuninatorType::array(infer_lambda_type(
+            args.get(1)?,
+            &[(0, item_type)],
+            context,
+        )?)),
+        "flat_map" => match infer_lambda_type(args.get(1)?, &[(0, item_type)], context)? {
+            RuninatorType::Array(inner) => Some(RuninatorType::array(*inner)),
+            other => Some(RuninatorType::array(other)),
+        },
+        // filter/sort_by keep the element type; the lambda only refines ordering/selection.
+        "filter" | "sort_by" => Some(RuninatorType::array(item_type)),
+        "find" => Some(RuninatorType::Union(vec![item_type, RuninatorType::Null])),
+        "any" | "all" => Some(RuninatorType::Boolean),
+        "reduce" => {
+            let accumulator = infer_expr_type(args.get(1)?, context)?;
+            let body = infer_lambda_type(
+                args.get(2)?,
+                &[(0, accumulator.clone()), (1, item_type)],
+                context,
+            )?;
+            Some(accumulator.common_type(&body).unwrap_or(accumulator))
+        }
+        _ => None,
+    }
+}
+
+/// the element type of a higher-order collection argument (`array<T>` -> `T`, union of arrays ->
+/// union of elements, `any` -> `any`); `None` for a non-iterable.
+fn higher_order_item_type(ty: &RuninatorType) -> Option<RuninatorType> {
+    match ty {
+        RuninatorType::Union(_) => ty.union_element_type(),
+        other => other.element_type(),
+    }
+}
+
+/// find a local bound to a first-class function type (a lambda value), if any.
+fn function_local<'a>(name: &str, context: &'a CompletionContext) -> Option<&'a RuninatorType> {
+    context
+        .scoped
+        .get(name)
+        .or_else(|| context.bindings.get(name))
+        .filter(|ty| matches!(ty, RuninatorType::Function { .. }))
+}
+
+/// infer a lambda body's type with its parameters bound to the given element types in a scoped copy
+/// of the completion context, or use a first-class function argument's declared result type. `None`
+/// when the expression is neither a lambda nor a function of the expected arity.
+fn infer_lambda_type(
+    expr: &Expr,
+    bindings: &[(usize, RuninatorType)],
+    context: &CompletionContext,
+) -> Option<RuninatorType> {
+    let ExprKind::Lambda { params, body } = &expr.kind else {
+        return match infer_expr_type(expr, context) {
+            Some(RuninatorType::Function { params, ret }) if params.len() == bindings.len() => {
+                Some(*ret)
+            }
+            _ => None,
+        };
+    };
+    if params.len() != bindings.len() {
+        return None;
+    }
+    let mut scoped = context.clone();
+    for (index, ty) in bindings {
+        scoped.scoped.insert(params[*index].clone(), ty.clone());
+    }
+    infer_expr_type(body, &scoped)
 }
 
 fn infer_path_type(segs: &[PathSeg], context: &CompletionContext) -> Option<RuninatorType> {
@@ -1204,30 +1367,25 @@ fn infer_path_type(segs: &[PathSeg], context: &CompletionContext) -> Option<Runi
     navigate_type(root, &rest)
 }
 
-fn array_element_type(ty: RuninatorType) -> Option<RuninatorType> {
-    match ty {
-        RuninatorType::Array(element) => Some(*element),
-        _ => None,
-    }
-}
-
 pub(crate) fn workflow_context_type() -> RuninatorType {
-    RuninatorType::structure([
-        ("run_id", RuninatorType::Integer),
-        ("workflow_id", RuninatorType::Integer),
-        ("name", RuninatorType::String),
-        ("state", RuninatorType::Any),
-    ])
+    runinator_models::workflow_state::WorkflowContextHeader::runinator_type()
 }
 
-fn subflow_output_type() -> RuninatorType {
+fn subflow_output_type(detached: bool) -> RuninatorType {
+    // a detached subflow is fire-and-forget, so its output snapshot is never populated: `state` is
+    // `Null` (no fields to complete) rather than `Any`, matching the author-time type checker.
+    let state = if detached {
+        RuninatorType::Null
+    } else {
+        RuninatorType::Any
+    };
     RuninatorType::structure([
         ("subflow_run_id", RuninatorType::Integer),
         ("subflow_workflow_id", RuninatorType::Integer),
         ("run_name", RuninatorType::String),
         ("reused", RuninatorType::Boolean),
         ("status", RuninatorType::String),
-        ("state", RuninatorType::Any),
+        ("state", state),
         ("parameters", RuninatorType::Any),
     ])
 }

@@ -143,6 +143,8 @@ pub async fn import_workflow_bundle_with<T: DatabaseImpl>(
     // reject the whole pack up front if any subflow targets a workflow that is neither in the pack
     // nor already stored, so a typo'd `spawn "Naem"` fails at apply time rather than at run time.
     validate_subflow_targets(db, &bundle).await?;
+    // likewise reject a chaining trigger whose target workflow cannot be resolved.
+    validate_chained_targets(db, &bundle).await?;
 
     let mut workflows = Vec::with_capacity(bundle.workflows.len());
     for workflow in bundle.workflows {
@@ -225,9 +227,56 @@ async fn validate_subflow_targets<T: DatabaseImpl>(
     Ok(())
 }
 
-/// replace a workflow's `managed_by: wdl` cron triggers with the ones declared in its
+/// validate that every chaining trigger targets a workflow present in the bundle or already stored.
+async fn validate_chained_targets<T: DatabaseImpl>(
+    db: &T,
+    bundle: &WorkflowBundle,
+) -> Result<(), SendableError> {
+    let mut incoming: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for workflow in &bundle.workflows {
+        incoming.insert(workflow.name.clone());
+        if let Some(namespace) = &workflow.namespace {
+            incoming.insert(format!("{namespace}.{}", workflow.name));
+        }
+    }
+    for workflow in &bundle.workflows {
+        let specs = workflow
+            .definition
+            .metadata
+            .pointer("/triggers")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        for spec in &specs {
+            if spec.get("kind").and_then(Value::as_str) != Some("chained") {
+                continue;
+            }
+            let Some(name) = spec
+                .get("target_workflow")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+            else {
+                continue;
+            };
+            if incoming.contains(name)
+                || db.fetch_workflow_by_name(name.to_string()).await?.is_some()
+            {
+                continue;
+            }
+            return Err(crate::errors::IMPORT_UNKNOWN_CHAINED_TARGET.error(format!(
+                "workflow '{}' chains to unknown target workflow '{name}'",
+                workflow.name
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// replace a workflow's `managed_by: wdl` triggers with the ones declared in its
 /// `definition.metadata.triggers`. manually-added triggers are left untouched; re-import is
-/// idempotent (delete the pack-managed set, then insert the current declarations).
+/// idempotent (delete the pack-managed set, then insert the current declarations). each spec's
+/// `kind` selects the trigger kind (absent ⇒ `cron` for back-compat with older packs).
 async fn materialize_workflow_triggers<T: DatabaseImpl>(
     db: &T,
     workflow: &WorkflowDefinition,
@@ -253,42 +302,75 @@ async fn materialize_workflow_triggers<T: DatabaseImpl>(
             db.delete_workflow_trigger(trigger_id).await?;
         }
     }
-    // insert the currently declared schedules.
+    // insert the currently declared triggers.
     for spec in &specs {
-        let Some(cron) = spec
-            .get("cron")
-            .and_then(Value::as_str)
-            .filter(|c| !c.is_empty())
-        else {
-            continue;
-        };
         let parameters = spec
             .get("parameters")
             .cloned()
             .unwrap_or_else(|| Value::Object(Default::default()));
         let enabled = spec.get("enabled").and_then(Value::as_bool).unwrap_or(true);
-        let blackout_start = spec
-            .get("blackout_start")
-            .and_then(Value::as_str)
-            .map(parse_trigger_datetime)
-            .transpose()?;
-        let blackout_end = spec
-            .get("blackout_end")
-            .and_then(Value::as_str)
-            .map(parse_trigger_datetime)
-            .transpose()?;
-        let trigger = WorkflowTrigger {
-            id: None,
-            workflow_id,
-            kind: runinator_models::workflows::WorkflowTriggerKind::Cron,
-            enabled,
-            configuration: runinator_models::json!({ "cron": cron, "parameters": parameters }),
-            next_execution: None,
-            blackout_start,
-            blackout_end,
-            metadata: runinator_models::json!({ "managed_by": "wdl" }),
-            created_at: None,
-            updated_at: None,
+        let kind = spec.get("kind").and_then(Value::as_str).unwrap_or("cron");
+        let trigger = match kind {
+            "chained" => {
+                let Some(target) = spec
+                    .get("target_workflow")
+                    .and_then(Value::as_str)
+                    .filter(|t| !t.is_empty())
+                else {
+                    continue;
+                };
+                let on = spec.get("on").and_then(Value::as_str).unwrap_or("success");
+                WorkflowTrigger {
+                    id: None,
+                    workflow_id,
+                    kind: runinator_models::workflows::WorkflowTriggerKind::Chained,
+                    enabled,
+                    configuration: runinator_models::json!({
+                        "on": on,
+                        "target_workflow": target,
+                        "parameters": parameters,
+                    }),
+                    next_execution: None,
+                    blackout_start: None,
+                    blackout_end: None,
+                    metadata: runinator_models::json!({ "managed_by": "wdl" }),
+                    created_at: None,
+                    updated_at: None,
+                }
+            }
+            // absent kind ⇒ cron for back-compat with packs compiled before the kind discriminator.
+            _ => {
+                let Some(cron) = spec
+                    .get("cron")
+                    .and_then(Value::as_str)
+                    .filter(|c| !c.is_empty())
+                else {
+                    continue;
+                };
+                let blackout_start = spec
+                    .get("blackout_start")
+                    .and_then(Value::as_str)
+                    .map(parse_trigger_datetime)
+                    .transpose()?;
+                let blackout_end = spec
+                    .get("blackout_end")
+                    .and_then(Value::as_str)
+                    .map(parse_trigger_datetime)
+                    .transpose()?;
+                WorkflowTrigger {
+                    id: None,
+                    workflow_id,
+                    kind: runinator_models::workflows::WorkflowTriggerKind::Cron,
+                    enabled,
+                    configuration: runinator_models::json!({ "cron": cron, "parameters": parameters }),
+                    next_execution: None,
+                    blackout_start,
+                    blackout_end,
+                    metadata: runinator_models::json!({ "managed_by": "wdl" }),
+                    created_at: None,
+                    updated_at: None,
+                }
+            }
         };
         db.upsert_workflow_trigger(&trigger).await?;
     }

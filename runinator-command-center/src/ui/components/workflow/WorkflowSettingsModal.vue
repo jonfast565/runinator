@@ -190,6 +190,7 @@
                     :key="field.name"
                     :field="toNodeField(field)"
                     :model-value="configDraft[field.name]"
+                    :workflows="workflows.workflows"
                     @update:model-value="setConfigField(field.name, $event)"
                   />
                 </div>

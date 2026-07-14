@@ -1,5 +1,5 @@
 use runinator_models::types::RuninatorType;
-use runinator_models::value::{Map, Value};
+use runinator_models::value::{CLOSURE_TAG, Map, Value};
 
 use crate::compute::{cmp_values, is_higher_order};
 use crate::errors::WorkflowValidationError;
@@ -272,6 +272,19 @@ pub(crate) fn evaluate_expression_with(
             if is_higher_order(name) {
                 return evaluate_higher_order(name, args, context, env);
             }
+            // a call to a local bound to a first-class closure applies it (locals shadow user fns).
+            if let Some(closure) = context
+                .get(REF_LOCAL)
+                .and_then(|locals| locals.get(name))
+                .filter(|value| is_closure(value))
+                && let Some((params, body, captured)) = as_closure(closure)
+            {
+                let values = args
+                    .iter()
+                    .map(|arg| evaluate_expression_with(arg, context, env))
+                    .collect::<Result<Vec<_>, _>>()?;
+                return apply_lambda_over(&params, &body, Some(&captured), &values, context, env);
+            }
             // a user-defined function: evaluate its args in this context, then apply the body.
             if let Some(function) = env.lookup(name) {
                 let values = args
@@ -304,10 +317,23 @@ pub(crate) fn evaluate_expression_with(
             };
             evaluate_expression_with(taken, context, env)
         }
-        // a lambda has no standalone value; it is only meaningful as a higher-order argument.
-        WorkflowExpression::Lambda { .. } => Err(WorkflowValidationError::InvalidValueRef(
-            "a lambda may only be passed to a higher-order intrinsic".into(),
-        )),
+        // a lambda evaluates to a first-class closure value capturing the current lexical locals.
+        WorkflowExpression::Lambda { params, body } => Ok(make_closure(params, body, context)),
+        // apply an arbitrary callee value (a field/index-held closure) to arguments. the callee must
+        // evaluate to a first-class closure; a bare named application uses the leaner `Call` form.
+        WorkflowExpression::Apply { callee, args } => {
+            let target = evaluate_expression_with(callee, context, env)?;
+            let Some((params, body, captured)) = as_closure(&target) else {
+                return Err(WorkflowValidationError::InvalidValueRef(
+                    "cannot apply a value that is not a function".to_string(),
+                ));
+            };
+            let values = args
+                .iter()
+                .map(|arg| evaluate_expression_with(arg, context, env))
+                .collect::<Result<Vec<_>, _>>()?;
+            apply_lambda_over(&params, &body, Some(&captured), &values, context, env)
+        }
     }
 }
 
@@ -341,20 +367,20 @@ fn evaluate_higher_order(
     // reduce takes (collection, initial, lambda); every other higher-order takes (collection, lambda).
     let lambda_index = if name == "reduce" { 2 } else { 1 };
     let items = collection(name, evaluate_expression_with(arg(0)?, context, env)?)?;
-    let (params, body) = as_lambda(name, arg(lambda_index)?)?;
+    let callable = resolve_callable(name, arg(lambda_index)?, context, env)?;
 
     match name {
         "map" => {
             let mapped = items
                 .iter()
-                .map(|item| apply_lambda(params, body, &[item.clone()], context, env))
+                .map(|item| callable.apply(&[item.clone()], context, env))
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(Value::Array(mapped))
         }
         "flat_map" => {
             let mut out = Vec::new();
             for item in &items {
-                match apply_lambda(params, body, &[item.clone()], context, env)? {
+                match callable.apply(&[item.clone()], context, env)? {
                     Value::Array(inner) => out.extend(inner),
                     other => out.push(other),
                 }
@@ -364,10 +390,7 @@ fn evaluate_higher_order(
         "filter" => {
             let mut out = Vec::new();
             for item in items {
-                if predicate(
-                    name,
-                    apply_lambda(params, body, &[item.clone()], context, env)?,
-                )? {
+                if predicate(name, callable.apply(&[item.clone()], context, env)?)? {
                     out.push(item);
                 }
             }
@@ -375,10 +398,7 @@ fn evaluate_higher_order(
         }
         "find" => {
             for item in items {
-                if predicate(
-                    name,
-                    apply_lambda(params, body, &[item.clone()], context, env)?,
-                )? {
+                if predicate(name, callable.apply(&[item.clone()], context, env)?)? {
                     return Ok(item);
                 }
             }
@@ -386,10 +406,7 @@ fn evaluate_higher_order(
         }
         "any" => {
             for item in &items {
-                if predicate(
-                    name,
-                    apply_lambda(params, body, &[item.clone()], context, env)?,
-                )? {
+                if predicate(name, callable.apply(&[item.clone()], context, env)?)? {
                     return Ok(Value::Bool(true));
                 }
             }
@@ -397,10 +414,7 @@ fn evaluate_higher_order(
         }
         "all" => {
             for item in &items {
-                if !predicate(
-                    name,
-                    apply_lambda(params, body, &[item.clone()], context, env)?,
-                )? {
+                if !predicate(name, callable.apply(&[item.clone()], context, env)?)? {
                     return Ok(Value::Bool(false));
                 }
             }
@@ -411,7 +425,7 @@ fn evaluate_higher_order(
             let mut keyed = items
                 .into_iter()
                 .map(|item| {
-                    let key = apply_lambda(params, body, &[item.clone()], context, env)?;
+                    let key = callable.apply(&[item.clone()], context, env)?;
                     Ok((key, item))
                 })
                 .collect::<Result<Vec<_>, WorkflowValidationError>>()?;
@@ -423,7 +437,7 @@ fn evaluate_higher_order(
         "reduce" => {
             let mut acc = evaluate_expression_with(arg(1)?, context, env)?;
             for item in items {
-                acc = apply_lambda(params, body, &[acc, item], context, env)?;
+                acc = callable.apply(&[acc, item], context, env)?;
             }
             Ok(acc)
         }
@@ -434,16 +448,105 @@ fn evaluate_higher_order(
 }
 
 /// extract a lambda's parameters and body, rejecting a non-lambda argument.
-fn as_lambda<'a>(
-    name: &str,
-    expr: &'a WorkflowExpression,
-) -> Result<(&'a [String], &'a WorkflowExpression), WorkflowValidationError> {
-    match expr {
-        WorkflowExpression::Lambda { params, body } => Ok((params, body)),
-        _ => Err(WorkflowValidationError::InvalidValueRef(format!(
-            "'{name}' requires a lambda argument"
-        ))),
+/// a resolved lambda argument to a higher-order intrinsic: either a literal lambda expression (which
+/// closes over the call-site locals) or a first-class closure value carrying its own captured env.
+struct Callable {
+    params: Vec<String>,
+    body: WorkflowExpression,
+    captured: Option<Value>,
+}
+
+impl Callable {
+    fn apply(
+        &self,
+        values: &[Value],
+        context: &Value,
+        env: EvalEnv,
+    ) -> Result<Value, WorkflowValidationError> {
+        match &self.captured {
+            // a closure value restores its captured lexical locals; a literal lambda uses the
+            // call-site locals (the existing higher-order behavior).
+            Some(captured) => apply_lambda_over(
+                &self.params,
+                &self.body,
+                Some(captured),
+                values,
+                context,
+                env,
+            ),
+            None => apply_lambda_over(&self.params, &self.body, None, values, context, env),
+        }
     }
+}
+
+/// resolve a higher-order intrinsic's function argument: a literal lambda expression is used
+/// directly; otherwise the argument is evaluated and must yield a first-class closure value.
+fn resolve_callable(
+    name: &str,
+    expr: &WorkflowExpression,
+    context: &Value,
+    env: EvalEnv,
+) -> Result<Callable, WorkflowValidationError> {
+    if let WorkflowExpression::Lambda { params, body } = expr {
+        return Ok(Callable {
+            params: params.clone(),
+            body: (**body).clone(),
+            captured: None,
+        });
+    }
+    let value = evaluate_expression_with(expr, context, env)?;
+    if let Some((params, body, captured)) = as_closure(&value) {
+        return Ok(Callable {
+            params,
+            body,
+            captured: Some(captured),
+        });
+    }
+    Err(WorkflowValidationError::InvalidValueRef(format!(
+        "'{name}' requires a lambda argument"
+    )))
+}
+
+/// build a first-class closure value from a lambda, capturing the lexical locals visible now so a
+/// later application (in any context) still sees them. the body is stored in its wire form.
+fn make_closure(params: &[String], body: &WorkflowExpression, context: &Value) -> Value {
+    let env = context
+        .get(REF_LOCAL)
+        .cloned()
+        .unwrap_or_else(|| Value::Object(Map::new()));
+    let spec = Map::from_iter([
+        (
+            "params".into(),
+            Value::Array(params.iter().cloned().map(Value::String).collect()),
+        ),
+        ("body".into(), Value::from(body)),
+        ("env".into(), env),
+    ]);
+    Value::Object(Map::from_iter([(CLOSURE_TAG.into(), Value::Object(spec))]))
+}
+
+/// parse a closure value into its parameters, body, and captured locals, if it is one.
+fn as_closure(value: &Value) -> Option<(Vec<String>, WorkflowExpression, Value)> {
+    let spec = value.as_object()?.get(CLOSURE_TAG)?.as_object()?;
+    let params = spec
+        .get("params")?
+        .as_array()?
+        .iter()
+        .map(|value| value.as_str().map(str::to_string))
+        .collect::<Option<Vec<_>>>()?;
+    let body = parse_expression(spec.get("body")?).ok()?;
+    let env = spec
+        .get("env")
+        .cloned()
+        .unwrap_or_else(|| Value::Object(Map::new()));
+    Some((params, body, env))
+}
+
+/// whether a value is a first-class closure.
+fn is_closure(value: &Value) -> bool {
+    value
+        .as_object()
+        .is_some_and(|object| object.contains_key(CLOSURE_TAG))
 }
 
 /// require an array, naming the offending intrinsic.
@@ -466,25 +569,31 @@ fn predicate(name: &str, value: Value) -> Result<bool, WorkflowValidationError> 
     }
 }
 
-/// apply a lambda body with `values` bound to its parameters in a fresh `let` scope layered over a
-/// clone of `context`.
-fn apply_lambda(
+/// apply a lambda/closure body with `values` bound to its parameters over a clone of `context`. a
+/// closure passes its `captured` locals to seed the `let` scope; a literal lambda passes `None` and
+/// keeps the call-site locals already in `context`. in both cases the parameters are overlaid last.
+fn apply_lambda_over(
     params: &[String],
     body: &WorkflowExpression,
+    captured: Option<&Value>,
     values: &[Value],
     context: &Value,
     env: EvalEnv,
 ) -> Result<Value, WorkflowValidationError> {
     let mut scope = context.clone();
-    if !scope.get(REF_LOCAL).is_some_and(Value::is_object)
-        && let Some(object) = scope.as_object_mut()
-    {
-        object.insert(REF_LOCAL.into(), Value::Object(Map::new()));
-    }
+    let mut locals = match captured {
+        Some(captured) => captured.as_object().cloned().unwrap_or_default(),
+        None => scope
+            .get(REF_LOCAL)
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default(),
+    };
     for (param, value) in params.iter().zip(values.iter()) {
-        if let Some(locals) = scope.get_mut(REF_LOCAL).and_then(Value::as_object_mut) {
-            locals.insert(param.clone(), value.clone());
-        }
+        locals.insert(param.clone(), value.clone());
+    }
+    if let Some(object) = scope.as_object_mut() {
+        object.insert(REF_LOCAL.into(), Value::Object(locals));
     }
     evaluate_expression_with(body, &scope, env)
 }

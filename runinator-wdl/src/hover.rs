@@ -420,6 +420,9 @@ fn keyword_hover(word: WordAt<'_>) -> Option<WdlHoverResponse> {
         "output" => "Declares run-level artifacts and/or emits an event from an output block.",
         "yield" => "Returns a value from a control region.",
         "trigger" => "Declares an import-managed workflow trigger.",
+        "on_success" | "on_failure" | "on_complete" => {
+            "Chains another workflow to start when this run reaches that terminal state."
+        }
         "watch" => "Declares a workflow-level cancellation guard.",
         "fn" => "Declares a reusable compute function.",
         "import" => "Imports a namespace or standard-library module.",
@@ -592,6 +595,15 @@ fn render_type_with_depth(ty: &RuninatorType, depth: usize) -> String {
             .map(|variant| render_type_with_depth(variant, depth + 1))
             .collect::<Vec<_>>()
             .join(" | "),
+        RuninatorType::Function { params, ret } => format!(
+            "function({}) -> {}",
+            params
+                .iter()
+                .map(|param| render_type_with_depth(param, depth + 1))
+                .collect::<Vec<_>>()
+                .join(", "),
+            render_type_with_depth(ret, depth + 1)
+        ),
     }
 }
 

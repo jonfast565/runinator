@@ -127,6 +127,29 @@ impl Decompiler<'_> {
                 .unwrap_or_else(|| name.to_string());
             return Ok(Some(format!("{callee}({})", rendered.join(", "))));
         }
+        // an application ($apply + args): render `callee(args)`. a `$ref`/path callee (`obj.f`,
+        // `fns[0]`) is parenthesized so the trailing `(` is not re-parsed as a method/prefix call.
+        if let Some(callee) = map.get("$apply") {
+            let args = map
+                .get("args")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let rendered = args
+                .iter()
+                .map(|arg| self.expr(arg))
+                .collect::<Result<Vec<_>, _>>()?;
+            let callee_text = self.expr(callee)?;
+            let callee_text = if callee
+                .as_object()
+                .is_some_and(|object| object.contains_key("$ref"))
+            {
+                format!("({callee_text})")
+            } else {
+                callee_text
+            };
+            return Ok(Some(format!("{callee_text}({})", rendered.join(", "))));
+        }
         if map.len() == 1 {
             if let Some(spec) = map.get("$lambda").and_then(Value::as_object) {
                 let params = spec
@@ -510,6 +533,15 @@ pub(super) fn render_type(ty: &RuninatorType) -> String {
             }
             format!("{{ {} }}", parts.join(", "))
         }
+        RuninatorType::Function { params, ret } => format!(
+            "function({}) -> {}",
+            params
+                .iter()
+                .map(render_type)
+                .collect::<Vec<_>>()
+                .join(", "),
+            render_type(ret)
+        ),
     }
 }
 

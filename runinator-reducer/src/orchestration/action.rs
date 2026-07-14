@@ -3,7 +3,8 @@ use std::future::Future;
 use super::context::{is_reentry_stale, merge_parameters, runtime_context};
 use super::handler::{NodeHandler, NodeHandlerContext};
 use super::transitions::{
-    arm_node_timeout, retry_or_transition, time_out, timed_out, timed_out_since_created,
+    arm_node_timeout, arm_node_timeout_or, retry_or_transition, time_out, timed_out,
+    timed_out_since_created_or,
 };
 use super::*;
 use runinator_comm::ActionTarget;
@@ -23,6 +24,10 @@ const REPLICA_STALE_SECONDS: i64 = 30;
 // fails the node promptly rather than waiting out (or never reaching) its `timeout_seconds`
 // deadline.
 const DISPATCH_LIVENESS_POLL_SECONDS: i64 = 15;
+// fallback deadline for a node parked on an unavailable worker target when it declares no
+// `timeout_seconds` of its own. the matching worker may never connect, and an indefinite park
+// holds mutexes and blocks every run queued behind it, so the park must fail eventually.
+pub(super) const TARGET_PARK_DEFAULT_TIMEOUT_SECONDS: i64 = 3600;
 
 // the routing decision for an action node: dispatch now to a resolved target, or park until the
 // bound worker becomes available.
@@ -177,8 +182,11 @@ pub(super) async fn process_action_node<T: DatabaseImpl>(
         // a node parked waiting for its bound desktop worker; honor the timeout, otherwise fall
         // through to re-resolve the target (the worker may have reconnected) reusing this run. a
         // parked run never touches `started_at` (only a `Running` transition sets it), so the
-        // deadline is measured from `created_at` instead.
-        if node_run.status == WorkflowStatus::Waiting && timed_out_since_created(node, node_run) {
+        // deadline is measured from `created_at` instead, with a fallback deadline when the node
+        // declares no timeout of its own.
+        if node_run.status == WorkflowStatus::Waiting
+            && timed_out_since_created_or(node, node_run, TARGET_PARK_DEFAULT_TIMEOUT_SECONDS)
+        {
             return time_out(
                 db,
                 workflow_run,
@@ -548,7 +556,13 @@ async fn park_for_target<T: DatabaseImpl>(
             None,
         )
         .await?;
-        arm_node_timeout(db, workflow_run.id, node).await?;
+        arm_node_timeout_or(
+            db,
+            workflow_run.id,
+            node,
+            TARGET_PARK_DEFAULT_TIMEOUT_SECONDS,
+        )
+        .await?;
     }
     enqueue_target_poll(db, workflow_run.id, node).await
 }

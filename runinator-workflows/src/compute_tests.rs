@@ -446,9 +446,101 @@ fn lambda_sort_by_key() {
 }
 
 #[test]
-fn lambda_outside_higher_order_is_rejected() {
+fn first_class_lambda_applied_by_name() {
+    // a lambda bound to a local is applied by calling the local name.
+    let program = parse_program(&json!([
+        { "$let": "f", "value": { "$lambda": { "params": ["x"],
+            "body": { "$add": [{ "$ref": { "let": ["x"] } }, 1] } } } },
+        { "$return": { "$call": "f", "args": [2] } }
+    ]))
+    .unwrap();
+    let outcome = run_program(&program, &json!({}), &PureIntrinsics).unwrap();
+    assert_eq!(outcome, ComputeOutcome::Return(json!(3)));
+}
+
+#[test]
+fn first_class_lambda_captures_outer_local() {
+    // the closure captures `base` from its lexical scope at creation.
+    let program = parse_program(&json!([
+        { "$let": "base", "value": 10 },
+        { "$let": "addbase", "value": { "$lambda": { "params": ["x"],
+            "body": { "$add": [{ "$ref": { "let": ["x"] } }, { "$ref": { "let": ["base"] } }] } } } },
+        { "$return": { "$call": "addbase", "args": [5] } }
+    ]))
+    .unwrap();
+    let outcome = run_program(&program, &json!({}), &PureIntrinsics).unwrap();
+    assert_eq!(outcome, ComputeOutcome::Return(json!(15)));
+}
+
+#[test]
+fn first_class_lambda_passed_to_higher_order() {
+    // a closure bound to a local is passed by name to a higher-order intrinsic.
+    let program = parse_program(&json!([
+        { "$let": "double", "value": { "$lambda": { "params": ["x"],
+            "body": { "$mul": [{ "$ref": { "let": ["x"] } }, 2] } } } },
+        { "$return": { "$call": "map", "args": [
+            { "$ref": { "params": ["xs"] } },
+            { "$ref": { "let": ["double"] } }
+        ] } }
+    ]))
+    .unwrap();
+    let outcome = run_program(
+        &program,
+        &json!({ "input": { "xs": [1, 2, 3] } }),
+        &PureIntrinsics,
+    )
+    .unwrap();
+    assert_eq!(outcome, ComputeOutcome::Return(json!([2, 4, 6])));
+}
+
+#[test]
+fn applies_a_field_held_closure() {
+    // a closure stored in an object field is applied via `$apply` with the field ref as the callee.
+    let program = parse_program(&json!([
+        { "$let": "ops", "value": { "inc": { "$lambda": { "params": ["x"],
+            "body": { "$add": [{ "$ref": { "let": ["x"] } }, 1] } } } } },
+        { "$return": { "$apply": { "$ref": { "let": ["ops", "inc"] } }, "args": [5] } }
+    ]))
+    .unwrap();
+    let outcome = run_program(&program, &json!({}), &PureIntrinsics).unwrap();
+    assert_eq!(outcome, ComputeOutcome::Return(json!(6)));
+}
+
+#[test]
+fn applies_an_index_held_closure() {
+    // a closure stored in an array element is applied via `$apply` with the index ref as the callee.
+    let program = parse_program(&json!([
+        { "$let": "fns", "value": [
+            { "$lambda": { "params": ["x"], "body": { "$add": [{ "$ref": { "let": ["x"] } }, 1] } } },
+            { "$lambda": { "params": ["x"], "body": { "$add": [{ "$ref": { "let": ["x"] } }, 2] } } }
+        ] },
+        { "$return": { "$apply": { "$ref": { "let": ["fns", 0] } }, "args": [10] } }
+    ]))
+    .unwrap();
+    let outcome = run_program(&program, &json!({}), &PureIntrinsics).unwrap();
+    assert_eq!(outcome, ComputeOutcome::Return(json!(11)));
+}
+
+#[test]
+fn applying_a_non_function_is_an_error() {
+    // applying a value that is not a closure is a runtime error.
+    let program = parse_program(&json!([
+        { "$return": { "$apply": { "$literal": 7 }, "args": [1] } }
+    ]))
+    .unwrap();
+    assert!(run_program(&program, &json!({}), &PureIntrinsics).is_err());
+}
+
+#[test]
+fn lambda_evaluates_to_a_first_class_closure() {
+    // a lambda outside a higher-order call now evaluates to a first-class closure value (tagged
+    // `$closure`) capturing its lexical env, rather than being rejected.
     let value = json!({ "$lambda": { "params": ["x"], "body": { "$ref": { "let": ["x"] } } } });
-    assert!(resolve_value_refs(&value, &Value::Null).is_err());
+    let closure = resolve_value_refs(&value, &Value::Null).unwrap();
+    assert!(
+        closure.get("$closure").is_some(),
+        "expected a closure value, got {closure:?}"
+    );
 }
 
 #[test]

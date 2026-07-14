@@ -95,31 +95,42 @@ pub(super) fn analyze(
         }
     }
 
-    // a `trigger cron` schedule must be a plain string literal (the cron expression).
-    for trigger in &workflow.triggers {
+    // a `trigger cron` schedule and a chained trigger target must be plain string literals.
+    let require_literal = |value: &Expr, message: &str, diagnostics: &mut Vec<Diagnostic>| {
         let is_literal_string = matches!(
-            &trigger.schedule.kind,
+            &value.kind,
             ExprKind::Str(parts) if parts.iter().all(|part| matches!(part, StrPart::Lit(_)))
         );
         if !is_literal_string {
-            diagnostics.push(Diagnostic::error(
-                trigger.schedule.span,
-                "trigger cron expression must be a string literal",
-            ));
+            diagnostics.push(Diagnostic::error(value.span, message));
         }
-        for value in [&trigger.blackout_start, &trigger.blackout_end]
-            .into_iter()
-            .flatten()
-        {
-            let is_literal_string = matches!(
-                &value.kind,
-                ExprKind::Str(parts) if parts.iter().all(|part| matches!(part, StrPart::Lit(_)))
-            );
-            if !is_literal_string {
-                diagnostics.push(Diagnostic::error(
-                    value.span,
-                    "trigger blackout value must be a string literal",
-                ));
+    };
+    for trigger in &workflow.triggers {
+        match &trigger.kind {
+            TriggerDeclKind::Cron {
+                schedule,
+                blackout_start,
+                blackout_end,
+            } => {
+                require_literal(
+                    schedule,
+                    "trigger cron expression must be a string literal",
+                    diagnostics,
+                );
+                for value in [blackout_start, blackout_end].into_iter().flatten() {
+                    require_literal(
+                        value,
+                        "trigger blackout value must be a string literal",
+                        diagnostics,
+                    );
+                }
+            }
+            TriggerDeclKind::Chained { target, .. } => {
+                require_literal(
+                    target,
+                    "chained trigger target must be a string literal",
+                    diagnostics,
+                );
             }
         }
     }
@@ -550,6 +561,13 @@ fn resolve_expr(
                 resolve_expr(part, symbols, scope, ctx, diagnostics);
             }
         }
+        ExprKind::Cast { expr, .. } => resolve_expr(expr, symbols, scope, ctx, diagnostics),
+        ExprKind::Apply { callee, args } => {
+            resolve_expr(callee, symbols, scope, ctx, diagnostics);
+            for arg in args {
+                resolve_expr(arg, symbols, scope, ctx, diagnostics);
+            }
+        }
         ExprKind::ToString(inner) | ExprKind::ToJson(inner) | ExprKind::Neg(inner) => {
             resolve_expr(inner, symbols, scope, ctx, diagnostics);
         }
@@ -575,14 +593,18 @@ fn resolve_expr(
             name, args, named, ..
         } => {
             let is_user = symbols.registry.is_user(name);
+            // a local bound to a first-class lambda is a valid callee; its type-correctness (that it
+            // really is a function, and its arity) is checked by the type pass.
+            let is_local = scope.iter().any(|local| local == name);
             // validate the call against the callable vocabulary: unknown names (typos), arity, and
             // keyword-argument mistakes are reported here rather than failing late at the worker.
-            if !symbols.registry.knows(name) {
+            if !symbols.registry.knows(name) && !is_local {
                 diagnostics.push(Diagnostic::error(
                     expr.span,
                     format!("unknown function '{name}'"),
                 ));
             } else if !is_user
+                && !is_local
                 && let Some((min, max)) = runinator_workflows::intrinsic_arity(name)
                 && named.is_empty()
                 && (args.len() < min || args.len() > max)
@@ -678,6 +700,13 @@ fn resolve_default_expr(
         ExprKind::Concat(parts) | ExprKind::Coalesce(parts) => {
             for part in parts {
                 resolve_default_expr(part, registry, diagnostics);
+            }
+        }
+        ExprKind::Cast { expr, .. } => resolve_default_expr(expr, registry, diagnostics),
+        ExprKind::Apply { callee, args } => {
+            resolve_default_expr(callee, registry, diagnostics);
+            for arg in args {
+                resolve_default_expr(arg, registry, diagnostics);
             }
         }
         ExprKind::ToString(inner) | ExprKind::ToJson(inner) | ExprKind::Neg(inner) => {

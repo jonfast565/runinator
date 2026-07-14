@@ -8,7 +8,8 @@ use std::time::Duration;
 use chrono::Utc;
 use runinator_broker::{Broker, IngressMessage, WsIngressCommand};
 use runinator_models::errors::error_code_or_unknown;
-use tokio::sync::Notify;
+use tokio::sync::{Notify, Semaphore};
+use tokio::task::JoinSet;
 use tracing::{Instrument, error, info};
 
 use crate::config::Config;
@@ -32,17 +33,28 @@ pub fn spawn_liveness(
 /// consume wakes, sleep until each is due, then publish a drive on the ingress channel. multiple
 /// waker replicas share a consumer group so each wake is handled once; a not-yet-due wake is
 /// returned to the broker (nack) after a bounded sleep so the lease never expires under us and
-/// other wakes still get serviced.
+/// other wakes still get serviced. wakes are handled concurrently up to `max_concurrent_wakes`,
+/// so one wake sleeping toward its due time never head-of-line blocks a due wake behind it.
 pub async fn waker_loop(broker: Arc<dyn Broker>, notify: Arc<Notify>, config: &Config) {
-    let group = config.waker_consumer_group.as_str();
+    let group: Arc<str> = Arc::from(config.waker_consumer_group.as_str());
     let max_sleep = Duration::from_secs(config.max_wake_sleep_seconds);
+    let slots = Arc::new(Semaphore::new(config.max_concurrent_wakes));
+    let mut handlers = JoinSet::new();
     loop {
-        let delivery = tokio::select! {
-            _ = notify.notified() => {
-                info!("shutdown signal received, exiting waker loop");
-                return;
+        // reap finished handlers so the join set does not hold results for the process lifetime.
+        while handlers.try_join_next().is_some() {}
+
+        // hold a slot before receiving so this replica never buffers more wakes than it services.
+        let slot = tokio::select! {
+            _ = notify.notified() => break,
+            slot = Arc::clone(&slots).acquire_owned() => match slot {
+                Ok(slot) => slot,
+                Err(_) => break,
             }
-            received = broker.receive_wake(group) => {
+        };
+        let delivery = tokio::select! {
+            _ = notify.notified() => break,
+            received = broker.receive_wake(&group) => {
                 match received {
                     Ok(delivery) => delivery,
                     Err(err) => {
@@ -52,10 +64,7 @@ pub async fn waker_loop(broker: Arc<dyn Broker>, notify: Arc<Notify>, config: &C
                         );
                         // back off so an unreachable broker does not spin this loop hot.
                         tokio::select! {
-                            _ = notify.notified() => {
-                                info!("shutdown signal received, exiting waker loop");
-                                return;
-                            }
+                            _ = notify.notified() => break,
                             _ = tokio::time::sleep(RECEIVE_RETRY_BACKOFF) => {}
                         }
                         continue;
@@ -72,20 +81,19 @@ pub async fn waker_loop(broker: Arc<dyn Broker>, notify: Arc<Notify>, config: &C
             run_id = %delivery.command.workflow_run_id,
             node_id = %delivery.command.node_id,
         );
-        let outcome = handle_wake(broker.as_ref(), group, max_sleep, &notify, delivery, config)
-            .instrument(span)
-            .await;
-        if outcome == WakeOutcome::Shutdown {
-            info!("shutdown signal received, exiting waker loop");
-            return;
-        }
+        let broker = Arc::clone(&broker);
+        let notify = Arc::clone(&notify);
+        let group = Arc::clone(&group);
+        handlers.spawn(async move {
+            let _slot = slot;
+            handle_wake(broker.as_ref(), &group, max_sleep, &notify, delivery)
+                .instrument(span)
+                .await;
+        });
     }
-}
-
-#[derive(PartialEq, Eq)]
-enum WakeOutcome {
-    Continue,
-    Shutdown,
+    info!("shutdown signal received, exiting waker loop");
+    // drain in-flight handlers; each observes the shutdown notify and nacks its held wake.
+    while handlers.join_next().await.is_some() {}
 }
 
 async fn handle_wake(
@@ -94,8 +102,7 @@ async fn handle_wake(
     max_sleep: Duration,
     notify: &Notify,
     delivery: runinator_broker::WakeDelivery,
-    config: &Config,
-) -> WakeOutcome {
+) {
     let now = Utc::now();
     metrics::wake_received((delivery.command.ready_at - now).num_milliseconds() as f64);
     let remaining = (delivery.command.ready_at - now)
@@ -103,8 +110,8 @@ async fn handle_wake(
         .unwrap_or_default();
 
     if remaining.is_zero() {
-        drive(broker, group, &delivery, config).await;
-        return WakeOutcome::Continue;
+        drive(broker, group, &delivery).await;
+        return;
     }
 
     let sleep = remaining.min(max_sleep);
@@ -115,13 +122,13 @@ async fn handle_wake(
     tokio::select! {
         _ = notify.notified() => {
             let _ = broker.nack_wake(group, delivery.delivery_id).await;
-            return WakeOutcome::Shutdown;
+            return;
         }
         _ = tokio::time::sleep(sleep) => {}
     }
 
     if Utc::now() >= delivery.command.ready_at {
-        drive(broker, group, &delivery, config).await;
+        drive(broker, group, &delivery).await;
     } else {
         metrics::wake_requeued();
         if let Err(err) = broker.nack_wake(group, delivery.delivery_id).await {
@@ -132,15 +139,9 @@ async fn handle_wake(
             );
         }
     }
-    WakeOutcome::Continue
 }
 
-async fn drive(
-    broker: &dyn Broker,
-    group: &str,
-    delivery: &runinator_broker::WakeDelivery,
-    _config: &Config,
-) {
+async fn drive(broker: &dyn Broker, group: &str, delivery: &runinator_broker::WakeDelivery) {
     let command = WsIngressCommand::drive(
         delivery.command.ready_node_id,
         delivery.command.workflow_run_id,

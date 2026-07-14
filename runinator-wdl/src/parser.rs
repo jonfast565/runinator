@@ -450,6 +450,15 @@ fn parse_import_decl(pair: Pair<Rule>) -> Result<Import, WdlError> {
 
 fn parse_trigger_decl(pair: Pair<Rule>) -> Result<TriggerDecl, WdlError> {
     let span = span_of(&pair);
+    let inner = first_inner(pair)?;
+    match inner.as_rule() {
+        Rule::cron_trigger => parse_cron_trigger(inner, span),
+        Rule::chained_trigger => parse_chained_trigger(inner, span),
+        _ => Err(WdlError::syntax(span, "unrecognized trigger declaration")),
+    }
+}
+
+fn parse_cron_trigger(pair: Pair<Rule>, span: Span) -> Result<TriggerDecl, WdlError> {
     let mut schedule = None;
     let mut params = None;
     let mut enabled = true;
@@ -479,11 +488,45 @@ fn parse_trigger_decl(pair: Pair<Rule>) -> Result<TriggerDecl, WdlError> {
     let schedule =
         schedule.ok_or_else(|| WdlError::syntax(span, "trigger is missing a cron expression"))?;
     Ok(TriggerDecl {
-        schedule,
+        kind: TriggerDeclKind::Cron {
+            schedule,
+            blackout_start,
+            blackout_end,
+        },
         params,
         enabled,
-        blackout_start,
-        blackout_end,
+        span,
+    })
+}
+
+fn parse_chained_trigger(pair: Pair<Rule>, span: Span) -> Result<TriggerDecl, WdlError> {
+    let mut event = None;
+    let mut target = None;
+    let mut params = None;
+    let mut enabled = true;
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::chain_event => {
+                event = Some(match inner.as_str() {
+                    "on_failure" => ChainEvent::Failure,
+                    "on_complete" => ChainEvent::Complete,
+                    _ => ChainEvent::Success,
+                });
+            }
+            Rule::expr => target = Some(parse_expr(inner)?),
+            Rule::object => params = Some(parse_object(inner)?),
+            Rule::trigger_disabled => enabled = false,
+            _ => {}
+        }
+    }
+    let event =
+        event.ok_or_else(|| WdlError::syntax(span, "chained trigger is missing an event"))?;
+    let target = target
+        .ok_or_else(|| WdlError::syntax(span, "chained trigger is missing a target workflow"))?;
+    Ok(TriggerDecl {
+        kind: TriggerDeclKind::Chained { event, target },
+        params,
+        enabled,
         span,
     })
 }
@@ -657,10 +700,28 @@ fn parse_type_atom(pair: Pair<Rule>) -> Result<TypeExpr, WdlError> {
             Ok(TypeExpr::Map(Box::new(parse_type_expr(value)?)))
         }
         Rule::type_enum => parse_type_enum(inner),
+        Rule::type_function => parse_type_function(inner),
         Rule::type_struct => parse_type_struct(inner),
         Rule::type_named => Ok(TypeExpr::Named(inner.as_str().to_string())),
         other => Err(WdlError::lower(format!("unexpected type atom {other:?}"))),
     }
+}
+
+fn parse_type_function(pair: Pair<Rule>) -> Result<TypeExpr, WdlError> {
+    // type_function -> "function" "<" "(" (type_expr ("," type_expr)*)? ")" "->" type_expr ">".
+    // the trailing type_expr is the return; every earlier one is a parameter.
+    let mut types = pair
+        .into_inner()
+        .filter(|p| p.as_rule() == Rule::type_expr)
+        .map(parse_type_expr)
+        .collect::<Result<Vec<_>, _>>()?;
+    let ret = types
+        .pop()
+        .ok_or_else(|| WdlError::lower("function type is missing a return type"))?;
+    Ok(TypeExpr::Function {
+        params: types,
+        ret: Box::new(ret),
+    })
 }
 
 fn parse_type_enum(pair: Pair<Rule>) -> Result<TypeExpr, WdlError> {
@@ -2317,14 +2378,14 @@ fn parse_expr(pair: Pair<Rule>) -> Result<Expr, WdlError> {
 }
 
 fn parse_ternary(pair: Pair<Rule>) -> Result<Expr, WdlError> {
-    // ternary_expr -> compare_expr ("?" expr ":" expr)?
+    // ternary_expr -> cast_expr ("?" expr ":" expr)?
     let span = span_of(&pair);
     let mut cond = None;
     let mut then = None;
     let mut els = None;
     for inner in pair.into_inner() {
         match inner.as_rule() {
-            Rule::compare_expr => cond = Some(parse_compare(inner)?),
+            Rule::cast_expr => cond = Some(parse_cast(inner)?),
             Rule::expr if then.is_none() => then = Some(parse_expr(inner)?),
             Rule::expr => els = Some(parse_expr(inner)?),
             _ => {}
@@ -2341,6 +2402,31 @@ fn parse_ternary(pair: Pair<Rule>) -> Result<Expr, WdlError> {
             span,
         )),
         _ => Ok(cond),
+    }
+}
+
+fn parse_cast(pair: Pair<Rule>) -> Result<Expr, WdlError> {
+    // cast_expr -> compare_expr ("as" type_expr)?
+    let span = span_of(&pair);
+    let mut expr = None;
+    let mut ty = None;
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::compare_expr => expr = Some(parse_compare(inner)?),
+            Rule::type_expr => ty = Some(parse_type_expr(inner)?),
+            _ => {}
+        }
+    }
+    let expr = expr.ok_or_else(|| WdlError::lower("empty cast"))?;
+    match ty {
+        Some(ty) => Ok(Expr::new(
+            ExprKind::Cast {
+                expr: Box::new(expr),
+                ty,
+            },
+            span,
+        )),
+        None => Ok(expr),
     }
 }
 
@@ -2515,6 +2601,28 @@ fn apply_access(base: Expr, access: Pair<Rule>) -> Result<Expr, WdlError> {
         }
         Rule::path_seg => Ok(index_access(base, path_seg_key(first)?, span)),
         Rule::expr => Ok(index_access(base, parse_expr(first)?, span)),
+        // `(args)` applies the running value as a first-class closure. arguments are positional; a
+        // named argument is meaningless (a lambda's parameters are positional) and is rejected.
+        Rule::apply_access => {
+            let mut args = Vec::new();
+            let mut named = Vec::new();
+            for arg in first.into_inner().filter(|p| p.as_rule() == Rule::call_arg) {
+                parse_call_arg(arg, &mut args, &mut named)?;
+            }
+            if !named.is_empty() {
+                return Err(WdlError::semantic(
+                    span,
+                    "applied functions take positional arguments only",
+                ));
+            }
+            Ok(Expr::new(
+                ExprKind::Apply {
+                    callee: Box::new(base),
+                    args,
+                },
+                span,
+            ))
+        }
         other => Err(WdlError::lower(format!("unexpected access {other:?}"))),
     }
 }

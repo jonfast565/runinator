@@ -451,6 +451,8 @@ impl PureIntrinsics {
                 )])
                 .pure(),
             // objects.
+            // the catalog result is `any`; `intrinsic_result_type` recovers a merged struct when
+            // both operands are structs, otherwise the shape is not statically known.
             ActionMetadata::new("merge", "shallow-merge two objects (right wins)")
                 .with_parameters(vec![
                     ParameterMetadata::required("a", RuninatorType::Any),
@@ -485,11 +487,13 @@ impl PureIntrinsics {
                     RuninatorType::array(RuninatorType::Any),
                 )])
                 .pure(),
+            // `any`: the object shape is built from runtime keys, not derivable from arg types.
             ActionMetadata::new("from_entries", "build an object from {key, value} pairs")
                 .with_parameters(vec![ParameterMetadata::required("a", RuninatorType::Any)])
                 .with_results(vec![ResultMetadata::new("result", RuninatorType::Any)])
                 .pure(),
             // encoding.
+            // `any`: the parsed shape is only known at runtime, so the result stays opaque.
             ActionMetadata::new("parse_json", "parse a JSON string into a value")
                 .with_parameters(vec![ParameterMetadata::required(
                     "a",
@@ -629,6 +633,7 @@ pub const EFFECTFUL_INTRINSIC_NAMES: &[&str] = &["http_get", "http_post", "now",
 /// (so the implementation and the advertised contract stay in sync), and sema type-checks calls
 /// against them.
 pub fn effectful_signatures() -> Vec<ActionMetadata> {
+    // the response `body` is `any`: the remote payload shape is not knowable author-time.
     let response = || {
         RuninatorType::structure([
             ("status", RuninatorType::Integer),

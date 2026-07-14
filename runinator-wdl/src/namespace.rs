@@ -86,15 +86,26 @@ pub fn resolve(document: &mut Document) -> Result<(), WdlError> {
             }
         }
         for trigger in workflow.triggers.iter_mut() {
-            resolve_expr(&mut trigger.schedule, &scope)?;
+            match &mut trigger.kind {
+                TriggerDeclKind::Cron {
+                    schedule,
+                    blackout_start,
+                    blackout_end,
+                } => {
+                    resolve_expr(schedule, &scope)?;
+                    if let Some(start) = blackout_start.as_mut() {
+                        resolve_expr(start, &scope)?;
+                    }
+                    if let Some(end) = blackout_end.as_mut() {
+                        resolve_expr(end, &scope)?;
+                    }
+                }
+                TriggerDeclKind::Chained { target, .. } => {
+                    resolve_expr(target, &scope)?;
+                }
+            }
             if let Some(params) = trigger.params.as_mut() {
                 resolve_expr(params, &scope)?;
-            }
-            if let Some(start) = trigger.blackout_start.as_mut() {
-                resolve_expr(start, &scope)?;
-            }
-            if let Some(end) = trigger.blackout_end.as_mut() {
-                resolve_expr(end, &scope)?;
             }
         }
         if let Some(input) = workflow.input.as_mut() {
@@ -435,6 +446,12 @@ fn resolve_type_defaults(ty: &mut TypeExpr, scope: &Scope) -> Result<(), WdlErro
                 resolve_type_defaults(variant, scope)?;
             }
         }
+        TypeExpr::Function { params, ret } => {
+            for param in params.iter_mut() {
+                resolve_type_defaults(param, scope)?;
+            }
+            resolve_type_defaults(ret, scope)?;
+        }
         TypeExpr::Named(_) | TypeExpr::Enum(_) => {}
     }
     Ok(())
@@ -468,6 +485,13 @@ fn resolve_expr(expr: &mut Expr, scope: &Scope) -> Result<(), WdlError> {
             }
         }
         ExprKind::Lambda { body, .. } => resolve_expr(body, scope)?,
+        ExprKind::Cast { expr, .. } => resolve_expr(expr, scope)?,
+        ExprKind::Apply { callee, args } => {
+            resolve_expr(callee, scope)?;
+            for arg in args.iter_mut() {
+                resolve_expr(arg, scope)?;
+            }
+        }
         ExprKind::Object(entries) => {
             for (_, value) in entries.iter_mut() {
                 resolve_expr(value, scope)?;
