@@ -26,6 +26,7 @@ pub const API_WDL_IMPORT: &str = "/wdl/import";
 pub const API_WORKFLOW_TRIGGERS_DUE: &str = "/workflow_triggers/due";
 pub const API_SCHEDULER_WORKFLOW_TRIGGER_FIRINGS_CLAIM: &str =
     "/scheduler/workflow_trigger_firings/claim";
+pub const API_PIPELINES: &str = "/pipelines";
 pub const API_WORKFLOW_RUNS: &str = "/workflow_runs";
 pub const API_SCHEDULER_WORKFLOW_RUNS_CLAIM: &str = "/scheduler/workflow_runs/claim";
 pub const API_SCHEDULER_READY_NODES_CLAIM: &str = "/scheduler/ready_nodes/claim";
@@ -67,6 +68,10 @@ pub fn api_workflow_trigger(trigger_id: Uuid) -> String {
 
 pub fn api_workflow_trigger_runs(trigger_id: Uuid) -> String {
     format!("/workflow_triggers/{trigger_id}/runs")
+}
+
+pub fn api_pipeline(pipeline_id: Uuid) -> String {
+    format!("{API_PIPELINES}/{pipeline_id}")
 }
 
 pub fn api_workflow_run(workflow_run_id: Uuid) -> String {

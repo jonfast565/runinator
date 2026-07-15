@@ -8,6 +8,7 @@ use runinator_models::billing::{
     OrgQuota, OrgResourceGroup, OrgUsage, RateCard, ScaleOrgNodesRequest, UpdateOrgQuotaRequest,
     UsageSample,
 };
+use runinator_models::capabilities::Capability;
 use runinator_models::provisioning::{NodeSpec, ProvisionBackend};
 use runinator_models::replicas::ReplicaKind;
 use runinator_models::value::Value;
@@ -189,7 +190,7 @@ pub(crate) async fn put_org_quota<T: DatabaseImpl>(
     Path(org_id): Path<Uuid>,
     Json(request): Json<UpdateOrgQuotaRequest>,
 ) -> Reply {
-    if let Err(reply) = authz::require_admin(&ctx) {
+    if let Err(reply) = authz::require_capability(&ctx, Capability::BillingManage) {
         return reply;
     }
     // reject unknown replica-kind keys so a typo never silently disables a cap.

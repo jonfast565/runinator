@@ -54,7 +54,7 @@
           <tr>
             <th>User</th>
             <th>Role</th>
-            <th v-if="orgs.isActiveOrgAdmin" class="col-actions"></th>
+            <th v-if="can('org:members:manage')" class="col-actions"></th>
           </tr>
         </thead>
         <tbody>
@@ -65,7 +65,7 @@
             </td>
             <td>
               <select
-                v-if="orgs.isActiveOrgAdmin"
+                v-if="can('org:members:manage')"
                 :value="member.role"
                 @change="(e) => changeRole(member.user_id, e)"
               >
@@ -75,7 +75,7 @@
               </select>
               <span v-else class="chip role-badge">{{ member.role }}</span>
             </td>
-            <td v-if="orgs.isActiveOrgAdmin" class="col-actions">
+            <td v-if="can('org:members:manage')" class="col-actions">
               <button
                 class="btn btn-icon btn-ghost"
                 title="Remove"
@@ -88,7 +88,7 @@
         </tbody>
       </table>
 
-      <form v-if="orgs.isActiveOrgAdmin" class="org-inline-form" @submit.prevent="addMember">
+      <form v-if="can('org:members:manage')" class="org-inline-form" @submit.prevent="addMember">
         <input v-model="newMemberId" placeholder="User id (uuid)" />
         <select v-model="newMemberRole">
           <option value="member">member</option>
@@ -103,7 +103,7 @@
       Create or select an organization to manage its members.
     </div>
 
-    <div class="panel">
+    <div v-if="can('teams:manage')" class="panel">
       <div class="panel-toolbar">
         <h2>Teams</h2>
         <span class="chip role-badge">{{ teams.length }} team(s)</span>
@@ -191,10 +191,12 @@ import {
 } from "../../core/services";
 import { useAppStore } from "../../ui/adapters/pinia/app";
 import { useOrgsStore } from "../../ui/adapters/pinia/orgs";
+import { useCan } from "../composables/useCan";
 import { useOperationLoading } from "../composables/useOperationLoading";
 
 const app = useAppStore();
 const orgs = useOrgsStore();
+const { can } = useCan();
 const { isLoading: loadingOrgData, loadingMessage: loadingOrgDataMessage } = useOperationLoading([
   "Loading organizations",
   "Loading org members",

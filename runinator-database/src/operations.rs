@@ -16,6 +16,7 @@ use runinator_models::{
     notifications::{NewNotification, Notification},
     orchestration::{NewOrchestrationEvent, OrchestrationEvent, ReadyNodeRecord},
     orgs::{OrgMembership, OrgRole, Organization},
+    pipelines::Pipeline,
     replicas::{
         ReplicaHeartbeatRequest, ReplicaKind, ReplicaProviderRegistration,
         ReplicaProviderRegistrationRequest, ReplicaRecord, ReplicaRegistrationRequest,
@@ -49,6 +50,8 @@ const WORKFLOW_RUN_COLUMNS: &str = "id, workflow_id, workflow_snapshot, status, 
 const WORKFLOW_NODE_RUN_COLUMNS: &str = "id, workflow_run_id, node_id, status, attempt, parameters, output_json, state, transition_reason, prev_node_run_id, created_at, started_at, finished_at, message, current_executor_replica_id, last_executor_replica_id, executor_claimed_at, executor_released_at";
 const REPLICA_COLUMNS: &str = "replica_id, replica_type, instance_id, runtime_id, status, display_name, host, port, base_path, observed_ip, version, attributes, first_seen_at, last_heartbeat_at, last_seen_at, offline_at, registered_by_principal_id, registered_by_kind, registered_by_org_id";
 const REPLICA_PROVIDER_COLUMNS: &str = "replica_id, provider_name, provider_json, first_registered_at, last_registered_at, last_heartbeat_at";
+const PIPELINE_COLUMNS: &str =
+    "id, name, description, org_id, workflow_ids, defaults, metadata, created_at, updated_at";
 
 trait ArchiveSqlExt: SqlBackend {
     async fn archive_candidate_ids(
@@ -1122,6 +1125,127 @@ where
                 sqlx::query(&self.render("DELETE FROM workflow_triggers WHERE id = ?"))
                     .bind(trigger_id),
             )
+            .await?;
+        Ok(())
+    }
+
+    async fn upsert_pipeline(&self, pipeline: &Pipeline) -> Result<Pipeline, SendableError> {
+        let now = Utc::now().timestamp();
+        let pipeline_id = pipeline.id.unwrap_or_else(Uuid::new_v4);
+        let workflow_ids =
+            serde_json::to_string(&pipeline.workflow_ids).unwrap_or_else(|_| "[]".to_string());
+        let defaults =
+            serde_json::to_string(&pipeline.defaults).unwrap_or_else(|_| "{}".to_string());
+
+        let update_cols = [
+            "name",
+            "description",
+            "org_id",
+            "workflow_ids",
+            "defaults",
+            "metadata",
+            "updated_at",
+        ];
+
+        // mysql has no usable RETURNING via sqlx: upsert with ON DUPLICATE KEY UPDATE, then read the
+        // row back on the same pinned connection by the (now app-generated) id.
+        if self.dialect() == SqlDialect::MySql {
+            let conflict = queries::on_conflict_update(SqlDialect::MySql, "id", &update_cols);
+            let mut conn = self.pool().acquire().await?;
+            sqlx::query(&self.render(&format!(
+                "INSERT INTO pipelines ({PIPELINE_COLUMNS})
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) {conflict}",
+            )))
+            .bind(pipeline_id)
+            .bind(&pipeline.name)
+            .bind(&pipeline.description)
+            .bind(pipeline.org_id)
+            .bind(&workflow_ids)
+            .bind(&defaults)
+            .bind(pipeline.metadata.to_string())
+            .bind(pipeline.created_at.map(|dt| dt.timestamp()).unwrap_or(now))
+            .bind(now)
+            .execute(&mut *conn)
+            .await?;
+            let row = sqlx::query(&self.render(&format!(
+                "SELECT {PIPELINE_COLUMNS} FROM pipelines WHERE id = ?"
+            )))
+            .bind(pipeline_id)
+            .fetch_one(&mut *conn)
+            .await?;
+            return Ok(mappers::row_to_pipeline(&row));
+        }
+
+        let conflict = queries::on_conflict_update(self.dialect(), "id", &update_cols);
+        let row = sqlx::query(&self.render(&format!(
+            "INSERT INTO pipelines ({PIPELINE_COLUMNS})
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) {conflict}
+             RETURNING {PIPELINE_COLUMNS}",
+        )))
+        .bind(pipeline_id)
+        .bind(&pipeline.name)
+        .bind(&pipeline.description)
+        .bind(pipeline.org_id)
+        .bind(&workflow_ids)
+        .bind(&defaults)
+        .bind(pipeline.metadata.to_string())
+        .bind(pipeline.created_at.map(|dt| dt.timestamp()).unwrap_or(now))
+        .bind(now)
+        .fetch_one(self.pool())
+        .await?;
+        Ok(mappers::row_to_pipeline(&row))
+    }
+
+    async fn fetch_pipelines(&self) -> Result<Vec<Pipeline>, SendableError> {
+        let rows = sqlx::query(&self.render(&format!(
+            "SELECT {PIPELINE_COLUMNS} FROM pipelines ORDER BY name, id"
+        )))
+        .fetch_all(self.pool())
+        .await?;
+        Ok(rows.iter().map(mappers::row_to_pipeline).collect())
+    }
+
+    async fn fetch_pipeline(&self, pipeline_id: Uuid) -> Result<Option<Pipeline>, SendableError> {
+        let row = sqlx::query(&self.render(&format!(
+            "SELECT {PIPELINE_COLUMNS} FROM pipelines WHERE id = ?"
+        )))
+        .bind(pipeline_id)
+        .fetch_optional(self.pool())
+        .await?;
+        Ok(row.map(|row| mappers::row_to_pipeline(&row)))
+    }
+
+    async fn delete_pipeline(&self, pipeline_id: Uuid) -> Result<(), SendableError> {
+        self.pool()
+            .execute(
+                sqlx::query(&self.render("DELETE FROM pipelines WHERE id = ?")).bind(pipeline_id),
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn fetch_pipeline_ids_for_org(&self, org_id: Uuid) -> Result<Vec<Uuid>, SendableError> {
+        let rows = sqlx::query(&self.render("SELECT id FROM pipelines WHERE org_id = ?"))
+            .bind(org_id)
+            .fetch_all(self.pool())
+            .await?;
+        let mut ids = Vec::with_capacity(rows.len());
+        for row in &rows {
+            ids.push(row.try_get("id")?);
+        }
+        Ok(ids)
+    }
+
+    async fn set_pipeline_org(
+        &self,
+        pipeline_id: Uuid,
+        org_id: Option<Uuid>,
+    ) -> Result<(), SendableError> {
+        sqlx::query(&self.render("UPDATE pipelines SET org_id = ?, updated_at = ? WHERE id = ?"))
+            .bind(org_id)
+            .bind(Utc::now().timestamp())
+            .bind(pipeline_id)
+            .execute(self.pool())
             .await?;
         Ok(())
     }

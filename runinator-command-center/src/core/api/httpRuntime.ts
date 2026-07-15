@@ -269,6 +269,31 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     method: "DELETE",
     path: (args) => `workflow_triggers/${escape(arg(args, "triggerId"))}`,
   },
+  fetch_pipelines: { method: "GET", path: () => "pipelines" },
+  fetch_pipeline: {
+    method: "GET",
+    path: (args) => `pipelines/${escape(arg(args, "pipelineId"))}`,
+  },
+  save_pipeline: {
+    method: (args) => {
+      const pipeline = arg(args, "pipeline") as { id?: string | null };
+      return pipeline.id != null ? "PATCH" : "POST";
+    },
+    path: (args) => {
+      const pipeline = arg(args, "pipeline") as { id?: string | null };
+      return pipeline.id != null ? `pipelines/${escape(pipeline.id)}` : "pipelines";
+    },
+    body: (args) => arg(args, "pipeline"),
+  },
+  delete_pipeline: {
+    method: "DELETE",
+    path: (args) => `pipelines/${escape(arg(args, "pipelineId"))}`,
+  },
+  set_pipeline_owner: {
+    method: "PATCH",
+    path: (args) => `pipelines/${escape(arg(args, "pipelineId"))}/owner`,
+    body: (args) => ({ org_id: argOpt(args, "orgId") ?? null }),
+  },
   fetch_run_chunks: {
     method: "GET",
     path: (args) => `runs/${escape(arg(args, "runId"))}/chunks?limit=500`,

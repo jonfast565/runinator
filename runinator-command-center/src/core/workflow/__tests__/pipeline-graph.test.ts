@@ -74,6 +74,30 @@ describe("buildPipelineGraph", () => {
     expect(graph.edges[0].label).toBe("on failure");
   });
 
+  it("scopes nodes to members and edges to the pipeline's tagged links", () => {
+    const a = workflow("id-a", "Build");
+    const b = workflow("id-b", "Deploy");
+    const c = workflow("id-c", "Unrelated");
+    const inPipeline = {
+      ...chainedTrigger("t-in", "id-a", "Deploy", "success"),
+      configuration: { on: "success", target_workflow: "Deploy", parameters: {}, pipeline_id: "p1" },
+    };
+    const otherPipeline = {
+      ...chainedTrigger("t-out", "id-a", "Deploy", "complete"),
+      configuration: { on: "complete", target_workflow: "Deploy", parameters: {}, pipeline_id: "p2" },
+    };
+    const graph = buildPipelineGraph(
+      [a, b, c],
+      { "id-a": [inPipeline, otherPipeline], "id-b": [], "id-c": [] },
+      { pipelineId: "p1", memberIds: ["id-a", "id-b"] },
+    );
+
+    // only the two members are nodes; the p2-tagged link is excluded.
+    expect(graph.nodes.map((n) => n.id).sort()).toEqual(["id-a", "id-b"]);
+    expect(graph.edges).toHaveLength(1);
+    expect(graph.edges[0].data.triggerId).toBe("t-in");
+  });
+
   it("flags a chained trigger whose target name does not resolve", () => {
     const a = workflow("id-a", "Deploy");
     const graph = buildPipelineGraph([a], {

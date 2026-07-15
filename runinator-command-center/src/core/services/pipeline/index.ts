@@ -1,14 +1,20 @@
-// loads the data behind the pipeline graph: every workflow plus its triggers. there is no bulk
-// "all triggers" endpoint, so triggers are fetched per workflow and fanned out (same pattern as
-// the pack export).
+// data + write helpers behind the pipeline canvas. a pipeline is a named instance grouping member
+// workflows; the links between members are `chained` workflow triggers stamped with the pipeline's
+// id. there is no bulk "all triggers" endpoint, so member triggers are fetched per workflow and
+// fanned out (same pattern as the pack export).
 
 import {
+  deletePipeline as deletePipelineApi,
   deleteWorkflowTrigger,
+  fetchPipelines as fetchPipelinesApi,
   fetchWorkflowTriggers,
   fetchWorkflows,
+  savePipeline as savePipelineApi,
+  setPipelineOwner as setPipelineOwnerApi,
   saveWorkflowTrigger,
 } from "../../api/commandCenterApi";
-import type { WorkflowDefinition, WorkflowTrigger } from "../../domain/models";
+import type { JsonRecord } from "../../domain/json";
+import type { Pipeline, WorkflowDefinition, WorkflowTrigger } from "../../domain/models";
 import type { ChainEvent } from "../../workflow/pipeline-graph";
 
 export interface PipelineData {
@@ -16,33 +22,69 @@ export interface PipelineData {
   triggersByWorkflowId: Record<string, WorkflowTrigger[]>;
 }
 
-export async function loadPipelineData(): Promise<PipelineData> {
+/** the `on` selector a new link inherits from the pipeline's failure policy. */
+export function defaultChainEvent(pipeline: Pipeline): ChainEvent {
+  return pipeline.defaults.on_step_failure === "continue" ? "complete" : "success";
+}
+
+/** load the full workflow list (for the picker + name resolution) and triggers for the members. */
+export async function loadPipelineData(memberIds: string[]): Promise<PipelineData> {
   const workflows = await fetchWorkflows();
-  const identified = workflows.filter(
-    (wf): wf is WorkflowDefinition & { id: string } => Boolean(wf.id),
+  const memberSet = new Set(memberIds);
+  const members = workflows.filter(
+    (wf): wf is WorkflowDefinition & { id: string } => wf.id != null && memberSet.has(wf.id),
   );
-  const triggerLists = await Promise.all(
-    identified.map((wf) => fetchWorkflowTriggers(wf.id)),
-  );
+  const triggerLists = await Promise.all(members.map((wf) => fetchWorkflowTriggers(wf.id)));
   const triggersByWorkflowId: Record<string, WorkflowTrigger[]> = {};
-  identified.forEach((wf, index) => {
+  members.forEach((wf, index) => {
     triggersByWorkflowId[wf.id] = triggerLists[index];
   });
   return { workflows, triggersByWorkflowId };
 }
 
-/** create a chained trigger on `sourceWorkflowId` targeting `targetName` when it reaches `on`. */
+export async function fetchPipelines(): Promise<Pipeline[]> {
+  return fetchPipelinesApi();
+}
+
+export async function savePipeline(pipeline: Pipeline): Promise<Pipeline> {
+  return savePipelineApi(pipeline);
+}
+
+export async function deletePipeline(pipelineId: string): Promise<void> {
+  await deletePipelineApi(pipelineId);
+}
+
+/** reassign a pipeline's owning organization; null makes it platform-global. */
+export async function setPipelineOwner(
+  pipelineId: string,
+  orgId: string | null,
+): Promise<Pipeline> {
+  return setPipelineOwnerApi(pipelineId, orgId);
+}
+
+/** create a chained trigger tagged with the pipeline, pre-filled from the pipeline's defaults. */
 export async function createChainLink(
   sourceWorkflowId: string,
   targetName: string,
-  on: ChainEvent = "success",
+  pipeline: Pipeline,
 ): Promise<WorkflowTrigger> {
+  const configuration: JsonRecord = {
+    on: defaultChainEvent(pipeline),
+    target_workflow: targetName,
+    parameters: pipeline.defaults.default_parameters,
+    pipeline_id: pipeline.id,
+  };
+
+  if (pipeline.defaults.max_chain_depth != null) {
+    configuration.max_chain_depth = pipeline.defaults.max_chain_depth;
+  }
+
   const trigger: WorkflowTrigger = {
     id: null,
     workflow_id: sourceWorkflowId,
     kind: "chained",
-    enabled: true,
-    configuration: { on, target_workflow: targetName, parameters: {} },
+    enabled: pipeline.defaults.links_enabled_by_default,
+    configuration,
     next_execution: null,
     blackout_start: null,
     blackout_end: null,
@@ -51,7 +93,7 @@ export async function createChainLink(
   return saveWorkflowTrigger(trigger, true);
 }
 
-/** persist selector/enabled edits to an existing chained trigger. */
+/** persist selector/enabled edits to an existing chained trigger (pipeline tag preserved). */
 export async function updateChainLink(
   trigger: WorkflowTrigger,
   changes: { on?: ChainEvent; enabled?: boolean },

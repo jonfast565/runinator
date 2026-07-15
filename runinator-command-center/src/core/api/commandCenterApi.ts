@@ -38,6 +38,7 @@ import type {
   WorkflowRunArtifact,
   WorkflowRunDetail,
   WorkflowTrigger,
+  Pipeline,
 } from "../domain/models";
 
 export interface WorkflowWdlSaveRequest {
@@ -64,6 +65,7 @@ export interface LoginResult {
   refresh_token: string;
   expires_in: number;
   user: JsonRecord;
+  capabilities?: string[];
 }
 
 export async function fetchAuthConfig() {
@@ -353,6 +355,27 @@ export async function saveWorkflowTrigger(trigger: WorkflowTrigger, creating: bo
 
 export async function deleteWorkflowTrigger(triggerId: string) {
   return command<TaskResponse>("delete_workflow_trigger", { triggerId });
+}
+
+export async function fetchPipelines() {
+  return command<Pipeline[]>("fetch_pipelines");
+}
+
+export async function fetchPipeline(pipelineId: string) {
+  return command<Pipeline>("fetch_pipeline", { pipelineId });
+}
+
+export async function savePipeline(pipeline: Pipeline) {
+  return command<Pipeline>("save_pipeline", { pipeline });
+}
+
+export async function deletePipeline(pipelineId: string) {
+  return command<TaskResponse>("delete_pipeline", { pipelineId });
+}
+
+// reassign a pipeline's owning organization; null makes it platform-global.
+export async function setPipelineOwner(pipelineId: string, orgId: string | null) {
+  return command<Pipeline>("set_pipeline_owner", { pipelineId, orgId });
 }
 
 export async function createWorkflowRun(

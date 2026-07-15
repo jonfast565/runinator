@@ -11,9 +11,10 @@ use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::auth::{
     AddTeamMemberRequest, ApiKey, ApiKeyRecord, AuthContext, AuthSession, CreateApiKeyRequest,
     CreateApiKeyResponse, CreateGrantRequest, CreateTeamRequest, CreateUserRequest, Grant,
-    LoginRequest, LoginResponse, Permission, RefreshRequest, ResourceType, UpdateApiKeyRequest,
-    UpdateTeamRequest, UpdateUserRequest, User,
+    LoginRequest, LoginResponse, Permission, PrincipalKind, RefreshRequest, ResourceType,
+    UpdateApiKeyRequest, UpdateTeamRequest, UpdateUserRequest, User,
 };
+use runinator_models::capabilities::Capability;
 use runinator_models::value::Value;
 use serde::Serialize;
 use uuid::Uuid;
@@ -53,14 +54,6 @@ fn too_many_requests(retry_after_secs: f64) -> Reply {
             "too many login attempts; retry in {secs}s"
         )))),
     )
-}
-
-fn require_admin(ctx: &AuthContext) -> Result<(), Reply> {
-    if ctx.is_admin {
-        Ok(())
-    } else {
-        Err(forbidden("admin privileges required"))
-    }
 }
 
 async fn enabled_admin_count<T: DatabaseImpl>(db: &T) -> Result<usize, Reply> {
@@ -110,6 +103,18 @@ async fn issue_session<T: DatabaseImpl>(
     // login issues an org-less token; the client selects an active org via /auth/switch-org.
     let (access_token, _exp) = issue_access_token(config, user_id, user.is_admin, None, None)
         .map_err(|err| api_error(err))?;
+    // capabilities for the org-less session: platform caps for admins, none otherwise. org caps
+    // arrive when the client switches org and reloads its principal.
+    let mut capabilities: Vec<Capability> = crate::authz::capabilities_for(&AuthContext {
+        principal_id: Some(user_id),
+        is_admin: user.is_admin,
+        kind: PrincipalKind::User,
+        org_id: None,
+        org_role: None,
+    })
+    .into_iter()
+    .collect();
+    capabilities.sort();
     let (refresh_token, refresh_hash) = new_refresh_token();
     let session = AuthSession {
         id: Uuid::new_v4(),
@@ -126,6 +131,7 @@ async fn issue_session<T: DatabaseImpl>(
         refresh_token,
         expires_in: config.access_ttl_secs,
         user,
+        capabilities,
     })
 }
 
@@ -301,11 +307,29 @@ pub(crate) async fn me<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> Reply {
+    // the caller's resolved capability set, sorted for a stable wire order; the command center gates
+    // the whole ui against exactly this list (see `capabilities_for`).
+    let mut capabilities: Vec<Capability> =
+        crate::authz::capabilities_for(&ctx).into_iter().collect();
+    capabilities.sort();
     let Some(user_id) = ctx.principal_id else {
-        return ok_value(&serde_json::json!({ "service": true, "is_admin": ctx.is_admin }));
+        return ok_value(&serde_json::json!({
+            "service": true,
+            "is_admin": ctx.is_admin,
+            "capabilities": capabilities,
+        }));
     };
     match db.fetch_user(user_id).await {
-        Ok(Some(user)) => ok_value(&user),
+        Ok(Some(user)) => {
+            let mut value = match serde_json::to_value(&user) {
+                Ok(value) => value,
+                Err(err) => return api_error(err.to_string()),
+            };
+            if let Some(object) = value.as_object_mut() {
+                object.insert("capabilities".to_string(), serde_json::json!(capabilities));
+            }
+            ok_value(&value)
+        }
         Ok(None) => not_found("user not found"),
         Err(err) => api_error(err.to_string()),
     }
@@ -317,7 +341,7 @@ pub(crate) async fn list_users<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> Reply {
-    if let Err(reply) = require_admin(&ctx) {
+    if let Err(reply) = crate::authz::require_capability(&ctx, Capability::UsersManage) {
         return reply;
     }
     match db.list_users().await {
@@ -334,7 +358,7 @@ pub(crate) async fn create_user<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<CreateUserRequest>,
 ) -> Reply {
-    if let Err(reply) = require_admin(&ctx) {
+    if let Err(reply) = crate::authz::require_capability(&ctx, Capability::UsersManage) {
         return reply;
     }
     let hash = match hash_password(&request.password) {
@@ -361,7 +385,7 @@ pub(crate) async fn update_user<T: DatabaseImpl>(
     Path(user_id): Path<Uuid>,
     Json(request): Json<UpdateUserRequest>,
 ) -> Reply {
-    if let Err(reply) = require_admin(&ctx) {
+    if let Err(reply) = crate::authz::require_capability(&ctx, Capability::UsersManage) {
         return reply;
     }
     let current = match db.fetch_user(user_id).await {
@@ -406,7 +430,7 @@ pub(crate) async fn delete_user<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(user_id): Path<Uuid>,
 ) -> Reply {
-    if let Err(reply) = require_admin(&ctx) {
+    if let Err(reply) = crate::authz::require_capability(&ctx, Capability::UsersManage) {
         return reply;
     }
     let current = match db.fetch_user(user_id).await {
@@ -505,7 +529,7 @@ pub(crate) async fn update_api_key<T: DatabaseImpl>(
     Path(key_id): Path<Uuid>,
     Json(request): Json<UpdateApiKeyRequest>,
 ) -> Reply {
-    if let Err(reply) = require_admin(&ctx) {
+    if let Err(reply) = crate::authz::require_capability(&ctx, Capability::ApiKeysManage) {
         return reply;
     }
     match db
@@ -522,7 +546,7 @@ pub(crate) async fn rotate_api_key<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(key_id): Path<Uuid>,
 ) -> Reply {
-    if let Err(reply) = require_admin(&ctx) {
+    if let Err(reply) = crate::authz::require_capability(&ctx, Capability::ApiKeysManage) {
         return reply;
     }
     let current = match db.fetch_api_key(key_id).await {
@@ -566,7 +590,7 @@ pub(crate) async fn revoke_api_key<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(key_id): Path<Uuid>,
 ) -> Reply {
-    if let Err(reply) = require_admin(&ctx) {
+    if let Err(reply) = crate::authz::require_capability(&ctx, Capability::ApiKeysManage) {
         return reply;
     }
     match db.revoke_api_key(key_id).await {
@@ -648,7 +672,7 @@ pub(crate) async fn list_teams<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> Reply {
-    if let Err(reply) = require_admin(&ctx) {
+    if let Err(reply) = crate::authz::require_capability(&ctx, Capability::TeamsManage) {
         return reply;
     }
     match db.list_teams().await {
@@ -665,7 +689,7 @@ pub(crate) async fn list_user_teams<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(user_id): Path<Uuid>,
 ) -> Reply {
-    if let Err(reply) = require_admin(&ctx) {
+    if let Err(reply) = crate::authz::require_capability(&ctx, Capability::TeamsManage) {
         return reply;
     }
     match db.list_user_teams(user_id).await {
@@ -682,7 +706,7 @@ pub(crate) async fn create_team<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<CreateTeamRequest>,
 ) -> Reply {
-    if let Err(reply) = require_admin(&ctx) {
+    if let Err(reply) = crate::authz::require_capability(&ctx, Capability::TeamsManage) {
         return reply;
     }
     match db.create_team(request.name).await {
@@ -697,7 +721,7 @@ pub(crate) async fn update_team<T: DatabaseImpl>(
     Path(team_id): Path<Uuid>,
     Json(request): Json<UpdateTeamRequest>,
 ) -> Reply {
-    if let Err(reply) = require_admin(&ctx) {
+    if let Err(reply) = crate::authz::require_capability(&ctx, Capability::TeamsManage) {
         return reply;
     }
     match db.update_team(team_id, request.name).await {
@@ -711,7 +735,7 @@ pub(crate) async fn delete_team<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(team_id): Path<Uuid>,
 ) -> Reply {
-    if let Err(reply) = require_admin(&ctx) {
+    if let Err(reply) = crate::authz::require_capability(&ctx, Capability::TeamsManage) {
         return reply;
     }
     match db.delete_team(team_id).await {
@@ -725,7 +749,7 @@ pub(crate) async fn list_team_members<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(team_id): Path<Uuid>,
 ) -> Reply {
-    if let Err(reply) = require_admin(&ctx) {
+    if let Err(reply) = crate::authz::require_capability(&ctx, Capability::TeamsManage) {
         return reply;
     }
     match db.list_team_members(team_id).await {
@@ -743,7 +767,7 @@ pub(crate) async fn add_team_member<T: DatabaseImpl>(
     Path(team_id): Path<Uuid>,
     Json(request): Json<AddTeamMemberRequest>,
 ) -> Reply {
-    if let Err(reply) = require_admin(&ctx) {
+    if let Err(reply) = crate::authz::require_capability(&ctx, Capability::TeamsManage) {
         return reply;
     }
     match db.add_team_member(team_id, request.user_id).await {
@@ -757,7 +781,7 @@ pub(crate) async fn remove_team_member<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path((team_id, user_id)): Path<(Uuid, Uuid)>,
 ) -> Reply {
-    if let Err(reply) = require_admin(&ctx) {
+    if let Err(reply) = crate::authz::require_capability(&ctx, Capability::TeamsManage) {
         return reply;
     }
     match db.remove_team_member(team_id, user_id).await {

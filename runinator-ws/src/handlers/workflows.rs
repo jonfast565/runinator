@@ -10,6 +10,7 @@ use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::{
     api_routes::{WORKFLOW_JSON_IMPORT_RISK_ACK, WORKFLOW_JSON_IMPORT_RISK_HEADER},
     auth::{AuthContext, Permission},
+    capabilities::Capability,
     errors::error_code_or_unknown,
     workflows::{WorkflowBundle, WorkflowDefinition, WorkflowDuplicateRequest},
 };
@@ -188,7 +189,7 @@ pub(crate) async fn import_workflow_bundle<T: DatabaseImpl>(
     headers: HeaderMap,
     Json(bundle): Json<WorkflowBundle>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = authz::require_admin(&ctx) {
+    if let Err(reply) = authz::require_capability(&ctx, Capability::WorkflowsImport) {
         return reply;
     }
     if !json_workflow_import_risk_acknowledged(&headers) {

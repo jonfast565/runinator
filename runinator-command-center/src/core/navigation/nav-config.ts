@@ -1,3 +1,4 @@
+import type { Capability } from "../domain/models";
 import type { AppTab, NavSection } from "./app";
 
 export const navSections: NavSection[] = [
@@ -66,8 +67,20 @@ export const navSections: NavSection[] = [
     label: "Other",
     items: [
       { tab: "Gates", label: "Gates", icon: "gate", searchPlaceholder: "Search gates" },
-      { tab: "Configs", label: "Configs", icon: "settings", searchPlaceholder: "Search configs" },
-      { tab: "Secrets", label: "Secrets", icon: "key", searchPlaceholder: "Search secrets" },
+      {
+        tab: "Configs",
+        label: "Configs",
+        icon: "settings",
+        requires: "secrets:read",
+        searchPlaceholder: "Search configs",
+      },
+      {
+        tab: "Secrets",
+        label: "Secrets",
+        icon: "key",
+        requires: "secrets:read",
+        searchPlaceholder: "Search secrets",
+      },
     ],
   },
   {
@@ -80,16 +93,16 @@ export const navSections: NavSection[] = [
   {
     label: "Admin",
     items: [
-      { tab: "AdminSettings", label: "Settings", icon: "settings", adminOnly: true },
+      { tab: "AdminSettings", label: "Settings", icon: "settings", requires: "settings:manage" },
       {
         tab: "Permissions",
         label: "Permissions",
         icon: "shield",
-        adminOnly: true,
+        requires: "users:manage",
         searchPlaceholder: "Search users & teams",
       },
-      { tab: "DeadLetters", label: "Dead Letters", icon: "flag", adminOnly: true },
-      { tab: "AuditLog", label: "Audit Log", icon: "list", adminOnly: true },
+      { tab: "DeadLetters", label: "Dead Letters", icon: "flag", requires: "deadletters:read" },
+      { tab: "AuditLog", label: "Audit Log", icon: "list", requires: "audit:read" },
     ],
   },
 ];
@@ -121,13 +134,13 @@ export function isResourceTab(tab: AppTab): boolean {
 }
 
 export function visibleNavSections(options: {
-  canSeeAdmin: boolean;
+  can: (capability: Capability) => boolean;
   isDesktop: boolean;
 }): NavSection[] {
   const sections = navSections
     .map((section) => ({
       ...section,
-      items: section.items.filter((item) => !item.adminOnly || options.canSeeAdmin),
+      items: section.items.filter((item) => !item.requires || options.can(item.requires)),
     }))
     .filter((section) => section.items.length > 0);
 

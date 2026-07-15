@@ -3,6 +3,7 @@ use std::sync::Arc;
 use axum::{Extension, Json, extract::Path, http::StatusCode};
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::auth::AuthContext;
+use runinator_models::capabilities::Capability;
 use runinator_models::orgs::{
     AddOrgMemberRequest, CreateOrgRequest, OrgContextResponse, OrgMembershipView, OrgRole,
     SwitchOrgRequest, UpdateOrgMemberRequest, UpdateOrgRequest, slugify,
@@ -92,7 +93,7 @@ pub(crate) async fn list_orgs<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> Reply {
-    if let Err(reply) = authz::require_admin(&ctx) {
+    if let Err(reply) = authz::require_capability(&ctx, Capability::OrgsManage) {
         return reply;
     }
     match db.list_orgs().await {

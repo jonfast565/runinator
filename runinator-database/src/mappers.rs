@@ -11,6 +11,7 @@ use runinator_models::{
     notifications::Notification,
     orchestration::{OrchestrationEvent, ReadyNodeRecord},
     orgs::{OrgMembership, OrgRole, Organization},
+    pipelines::{Pipeline, PipelineDefaults},
     provisioning::ProvisionBackend,
     replicas::{
         ReplicaKind, ReplicaProviderRegistration, ReplicaRecord, ReplicaStatus, TriggerActorType,
@@ -338,6 +339,28 @@ macro_rules! workflow_trigger_from_row {
 }
 
 row_mapper!(row_to_workflow_trigger(row) -> WorkflowTrigger { workflow_trigger_from_row!(row) });
+
+macro_rules! pipeline_from_row {
+    ($row:expr) => {{
+        Pipeline {
+            id: $row.get("id"),
+            name: $row.get("name"),
+            description: $row.get::<Option<String>, _>("description"),
+            org_id: $row.get("org_id"),
+            workflow_ids: serde_json::from_str($row.get::<String, _>("workflow_ids").as_str())
+                .unwrap_or_default(),
+            defaults: serde_json::from_str::<PipelineDefaults>(
+                $row.get::<String, _>("defaults").as_str(),
+            )
+            .unwrap_or_default(),
+            metadata: parse_json($row.get::<String, _>("metadata")),
+            created_at: DateTime::<Utc>::from_timestamp($row.get("created_at"), 0),
+            updated_at: DateTime::<Utc>::from_timestamp($row.get("updated_at"), 0),
+        }
+    }};
+}
+
+row_mapper!(row_to_pipeline(row) -> Pipeline { pipeline_from_row!(row) });
 
 macro_rules! workflow_run_from_row {
     ($row:expr) => {{

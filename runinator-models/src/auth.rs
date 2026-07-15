@@ -5,6 +5,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::capabilities::Capability;
+
 /// the local-password identity provider tag. future SSO providers use `"oidc:<issuer>"`.
 pub const PROVIDER_LOCAL: &str = "local";
 
@@ -52,12 +54,14 @@ impl Permission {
 #[serde(rename_all = "snake_case")]
 pub enum ResourceType {
     Workflow,
+    Pipeline,
 }
 
 impl ResourceType {
     pub fn as_str(&self) -> &'static str {
         match self {
             ResourceType::Workflow => "workflow",
+            ResourceType::Pipeline => "pipeline",
         }
     }
 }
@@ -274,6 +278,10 @@ pub struct LoginResponse {
     /// access-token lifetime in seconds.
     pub expires_in: i64,
     pub user: User,
+    /// the capabilities this token grants, so the client can gate the ui without a follow-up call.
+    /// login issues an org-less token, so only platform capabilities appear until an org is selected.
+    #[serde(default)]
+    pub capabilities: Vec<Capability>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

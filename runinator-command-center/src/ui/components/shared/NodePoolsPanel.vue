@@ -1,5 +1,5 @@
 <template>
-  <div v-if="isAdmin" class="panel node-pools-panel">
+  <div v-if="canScale" class="panel node-pools-panel">
     <div class="panel-toolbar">
       <h2>Node Pools</h2>
       <button class="btn" :disabled="loading" @click="refresh">
@@ -97,13 +97,14 @@ import {
   type ProvisionedGroup,
 } from "../../../core/services";
 import { useAppStore } from "../../../ui/adapters/pinia/app";
-import { useAuthStore } from "../../../ui/adapters/pinia/auth";
+import { useCan } from "../../../ui/composables/useCan";
 import { errorMessage } from "../../../core/utils/format";
 
 const app = useAppStore();
-const auth = useAuthStore();
+const { can } = useCan();
 
-const isAdmin = computed(() => !auth.required || auth.user?.is_admin === true);
+// global worker-node scaling is a platform capability (backend: nodes:scale).
+const canScale = computed(() => can("nodes:scale"));
 
 // the scale-to-zero floor is backend-provided: control-plane kinds (webservice/postgres) report a
 // min_desired of one so they cannot be scaled to zero from here, and any future protected kind is
@@ -123,7 +124,7 @@ const busy = ref(false);
 const error = ref<string | null>(null);
 
 async function refresh() {
-  if (!isAdmin.value) {
+  if (!canScale.value) {
     return;
   }
 

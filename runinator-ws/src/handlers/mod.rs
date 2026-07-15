@@ -13,6 +13,7 @@ pub(crate) mod notifications;
 pub(crate) mod observability;
 pub(crate) mod orgs;
 pub(crate) mod packs;
+pub(crate) mod pipelines;
 pub(crate) mod providers;
 pub(crate) mod provisioning;
 pub(crate) mod replicas;

@@ -8,6 +8,7 @@ use runinator_models::{
     debug::{DEBUG_RERUN, DEBUG_SKIPPED, DEBUG_SUPERSEDED},
     errors::SendableError,
     orchestration::{NewOrchestrationEvent, ReadyNodeRecord},
+    pipelines::Pipeline,
     runs::{NewRunArtifact, NewRunChunk},
     web::TaskResponse,
     workflow_state::{ControlFrame, DebugFrame, DebugMode, WorkflowRunState},
@@ -28,6 +29,7 @@ mod catalog;
 mod debug;
 mod definitions;
 mod node_runs;
+mod pipelines;
 mod provider_meta;
 mod replicas;
 mod runs;
@@ -38,6 +40,7 @@ pub use catalog::*;
 pub use debug::*;
 pub use definitions::*;
 pub use node_runs::*;
+pub use pipelines::*;
 pub use provider_meta::{provider_metadata_from_item, provider_metadata_from_items};
 pub use replicas::*;
 pub use runs::*;

@@ -108,7 +108,7 @@
             </table>
           </section>
 
-          <section v-if="orgs.isActiveOrgAdmin" class="res-card res-card-wide">
+          <section v-if="can('org:nodes:scale')" class="res-card res-card-wide">
             <h3 class="res-card-title">Scale a pool</h3>
             <form class="res-scale" @submit.prevent="scale">
               <select v-model="scaleBackend">
@@ -154,11 +154,13 @@ import {
   type RateCard,
 } from "../../core/services";
 import { useOrgsStore } from "../../ui/adapters/pinia/orgs";
+import { useCan } from "../composables/useCan";
 import { useOperationLoading } from "../composables/useOperationLoading";
 
 const HOURS_PER_MONTH = 730;
 
 const orgs = useOrgsStore();
+const { can } = useCan();
 const refreshing = ref(false);
 const { isLoading: loadingNodes, loadingMessage: refreshMessage } =
   useOperationLoading("Loading org nodes");

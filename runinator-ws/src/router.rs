@@ -10,7 +10,7 @@ use axum::{
 use runinator_broker::Broker;
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::api_routes::{
-    API_ARTIFACTS, API_PACKS_IMPORT, API_PROVIDERS, API_REPLICAS, API_RUNS,
+    API_ARTIFACTS, API_PACKS_IMPORT, API_PIPELINES, API_PROVIDERS, API_REPLICAS, API_RUNS,
     API_SCHEDULER_ACTION_DISPATCHES, API_SCHEDULER_ACTION_DISPATCHES_CLAIM,
     API_SCHEDULER_ACTION_DISPATCHES_PENDING, API_SCHEDULER_READY_NODES_CLAIM,
     API_SCHEDULER_WORKFLOW_RUNS_CLAIM, API_SCHEDULER_WORKFLOW_TRIGGER_FIRINGS_CLAIM,
@@ -78,6 +78,10 @@ use crate::handlers::{
         remove_org_member, switch_org, update_org, update_org_member,
     },
     packs::import_pack,
+    pipelines::{
+        create_pipeline, delete_pipeline, get_pipeline, get_pipelines, set_pipeline_owner,
+        update_pipeline,
+    },
     providers::{get_providers, import_provider_bundle, upsert_provider},
     provisioning::{get_node_backends, get_nodes, scale_nodes, stop_node},
     replicas::{
@@ -235,6 +239,23 @@ pub fn build_router<T: DatabaseImpl>(
         .route(
             "/workflow_triggers/{id}/runs",
             post(create_workflow_trigger_run::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            API_PIPELINES,
+            get(get_pipelines::<T>)
+                .post(create_pipeline::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/pipelines/{id}",
+            get(get_pipeline::<T>)
+                .patch(update_pipeline::<T>)
+                .delete(delete_pipeline::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/pipelines/{id}/owner",
+            patch(set_pipeline_owner::<T>).layer(Extension(pool.clone())),
         )
         .route(
             API_WORKFLOW_RUNS,

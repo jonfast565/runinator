@@ -12,6 +12,8 @@ export {
 } from "../json";
 
 export type { PermissionLevel, PrincipalType } from "./auth/permission";
+export type { Capability } from "./auth/capability";
+export { ALL_CAPABILITIES } from "./auth/capability";
 export type { User } from "./auth/user";
 export type { Team } from "./auth/team";
 export type { Grant } from "./auth/grant";
@@ -45,6 +47,12 @@ export type { WorkflowDefinition } from "./workflow/definition";
 export { workflowInputType } from "./workflow/definition";
 export type { WorkflowBundle } from "./workflow/bundle";
 export type { WorkflowTrigger, WorkflowTriggerKind } from "./workflow/trigger";
+export type {
+  Pipeline,
+  PipelineDefaults,
+  PipelineFailurePolicy,
+} from "./pipeline/pipeline";
+export { defaultPipelineDefaults } from "./pipeline/pipeline";
 export type { WorkflowNodeRun } from "./workflow/node-run";
 export type { WorkflowRunDetail } from "./workflow/run-detail";
 export { runWorkflowSnapshot } from "./workflow/run-detail";

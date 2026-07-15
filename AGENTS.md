@@ -117,6 +117,14 @@ The database crate owns persistence behavior. The web service owns HTTP behavior
 - Keep repository functions in `runinator-ws/src/repository.rs` thin. They should orchestrate database calls and web responses, not duplicate SQL behavior.
 - Keep public API payloads in shared model/API crates when they must be consumed by multiple binaries or the command center.
 
+## Authorization
+
+Two axes, both enforced backend-side; see `docs/permissions.md` for the full model.
+
+- **Capabilities** are the named, documented catalog of platform/org privileges (`runinator-models/src/capabilities.rs`, mirrored to the command center). Gate a privileged handler with `authz::require_capability(&ctx, Capability::X)` and add the caller's set to the resolver in `authz::capabilities_for`. Do **not** add a new bare `require_admin` gate for a user-facing action — add a capability so the backend and the ui reference one dictionary. `require_admin`/`require_service_or_admin` remain for platform-admin-or-service internal traffic; `require_org_admin(ctx, org_id)` remains for org-scoped resource checks.
+- **Resource grants** (`Permission` View/Run/Edit/Own) gate individual workflows/pipelines via `authz::require_workflow`/`require_pipeline`; leave these as-is.
+- The command center gates against `GET /auth/me`'s `capabilities`; it hides nav/panels and disables actions the caller lacks, but this never replaces backend enforcement.
+
 ## Configuration
 
 CLI/config changes usually affect more than one place.

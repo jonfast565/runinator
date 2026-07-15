@@ -2,6 +2,7 @@ use runinator_models::{
     api_routes::{
         API_WORKFLOWS_IMPORT, WORKFLOW_JSON_IMPORT_RISK_ACK, WORKFLOW_JSON_IMPORT_RISK_HEADER,
     },
+    pipelines::Pipeline,
     providers::ProviderMetadata,
     replicas::ReplicaListResponse,
     runs::{RunArtifact, RunChunk},
@@ -732,6 +733,83 @@ pub async fn delete_workflow_trigger(
     let response = state.client.read().await.delete(url.clone()).send().await?;
     let response = handle_response(url, response).await?;
     Ok(response.json::<TaskResponse>().await?)
+}
+
+#[tauri::command]
+pub async fn fetch_pipelines(state: State<'_, CommandCenterState>) -> CommandResult<Vec<Pipeline>> {
+    get_json(&state, "pipelines").await
+}
+
+#[tauri::command]
+pub async fn fetch_pipeline(
+    state: State<'_, CommandCenterState>,
+    pipeline_id: Uuid,
+) -> CommandResult<Pipeline> {
+    get_json(&state, &format!("pipelines/{pipeline_id}")).await
+}
+
+#[tauri::command]
+pub async fn save_pipeline(
+    state: State<'_, CommandCenterState>,
+    pipeline: Pipeline,
+) -> CommandResult<Pipeline> {
+    let response = match pipeline.id {
+        Some(id) => {
+            let url = build_state_url(&state, &format!("pipelines/{id}")).await?;
+            let response = state
+                .client
+                .read()
+                .await
+                .patch(url.clone())
+                .json(&pipeline)
+                .send()
+                .await?;
+            handle_response(url, response).await?
+        }
+        None => {
+            let url = build_state_url(&state, "pipelines").await?;
+            let response = state
+                .client
+                .read()
+                .await
+                .post(url.clone())
+                .json(&pipeline)
+                .send()
+                .await?;
+            handle_response(url, response).await?
+        }
+    };
+    Ok(response.json::<Pipeline>().await?)
+}
+
+#[tauri::command]
+pub async fn delete_pipeline(
+    state: State<'_, CommandCenterState>,
+    pipeline_id: Uuid,
+) -> CommandResult<TaskResponse> {
+    let url = build_state_url(&state, &format!("pipelines/{pipeline_id}")).await?;
+    let response = state.client.read().await.delete(url.clone()).send().await?;
+    let response = handle_response(url, response).await?;
+    Ok(response.json::<TaskResponse>().await?)
+}
+
+#[tauri::command]
+pub async fn set_pipeline_owner(
+    state: State<'_, CommandCenterState>,
+    pipeline_id: Uuid,
+    org_id: Option<Uuid>,
+) -> CommandResult<Pipeline> {
+    let url = build_state_url(&state, &format!("pipelines/{pipeline_id}/owner")).await?;
+    let response = state
+        .client
+        .read()
+        .await
+        .patch(url.clone())
+        .json(&json!({ "org_id": org_id }))
+        .send()
+        .await?;
+    let response = handle_response(url, response).await?;
+    Ok(response.json::<Pipeline>().await?)
 }
 
 #[tauri::command]

@@ -10,6 +10,7 @@ use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::auth::{
     AuthContext, Grant, Permission, PrincipalKind, PrincipalType, ResourceType,
 };
+use runinator_models::capabilities::Capability;
 use runinator_models::orgs::OrgRole;
 use runinator_models::value::Value;
 use uuid::Uuid;
@@ -38,6 +39,10 @@ fn workflow_kind() -> String {
     ResourceType::Workflow.as_str().to_string()
 }
 
+fn pipeline_kind() -> String {
+    ResourceType::Pipeline.as_str().to_string()
+}
+
 pub fn require_admin(ctx: &AuthContext) -> Result<(), Reply> {
     if ctx.is_admin {
         Ok(())
@@ -48,6 +53,32 @@ pub fn require_admin(ctx: &AuthContext) -> Result<(), Reply> {
 
 pub fn require_service_or_admin(ctx: &AuthContext) -> Result<(), Reply> {
     if ctx.is_admin || matches!(ctx.kind, PrincipalKind::Service) {
+        Ok(())
+    } else {
+        Err(forbidden())
+    }
+}
+
+/// the capability set a caller holds. this is the single documented mapping of who-holds-what:
+/// platform admins (including the synthetic admin used when auth is disabled) hold every capability;
+/// admins of the caller's active org hold the org-scoped capabilities; ordinary members hold none.
+/// returned on `/auth/me` so the command center gates against the same truth the handlers enforce.
+pub fn capabilities_for(ctx: &AuthContext) -> HashSet<Capability> {
+    if ctx.is_admin {
+        return Capability::ALL.iter().copied().collect();
+    }
+    match ctx.org_role {
+        Some(role) if role.allows(OrgRole::Admin) => {
+            Capability::ORG_ADMIN.iter().copied().collect()
+        }
+        _ => HashSet::new(),
+    }
+}
+
+/// gate an action on a named capability, else a 403 reply. platform-scoped capabilities pass only for
+/// platform admins; org-scoped capabilities pass for admins of the active org (see `capabilities_for`).
+pub fn require_capability(ctx: &AuthContext, cap: Capability) -> Result<(), Reply> {
+    if capabilities_for(ctx).contains(&cap) {
         Ok(())
     } else {
         Err(forbidden())
@@ -201,6 +232,93 @@ pub async fn grant_owner<T: DatabaseImpl>(db: &T, ctx: &AuthContext, workflow_id
         id: None,
         resource_type: ResourceType::Workflow,
         resource_id: workflow_id,
+        principal_type: PrincipalType::User,
+        principal_id: user_id,
+        permission: Permission::Own,
+        created_at: Utc::now(),
+    };
+    let _ = db.create_grant(grant).await;
+}
+
+/// the caller's effective permission on a pipeline, or `None` when they have no access.
+pub async fn pipeline_permission<T: DatabaseImpl>(
+    db: &T,
+    ctx: &AuthContext,
+    pipeline_id: Uuid,
+) -> Option<Permission> {
+    if ctx.is_admin {
+        return Some(Permission::Own);
+    }
+    let user_id = ctx.principal_id?;
+    let team_ids = db.list_user_team_ids(user_id).await.unwrap_or_default();
+    let grants = db.list_grants(pipeline_kind(), pipeline_id).await.ok()?;
+    grants
+        .into_iter()
+        .filter(|grant| match grant.principal_type {
+            PrincipalType::User => grant.principal_id == user_id,
+            PrincipalType::Team => team_ids.contains(&grant.principal_id),
+        })
+        .map(|grant| grant.permission)
+        .max()
+}
+
+/// require at least `needed` permission on the pipeline, else a 403 reply.
+pub async fn require_pipeline<T: DatabaseImpl>(
+    db: &T,
+    ctx: &AuthContext,
+    pipeline_id: Uuid,
+    needed: Permission,
+) -> Result<(), Reply> {
+    if ctx.is_admin {
+        return Ok(());
+    }
+    match pipeline_permission(db, ctx, pipeline_id).await {
+        Some(permission) if permission.allows(needed) => Ok(()),
+        _ => Err(forbidden()),
+    }
+}
+
+/// the pipeline ids the caller can see, or `None` meaning "all" (admin / auth disabled).
+pub async fn visible_pipeline_ids<T: DatabaseImpl>(
+    db: &T,
+    ctx: &AuthContext,
+) -> Option<HashSet<Uuid>> {
+    if ctx.is_admin {
+        return None;
+    }
+    let mut ids = HashSet::new();
+    // every pipeline owned by the caller's active org is visible to its members.
+    if let Some(org_id) = ctx.org_id {
+        if let Ok(org_ids) = db.fetch_pipeline_ids_for_org(org_id).await {
+            ids.extend(org_ids);
+        }
+    }
+    let Some(user_id) = ctx.principal_id else {
+        return Some(ids);
+    };
+    if let Ok(grants) = db.list_user_grants(pipeline_kind(), user_id).await {
+        ids.extend(grants.into_iter().map(|grant| grant.resource_id));
+    }
+    if let Ok(team_ids) = db.list_user_team_ids(user_id).await {
+        for team_id in team_ids {
+            if let Ok(grants) = db.list_team_grants(pipeline_kind(), team_id).await {
+                ids.extend(grants.into_iter().map(|grant| grant.resource_id));
+            }
+        }
+    }
+    Some(ids)
+}
+
+/// stamp the creator as `own` on a freshly created pipeline. a no-op for service/admin principals
+/// without a user id (nothing to own it).
+pub async fn grant_pipeline_owner<T: DatabaseImpl>(db: &T, ctx: &AuthContext, pipeline_id: Uuid) {
+    let Some(user_id) = ctx.principal_id else {
+        return;
+    };
+    let grant = Grant {
+        id: None,
+        resource_type: ResourceType::Pipeline,
+        resource_id: pipeline_id,
         principal_type: PrincipalType::User,
         principal_id: user_id,
         permission: Permission::Own,

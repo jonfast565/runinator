@@ -3,6 +3,7 @@ use runinator_models::value::Value;
 use runinator_models::{
     bundles::{PackImportResult, ProviderBundle, SecretBundle},
     notifications::Notification,
+    pipelines::Pipeline,
     providers::ProviderMetadata,
     provisioning::{NodeBackendsResponse, ProvisionedGroup},
     replicas::{ReplicaListResponse, ReplicaProviderRegistration, ReplicaRecord, ReplicaStatus},
@@ -95,6 +96,8 @@ pub enum ApiResponse {
     WorkflowList(Vec<WorkflowDefinition>),
     WorkflowTrigger(WorkflowTrigger),
     WorkflowTriggerList(Vec<WorkflowTrigger>),
+    Pipeline(Pipeline),
+    PipelineList(Vec<Pipeline>),
     WorkflowRun(WorkflowRunResponse),
     WorkflowRunList(Vec<WorkflowRun>),
     WorkflowNodeRun(WorkflowNodeRun),
@@ -368,6 +371,13 @@ pub struct ReplicaQuery {
 #[derive(Debug, Deserialize)]
 pub struct WorkflowOwnerRequest {
     /// the org to own the workflow, or `null`/absent to make it platform-global.
+    #[serde(default)]
+    pub org_id: Option<Uuid>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PipelineOwnerRequest {
+    /// the org to own the pipeline, or `null`/absent to make it platform-global.
     #[serde(default)]
     pub org_id: Option<Uuid>,
 }

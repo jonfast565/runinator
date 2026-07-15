@@ -1,4 +1,5 @@
 import type { IconName } from "../domain/icons";
+import type { Capability } from "../domain/models";
 
 export type AppTab =
   | "Dev"
@@ -34,8 +35,9 @@ export interface NavItem {
   endpoint?: string;
   // only available in the tauri desktop client; hidden in the hosted web app.
   desktopOnly?: boolean;
-  // only available to admins, or to auth-disabled stacks where every caller is an admin.
-  adminOnly?: boolean;
+  // capability the caller must hold for this tab to be visible. absent means visible to any
+  // authenticated caller. auth-disabled stacks hold every capability, so nothing is hidden there.
+  requires?: Capability;
   // placeholder for the global search box; when set the tab's list consumes app.searchQuery.
   // when unset the search box is hidden for this tab so it is never a dead control.
   searchPlaceholder?: string;

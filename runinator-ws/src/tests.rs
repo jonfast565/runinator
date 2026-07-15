@@ -3683,3 +3683,101 @@ async fn ws_desktop_worker_relay_enforces_policy_and_ownership() {
     server.abort();
     let _ = std::fs::remove_file(path);
 }
+
+// ---- capability resolver (authz::capabilities_for / require_capability) ----
+
+fn auth_ctx(is_admin: bool, org_role: Option<OrgRole>) -> AuthContext {
+    AuthContext {
+        principal_id: Some(Uuid::now_v7()),
+        is_admin,
+        kind: PrincipalKind::User,
+        org_id: org_role.map(|_| Uuid::now_v7()),
+        org_role,
+    }
+}
+
+#[test]
+fn platform_admin_holds_every_capability() {
+    let ctx = auth_ctx(true, None);
+    let caps = crate::authz::capabilities_for(&ctx);
+    for cap in runinator_models::capabilities::Capability::ALL {
+        assert!(caps.contains(cap), "admin must hold {cap:?}");
+    }
+}
+
+#[test]
+fn disabled_admin_holds_every_capability() {
+    let caps = crate::authz::capabilities_for(&AuthContext::disabled_admin());
+    assert_eq!(
+        caps.len(),
+        runinator_models::capabilities::Capability::ALL.len()
+    );
+}
+
+#[test]
+fn org_admin_holds_only_org_capabilities() {
+    use runinator_models::capabilities::Capability;
+    let ctx = auth_ctx(false, Some(OrgRole::Admin));
+    let caps = crate::authz::capabilities_for(&ctx);
+    assert!(caps.contains(&Capability::OrgMembersManage));
+    assert!(caps.contains(&Capability::OrgNodesScale));
+    assert!(!caps.contains(&Capability::UsersManage));
+    assert!(!caps.contains(&Capability::SecretsRead));
+    assert!(!caps.contains(&Capability::NodesScale));
+}
+
+#[test]
+fn org_member_holds_no_capabilities() {
+    let ctx = auth_ctx(false, Some(OrgRole::Member));
+    assert!(crate::authz::capabilities_for(&ctx).is_empty());
+}
+
+#[test]
+fn require_capability_gates_by_holder() {
+    use runinator_models::capabilities::Capability;
+    let admin = auth_ctx(true, None);
+    let member = auth_ctx(false, Some(OrgRole::Member));
+    let org_admin = auth_ctx(false, Some(OrgRole::Admin));
+
+    assert!(crate::authz::require_capability(&admin, Capability::UsersManage).is_ok());
+    assert!(crate::authz::require_capability(&member, Capability::UsersManage).is_err());
+    assert!(crate::authz::require_capability(&org_admin, Capability::UsersManage).is_err());
+    assert!(crate::authz::require_capability(&org_admin, Capability::OrgMembersManage).is_ok());
+}
+
+#[tokio::test]
+async fn me_returns_resolved_capabilities() {
+    let (db, path) = test_db().await;
+    let db = Arc::new(db);
+    let user = db
+        .create_user("member".into(), None, false, None)
+        .await
+        .unwrap();
+    let user_id = user.id.expect("user id");
+
+    // an org admin sees the org capabilities but none of the platform ones.
+    let ctx = AuthContext {
+        principal_id: Some(user_id),
+        is_admin: false,
+        kind: PrincipalKind::User,
+        org_id: Some(Uuid::now_v7()),
+        org_role: Some(OrgRole::Admin),
+    };
+    let (status, Json(body)) =
+        crate::handlers::auth::me::<SqliteDb>(Extension(db.clone()), Extension(ctx)).await;
+    assert_eq!(status, StatusCode::OK);
+    let crate::models::ApiResponse::JsonValue(value) = body else {
+        panic!("me response must be json");
+    };
+    let capabilities: Vec<String> = value
+        .get("capabilities")
+        .and_then(|caps| caps.as_array())
+        .expect("capabilities array")
+        .iter()
+        .filter_map(|cap| cap.as_str().map(str::to_string))
+        .collect();
+    assert!(capabilities.contains(&"org:members:manage".to_string()));
+    assert!(!capabilities.contains(&"users:manage".to_string()));
+
+    let _ = std::fs::remove_file(path);
+}

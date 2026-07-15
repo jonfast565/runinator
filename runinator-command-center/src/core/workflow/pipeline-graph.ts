@@ -66,13 +66,33 @@ function chainEvent(value: unknown): ChainEvent {
   return value === "failure" || value === "complete" ? value : "success";
 }
 
+export interface BuildPipelineGraphOptions {
+  /** when set, only member workflows are nodes and only links tagged with this pipeline are edges. */
+  pipelineId?: string | null;
+  /** the member workflow ids that scope the graph (used with `pipelineId`). */
+  memberIds?: string[];
+}
+
+/** does a chained trigger belong to the pipeline currently being rendered? */
+function belongsToPipeline(trigger: WorkflowTrigger, pipelineId: string | null | undefined): boolean {
+  if (pipelineId == null) {
+    return true;
+  }
+
+  return asString(trigger.configuration.pipeline_id) === pipelineId;
+}
+
 /** build the workflow-level graph: one node per workflow, one edge per resolvable chained trigger. */
 export function buildPipelineGraph(
   workflows: WorkflowDefinition[],
   triggersByWorkflowId: Record<string, WorkflowTrigger[]>,
+  options: BuildPipelineGraphOptions = {},
 ): PipelineGraph {
-  const identified = workflows.filter((wf): wf is WorkflowDefinition & { id: string } =>
-    Boolean(wf.id),
+  const memberSet =
+    options.memberIds != null ? new Set(options.memberIds) : null;
+  const identified = workflows.filter(
+    (wf): wf is WorkflowDefinition & { id: string } =>
+      wf.id != null && (memberSet == null || memberSet.has(wf.id)),
   );
   const nameToId = new Map<string, string>();
 
@@ -92,6 +112,10 @@ export function buildPipelineGraph(
   for (const wf of identified) {
     for (const trigger of triggersByWorkflowId[wf.id] ?? []) {
       if (trigger.kind !== "chained") {
+        continue;
+      }
+
+      if (!belongsToPipeline(trigger, options.pipelineId)) {
         continue;
       }
 

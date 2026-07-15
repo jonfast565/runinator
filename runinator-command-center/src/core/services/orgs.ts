@@ -99,6 +99,8 @@ export function createOrgsService(app: AppService, auth: AuthService) {
       try {
         const context = await switchOrg(orgId);
         await auth.applyAccessToken(context.access_token);
+        // the new token carries the org role, so refresh the principal to pick up org capabilities.
+        await auth.reloadMe();
         service.setActiveLocal(orgId);
         app.setStatus(`Active organization: ${context.org.name}`);
         return true;

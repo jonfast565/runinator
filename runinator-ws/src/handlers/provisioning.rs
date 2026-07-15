@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use axum::{Extension, Json, http::StatusCode};
 use runinator_models::auth::AuthContext;
+use runinator_models::capabilities::Capability;
 use runinator_models::provisioning::{NodeBackendsResponse, ScaleNodesRequest, StopNodeRequest};
 use runinator_provisioner::ProvisionerRegistry;
 
@@ -53,7 +54,7 @@ pub(crate) async fn scale_nodes(
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<ScaleNodesRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = crate::authz::require_admin(&ctx) {
+    if let Err(reply) = crate::authz::require_capability(&ctx, Capability::NodesScale) {
         return reply;
     }
     let provisioner = match registry.require(request.backend) {
@@ -75,7 +76,7 @@ pub(crate) async fn stop_node(
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<StopNodeRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = crate::authz::require_admin(&ctx) {
+    if let Err(reply) = crate::authz::require_capability(&ctx, Capability::NodesScale) {
         return reply;
     }
     let provisioner = match registry.require(request.backend) {

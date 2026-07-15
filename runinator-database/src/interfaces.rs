@@ -12,6 +12,7 @@ use runinator_models::{
     notifications::{NewNotification, Notification},
     orchestration::{NewOrchestrationEvent, OrchestrationEvent, ReadyNodeRecord},
     orgs::{OrgMembership, OrgRole, Organization},
+    pipelines::Pipeline,
     replicas::{
         ReplicaHeartbeatRequest, ReplicaKind, ReplicaProviderRegistration,
         ReplicaProviderRegistrationRequest, ReplicaRecord, ReplicaRegistrationRequest,
@@ -204,6 +205,40 @@ pub trait DatabaseImpl: Send + Sync + 'static {
     fn delete_workflow_trigger(
         &self,
         trigger_id: Uuid,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
+
+    /// Create or update a pipeline instance.
+    fn upsert_pipeline(
+        &self,
+        pipeline: &Pipeline,
+    ) -> impl Future<Output = Result<Pipeline, SendableError>> + Send;
+
+    /// Fetch all pipeline instances.
+    fn fetch_pipelines(&self) -> impl Future<Output = Result<Vec<Pipeline>, SendableError>> + Send;
+
+    /// Fetch a pipeline instance by identifier.
+    fn fetch_pipeline(
+        &self,
+        pipeline_id: Uuid,
+    ) -> impl Future<Output = Result<Option<Pipeline>, SendableError>> + Send;
+
+    /// Delete a pipeline instance.
+    fn delete_pipeline(
+        &self,
+        pipeline_id: Uuid,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
+
+    /// Fetch the ids of every pipeline owned by an organization (org-scoped visibility).
+    fn fetch_pipeline_ids_for_org(
+        &self,
+        org_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<Uuid>, SendableError>> + Send;
+
+    /// Reassign a pipeline's owning organization (`None` makes it platform-global).
+    fn set_pipeline_org(
+        &self,
+        pipeline_id: Uuid,
+        org_id: Option<Uuid>,
     ) -> impl Future<Output = Result<(), SendableError>> + Send;
 
     /// Fetch enabled triggers that should fire at or before the provided instant.

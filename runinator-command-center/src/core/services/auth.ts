@@ -7,7 +7,7 @@ import {
   setAccessToken,
   type LoginResult,
 } from "../api/commandCenterApi";
-import type { JsonRecord } from "../domain/models";
+import { ALL_CAPABILITIES, type Capability, type JsonRecord } from "../domain/models";
 import { getPlatformAdapterOptional } from "../platform";
 import type { AuthStorage } from "../platform/types";
 import { createStore } from "./event-bus";
@@ -20,8 +20,20 @@ export interface AuthState {
   authenticated: boolean;
   ready: boolean;
   user: JsonRecord | null;
+  // the caller's resolved capability set (see runinator-models capabilities). the whole ui gates
+  // against this; auth-disabled stacks ignore it (every capability is granted).
+  capabilities: Capability[];
   error: string;
   accessTokenRevision: number;
+}
+
+function isCapability(value: unknown): value is Capability {
+  return typeof value === "string" && (ALL_CAPABILITIES as readonly string[]).includes(value);
+}
+
+function readCapabilities(source: unknown): Capability[] {
+  const raw = (source as { capabilities?: unknown } | null)?.capabilities;
+  return Array.isArray(raw) ? raw.filter(isCapability) : [];
 }
 
 const fallbackAuthStorage: AuthStorage = {
@@ -63,6 +75,7 @@ export function createAuthService() {
     authenticated: false,
     ready: false,
     user: null,
+    capabilities: [],
     error: "",
     accessTokenRevision: 0,
   });
@@ -98,6 +111,7 @@ export function createAuthService() {
     store.setState((state) => ({
       ...state,
       user: result.user,
+      capabilities: result.capabilities?.filter(isCapability) ?? [],
       authenticated: true,
     }));
   }
@@ -109,6 +123,7 @@ export function createAuthService() {
       ...state,
       authenticated: false,
       user: null,
+      capabilities: [],
     }));
   }
 
@@ -131,6 +146,7 @@ export function createAuthService() {
         authenticated: false,
         ready: false,
         user: null,
+        capabilities: [],
         error: "",
         accessTokenRevision: 0,
       }));
@@ -159,7 +175,12 @@ export function createAuthService() {
 
         try {
           const user = await fetchAuthMe();
-          store.setState((state) => ({ ...state, user, authenticated: true }));
+          store.setState((state) => ({
+            ...state,
+            user,
+            capabilities: readCapabilities(user),
+            authenticated: true,
+          }));
         } catch {
           const authenticated = refresh ? await tryRefresh(refresh) : false;
           store.setState((state) => ({ ...state, authenticated }));
@@ -196,6 +217,20 @@ export function createAuthService() {
     async applyAccessToken(access: string) {
       persist(access, refreshToken);
       await publishAccessToken(access);
+    },
+    /// re-hydrate the principal (and its capabilities) under the current token. called after an org
+    /// switch, where the token — and therefore the org-derived capability set — changes.
+    async reloadMe() {
+      if (!store.getState().required) {
+        return;
+      }
+
+      try {
+        const user = await fetchAuthMe();
+        store.setState((state) => ({ ...state, user, capabilities: readCapabilities(user) }));
+      } catch {
+        /* keep the current principal on a transient failure */
+      }
     },
   };
 }

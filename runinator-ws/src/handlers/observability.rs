@@ -5,8 +5,9 @@ use std::sync::Arc;
 use axum::{Extension, Json, extract::Query, http::StatusCode};
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::auth::AuthContext;
+use runinator_models::capabilities::Capability;
 
-use crate::authz::require_admin;
+use crate::authz::require_capability;
 use crate::models::{ApiResponse, AuditLogQuery, DeadLetterQuery};
 use crate::responses::api_error;
 
@@ -30,7 +31,7 @@ pub(crate) async fn get_dead_letters<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Query(query): Query<DeadLetterQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = require_admin(&ctx) {
+    if let Err(reply) = require_capability(&ctx, Capability::DeadLettersRead) {
         return reply;
     }
     match db
@@ -54,7 +55,7 @@ pub(crate) async fn get_audit_log<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Query(query): Query<AuditLogQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = require_admin(&ctx) {
+    if let Err(reply) = require_capability(&ctx, Capability::AuditRead) {
         return reply;
     }
     match db

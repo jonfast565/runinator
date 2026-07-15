@@ -2066,3 +2066,81 @@ async fn legacy_plaintext_jwt_secret_loads_and_migrates_to_encrypted() {
 
     let _ = std::fs::remove_file(path);
 }
+
+#[tokio::test]
+async fn pipeline_round_trip_create_update_delete() {
+    use runinator_models::pipelines::{Pipeline, PipelineDefaults, PipelineFailurePolicy};
+
+    let path = std::env::temp_dir().join(format!(
+        "runinator-pipeline-{}.db",
+        Utc::now().timestamp_nanos_opt().unwrap()
+    ));
+    let db = SqliteDb::new(path.to_str().unwrap()).await.unwrap();
+    db.run_init_scripts(&Vec::new()).await.unwrap();
+
+    let member = Uuid::new_v4();
+    let org = Uuid::new_v4();
+    let created = db
+        .upsert_pipeline(&Pipeline {
+            id: None,
+            name: "Release".into(),
+            description: Some("ship it".into()),
+            org_id: Some(org),
+            workflow_ids: vec![member],
+            defaults: PipelineDefaults {
+                on_step_failure: PipelineFailurePolicy::Continue,
+                links_enabled_by_default: false,
+                default_parameters: runinator_models::json!({ "env": "prod" }),
+                max_chain_depth: Some(8),
+            },
+            metadata: Value::Null,
+            created_at: None,
+            updated_at: None,
+        })
+        .await
+        .unwrap();
+    let id = created.id.unwrap();
+    assert_eq!(created.org_id, Some(org));
+    assert_eq!(created.workflow_ids, vec![member]);
+    assert_eq!(
+        created.defaults.on_step_failure,
+        PipelineFailurePolicy::Continue
+    );
+    assert!(!created.defaults.links_enabled_by_default);
+    assert_eq!(created.defaults.max_chain_depth, Some(8));
+
+    // update: rename and swap the failure policy; the id and created_at are preserved.
+    let mut edit = created.clone();
+    edit.name = "Release v2".into();
+    edit.defaults.on_step_failure = PipelineFailurePolicy::Halt;
+    let updated = db.upsert_pipeline(&edit).await.unwrap();
+    assert_eq!(updated.id, Some(id));
+    assert_eq!(updated.name, "Release v2");
+    assert_eq!(
+        updated.defaults.on_step_failure,
+        PipelineFailurePolicy::Halt
+    );
+
+    let all = db.fetch_pipelines().await.unwrap();
+    assert_eq!(all.len(), 1);
+    let fetched = db.fetch_pipeline(id).await.unwrap().unwrap();
+    assert_eq!(fetched.name, "Release v2");
+    // org ownership: the pipeline is discoverable by its org, and reassignment clears it.
+    assert_eq!(db.fetch_pipeline_ids_for_org(org).await.unwrap(), vec![id]);
+    db.set_pipeline_org(id, None).await.unwrap();
+    assert!(
+        db.fetch_pipeline(id)
+            .await
+            .unwrap()
+            .unwrap()
+            .org_id
+            .is_none()
+    );
+    assert!(db.fetch_pipeline_ids_for_org(org).await.unwrap().is_empty());
+
+    db.delete_pipeline(id).await.unwrap();
+    assert!(db.fetch_pipeline(id).await.unwrap().is_none());
+    assert!(db.fetch_pipelines().await.unwrap().is_empty());
+
+    let _ = std::fs::remove_file(path);
+}
