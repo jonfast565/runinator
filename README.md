@@ -122,6 +122,15 @@ The local supervisor path runs `runinator-bootstrap` before `runinator-ws`, so
 schema/auth bootstrap stays outside the web-service binary even in local
 development.
 
+Once authenticated, requests are authorized on two axes, both enforced
+backend-side: named **capabilities** (a documented catalog of platform/org
+privileges) gate privileged handlers, and **resource grants** (View/Run/Edit/Own)
+gate individual workflows and pipelines — list responses are scoped to the
+workflows the caller can see, and creators are stamped as owners. The command
+center hides nav/panels and disables actions the caller lacks (via `GET /auth/me`),
+but that never replaces backend enforcement. See [`docs/permissions.md`](docs/permissions.md)
+for the full model.
+
 For rapid WDL development, keep a pack compiling and re-importing on every save:
 
 ```bash
@@ -368,9 +377,36 @@ Workflow syntax now includes richer declarative control-flow nodes:
 - `join` waits for named upstream nodes using `all`, `any`, or `first_success`.
 - `try` runs a body, optional catch, and optional finally node; those nodes transition back to the `try` controller.
 - `map` runs one target node for each resolved item and exposes the current item under `workflow.state.map`.
-- `race` starts branch roots until one satisfies the winner policy; v1 does not cancel already dispatched work.
+- `race` starts branch roots until one satisfies the winner policy, then cancels the still-running losing branches (their latest non-terminal node run is marked `Canceled`).
 - `emit` records structured node output without calling a provider.
 - `reentry` allows explicit bounded cycles back to a node and can route to `on_exhausted`.
+
+#### Triggers and workflow chaining
+
+Workflows declare triggers in the WDL header, materialized from `metadata.triggers`
+on import (pack-managed, `metadata.managed_by = "wdl"`):
+
+- `trigger cron "<expr>"` schedules the workflow.
+- `trigger on_success | on_failure | on_complete workflow "<name>"` chains another
+  workflow: when this run reaches that terminal state, the named target starts a new
+  run. `on_failure` matches `Failed`/`TimedOut` (not a manual `Cancel`).
+
+```wdl
+trigger cron "0 * * * *"
+trigger on_success workflow "Downstream Report"
+```
+
+Chaining is event-driven from the reducer's terminal settle (not the best-effort
+`events` channel), fired exactly once per (trigger, source-run) via a durable
+dedupe table, and cycle-bounded by a `chain_depth` cap. Only top-level runs fan out
+chains — subflow/map children do not. Chaining does **not** replace `subflow`: a
+subflow is a synchronous child with a return path, while a chain starts an
+independent downstream run.
+
+The command center's top-level **Pipelines** tab visualizes chains as a DAG — one
+node per workflow, one edge per chained trigger — and lets you author them by
+dragging between workflows, editing an edge's `on` selector, or enabling/disabling
+and deleting chains through the normal trigger CRUD.
 
 WDL references resolve runtime values into action arguments. Alongside `params.*`,
 `prev.*`, `run.*`, and bare node-output names, two roots read from the unified
@@ -521,6 +557,16 @@ kubectl -n runinator logs deploy/runinator-otel-collector
 Grafana's anonymous-admin login is for convenient local viewing; lock it down (set
 a real admin password and disable anonymous access) before using it on a shared
 cluster.
+
+### Dead letters and audit log
+
+Poison messages are no longer dropped silently. When a result or ingress event
+cannot be applied and is given up on, the web service persists a `dead_letters`
+row before acking, so failed messages have a durable record. Auth and sensitive
+operations (login success/failure, authorization denials) are recorded to an
+`audit_log` table. Both are exposed as admin-only endpoints (`GET /dead_letters`,
+`GET /audit_log`, in the OpenAPI spec) and surfaced in the command center as
+admin-gated **Dead Letters** and **Audit Log** views.
 
 ## Kubernetes
 

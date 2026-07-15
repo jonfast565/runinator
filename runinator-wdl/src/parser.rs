@@ -9,6 +9,7 @@ use runinator_models::semver::SemVer;
 use runinator_models::value::Value;
 
 use crate::ast::*;
+use crate::comments::{CommentSet, attach_comments};
 use crate::errors::{Span, WdlError};
 
 #[derive(Parser)]
@@ -85,6 +86,8 @@ pub fn parse_document(src: &str) -> Result<Document, WdlError> {
                     type_decls: Vec::new(),
                     body: Vec::new(),
                     span,
+                    leading_comments: Vec::new(),
+                    dangling_comments: Vec::new(),
                 });
             }
             Rule::params_block => {
@@ -134,10 +137,14 @@ pub fn parse_document(src: &str) -> Result<Document, WdlError> {
     if workflows.is_empty() {
         return Err(WdlError::Parse("missing workflow".into()));
     }
-    Ok(Document {
+    let mut document = Document {
         functions,
         workflows,
-    })
+        trailing_comments: Vec::new(),
+    };
+    // pest drops comments as silent trivia; lex them separately and attach for lossless formatting.
+    attach_comments(&mut document, src);
+    Ok(document)
 }
 
 /// parse a standalone WDL expression fragment.
@@ -219,6 +226,7 @@ fn parse_func_def(pair: Pair<Rule>) -> Result<FunctionDef, WdlError> {
         body,
         recursive,
         span,
+        comments: CommentSet::default(),
     })
 }
 
@@ -383,6 +391,8 @@ fn parse_workflow(pair: Pair<Rule>, namespace: Option<String>) -> Result<Workflo
         type_decls,
         body,
         span,
+        leading_comments: Vec::new(),
+        dangling_comments: Vec::new(),
     })
 }
 
@@ -445,7 +455,12 @@ fn parse_import_decl(pair: Pair<Rule>) -> Result<Import, WdlError> {
             _ => {}
         }
     }
-    Ok(Import { path, alias, span })
+    Ok(Import {
+        path,
+        alias,
+        span,
+        comments: CommentSet::default(),
+    })
 }
 
 fn parse_trigger_decl(pair: Pair<Rule>) -> Result<TriggerDecl, WdlError> {
@@ -496,6 +511,7 @@ fn parse_cron_trigger(pair: Pair<Rule>, span: Span) -> Result<TriggerDecl, WdlEr
         params,
         enabled,
         span,
+        comments: CommentSet::default(),
     })
 }
 
@@ -528,6 +544,7 @@ fn parse_chained_trigger(pair: Pair<Rule>, span: Span) -> Result<TriggerDecl, Wd
         params,
         enabled,
         span,
+        comments: CommentSet::default(),
     })
 }
 
@@ -545,6 +562,7 @@ fn parse_alias_decl(pair: Pair<Rule>) -> Result<Alias, WdlError> {
         name,
         entries,
         span,
+        comments: CommentSet::default(),
     })
 }
 
@@ -571,6 +589,7 @@ fn parse_params_block(pair: Pair<Rule>) -> Result<TypeExpr, WdlError> {
 
 /// a top-level workflow parameter field, optionally carrying a `= expr` default.
 fn parse_params_field(pair: Pair<Rule>) -> Result<TypeField, WdlError> {
+    let span = span_of(&pair);
     let mut name = String::new();
     let mut optional = false;
     let mut ty = TypeExpr::Named("any".into());
@@ -590,10 +609,13 @@ fn parse_params_field(pair: Pair<Rule>) -> Result<TypeField, WdlError> {
         optional,
         ty,
         default,
+        span,
+        comments: CommentSet::default(),
     })
 }
 
 fn parse_type_field(pair: Pair<Rule>) -> Result<TypeField, WdlError> {
+    let span = span_of(&pair);
     let mut name = String::new();
     let mut optional = false;
     let mut ty = TypeExpr::Named("any".into());
@@ -611,6 +633,8 @@ fn parse_type_field(pair: Pair<Rule>) -> Result<TypeField, WdlError> {
         optional,
         ty,
         default: None,
+        span,
+        comments: CommentSet::default(),
     })
 }
 
@@ -784,7 +808,12 @@ fn parse_type_decl(pair: Pair<Rule>) -> Result<TypeDecl, WdlError> {
         }
     }
     let ty = ty.ok_or_else(|| WdlError::syntax(span, "type declaration is missing a body"))?;
-    Ok(TypeDecl { name, ty, span })
+    Ok(TypeDecl {
+        name,
+        ty,
+        span,
+        comments: CommentSet::default(),
+    })
 }
 
 // statements ----------------------------------------------------------------
@@ -835,6 +864,7 @@ fn parse_stmt(pair: Pair<Rule>) -> Result<Stmt, WdlError> {
         kind,
         transitions,
         compensation,
+        comments: CommentSet::default(),
     })
 }
 
@@ -1922,6 +1952,7 @@ fn parse_wait_until(pair: Pair<Rule>) -> Result<WhileStmt, WdlError> {
         }),
         transitions: TransitionClause::default(),
         compensation: None,
+        comments: CommentSet::default(),
     };
     Ok(WhileStmt {
         cond: cond.ok_or_else(|| WdlError::lower("wait until missing condition"))?,

@@ -681,6 +681,7 @@ impl Lowerer {
             }),
             transitions: TransitionClause::default(),
             compensation: None,
+            comments: crate::comments::CommentSet::default(),
         };
         // the synthetic statement is built as a compute above; guard the invariant instead of
         // panicking if that ever changes.

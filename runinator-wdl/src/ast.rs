@@ -2,6 +2,7 @@
 // single input to lowering. it intentionally stays free of runinator-models types so
 // the grammar can evolve independently of the json wire model.
 
+use crate::comments::{Comment, CommentSet};
 use crate::errors::Span;
 use runinator_models::semver::SemVer;
 
@@ -11,6 +12,8 @@ pub struct Document {
     /// function bodies. siblings of the workflow.
     pub functions: Vec<FunctionDef>,
     pub workflows: Vec<Workflow>,
+    /// comments after the last top-level item, preserved for lossless formatting.
+    pub trailing_comments: Vec<Comment>,
 }
 
 impl Document {
@@ -38,6 +41,8 @@ pub struct FunctionDef {
     pub body: FnBody,
     pub recursive: Option<u32>,
     pub span: Span,
+    /// leading/trailing comments, preserved for lossless formatting.
+    pub comments: CommentSet,
 }
 
 /// a function body: a single expression (`= expr`) or a compute-style block of statements
@@ -86,6 +91,10 @@ pub struct Workflow {
     pub type_decls: Vec<TypeDecl>,
     pub body: Block,
     pub span: Span,
+    /// comments before the `workflow` keyword, preserved for lossless formatting.
+    pub leading_comments: Vec<Comment>,
+    /// comments after the last body statement, before the closing brace.
+    pub dangling_comments: Vec<Comment>,
 }
 
 /// a header `type <Name> { ... }` (struct shorthand) or `type <Name> = <type>` (alias) declaration.
@@ -94,6 +103,7 @@ pub struct TypeDecl {
     pub name: String,
     pub ty: TypeExpr,
     pub span: Span,
+    pub comments: CommentSet,
 }
 
 /// which terminal state of the source workflow fires a chained trigger.
@@ -146,6 +156,7 @@ pub struct TriggerDecl {
     pub params: Option<Expr>,
     pub enabled: bool,
     pub span: Span,
+    pub comments: CommentSet,
 }
 
 /// a header `watch <cond> -> <target>` guard: when `cond` holds, the run jumps to `handler`.
@@ -162,6 +173,7 @@ pub struct Import {
     pub path: String,
     pub alias: Option<String>,
     pub span: Span,
+    pub comments: CommentSet,
 }
 
 /// a header `alias <name> = { k: expr, ... }` binding: a named, reusable group of argument
@@ -171,6 +183,7 @@ pub struct Alias {
     pub name: String,
     pub entries: Vec<(String, Expr)>,
     pub span: Span,
+    pub comments: CommentSet,
 }
 
 pub type Block = Vec<Stmt>;
@@ -187,6 +200,8 @@ pub struct Stmt {
     pub transitions: TransitionClause,
     /// `compensate <call>` on an action node: the compensating action run in reverse on saga rollback.
     pub compensation: Option<Box<ActionStmt>>,
+    /// leading/trailing/dangling comments, preserved for lossless formatting.
+    pub comments: CommentSet,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -881,4 +896,9 @@ pub struct TypeField {
     /// an optional default expression, only present on top-level workflow parameter fields. when
     /// set the field is effectively optional and the expression fills it at run start if omitted.
     pub default: Option<Expr>,
+    /// the source span of this field, used to attach comments for lossless formatting. defaults to an
+    /// empty span for fields synthesized outside the parser.
+    pub span: Span,
+    /// leading/trailing/dangling comments on this `params`/`type` struct field.
+    pub comments: CommentSet,
 }

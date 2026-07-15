@@ -1,7 +1,10 @@
-// renders the parsed wdl ast back to canonical source. comments are intentionally not
-// preserved because they are skipped by the grammar before ast construction.
+// renders the parsed wdl ast back to canonical source. comments captured by `attach_comments`
+// (see `comments.rs`) are woven back in: leading comments render on their own lines above an
+// anchor, a trailing comment suffixes the anchor's last line, and dangling comments render on
+// their own lines after the last statement of a block.
 
 use crate::ast::*;
+use crate::comments::{Comment, CommentSet};
 
 pub fn format_document(document: &Document) -> String {
     let mut formatter = Formatter {
@@ -18,7 +21,35 @@ struct Formatter {
 }
 
 impl Formatter {
+    // render leading comments (each on its own line) at the current indent.
+    fn emit_leading(&mut self, comments: &[Comment]) {
+        for comment in comments {
+            self.emit_comment(comment);
+        }
+    }
+
+    // render one comment; multi-line block comments keep their interior lines verbatim.
+    fn emit_comment(&mut self, comment: &Comment) {
+        for line in comment.text.split('\n') {
+            self.line(line.trim_end());
+        }
+    }
+
+    // splice a trailing comment onto the anchor's last emitted line (before its newline).
+    fn append_trailing(&mut self, comments: &CommentSet) {
+        let Some(trailing) = &comments.trailing else {
+            return;
+        };
+        if self.out.ends_with('\n') {
+            self.out.pop();
+        }
+        self.out.push(' ');
+        self.out.push_str(trailing.text.trim_end());
+        self.out.push('\n');
+    }
+
     fn function_def(&mut self, function: &FunctionDef) {
+        self.emit_leading(&function.comments.leading);
         if let Some(max_depth) = function.recursive {
             self.line(&format!("@recursive(max_depth: {max_depth})"));
         }
@@ -43,6 +74,7 @@ impl Formatter {
                 self.line(&out);
             }
         }
+        self.append_trailing(&function.comments);
     }
 
     fn document(&mut self, document: &Document) {
@@ -67,9 +99,15 @@ impl Formatter {
                 self.workflow(workflow);
             }
         }
+        // comments after the last top-level item, on their own lines.
+        if !document.trailing_comments.is_empty() {
+            self.out.push('\n');
+            self.emit_leading(&document.trailing_comments);
+        }
     }
 
     fn workflow(&mut self, workflow: &Workflow) {
+        self.emit_leading(&workflow.leading_comments);
         let version = workflow
             .version
             .map(|version| format!(" v{version}"))
@@ -95,10 +133,12 @@ impl Formatter {
             }
         }
         for import in &workflow.imports {
+            self.emit_leading(&import.comments.leading);
             match &import.alias {
                 Some(alias) => self.line(&format!("import {} as {alias}", import.path)),
                 None => self.line(&format!("import {}", import.path)),
             }
+            self.append_trailing(&import.comments);
         }
         if (workflow.namespace.is_some() || !workflow.imports.is_empty())
             && (!workflow.triggers.is_empty()
@@ -109,7 +149,9 @@ impl Formatter {
         }
         // preserve header `trigger cron` declarations.
         for trigger in &workflow.triggers {
+            self.emit_leading(&trigger.comments.leading);
             self.trigger_decl(trigger);
+            self.append_trailing(&trigger.comments);
         }
         if !workflow.triggers.is_empty()
             && (!workflow.aliases.is_empty() || !workflow.body.is_empty())
@@ -136,11 +178,13 @@ impl Formatter {
             if index > 0 {
                 self.out.push('\n');
             }
+            self.emit_leading(&decl.comments.leading);
             if let TypeExpr::Struct { fields, additional } = &decl.ty {
                 self.type_struct_block(&format!("type {} {{", decl.name), fields, additional);
             } else {
                 self.line(&format!("type {} = {}", decl.name, format_type(&decl.ty)));
             }
+            self.append_trailing(&decl.comments);
         }
         if !workflow.type_decls.is_empty()
             && (!workflow.aliases.is_empty() || !workflow.body.is_empty())
@@ -149,7 +193,9 @@ impl Formatter {
         }
         // preserve header `alias` declarations; they are surface sugar and never reach the graph.
         for alias in &workflow.aliases {
+            self.emit_leading(&alias.comments.leading);
             self.alias_decl(alias);
+            self.append_trailing(&alias.comments);
         }
         if !workflow.aliases.is_empty() && !workflow.body.is_empty() {
             self.out.push('\n');
@@ -159,6 +205,13 @@ impl Formatter {
             self.line(&format!("start -> {}", format_target(start)));
         }
         self.block_body(&workflow.body);
+        // comments trapped after the last body statement, before the closing brace.
+        if !workflow.dangling_comments.is_empty() {
+            if !workflow.body.is_empty() {
+                self.out.push('\n');
+            }
+            self.emit_leading(&workflow.dangling_comments);
+        }
         self.indent -= 1;
         self.line("}");
     }
@@ -230,6 +283,7 @@ impl Formatter {
     }
 
     fn type_field(&mut self, field: &TypeField, comma: bool) {
+        self.emit_leading(&field.comments.leading);
         let optional = if field.optional { "?" } else { "" };
         let name = format_key(&field.name);
         match &field.ty {
@@ -261,6 +315,9 @@ impl Formatter {
                 }
             }
         }
+        self.append_trailing(&field.comments);
+        // comments trapped after the last field of a struct render before its closing brace.
+        self.emit_leading(&field.comments.dangling);
     }
 
     fn block_body(&mut self, body: &Block) {
@@ -281,6 +338,7 @@ impl Formatter {
     }
 
     fn stmt(&mut self, stmt: &Stmt) {
+        self.emit_leading(&stmt.comments.leading);
         if let Some(id) = &stmt.annotations.id {
             self.line(&format!("@id({})", quote(id)));
         }
@@ -311,9 +369,12 @@ impl Formatter {
         }
         if stmt.transitions.is_empty() {
             self.line(&text);
-            return;
+        } else {
+            self.stmt_with_transitions(&text, &stmt.transitions);
         }
-        self.stmt_with_transitions(&text, &stmt.transitions);
+        self.append_trailing(&stmt.comments);
+        // dangling comments trapped at the end of this statement's block render after it.
+        self.emit_leading(&stmt.comments.dangling);
     }
 
     fn stmt_with_transitions(&mut self, text: &str, transitions: &TransitionClause) {

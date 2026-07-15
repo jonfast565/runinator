@@ -10,6 +10,7 @@ Guidance for agents working in `runinator-wdl`.
 
 - Grammar: `src/wdl.pest`.
 - AST and parser: `src/ast.rs`, `src/parser.rs`.
+- Comment preservation: `src/comments.rs`. Pest treats `COMMENT` as silent trivia, so comments are lexed separately and attached to ast anchors (as `CommentSet` leading/trailing/dangling) after parsing; the formatter renders them back for lossless round-trips. Anchors include top-level items, workflow headers, body statements (recursively, per branch), and `params`/`type` struct fields (recursively). Attachment keys off reliable anchor *start* positions and the `own_line` flag, not pest `span.end` (which includes trailing trivia); nested-block and struct boundaries are found by matching source braces (`block_close`).
 - Semantic passes: `src/sema/`.
 - Lowering to workflow JSON: `src/lower/`.
 - Desugaring: `src/desugar.rs`.

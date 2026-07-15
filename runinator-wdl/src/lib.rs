@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 pub mod ast;
+pub mod comments;
 pub mod completion;
 mod decompile;
 mod desugar;
