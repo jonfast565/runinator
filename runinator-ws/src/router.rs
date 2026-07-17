@@ -16,7 +16,8 @@ use runinator_models::api_routes::{
     API_SCHEDULER_WORKFLOW_RUNS_CLAIM, API_SCHEDULER_WORKFLOW_TRIGGER_FIRINGS_CLAIM,
     API_WDL_ANALYZE, API_WDL_COMPILE, API_WDL_COMPLETE, API_WDL_DECOMPILE, API_WDL_EVALUATE,
     API_WDL_FORMAT, API_WDL_HOVER, API_WDL_IMPORT, API_WORKFLOW_RUNS, API_WORKFLOW_TRIGGERS_DUE,
-    API_WORKFLOWS, API_WORKFLOWS_EXPORT, API_WORKFLOWS_IMPORT, API_WORKFLOWS_VALIDATE,
+    API_WORKFLOWS, API_WORKFLOWS_EXPORT, API_WORKFLOWS_IMPORT, API_WORKFLOWS_SIMULATE,
+    API_WORKFLOWS_VALIDATE,
 };
 use runinator_provisioner::ProvisionerRegistry;
 use tower_http::catch_panic::CatchPanicLayer;
@@ -109,8 +110,8 @@ use crate::handlers::{
     webhook::{webhook_signal, webhook_wake},
     workflows::{
         delete_workflow, duplicate_workflow, export_single_workflow_bundle, export_workflow_bundle,
-        get_workflow, get_workflows, import_workflow_bundle, set_workflow_owner, upsert_workflow,
-        validate_workflow,
+        get_workflow, get_workflows, import_workflow_bundle, set_workflow_owner, simulate_workflow,
+        upsert_workflow, validate_workflow,
     },
 };
 use crate::rate_limit::{RateLimitConfig, RateLimiter, rate_limit_middleware};
@@ -166,6 +167,10 @@ pub fn build_router<T: DatabaseImpl>(
         .route(
             API_WORKFLOWS_VALIDATE,
             post(validate_workflow::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            API_WORKFLOWS_SIMULATE,
+            post(simulate_workflow::<T>).layer(Extension(pool.clone())),
         )
         .route(API_WDL_COMPLETE, post(complete_wdl))
         .route(API_WDL_HOVER, post(hover_wdl))

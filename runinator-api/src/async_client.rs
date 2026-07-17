@@ -20,8 +20,9 @@ use runinator_models::{
         API_SCHEDULER_ACTION_DISPATCHES_CLAIM, API_SCHEDULER_ACTION_DISPATCHES_PENDING,
         API_SCHEDULER_READY_NODES_CLAIM, API_SCHEDULER_WORKFLOW_RUNS_CLAIM,
         API_SCHEDULER_WORKFLOW_TRIGGER_FIRINGS_CLAIM, API_SUPERVISOR_STATUS, API_WORKFLOWS,
-        API_WORKFLOWS_EXPORT, API_WORKFLOWS_IMPORT, API_WORKFLOWS_VALIDATE, API_WORKFLOW_RUNS,
-        API_WORKFLOW_TRIGGERS_DUE, WORKFLOW_JSON_IMPORT_RISK_ACK, WORKFLOW_JSON_IMPORT_RISK_HEADER,
+        API_WORKFLOWS_EXPORT, API_WORKFLOWS_IMPORT, API_WORKFLOWS_SIMULATE, API_WORKFLOWS_VALIDATE,
+        API_WORKFLOW_RUNS, API_WORKFLOW_TRIGGERS_DUE, WORKFLOW_JSON_IMPORT_RISK_ACK,
+        WORKFLOW_JSON_IMPORT_RISK_HEADER,
     },
     auth::{AuthConfigResponse, LoginRequest, LoginResponse, RefreshRequest},
     billing::ScaleOrgNodesRequest,
@@ -39,7 +40,8 @@ use runinator_models::{
     web::TaskResponse,
     workflows::{
         WorkflowBundle, WorkflowDefinition, WorkflowNodeRun, WorkflowNodeRunArtifact,
-        WorkflowNodeRunChunk, WorkflowRun, WorkflowRunArtifact, WorkflowStatus, WorkflowTrigger,
+        WorkflowNodeRunChunk, WorkflowRun, WorkflowRunArtifact, WorkflowSimulateRequest,
+        WorkflowStatus, WorkflowTrigger,
     },
 };
 use uuid::Uuid;
@@ -452,6 +454,19 @@ where
         let response = self.http_post(url.clone()).json(workflow).send().await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<WorkflowDefinition>().await?)
+    }
+
+    /// server-side dry-run: walk `request.workflow` with the reducer's evaluators against live
+    /// config (optionally replaying a prior run), publishing no actions. Returns the raw
+    /// `SimulationRun` JSON (status, ordered steps, branch targets, final output).
+    pub async fn simulate_workflow(
+        &self,
+        request: &WorkflowSimulateRequest,
+    ) -> Result<serde_json::Value> {
+        let url = self.build_url(API_WORKFLOWS_SIMULATE).await?;
+        let response = self.http_post(url.clone()).json(request).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<serde_json::Value>().await?)
     }
 
     /// POST a typed bundle to its associated import endpoint.

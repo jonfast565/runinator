@@ -12,7 +12,10 @@ use runinator_models::{
     auth::{AuthContext, Permission},
     capabilities::Capability,
     errors::error_code_or_unknown,
-    workflows::{WorkflowBundle, WorkflowDefinition, WorkflowDuplicateRequest},
+    value::Value,
+    workflows::{
+        WorkflowBundle, WorkflowDefinition, WorkflowDuplicateRequest, WorkflowSimulateRequest,
+    },
 };
 use serde::Deserialize;
 
@@ -97,6 +100,49 @@ pub(crate) async fn validate_workflow<T: DatabaseImpl>(
     match repository::validate_workflow_definition_with_catalog(db.as_ref(), &workflow).await {
         Ok(workflow) => (StatusCode::OK, Json(ApiResponse::Workflow(workflow))),
         Err(err) => validation_error(err.as_ref()),
+    }
+}
+
+/// dry-run a workflow with the reducer's evaluators against live config, publishing no actions.
+/// A saved workflow requires `Run`; an unsaved draft only needs an authenticated caller. When
+/// `replay_run` is set, that run's recorded outputs drive the walk, so it is gated on the run too.
+pub(crate) async fn simulate_workflow<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+    Json(request): Json<WorkflowSimulateRequest>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if let Some(id) = request.workflow.id {
+        if let Err(reply) = authz::require_workflow(db.as_ref(), &ctx, id, Permission::Run).await {
+            return reply;
+        }
+    }
+    if let Some(run_id) = request.replay_run {
+        match repository::fetch_workflow_run(db.as_ref(), run_id).await {
+            Ok(Some((run, _))) => {
+                if let Err(reply) =
+                    authz::require_workflow(db.as_ref(), &ctx, run.workflow_id, Permission::Run)
+                        .await
+                {
+                    return reply;
+                }
+            }
+            Ok(None) => return not_found(format!("Workflow run {run_id} not found")),
+            Err(err) => return api_error(err.to_string()),
+        }
+    }
+    match runinator_engine::simulate::simulate_run(
+        db.as_ref(),
+        &request.workflow,
+        request.inputs,
+        request.replay_run,
+    )
+    .await
+    {
+        Ok(run) => match Value::encode(&run) {
+            Ok(value) => (StatusCode::OK, Json(ApiResponse::JsonValue(value))),
+            Err(err) => api_error(err.to_string()),
+        },
+        Err(err) => bad_request(err.to_string()),
     }
 }
 

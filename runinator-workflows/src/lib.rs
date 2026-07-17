@@ -14,6 +14,8 @@ mod normalize;
 mod parameters;
 mod refs;
 mod run_state;
+mod simulate;
+mod testkit;
 mod types;
 mod typing;
 mod validation;
@@ -51,6 +53,13 @@ pub use run_state::{
 pub use runinator_models::workflow_ast::{
     ComputeProgram, ComputeStmt, WorkflowExpression, WorkflowPathSegment, WorkflowRefSource,
     WorkflowValueRef,
+};
+pub use simulate::{
+    NodeEvalRequest, NodeOutcome, SimStep, SimulationEnv, SimulationRun, simulate_workflow,
+};
+pub use testkit::{
+    Expectations, MockEnv, MockSpec, TestCaseResult, WorkflowTestCase, WorkflowTestSuite,
+    run_test_case,
 };
 pub use types::{
     ApprovalParameters, ArtifactItem, BranchPolicy, GateParameters, InputParameters,

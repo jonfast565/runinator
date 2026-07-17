@@ -6,14 +6,14 @@ use runinator_models::json;
 use runinator_models::{
     api_routes::{
         api_workflow, api_workflow_duplicate, api_workflow_run_command, API_PACKS_IMPORT,
-        API_PROVIDERS, API_WORKFLOWS_IMPORT, API_WORKFLOWS_VALIDATE, WORKFLOW_JSON_IMPORT_RISK_ACK,
-        WORKFLOW_JSON_IMPORT_RISK_HEADER,
+        API_PROVIDERS, API_WORKFLOWS_IMPORT, API_WORKFLOWS_SIMULATE, API_WORKFLOWS_VALIDATE,
+        WORKFLOW_JSON_IMPORT_RISK_ACK, WORKFLOW_JSON_IMPORT_RISK_HEADER,
     },
     bundles::{Bundle, PackImportResult, ProviderBundle, SecretBundle},
     providers::ProviderMetadata,
     semver::SemVerBump,
     web::TaskResponse,
-    workflows::{WorkflowBundle, WorkflowDefinition},
+    workflows::{WorkflowBundle, WorkflowDefinition, WorkflowSimulateRequest},
 };
 use uuid::Uuid;
 
@@ -113,6 +113,18 @@ where
         let response = self.http_post(url.clone()).json(workflow).send()?;
         let response = Self::handle_response(url, response)?;
         Ok(response.json::<WorkflowDefinition>()?)
+    }
+
+    /// server-side dry-run: walk the request's workflow with the reducer's evaluators against live
+    /// config, publishing no actions. Returns the raw `SimulationRun` JSON.
+    pub fn simulate_workflow(
+        &self,
+        request: &WorkflowSimulateRequest,
+    ) -> Result<serde_json::Value> {
+        let url = self.build_url(API_WORKFLOWS_SIMULATE)?;
+        let response = self.http_post(url.clone()).json(request).send()?;
+        let response = Self::handle_response(url, response)?;
+        Ok(response.json::<serde_json::Value>()?)
     }
 
     /// POST a typed bundle to its associated import endpoint.

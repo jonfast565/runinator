@@ -37,7 +37,9 @@ import type {
   WorkflowRunCreated,
   WorkflowRunArtifact,
   WorkflowRunDetail,
+  WorkflowSimulateRequest,
   WorkflowTrigger,
+  SimulationRun,
   Pipeline,
 } from "../domain/models";
 
@@ -274,6 +276,10 @@ export async function saveWorkflow(workflow: WorkflowDefinition) {
 
 export async function saveWorkflowBundle(request: WorkflowBundle) {
   return command<WorkflowBundle>("save_workflow_bundle", { request });
+}
+
+export async function simulateWorkflow(request: WorkflowSimulateRequest) {
+  return command<SimulationRun>("simulate_workflow", { request });
 }
 
 export async function saveWorkflowWdl(request: WorkflowWdlSaveRequest) {

@@ -37,6 +37,7 @@ pub fn run() {
             crate::commands::fetch_workflow_run_artifacts,
             crate::commands::fetch_workflows,
             crate::commands::save_workflow,
+            crate::commands::simulate_workflow,
             crate::commands::fetch_workflow_triggers,
             crate::commands::save_workflow_trigger,
             crate::commands::delete_workflow_trigger,

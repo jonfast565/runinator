@@ -89,13 +89,13 @@ These are footguns when creating new providers and workflow jobs, grounded in `r
 
 ## Tier 5 — Net-new product capabilities (2026-07-12 survey)
 
-These are **new product features** rather than hardening of existing ones — capabilities the runtime does not have today. Each was confirmed against the current codebase as a genuine gap. Ordered by leverage; #5.1 (test harness) and #5.3 (webhook triggers) are the highest-value picks.
+These are **new product features** rather than hardening of existing ones — capabilities the runtime does not have today. Each was confirmed against the current codebase as a genuine gap. Ordered by leverage; #5.3 (webhook triggers) is now the highest-value remaining pick.
 
-### 5.1 Workflow test harness + dry-run simulation
-- **Owning crates:** `runinator-wdl`, `runinator-workflows`, `runinator-ctl`.
-- **Problem:** The only way to verify a workflow behaves is to run it live against real providers. There is no offline way to assert which branch a `condition`/`toggle`/`percentage` takes, or that outputs map correctly — the single biggest confidence gap for the WDL surface.
-- **Approach:** Add a `.wdlt` test format (or a `test { }` block in WDL) that mocks provider outputs and asserts on the branch taken and final outputs. Pair it with a **reducer dry-run mode** that walks the state machine with `task` nodes stubbed — no `ActionCommand`s published — so authors can preview the branch taken for given inputs. Expose as `runinatorctl workflows test pack/` for CI.
-- **Boundary note:** dry-run belongs in the reducer/`runinator-workflows` evaluation path, not the worker; mocked provider outputs must not touch the broker.
+### 5.1 Workflow test harness + dry-run simulation — ✅ implemented
+- **Owning crates:** `runinator-workflows`, `runinator-engine`, `runinator-ctl`, `runinator-ws`, `runinator-api`, `runinator-command-center`.
+- **What shipped:** A `SimulationEnv` evaluator interface in `runinator-workflows` (`simulate.rs`) with two implementations — the `MockEnv` test impl (`testkit.rs`, driven by a `.wdlt` spec) and a `DbSimulationEnv` db impl in `runinator-engine` (`simulate.rs`, config from the settings store + a prior run's recorded outputs). `simulate_workflow` walks the state machine reusing the reducer's own `next_transition`/`evaluate_switch`/`evaluate_toggle`/`evaluate_percentage`/condition evaluators, stubs task/park nodes through the interface, and publishes no `ActionCommand`s. `.wdlt` suites (JSON) assert on status, reached/not_reached nodes, router branch targets, and final outputs; `runinatorctl workflows test <pack>` runs them offline and exits non-zero on failure. Fan-out kinds (loop/parallel/join/map/race/try/subflow) are reported as unsupported rather than simulated incorrectly.
+- **Server-side dry-run/branch-preview (follow-on):** `POST /workflows/simulate` (`WorkflowSimulateRequest`) drives the `DbSimulationEnv` against live config and, optionally, a prior run's outputs (`replay_run`) — no actions published. Authz: a saved workflow requires `Run`; an unsaved draft only an authenticated caller; `replay_run` is additionally gated on that run's workflow. Exposed through the async/blocking `runinator-api` clients (`simulate_workflow`) and the command center: a **Dry run** button in the workflow toolbar opens a modal that walks the current draft and shows the routed path, per-node status, branch targets, and final output.
+- **Boundary note (honored):** dry-run lives in the `runinator-workflows` evaluation path; the db impl lives one layer up in `runinator-engine`; the endpoint is a thin `runinator-ws` handler; nothing touches the broker.
 
 ### 5.2 AI-assisted WDL authoring in the command center
 - **Owning crates:** `runinator-command-center`, `runinator-provider-ai`.
@@ -113,10 +113,9 @@ These are **new product features** rather than hardening of existing ones — ca
 - **Problem:** No way to replay missed cron slots, and no way to suppress firing during a change freeze or holiday.
 - **Approach:** Backfill — `runinatorctl workflows backfill <wf> --from --to` synthesizes trigger firings for past/missed cron slots. Freeze windows — a calendar (change-freeze, holidays) the trigger-firing loop consults to defer firing until the window closes. Both localize to the trigger-firing loop.
 
-### 5.5 Run timeline / Gantt visualization
+### 5.5 Run timeline / Gantt visualization — ✅ implemented
 - **Owning crate:** `runinator-command-center`.
-- **Problem:** `trace_id` and per-node timing exist post-tracing, but the only way to inspect a run's shape is reading logs.
-- **Approach:** Per-run timeline view: node durations, parked/waiting gaps, retries, and the critical path, rendered from the correlation data already persisted. Far higher debugging value than raw logs; no backend change required beyond exposing node timing already recorded.
+- **What shipped:** A proportional Gantt timeline in the run detail. Pure layout logic lives in `core/workflow/run-gantt.ts` (`buildGanttLayout`, unit-tested) and a thin `ui/components/shared/RunGantt.vue` renders it: one bar per node run positioned on a shared time axis, a dashed segment for queued/parked wait before a node goes active, retry (`attempt`) badges, and the longest active segment highlighted as the critical-path bottleneck. Live bars count up while a run is in flight. Rendered entirely from the `started_at`/`finished_at`/`attempt` fields already persisted — no backend change. Complements the existing vertical `RunTimeline` (step list) with a duration-proportional view.
 
 ### 5.6 AI cost & token accounting
 - **Owning crates:** `runinator-provider-ai`, `runinator-models` (result event), `runinator-database`.
@@ -133,9 +132,9 @@ These are **new product features** rather than hardening of existing ones — ca
 
 ### Recommended sequencing
 
-1. **5.1 (test harness)** — highest authoring-safety leverage, self-contained in the WDL/reducer evaluation path, no shared-contract churn.
+1. ~~**5.1 (test harness + server-side dry-run/branch-preview)**~~ — ✅ done; `POST /workflows/simulate` now backs the command center's Dry run modal and feeds 1.3 live expression preview and 5.2 AI authoring.
 2. **5.3 (webhook triggers)** — highest reach; reuses the pack-managed-trigger path. Workflow-to-workflow chaining already shipped, so **5.4 (backfill/freeze)** is a natural follow-on once trigger kinds keep extending.
-3. **5.5 (run timeline)** — pure frontend win on data already persisted.
+3. ~~**5.5 (run timeline)**~~ — ✅ done.
 4. **5.6 (AI cost)** and **5.2 (AI authoring)** as the AI surface grows.
 5. **5.7 (environments)** once multi-env deployment is a real need.
 6. **1.1 / 1.2 (dark mode + a11y)** can run in parallel as low-risk UX wins throughout.

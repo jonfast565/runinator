@@ -56,6 +56,7 @@ export { defaultPipelineDefaults } from "./pipeline/pipeline";
 export type { WorkflowNodeRun } from "./workflow/node-run";
 export type { WorkflowRunDetail } from "./workflow/run-detail";
 export { runWorkflowSnapshot } from "./workflow/run-detail";
+export type { SimStep, SimulationRun, WorkflowSimulateRequest } from "./workflow/simulation";
 export type { WorkflowRunCreated } from "./workflow/run-created";
 
 export type { RuninatorField, RuninatorType } from "./provider/runinator-type";

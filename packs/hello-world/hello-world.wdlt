@@ -1,0 +1,14 @@
+{
+  "tests": [
+    {
+      "name": "greeting runs and the workflow completes",
+      "mocks": {
+        "greeting": { "output": { "stdout": "hello world" } }
+      },
+      "expect": {
+        "status": "succeeded",
+        "reached": ["greeting"]
+      }
+    }
+  ]
+}

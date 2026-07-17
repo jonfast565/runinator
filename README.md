@@ -349,6 +349,25 @@ compiled zip upload in a watch loop. It watches the pack manifest, referenced
 provided, it starts that workflow after each successful import and refreshes the
 run detail until the run reaches a terminal state.
 
+`runinatorctl workflows test <path>` dry-runs a pack against `.wdlt` test suites
+entirely client-side — no server or broker. It compiles the pack, then walks each
+workflow's state machine with the reducer's own condition/switch/toggle/percentage
+evaluators, stubbing task nodes with mocked outputs, and asserts on the branch
+taken and final outputs. A `.wdlt` file is JSON: `{ "tests": [ { "name", "input",
+"config", "mocks": { "<node>": { "output", "status" } }, "expect": { "status",
+"reached", "not_reached", "branches", "output", "output_contains" } } ] }`. Sibling
+`*.wdlt` files are picked up automatically, or pass them with `--tests`. The command
+exits non-zero when any case fails, so it drops straight into CI.
+
+The same walker also backs a server-side dry-run: `POST /workflows/simulate`
+(`WorkflowSimulateRequest`: `{ workflow, inputs?, replay_run? }`) walks a workflow
+against live config — publishing no actions — and returns the routed path, per-node
+status, branch targets, and final output. Pass `replay_run` to replay a prior run's
+recorded node outputs so the walk follows the branches that run actually took. A
+saved workflow requires `Run` permission; an unsaved draft only an authenticated
+caller; `replay_run` is additionally gated on that run's workflow. The command
+center surfaces it as a **Dry run** button in the workflow editor toolbar.
+
 For the checked-in local stack only, `bash scripts/run-local.sh sync`, `dev`,
 and `smoke-sync` will default `RUNINATOR_API_KEY` to the same seeded dev
 service key when talking to `http://127.0.0.1:8080/` and no explicit

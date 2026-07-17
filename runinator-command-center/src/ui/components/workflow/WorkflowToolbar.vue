@@ -138,6 +138,14 @@
         </div>
       </div>
       <button
+        class="btn"
+        title="Dry-run the current draft with the reducer's evaluators — no actions are published"
+        @click="simulateOpen = true"
+      >
+        <Icon name="debug" />
+        <span>Dry run</span>
+      </button>
+      <button
         class="btn btn-primary"
         :disabled="!workflows.canRunWorkflow || startingRun"
         @click="workflows.runSelectedWorkflow()"
@@ -182,6 +190,12 @@
       :workflow-id="workflows.selectedWorkflowId || ''"
       @close="shareOpen = false"
     />
+    <WorkflowSimulateModal
+      v-if="simulateOpen"
+      :workflow="workflows.workflowDraft"
+      :inputs="workflows.runInputDraft"
+      @close="simulateOpen = false"
+    />
   </div>
 </template>
 
@@ -199,6 +213,7 @@ import Icon from "../shared/Icon.vue";
 import LoadingSpinner from "../shared/LoadingSpinner.vue";
 import WorkflowSettingsModal from "./WorkflowSettingsModal.vue";
 import ShareWorkflowModal from "./ShareWorkflowModal.vue";
+import WorkflowSimulateModal from "./WorkflowSimulateModal.vue";
 import { useOperationLoading } from "../../composables/useOperationLoading";
 
 const workflows = useWorkflowsStore();
@@ -209,6 +224,7 @@ const { isLoading: cancelingRun } = useOperationLoading("Canceling workflow run"
 const toolbarRef = ref<HTMLElement | null>(null);
 const openMenu = ref<"nodes" | "arrange" | "export" | null>(null);
 const shareOpen = ref(false);
+const simulateOpen = ref(false);
 
 const isActiveDebugRun = computed(() => {
   if (!workflows.isDebugRun) {

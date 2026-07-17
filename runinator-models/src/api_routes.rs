@@ -7,6 +7,8 @@ pub const API_AUTH_REFRESH: &str = "/auth/refresh";
 pub const API_AUTH_LOGOUT: &str = "/auth/logout";
 pub const API_WORKFLOWS: &str = "/workflows";
 pub const API_WORKFLOWS_VALIDATE: &str = "/workflows/validate";
+/// server-side dry-run / branch preview (no actions published).
+pub const API_WORKFLOWS_SIMULATE: &str = "/workflows/simulate";
 pub const API_WORKFLOWS_IMPORT: &str = "/workflows/import";
 pub const API_WORKFLOWS_EXPORT: &str = "/workflows/export";
 /// compiled pack zip import (workflows + optional secrets).

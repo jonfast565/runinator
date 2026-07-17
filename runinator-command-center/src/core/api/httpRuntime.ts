@@ -221,6 +221,11 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     },
     body: (args) => arg(args, "workflow"),
   },
+  simulate_workflow: {
+    method: "POST",
+    path: () => "workflows/simulate",
+    body: (args) => arg(args, "request"),
+  },
   save_workflow_bundle: {
     method: "POST",
     path: () => "workflows/import",

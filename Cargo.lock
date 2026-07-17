@@ -7229,6 +7229,7 @@ dependencies = [
  "runinator-provider-catalog",
  "runinator-utilities",
  "runinator-wdl",
+ "runinator-workflows",
  "serde",
  "serde_json",
  "tokio",

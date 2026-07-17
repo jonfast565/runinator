@@ -341,6 +341,18 @@ pub enum WorkflowCommands {
     /// imported too to seed config/secret slots. When no path is given, falls back to the
     /// `~/.runinator/workflows` folder if it exists.
     Apply { file: Option<PathBuf> },
+    /// Dry-run a workflow pack against .wdlt test suites: simulate the state machine offline with
+    /// mocked task outputs and assert on the branch taken and final outputs. No server required.
+    Test {
+        /// Workflow pack source (.wdl, .wdlp, or a directory of .wdl files).
+        file: PathBuf,
+        /// One or more .wdlt test-suite files (JSON). When omitted, sibling *.wdlt files are used.
+        #[arg(long = "tests", value_name = "PATH")]
+        tests: Vec<PathBuf>,
+        /// Only run cases whose name contains this substring.
+        #[arg(long)]
+        filter: Option<String>,
+    },
     /// Watch a workflow pack, re-apply it on changes, and optionally run a workflow.
     Dev {
         file: Option<PathBuf>,

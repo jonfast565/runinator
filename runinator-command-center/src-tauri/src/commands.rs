@@ -1,6 +1,7 @@
 use runinator_models::{
     api_routes::{
-        API_WORKFLOWS_IMPORT, WORKFLOW_JSON_IMPORT_RISK_ACK, WORKFLOW_JSON_IMPORT_RISK_HEADER,
+        API_WORKFLOWS_IMPORT, API_WORKFLOWS_SIMULATE, WORKFLOW_JSON_IMPORT_RISK_ACK,
+        WORKFLOW_JSON_IMPORT_RISK_HEADER,
     },
     pipelines::Pipeline,
     providers::ProviderMetadata,
@@ -9,7 +10,7 @@ use runinator_models::{
     web::TaskResponse,
     workflows::{
         WorkflowBundle, WorkflowDefinition, WorkflowNodeRunArtifact, WorkflowNodeRunChunk,
-        WorkflowRun, WorkflowRunArtifact, WorkflowTrigger,
+        WorkflowRun, WorkflowRunArtifact, WorkflowSimulateRequest, WorkflowTrigger,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -476,6 +477,16 @@ pub async fn save_workflow(
     workflow: WorkflowDefinition,
 ) -> CommandResult<WorkflowDefinition> {
     save_workflow_to_service(&state, &workflow).await
+}
+
+#[tauri::command]
+pub async fn simulate_workflow(
+    state: State<'_, CommandCenterState>,
+    request: WorkflowSimulateRequest,
+) -> CommandResult<Value> {
+    let body =
+        serde_json::to_value(&request).map_err(|err| CommandError::Unexpected(err.to_string()))?;
+    post_json(&state, API_WORKFLOWS_SIMULATE, &body).await
 }
 
 #[tauri::command]

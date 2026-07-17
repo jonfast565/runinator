@@ -100,6 +100,16 @@
       </details>
     </div>
 
+    <details v-if="hasNodeTiming" class="run-gantt-group" open>
+      <summary>Timeline</summary>
+      <RunGantt
+        class="run-detail-gantt"
+        :detail="workflows.workflowRunDetail"
+        :selected-node-id="workflows.selectedWorkflowRunNodeId"
+        @select="workflows.selectWorkflowRunNode"
+      />
+    </details>
+
     <h3 class="run-detail-section-title">Steps</h3>
     <RunTimeline
       class="run-detail-timeline"
@@ -212,6 +222,7 @@ import Icon from "../shared/Icon.vue";
 import StatusBadge from "../shared/StatusBadge.vue";
 import JsonEditor from "../shared/JsonEditor.vue";
 import RunTimeline from "../shared/RunTimeline.vue";
+import RunGantt from "../shared/RunGantt.vue";
 import RunNodeActions, { type RunNodeActionType } from "../shared/RunNodeActions.vue";
 import DebugControlBar from "./DebugControlBar.vue";
 import RunControlBar from "./RunControlBar.vue";
@@ -377,6 +388,13 @@ const isTerminalRun = computed(() => {
   const status = workflows.workflowRunDetail?.run.status;
   return Boolean(status && TERMINAL_STATUSES.has(status));
 });
+
+// only show the proportional timeline once at least one node has real start/finish timing.
+const hasNodeTiming = computed(() =>
+  (workflows.workflowRunDetail?.nodes ?? []).some(
+    (node) => node.started_at != null || node.finished_at != null,
+  ),
+);
 
 const nodeCounts = computed(() => {
   const counts = { succeeded: 0, failed: 0, canceled: 0 };
@@ -574,6 +592,23 @@ function selectByRunId(runId: string) {
 }
 .run-detail-section-title {
   margin-top: 2px;
+}
+.run-gantt-group {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface);
+  margin: 6px 0 12px;
+  padding: 6px 8px;
+}
+.run-gantt-group summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-subtle);
+  user-select: none;
+}
+.run-detail-gantt {
+  margin-top: 8px;
 }
 .run-summary-card {
   border: 1px solid var(--border);
