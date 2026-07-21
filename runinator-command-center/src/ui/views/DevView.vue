@@ -37,7 +37,7 @@
             <input
               v-model="packPath"
               list="dev-pack-paths"
-              placeholder="packs/sdlc/sdlc.wdlp"
+              placeholder="packs/sdlc/sdlc.wdlm"
               @keydown.enter.prevent="inspectPackNow"
             />
             <datalist id="dev-pack-paths">
@@ -339,7 +339,7 @@ import type {
 } from "../../core/domain/models";
 import { workflowInputType } from "../../core/domain/models";
 
-const DEFAULT_PACK_PATH = "packs/sdlc/sdlc.wdlp";
+const DEFAULT_PACK_PATH = "packs/sdlc/sdlc.wdlm";
 const TERMINAL_STATUSES = new Set(["succeeded", "failed", "canceled", "timed_out"]);
 
 const workflows = useWorkflowsStore();

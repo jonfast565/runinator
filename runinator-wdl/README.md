@@ -294,7 +294,7 @@ The cron expression must be a string literal; the optional `with { … }` object
 Triggers belong to their workflow, so they are carried inside the compiled definition
 (`definition.metadata.triggers`) and **materialized at import**: the web service replaces that
 workflow's pack-managed (`managed_by: wdl`) cron triggers with the declared set (idempotent on
-re-apply; manually-added triggers are left alone). This works for directory packs, not just `.wdlp`
+re-apply; manually-added triggers are left alone). This works for directory packs, not just `.wdlm`
 manifests, and they round-trip through decompile.
 
 **Watch guards**: a header `watch <cond> -> <target>` declares a workflow-level cancellation guard.
@@ -470,13 +470,13 @@ runinatorctl wdl check    workflow.wdl [--typing strict|permissive]
 WDL commands default to `--typing strict`. `--typing permissive` exists only for legacy
 investigation; pack import paths keep strict typing.
 
-`runinatorctl workflows apply` also accepts `.wdl` files, `.wdlp` manifests, and
+`runinatorctl workflows apply` also accepts `.wdl` files, `.wdlm` manifests, and
 directories of `.wdl` files directly alongside JSON packs. The ctl compiles the pack
 client-side, zips the compiled artifacts (`workflows.json` + optional `secrets.json`), and
 uploads a single `application/zip` to the web service's `/packs/import` endpoint — compilation
 never happens on the backend. With no path argument, `workflows apply` falls back to the
 `~/.runinator/workflows` folder (honoring `RUNINATOR_HOME`) if it exists.
-Directory and `.wdlp` pack compilation runs in two passes: first it reads every workflow signature,
+Directory and `.wdlm` pack compilation runs in two passes: first it reads every workflow signature,
 then it compiles each workflow with the full pack-local signature table so subflow calls are typed
 before upload.
 
@@ -503,7 +503,7 @@ A dotted name with more than two segments joins the tail with `/` (so `secret ji
 secret `key` under scope `jira` named `api/key`). `secret` entries are stored as redacted secrets;
 `config` entries are eagerly-resolvable config values. `parse_secrets_str` lowers `.wdls` to a
 `SecretBundle`; `secrets_to_wdls` renders one back. A pack ships secrets as a sibling
-`settings.wdls` (or `settings.json`) next to a directory pack, or via a `.wdlp` manifest's
+`settings.wdls` (or `settings.json`) next to a directory pack, or via a `.wdlm` manifest's
 `settings` path; the ctl folds them into the same compiled pack zip.
 
 Standalone secret/config import requires a `.wdls` file (JSON is not accepted):

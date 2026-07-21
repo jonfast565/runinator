@@ -455,21 +455,27 @@ async fn apply_workflow_source(
     file: &Path,
     json_output: bool,
 ) -> Result<WorkflowApplySummary> {
-    // a .wdl/.wdlp/directory is compiled client-side, zipped, and uploaded as one compiled pack;
+    // a .wdl/.wdlm/directory is compiled client-side, zipped, and uploaded as one compiled pack;
     // json is handled below.
     if pack::is_pack_source(file) {
         let providers = client.fetch_providers().await.unwrap_or_default();
         let bundle = pack::load_workflow_bundle_with_providers(file, &providers)?;
         // any settings (`settings.wdls`/`.json`) always ride in the same compiled pack zip.
         let settings = pack::load_pack_settings(file)?;
+        // any pipelines (`.wdlp` files) ride along too; the backend upserts them and materializes
+        // their managed chained triggers after the workflows land.
+        let pipelines = pack::load_pack_pipelines(file)?;
         // `workflows apply` is an explicit re-apply: update existing items in place.
-        let result = client.import_pack(&bundle, settings.as_ref(), true).await?;
+        let result = client
+            .import_pack(&bundle, settings.as_ref(), pipelines.as_ref(), true)
+            .await?;
         let summary = WorkflowApplySummary {
             message: format!(
-                "imported {} workflows, {} triggers, and {} settings",
+                "imported {} workflows, {} triggers, {} settings, and {} pipelines",
                 result.workflows.workflows.len(),
                 result.workflows.triggers.len(),
-                result.secrets.secrets.len()
+                result.secrets.secrets.len(),
+                result.pipelines.len()
             ),
         };
         if json_output {

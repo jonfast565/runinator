@@ -121,6 +121,23 @@ pub(crate) struct CliArgs {
     #[arg(long, env = "RUNINATOR_RATE_LIMIT_BURST", default_value_t = 100.0)]
     pub rate_limit_burst: f64,
 
+    /// Enable global overload protection (a concurrency cap + per-request timeout) on the HTTP API.
+    /// On by default; set to false to disable both the concurrency limit and the request timeout.
+    #[arg(
+        long,
+        env = "RUNINATOR_OVERLOAD_PROTECTION_ENABLED",
+        default_value_t = true
+    )]
+    pub overload_protection_enabled: bool,
+
+    /// Maximum HTTP requests processed concurrently before excess load is shed with 503.
+    #[arg(long, env = "RUNINATOR_MAX_CONCURRENT_REQUESTS", default_value_t = 512)]
+    pub max_concurrent_requests: usize,
+
+    /// Per-request wall-clock timeout in seconds; a slower handler is aborted with 408.
+    #[arg(long, env = "RUNINATOR_REQUEST_TIMEOUT_SECONDS", default_value_t = 30)]
+    pub request_timeout_seconds: u64,
+
     /// Run the durable orchestration engine (reducer, wake/trigger/action/ingress loops, result
     /// consumer, maintenance backstops) in-process. On by default so the single-process local/dev
     /// stack runs unchanged; set to false when a standalone `runinator-background-worker` owns the

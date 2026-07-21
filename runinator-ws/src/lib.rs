@@ -7,6 +7,7 @@ mod events;
 mod handlers;
 mod models;
 mod openapi;
+mod overload;
 mod provisioner_config;
 pub mod orchestration {
     pub use runinator_reducer::{ReadyNodeDisposition, process_ready_node};
@@ -35,6 +36,7 @@ pub(crate) mod result_consumer {
 
 pub use auth::AuthOptions;
 pub use events::{AppEvent, EventSender};
+pub use overload::OverloadConfig;
 pub use rate_limit::RateLimitConfig;
 pub use router::build_router;
 pub use server::{ReplicaAdvertisement, run_webserver};

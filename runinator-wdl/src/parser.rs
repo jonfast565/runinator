@@ -321,6 +321,103 @@ fn parse_secret_decl(pair: Pair<Rule>) -> Result<SecretDecl, WdlError> {
     })
 }
 
+pub(crate) fn parse_pipeline_document(src: &str) -> Result<Vec<PipelineDecl>, WdlError> {
+    let mut pairs = WdlParser::parse(Rule::pipeline_document, src)
+        .map_err(|err| WdlError::Parse(err.to_string()))?;
+    let document = pairs
+        .next()
+        .ok_or_else(|| WdlError::Parse("empty input".into()))?;
+    let mut decls = Vec::new();
+    for inner in document.into_inner() {
+        if inner.as_rule() == Rule::pipeline_decl {
+            decls.push(parse_pipeline_decl(inner)?);
+        }
+    }
+    Ok(decls)
+}
+
+fn parse_pipeline_decl(pair: Pair<Rule>) -> Result<PipelineDecl, WdlError> {
+    let span = span_of(&pair);
+    let mut name = String::new();
+    let mut description = None;
+    let mut on_failure = None;
+    let mut max_depth = None;
+    let mut members = Vec::new();
+    let mut links = Vec::new();
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            // the leading `string` before `{` is the pipeline name.
+            Rule::string => name = plain_string(inner)?,
+            Rule::pipeline_item => {
+                let item = inner
+                    .into_inner()
+                    .next()
+                    .ok_or_else(|| WdlError::syntax(span, "empty pipeline item"))?;
+                match item.as_rule() {
+                    Rule::pipeline_desc => {
+                        if let Some(s) = item.into_inner().find(|p| p.as_rule() == Rule::string) {
+                            description = Some(plain_string(s)?);
+                        }
+                    }
+                    Rule::pipeline_on_failure => {
+                        on_failure = item
+                            .into_inner()
+                            .find(|p| p.as_rule() == Rule::pipeline_failure_policy)
+                            .map(|p| p.as_str().to_string());
+                    }
+                    Rule::pipeline_max_depth => {
+                        if let Some(int) = item.into_inner().find(|p| p.as_rule() == Rule::integer)
+                        {
+                            max_depth = Some(int.as_str().parse::<u32>().map_err(|_| {
+                                WdlError::syntax(span, "max_depth must be a non-negative integer")
+                            })?);
+                        }
+                    }
+                    Rule::pipeline_member => {
+                        if let Some(s) = item.into_inner().find(|p| p.as_rule() == Rule::string) {
+                            members.push(plain_string(s)?);
+                        }
+                    }
+                    Rule::pipeline_link => links.push(parse_pipeline_link(item)?),
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(PipelineDecl {
+        name,
+        description,
+        on_failure,
+        max_depth,
+        members,
+        links,
+        span,
+    })
+}
+
+fn parse_pipeline_link(pair: Pair<Rule>) -> Result<PipelineLinkDecl, WdlError> {
+    let span = span_of(&pair);
+    let mut endpoints = Vec::with_capacity(2);
+    let mut on = None;
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::string => endpoints.push(plain_string(inner)?),
+            Rule::pipeline_link_selector => on = Some(inner.as_str().to_string()),
+            _ => {}
+        }
+    }
+    if endpoints.len() != 2 {
+        return Err(WdlError::syntax(
+            span,
+            "a pipeline link needs a source and a target",
+        ));
+    }
+    let to = endpoints.pop().unwrap();
+    let from = endpoints.pop().unwrap();
+    Ok(PipelineLinkDecl { from, to, on, span })
+}
+
 fn parse_namespace_block(pair: Pair<Rule>) -> Result<Vec<Workflow>, WdlError> {
     let mut namespace = None;
     let mut workflows = Vec::new();

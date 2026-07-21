@@ -17,6 +17,7 @@ pub mod interfaces;
 mod mappers;
 pub mod mysql;
 mod operations;
+mod pool;
 pub mod postgres;
 mod queries;
 pub mod sqlite;

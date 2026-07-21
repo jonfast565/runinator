@@ -64,7 +64,7 @@ if not configs.runinator then
     default_config = {
       cmd = { "runinator-lsp" },
       filetypes = { "wdl" },
-      root_dir = lspconfig.util.root_pattern(".git", "*.wdlp"),
+      root_dir = lspconfig.util.root_pattern(".git", "*.wdlm"),
       cmd_env = { RUNINATOR_API_BASE_URL = "http://127.0.0.1:8080/" },
       init_options = { runinator = { autoApply = true, serviceUrl = "http://127.0.0.1:8080/" } },
     },
@@ -82,6 +82,6 @@ Add a custom language server pointing `command` at the `runinator-lsp` binary wi
 
 ## Note on file kinds
 
-Only `.wdl` (the workflow language) is analyzed and completed. `.wdlp` (JSON pack manifest) and
+Only `.wdl` (the workflow language) is analyzed and completed. `.wdlm` (JSON pack manifest) and
 `.wdls` (secrets) are recognized for apply-on-save packaging but are not run through the workflow
 grammar.

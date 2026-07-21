@@ -217,7 +217,7 @@ export function createWorkflowCatalogService(
       }
 
       const manifest = { version: 1, workflows: manifestWorkflows, triggers };
-      entries.unshift({ name: "pack.wdlp", content: pretty(manifest) });
+      entries.unshift({ name: "pack.wdlm", content: pretty(manifest) });
       host.deps.downloadBlob("runinator-pack.zip", createZip(entries));
       const note = skipped.length
         ? ` (skipped ${String(skipped.length)} non-WDL: ${skipped.join(", ")})`

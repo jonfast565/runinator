@@ -9,7 +9,11 @@ use sqlx::{
     mysql::{MySqlConnectOptions, MySqlPoolOptions},
 };
 
-use crate::{backend::SqlBackend, queries::SqlDialect};
+use crate::{
+    backend::SqlBackend,
+    pool::{pool_acquire_timeout, pool_max_connections},
+    queries::SqlDialect,
+};
 
 static MYSQL_MIGRATOR: Migrator = sqlx::migrate!("./migrations/mysql");
 
@@ -27,7 +31,13 @@ impl MySqlDb {
             .log_statements(log::LevelFilter::Debug)
             .log_slow_statements(log::LevelFilter::Warn, std::time::Duration::from_secs(1));
 
-        let pool = MySqlPoolOptions::new().connect_with(options).await?;
+        // bound the pool and time out acquisition so a request flood cannot open unbounded
+        // connections and a saturated pool fails fast; both env-tunable (see the `pool` module).
+        let pool = MySqlPoolOptions::new()
+            .max_connections(pool_max_connections())
+            .acquire_timeout(pool_acquire_timeout())
+            .connect_with(options)
+            .await?;
         Ok(Self { pool })
     }
 

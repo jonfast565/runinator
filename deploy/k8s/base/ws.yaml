@@ -72,6 +72,16 @@ spec:
             # (load_jwt_secret) and shared across replicas; only the toggle lives here.
             - name: RUNINATOR_AUTH_ENABLED
               value: "true"
+            # global HTTP overload protection: cap concurrently in-flight requests (excess is shed
+            # with 503 + Retry-After) and abort a stuck handler with 408. each replica protects
+            # itself independently; this is the aggregate backstop the per-principal rate limiter
+            # does not provide. tune per environment in an overlay.
+            - name: RUNINATOR_OVERLOAD_PROTECTION_ENABLED
+              value: "true"
+            - name: RUNINATOR_MAX_CONCURRENT_REQUESTS
+              value: "512"
+            - name: RUNINATOR_REQUEST_TIMEOUT_SECONDS
+              value: "30"
             # the runinator-background Deployment owns the durable orchestration engine, so these
             # replicas serve HTTP/WebSocket only. set to "true" to fold the engine back in-process
             # and scale ws down to zero background pods.

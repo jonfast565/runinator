@@ -46,7 +46,7 @@ impl Backend {
             .unwrap_or_default()
     }
 
-    // recompute and publish diagnostics for an open document. non-workflow files (.wdlp/.wdls) get
+    // recompute and publish diagnostics for an open document. non-workflow files (.wdlm/.wdls) get
     // their diagnostics cleared instead of analyzed with the workflow grammar.
     async fn publish(&self, uri: Url, check_lowering: bool) {
         let Some(text) = self.documents.get(&uri) else {
@@ -218,7 +218,7 @@ impl LanguageServer for Backend {
 }
 
 // true when the uri names a `.wdl` workflow source (or a non-file uri we optimistically treat as
-// one); `.wdlp`/`.wdls` are not analyzed with the workflow grammar.
+// one); `.wdlm`/`.wdls` are not analyzed with the workflow grammar.
 fn is_workflow_uri(uri: &Url) -> bool {
     match uri.to_file_path() {
         Ok(path) => path

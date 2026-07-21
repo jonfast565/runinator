@@ -23,6 +23,7 @@ mod includes;
 pub(crate) mod lower;
 mod namespace;
 mod parser;
+mod pipeline;
 mod purity;
 mod registry;
 mod secrets;
@@ -34,6 +35,7 @@ pub use includes::included_file_paths;
 pub use parser::{
     parse_compute_fragment, parse_condition_fragment, parse_document, parse_expression_fragment,
 };
+pub use pipeline::{parse_pipeline_str, pipeline_to_wdlp};
 pub use secrets::{parse_secrets_str, secrets_to_wdls};
 pub use sema::{Diagnostic, Severity};
 

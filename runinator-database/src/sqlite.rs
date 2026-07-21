@@ -3,9 +3,13 @@ use std::{fs, path::PathBuf};
 use futures_util::stream::StreamExt;
 use log::{debug, info};
 use runinator_models::errors::SendableError;
-use sqlx::{ConnectOptions, Executor, SqlitePool, migrate::Migrator, sqlite::SqliteConnectOptions};
+use sqlx::{
+    ConnectOptions, Executor, SqlitePool,
+    migrate::Migrator,
+    sqlite::{SqliteConnectOptions, SqlitePoolOptions},
+};
 
-use crate::{backend::SqlBackend, queries::SqlDialect};
+use crate::{backend::SqlBackend, pool::pool_acquire_timeout, queries::SqlDialect};
 
 static SQLITE_MIGRATOR: Migrator = sqlx::migrate!("./migrations/sqlite");
 
@@ -26,7 +30,13 @@ impl SqliteDb {
             .log_statements(log::LevelFilter::Debug)
             .log_slow_statements(log::LevelFilter::Warn, std::time::Duration::from_secs(1));
         let unmutable_options = options_with_logs.clone();
-        let connection = SqlitePool::connect_with(unmutable_options).await?;
+        // bound acquisition so a saturated pool fails fast instead of parking the caller. the
+        // connection count is left at the driver default: sqlite serializes writes, so raising it
+        // trades few gains for more lock contention on the single file.
+        let connection = SqlitePoolOptions::new()
+            .acquire_timeout(pool_acquire_timeout())
+            .connect_with(unmutable_options)
+            .await?;
         Ok(SqliteDb { pool: connection })
     }
 

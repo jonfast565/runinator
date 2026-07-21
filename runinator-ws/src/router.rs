@@ -114,6 +114,7 @@ use crate::handlers::{
         upsert_workflow, validate_workflow,
     },
 };
+use crate::overload::{OverloadConfig, apply_overload_protection};
 use crate::rate_limit::{RateLimitConfig, RateLimiter, rate_limit_middleware};
 use crate::websocket::{
     ws_desktop_worker, ws_events, ws_run_stream, ws_workflow_node_run_stream, ws_workflow_run,
@@ -126,6 +127,7 @@ pub fn build_router<T: DatabaseImpl>(
     provisioner: Arc<ProvisionerRegistry>,
     auth: AuthConfig,
     rate_limit: RateLimitConfig,
+    overload: OverloadConfig,
 ) -> Router {
     let auth_config_arc = Arc::new(auth);
     let rate_limiter = Arc::new(RateLimiter::new(rate_limit));
@@ -135,7 +137,7 @@ pub fn build_router<T: DatabaseImpl>(
         .allow_headers(Any)
         .expose_headers(Any);
 
-    Router::new()
+    let router = Router::new()
         .route("/health", get(health))
         .route("/metrics", get(metrics))
         .route("/ready", get(ready::<T>).layer(Extension(pool.clone())))
@@ -740,7 +742,14 @@ pub fn build_router<T: DatabaseImpl>(
         // cap request bodies for every route. layered here (after all routes are added) so axum
         // actually applies it; placed before `Router::new()` had any routes, it wrapped nothing and
         // requests silently fell back to axum's stricter 2 MB default. 10 MB accommodates pack uploads.
-        .layer(DefaultBodyLimit::max(10 * 1024 * 1024))
+        .layer(DefaultBodyLimit::max(10 * 1024 * 1024));
+
+    // global overload protection (concurrency cap + per-request timeout) wraps everything above so a
+    // flood is shed or timed out before auth/handler work runs. applied here rather than in the chain
+    // so the catch-panic and trace layers below stay outermost and still cover its 503/408 responses.
+    let router = apply_overload_protection(router, overload);
+
+    router
         // recover from any panic in a handler or inner middleware so a single bad request returns a
         // 500 instead of dropping the connection or poisoning the runtime.
         .layer(CatchPanicLayer::custom(handle_panic))

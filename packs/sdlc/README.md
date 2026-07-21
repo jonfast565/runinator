@@ -1,108 +1,77 @@
 # SDLC workflow pack
 
-This pack contains two workflows: **Core Team SDLC Pipeline** (the fan-out driver) and
-**Ticket Work** (the per-ticket pipeline the driver starts).
+This pack is a **status-driven pipeline**: the old monolithic *Ticket Work* flow is split into
+four phase workflows, each an independent scanner keyed to a Jira status "inbox", tied together as
+a first-class **Core SDLC** pipeline.
 
-## Authoring format
+| Workflow | Trigger | Inbox status | Advances to |
+|---|---|---|---|
+| **SDLC: Development** | `cron "0 * * * *"` (pipeline head) | Ready for Development (budgeted) | In Review |
+| **SDLC: Review** | chained on Development + cron | In Review | Ready for Testing |
+| **SDLC: Deploy** | chained on Review + cron | Ready for Testing | In Testing |
+| **SDLC: QA** | chained on Deploy + cron (terminal) | In Testing | Done / cleanup |
 
-WDL is the source-of-truth authoring format. JSON is a compiled artifact: the runtime
-persists, transports, and executes the JSON graph, but workflows are written and edited as
-WDL and compiled to JSON, not hand-edited as JSON.
+Each phase processes the tickets currently in its inbox and moves each to the next status; the
+`chained` links fire the next phase as soon as a pass finishes (each phase also has a cron backstop,
+so the chain is a latency optimization, not the only trigger). A ticket flows through the pipeline
+over several scanner passes — the long parks of the old monolith (24h review gate, QA park) are now
+**check-and-advance per pass**: a ticket that isn't ready yet is simply left in its status.
 
-- `sdlc.wdlp` — the pack manifest: lists the `.wdl` files (and any triggers) that make up the
-  pack. This is what `runinatorctl workflows apply` loads.
-- `wdl/core-team-sdlc-pipeline.wdl` — the fan-out driver, as WDL.
-- `wdl/ticket-work.wdl` — the per-ticket pipeline, as WDL, including its CI-poll loop.
-- `settings.wdls` — a settings bundle that seeds every `config.*` value and `secret.*` token the
-  workflows reference. Every slot ships as a `<<insert here>>` placeholder (non-string slots use a
-  typed placeholder such as `0` or an array); replace each one with a real value for your org
-  before running the pipeline.
+## Files
+
+- `sdlc.wdlm` — the pack manifest (JSON): lists the four `wdl/*.wdl` workflows, the `pipeline/*.wdlp`
+  pipeline file, and the `settings.wdls` bundle. This is what `runinatorctl workflows apply` loads.
+- `wdl/sdlc-development.wdl`, `wdl/sdlc-review.wdl`, `wdl/sdlc-deploy.wdl`, `wdl/sdlc-qa.wdl` — the
+  four phase scanners.
+- `pipeline/core-sdlc.wdlp` — the **Core SDLC** pipeline: declares the four member workflows and the
+  `Development -> Review -> Deploy -> QA` links. On import the web service upserts the pipeline and
+  materializes each link as a managed `chained` trigger stamped with the pipeline id.
+- `settings.wdls` — seeds every `config.*` value and `secret.*` token the workflows reference. Every
+  slot ships as a `<<insert here>>` placeholder; replace each with a real value for your org.
+
+## How the phases share state
+
+Because a `chained` trigger carries **no per-ticket data** (the runtime chaining engine is
+fire-and-forget), the phases coordinate entirely through Jira status and a few deterministic
+conventions:
+
+- **Jira status is the handoff.** Each phase's inbox is a JQL (`jira.*_jql`). Development moves a
+  ticket to *In Review*, Review merges and moves it to *Ready for Testing*, Deploy dispatches and
+  moves it to *In Testing* (the deploy marker — an In Testing ticket has already been deployed), and
+  QA reacts to the human QA outcome.
+- **Deterministic worktree.** The git worktree lives at `git.worktree_root/<TICKET-KEY>`.
+  Development creates it; Review/Deploy re-attach the same path (`git.worktree` is create-or-attach);
+  QA runs `git.cleanup` on finished tickets. Every worktree-touching node is pinned with
+  `.runner("sdlc")` so it lands on the one worker that holds the checkouts — run a single worker with
+  `RUNINATOR_WORKER_LABELS=runner=sdlc`. If a phase ever lands without the worktree, `git.worktree`
+  re-materializes it from the remote branch.
+- **PR by branch.** Phases re-obtain the PR with `github.create_pr` (create-or-update finds the open
+  PR for the branch instead of opening a duplicate), so no PR number needs to cross the chain.
+- **Overlap safety.** Each phase holds a per-phase `mutex` so an overlapping cron/chained fire never
+  double-picks a ticket.
 
 ## Config and secrets
 
-The workflows no longer thread shared settings through their `input` block. Instead they read:
-
-- `config.*` for non-sensitive, shared values (Jira base URL/email/JQL, GitHub owner/repo/base
-  branch, Slack channel, Jira transition ids, git checkout/remote, the Claude CLI knobs, and the
-  CI-poll interval). Config is resolved **eagerly in the web service** and is freely
-  interpolatable, so a `config.git.repo ++ "/.."` path works.
-- `secret.*` for the three tokens (`secret.jira.token`, `secret.github.token`,
-  `secret.slack.token`). Secrets lower to a `secret://scope/name` reference resolved **late at the
-  worker**, so plaintext never touches the web service, database, or broker. A secret must be a
-  whole argument value, never interpolated mid-string.
-
-That leaves the per-run inputs tiny: the driver takes none, and `Ticket Work` takes only the
-`ticket` payload plus the `parent_workflow_run_id`.
-
-The rewritten workflows lean on WDL's typed surface instead of anonymous blobs: `JiraIssue`
-captures the ticket payload, `PullRequest` carries the GitHub PR metadata, `CheckSummary`
-captures CI state, and the git/slack actions are bound to explicit result records. That keeps
-the workflow source close to the provider contracts and makes decompile output readable without
-guessing at shapes.
-
-Compiled JSON workflow packs are no longer checked in; WDL is the source of truth.
-
-Import the whole pack in one step. The manifest's `"settings": "settings.wdls"` entry means
-`workflows apply` also seeds every `config.*` value and `secret.*` slot from the bundle (config
-values are inferred-typed; secrets are stored verbatim), so workflows and their settings land
-together:
+Workflows read `config.*` for non-sensitive shared values (resolved eagerly in the web service,
+freely interpolatable) and `secret.*` for the three tokens (`secret.jira.token`,
+`secret.github.token`, `secret.slack.token`, lowered to a `secret://scope/name` reference resolved
+late at the worker). Import the whole pack — workflows, settings, and pipeline — in one step:
 
 ```bash
-runinatorctl workflows apply ./packs/sdlc/sdlc.wdlp   # workflows + config/secret slots
+runinatorctl workflows apply ./packs/sdlc/sdlc.wdlm   # workflows + settings + Core SDLC pipeline
 runinatorctl settings list                            # config + secret slots, no values
 runinatorctl settings set jira token <api-token> --kind secret   # fill real token values
 ```
 
-A pack's settings bundle is always imported with its workflows. To compile a single workflow to
-JSON, use `runinatorctl wdl compile packs/sdlc/wdl/ticket-work.wdl`.
-
-`runinatorctl workflows apply` also accepts a directory of `.wdl` files (each one workflow) as a
-pack; a sibling `settings.wdls` (or `settings.json`) is seeded the same way.
-
-WDL is the authored source; the JSON graph is generated by the compiler. Decompiling JSON back
-to WDL is also supported for arbitrary graphs: structured control flow (for/while/if/match/
-parallel/race/try) is recovered where possible, and any remaining edges — error-handler
-`fail`/`reject` arrows, convergence onto a shared node like `cleanup`, and back-edges — are
-emitted as explicit `-> label` arrows. `Ticket Work` round-trips compile → decompile → compile.
-
-## The CI-poll loop
-
-`Ticket Work` polls CI until the checks settle. In WDL this is a condition-driven loop:
-
-```
-until poll_checks.status == "passed" || poll_checks.status == "failed" limit 30 {
-    wait config.ci_poll.interval_seconds
-    node poll_checks: CheckSummary <- github.checks_summary(
-        ...github_conn,
-        ref: create_pr.head.sha
-    )
-}
-```
-
-`until c { … }` is sugar for `while !c { … }` (test-at-top). The optional `limit` is a safety
-cap; it compiles to a re-entry bound on the loop header, the same runtime mechanism a
-hand-authored back-edge uses. `wait` accepts an expression (here the configured poll interval),
-not just a literal duration.
-
-`Core Team SDLC Pipeline` now declares a cron trigger in its WDL header, so the driver can be
-materialized as a scheduled workflow instead of being run manually after import.
+`workflows apply` also accepts a directory of `.wdl` files (with any sibling `settings.wdls` and
+`*.wdlp` pipeline files) as a pack.
 
 ## Retry policy
 
-Network-bound nodes carry `.retry(...)` with jittered exponential backoff and an error class so a
-transient blip does not strand a long-running ticket. The class is chosen by side-effect safety:
-
-- **Reads** (`jira.poll`, `jira.search`, `jira.comments`, `github.reviews`, `github.checks_summary`,
-  `github.workflow_runs`, `git.diff`) retry `on: any` — they are idempotent, so repeating after a
-  timeout is safe.
-- **Idempotent writes** (`git.push`, `git.worktree`, `git.cleanup`, `slack.send_message`) retry
-  `on: failure` only — a timed-out attempt may already have applied, so a lost response is not
-  retried; a hard failure is.
-- **Non-idempotent writes** (`github.create_pr`, `github.merge_pr`, `jira.transition`,
-  `git.commit`, `github.add_comment`, `github.dispatch`, reviewer/assignee calls) carry **no**
-  retry; they keep their explicit `fail -> handle_failure` edge so a lost-response retry can never
-  double-apply. Redelivery of an in-flight action is separately guarded by the engine's executor
-  lease, so `create_pr`/`merge_pr` cannot be double-executed by a broker redelivery.
-
-The Claude agent steps (`ai-command.claude_code`) are deliberately not retried: they are expensive
-and non-idempotent.
+Network-bound nodes carry `.retry(...)` with jittered exponential backoff and an error class chosen
+by side-effect safety: **reads** (`jira.poll/search/comments`, `github.reviews/checks_summary/
+workflow_runs`, `git.diff`) retry `on: any`; **idempotent writes** (`git.push/worktree/cleanup`,
+`slack.send_message`) retry `on: failure` only; **non-idempotent writes** (`github.create_pr/
+merge_pr/dispatch`, `jira.transition`, `git.commit`, comment/reviewer/assignee calls) carry no retry.
+The Claude agent steps (`ai-command.claude_code`) are deliberately not retried — expensive and
+non-idempotent.

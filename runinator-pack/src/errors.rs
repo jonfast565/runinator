@@ -19,7 +19,7 @@ pub enum PackError {
     Compile(String),
 
     /// the pack source was structurally invalid (unsupported extension, empty directory, or a
-    /// malformed `.wdlp` manifest).
+    /// malformed `.wdlm` manifest).
     #[error("PACK004 - pack source error: {0}")]
     Source(String),
 }

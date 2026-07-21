@@ -46,7 +46,7 @@ pub(crate) async fn upsert_catalog_item<T: DatabaseImpl>(
 }
 
 pub(crate) async fn seed_builtin_catalog<T: DatabaseImpl>(db: &T) -> Result<(), SendableError> {
-    for raw in [include_str!("../../../packs/sdlc/sdlc.wdlp")] {
+    for raw in [include_str!("../../../packs/sdlc/sdlc.wdlm")] {
         let item = wdl_pack_catalog_item(raw)?;
         db.upsert_catalog_item(item).await?;
     }

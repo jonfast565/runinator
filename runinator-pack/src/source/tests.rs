@@ -1,7 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use super::{
-    load_pack_settings, load_workflow_bundle, pack_source_files, wdl_context_workflow_signatures,
+    load_pack_pipelines, load_pack_settings, load_workflow_bundle, pack_source_files,
+    wdl_context_workflow_signatures,
 };
 
 fn repo_root() -> &'static Path {
@@ -32,7 +33,7 @@ fn loads_hello_world_smoke_pack_manifest() {
     let manifest = repo_root()
         .join("packs")
         .join("hello-world")
-        .join("hello-world.wdlp");
+        .join("hello-world.wdlm");
 
     let bundle = load_workflow_bundle(&manifest).expect("hello-world pack should load");
 
@@ -49,12 +50,12 @@ fn loads_hello_world_smoke_pack_manifest() {
 fn checked_in_packs_all_compile_and_settings_parse() {
     let packs_dir = repo_root().join("packs");
     let mut manifests = Vec::new();
-    collect_files_with_extension(&packs_dir, "wdlp", &mut manifests);
+    collect_files_with_extension(&packs_dir, "wdlm", &mut manifests);
     manifests.sort();
 
     assert!(
         !manifests.is_empty(),
-        "expected checked-in .wdlp manifests under {}",
+        "expected checked-in .wdlm manifests under {}",
         packs_dir.display()
     );
 
@@ -135,7 +136,7 @@ fn checked_in_packs_all_compile_and_settings_parse() {
 
 #[test]
 fn sdlc_manifest_settings_entry_loads_bundle() {
-    let manifest = repo_root().join("packs").join("sdlc").join("sdlc.wdlp");
+    let manifest = repo_root().join("packs").join("sdlc").join("sdlc.wdlm");
 
     let settings = load_pack_settings(&manifest)
         .expect("sdlc settings should load")
@@ -145,6 +146,26 @@ fn sdlc_manifest_settings_entry_loads_bundle() {
         !settings.secrets.is_empty(),
         "sdlc settings bundle should seed config/secret slots"
     );
+}
+
+#[test]
+fn sdlc_manifest_loads_core_pipeline() {
+    let manifest = repo_root().join("packs").join("sdlc").join("sdlc.wdlm");
+
+    let pipelines = load_pack_pipelines(&manifest)
+        .expect("sdlc pipelines should load")
+        .expect("sdlc manifest declares a pipeline file");
+
+    assert_eq!(pipelines.pipelines.len(), 1);
+    let core = &pipelines.pipelines[0];
+    assert_eq!(core.name, "Core SDLC");
+    assert_eq!(core.members.len(), 4);
+    assert_eq!(core.links.len(), 3);
+    // every link's endpoints must be declared members (lowering enforces this).
+    for link in &core.links {
+        assert!(core.members.contains(&link.from));
+        assert!(core.members.contains(&link.to));
+    }
 }
 
 #[test]
@@ -256,7 +277,7 @@ fn manifest_without_settings_entry_yields_none() {
     let manifest = repo_root()
         .join("packs")
         .join("hello-world")
-        .join("hello-world.wdlp");
+        .join("hello-world.wdlm");
 
     let settings = load_pack_settings(&manifest).expect("loader should not error");
 

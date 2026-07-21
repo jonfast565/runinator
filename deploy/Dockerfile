@@ -108,7 +108,7 @@ USER runinator
 # final argument to import a different pack, or pass other runinatorctl subcommands. the k8s
 # pack-import job overrides this to loop over every baked-in pack.
 ENTRYPOINT ["/usr/local/bin/runinatorctl"]
-CMD ["workflows", "apply", "/home/runinator/.runinator/workflows/packs/sdlc/sdlc.wdlp"]
+CMD ["workflows", "apply", "/home/runinator/.runinator/workflows/packs/sdlc/sdlc.wdlm"]
 
 # ---- bootstrap ----
 FROM runtime-base AS bootstrap

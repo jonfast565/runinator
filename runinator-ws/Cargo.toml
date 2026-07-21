@@ -6,7 +6,8 @@ edition = "2024"
 [dependencies]
 log = "0.4"
 axum = { version = "0.8.9", features = ["ws", "multipart"] }
-tower-http = { version = "0.6.2", features = ["cors", "catch-panic"] }
+tower = { version = "0.5", features = ["limit", "load-shed"] }
+tower-http = { version = "0.6.2", features = ["cors", "catch-panic", "timeout"] }
 futures = "0.3"
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["io"] }
@@ -44,6 +45,8 @@ runinator-provider-catalog = { path = "../runinator-provider-catalog" }
 
 [dev-dependencies]
 async-trait = "0.1"
+# `ServiceExt::oneshot` for driving the router directly in the overload-protection layer tests.
+tower = { version = "0.5", features = ["util"] }
 # enable the engine's in-crate test hooks (forced-failure injection, test helpers) so the
 # result-consumer/repository integration tests can drive engine behavior. dev-only, so normal
 # builds never compile the hooks in.

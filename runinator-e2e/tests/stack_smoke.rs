@@ -32,8 +32,8 @@ async fn brokered_result_path_smoke() -> E2eResult<()> {
     let harness = StackHarness::start(&workspace, ports).await?;
     let api = harness.api_client()?;
 
-    // import the workflow through the wdlp pack path, the same way the real stack ships workflows.
-    harness.import_workflows(&workspace.join("runinator-e2e/fixtures/broker-smoke.wdlp"))?;
+    // import the workflow through the wdlm pack path, the same way the real stack ships workflows.
+    harness.import_workflows(&workspace.join("runinator-e2e/fixtures/broker-smoke.wdlm"))?;
     let workflow = api
         .fetch_workflow_by_name("Brokered Result Path Smoke")
         .await?;
@@ -255,7 +255,7 @@ impl StackHarness {
     }
 
     /// run `runinatorctl workflows apply` once against the given workflows file (a .json bundle,
-    /// .wdl file, .wdlp pack, or directory of .wdl files).
+    /// .wdl file, .wdlm pack, or directory of .wdl files).
     fn import_workflows(&self, workflows_file: &Path) -> E2eResult<()> {
         let status = Command::new(
             self.workspace

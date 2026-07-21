@@ -714,7 +714,7 @@ const ENDPOINT_DOCS: &[EndpointDoc] = &[
         "/packs/import",
         "Packs",
         "Import a compiled pack zip",
-        "Imports a compiled `.wdlp`/pack zip containing `workflows.json` and optional `secrets.json`. The backend reads compiled JSON only; it does not compile WDL.",
+        "Imports a compiled `.wdlm`/pack zip containing `workflows.json` and optional `secrets.json`. The backend reads compiled JSON only; it does not compile WDL.",
         false,
         Some(RequestDoc {
             description: "Compiled pack zip, or JSON in compatibility mode.",

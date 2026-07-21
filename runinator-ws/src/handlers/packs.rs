@@ -105,15 +105,18 @@ pub(crate) async fn import_pack<T: DatabaseImpl>(
             Json(ApiResponse::PackImport(PackImportResult {
                 workflows,
                 secrets: SecretBundle::default(),
+                pipelines: Vec::new(),
             })),
         );
     }
 
-    let (mut workflow_bundle, secret_bundle) = match runinator_utilities::pack::read_pack_zip(&body)
-    {
+    let contents = match runinator_utilities::pack::read_pack_zip(&body) {
         Ok(parsed) => parsed,
         Err(err) => return bad_request(format!("invalid pack zip: {err}")),
     };
+    let mut workflow_bundle = contents.workflows;
+    let secret_bundle = contents.secrets;
+    let pipeline_bundle = contents.pipelines;
     stamp_bundle_org(&mut workflow_bundle, import_org);
     log::info!(
         "Importing pack: {} workflows, {} triggers, {} secrets (overwrite={overwrite})",
@@ -143,12 +146,27 @@ pub(crate) async fn import_pack<T: DatabaseImpl>(
         Ok(bundle) => bundle,
         Err(err) => return api_error(err.to_string()),
     };
+    // import pipelines after workflows so member names resolve to freshly-imported ids, and their
+    // links materialize as managed chained triggers stamped with the pipeline id.
+    let pipelines = match &pipeline_bundle {
+        Some(bundle) => {
+            match repository::import_pipeline_bundle_with(db.as_ref(), bundle, import_org).await {
+                Ok(imported) => imported,
+                Err(err) => return api_error(err.to_string()),
+            }
+        }
+        None => Vec::new(),
+    };
+    if let Some(bundle) = &pipeline_bundle {
+        log::info!("Imported {} pipelines from pack", bundle.pipelines.len());
+    }
     emit(&events, AppEvent::WorkflowsChanged);
     (
         StatusCode::OK,
         Json(ApiResponse::PackImport(PackImportResult {
             workflows,
             secrets,
+            pipelines,
         })),
     )
 }

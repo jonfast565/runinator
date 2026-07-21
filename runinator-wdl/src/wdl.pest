@@ -31,6 +31,22 @@ secrets_document = { SOI ~ secret_decl* ~ EOI }
 secret_decl      = { secret_kind ~ path ~ "=" ~ expr }
 secret_kind      = { "secret" | "config" }
 
+// a `.wdlp` pipeline file: one or more `pipeline "Name" { ... }` blocks. each declares member
+// workflows (`workflow "Name"`) and directed links (`"A" -> "B" on <selector>`) plus authoring
+// defaults. lowers to a portable `PipelineBundle`; the web service resolves member names to workflow
+// ids and materializes links as managed `chained` triggers stamped with the pipeline id at import.
+// the grammar only expresses well-formed pipelines; the lowering rejects empty/danging references.
+pipeline_document       = { SOI ~ pipeline_decl* ~ EOI }
+pipeline_decl           = { "pipeline" ~ string ~ "{" ~ pipeline_item* ~ "}" }
+pipeline_item           = { pipeline_desc | pipeline_on_failure | pipeline_max_depth | pipeline_member | pipeline_link }
+pipeline_desc           = { "description" ~ string }
+pipeline_on_failure     = { "on_failure" ~ pipeline_failure_policy }
+pipeline_failure_policy = { "halt" | "continue" }
+pipeline_max_depth      = { "max_depth" ~ integer }
+pipeline_member         = { "workflow" ~ string }
+pipeline_link           = { string ~ "->" ~ string ~ ("on" ~ pipeline_link_selector)? }
+pipeline_link_selector  = { "success" | "complete" | "failure" }
+
 document_item = {
     func_def
   | namespace_block

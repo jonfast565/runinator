@@ -127,7 +127,8 @@ pub async fn apply_dev_pack(
     } else {
         load_pack_settings(&source)?
     };
-    let body = runinator_utilities::pack::build_pack_zip(&bundle, settings.as_ref())
+    // desktop dev re-apply pushes workflows + settings; pipelines are pack-managed via ctl apply.
+    let body = runinator_utilities::pack::build_pack_zip(&bundle, settings.as_ref(), None)
         .map_err(|err| CommandError::Unexpected(err.to_string()))?;
     let mut url = build_state_url(&state, API_PACKS_IMPORT).await?;
     // an explicit dev re-apply is authoritative: update existing items in place.
@@ -166,7 +167,7 @@ fn is_pack_source(path: &Path) -> bool {
     }
     matches!(
         path.extension().and_then(|ext| ext.to_str()),
-        Some("wdl") | Some("wdlp")
+        Some("wdl") | Some("wdlm")
     )
 }
 
@@ -183,7 +184,7 @@ fn pack_source_files(path: &Path) -> CommandResult<Vec<DevPackFile>> {
     }
 
     match path.extension().and_then(|ext| ext.to_str()) {
-        Some("wdlp") => {
+        Some("wdlm") => {
             files.push(path.to_path_buf());
             files.extend(wdl_pack_manifest_paths(path)?);
             extend_wdl_includes(&mut files);
@@ -244,7 +245,7 @@ fn source_file_kind(path: &Path) -> String {
         return "directory".into();
     }
     match path.extension().and_then(|ext| ext.to_str()) {
-        Some("wdlp") => "manifest".into(),
+        Some("wdlm") => "manifest".into(),
         Some("wdl") => "workflow".into(),
         Some("wdls") => "settings".into(),
         Some("json") => "json".into(),
@@ -291,7 +292,7 @@ fn pack_settings_path(path: &Path) -> CommandResult<Option<PathBuf>> {
         }
         return Ok(None);
     }
-    if path.extension().and_then(|ext| ext.to_str()) != Some("wdlp") {
+    if path.extension().and_then(|ext| ext.to_str()) != Some("wdlm") {
         return Ok(None);
     }
     let data = fs::read_to_string(path).map_err(|err| CommandError::Unexpected(err.to_string()))?;
@@ -315,7 +316,7 @@ fn load_workflow_bundle(path: &Path) -> CommandResult<WorkflowBundle> {
         return load_wdl_directory(path);
     }
     match path.extension().and_then(|ext| ext.to_str()) {
-        Some("wdlp") => load_wdl_pack_manifest(path),
+        Some("wdlm") => load_wdl_pack_manifest(path),
         Some("wdl") => {
             let data = fs::read_to_string(path)
                 .map_err(|err| CommandError::Unexpected(err.to_string()))?;

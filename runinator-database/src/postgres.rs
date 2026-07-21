@@ -9,7 +9,11 @@ use sqlx::{
     postgres::{PgConnectOptions, PgPoolOptions},
 };
 
-use crate::{backend::SqlBackend, queries::SqlDialect};
+use crate::{
+    backend::SqlBackend,
+    pool::{pool_acquire_timeout, pool_max_connections},
+    queries::SqlDialect,
+};
 
 static POSTGRES_MIGRATOR: Migrator = sqlx::migrate!("./migrations/postgres");
 
@@ -23,7 +27,14 @@ impl PostgresDb {
             .log_statements(log::LevelFilter::Debug)
             .log_slow_statements(log::LevelFilter::Warn, std::time::Duration::from_secs(1));
 
-        let pool = PgPoolOptions::new().connect_with(options).await?;
+        // bound the pool so a request flood cannot open unbounded server connections, and time out
+        // acquisition so a saturated pool surfaces a fast error instead of an unbounded wait that ties
+        // up the http worker. both are env-tunable; see the `pool` module.
+        let pool = PgPoolOptions::new()
+            .max_connections(pool_max_connections())
+            .acquire_timeout(pool_acquire_timeout())
+            .connect_with(options)
+            .await?;
         Ok(Self { pool })
     }
 

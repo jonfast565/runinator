@@ -1,4 +1,8 @@
+use std::collections::HashMap;
+
 use super::*;
+use runinator_models::pipelines::{PipelineBundle, PipelineLinkSpec, PipelineSpec};
+use runinator_models::workflows::WorkflowTriggerKind;
 use uuid::Uuid;
 
 pub async fn upsert_pipeline<T: DatabaseImpl>(
@@ -6,6 +10,121 @@ pub async fn upsert_pipeline<T: DatabaseImpl>(
     pipeline: &Pipeline,
 ) -> Result<Pipeline, SendableError> {
     db.upsert_pipeline(pipeline).await
+}
+
+/// import a compiled pipeline bundle from a pack. for each pipeline: resolve member workflow names to
+/// ids, upsert the pipeline (reusing an existing id with the same name + org so re-import updates in
+/// place), and materialize its links as managed `chained` triggers. pack-managed pipelines carry
+/// `metadata.managed_by = "wdl"`, and their link triggers carry `configuration.pipeline_id`.
+pub async fn import_pipeline_bundle_with<T: DatabaseImpl>(
+    db: &T,
+    bundle: &PipelineBundle,
+    import_org: Option<Uuid>,
+) -> Result<Vec<Pipeline>, SendableError> {
+    let existing = db.fetch_pipelines().await?;
+    let mut imported = Vec::with_capacity(bundle.pipelines.len());
+    for spec in &bundle.pipelines {
+        imported.push(import_pipeline_spec(db, spec, import_org, &existing).await?);
+    }
+    Ok(imported)
+}
+
+async fn import_pipeline_spec<T: DatabaseImpl>(
+    db: &T,
+    spec: &PipelineSpec,
+    import_org: Option<Uuid>,
+    existing: &[Pipeline],
+) -> Result<Pipeline, SendableError> {
+    // resolve each member workflow name to its id; an unknown member fails the import loudly.
+    let mut workflow_ids = Vec::with_capacity(spec.members.len());
+    let mut member_ids: HashMap<&str, Uuid> = HashMap::new();
+    for member in &spec.members {
+        let id = db
+            .fetch_workflow_by_name(member.clone())
+            .await?
+            .and_then(|workflow| workflow.id)
+            .ok_or_else(|| crate::errors::IMPORT_UNKNOWN_PIPELINE_MEMBER.error(member.as_str()))?;
+        workflow_ids.push(id);
+        member_ids.insert(member.as_str(), id);
+    }
+    // reuse the id of an existing pipeline with the same name and org so re-import updates in place.
+    let prior_id = existing
+        .iter()
+        .find(|p| p.name == spec.name && p.org_id == import_org)
+        .and_then(|p| p.id);
+    let pipeline = Pipeline {
+        id: prior_id,
+        name: spec.name.clone(),
+        description: spec.description.clone(),
+        org_id: import_org,
+        workflow_ids,
+        defaults: spec.defaults.clone(),
+        metadata: runinator_models::json!({ "managed_by": "wdl" }),
+        created_at: None,
+        updated_at: None,
+    };
+    let saved = db.upsert_pipeline(&pipeline).await?;
+    let pipeline_id = saved
+        .id
+        .ok_or_else(|| crate::errors::IMPORT_UNKNOWN_PIPELINE_MEMBER.error(spec.name.as_str()))?;
+    materialize_pipeline_links(db, spec, pipeline_id, &member_ids).await?;
+    Ok(saved)
+}
+
+// realize a pipeline's links as managed `chained` triggers. reconciles idempotently: on every member
+// workflow, drop this pipeline's prior link triggers (keyed by `configuration.pipeline_id`), then
+// insert the current links sourced from that workflow. header triggers (no `pipeline_id`) and other
+// pipelines' triggers on the same workflow are left untouched.
+async fn materialize_pipeline_links<T: DatabaseImpl>(
+    db: &T,
+    spec: &PipelineSpec,
+    pipeline_id: Uuid,
+    member_ids: &HashMap<&str, Uuid>,
+) -> Result<(), SendableError> {
+    let pipeline_key = pipeline_id.to_string();
+    let mut by_source: HashMap<Uuid, Vec<&PipelineLinkSpec>> = HashMap::new();
+    for link in &spec.links {
+        if let Some(from_id) = member_ids.get(link.from.as_str()) {
+            by_source.entry(*from_id).or_default().push(link);
+        }
+    }
+    for workflow_id in member_ids.values().copied() {
+        for existing in db.fetch_workflow_triggers(workflow_id).await? {
+            let belongs = existing
+                .configuration
+                .pointer("/pipeline_id")
+                .and_then(Value::as_str)
+                == Some(pipeline_key.as_str());
+            if let (true, Some(trigger_id)) = (belongs, existing.id) {
+                db.delete_workflow_trigger(trigger_id).await?;
+            }
+        }
+        let Some(links) = by_source.get(&workflow_id) else {
+            continue;
+        };
+        for link in links {
+            let trigger = WorkflowTrigger {
+                id: None,
+                workflow_id,
+                kind: WorkflowTriggerKind::Chained,
+                enabled: link.enabled,
+                configuration: runinator_models::json!({
+                    "on": link.on.as_str(),
+                    "target_workflow": link.to,
+                    "parameters": {},
+                    "pipeline_id": pipeline_key,
+                }),
+                next_execution: None,
+                blackout_start: None,
+                blackout_end: None,
+                metadata: runinator_models::json!({ "managed_by": "wdl" }),
+                created_at: None,
+                updated_at: None,
+            };
+            db.upsert_workflow_trigger(&trigger).await?;
+        }
+    }
+    Ok(())
 }
 
 pub async fn fetch_pipelines<T: DatabaseImpl>(db: &T) -> Result<Vec<Pipeline>, SendableError> {

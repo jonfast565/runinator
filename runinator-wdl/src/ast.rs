@@ -888,6 +888,31 @@ pub struct SecretDecl {
     pub span: Span,
 }
 
+// pipelines (.wdlp) ---------------------------------------------------------
+
+/// a directed link in a `.wdlp` pipeline: `"A" -> "B" on <selector>`. `on` holds the raw selector
+/// keyword (`success`/`complete`/`failure`) or `None` when omitted; lowering resolves it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PipelineLinkDecl {
+    pub from: String,
+    pub to: String,
+    pub on: Option<String>,
+    pub span: Span,
+}
+
+/// a `pipeline "Name" { ... }` block parsed from a `.wdlp` file. `on_failure` holds the raw policy
+/// keyword (`halt`/`continue`) or `None`; lowering maps the string fields to the model enums.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PipelineDecl {
+    pub name: String,
+    pub description: Option<String>,
+    pub on_failure: Option<String>,
+    pub max_depth: Option<u32>,
+    pub members: Vec<String>,
+    pub links: Vec<PipelineLinkDecl>,
+    pub span: Span,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeField {
     pub name: String,

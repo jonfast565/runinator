@@ -10,7 +10,7 @@ use runinator_pack::source;
 pub async fn apply(service_url: &str, path: &Path) -> Result<String, String> {
     if !source::is_pack_source(path) {
         return Err(format!(
-            "{} is not a pack source (.wdl/.wdlp/directory)",
+            "{} is not a pack source (.wdl/.wdlm/directory)",
             path.display()
         ));
     }
@@ -18,11 +18,12 @@ pub async fn apply(service_url: &str, path: &Path) -> Result<String, String> {
     // compile client-side; surface compile errors to the caller for diagnostics + a toast.
     let bundle = source::load_workflow_bundle(path).map_err(|err| err.to_string())?;
     let secrets = source::load_pack_settings(path).map_err(|err| err.to_string())?;
+    let pipelines = source::load_pack_pipelines(path).map_err(|err| err.to_string())?;
 
     let client = AsyncApiClient::new(StaticLocator::new(service_url.to_string()))
         .map_err(|err| err.to_string())?;
     let result = client
-        .import_pack(&bundle, secrets.as_ref(), true)
+        .import_pack(&bundle, secrets.as_ref(), pipelines.as_ref(), true)
         .await
         .map_err(|err| err.to_string())?;
 

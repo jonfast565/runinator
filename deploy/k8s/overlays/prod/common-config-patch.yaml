@@ -1,0 +1,21 @@
+# Production database connection-pool sizing. RUNINATOR_DB_MAX_CONNECTIONS is PER POD, and every pod
+# that opens a pool counts: ws (HPA min 3 / max 20), background (2), archiver (1). At peak ws scale
+# that is ~23 pods, so total server connections ~= 23 x this value. Keep that product (plus headroom
+# for the db-bootstrap job and admin sessions) under the Postgres `max_connections`.
+#
+#   this value  |  ws min (3) -> pods ~6   |  ws max (20) -> pods ~23
+#   ------------+--------------------------+-------------------------
+#        10     |   ~60 connections        |   ~230 connections
+#
+# 10 keeps peak ~230, matched by the Postgres `max_connections=300` set in resources-patch.yaml
+# (peak + headroom for the db-bootstrap job and admin sessions). If your Postgres cap is lower, drop
+# this further; for higher fan-out, front the database with PgBouncer (transaction pooling) and raise
+# both — see the PgBouncer note in resources-patch.yaml. The acquire timeout is inherited from the
+# base ConfigMap (30s) and is not overridden here.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: runinator-common
+  namespace: runinator
+data:
+  RUNINATOR_DB_MAX_CONNECTIONS: "10"

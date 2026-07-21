@@ -56,12 +56,14 @@ impl Bundle for SecretBundle {
     const RESOURCE: &'static str = "/credentials/import";
 }
 
-/// the result of importing a compiled pack zip at `/packs/import`: the imported workflow bundle
-/// and the imported (redacted) secret bundle.
+/// the result of importing a compiled pack zip at `/packs/import`: the imported workflow bundle,
+/// the imported (redacted) secret bundle, and the pipelines that were upserted.
 #[derive(Debug, Clone, Default, Serialize, serde::Deserialize)]
 pub struct PackImportResult {
     #[serde(default)]
     pub workflows: crate::workflows::WorkflowBundle,
     #[serde(default)]
     pub secrets: SecretBundle,
+    #[serde(default)]
+    pub pipelines: Vec<crate::pipelines::Pipeline>,
 }

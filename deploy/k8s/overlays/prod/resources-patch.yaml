@@ -65,6 +65,26 @@ spec:
     spec:
       containers:
         - name: postgres
+          # server tuning passed to the `postgres` command (the official image runs CMD `postgres`,
+          # so it must be repeated here or the entrypoint loses it). max_connections is sized to the
+          # per-pod pool cap x peak pods: RUNINATOR_DB_MAX_CONNECTIONS=10 (see common-config-patch)
+          # x ~23 pods at peak ws scale = ~230, plus headroom for the db-bootstrap job and admin
+          # sessions -> 300. If you raise the pool cap or ws maxReplicas, raise this in lockstep and
+          # confirm it fits available memory (each connection reserves work_mem-sized buffers).
+          #
+          # PgBouncer: a single Postgres does not scale connections indefinitely, and bumping
+          # max_connections trades memory for headroom rather than fixing the ceiling. For higher
+          # fan-out (many ws/background replicas, or a smaller Postgres), front this StatefulSet with
+          # PgBouncer in transaction-pooling mode: point the app's --database-url at the PgBouncer
+          # service, keep PgBouncer's server-side pool small (e.g. default_pool_size ~ 25) so actual
+          # Postgres connections stay low, and then RUNINATOR_DB_MAX_CONNECTIONS bounds client-side
+          # checkouts against PgBouncer rather than against Postgres directly.
+          args:
+            - "postgres"
+            - "-c"
+            - "max_connections=300"
+            - "-c"
+            - "shared_buffers=1GB"
           resources:
             requests:
               cpu: "500m"

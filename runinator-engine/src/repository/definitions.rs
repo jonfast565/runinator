@@ -291,14 +291,17 @@ async fn materialize_workflow_triggers<T: DatabaseImpl>(
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
-    // drop the previous pack-managed triggers for this workflow.
+    // drop the previous pack-managed header triggers for this workflow. pipeline-link triggers are
+    // also managed_by=wdl but owned by a pipeline (keyed by configuration.pipeline_id); leave those
+    // to pipeline reconciliation so materializing a workflow does not clobber its pipeline links.
     for existing in db.fetch_workflow_triggers(workflow_id).await? {
         let managed = existing
             .metadata
             .pointer("/managed_by")
             .and_then(Value::as_str)
             == Some("wdl");
-        if let (true, Some(trigger_id)) = (managed, existing.id) {
+        let pipeline_owned = existing.configuration.pointer("/pipeline_id").is_some();
+        if let (true, false, Some(trigger_id)) = (managed, pipeline_owned, existing.id) {
             db.delete_workflow_trigger(trigger_id).await?;
         }
     }

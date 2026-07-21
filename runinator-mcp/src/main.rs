@@ -271,8 +271,11 @@ impl McpServer {
                     workflows,
                     triggers: Vec::new(),
                 };
-                let body = runinator_utilities::pack::build_pack_zip(&bundle, secrets.as_ref())
-                    .map_err(|err| err.to_string())?;
+                // the mcp import path carries workflows + secrets only; pipelines are pack-managed
+                // via `runinatorctl workflows apply`.
+                let body =
+                    runinator_utilities::pack::build_pack_zip(&bundle, secrets.as_ref(), None)
+                        .map_err(|err| err.to_string())?;
                 let result = self.post_api_zip(API_PACKS_IMPORT, body)?;
                 json_tool_response("Workflow pack imported", result, false)?
             }

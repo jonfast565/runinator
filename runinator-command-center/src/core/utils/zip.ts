@@ -1,5 +1,5 @@
 // minimal, dependency-free zip writer (store / no compression). enough to bundle a few small text
-// files (e.g. an exported .wdlp pack and its .wdl sources) into one downloadable archive.
+// files (e.g. an exported .wdlm pack and its .wdl sources) into one downloadable archive.
 
 export interface ZipEntry {
   name: string;

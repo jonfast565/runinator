@@ -130,10 +130,10 @@
             type="button"
             role="menuitem"
             class="btn btn-ghost"
-            title="Export all workflows as a .wdlp pack zip"
+            title="Export all workflows as a .wdlm pack zip"
             @click="exportPack"
           >
-            All workflows (.wdlp pack)
+            All workflows (.wdlm pack)
           </button>
         </div>
       </div>

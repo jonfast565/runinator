@@ -1437,12 +1437,29 @@ fn typed_compute_output_hint_validates_loop_items() {
 }
 
 #[test]
-fn compiles_checked_in_sdlc_ticket_workflow() {
+fn compiles_checked_in_sdlc_review_workflow() {
     let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs/sdlc/wdl/ticket-work.wdl");
-    let src = fs::read_to_string(&path).expect("read sdlc ticket workflow");
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs/sdlc/wdl/sdlc-review.wdl");
+    let src = fs::read_to_string(&path).expect("read sdlc review workflow");
     let definition = compile_with_providers(&src);
-    assert_eq!(definition.name, "Ticket Work");
+    assert_eq!(definition.name, "SDLC: Review");
+    assert_eq!(
+        definition
+            .definition
+            .metadata
+            .pointer("/wdl/type_hints/review_state/fields/changes_requested/ty/type")
+            .and_then(Value::as_str),
+        Some("integer")
+    );
+}
+
+#[test]
+fn compiles_checked_in_sdlc_deploy_workflow() {
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs/sdlc/wdl/sdlc-deploy.wdl");
+    let src = fs::read_to_string(&path).expect("read sdlc deploy workflow");
+    let definition = compile_with_providers(&src);
+    assert_eq!(definition.name, "SDLC: Deploy");
     assert_eq!(
         definition
             .definition
@@ -1455,14 +1472,6 @@ fn compiles_checked_in_sdlc_ticket_workflow() {
         definition
             .definition
             .metadata
-            .pointer("/wdl/type_hints/review_state/fields/changes_requested/ty/type")
-            .and_then(Value::as_str),
-        Some("integer")
-    );
-    assert_eq!(
-        definition
-            .definition
-            .metadata
             .pointer("/wdl/type_hints/deploy_state/fields/failed/ty/type")
             .and_then(Value::as_str),
         Some("integer")
@@ -1470,12 +1479,12 @@ fn compiles_checked_in_sdlc_ticket_workflow() {
 }
 
 #[test]
-fn compiles_checked_in_sdlc_pipeline_workflow() {
+fn compiles_checked_in_sdlc_development_workflow() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../packs/sdlc/wdl/core-team-sdlc-pipeline.wdl");
-    let src = fs::read_to_string(&path).expect("read sdlc pipeline workflow");
+        .join("../packs/sdlc/wdl/sdlc-development.wdl");
+    let src = fs::read_to_string(&path).expect("read sdlc development workflow");
     let definition = compile_with_providers(&src);
-    assert_eq!(definition.name, "Core Team SDLC Pipeline");
+    assert_eq!(definition.name, "SDLC: Development");
     assert_eq!(
         definition
             .definition

@@ -42,6 +42,7 @@ pub async fn run_webserver<T: DatabaseImpl>(
     advertisement: ReplicaAdvertisement,
     auth: crate::auth::AuthOptions,
     rate_limit: crate::rate_limit::RateLimitConfig,
+    overload: crate::overload::OverloadConfig,
     run_engine: bool,
 ) -> Result<(), SendableError> {
     crate::stability::init_metrics();
@@ -183,13 +184,28 @@ pub async fn run_webserver<T: DatabaseImpl>(
             "HTTP API rate limiting is ENABLED"
         );
     }
+    if overload.enabled {
+        info!(
+            max_concurrent_requests = overload.max_concurrent_requests,
+            request_timeout_seconds = overload.request_timeout.as_secs(),
+            "HTTP API overload protection is ENABLED"
+        );
+    }
     let provisioner = Arc::new(runinator_provisioner::build_registry(
         crate::provisioner_config::from_env(),
     ));
     if !provisioner.is_empty() {
         info!("on-demand node provisioning is ENABLED");
     }
-    let app = build_router(pool, bus, broker, provisioner, auth_config, rate_limit);
+    let app = build_router(
+        pool,
+        bus,
+        broker,
+        provisioner,
+        auth_config,
+        rate_limit,
+        overload,
+    );
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port);
     let listener = TcpListener::bind(addr).await?;
     let server = axum::serve(

@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
 use runinator_models::bundles::SecretBundle;
+use runinator_models::pipelines::PipelineBundle;
 use runinator_models::providers::ProviderMetadata;
 use runinator_models::semver::SemVer;
 use runinator_models::value::Value;
@@ -23,7 +24,7 @@ fn file_modified(path: &Path) -> Option<DateTime<Utc>> {
         .map(DateTime::<Utc>::from)
 }
 
-// returns true when the path is a wdl pack source (a directory, a .wdl, or a .wdlp manifest)
+// returns true when the path is a wdl pack source (a directory, a .wdl, or a .wdlm manifest)
 // rather than a raw workflow/bundle json file.
 pub fn is_pack_source(path: &Path) -> bool {
     if path.is_dir() {
@@ -31,7 +32,7 @@ pub fn is_pack_source(path: &Path) -> bool {
     }
     matches!(
         path.extension().and_then(|ext| ext.to_str()),
-        Some("wdl") | Some("wdlp")
+        Some("wdl") | Some("wdlm")
     )
 }
 
@@ -45,19 +46,21 @@ pub fn pack_source_files(path: &Path) -> Result<Vec<PathBuf>> {
         if let Some(settings_path) = pack_settings_path(path)? {
             files.push(settings_path);
         }
+        files.extend(pack_pipeline_paths(path)?);
         files.sort();
         files.dedup();
         return Ok(files);
     }
 
     match path.extension().and_then(|ext| ext.to_str()) {
-        Some("wdlp") => {
+        Some("wdlm") => {
             files.push(path.to_path_buf());
             files.extend(wdl_pack_manifest_paths(path)?);
             extend_wdl_includes(&mut files);
             if let Some(settings_path) = pack_settings_path(path)? {
                 files.push(settings_path);
             }
+            files.extend(pack_pipeline_paths(path)?);
         }
         Some("wdl") => {
             files.push(path.to_path_buf());
@@ -89,7 +92,7 @@ fn extend_wdl_includes(files: &mut Vec<PathBuf>) {
     }
 }
 
-// load a settings bundle that ships alongside a pack source: a `.wdlp` manifest's optional
+// load a settings bundle that ships alongside a pack source: a `.wdlm` manifest's optional
 // "settings" path entry, or a sibling `settings.wdls`/`settings.json` next to a directory pack. a
 // `.wdls` settings file is parsed with the wdl secrets front end; `.json` is read directly. a
 // single .wdl or a pack without a settings file yields None.
@@ -122,6 +125,68 @@ fn parse_settings_file(path: &Path) -> Result<SecretBundle> {
     Ok(bundle)
 }
 
+// load pipeline declarations that ship with a pack: a `.wdlm` manifest's optional "pipelines" array
+// of relative `.wdlp` paths, or any `*.wdlp` files next to a directory pack. each is parsed with the
+// wdl pipeline front end and merged into one bundle. a single `.wdl` or a pack without pipeline files
+// yields None.
+pub fn load_pack_pipelines(path: &Path) -> Result<Option<PipelineBundle>> {
+    let paths = pack_pipeline_paths(path)?;
+    if paths.is_empty() {
+        return Ok(None);
+    }
+    let mut pipelines = Vec::new();
+    for pipeline_path in paths {
+        let data = fs::read_to_string(&pipeline_path)?;
+        let bundle = runinator_wdl::parse_pipeline_str(&data).map_err(|e| {
+            PackError::compile(format!(
+                "failed to parse {}:\n{}",
+                pipeline_path.display(),
+                e.render(&data)
+            ))
+        })?;
+        pipelines.extend(bundle.pipelines);
+    }
+    Ok(Some(PipelineBundle { pipelines }))
+}
+
+// resolve the pipeline file paths for a pack source: a directory pack's `*.wdlp` files, or a `.wdlm`
+// manifest's optional "pipelines" array of relative paths. anything else yields an empty list.
+fn pack_pipeline_paths(path: &Path) -> Result<Vec<PathBuf>> {
+    if path.is_dir() {
+        let mut paths = Vec::new();
+        for entry in fs::read_dir(path)? {
+            let entry_path = entry?.path();
+            if entry_path.extension().and_then(|ext| ext.to_str()) == Some("wdlp") {
+                paths.push(entry_path);
+            }
+        }
+        paths.sort();
+        return Ok(paths);
+    }
+    if path.extension().and_then(|ext| ext.to_str()) != Some("wdlm") {
+        return Ok(Vec::new());
+    }
+    let data = fs::read_to_string(path)?;
+    let manifest: Value = serde_json::from_str(&data)?;
+    let base_dir = path.parent().unwrap_or_else(|| Path::new("."));
+    let mut paths = Vec::new();
+    if let Some(entries) = manifest.get("pipelines").and_then(Value::as_array) {
+        for entry in entries {
+            let rel = entry
+                .as_str()
+                .or_else(|| entry.get("path").and_then(Value::as_str))
+                .ok_or_else(|| {
+                    PackError::source(
+                        "each manifest pipeline entry must be a path string or have a 'path'",
+                    )
+                })?;
+            paths.push(base_dir.join(rel));
+        }
+    }
+    paths.sort();
+    Ok(paths)
+}
+
 // resolve the settings file path for a pack source, if one exists. a directory pack prefers a
 // `settings.wdls` over a `settings.json`.
 fn pack_settings_path(path: &Path) -> Result<Option<PathBuf>> {
@@ -134,7 +199,7 @@ fn pack_settings_path(path: &Path) -> Result<Option<PathBuf>> {
         }
         return Ok(None);
     }
-    if path.extension().and_then(|ext| ext.to_str()) != Some("wdlp") {
+    if path.extension().and_then(|ext| ext.to_str()) != Some("wdlm") {
         return Ok(None);
     }
     let data = fs::read_to_string(path)?;
@@ -146,7 +211,7 @@ fn pack_settings_path(path: &Path) -> Result<Option<PathBuf>> {
         .map(|rel| base_dir.join(rel)))
 }
 
-// compile a wdl pack source into a workflow bundle: a single .wdl, a .wdlp manifest, or a
+// compile a wdl pack source into a workflow bundle: a single .wdl, a .wdlm manifest, or a
 // directory of .wdl files.
 pub fn load_workflow_bundle(path: &Path) -> Result<WorkflowBundle> {
     load_workflow_bundle_with_providers(path, &[])
@@ -163,7 +228,7 @@ pub fn load_workflow_bundle_with_providers(
     }
 
     match path.extension().and_then(|ext| ext.to_str()) {
-        Some("wdlp") => load_wdl_pack_manifest(path, providers),
+        Some("wdlm") => load_wdl_pack_manifest(path, providers),
         Some("wdl") => {
             let data = fs::read_to_string(path)?;
             Ok(WorkflowBundle {
@@ -382,7 +447,7 @@ fn wdl_directory_paths(dir: &Path) -> Result<Vec<PathBuf>> {
     Ok(wdl_paths)
 }
 
-// resolve a .wdlp manifest: compile each referenced .wdl (relative to the manifest) and
+// resolve a .wdlm manifest: compile each referenced .wdl (relative to the manifest) and
 // pass through any declared triggers.
 fn load_wdl_pack_manifest(path: &Path, providers: &[ProviderMetadata]) -> Result<WorkflowBundle> {
     let data = fs::read_to_string(path)?;

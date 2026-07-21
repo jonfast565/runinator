@@ -18,6 +18,16 @@ config jira.ready_jql = "<<insert here>>"
 // openSprints() AND status in ('In Progress','In Review','Ready for Testing','In Testing')".
 config jira.in_flight_jql = "<<insert here>>"
 
+// per-phase inbox jqls for the status-scanner pipeline. each phase pulls the tickets
+// currently in its inbox status that the automation owns, processes them, and advances
+// them to the next status (the handoff between chained phase workflows).
+// in_review: work awaiting automated + human review. e.g. "... AND status = 'In Review'".
+config jira.in_review_jql = "<<insert here>>"
+// deploy: merged work awaiting deploy dispatch. e.g. "... AND status = 'Ready for Testing'".
+config jira.deploy_jql = "<<insert here>>"
+// qa: deployed work awaiting a QA outcome. e.g. "... AND status = 'In Testing'".
+config jira.qa_jql = "<<insert here>>"
+
 // jira status display names, used for drift detection (comparing what a human set
 // against what the automation expects at each park point).
 config status.ready_for_dev = "Ready for Development"
@@ -32,6 +42,8 @@ config status.terminal = ["Cancelled", "Won't Do"]
 config transitions.in_progress = "<<insert here>>"
 config transitions.in_review = "<<insert here>>"
 config transitions.ready_for_testing = "<<insert here>>"
+// deploy moves a merged ticket Ready for Testing -> In Testing so QA scans a distinct inbox.
+config transitions.in_testing = "<<insert here>>"
 config transitions.done = "<<insert here>>"
 config transitions.back_to_dev = "<<insert here>>"
 

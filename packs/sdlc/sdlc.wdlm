@@ -1,0 +1,16 @@
+{
+  "item_type": "wdl_pack",
+  "name": "SDLC Automation Pack",
+  "version": 7,
+  "workflows": [
+    "wdl/sdlc-development.wdl",
+    "wdl/sdlc-review.wdl",
+    "wdl/sdlc-deploy.wdl",
+    "wdl/sdlc-qa.wdl"
+  ],
+  "pipelines": [
+    "pipeline/core-sdlc.wdlp"
+  ],
+  "settings": "settings.wdls",
+  "triggers": []
+}

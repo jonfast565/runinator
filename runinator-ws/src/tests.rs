@@ -2043,6 +2043,89 @@ async fn import_overwrite_updates_existing_workflow_in_place() {
 }
 
 #[tokio::test]
+async fn import_pipeline_creates_managed_chained_triggers_idempotently() {
+    use runinator_models::pipelines::{
+        PipelineBundle, PipelineLinkSelector, PipelineLinkSpec, PipelineSpec,
+    };
+
+    let (db, path) = test_db().await;
+    // import the two member workflows first so the pipeline can resolve their names to ids.
+    let members = WorkflowBundle {
+        workflows: vec![
+            workflow(None, "SDLC: Development"),
+            workflow(None, "SDLC: Review"),
+        ],
+        triggers: vec![],
+    };
+    crate::repository::import_workflow_bundle(&db, members)
+        .await
+        .unwrap();
+
+    let bundle = PipelineBundle {
+        pipelines: vec![PipelineSpec {
+            name: "Core SDLC".into(),
+            description: Some("test".into()),
+            defaults: Default::default(),
+            members: vec!["SDLC: Development".into(), "SDLC: Review".into()],
+            links: vec![PipelineLinkSpec {
+                from: "SDLC: Development".into(),
+                to: "SDLC: Review".into(),
+                on: PipelineLinkSelector::Complete,
+                enabled: true,
+            }],
+        }],
+    };
+
+    // first import: creates the pipeline and one managed chained trigger on the source workflow.
+    let imported = crate::repository::import_pipeline_bundle_with(&db, &bundle, None)
+        .await
+        .unwrap();
+    assert_eq!(imported.len(), 1);
+    let pipeline_id = imported[0].id.expect("pipeline id");
+    assert_eq!(imported[0].workflow_ids.len(), 2);
+
+    let dev_id = db
+        .fetch_workflow_by_name("SDLC: Development".into())
+        .await
+        .unwrap()
+        .unwrap()
+        .id
+        .unwrap();
+    let triggers = db.fetch_workflow_triggers(dev_id).await.unwrap();
+    assert_eq!(triggers.len(), 1);
+    let trigger = &triggers[0];
+    assert_eq!(
+        trigger
+            .configuration
+            .pointer("/target_workflow")
+            .and_then(Value::as_str),
+        Some("SDLC: Review")
+    );
+    assert_eq!(
+        trigger.configuration.pointer("/on").and_then(Value::as_str),
+        Some("complete")
+    );
+    // the frontend keys pipeline membership off configuration.pipeline_id.
+    assert_eq!(
+        trigger
+            .configuration
+            .pointer("/pipeline_id")
+            .and_then(Value::as_str),
+        Some(pipeline_id.to_string().as_str())
+    );
+
+    // re-import: reconciles in place — no duplicate pipeline and no duplicate trigger.
+    let reimported = crate::repository::import_pipeline_bundle_with(&db, &bundle, None)
+        .await
+        .unwrap();
+    assert_eq!(reimported[0].id, Some(pipeline_id));
+    assert_eq!(db.fetch_pipelines().await.unwrap().len(), 1);
+    assert_eq!(db.fetch_workflow_triggers(dev_id).await.unwrap().len(), 1);
+
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
 async fn import_upserts_existing_workflow_when_id_is_present() {
     let (db, path) = test_db().await;
     let first = WorkflowBundle {

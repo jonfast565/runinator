@@ -11,3 +11,13 @@ data:
   POSTGRES_PORT: "5432"
   RABBITMQ_HOST: "runinator-rabbitmq.runinator.svc.cluster.local"
   RABBITMQ_PORT: "5672"
+  # database connection-pool bounds, applied by every pod that opens a pool (ws, background,
+  # archiver, db-bootstrap). max-connections is per-pod: keep (pods x this) under the Postgres
+  # connection cap. acquire-timeout fails a checkout fast on a saturated pool instead of parking
+  # the caller. tune per environment in an overlay.
+  RUNINATOR_DB_MAX_CONNECTIONS: "20"
+  RUNINATOR_DB_ACQUIRE_TIMEOUT_SECONDS: "30"
+  # outbound api-client timeouts, applied by every pod that calls the web service through
+  # runinator-api (worker, waker, background, ctl). bound a hung/slow ws so callers fail fast.
+  RUNINATOR_API_TIMEOUT_SECONDS: "60"
+  RUNINATOR_API_CONNECT_TIMEOUT_SECONDS: "10"

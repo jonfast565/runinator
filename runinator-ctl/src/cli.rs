@@ -335,16 +335,16 @@ pub enum WorkflowCommands {
     Show { workflow: String },
     /// Validate a workflow definition JSON file.
     Validate { file: PathBuf },
-    /// Import a workflow pack (.wdl, .wdlp, or a directory of .wdl files), or save a workflow
+    /// Import a workflow pack (.wdl, .wdlm, or a directory of .wdl files), or save a workflow
     /// definition / import a workflow bundle from a JSON file. For a pack, an adjacent settings
-    /// bundle (a `.wdlp` "settings" entry or a sibling settings.wdls/settings.json) is always
+    /// bundle (a `.wdlm` "settings" entry or a sibling settings.wdls/settings.json) is always
     /// imported too to seed config/secret slots. When no path is given, falls back to the
     /// `~/.runinator/workflows` folder if it exists.
     Apply { file: Option<PathBuf> },
     /// Dry-run a workflow pack against .wdlt test suites: simulate the state machine offline with
     /// mocked task outputs and assert on the branch taken and final outputs. No server required.
     Test {
-        /// Workflow pack source (.wdl, .wdlp, or a directory of .wdl files).
+        /// Workflow pack source (.wdl, .wdlm, or a directory of .wdl files).
         file: PathBuf,
         /// One or more .wdlt test-suite files (JSON). When omitted, sibling *.wdlt files are used.
         #[arg(long = "tests", value_name = "PATH")]

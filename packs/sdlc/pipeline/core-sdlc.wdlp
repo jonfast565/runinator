@@ -1,0 +1,19 @@
+// the Core SDLC pipeline: a status-driven scan chain. each member workflow is an independent
+// scanner keyed to a Jira status inbox; a `chained` link fires the next phase as soon as the prior
+// one finishes a pass (each phase also carries its own cron backstop, so the chain is a latency
+// optimization, not the only trigger). `on complete` keeps the chain flowing even when a pass finds
+// no work. member names must match the `workflow "…"` names in this pack's .wdl files.
+pipeline "Core SDLC" {
+    description "Status-driven SDLC scanner pipeline: Development -> Review -> Deploy -> QA."
+    on_failure continue
+    max_depth 8
+
+    workflow "SDLC: Development"
+    workflow "SDLC: Review"
+    workflow "SDLC: Deploy"
+    workflow "SDLC: QA"
+
+    "SDLC: Development" -> "SDLC: Review" on complete
+    "SDLC: Review"      -> "SDLC: Deploy" on complete
+    "SDLC: Deploy"      -> "SDLC: QA"     on complete
+}

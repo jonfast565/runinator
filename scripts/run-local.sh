@@ -4,8 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SUPERVISOR_ARGS=(-p runinator-supervisor --)
 COMMAND="${1:-start}"
-WORKFLOWS_FILE="${RUNINATOR_WORKFLOWS_FILE:-$ROOT_DIR/packs/sdlc/sdlc.wdlp}"
-SMOKE_WORKFLOWS_FILE="${RUNINATOR_SMOKE_WORKFLOWS_FILE:-$ROOT_DIR/packs/hello-world/hello-world.wdlp}"
+WORKFLOWS_FILE="${RUNINATOR_WORKFLOWS_FILE:-$ROOT_DIR/packs/sdlc/sdlc.wdlm}"
+SMOKE_WORKFLOWS_FILE="${RUNINATOR_SMOKE_WORKFLOWS_FILE:-$ROOT_DIR/packs/hello-world/hello-world.wdlm}"
 SMOKE_WORKFLOW="${RUNINATOR_SMOKE_WORKFLOW:-Hello World Test}"
 LOG_PROCESS=""
 LOG_LINES="${RUNINATOR_LOG_LINES:-80}"

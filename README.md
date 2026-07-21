@@ -84,7 +84,7 @@ bash scripts/run-local.sh stop
 bash scripts/run-local.sh restart
 ```
 
-The supervisor runs `runinatorctl workflows apply` once per pack configured in `runinator-supervisor.json`, so those workflow packs are pushed into the API after the web service starts. The checked-in local config imports all three packs under `packs/` — `packs/sdlc/sdlc.wdlp`, `packs/hello-world/hello-world.wdlp`, and the `packs/creds-sync` directory — compiling the referenced `.wdl` files before sending each bundle to the API. The `creds-sync` workflows require a `runner=creds-sync` worker, so on the local stack their scheduled runs park then fail unless you start such a worker (see `packs/creds-sync/README.md`). It also advertises `127.0.0.1` for the web service, waker, and worker, and gives the waker and worker stable local instance ids so the replicas list shows host/IP/version data instead of blank fields on restart. Built-in provider metadata is seeded by the web service from the provider catalog on startup. If the stack is already running and you want another sync, run:
+The supervisor runs `runinatorctl workflows apply` once per pack configured in `runinator-supervisor.json`, so those workflow packs are pushed into the API after the web service starts. The checked-in local config imports all three packs under `packs/` — `packs/sdlc/sdlc.wdlm`, `packs/hello-world/hello-world.wdlm`, and the `packs/creds-sync` directory — compiling the referenced `.wdl` files before sending each bundle to the API. The `creds-sync` workflows require a `runner=creds-sync` worker, so on the local stack their scheduled runs park then fail unless you start such a worker (see `packs/creds-sync/README.md`). It also advertises `127.0.0.1` for the web service, waker, and worker, and gives the waker and worker stable local instance ids so the replicas list shows host/IP/version data instead of blank fields on restart. Built-in provider metadata is seeded by the web service from the provider catalog on startup. If the stack is already running and you want another sync, run:
 
 ```bash
 bash scripts/run-local.sh sync
@@ -140,7 +140,7 @@ bash scripts/run-local.sh dev
 Pass `--run` to create and watch a workflow run after each successful import:
 
 ```bash
-bash scripts/run-local.sh dev --run "Core Team SDLC Pipeline"
+bash scripts/run-local.sh dev --run "SDLC: Development"
 ```
 
 When you only need to prove the local ws/waker/worker wiring with a tiny import
@@ -267,7 +267,7 @@ holds config and secrets in the `settings` table, with each value encrypted at r
 `RUNINATOR_CREDENTIAL_KEY`), application logs under `~/.runinator/logs/`, and
 supervisor state under `~/.runinator/supervisor/`.
 The local supervisor runs `runinatorctl workflows apply` against the pack at
-`packs/sdlc/sdlc.wdlp`.
+`packs/sdlc/sdlc.wdlm`.
 Child process stdout and stderr are collected under
 `~/.runinator/supervisor/logs/` with one file per process start:
 
@@ -324,10 +324,10 @@ without starting anything.
 ## Workflow Import
 
 `runinatorctl workflows apply <path>` imports a workflow pack in one shot. The
-path can be a `.wdl` file, a `.wdlp` manifest (which lists the `.wdl` files that
+path can be a `.wdl` file, a `.wdlm` manifest (which lists the `.wdl` files that
 make up the pack, resolved relative to the manifest), a directory of `.wdl`
 files, or a workflow/bundle JSON file. The local supervisor config applies
-`./packs/sdlc/sdlc.wdlp`. To load local credentials and config, import a settings
+`./packs/sdlc/sdlc.wdlm`. To load local credentials and config, import a settings
 bundle with `runinatorctl settings import <file>`. Each entry carries a `kind`
 (`secret` — the default — or `config`) and a `value`; secret values stay
 encrypted and resolve late at the worker, while config values are arbitrary JSON
@@ -336,11 +336,11 @@ workflow manifest from the repository sample pack if needed:
 
 ```bash
 mkdir -p ~/.runinator/workflows
-cp packs/sdlc/sdlc.wdlp ~/.runinator/workflows/sdlc.wdlp
+cp packs/sdlc/sdlc.wdlm ~/.runinator/workflows/sdlc.wdlm
 cp -R packs/sdlc/wdl ~/.runinator/workflows/wdl
 ```
 
-Compiled JSON workflow packs are no longer checked in. Use `sdlc.wdlp` plus the
+Compiled JSON workflow packs are no longer checked in. Use `sdlc.wdlm` plus the
 referenced `.wdl` sources for imports.
 
 `runinatorctl workflows dev <path>` runs the same client-side pack compile and
@@ -374,7 +374,7 @@ service key when talking to `http://127.0.0.1:8080/` and no explicit
 `RUNINATOR_API_KEY` is already set. Pointing those helpers at another stack
 still requires that stack's own credentials.
 
-For a minimal smoke import, use `./packs/hello-world/hello-world.wdlp`. It
+For a minimal smoke import, use `./packs/hello-world/hello-world.wdlm`. It
 contains one WDL workflow that runs a single built-in console action and is wired
 into `bash scripts/run-local.sh smoke-sync` for an import-and-run check against
 an already running local stack.
@@ -651,6 +651,21 @@ without invalidating live tokens or stranding stored secrets:
   requests get `429` with a `Retry-After` header. Independently, the unauthenticated
   `/auth/login` endpoint carries an always-on per-IP brute-force throttle (a small
   burst, then ~1 attempt every 5s) that cannot be disabled.
+- **Overload protection.** On by default; set
+  `RUNINATOR_OVERLOAD_PROTECTION_ENABLED=false` to disable. A global cap of
+  `RUNINATOR_MAX_CONCURRENT_REQUESTS` (default `512`) in-flight requests sheds excess
+  load with `503` + `Retry-After` instead of queueing it without bound, and
+  `RUNINATOR_REQUEST_TIMEOUT_SECONDS` (default `30`) aborts a stuck handler with
+  `408`. Each ws replica protects itself independently. This is the aggregate backstop
+  the per-principal rate limiter above does not provide.
+- **Database pool.** The Postgres/MySQL pool is bounded by
+  `RUNINATOR_DB_MAX_CONNECTIONS` (default `20`) so a request flood cannot open
+  unbounded server connections, and `RUNINATOR_DB_ACQUIRE_TIMEOUT_SECONDS`
+  (default `30`) fails a checkout fast on a saturated pool rather than parking the
+  caller. SQLite applies only the acquire timeout (its writes serialize, so more
+  connections just add lock contention). Outbound API-client calls
+  (`runinator-api`) carry their own `RUNINATOR_API_TIMEOUT_SECONDS` (default `60`)
+  and `RUNINATOR_API_CONNECT_TIMEOUT_SECONDS` (default `10`).
 
 ### Quick start (local cluster)
 
@@ -810,8 +825,8 @@ the control CLI (`runinatorctl`), and supervisor under `target/macos-apps`.
 For workflow pack import changes, run:
 
 ```bash
-jq empty packs/sdlc/sdlc.wdlp
-jq empty packs/hello-world/hello-world.wdlp
+jq empty packs/sdlc/sdlc.wdlm
+jq empty packs/hello-world/hello-world.wdlm
 cargo test -p runinator-ctl
 ```
 

@@ -3,6 +3,7 @@ use reqwest::{
     Url,
 };
 use runinator_models::json;
+use runinator_models::pipelines::PipelineBundle;
 use runinator_models::{
     api_routes::{
         api_workflow, api_workflow_duplicate, api_workflow_run_command, API_PACKS_IMPORT,
@@ -150,14 +151,16 @@ where
         Ok(response.json::<WorkflowBundle>()?)
     }
 
-    /// Build a compiled pack zip (workflows + optional secrets) and POST it to `/packs/import`.
+    /// Build a compiled pack zip (workflows + optional secrets + pipelines) and POST it to
+    /// `/packs/import`.
     pub fn import_pack(
         &self,
         workflows: &WorkflowBundle,
         secrets: Option<&SecretBundle>,
+        pipelines: Option<&PipelineBundle>,
         overwrite: bool,
     ) -> Result<PackImportResult> {
-        let body = runinator_utilities::pack::build_pack_zip(workflows, secrets)
+        let body = runinator_utilities::pack::build_pack_zip(workflows, secrets, pipelines)
             .map_err(|err| ApiError::Pack(err.to_string()))?;
         let mut url = self.build_url(API_PACKS_IMPORT)?;
         if overwrite {

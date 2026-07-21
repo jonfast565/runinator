@@ -1,7 +1,10 @@
+use std::time::Duration;
+
 use chrono::{DateTime, Utc};
 use reqwest::{Client, Response, Url};
 use runinator_comm::{ActionCommand, ActionDispatchRecord};
 use runinator_models::json;
+use runinator_models::pipelines::PipelineBundle;
 use runinator_models::value::Value;
 use runinator_models::{
     api_routes::{
@@ -52,6 +55,37 @@ use crate::{
     types::{RunArtifactPayload, RunChunkPayload, RunStatusPayload, WorkflowNodeRunStatusPayload},
 };
 
+/// Default cap on a single request's total wall-clock time. Bounds a hung or slow web service so a
+/// caller (worker/ctl/engine) fails fast and retries rather than parking a task indefinitely.
+/// Override with `RUNINATOR_API_TIMEOUT_SECONDS`.
+const DEFAULT_REQUEST_TIMEOUT_SECONDS: u64 = 60;
+
+/// Default cap on establishing the TCP/TLS connection, separate from the overall request timeout so a
+/// dead host is detected quickly. Override with `RUNINATOR_API_CONNECT_TIMEOUT_SECONDS`.
+const DEFAULT_CONNECT_TIMEOUT_SECONDS: u64 = 10;
+
+fn env_duration(key: &str, default_seconds: u64) -> Duration {
+    let seconds = std::env::var(key)
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(default_seconds);
+    Duration::from_secs(seconds)
+}
+
+/// A `reqwest::ClientBuilder` preconfigured with the request/connect timeouts every client shares.
+fn timed_client_builder() -> reqwest::ClientBuilder {
+    Client::builder()
+        .timeout(env_duration(
+            "RUNINATOR_API_TIMEOUT_SECONDS",
+            DEFAULT_REQUEST_TIMEOUT_SECONDS,
+        ))
+        .connect_timeout(env_duration(
+            "RUNINATOR_API_CONNECT_TIMEOUT_SECONDS",
+            DEFAULT_CONNECT_TIMEOUT_SECONDS,
+        ))
+}
+
 /// Asynchronous API client that wraps `reqwest::Client` and a service locator.
 #[derive(Clone)]
 pub struct AsyncApiClient<L> {
@@ -63,9 +97,9 @@ impl<L> AsyncApiClient<L>
 where
     L: ServiceLocator,
 {
-    /// Construct a client with the default `reqwest::Client` configuration.
+    /// Construct a client with default request/connect timeouts applied.
     pub fn new(locator: L) -> reqwest::Result<Self> {
-        let client = Client::builder().build()?;
+        let client = timed_client_builder().build()?;
         Ok(Self { client, locator })
     }
 
@@ -73,7 +107,7 @@ where
     /// `None`/empty token yields an unauthenticated client (for stacks with auth disabled). Both
     /// JWTs and api keys are accepted as bearer tokens by the web service.
     pub fn with_credentials(locator: L, token: Option<String>) -> reqwest::Result<Self> {
-        let mut builder = Client::builder();
+        let mut builder = timed_client_builder();
         if let Some(token) = token.filter(|t| !t.is_empty()) {
             if let Ok(value) = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}")) {
                 let mut headers = reqwest::header::HeaderMap::new();
@@ -493,14 +527,16 @@ where
         Ok(response.json::<WorkflowBundle>().await?)
     }
 
-    /// Build a compiled pack zip (workflows + optional secrets) and POST it to `/packs/import`.
+    /// Build a compiled pack zip (workflows + optional secrets + pipelines) and POST it to
+    /// `/packs/import`.
     pub async fn import_pack(
         &self,
         workflows: &WorkflowBundle,
         secrets: Option<&SecretBundle>,
+        pipelines: Option<&PipelineBundle>,
         overwrite: bool,
     ) -> Result<PackImportResult> {
-        let body = runinator_utilities::pack::build_pack_zip(workflows, secrets)
+        let body = runinator_utilities::pack::build_pack_zip(workflows, secrets, pipelines)
             .map_err(|err| ApiError::Pack(err.to_string()))?;
         let mut url = self.build_url(API_PACKS_IMPORT).await?;
         if overwrite {

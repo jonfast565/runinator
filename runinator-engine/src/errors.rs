@@ -20,6 +20,11 @@ pub const IMPORT_UNKNOWN_CHAINED_TARGET: ErrorDescriptor = ErrorDescriptor::new(
     "workflow.import.unknown_chained_target",
     "Imported workflow chains to an unknown target workflow",
 );
+pub const IMPORT_UNKNOWN_PIPELINE_MEMBER: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI123",
+    "workflow.import.unknown_pipeline_member",
+    "Imported pipeline references an unknown member workflow",
+);
 
 // debug, control, and replay.
 pub const DEBUG_NOT_FOUND: ErrorDescriptor = ErrorDescriptor::new(
@@ -89,6 +94,7 @@ pub const DICTIONARY: &[ErrorDescriptor] = &[
     IMPORT_UNKNOWN_SUBFLOW,
     IMPORT_INVALID_TRIGGER_BLACKOUT,
     IMPORT_UNKNOWN_CHAINED_TARGET,
+    IMPORT_UNKNOWN_PIPELINE_MEMBER,
     DEBUG_NOT_FOUND,
     DEBUG_DISABLED,
     DEBUG_TERMINAL,

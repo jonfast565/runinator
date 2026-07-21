@@ -18,6 +18,11 @@
         "RUNINATOR_AUTH_BOOTSTRAP_ADMIN": "admin:admin",
         "RUNINATOR_AUTH_BOOTSTRAP_SERVICE_API_KEY": "localdev.runinator-local-dev-service-key",
         "RUNINATOR_AUTH_BOOTSTRAP_SERVICE_API_KEY_NAME": "local-supervisor",
+        "RUNINATOR_OVERLOAD_PROTECTION_ENABLED": "true",
+        "RUNINATOR_MAX_CONCURRENT_REQUESTS": "512",
+        "RUNINATOR_REQUEST_TIMEOUT_SECONDS": "30",
+        "RUNINATOR_DB_MAX_CONNECTIONS": "20",
+        "RUNINATOR_DB_ACQUIRE_TIMEOUT_SECONDS": "30",
         "RUNINATOR_PROVISIONER_SUPERVISOR_ENABLED": "true",
         "RUNINATOR_PROVISIONER_SUPERVISOR_WORKER": "{\"command\":\"./target/debug/runinator-worker\",\"args\":[\"--advertise-host\",\"127.0.0.1\",\"--broker-backend\",\"tcp\",\"--broker-endpoint\",\"127.0.0.1:7070\",\"--max-concurrent-actions\",\"4\",\"--api-base-url\",\"http://127.0.0.1:8080/\"],\"env\":{\"RUNINATOR_API_KEY\":\"localdev.runinator-local-dev-service-key\"}}",
         "RUNINATOR_PROVISIONER_SUPERVISOR_WAKER": "{\"command\":\"./target/debug/runinator-waker\",\"args\":[\"--broker-backend\",\"tcp\",\"--broker-endpoint\",\"127.0.0.1:7070\",\"--api-base-url\",\"http://127.0.0.1:8080/\",\"--advertise-host\",\"127.0.0.1\"],\"env\":{\"RUNINATOR_API_KEY\":\"localdev.runinator-local-dev-service-key\"}}"
@@ -71,7 +76,9 @@
       "name": "waker",
       "command": "./target/debug/runinator-waker",
       "env": {
-        "RUNINATOR_API_KEY": "localdev.runinator-local-dev-service-key"
+        "RUNINATOR_API_KEY": "localdev.runinator-local-dev-service-key",
+        "RUNINATOR_API_TIMEOUT_SECONDS": "60",
+        "RUNINATOR_API_CONNECT_TIMEOUT_SECONDS": "10"
       },
       "args": [
         "--waker-id",
@@ -90,7 +97,10 @@
       "name": "worker",
       "command": "./target/debug/runinator-worker",
       "env": {
-        "RUNINATOR_API_KEY": "localdev.runinator-local-dev-service-key"
+        "RUNINATOR_API_KEY": "localdev.runinator-local-dev-service-key",
+        "RUNINATOR_API_TIMEOUT_SECONDS": "60",
+        "RUNINATOR_API_CONNECT_TIMEOUT_SECONDS": "10",
+        "RUNINATOR_WORKER_LABELS": "runner=sdlc"
       },
       "args": [
         "--worker-id",
@@ -118,7 +128,7 @@
         "http://127.0.0.1:8080/",
         "workflows",
         "apply",
-        "./packs/sdlc/sdlc.wdlp"
+        "./packs/sdlc/sdlc.wdlm"
       ],
       "restart_on_failure": false
     },
@@ -133,7 +143,7 @@
         "http://127.0.0.1:8080/",
         "workflows",
         "apply",
-        "./packs/hello-world/hello-world.wdlp"
+        "./packs/hello-world/hello-world.wdlm"
       ],
       "restart_on_failure": false
     },
@@ -148,7 +158,7 @@
         "http://127.0.0.1:8080/",
         "workflows",
         "apply",
-        "packs/creds-sync/creds-sync.wdlp"
+        "packs/creds-sync/creds-sync.wdlm"
       ],
       "restart_on_failure": false
     }
