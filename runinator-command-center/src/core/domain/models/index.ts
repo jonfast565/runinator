@@ -54,6 +54,7 @@ export type {
 } from "./pipeline/pipeline";
 export { defaultPipelineDefaults } from "./pipeline/pipeline";
 export type { WorkflowNodeRun } from "./workflow/node-run";
+export type { NodeTransition, NodeTransitionStat } from "./workflow/transition";
 export type { WorkflowRunDetail } from "./workflow/run-detail";
 export { runWorkflowSnapshot } from "./workflow/run-detail";
 export type { SimStep, SimulationRun, WorkflowSimulateRequest } from "./workflow/simulation";

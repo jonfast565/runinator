@@ -174,6 +174,29 @@
       </table>
     </details>
 
+    <details v-if="runTransitions.length" class="transitions-group">
+      <summary>Transition path · {{ runTransitions.length }} edge(s)</summary>
+      <p class="transitions-hint">
+        The edges this run actually walked, in order, reconstructed from each step's recorded
+        origin. Untaken branches never appear here.
+      </p>
+      <ol class="transition-path">
+        <li
+          v-for="transition in runTransitions"
+          :key="transition.node_run_id"
+          :class="{ selected: transition.to_node === workflows.selectedWorkflowRunNodeId }"
+          @click="workflows.selectWorkflowRunNode(transition.to_node)"
+        >
+          <span class="transition-edge">
+            <span class="transition-from">{{ transition.from_node ?? "start" }}</span>
+            <Icon name="chevron-right" :size="12" class="transition-arrow" />
+            <span class="transition-to">{{ transition.to_node }}</span>
+          </span>
+          <span v-if="transition.reason" class="transition-reason">{{ transition.reason }}</span>
+        </li>
+      </ol>
+    </details>
+
     <div v-if="workflows.selectedWorkflowRunNodeId" class="node-logs-section">
       <h3 class="run-detail-section-title">Result: {{ workflows.selectedWorkflowRunNodeId }}</h3>
       <div v-if="selectedNodeOutput && resultFields.length" class="result-fields">
@@ -206,6 +229,24 @@
         readonly
         title="Output JSON"
       />
+      <div v-if="sortedNodeStats.length" class="node-stats">
+        <h3 class="run-detail-section-title">
+          Usually goes to <span class="node-stats-total">({{ nodeStatTotal }} runs)</span>
+        </h3>
+        <div
+          v-for="stat in sortedNodeStats"
+          :key="stat.to_node"
+          class="node-stat-row"
+          @click="workflows.selectWorkflowRunNode(stat.to_node)"
+        >
+          <span class="node-stat-target">{{ stat.to_node }}</span>
+          <span class="node-stat-bar">
+            <span class="node-stat-fill" :style="{ width: statPercent(stat.count) }" />
+          </span>
+          <span class="node-stat-count">{{ statPercent(stat.count) }} · {{ stat.count }}</span>
+        </div>
+      </div>
+
       <h3 class="run-detail-section-title">Logs: {{ workflows.selectedWorkflowRunNodeId }}</h3>
       <pre class="output workflow-detail-logs">{{
         workflows.workflowNodeDetailExtra || "No logs for this step"
@@ -230,8 +271,18 @@ import JsonDiff from "./JsonDiff.vue";
 import WatchExpressions from "./WatchExpressions.vue";
 import { formatDate, pretty } from "../../../core/utils/format";
 import { displayValue } from "../../../core/utils/values";
-import { computed, nextTick, ref } from "vue";
-import type { ActionResultMetadata, DebugFrame, WorkflowNodeRun } from "../../../core/domain/models";
+import { computed, nextTick, ref, watch } from "vue";
+import type {
+  ActionResultMetadata,
+  DebugFrame,
+  NodeTransition,
+  NodeTransitionStat,
+  WorkflowNodeRun,
+} from "../../../core/domain/models";
+import {
+  fetchWorkflowNodeTransitions,
+  fetchWorkflowRunTransitions,
+} from "../../../core/api/commandCenterApi";
 import { coerceDebugFrame } from "../../../core/domain/models/workflow-state";
 import {
   asArray,
@@ -512,6 +563,67 @@ function selectByRunId(runId: string) {
   if (node) {
     workflows.selectWorkflowRunNode(node.node_id);
   }
+}
+
+// audit history: the edges this run actually walked, and where the selected node usually goes.
+const runTransitions = ref<NodeTransition[]>([]);
+const nodeStats = ref<NodeTransitionStat[]>([]);
+
+// reload the per-run transition path whenever a different run is opened.
+watch(
+  () => workflows.workflowRunDetail?.run.id ?? null,
+  async (runId) => {
+    runTransitions.value = [];
+
+    if (!runId) {
+      return;
+    }
+
+    try {
+      runTransitions.value = await fetchWorkflowRunTransitions(runId);
+    } catch {
+      runTransitions.value = [];
+    }
+  },
+  { immediate: true },
+);
+
+// reload cross-run stats for whichever node is selected.
+watch(
+  () => [workflows.workflowRunWorkflow?.id ?? null, workflows.selectedWorkflowRunNodeId] as const,
+  async ([workflowId, nodeId]) => {
+    nodeStats.value = [];
+
+    if (!workflowId || !nodeId) {
+      return;
+    }
+
+    try {
+      nodeStats.value = await fetchWorkflowNodeTransitions(workflowId, nodeId);
+    } catch {
+      nodeStats.value = [];
+    }
+  },
+  { immediate: true },
+);
+
+// stats sorted most-frequent-first so the common path reads at the top.
+const sortedNodeStats = computed<NodeTransitionStat[]>(() =>
+  [...nodeStats.value].sort((a, b) => b.count - a.count),
+);
+
+const nodeStatTotal = computed(() =>
+  nodeStats.value.reduce((sum, stat) => sum + stat.count, 0),
+);
+
+function statPercent(count: number): string {
+  const total = nodeStatTotal.value;
+
+  if (total <= 0) {
+    return "0%";
+  }
+
+  return `${String(Math.round((count / total) * 100))}%`;
 }
 </script>
 
@@ -811,6 +923,120 @@ function selectByRunId(runId: string) {
   cursor: pointer;
   font-family: var(--font-mono);
   text-decoration: underline;
+}
+
+.transitions-group {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface);
+  margin: 6px 0 12px;
+  padding: 6px 8px;
+}
+.transitions-group summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-subtle);
+  user-select: none;
+}
+.transitions-hint {
+  margin: 6px 0;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.transition-path {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.transition-path li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 4px 8px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-size: 12px;
+}
+.transition-path li:hover {
+  background: var(--surface-subtle);
+}
+.transition-path li.selected {
+  background: var(--accent-soft);
+}
+.transition-edge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+}
+.transition-from {
+  color: var(--text-muted);
+}
+.transition-to {
+  color: var(--text);
+  font-weight: 500;
+}
+.transition-arrow {
+  color: var(--text-faint);
+}
+.transition-reason {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-style: italic;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.node-stats {
+  margin-bottom: 10px;
+}
+.node-stats-total {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 400;
+}
+.node-stat-row {
+  display: grid;
+  grid-template-columns: minmax(80px, 140px) 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 3px 6px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-size: 12px;
+}
+.node-stat-row:hover {
+  background: var(--surface-subtle);
+}
+.node-stat-target {
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.node-stat-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--surface-muted);
+  overflow: hidden;
+}
+.node-stat-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 3px;
+}
+.node-stat-count {
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 @media (max-width: 920px) {

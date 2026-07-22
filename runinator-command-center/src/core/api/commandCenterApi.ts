@@ -11,6 +11,8 @@ import type {
   DevPackTextFile,
   GateRecord,
   Grant,
+  NodeTransition,
+  NodeTransitionStat,
   Notification,
   PermissionLevel,
   PrincipalType,
@@ -264,6 +266,16 @@ export async function fetchWorkflowNodeRunArtifacts(nodeRunId: string) {
 
 export async function fetchWorkflowRunArtifacts(workflowRunId: string) {
   return command<WorkflowRunArtifact[]>("fetch_workflow_run_artifacts", { workflowRunId });
+}
+
+// the edges a single run actually walked, in order, reconstructed from the node-run chain.
+export async function fetchWorkflowRunTransitions(workflowRunId: string) {
+  return command<NodeTransition[]>("fetch_workflow_run_transitions", { workflowRunId });
+}
+
+// aggregated `from -> to` edges out of one node across every run of its workflow.
+export async function fetchWorkflowNodeTransitions(workflowId: string, nodeId: string) {
+  return command<NodeTransitionStat[]>("fetch_workflow_node_transitions", { workflowId, nodeId });
 }
 
 export async function fetchWorkflows() {

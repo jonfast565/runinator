@@ -3,6 +3,7 @@ use runinator_models::{
         API_WORKFLOWS_IMPORT, API_WORKFLOWS_SIMULATE, WORKFLOW_JSON_IMPORT_RISK_ACK,
         WORKFLOW_JSON_IMPORT_RISK_HEADER,
     },
+    orchestration::{NodeTransition, NodeTransitionStat},
     pipelines::Pipeline,
     providers::ProviderMetadata,
     replicas::ReplicaListResponse,
@@ -871,6 +872,31 @@ pub async fn fetch_workflow_run_artifacts(
     get_json(
         &state,
         &format!("workflow_runs/{workflow_run_id}/artifacts"),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn fetch_workflow_run_transitions(
+    state: State<'_, CommandCenterState>,
+    workflow_run_id: Uuid,
+) -> CommandResult<Vec<NodeTransition>> {
+    get_json(
+        &state,
+        &format!("workflow_runs/{workflow_run_id}/transitions"),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn fetch_workflow_node_transitions(
+    state: State<'_, CommandCenterState>,
+    workflow_id: Uuid,
+    node_id: String,
+) -> CommandResult<Vec<NodeTransitionStat>> {
+    get_json(
+        &state,
+        &format!("workflows/{workflow_id}/nodes/{node_id}/transitions"),
     )
     .await
 }

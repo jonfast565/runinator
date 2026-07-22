@@ -35,6 +35,8 @@ pub fn run() {
             crate::commands::fetch_workflow_node_run_chunks,
             crate::commands::fetch_workflow_node_run_artifacts,
             crate::commands::fetch_workflow_run_artifacts,
+            crate::commands::fetch_workflow_run_transitions,
+            crate::commands::fetch_workflow_node_transitions,
             crate::commands::fetch_workflows,
             crate::commands::save_workflow,
             crate::commands::simulate_workflow,
