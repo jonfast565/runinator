@@ -1360,6 +1360,44 @@ describe("traversedEdgeKeys", () => {
   });
 });
 
+describe("in-play run edges", () => {
+  const runWorkflow: WorkflowDefinition = {
+    id: WORKFLOW_ID,
+    name: "Flow",
+    version: "1.0.0",
+    enabled: true,
+    input_type: { type: "any" },
+    definition: {
+      nodes: [
+        { id: "a", kind: "action", transitions: { next: { $node: "b" } } },
+        { id: "b", kind: "action", transitions: {} },
+      ],
+    },
+  };
+
+  it("marks only the walked edge into a running node as in-play", () => {
+    const completed = new Set(["a"]);
+    const walked = new Set(["a->b"]);
+    const active = new Set(["b"]);
+
+    const [edge] = buildGraphEdges(runWorkflow, completed, walked, active);
+
+    expect(edge.animated).toBe(true);
+    expect(edge.class).toBe("edge-in-play");
+  });
+
+  it("leaves the edge un-emphasized when its target is not running", () => {
+    const completed = new Set(["a"]);
+    const walked = new Set(["a->b"]);
+    const active = new Set<string>();
+
+    const [edge] = buildGraphEdges(runWorkflow, completed, walked, active);
+
+    expect(edge.animated).toBe(true);
+    expect(edge.class).toBeUndefined();
+  });
+});
+
 describe("catalog-driven workflow helpers", () => {
   afterEach(() => {
     setWorkflowCatalogs({ nodeKinds: [], triggerKinds: [], enums: [] });

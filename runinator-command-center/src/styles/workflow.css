@@ -512,6 +512,21 @@
   border-color: var(--accent);
 }
 
+/* the edge feeding an actively running node: accent-colored, thicker, faster dash. */
+.vue-flow__edge.edge-in-play .vue-flow__edge-path {
+  stroke: var(--accent);
+  stroke-width: 2.5;
+  filter: drop-shadow(0 0 3px var(--accent));
+}
+.vue-flow__edge.edge-in-play.animated .vue-flow__edge-path {
+  animation-duration: 0.35s;
+}
+@media (prefers-reduced-motion: reduce) {
+  .vue-flow__edge.edge-in-play.animated .vue-flow__edge-path {
+    animation: none;
+  }
+}
+
 .inspector-panel {
   overflow: hidden;
 }

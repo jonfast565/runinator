@@ -11,6 +11,7 @@
       },
     ]"
   >
+    <span v-if="isNodeRunning" class="node-sheen" aria-hidden="true" />
     <span v-if="data.debugBreakpoint" class="breakpoint-dot" title="Breakpoint set" />
     <span v-if="data.locked" class="lock-dot" title="Locked node"
       ><Icon name="lock" :size="11"
@@ -870,6 +871,47 @@ function formatInputDraft(value: unknown): string {
   color: var(--text);
   text-transform: none;
   word-break: break-word;
+}
+
+/* a soft light band that sweeps across a node while it is in play (running/queued). */
+.node-sheen {
+  position: absolute;
+  inset: 0;
+  border-radius: 4px;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+.node-sheen::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 45%;
+  background: linear-gradient(
+    100deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.28) 50%,
+    transparent 100%
+  );
+  transform: translateX(-160%);
+  animation: node-sheen-sweep 1.9s ease-in-out infinite;
+}
+@keyframes node-sheen-sweep {
+  0% {
+    transform: translateX(-160%);
+  }
+  60%,
+  100% {
+    transform: translateX(320%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .node-sheen::before {
+    animation: none;
+    opacity: 0;
+  }
 }
 
 .node-loader {

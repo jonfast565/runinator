@@ -191,6 +191,7 @@ export function buildGraphEdgeModels(
   workflow: WorkflowDefinition,
   completedNodeIds?: ReadonlySet<string> | null,
   traversedKeys?: ReadonlySet<string> | null,
+  activeNodeIds?: ReadonlySet<string> | null,
 ): GraphEdgeModel[] {
   const definition = workflow.definition;
   const nodes = recordArray(definition.nodes);
@@ -275,6 +276,11 @@ export function buildGraphEdgeModels(
     for (const edge of separated) {
       const walked = traversedKeys ? traversedKeys.has(`${edge.source}->${edge.target}`) : true;
       edge.animated = walked && !completedNodeIds.has(edge.target);
+
+      // the edge feeding a node that is actively running gets a stronger "in play" treatment.
+      if (edge.animated && activeNodeIds?.has(edge.target)) {
+        edge.class = "edge-in-play";
+      }
     }
   }
 

@@ -267,12 +267,16 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     // edge freezes exactly when its target card stops looking active. a node
     // revisited in a cycle flips back to running and re-animates on the next tick.
     const completed = new Set<string>();
+    // nodes actively in play (running/queued) get the emphasized in-play edge feeding them.
+    const active = new Set<string>();
 
     for (const node of runGraphNodes.value) {
       const data = node.data as JsonRecord | undefined;
 
       if (isCompletedNodeStatus(data?.status) || data?.skipped === true) {
         completed.add(node.id);
+      } else if (data?.running === true) {
+        active.add(node.id);
       }
     }
 
@@ -280,7 +284,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     // prev_node_run_id) so untaken branches stay static.
     const walked = traversedEdgeKeys(state.value.workflowRunDetail?.nodes ?? []);
 
-    return buildGraphEdges(workflowRunWorkflow.value, completed, walked);
+    return buildGraphEdges(workflowRunWorkflow.value, completed, walked, active);
   });
   const selectedNode = mirroredComputed((): JsonRecord | null => svc.getSelectedNode());
   const selectedGraphEdge = computed(

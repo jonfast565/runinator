@@ -61,4 +61,5 @@ export interface GraphEdgeModel extends GraphEdgeLike {
   pathOptions?: GraphEdgePathOptions;
   zIndex?: number;
   animated?: boolean;
+  class?: string;
 }
