@@ -239,6 +239,7 @@ fn expand_stmt(stmt: &mut Stmt, aliases: &AliasTable) -> Result<(), WdlError> {
         // these carry no spread-bearing expressions.
         StmtKind::Checkpoint(_)
         | StmtKind::Throttle(_)
+        | StmtKind::Cooldown(_)
         | StmtKind::Collect(_)
         | StmtKind::Barrier(_)
         | StmtKind::CircuitBreaker(_) => {}

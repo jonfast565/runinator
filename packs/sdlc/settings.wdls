@@ -28,13 +28,12 @@ config jira.deploy_jql = "<<insert here>>"
 // qa: deployed work awaiting a QA outcome. e.g. "... AND status = 'In Testing'".
 config jira.qa_jql = "<<insert here>>"
 
-// jira status display names, used for drift detection (comparing what a human set
-// against what the automation expects at each park point).
+// jira status display names the QA phase inspects by name. the scanners are drift-tolerant by
+// construction: each phase only acts on tickets its inbox JQL returns, so a human who moves a
+// ticket out of a phase's status simply drops it from that phase's scope (no poll-and-bail
+// drift nodes needed). only these three names are read at runtime — the intermediate statuses
+// are expressed through the *_jql inboxes and the transitions.* ids below, not by display name.
 config status.ready_for_dev = "Ready for Development"
-config status.in_progress = "In Progress"
-config status.in_review = "In Review"
-config status.ready_for_testing = "Ready for Testing"
-config status.in_testing = "In Testing"
 config status.done = "Done"
 config status.terminal = ["Cancelled", "Won't Do"]
 

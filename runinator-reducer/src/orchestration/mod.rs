@@ -12,12 +12,12 @@ use runinator_models::{
         ApprovalRecord, ApprovalState, AssertOutput, AssertViolation, AuditOutput, AwaitRunOutput,
         AwaitRunState, BarrierOutput, BarrierState, CheckpointOutput, CircuitBreakerOutput,
         CircuitBreakerState, CollectOutput, CollectState, CompensationFrame, ConfigSummary,
-        DebounceOutput, DebounceState, EventSourceState, GateRecord, GateState, InputState,
-        JoinOutput, LoopFrame, LoopOutput, MapChild, MapChildState, MapFrame, MapOutput,
-        MutexOutput, MutexState, OutputPayload, ParallelFrame, ParallelOutput, RaceFrame,
-        RaceOutput, SignalState, SkippedOutput, SubflowOutcome, SubflowState, SwitchOutput,
-        ThrottleOutput, ThrottleState, TransformOutput, TryFrame, WaitElapsedOutput, WaitState,
-        WorkflowContextHeader, WorkflowRunState,
+        CooldownOutput, DebounceOutput, DebounceState, EventSourceState, GateRecord, GateState,
+        InputState, JoinOutput, LoopFrame, LoopOutput, MapChild, MapChildState, MapFrame,
+        MapOutput, MutexOutput, MutexState, OutputPayload, ParallelFrame, ParallelOutput,
+        RaceFrame, RaceOutput, SignalState, SkippedOutput, SubflowOutcome, SubflowState,
+        SwitchOutput, ThrottleOutput, ThrottleState, TransformOutput, TryFrame, WaitElapsedOutput,
+        WaitState, WorkflowContextHeader, WorkflowRunState,
     },
     workflows::{
         WorkflowAction, WorkflowNode, WorkflowNodeKind, WorkflowNodeRun, WorkflowNodeRunArtifact,
@@ -48,6 +48,7 @@ mod compensation;
 mod compute;
 mod context;
 mod control_flow;
+mod cooldown;
 mod debounce;
 mod engine;
 mod event_source;

@@ -234,6 +234,7 @@ async fn process_workflow_run_step<T: DatabaseImpl>(
         WorkflowNodeKind::Checkpoint => checkpoint::CheckpointHandler.process(&ctx).await?,
         WorkflowNodeKind::Mutex => mutex::MutexHandler.process(&ctx).await?,
         WorkflowNodeKind::Throttle => throttle::ThrottleHandler.process(&ctx).await?,
+        WorkflowNodeKind::Cooldown => cooldown::CooldownHandler.process(&ctx).await?,
         WorkflowNodeKind::AwaitRun => await_run::AwaitRunHandler.process(&ctx).await?,
         WorkflowNodeKind::Debounce => debounce::DebounceHandler.process(&ctx).await?,
         WorkflowNodeKind::Collect => collect::CollectHandler.process(&ctx).await?,

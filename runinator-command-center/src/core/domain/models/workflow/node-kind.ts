@@ -25,6 +25,7 @@ export type WorkflowNodeKind =
   | "checkpoint"
   | "mutex"
   | "throttle"
+  | "cooldown"
   | "await_run"
   | "debounce"
   | "collect"

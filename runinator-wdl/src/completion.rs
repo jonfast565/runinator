@@ -509,6 +509,13 @@ fn construct_completion_items() -> Vec<WdlCompletionItem> {
             true,
         ),
         (
+            "cooldown",
+            "keyword",
+            "cross-run cooldown; one pass per window",
+            "cooldown \"${name}\" every ${window}",
+            true,
+        ),
+        (
             "await",
             "keyword",
             "wait for other run(s)",

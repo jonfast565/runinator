@@ -230,6 +230,7 @@ pub enum StmtKind {
     Checkpoint(CheckpointStmt),
     Mutex(MutexStmt),
     Throttle(ThrottleStmt),
+    Cooldown(CooldownStmt),
     Await(AwaitStmt),
     Debounce(DebounceStmt),
     Collect(CollectStmt),
@@ -479,6 +480,13 @@ pub struct ThrottleStmt {
     pub window_seconds: i64,
     pub poll_interval: Option<i64>,
     pub timeout: Option<i64>,
+}
+
+/// `cooldown "name" every <dur>`: a named cross-run cooldown gate.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CooldownStmt {
+    pub name: String,
+    pub window_seconds: i64,
 }
 
 /// `await <expr> (mode <str>)? ...`: wait for other run(s) to reach a terminal state.

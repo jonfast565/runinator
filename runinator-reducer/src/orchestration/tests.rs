@@ -8,6 +8,7 @@ use super::await_run::parse_await_mode;
 use super::barrier::arrivals_complete;
 use super::circuit_breaker::is_circuit_open;
 use super::collect::threshold_reached;
+use super::cooldown::remaining_seconds;
 use super::debounce::deadline_elapsed;
 use super::engine::reentry_exhausted;
 use super::event_source::event_type_matches;
@@ -412,6 +413,29 @@ fn throttle_bucket_has_tokens_resets_on_expired_window() {
     .unwrap()
     .into();
     assert!(bucket_has_tokens(&partial, 5, 60));
+}
+
+#[test]
+fn cooldown_remaining_seconds_reflects_window() {
+    let now = chrono::Utc::now().timestamp();
+    // ran 100s ago with a 300s window → 200s left, still inside the window (skip).
+    let recent = serde_json::from_str::<Value>(&format!(r#"{{ "last_run_at": {} }}"#, now - 100))
+        .unwrap()
+        .into();
+    assert_eq!(remaining_seconds(&recent, 300, now), 200);
+    // ran 400s ago with a 300s window → window elapsed, 0 remaining (proceed).
+    let stale = serde_json::from_str::<Value>(&format!(r#"{{ "last_run_at": {} }}"#, now - 400))
+        .unwrap()
+        .into();
+    assert_eq!(remaining_seconds(&stale, 300, now), 0);
+    // exactly at the boundary → 0 remaining (proceed).
+    let boundary = serde_json::from_str::<Value>(&format!(r#"{{ "last_run_at": {} }}"#, now - 300))
+        .unwrap()
+        .into();
+    assert_eq!(remaining_seconds(&boundary, 300, now), 0);
+    // missing timestamp → treated as long past, 0 remaining.
+    let empty = serde_json::from_str::<Value>("{}").unwrap().into();
+    assert_eq!(remaining_seconds(&empty, 300, now), 0);
 }
 
 #[test]

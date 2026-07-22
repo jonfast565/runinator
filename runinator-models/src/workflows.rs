@@ -528,6 +528,9 @@ pub enum WorkflowNodeKind {
     Mutex,
     /// enforce a cross-run rate limit; parks until a token is available.
     Throttle,
+    /// named cross-run cooldown: a pass within the window short-circuits the run to success
+    /// without running the body, so at most one pass proceeds per window.
+    Cooldown,
     /// wait for one or more independently-started workflow runs to reach a terminal state.
     AwaitRun,
     /// park for a trailing delay that resets when re-triggered; collapses event bursts.
@@ -545,7 +548,7 @@ pub enum WorkflowNodeKind {
 impl WorkflowNodeKind {
     /// every node kind in a stable, ui-facing order. used to build the metadata catalog; the
     /// catalog's per-kind `match` is what guarantees exhaustiveness at compile time.
-    pub const ALL: [WorkflowNodeKind; 34] = [
+    pub const ALL: [WorkflowNodeKind; 35] = [
         WorkflowNodeKind::Start,
         WorkflowNodeKind::Action,
         WorkflowNodeKind::Wait,
@@ -572,6 +575,7 @@ impl WorkflowNodeKind {
         WorkflowNodeKind::Checkpoint,
         WorkflowNodeKind::Mutex,
         WorkflowNodeKind::Throttle,
+        WorkflowNodeKind::Cooldown,
         WorkflowNodeKind::AwaitRun,
         WorkflowNodeKind::Debounce,
         WorkflowNodeKind::Collect,

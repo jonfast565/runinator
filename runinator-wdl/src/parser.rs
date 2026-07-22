@@ -1005,6 +1005,7 @@ fn parse_stmt_body(pair: Pair<Rule>) -> Result<StmtKind, WdlError> {
         Rule::checkpoint_stmt => Ok(StmtKind::Checkpoint(parse_checkpoint(inner)?)),
         Rule::mutex_stmt => Ok(StmtKind::Mutex(parse_mutex(inner)?)),
         Rule::throttle_stmt => Ok(StmtKind::Throttle(parse_throttle(inner)?)),
+        Rule::cooldown_stmt => Ok(StmtKind::Cooldown(parse_cooldown(inner)?)),
         Rule::await_stmt => Ok(StmtKind::Await(parse_await(inner)?)),
         Rule::debounce_stmt => Ok(StmtKind::Debounce(parse_debounce(inner)?)),
         Rule::collect_stmt => Ok(StmtKind::Collect(parse_collect(inner)?)),
@@ -1755,6 +1756,25 @@ fn parse_throttle(pair: Pair<Rule>) -> Result<ThrottleStmt, WdlError> {
         window_seconds,
         poll_interval,
         timeout,
+    })
+}
+
+fn parse_cooldown(pair: Pair<Rule>) -> Result<CooldownStmt, WdlError> {
+    let mut name = String::new();
+    let mut window_seconds = 0;
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::string => name = plain_string(inner)?,
+            Rule::poll_every => {
+                let value = first_inner(inner)?;
+                window_seconds = parse_duration(value.as_str(), span_of(&value))?;
+            }
+            _ => {}
+        }
+    }
+    Ok(CooldownStmt {
+        name,
+        window_seconds,
     })
 }
 

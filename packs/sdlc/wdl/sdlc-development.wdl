@@ -4,6 +4,11 @@ workflow "SDLC: Development" v1 {
     // PR, and moves it to In Review — the inbox the Review phase scans next.
     trigger cron "0 * * * *"
 
+    // cooldown: this phase admits and implements tickets (expensive Claude runs), so guard against a
+    // duplicate/manual re-fire within 5 minutes double-spending the budget. the hourly cron is the
+    // real cadence; the mutex below still serializes any concurrent overlap.
+    cooldown "sdlc-development" every 300s
+
     // serialize passes so an overlapping cron/chained fire never double-picks a ticket.
     mutex "sdlc-development" every 10s timeout 900s
 

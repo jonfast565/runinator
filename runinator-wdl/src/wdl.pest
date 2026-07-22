@@ -198,6 +198,7 @@ stmt_body = {
   | checkpoint_stmt
   | mutex_stmt
   | throttle_stmt
+  | cooldown_stmt
   | await_stmt
   | debounce_stmt
   | collect_stmt
@@ -332,6 +333,10 @@ mutex_stmt    = { "mutex" ~ (mutex_release ~ string | string ~ poll_every? ~ nod
 
 // a named cross-run rate limiter (n per window). `throttle "github" rate 10 per 60s`.
 throttle_stmt = { "throttle" ~ string ~ "rate" ~ integer ~ "per" ~ duration ~ poll_every? ~ node_timeout? }
+
+// a named cross-run cooldown: at most one pass per window; passes inside the window short-circuit
+// the run to success without running the body. `cooldown "sdlc-qa" every 900s`.
+cooldown_stmt = { "cooldown" ~ string ~ poll_every }
 
 // wait for other run(s) to reach a terminal state. the expression yields the run-id array; `mode`
 // is `all` (default) or `any`. `await context.prep_run_ids mode "all" timeout 1800s`.

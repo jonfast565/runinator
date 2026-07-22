@@ -695,6 +695,7 @@ impl<'a> Decompiler<'a> {
                 | WorkflowNodeKind::Audit
                 | WorkflowNodeKind::Checkpoint
                 | WorkflowNodeKind::Throttle
+                | WorkflowNodeKind::Cooldown
                 | WorkflowNodeKind::AwaitRun
                 | WorkflowNodeKind::Debounce
                 | WorkflowNodeKind::Collect
@@ -1001,6 +1002,7 @@ impl<'a> Decompiler<'a> {
             WorkflowNodeKind::Checkpoint => Ok((self.checkpoint_text(node)?, false)),
             WorkflowNodeKind::Mutex => Ok((self.mutex_text(node)?, false)),
             WorkflowNodeKind::Throttle => Ok((self.throttle_text(node)?, false)),
+            WorkflowNodeKind::Cooldown => Ok((self.cooldown_text(node)?, false)),
             WorkflowNodeKind::AwaitRun => Ok((self.await_text(node)?, false)),
             WorkflowNodeKind::Debounce => Ok((self.debounce_text(node)?, false)),
             WorkflowNodeKind::Collect => Ok((self.collect_text(node)?, false)),
@@ -1701,6 +1703,20 @@ impl<'a> Decompiler<'a> {
             text.push_str(&format!(" every {poll}s"));
         }
         Ok(text)
+    }
+
+    fn cooldown_text(&self, node: &WorkflowNode) -> Result<String, WdlError> {
+        let name = node
+            .parameters
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let window = node
+            .parameters
+            .get("window_seconds")
+            .and_then(Value::as_i64)
+            .unwrap_or(0);
+        Ok(format!("cooldown {} every {window}s", quote(name)))
     }
 
     fn await_text(&self, node: &WorkflowNode) -> Result<String, WdlError> {
@@ -2511,6 +2527,7 @@ fn needs_id_annotation(kind: &WorkflowNodeKind) -> bool {
             | WorkflowNodeKind::Checkpoint
             | WorkflowNodeKind::Mutex
             | WorkflowNodeKind::Throttle
+            | WorkflowNodeKind::Cooldown
             | WorkflowNodeKind::AwaitRun
             | WorkflowNodeKind::Debounce
             | WorkflowNodeKind::Collect

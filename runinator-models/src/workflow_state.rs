@@ -529,6 +529,16 @@ pub struct ThrottleOutput {
     pub admitted: bool,
 }
 
+/// cooldown node output: whether this pass was short-circuited by the cooldown window.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CooldownOutput {
+    pub name: String,
+    /// true when the run was completed without entering the body (still inside the window).
+    pub skipped: bool,
+    /// seconds left in the window when skipped; 0 when the pass proceeded.
+    pub remaining_seconds: i64,
+}
+
 /// await_run node-run state while parked watching sibling run(s).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AwaitRunState {

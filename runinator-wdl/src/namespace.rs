@@ -372,6 +372,7 @@ fn resolve_stmt(stmt: &mut Stmt, scope: &Scope) -> Result<(), WdlError> {
         // no namespace-qualified references to resolve.
         StmtKind::Checkpoint(_)
         | StmtKind::Throttle(_)
+        | StmtKind::Cooldown(_)
         | StmtKind::Collect(_)
         | StmtKind::Barrier(_)
         | StmtKind::CircuitBreaker(_) => {}

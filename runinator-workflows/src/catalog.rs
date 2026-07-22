@@ -787,6 +787,33 @@ fn node_kind_metadata(kind: WorkflowNodeKind) -> WorkflowNodeKindMetadata {
                 "Enforces a cross-run rate limit; parks until a token is available.",
             )
         },
+        WorkflowNodeKind::Cooldown => WorkflowNodeKindMetadata {
+            fields: vec![
+                field(
+                    req("name", RuninatorType::String),
+                    FieldLocation::parameters(&["name"]),
+                    None,
+                ),
+                field(
+                    opt("window_seconds", RuninatorType::Integer),
+                    FieldLocation::parameters(&["window_seconds"]),
+                    None,
+                ),
+            ],
+            default_template: json!({
+                "kind": "cooldown",
+                "parameters": { "name": "my-cooldown", "window_seconds": 900 },
+                "retry": { "max_attempts": 1 },
+                "transitions": { "on_success": end_ref() },
+            }),
+            ..base(
+                kind,
+                "Cooldown",
+                "hourglass",
+                "sync",
+                "Short-circuits the run to success when a prior pass ran within the window; at most one pass proceeds per window.",
+            )
+        },
         WorkflowNodeKind::AwaitRun => WorkflowNodeKindMetadata {
             fields: vec![
                 field(

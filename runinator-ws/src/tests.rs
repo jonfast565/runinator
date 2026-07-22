@@ -1027,7 +1027,7 @@ async fn get_node_kinds_returns_catalog_json() {
     let crate::models::ApiResponse::JsonValue(value) = response else {
         panic!("node catalog response must be json");
     };
-    assert_eq!(value.as_array().map(Vec::len), Some(34));
+    assert_eq!(value.as_array().map(Vec::len), Some(35));
 }
 
 #[tokio::test]

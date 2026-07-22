@@ -377,6 +377,7 @@ fn check_stmt(stmt: &Stmt, env: &mut Env, diagnostics: &mut Vec<Diagnostic>) {
         // these carry no expressions to type-check.
         StmtKind::Checkpoint(_)
         | StmtKind::Throttle(_)
+        | StmtKind::Cooldown(_)
         | StmtKind::Collect(_)
         | StmtKind::Barrier(_)
         | StmtKind::CircuitBreaker(_) => {}

@@ -410,6 +410,7 @@ fn evaluate_node(
         | WorkflowNodeKind::Input
         | WorkflowNodeKind::Mutex
         | WorkflowNodeKind::Throttle
+        | WorkflowNodeKind::Cooldown
         | WorkflowNodeKind::AwaitRun
         | WorkflowNodeKind::Debounce
         | WorkflowNodeKind::Collect

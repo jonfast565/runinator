@@ -81,6 +81,7 @@ const CONTROL_KW = new Set([
   "checkpoint",
   "mutex",
   "throttle",
+  "cooldown",
   "await",
   "debounce",
   "collect",
@@ -775,6 +776,11 @@ const snippets = [
     label: "throttle",
     type: "keyword",
     detail: "cross-run rate limiter",
+  }),
+  snippetCompletion('cooldown "${name}" every ${window}', {
+    label: "cooldown",
+    type: "keyword",
+    detail: "cross-run cooldown; one pass per window",
   }),
   snippetCompletion('await ${run_ids} mode "all"', {
     label: "await",

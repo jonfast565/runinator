@@ -213,6 +213,7 @@ fn collect_stmt(stmt: &Stmt, source_dir: &Path, paths: &mut Vec<PathBuf>) -> Res
         // these reference no file()-bearing expressions.
         StmtKind::Checkpoint(_)
         | StmtKind::Throttle(_)
+        | StmtKind::Cooldown(_)
         | StmtKind::Collect(_)
         | StmtKind::Barrier(_)
         | StmtKind::CircuitBreaker(_) => {}

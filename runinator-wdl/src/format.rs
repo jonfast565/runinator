@@ -437,6 +437,7 @@ impl Formatter {
             }
             StmtKind::Mutex(mutex) => self.mutex(mutex),
             StmtKind::Throttle(throttle) => self.throttle(throttle),
+            StmtKind::Cooldown(cooldown) => self.cooldown(cooldown),
             StmtKind::Await(await_stmt) => self.await_node(await_stmt),
             StmtKind::Debounce(debounce) => self.debounce(debounce),
             StmtKind::Collect(collect) => self.collect(collect),
@@ -875,6 +876,14 @@ impl Formatter {
             text.push_str(&format!(" timeout {timeout}s"));
         }
         text
+    }
+
+    fn cooldown(&self, cooldown: &CooldownStmt) -> String {
+        format!(
+            "cooldown {} every {}s",
+            quote(&cooldown.name),
+            cooldown.window_seconds
+        )
     }
 
     fn await_node(&self, await_stmt: &AwaitStmt) -> String {

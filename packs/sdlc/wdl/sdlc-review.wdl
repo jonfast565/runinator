@@ -5,6 +5,11 @@ workflow "SDLC: Review" v1 {
     // In Review for the next pass.
     trigger cron "*/30 * * * *"
 
+    // cooldown: collapse a near-simultaneous cron + chained fire into one pass per 5 minutes so a
+    // burst never re-scans the inbox back-to-back. cron still drives the baseline cadence, and a
+    // chained fire that lands after the window still runs.
+    cooldown "sdlc-review" every 300s
+
     mutex "sdlc-review" every 10s timeout 1800s
 
     import std

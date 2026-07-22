@@ -608,6 +608,7 @@ impl Lowerer {
             StmtKind::Checkpoint(checkpoint) => self.lower_checkpoint(checkpoint, stmt, id, next),
             StmtKind::Mutex(mutex) => self.lower_mutex(mutex, stmt, id, next),
             StmtKind::Throttle(throttle) => self.lower_throttle(throttle, stmt, id, next),
+            StmtKind::Cooldown(cooldown) => self.lower_cooldown(cooldown, stmt, id, next),
             StmtKind::Await(await_stmt) => self.lower_await(await_stmt, stmt, id, next),
             StmtKind::Debounce(debounce) => self.lower_debounce(debounce, stmt, id, next),
             StmtKind::Collect(collect) => self.lower_collect(collect, stmt, id, next),
@@ -1236,6 +1237,24 @@ impl Lowerer {
         Ok(())
     }
 
+    fn lower_cooldown(
+        &mut self,
+        cooldown: &CooldownStmt,
+        stmt: &Stmt,
+        id: &str,
+        next: &str,
+    ) -> Result<(), WdlError> {
+        let mut params = Map::new();
+        params.insert("name".into(), Value::String(cooldown.name.clone()));
+        params.insert(
+            "window_seconds".into(),
+            Value::from(cooldown.window_seconds),
+        );
+        let fields = self.leaf_fields(params, stmt, next, None)?;
+        self.push(node(id, "cooldown", fields));
+        Ok(())
+    }
+
     fn lower_await(
         &mut self,
         await_stmt: &AwaitStmt,
@@ -1574,6 +1593,7 @@ fn control_prefix(kind: &StmtKind) -> &'static str {
         StmtKind::Checkpoint(_) => "checkpoint",
         StmtKind::Mutex(_) => "mutex",
         StmtKind::Throttle(_) => "throttle",
+        StmtKind::Cooldown(_) => "cooldown",
         StmtKind::Await(_) => "await_run",
         StmtKind::Debounce(_) => "debounce",
         StmtKind::Collect(_) => "collect",

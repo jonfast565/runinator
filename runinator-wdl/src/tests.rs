@@ -5920,6 +5920,7 @@ fn new_node_kinds_compile_and_round_trip() {
             checkpoint "after-audit"
             mutex "deploy-lock" every 5s timeout 300s
             throttle "github-api" rate 10 per 60s
+            cooldown "scan-gate" every 300s
             await params.run_ids mode "all" timeout 1800s
             debounce "file-change" delay 30s
             collect "events" max 50 timeout 300s
@@ -5944,6 +5945,7 @@ fn new_node_kinds_compile_and_round_trip() {
         WorkflowNodeKind::Checkpoint,
         WorkflowNodeKind::Mutex,
         WorkflowNodeKind::Throttle,
+        WorkflowNodeKind::Cooldown,
         WorkflowNodeKind::AwaitRun,
         WorkflowNodeKind::Debounce,
         WorkflowNodeKind::Collect,
@@ -5953,6 +5955,20 @@ fn new_node_kinds_compile_and_round_trip() {
     ] {
         assert!(kinds.contains(&expected), "missing node kind {expected:?}");
     }
+
+    let cooldown = definition
+        .definition
+        .nodes
+        .iter()
+        .find(|n| n.kind == WorkflowNodeKind::Cooldown)
+        .expect("cooldown node");
+    assert_eq!(
+        cooldown
+            .parameters
+            .get("window_seconds")
+            .and_then(Value::as_i64),
+        Some(300)
+    );
 
     // spot-check a couple of lowered parameter shapes against what the reducer reads.
     let throttle = definition
@@ -6010,6 +6026,7 @@ fn new_node_kinds_optional_clauses_round_trip() {
             "throttle-poll",
             "throttle \"gh\" rate 10 per 60s every 5s timeout 120s",
         ),
+        ("cooldown", "cooldown \"scan-gate\" every 300s"),
         (
             "barrier-poll",
             "barrier \"sync\" count 4 every 5s timeout 600s",

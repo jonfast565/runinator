@@ -5,6 +5,11 @@ workflow "SDLC: Deploy" v1 {
     // In Testing has already been dispatched, so it is never double-deployed.
     trigger cron "*/30 * * * *"
 
+    // cooldown: collapse a near-simultaneous cron + chained fire into one pass per 5 minutes so a
+    // burst never re-scans the inbox back-to-back. cron still drives the baseline cadence, and a
+    // chained fire that lands after the window still runs.
+    cooldown "sdlc-deploy" every 300s
+
     mutex "sdlc-deploy" every 10s timeout 1800s
 
     import std

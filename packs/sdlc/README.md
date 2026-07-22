@@ -49,6 +49,13 @@ conventions:
   PR for the branch instead of opening a duplicate), so no PR number needs to cross the chain.
 - **Overlap safety.** Each phase holds a per-phase `mutex` so an overlapping cron/chained fire never
   double-picks a ticket.
+- **Cooldown.** Each phase opens with a per-phase `cooldown "sdlc-<phase>" every 300s` (the first
+  node, before the mutex). A pass that starts within 5 minutes of the prior pass short-circuits to a
+  clean success without scanning, so a near-simultaneous cron + chained fire collapses to one pass
+  instead of hammering Jira/GitHub back-to-back. cron (every 30 min / hourly) remains the baseline
+  cadence, and a chained fire that lands after the window still runs — a scanner completes in seconds
+  when its inbox is empty, so Development completions (which take minutes) always clear the window
+  before chaining the next phase.
 
 ## Config and secrets
 
