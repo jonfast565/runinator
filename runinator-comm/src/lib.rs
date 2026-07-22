@@ -115,10 +115,10 @@ pub struct ControlCommand {
     pub target: ActionTarget,
 }
 
-/// a request to run the web-service reducer for one ready-queue row at a future time. the web
-/// service publishes this when it enqueues a ready node (and the reconcile backstop re-publishes
-/// overdue ones); the waker is the sole consumer and relays a [`WsIngressCommand::Drive`] once
-/// `ready_at` arrives.
+/// a timer ticket for a future-dated ready node. the web service publishes these when a ready
+/// node's `ready_at` is still in the future (and the reconcile backstop re-publishes lost ones);
+/// the waker is the sole consumer and relays a [`WsIngressCommand::Drive`] once due. already-due
+/// ready nodes skip this channel: the web service publishes their Drive on ingress directly.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WakeCommand {
     pub ready_node_id: Uuid,

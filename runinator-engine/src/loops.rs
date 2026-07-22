@@ -27,8 +27,8 @@ const USAGE_SAMPLE_INTERVAL: Duration = Duration::from_secs(300);
 const READY_NODE_REAP_INTERVAL: Duration = Duration::from_secs(30);
 const READY_NODE_REAP_LIMIT: i64 = 1000;
 
-/// periodically announce pending ready nodes on the wake channel and re-announce any that were lost
-/// (the durable backstop). the broker dedupes wakes already in flight. `wake_nudge` interrupts the
+/// periodically announce pending ready nodes for drive. due nodes are driven directly on ingress;
+/// future-dated nodes are published on the wake channel for the waker. `wake_nudge` interrupts the
 /// poll sleep when create/drive/result paths enqueue new ready work so queue→running is not gated
 /// on [`WAKE_PUBLISH_INTERVAL`].
 pub async fn run_wake_publisher<T: DatabaseImpl>(

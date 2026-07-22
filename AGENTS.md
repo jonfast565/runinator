@@ -77,7 +77,7 @@ Preserve the command lifecycle:
 
 - Workflows are executed as state-machines with nodes like `task`, `wait`, `condition`, `approval`, `loop`, and `subflow`.
 - The web service owns the reducer and publishes `ActionCommand` values through `runinator-broker` for `task` nodes (drained from the durable `workflow_action_dispatches` outbox by an in-process publisher loop). The waker never publishes `ActionCommand`s.
-- The web service publishes a `WakeCommand` on the `wake` channel for every pending ready node (the wake-publisher loop doubles as the durable reconcile backstop; the broker dedupes wakes already in flight). The waker relays a due wake to a `WsIngressCommand::Drive` on the `ingress` channel, which the web service consumes to run the reducer.
+- The web service publishes a `WsIngressCommand::Drive` on the `ingress` channel for every already-due ready node, and a `WakeCommand` on the `wake` channel for future-dated ones (the wake-publisher loop doubles as the durable reconcile backstop; the broker dedupes wakes/drives already in flight). The waker relays a due wake to a `WsIngressCommand::Drive` on the `ingress` channel, which the web service consumes to run the reducer.
 - Workflow run states (`queued`, `running`, `waiting`, etc.) are persisted separately from individual task run statuses.
 - Workers acknowledge broker deliveries only after processing and any required result logging has completed.
 - Worker outputs, logs, artifacts, and node-run status/results may be delivered as broker result events consumed by `runinator-ws`, or through compatibility endpoints in `runinator-api`; only `runinator-ws` persists them through `runinator-database`, and workers must not write directly to the database.

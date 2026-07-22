@@ -1,5 +1,7 @@
 use super::support;
 use super::*;
+use runinator_broker::IngressMessage;
+use runinator_comm::WsIngressCommand;
 use uuid::Uuid;
 
 pub async fn create_workflow_run<T: DatabaseImpl>(
@@ -198,9 +200,10 @@ pub async fn publish_pending_action_dispatches<T: DatabaseImpl>(
 // duplicate wakes; a wake lost in flight is re-announced once the lease lapses after its due time.
 const WAKE_ANNOUNCE_LEASE_SECONDS: i64 = 30;
 
-/// publish a wake for each ready node still pending drive. doubles as the durable backstop: the
-/// database announce lease bounds republishing to once per window per node, and backends with
-/// broker-side dedupe drop the remaining duplicates.
+/// announce pending ready nodes for drive. due nodes (`ready_at <= now`) publish a Drive straight
+/// onto the ingress channel so queue→running (and node→node) is not gated on a waker broker hop;
+/// future-dated nodes still publish a Wake for the waker to sleep until due. doubles as the durable
+/// backstop via the announce lease; the broker dedupes wakes/drives already in flight.
 pub async fn publish_pending_wakes<T: DatabaseImpl>(
     db: &T,
     broker: &dyn Broker,
@@ -211,13 +214,40 @@ pub async fn publish_pending_wakes<T: DatabaseImpl>(
         .claim_ready_nodes_for_announce(now, WAKE_ANNOUNCE_LEASE_SECONDS, limit)
         .await?;
     for node in pending {
+        let trace_id = Uuid::now_v7();
+        if node.ready_at <= now {
+            // already due: skip wake→waker→ingress and drive immediately.
+            let command = WsIngressCommand::drive(
+                node.id,
+                node.workflow_run_id,
+                node.node_id,
+                trace_id,
+            );
+            let message = IngressMessage {
+                command,
+                dedupe_key: None,
+                enqueued_at: Utc::now(),
+            };
+            match broker.publish_ingress(message).await {
+                Ok(()) | Err(BrokerError::Duplicate(_)) => {}
+                Err(err) => {
+                    log::warn!(
+                        "Failed to publish drive for due ready node {}: {}",
+                        node.id,
+                        err
+                    );
+                }
+            }
+            continue;
+        }
+
         let command = runinator_comm::WakeCommand::new(
             node.id,
             node.workflow_run_id,
             node.node_id,
             node.ready_at,
             node.source_event_id,
-            Uuid::now_v7(),
+            trace_id,
         );
         let message = runinator_broker::WakeMessage {
             command,
