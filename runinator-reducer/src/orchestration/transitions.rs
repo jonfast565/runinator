@@ -83,6 +83,7 @@ pub(super) async fn block_node<T: DatabaseImpl>(
             workflow_run.id,
             node.id.clone(),
             node.parameters.clone().into(),
+            None,
         )
         .await?;
     db.update_workflow_node_run(
@@ -377,6 +378,7 @@ pub(super) async fn ensure_node_run<T: DatabaseImpl>(
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
     latest: Option<&WorkflowNodeRun>,
+    prev_node_run_id: Option<Uuid>,
 ) -> Result<WorkflowNodeRun, SendableError> {
     if let Some(latest) = latest {
         return Ok(latest.clone());
@@ -385,6 +387,7 @@ pub(super) async fn ensure_node_run<T: DatabaseImpl>(
         workflow_run.id,
         node.id.clone(),
         node.parameters.clone().into(),
+        prev_node_run_id,
     )
     .await
 }
@@ -399,7 +402,7 @@ pub(super) async fn ensure_completed_node_run<T: DatabaseImpl>(
     if latest.is_some_and(|run| run.status == WorkflowStatus::Succeeded) {
         return Ok(());
     }
-    let node_run = ensure_node_run(db, workflow_run, node, latest).await?;
+    let node_run = ensure_node_run(db, workflow_run, node, latest, None).await?;
     db.update_workflow_node_run(
         node_run.id,
         WorkflowStatus::Succeeded,

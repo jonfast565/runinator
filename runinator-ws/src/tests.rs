@@ -2531,7 +2531,7 @@ async fn create_node_run(db: &SqliteDb) -> WorkflowNodeRun {
     )
     .await
     .unwrap();
-    crate::repository::create_workflow_node_run(db, run.id, "node-a".into(), json!({}))
+    crate::repository::create_workflow_node_run(db, run.id, "node-a".into(), json!({}), None)
         .await
         .unwrap()
 }

@@ -163,12 +163,34 @@ function workflowNodeRunExecutionCount(node: WorkflowRunDetail["nodes"][number])
   return node.status === "queued" ? 0 : 1;
 }
 
+// the set of `from->to` edges a run actually walked, reconstructed from the node-run
+// chain (each run's `prev_node_run_id` points at the visit it transitioned from).
+export function traversedEdgeKeys(
+  nodes: readonly { id: string; node_id: string; prev_node_run_id?: string | null }[],
+): Set<string> {
+  const byId = new Map(nodes.map((run) => [run.id, run]));
+  const keys = new Set<string>();
+
+  for (const run of nodes) {
+    const prev = run.prev_node_run_id ? byId.get(run.prev_node_run_id) : undefined;
+
+    if (prev && prev.node_id !== run.node_id) {
+      keys.add(`${prev.node_id}->${run.node_id}`);
+    }
+  }
+
+  return keys;
+}
+
 // when `completedNodeIds` is provided (the run graph), an edge animates only
 // while its target node is still incomplete; without it (the editor) every
-// edge animates, matching the pipeline canvas.
+// edge animates, matching the pipeline canvas. when `traversedKeys` is also
+// provided, only edges the run actually walked animate, so untaken branches
+// stay static instead of the status heuristic lighting every incoming edge.
 export function buildGraphEdgeModels(
   workflow: WorkflowDefinition,
   completedNodeIds?: ReadonlySet<string> | null,
+  traversedKeys?: ReadonlySet<string> | null,
 ): GraphEdgeModel[] {
   const definition = workflow.definition;
   const nodes = recordArray(definition.nodes);
@@ -247,10 +269,12 @@ export function buildGraphEdgeModels(
   const separated = separateParallelEdges(edges);
 
   // freeze the animation on edges whose target has already completed; leave the
-  // rest (incomplete or not-yet-reached) animating to show the live flow.
+  // rest (incomplete or not-yet-reached) animating to show the live flow. when the
+  // walked trail is known, only edges the run actually took animate.
   if (completedNodeIds) {
     for (const edge of separated) {
-      edge.animated = !completedNodeIds.has(edge.target);
+      const walked = traversedKeys ? traversedKeys.has(`${edge.source}->${edge.target}`) : true;
+      edge.animated = walked && !completedNodeIds.has(edge.target);
     }
   }
 

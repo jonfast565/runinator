@@ -448,7 +448,7 @@ pub async fn skip_debug_workflow_node<T: DatabaseImpl>(
     let node_run = match latest_node_run {
         Some(n) => n,
         None => {
-            db.create_workflow_node_run(workflow_run_id, active_node_id.clone(), Value::Null)
+            db.create_workflow_node_run(workflow_run_id, active_node_id.clone(), Value::Null, None)
                 .await?
         }
     };
@@ -512,7 +512,7 @@ pub async fn rerun_debug_workflow_node<T: DatabaseImpl>(
         .await?;
     }
     let new_run = db
-        .create_workflow_node_run(workflow_run_id, active_node_id.clone(), parameters)
+        .create_workflow_node_run(workflow_run_id, active_node_id.clone(), parameters, None)
         .await?;
     db.update_workflow_node_run(
         new_run.id,
@@ -610,6 +610,7 @@ pub async fn replay_workflow_run<T: DatabaseImpl>(
                             new_run.id,
                             node_id.clone(),
                             source_node.parameters.clone(),
+                            None,
                         )
                         .await?;
                     let attempt = if source_node.attempt > 0 {

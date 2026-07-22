@@ -187,7 +187,7 @@ async fn mariadb_full_lifecycle() {
 
     // node run + idempotent result event (INSERT IGNORE on the dedupe table).
     let node = db
-        .create_workflow_node_run(run.id, "task-1".into(), Value::Null)
+        .create_workflow_node_run(run.id, "task-1".into(), Value::Null, None)
         .await
         .unwrap();
     let event = WorkflowResultEvent {

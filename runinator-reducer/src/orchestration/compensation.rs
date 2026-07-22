@@ -127,7 +127,12 @@ async fn dispatch_compensation<T: DatabaseImpl>(
 
     let synthetic_id = format!("{COMPENSATION_NODE_PREFIX}:{origin}");
     let node_run = db
-        .create_workflow_node_run(workflow_run.id, synthetic_id.clone(), parameters.clone())
+        .create_workflow_node_run(
+            workflow_run.id,
+            synthetic_id.clone(),
+            parameters.clone(),
+            super::context::most_recently_finished_node_run(node_runs),
+        )
         .await?;
     let command = ActionCommand {
         command_id: Uuid::new_v4(),

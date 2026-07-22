@@ -100,6 +100,14 @@ pub fn api_workflow_run_artifacts(workflow_run_id: Uuid) -> String {
     format!("{API_WORKFLOW_RUNS}/{workflow_run_id}/artifacts")
 }
 
+pub fn api_workflow_run_transitions(workflow_run_id: Uuid) -> String {
+    format!("{API_WORKFLOW_RUNS}/{workflow_run_id}/transitions")
+}
+
+pub fn api_workflow_node_transitions(workflow_id: Uuid, node_id: &str) -> String {
+    format!("{API_WORKFLOWS}/{workflow_id}/nodes/{node_id}/transitions")
+}
+
 pub fn api_scheduler_workflow_run_claim_renew(workflow_run_id: Uuid) -> String {
     format!("/scheduler/workflow_runs/{workflow_run_id}/claim/renew")
 }

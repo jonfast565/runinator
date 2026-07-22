@@ -41,7 +41,7 @@ import {
   newWorkflowTriggerDraft,
 } from "../../../../core/workflow/editor-defaults";
 import { catalogMetadataService, workflowServices } from "../../../../core/services";
-import { workflowNodeKindsList } from "../../../../core/workflow";
+import { traversedEdgeKeys, workflowNodeKindsList } from "../../../../core/workflow";
 import { useAppStore } from "../app";
 import { useProvidersStore } from "../providers";
 import { buildGraphEdges, buildGraphNodes } from "../../vue-flow/builder";
@@ -276,7 +276,11 @@ export const useWorkflowsStore = defineStore("workflows", () => {
       }
     }
 
-    return buildGraphEdges(workflowRunWorkflow.value, completed);
+    // drive the animation from the actual trail walked (via each node run's
+    // prev_node_run_id) so untaken branches stay static.
+    const walked = traversedEdgeKeys(state.value.workflowRunDetail?.nodes ?? []);
+
+    return buildGraphEdges(workflowRunWorkflow.value, completed, walked);
   });
   const selectedNode = mirroredComputed((): JsonRecord | null => svc.getSelectedNode());
   const selectedGraphEdge = computed(

@@ -3,6 +3,28 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// one edge walked by a workflow run, derived from the node-run chain (`prev_node_run_id`).
+/// `from_node` is `None` for the run's first node.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeTransition {
+    pub from_node: Option<String>,
+    pub to_node: String,
+    pub reason: Option<String>,
+    pub node_run_id: Uuid,
+    pub at: DateTime<Utc>,
+}
+
+/// an aggregated `from_node -> to_node` edge across all runs of a workflow, with how often it
+/// was taken and when it was last taken.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeTransitionStat {
+    pub from_node: String,
+    pub to_node: String,
+    pub count: i64,
+    pub last_reason: Option<String>,
+    pub last_at: DateTime<Utc>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExternalItem {
     pub id: Option<Uuid>,

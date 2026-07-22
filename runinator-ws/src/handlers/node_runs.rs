@@ -40,6 +40,7 @@ pub(crate) async fn create_workflow_node_run<T: DatabaseImpl>(
         workflow_run_id,
         request.node_id,
         request.parameters,
+        request.prev_node_run_id,
     )
     .await
     {
@@ -269,6 +270,54 @@ pub(crate) async fn get_workflow_run_artifacts<T: DatabaseImpl>(
         Ok(artifacts) => (
             StatusCode::OK,
             Json(ApiResponse::WorkflowRunArtifacts(artifacts)),
+        ),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+pub(crate) async fn get_workflow_run_transitions<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<runinator_models::auth::AuthContext>,
+    Path(workflow_run_id): Path<Uuid>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = crate::authz::require_run_workflow(
+        db.as_ref(),
+        &ctx,
+        workflow_run_id,
+        runinator_models::auth::Permission::View,
+    )
+    .await
+    {
+        return reply;
+    }
+    match repository::fetch_run_transitions(db.as_ref(), workflow_run_id).await {
+        Ok(transitions) => (
+            StatusCode::OK,
+            Json(ApiResponse::NodeTransitions(transitions)),
+        ),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+pub(crate) async fn get_workflow_node_transitions<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<runinator_models::auth::AuthContext>,
+    Path((workflow_id, node_id)): Path<(Uuid, String)>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = crate::authz::require_workflow(
+        db.as_ref(),
+        &ctx,
+        workflow_id,
+        runinator_models::auth::Permission::View,
+    )
+    .await
+    {
+        return reply;
+    }
+    match repository::fetch_node_transition_stats(db.as_ref(), workflow_id, Some(node_id)).await {
+        Ok(stats) => (
+            StatusCode::OK,
+            Json(ApiResponse::NodeTransitionStats(stats)),
         ),
         Err(err) => api_error(err.to_string()),
     }

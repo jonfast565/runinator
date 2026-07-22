@@ -104,6 +104,8 @@ pub enum ApiResponse {
     WorkflowNodeRunChunks(Vec<WorkflowNodeRunChunk>),
     WorkflowNodeRunArtifacts(Vec<WorkflowNodeRunArtifact>),
     WorkflowRunArtifacts(Vec<WorkflowRunArtifact>),
+    NodeTransitions(Vec<runinator_models::orchestration::NodeTransition>),
+    NodeTransitionStats(Vec<runinator_models::orchestration::NodeTransitionStat>),
     Provider(ProviderMetadata),
     ProviderList(Vec<ProviderMetadata>),
     ProviderBundle(ProviderBundle),
@@ -238,6 +240,8 @@ pub struct WorkflowNodeRunRequest {
     pub node_id: String,
     #[serde(default)]
     pub parameters: Value,
+    #[serde(default)]
+    pub prev_node_run_id: Option<Uuid>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -166,7 +166,12 @@ pub(super) async fn process_subflow_node<T: DatabaseImpl>(
         )
     };
     let node_run = db
-        .create_workflow_node_run(workflow_run.id, node.id.clone(), parameters)
+        .create_workflow_node_run(
+            workflow_run.id,
+            node.id.clone(),
+            parameters,
+            super::context::most_recently_finished_node_run(node_runs),
+        )
         .await?;
     let state = SubflowState {
         subflow_run_id: subflow_run.id,
@@ -348,6 +353,7 @@ impl<T: DatabaseImpl> super::handler::NodeHandler<T> for SubflowHandler {
                     ctx.workflow_run,
                     ctx.node,
                     ctx.latest,
+                    super::context::most_recently_finished_node_run(ctx.node_runs),
                 )
                 .await?;
                 super::transitions::transition_from_node(

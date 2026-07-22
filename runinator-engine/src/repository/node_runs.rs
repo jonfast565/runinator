@@ -102,6 +102,21 @@ pub async fn fetch_workflow_run_artifacts<T: DatabaseImpl>(
     db.fetch_workflow_run_artifacts(workflow_run_id).await
 }
 
+pub async fn fetch_run_transitions<T: DatabaseImpl>(
+    db: &T,
+    workflow_run_id: Uuid,
+) -> Result<Vec<runinator_models::orchestration::NodeTransition>, SendableError> {
+    db.fetch_run_transitions(workflow_run_id).await
+}
+
+pub async fn fetch_node_transition_stats<T: DatabaseImpl>(
+    db: &T,
+    workflow_id: Uuid,
+    node_id: Option<String>,
+) -> Result<Vec<runinator_models::orchestration::NodeTransitionStat>, SendableError> {
+    db.fetch_node_transition_stats(workflow_id, node_id).await
+}
+
 pub async fn apply_workflow_result_event<T: DatabaseImpl>(
     db: &T,
     event: &WorkflowResultEvent,
@@ -134,8 +149,9 @@ pub async fn create_workflow_node_run<T: DatabaseImpl>(
     workflow_run_id: Uuid,
     node_id: String,
     parameters: Value,
+    prev_node_run_id: Option<Uuid>,
 ) -> Result<WorkflowNodeRun, SendableError> {
-    db.create_workflow_node_run(workflow_run_id, node_id, parameters)
+    db.create_workflow_node_run(workflow_run_id, node_id, parameters, prev_node_run_id)
         .await
 }
 

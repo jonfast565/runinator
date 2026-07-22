@@ -10,7 +10,10 @@ use runinator_models::{
     billing::{OrgQuota, OrgResourceGroup, UsageSample},
     errors::SendableError,
     notifications::{NewNotification, Notification},
-    orchestration::{NewOrchestrationEvent, OrchestrationEvent, ReadyNodeRecord},
+    orchestration::{
+        NewOrchestrationEvent, NodeTransition, NodeTransitionStat, OrchestrationEvent,
+        ReadyNodeRecord,
+    },
     orgs::{OrgMembership, OrgRole, Organization},
     pipelines::Pipeline,
     replicas::{
@@ -355,12 +358,15 @@ pub trait DatabaseImpl: Send + Sync + 'static {
         workflow_run_id: Uuid,
     ) -> impl Future<Output = Result<Option<WorkflowRun>, SendableError>> + Send;
 
-    /// Create a new node execution record within a workflow run.
+    /// Create a new node execution record within a workflow run. `prev_node_run_id` is the
+    /// origin node run this one transitioned from (the reducer supplies it; `None` for the
+    /// first node or when unknown).
     fn create_workflow_node_run(
         &self,
         workflow_run_id: Uuid,
         node_id: String,
         parameters: Value,
+        prev_node_run_id: Option<Uuid>,
     ) -> impl Future<Output = Result<WorkflowNodeRun, SendableError>> + Send;
 
     /// Update the status and state of a specific node execution.
@@ -481,6 +487,20 @@ pub trait DatabaseImpl: Send + Sync + 'static {
         workflow_run_id: Uuid,
         limit: i64,
     ) -> impl Future<Output = Result<Vec<OrchestrationEvent>, SendableError>> + Send;
+
+    /// Reconstruct the ordered edges a workflow run walked from its node-run chain.
+    fn fetch_run_transitions(
+        &self,
+        workflow_run_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<NodeTransition>, SendableError>> + Send;
+
+    /// Aggregate `from_node -> to_node` edges across all runs of a workflow. When `node_id` is
+    /// set, only edges leaving that node are returned.
+    fn fetch_node_transition_stats(
+        &self,
+        workflow_id: Uuid,
+        node_id: Option<String>,
+    ) -> impl Future<Output = Result<Vec<NodeTransitionStat>, SendableError>> + Send;
 
     /// Enqueue a state-machine node for scheduler processing.
     fn enqueue_ready_node(

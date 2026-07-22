@@ -66,7 +66,8 @@ use crate::handlers::{
     node_runs::{
         add_workflow_node_run_artifact, append_workflow_node_run_chunk,
         claim_workflow_node_run_executor, create_workflow_node_run,
-        get_workflow_node_run_artifacts, get_workflow_node_run_chunks, get_workflow_run_artifacts,
+        get_workflow_node_run_artifacts, get_workflow_node_run_chunks,
+        get_workflow_node_transitions, get_workflow_run_artifacts, get_workflow_run_transitions,
         release_workflow_node_run_executor, resolve_workflow_input, update_workflow_node_run,
     },
     notifications::{
@@ -487,6 +488,14 @@ pub fn build_router<T: DatabaseImpl>(
         .route(
             "/workflow_runs/{id}/artifacts",
             get(get_workflow_run_artifacts::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflow_runs/{id}/transitions",
+            get(get_workflow_run_transitions::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflows/{id}/nodes/{node_id}/transitions",
+            get(get_workflow_node_transitions::<T>).layer(Extension(pool.clone())),
         )
         .route(
             "/catalog/items",

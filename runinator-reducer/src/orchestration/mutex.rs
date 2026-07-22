@@ -278,6 +278,7 @@ pub(super) async fn process_mutex_node<T: DatabaseImpl>(
                 workflow_run.id,
                 node.id.clone(),
                 node.parameters.clone().into(),
+                super::context::most_recently_finished_node_run(node_runs),
             )
             .await?;
         release_run_mutex_named(db, workflow_run.id, &params.name).await?;
@@ -347,6 +348,7 @@ pub(super) async fn process_mutex_node<T: DatabaseImpl>(
                 workflow_run.id,
                 node.id.clone(),
                 node.parameters.clone().into(),
+                super::context::most_recently_finished_node_run(node_runs),
             )
             .await?;
         acquire_or_reinforce(db, &params.name, workflow_run.id, params.hold_timeout).await?;
@@ -375,6 +377,7 @@ pub(super) async fn process_mutex_node<T: DatabaseImpl>(
             workflow_run.id,
             node.id.clone(),
             node.parameters.clone().into(),
+            super::context::most_recently_finished_node_run(node_runs),
         )
         .await?;
     let state = MutexState {

@@ -6,6 +6,7 @@ pub(super) async fn process_wait_node<T: DatabaseImpl>(
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
     latest: Option<&WorkflowNodeRun>,
+    node_runs: &[WorkflowNodeRun],
 ) -> Result<ReadyNodeDisposition, SendableError> {
     let params = runinator_workflows::parse_wait_parameters(node);
     if let Some(node_run) = latest.filter(|run| run.status == WorkflowStatus::Waiting) {
@@ -46,6 +47,7 @@ pub(super) async fn process_wait_node<T: DatabaseImpl>(
             workflow_run.id,
             node.id.clone(),
             node.parameters.clone().into(),
+            super::context::most_recently_finished_node_run(node_runs),
         )
         .await?;
     db.update_workflow_node_run(
@@ -89,6 +91,15 @@ impl<T: DatabaseImpl> super::handler::NodeHandler<T> for WaitHandler {
     where
         T: 'a,
     {
-        async move { process_wait_node(ctx.db, ctx.workflow_run, ctx.node, ctx.latest).await }
+        async move {
+            process_wait_node(
+                ctx.db,
+                ctx.workflow_run,
+                ctx.node,
+                ctx.latest,
+                ctx.node_runs,
+            )
+            .await
+        }
     }
 }

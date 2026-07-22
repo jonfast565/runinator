@@ -16,6 +16,7 @@ pub(super) async fn process_config_node<T: DatabaseImpl>(
             workflow_run.id,
             node.id.clone(),
             node.parameters.clone().into(),
+            super::context::most_recently_finished_node_run(node_runs),
         )
         .await?;
     let context = runtime_context(db, workflow_run, node_runs).await;
@@ -55,7 +56,14 @@ pub(super) async fn process_skipped_node<T: DatabaseImpl>(
     latest: Option<&WorkflowNodeRun>,
     node_runs: &[WorkflowNodeRun],
 ) -> Result<(), SendableError> {
-    let node_run = ensure_node_run(db, workflow_run, node, latest).await?;
+    let node_run = ensure_node_run(
+        db,
+        workflow_run,
+        node,
+        latest,
+        super::context::most_recently_finished_node_run(node_runs),
+    )
+    .await?;
     let output = SkippedOutput {
         skipped: true,
         node_id: node.id.clone(),
@@ -81,7 +89,14 @@ pub(super) async fn process_start_node<T: DatabaseImpl>(
     latest: Option<&WorkflowNodeRun>,
     node_runs: &[WorkflowNodeRun],
 ) -> Result<(), SendableError> {
-    let node_run = ensure_node_run(db, workflow_run, node, latest).await?;
+    let node_run = ensure_node_run(
+        db,
+        workflow_run,
+        node,
+        latest,
+        super::context::most_recently_finished_node_run(node_runs),
+    )
+    .await?;
     transition_from_node(
         db,
         workflow_run,
@@ -125,6 +140,7 @@ pub(super) async fn process_condition_node<T: DatabaseImpl>(
             workflow_run.id,
             node.id.clone(),
             node.parameters.clone().into(),
+            super::context::most_recently_finished_node_run(node_runs),
         )
         .await?;
     let context = runtime_context(db, workflow_run, node_runs).await;
@@ -160,6 +176,7 @@ pub(super) async fn process_switch_node<T: DatabaseImpl>(
             workflow_run.id,
             node.id.clone(),
             node.parameters.clone().into(),
+            super::context::most_recently_finished_node_run(node_runs),
         )
         .await?;
     let params = runinator_workflows::parse_switch_parameters(node)
@@ -191,6 +208,7 @@ pub(super) async fn process_toggle_node<T: DatabaseImpl>(
             workflow_run.id,
             node.id.clone(),
             node.parameters.clone().into(),
+            super::context::most_recently_finished_node_run(node_runs),
         )
         .await?;
     let params = runinator_workflows::parse_toggle_parameters(node)
@@ -223,6 +241,7 @@ pub(super) async fn process_percentage_node<T: DatabaseImpl>(
             workflow_run.id,
             node.id.clone(),
             node.parameters.clone().into(),
+            super::context::most_recently_finished_node_run(node_runs),
         )
         .await?;
     let params = runinator_workflows::parse_percentage_parameters(node)

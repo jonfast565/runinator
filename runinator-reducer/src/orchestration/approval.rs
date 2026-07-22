@@ -49,6 +49,7 @@ pub(super) async fn process_approval_node<T: DatabaseImpl>(
             workflow_run.id,
             node.id.clone(),
             node.parameters.clone().into(),
+            super::context::most_recently_finished_node_run(node_runs),
         )
         .await?;
     let params = runinator_workflows::parse_approval_parameters(node);

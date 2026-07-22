@@ -16,6 +16,7 @@ import {
   setWorkflowEdgeHandles,
   setWorkflowEdgeLabelAnchor,
   setWorkflowEdgeLabelOffset,
+  traversedEdgeKeys,
   uniqueWorkflowNodeId,
   moveWorkflowEdgeEditorDraft,
   recordArray,
@@ -1324,6 +1325,38 @@ describe("workflow graph utils", () => {
       nodes: [],
     });
     expect(nodes.find((node) => node.id === "b")?.class).toBe("node-danger");
+  });
+});
+
+describe("traversedEdgeKeys", () => {
+  it("reconstructs walked edges and points fan-out siblings at their parent", () => {
+    const nodes = [
+      { id: "r1", node_id: "start", prev_node_run_id: null },
+      { id: "r2", node_id: "fork", prev_node_run_id: "r1" },
+      { id: "r3", node_id: "a", prev_node_run_id: "r2" },
+      { id: "r4", node_id: "b", prev_node_run_id: "r2" },
+    ];
+
+    const keys = traversedEdgeKeys(nodes);
+
+    expect(keys.has("start->fork")).toBe(true);
+    expect(keys.has("fork->a")).toBe(true);
+    expect(keys.has("fork->b")).toBe(true);
+    // an untaken edge is absent.
+    expect(keys.has("start->a")).toBe(false);
+  });
+
+  it("skips self-references and missing predecessors", () => {
+    const nodes = [
+      { id: "r1", node_id: "loop", prev_node_run_id: null },
+      { id: "r2", node_id: "loop", prev_node_run_id: "r1" },
+      { id: "r3", node_id: "next", prev_node_run_id: "missing" },
+    ];
+
+    const keys = traversedEdgeKeys(nodes);
+
+    expect(keys.has("loop->loop")).toBe(false);
+    expect(keys.size).toBe(0);
   });
 });
 

@@ -14,9 +14,10 @@ use runinator_models::{
         api_scheduler_ready_node_process, api_scheduler_workflow_run_claim_release,
         api_scheduler_workflow_run_claim_renew, api_workflow, api_workflow_duplicate,
         api_workflow_node_run, api_workflow_node_run_artifacts, api_workflow_node_run_chunks,
-        api_workflow_node_run_claim, api_workflow_node_run_release, api_workflow_run,
-        api_workflow_run_artifacts, api_workflow_run_command, api_workflow_run_nodes,
-        api_workflow_run_rename, api_workflow_run_replay, api_workflow_runs, api_workflow_trigger,
+        api_workflow_node_run_claim, api_workflow_node_run_release, api_workflow_node_transitions,
+        api_workflow_run, api_workflow_run_artifacts, api_workflow_run_command,
+        api_workflow_run_nodes, api_workflow_run_rename, api_workflow_run_replay,
+        api_workflow_run_transitions, api_workflow_runs, api_workflow_trigger,
         api_workflow_trigger_runs, api_workflow_triggers, API_APPROVALS, API_AUTH_CONFIG,
         API_AUTH_LOGIN, API_AUTH_LOGOUT, API_AUTH_REFRESH, API_CREDENTIALS, API_IDEMPOTENCY_KEYS,
         API_PACKS_IMPORT, API_PROVIDERS, API_REPLICAS, API_RUNS, API_SCHEDULER_ACTION_DISPATCHES,
@@ -1063,13 +1064,18 @@ where
         workflow_run_id: Uuid,
         node_id: &str,
         parameters: Value,
+        prev_node_run_id: Option<Uuid>,
     ) -> Result<WorkflowNodeRun> {
         let url = self
             .build_url(&api_workflow_run_nodes(workflow_run_id))
             .await?;
         let response = self
             .http_post(url.clone())
-            .json(&json!({ "node_id": node_id, "parameters": parameters }))
+            .json(&json!({
+                "node_id": node_id,
+                "parameters": parameters,
+                "prev_node_run_id": prev_node_run_id,
+            }))
             .send()
             .await?;
         let response = Self::handle_response(url, response).await?;
@@ -1217,6 +1223,35 @@ where
         let response = self.http_get(url.clone()).send().await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Vec<WorkflowRunArtifact>>().await?)
+    }
+
+    pub async fn fetch_workflow_run_transitions(
+        &self,
+        workflow_run_id: Uuid,
+    ) -> Result<Vec<runinator_models::orchestration::NodeTransition>> {
+        let url = self
+            .build_url(&api_workflow_run_transitions(workflow_run_id))
+            .await?;
+        let response = self.http_get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response
+            .json::<Vec<runinator_models::orchestration::NodeTransition>>()
+            .await?)
+    }
+
+    pub async fn fetch_workflow_node_transitions(
+        &self,
+        workflow_id: Uuid,
+        node_id: &str,
+    ) -> Result<Vec<runinator_models::orchestration::NodeTransitionStat>> {
+        let url = self
+            .build_url(&api_workflow_node_transitions(workflow_id, node_id))
+            .await?;
+        let response = self.http_get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response
+            .json::<Vec<runinator_models::orchestration::NodeTransitionStat>>()
+            .await?)
     }
 
     pub async fn fetch_workflow_node_run_artifacts(

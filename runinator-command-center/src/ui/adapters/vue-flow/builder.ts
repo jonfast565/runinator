@@ -36,6 +36,7 @@ export function buildGraphNodes(
 export function buildGraphEdges(
   workflow: WorkflowDefinition,
   completedNodeIds?: ReadonlySet<string> | null,
+  traversedKeys?: ReadonlySet<string> | null,
 ): Edge[] {
-  return buildGraphEdgeModels(workflow, completedNodeIds).map(toVueFlowEdge);
+  return buildGraphEdgeModels(workflow, completedNodeIds, traversedKeys).map(toVueFlowEdge);
 }

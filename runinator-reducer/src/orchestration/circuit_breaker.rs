@@ -139,6 +139,7 @@ pub(super) async fn process_circuit_breaker_node<T: DatabaseImpl>(
             workflow_run.id,
             node.id.clone(),
             node.parameters.clone().into(),
+            super::context::most_recently_finished_node_run(node_runs),
         )
         .await?;
     let now = Utc::now().timestamp();

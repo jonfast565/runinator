@@ -4,6 +4,8 @@
 //! genuinely divergent fragments (boolean literal, row locking, insert-or-ignore form, and the
 //! postgres no-id insert path) are the only places that branch on `self.dialect()`.
 
+use std::collections::HashMap;
+
 use chrono::{DateTime, Utc};
 use runinator_comm::{
     ActionCommand, ActionDispatchRecord, WorkflowResultEvent, WorkflowResultEventKind,
@@ -14,7 +16,10 @@ use runinator_models::{
     billing::{OrgQuota, OrgResourceGroup, UsageSample},
     errors::SendableError,
     notifications::{NewNotification, Notification},
-    orchestration::{NewOrchestrationEvent, OrchestrationEvent, ReadyNodeRecord},
+    orchestration::{
+        NewOrchestrationEvent, NodeTransition, NodeTransitionStat, OrchestrationEvent,
+        ReadyNodeRecord,
+    },
     orgs::{OrgMembership, OrgRole, Organization},
     pipelines::Pipeline,
     replicas::{
@@ -1766,18 +1771,13 @@ where
         workflow_run_id: Uuid,
         node_id: String,
         parameters: Value,
+        prev_node_run_id: Option<Uuid>,
     ) -> Result<WorkflowNodeRun, SendableError> {
         let empty_state = Value::Object(Default::default()).to_string();
         let id = Uuid::now_v7();
         let created_at = Utc::now().timestamp();
-        // the previous step is the most recently created node run in the same run. node run ids are
-        // uuidv7 (time-ordered), so ordering by id descending yields the immediate predecessor.
-        let prev_node_run_id: Option<Uuid> = sqlx::query_scalar(&self.render(
-            "SELECT id FROM workflow_node_runs WHERE workflow_run_id = ? ORDER BY id DESC LIMIT 1",
-        ))
-        .bind(workflow_run_id)
-        .fetch_optional(self.pool())
-        .await?;
+        // the origin node run is supplied by the reducer, which knows the true edge taken
+        // (including fan-out parents); the database no longer infers it from insertion order.
         if self.dialect() == SqlDialect::MySql {
             let mut conn = self.pool().acquire().await?;
             sqlx::query(&self.render(
@@ -2315,6 +2315,80 @@ where
         rows.iter()
             .map(mappers::row_to_orchestration_event)
             .collect()
+    }
+
+    async fn fetch_run_transitions(
+        &self,
+        workflow_run_id: Uuid,
+    ) -> Result<Vec<NodeTransition>, SendableError> {
+        // reconstruct edges from the node-run chain, ordered as the run walked them. the reason an
+        // edge was taken is the predecessor's transition_reason (why it left toward this node).
+        let node_runs = self.fetch_workflow_node_runs(workflow_run_id).await?;
+        let by_id: HashMap<Uuid, &WorkflowNodeRun> =
+            node_runs.iter().map(|run| (run.id, run)).collect();
+        let transitions = node_runs
+            .iter()
+            .map(|run| {
+                let prev = run.prev_node_run_id.and_then(|id| by_id.get(&id));
+                NodeTransition {
+                    from_node: prev.map(|p| p.node_id.clone()),
+                    to_node: run.node_id.clone(),
+                    reason: prev.and_then(|p| p.transition_reason.clone()),
+                    node_run_id: run.id,
+                    at: run.created_at,
+                }
+            })
+            .collect();
+        Ok(transitions)
+    }
+
+    async fn fetch_node_transition_stats(
+        &self,
+        workflow_id: Uuid,
+        node_id: Option<String>,
+    ) -> Result<Vec<NodeTransitionStat>, SendableError> {
+        // pull every walked edge for the workflow, then aggregate in rust so last_reason stays exact
+        // and the query stays dialect-neutral (no window functions).
+        let mut sql = String::from(
+            "SELECT prev.node_id AS from_node, cur.node_id AS to_node, \
+                    prev.transition_reason AS reason, cur.created_at AS at \
+             FROM workflow_node_runs cur \
+             JOIN workflow_node_runs prev ON cur.prev_node_run_id = prev.id \
+             JOIN workflow_runs r ON cur.workflow_run_id = r.id \
+             WHERE r.workflow_id = ?",
+        );
+        if node_id.is_some() {
+            sql.push_str(" AND prev.node_id = ?");
+        }
+        let rendered = self.render(&sql);
+        let mut query = sqlx::query(&rendered).bind(workflow_id);
+        if let Some(node_id) = node_id.as_ref() {
+            query = query.bind(node_id);
+        }
+        let rows = query.fetch_all(self.pool()).await?;
+        let mut stats: HashMap<(String, String), NodeTransitionStat> = HashMap::new();
+        for row in &rows {
+            let from_node: String = row.get("from_node");
+            let to_node: String = row.get("to_node");
+            let reason: Option<String> = row.get("reason");
+            let at = DateTime::<Utc>::from_timestamp(row.get::<i64, _>("at"), 0)
+                .unwrap_or_else(Utc::now);
+            let entry = stats
+                .entry((from_node.clone(), to_node.clone()))
+                .or_insert_with(|| NodeTransitionStat {
+                    from_node,
+                    to_node,
+                    count: 0,
+                    last_reason: None,
+                    last_at: at,
+                });
+            entry.count += 1;
+            if at >= entry.last_at {
+                entry.last_at = at;
+                entry.last_reason = reason;
+            }
+        }
+        Ok(stats.into_values().collect())
     }
 
     async fn enqueue_ready_node(

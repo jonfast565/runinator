@@ -17,7 +17,14 @@ pub(super) async fn process_map_node<T: DatabaseImpl>(
 ) -> Result<(), SendableError> {
     let params = runinator_workflows::parse_map_parameters(node)
         .map_err(|err| -> SendableError { Box::new(err) })?;
-    let node_run = ensure_node_run(db, workflow_run, node, latest).await?;
+    let node_run = ensure_node_run(
+        db,
+        workflow_run,
+        node,
+        latest,
+        super::context::most_recently_finished_node_run(node_runs),
+    )
+    .await?;
     if node_run.status == WorkflowStatus::Running && timed_out(node, &node_run) {
         return time_out(
             db,
@@ -257,6 +264,8 @@ async fn create_map_child_run<T: DatabaseImpl>(
             child.id,
             map_node.id.clone(),
             map_node.parameters.clone().into(),
+            // the seed is the first node run in the child run; it has no in-run predecessor.
+            None,
         )
         .await?;
     db.update_workflow_node_run(

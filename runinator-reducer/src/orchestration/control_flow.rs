@@ -52,8 +52,13 @@ pub(super) async fn process_loop_node<T: DatabaseImpl>(
             latest.clone()
         }
         None => {
-            db.create_workflow_node_run(workflow_run.id, node.id.clone(), parameters.clone())
-                .await?
+            db.create_workflow_node_run(
+                workflow_run.id,
+                node.id.clone(),
+                parameters.clone(),
+                super::context::most_recently_finished_node_run(node_runs),
+            )
+            .await?
         }
     };
     let output = if exhausted {
@@ -182,6 +187,7 @@ pub(super) async fn process_parallel_node<T: DatabaseImpl>(
             workflow_run.id,
             node.id.clone(),
             node.parameters.clone().into(),
+            super::context::most_recently_finished_node_run(node_runs),
         )
         .await?;
     let output = ParallelOutput {
@@ -229,7 +235,14 @@ pub(super) async fn process_join_node<T: DatabaseImpl>(
         .map(|target| target.as_str().to_string())
         .collect::<Vec<_>>();
     if join_satisfied(&wait_for, params.mode, node_runs) {
-        let node_run = ensure_node_run(db, workflow_run, node, latest).await?;
+        let node_run = ensure_node_run(
+            db,
+            workflow_run,
+            node,
+            latest,
+            super::context::most_recently_finished_node_run(node_runs),
+        )
+        .await?;
         let output = JoinOutput {
             outputs: wait_for
                 .iter()
@@ -281,7 +294,14 @@ pub(super) async fn process_join_node<T: DatabaseImpl>(
         .await?;
         return Ok(());
     }
-    let node_run = ensure_node_run(db, workflow_run, node, latest).await?;
+    let node_run = ensure_node_run(
+        db,
+        workflow_run,
+        node,
+        latest,
+        super::context::most_recently_finished_node_run(node_runs),
+    )
+    .await?;
     db.update_workflow_node_run(
         node_run.id,
         WorkflowStatus::Waiting,
@@ -313,7 +333,14 @@ pub(super) async fn process_race_node<T: DatabaseImpl>(
 ) -> Result<(), SendableError> {
     let params = runinator_workflows::parse_race_parameters(node)
         .map_err(|err| -> SendableError { Box::new(err) })?;
-    let node_run = ensure_node_run(db, workflow_run, node, latest).await?;
+    let node_run = ensure_node_run(
+        db,
+        workflow_run,
+        node,
+        latest,
+        super::context::most_recently_finished_node_run(node_runs),
+    )
+    .await?;
     if node_run.status == WorkflowStatus::Running && timed_out(node, &node_run) {
         return time_out(
             db,
@@ -412,7 +439,14 @@ pub(super) async fn process_try_node<T: DatabaseImpl>(
 ) -> Result<(), SendableError> {
     let params = runinator_workflows::parse_try_parameters(node)
         .map_err(|err| -> SendableError { Box::new(err) })?;
-    let node_run = ensure_node_run(db, workflow_run, node, latest).await?;
+    let node_run = ensure_node_run(
+        db,
+        workflow_run,
+        node,
+        latest,
+        super::context::most_recently_finished_node_run(node_runs),
+    )
+    .await?;
     if node_run.status == WorkflowStatus::Running && timed_out(node, &node_run) {
         return time_out(
             db,

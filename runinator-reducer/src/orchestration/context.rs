@@ -140,6 +140,17 @@ pub(super) fn latest_node_run<'a>(
         .max_by_key(|run| run.id)
 }
 
+// the node run that most recently finished, used as the default origin for the next node run. in
+// the single-cursor model the run this step transitioned from is the last one to settle, so its id
+// is the correct `prev_node_run_id`. fan-out handlers override this with the explicit parent id.
+pub(super) fn most_recently_finished_node_run(node_runs: &[WorkflowNodeRun]) -> Option<Uuid> {
+    node_runs
+        .iter()
+        .filter(|run| run.finished_at.is_some())
+        .max_by_key(|run| (run.finished_at, run.id))
+        .map(|run| run.id)
+}
+
 // true when a resumable node is re-entered with a terminal run from a prior visit. a loop body (or
 // any back-edge) drives control past the node and returns to it, leaving the previous iteration's
 // run as `latest`; the intervening control node always records a newer node run, so a node run

@@ -112,6 +112,7 @@ pub(super) async fn process_collect_node<T: DatabaseImpl>(
             workflow_run.id,
             node.id.clone(),
             node.parameters.clone().into(),
+            super::context::most_recently_finished_node_run(node_runs),
         )
         .await?;
     let deadline_unix = node.timeout_seconds.map(|t| Utc::now().timestamp() + t);
