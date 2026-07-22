@@ -1,7 +1,11 @@
 use std::collections::HashMap;
 
 use super::*;
-use runinator_models::pipelines::{PipelineBundle, PipelineLinkSpec, PipelineSpec};
+use runinator_models::pipelines::{
+    PipelineBundle, PipelineLinkSpec, PipelineRun, PipelineRunDetail, PipelineSpec,
+    PipelineTrigger, PipelineTriggerSpec,
+};
+use runinator_models::replicas::{TriggerActorType, TriggerSourceKind, WorkflowRunProvenance};
 use runinator_models::workflows::WorkflowTriggerKind;
 use uuid::Uuid;
 
@@ -68,7 +72,45 @@ async fn import_pipeline_spec<T: DatabaseImpl>(
         .id
         .ok_or_else(|| crate::errors::IMPORT_UNKNOWN_PIPELINE_MEMBER.error(spec.name.as_str()))?;
     materialize_pipeline_links(db, spec, pipeline_id, &member_ids).await?;
+    materialize_pipeline_triggers(db, spec, pipeline_id).await?;
     Ok(saved)
+}
+
+// realize a pipeline's header triggers as managed `pipeline_triggers`. reconciles idempotently: drop
+// this pipeline's prior managed triggers, then insert the current specs. manually-created pipeline
+// triggers (no `managed_by == "wdl"`) are left untouched.
+async fn materialize_pipeline_triggers<T: DatabaseImpl>(
+    db: &T,
+    spec: &PipelineSpec,
+    pipeline_id: Uuid,
+) -> Result<(), SendableError> {
+    for existing in db.fetch_pipeline_triggers(pipeline_id).await? {
+        let managed = existing
+            .metadata
+            .pointer("/managed_by")
+            .and_then(Value::as_str)
+            == Some("wdl");
+        if let (true, Some(trigger_id)) = (managed, existing.id) {
+            db.delete_pipeline_trigger(trigger_id).await?;
+        }
+    }
+    for spec_trigger in &spec.triggers {
+        let trigger = PipelineTrigger {
+            id: None,
+            pipeline_id,
+            kind: spec_trigger.kind.clone(),
+            enabled: spec_trigger.enabled,
+            configuration: spec_trigger.configuration.clone(),
+            next_execution: None,
+            blackout_start: None,
+            blackout_end: None,
+            metadata: runinator_models::json!({ "managed_by": "wdl" }),
+            created_at: None,
+            updated_at: None,
+        };
+        db.upsert_pipeline_trigger(&trigger).await?;
+    }
+    Ok(())
 }
 
 // realize a pipeline's links as managed `chained` triggers. reconciles idempotently: on every member
@@ -155,4 +197,180 @@ pub async fn set_pipeline_org<T: DatabaseImpl>(
     org_id: Option<Uuid>,
 ) -> Result<(), SendableError> {
     db.set_pipeline_org(pipeline_id, org_id).await
+}
+
+// --- pipeline triggers ---
+
+pub async fn upsert_pipeline_trigger<T: DatabaseImpl>(
+    db: &T,
+    trigger: &PipelineTrigger,
+) -> Result<PipelineTrigger, SendableError> {
+    db.upsert_pipeline_trigger(trigger).await
+}
+
+pub async fn fetch_pipeline_triggers<T: DatabaseImpl>(
+    db: &T,
+    pipeline_id: Uuid,
+) -> Result<Vec<PipelineTrigger>, SendableError> {
+    db.fetch_pipeline_triggers(pipeline_id).await
+}
+
+pub async fn fetch_pipeline_trigger<T: DatabaseImpl>(
+    db: &T,
+    trigger_id: Uuid,
+) -> Result<Option<PipelineTrigger>, SendableError> {
+    db.fetch_pipeline_trigger(trigger_id).await
+}
+
+pub async fn delete_pipeline_trigger<T: DatabaseImpl>(
+    db: &T,
+    trigger_id: Uuid,
+) -> Result<TaskResponse, SendableError> {
+    db.delete_pipeline_trigger(trigger_id).await?;
+    Ok(TaskResponse {
+        success: true,
+        message: "Pipeline trigger deleted".into(),
+    })
+}
+
+// --- pipeline runs ---
+
+/// start a manual pipeline run for a pipeline id (creates the run and its entry members).
+pub async fn create_manual_pipeline_run<T: DatabaseImpl>(
+    db: &T,
+    pipeline_id: Uuid,
+    parameters: Value,
+    actor_replica_id: Option<Uuid>,
+    actor_display_name: Option<String>,
+) -> Result<PipelineRun, SendableError> {
+    let pipeline = db
+        .fetch_pipeline(pipeline_id)
+        .await?
+        .ok_or_else(|| runinator_reducer::errors::PIPELINE_NOT_FOUND.error(pipeline_id))?;
+    let provenance = WorkflowRunProvenance {
+        source_kind: Some(TriggerSourceKind::Manual),
+        actor_type: Some(TriggerActorType::User),
+        actor_replica_id,
+        actor_display_name,
+        request_host: None,
+        request_ip: None,
+        metadata: Value::Object(Default::default()),
+    };
+    runinator_reducer::create_and_start_pipeline_run(db, &pipeline, parameters, provenance).await
+}
+
+/// start a pipeline run from a manual/cron pipeline trigger id.
+pub async fn create_pipeline_run_for_trigger<T: DatabaseImpl>(
+    db: &T,
+    trigger_id: Uuid,
+    parameters: Value,
+    actor_replica_id: Option<Uuid>,
+    actor_display_name: Option<String>,
+) -> Result<PipelineRun, SendableError> {
+    let trigger = db
+        .fetch_pipeline_trigger(trigger_id)
+        .await?
+        .ok_or_else(|| runinator_reducer::errors::PIPELINE_TRIGGER_NOT_FOUND.error(trigger_id))?;
+    let effective =
+        if parameters.is_null() || matches!(&parameters, Value::Object(map) if map.is_empty()) {
+            trigger
+                .configuration
+                .get("parameters")
+                .cloned()
+                .unwrap_or_else(|| Value::Object(Default::default()))
+        } else {
+            parameters
+        };
+    create_manual_pipeline_run(
+        db,
+        trigger.pipeline_id,
+        effective,
+        actor_replica_id,
+        actor_display_name,
+    )
+    .await
+}
+
+/// fire due cron pipeline triggers and start each created run's entry members. mirrors the workflow
+/// trigger claim wrapper.
+pub async fn claim_due_pipeline_trigger_firings<T: DatabaseImpl>(
+    db: &T,
+    scheduler_id: String,
+    limit: i64,
+) -> Result<Vec<PipelineRun>, SendableError> {
+    let runs = db
+        .claim_due_pipeline_trigger_firings(scheduler_id, Utc::now(), limit)
+        .await?;
+    for run in &runs {
+        runinator_reducer::start_pipeline_run(db, run).await?;
+    }
+    Ok(runs)
+}
+
+pub async fn fetch_pipeline_run<T: DatabaseImpl>(
+    db: &T,
+    pipeline_run_id: Uuid,
+) -> Result<Option<PipelineRun>, SendableError> {
+    db.fetch_pipeline_run(pipeline_run_id).await
+}
+
+pub async fn fetch_recent_pipeline_runs<T: DatabaseImpl>(
+    db: &T,
+    limit: i64,
+) -> Result<Vec<PipelineRun>, SendableError> {
+    db.fetch_recent_pipeline_runs(limit).await
+}
+
+/// fetch a pipeline run together with the member workflow runs it started.
+pub async fn fetch_pipeline_run_detail<T: DatabaseImpl>(
+    db: &T,
+    pipeline_run_id: Uuid,
+) -> Result<Option<PipelineRunDetail>, SendableError> {
+    let Some(run) = db.fetch_pipeline_run(pipeline_run_id).await? else {
+        return Ok(None);
+    };
+    let members = db
+        .fetch_workflow_runs_for_pipeline_run(pipeline_run_id)
+        .await?;
+    Ok(Some(PipelineRunDetail { run, members }))
+}
+
+pub async fn fetch_pipeline_runs_for_pipeline<T: DatabaseImpl>(
+    db: &T,
+    pipeline_id: Uuid,
+) -> Result<Vec<PipelineRun>, SendableError> {
+    db.fetch_pipeline_runs_for_pipeline(pipeline_id).await
+}
+
+/// cancel a pipeline run and every active member workflow run it owns.
+pub async fn cancel_pipeline_run<T: DatabaseImpl>(
+    db: &T,
+    pipeline_run_id: Uuid,
+) -> Result<TaskResponse, SendableError> {
+    for member in db
+        .fetch_workflow_runs_for_pipeline_run(pipeline_run_id)
+        .await?
+    {
+        if member.status.is_active() {
+            db.update_workflow_run_status(
+                member.id,
+                WorkflowStatus::Canceled,
+                None,
+                None,
+                Some("Pipeline run canceled".into()),
+            )
+            .await?;
+        }
+    }
+    db.update_pipeline_run_status(
+        pipeline_run_id,
+        WorkflowStatus::Canceled,
+        None,
+        Some("Pipeline run canceled".into()),
+    )
+    .await?;
+    Ok(TaskResponse {
+        success: true,
+        message: "Pipeline run canceled".into(),
+    })
 }

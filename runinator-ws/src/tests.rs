@@ -52,6 +52,7 @@ fn workflow_run_stream_terminal_status_stays_snapshot_message() {
             finished_at: Some(chrono::Utc::now()),
             message: None,
             name: None,
+            pipeline_run_id: None,
             trigger_source_kind: None,
             trigger_actor_type: None,
             trigger_actor_replica_id: None,
@@ -2073,6 +2074,7 @@ async fn import_pipeline_creates_managed_chained_triggers_idempotently() {
                 on: PipelineLinkSelector::Complete,
                 enabled: true,
             }],
+            triggers: vec![],
         }],
     };
 
@@ -2121,6 +2123,75 @@ async fn import_pipeline_creates_managed_chained_triggers_idempotently() {
     assert_eq!(reimported[0].id, Some(pipeline_id));
     assert_eq!(db.fetch_pipelines().await.unwrap().len(), 1);
     assert_eq!(db.fetch_workflow_triggers(dev_id).await.unwrap().len(), 1);
+
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn manual_pipeline_run_starts_entry_member_chains_and_settles() {
+    use runinator_models::pipelines::{
+        PipelineBundle, PipelineLinkSelector, PipelineLinkSpec, PipelineSpec,
+    };
+    use runinator_models::workflows::WorkflowStatus;
+
+    let (db, path) = test_db().await;
+    let members = WorkflowBundle {
+        workflows: vec![workflow(None, "Build"), workflow(None, "Deploy")],
+        triggers: vec![],
+    };
+    crate::repository::import_workflow_bundle(&db, members)
+        .await
+        .unwrap();
+
+    // Build -> Deploy on complete: Build is the sole entry member, Deploy is downstream.
+    let bundle = PipelineBundle {
+        pipelines: vec![PipelineSpec {
+            name: "Release".into(),
+            description: None,
+            defaults: Default::default(),
+            members: vec!["Build".into(), "Deploy".into()],
+            links: vec![PipelineLinkSpec {
+                from: "Build".into(),
+                to: "Deploy".into(),
+                on: PipelineLinkSelector::Complete,
+                enabled: true,
+            }],
+            triggers: vec![],
+        }],
+    };
+    let imported = crate::repository::import_pipeline_bundle_with(&db, &bundle, None)
+        .await
+        .unwrap();
+    let pipeline_id = imported[0].id.expect("pipeline id");
+
+    // start a manual pipeline run and drive the whole member graph to completion.
+    let run = crate::repository::create_manual_pipeline_run(
+        &db,
+        pipeline_id,
+        json!({}),
+        None,
+        Some("test".into()),
+    )
+    .await
+    .unwrap();
+    drain_ready_nodes(&db).await;
+
+    // both members ran, each tagged with the pipeline run, and the chained Deploy inherited the tag.
+    let members = db
+        .fetch_workflow_runs_for_pipeline_run(run.id)
+        .await
+        .unwrap();
+    assert_eq!(members.len(), 2, "entry member + chained downstream member");
+    assert!(members.iter().all(|m| m.pipeline_run_id == Some(run.id)));
+    assert!(
+        members
+            .iter()
+            .all(|m| m.status == WorkflowStatus::Succeeded)
+    );
+
+    // the pipeline run settles Succeeded once the reachable graph is terminal.
+    let settled = db.fetch_pipeline_run(run.id).await.unwrap().unwrap();
+    assert_eq!(settled.status, WorkflowStatus::Succeeded);
 
     let _ = std::fs::remove_file(path);
 }

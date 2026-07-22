@@ -344,6 +344,7 @@ fn parse_pipeline_decl(pair: Pair<Rule>) -> Result<PipelineDecl, WdlError> {
     let mut max_depth = None;
     let mut members = Vec::new();
     let mut links = Vec::new();
+    let mut triggers = Vec::new();
     for inner in pair.into_inner() {
         match inner.as_rule() {
             // the leading `string` before `{` is the pipeline name.
@@ -379,6 +380,7 @@ fn parse_pipeline_decl(pair: Pair<Rule>) -> Result<PipelineDecl, WdlError> {
                         }
                     }
                     Rule::pipeline_link => links.push(parse_pipeline_link(item)?),
+                    Rule::pipeline_trigger => triggers.push(parse_pipeline_trigger(item)?),
                     _ => {}
                 }
             }
@@ -392,6 +394,51 @@ fn parse_pipeline_decl(pair: Pair<Rule>) -> Result<PipelineDecl, WdlError> {
         max_depth,
         members,
         links,
+        triggers,
+        span,
+    })
+}
+
+fn parse_pipeline_trigger(pair: Pair<Rule>) -> Result<PipelineTriggerDecl, WdlError> {
+    let span = span_of(&pair);
+    let mut cron = None;
+    let mut event = None;
+    let mut source_kind = None;
+    let mut source = None;
+    let mut disabled = false;
+    let inner = pair
+        .into_inner()
+        .next()
+        .ok_or_else(|| WdlError::syntax(span, "empty pipeline trigger"))?;
+    match inner.as_rule() {
+        Rule::pipeline_cron_trigger => {
+            for part in inner.into_inner() {
+                match part.as_rule() {
+                    Rule::string => cron = Some(plain_string(part)?),
+                    Rule::trigger_disabled => disabled = true,
+                    _ => {}
+                }
+            }
+        }
+        Rule::pipeline_chained_trigger => {
+            for part in inner.into_inner() {
+                match part.as_rule() {
+                    Rule::chain_event => event = Some(part.as_str().to_string()),
+                    Rule::pipeline_chain_source => source_kind = Some(part.as_str().to_string()),
+                    Rule::string => source = Some(plain_string(part)?),
+                    Rule::trigger_disabled => disabled = true,
+                    _ => {}
+                }
+            }
+        }
+        _ => {}
+    }
+    Ok(PipelineTriggerDecl {
+        cron,
+        event,
+        source_kind,
+        source,
+        disabled,
         span,
     })
 }

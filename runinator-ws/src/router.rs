@@ -81,8 +81,10 @@ use crate::handlers::{
     },
     packs::import_pack,
     pipelines::{
-        create_pipeline, delete_pipeline, get_pipeline, get_pipelines, set_pipeline_owner,
-        update_pipeline,
+        cancel_pipeline_run, create_pipeline, create_pipeline_run, create_pipeline_trigger_run,
+        delete_pipeline, delete_pipeline_trigger, get_pipeline, get_pipeline_run,
+        get_pipeline_runs, get_pipeline_triggers, get_pipelines, set_pipeline_owner,
+        update_pipeline, update_pipeline_trigger, upsert_pipeline_trigger,
     },
     providers::{get_providers, import_provider_bundle, upsert_provider},
     provisioning::{get_node_backends, get_nodes, scale_nodes, stop_node},
@@ -264,6 +266,38 @@ pub fn build_router<T: DatabaseImpl>(
         .route(
             "/pipelines/{id}/owner",
             patch(set_pipeline_owner::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/pipelines/{id}/triggers",
+            get(get_pipeline_triggers::<T>)
+                .post(upsert_pipeline_trigger::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/pipeline_triggers/{id}",
+            patch(update_pipeline_trigger::<T>)
+                .delete(delete_pipeline_trigger::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/pipeline_triggers/{id}/runs",
+            post(create_pipeline_trigger_run::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/pipelines/{id}/runs",
+            post(create_pipeline_run::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/pipeline_runs",
+            get(get_pipeline_runs::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/pipeline_runs/{id}",
+            get(get_pipeline_run::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/pipeline_runs/{id}/cancel",
+            post(cancel_pipeline_run::<T>).layer(Extension(pool.clone())),
         )
         .route(
             API_WORKFLOW_RUNS,

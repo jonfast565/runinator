@@ -936,6 +936,10 @@ pub struct WorkflowRun {
     pub message: Option<String>,
     #[serde(default)]
     pub name: Option<String>,
+    /// set when this run is a member of a pipeline run; the pipeline-run orchestrator uses it to
+    /// aggregate member terminals and propagates it along in-pipeline chained links.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pipeline_run_id: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trigger_source_kind: Option<TriggerSourceKind>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

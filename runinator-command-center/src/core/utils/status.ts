@@ -13,6 +13,17 @@ export function isTerminalWorkflowRunStatus(status?: string) {
   return ["succeeded", "failed", "timed_out", "canceled"].includes(status ?? "");
 }
 
+// a run (workflow or pipeline — they share the status vocabulary) that is still doing work: not yet
+// settled into a terminal state. used by the runs monitors to count active runs and gate cancel.
+export function isActiveRunStatus(status?: string): boolean {
+  return !isTerminalWorkflowRunStatus(status);
+}
+
+// count the runs still in flight in a list of run-like records.
+export function countActiveRuns(runs: { status: string }[]): number {
+  return runs.filter((run) => isActiveRunStatus(run.status)).length;
+}
+
 // a node whose current run has settled: succeeded, failed, or otherwise not
 // still doing work. used to freeze the flow animation on the completed trail.
 // a node not in this set (running/waiting/queued/pending or not yet reached)

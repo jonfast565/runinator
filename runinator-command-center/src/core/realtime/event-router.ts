@@ -18,6 +18,8 @@ export interface EventStreamRouterDeps {
   refreshWorkflowRunIfSelected: (runId: string) => void;
   refreshArtifactsIfActive: () => void;
   refreshNotifications: () => void;
+  refreshPipelineRunsIfActive: () => void;
+  refreshPipelineDetailIfMember: (runId: string) => void;
 }
 
 export function createEventStreamRouter(deps: () => EventStreamRouterDeps): EventStreamRouter {
@@ -50,9 +52,16 @@ export function createEventStreamRouter(deps: () => EventStreamRouterDeps): Even
           }
 
           context.refreshRecentRunsIfActive();
+          // a member workflow run of the open pipeline-run detail just changed — refetch its steps.
+          context.refreshPipelineDetailIfMember(runId);
           context.refreshResourcesIfActive();
           break;
         }
+
+        case "pipeline_run_changed":
+        case "pipeline_run_activity":
+          context.refreshPipelineRunsIfActive();
+          break;
 
         case "resources_changed":
           context.refreshResourcesIfActive();

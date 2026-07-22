@@ -81,3 +81,67 @@ fn round_trips_through_wdlp_render() {
     let reparsed = parse_pipeline_str(&rendered).expect("reparse");
     assert_eq!(bundle, reparsed);
 }
+
+const TRIGGERED: &str = r#"
+pipeline "Nightly" {
+    trigger cron "0 0 * * *"
+    trigger on_success workflow "Upstream"
+    trigger on_complete pipeline "Other" disabled
+
+    workflow "A"
+    workflow "B"
+
+    "A" -> "B" on success
+}
+"#;
+
+#[test]
+fn parses_pipeline_triggers() {
+    use runinator_models::workflows::WorkflowTriggerKind;
+    let bundle = parse_pipeline_str(TRIGGERED).expect("parse");
+    let p = &bundle.pipelines[0];
+    assert_eq!(p.triggers.len(), 3);
+
+    let cron = &p.triggers[0];
+    assert_eq!(cron.kind, WorkflowTriggerKind::Cron);
+    assert!(cron.enabled);
+    assert_eq!(
+        cron.configuration.get("cron").and_then(|v| v.as_str()),
+        Some("0 0 * * *")
+    );
+
+    let from_workflow = &p.triggers[1];
+    assert_eq!(from_workflow.kind, WorkflowTriggerKind::Chained);
+    assert_eq!(
+        from_workflow
+            .configuration
+            .get("on")
+            .and_then(|v| v.as_str()),
+        Some("success")
+    );
+    assert_eq!(
+        from_workflow
+            .configuration
+            .get("source_workflow")
+            .and_then(|v| v.as_str()),
+        Some("Upstream")
+    );
+
+    let from_pipeline = &p.triggers[2];
+    assert!(!from_pipeline.enabled);
+    assert_eq!(
+        from_pipeline
+            .configuration
+            .get("source_pipeline")
+            .and_then(|v| v.as_str()),
+        Some("Other")
+    );
+}
+
+#[test]
+fn round_trips_pipeline_triggers() {
+    let bundle = parse_pipeline_str(TRIGGERED).expect("parse");
+    let rendered = pipeline_to_wdlp(&bundle);
+    let reparsed = parse_pipeline_str(&rendered).expect("reparse");
+    assert_eq!(bundle, reparsed);
+}

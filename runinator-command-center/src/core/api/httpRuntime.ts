@@ -299,6 +299,20 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     path: (args) => `pipelines/${escape(arg(args, "pipelineId"))}/owner`,
     body: (args) => ({ org_id: argOpt(args, "orgId") ?? null }),
   },
+  create_pipeline_run: {
+    method: "POST",
+    path: (args) => `pipelines/${escape(arg(args, "pipelineId"))}/runs`,
+    body: (args) => ({ parameters: argOpt(args, "parameters") ?? {} }),
+  },
+  fetch_pipeline_runs: { method: "GET", path: () => "pipeline_runs" },
+  fetch_pipeline_run: {
+    method: "GET",
+    path: (args) => `pipeline_runs/${escape(arg(args, "pipelineRunId"))}`,
+  },
+  cancel_pipeline_run: {
+    method: "POST",
+    path: (args) => `pipeline_runs/${escape(arg(args, "pipelineRunId"))}/cancel`,
+  },
   fetch_run_chunks: {
     method: "GET",
     path: (args) => `runs/${escape(arg(args, "runId"))}/chunks?limit=500`,

@@ -227,6 +227,7 @@ import { useAppStore } from "../../ui/adapters/pinia/app";
 import { useWorkflowsStore } from "../../ui/adapters/pinia/workflows";
 import type { RunArtifact, WorkflowRunArtifact } from "../../core/domain/models";
 import { formatDate, pretty } from "../../core/utils/format";
+import { countActiveRuns } from "../../core/utils/status";
 
 const app = useAppStore();
 const workflows = useWorkflowsStore();
@@ -250,10 +251,7 @@ const workflowNames = computed(() =>
     ),
   ),
 );
-const TERMINAL_STATUSES = new Set(["succeeded", "failed", "canceled", "timed_out"]);
-const activeRunCount = computed(
-  () => workflows.recentWorkflowRuns.filter((run) => !TERMINAL_STATUSES.has(run.status)).length,
-);
+const activeRunCount = computed(() => countActiveRuns(workflows.recentWorkflowRuns));
 const selectedRunLabel = computed(() =>
   workflows.selectedWorkflowRunId ? `#${workflows.selectedWorkflowRunId}` : "None",
 );

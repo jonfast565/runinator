@@ -1,11 +1,11 @@
-ARG ALPINE_VERSION=3.22
-FROM rust:1.91.1-alpine${ALPINE_VERSION} AS builder
+ARG ALPINE_VERSION=3.24
+FROM rust:1.97.1-alpine${ALPINE_VERSION} AS builder
 WORKDIR /workspace
 RUN apk add --no-cache build-base ca-certificates
 COPY . .
 ENV RUSTFLAGS="-C target-feature=-crt-static"
-RUN rustup install 1.91.1 && \
-    rustup default 1.91.1 && \
+RUN rustup install 1.97.1 && \
+    rustup default 1.97.1 && \
     cargo build --release --bin runinator-broker
 
 FROM alpine:${ALPINE_VERSION}

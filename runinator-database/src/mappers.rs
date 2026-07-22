@@ -11,7 +11,7 @@ use runinator_models::{
     notifications::Notification,
     orchestration::{OrchestrationEvent, ReadyNodeRecord},
     orgs::{OrgMembership, OrgRole, Organization},
-    pipelines::{Pipeline, PipelineDefaults},
+    pipelines::{Pipeline, PipelineDefaults, PipelineRun, PipelineTrigger},
     provisioning::ProvisionBackend,
     replicas::{
         ReplicaKind, ReplicaProviderRegistration, ReplicaRecord, ReplicaStatus, TriggerActorType,
@@ -385,6 +385,7 @@ macro_rules! workflow_run_from_row {
                 .and_then(|ts| DateTime::<Utc>::from_timestamp(ts, 0)),
             message: $row.get("message"),
             name: $row.get("name"),
+            pipeline_run_id: $row.try_get("pipeline_run_id").ok().flatten(),
             trigger_source_kind: $row
                 .try_get::<Option<String>, _>("trigger_source_kind")
                 .ok()
@@ -416,6 +417,84 @@ macro_rules! workflow_run_from_row {
 }
 
 row_mapper!(row_to_workflow_run(row) -> WorkflowRun { workflow_run_from_row!(row) });
+
+macro_rules! pipeline_trigger_from_row {
+    ($row:expr) => {{
+        PipelineTrigger {
+            id: $row.get("id"),
+            pipeline_id: $row.get("pipeline_id"),
+            kind: WorkflowTriggerKind::try_from($row.get::<String, _>("kind").as_str())
+                .unwrap_or(WorkflowTriggerKind::Manual),
+            enabled: $row.get("enabled"),
+            configuration: parse_json($row.get::<String, _>("configuration")),
+            next_execution: $row
+                .get::<Option<i64>, _>("next_execution")
+                .and_then(|ts| DateTime::<Utc>::from_timestamp(ts, 0)),
+            blackout_start: $row
+                .get::<Option<i64>, _>("blackout_start")
+                .and_then(|ts| DateTime::<Utc>::from_timestamp(ts, 0)),
+            blackout_end: $row
+                .get::<Option<i64>, _>("blackout_end")
+                .and_then(|ts| DateTime::<Utc>::from_timestamp(ts, 0)),
+            metadata: parse_json($row.get::<String, _>("metadata")),
+            created_at: DateTime::<Utc>::from_timestamp($row.get("created_at"), 0),
+            updated_at: DateTime::<Utc>::from_timestamp($row.get("updated_at"), 0),
+        }
+    }};
+}
+
+row_mapper!(row_to_pipeline_trigger(row) -> PipelineTrigger { pipeline_trigger_from_row!(row) });
+
+macro_rules! pipeline_run_from_row {
+    ($row:expr) => {{
+        PipelineRun {
+            id: $row.get("id"),
+            pipeline_id: $row.get("pipeline_id"),
+            pipeline_snapshot: $row
+                .get::<Option<String>, _>("pipeline_snapshot")
+                .and_then(|raw| serde_json::from_str(&raw).ok()),
+            status: WorkflowStatus::try_from($row.get::<String, _>("status").as_str())
+                .unwrap_or(WorkflowStatus::Failed),
+            parameters: parse_json($row.get::<String, _>("parameters")),
+            state: parse_json($row.get::<String, _>("state")),
+            created_at: DateTime::<Utc>::from_timestamp($row.get("created_at"), 0)
+                .unwrap_or_else(Utc::now),
+            started_at: $row
+                .get::<Option<i64>, _>("started_at")
+                .and_then(|ts| DateTime::<Utc>::from_timestamp(ts, 0)),
+            finished_at: $row
+                .get::<Option<i64>, _>("finished_at")
+                .and_then(|ts| DateTime::<Utc>::from_timestamp(ts, 0)),
+            message: $row.get("message"),
+            trigger_source_kind: $row
+                .try_get::<Option<String>, _>("trigger_source_kind")
+                .ok()
+                .flatten()
+                .as_deref()
+                .map(TriggerSourceKind::try_from)
+                .transpose()
+                .ok()
+                .flatten(),
+            trigger_actor_type: $row
+                .try_get::<Option<String>, _>("trigger_actor_type")
+                .ok()
+                .flatten()
+                .as_deref()
+                .map(TriggerActorType::try_from)
+                .transpose()
+                .ok()
+                .flatten(),
+            trigger_actor_replica_id: $row.try_get("trigger_actor_replica_id").ok().flatten(),
+            trigger_actor_display_name: $row.try_get("trigger_actor_display_name").ok().flatten(),
+            trigger_metadata: $row
+                .try_get::<String, _>("trigger_metadata")
+                .map(parse_json)
+                .unwrap_or(Value::Null),
+        }
+    }};
+}
+
+row_mapper!(row_to_pipeline_run(row) -> PipelineRun { pipeline_run_from_row!(row) });
 
 macro_rules! workflow_node_run_from_row {
     ($row:expr) => {{

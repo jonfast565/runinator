@@ -252,6 +252,8 @@ pub enum TriggerSourceKind {
     Subflow,
     Map,
     Chained,
+    /// a member workflow run started as part of a pipeline run.
+    Pipeline,
 }
 
 impl TriggerSourceKind {
@@ -267,6 +269,7 @@ impl TriggerSourceKind {
             Self::Subflow => "subflow",
             Self::Map => "map",
             Self::Chained => "chained",
+            Self::Pipeline => "pipeline",
         }
     }
 }
@@ -286,6 +289,7 @@ impl TryFrom<&str> for TriggerSourceKind {
             "subflow" => Ok(Self::Subflow),
             "map" => Ok(Self::Map),
             "chained" => Ok(Self::Chained),
+            "pipeline" => Ok(Self::Pipeline),
             other => Err(format!("Unknown trigger source kind '{other}'")),
         }
     }

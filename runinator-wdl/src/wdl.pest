@@ -38,7 +38,7 @@ secret_kind      = { "secret" | "config" }
 // the grammar only expresses well-formed pipelines; the lowering rejects empty/danging references.
 pipeline_document       = { SOI ~ pipeline_decl* ~ EOI }
 pipeline_decl           = { "pipeline" ~ string ~ "{" ~ pipeline_item* ~ "}" }
-pipeline_item           = { pipeline_desc | pipeline_on_failure | pipeline_max_depth | pipeline_member | pipeline_link }
+pipeline_item           = { pipeline_desc | pipeline_on_failure | pipeline_max_depth | pipeline_trigger | pipeline_member | pipeline_link }
 pipeline_desc           = { "description" ~ string }
 pipeline_on_failure     = { "on_failure" ~ pipeline_failure_policy }
 pipeline_failure_policy = { "halt" | "continue" }
@@ -46,6 +46,13 @@ pipeline_max_depth      = { "max_depth" ~ integer }
 pipeline_member         = { "workflow" ~ string }
 pipeline_link           = { string ~ "->" ~ string ~ ("on" ~ pipeline_link_selector)? }
 pipeline_link_selector  = { "success" | "complete" | "failure" }
+// pipeline-level triggers. `trigger cron "<expr>"` schedules a pipeline run; `trigger on_success
+// workflow "<name>"` (or on_failure/on_complete, workflow|pipeline) starts this pipeline when the
+// named source reaches that terminal state (chained-to-pipeline).
+pipeline_trigger          = { "trigger" ~ (pipeline_cron_trigger | pipeline_chained_trigger) }
+pipeline_cron_trigger     = { "cron" ~ string ~ trigger_disabled? }
+pipeline_chained_trigger  = { chain_event ~ pipeline_chain_source ~ string ~ trigger_disabled? }
+pipeline_chain_source     = { "workflow" | "pipeline" }
 
 document_item = {
     func_def

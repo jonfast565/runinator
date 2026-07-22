@@ -358,6 +358,38 @@ pub async fn require_trigger_workflow<T: DatabaseImpl>(
     }
 }
 
+/// gate a pipeline-trigger handler by its owning pipeline's permission.
+pub async fn require_pipeline_trigger<T: DatabaseImpl>(
+    db: &T,
+    ctx: &AuthContext,
+    trigger_id: Uuid,
+    needed: Permission,
+) -> Result<(), Reply> {
+    if ctx.is_admin {
+        return Ok(());
+    }
+    match db.fetch_pipeline_trigger(trigger_id).await {
+        Ok(Some(trigger)) => require_pipeline(db, ctx, trigger.pipeline_id, needed).await,
+        _ => Err(not_found()),
+    }
+}
+
+/// gate a pipeline-run handler by its owning pipeline's permission.
+pub async fn require_pipeline_run<T: DatabaseImpl>(
+    db: &T,
+    ctx: &AuthContext,
+    pipeline_run_id: Uuid,
+    needed: Permission,
+) -> Result<(), Reply> {
+    if ctx.is_admin {
+        return Ok(());
+    }
+    match db.fetch_pipeline_run(pipeline_run_id).await {
+        Ok(Some(run)) => require_pipeline(db, ctx, run.pipeline_id, needed).await,
+        _ => Err(not_found()),
+    }
+}
+
 pub async fn require_node_run_workflow<T: DatabaseImpl>(
     db: &T,
     ctx: &AuthContext,

@@ -47,6 +47,10 @@ pub(crate) fn emit_workflow_run(events: &EventSender, run_id: Uuid) {
     runinator_engine::events::emit_workflow_run(&events.publisher, run_id);
 }
 
+pub(crate) fn emit_pipeline_run(events: &EventSender, run_id: Uuid) {
+    runinator_engine::events::emit_pipeline_run(&events.publisher, run_id);
+}
+
 pub(crate) fn emit_task_run(events: &EventSender, run_id: Uuid, status: RunStatus) {
     runinator_engine::events::emit_task_run(&events.publisher, run_id, status);
 }

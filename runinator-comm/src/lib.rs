@@ -273,6 +273,8 @@ pub enum UiEvent {
     WorkflowsChanged,
     WorkflowRunChanged { run_id: Uuid },
     WorkflowRunActivity,
+    PipelineRunChanged { run_id: Uuid },
+    PipelineRunActivity,
     TasksChanged,
     ArtifactCreated { artifact_id: Uuid, run_id: Uuid },
     NotificationCreated { notification_id: Uuid },

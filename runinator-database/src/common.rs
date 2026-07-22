@@ -2,6 +2,7 @@ use chrono::{DateTime, Utc};
 use croner::Cron;
 use runinator_comm::{WorkflowResultEvent, WorkflowResultEventKind};
 use runinator_models::errors::SendableError;
+use runinator_models::pipelines::PipelineTrigger;
 use runinator_models::value::Value;
 use runinator_models::workflows::{WorkflowStatus, WorkflowTrigger};
 
@@ -76,6 +77,34 @@ pub(crate) fn trigger_state(trigger: &WorkflowTrigger) -> Value {
 }
 
 pub(crate) fn is_trigger_in_blackout(trigger: &WorkflowTrigger, now: DateTime<Utc>) -> bool {
+    if let (Some(start), Some(end)) = (trigger.blackout_start, trigger.blackout_end) {
+        return now >= start && now <= end;
+    }
+    false
+}
+
+pub(crate) fn pipeline_trigger_parameters(trigger: &PipelineTrigger) -> Value {
+    trigger
+        .configuration
+        .get("parameters")
+        .cloned()
+        .unwrap_or_else(|| Value::Object(Default::default()))
+}
+
+pub(crate) fn pipeline_trigger_state(trigger: &PipelineTrigger) -> Value {
+    runinator_models::json!({
+        "trigger": {
+            "id": trigger.id,
+            "kind": trigger.kind,
+            "metadata": trigger.metadata
+        }
+    })
+}
+
+pub(crate) fn is_pipeline_trigger_in_blackout(
+    trigger: &PipelineTrigger,
+    now: DateTime<Utc>,
+) -> bool {
     if let (Some(start), Some(end)) = (trigger.blackout_start, trigger.blackout_end) {
         return now >= start && now <= end;
     }

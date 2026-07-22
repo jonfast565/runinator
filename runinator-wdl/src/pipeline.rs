@@ -7,10 +7,11 @@ use std::collections::HashSet;
 
 use runinator_models::pipelines::{
     PipelineBundle, PipelineDefaults, PipelineFailurePolicy, PipelineLinkSelector,
-    PipelineLinkSpec, PipelineSpec,
+    PipelineLinkSpec, PipelineSpec, PipelineTriggerSpec,
 };
+use runinator_models::workflows::WorkflowTriggerKind;
 
-use crate::ast::{PipelineDecl, PipelineLinkDecl};
+use crate::ast::{PipelineDecl, PipelineLinkDecl, PipelineTriggerDecl};
 use crate::errors::WdlError;
 use crate::parser::parse_pipeline_document;
 
@@ -53,12 +54,51 @@ fn lower_pipeline(decl: &PipelineDecl) -> Result<PipelineSpec, WdlError> {
     for link in &decl.links {
         links.push(lower_link(link, &members, on_step_failure)?);
     }
+    let mut triggers = Vec::with_capacity(decl.triggers.len());
+    for trigger in &decl.triggers {
+        triggers.push(lower_trigger(trigger)?);
+    }
     Ok(PipelineSpec {
         name: decl.name.clone(),
         description: decl.description.clone(),
         defaults,
         members: decl.members.clone(),
         links,
+        triggers,
+    })
+}
+
+/// lower a parsed pipeline trigger decl into a portable `PipelineTriggerSpec`. a cron trigger carries
+/// `{cron, parameters}`; a chained trigger carries `{on, source_workflow | source_pipeline}`.
+fn lower_trigger(decl: &PipelineTriggerDecl) -> Result<PipelineTriggerSpec, WdlError> {
+    if let Some(cron) = &decl.cron {
+        return Ok(PipelineTriggerSpec {
+            kind: WorkflowTriggerKind::Cron,
+            enabled: !decl.disabled,
+            configuration: runinator_models::json!({ "cron": cron, "parameters": {} }),
+        });
+    }
+    let source = decl.source.clone().ok_or_else(|| {
+        WdlError::syntax(decl.span, "a chained pipeline trigger needs a source name")
+    })?;
+    // map the raw chain event keyword to the `on` selector.
+    let on = match decl.event.as_deref() {
+        Some("on_failure") => "failure",
+        Some("on_complete") => "complete",
+        _ => "success",
+    };
+    let source_field = match decl.source_kind.as_deref() {
+        Some("pipeline") => "source_pipeline",
+        _ => "source_workflow",
+    };
+    Ok(PipelineTriggerSpec {
+        kind: WorkflowTriggerKind::Chained,
+        enabled: !decl.disabled,
+        configuration: runinator_models::json!({
+            "on": on,
+            source_field: source,
+            "parameters": {},
+        }),
     })
 }
 
@@ -122,6 +162,12 @@ pub fn pipeline_to_wdlp(bundle: &PipelineBundle) -> String {
         if let Some(max_depth) = spec.defaults.max_chain_depth {
             out.push_str(&format!("    max_depth {max_depth}\n"));
         }
+        if !spec.triggers.is_empty() {
+            out.push('\n');
+            for trigger in &spec.triggers {
+                out.push_str(&render_trigger(trigger));
+            }
+        }
         if !spec.members.is_empty() {
             out.push('\n');
             for member in &spec.members {
@@ -142,6 +188,44 @@ pub fn pipeline_to_wdlp(bundle: &PipelineBundle) -> String {
         out.push_str("}\n");
     }
     out
+}
+
+/// render a pipeline trigger spec back to `.wdlp` source. mirrors `lower_trigger` so files round-trip.
+fn render_trigger(trigger: &PipelineTriggerSpec) -> String {
+    let config = &trigger.configuration;
+    let disabled = if trigger.enabled { "" } else { " disabled" };
+    if trigger.kind == WorkflowTriggerKind::Cron {
+        let cron = config.get("cron").and_then(|v| v.as_str()).unwrap_or("");
+        return format!("    trigger cron {}{}\n", quote(cron), disabled);
+    }
+    let on = config
+        .get("on")
+        .and_then(|v| v.as_str())
+        .unwrap_or("success");
+    let event = match on {
+        "failure" => "on_failure",
+        "complete" => "on_complete",
+        _ => "on_success",
+    };
+    let (source_kind, source) =
+        if let Some(name) = config.get("source_pipeline").and_then(|v| v.as_str()) {
+            ("pipeline", name)
+        } else {
+            (
+                "workflow",
+                config
+                    .get("source_workflow")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(""),
+            )
+        };
+    format!(
+        "    trigger {} {} {}{}\n",
+        event,
+        source_kind,
+        quote(source),
+        disabled
+    )
 }
 
 fn quote(text: &str) -> String {

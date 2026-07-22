@@ -124,6 +124,15 @@ async fn start_chained_run<T: DatabaseImpl>(
             },
         )
         .await?;
+    // propagate the owning pipeline run onto the chained child when this link belongs to a pipeline
+    // (the chained trigger carries `configuration.pipeline_id`), so the whole in-pipeline chain stays
+    // tagged and the pipeline-run orchestrator can aggregate its terminal.
+    if let Some(pipeline_run_id) = source_run.pipeline_run_id {
+        if trigger.configuration.pointer("/pipeline_id").is_some() {
+            db.set_workflow_run_pipeline_run(run.id, pipeline_run_id)
+                .await?;
+        }
+    }
     // enqueue the target's start node so the reducer drives it (mirrors create_subflow_run).
     if let Some(snapshot) = run.workflow_snapshot.as_ref() {
         let (start, _) = runinator_workflows::parse_nodes(snapshot)

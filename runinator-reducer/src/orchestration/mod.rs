@@ -58,6 +58,7 @@ mod input;
 mod map;
 mod mutex;
 mod output;
+mod pipeline_orchestration;
 mod signal;
 mod subflow;
 mod throttle;
@@ -69,3 +70,4 @@ mod wait;
 mod tests;
 
 pub use engine::process_ready_node;
+pub use pipeline_orchestration::{create_and_start_pipeline_run, start_pipeline_run};

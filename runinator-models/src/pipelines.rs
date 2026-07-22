@@ -2,7 +2,9 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::replicas::{TriggerActorType, TriggerSourceKind};
 use crate::value::Value;
+use crate::workflows::{WorkflowRun, WorkflowStatus, WorkflowTriggerKind};
 
 /// what happens to downstream links when a member workflow fails. authoring-only: it seeds the
 /// `on` selector of newly drawn links (`Halt` -> fire on success, `Continue` -> fire on complete).
@@ -104,6 +106,22 @@ pub struct PipelineSpec {
     pub members: Vec<String>,
     #[serde(default)]
     pub links: Vec<PipelineLinkSpec>,
+    /// pipeline-level triggers (cron / manual / chained) declared in the `.wdlp` header. materialized
+    /// on import as managed `pipeline_triggers` reconciled by pipeline id.
+    #[serde(default)]
+    pub triggers: Vec<PipelineTriggerSpec>,
+}
+
+/// a portable, id-free pipeline trigger declaration compiled from a `.wdlp` header. `configuration`
+/// carries kind-specific data (cron: `{cron, parameters}`; chained: `{on, source_workflow |
+/// source_pipeline, parameters}`); manual triggers carry no schedule.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PipelineTriggerSpec {
+    pub kind: WorkflowTriggerKind,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub configuration: Value,
 }
 
 // PipelineDefaults derives Clone but not PartialEq; PipelineSpec's PartialEq needs it.
@@ -146,4 +164,63 @@ pub struct Pipeline {
     pub created_at: Option<DateTime<Utc>>,
     #[serde(default)]
     pub updated_at: Option<DateTime<Utc>>,
+}
+
+/// a persisted pipeline-level trigger. mirrors [`crate::workflows::WorkflowTrigger`] but is owned by a
+/// pipeline: cron/manual start a pipeline run for `pipeline_id`; a `chained` trigger is target-keyed
+/// (`pipeline_id` is the pipeline to start) with its source and `on` selector in `configuration`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PipelineTrigger {
+    pub id: Option<Uuid>,
+    pub pipeline_id: Uuid,
+    pub kind: WorkflowTriggerKind,
+    pub enabled: bool,
+    #[serde(default)]
+    pub configuration: Value,
+    pub next_execution: Option<DateTime<Utc>>,
+    pub blackout_start: Option<DateTime<Utc>>,
+    pub blackout_end: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub metadata: Value,
+    #[serde(default)]
+    pub created_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub updated_at: Option<DateTime<Utc>>,
+}
+
+/// a first-class pipeline execution. an orchestration envelope over the member workflow runs it
+/// starts: each member run is stamped with this run's id, and the run settles when the reachable
+/// member graph reaches terminal. status reuses [`WorkflowStatus`] (only queued/running/waiting and
+/// the terminal states are meaningful for a pipeline run).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PipelineRun {
+    pub id: Uuid,
+    pub pipeline_id: Uuid,
+    #[serde(default)]
+    pub pipeline_snapshot: Option<Pipeline>,
+    pub status: WorkflowStatus,
+    pub parameters: Value,
+    pub state: Value,
+    pub created_at: DateTime<Utc>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub finished_at: Option<DateTime<Utc>>,
+    pub message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger_source_kind: Option<TriggerSourceKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger_actor_type: Option<TriggerActorType>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger_actor_replica_id: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger_actor_display_name: Option<String>,
+    #[serde(default)]
+    pub trigger_metadata: Value,
+}
+
+/// a pipeline run with the member workflow runs it started. mirrors the workflow-run detail shape so
+/// the ui can render the same list+detail layout and click through from a member step to its run.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PipelineRunDetail {
+    pub run: PipelineRun,
+    pub members: Vec<WorkflowRun>,
 }

@@ -3,6 +3,7 @@ import { endpointForTab, isResourceTab, useAppStore } from "../../ui/adapters/pi
 import { useArtifactsStore } from "../../ui/adapters/pinia/artifacts";
 import { useAuthStore } from "../../ui/adapters/pinia/auth";
 import { useNotificationsStore } from "../../ui/adapters/pinia/notifications";
+import { usePipelineRunsStore } from "../../ui/adapters/pinia/pipeline-runs";
 import { useResourcesStore } from "../../ui/adapters/pinia/resources";
 import { useWorkflowsStore } from "../../ui/adapters/pinia/workflows";
 import { createEventStreamRouter } from "../../core/realtime/event-router";
@@ -14,6 +15,7 @@ export function useEventStream() {
   const resources = useResourcesStore();
   const artifacts = useArtifactsStore();
   const notifications = useNotificationsStore();
+  const pipelineRuns = usePipelineRunsStore();
   const auth = useAuthStore();
 
   function refreshResourcesIfActive() {
@@ -49,6 +51,10 @@ export function useEventStream() {
       void notifications.refreshNotifications();
     }
 
+    if (app.activeTab === "PipelineRuns") {
+      void pipelineRuns.refresh();
+    }
+
     refreshResourcesIfActive();
   }
 
@@ -79,6 +85,16 @@ export function useEventStream() {
     },
     refreshNotifications: () => {
       void notifications.refreshNotifications();
+    },
+    refreshPipelineRunsIfActive: () => {
+      if (app.activeTab === "PipelineRuns") {
+        void pipelineRuns.refresh();
+      }
+    },
+    refreshPipelineDetailIfMember: (runId: string) => {
+      if (app.activeTab === "PipelineRuns") {
+        void pipelineRuns.refreshDetailIfMember(runId);
+      }
     },
   }));
 

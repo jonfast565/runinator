@@ -140,6 +140,19 @@ pub const EVENT_SOURCE_TYPE_MISSING: ErrorDescriptor = ErrorDescriptor::new(
     "EventSource node is missing an event_type parameter",
 );
 
+pub const PIPELINE_NOT_FOUND: ErrorDescriptor =
+    ErrorDescriptor::new("RUNI170", "pipeline.not_found", "Pipeline not found");
+pub const PIPELINE_TRIGGER_NOT_FOUND: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI171",
+    "pipeline.trigger.not_found",
+    "Pipeline trigger not found",
+);
+pub const PIPELINE_NO_ENTRY_MEMBERS: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI172",
+    "pipeline.run.no_entry_members",
+    "Pipeline has no entry members to start (empty or fully cyclic member graph)",
+);
+
 pub const DICTIONARY: &[ErrorDescriptor] = &[
     ASSERT_PARAMS_MISSING,
     TRANSFORM_PARAMS_MISSING,
@@ -168,6 +181,9 @@ pub const DICTIONARY: &[ErrorDescriptor] = &[
     COMPUTE_NODE_FAILED,
     ARTIFACT_SOURCE_UNRESOLVED,
     FOREIGN_LANGUAGE_CONFIG_MISSING,
+    PIPELINE_NOT_FOUND,
+    PIPELINE_TRIGGER_NOT_FOUND,
+    PIPELINE_NO_ENTRY_MEMBERS,
 ];
 
 /// reducer error dictionary.

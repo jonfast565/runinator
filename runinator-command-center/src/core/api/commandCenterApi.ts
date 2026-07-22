@@ -43,6 +43,9 @@ import type {
   WorkflowTrigger,
   SimulationRun,
   Pipeline,
+  PipelineRun,
+  PipelineRunDetail,
+  PipelineTrigger,
 } from "../domain/models";
 
 export interface WorkflowWdlSaveRequest {
@@ -394,6 +397,34 @@ export async function deletePipeline(pipelineId: string) {
 // reassign a pipeline's owning organization; null makes it platform-global.
 export async function setPipelineOwner(pipelineId: string, orgId: string | null) {
   return command<Pipeline>("set_pipeline_owner", { pipelineId, orgId });
+}
+
+export async function fetchPipelineTriggers(pipelineId: string) {
+  return command<PipelineTrigger[]>("fetch_pipeline_triggers", { pipelineId });
+}
+
+export async function savePipelineTrigger(trigger: PipelineTrigger, creating: boolean) {
+  return command<PipelineTrigger>("save_pipeline_trigger", { trigger, creating });
+}
+
+export async function deletePipelineTrigger(triggerId: string) {
+  return command<TaskResponse>("delete_pipeline_trigger", { triggerId });
+}
+
+export async function createPipelineRun(pipelineId: string, parameters: unknown = {}) {
+  return command<PipelineRun>("create_pipeline_run", { pipelineId, parameters });
+}
+
+export async function fetchPipelineRuns() {
+  return command<PipelineRun[]>("fetch_pipeline_runs");
+}
+
+export async function fetchPipelineRun(pipelineRunId: string) {
+  return command<PipelineRunDetail>("fetch_pipeline_run", { pipelineRunId });
+}
+
+export async function cancelPipelineRun(pipelineRunId: string) {
+  return command<TaskResponse>("cancel_pipeline_run", { pipelineRunId });
 }
 
 export async function createWorkflowRun(

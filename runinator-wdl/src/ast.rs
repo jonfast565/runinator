@@ -908,6 +908,19 @@ pub struct PipelineLinkDecl {
     pub span: Span,
 }
 
+/// a pipeline-level trigger parsed from a `.wdlp` header. `cron` carries the schedule for a cron
+/// trigger; a chained trigger sets `event` (raw `on_success`/`on_failure`/`on_complete`), `source_kind`
+/// (`workflow`/`pipeline`), and `source` (the source name). `disabled` toggles the enabled flag.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PipelineTriggerDecl {
+    pub cron: Option<String>,
+    pub event: Option<String>,
+    pub source_kind: Option<String>,
+    pub source: Option<String>,
+    pub disabled: bool,
+    pub span: Span,
+}
+
 /// a `pipeline "Name" { ... }` block parsed from a `.wdlp` file. `on_failure` holds the raw policy
 /// keyword (`halt`/`continue`) or `None`; lowering maps the string fields to the model enums.
 #[derive(Debug, Clone, PartialEq)]
@@ -918,6 +931,7 @@ pub struct PipelineDecl {
     pub max_depth: Option<u32>,
     pub members: Vec<String>,
     pub links: Vec<PipelineLinkDecl>,
+    pub triggers: Vec<PipelineTriggerDecl>,
     pub span: Span,
 }
 

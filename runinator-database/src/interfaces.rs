@@ -15,7 +15,7 @@ use runinator_models::{
         ReadyNodeRecord,
     },
     orgs::{OrgMembership, OrgRole, Organization},
-    pipelines::Pipeline,
+    pipelines::{Pipeline, PipelineRun, PipelineTrigger},
     replicas::{
         ReplicaHeartbeatRequest, ReplicaKind, ReplicaProviderRegistration,
         ReplicaProviderRegistrationRequest, ReplicaRecord, ReplicaRegistrationRequest,
@@ -242,6 +242,102 @@ pub trait DatabaseImpl: Send + Sync + 'static {
         &self,
         pipeline_id: Uuid,
         org_id: Option<Uuid>,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
+
+    /// Create or update a pipeline-level trigger.
+    fn upsert_pipeline_trigger(
+        &self,
+        trigger: &PipelineTrigger,
+    ) -> impl Future<Output = Result<PipelineTrigger, SendableError>> + Send;
+
+    /// Fetch all triggers owned by a pipeline.
+    fn fetch_pipeline_triggers(
+        &self,
+        pipeline_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<PipelineTrigger>, SendableError>> + Send;
+
+    /// Fetch a pipeline trigger by identifier.
+    fn fetch_pipeline_trigger(
+        &self,
+        trigger_id: Uuid,
+    ) -> impl Future<Output = Result<Option<PipelineTrigger>, SendableError>> + Send;
+
+    /// Fetch every enabled `chained` pipeline trigger, for the terminal-run chaining scan.
+    fn fetch_enabled_chained_pipeline_triggers(
+        &self,
+    ) -> impl Future<Output = Result<Vec<PipelineTrigger>, SendableError>> + Send;
+
+    /// Delete a pipeline trigger.
+    fn delete_pipeline_trigger(
+        &self,
+        trigger_id: Uuid,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
+
+    /// Atomically fire due cron pipeline triggers and return the pipeline runs created by this claim
+    /// (status `queued`; entry members are started by the repository layer).
+    fn claim_due_pipeline_trigger_firings(
+        &self,
+        scheduler_id: String,
+        now: DateTime<Utc>,
+        limit: i64,
+    ) -> impl Future<Output = Result<Vec<PipelineRun>, SendableError>> + Send;
+
+    /// Record a one-off pipeline trigger firing keyed on `(trigger_id, fire_key)`, returning `true`
+    /// only when this call inserted the row (chained-to-pipeline exactly-once, per source run).
+    fn try_record_pipeline_trigger_firing(
+        &self,
+        trigger_id: Uuid,
+        fire_key: String,
+    ) -> impl Future<Output = Result<bool, SendableError>> + Send;
+
+    /// Create a new pipeline run (status `queued`).
+    fn create_pipeline_run(
+        &self,
+        pipeline_id: Uuid,
+        pipeline_snapshot: Pipeline,
+        parameters: Value,
+        state: Value,
+        provenance: WorkflowRunProvenance,
+    ) -> impl Future<Output = Result<PipelineRun, SendableError>> + Send;
+
+    /// Fetch a pipeline run by identifier.
+    fn fetch_pipeline_run(
+        &self,
+        pipeline_run_id: Uuid,
+    ) -> impl Future<Output = Result<Option<PipelineRun>, SendableError>> + Send;
+
+    /// Fetch the most recent pipeline runs, newest first, capped at `limit`.
+    fn fetch_recent_pipeline_runs(
+        &self,
+        limit: i64,
+    ) -> impl Future<Output = Result<Vec<PipelineRun>, SendableError>> + Send;
+
+    /// Fetch all runs for a specific pipeline.
+    fn fetch_pipeline_runs_for_pipeline(
+        &self,
+        pipeline_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<PipelineRun>, SendableError>> + Send;
+
+    /// Update the top-level status of a pipeline run.
+    fn update_pipeline_run_status(
+        &self,
+        pipeline_run_id: Uuid,
+        status: WorkflowStatus,
+        state: Option<Value>,
+        message: Option<String>,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
+
+    /// Fetch every member workflow run tagged with the given pipeline run.
+    fn fetch_workflow_runs_for_pipeline_run(
+        &self,
+        pipeline_run_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<WorkflowRun>, SendableError>> + Send;
+
+    /// Tag a workflow run as a member of a pipeline run.
+    fn set_workflow_run_pipeline_run(
+        &self,
+        workflow_run_id: Uuid,
+        pipeline_run_id: Uuid,
     ) -> impl Future<Output = Result<(), SendableError>> + Send;
 
     /// Fetch enabled triggers that should fire at or before the provided instant.

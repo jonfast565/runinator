@@ -4,17 +4,31 @@
 // fanned out (same pattern as the pack export).
 
 import {
+  cancelPipelineRun as cancelPipelineRunApi,
+  createPipelineRun as createPipelineRunApi,
   deletePipeline as deletePipelineApi,
+  deletePipelineTrigger as deletePipelineTriggerApi,
   deleteWorkflowTrigger,
+  fetchPipelineRun as fetchPipelineRunApi,
+  fetchPipelineRuns as fetchPipelineRunsApi,
+  fetchPipelineTriggers as fetchPipelineTriggersApi,
   fetchPipelines as fetchPipelinesApi,
   fetchWorkflowTriggers,
   fetchWorkflows,
   savePipeline as savePipelineApi,
+  savePipelineTrigger as savePipelineTriggerApi,
   setPipelineOwner as setPipelineOwnerApi,
   saveWorkflowTrigger,
 } from "../../api/commandCenterApi";
 import type { JsonRecord } from "../../domain/json";
-import type { Pipeline, WorkflowDefinition, WorkflowTrigger } from "../../domain/models";
+import type {
+  Pipeline,
+  PipelineRun,
+  PipelineRunDetail,
+  PipelineTrigger,
+  WorkflowDefinition,
+  WorkflowTrigger,
+} from "../../domain/models";
 import type { ChainEvent } from "../../workflow/pipeline-graph";
 
 export interface PipelineData {
@@ -60,6 +74,45 @@ export async function setPipelineOwner(
   orgId: string | null,
 ): Promise<Pipeline> {
   return setPipelineOwnerApi(pipelineId, orgId);
+}
+
+// --- pipeline triggers (cron/manual/chained on the pipeline itself) ---
+
+export async function fetchPipelineTriggers(pipelineId: string): Promise<PipelineTrigger[]> {
+  return fetchPipelineTriggersApi(pipelineId);
+}
+
+export async function savePipelineTrigger(
+  trigger: PipelineTrigger,
+  creating: boolean,
+): Promise<PipelineTrigger> {
+  return savePipelineTriggerApi(trigger, creating);
+}
+
+export async function deletePipelineTrigger(triggerId: string): Promise<void> {
+  await deletePipelineTriggerApi(triggerId);
+}
+
+// --- pipeline runs ---
+
+/** start a manual run of a pipeline (starts its entry members). */
+export async function createPipelineRun(
+  pipelineId: string,
+  parameters: JsonRecord = {},
+): Promise<PipelineRun> {
+  return createPipelineRunApi(pipelineId, parameters);
+}
+
+export async function fetchPipelineRuns(): Promise<PipelineRun[]> {
+  return fetchPipelineRunsApi();
+}
+
+export async function fetchPipelineRun(pipelineRunId: string): Promise<PipelineRunDetail> {
+  return fetchPipelineRunApi(pipelineRunId);
+}
+
+export async function cancelPipelineRun(pipelineRunId: string): Promise<void> {
+  await cancelPipelineRunApi(pipelineRunId);
 }
 
 /** create a chained trigger tagged with the pipeline, pre-filled from the pipeline's defaults. */

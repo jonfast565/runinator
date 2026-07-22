@@ -4,6 +4,7 @@ import type { Capability } from "../domain/models";
 export type AppTab =
   | "Dev"
   | "Pipelines"
+  | "PipelineRuns"
   | "Workflows"
   | "Runs"
   | "Providers"

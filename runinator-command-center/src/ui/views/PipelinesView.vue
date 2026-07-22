@@ -20,6 +20,20 @@
               <span>New Pipeline</span>
             </button>
           </div>
+          <div class="pipeline-list-summary">
+            <div>
+              <span>Visible</span>
+              <strong>{{ pipeline.pipelines.length }}</strong>
+            </div>
+            <div>
+              <span>Workflows</span>
+              <strong>{{ memberWorkflowCount }}</strong>
+            </div>
+            <div>
+              <span>Selected</span>
+              <strong>{{ selectedPipelineLabel }}</strong>
+            </div>
+          </div>
           <p v-if="pipeline.error" class="pipeline-error">{{ pipeline.error }}</p>
           <ul v-if="pipeline.pipelines.length" class="pipeline-list">
             <li
@@ -254,6 +268,12 @@ const orgs = useOrgsStore();
 const selectedPipeline = computed(() => pipeline.selectedPipeline);
 const selectedEdge = computed(() => pipeline.selectedEdge);
 
+// distinct member workflows across all visible pipelines (a workflow can belong to several).
+const memberWorkflowCount = computed(
+  () => new Set(pipeline.pipelines.flatMap((item) => item.workflow_ids)).size,
+);
+const selectedPipelineLabel = computed(() => selectedPipeline.value?.name ?? "None");
+
 const ownerOrgId = ref<string>("");
 const ownerSaving = ref(false);
 
@@ -470,6 +490,41 @@ onMounted(() => {
   color: var(--danger, #b42318);
   padding: 6px 12px;
   margin: 0;
+}
+
+.pipeline-list-summary {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  padding: 0 8px 8px;
+}
+
+.pipeline-list-summary div {
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface-subtle);
+  padding: 10px 12px;
+}
+
+.pipeline-list-summary span {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.pipeline-list-summary strong {
+  color: var(--text);
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 980px) {
+  .pipeline-list-summary {
+    grid-template-columns: 1fr;
+  }
 }
 
 .pipeline-inspector {

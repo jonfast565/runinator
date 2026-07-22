@@ -138,6 +138,7 @@ mod tests {
                     on: PipelineLinkSelector::Complete,
                     enabled: true,
                 }],
+                triggers: vec![],
             }],
         };
 

@@ -10,7 +10,7 @@ use tracing::{Instrument, error, info, warn};
 use uuid::Uuid;
 
 use crate::{
-    events::{AppEvent, EventSender, emit, emit_workflow_run},
+    events::{AppEvent, EventSender, emit, emit_pipeline_run, emit_workflow_run},
     repository, stability,
 };
 
@@ -28,10 +28,13 @@ const READY_NODE_REAP_INTERVAL: Duration = Duration::from_secs(30);
 const READY_NODE_REAP_LIMIT: i64 = 1000;
 
 /// periodically announce pending ready nodes on the wake channel and re-announce any that were lost
-/// (the durable backstop). the broker dedupes wakes already in flight.
+/// (the durable backstop). the broker dedupes wakes already in flight. `wake_nudge` interrupts the
+/// poll sleep when create/drive/result paths enqueue new ready work so queue→running is not gated
+/// on [`WAKE_PUBLISH_INTERVAL`].
 pub async fn run_wake_publisher<T: DatabaseImpl>(
     db: Arc<T>,
     broker: Arc<dyn Broker>,
+    wake_nudge: Arc<Notify>,
     shutdown: Arc<Notify>,
 ) {
     info!("wake publisher started");
@@ -49,6 +52,7 @@ pub async fn run_wake_publisher<T: DatabaseImpl>(
                 info!("wake publisher shutting down");
                 return;
             }
+            _ = wake_nudge.notified() => {}
             _ = tokio::time::sleep(WAKE_PUBLISH_INTERVAL) => {}
         }
     }
@@ -215,11 +219,38 @@ pub async fn run_trigger_loop<T: DatabaseImpl>(
                 }
                 if !runs.is_empty() {
                     emit(&events, AppEvent::WorkflowRunActivity);
+                    // ready nodes were just enqueued for each fired run — do not wait for the wake
+                    // publisher poll interval before announcing them.
+                    events.nudge_wake_publisher();
                 }
             }
             Err(err) => error!(
                 error_code = error_code_or_unknown(err.as_ref()),
                 "trigger firing iteration failed: {}", err
+            ),
+        }
+
+        // fire due cron pipeline triggers and start each created pipeline run's entry members.
+        match repository::claim_due_pipeline_trigger_firings(
+            db.as_ref(),
+            instance_id.clone(),
+            CLAIM_LIMIT,
+        )
+        .await
+        {
+            Ok(runs) => {
+                if !runs.is_empty() {
+                    info!(count = runs.len(), "fired due pipeline trigger(s)");
+                    for run in &runs {
+                        emit_pipeline_run(&events, run.id);
+                    }
+                    emit(&events, AppEvent::PipelineRunActivity);
+                    events.nudge_wake_publisher();
+                }
+            }
+            Err(err) => error!(
+                error_code = error_code_or_unknown(err.as_ref()),
+                "pipeline trigger firing iteration failed: {}", err
             ),
         }
         tokio::select! {
@@ -419,6 +450,15 @@ async fn apply_ingress<T: DatabaseImpl>(
             if let Some(run_id) = driven {
                 signal_canceled_executing_node_runs(db, broker, run_id).await;
                 emit_workflow_run(events, run_id);
+                // pipeline settle and member progression happen inside the drive with no other emit
+                // site — fan a pipeline-run event so the UI does not fall back to the 30s poll.
+                if let Ok(Some(run)) = db.fetch_workflow_run(run_id).await {
+                    if let Some(pipeline_run_id) = run.pipeline_run_id {
+                        emit_pipeline_run(events, pipeline_run_id);
+                    }
+                }
+                // drive may have enqueued the next ready node(s); announce without waiting on poll.
+                events.nudge_wake_publisher();
             }
             Ok(())
         }
@@ -438,6 +478,7 @@ async fn apply_ingress<T: DatabaseImpl>(
                 }
             }
             emit_workflow_run(events, *workflow_run_id);
+            events.nudge_wake_publisher();
             Ok(())
         }
     }

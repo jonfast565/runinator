@@ -21,7 +21,7 @@ use runinator_models::{
         ReadyNodeRecord,
     },
     orgs::{OrgMembership, OrgRole, Organization},
-    pipelines::Pipeline,
+    pipelines::{Pipeline, PipelineRun, PipelineTrigger},
     replicas::{
         ReplicaHeartbeatRequest, ReplicaKind, ReplicaProviderRegistration,
         ReplicaProviderRegistrationRequest, ReplicaRecord, ReplicaRegistrationRequest,
@@ -42,21 +42,24 @@ use crate::{
     archive::{ArchiveMark, ArchiveRow, ArchiveTable},
     backend::{RowsAffected, SqlBackend},
     common::{
-        is_trigger_in_blackout, json_metadata, json_opt_i64, json_opt_str, json_opt_uuid, json_str,
-        next_execution_for_cron, status_list, trigger_parameters, trigger_state,
-        workflow_result_event_type,
+        is_pipeline_trigger_in_blackout, is_trigger_in_blackout, json_metadata, json_opt_i64,
+        json_opt_str, json_opt_uuid, json_str, next_execution_for_cron,
+        pipeline_trigger_parameters, pipeline_trigger_state, status_list, trigger_parameters,
+        trigger_state, workflow_result_event_type,
     },
     interfaces::DatabaseImpl,
     mappers,
     queries::{self, SqlDialect},
 };
 
-const WORKFLOW_RUN_COLUMNS: &str = "id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message, name, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_request_host, trigger_request_ip, trigger_metadata";
+const WORKFLOW_RUN_COLUMNS: &str = "id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message, name, pipeline_run_id, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_request_host, trigger_request_ip, trigger_metadata";
 const WORKFLOW_NODE_RUN_COLUMNS: &str = "id, workflow_run_id, node_id, status, attempt, parameters, output_json, state, transition_reason, prev_node_run_id, created_at, started_at, finished_at, message, current_executor_replica_id, last_executor_replica_id, executor_claimed_at, executor_released_at";
 const REPLICA_COLUMNS: &str = "replica_id, replica_type, instance_id, runtime_id, status, display_name, host, port, base_path, observed_ip, version, attributes, first_seen_at, last_heartbeat_at, last_seen_at, offline_at, registered_by_principal_id, registered_by_kind, registered_by_org_id";
 const REPLICA_PROVIDER_COLUMNS: &str = "replica_id, provider_name, provider_json, first_registered_at, last_registered_at, last_heartbeat_at";
 const PIPELINE_COLUMNS: &str =
     "id, name, description, org_id, workflow_ids, defaults, metadata, created_at, updated_at";
+const PIPELINE_TRIGGER_COLUMNS: &str = "id, pipeline_id, kind, enabled, configuration, next_execution, blackout_start, blackout_end, metadata, created_at, updated_at";
+const PIPELINE_RUN_COLUMNS: &str = "id, pipeline_id, pipeline_snapshot, status, parameters, state, created_at, started_at, finished_at, message, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_metadata";
 
 trait ArchiveSqlExt: SqlBackend {
     async fn archive_candidate_ids(
@@ -1251,6 +1254,462 @@ where
             .bind(Utc::now().timestamp())
             .bind(pipeline_id)
             .execute(self.pool())
+            .await?;
+        Ok(())
+    }
+
+    async fn upsert_pipeline_trigger(
+        &self,
+        trigger: &PipelineTrigger,
+    ) -> Result<PipelineTrigger, SendableError> {
+        let now = Utc::now().timestamp();
+        let trigger_id = trigger.id.unwrap_or_else(Uuid::new_v4);
+        let update_cols = [
+            "pipeline_id",
+            "kind",
+            "enabled",
+            "configuration",
+            "next_execution",
+            "blackout_start",
+            "blackout_end",
+            "metadata",
+            "updated_at",
+        ];
+
+        // mysql has no usable RETURNING via sqlx: upsert, then read the row back on the same conn.
+        if self.dialect() == SqlDialect::MySql {
+            let conflict = queries::on_conflict_update(SqlDialect::MySql, "id", &update_cols);
+            let mut conn = self.pool().acquire().await?;
+            sqlx::query(&self.render(&format!(
+                "INSERT INTO pipeline_triggers ({PIPELINE_TRIGGER_COLUMNS})
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) {conflict}",
+            )))
+            .bind(trigger_id)
+            .bind(trigger.pipeline_id)
+            .bind(trigger.kind.as_str())
+            .bind(trigger.enabled)
+            .bind(trigger.configuration.to_string())
+            .bind(trigger.next_execution.map(|dt| dt.timestamp()))
+            .bind(trigger.blackout_start.map(|dt| dt.timestamp()))
+            .bind(trigger.blackout_end.map(|dt| dt.timestamp()))
+            .bind(trigger.metadata.to_string())
+            .bind(trigger.created_at.map(|dt| dt.timestamp()).unwrap_or(now))
+            .bind(now)
+            .execute(&mut *conn)
+            .await?;
+            let row = sqlx::query(&self.render(&format!(
+                "SELECT {PIPELINE_TRIGGER_COLUMNS} FROM pipeline_triggers WHERE id = ?"
+            )))
+            .bind(trigger_id)
+            .fetch_one(&mut *conn)
+            .await?;
+            return Ok(mappers::row_to_pipeline_trigger(&row));
+        }
+
+        let conflict = queries::on_conflict_update(self.dialect(), "id", &update_cols);
+        let row = sqlx::query(&self.render(&format!(
+            "INSERT INTO pipeline_triggers ({PIPELINE_TRIGGER_COLUMNS})
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) {conflict}
+             RETURNING {PIPELINE_TRIGGER_COLUMNS}",
+        )))
+        .bind(trigger_id)
+        .bind(trigger.pipeline_id)
+        .bind(trigger.kind.as_str())
+        .bind(trigger.enabled)
+        .bind(trigger.configuration.to_string())
+        .bind(trigger.next_execution.map(|dt| dt.timestamp()))
+        .bind(trigger.blackout_start.map(|dt| dt.timestamp()))
+        .bind(trigger.blackout_end.map(|dt| dt.timestamp()))
+        .bind(trigger.metadata.to_string())
+        .bind(trigger.created_at.map(|dt| dt.timestamp()).unwrap_or(now))
+        .bind(now)
+        .fetch_one(self.pool())
+        .await?;
+        Ok(mappers::row_to_pipeline_trigger(&row))
+    }
+
+    async fn fetch_pipeline_triggers(
+        &self,
+        pipeline_id: Uuid,
+    ) -> Result<Vec<PipelineTrigger>, SendableError> {
+        let rows = sqlx::query(&self.render(&format!(
+            "SELECT {PIPELINE_TRIGGER_COLUMNS} FROM pipeline_triggers WHERE pipeline_id = ? ORDER BY created_at, id"
+        )))
+        .bind(pipeline_id)
+        .fetch_all(self.pool())
+        .await?;
+        Ok(rows.iter().map(mappers::row_to_pipeline_trigger).collect())
+    }
+
+    async fn fetch_pipeline_trigger(
+        &self,
+        trigger_id: Uuid,
+    ) -> Result<Option<PipelineTrigger>, SendableError> {
+        let row = sqlx::query(&self.render(&format!(
+            "SELECT {PIPELINE_TRIGGER_COLUMNS} FROM pipeline_triggers WHERE id = ?"
+        )))
+        .bind(trigger_id)
+        .fetch_optional(self.pool())
+        .await?;
+        Ok(row.map(|row| mappers::row_to_pipeline_trigger(&row)))
+    }
+
+    async fn fetch_enabled_chained_pipeline_triggers(
+        &self,
+    ) -> Result<Vec<PipelineTrigger>, SendableError> {
+        let sql = self.render(&format!(
+            "SELECT {PIPELINE_TRIGGER_COLUMNS} FROM pipeline_triggers WHERE enabled = {} AND kind = 'chained' ORDER BY created_at, id",
+            queries::bool_true(self.dialect()),
+        ));
+        let rows = sqlx::query(&sql).fetch_all(self.pool()).await?;
+        Ok(rows.iter().map(mappers::row_to_pipeline_trigger).collect())
+    }
+
+    async fn delete_pipeline_trigger(&self, trigger_id: Uuid) -> Result<(), SendableError> {
+        self.pool()
+            .execute(
+                sqlx::query(&self.render("DELETE FROM pipeline_triggers WHERE id = ?"))
+                    .bind(trigger_id),
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn claim_due_pipeline_trigger_firings(
+        &self,
+        scheduler_id: String,
+        now: DateTime<Utc>,
+        limit: i64,
+    ) -> Result<Vec<PipelineRun>, SendableError> {
+        let mut tx = self.pool().begin().await?;
+        let select_sql = self.render(&format!(
+            "SELECT {PIPELINE_TRIGGER_COLUMNS} FROM pipeline_triggers WHERE enabled = {} AND kind = 'cron' AND (next_execution IS NULL OR next_execution <= ?) ORDER BY COALESCE(next_execution, 0), id LIMIT ?{}",
+            queries::bool_true(self.dialect()),
+            queries::skip_locked(self.dialect()),
+        ));
+        let rows = sqlx::query(&select_sql)
+            .bind(now.timestamp())
+            .bind(limit.max(1))
+            .fetch_all(&mut *tx)
+            .await?;
+
+        let firing_sql = self.render(&queries::insert_ignore(
+            self.dialect(),
+            "pipeline_trigger_firings",
+            "id, trigger_id, fire_key, scheduler_id, created_at",
+            "?, ?, ?, ?, ?",
+            "trigger_id, fire_key",
+            None,
+        ));
+        let update_next_sql = self
+            .render("UPDATE pipeline_triggers SET next_execution = ?, updated_at = ? WHERE id = ?");
+
+        let mut runs = Vec::new();
+        for row in rows {
+            let mut trigger = mappers::row_to_pipeline_trigger(&row);
+            let Some(trigger_id) = trigger.id else {
+                continue;
+            };
+            let cron_schedule = trigger
+                .configuration
+                .get("cron")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+
+            if trigger.next_execution.is_none() {
+                trigger.next_execution = Some(next_execution_for_cron(cron_schedule, now)?);
+                sqlx::query(&update_next_sql)
+                    .bind(trigger.next_execution.map(|dt| dt.timestamp()))
+                    .bind(now.timestamp())
+                    .bind(trigger_id)
+                    .execute(&mut *tx)
+                    .await?;
+                continue;
+            }
+
+            if is_pipeline_trigger_in_blackout(&trigger, now) {
+                if let Some(end) = trigger.blackout_end {
+                    sqlx::query(&update_next_sql)
+                        .bind(end.timestamp())
+                        .bind(now.timestamp())
+                        .bind(trigger_id)
+                        .execute(&mut *tx)
+                        .await?;
+                }
+                continue;
+            }
+
+            let fire_key = trigger
+                .next_execution
+                .map(|dt| dt.timestamp().to_string())
+                .unwrap_or_else(|| "initial".into());
+            let insert = sqlx::query(&firing_sql)
+                .bind(Uuid::now_v7())
+                .bind(trigger_id)
+                .bind(fire_key.as_str())
+                .bind(scheduler_id.as_str())
+                .bind(now.timestamp())
+                .execute(&mut *tx)
+                .await?;
+            if insert.affected() == 0 {
+                continue;
+            }
+
+            let pipeline_row = sqlx::query(&self.render(&format!(
+                "SELECT {PIPELINE_COLUMNS} FROM pipelines WHERE id = ?"
+            )))
+            .bind(trigger.pipeline_id)
+            .fetch_one(&mut *tx)
+            .await?;
+            let pipeline_snapshot = mappers::row_to_pipeline(&pipeline_row);
+            let new_run_id = Uuid::now_v7();
+            let snapshot_json = serde_json::to_string(&pipeline_snapshot)?;
+            let parameters = pipeline_trigger_parameters(&trigger).to_string();
+            let state = pipeline_trigger_state(&trigger).to_string();
+            let run_row = if self.dialect() == SqlDialect::MySql {
+                sqlx::query(&self.render(
+                    "INSERT INTO pipeline_runs (id, pipeline_id, pipeline_snapshot, status, parameters, state, created_at, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)",
+                ))
+                .bind(new_run_id)
+                .bind(trigger.pipeline_id)
+                .bind(&snapshot_json)
+                .bind(WorkflowStatus::Queued.as_str())
+                .bind(&parameters)
+                .bind(&state)
+                .bind(now.timestamp())
+                .bind("cron")
+                .bind("replica")
+                .bind(scheduler_id.as_str())
+                .bind(trigger.metadata.to_string())
+                .execute(&mut *tx)
+                .await?;
+                sqlx::query(&self.render(&format!(
+                    "SELECT {PIPELINE_RUN_COLUMNS} FROM pipeline_runs WHERE id = ?"
+                )))
+                .bind(new_run_id)
+                .fetch_one(&mut *tx)
+                .await?
+            } else {
+                sqlx::query(&self.render(&format!(
+                    "INSERT INTO pipeline_runs (id, pipeline_id, pipeline_snapshot, status, parameters, state, created_at, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_metadata)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+                     RETURNING {PIPELINE_RUN_COLUMNS}",
+                )))
+                .bind(new_run_id)
+                .bind(trigger.pipeline_id)
+                .bind(&snapshot_json)
+                .bind(WorkflowStatus::Queued.as_str())
+                .bind(&parameters)
+                .bind(&state)
+                .bind(now.timestamp())
+                .bind("cron")
+                .bind("replica")
+                .bind(scheduler_id.as_str())
+                .bind(trigger.metadata.to_string())
+                .fetch_one(&mut *tx)
+                .await?
+            };
+            let run = mappers::row_to_pipeline_run(&run_row);
+
+            sqlx::query(&self.render("UPDATE pipeline_trigger_firings SET pipeline_run_id = ? WHERE trigger_id = ? AND fire_key = ?"))
+                .bind(run.id)
+                .bind(trigger_id)
+                .bind(fire_key.as_str())
+                .execute(&mut *tx)
+                .await?;
+
+            let next_execution = next_execution_for_cron(cron_schedule, now)?;
+            sqlx::query(&update_next_sql)
+                .bind(next_execution.timestamp())
+                .bind(now.timestamp())
+                .bind(trigger_id)
+                .execute(&mut *tx)
+                .await?;
+            runs.push(run);
+        }
+
+        tx.commit().await?;
+        Ok(runs)
+    }
+
+    async fn try_record_pipeline_trigger_firing(
+        &self,
+        trigger_id: Uuid,
+        fire_key: String,
+    ) -> Result<bool, SendableError> {
+        let firing_sql = self.render(&queries::insert_ignore(
+            self.dialect(),
+            "pipeline_trigger_firings",
+            "id, trigger_id, fire_key, scheduler_id, created_at",
+            "?, ?, ?, ?, ?",
+            "trigger_id, fire_key",
+            None,
+        ));
+        let insert = sqlx::query(&firing_sql)
+            .bind(Uuid::now_v7())
+            .bind(trigger_id)
+            .bind(fire_key.as_str())
+            .bind("chained")
+            .bind(Utc::now().timestamp())
+            .execute(self.pool())
+            .await?;
+        Ok(insert.affected() > 0)
+    }
+
+    async fn create_pipeline_run(
+        &self,
+        pipeline_id: Uuid,
+        pipeline_snapshot: Pipeline,
+        parameters: Value,
+        state: Value,
+        provenance: WorkflowRunProvenance,
+    ) -> Result<PipelineRun, SendableError> {
+        let id = Uuid::now_v7();
+        let created_at = Utc::now().timestamp();
+        let snapshot_json = serde_json::to_string(&pipeline_snapshot)?;
+        let source_kind = provenance.source_kind.map(|v| v.as_str().to_string());
+        let actor_type = provenance.actor_type.map(|v| v.as_str().to_string());
+        if self.dialect() == SqlDialect::MySql {
+            let mut conn = self.pool().acquire().await?;
+            sqlx::query(&self.render(
+                "INSERT INTO pipeline_runs (id, pipeline_id, pipeline_snapshot, status, parameters, state, created_at, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ))
+            .bind(id)
+            .bind(pipeline_id)
+            .bind(&snapshot_json)
+            .bind(WorkflowStatus::Queued.as_str())
+            .bind(parameters.to_string())
+            .bind(state.to_string())
+            .bind(created_at)
+            .bind(source_kind)
+            .bind(actor_type)
+            .bind(provenance.actor_replica_id)
+            .bind(provenance.actor_display_name)
+            .bind(provenance.metadata.to_string())
+            .execute(&mut *conn)
+            .await?;
+            let row = sqlx::query(&self.render(&format!(
+                "SELECT {PIPELINE_RUN_COLUMNS} FROM pipeline_runs WHERE id = ?"
+            )))
+            .bind(id)
+            .fetch_one(&mut *conn)
+            .await?;
+            return Ok(mappers::row_to_pipeline_run(&row));
+        }
+        let row = sqlx::query(&self.render(&format!(
+            "INSERT INTO pipeline_runs (id, pipeline_id, pipeline_snapshot, status, parameters, state, created_at, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_metadata)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             RETURNING {PIPELINE_RUN_COLUMNS}",
+        )))
+        .bind(id)
+        .bind(pipeline_id)
+        .bind(serde_json::to_string(&pipeline_snapshot)?)
+        .bind(WorkflowStatus::Queued.as_str())
+        .bind(parameters.to_string())
+        .bind(state.to_string())
+        .bind(created_at)
+        .bind(source_kind)
+        .bind(actor_type)
+        .bind(provenance.actor_replica_id)
+        .bind(provenance.actor_display_name)
+        .bind(provenance.metadata.to_string())
+        .fetch_one(self.pool())
+        .await?;
+        Ok(mappers::row_to_pipeline_run(&row))
+    }
+
+    async fn fetch_pipeline_run(
+        &self,
+        pipeline_run_id: Uuid,
+    ) -> Result<Option<PipelineRun>, SendableError> {
+        let row = sqlx::query(&self.render(&format!(
+            "SELECT {PIPELINE_RUN_COLUMNS} FROM pipeline_runs WHERE id = ?"
+        )))
+        .bind(pipeline_run_id)
+        .fetch_optional(self.pool())
+        .await?;
+        Ok(row.map(|row| mappers::row_to_pipeline_run(&row)))
+    }
+
+    async fn fetch_recent_pipeline_runs(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<PipelineRun>, SendableError> {
+        let rows = sqlx::query(&self.render(&format!(
+            "SELECT {PIPELINE_RUN_COLUMNS} FROM pipeline_runs ORDER BY created_at DESC, id DESC LIMIT ?"
+        )))
+        .bind(limit.max(1))
+        .fetch_all(self.pool())
+        .await?;
+        Ok(rows.iter().map(mappers::row_to_pipeline_run).collect())
+    }
+
+    async fn fetch_pipeline_runs_for_pipeline(
+        &self,
+        pipeline_id: Uuid,
+    ) -> Result<Vec<PipelineRun>, SendableError> {
+        let rows = sqlx::query(&self.render(&format!(
+            "SELECT {PIPELINE_RUN_COLUMNS} FROM pipeline_runs WHERE pipeline_id = ? ORDER BY created_at DESC, id DESC"
+        )))
+        .bind(pipeline_id)
+        .fetch_all(self.pool())
+        .await?;
+        Ok(rows.iter().map(mappers::row_to_pipeline_run).collect())
+    }
+
+    async fn update_pipeline_run_status(
+        &self,
+        pipeline_run_id: Uuid,
+        status: WorkflowStatus,
+        state: Option<Value>,
+        message: Option<String>,
+    ) -> Result<(), SendableError> {
+        let now = Utc::now().timestamp();
+        let terminal = status.is_terminal();
+        self.pool()
+            .execute(
+                sqlx::query(&self.render(
+                    "UPDATE pipeline_runs SET status = ?, state = COALESCE(?, state), message = COALESCE(?, message), started_at = CASE WHEN ? = 'running' AND started_at IS NULL THEN ? ELSE started_at END, finished_at = CASE WHEN ? THEN ? ELSE finished_at END WHERE id = ?",
+                ))
+                .bind(status.as_str())
+                .bind(state.map(|value| value.to_string()))
+                .bind(message)
+                .bind(status.as_str())
+                .bind(now)
+                .bind(terminal)
+                .bind(now)
+                .bind(pipeline_run_id),
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn fetch_workflow_runs_for_pipeline_run(
+        &self,
+        pipeline_run_id: Uuid,
+    ) -> Result<Vec<WorkflowRun>, SendableError> {
+        let rows = sqlx::query(&self.render(&format!(
+            "SELECT {WORKFLOW_RUN_COLUMNS} FROM workflow_runs WHERE pipeline_run_id = ? ORDER BY created_at, id"
+        )))
+        .bind(pipeline_run_id)
+        .fetch_all(self.pool())
+        .await?;
+        Ok(rows.iter().map(mappers::row_to_workflow_run).collect())
+    }
+
+    async fn set_workflow_run_pipeline_run(
+        &self,
+        workflow_run_id: Uuid,
+        pipeline_run_id: Uuid,
+    ) -> Result<(), SendableError> {
+        self.pool()
+            .execute(
+                sqlx::query(
+                    &self.render("UPDATE workflow_runs SET pipeline_run_id = ? WHERE id = ?"),
+                )
+                .bind(pipeline_run_id)
+                .bind(workflow_run_id),
+            )
             .await?;
         Ok(())
     }

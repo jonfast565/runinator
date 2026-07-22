@@ -3,7 +3,7 @@
     <thead>
       <tr>
         <th>Run</th>
-        <th v-if="showWorkflow">Workflow</th>
+        <th v-if="showWorkflow">{{ entityLabel ?? "Workflow" }}</th>
         <th>Status</th>
         <th v-if="!compact" class="col-low">Trigger</th>
         <th class="col-low">Created</th>
@@ -46,6 +46,8 @@ const props = defineProps<{
   compact?: boolean;
   showWorkflow?: boolean;
   workflowNames?: Record<string, string>;
+  // header label for the entity column (default "Workflow"); set to "Pipeline" for pipeline runs.
+  entityLabel?: string;
 }>();
 
 defineEmits<{
