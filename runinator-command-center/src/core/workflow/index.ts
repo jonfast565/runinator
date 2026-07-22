@@ -163,7 +163,13 @@ function workflowNodeRunExecutionCount(node: WorkflowRunDetail["nodes"][number])
   return node.status === "queued" ? 0 : 1;
 }
 
-export function buildGraphEdgeModels(workflow: WorkflowDefinition): GraphEdgeModel[] {
+// when `completedNodeIds` is provided (the run graph), an edge animates only
+// while its target node is still incomplete; without it (the editor) every
+// edge animates, matching the pipeline canvas.
+export function buildGraphEdgeModels(
+  workflow: WorkflowDefinition,
+  completedNodeIds?: ReadonlySet<string> | null,
+): GraphEdgeModel[] {
   const definition = workflow.definition;
   const nodes = recordArray(definition.nodes);
   const nodeIds = new Set(nodes.map((node: JsonRecord) => String(node.id)));
@@ -238,7 +244,17 @@ export function buildGraphEdgeModels(workflow: WorkflowDefinition): GraphEdgeMod
     edges.push(...controlFlowEdges(definition, node, nodeIds, issuesByEdge));
   }
 
-  return separateParallelEdges(edges);
+  const separated = separateParallelEdges(edges);
+
+  // freeze the animation on edges whose target has already completed; leave the
+  // rest (incomplete or not-yet-reached) animating to show the live flow.
+  if (completedNodeIds) {
+    for (const edge of separated) {
+      edge.animated = !completedNodeIds.has(edge.target);
+    }
+  }
+
+  return separated;
 }
 
 // predicate edges are only available when the catalog marks a kind as supporting them.
@@ -1846,6 +1862,8 @@ function graphEdge(
     data: { ...data, edgeStyle, labelOffset, labelAnchor },
     updatable: data.editable,
     interactionWidth: 24,
+    // animate the flow direction, matching the pipeline canvas edges.
+    animated: true,
   };
 }
 

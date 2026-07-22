@@ -13,6 +13,27 @@ export function isTerminalWorkflowRunStatus(status?: string) {
   return ["succeeded", "failed", "timed_out", "canceled"].includes(status ?? "");
 }
 
+// a node whose current run has settled: succeeded, failed, or otherwise not
+// still doing work. used to freeze the flow animation on the completed trail.
+// a node not in this set (running/waiting/queued/pending or not yet reached)
+// is treated as incomplete and keeps animating.
+export function isCompletedNodeStatus(status?: unknown) {
+  return (
+    typeof status === "string" &&
+    [
+      "succeeded",
+      "passed",
+      "approved",
+      "failed",
+      "rejected",
+      "timed_out",
+      "canceled",
+      "blocked",
+      "skipped",
+    ].includes(status)
+  );
+}
+
 export function statusBadgeClass(status?: string) {
   if (isBadStatus(status)) {
     return "status-failed";

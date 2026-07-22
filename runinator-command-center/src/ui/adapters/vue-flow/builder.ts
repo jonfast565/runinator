@@ -33,6 +33,9 @@ export function buildGraphNodes(
   return buildGraphNodeModels(workflow, detail, subflowNames, providers).map(toVueFlowNode);
 }
 
-export function buildGraphEdges(workflow: WorkflowDefinition): Edge[] {
-  return buildGraphEdgeModels(workflow).map(toVueFlowEdge);
+export function buildGraphEdges(
+  workflow: WorkflowDefinition,
+  completedNodeIds?: ReadonlySet<string> | null,
+): Edge[] {
+  return buildGraphEdgeModels(workflow, completedNodeIds).map(toVueFlowEdge);
 }

@@ -45,6 +45,7 @@ import { workflowNodeKindsList } from "../../../../core/workflow";
 import { useAppStore } from "../app";
 import { useProvidersStore } from "../providers";
 import { buildGraphEdges, buildGraphNodes } from "../../vue-flow/builder";
+import { isCompletedNodeStatus } from "../../../../core/utils/status";
 import { mirrorServiceState } from "../sync";
 
 export { buildInputSkeleton, newWorkflowDraft, newWorkflowTriggerDraft } from "../../../../core/workflow/editor-defaults";
@@ -257,9 +258,26 @@ export const useWorkflowsStore = defineStore("workflows", () => {
       },
     }));
   });
-  const runGraphEdges = computed((): Edge[] =>
-    workflowRunWorkflow.value ? buildGraphEdges(workflowRunWorkflow.value) : [],
-  );
+  const runGraphEdges = computed((): Edge[] => {
+    if (!workflowRunWorkflow.value) {
+      return [];
+    }
+
+    // derive completed nodes from the same status the node cards render, so an
+    // edge freezes exactly when its target card stops looking active. a node
+    // revisited in a cycle flips back to running and re-animates on the next tick.
+    const completed = new Set<string>();
+
+    for (const node of runGraphNodes.value) {
+      const data = node.data as JsonRecord | undefined;
+
+      if (isCompletedNodeStatus(data?.status) || data?.skipped === true) {
+        completed.add(node.id);
+      }
+    }
+
+    return buildGraphEdges(workflowRunWorkflow.value, completed);
+  });
   const selectedNode = mirroredComputed((): JsonRecord | null => svc.getSelectedNode());
   const selectedGraphEdge = computed(
     () => graphEdges.value.find((edge: Edge) => edge.id === state.value.selectedGraphEdgeId) ?? null,
