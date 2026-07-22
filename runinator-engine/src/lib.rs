@@ -25,7 +25,7 @@ pub mod orchestration {
 }
 
 pub use engine::run_background_engine;
-pub use events::{AppEvent, EnginePublisher, EventSender};
+pub use events::{AppEvent, AppEventKind, EnginePublisher, EventSender};
 
 // exposed so the web service can reuse the same result-consumer policy/loop in-process.
 pub use result_consumer::{

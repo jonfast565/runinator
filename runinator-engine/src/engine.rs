@@ -48,6 +48,7 @@ pub async fn run_background_engine<T: DatabaseImpl>(
     loops.spawn(run_wake_publisher(
         pool.clone(),
         broker.clone(),
+        publisher.wake_nudge(),
         shutdown.clone(),
     ));
     loops.spawn(run_trigger_loop(
@@ -60,6 +61,7 @@ pub async fn run_background_engine<T: DatabaseImpl>(
         pool.clone(),
         broker.clone(),
         instance.clone(),
+        publisher.action_nudge(),
         shutdown.clone(),
     ));
     loops.spawn(run_replica_reaper(pool.clone(), shutdown.clone()));

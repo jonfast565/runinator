@@ -35,7 +35,7 @@ pub(crate) mod result_consumer {
 }
 
 pub use auth::AuthOptions;
-pub use events::{AppEvent, EventSender};
+pub use events::{AppEvent, AppEventKind, EventSender};
 pub use overload::OverloadConfig;
 pub use rate_limit::RateLimitConfig;
 pub use router::build_router;

@@ -22,7 +22,8 @@ use serde::Serialize;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
-use crate::events::{AppEvent, EventSender};
+use crate::authz;
+use crate::events::{AppEventKind, EventSender};
 use crate::models;
 use crate::repository;
 
@@ -105,6 +106,7 @@ pub(crate) fn merge_json(
 
 pub(crate) async fn ws_events(
     Extension(events): Extension<EventSender>,
+    Extension(ctx): Extension<AuthContext>,
     ws: WebSocketUpgrade,
 ) -> Response {
     log::info!("WebSocket upgrade request for /ws/events");
@@ -117,6 +119,10 @@ pub(crate) async fn ws_events(
                 event = rx.recv() => {
                     match event {
                         Ok(event) => {
+                            // org-scoped egress: drop cross-tenant hints; unscoped events stay visible.
+                            if !authz::org_visible(&ctx, event.org_id) {
+                                continue;
+                            }
                             if send_json(&mut tx, &event).await.is_err() {
                                 log::warn!("Failed to send event to WebSocket, closing connection");
                                 break;
@@ -166,6 +172,7 @@ pub(crate) async fn ws_events(
 pub(crate) async fn ws_workflow_run<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
+    Extension(ctx): Extension<AuthContext>,
     Path(run_id): Path<Uuid>,
     ws: WebSocketUpgrade,
 ) -> Response {
@@ -183,8 +190,12 @@ pub(crate) async fn ws_workflow_run<T: DatabaseImpl>(
                 event = event_rx.recv() => {
                     match event {
                         Ok(event) => {
-                            let relevant = matches!(&event,
-                                AppEvent::WorkflowRunChanged { run_id: id } if *id == run_id
+                            if !authz::org_visible(&ctx, event.org_id) {
+                                continue;
+                            }
+                            let relevant = matches!(
+                                &event.kind,
+                                AppEventKind::WorkflowRunChanged { run_id: id } if *id == run_id
                             );
                             if !relevant {
                                 continue;
@@ -219,6 +230,7 @@ pub(crate) async fn ws_workflow_run<T: DatabaseImpl>(
 pub(crate) async fn ws_workflow_node_run_stream<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
+    Extension(ctx): Extension<AuthContext>,
     Path(node_run_id): Path<Uuid>,
     ws: WebSocketUpgrade,
 ) -> Response {
@@ -243,7 +255,8 @@ pub(crate) async fn ws_workflow_node_run_stream<T: DatabaseImpl>(
                 event = event_rx.recv() => {
                     match event {
                         Ok(event) => {
-                            if matches!(&event, AppEvent::WorkflowRunChanged { .. })
+                            if matches!(&event.kind, AppEventKind::WorkflowRunChanged { .. })
+                                && authz::org_visible(&ctx, event.org_id)
                                 && send_workflow_node_run_chunks(db.as_ref(), &mut tx, node_run_id, &mut cursor, 100).await.is_err() {
                                     break;
                                 }
@@ -276,6 +289,7 @@ pub(crate) async fn ws_workflow_node_run_stream<T: DatabaseImpl>(
 pub(crate) async fn ws_run_stream<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
+    Extension(ctx): Extension<AuthContext>,
     Path(run_id): Path<Uuid>,
     ws: WebSocketUpgrade,
 ) -> Response {
@@ -297,8 +311,17 @@ pub(crate) async fn ws_run_stream<T: DatabaseImpl>(
                 event = event_rx.recv() => {
                     match event {
                         Ok(event) => {
-                            let is_chunk = matches!(&event, AppEvent::RunChunkAdded { run_id: id } if *id == run_id);
-                            let is_done = matches!(&event, AppEvent::RunStatusChanged { run_id: id, terminal: true } if *id == run_id);
+                            if !authz::org_visible(&ctx, event.org_id) {
+                                continue;
+                            }
+                            let is_chunk = matches!(
+                                &event.kind,
+                                AppEventKind::RunChunkAdded { run_id: id } if *id == run_id
+                            );
+                            let is_done = matches!(
+                                &event.kind,
+                                AppEventKind::RunStatusChanged { run_id: id, terminal: true } if *id == run_id
+                            );
                             if is_chunk || is_done {
                                 if send_run_chunks(db.as_ref(), &mut tx, run_id, &mut cursor, 100).await.is_err() {
                                     break;

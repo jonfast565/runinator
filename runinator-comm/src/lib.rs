@@ -264,10 +264,40 @@ impl DebugCommand {
 
 /// a live UI hint fanned out to every web-service replica so connected WebSocket clients refetch.
 /// best-effort: a dropped event at worst leaves a panel briefly stale until the next event. carried
-/// on the broker fan-out `events` channel (every ws pod receives every event).
+/// on the broker fan-out `events` channel (every ws pod receives every event); each replica may then
+/// drop events at WebSocket egress when [`Self::org_id`] does not match the caller's active org.
+///
+/// wire shape keeps the historical tagged `type` field via flatten, with an optional sibling
+/// `org_id`. older publishers that omit `org_id` deserialize as unscoped (`None`) and remain
+/// visible to every client during the rollout phase.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiEvent {
+    /// when set, ws egress delivers only to platform admins and clients whose active org matches.
+    /// when absent, the event is treated as global (visible to every connected client).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub org_id: Option<Uuid>,
+    #[serde(flatten)]
+    pub kind: UiEventKind,
+}
+
+impl UiEvent {
+    pub fn new(org_id: Option<Uuid>, kind: UiEventKind) -> Self {
+        Self { org_id, kind }
+    }
+
+    /// unscoped / platform-global hint.
+    pub fn global(kind: UiEventKind) -> Self {
+        Self::new(None, kind)
+    }
+
+    pub fn for_org(org_id: Uuid, kind: UiEventKind) -> Self {
+        Self::new(Some(org_id), kind)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum UiEvent {
+pub enum UiEventKind {
     RunStatusChanged { run_id: Uuid, terminal: bool },
     RunChunkAdded { run_id: Uuid },
     WorkflowsChanged,

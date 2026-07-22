@@ -43,6 +43,9 @@ const WORKFLOW_WDL_SYNC_DELAY_MS = 1500;
 const MAX_OPEN_RUN_TABS = 8;
 const WATCH_STORAGE_PREFIX = "runinator.watch.";
 const RECENT_RUNS_REFRESH_DEBOUNCE_MS = 300;
+// worker status/chunk events often arrive in bursts; coalesce detail refetches so the UI tracks the
+// latest node status without stampeding /workflow_runs/:id on every broker result.
+const WORKFLOW_RUN_DETAIL_REFRESH_DEBOUNCE_MS = 75;
 
 export function createWorkflowRunService(host: WorkflowServiceHost) {
   const { deps, internal } = host;
@@ -578,6 +581,53 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     }, RECENT_RUNS_REFRESH_DEBOUNCE_MS);
   }
 
+  // event-stream-driven detail refresh: trailing debounce + in-flight re-arm so a burst of
+  // workflow_run_changed (drive + worker Running + chunks + terminal) collapses to one fetch of the
+  // latest state. manual/user actions still call fetchWorkflowRunDetail directly.
+  const detailRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const detailRefreshing = new Set<string>();
+  const detailRefreshQueued = new Set<string>();
+
+  async function runCoalescedDetailRefresh(runId: string) {
+    if (detailRefreshing.has(runId)) {
+      detailRefreshQueued.add(runId);
+      return;
+    }
+
+    detailRefreshing.add(runId);
+
+    try {
+      await fetchWorkflowRunDetail(runId, true);
+    } finally {
+      detailRefreshing.delete(runId);
+
+      if (detailRefreshQueued.has(runId)) {
+        detailRefreshQueued.delete(runId);
+        scheduleWorkflowRunDetailRefresh(runId);
+      }
+    }
+  }
+
+  function scheduleWorkflowRunDetailRefresh(runId: string) {
+    if (!runId) {
+      return;
+    }
+
+    const existing = detailRefreshTimers.get(runId);
+
+    if (existing) {
+      clearTimeout(existing);
+    }
+
+    detailRefreshTimers.set(
+      runId,
+      setTimeout(() => {
+        detailRefreshTimers.delete(runId);
+        void runCoalescedDetailRefresh(runId);
+      }, WORKFLOW_RUN_DETAIL_REFRESH_DEBOUNCE_MS),
+    );
+  }
+
   async function selectWorkflowRun(run: RunSummary) {
     openRunInTab(run.id);
     activateRunTab(run.id);
@@ -964,5 +1014,5 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     host.notify();
   }
 
-  return { isBreakpointed, getTransition, setTransition, runSelectedWorkflow, runSelectedWorkflowDebug, closeRunInput, confirmRunInput, launchWorkflowRun, stepSelectedWorkflowRun, continueSelectedWorkflowRun, cancelSelectedWorkflowRun, pauseSelectedWorkflowRun, resumeSelectedWorkflowRun, patchSelectedWorkflowRunDebug, toggleBreakpoint, runToCursor, skipCurrentNode, rerunCurrentNode, replaySelectedWorkflowRun, renameSelectedWorkflowRun, loadAllWatchExpressions, persistWatchExpressions, addWatchExpression, removeWatchExpression, fetchWorkflowRunsForSelected, fetchRecentWorkflowRuns, scheduleRecentWorkflowRunsRefresh, selectWorkflowRun, openRunInTab, activateRunTab, closeRunTab, fetchWorkflowRunDetail, setWorkflowRunDetail, selectWorkflowRunNode, clearWorkflowRunGates, workflowRunGateIds, workflowRunGateFingerprintForDetail, refreshWorkflowRunGates, syncWorkflowRunGatesForDetail, resolveWorkflowRunGate, applyWorkflowRunDetail, reapplyPendingBreakpointPatch, confirmPendingBreakpointPatch, clearPendingBreakpointPatch, applyBreakpointPatch, readBreakpoints, sameBreakpoints, updateSelectedWorkflowNodeDetail };
+  return { isBreakpointed, getTransition, setTransition, runSelectedWorkflow, runSelectedWorkflowDebug, closeRunInput, confirmRunInput, launchWorkflowRun, stepSelectedWorkflowRun, continueSelectedWorkflowRun, cancelSelectedWorkflowRun, pauseSelectedWorkflowRun, resumeSelectedWorkflowRun, patchSelectedWorkflowRunDebug, toggleBreakpoint, runToCursor, skipCurrentNode, rerunCurrentNode, replaySelectedWorkflowRun, renameSelectedWorkflowRun, loadAllWatchExpressions, persistWatchExpressions, addWatchExpression, removeWatchExpression, fetchWorkflowRunsForSelected, fetchRecentWorkflowRuns, scheduleRecentWorkflowRunsRefresh, scheduleWorkflowRunDetailRefresh, selectWorkflowRun, openRunInTab, activateRunTab, closeRunTab, fetchWorkflowRunDetail, setWorkflowRunDetail, selectWorkflowRunNode, clearWorkflowRunGates, workflowRunGateIds, workflowRunGateFingerprintForDetail, refreshWorkflowRunGates, syncWorkflowRunGatesForDetail, resolveWorkflowRunGate, applyWorkflowRunDetail, reapplyPendingBreakpointPatch, confirmPendingBreakpointPatch, clearPendingBreakpointPatch, applyBreakpointPatch, readBreakpoints, sameBreakpoints, updateSelectedWorkflowNodeDetail };
 }

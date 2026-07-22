@@ -15,7 +15,7 @@ use runinator_models::{
 use serde::Deserialize;
 use utoipa::IntoParams;
 
-use crate::events::{AppEvent, EventSender, emit};
+use crate::events::{EventSender, emit_workflows_changed};
 use crate::handlers::credentials::import_secret_entries_with;
 use crate::handlers::workflows::{
     json_workflow_import_risk_acknowledged, json_workflow_import_risk_required,
@@ -99,7 +99,7 @@ pub(crate) async fn import_pack<T: DatabaseImpl>(
                 Ok(bundle) => bundle,
                 Err(err) => return api_error(err.to_string()),
             };
-        emit(&events, AppEvent::WorkflowsChanged);
+        emit_workflows_changed(&events, import_org);
         return (
             StatusCode::OK,
             Json(ApiResponse::PackImport(PackImportResult {
@@ -160,7 +160,7 @@ pub(crate) async fn import_pack<T: DatabaseImpl>(
     if let Some(bundle) = &pipeline_bundle {
         log::info!("Imported {} pipelines from pack", bundle.pipelines.len());
     }
-    emit(&events, AppEvent::WorkflowsChanged);
+    emit_workflows_changed(&events, import_org);
     (
         StatusCode::OK,
         Json(ApiResponse::PackImport(PackImportResult {

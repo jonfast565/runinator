@@ -9,7 +9,10 @@ use runinator_models::{
 };
 
 use crate::authz;
-use crate::events::{AppEvent, EventSender, emit, emit_pipeline_run};
+use crate::events::{
+    AppEvent, AppEventKind, EventSender, emit, emit_pipeline_run, emit_workflows_changed,
+    nudge_wake_publisher,
+};
 use crate::models::{ApiResponse, PipelineOwnerRequest, PipelineRunRequest};
 use crate::repository;
 use crate::responses::{api_error, not_found};
@@ -75,7 +78,7 @@ pub(crate) async fn create_pipeline<T: DatabaseImpl>(
             if let Some(id) = pipeline.id {
                 authz::grant_pipeline_owner(db.as_ref(), &ctx, id).await;
             }
-            emit(&events, AppEvent::WorkflowsChanged);
+            emit_workflows_changed(&events, pipeline.org_id);
             (StatusCode::OK, Json(ApiResponse::Pipeline(pipeline)))
         }
         Err(err) => api_error(err.to_string()),
@@ -103,7 +106,7 @@ pub(crate) async fn update_pipeline<T: DatabaseImpl>(
     };
     match repository::upsert_pipeline(db.as_ref(), &pipeline).await {
         Ok(pipeline) => {
-            emit(&events, AppEvent::WorkflowsChanged);
+            emit_workflows_changed(&events, pipeline.org_id);
             (StatusCode::OK, Json(ApiResponse::Pipeline(pipeline)))
         }
         Err(err) => api_error(err.to_string()),
@@ -131,7 +134,7 @@ pub(crate) async fn set_pipeline_owner<T: DatabaseImpl>(
     }
     match repository::set_pipeline_org(db.as_ref(), pipeline_id, request.org_id).await {
         Ok(()) => {
-            emit(&events, AppEvent::WorkflowsChanged);
+            emit_workflows_changed(&events, request.org_id);
             match repository::fetch_pipeline(db.as_ref(), pipeline_id).await {
                 Ok(Some(pipeline)) => (StatusCode::OK, Json(ApiResponse::Pipeline(pipeline))),
                 Ok(None) => not_found(format!("Pipeline {pipeline_id} not found")),
@@ -153,9 +156,14 @@ pub(crate) async fn delete_pipeline<T: DatabaseImpl>(
     {
         return reply;
     }
+    let org_id = match repository::fetch_pipeline(db.as_ref(), pipeline_id).await {
+        Ok(Some(pipeline)) => pipeline.org_id.or(ctx.org_id),
+        Ok(None) => ctx.org_id,
+        Err(_) => ctx.org_id,
+    };
     match repository::delete_pipeline(db.as_ref(), pipeline_id).await {
         Ok(resp) => {
-            emit(&events, AppEvent::WorkflowsChanged);
+            emit_workflows_changed(&events, org_id);
             (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
         }
         Err(err) => api_error(err.to_string()),
@@ -198,7 +206,8 @@ pub(crate) async fn upsert_pipeline_trigger<T: DatabaseImpl>(
     trigger.pipeline_id = pipeline_id;
     match repository::upsert_pipeline_trigger(db.as_ref(), &trigger).await {
         Ok(trigger) => {
-            emit(&events, AppEvent::WorkflowsChanged);
+            let org_id = pipeline_org(db.as_ref(), pipeline_id, ctx.org_id).await;
+            emit_workflows_changed(&events, org_id);
             (StatusCode::OK, Json(ApiResponse::PipelineTrigger(trigger)))
         }
         Err(err) => api_error(err.to_string()),
@@ -220,7 +229,8 @@ pub(crate) async fn update_pipeline_trigger<T: DatabaseImpl>(
     trigger.id = Some(trigger_id);
     match repository::upsert_pipeline_trigger(db.as_ref(), &trigger).await {
         Ok(trigger) => {
-            emit(&events, AppEvent::WorkflowsChanged);
+            let org_id = pipeline_org(db.as_ref(), trigger.pipeline_id, ctx.org_id).await;
+            emit_workflows_changed(&events, org_id);
             (StatusCode::OK, Json(ApiResponse::PipelineTrigger(trigger)))
         }
         Err(err) => api_error(err.to_string()),
@@ -238,9 +248,13 @@ pub(crate) async fn delete_pipeline_trigger<T: DatabaseImpl>(
     {
         return reply;
     }
+    let org_id = match repository::fetch_pipeline_trigger(db.as_ref(), trigger_id).await {
+        Ok(Some(trigger)) => pipeline_org(db.as_ref(), trigger.pipeline_id, ctx.org_id).await,
+        _ => ctx.org_id,
+    };
     match repository::delete_pipeline_trigger(db.as_ref(), trigger_id).await {
         Ok(resp) => {
-            emit(&events, AppEvent::WorkflowsChanged);
+            emit_workflows_changed(&events, org_id);
             (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
         }
         Err(err) => api_error(err.to_string()),
@@ -271,8 +285,13 @@ pub(crate) async fn create_pipeline_run<T: DatabaseImpl>(
     .await
     {
         Ok(run) => {
-            emit_pipeline_run(&events, run.id);
-            emit(&events, AppEvent::PipelineRunActivity);
+            let org_id = repository::org_id_for_pipeline_run(db.as_ref(), run.id).await;
+            emit_pipeline_run(&events, run.id, org_id);
+            emit(
+                &events,
+                AppEvent::new(org_id, AppEventKind::PipelineRunActivity),
+            );
+            nudge_wake_publisher(&events);
             (StatusCode::ACCEPTED, Json(ApiResponse::PipelineRun(run)))
         }
         Err(err) => api_error(err.to_string()),
@@ -301,8 +320,13 @@ pub(crate) async fn create_pipeline_trigger_run<T: DatabaseImpl>(
     .await
     {
         Ok(run) => {
-            emit_pipeline_run(&events, run.id);
-            emit(&events, AppEvent::PipelineRunActivity);
+            let org_id = repository::org_id_for_pipeline_run(db.as_ref(), run.id).await;
+            emit_pipeline_run(&events, run.id, org_id);
+            emit(
+                &events,
+                AppEvent::new(org_id, AppEventKind::PipelineRunActivity),
+            );
+            nudge_wake_publisher(&events);
             (StatusCode::ACCEPTED, Json(ApiResponse::PipelineRun(run)))
         }
         Err(err) => api_error(err.to_string()),
@@ -359,10 +383,25 @@ pub(crate) async fn cancel_pipeline_run<T: DatabaseImpl>(
     }
     match repository::cancel_pipeline_run(db.as_ref(), pipeline_run_id).await {
         Ok(resp) => {
-            emit_pipeline_run(&events, pipeline_run_id);
-            emit(&events, AppEvent::PipelineRunActivity);
+            let org_id = repository::org_id_for_pipeline_run(db.as_ref(), pipeline_run_id).await;
+            emit_pipeline_run(&events, pipeline_run_id, org_id);
+            emit(
+                &events,
+                AppEvent::new(org_id, AppEventKind::PipelineRunActivity),
+            );
             (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
         }
         Err(err) => api_error(err.to_string()),
+    }
+}
+
+async fn pipeline_org<T: DatabaseImpl>(
+    db: &T,
+    pipeline_id: Uuid,
+    fallback: Option<Uuid>,
+) -> Option<Uuid> {
+    match repository::fetch_pipeline(db, pipeline_id).await {
+        Ok(Some(pipeline)) => pipeline.org_id.or(fallback),
+        _ => fallback,
     }
 }

@@ -611,6 +611,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     fetchWorkflowRunsForSelected: svc.runs.fetchWorkflowRunsForSelected,
     fetchRecentWorkflowRuns: svc.runs.fetchRecentWorkflowRuns,
     scheduleRecentWorkflowRunsRefresh: svc.runs.scheduleRecentWorkflowRunsRefresh,
+    scheduleWorkflowRunDetailRefresh: svc.runs.scheduleWorkflowRunDetailRefresh,
     selectWorkflowRun: svc.runs.selectWorkflowRun,
     fetchWorkflowRunDetail: svc.runs.fetchWorkflowRunDetail,
     refreshWorkflowRunGates: svc.runs.refreshWorkflowRunGates,

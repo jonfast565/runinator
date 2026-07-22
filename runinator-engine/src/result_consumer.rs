@@ -149,6 +149,8 @@ pub async fn run_result_consumer_with_policy<T: DatabaseImpl>(
                     stability::result_event_applied(applied);
                     attempts.remove(&delivery.event.event_id);
                     emit_workflow_node_run(db.as_ref(), &events, node_run_id).await;
+                    // applying a result often enqueues the next ready node for drive.
+                    events.nudge_wake_publisher();
                     if let Err(err) = broker
                         .ack_result(RESULT_CONSUMER_ID, delivery.delivery_id)
                         .await

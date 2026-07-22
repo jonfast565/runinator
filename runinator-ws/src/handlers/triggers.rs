@@ -9,7 +9,7 @@ use runinator_models::{
 };
 
 use crate::authz;
-use crate::events::{AppEvent, EventSender, emit};
+use crate::events::{EventSender, emit_workflows_changed};
 use crate::models::{ApiResponse, SchedulerTriggerClaimRequest};
 use crate::repository;
 use crate::responses::{api_error, not_found};
@@ -29,7 +29,8 @@ pub(crate) async fn upsert_workflow_trigger<T: DatabaseImpl>(
     trigger.workflow_id = workflow_id;
     match repository::upsert_workflow_trigger(db.as_ref(), &trigger).await {
         Ok(trigger) => {
-            emit(&events, AppEvent::WorkflowsChanged);
+            let org_id = workflow_org(db.as_ref(), workflow_id, ctx.org_id).await;
+            emit_workflows_changed(&events, org_id);
             (StatusCode::OK, Json(ApiResponse::WorkflowTrigger(trigger)))
         }
         Err(err) => api_error(err.to_string()),
@@ -51,7 +52,8 @@ pub(crate) async fn update_workflow_trigger<T: DatabaseImpl>(
     trigger.id = Some(trigger_id);
     match repository::upsert_workflow_trigger(db.as_ref(), &trigger).await {
         Ok(trigger) => {
-            emit(&events, AppEvent::WorkflowsChanged);
+            let org_id = workflow_org(db.as_ref(), trigger.workflow_id, ctx.org_id).await;
+            emit_workflows_changed(&events, org_id);
             (StatusCode::OK, Json(ApiResponse::WorkflowTrigger(trigger)))
         }
         Err(err) => api_error(err.to_string()),
@@ -141,11 +143,26 @@ pub(crate) async fn delete_workflow_trigger<T: DatabaseImpl>(
     {
         return reply;
     }
+    let org_id = match repository::fetch_workflow_trigger(db.as_ref(), trigger_id).await {
+        Ok(Some(trigger)) => workflow_org(db.as_ref(), trigger.workflow_id, ctx.org_id).await,
+        _ => ctx.org_id,
+    };
     match repository::delete_workflow_trigger(db.as_ref(), trigger_id).await {
         Ok(resp) => {
-            emit(&events, AppEvent::WorkflowsChanged);
+            emit_workflows_changed(&events, org_id);
             (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
         }
         Err(err) => api_error(err.to_string()),
+    }
+}
+
+async fn workflow_org<T: DatabaseImpl>(
+    db: &T,
+    workflow_id: Uuid,
+    fallback: Option<Uuid>,
+) -> Option<Uuid> {
+    match repository::fetch_workflow(db, workflow_id).await {
+        Ok(Some(workflow)) => workflow.org_id.or(fallback),
+        _ => fallback,
     }
 }

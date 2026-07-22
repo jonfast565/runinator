@@ -13,7 +13,10 @@ use runinator_models::replicas::{TriggerActorType, TriggerSourceKind, WorkflowRu
 use runinator_models::runs::NewRunChunk;
 use serde::Deserialize;
 
-use crate::events::{AppEvent, EventSender, emit, emit_task_run, emit_workflow_run};
+use crate::events::{
+    AppEvent, AppEventKind, EventSender, emit, emit_task_run, emit_workflow_run,
+    nudge_wake_publisher,
+};
 use crate::models::{
     self, ApiResponse, RunStatusQuery, RunStatusRequest, SchedulerRunClaimReleaseRequest,
     SchedulerRunClaimRenewRequest, SchedulerRunClaimRequest, TaskResponseSchema,
@@ -59,7 +62,9 @@ pub(crate) async fn create_workflow_trigger_run<T: DatabaseImpl>(
     .await
     {
         Ok(run) => {
-            emit_workflow_run(&events, run.id);
+            let org_id = repository::org_id_for_workflow_run(db.as_ref(), run.id).await;
+            emit_workflow_run(&events, run.id, org_id);
+            nudge_wake_publisher(&events);
             (
                 StatusCode::ACCEPTED,
                 Json(ApiResponse::WorkflowRun(models::WorkflowRunResponse {
@@ -107,7 +112,9 @@ pub(crate) async fn create_workflow_run<T: DatabaseImpl>(
     .await
     {
         Ok(run) => {
-            emit_workflow_run(&events, run.id);
+            let org_id = repository::org_id_for_workflow_run(db.as_ref(), run.id).await;
+            emit_workflow_run(&events, run.id, org_id);
+            nudge_wake_publisher(&events);
             (
                 StatusCode::ACCEPTED,
                 Json(ApiResponse::WorkflowRun(models::WorkflowRunResponse {
@@ -328,12 +335,8 @@ pub(crate) async fn cancel_workflow_run<T: DatabaseImpl>(
     }
     match repository::cancel_workflow_run(db.as_ref(), broker.as_ref(), workflow_run_id).await {
         Ok(resp) => {
-            emit(
-                &events,
-                AppEvent::WorkflowRunChanged {
-                    run_id: workflow_run_id,
-                },
-            );
+            let org_id = repository::org_id_for_workflow_run(db.as_ref(), workflow_run_id).await;
+            emit_workflow_run(&events, workflow_run_id, org_id);
             (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
         }
         Err(err) => bad_request(err.to_string()),
@@ -369,12 +372,8 @@ pub(crate) async fn pause_workflow_run<T: DatabaseImpl>(
     }
     match repository::pause_workflow_run(db.as_ref(), workflow_run_id).await {
         Ok(resp) => {
-            emit(
-                &events,
-                AppEvent::WorkflowRunChanged {
-                    run_id: workflow_run_id,
-                },
-            );
+            let org_id = repository::org_id_for_workflow_run(db.as_ref(), workflow_run_id).await;
+            emit_workflow_run(&events, workflow_run_id, org_id);
             (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
         }
         Err(err) => bad_request(err.to_string()),
@@ -410,12 +409,8 @@ pub(crate) async fn resume_workflow_run<T: DatabaseImpl>(
     }
     match repository::resume_workflow_run(db.as_ref(), workflow_run_id).await {
         Ok(resp) => {
-            emit(
-                &events,
-                AppEvent::WorkflowRunChanged {
-                    run_id: workflow_run_id,
-                },
-            );
+            let org_id = repository::org_id_for_workflow_run(db.as_ref(), workflow_run_id).await;
+            emit_workflow_run(&events, workflow_run_id, org_id);
             (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
         }
         Err(err) => bad_request(err.to_string()),
@@ -454,7 +449,8 @@ pub(crate) async fn replay_workflow_run<T: DatabaseImpl>(
     let from_step_id = body.and_then(|Json(request)| request.from_step_id);
     match repository::replay_workflow_run(db.as_ref(), workflow_run_id, from_step_id).await {
         Ok(run) => {
-            emit(&events, AppEvent::WorkflowRunChanged { run_id: run.id });
+            let org_id = repository::org_id_for_workflow_run(db.as_ref(), run.id).await;
+            emit_workflow_run(&events, run.id, org_id);
             (
                 StatusCode::ACCEPTED,
                 Json(ApiResponse::WorkflowRun(models::WorkflowRunResponse {
@@ -488,12 +484,8 @@ pub(crate) async fn deliver_signal<T: DatabaseImpl>(
         .await
     {
         Ok(response) => {
-            emit(
-                &events,
-                AppEvent::WorkflowRunChanged {
-                    run_id: workflow_run_id,
-                },
-            );
+            let org_id = repository::org_id_for_workflow_run(db.as_ref(), workflow_run_id).await;
+            emit_workflow_run(&events, workflow_run_id, org_id);
             (StatusCode::OK, Json(ApiResponse::TaskResponse(response)))
         }
         Err(err) => bad_request(err.to_string()),
@@ -531,12 +523,8 @@ pub(crate) async fn rename_workflow_run<T: DatabaseImpl>(
     }
     match repository::set_workflow_run_name(db.as_ref(), workflow_run_id, request.name).await {
         Ok(response) => {
-            emit(
-                &events,
-                AppEvent::WorkflowRunChanged {
-                    run_id: workflow_run_id,
-                },
-            );
+            let org_id = repository::org_id_for_workflow_run(db.as_ref(), workflow_run_id).await;
+            emit_workflow_run(&events, workflow_run_id, org_id);
             (StatusCode::OK, Json(ApiResponse::TaskResponse(response)))
         }
         Err(err) => bad_request(err.to_string()),
@@ -657,7 +645,7 @@ pub(crate) async fn update_run<T: DatabaseImpl>(
     .await
     {
         Ok(resp) => {
-            emit_task_run(&events, run_id, request.status);
+            emit_task_run(&events, run_id, request.status, ctx.org_id);
             (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
         }
         Err(err) => api_error(err.to_string()),
@@ -698,7 +686,10 @@ pub(crate) async fn append_run_chunk<T: DatabaseImpl>(
     }
     match repository::append_run_chunk(db.as_ref(), run_id, &chunk).await {
         Ok(chunk) => {
-            emit(&events, AppEvent::RunChunkAdded { run_id });
+            emit(
+                &events,
+                AppEvent::new(ctx.org_id, AppEventKind::RunChunkAdded { run_id }),
+            );
             (
                 StatusCode::ACCEPTED,
                 Json(ApiResponse::RunChunks(vec![chunk])),
@@ -729,12 +720,8 @@ pub(crate) async fn update_workflow_run<T: DatabaseImpl>(
     .await
     {
         Ok(resp) => {
-            emit(
-                &events,
-                AppEvent::WorkflowRunChanged {
-                    run_id: workflow_run_id,
-                },
-            );
+            let org_id = repository::org_id_for_workflow_run(db.as_ref(), workflow_run_id).await;
+            emit_workflow_run(&events, workflow_run_id, org_id);
             (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
         }
         Err(err) => api_error(err.to_string()),

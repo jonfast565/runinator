@@ -4,7 +4,9 @@ use axum::{Extension, Json, http::StatusCode};
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::auth::AuthContext;
 
-use crate::events::{AppEvent, EventSender, emit, emit_workflow_run};
+use crate::events::{
+    AppEvent, AppEventKind, EventSender, emit, emit_workflow_run, nudge_wake_publisher,
+};
 use crate::models::{ApiResponse, WebhookSignalRequest, WebhookWakeRequest};
 use crate::repository;
 use crate::responses::{api_error, not_found, task_response_success};
@@ -78,7 +80,8 @@ pub(crate) async fn webhook_wake<T: DatabaseImpl>(
     {
         return api_error(err.to_string());
     }
-    emit_workflow_run(&events, request.workflow_run_id);
+    let org_id = repository::org_id_for_workflow_run(db.as_ref(), request.workflow_run_id).await;
+    emit_workflow_run(&events, request.workflow_run_id, org_id);
     task_response_success("Webhook wake recorded")
 }
 
@@ -102,7 +105,12 @@ pub(crate) async fn webhook_signal<T: DatabaseImpl>(
     .await
     {
         Ok(response) => {
-            emit(&events, AppEvent::WorkflowRunActivity);
+            // correlation delivery can span orgs; leave the coarse tip unscoped.
+            emit(
+                &events,
+                AppEvent::global(AppEventKind::WorkflowRunActivity),
+            );
+            nudge_wake_publisher(&events);
             (StatusCode::OK, Json(ApiResponse::TaskResponse(response)))
         }
         Err(err) => api_error(err.to_string()),

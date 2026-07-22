@@ -45,7 +45,8 @@ pub(crate) async fn create_workflow_node_run<T: DatabaseImpl>(
     .await
     {
         Ok(step) => {
-            emit_workflow_run(&events, workflow_run_id);
+            let org_id = repository::org_id_for_workflow_run(db.as_ref(), workflow_run_id).await;
+            emit_workflow_run(&events, workflow_run_id, org_id);
             (
                 StatusCode::ACCEPTED,
                 Json(ApiResponse::WorkflowNodeRun(step)),

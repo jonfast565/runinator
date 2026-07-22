@@ -13,7 +13,7 @@ use runinator_wdl::{CompileOptions, Severity, WdlError, WdlFragmentKind, Workflo
 use serde::{Deserialize, Serialize};
 
 use crate::authz;
-use crate::events::{AppEvent, EventSender, emit};
+use crate::events::{EventSender, emit_workflows_changed};
 use crate::handlers::providers::provider_metadata_from_items;
 use crate::models::ApiResponse;
 use crate::repository;
@@ -158,7 +158,12 @@ pub(crate) async fn import_wdl<T: DatabaseImpl>(
                     }
                 }
             }
-            emit(&events, AppEvent::WorkflowsChanged);
+            let org_id = saved
+                .workflows
+                .first()
+                .and_then(|workflow| workflow.org_id)
+                .or(ctx.org_id);
+            emit_workflows_changed(&events, org_id);
             (StatusCode::OK, Json(ApiResponse::WorkflowBundle(saved)))
         }
         Err(err) => api_error(err.to_string()),

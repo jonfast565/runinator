@@ -76,7 +76,8 @@ export function useEventStream() {
       }
     },
     refreshWorkflowRunIfSelected: (runId: string) => {
-      void workflows.fetchWorkflowRunDetail(runId, true);
+      // coalesce drive/worker/chunk event bursts into one trailing detail refetch.
+      workflows.scheduleWorkflowRunDetailRefresh(runId);
     },
     refreshArtifactsIfActive: () => {
       if (app.activeTab === "Artifacts") {

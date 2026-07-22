@@ -3851,6 +3851,45 @@ fn auth_ctx(is_admin: bool, org_role: Option<OrgRole>) -> AuthContext {
 }
 
 #[test]
+fn org_visible_matches_ui_event_egress_policy() {
+    let org_a = Uuid::now_v7();
+    let org_b = Uuid::now_v7();
+    let admin = AuthContext {
+        principal_id: Some(Uuid::now_v7()),
+        is_admin: true,
+        kind: PrincipalKind::User,
+        org_id: Some(org_a),
+        org_role: Some(OrgRole::Admin),
+    };
+    let member_a = AuthContext {
+        principal_id: Some(Uuid::now_v7()),
+        is_admin: false,
+        kind: PrincipalKind::User,
+        org_id: Some(org_a),
+        org_role: Some(OrgRole::Member),
+    };
+    let member_b = AuthContext {
+        principal_id: Some(Uuid::now_v7()),
+        is_admin: false,
+        kind: PrincipalKind::User,
+        org_id: Some(org_b),
+        org_role: Some(OrgRole::Member),
+    };
+
+    // platform admin sees every scoped and unscoped event.
+    assert!(crate::authz::org_visible(&admin, Some(org_a)));
+    assert!(crate::authz::org_visible(&admin, Some(org_b)));
+    assert!(crate::authz::org_visible(&admin, None));
+    // unscoped (rollout / global) tips stay visible to every client.
+    assert!(crate::authz::org_visible(&member_a, None));
+    assert!(crate::authz::org_visible(&member_b, None));
+    // scoped tips only reach the matching active org.
+    assert!(crate::authz::org_visible(&member_a, Some(org_a)));
+    assert!(!crate::authz::org_visible(&member_a, Some(org_b)));
+    assert!(!crate::authz::org_visible(&member_b, Some(org_a)));
+}
+
+#[test]
 fn platform_admin_holds_every_capability() {
     let ctx = auth_ctx(true, None);
     let caps = crate::authz::capabilities_for(&ctx);

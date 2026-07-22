@@ -20,7 +20,7 @@ use runinator_models::{
 use serde::Deserialize;
 
 use crate::authz;
-use crate::events::{AppEvent, EventSender, emit};
+use crate::events::{EventSender, emit_workflows_changed};
 use crate::models::ApiResponse;
 use crate::repository;
 use crate::responses::{api_error, bad_request, not_found, validation_error};
@@ -54,7 +54,7 @@ pub(crate) async fn upsert_workflow<T: DatabaseImpl>(
                     authz::grant_owner(db.as_ref(), &ctx, id).await;
                 }
             }
-            emit(&events, AppEvent::WorkflowsChanged);
+            emit_workflows_changed(&events, workflow.org_id);
             (StatusCode::OK, Json(ApiResponse::Workflow(workflow)))
         }
         Err(err) => api_error(err.to_string()),
@@ -82,7 +82,7 @@ pub(crate) async fn set_workflow_owner<T: DatabaseImpl>(
     }
     match repository::set_workflow_org(db.as_ref(), workflow_id, request.org_id).await {
         Ok(()) => {
-            emit(&events, AppEvent::WorkflowsChanged);
+            emit_workflows_changed(&events, request.org_id);
             match repository::fetch_workflow(db.as_ref(), workflow_id).await {
                 Ok(Some(workflow)) => (StatusCode::OK, Json(ApiResponse::Workflow(workflow))),
                 Ok(None) => not_found(format!("Workflow {workflow_id} not found")),
@@ -241,12 +241,13 @@ pub(crate) async fn import_workflow_bundle<T: DatabaseImpl>(
     if !json_workflow_import_risk_acknowledged(&headers) {
         return json_workflow_import_risk_required();
     }
-    import_acknowledged_workflow_bundle(db, events, bundle).await
+    import_acknowledged_workflow_bundle(db, events, ctx.org_id, bundle).await
 }
 
 pub(crate) async fn import_acknowledged_workflow_bundle<T: DatabaseImpl>(
     db: Arc<T>,
     events: EventSender,
+    org_id: Option<Uuid>,
     bundle: WorkflowBundle,
 ) -> (StatusCode, Json<ApiResponse>) {
     log::info!(
@@ -257,7 +258,12 @@ pub(crate) async fn import_acknowledged_workflow_bundle<T: DatabaseImpl>(
     match repository::import_workflow_bundle(db.as_ref(), bundle).await {
         Ok(bundle) => {
             log::info!("Imported workflow bundle successfully");
-            emit(&events, AppEvent::WorkflowsChanged);
+            let org_id = bundle
+                .workflows
+                .first()
+                .and_then(|workflow| workflow.org_id)
+                .or(org_id);
+            emit_workflows_changed(&events, org_id);
             (StatusCode::OK, Json(ApiResponse::WorkflowBundle(bundle)))
         }
         Err(err) => {
@@ -361,7 +367,7 @@ pub(crate) async fn duplicate_workflow<T: DatabaseImpl>(
             if let Some(id) = workflow.id {
                 authz::grant_owner(db.as_ref(), &ctx, id).await;
             }
-            emit(&events, AppEvent::WorkflowsChanged);
+            emit_workflows_changed(&events, workflow.org_id.or(ctx.org_id));
             (StatusCode::OK, Json(ApiResponse::Workflow(workflow)))
         }
         Err(err) => api_error(err.to_string()),

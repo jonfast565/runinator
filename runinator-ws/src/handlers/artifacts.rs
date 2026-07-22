@@ -12,7 +12,7 @@ use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::auth::AuthContext;
 use runinator_models::runs::NewRunArtifact;
 
-use crate::events::{AppEvent, EventSender, emit};
+use crate::events::{AppEvent, AppEventKind, EventSender, emit};
 use crate::models::ApiResponse;
 use crate::repository;
 use crate::responses::{api_error, bad_request};
@@ -154,12 +154,27 @@ pub(crate) async fn upload_artifact<T: DatabaseImpl>(
     .await
     {
         Ok(artifact) => {
+            let org_id = if let Some(node_run_id) = node_run_id {
+                match repository::fetch_workflow_node_run(db.as_ref(), node_run_id).await {
+                    Ok(Some(node_run)) => {
+                        repository::org_id_for_workflow_run(db.as_ref(), node_run.workflow_run_id)
+                            .await
+                            .or(ctx.org_id)
+                    }
+                    _ => ctx.org_id,
+                }
+            } else {
+                ctx.org_id
+            };
             emit(
                 &events,
-                AppEvent::ArtifactCreated {
-                    artifact_id: artifact.id,
-                    run_id: artifact.run_id,
-                },
+                AppEvent::new(
+                    org_id,
+                    AppEventKind::ArtifactCreated {
+                        artifact_id: artifact.id,
+                        run_id: artifact.run_id,
+                    },
+                ),
             );
             (
                 StatusCode::OK,

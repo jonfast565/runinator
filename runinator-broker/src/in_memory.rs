@@ -748,14 +748,16 @@ mod tests {
         let _ = broker.event_receiver("ws-b");
 
         broker
-            .publish_event(EventMessage::new(UiEvent::WorkflowsChanged))
+            .publish_event(EventMessage::new(UiEvent::global(
+                runinator_comm::UiEventKind::WorkflowsChanged,
+            )))
             .await
             .unwrap();
 
         let a = broker.receive_event("ws-a").await.unwrap();
         let b = broker.receive_event("ws-b").await.unwrap();
-        assert!(matches!(a.event, UiEvent::WorkflowsChanged));
-        assert!(matches!(b.event, UiEvent::WorkflowsChanged));
+        assert!(matches!(a.event.kind, runinator_comm::UiEventKind::WorkflowsChanged));
+        assert!(matches!(b.event.kind, runinator_comm::UiEventKind::WorkflowsChanged));
     }
 
     #[tokio::test]

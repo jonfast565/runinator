@@ -10,8 +10,9 @@ use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::{notifications::NewNotification, web::TaskResponse};
 use serde::Deserialize;
 
-use crate::events::{AppEvent, EventSender, emit};
+use crate::events::{AppEvent, AppEventKind, EventSender, emit};
 use crate::models::ApiResponse;
+use crate::repository;
 use crate::responses::{api_error, not_found};
 
 #[derive(Deserialize, Default)]
@@ -44,11 +45,19 @@ pub(crate) async fn create_notification<T: DatabaseImpl>(
 ) -> (StatusCode, Json<ApiResponse>) {
     match db.create_notification(&notification).await {
         Ok(notification) => {
+            let org_id = if let Some(workflow_run_id) = notification.workflow_run_id {
+                repository::org_id_for_workflow_run(db.as_ref(), workflow_run_id).await
+            } else {
+                None
+            };
             emit(
                 &events,
-                AppEvent::NotificationCreated {
-                    notification_id: notification.id,
-                },
+                AppEvent::new(
+                    org_id,
+                    AppEventKind::NotificationCreated {
+                        notification_id: notification.id,
+                    },
+                ),
             );
             (
                 StatusCode::CREATED,
@@ -66,7 +75,11 @@ pub(crate) async fn mark_notification_read<T: DatabaseImpl>(
 ) -> (StatusCode, Json<ApiResponse>) {
     match db.mark_notification_read(notification_id).await {
         Ok(Some(notification)) => {
-            emit(&events, AppEvent::NotificationsChanged);
+            // no auth ctx on this handler — leave global.
+            emit(
+                &events,
+                AppEvent::global(AppEventKind::NotificationsChanged),
+            );
             (
                 StatusCode::OK,
                 Json(ApiResponse::Notification(notification)),
@@ -84,7 +97,10 @@ pub(crate) async fn delete_notification<T: DatabaseImpl>(
 ) -> (StatusCode, Json<ApiResponse>) {
     match db.delete_notification(notification_id).await {
         Ok(true) => {
-            emit(&events, AppEvent::NotificationsChanged);
+            emit(
+                &events,
+                AppEvent::global(AppEventKind::NotificationsChanged),
+            );
             (
                 StatusCode::OK,
                 Json(ApiResponse::TaskResponse(TaskResponse {
@@ -104,7 +120,10 @@ pub(crate) async fn mark_all_notifications_read<T: DatabaseImpl>(
 ) -> (StatusCode, Json<ApiResponse>) {
     match db.mark_all_notifications_read().await {
         Ok(count) => {
-            emit(&events, AppEvent::NotificationsChanged);
+            emit(
+                &events,
+                AppEvent::global(AppEventKind::NotificationsChanged),
+            );
             (
                 StatusCode::OK,
                 Json(ApiResponse::TaskResponse(TaskResponse {

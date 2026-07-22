@@ -10,7 +10,7 @@ use tracing::{Instrument, error, info, warn};
 use uuid::Uuid;
 
 use crate::{
-    events::{AppEvent, EventSender, emit, emit_pipeline_run, emit_workflow_run},
+    events::{AppEventKind, EventSender, emit, emit_pipeline_run, emit_workflow_run},
     repository, stability,
 };
 
@@ -215,10 +215,16 @@ pub async fn run_trigger_loop<T: DatabaseImpl>(
                     info!(count = runs.len(), "fired due workflow trigger(s)");
                 }
                 for run in &runs {
-                    emit_workflow_run(&events, run.id);
+                    let org_id = repository::org_id_for_workflow_run(db.as_ref(), run.id).await;
+                    emit_workflow_run(&events, run.id, org_id);
                 }
                 if !runs.is_empty() {
-                    emit(&events, AppEvent::WorkflowRunActivity);
+                    // activity tip: unscoped when fired runs span unknown/unowned orgs; individual
+                    // run events above carry org when resolvable.
+                    emit(
+                        &events,
+                        crate::events::AppEvent::global(AppEventKind::WorkflowRunActivity),
+                    );
                     // ready nodes were just enqueued for each fired run — do not wait for the wake
                     // publisher poll interval before announcing them.
                     events.nudge_wake_publisher();
@@ -242,9 +248,13 @@ pub async fn run_trigger_loop<T: DatabaseImpl>(
                 if !runs.is_empty() {
                     info!(count = runs.len(), "fired due pipeline trigger(s)");
                     for run in &runs {
-                        emit_pipeline_run(&events, run.id);
+                        let org_id = repository::org_id_for_pipeline_run(db.as_ref(), run.id).await;
+                        emit_pipeline_run(&events, run.id, org_id);
                     }
-                    emit(&events, AppEvent::PipelineRunActivity);
+                    emit(
+                        &events,
+                        crate::events::AppEvent::global(AppEventKind::PipelineRunActivity),
+                    );
                     events.nudge_wake_publisher();
                 }
             }
@@ -264,10 +274,13 @@ pub async fn run_trigger_loop<T: DatabaseImpl>(
 }
 
 /// periodically drain durable action-dispatch intents and publish them to the broker action channel.
+/// `action_nudge` interrupts the poll sleep when a drive (or other path) enqueues outbox rows so
+/// workers are not gated on [`ACTION_DISPATCH_INTERVAL`].
 pub async fn run_action_dispatch_publisher<T: DatabaseImpl>(
     db: Arc<T>,
     broker: Arc<dyn Broker>,
     instance_id: String,
+    action_nudge: Arc<Notify>,
     shutdown: Arc<Notify>,
 ) {
     info!("action dispatch publisher started");
@@ -291,6 +304,7 @@ pub async fn run_action_dispatch_publisher<T: DatabaseImpl>(
                 info!("action dispatch publisher shutting down");
                 return;
             }
+            _ = action_nudge.notified() => {}
             _ = tokio::time::sleep(ACTION_DISPATCH_INTERVAL) => {}
         }
     }
@@ -449,16 +463,20 @@ async fn apply_ingress<T: DatabaseImpl>(
             stability::record_reducer_drive_ms(started.elapsed().as_secs_f64() * 1000.0);
             if let Some(run_id) = driven {
                 signal_canceled_executing_node_runs(db, broker, run_id).await;
-                emit_workflow_run(events, run_id);
+                let org_id = repository::org_id_for_workflow_run(db, run_id).await;
+                emit_workflow_run(events, run_id, org_id);
                 // pipeline settle and member progression happen inside the drive with no other emit
                 // site — fan a pipeline-run event so the UI does not fall back to the 30s poll.
                 if let Ok(Some(run)) = db.fetch_workflow_run(run_id).await {
                     if let Some(pipeline_run_id) = run.pipeline_run_id {
-                        emit_pipeline_run(events, pipeline_run_id);
+                        let pipeline_org =
+                            repository::org_id_for_pipeline_run(db, pipeline_run_id).await;
+                        emit_pipeline_run(events, pipeline_run_id, pipeline_org);
                     }
                 }
-                // drive may have enqueued the next ready node(s); announce without waiting on poll.
+                // drive may have enqueued the next ready node(s) and/or action-dispatch outbox rows.
                 events.nudge_wake_publisher();
+                events.nudge_action_dispatch_publisher();
             }
             Ok(())
         }
@@ -477,8 +495,10 @@ async fn apply_ingress<T: DatabaseImpl>(
                     repository::resume_workflow_run(db, *workflow_run_id).await?;
                 }
             }
-            emit_workflow_run(events, *workflow_run_id);
+            let org_id = repository::org_id_for_workflow_run(db, *workflow_run_id).await;
+            emit_workflow_run(events, *workflow_run_id, org_id);
             events.nudge_wake_publisher();
+            events.nudge_action_dispatch_publisher();
             Ok(())
         }
     }

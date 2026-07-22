@@ -1,6 +1,6 @@
 use crate::{
-    ActionCommand, ActionTarget, ControlCommand, ControlKind, WakeCommand, WireCodec,
-    WorkflowResultEvent, WorkflowResultEventKind, WsIngressCommand,
+    ActionCommand, ActionTarget, ControlCommand, ControlKind, UiEvent, UiEventKind, WakeCommand,
+    WireCodec, WorkflowResultEvent, WorkflowResultEventKind, WsIngressCommand,
 };
 use chrono::Utc;
 use runinator_models::{json, runs::NewRunChunk, workflows::WorkflowAction};
@@ -117,4 +117,28 @@ fn workflow_result_events_round_trip_with_json() {
     legacy.as_object_mut().unwrap().remove("attempt");
     let decoded: WorkflowResultEvent = serde_json::from_value(legacy).unwrap();
     assert_eq!(decoded.attempt, 0);
+}
+
+#[test]
+fn ui_event_round_trips_org_scope_and_accepts_legacy_unscoped_json() {
+    let run_id = Uuid::now_v7();
+    let org_id = Uuid::now_v7();
+    let scoped = UiEvent::for_org(org_id, UiEventKind::WorkflowRunChanged { run_id });
+    let value = serde_json::to_value(&scoped).unwrap();
+    assert_eq!(value["type"], "workflow_run_changed");
+    assert_eq!(value["run_id"], run_id.to_string());
+    assert_eq!(value["org_id"], org_id.to_string());
+
+    let decoded: UiEvent = serde_json::from_value(value).unwrap();
+    assert_eq!(decoded.org_id, Some(org_id));
+    assert!(matches!(
+        decoded.kind,
+        UiEventKind::WorkflowRunChanged { run_id: id } if id == run_id
+    ));
+
+    // pre-scope publishers omit org_id; they must remain deliverable as unscoped.
+    let legacy = format!(r#"{{"type":"workflows_changed"}}"#);
+    let decoded: UiEvent = serde_json::from_str(&legacy).unwrap();
+    assert_eq!(decoded.org_id, None);
+    assert!(matches!(decoded.kind, UiEventKind::WorkflowsChanged));
 }

@@ -166,7 +166,10 @@ async fn http_broker_fans_out_events_to_every_subscriber() {
 
     let run_id = Uuid::from_u128(7);
     broker
-        .publish_event(EventMessage::new(UiEvent::WorkflowRunChanged { run_id }))
+        .publish_event(EventMessage::new(UiEvent::new(
+            None,
+            runinator_comm::UiEventKind::WorkflowRunChanged { run_id },
+        )))
         .await
         .unwrap();
 
@@ -180,8 +183,14 @@ async fn http_broker_fans_out_events_to_every_subscriber() {
         .unwrap()
         .unwrap()
         .unwrap();
-    assert!(matches!(a.event, UiEvent::WorkflowRunChanged { run_id: r } if r == run_id));
-    assert!(matches!(b.event, UiEvent::WorkflowRunChanged { run_id: r } if r == run_id));
+    assert!(matches!(
+        a.event.kind,
+        runinator_comm::UiEventKind::WorkflowRunChanged { run_id: r } if r == run_id
+    ));
+    assert!(matches!(
+        b.event.kind,
+        runinator_comm::UiEventKind::WorkflowRunChanged { run_id: r } if r == run_id
+    ));
 
     server.abort();
 }

@@ -137,7 +137,10 @@ pub async fn run_webserver<T: DatabaseImpl>(
     });
     // the bus publishes emitted events to the broker; the event consumer is the sole writer to the
     // local broadcast that feeds this replica's WebSocket clients.
-    let bus = EventBus::new(events_tx.clone(), broker.clone());
+    // one publisher handle is shared by the EventBus (HTTP emit/nudge) and the in-process engine so
+    // create handlers can interrupt the wake-publisher poll sleep via the same Notify.
+    let engine_publisher = EnginePublisher::new(broker.clone());
+    let bus = EventBus::from_publisher(events_tx.clone(), engine_publisher.clone());
     // every replica consumes the broker fan-out events channel so its WebSocket clients see events
     // emitted by any replica or a standalone background worker, regardless of who did the work.
     background.spawn(run_event_consumer(
@@ -153,7 +156,6 @@ pub async fn run_webserver<T: DatabaseImpl>(
         info!("embedding the background orchestration engine in-process");
         let engine_pool = pool.clone();
         let engine_broker = broker.clone();
-        let engine_publisher = EnginePublisher::new(broker.clone());
         let engine_instance = instance.clone();
         let engine_shutdown = notify.clone();
         background.spawn(async move {
