@@ -1,18 +1,22 @@
 <template>
-  <section class="expression-editor-shell" @mousedown.stop @click.stop>
-    <header class="expression-editor-title">
+  <section
+    class="editor-shell editor-shell--expression expression-editor-shell"
+    @mousedown.stop
+    @click.stop
+  >
+    <header class="editor-shell-title">
       <span>{{ title }}</span>
       <button
         v-if="!readonly"
         type="button"
-        class="expression-picker-toggle"
+        class="editor-shell-title-btn"
         :class="{ active: showPicker }"
         @click="showPicker = !showPicker"
       >
         {{ showPicker ? "Hide references" : "Insert reference" }}
       </button>
     </header>
-    <div ref="editorContainer" class="expression-editor-container"></div>
+    <div ref="editorContainer" class="editor-shell-container"></div>
     <ReferencePicker
       v-if="showPicker && !readonly"
       :groups="referenceGroups"
@@ -29,7 +33,7 @@
       <summary>Lowered value</summary>
       <pre>{{ loweredJson }}</pre>
     </details>
-    <p v-if="parseError" class="expression-error">{{ parseError }}</p>
+    <p v-if="parseError" class="editor-shell-error !text-xs">{{ parseError }}</p>
   </section>
 </template>
 
@@ -324,105 +328,3 @@ function updateLoweredJson(source: string) {
   }
 }
 </script>
-
-<style scoped>
-.expression-editor-shell {
-  display: flex;
-  min-height: 164px;
-  min-width: 0;
-  flex-direction: column;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  background-color: var(--surface);
-  overflow: hidden;
-}
-
-.expression-editor-title {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 7px 9px;
-  color: var(--text-subtle);
-  font-size: 12px;
-  font-weight: 700;
-  user-select: none;
-}
-
-.expression-picker-toggle {
-  padding: 2px 9px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  color: var(--text-subtle);
-  cursor: pointer;
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.expression-picker-toggle:hover,
-.expression-picker-toggle.active {
-  background: var(--surface-hover);
-  border-color: var(--border-hover);
-}
-
-.expression-editor-container {
-  flex: 1 1 auto;
-  min-height: 0;
-  width: 100%;
-  border-top: 1px solid var(--border-subtle);
-  overflow: hidden;
-}
-
-.expression-preview {
-  border-top: 1px solid var(--border-subtle);
-  background: var(--surface-subtle);
-}
-
-.expression-preview summary {
-  cursor: pointer;
-  padding: 6px 9px;
-  color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.expression-preview pre {
-  max-height: 160px;
-  margin: 0;
-  overflow: auto;
-  padding: 8px 10px;
-  border-top: 1px solid var(--border-subtle);
-  color: var(--text);
-  font-size: 12px;
-  white-space: pre-wrap;
-}
-
-.expression-preview pre.expression-preview-error {
-  color: var(--warning-fg);
-  background: var(--warning-bg);
-}
-
-.expression-preview pre.expression-preview-muted {
-  color: var(--text-faint);
-  font-style: italic;
-}
-
-.expression-error {
-  margin: 0;
-  padding: 7px 9px;
-  border-top: 1px solid var(--danger-bg);
-  background: var(--danger-bg);
-  color: var(--danger-fg);
-  font-size: 12px;
-}
-
-:deep(.cm-editor) {
-  height: 100%;
-  min-height: 0;
-}
-
-:deep(.cm-scroller) {
-  overflow: auto;
-}
-</style>

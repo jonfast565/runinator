@@ -1,7 +1,7 @@
 <template>
   <details class="json-diff" :open="open">
     <summary>{{ title }}</summary>
-    <div v-if="rows.length === 0" class="json-diff-empty">No differences</div>
+    <div v-if="rows.length === 0" class="py-2 text-fg-faint italic">No differences</div>
     <table v-else class="json-diff-table">
       <thead>
         <tr>
@@ -148,70 +148,3 @@ function formatValue(v: unknown): string {
   return displayValue(v);
 }
 </script>
-
-<style scoped>
-.json-diff {
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--surface-subtle);
-  padding: 6px 10px;
-  font-size: 11px;
-  margin-bottom: 8px;
-  overflow: hidden;
-}
-.json-diff[open] {
-  max-height: 220px;
-  overflow: auto;
-}
-.json-diff summary {
-  cursor: pointer;
-  font-weight: 600;
-  color: var(--text-subtle);
-  user-select: none;
-}
-.json-diff-empty {
-  padding: 8px 0;
-  color: var(--text-faint);
-  font-style: italic;
-}
-.json-diff-table {
-  width: 100%;
-  border-collapse: collapse;
-  margin-top: 6px;
-  font-family: "SFMono-Regular", Consolas, monospace;
-}
-.json-diff-table th,
-.json-diff-table td {
-  padding: 4px 8px;
-  border-bottom: 1px solid var(--border-subtle);
-  text-align: left;
-  vertical-align: top;
-  word-break: break-all;
-}
-.json-diff-table th {
-  font-size: 10px;
-  color: var(--text-muted);
-  font-weight: 600;
-}
-.path {
-  font-weight: 500;
-  color: var(--text);
-  white-space: nowrap;
-}
-.added .cell-after {
-  background: var(--success-bg);
-  color: var(--success-fg);
-}
-.removed .cell-before {
-  background: var(--danger-bg);
-  color: var(--danger-fg);
-}
-.changed .cell-before {
-  background: var(--warning-bg);
-  color: var(--warning-fg);
-}
-.changed .cell-after {
-  background: var(--warning-bg);
-  color: var(--warning-fg);
-}
-</style>

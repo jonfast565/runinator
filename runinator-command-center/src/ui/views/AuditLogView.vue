@@ -1,9 +1,9 @@
 <template>
-  <section class="pane audit-pane">
-    <div class="panel audit-panel">
+  <section class="pane">
+    <div class="panel flex min-h-0 flex-col">
       <div class="panel-toolbar">
-        <h2>Audit Log</h2>
-        <div class="audit-controls">
+        <h2 class="m-0 text-base font-semibold text-fg">Audit Log</h2>
+        <div class="flex items-center gap-2">
           <input
             v-model="action"
             class="input"
@@ -33,19 +33,27 @@
       >
         <template #cell-created_at="{ row }">{{ formatDate(row.created_at as string) }}</template>
         <template #cell-action="{ row }"
-          ><span class="mono">{{ row.action }}</span></template
+          ><span class="font-mono">{{ row.action }}</span></template
         >
         <template #cell-outcome="{ row }">
-          <span class="badge" :class="`badge-${row.outcome}`">{{ row.outcome }}</span>
+          <span
+            class="rounded-pill px-2 py-0.5 text-xs capitalize"
+            :class="
+              row.outcome === 'success'
+                ? 'bg-success-bg text-success-fg'
+                : 'bg-danger-bg text-danger-fg'
+            "
+            >{{ row.outcome }}</span
+          >
         </template>
         <template #cell-actor="{ row }"
-          ><span class="mono">{{ row.actor_id || row.actor_kind || "-" }}</span></template
+          ><span class="font-mono">{{ row.actor_id || row.actor_kind || "-" }}</span></template
         >
         <template #cell-resource="{ row }"
-          ><span class="mono">{{ resourceLabel(row) }}</span></template
+          ><span class="font-mono">{{ resourceLabel(row) }}</span></template
         >
         <template #cell-detail="{ row }"
-          ><span class="audit-detail">{{ row.detail || "-" }}</span></template
+          ><span class="max-w-[420px]">{{ row.detail || "-" }}</span></template
         >
       </DataTable>
     </div>
@@ -108,43 +116,3 @@ async function refresh() {
 onMounted(refresh);
 watch(() => orgs.activeOrgId, refresh);
 </script>
-
-<style scoped>
-.audit-panel {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
-
-.audit-controls {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-.badge {
-  border-radius: var(--radius-pill);
-  padding: 2px 8px;
-  font-size: 12px;
-  text-transform: capitalize;
-}
-
-.badge-success {
-  background: var(--success-bg);
-  color: var(--success-fg);
-}
-
-.badge-failure,
-.badge-denied {
-  background: var(--danger-bg);
-  color: var(--danger-fg);
-}
-
-.mono {
-  font-family: var(--font-mono);
-}
-
-.audit-detail {
-  max-width: 420px;
-}
-</style>

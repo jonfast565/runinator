@@ -1,9 +1,9 @@
 <template>
-  <section class="pane dlq-pane">
-    <div class="panel dlq-panel">
+  <section class="pane">
+    <div class="panel flex min-h-0 flex-col">
       <div class="panel-toolbar">
-        <h2>Dead Letters</h2>
-        <div class="dlq-controls">
+        <h2 class="m-0 text-base font-semibold text-fg">Dead Letters</h2>
+        <div class="flex items-center gap-2">
           <select v-model="channel" class="input" @change="refresh">
             <option value="">All channels</option>
             <option value="result">result</option>
@@ -31,8 +31,8 @@
         description="Failed broker deliveries that exhaust their retries appear here."
       />
 
-      <div v-else class="dlq-table-wrap">
-        <table class="dlq-table">
+      <div v-else class="table-scroll min-h-0 flex-1">
+        <table class="w-full border-collapse text-[13px]">
           <thead>
             <tr>
               <th>Time</th>
@@ -44,18 +44,35 @@
           </thead>
           <tbody>
             <template v-for="row in rows" :key="String(row.id)">
-              <tr class="dlq-row" @click="toggle(String(row.id))">
-                <td>{{ formatDate(row.created_at as string) }}</td>
-                <td class="col-low">
-                  <span class="badge">{{ row.channel }}</span>
+              <tr class="cursor-pointer hover:bg-surface-subtle" @click="toggle(String(row.id))">
+                <td class="border-b border-border px-2.5 py-2 align-top text-left">
+                  {{ formatDate(row.created_at as string) }}
                 </td>
-                <td class="col-low">{{ row.attempts }}</td>
-                <td class="dlq-error">{{ row.error }}</td>
-                <td class="col-low mono">{{ row.event_id || row.dedupe_key || "-" }}</td>
+                <td class="col-low border-b border-border px-2.5 py-2 align-top text-left">
+                  <span class="rounded-pill bg-surface-subtle px-2 py-0.5 text-xs">{{
+                    row.channel
+                  }}</span>
+                </td>
+                <td class="col-low border-b border-border px-2.5 py-2 align-top text-left">
+                  {{ row.attempts }}
+                </td>
+                <td
+                  class="max-w-[420px] overflow-hidden text-ellipsis border-b border-border px-2.5 py-2 align-top text-left text-danger-fg"
+                >
+                  {{ row.error }}
+                </td>
+                <td
+                  class="col-low border-b border-border px-2.5 py-2 align-top text-left font-mono"
+                >
+                  {{ row.event_id || row.dedupe_key || "-" }}
+                </td>
               </tr>
-              <tr v-if="expanded === String(row.id)" class="dlq-detail-row">
-                <td colspan="5">
-                  <pre class="dlq-pre">{{ pretty(row.payload ?? {}) }}</pre>
+              <tr v-if="expanded === String(row.id)">
+                <td colspan="5" class="border-b border-border px-2.5 py-2">
+                  <pre
+                    class="m-0 overflow-auto rounded-md border border-border bg-surface-sunken p-3 font-mono text-xs leading-snug"
+                    >{{ pretty(row.payload ?? {}) }}</pre
+                  >
                 </td>
               </tr>
             </template>
@@ -105,75 +122,3 @@ async function refresh() {
 onMounted(refresh);
 watch(() => orgs.activeOrgId, refresh);
 </script>
-
-<style scoped>
-.dlq-panel {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
-
-.dlq-controls {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-.dlq-table-wrap {
-  flex: 1;
-  overflow: auto;
-  min-height: 0;
-}
-
-.dlq-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-}
-
-.dlq-table th,
-.dlq-table td {
-  text-align: left;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--border);
-  vertical-align: top;
-}
-
-.dlq-row {
-  cursor: pointer;
-}
-
-.dlq-row:hover {
-  background: var(--surface-subtle);
-}
-
-.dlq-error {
-  color: var(--danger-fg);
-  max-width: 420px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.badge {
-  border-radius: var(--radius-pill);
-  background: var(--surface-subtle);
-  padding: 2px 8px;
-  font-size: 12px;
-}
-
-.mono {
-  font-family: var(--font-mono);
-}
-
-.dlq-pre {
-  margin: 0;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface-sunken);
-  padding: 12px;
-  overflow: auto;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 1.45;
-}
-</style>

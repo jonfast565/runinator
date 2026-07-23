@@ -1,8 +1,8 @@
 <template>
-  <section class="pane artifacts-pane">
+  <section class="pane">
     <div class="panel">
       <div class="panel-toolbar">
-        <h2>Artifacts</h2>
+        <h2 class="m-0 text-base font-semibold text-fg">Artifacts</h2>
         <div class="btn-row">
           <Button variant="default" :loading="loading" @click="refresh">
             <Icon name="refresh" />
@@ -33,11 +33,11 @@
       >
         <template #cell-size_bytes="{ row }">{{ formatBytes(row.size_bytes) }}</template>
         <template #cell-uri="{ value }">
-          <span class="uri-cell">{{ value }}</span>
+          <span class="max-w-80 truncate">{{ value }}</span>
         </template>
         <template #cell-created_at="{ row }">{{ formatDate(row.created_at) }}</template>
         <template #cell-actions="{ row }">
-          <span class="row-actions">
+          <span class="text-right">
             <button class="btn btn-icon btn-ghost" title="Download" @click.stop="onDownload(row)">
               <Icon name="download" />
             </button>
@@ -134,22 +134,3 @@ function formatBytes(size: number): string {
 
 onMounted(refresh);
 </script>
-
-<style scoped>
-.uri-cell {
-  max-width: 320px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.row-actions {
-  text-align: right;
-}
-
-.empty-cell {
-  color: var(--text-muted);
-  text-align: center;
-  padding: 14px;
-}
-</style>

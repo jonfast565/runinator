@@ -1,5 +1,5 @@
 <template>
-  <div class="run-control-bar">
+  <div class="mb-2 flex flex-wrap gap-1">
     <button
       class="btn btn-sm"
       :disabled="!workflows.canPauseWorkflowRun || runControlBusy"
@@ -41,12 +41,3 @@ const { isLoading: runControlBusy } = useOperationLoading(
   { prefix: true },
 );
 </script>
-
-<style scoped>
-.run-control-bar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-bottom: 8px;
-}
-</style>

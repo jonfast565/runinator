@@ -1,28 +1,58 @@
 <template>
-  <div ref="menuRef" class="user-menu">
+  <div ref="menuRef" class="relative">
     <button
       type="button"
-      class="btn user-trigger"
+      class="btn flex items-center gap-2"
       aria-haspopup="menu"
       :aria-expanded="open"
       :title="email || username"
       @click="toggle"
     >
-      <span class="user-avatar" aria-hidden="true">{{ initials }}</span>
-      <span class="user-name">{{ username }}</span>
-      <Icon name="arrow-down" :size="14" />
+      <span
+        class="inline-flex size-[22px] items-center justify-center rounded-full bg-accent text-[11px] font-semibold text-white"
+        aria-hidden="true"
+        >{{ initials }}</span
+      >
+      <span class="max-w-[140px] overflow-hidden text-ellipsis whitespace-nowrap">{{
+        username
+      }}</span>
+      <Icon
+        name="arrow-down"
+        :size="14"
+        class="transition-transform duration-200 ease-out"
+        :class="open ? 'rotate-180' : ''"
+      />
     </button>
-    <div v-if="open" class="user-menu-panel" role="menu">
-      <div class="user-info">
-        <span class="user-info-name">{{ username }}</span>
-        <span v-if="email" class="user-info-email">{{ email }}</span>
-        <span v-if="isAdmin" class="user-info-badge">Admin</span>
+    <Transition name="menu">
+      <div
+        v-if="open"
+        class="absolute top-[calc(100%+4px)] right-0 z-30 origin-top-right grid min-w-[200px] rounded-md border border-border-strong bg-surface p-1 shadow-modal"
+        role="menu"
+      >
+        <div class="flex flex-col gap-0.5 border-b border-border-subtle px-2 pt-2 pb-2.5">
+          <span class="text-[13px] font-semibold text-fg">{{ username }}</span>
+          <span
+            v-if="email"
+            class="overflow-hidden text-ellipsis whitespace-nowrap text-xs text-fg-muted"
+            >{{ email }}</span
+          >
+          <span
+            v-if="isAdmin"
+            class="mt-1 self-start rounded-pill bg-accent-soft px-1.5 py-px text-[10px] font-semibold tracking-[0.04em] text-accent-text uppercase"
+            >Admin</span
+          >
+        </div>
+        <button
+          type="button"
+          role="menuitem"
+          class="btn btn-ghost mt-1 justify-start gap-2 border-transparent bg-transparent text-xs text-fg hover:bg-surface-hover"
+          @click="signOut"
+        >
+          <Icon name="lock" :size="14" />
+          <span>Sign out</span>
+        </button>
       </div>
-      <button type="button" role="menuitem" class="btn btn-ghost user-menu-item" @click="signOut">
-        <Icon name="lock" :size="14" />
-        <span>Sign out</span>
-      </button>
-    </div>
+    </Transition>
   </div>
 </template>
 
@@ -111,98 +141,3 @@ onBeforeUnmount(() => {
   document.removeEventListener("keydown", onDocumentKeyDown);
 });
 </script>
-
-<style scoped>
-.user-menu {
-  position: relative;
-}
-
-.user-trigger {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.user-avatar {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: var(--accent);
-  color: #ffffff;
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.user-name {
-  max-width: 140px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.user-menu-panel {
-  position: absolute;
-  z-index: 30;
-  top: calc(100% + 4px);
-  right: 0;
-  display: grid;
-  min-width: 200px;
-  padding: 4px;
-  border: 1px solid var(--border-strong);
-  border-radius: 6px;
-  background: var(--surface);
-  box-shadow: var(--shadow-modal);
-}
-
-.user-info {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 8px 8px 10px;
-  border-bottom: 1px solid var(--border-subtle);
-}
-
-.user-info-name {
-  font-weight: 600;
-  font-size: 13px;
-  color: var(--text);
-}
-
-.user-info-email {
-  font-size: 12px;
-  color: var(--text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.user-info-badge {
-  align-self: flex-start;
-  margin-top: 4px;
-  padding: 1px 6px;
-  border-radius: 999px;
-  background: var(--accent-soft);
-  color: var(--accent-text);
-  font-size: 10px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.user-menu-item {
-  justify-content: flex-start;
-  gap: 8px;
-  margin-top: 4px;
-  border-color: transparent;
-  background: transparent;
-  color: var(--text);
-  font-size: 12px;
-}
-
-.user-menu-item:hover:not(:disabled) {
-  background: var(--surface-hover);
-}
-</style>

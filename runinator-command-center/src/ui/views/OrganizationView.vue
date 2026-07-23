@@ -1,8 +1,8 @@
 <template>
-  <section class="pane org-pane">
+  <section class="pane flex flex-col gap-2.5 overflow-auto">
     <div class="panel">
       <div class="panel-toolbar">
-        <h2>Organizations</h2>
+        <h2 class="m-0 text-base font-semibold text-fg">Organizations</h2>
         <button class="btn" :disabled="loadingOrgData" @click="refresh">
           <LoadingSpinner v-if="loadingOrgData" size="sm" label="Refreshing organizations" />
           <Icon v-else name="refresh" />
@@ -10,25 +10,38 @@
         </button>
       </div>
 
-      <div class="org-cards">
-        <div class="org-card">
-          <label class="org-card-label">Active organization</label>
-          <select class="org-select" :value="orgs.activeOrgId ?? ''" @change="onSwitch">
+      <div class="grid grid-cols-[repeat(auto-fit,minmax(260px,1fr))] gap-3">
+        <div
+          class="flex flex-col gap-2 rounded-md border border-border-subtle bg-surface-subtle px-3.5 py-3"
+        >
+          <label class="text-xs tracking-wide text-fg-muted uppercase">Active organization</label>
+          <select class="w-full" :value="orgs.activeOrgId ?? ''" @change="onSwitch">
             <option value="" disabled>Select an organization…</option>
             <option v-for="m in orgs.memberships" :key="m.org.id" :value="m.org.id">
               {{ m.org.name }} ({{ m.role }})
             </option>
           </select>
-          <div v-if="orgs.activeOrg" class="org-card-meta">
-            <span class="chip mono">org={{ orgs.activeOrg.slug }}</span>
-            <span class="chip role-badge">you are {{ orgs.activeRole }}</span>
+          <div v-if="orgs.activeOrg" class="flex flex-wrap gap-2">
+            <span class="rounded-pill bg-surface px-2 py-0.5 font-mono text-xs text-fg-subtle"
+              >org={{ orgs.activeOrg.slug }}</span
+            >
+            <span class="rounded-pill bg-surface px-2 py-0.5 text-xs capitalize text-fg-subtle"
+              >you are {{ orgs.activeRole }}</span
+            >
           </div>
         </div>
 
-        <form class="org-card" @submit.prevent="createOrg">
-          <label class="org-card-label">Create organization</label>
+        <form
+          class="flex flex-col gap-2 rounded-md border border-border-subtle bg-surface-subtle px-3.5 py-3"
+          @submit.prevent="createOrg"
+        >
+          <label class="text-xs tracking-wide text-fg-muted uppercase">Create organization</label>
           <input v-model="newOrgName" placeholder="Acme Inc." />
-          <button class="btn btn-primary" type="submit" :disabled="!newOrgName.trim() || creatingOrg">
+          <button
+            class="btn btn-primary"
+            type="submit"
+            :disabled="!newOrgName.trim() || creatingOrg"
+          >
             <LoadingSpinner v-if="creatingOrg" size="sm" label="Creating organization" />
             <Icon v-else name="plus" />
             <span>{{ creatingOrg ? "Creating…" : "Create organization" }}</span>
@@ -39,8 +52,10 @@
 
     <div v-if="orgs.activeOrg" class="panel">
       <div class="panel-toolbar">
-        <h2>Members — {{ orgs.activeOrg.name }}</h2>
-        <span class="chip role-badge">{{ members.length }} member(s)</span>
+        <h2 class="m-0 text-base font-semibold text-fg">Members — {{ orgs.activeOrg.name }}</h2>
+        <span class="rounded-pill bg-surface px-2 py-0.5 text-xs capitalize text-fg-subtle"
+          >{{ members.length }} member(s)</span
+        >
       </div>
 
       <LoadingPanel
@@ -48,22 +63,28 @@
         compact
         :message="loadingOrgDataMessage || 'Loading members…'"
       />
-      <div v-else-if="!members.length" class="empty-state">No members loaded.</div>
-      <table v-else class="org-table">
+      <div v-else-if="!members.length" class="py-3.5 text-fg-muted">No members loaded.</div>
+      <table v-else class="w-full border-collapse">
         <thead>
           <tr>
-            <th>User</th>
-            <th>Role</th>
-            <th v-if="can('org:members:manage')" class="col-actions"></th>
+            <th class="border-b border-border px-1.5 py-2 text-left">User</th>
+            <th class="border-b border-border px-1.5 py-2 text-left">Role</th>
+            <th
+              v-if="can('org:members:manage')"
+              class="w-px border-b border-border px-1.5 py-2 text-right"
+            ></th>
           </tr>
         </thead>
         <tbody>
           <tr v-for="member in members" :key="member.user_id">
-            <td>
-              <span class="avatar">{{ initials(userLabel(member.user_id)) }}</span>
-              <span class="member-name">{{ userLabel(member.user_id) }}</span>
+            <td class="border-b border-border px-1.5 py-2 text-left align-middle">
+              <span
+                class="mr-2 inline-flex h-6 w-6 items-center justify-center rounded-full bg-accent-soft text-[11px] font-bold text-accent align-middle"
+                >{{ initials(userLabel(member.user_id)) }}</span
+              >
+              <span class="align-middle">{{ userLabel(member.user_id) }}</span>
             </td>
-            <td>
+            <td class="border-b border-border px-1.5 py-2 text-left">
               <select
                 v-if="can('org:members:manage')"
                 :value="member.role"
@@ -73,9 +94,16 @@
                 <option value="admin">admin</option>
                 <option value="owner">owner</option>
               </select>
-              <span v-else class="chip role-badge">{{ member.role }}</span>
+              <span
+                v-else
+                class="rounded-pill bg-surface px-2 py-0.5 text-xs capitalize text-fg-subtle"
+                >{{ member.role }}</span
+              >
             </td>
-            <td v-if="can('org:members:manage')" class="col-actions">
+            <td
+              v-if="can('org:members:manage')"
+              class="w-px border-b border-border px-1.5 py-2 text-right"
+            >
               <button
                 class="btn btn-icon btn-ghost"
                 title="Remove"
@@ -88,9 +116,13 @@
         </tbody>
       </table>
 
-      <form v-if="can('org:members:manage')" class="org-inline-form" @submit.prevent="addMember">
-        <input v-model="newMemberId" placeholder="User id (uuid)" />
-        <select v-model="newMemberRole">
+      <form
+        v-if="can('org:members:manage')"
+        class="mt-3 flex flex-wrap gap-2"
+        @submit.prevent="addMember"
+      >
+        <input v-model="newMemberId" class="min-w-40 flex-1" placeholder="User id (uuid)" />
+        <select v-model="newMemberRole" class="min-w-40 flex-1">
           <option value="member">member</option>
           <option value="admin">admin</option>
           <option value="owner">owner</option>
@@ -99,22 +131,24 @@
       </form>
     </div>
 
-    <div v-else class="panel empty-state">
+    <div v-else class="panel py-3.5 text-fg-muted">
       Create or select an organization to manage its members.
     </div>
 
     <div v-if="can('teams:manage')" class="panel">
       <div class="panel-toolbar">
-        <h2>Teams</h2>
-        <span class="chip role-badge">{{ teams.length }} team(s)</span>
+        <h2 class="m-0 text-base font-semibold text-fg">Teams</h2>
+        <span class="rounded-pill bg-surface px-2 py-0.5 text-xs capitalize text-fg-subtle"
+          >{{ teams.length }} team(s)</span
+        >
       </div>
-      <p class="org-hint">
+      <p class="mb-2.5 mt-0 text-xs text-fg-muted">
         Teams are named principals you can grant workflow access to. Add users to a team, then share
         a workflow with the whole team.
       </p>
 
-      <div class="teams-layout">
-        <div class="teams-list">
+      <div class="grid grid-cols-1 gap-3 md:grid-cols-[minmax(200px,260px)_minmax(0,1fr)]">
+        <div class="flex flex-col gap-1.5">
           <LoadingPanel
             v-if="loadingOrgData && !teams.length"
             compact
@@ -124,45 +158,60 @@
             v-for="team in teams"
             :key="team.id ?? team.name"
             type="button"
-            class="team-row"
-            :class="{ selected: selectedTeamId === team.id }"
+            class="flex w-full cursor-pointer items-center justify-between gap-2 rounded-md border border-border bg-surface px-2.5 py-2 text-left"
+            :class="selectedTeamId === team.id ? 'border-accent bg-accent-soft' : ''"
             @click="selectTeam(team)"
           >
-            <span class="team-name">{{ team.name }}</span>
+            <span class="font-semibold">{{ team.name }}</span>
             <Icon
               name="trash"
-              class="team-delete"
+              class="text-fg-muted opacity-70 hover:text-danger-fg hover:opacity-100"
               title="Delete team"
               @click.stop="removeTeam(team)"
             />
           </button>
-          <form class="org-inline-form team-create" @submit.prevent="onCreateTeam">
-            <input v-model="newTeamName" placeholder="New team name" />
+          <form class="mt-1 flex flex-wrap gap-2" @submit.prevent="onCreateTeam">
+            <input v-model="newTeamName" class="min-w-40 flex-1" placeholder="New team name" />
             <button class="btn" type="submit" :disabled="!newTeamName.trim()">Create</button>
           </form>
         </div>
 
-        <div class="team-members">
-          <div v-if="!selectedTeamId" class="empty-state">Select a team to manage its members.</div>
+        <div>
+          <div v-if="!selectedTeamId" class="py-3.5 text-fg-muted">
+            Select a team to manage its members.
+          </div>
           <template v-else>
-            <h3>{{ selectedTeamName }} · members</h3>
+            <h3 class="m-0 mb-2 text-sm font-semibold text-fg">
+              {{ selectedTeamName }} · members
+            </h3>
             <LoadingPanel
               v-if="loadingTeamMembers && !teamMembers.length"
               compact
               :message="loadingTeamMembersMessage || 'Loading team members…'"
             />
-            <div v-else-if="!teamMembers.length" class="empty-state">No members yet.</div>
-            <ul v-else class="team-member-list">
-              <li v-for="user in teamMembers" :key="user.id ?? ''">
-                <span class="avatar">{{ initials(user.username) }}</span>
-                <span class="member-name">{{ user.username }}</span>
-                <button class="btn btn-icon btn-ghost" title="Remove" @click="removeFromTeam(user)">
+            <div v-else-if="!teamMembers.length" class="py-3.5 text-fg-muted">No members yet.</div>
+            <ul v-else class="m-0 flex list-none flex-col gap-1 p-0">
+              <li
+                v-for="user in teamMembers"
+                :key="user.id ?? ''"
+                class="flex items-center gap-1 border-b border-border-faint py-1"
+              >
+                <span
+                  class="mr-2 inline-flex h-6 w-6 items-center justify-center rounded-full bg-accent-soft text-[11px] font-bold text-accent"
+                  >{{ initials(user.username) }}</span
+                >
+                <span class="flex-1">{{ user.username }}</span>
+                <button
+                  class="btn btn-icon btn-ghost"
+                  title="Remove"
+                  @click="removeFromTeam(user)"
+                >
                   <Icon name="trash" />
                 </button>
               </li>
             </ul>
-            <form class="org-inline-form" @submit.prevent="onAddTeamMember">
-              <select v-model="newTeamMemberId">
+            <form class="mt-3 flex flex-wrap gap-2" @submit.prevent="onAddTeamMember">
+              <select v-model="newTeamMemberId" class="min-w-40 flex-1">
                 <option value="" disabled>Add a user…</option>
                 <option v-for="user in users" :key="user.id ?? ''" :value="user.id ?? ''">
                   {{ user.username }}
@@ -176,7 +225,6 @@
     </div>
   </section>
 </template>
-
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import Icon from "../components/shared/Icon.vue";
@@ -409,195 +457,3 @@ onMounted(refresh);
 watch(() => orgs.activeOrgId, refreshActiveOrgDetail);
 </script>
 
-<style scoped>
-.org-pane {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  overflow: auto;
-}
-
-.org-cards {
-  display: grid;
-  gap: 12px;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-}
-
-.org-card {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius);
-  background: var(--surface-subtle);
-  padding: 12px 14px;
-}
-
-.org-card-label {
-  color: var(--text-muted);
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.org-card-meta {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.org-select {
-  width: 100%;
-}
-
-.chip {
-  border-radius: var(--radius-pill);
-  background: var(--surface);
-  color: var(--text-subtle);
-  padding: 2px 8px;
-  font-size: 12px;
-}
-
-.org-inline-form {
-  display: flex;
-  gap: 8px;
-  margin-top: 12px;
-  flex-wrap: wrap;
-}
-
-.org-inline-form input,
-.org-inline-form select {
-  flex: 1;
-  min-width: 160px;
-}
-
-.org-hint {
-  margin: 0 0 10px;
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.org-table {
-  width: 100%;
-  border-collapse: collapse;
-}
-
-.org-table th,
-.org-table td {
-  text-align: left;
-  padding: 8px 6px;
-  border-bottom: 1px solid var(--border);
-}
-
-.col-actions {
-  text-align: right;
-  width: 1%;
-}
-
-.avatar {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  margin-right: 8px;
-  border-radius: 50%;
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-size: 11px;
-  font-weight: 700;
-  vertical-align: middle;
-}
-
-.member-name {
-  vertical-align: middle;
-}
-
-.role-badge {
-  text-transform: capitalize;
-}
-
-.mono {
-  font-family: var(--font-mono);
-}
-
-.teams-layout {
-  display: grid;
-  gap: 12px;
-  grid-template-columns: minmax(200px, 260px) minmax(0, 1fr);
-}
-
-.teams-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.team-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  width: 100%;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface);
-  padding: 8px 10px;
-  text-align: left;
-  cursor: pointer;
-}
-
-.team-row.selected {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-}
-
-.team-name {
-  font-weight: 600;
-}
-
-.team-delete {
-  color: var(--text-muted);
-  opacity: 0.7;
-}
-
-.team-delete:hover {
-  color: var(--danger-fg);
-  opacity: 1;
-}
-
-.team-create {
-  margin-top: 4px;
-}
-
-.team-members h3 {
-  margin: 0 0 8px;
-}
-
-.team-member-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.team-member-list li {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  border-bottom: 1px solid var(--border-faint);
-  padding: 4px 0;
-}
-
-.team-member-list li .member-name {
-  flex: 1;
-}
-
-@media (max-width: 820px) {
-  .teams-layout {
-    grid-template-columns: 1fr;
-  }
-}
-</style>

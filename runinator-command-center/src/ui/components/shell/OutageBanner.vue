@@ -1,12 +1,20 @@
 <template>
   <transition name="outage">
-    <div v-if="app.showOutageBanner" class="outage-banner" role="alert">
-      <Icon name="alert" :size="16" class="outage-icon" />
-      <span class="outage-text">
+    <div
+      v-if="app.showOutageBanner"
+      class="flex items-center gap-2.5 border-b border-danger-fg bg-danger-bg px-3.5 py-2 text-[13px] text-danger-fg"
+      role="alert"
+    >
+      <Icon name="alert" :size="16" class="shrink-0" />
+      <span class="min-w-0 flex-1">
         Runinator service is unreachable right now. Retrying automatically&mdash;changes may not be
         saved until it reconnects.
       </span>
-      <button class="outage-close" aria-label="Dismiss" @click="app.dismissOutageBanner()">
+      <button
+        class="inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-sm border-0 bg-transparent p-0 text-inherit opacity-70 hover:opacity-100"
+        aria-label="Dismiss"
+        @click="app.dismissOutageBanner()"
+      >
         <Icon name="close" :size="13" />
       </button>
     </div>
@@ -19,59 +27,3 @@ import { useAppStore } from "../../../ui/adapters/pinia/app";
 
 const app = useAppStore();
 </script>
-
-<style scoped>
-.outage-banner {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 14px;
-  border-bottom: 1px solid var(--danger-fg);
-  background: var(--danger-bg);
-  color: var(--danger-fg);
-  font-size: 13px;
-}
-
-.outage-icon {
-  flex: 0 0 auto;
-}
-
-.outage-text {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.outage-close {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: inherit;
-  opacity: 0.7;
-  cursor: pointer;
-}
-
-.outage-close:hover {
-  opacity: 1;
-  background: transparent;
-}
-
-.outage-enter-active,
-.outage-leave-active {
-  transition:
-    opacity 0.18s ease,
-    transform 0.18s ease;
-}
-
-.outage-enter-from,
-.outage-leave-to {
-  opacity: 0;
-  transform: translateY(-6px);
-}
-</style>

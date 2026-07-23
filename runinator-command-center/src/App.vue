@@ -3,7 +3,7 @@
   <AppShell v-else>
     <DevView v-if="app.activeTab === 'Dev' && isDesktop" />
     <section v-else-if="app.activeTab === 'Dev'" class="pane">
-      <div class="dev-unavailable">
+      <div class="py-3.5 text-fg-muted">
         The Dev environment is only available in the desktop client. It is disabled in the hosted
         web app.
       </div>
@@ -402,10 +402,3 @@ onBeforeUnmount(() => {
   app.dispose();
 });
 </script>
-
-<style scoped>
-.dev-unavailable {
-  color: var(--text-muted);
-  padding: 14px 0;
-}
-</style>

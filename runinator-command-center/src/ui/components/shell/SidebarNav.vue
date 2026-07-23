@@ -1,34 +1,56 @@
 <template>
   <aside class="sidebar" :class="{ collapsed: app.sidebarCollapsed }">
-    <div class="brand">
+    <div class="brand" :class="railMode ? 'flex-col gap-2.5' : ''">
       <span class="brand-mark">R</span>
-      <span class="brand-text">Command Center</span>
+      <span class="brand-text" :class="railMode ? 'hidden' : ''">Command Center</span>
       <button
-        class="sidebar-toggle"
+        class="sidebar-toggle inline-flex size-[26px] cursor-pointer items-center justify-center rounded-md border-0 bg-transparent text-fg-inverse-muted hover:bg-inverse-hover hover:text-fg-inverse disabled:cursor-default"
+        :class="railMode ? 'ml-0' : 'ml-auto'"
         :title="app.sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'"
         :aria-label="app.sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'"
         :disabled="app.interactionsDisabled"
         @click="app.toggleSidebar()"
       >
-        <Icon :name="app.sidebarCollapsed ? 'chevron-right' : 'chevron-left'" :size="16" />
+        <Icon
+          :name="app.sidebarCollapsed ? 'chevron-right' : 'chevron-left'"
+          :size="16"
+          class="transition-transform duration-200 ease-out"
+        />
       </button>
     </div>
     <nav class="nav-list">
       <template v-for="section in sections" :key="section.label">
-        <div class="nav-section-label">{{ section.label }}</div>
+        <div
+          class="mt-2.5 px-2.5 text-[11px] font-semibold uppercase tracking-[0.04em] text-[#7e8c9c] first:mt-0"
+          :class="railMode ? 'hidden' : ''"
+        >
+          {{ section.label }}
+        </div>
         <button
           v-for="item in section.items"
           :key="item.tab"
-          :class="{ active: app.activeTab === item.tab }"
+          :class="{
+            active: app.activeTab === item.tab,
+            '!justify-center': railMode,
+          }"
           :disabled="app.interactionsDisabled"
           :title="app.sidebarCollapsed ? item.label : undefined"
           @click="app.activeTab = item.tab"
         >
-          <span class="nav-row">
+          <span class="inline-flex min-w-0 items-center" :class="railMode ? 'gap-0' : 'gap-[9px]'">
             <Icon :name="item.icon" :size="15" />
-            <span class="nav-label">{{ item.label }}</span>
+            <span
+              class="overflow-hidden text-ellipsis whitespace-nowrap"
+              :class="railMode ? 'hidden' : ''"
+              >{{ item.label }}</span
+            >
           </span>
-          <span v-if="countFor(item.tab) !== null" class="nav-count">{{ countFor(item.tab) }}</span>
+          <span
+            v-if="countFor(item.tab) !== null"
+            class="nav-count"
+            :class="railMode ? 'hidden' : ''"
+            >{{ countFor(item.tab) }}</span
+          >
         </button>
       </template>
     </nav>
@@ -43,8 +65,12 @@ import { useSecretsStore } from "../../../ui/adapters/pinia/secrets";
 import { useWorkflowsStore } from "../../../ui/adapters/pinia/workflows";
 import type { AppTab } from "../../../core/navigation/app";
 import { computed } from "vue";
+import { useBreakpoint } from "../../composables/useBreakpoint";
 
 const app = useAppStore();
+const { isMobile } = useBreakpoint();
+// desktop icon-rail only; the mobile drawer always shows labels regardless of the collapsed flag.
+const railMode = computed(() => app.sidebarCollapsed && !isMobile.value);
 const sections = computed(() => app.visibleNavSections());
 const workflows = useWorkflowsStore();
 const resources = useResourcesStore();
@@ -80,99 +106,3 @@ function resourceEndpointFor(tab: AppTab): string | undefined {
   return item?.endpoint;
 }
 </script>
-
-<style scoped>
-.nav-section-label {
-  color: #7e8c9c;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  margin-top: 10px;
-  padding: 0 10px;
-  text-transform: uppercase;
-}
-
-.nav-section-label:first-child {
-  margin-top: 0;
-}
-
-.nav-row {
-  display: inline-flex;
-  align-items: center;
-  gap: 9px;
-  min-width: 0;
-}
-
-.nav-label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.sidebar-toggle {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  margin-left: auto;
-  width: 26px;
-  height: 26px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-inverse-muted);
-  cursor: pointer;
-}
-
-.sidebar-toggle:hover {
-  background: var(--surface-inverse-hover);
-  color: var(--text-inverse);
-}
-
-/* collapsed: icon rail only. */
-.sidebar.collapsed .brand-text,
-.sidebar.collapsed .nav-section-label,
-.sidebar.collapsed .nav-label,
-.sidebar.collapsed .nav-count {
-  display: none;
-}
-
-.sidebar.collapsed .brand {
-  flex-direction: column;
-  gap: 10px;
-}
-
-.sidebar.collapsed .sidebar-toggle {
-  margin-left: 0;
-}
-
-.sidebar.collapsed :deep(.nav-list button) {
-  justify-content: center;
-}
-
-.sidebar.collapsed .nav-row {
-  gap: 0;
-}
-
-/* in the mobile drawer the sidebar is full-width regardless of the persisted collapsed flag:
-   always show labels, counts, and section headers so nav is usable. */
-@media (max-width: 760px) {
-  .sidebar.collapsed .brand-text,
-  .sidebar.collapsed .nav-section-label,
-  .sidebar.collapsed .nav-label,
-  .sidebar.collapsed .nav-count {
-    display: revert;
-  }
-
-  .sidebar.collapsed .brand {
-    flex-direction: row;
-  }
-
-  .sidebar.collapsed :deep(.nav-list button) {
-    justify-content: space-between;
-  }
-
-  .sidebar.collapsed .nav-row {
-    gap: 9px;
-  }
-}
-</style>

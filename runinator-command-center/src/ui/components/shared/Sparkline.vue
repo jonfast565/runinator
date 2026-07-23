@@ -1,19 +1,23 @@
 <template>
-  <div class="sparkline">
-    <div class="sparkline-head">
-      <span class="sparkline-label">{{ label }}</span>
-      <span class="sparkline-value">{{ latestLabel }}</span>
+  <div class="rounded-md border border-border bg-surface-sunken px-2.5 py-2">
+    <div class="mb-1 flex items-baseline justify-between gap-2">
+      <span class="text-[11px] tracking-wide text-fg-muted uppercase">{{ label }}</span>
+      <span class="font-mono text-xs font-semibold">{{ latestLabel }}</span>
     </div>
     <svg
       v-if="points.length > 1"
-      class="sparkline-svg"
+      class="block h-10 w-full"
       :viewBox="`0 0 ${String(width)} ${String(height)}`"
       preserveAspectRatio="none"
     >
-      <polyline :points="areaPath" class="sparkline-area" :style="{ fill: color, opacity: 0.12 }" />
-      <polyline :points="linePath" class="sparkline-line" :style="{ stroke: color }" />
+      <polyline :points="areaPath" class="stroke-none" :style="{ fill: color, opacity: 0.12 }" />
+      <polyline
+        :points="linePath"
+        class="fill-none [stroke-width:1.5] [vector-effect:non-scaling-stroke]"
+        :style="{ stroke: color }"
+      />
     </svg>
-    <div v-else class="sparkline-empty">no samples yet</div>
+    <div v-else class="py-2.5 text-[11px] text-fg-muted">no samples yet</div>
   </div>
 </template>
 
@@ -92,55 +96,3 @@ const latestLabel = computed(() => {
   return `${latest.toFixed(1)}${props.unit}`;
 });
 </script>
-
-<style scoped>
-.sparkline {
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface-sunken);
-  padding: 8px 10px;
-}
-
-.sparkline-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 4px;
-}
-
-.sparkline-label {
-  color: var(--text-muted);
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.sparkline-value {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.sparkline-svg {
-  display: block;
-  width: 100%;
-  height: 40px;
-}
-
-.sparkline-area {
-  stroke: none;
-}
-
-.sparkline-line {
-  fill: none;
-  stroke-width: 1.5;
-  vector-effect: non-scaling-stroke;
-}
-
-.sparkline-empty {
-  color: var(--text-muted);
-  font-size: 11px;
-  padding: 10px 0;
-}
-</style>

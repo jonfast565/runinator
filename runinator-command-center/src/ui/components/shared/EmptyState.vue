@@ -1,12 +1,34 @@
 <template>
-  <div class="empty-state" :class="{ compact, loading }" role="status" :aria-live="loading ? 'polite' : undefined">
+  <div
+    class="flex flex-col items-center justify-center text-center text-fg-muted"
+    :class="compact ? 'gap-1.5 px-3 py-4' : 'gap-2 px-5 py-8'"
+    role="status"
+    :aria-live="loading ? 'polite' : undefined"
+  >
     <LoadingSpinner v-if="loading" :size="compact ? 'sm' : 'md'" :label="loadingMessage || title" />
-    <div v-else-if="icon" class="empty-state-icon">
+    <div
+      v-else-if="icon"
+      class="ui-fade-up inline-flex items-center justify-center rounded-pill bg-surface-muted text-fg-subtle"
+      :class="compact ? 'size-[34px]' : 'size-11'"
+    >
       <Icon :name="icon" :size="compact ? 18 : 24" />
     </div>
-    <p class="empty-state-title">{{ loading ? loadingMessage || title : title }}</p>
-    <p v-if="!loading && description" class="empty-state-desc">{{ description }}</p>
-    <div v-if="!loading && $slots.default" class="empty-state-actions">
+    <p
+      class="m-0"
+      :class="
+        loading
+          ? 'font-medium text-fg-muted'
+          : compact
+            ? 'text-[13px] font-semibold text-fg'
+            : 'font-semibold text-fg'
+      "
+    >
+      {{ loading ? loadingMessage || title : title }}
+    </p>
+    <p v-if="!loading && description" class="m-0 max-w-[42ch] text-[13px] leading-normal">
+      {{ description }}
+    </p>
+    <div v-if="!loading && $slots.default" class="mt-1.5 flex flex-wrap justify-center gap-2">
       <slot />
     </div>
   </div>
@@ -36,67 +58,3 @@ withDefaults(
   },
 );
 </script>
-
-<style scoped>
-.empty-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  text-align: center;
-  color: var(--text-muted);
-  padding: 32px 20px;
-}
-
-.empty-state.compact {
-  padding: 16px 12px;
-  gap: 6px;
-}
-
-.empty-state-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 44px;
-  height: 44px;
-  border-radius: var(--radius-pill);
-  background: var(--surface-muted);
-  color: var(--text-subtle);
-}
-
-.empty-state.compact .empty-state-icon {
-  width: 34px;
-  height: 34px;
-}
-
-.empty-state-title {
-  margin: 0;
-  color: var(--text);
-  font-weight: 600;
-}
-
-.empty-state.compact .empty-state-title {
-  font-size: 13px;
-}
-
-.empty-state-desc {
-  margin: 0;
-  max-width: 42ch;
-  font-size: 13px;
-  line-height: 1.5;
-}
-
-.empty-state-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  justify-content: center;
-  margin-top: 6px;
-}
-
-.empty-state.loading .empty-state-title {
-  color: var(--text-muted);
-  font-weight: 500;
-}
-</style>

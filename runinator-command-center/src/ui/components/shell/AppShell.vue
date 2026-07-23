@@ -10,12 +10,14 @@
     @keydown="onShellKeydown"
   >
     <SidebarNav />
-    <div
-      v-if="app.mobileNavOpen"
-      class="mobile-nav-backdrop"
-      aria-hidden="true"
-      @click="app.closeMobileNav()"
-    ></div>
+    <Transition name="mobile-nav-backdrop">
+      <div
+        v-if="app.mobileNavOpen"
+        class="mobile-nav-backdrop"
+        aria-hidden="true"
+        @click="app.closeMobileNav()"
+      ></div>
+    </Transition>
     <section class="workspace">
       <TopToolbar @refresh="refreshActive" />
       <OutageBanner />

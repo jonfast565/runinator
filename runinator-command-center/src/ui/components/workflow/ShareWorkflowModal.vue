@@ -2,20 +2,20 @@
   <Modal title="Share workflow" width="min(560px, calc(100vw - 32px))" @close="emit('close')">
     <section class="form-section">
       <h3>Access</h3>
-      <table v-if="grants.length" class="grants-table">
+      <table v-if="grants.length" class="w-full border-collapse text-xs">
         <thead>
           <tr>
-            <th>Principal</th>
-            <th>Type</th>
-            <th>Permission</th>
-            <th></th>
+            <th class="border-b border-border-subtle px-2 py-1.5 text-left">Principal</th>
+            <th class="border-b border-border-subtle px-2 py-1.5 text-left">Type</th>
+            <th class="border-b border-border-subtle px-2 py-1.5 text-left">Permission</th>
+            <th class="border-b border-border-subtle px-2 py-1.5 text-left"></th>
           </tr>
         </thead>
         <tbody>
           <tr v-for="grant in grants" :key="String(grant.id)">
-            <td class="mono">{{ grant.principal_id }}</td>
-            <td>{{ grant.principal_type }}</td>
-            <td>{{ grant.permission }}</td>
+            <td class="mono border-b border-border-subtle px-2 py-1.5 text-left">{{ grant.principal_id }}</td>
+            <td class="border-b border-border-subtle px-2 py-1.5 text-left">{{ grant.principal_type }}</td>
+            <td class="border-b border-border-subtle px-2 py-1.5 text-left">{{ grant.permission }}</td>
             <td>
               <Button size="sm" variant="ghost" @click="revoke(String(grant.id))">Remove</Button>
             </td>
@@ -29,19 +29,19 @@
 
     <section class="form-section">
       <h3>Add grant</h3>
-      <form class="add-grant" @submit.prevent="add">
-        <label>
+      <form class="flex flex-wrap items-end gap-2" @submit.prevent="add">
+        <label class="grid gap-1 text-xs text-fg-subtle">
           Principal
           <select v-model="principalType">
             <option value="user">user</option>
             <option value="team">team</option>
           </select>
         </label>
-        <label>
+        <label class="grid gap-1 text-xs text-fg-subtle">
           Principal ID (UUID)
           <input v-model="principalId" placeholder="user or team id" />
         </label>
-        <label>
+        <label class="grid gap-1 text-xs text-fg-subtle">
           Permission
           <select v-model="permission">
             <option value="view">view</option>
@@ -117,59 +117,3 @@ async function revoke(grantId: string) {
 
 onMounted(refresh);
 </script>
-
-<style scoped>
-.form-section {
-  margin-top: 14px;
-}
-
-.grants-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 12px;
-}
-
-.grants-table th,
-.grants-table td {
-  padding: 5px 8px;
-  border-bottom: 1px solid var(--border-subtle);
-  text-align: left;
-}
-
-.mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 11px;
-}
-
-.add-grant {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: end;
-  gap: 8px;
-}
-
-.add-grant label {
-  display: grid;
-  gap: 4px;
-  font-size: 12px;
-  color: var(--text-subtle);
-}
-
-.add-grant input,
-.add-grant select {
-  padding: 6px 8px;
-  border: 1px solid var(--border-strong);
-  border-radius: 6px;
-  font: inherit;
-}
-
-.hint {
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.error {
-  color: var(--danger-fg);
-  font-size: 12px;
-}
-</style>

@@ -1,5 +1,5 @@
 <template>
-  <div class="run-node-actions">
+  <div class="flex flex-wrap gap-1.5">
     <button
       type="button"
       class="btn btn-sm"
@@ -21,11 +21,21 @@
       <Icon name="restart" :size="13" />
       <span>Replay from here</span>
     </button>
-    <button type="button" class="btn btn-sm" :title="copyTitle('input')" @click="copy('input')">
+    <button
+      type="button"
+      class="btn btn-sm"
+      :title="copyTitle('input')"
+      @click="copy('input')"
+    >
       <Icon name="download" :size="13" />
       <span>{{ copied === "input" ? "Copied" : "Copy input" }}</span>
     </button>
-    <button type="button" class="btn btn-sm" :title="copyTitle('output')" @click="copy('output')">
+    <button
+      type="button"
+      class="btn btn-sm"
+      :title="copyTitle('output')"
+      @click="copy('output')"
+    >
       <Icon name="download" :size="13" />
       <span>{{ copied === "output" ? "Copied" : isFailed ? "Copy error" : "Copy output" }}</span>
     </button>
@@ -135,15 +145,3 @@ function toText(value: unknown): string {
   return JSON.stringify(value, null, 2);
 }
 </script>
-
-<style scoped>
-.run-node-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.btn-sm {
-  font-size: 11px;
-  padding: 3px 8px;
-}
-</style>

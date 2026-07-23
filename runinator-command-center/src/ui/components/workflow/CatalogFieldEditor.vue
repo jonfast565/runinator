@@ -1,8 +1,8 @@
 <template>
-  <div class="catalog-field-editor">
-    <span class="field-label">
+  <div class="flex flex-col gap-1">
+    <span class="text-xs text-fg-muted">
       {{ field.label || field.name }}
-      <strong v-if="field.required">*</strong>
+      <strong v-if="field.required" class="ml-0.5 text-danger-fg">*</strong>
     </span>
 
     <!-- provider select: shows all registered providers. -->
@@ -103,10 +103,10 @@
       <div
         v-for="(assertion, index) in assertionList"
         :key="index"
-        class="assertion-row"
+        class="mb-2 flex flex-col gap-2 rounded-lg border border-border p-3"
       >
-        <div class="assertion-row-head">
-          <label>Name <input v-model="assertion.name" @change="emitAssertions" /></label>
+        <div class="flex items-end justify-between gap-2">
+          <label class="flex-1">Name <input v-model="assertion.name" @change="emitAssertions" /></label>
           <button type="button" @click="removeAssertion(index)">Remove</button>
         </div>
         <div class="form-field">
@@ -281,42 +281,3 @@ function emitNodeRef(nodeId: string) {
   emit("update:modelValue", nodeId ? makeNodeRef(nodeId) : undefined);
 }
 </script>
-
-<style scoped>
-.catalog-field-editor {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.field-label {
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
-.field-label strong {
-  color: var(--text-error, red);
-  margin-left: 2px;
-}
-
-.assertion-row {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px;
-  margin-bottom: 8px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-}
-
-.assertion-row-head {
-  display: flex;
-  gap: 8px;
-  align-items: end;
-  justify-content: space-between;
-}
-
-.assertion-row-head label {
-  flex: 1;
-}
-</style>

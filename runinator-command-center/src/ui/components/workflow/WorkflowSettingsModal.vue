@@ -1,6 +1,6 @@
 <template>
   <div class="modal-backdrop">
-    <form class="modal workflow-settings-modal" @submit.prevent="workflows.closeWorkflowSettings">
+    <form class="modal w-[min(1040px,100%)]" @submit.prevent="workflows.closeWorkflowSettings">
       <header class="modal-header">
         <h2>Workflow Settings</h2>
         <button type="button" @click="workflows.closeWorkflowSettings">Close</button>
@@ -206,7 +206,7 @@
               <JsonEditor v-model="workflows.triggerJson.metadata" />
             </div>
           </div>
-          <p v-if="workflows.triggerEditorError" class="form-error">
+          <p v-if="workflows.triggerEditorError" class="error m-0 text-xs">
             {{ workflows.triggerEditorError }}
           </p>
           <div class="modal-actions">
@@ -219,7 +219,7 @@
       <div class="modal-actions">
         <button
           type="button"
-          class="danger"
+          class="btn btn-danger"
           :disabled="!workflows.workflowDraft.id"
           @click="workflows.deleteSelectedWorkflow"
         >
@@ -325,89 +325,3 @@ if (!orgs.memberships.length) {
   void orgs.refresh();
 }
 </script>
-
-<style scoped>
-.workflow-settings-modal {
-  width: min(1040px, 100%);
-}
-
-.section-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.section-actions,
-.row-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-.hint,
-.form-error {
-  margin: 0;
-  font-size: 12px;
-}
-
-.hint {
-  color: #66717e;
-}
-
-.catalog-loading-hint {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.form-error {
-  color: #a33a2f;
-}
-
-.danger {
-  border-color: #c94b3f;
-  color: #a33a2f;
-}
-
-.trigger-table-wrap {
-  overflow: auto;
-  border: 1px solid #edf1f5;
-  border-radius: 6px;
-}
-
-.trigger-table-wrap th:last-child,
-.trigger-table-wrap td:last-child {
-  width: 148px;
-}
-
-.trigger-editor {
-  display: grid;
-  gap: 12px;
-  border-top: 1px solid #e5ebf1;
-  padding-top: 12px;
-}
-
-.trigger-field-list {
-  display: grid;
-  gap: 8px;
-}
-
-.trigger-json-grid {
-  display: grid;
-  gap: 12px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-@media (max-width: 760px) {
-  .section-toolbar,
-  .trigger-json-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .section-toolbar {
-    align-items: stretch;
-    flex-direction: column;
-  }
-}
-</style>

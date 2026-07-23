@@ -1,6 +1,6 @@
 <template>
-  <details class="advanced-params">
-    <summary>{{ title }}</summary>
+  <details class="mt-2">
+    <summary class="cursor-pointer text-xs text-fg-muted">{{ title }}</summary>
     <ExpressionJsonEditor
       :model-value="modelValue"
       :context="context"
@@ -28,15 +28,3 @@ withDefaults(
 
 defineEmits<{ "update:modelValue": [value: string] }>();
 </script>
-
-<style scoped>
-.advanced-params {
-  margin-top: 8px;
-}
-
-.advanced-params summary {
-  cursor: pointer;
-  color: #66717e;
-  font-size: 12px;
-}
-</style>

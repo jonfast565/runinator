@@ -9,7 +9,11 @@
     :disabled="disabled || loading"
     @click="emit('click', $event)"
   >
-    <span v-if="loading" class="btn-spinner" aria-hidden="true"></span>
+    <span
+      v-if="loading"
+      class="btn-spinner size-[13px] shrink-0 animate-spin rounded-full border-2 border-current border-t-transparent opacity-80"
+      aria-hidden="true"
+    ></span>
     <Icon v-else-if="icon" :name="icon" :size="iconSize" />
     <span v-if="$slots.default" class="btn-label"><slot /></span>
   </button>
@@ -19,7 +23,7 @@
 import { computed } from "vue";
 import Icon, { type IconName } from "./Icon.vue";
 
-// shared button wrapping the .btn vocabulary in buttons.css. adds a built-in loading spinner
+// shared button wrapping the .btn vocabulary in tailwind.css. adds a built-in loading spinner
 // (which also disables the button) so callers stop hand-rolling per-button busy state.
 const props = withDefaults(
   defineProps<{
@@ -61,22 +65,3 @@ const variantClass = computed(() => {
 
 const iconSize = computed(() => (props.size === "sm" ? 13 : 15));
 </script>
-
-<style scoped>
-.btn-spinner {
-  flex: 0 0 auto;
-  width: 13px;
-  height: 13px;
-  border: 2px solid currentColor;
-  border-top-color: transparent;
-  border-radius: 50%;
-  opacity: 0.8;
-  animation: btn-spin 0.7s linear infinite;
-}
-
-@keyframes btn-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-</style>

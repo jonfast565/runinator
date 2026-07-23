@@ -9,7 +9,7 @@
           <Icon name="close" :size="16" />
         </button>
       </div>
-      <div class="modal-body">
+      <div class="flex min-h-0 flex-col gap-3">
         <slot />
       </div>
       <div v-if="$slots.actions" class="modal-actions">
@@ -23,12 +23,12 @@
 import { computed, onBeforeUnmount, onMounted } from "vue";
 import Icon from "./Icon.vue";
 
-// shared modal shell wrapping modal.css. standardizes header + close button, footer actions,
-// and escape/backdrop dismissal so every modal behaves the same.
+// shared modal shell (styles live in tailwind.css @layer components). standardizes header +
+// close button, footer actions, and escape/backdrop dismissal so every modal behaves the same.
 const props = withDefaults(
   defineProps<{
     title?: string;
-    // css width for the dialog, e.g. "560px" or "min(820px, 100%)". defaults to modal.css.
+    // css width for the dialog, e.g. "560px" or "min(820px, 100%)".
     width?: string;
     closeOnBackdrop?: boolean;
     closeOnEsc?: boolean;
@@ -59,12 +59,3 @@ onBeforeUnmount(() => {
   window.removeEventListener("keydown", onKeydown);
 });
 </script>
-
-<style scoped>
-.modal-body {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  min-height: 0;
-}
-</style>

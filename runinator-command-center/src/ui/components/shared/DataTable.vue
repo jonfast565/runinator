@@ -34,7 +34,7 @@ const props = withDefaults(
     // client-side page size; 0 disables pagination.
     pageSize?: number;
     compact?: boolean;
-    // per-row css classes (e.g. danger/success/muted) mirroring the shared tables.css variants.
+    // per-row css classes (e.g. danger/success/muted) matching .table-scroll row variants.
     rowClass?: (row: Row) => string | Record<string, boolean>;
     emptyTitle?: string;
     emptyDescription?: string;
@@ -165,6 +165,39 @@ function rowClasses(row: Row, index: number): Record<string, boolean> {
   return base;
 }
 
+function cardToneClass(row: Row, index: number): string {
+  const classes = rowClasses(row, index);
+  const tones: string[] = [
+    classes.selected ? "border-accent bg-accent-soft" : "border-border-subtle bg-surface",
+  ];
+
+  if (classes.danger) {
+    tones.push("text-danger-fg");
+  }
+
+  if (classes.success) {
+    tones.push("text-success-fg");
+  }
+
+  if (classes.muted) {
+    tones.push("text-fg-muted");
+  }
+
+  return tones.join(" ");
+}
+
+function alignClass(align?: "left" | "right" | "center"): string {
+  if (align === "right") {
+    return "text-right";
+  }
+
+  if (align === "center") {
+    return "text-center";
+  }
+
+  return "";
+}
+
 function displayCell(value: unknown): string {
   return displayValue(value);
 }
@@ -197,14 +230,18 @@ function compareValues(left: unknown, right: unknown): number {
   <div v-if="!columns" class="table-scroll">
     <slot />
   </div>
-  <div v-else class="data-table" :class="{ 'is-refreshing': refreshing }">
+  <div v-else class="flex min-h-0 flex-1 flex-col gap-2">
     <LoadingPanel
       v-if="showLoadingPanel"
       compact
       :message="loadingMessage || 'Loading…'"
     />
     <!-- mobile card layout: each row becomes a stack of label:value pairs. -->
-    <div v-else-if="cardMode" class="data-table-cards">
+    <div
+      v-else-if="cardMode"
+      class="flex min-h-0 flex-1 flex-col gap-2 overflow-auto"
+      :class="refreshing ? 'opacity-60 transition-opacity duration-[120ms]' : ''"
+    >
       <EmptyState
         v-if="!pagedRows.length && emptyTitle"
         compact
@@ -212,17 +249,23 @@ function compareValues(left: unknown, right: unknown): number {
         :title="emptyTitle"
         :description="emptyDescription"
       />
-      <span v-else-if="!pagedRows.length" class="data-table-empty-text">No records.</span>
+      <span v-else-if="!pagedRows.length" class="block px-3.5 py-3.5 text-center text-fg-muted"
+        >No records.</span
+      >
       <div
         v-for="(row, index) in pagedRows"
         :key="keyForRow(row, index)"
-        class="data-card"
-        :class="rowClasses(row, index)"
+        class="flex flex-col gap-1 rounded-md border px-3 py-2.5"
+        :class="cardToneClass(row, index)"
         @click="emit('select', row)"
       >
-        <div v-for="column in columns" :key="column.key" class="data-card-row">
-          <span class="data-card-label">{{ column.label }}</span>
-          <span class="data-card-value" :class="column.align ? `align-${column.align}` : ''">
+        <div
+          v-for="column in columns"
+          :key="column.key"
+          class="flex min-w-0 items-baseline justify-between gap-3"
+        >
+          <span class="shrink-0 text-xs font-semibold text-fg-muted">{{ column.label }}</span>
+          <span class="min-w-0 text-right [overflow-wrap:anywhere]" :class="alignClass(column.align)">
             <slot :name="`cell-${column.key}`" :row="row" :value="cellValue(row, column)">
               {{ displayCell(cellValue(row, column)) }}
             </slot>
@@ -230,7 +273,11 @@ function compareValues(left: unknown, right: unknown): number {
         </div>
       </div>
     </div>
-    <div v-else class="table-scroll">
+    <div
+      v-else
+      class="table-scroll"
+      :class="refreshing ? 'opacity-60 transition-opacity duration-[120ms]' : ''"
+    >
       <table :class="{ compact }">
         <thead>
           <tr>
@@ -238,14 +285,14 @@ function compareValues(left: unknown, right: unknown): number {
               v-for="column in columns"
               :key="column.key"
               :class="[
-                column.align ? `align-${column.align}` : '',
+                alignClass(column.align),
                 column.priority === 'low' ? 'col-low' : '',
-                { sortable: column.sortable },
+                column.sortable ? 'cursor-pointer select-none hover:text-fg' : '',
               ]"
               :style="column.width ? { width: column.width } : undefined"
               @click="column.sortable ? toggleSort(column.key) : undefined"
             >
-              <span class="th-inner">
+              <span class="inline-flex items-center gap-1">
                 <span>{{ column.label }}</span>
                 <Icon
                   v-if="column.sortable && sortKey === column.key"
@@ -258,7 +305,7 @@ function compareValues(left: unknown, right: unknown): number {
         </thead>
         <tbody>
           <tr v-if="!pagedRows.length" class="data-table-empty-row">
-            <td :colspan="columns.length">
+            <td :colspan="columns.length" class="!p-0 hover:!bg-transparent">
               <EmptyState
                 v-if="emptyTitle"
                 compact
@@ -266,7 +313,7 @@ function compareValues(left: unknown, right: unknown): number {
                 :title="emptyTitle"
                 :description="emptyDescription"
               />
-              <span v-else class="data-table-empty-text">No records.</span>
+              <span v-else class="block px-3.5 py-3.5 text-center text-fg-muted">No records.</span>
             </td>
           </tr>
           <tr
@@ -278,10 +325,7 @@ function compareValues(left: unknown, right: unknown): number {
             <td
               v-for="column in columns"
               :key="column.key"
-              :class="[
-                column.align ? `align-${column.align}` : '',
-                column.priority === 'low' ? 'col-low' : '',
-              ]"
+              :class="[alignClass(column.align), column.priority === 'low' ? 'col-low' : '']"
             >
               <slot :name="`cell-${column.key}`" :row="row" :value="cellValue(row, column)">
                 {{ displayCell(cellValue(row, column)) }}
@@ -291,12 +335,12 @@ function compareValues(left: unknown, right: unknown): number {
         </tbody>
       </table>
     </div>
-    <div v-if="pageCount > 1" class="data-table-pager">
+    <div v-if="pageCount > 1" class="flex shrink-0 items-center justify-end gap-2.5">
       <button class="btn btn-sm" :disabled="page === 0" @click="page = Math.max(0, page - 1)">
         <Icon name="chevron-left" :size="13" />
         <span>Prev</span>
       </button>
-      <span class="data-table-page-label">{{ pageLabel }}</span>
+      <span class="text-xs text-fg-muted">{{ pageLabel }}</span>
       <button
         class="btn btn-sm"
         :disabled="page >= pageCount - 1"
@@ -308,128 +352,3 @@ function compareValues(left: unknown, right: unknown): number {
     </div>
   </div>
 </template>
-
-<style scoped>
-.data-table {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  flex: 1;
-  gap: 8px;
-}
-
-/* keep rows in place during a background refresh, just dimmed, instead of unmounting the table. */
-.data-table.is-refreshing .table-scroll,
-.data-table.is-refreshing .data-table-cards {
-  opacity: 0.6;
-  transition: opacity 120ms ease-out;
-}
-
-.th-inner {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-
-th.sortable {
-  cursor: pointer;
-  user-select: none;
-}
-
-th.sortable:hover {
-  color: var(--text);
-}
-
-.align-right {
-  text-align: right;
-}
-
-.align-center {
-  text-align: center;
-}
-
-.data-table-empty-row td {
-  padding: 0;
-}
-
-.data-table-empty-text {
-  display: block;
-  color: var(--text-muted);
-  text-align: center;
-  padding: 14px;
-}
-
-.data-table-empty-row:hover td {
-  background: transparent;
-}
-
-.data-table-pager {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 10px;
-  flex: 0 0 auto;
-}
-
-.data-table-page-label {
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.data-table-cards {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  min-height: 0;
-  flex: 1;
-  overflow: auto;
-}
-
-.data-card {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius);
-  background: var(--surface);
-  padding: 10px 12px;
-}
-
-.data-card.selected {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-}
-
-.data-card.danger {
-  color: var(--danger-fg);
-}
-
-.data-card.success {
-  color: var(--success-fg);
-}
-
-.data-card.muted {
-  color: var(--text-muted);
-}
-
-.data-card-row {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  min-width: 0;
-}
-
-.data-card-label {
-  flex: 0 0 auto;
-  color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 650;
-}
-
-.data-card-value {
-  min-width: 0;
-  overflow-wrap: anywhere;
-  text-align: right;
-}
-</style>

@@ -1,7 +1,7 @@
 <template>
-  <section class="pane workflows-pane">
+  <section class="pane h-full overflow-hidden">
     <SplitPane
-      class="workflow-layout"
+      class="h-full w-full"
       storage-key="command-center.workflows.list-split"
       :initial-first-pct="20"
       :min-first="240"
@@ -11,37 +11,39 @@
       :mobile-detail-active="mobileView === 'editor'"
     >
       <template #first>
-        <div class="panel workflow-list">
+        <div class="panel min-h-0">
           <div class="panel-toolbar">
-            <div class="workflow-list-copy">
-              <h2>Workflows</h2>
-              <p>Browse definitions, select one to edit, or create a new workflow.</p>
+            <div class="grid gap-1">
+              <h2 class="m-0 text-base font-semibold text-fg">Workflows</h2>
+              <p class="m-0 text-xs text-fg-muted">
+                Browse definitions, select one to edit, or create a new workflow.
+              </p>
             </div>
             <button class="btn btn-primary" @click="newWorkflow">
               <Icon name="plus" />
               <span>New</span>
             </button>
           </div>
-          <div class="workflow-scope-filter">
-            <label>Scope</label>
-            <select v-model="scopeFilter">
+          <div class="mb-2 flex items-center gap-2">
+            <label class="text-xs uppercase tracking-wide text-fg-muted">Scope</label>
+            <select v-model="scopeFilter" class="flex-1">
               <option value="all">All</option>
               <option value="org">This org</option>
               <option value="global">Global</option>
             </select>
           </div>
-          <div class="workflow-list-summary">
-            <div>
-              <span>Visible</span>
-              <strong>{{ scopedWorkflows.length }}</strong>
+          <div class="mb-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <div class="metric-card">
+              <span class="text-xs text-fg-muted">Visible</span>
+              <strong class="truncate text-sm text-fg">{{ scopedWorkflows.length }}</strong>
             </div>
-            <div>
-              <span>Disabled</span>
-              <strong>{{ disabledWorkflowCount }}</strong>
+            <div class="metric-card">
+              <span class="text-xs text-fg-muted">Disabled</span>
+              <strong class="truncate text-sm text-fg">{{ disabledWorkflowCount }}</strong>
             </div>
-            <div>
-              <span>Selected</span>
-              <strong>{{ selectedWorkflowLabel }}</strong>
+            <div class="metric-card">
+              <span class="text-xs text-fg-muted">Selected</span>
+              <strong class="truncate text-sm text-fg">{{ selectedWorkflowLabel }}</strong>
             </div>
           </div>
           <EmptyState
@@ -87,6 +89,7 @@
                 <tr
                   v-for="workflow in scopedWorkflows"
                   :key="workflow.id ?? workflow.name"
+                  class="cursor-pointer"
                   :class="{
                     selected: workflows.selectedWorkflowId === workflow.id,
                     muted: !workflow.enabled,
@@ -104,10 +107,10 @@
       </template>
 
       <template #second>
-        <div class="workflow-main">
+        <div class="flex h-full min-h-0 min-w-0 flex-1 flex-col">
           <MobileBackBar label="Back to workflows" @back="mobileView = 'list'" />
           <SplitPane
-            class="workflow-main-split"
+            class="min-h-0 flex-1"
             storage-key="command-center.workflows.inspector-split"
             :initial-first-pct="64"
             :min-first="360"
@@ -120,9 +123,9 @@
               <WorkflowCanvas />
             </template>
             <template #second>
-              <div class="workflow-inspector-wrap">
+              <div class="flex h-full min-h-0 min-w-0 flex-1 flex-col">
                 <MobileBackBar label="Back to canvas" @back="workflows.selectedStepId = ''" />
-                <WorkflowInspector class="workflow-inspector-fill" />
+                <WorkflowInspector class="min-h-0 flex-1" />
               </div>
             </template>
           </SplitPane>
@@ -157,11 +160,8 @@ const app = useAppStore();
 const { isLoading: loadingWorkflows, loadingMessage: loadingWorkflowsMessage } =
   useOperationLoading("Refreshing workflows");
 const scopeFilter = ref<"all" | "org" | "global">("all");
-// mobile master-detail: 'list' shows the workflow list, 'editor' shows the canvas/inspector.
 const mobileView = ref<"list" | "editor">("list");
 
-// client-side scope filter on top of the server's already org-scoped list: "org" keeps only
-// workflows owned by the active org, "global" keeps only unassigned (platform-global) ones.
 const scopedWorkflows = computed(() => {
   const list = workflows.filteredWorkflows;
 
@@ -182,7 +182,6 @@ const disabledWorkflowCount = computed(
 );
 const selectedWorkflowLabel = computed(() => workflows.selectedWorkflow?.name ?? "None");
 
-// confirm before discarding unsaved edits when switching to a different workflow.
 function confirmDiscardIfDirty(): boolean {
   if (!workflows.isDirty) {
     return true;
@@ -200,7 +199,6 @@ function chooseWorkflow(workflow: (typeof scopedWorkflows.value)[number]) {
     return;
   }
 
-  // on mobile, selecting a workflow reveals the editor pane (canvas).
   mobileView.value = "editor";
   void workflows.selectWorkflow(workflow);
 }
@@ -214,98 +212,3 @@ function newWorkflow() {
   workflows.addWorkflow();
 }
 </script>
-
-<style scoped>
-.workflows-pane {
-  overflow: hidden;
-}
-
-.workflow-list {
-  min-height: 0;
-}
-
-.workflow-list-copy {
-  display: grid;
-  gap: 4px;
-}
-
-.workflow-list-copy p {
-  margin: 0;
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.workflow-scope-filter {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-
-.workflow-scope-filter label {
-  color: var(--text-muted);
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.workflow-scope-filter select {
-  flex: 1;
-}
-
-.workflow-list-summary {
-  display: grid;
-  gap: 8px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.workflow-list-summary div {
-  display: grid;
-  gap: 4px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius);
-  background: var(--surface-subtle);
-  padding: 10px 12px;
-}
-
-.workflow-list-summary span {
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.workflow-list-summary strong {
-  color: var(--text);
-  font-size: 14px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.workflow-empty {
-  color: var(--text-muted);
-  padding: 6px 2px;
-}
-
-/* wrappers added for the mobile back bars must still fill the pane on desktop. */
-.workflow-main,
-.workflow-inspector-wrap {
-  display: flex;
-  flex: 1 1 auto;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
-  height: 100%;
-}
-
-.workflow-main > .split-pane,
-.workflow-inspector-fill {
-  flex: 1 1 auto;
-  min-height: 0;
-}
-
-@media (max-width: 980px) {
-  .workflow-list-summary {
-    grid-template-columns: 1fr;
-  }
-}
-</style>

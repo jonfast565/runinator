@@ -1,7 +1,7 @@
 <template>
-  <section class="pane resources-pane">
+  <section class="pane h-full overflow-hidden">
     <SplitPane
-      class="split"
+      class="h-full w-full"
       :storage-key="`command-center.resources.${endpoint}.split`"
       :initial-first-pct="58"
       :min-first="420"
@@ -13,7 +13,7 @@
       <template #first>
         <div class="panel">
           <div class="panel-toolbar">
-            <h2>{{ title }}</h2>
+            <h2 class="m-0 text-base font-semibold text-fg">{{ title }}</h2>
             <div class="btn-row">
               <button class="btn" :disabled="loadingResources" @click="refresh">
                 <LoadingSpinner v-if="loadingResources" size="sm" label="Refreshing resources" />
@@ -21,8 +21,8 @@
                 <span>Refresh</span>
               </button>
               <template v-if="endpoint === 'approvals'">
-                <label class="filter-toggle">
-                  <input v-model="resourcesStore.hideResolved" type="checkbox" />
+                <label class="inline-flex items-center gap-1.5 text-xs text-fg-muted">
+                  <input v-model="resourcesStore.hideResolved" type="checkbox" class="w-auto" />
                   <span>Hide resolved</span>
                 </label>
                 <button
@@ -68,7 +68,10 @@
               </thead>
               <tbody>
                 <tr v-if="loadingResources && !resourcesStore.resourceRecords.length">
-                  <td :colspan="endpoint === 'approvals' ? 7 : 6" class="empty-cell">
+                  <td
+                    :colspan="endpoint === 'approvals' ? 7 : 6"
+                    class="px-3.5 py-3.5 text-center text-fg-muted"
+                  >
                     <LoadingPanel
                       compact
                       :message="loadingResourcesMessage || `Loading ${title.toLowerCase()}…`"
@@ -76,7 +79,10 @@
                   </td>
                 </tr>
                 <tr v-else-if="!resourcesStore.filteredResourceRecords.length">
-                  <td :colspan="endpoint === 'approvals' ? 7 : 6" class="empty-cell">
+                  <td
+                    :colspan="endpoint === 'approvals' ? 7 : 6"
+                    class="px-3.5 py-3.5 text-center text-fg-muted"
+                  >
                     {{
                       resourcesStore.resourceRecords.length
                         ? `No records match “${app.searchQuery}”.`
@@ -87,11 +93,12 @@
                 <tr
                   v-for="record in resourcesStore.filteredResourceRecords"
                   :key="String(record.id ?? JSON.stringify(record))"
+                  class="cursor-pointer"
                   :class="{
                     selected: resourcesStore.selectedResourceRecord === record,
                     danger: isBadStatus(record.status),
                     success: isGoodStatus(record.status),
-                    resolved: endpoint === 'approvals' && resourcesStore.isResolved(record),
+                    'opacity-55': endpoint === 'approvals' && resourcesStore.isResolved(record),
                   }"
                   @click="resourcesStore.selectedResourceRecord = record"
                 >
@@ -100,10 +107,10 @@
                   <td class="col-low">{{ resourcesStore.recordType(record) }}</td>
                   <td><StatusBadge :status="record.status as string" /></td>
                   <td>{{ resourcesStore.recordSummary(record) }}</td>
-                  <td v-if="endpoint === 'approvals'" class="resolver-cell col-low">
+                  <td v-if="endpoint === 'approvals'" class="col-low whitespace-nowrap">
                     <template v-if="resourcesStore.isResolved(record)">
                       {{ record.resolved_by ?? "—" }}
-                      <span v-if="record.resolved_at" class="resolver-time">{{
+                      <span v-if="record.resolved_at" class="block text-[11px] text-fg-muted">{{
                         formatDate(record.resolved_at as string | null | undefined)
                       }}</span>
                     </template>
@@ -118,9 +125,9 @@
         </div>
       </template>
       <template #second>
-        <div class="panel details">
+        <div class="panel details overflow-hidden">
           <MobileBackBar @back="resourcesStore.selectedResourceRecord = null" />
-          <h2>Record Detail</h2>
+          <h2 class="m-0 text-base font-semibold text-fg">Record Detail</h2>
           <pre class="output">{{
             resourcesStore.selectedResourceRecord
               ? pretty(resourcesStore.selectedResourceRecord)
@@ -176,37 +183,3 @@ onMounted(refresh);
 watch(() => props.endpoint, refresh);
 watch(() => orgs.activeOrgId, refresh);
 </script>
-
-<style scoped>
-.filter-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.filter-toggle input {
-  width: auto;
-}
-
-tr.resolved td {
-  opacity: 0.55;
-}
-
-.empty-cell {
-  color: var(--text-muted);
-  text-align: center;
-  padding: 14px;
-}
-
-.resolver-cell {
-  white-space: nowrap;
-}
-
-.resolver-time {
-  display: block;
-  color: var(--text-muted);
-  font-size: 11px;
-}
-</style>

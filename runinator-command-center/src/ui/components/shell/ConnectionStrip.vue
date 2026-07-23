@@ -1,44 +1,68 @@
 <template>
-  <div ref="root" class="connection-cluster">
+  <div ref="root" class="relative flex min-w-0 flex-1 flex-col items-end gap-1.5 overflow-hidden">
     <!-- on mobile the full summary collapses to one tappable status chip that reveals a popover. -->
     <button
-      class="connection-chip"
-      :class="connectionPillClass"
+      v-if="isMobile"
+      class="inline-flex items-center gap-1.5 rounded-pill px-2.5 py-1 text-xs transition-[transform,filter] duration-150 ease-out active:scale-95"
+      :class="chipToneClass"
       aria-label="Connection status"
       :aria-expanded="popoverOpen"
       @click="popoverOpen = !popoverOpen"
     >
-      <span class="connection-chip-dot"></span>
-      <span class="connection-chip-label">{{ connectionPillLabel }}</span>
+      <span class="size-2 rounded-full bg-current"></span>
+      <span>{{ connectionPillLabel }}</span>
     </button>
-    <div class="connection-summary" :class="{ 'popover-open': popoverOpen }">
-      <span class="service-url" :title="app.serviceLabel">{{ app.serviceLabel }}</span>
-      <span class="connection-pill" :class="connectionPillClass">
+    <div
+      v-show="!isMobile || popoverOpen"
+      :class="
+        isMobile
+          ? 'ui-fade-up absolute top-[calc(100%+6px)] right-0 z-[45] flex w-max max-w-[78vw] origin-top-right flex-col flex-wrap items-start gap-1.5 overflow-visible rounded-lg border border-border bg-surface px-3 py-2.5 shadow-modal'
+          : 'flex min-w-0 max-w-full flex-nowrap items-center justify-end gap-1.5 overflow-hidden'
+      "
+    >
+      <span
+        class="service-url min-w-0 flex-[0_1_auto] overflow-hidden text-ellipsis whitespace-nowrap"
+        :class="isMobile ? 'max-w-full' : 'max-w-[clamp(120px,18vw,220px)]'"
+        :title="app.serviceLabel"
+        >{{ app.serviceLabel }}</span
+      >
+      <span v-if="!isMobile" class="connection-pill" :class="connectionPillClass">
         {{ connectionPillLabel }}
       </span>
-      <span class="connection-pill stream-state" :class="app.eventStreamState">
+      <span
+        class="connection-pill inline-flex items-center gap-[5px] whitespace-nowrap"
+        :class="streamStateClass"
+      >
         <span v-if="app.eventStreamState === 'connected'" class="stream-state-dot"></span>
         {{ app.eventStreamLabel }}
       </span>
       <span v-if="!app.isRealtime && app.lastRefreshAt" class="last-refresh"
         >Last refresh: {{ app.lastRefreshText }}</span
       >
-      <span v-if="app.hasReplicaState" class="replica-summary">
+      <span
+        v-if="app.hasReplicaState"
+        class="overflow-hidden text-xs text-ellipsis whitespace-nowrap text-fg-muted"
+      >
         {{ app.liveReplicaCount }}/{{ app.replicas.length }} healthy ·
         {{ app.replicaCounts.webservices }} ws · {{ app.replicaCounts.workers }} workers ·
         {{ app.replicaCounts.wakers }} wakers
       </span>
-      <div v-if="supervisor.status.value?.configured" class="supervisor-pills">
+      <div
+        v-if="supervisor.status.value?.configured"
+        class="flex min-w-0 items-center gap-1 overflow-hidden"
+      >
         <span
           v-for="proc in supervisor.status.value?.processes ?? []"
           :key="proc.name"
-          class="supervisor-pill"
+          class="shrink-0 rounded-[10px] border border-transparent px-[7px] py-px text-[10px] font-medium"
           :class="pillClass(proc.status, supervisor.status.value?.stale_seconds)"
           :title="processTooltip(proc)"
         >
           {{ proc.name }}
         </span>
-        <span v-if="staleHint" class="supervisor-stale">{{ staleHint }}</span>
+        <span v-if="staleHint" class="ml-1 shrink-0 text-[10px] text-fg-faint">{{
+          staleHint
+        }}</span>
       </div>
     </div>
   </div>
@@ -47,14 +71,16 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useAppStore } from "../../../ui/adapters/pinia/app";
+import { useBreakpoint } from "../../composables/useBreakpoint";
 import { useSupervisorStatus } from "../../composables/useSupervisorStatus";
 import type { SupervisorProcessSnapshot } from "../../../core/api/commandCenterApi";
 
 const app = useAppStore();
 const supervisor = useSupervisorStatus();
+const { isMobile } = useBreakpoint();
 
 const root = ref<HTMLElement | null>(null);
-// popover is only visually active on mobile (css-gated); track open state here for the chip toggle.
+// popover is only visually active on mobile; track open state here for the chip toggle.
 const popoverOpen = ref(false);
 
 function onDocumentClick(event: MouseEvent) {
@@ -82,6 +108,17 @@ const connectionPillClass = computed(() => {
 
   return "waiting";
 });
+const chipToneClass = computed(() => {
+  if (app.serviceConnected) {
+    return "text-success-fg";
+  }
+
+  if (app.serviceKnown) {
+    return "text-danger-fg";
+  }
+
+  return "text-warning-fg";
+});
 const connectionPillLabel = computed(() => {
   if (app.serviceConnected) {
     return "Service up";
@@ -92,6 +129,18 @@ const connectionPillLabel = computed(() => {
   }
 
   return "Service pending";
+});
+
+const streamStateClass = computed(() => {
+  if (app.eventStreamState === "connected") {
+    return "bg-success-bg text-success-fg";
+  }
+
+  if (app.eventStreamState === "connecting" || app.eventStreamState === "fallback") {
+    return "bg-warning-bg text-warning-fg";
+  }
+
+  return "bg-surface-muted text-fg-muted";
 });
 
 const staleHint = computed(() => {
@@ -108,24 +157,24 @@ function pillClass(status: string, staleSeconds: number | null | undefined) {
   const stale = staleSeconds != null && staleSeconds > 30;
 
   if (stale) {
-    return "supervisor-pill-stale";
+    return "bg-surface-muted text-fg-faint border-border-subtle";
   }
 
   const normalized = status.toLowerCase();
 
   if (normalized === "running") {
-    return "supervisor-pill-running";
+    return "bg-success-bg text-success-fg border-success-fg";
   }
 
   if (normalized === "starting" || normalized === "backoff") {
-    return "supervisor-pill-warn";
+    return "bg-warning-bg text-warning-fg border-warning-fg";
   }
 
   if (normalized === "failed" || normalized === "exited" || normalized === "stopping") {
-    return "supervisor-pill-fail";
+    return "bg-danger-bg text-danger-fg border-danger-fg";
   }
 
-  return "supervisor-pill-neutral";
+  return "bg-surface-muted text-fg-subtle border-border";
 }
 
 function processTooltip(proc: SupervisorProcessSnapshot): string {
@@ -170,214 +219,3 @@ function formatUptime(seconds: number): string {
   return `${String(h)}h${String(m % 60)}m`;
 }
 </script>
-
-<style scoped>
-.connection-cluster {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 6px;
-  min-width: 0;
-  flex: 1 1 auto;
-  overflow: hidden;
-}
-
-/* the chip is a mobile-only summary control; desktop shows the inline summary instead. */
-.connection-chip {
-  display: none;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  border-radius: var(--radius-pill);
-  font-size: 12px;
-}
-
-.connection-chip-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: currentColor;
-}
-
-.connection-chip.connected {
-  color: var(--success-fg);
-}
-
-.connection-chip.down {
-  color: var(--danger-fg);
-}
-
-.connection-chip.waiting {
-  color: var(--warning-fg);
-}
-.connection-summary {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  min-width: 0;
-  max-width: 100%;
-  gap: 6px;
-  overflow: hidden;
-  flex-wrap: nowrap;
-}
-.connection-cluster .service-url {
-  max-width: clamp(120px, 18vw, 220px);
-  flex: 0 1 auto;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.replica-summary {
-  overflow: hidden;
-  color: var(--text-muted);
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.stream-state {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  white-space: nowrap;
-}
-
-.stream-state.connected {
-  background: var(--success-bg);
-  color: var(--success-fg);
-}
-
-/* a pulse means "this is live right now" (actively streaming), distinct from a settled ok state. */
-.stream-state-dot {
-  position: relative;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--accent-pulse);
-  flex: 0 0 auto;
-}
-
-.stream-state-dot::after {
-  content: "";
-  position: absolute;
-  inset: -4px;
-  border-radius: 50%;
-  background: var(--accent-pulse-soft);
-  animation: stream-state-pulse 1.6s ease-out infinite;
-}
-
-@keyframes stream-state-pulse {
-  0% {
-    transform: scale(0.6);
-    opacity: 0.7;
-  }
-
-  70%,
-  100% {
-    transform: scale(1.8);
-    opacity: 0;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .stream-state-dot::after {
-    animation: none;
-  }
-}
-
-.stream-state.connecting,
-.stream-state.fallback {
-  background: var(--warning-bg);
-  color: var(--warning-fg);
-}
-
-.stream-state.disconnected {
-  background: var(--surface-muted);
-  color: var(--text-muted);
-}
-.supervisor-pills {
-  display: flex;
-  align-items: center;
-  min-width: 0;
-  overflow: hidden;
-  gap: 4px;
-}
-.supervisor-pill {
-  flex: 0 0 auto;
-  font-size: 10px;
-  padding: 1px 7px;
-  border-radius: 10px;
-  border: 1px solid transparent;
-  font-weight: 500;
-}
-.supervisor-pill-running {
-  background: var(--success-bg);
-  color: var(--success-fg);
-  border-color: var(--success-fg);
-}
-.supervisor-pill-warn {
-  background: var(--warning-bg);
-  color: var(--warning-fg);
-  border-color: var(--warning-fg);
-}
-.supervisor-pill-fail {
-  background: var(--danger-bg);
-  color: var(--danger-fg);
-  border-color: var(--danger-fg);
-}
-.supervisor-pill-neutral {
-  background: var(--surface-muted);
-  color: var(--text-subtle);
-  border-color: var(--border);
-}
-.supervisor-pill-stale {
-  background: var(--surface-muted);
-  color: var(--text-faint);
-  border-color: var(--border-subtle);
-}
-.supervisor-stale {
-  flex: 0 0 auto;
-  font-size: 10px;
-  color: var(--text-faint);
-  margin-left: 4px;
-}
-
-@media (max-width: 760px) {
-  .connection-chip {
-    display: inline-flex;
-  }
-
-  /* the inline summary becomes a popover, hidden until the chip toggles it open. */
-  .connection-summary {
-    position: absolute;
-    top: calc(100% + 6px);
-    right: 0;
-    z-index: 45;
-    display: none;
-    flex-direction: column;
-    align-items: flex-start;
-    flex-wrap: wrap;
-    width: max-content;
-    max-width: 78vw;
-    padding: 10px 12px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    background: var(--surface);
-    box-shadow: var(--shadow-modal);
-    overflow: visible;
-  }
-
-  .connection-summary.popover-open {
-    display: flex;
-  }
-
-  .connection-cluster .service-url {
-    max-width: 100%;
-  }
-
-  /* the plain status pill duplicates the chip; keep the stream-state pill in the popover. */
-  .connection-summary .connection-pill:not(.stream-state) {
-    display: none;
-  }
-}
-</style>

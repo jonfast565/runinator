@@ -1,7 +1,7 @@
 <template>
   <span
-    class="loading-spinner"
-    :class="[`size-${size}`]"
+    class="inline-block shrink-0 animate-spin rounded-full border-border-subtle border-t-accent motion-reduce:[animation-duration:1.6s]"
+    :class="sizeClass"
     role="status"
     :aria-label="label"
     aria-live="polite"
@@ -9,8 +9,10 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from "vue";
+
 // reusable inline spinner for panels, empty states, and non-button loading affordances.
-withDefaults(
+const props = withDefaults(
   defineProps<{
     size?: "sm" | "md" | "lg";
     label?: string;
@@ -20,44 +22,15 @@ withDefaults(
     label: "Loading",
   },
 );
+
+const sizeClass = computed(() => {
+  switch (props.size) {
+    case "sm":
+      return "size-3.5 border-2";
+    case "lg":
+      return "size-8 border-[3px]";
+    default:
+      return "size-5 border-2";
+  }
+});
 </script>
-
-<style scoped>
-.loading-spinner {
-  display: inline-block;
-  flex: 0 0 auto;
-  border: 2px solid var(--border-subtle);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: loading-spin 0.8s linear infinite;
-}
-
-.size-sm {
-  width: 14px;
-  height: 14px;
-}
-
-.size-md {
-  width: 20px;
-  height: 20px;
-  border-width: 2px;
-}
-
-.size-lg {
-  width: 32px;
-  height: 32px;
-  border-width: 3px;
-}
-
-@keyframes loading-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .loading-spinner {
-    animation-duration: 1.6s;
-  }
-}
-</style>

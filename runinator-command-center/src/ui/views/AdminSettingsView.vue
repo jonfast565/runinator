@@ -1,74 +1,105 @@
 <template>
-  <section class="pane admin-settings-pane">
-    <div class="settings-shell panel">
+  <section class="pane flex h-full flex-col overflow-auto">
+    <div class="panel flex min-h-0 flex-1 flex-row gap-0 max-md:flex-col">
       <!-- embedded left nav: sections and their per-item subsections. -->
-      <nav class="settings-nav" aria-label="Settings sections">
-        <div class="settings-nav-title">Settings</div>
+      <nav
+        class="flex w-[220px] shrink-0 flex-col gap-2 border-r border-border py-4 pr-4 max-md:w-auto max-md:border-r-0 max-md:border-b max-md:pb-4 max-md:pr-0"
+        aria-label="Settings sections"
+      >
+        <div
+          class="px-2 pt-4 pb-1 text-[0.78rem] font-bold tracking-wide text-fg-muted uppercase"
+        >
+          Settings
+        </div>
 
-        <div class="nav-section">
+        <div class="flex flex-col gap-0.5">
           <button
-            class="nav-section-header"
+            class="flex w-full cursor-pointer items-center gap-1.5 rounded-md border-0 bg-transparent px-2 py-2 text-left font-semibold text-fg hover:bg-surface-muted"
             type="button"
-            :class="{ 'nav-section-header--active': activeSection === 'display' && !selected }"
+            :class="
+              activeSection === 'display' && !selected ? 'bg-surface-muted text-fg' : ''
+            "
             @click="selectSection('display')"
           >
             <span>Display</span>
           </button>
         </div>
 
-        <div class="nav-section">
+        <div class="flex flex-col gap-0.5">
           <button
-            class="nav-section-header"
+            class="flex w-full cursor-pointer items-center gap-1.5 rounded-md border-0 bg-transparent px-2 py-2 text-left font-semibold text-fg hover:bg-surface-muted"
             type="button"
             :aria-expanded="languagesOpen"
             @click="languagesOpen = !languagesOpen"
           >
-            <Icon name="chevron-right" class="nav-chevron" :class="{ open: languagesOpen }" />
+            <Icon
+              name="chevron-right"
+              class="transition-transform duration-150 ease-in-out"
+              :class="{ 'rotate-90': languagesOpen }"
+            />
             <span>Foreign Languages</span>
-            <span class="nav-count">{{ settings.languages.length }}</span>
+            <span
+              class="ml-auto rounded-[10px] border border-border bg-surface-muted px-1.5 py-px text-[0.74rem] text-fg-muted"
+              >{{ settings.languages.length }}</span
+            >
           </button>
-          <ul v-show="languagesOpen" class="nav-subsections">
+          <ul v-show="languagesOpen" class="m-0 flex list-none flex-col gap-0.5 py-0 pl-[18px]">
             <li v-for="runtime in settings.languages" :key="runtime.language">
               <button
-                class="nav-subitem"
+                class="flex w-full cursor-pointer items-center justify-between gap-2 rounded-r-md border-0 border-l-2 border-transparent bg-transparent px-2 py-1.5 text-left text-fg-muted hover:bg-surface-muted hover:text-fg"
                 type="button"
-                :class="{ active: activeSection === 'languages' && selected === runtime.language }"
+                :class="
+                  activeSection === 'languages' && selected === runtime.language
+                    ? 'border-l-accent bg-surface-muted font-semibold text-fg'
+                    : ''
+                "
                 @click="selectLanguage(runtime.language)"
               >
                 <span>{{ runtime.label }}</span>
-                <span class="nav-subitem-ref">{{ runtime.language }}</span>
+                <span class="text-[0.76rem] text-fg-muted">{{ runtime.language }}</span>
               </button>
             </li>
           </ul>
         </div>
       </nav>
 
-      <div class="settings-content">
+      <div class="flex min-w-0 flex-1 flex-col gap-4 p-4">
         <!-- display preferences panel -->
         <template v-if="activeSection === 'display'">
-          <header class="settings-header">
+          <header
+            class="flex items-center justify-between gap-3 max-md:flex-col max-md:items-stretch"
+          >
             <div>
-              <h2>Display</h2>
-              <p>Appearance and navigation preferences stored locally in your browser.</p>
+              <h2 class="m-0 text-base font-semibold text-fg">Display</h2>
+              <p class="mt-1 mb-0 text-fg-muted">
+                Appearance and navigation preferences stored locally in your browser.
+              </p>
             </div>
           </header>
 
-          <div class="settings-card">
-            <div class="settings-card-row">
-              <div class="settings-card-label">
-                <span>Theme</span>
-                <span class="settings-card-hint"
+          <div class="flex flex-col rounded-lg border border-border">
+            <div
+              class="flex items-center justify-between gap-6 border-b border-border-faint px-4 py-3.5 max-md:flex-col max-md:items-start max-md:gap-2.5"
+            >
+              <div class="flex flex-col gap-0.5">
+                <span class="font-semibold">Theme</span>
+                <span class="text-[0.82rem] text-fg-muted"
                   >Override the app color scheme. "System" follows your OS setting.</span
                 >
               </div>
-              <div class="theme-options">
+              <div class="flex gap-1.5">
                 <label
                   v-for="opt in themeOptions"
                   :key="opt.value"
-                  class="theme-option"
-                  :class="{ active: prefs.theme === opt.value }"
+                  class="flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-md border border-border-strong bg-surface px-3 py-1.5 select-none hover:border-border-hover hover:bg-surface-hover"
+                  :class="
+                    prefs.theme === opt.value
+                      ? 'border-accent bg-accent-soft font-semibold text-accent-text'
+                      : ''
+                  "
                 >
                   <input
+                    class="hidden"
                     type="radio"
                     name="theme"
                     :value="opt.value"
@@ -80,12 +111,16 @@
               </div>
             </div>
 
-            <div class="settings-card-row">
-              <div class="settings-card-label">
-                <span>Default page</span>
-                <span class="settings-card-hint">Which page opens when you launch the app.</span>
+            <div
+              class="flex items-center justify-between gap-6 px-4 py-3.5 max-md:flex-col max-md:items-start max-md:gap-2.5"
+            >
+              <div class="flex flex-col gap-0.5">
+                <span class="font-semibold">Default page</span>
+                <span class="text-[0.82rem] text-fg-muted"
+                  >Which page opens when you launch the app.</span
+                >
               </div>
-              <select :value="prefs.defaultTab" @change="onDefaultTabChange">
+              <select class="w-auto min-w-40" :value="prefs.defaultTab" @change="onDefaultTabChange">
                 <option v-for="opt in tabOptions" :key="opt.value" :value="opt.value">
                   {{ opt.label }}
                 </option>
@@ -96,12 +131,18 @@
 
         <!-- language runtime panel -->
         <template v-else-if="activeSection === 'languages'">
-          <header class="settings-header">
+          <header
+            class="flex items-center justify-between gap-3 max-md:flex-col max-md:items-stretch"
+          >
             <div>
-              <h2>{{ activeLanguage ? activeLanguage.label : "Foreign Languages" }}</h2>
-              <p>Runtime configuration shared by workers and workflow execution.</p>
+              <h2 class="m-0 text-base font-semibold text-fg">
+                {{ activeLanguage ? activeLanguage.label : "Foreign Languages" }}
+              </h2>
+              <p class="mt-1 mb-0 text-fg-muted">
+                Runtime configuration shared by workers and workflow execution.
+              </p>
             </div>
-            <button class="btn" type="button" @click="settings.refresh">
+            <button class="btn max-md:w-full max-md:justify-center" type="button" @click="settings.refresh">
               <Icon name="refresh" />
               <span>Refresh</span>
             </button>
@@ -109,36 +150,47 @@
 
           <form
             v-if="activeLanguage"
-            class="language-form"
+            class="grid gap-3.5 rounded-lg border border-border p-4"
             @submit.prevent="settings.saveLanguage(activeLanguage.language)"
           >
-            <header class="language-form-header">
+            <header
+              class="flex items-center justify-between gap-3 max-md:flex-col max-md:items-stretch"
+            >
               <div>
-                <h3>{{ activeLanguage.label }}</h3>
-                <p>
-                  <span>{{ activeLanguage.language }}</span>
-                  <span v-if="activeLanguage.aliases.length"
+                <h3 class="m-0 text-sm font-semibold text-fg">{{ activeLanguage.label }}</h3>
+                <p class="mt-1 mb-0 flex flex-wrap gap-2 text-fg-muted">
+                  <span class="text-[0.84rem] text-fg-muted">{{ activeLanguage.language }}</span>
+                  <span v-if="activeLanguage.aliases.length" class="text-[0.84rem] text-fg-muted"
                     >aliases: {{ activeLanguage.aliases.join(", ") }}</span
                   >
                 </p>
               </div>
-              <span class="lang-badge">{{ activeLanguage.defaultImage }}</span>
+              <span
+                class="whitespace-nowrap rounded-md border border-border bg-surface-muted px-2 py-1.5 text-[0.84rem] text-fg-muted"
+                >{{ activeLanguage.defaultImage }}</span
+              >
             </header>
-            <label>
-              <span>Docker Image</span>
+            <label class="grid gap-1.5">
+              <span class="text-[0.84rem] font-semibold text-fg-muted">Docker Image</span>
               <input v-model="activeLanguage.image" :placeholder="activeLanguage.defaultImage" />
             </label>
-            <label class="setup-field">
-              <span>Setup Script</span>
+            <label class="grid gap-1.5">
+              <span class="text-[0.84rem] font-semibold text-fg-muted">Setup Script</span>
               <textarea
                 v-model="activeLanguage.setup_script"
+                class="min-h-[120px] resize-y font-mono"
                 spellcheck="false"
                 placeholder="apt-get update && apt-get install -y curl"
               />
             </label>
-            <div class="form-actions">
-              <span class="form-ref">config.foreign_languages.{{ activeLanguage.language }}</span>
-              <button class="btn btn-primary" type="submit">
+            <div
+              class="flex items-center justify-between gap-3 max-md:flex-col max-md:items-stretch"
+            >
+              <span
+                class="whitespace-nowrap rounded-md border border-border bg-surface-muted px-2 py-1.5 text-[0.84rem] text-fg-muted"
+                >config.foreign_languages.{{ activeLanguage.language }}</span
+              >
+              <button class="btn btn-primary max-md:w-full max-md:justify-center" type="submit">
                 <Icon name="save" />
                 <span>Save</span>
               </button>
@@ -149,7 +201,6 @@
     </div>
   </section>
 </template>
-
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import Icon from "../components/shared/Icon.vue";
@@ -203,312 +254,3 @@ onMounted(() => {
 });
 </script>
 
-<style scoped>
-.admin-settings-pane {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  overflow: auto;
-}
-
-.settings-shell {
-  display: flex;
-  flex-direction: row;
-  flex: 1;
-  gap: 0;
-  min-height: 0;
-}
-
-/* embedded left nav. */
-.settings-nav {
-  border-right: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  flex-shrink: 0;
-  gap: 8px;
-  padding: 16px 16px 16px 0;
-  width: 220px;
-}
-
-.settings-nav-title {
-  color: var(--text-muted);
-  font-size: 0.78rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  padding: 16px 8px 4px;
-  text-transform: uppercase;
-}
-
-.nav-section {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.nav-section-header {
-  align-items: center;
-  background: transparent;
-  border: none;
-  border-radius: 6px;
-  color: var(--text);
-  cursor: pointer;
-  display: flex;
-  font-weight: 600;
-  gap: 6px;
-  padding: 8px;
-  text-align: left;
-  width: 100%;
-}
-
-.nav-section-header:hover {
-  background: var(--surface-muted);
-}
-
-.nav-section-header--active {
-  background: var(--surface-muted);
-  color: var(--text);
-}
-
-.nav-chevron {
-  transition: transform 0.15s ease;
-}
-
-.nav-chevron.open {
-  transform: rotate(90deg);
-}
-
-.nav-count {
-  background: var(--surface-muted);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  color: var(--text-muted);
-  font-size: 0.74rem;
-  margin-left: auto;
-  padding: 1px 7px;
-}
-
-.nav-subsections {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  list-style: none;
-  margin: 0;
-  padding: 0 0 0 18px;
-}
-
-.nav-subitem {
-  align-items: center;
-  background: transparent;
-  border: none;
-  border-left: 2px solid transparent;
-  border-radius: 0 6px 6px 0;
-  color: var(--text-muted);
-  cursor: pointer;
-  display: flex;
-  gap: 8px;
-  justify-content: space-between;
-  padding: 7px 8px;
-  text-align: left;
-  width: 100%;
-}
-
-.nav-subitem:hover {
-  background: var(--surface-muted);
-  color: var(--text);
-}
-
-.nav-subitem.active {
-  background: var(--surface-muted);
-  border-left-color: var(--accent, var(--text));
-  color: var(--text);
-  font-weight: 600;
-}
-
-.nav-subitem-ref {
-  color: var(--text-muted);
-  font-size: 0.76rem;
-}
-
-.settings-content {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  gap: 16px;
-  min-width: 0;
-  padding: 16px;
-}
-
-.settings-header,
-.language-form-header,
-.form-actions {
-  align-items: center;
-  display: flex;
-  gap: 12px;
-  justify-content: space-between;
-}
-
-.settings-header h2,
-.language-form-header h3 {
-  margin: 0;
-}
-
-.settings-header p,
-.language-form-header p {
-  color: var(--text-muted);
-  margin: 4px 0 0;
-}
-
-.language-form-header p {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.language-form-header p span {
-  color: var(--text-muted);
-  font-size: 0.84rem;
-}
-
-.lang-badge,
-.form-ref {
-  background: var(--surface-muted);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--text-muted);
-  font-size: 0.84rem;
-  padding: 6px 8px;
-  white-space: nowrap;
-}
-
-.language-form {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  display: grid;
-  gap: 14px;
-  padding: 16px;
-}
-
-.language-form label {
-  display: grid;
-  gap: 6px;
-}
-
-.language-form label > span {
-  color: var(--text-muted);
-  font-size: 0.84rem;
-  font-weight: 600;
-}
-
-.setup-field textarea {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  min-height: 120px;
-  resize: vertical;
-}
-
-/* display preferences card */
-.settings-card {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-}
-
-.settings-card-row {
-  align-items: center;
-  border-bottom: 1px solid var(--border-faint);
-  display: flex;
-  gap: 24px;
-  justify-content: space-between;
-  padding: 14px 16px;
-}
-
-.settings-card-row:last-child {
-  border-bottom: none;
-}
-
-.settings-card-label {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.settings-card-label > span:first-child {
-  font-weight: 600;
-}
-
-.settings-card-hint {
-  color: var(--text-muted);
-  font-size: 0.82rem;
-}
-
-.theme-options {
-  display: flex;
-  gap: 6px;
-}
-
-.theme-option {
-  align-items: center;
-  background: var(--surface);
-  border: 1px solid var(--border-strong);
-  border-radius: 6px;
-  cursor: pointer;
-  display: flex;
-  gap: 6px;
-  padding: 6px 12px;
-  user-select: none;
-  white-space: nowrap;
-}
-
-.theme-option:hover {
-  background: var(--surface-hover);
-  border-color: var(--border-hover);
-}
-
-.theme-option.active {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-  color: var(--accent-text);
-  font-weight: 600;
-}
-
-.theme-option input[type="radio"] {
-  display: none;
-}
-
-.settings-card-row select {
-  width: auto;
-  min-width: 160px;
-}
-
-@media (max-width: 760px) {
-  .settings-shell {
-    flex-direction: column;
-  }
-
-  .settings-nav {
-    border-bottom: 1px solid var(--border);
-    border-right: none;
-    padding: 0 0 16px;
-    width: auto;
-  }
-
-  .settings-header,
-  .language-form-header,
-  .form-actions {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .form-actions .btn {
-    justify-content: center;
-    width: 100%;
-  }
-
-  .settings-card-row {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 10px;
-  }
-}
-</style>

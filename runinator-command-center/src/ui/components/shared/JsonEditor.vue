@@ -1,18 +1,18 @@
 <template>
-  <section class="json-editor-shell" @mousedown.stop @click.stop>
-    <header v-if="title" class="json-editor-title">
+  <section class="editor-shell editor-shell--tall json-editor-shell" @mousedown.stop @click.stop>
+    <header v-if="title" class="editor-shell-title">
       <span>{{ title }}</span>
       <button
         type="button"
-        class="json-editor-copy"
+        class="editor-shell-title-btn"
         :title="copied ? 'Copied' : 'Copy JSON'"
         @click="copy"
       >
         {{ copied ? "Copied" : "Copy" }}
       </button>
     </header>
-    <div ref="editorContainer" class="json-editor-container"></div>
-    <p v-if="!readonly && parseError" class="json-editor-error" role="alert">
+    <div ref="editorContainer" class="editor-shell-container"></div>
+    <p v-if="!readonly && parseError" class="editor-shell-error" role="alert">
       <Icon name="alert" :size="12" />
       <span>{{ parseError }}</span>
     </p>
@@ -121,76 +121,3 @@ onBeforeUnmount(() => {
   host = null;
 });
 </script>
-
-<style scoped>
-.json-editor-shell {
-  display: flex;
-  flex: 1 1 auto;
-  height: auto;
-  min-height: 220px;
-  min-width: 0;
-  flex-direction: column;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  background-color: var(--surface);
-  overflow: hidden;
-}
-
-.json-editor-title {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 7px 9px;
-  color: var(--text-subtle);
-  font-size: 12px;
-  font-weight: 700;
-  user-select: none;
-}
-
-.json-editor-copy {
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  color: var(--text-muted);
-  cursor: pointer;
-  font: inherit;
-  font-size: 11px;
-  font-weight: 600;
-  padding: 2px 8px;
-}
-
-.json-editor-copy:hover {
-  background: var(--surface-hover);
-  color: var(--text);
-}
-
-.json-editor-container {
-  flex: 1 1 auto;
-  min-height: 0;
-  width: 100%;
-  border-top: 1px solid var(--border-subtle);
-  overflow: hidden;
-}
-
-.json-editor-error {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 0;
-  padding: 5px 9px;
-  border-top: 1px solid var(--danger-bg);
-  background: var(--danger-bg);
-  color: var(--danger-fg);
-  font-size: 11px;
-}
-
-:deep(.cm-editor) {
-  height: 100%;
-  min-height: 0;
-}
-
-:deep(.cm-scroller) {
-  overflow: auto;
-}
-</style>

@@ -1,10 +1,12 @@
 <template>
-  <section class="pane permissions-pane">
-    <div class="permissions-shell panel">
-      <header class="permissions-header">
+  <section class="pane h-full overflow-hidden">
+    <div
+      class="panel grid h-full min-h-0 gap-3 grid-rows-[auto_auto_1fr] max-[920px]:overflow-auto"
+    >
+      <header class="flex items-center justify-between gap-3">
         <div>
-          <h2>Permissions</h2>
-          <p>Users, teams, workflow access, and API keys.</p>
+          <h2 class="m-0 text-base font-semibold text-fg">Permissions</h2>
+          <p class="m-0 text-xs text-fg-muted">Users, teams, workflow access, and API keys.</p>
         </div>
         <button class="btn" :disabled="loadingPermissions" @click="refresh">
           <LoadingSpinner v-if="loadingPermissions" size="sm" label="Refreshing permissions" />
@@ -13,30 +15,37 @@
         </button>
       </header>
 
-      <nav class="permissions-tabs" aria-label="Permissions sections">
+      <nav
+        class="inline-flex w-fit overflow-hidden rounded-md border border-border max-[920px]:max-w-full max-[920px]:overflow-x-auto"
+        aria-label="Permissions sections"
+      >
         <button
-          :class="{ active: activeTab === 'users' }"
+          class="border-0 border-r border-border bg-surface px-3 py-1.5 text-fg-muted last:border-r-0"
+          :class="activeTab === 'users' ? 'bg-accent-soft font-semibold text-fg' : ''"
           type="button"
           @click="activeTab = 'users'"
         >
           Users
         </button>
         <button
-          :class="{ active: activeTab === 'teams' }"
+          class="border-0 border-r border-border bg-surface px-3 py-1.5 text-fg-muted last:border-r-0"
+          :class="activeTab === 'teams' ? 'bg-accent-soft font-semibold text-fg' : ''"
           type="button"
           @click="activeTab = 'teams'"
         >
           Teams
         </button>
         <button
-          :class="{ active: activeTab === 'access' }"
+          class="border-0 border-r border-border bg-surface px-3 py-1.5 text-fg-muted last:border-r-0"
+          :class="activeTab === 'access' ? 'bg-accent-soft font-semibold text-fg' : ''"
           type="button"
           @click="activeTab = 'access'"
         >
           Access
         </button>
         <button
-          :class="{ active: activeTab === 'apiKeys' }"
+          class="border-0 border-r border-border bg-surface px-3 py-1.5 text-fg-muted last:border-r-0"
+          :class="activeTab === 'apiKeys' ? 'bg-accent-soft font-semibold text-fg' : ''"
           type="button"
           @click="activeTab = 'apiKeys'"
         >
@@ -44,12 +53,12 @@
         </button>
       </nav>
 
-      <div v-if="activeTab === 'users'" class="permissions-content">
-        <section class="permissions-list">
+      <div v-if="activeTab === 'users'" class="min-h-0 overflow-hidden">
+        <section class="grid min-h-0 min-w-0 content-start gap-3 overflow-hidden">
           <div class="panel-toolbar">
             <div>
-              <h3>Users</h3>
-              <p class="muted">{{ permissions.filteredUsers.length }} shown</p>
+              <h3 class="m-0 text-sm font-semibold text-fg">Users</h3>
+              <p class="m-0 text-xs text-fg-muted">{{ permissions.filteredUsers.length }} shown</p>
             </div>
             <button class="btn btn-primary" type="button" @click="openNewUser">
               <Icon name="plus" />
@@ -75,6 +84,7 @@
                 <tr
                   v-for="user in permissions.filteredUsers"
                   :key="String(user.id)"
+                  class="cursor-pointer"
                   :class="{
                     selected: permissions.selectedUserId === user.id,
                     muted: user.disabled,
@@ -92,12 +102,12 @@
         </section>
       </div>
 
-      <div v-else-if="activeTab === 'teams'" class="permissions-content">
-        <section class="permissions-list">
+      <div v-else-if="activeTab === 'teams'" class="min-h-0 overflow-hidden">
+        <section class="grid min-h-0 min-w-0 content-start gap-3 overflow-hidden">
           <div class="panel-toolbar">
             <div>
-              <h3>Teams</h3>
-              <p class="muted">{{ permissions.filteredTeams.length }} shown</p>
+              <h3 class="m-0 text-sm font-semibold text-fg">Teams</h3>
+              <p class="m-0 text-xs text-fg-muted">{{ permissions.filteredTeams.length }} shown</p>
             </div>
             <button class="btn btn-primary" type="button" @click="openNewTeam">
               <Icon name="plus" />
@@ -121,6 +131,7 @@
                 <tr
                   v-for="team in permissions.filteredTeams"
                   :key="String(team.id)"
+                  class="cursor-pointer"
                   :class="{ selected: permissions.selectedTeamId === team.id }"
                   @click="openEditTeam(team)"
                 >
@@ -133,12 +144,15 @@
         </section>
       </div>
 
-      <div v-else-if="activeTab === 'access'" class="permissions-content access-content">
-        <section class="permissions-list">
+      <div
+        v-else-if="activeTab === 'access'"
+        class="grid min-h-0 gap-3 grid-rows-[minmax(220px,0.7fr)_minmax(220px,1fr)] overflow-hidden"
+      >
+        <section class="grid min-h-0 min-w-0 content-start gap-3 overflow-hidden">
           <div class="panel-toolbar">
             <div>
-              <h3>Workflows</h3>
-              <p class="muted">{{ filteredWorkflows.length }} shown</p>
+              <h3 class="m-0 text-sm font-semibold text-fg">Workflows</h3>
+              <p class="m-0 text-xs text-fg-muted">{{ filteredWorkflows.length }} shown</p>
             </div>
             <button
               class="btn btn-primary"
@@ -162,6 +176,7 @@
                 <tr
                   v-for="workflow in filteredWorkflows"
                   :key="String(workflow.id)"
+                  class="cursor-pointer"
                   :class="{ selected: permissions.selectedWorkflowId === workflow.id }"
                   @click="permissions.selectWorkflow(String(workflow.id))"
                 >
@@ -173,9 +188,9 @@
           </DataTable>
         </section>
 
-        <section class="permissions-list">
+        <section class="grid min-h-0 min-w-0 content-start gap-3 overflow-hidden">
           <div class="panel-toolbar">
-            <h3>Access</h3>
+            <h3 class="m-0 text-sm font-semibold text-fg">Access</h3>
             <button
               class="btn"
               type="button"
@@ -224,12 +239,12 @@
         </section>
       </div>
 
-      <div v-else class="permissions-content">
-        <section class="permissions-list">
+      <div v-else class="min-h-0 overflow-hidden">
+        <section class="grid min-h-0 min-w-0 content-start gap-3 overflow-hidden">
           <div class="panel-toolbar">
             <div>
-              <h3>API Keys</h3>
-              <p class="muted">{{ apiKeyScopeLabel }}</p>
+              <h3 class="m-0 text-sm font-semibold text-fg">API Keys</h3>
+              <p class="m-0 text-xs text-fg-muted">{{ apiKeyScopeLabel }}</p>
             </div>
             <div class="btn-row">
               <button class="btn btn-primary" type="button" @click="openNewApiKey">
@@ -263,6 +278,7 @@
                 <tr
                   v-for="apiKey in permissions.visibleApiKeys"
                   :key="String(apiKey.id)"
+                  class="cursor-pointer"
                   :class="{
                     selected: permissions.selectedApiKeyId === apiKey.id,
                     muted: apiKey.disabled,
@@ -285,7 +301,7 @@
     </div>
 
     <div v-if="userModalOpen" class="modal-backdrop" @click.self="closeUserModal">
-      <form class="modal permissions-modal" @submit.prevent="saveUserModal">
+      <form class="modal w-full max-w-[860px]" @submit.prevent="saveUserModal">
         <header class="modal-header">
           <h2>{{ permissions.selectedUser ? "Edit User" : "Create User" }}</h2>
           <button class="btn btn-ghost" type="button" @click="closeUserModal">
@@ -313,8 +329,8 @@
               autocomplete="new-password"
             />
           </label>
-          <div class="check-grid">
-            <label>
+          <div class="flex min-h-[54px] items-end gap-3.5">
+            <label class="inline-flex items-center gap-1.5 text-[13px] text-fg">
               <input
                 v-model="permissions.userDraft.is_admin"
                 type="checkbox"
@@ -322,7 +338,7 @@
               />
               <span>Admin</span>
             </label>
-            <label>
+            <label class="inline-flex items-center gap-1.5 text-[13px] text-fg">
               <input
                 v-model="permissions.userDraft.disabled"
                 type="checkbox"
@@ -332,12 +348,13 @@
             </label>
           </div>
         </div>
-        <section class="form-section">
-          <div class="section-head">
-            <h4>Teams</h4>
-            <div class="inline-actions">
+        <section class="grid gap-2.5">
+          <div class="flex items-center justify-between gap-3">
+            <h4 class="m-0">Teams</h4>
+            <div class="flex min-w-0 items-center gap-1.5">
               <select
                 v-model="userTeamId"
+                class="min-w-[140px]"
                 :disabled="!permissions.selectedUser || availableUserTeams.length === 0"
               >
                 <option value="">Add team</option>
@@ -359,18 +376,23 @@
               </button>
             </div>
           </div>
-          <div v-if="permissions.userTeams.length" class="pill-list">
-            <span v-for="team in permissions.userTeams" :key="String(team.id)" class="pill">
+          <div v-if="permissions.userTeams.length" class="flex flex-wrap gap-1.5">
+            <span
+              v-for="team in permissions.userTeams"
+              :key="String(team.id)"
+              class="inline-flex items-center gap-1.5 rounded-pill border border-border bg-surface-subtle px-2 py-1 text-xs"
+            >
               {{ team.name }}
               <button
                 type="button"
+                class="cursor-pointer border-0 bg-transparent p-0 text-sm leading-none text-fg-muted"
                 @click="permissions.removeSelectedUserFromTeam(String(team.id))"
               >
                 ×
               </button>
             </span>
           </div>
-          <div v-else class="empty-state small">No teams assigned.</div>
+          <div v-else class="min-h-0 py-2 text-left text-fg-muted">No teams assigned.</div>
         </section>
         <div class="modal-actions">
           <button
@@ -392,25 +414,26 @@
     </div>
 
     <div v-if="teamModalOpen" class="modal-backdrop" @click.self="closeTeamModal">
-      <form class="modal permissions-modal" @submit.prevent="saveTeamModal">
+      <form class="modal w-full max-w-[860px]" @submit.prevent="saveTeamModal">
         <header class="modal-header">
           <h2>{{ permissions.selectedTeam ? "Edit Team" : "Create Team" }}</h2>
           <button class="btn btn-ghost" type="button" @click="closeTeamModal">
             <Icon name="x" />
           </button>
         </header>
-        <div class="form-grid single">
+        <div class="form-grid !grid-cols-1">
           <label>
             <span>Name</span>
             <input v-model="permissions.teamDraftName" autocomplete="off" />
           </label>
         </div>
-        <section class="form-section">
-          <div class="section-head">
-            <h4>Members</h4>
-            <div class="inline-actions">
+        <section class="grid gap-2.5">
+          <div class="flex items-center justify-between gap-3">
+            <h4 class="m-0">Members</h4>
+            <div class="flex min-w-0 items-center gap-1.5">
               <select
                 v-model="memberUserId"
+                class="min-w-[140px]"
                 :disabled="!permissions.selectedTeam || availableTeamUsers.length === 0"
               >
                 <option value="">Add user</option>
@@ -479,14 +502,14 @@
     </div>
 
     <div v-if="grantModalOpen" class="modal-backdrop" @click.self="grantModalOpen = false">
-      <form class="modal permissions-modal" @submit.prevent="saveGrantModal">
+      <form class="modal w-full max-w-[860px]" @submit.prevent="saveGrantModal">
         <header class="modal-header">
           <h2>Add Workflow Access</h2>
           <button class="btn btn-ghost" type="button" @click="grantModalOpen = false">
             <Icon name="x" />
           </button>
         </header>
-        <div class="form-grid single">
+        <div class="form-grid !grid-cols-1">
           <label>
             <span>Principal Type</span>
             <select
@@ -537,17 +560,22 @@
     </div>
 
     <div v-if="apiKeyModalOpen" class="modal-backdrop" @click.self="closeApiKeyModal">
-      <form class="modal permissions-modal" @submit.prevent="saveApiKeyModal">
+      <form class="modal w-full max-w-[860px]" @submit.prevent="saveApiKeyModal">
         <header class="modal-header">
           <h2>{{ permissions.selectedApiKey ? "Edit API Key" : "Create API Key" }}</h2>
           <button class="btn btn-ghost" type="button" @click="closeApiKeyModal">
             <Icon name="x" />
           </button>
         </header>
-        <div v-if="permissions.revealedApiKey" class="secret-reveal">
-          <div>
-            <span>Secret for {{ permissions.revealedApiKey.api_key.name }}</span>
-            <code>{{ permissions.revealedApiKey.secret }}</code>
+        <div
+          v-if="permissions.revealedApiKey"
+          class="flex items-start justify-between gap-3 rounded-md border border-accent bg-accent-soft px-3 py-2.5"
+        >
+          <div class="grid min-w-0 gap-1.5">
+            <span class="text-xs text-fg-muted"
+              >Secret for {{ permissions.revealedApiKey.api_key.name }}</span
+            >
+            <code class="break-words">{{ permissions.revealedApiKey.secret }}</code>
           </div>
           <div class="btn-row">
             <button class="btn btn-sm" type="button" @click="copySecret">
@@ -560,7 +588,7 @@
             </button>
           </div>
         </div>
-        <div class="form-grid single">
+        <div class="form-grid !grid-cols-1">
           <label>
             <span>Name</span>
             <input v-model="permissions.apiKeyDraft.name" autocomplete="off" />
@@ -582,7 +610,7 @@
             <span>Expires At</span>
             <input v-model="permissions.apiKeyDraft.expires_at" type="datetime-local" />
           </label>
-          <label class="checkbox-label">
+          <label class="inline-flex items-center gap-1.5 text-[13px] text-fg">
             <input v-model="permissions.apiKeyDraft.disabled" type="checkbox" />
             <span>Disabled</span>
           </label>
@@ -616,7 +644,6 @@
     </div>
   </section>
 </template>
-
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import DataTable from "../components/shared/DataTable.vue";
@@ -937,211 +964,3 @@ watch(activeTab, (tab) => {
 onMounted(refresh);
 </script>
 
-<style scoped>
-.permissions-shell {
-  display: grid;
-  gap: 12px;
-  height: 100%;
-  min-height: 0;
-  grid-template-rows: auto auto 1fr;
-}
-
-.permissions-header,
-.section-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.permissions-header h2,
-.permissions-header p,
-.permissions-list h3,
-.permissions-list p,
-.section-head h4 {
-  margin: 0;
-}
-
-.permissions-header p,
-.muted {
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.permissions-tabs {
-  display: inline-flex;
-  width: fit-content;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-}
-
-.permissions-tabs button {
-  border: 0;
-  border-right: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text-muted);
-  padding: 7px 12px;
-}
-
-.permissions-tabs button:last-child {
-  border-right: 0;
-}
-
-.permissions-tabs button.active {
-  background: var(--accent-soft);
-  color: var(--text);
-  font-weight: 650;
-}
-
-.permissions-content {
-  min-height: 0;
-  overflow: hidden;
-}
-
-.access-content {
-  display: grid;
-  gap: 12px;
-  grid-template-rows: minmax(220px, 0.7fr) minmax(220px, 1fr);
-}
-
-.permissions-list {
-  display: grid;
-  min-width: 0;
-  min-height: 0;
-  gap: 12px;
-  align-content: start;
-  overflow: hidden;
-}
-
-.permissions-modal {
-  width: min(860px, 100%);
-}
-
-.permissions-modal .form-section {
-  display: grid;
-  gap: 10px;
-}
-
-.form-grid.single {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.check-grid {
-  display: flex;
-  align-items: end;
-  gap: 14px;
-  min-height: 54px;
-}
-
-.check-grid label {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--text);
-  font-size: 13px;
-}
-
-.checkbox-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--text);
-  font-size: 13px;
-}
-
-.inline-actions,
-.grant-form {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-
-.inline-actions select,
-.grant-form select {
-  min-width: 140px;
-}
-
-.api-key-form {
-  display: grid;
-  align-content: start;
-  gap: 12px;
-  min-width: 0;
-}
-
-.api-key-actions {
-  justify-content: end;
-  flex-wrap: wrap;
-}
-
-.secret-reveal {
-  display: flex;
-  align-items: start;
-  justify-content: space-between;
-  gap: 12px;
-  border: 1px solid var(--accent);
-  border-radius: var(--radius);
-  background: var(--accent-soft);
-  padding: 10px 12px;
-}
-
-.secret-reveal div:first-child {
-  display: grid;
-  gap: 6px;
-  min-width: 0;
-}
-
-.secret-reveal span {
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.secret-reveal code {
-  overflow-wrap: anywhere;
-}
-
-.pill-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-pill);
-  background: var(--surface-subtle);
-  padding: 4px 8px;
-  font-size: 12px;
-}
-
-.pill button {
-  border: 0;
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  font-size: 14px;
-  line-height: 1;
-  padding: 0;
-}
-
-.empty-state.small {
-  min-height: 0;
-  padding: 8px 0;
-  text-align: left;
-}
-
-@media (max-width: 920px) {
-  .permissions-shell {
-    overflow: auto;
-  }
-
-  .permissions-tabs {
-    max-width: 100%;
-    overflow-x: auto;
-  }
-}
-</style>

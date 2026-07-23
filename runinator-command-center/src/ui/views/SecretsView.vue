@@ -1,7 +1,7 @@
 <template>
-  <section class="pane settings-pane">
+  <section class="pane h-full overflow-hidden">
     <SplitPane
-      class="split"
+      class="h-full w-full"
       :storage-key="`command-center.settings.${settingKind}.split`"
       :initial-first-pct="60"
       :min-first="420"
@@ -11,11 +11,13 @@
       :mobile-detail-active="!!secrets.selectedSecret"
     >
       <template #first>
-        <div class="settings-shell panel">
-          <header class="settings-header">
+        <div
+          class="panel grid h-full min-h-0 gap-3 grid-rows-[auto_auto_1fr] max-[920px]:overflow-auto"
+        >
+          <header class="flex items-center justify-between gap-3">
             <div>
-              <h2>{{ pageTitle }}</h2>
-              <p>{{ pageDescription }}</p>
+              <h2 class="m-0 text-base font-semibold text-fg">{{ pageTitle }}</h2>
+              <p class="m-0 text-xs text-fg-muted">{{ pageDescription }}</p>
             </div>
             <div class="btn-row">
               <button class="btn" :disabled="loadingSecrets" @click="refreshPage">
@@ -30,28 +32,36 @@
             </div>
           </header>
 
-          <div class="settings-summary">
-            <div>
-              <span>{{ isConfig ? "Configs" : "Secrets" }}</span>
-              <strong>{{ filteredEntries.length }}</strong>
+          <div class="grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <div
+              class="grid gap-1 rounded-md border border-border-subtle bg-surface-subtle px-3 py-2.5"
+            >
+              <span class="text-xs text-fg-muted">{{ isConfig ? "Configs" : "Secrets" }}</span>
+              <strong class="text-base text-fg">{{ filteredEntries.length }}</strong>
             </div>
-            <div>
-              <span>Scopes</span>
-              <strong>{{ knownScopes.length }}</strong>
+            <div
+              class="grid gap-1 rounded-md border border-border-subtle bg-surface-subtle px-3 py-2.5"
+            >
+              <span class="text-xs text-fg-muted">Scopes</span>
+              <strong class="text-base text-fg">{{ knownScopes.length }}</strong>
             </div>
-            <div>
-              <span>Values</span>
-              <strong>{{ isConfig ? "Visible" : "Hidden" }}</strong>
+            <div
+              class="grid gap-1 rounded-md border border-border-subtle bg-surface-subtle px-3 py-2.5"
+            >
+              <span class="text-xs text-fg-muted">Values</span>
+              <strong class="text-base text-fg">{{ isConfig ? "Visible" : "Hidden" }}</strong>
             </div>
           </div>
 
-          <div class="settings-tree-shell">
+          <div
+            class="min-h-0 overflow-auto rounded-md border border-border-subtle bg-surface p-2"
+          >
             <LoadingPanel
               v-if="loadingSecrets"
               compact
               :message="loadingSecretsMessage || 'Refreshing secrets…'"
             />
-            <ul v-else-if="settingsTree.length" class="settings-tree-root">
+            <ul v-else-if="settingsTree.length" class="m-0 p-0">
               <SettingsTreeNode
                 v-for="node in settingsTree"
                 :key="node.path"
@@ -62,17 +72,19 @@
                 @select="selectOverview"
               />
             </ul>
-            <div v-else class="settings-tree-empty">
+            <div v-else class="px-6 py-6 text-center text-fg-muted">
               {{ isConfig ? "No configs match." : "No secrets match." }}
             </div>
           </div>
         </div>
       </template>
       <template #second>
-        <div class="panel overview-panel">
+        <div class="panel flex min-h-0 flex-col gap-3">
           <MobileBackBar @back="secrets.selectedSecretKey = ''" />
-          <div class="overview-head">
-            <h2>{{ isConfig ? "Config" : "Secret" }} Overview</h2>
+          <div class="flex items-center justify-between gap-3">
+            <h2 class="m-0 text-base font-semibold text-fg">
+              {{ isConfig ? "Config" : "Secret" }} Overview
+            </h2>
             <div v-if="selected" class="btn-row">
               <button class="btn btn-sm" @click="openEditSetting(selected)">
                 <Icon name="edit" :size="14" />
@@ -80,32 +92,53 @@
               </button>
             </div>
           </div>
-          <div v-if="!selected" class="empty-state">
+          <div v-if="!selected" class="py-3.5 text-fg-muted">
             Select an entry to preview its value. Editing happens in a modal.
           </div>
           <template v-else>
-            <div class="overview-grid">
-              <div class="overview-field">
-                <label>Scope</label>
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div>
+                <label
+                  class="mb-1 block text-[11px] tracking-wide text-fg-muted uppercase"
+                  >Scope</label
+                >
                 <div>{{ selected.scope }}</div>
               </div>
-              <div class="overview-field">
-                <label>Name</label>
+              <div>
+                <label
+                  class="mb-1 block text-[11px] tracking-wide text-fg-muted uppercase"
+                  >Name</label
+                >
                 <div>{{ selected.name }}</div>
               </div>
-              <div class="overview-field">
-                <label>Reference</label
-                ><code>{{ settingRef(selected.kind, selected.scope, selected.name) }}</code>
+              <div>
+                <label
+                  class="mb-1 block text-[11px] tracking-wide text-fg-muted uppercase"
+                  >Reference</label
+                >
+                <code class="break-words font-mono text-xs">{{
+                  settingRef(selected.kind, selected.scope, selected.name)
+                }}</code>
               </div>
-              <div class="overview-field">
-                <label>Kind</label>
+              <div>
+                <label
+                  class="mb-1 block text-[11px] tracking-wide text-fg-muted uppercase"
+                  >Kind</label
+                >
                 <div>{{ selected.kind }}</div>
               </div>
             </div>
-            <div class="overview-value">
-              <label>Value</label>
-              <pre v-if="isConfig" class="overview-pre">{{ overviewValue }}</pre>
-              <div v-else class="overview-hidden">
+            <div class="flex min-h-0 flex-1 flex-col">
+              <label class="mb-1 text-[11px] tracking-wide text-fg-muted uppercase">Value</label>
+              <pre
+                v-if="isConfig"
+                class="m-0 min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-surface-sunken p-3 font-mono text-xs"
+                >{{ overviewValue }}</pre
+              >
+              <div
+                v-else
+                class="rounded-md border border-dashed border-border p-3 text-xs text-fg-muted"
+              >
                 Secret values are write-only and never displayed. Use Edit to replace it.
               </div>
             </div>
@@ -121,18 +154,18 @@
       tabindex="-1"
       @keydown.esc.stop.prevent="closeEditor"
     >
-      <form class="modal setting-modal" @submit.prevent="saveEditor">
+      <form class="modal w-full max-w-[860px] [&_textarea]:min-h-[180px]" @submit.prevent="saveEditor">
         <header class="modal-header">
           <div>
-            <h2>{{ formTitle }}</h2>
-            <p>{{ hint }}</p>
+            <h2 class="m-0">{{ formTitle }}</h2>
+            <p class="m-0 text-xs text-fg-muted">{{ hint }}</p>
           </div>
           <button class="btn btn-ghost" type="button" @click="closeEditor">
             <Icon name="x" />
           </button>
         </header>
 
-        <div class="form-grid setting-form-grid">
+        <div class="form-grid !grid-cols-1 sm:!grid-cols-2">
           <label>
             <span>Scope</span>
             <input v-model="secrets.draft.scope" list="setting-scopes" placeholder="github" />
@@ -141,11 +174,11 @@
             <span>Name</span>
             <input v-model="secrets.draft.name" placeholder="token" />
           </label>
-          <label class="setting-value-field">
+          <label class="col-span-full">
             <span>{{ isConfig ? "Config Value (JSON)" : "Secret Value" }}</span>
             <JsonEditor
               v-if="isConfig"
-              class="setting-config-json"
+              class="min-h-[140px] [&_.json-editor-container]:min-h-24"
               :model-value="secrets.draft.secret"
               title=""
               @update:model-value="secrets.draft.secret = $event"
@@ -156,9 +189,13 @@
         <datalist id="setting-scopes">
           <option v-for="scope in knownScopes" :key="scope" :value="scope" />
         </datalist>
-        <div class="setting-reference-card">
-          <span>Reference</span>
-          <code>{{ settingRef(secrets.draft.kind, secrets.draft.scope, secrets.draft.name) }}</code>
+        <div
+          class="grid gap-1.5 rounded-md border border-border-subtle bg-surface-subtle px-3 py-2.5"
+        >
+          <span class="text-xs text-fg-muted">Reference</span>
+          <code class="break-words">{{
+            settingRef(secrets.draft.kind, secrets.draft.scope, secrets.draft.name)
+          }}</code>
         </div>
 
         <div class="modal-actions">
@@ -181,7 +218,6 @@
     </div>
   </section>
 </template>
-
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from "vue";
 import Icon from "../components/shared/Icon.vue";
@@ -381,216 +417,3 @@ onMounted(() => {
 });
 </script>
 
-<style scoped>
-.settings-shell {
-  display: grid;
-  gap: 12px;
-  height: 100%;
-  min-height: 0;
-  grid-template-rows: auto auto 1fr;
-}
-
-.settings-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.settings-header h2,
-.settings-header p,
-.modal-header p {
-  margin: 0;
-}
-
-.settings-header p,
-.modal-header p {
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.settings-summary {
-  display: grid;
-  gap: 8px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.settings-summary div {
-  display: grid;
-  gap: 4px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius);
-  background: var(--surface-subtle);
-  padding: 10px 12px;
-}
-
-.settings-summary span {
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.settings-summary strong {
-  color: var(--text);
-  font-size: 16px;
-}
-
-.settings-tree-shell {
-  min-height: 0;
-  overflow: auto;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius);
-  background: var(--surface);
-  padding: 8px;
-}
-
-.settings-tree-root {
-  margin: 0;
-  padding: 0;
-}
-
-.settings-tree-empty {
-  padding: 24px;
-  color: var(--text-muted);
-  text-align: center;
-}
-
-.setting-modal {
-  width: min(860px, 100%);
-}
-
-.setting-form-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.setting-value-field {
-  grid-column: 1 / -1;
-}
-
-.setting-config-json {
-  min-height: 140px;
-}
-
-.setting-config-json :deep(.json-editor-container) {
-  min-height: 96px;
-}
-
-.setting-modal textarea {
-  min-height: 180px;
-}
-
-.setting-reference-card {
-  display: grid;
-  gap: 6px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius);
-  background: var(--surface-subtle);
-  padding: 10px 12px;
-}
-
-.setting-reference-card span {
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.setting-reference-card code,
-.config-value {
-  overflow-wrap: anywhere;
-}
-
-.config-value {
-  max-width: 520px;
-  max-height: 120px;
-  overflow: auto;
-  margin: 0;
-  white-space: pre-wrap;
-}
-
-.overview-panel {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  gap: 12px;
-}
-
-.overview-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.overview-head h2 {
-  margin: 0;
-}
-
-.overview-grid {
-  display: grid;
-  gap: 12px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.overview-field label {
-  display: block;
-  margin-bottom: 4px;
-  color: var(--text-muted);
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.overview-field code {
-  overflow-wrap: anywhere;
-  font-family: var(--font-mono);
-  font-size: 12px;
-}
-
-.overview-value {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  flex: 1;
-}
-
-.overview-value label {
-  margin-bottom: 4px;
-  color: var(--text-muted);
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.overview-pre {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-  margin: 0;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface-sunken);
-  padding: 12px;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.overview-hidden {
-  border: 1px dashed var(--border);
-  border-radius: var(--radius);
-  padding: 12px;
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-@media (max-width: 920px) {
-  .settings-shell {
-    overflow: auto;
-  }
-
-  .settings-summary,
-  .setting-form-grid,
-  .overview-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-</style>

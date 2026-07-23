@@ -1,5 +1,5 @@
 <template>
-  <div class="catalog-edge-slot-editor">
+  <div class="flex flex-col gap-2">
 
     <!-- branch taxonomy with multiple entries: list of {when, target} pairs. -->
     <template v-if="edgeSlot.taxonomy === 'branch' && edgeSlot.multiple">
@@ -344,24 +344,3 @@ function toRec(value: unknown): Record<string, unknown> {
     : {};
 }
 </script>
-
-<style scoped>
-.catalog-edge-slot-editor {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.branch-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 180px auto;
-  gap: 8px;
-  align-items: end;
-}
-
-@media (max-width: 760px) {
-  .branch-row {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-</style>

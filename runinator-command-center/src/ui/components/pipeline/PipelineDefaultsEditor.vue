@@ -1,6 +1,6 @@
 <template>
-  <form class="pipeline-defaults" @submit.prevent="save">
-    <label class="pipeline-field">
+  <form class="flex flex-col gap-3" @submit.prevent="save">
+    <label class="flex flex-col gap-1 text-[13px]">
       <span>On step failure</span>
       <select v-model="onStepFailure">
         <option value="halt">Halt the pipeline (new links fire on success)</option>
@@ -8,12 +8,12 @@
       </select>
     </label>
 
-    <label class="pipeline-field pipeline-field-inline">
+    <label class="flex flex-row items-center gap-2 text-[13px]">
       <input v-model="linksEnabled" type="checkbox" />
       <span>New links enabled by default</span>
     </label>
 
-    <label class="pipeline-field">
+    <label class="flex flex-col gap-1 text-[13px]">
       <span>Max chain depth</span>
       <input
         v-model="maxChainDepth"
@@ -23,13 +23,13 @@
       />
     </label>
 
-    <div class="pipeline-field">
+    <div class="flex flex-col gap-1 text-[13px]">
       <span>Default parameters</span>
       <JsonEditor v-model="parametersText" title="Parameters" />
-      <p v-if="parametersError" class="pipeline-defaults-error">{{ parametersError }}</p>
+      <p v-if="parametersError" class="error m-0 text-xs">{{ parametersError }}</p>
     </div>
 
-    <div class="pipeline-defaults-actions">
+    <div class="flex justify-end gap-2">
       <button type="button" class="btn" @click="emit('cancel')">Cancel</button>
       <button type="submit" class="btn btn-primary" :disabled="Boolean(parametersError)">
         Save defaults
@@ -98,36 +98,3 @@ function save() {
   });
 }
 </script>
-
-<style scoped>
-.pipeline-defaults {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.pipeline-field {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: 13px;
-}
-
-.pipeline-field-inline {
-  flex-direction: row;
-  align-items: center;
-  gap: 8px;
-}
-
-.pipeline-defaults-error {
-  color: var(--danger, #b42318);
-  font-size: 12px;
-  margin: 0;
-}
-
-.pipeline-defaults-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-</style>

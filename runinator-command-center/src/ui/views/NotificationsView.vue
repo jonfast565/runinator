@@ -1,11 +1,11 @@
 <template>
-  <section class="pane notifications-pane">
+  <section class="pane">
     <div class="panel">
       <div class="panel-toolbar">
-        <h2>Notifications</h2>
+        <h2 class="m-0 text-base font-semibold text-fg">Notifications</h2>
         <div class="btn-row">
-          <label class="filter-toggle">
-            <input v-model="store.unreadOnly" type="checkbox" @change="refresh" />
+          <label class="inline-flex items-center gap-1.5 text-xs text-fg-muted">
+            <input v-model="store.unreadOnly" type="checkbox" class="w-auto" @change="refresh" />
             <span>Unread only</span>
           </label>
           <Button variant="default" :loading="loading" @click="refresh">
@@ -42,14 +42,14 @@
         "
       >
         <template #cell-title="{ row }"
-          ><span :class="{ 'nt-unread': !row.read_at }">{{ row.title }}</span></template
+          ><span :class="{ 'font-bold': !row.read_at }">{{ row.title }}</span></template
         >
         <template #cell-body="{ row }"
-          ><span class="body-cell">{{ row.body ?? "" }}</span></template
+          ><span class="max-w-[380px] truncate">{{ row.body ?? "" }}</span></template
         >
         <template #cell-created_at="{ row }">{{ formatDate(row.created_at) }}</template>
         <template #cell-actions="{ row }">
-          <span class="row-actions">
+          <span class="text-right">
             <button
               v-if="!row.read_at"
               class="btn btn-icon btn-ghost"
@@ -151,32 +151,3 @@ async function deleteRead() {
 
 onMounted(refresh);
 </script>
-
-<style scoped>
-.body-cell {
-  max-width: 380px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.row-actions {
-  text-align: right;
-}
-
-.nt-unread {
-  font-weight: 700;
-}
-
-.filter-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: #475260;
-  font-size: 12px;
-}
-
-.filter-toggle input {
-  width: auto;
-}
-</style>

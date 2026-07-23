@@ -1,7 +1,7 @@
 <template>
-  <section class="pane runs-pane">
+  <section class="pane h-full overflow-hidden">
     <SplitPane
-      class="runs-layout"
+      class="h-full w-full"
       storage-key="command-center.pipeline-runs.split"
       :initial-first-pct="28"
       :min-first="340"
@@ -11,11 +11,13 @@
       :mobile-detail-active="!!store.selectedRunId"
     >
       <template #first>
-        <div class="panel runs-list-panel">
+        <div class="panel min-h-0">
           <div class="panel-toolbar">
-            <div class="runs-copy">
-              <h2>Pipeline Runs</h2>
-              <p>First-class pipeline executions and the member workflow runs they orchestrate.</p>
+            <div class="grid gap-1">
+              <h2 class="m-0 text-base font-semibold text-fg">Pipeline Runs</h2>
+              <p class="m-0 text-xs text-fg-muted">
+                First-class pipeline executions and the member workflow runs they orchestrate.
+              </p>
             </div>
             <button class="btn" :disabled="store.loading" @click="store.refresh">
               <LoadingSpinner v-if="store.loading" size="sm" label="Refreshing pipeline runs" />
@@ -23,33 +25,47 @@
               <span>Refresh</span>
             </button>
           </div>
-          <div class="runs-start">
-            <select v-model="selectedPipelineId" class="input">
+          <div class="flex gap-2">
+            <select v-model="selectedPipelineId" class="input flex-1">
               <option value="">Start a pipeline…</option>
-              <option v-for="pipeline in store.pipelines" :key="pipeline.id ?? ''" :value="pipeline.id ?? ''">
+              <option
+                v-for="pipeline in store.pipelines"
+                :key="pipeline.id ?? ''"
+                :value="pipeline.id ?? ''"
+              >
                 {{ pipeline.name }}
               </option>
             </select>
-            <button class="btn btn-primary" :disabled="!selectedPipelineId || starting" @click="startRun">
+            <button
+              class="btn btn-primary"
+              :disabled="!selectedPipelineId || starting"
+              @click="startRun"
+            >
               <Icon name="runs" />
               <span>Start run</span>
             </button>
           </div>
-          <div class="runs-summary">
-            <div>
-              <span>Visible</span>
-              <strong>{{ store.runs.length }}</strong>
+          <div class="mb-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <div
+              class="grid gap-1 rounded-md border border-border-subtle bg-surface-subtle px-3 py-2.5"
+            >
+              <span class="text-xs text-fg-muted">Visible</span>
+              <strong class="truncate text-sm text-fg">{{ store.runs.length }}</strong>
             </div>
-            <div>
-              <span>Active</span>
-              <strong>{{ activeRunCount }}</strong>
+            <div
+              class="grid gap-1 rounded-md border border-border-subtle bg-surface-subtle px-3 py-2.5"
+            >
+              <span class="text-xs text-fg-muted">Active</span>
+              <strong class="truncate text-sm text-fg">{{ activeRunCount }}</strong>
             </div>
-            <div>
-              <span>Selected</span>
-              <strong>{{ selectedRunLabel }}</strong>
+            <div
+              class="grid gap-1 rounded-md border border-border-subtle bg-surface-subtle px-3 py-2.5"
+            >
+              <span class="text-xs text-fg-muted">Selected</span>
+              <strong class="truncate text-sm text-fg">{{ selectedRunLabel }}</strong>
             </div>
           </div>
-          <p v-if="store.error" class="error-hint">{{ store.error }}</p>
+          <p v-if="store.error" class="error m-0 text-xs">{{ store.error }}</p>
           <EmptyState
             v-if="store.loading && !store.runs.length"
             compact
@@ -63,7 +79,11 @@
             title="No pipeline runs yet"
             description="Start a pipeline above, or trigger one via a cron/chained pipeline trigger."
           />
-          <div v-else class="table-scroll runs-table-scroll" :class="{ 'is-refreshing': store.loading }">
+          <div
+            v-else
+            class="table-scroll min-h-0 flex-1"
+            :class="{ 'opacity-60 transition-opacity duration-100': store.loading }"
+          >
             <RunTable
               :runs="runRows"
               :selected-run-id="store.selectedRunId"
@@ -77,19 +97,21 @@
       </template>
 
       <template #second>
-        <div class="runs-detail-shell">
+        <div class="flex min-h-0 flex-1 flex-col">
           <MobileBackBar label="Back to pipeline runs" @back="store.selectedRunId = null" />
-          <div v-if="!store.detail" class="panel runs-detail-panel">
+          <div v-if="!store.detail" class="panel min-h-0">
             <EmptyState
               icon="branch"
               title="Select a pipeline run"
               description="Pick a run on the left to see its member workflow runs and their status."
             />
           </div>
-          <div v-else class="panel details runs-detail-panel">
-            <div class="runs-section-header">
-              <div class="runs-detail-title">
-                <h2 class="runs-detail-heading">{{ pipelineName(store.detail.run.pipeline_id) }}</h2>
+          <div v-else class="panel details flex min-h-0 flex-col gap-3 overflow-auto">
+            <div class="flex items-baseline justify-between gap-2">
+              <div class="flex items-center gap-2.5">
+                <h2 class="m-0 text-base font-semibold text-fg">
+                  {{ pipelineName(store.detail.run.pipeline_id) }}
+                </h2>
                 <StatusBadge :status="store.detail.run.status" />
               </div>
               <button
@@ -101,20 +123,46 @@
                 <span>Cancel</span>
               </button>
             </div>
-            <dl class="runs-detail-meta">
-              <div><dt>Run</dt><dd>#{{ store.detail.run.id }}</dd></div>
-              <div><dt>Source</dt><dd>{{ store.detail.run.trigger_source_kind ?? "-" }}</dd></div>
-              <div><dt>Started</dt><dd>{{ formatDate(store.detail.run.started_at) }}</dd></div>
-              <div><dt>Finished</dt><dd>{{ formatDate(store.detail.run.finished_at) }}</dd></div>
+            <dl class="m-0 grid grid-cols-[repeat(auto-fit,minmax(160px,1fr))] gap-2">
+              <div
+                class="grid gap-0.5 rounded-md border border-border-subtle bg-surface-subtle px-2.5 py-2"
+              >
+                <dt class="text-xs text-fg-muted">Run</dt>
+                <dd class="m-0 text-[13px] text-fg">#{{ store.detail.run.id }}</dd>
+              </div>
+              <div
+                class="grid gap-0.5 rounded-md border border-border-subtle bg-surface-subtle px-2.5 py-2"
+              >
+                <dt class="text-xs text-fg-muted">Source</dt>
+                <dd class="m-0 text-[13px] text-fg">
+                  {{ store.detail.run.trigger_source_kind ?? "-" }}
+                </dd>
+              </div>
+              <div
+                class="grid gap-0.5 rounded-md border border-border-subtle bg-surface-subtle px-2.5 py-2"
+              >
+                <dt class="text-xs text-fg-muted">Started</dt>
+                <dd class="m-0 text-[13px] text-fg">
+                  {{ formatDate(store.detail.run.started_at) }}
+                </dd>
+              </div>
+              <div
+                class="grid gap-0.5 rounded-md border border-border-subtle bg-surface-subtle px-2.5 py-2"
+              >
+                <dt class="text-xs text-fg-muted">Finished</dt>
+                <dd class="m-0 text-[13px] text-fg">
+                  {{ formatDate(store.detail.run.finished_at) }}
+                </dd>
+              </div>
             </dl>
-            <p v-if="store.detail.run.message" class="runs-detail-message">
+            <p v-if="store.detail.run.message" class="m-0 text-[13px] text-fg-muted">
               {{ store.detail.run.message }}
             </p>
 
-            <section class="runs-detail-section">
-              <div class="runs-section-header">
-                <h2 class="runs-detail-heading">Member Runs</h2>
-                <span>{{
+            <section class="grid gap-2 border-t border-border-subtle pt-3">
+              <div class="flex items-baseline justify-between gap-2">
+                <h2 class="m-0 text-base font-semibold text-fg">Member Runs</h2>
+                <span class="text-xs text-fg-muted">{{
                   store.detail.members.length
                     ? `${store.detail.members.length} step run${store.detail.members.length === 1 ? "" : "s"} — click to open`
                     : "No member runs started yet"
@@ -240,155 +288,3 @@ onMounted(() => {
   void store.refresh();
 });
 </script>
-
-<style scoped>
-.runs-pane {
-  overflow: hidden;
-}
-
-.runs-list-panel,
-.runs-detail-panel {
-  min-height: 0;
-}
-
-.runs-copy {
-  display: grid;
-  gap: 4px;
-}
-
-.runs-copy p {
-  margin: 0;
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.runs-start {
-  display: flex;
-  gap: 8px;
-}
-
-.runs-start select {
-  flex: 1;
-}
-
-.runs-summary {
-  display: grid;
-  gap: 8px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.runs-summary div {
-  display: grid;
-  gap: 4px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius);
-  background: var(--surface-subtle);
-  padding: 10px 12px;
-}
-
-.runs-summary span,
-.runs-section-header span {
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.runs-summary strong {
-  color: var(--text);
-  font-size: 14px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.error-hint {
-  color: var(--danger, #b42318);
-  margin: 0;
-  font-size: 12px;
-}
-
-.runs-table-scroll {
-  flex: 1 1 auto;
-}
-
-.runs-table-scroll.is-refreshing {
-  opacity: 0.6;
-  transition: opacity 120ms ease-out;
-}
-
-.runs-detail-shell {
-  display: flex;
-  flex-direction: column;
-  flex: 1 1 auto;
-  min-height: 0;
-}
-
-.runs-detail-panel {
-  overflow: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.runs-detail-title {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.runs-detail-heading {
-  margin: 0;
-}
-
-.runs-detail-meta {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 8px;
-  margin: 0;
-}
-
-.runs-detail-meta div {
-  display: grid;
-  gap: 2px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius);
-  background: var(--surface-subtle);
-  padding: 8px 10px;
-}
-
-.runs-detail-meta dt {
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.runs-detail-meta dd {
-  margin: 0;
-  color: var(--text);
-  font-size: 13px;
-}
-
-.runs-detail-message {
-  margin: 0;
-  color: var(--text-muted);
-  font-size: 13px;
-}
-
-.runs-detail-section {
-  display: grid;
-  gap: 8px;
-  border-top: 1px solid var(--border-subtle);
-  padding-top: 12px;
-}
-
-.runs-section-header {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-@media (max-width: 980px) {
-  .runs-summary {
-    grid-template-columns: 1fr;
-  }
-}
-</style>

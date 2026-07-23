@@ -8,7 +8,7 @@
     :stroke-width="strokeWidth"
     stroke-linecap="round"
     stroke-linejoin="round"
-    class="icon"
+    class="inline-block shrink-0 align-middle"
     :class="`icon-${name}`"
     aria-hidden="true"
     focusable="false"
@@ -322,11 +322,3 @@ const strokeWidth = computed(() => props.strokeWidth);
 const name = computed(() => props.name);
 void name.value;
 </script>
-
-<style scoped>
-.icon {
-  flex: 0 0 auto;
-  display: inline-block;
-  vertical-align: middle;
-}
-</style>

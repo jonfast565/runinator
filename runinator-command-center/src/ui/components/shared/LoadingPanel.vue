@@ -1,7 +1,18 @@
 <template>
-  <div class="loading-panel" :class="{ compact, inline }" role="status" aria-live="polite">
+  <div
+    class="text-fg-muted"
+    :class="
+      inline
+        ? 'flex min-h-0 flex-row items-center justify-start gap-2.5 p-3.5 text-left'
+        : compact
+          ? 'flex min-h-[72px] flex-col items-center justify-center gap-2 px-3 py-4 text-center'
+          : 'flex min-h-[120px] flex-col items-center justify-center gap-2.5 px-5 py-8 text-center'
+    "
+    role="status"
+    aria-live="polite"
+  >
     <LoadingSpinner :size="compact || inline ? 'sm' : 'md'" :label="message" />
-    <p v-if="message" class="loading-panel-message">{{ message }}</p>
+    <p v-if="message" class="m-0 max-w-[42ch] text-[13px] leading-snug">{{ message }}</p>
   </div>
 </template>
 
@@ -22,39 +33,3 @@ withDefaults(
   },
 );
 </script>
-
-<style scoped>
-.loading-panel {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  text-align: center;
-  color: var(--text-muted);
-  padding: 32px 20px;
-  min-height: 120px;
-}
-
-.loading-panel.compact {
-  padding: 16px 12px;
-  min-height: 72px;
-  gap: 8px;
-}
-
-.loading-panel.inline {
-  flex-direction: row;
-  justify-content: flex-start;
-  align-items: center;
-  min-height: 0;
-  padding: 14px;
-  gap: 10px;
-}
-
-.loading-panel-message {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.4;
-  max-width: 42ch;
-}
-</style>

@@ -1,17 +1,24 @@
 <template>
-  <section class="wdl-editor-shell" @mousedown.stop @click.stop>
-    <header class="wdl-editor-title">
+  <section class="editor-shell" @mousedown.stop @click.stop>
+    <header class="editor-shell-title !px-2.5 !py-2 !font-semibold">
       <span>{{ title }}</span>
-      <div class="wdl-editor-actions">
-        <span :class="['wdl-diagnostic-summary', diagnosticSummaryClass]">{{
-          diagnosticSummary
-        }}</span>
-        <button type="button" :disabled="readonly" @click.stop.prevent="formatDocument">
+      <div class="inline-flex min-w-0 items-center gap-2">
+        <span
+          class="rounded-pill px-1.5 py-0.5 text-[11px] font-bold"
+          :class="diagnosticSummaryClass"
+          >{{ diagnosticSummary }}</span
+        >
+        <button
+          type="button"
+          class="editor-shell-title-btn !bg-surface-subtle disabled:cursor-not-allowed disabled:opacity-50"
+          :disabled="readonly"
+          @click.stop.prevent="formatDocument"
+        >
           Format
         </button>
       </div>
     </header>
-    <div ref="editorContainer" class="wdl-editor-container"></div>
+    <div ref="editorContainer" class="editor-shell-container wdl-editor-container"></div>
     <div class="wdl-diagnostics">
       <table v-if="diagnostics.length">
         <thead>
@@ -30,9 +37,11 @@
             @click="goToDiagnostic(diagnostic)"
           >
             <td>
-              <span :class="['wdl-diagnostic-severity', diagnostic.severity]">{{
-                diagnostic.severity
-              }}</span>
+              <span
+                class="inline-block min-w-[52px] rounded px-1 py-px text-center capitalize"
+                :class="severityBadgeClass(diagnostic.severity)"
+                >{{ diagnostic.severity }}</span
+              >
             </td>
             <td>{{ diagnostic.message }}</td>
             <td>{{ diagnostic.line }}</td>
@@ -40,7 +49,7 @@
           </tr>
         </tbody>
       </table>
-      <div v-else class="wdl-diagnostics-empty">No WDL diagnostics.</div>
+      <div v-else class="px-2.5 py-1.5 text-xs text-fg-muted">No WDL diagnostics.</div>
     </div>
   </section>
 </template>
@@ -99,15 +108,27 @@ const diagnosticSummary = computed(() => {
 });
 const diagnosticSummaryClass = computed(() => {
   if (diagnosticCounts.value.errors > 0) {
-    return "error";
+    return "bg-danger-bg text-danger-fg";
   }
 
   if (diagnosticCounts.value.warnings > 0) {
-    return "warning";
+    return "bg-warning-bg text-warning-fg";
   }
 
-  return "clean";
+  return "bg-success-bg text-success-fg";
 });
+
+function severityBadgeClass(severity: string): string {
+  if (severity === "error") {
+    return "bg-danger-bg text-danger-fg";
+  }
+
+  if (severity === "warning") {
+    return "bg-warning-bg text-warning-fg";
+  }
+
+  return "bg-surface-muted text-fg-muted";
+}
 
 function diagnosticKey(diagnostic: TextEditorDiagnostic) {
   return `${diagnostic.severity}:${String(diagnostic.line)}:${String(diagnostic.column)}:${diagnostic.message}`;
@@ -175,173 +196,3 @@ onBeforeUnmount(() => {
   host = null;
 });
 </script>
-
-<style scoped>
-.wdl-editor-shell {
-  display: flex;
-  flex: 1 1 auto;
-  height: auto;
-  min-height: 0;
-  min-width: 0;
-  flex-direction: column;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  background-color: var(--surface);
-  overflow: hidden;
-}
-
-.wdl-editor-title {
-  padding: 8px 10px;
-  font-weight: 600;
-  user-select: none;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.wdl-editor-actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.wdl-diagnostic-summary {
-  border-radius: 999px;
-  padding: 2px 7px;
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.wdl-diagnostic-summary.clean {
-  background: var(--success-bg);
-  color: var(--success-fg);
-}
-
-.wdl-diagnostic-summary.warning {
-  background: var(--warning-bg);
-  color: var(--warning-fg);
-}
-
-.wdl-diagnostic-summary.error {
-  background: var(--danger-bg);
-  color: var(--danger-fg);
-}
-
-.wdl-editor-title button {
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface-subtle);
-  color: var(--text);
-  cursor: pointer;
-  font: inherit;
-  font-weight: 600;
-  padding: 3px 8px;
-}
-
-.wdl-editor-title button:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
-}
-
-.wdl-editor-container {
-  flex: 1 1 auto;
-  min-height: 0;
-  width: 100%;
-  border-top: 1px solid var(--border-subtle);
-  overflow: hidden;
-}
-
-.wdl-diagnostics {
-  flex: 0 0 136px;
-  min-height: 104px;
-  max-height: 180px;
-  overflow: auto;
-  border-top: 1px solid var(--border-subtle);
-  background: var(--surface-subtle);
-}
-
-.wdl-diagnostics table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 12px;
-}
-
-.wdl-diagnostics th,
-.wdl-diagnostics td {
-  padding: 5px 8px;
-  border-bottom: 1px solid var(--border-subtle);
-  text-align: left;
-  vertical-align: top;
-}
-
-.wdl-diagnostics th {
-  position: sticky;
-  top: 0;
-  background: var(--surface-sunken);
-  color: var(--text-subtle);
-  font-weight: 700;
-}
-
-.wdl-diagnostics tbody tr {
-  cursor: pointer;
-}
-
-.wdl-diagnostics tbody tr:hover {
-  background: var(--surface-hover);
-}
-
-.wdl-diagnostics tbody tr.error {
-  box-shadow: inset 3px 0 var(--danger-solid);
-}
-
-.wdl-diagnostics tbody tr.warning {
-  box-shadow: inset 3px 0 var(--warn-solid);
-}
-
-.wdl-diagnostics td:nth-child(2) {
-  min-width: 220px;
-}
-
-.wdl-diagnostics td:nth-child(3),
-.wdl-diagnostics td:nth-child(4) {
-  width: 56px;
-  color: var(--text-subtle);
-  font-variant-numeric: tabular-nums;
-}
-
-.wdl-diagnostic-severity {
-  display: inline-block;
-  min-width: 52px;
-  border-radius: 4px;
-  padding: 1px 5px;
-  text-align: center;
-  text-transform: capitalize;
-}
-
-.wdl-diagnostic-severity.error {
-  background: var(--danger-bg);
-  color: var(--danger-fg);
-}
-
-.wdl-diagnostic-severity.warning {
-  background: var(--warning-bg);
-  color: var(--warning-fg);
-}
-
-.wdl-diagnostics-empty {
-  padding: 7px 10px;
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-:deep(.cm-editor) {
-  height: 100%;
-  min-height: 0;
-}
-
-:deep(.cm-scroller) {
-  overflow: auto;
-}
-</style>

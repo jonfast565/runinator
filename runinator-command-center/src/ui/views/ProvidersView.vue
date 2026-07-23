@@ -1,46 +1,58 @@
 <template>
-  <section class="pane providers-pane">
-    <div class="providers-layout">
-      <aside class="panel providers-list-panel">
+  <section class="pane h-full overflow-hidden max-md:overflow-auto">
+    <div
+      class="grid h-full min-h-0 gap-2.5 grid-cols-1 md:grid-cols-[minmax(220px,280px)_minmax(0,1fr)] max-md:h-auto max-md:min-h-full"
+    >
+      <aside class="panel flex min-h-0 flex-col max-md:max-h-[50vh]">
         <div class="panel-toolbar">
-          <h2>Providers</h2>
+          <h2 class="m-0 text-base font-semibold text-fg">Providers</h2>
           <button class="btn" :disabled="providers.loading" @click="providers.fetchProviders()">
             <LoadingSpinner v-if="providers.loading" size="sm" label="Refreshing providers" />
             <Icon v-else name="refresh" />
             <span>Refresh</span>
           </button>
         </div>
-        <div v-if="providers.error" class="providers-error">{{ providers.error }}</div>
-        <LoadingPanel
-          v-if="providers.loading"
-          compact
-          message="Loading providers…"
-        />
-        <div v-else-if="!providers.providers.length" class="empty-state">No providers registered.</div>
-        <div v-else-if="!filteredProviders.length" class="empty-state">
+        <div
+          v-if="providers.error"
+          class="mb-1.5 border-l-[3px] border-danger bg-danger-bg px-2 py-1.5 text-xs text-danger-fg"
+        >
+          {{ providers.error }}
+        </div>
+        <LoadingPanel v-if="providers.loading" compact message="Loading providers…" />
+        <div v-else-if="!providers.providers.length" class="py-3.5 text-fg-muted">
+          No providers registered.
+        </div>
+        <div v-else-if="!filteredProviders.length" class="py-3.5 text-fg-muted">
           No providers match "{{ app.searchQuery }}".
         </div>
-        <div class="providers-tree">
-          <div v-for="provider in filteredProviders" :key="provider.name" class="providers-group">
+        <div class="flex min-h-0 flex-col gap-0.5 overflow-auto">
+          <div v-for="provider in filteredProviders" :key="provider.name" class="flex flex-col">
             <button
               type="button"
-              class="providers-group-head"
-              :class="{ selected: selectedProvider === provider.name && !selectedAction }"
+              class="flex cursor-pointer items-center gap-1.5 rounded-md border border-transparent bg-transparent px-2 py-1.5 text-left font-semibold text-fg hover:bg-surface-hover"
+              :class="
+                selectedProvider === provider.name && !selectedAction
+                  ? 'border-border-strong bg-accent-soft'
+                  : ''
+              "
               @click="selectProvider(provider.name)"
             >
               <Icon name="box" :size="14" />
-              <span class="providers-group-name">{{ provider.name }}</span>
-              <span class="providers-group-count">{{ provider.actions.length }}</span>
+              <span class="min-w-0 flex-1 truncate">{{ provider.name }}</span>
+              <span class="text-[11px] font-semibold text-fg-muted">{{
+                provider.actions.length
+              }}</span>
             </button>
             <button
               v-for="action in provider.actions"
               :key="action.function_name"
               type="button"
-              class="providers-action"
-              :class="{
-                selected:
-                  selectedProvider === provider.name && selectedAction === action.function_name,
-              }"
+              class="ml-5 cursor-pointer rounded-md border border-transparent bg-transparent px-2 py-1 text-left text-xs text-fg-subtle hover:bg-surface-hover"
+              :class="
+                selectedProvider === provider.name && selectedAction === action.function_name
+                  ? 'border-border-strong bg-accent-soft'
+                  : ''
+              "
               @click="selectAction(provider.name, action.function_name)"
             >
               {{ action.function_name }}
@@ -49,34 +61,40 @@
         </div>
       </aside>
 
-      <section class="panel providers-detail-panel">
+      <section class="panel flex min-h-0 flex-col overflow-auto [&_code]:font-mono [&_code]:text-[11px] [&_code]:leading-snug [&_code]:text-fg">
         <template v-if="currentAction && currentProvider">
-          <div class="providers-detail-head">
-            <h2>{{ currentProvider.name }}.{{ currentAction.function_name }}</h2>
+          <div>
+            <h2 class="m-0 text-base font-semibold text-fg">
+              {{ currentProvider.name }}.{{ currentAction.function_name }}
+            </h2>
           </div>
-          <p v-if="currentAction.description" class="providers-detail-desc">
+          <p v-if="currentAction.description" class="my-1.5 text-[13px] text-fg-subtle">
             {{ currentAction.description }}
           </p>
           <div
             v-if="
               currentProvider.metadata.credential_scopes.length || currentProvider.metadata.contract
             "
-            class="providers-meta-row"
+            class="mb-1.5 flex flex-wrap gap-1.5"
           >
             <span
               v-for="scope in currentProvider.metadata.credential_scopes"
               :key="scope"
-              class="providers-chip"
+              class="inline-flex items-center gap-1 rounded-pill bg-surface-muted px-2.5 py-0.5 text-[11px] text-fg-subtle"
             >
               <Icon name="key" :size="11" /> {{ scope }}
             </span>
-            <span v-if="currentProvider.metadata.contract" class="providers-chip muted">{{
-              currentProvider.metadata.contract
-            }}</span>
+            <span
+              v-if="currentProvider.metadata.contract"
+              class="inline-flex items-center gap-1 rounded-pill bg-surface-muted px-2.5 py-0.5 text-[11px] text-fg-muted"
+              >{{ currentProvider.metadata.contract }}</span
+            >
           </div>
 
-          <h3 class="providers-section-title">Parameters</h3>
-          <div v-if="!currentAction.parameters.length" class="providers-none">No parameters.</div>
+          <h3 class="mt-3 mb-1.5 text-[13px] font-semibold text-fg">Parameters</h3>
+          <div v-if="!currentAction.parameters.length" class="text-xs text-fg-muted">
+            No parameters.
+          </div>
           <div v-else class="table-scroll compact-scroll">
             <table class="compact">
               <thead>
@@ -91,22 +109,32 @@
               <tbody>
                 <tr v-for="param in currentAction.parameters" :key="param.name">
                   <td>
-                    <span class="providers-param-name">{{ param.name }}</span>
-                    <span v-if="param.secret" class="providers-tag secret">secret</span>
+                    <span class="font-semibold text-fg">{{ param.name }}</span>
+                    <span
+                      v-if="param.secret"
+                      class="ml-1.5 inline-block rounded px-1.5 text-[10px] font-bold uppercase bg-danger-bg text-danger-fg"
+                      >secret</span
+                    >
                   </td>
                   <td>
                     <code>{{ describeType(param.ty) }}</code>
                   </td>
                   <td>
-                    <span :class="['providers-tag', param.required ? 'req' : 'opt']">{{
-                      param.required ? "yes" : "no"
-                    }}</span>
+                    <span
+                      class="ml-0 inline-block rounded px-1.5 text-[10px] font-bold uppercase"
+                      :class="
+                        param.required
+                          ? 'bg-success-bg text-success-fg'
+                          : 'bg-surface-muted text-fg-muted'
+                      "
+                      >{{ param.required ? "yes" : "no" }}</span
+                    >
                   </td>
                   <td>
                     <code
                       v-if="param.default_value !== undefined && param.default_value !== null"
                       >{{ shortJson(param.default_value) }}</code
-                    ><span v-else class="providers-dim">—</span>
+                    ><span v-else class="text-fg-faint">—</span>
                   </td>
                   <td>{{ param.description || param.label || "" }}</td>
                 </tr>
@@ -114,8 +142,8 @@
             </table>
           </div>
 
-          <h3 class="providers-section-title">Results</h3>
-          <div v-if="!currentAction.results.length" class="providers-none">
+          <h3 class="mt-3 mb-1.5 text-[13px] font-semibold text-fg">Results</h3>
+          <div v-if="!currentAction.results.length" class="text-xs text-fg-muted">
             No declared results.
           </div>
           <div v-else class="table-scroll compact-scroll">
@@ -130,7 +158,7 @@
               <tbody>
                 <tr v-for="result in currentAction.results" :key="result.name">
                   <td>
-                    <span class="providers-param-name">{{ result.name }}</span>
+                    <span class="font-semibold text-fg">{{ result.name }}</span>
                   </td>
                   <td>
                     <code>{{ describeType(result.ty) }}</code>
@@ -143,37 +171,40 @@
         </template>
 
         <template v-else-if="currentProvider">
-          <div class="providers-detail-head">
-            <h2>{{ currentProvider.name }}</h2>
+          <div>
+            <h2 class="m-0 text-base font-semibold text-fg">{{ currentProvider.name }}</h2>
           </div>
-          <div v-if="currentProvider.metadata.credential_scopes.length" class="providers-meta-row">
+          <div
+            v-if="currentProvider.metadata.credential_scopes.length"
+            class="mb-1.5 flex flex-wrap gap-1.5"
+          >
             <span
               v-for="scope in currentProvider.metadata.credential_scopes"
               :key="scope"
-              class="providers-chip"
+              class="inline-flex items-center gap-1 rounded-pill bg-surface-muted px-2.5 py-0.5 text-[11px] text-fg-subtle"
             >
               <Icon name="key" :size="11" /> {{ scope }}
             </span>
           </div>
-          <h3 class="providers-section-title">Actions</h3>
-          <ul class="providers-action-summary">
+          <h3 class="mt-3 mb-1.5 text-[13px] font-semibold text-fg">Actions</h3>
+          <ul class="m-0 grid list-none gap-1 p-0">
             <li
               v-for="action in currentProvider.actions"
               :key="action.function_name"
+              class="flex cursor-pointer items-baseline gap-2.5 rounded-md border border-border-subtle px-2 py-1.5 hover:bg-surface-hover"
               @click="selectAction(currentProvider.name, action.function_name)"
             >
-              <span class="providers-param-name">{{ action.function_name }}</span>
-              <span class="providers-dim">{{ action.description || "" }}</span>
+              <span class="font-semibold text-fg">{{ action.function_name }}</span>
+              <span class="text-fg-faint">{{ action.description || "" }}</span>
             </li>
           </ul>
         </template>
 
-        <div v-else class="empty-state">Select a provider to view its actions.</div>
+        <div v-else class="py-3.5 text-fg-muted">Select a provider to view its actions.</div>
       </section>
     </div>
   </section>
 </template>
-
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import Icon from "../components/shared/Icon.vue";
@@ -297,198 +328,3 @@ function shortJson(value: unknown): string {
 }
 </script>
 
-<style scoped>
-.providers-pane {
-  overflow: hidden;
-}
-.providers-layout {
-  display: grid;
-  height: 100%;
-  min-height: 0;
-  gap: 10px;
-  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
-}
-
-/* stack the provider list above its detail on phones; the whole pane scrolls. */
-@media (max-width: 760px) {
-  .providers-pane {
-    overflow: auto;
-  }
-
-  .providers-layout {
-    grid-template-columns: minmax(0, 1fr);
-    height: auto;
-    min-height: 100%;
-  }
-
-  .providers-list-panel {
-    max-height: 50vh;
-  }
-}
-.providers-list-panel,
-.providers-detail-panel {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
-.providers-detail-panel {
-  overflow: auto;
-}
-.providers-error {
-  border-left: 3px solid var(--danger-solid);
-  background: var(--danger-bg);
-  color: var(--danger-fg);
-  padding: 6px 8px;
-  font-size: 12px;
-  margin-bottom: 6px;
-}
-.providers-tree {
-  overflow: auto;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.providers-group {
-  display: flex;
-  flex-direction: column;
-}
-.providers-group-head,
-.providers-action {
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background: transparent;
-  text-align: left;
-  cursor: pointer;
-  color: var(--text);
-  font: inherit;
-}
-.providers-group-head {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 6px 8px;
-  font-weight: 600;
-}
-.providers-group-name {
-  flex: 1 1 auto;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.providers-group-count {
-  color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 600;
-}
-.providers-action {
-  margin-left: 20px;
-  padding: 4px 8px;
-  font-size: 12px;
-  color: var(--text-subtle);
-}
-.providers-group-head:hover,
-.providers-action:hover {
-  background: var(--surface-hover);
-}
-.providers-group-head.selected,
-.providers-action.selected {
-  border-color: var(--border-strong);
-  background: var(--accent-soft);
-}
-.providers-detail-head h2 {
-  margin: 0;
-}
-.providers-detail-desc {
-  color: var(--text-subtle);
-  font-size: 13px;
-  margin: 6px 0;
-}
-.providers-meta-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 6px;
-}
-.providers-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  background: var(--surface-muted);
-  border-radius: 999px;
-  padding: 2px 9px;
-  font-size: 11px;
-  color: var(--text-subtle);
-}
-.providers-chip.muted {
-  color: var(--text-muted);
-}
-.providers-section-title {
-  margin: 12px 0 6px;
-  font-size: 13px;
-}
-.providers-none {
-  color: var(--text-muted);
-  font-size: 12px;
-}
-.providers-param-name {
-  font-weight: 600;
-  color: var(--text);
-}
-.providers-tag {
-  display: inline-block;
-  margin-left: 6px;
-  border-radius: 4px;
-  padding: 0 6px;
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-}
-.providers-tag.req {
-  background: var(--success-bg);
-  color: var(--success-fg);
-}
-.providers-tag.opt {
-  background: var(--surface-muted);
-  color: var(--text-muted);
-}
-.providers-tag.secret {
-  background: var(--danger-bg);
-  color: var(--danger-fg);
-}
-.providers-dim {
-  color: var(--text-faint);
-}
-.providers-detail-panel code {
-  font:
-    11px/1.4 ui-monospace,
-    SFMono-Regular,
-    Menlo,
-    Consolas,
-    monospace;
-  color: var(--text);
-}
-.providers-action-summary {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 4px;
-}
-.providers-action-summary li {
-  display: flex;
-  gap: 10px;
-  align-items: baseline;
-  padding: 6px 8px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius);
-  cursor: pointer;
-}
-.providers-action-summary li:hover {
-  background: var(--surface-hover);
-}
-.empty-state {
-  color: var(--text-muted);
-  padding: 14px 0;
-}
-</style>

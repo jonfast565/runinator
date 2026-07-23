@@ -2,12 +2,18 @@
   <header class="topbar">
     <button
       class="btn nav-hamburger"
-      aria-label="Open navigation"
-      title="Open navigation"
+      :class="{ 'is-open': app.mobileNavOpen }"
+      :aria-label="app.mobileNavOpen ? 'Close navigation' : 'Open navigation'"
+      :aria-expanded="app.mobileNavOpen"
+      :title="app.mobileNavOpen ? 'Close navigation' : 'Open navigation'"
       :disabled="app.interactionsDisabled"
       @click="app.toggleMobileNav()"
     >
-      <Icon name="list" :size="18" />
+      <span class="hamburger-box" aria-hidden="true">
+        <span class="hamburger-bar"></span>
+        <span class="hamburger-bar"></span>
+        <span class="hamburger-bar"></span>
+      </span>
     </button>
     <div class="view-title">
       <h1>{{ headingFor(app.activeTab) }}</h1>

@@ -1,7 +1,7 @@
 <template>
-  <section class="pane resources-pane">
+  <section class="pane h-full overflow-hidden">
     <SplitPane
-      class="split"
+      class="h-full w-full"
       storage-key="command-center.gates.split"
       :initial-first-pct="58"
       :min-first="420"
@@ -13,7 +13,7 @@
       <template #first>
         <div class="panel">
           <div class="panel-toolbar">
-            <h2>Gates</h2>
+            <h2 class="m-0 text-base font-semibold text-fg">Gates</h2>
             <div class="btn-row">
               <button class="btn" :disabled="loadingGates" @click="gates.refreshGates">
                 <LoadingSpinner v-if="loadingGates" size="sm" label="Refreshing gates" />
@@ -42,7 +42,7 @@
               </button>
             </div>
           </div>
-          <p class="gates-hint">
+          <p class="hint m-0">
             A gate blocks its workflow node until it opens. <strong>condition</strong> gates open
             automatically; open or close <strong>manual</strong> and <strong>external</strong> gates
             here.
@@ -60,12 +60,12 @@
               </thead>
               <tbody>
                 <tr v-if="loadingGates && !gates.gates.length">
-                  <td colspan="5" class="empty-cell">
+                  <td colspan="5" class="px-3.5 py-3.5 text-center text-fg-muted">
                     <LoadingPanel compact :message="loadingGatesMessage || 'Refreshing gates…'" />
                   </td>
                 </tr>
                 <tr v-else-if="!gates.filteredGates.length">
-                  <td colspan="5" class="empty-cell">
+                  <td colspan="5" class="px-3.5 py-3.5 text-center text-fg-muted">
                     {{
                       gates.gates.length
                         ? `No gates match “${app.searchQuery}”.`
@@ -76,6 +76,7 @@
                 <tr
                   v-for="gate in gates.filteredGates"
                   :key="String(gate.id ?? JSON.stringify(gate))"
+                  class="cursor-pointer"
                   :class="{
                     selected: gates.selectedGate === gate,
                     danger: isBadStatus(gate.status),
@@ -87,7 +88,7 @@
                   <td>{{ gate.kind ?? "" }}</td>
                   <td>{{ gate.label ?? "" }}</td>
                   <td>{{ gate.node_id ?? "" }}</td>
-                  <td class="gate-run-cell">{{ gate.workflow_run_id ?? "" }}</td>
+                  <td class="font-mono text-[11px]">{{ gate.workflow_run_id ?? "" }}</td>
                 </tr>
               </tbody>
             </table>
@@ -95,10 +96,10 @@
         </div>
       </template>
       <template #second>
-        <div class="panel details">
+        <div class="panel details overflow-hidden">
           <MobileBackBar @back="gates.selectedGate = null" />
-          <h2>Gate Detail</h2>
-          <label class="gate-reason">
+          <h2 class="m-0 text-base font-semibold text-fg">Gate Detail</h2>
+          <label class="grid gap-1 text-xs text-fg-muted">
             Reason (optional)
             <input v-model="reason" placeholder="Why are you opening/closing this gate?" />
           </label>
@@ -145,29 +146,3 @@ async function refresh() {
 onMounted(refresh);
 watch(() => orgs.activeOrgId, refresh);
 </script>
-
-<style scoped>
-.gates-hint {
-  margin: 0;
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.gate-run-cell {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 11px;
-}
-
-.empty-cell {
-  color: var(--text-muted);
-  text-align: center;
-  padding: 14px;
-}
-
-.gate-reason {
-  display: grid;
-  gap: 4px;
-  color: var(--text-muted);
-  font-size: 12px;
-}
-</style>

@@ -5,11 +5,11 @@
     tabindex="-1"
     @keydown.esc.stop.prevent="workflows.closeStepEditor"
   >
-    <form class="modal step-modal" @submit.prevent="workflows.submitStepEditor">
+    <form class="modal w-[min(1040px,100%)]" @submit.prevent="workflows.submitStepEditor">
       <header class="modal-header">
         <div>
           <h2>{{ workflows.stepEditorCreating ? "Add Workflow Step" : "Edit Workflow Step" }}</h2>
-          <span>{{ workflows.selectedStepId || "New step" }}</span>
+          <span class="text-xs text-fg-muted">{{ workflows.selectedStepId || "New step" }}</span>
         </div>
         <button
           type="button"
@@ -95,7 +95,7 @@
         class="form-section catalog-loading-section"
       >
         <h3>Parameters</h3>
-        <p class="hint catalog-loading-inline">
+        <p class="hint catalog-loading-hint">
           <LoadingSpinner size="sm" label="Loading node metadata" />
           Loading node metadata…
         </p>
@@ -151,7 +151,7 @@
         class="form-section catalog-loading-section"
       >
         <h3>Control Flow</h3>
-        <p class="hint catalog-loading-inline">
+        <p class="hint catalog-loading-hint">
           <LoadingSpinner size="sm" label="Loading node metadata" />
           Loading node metadata…
         </p>
@@ -376,38 +376,3 @@ onMounted(() => {
   modalRoot.value?.focus();
 });
 </script>
-
-<style scoped>
-.step-modal {
-  width: min(1040px, 100%);
-}
-
-.modal-header span,
-.result-metadata {
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.hint {
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.catalog-loading-inline {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.transition-grid {
-  display: grid;
-  gap: 8px;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-}
-
-@media (max-width: 760px) {
-  .transition-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-</style>

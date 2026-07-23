@@ -5,24 +5,24 @@
     tabindex="-1"
     @keydown.esc.stop.prevent="workflows.closeRunInput"
   >
-    <form class="modal run-input-modal" @submit.prevent="onSubmit">
+    <form class="modal w-[min(680px,100%)]" @submit.prevent="onSubmit">
       <header class="modal-header">
         <div>
           <h2>Run {{ workflows.selectedWorkflow?.name }}</h2>
-          <span>{{
+          <span class="text-xs text-fg-muted">{{
             workflows.runInputDebug ? "Debug run — provide inputs" : "Provide inputs for this run"
           }}</span>
         </div>
-        <div class="modal-header-actions">
-          <button type="submit" class="primary" :disabled="startingRun">
+        <div class="flex gap-2">
+          <button type="submit" class="btn btn-primary" :disabled="startingRun">
             <LoadingSpinner v-if="startingRun" size="sm" label="Starting run" />
             {{ startingRun ? "Starting…" : workflows.runInputDebug ? "Run Debug" : "Run" }}
           </button>
-          <button type="button" @click="workflows.closeRunInput">Close</button>
+          <button type="button" class="btn" @click="workflows.closeRunInput">Close</button>
         </div>
       </header>
 
-      <section class="form-section">
+      <section class="form-section !border-t-0 !pt-0">
         <RunInputForm
           ref="runInputFormRef"
           :input-type="inputType"
@@ -33,8 +33,8 @@
       </section>
 
       <div class="modal-actions">
-        <button type="button" @click="workflows.closeRunInput">Cancel</button>
-        <button type="submit" class="primary" :disabled="startingRun">
+        <button type="button" class="btn" @click="workflows.closeRunInput">Cancel</button>
+        <button type="submit" class="btn btn-primary" :disabled="startingRun">
           <LoadingSpinner v-if="startingRun" size="sm" label="Starting run" />
           {{ startingRun ? "Starting…" : workflows.runInputDebug ? "Run Debug" : "Run" }}
         </button>
@@ -75,25 +75,3 @@ function onSubmit() {
   void workflows.confirmRunInput();
 }
 </script>
-
-<style scoped>
-.run-input-modal {
-  width: min(680px, 100%);
-}
-
-.form-section {
-  display: grid;
-  gap: 8px;
-}
-
-.modal-header-actions {
-  display: flex;
-  gap: 8px;
-}
-
-button.primary {
-  background: #2563eb;
-  border-color: #2563eb;
-  color: #fff;
-}
-</style>

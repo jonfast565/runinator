@@ -1,11 +1,12 @@
 import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
+import tailwindcss from "@tailwindcss/vite";
 
 const WS_DEV_TARGET = process.env.VITE_RUNINATOR_WS_URL ?? "http://127.0.0.1:8080";
 const WS_WS_TARGET = WS_DEV_TARGET.replace(/^http/, "ws");
 
 export default defineConfig({
-  plugins: [vue()],
+  plugins: [vue(), tailwindcss()],
   clearScreen: false,
   test: {
     setupFiles: ["./src/test-setup.ts"],

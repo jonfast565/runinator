@@ -1,7 +1,7 @@
 <template>
-  <section class="pane runs-pane">
+  <section class="pane h-full overflow-hidden">
     <SplitPane
-      class="runs-layout"
+      class="h-full w-full"
       storage-key="command-center.runs.split"
       :initial-first-pct="28"
       :min-first="340"
@@ -11,11 +11,13 @@
       :mobile-detail-active="!!workflows.selectedWorkflowRunId"
     >
       <template #first>
-        <div class="panel runs-list-panel">
+        <div class="panel min-h-0">
           <div class="panel-toolbar">
-            <div class="runs-copy">
-              <h2>Runs</h2>
-              <p>Recent workflow executions, filtered by the current search when present.</p>
+            <div class="grid gap-1">
+              <h2 class="m-0 text-base font-semibold text-fg">Runs</h2>
+              <p class="m-0 text-xs text-fg-muted">
+                Recent workflow executions, filtered by the current search when present.
+              </p>
             </div>
             <button class="btn" :disabled="loadingRuns" @click="workflows.fetchRecentWorkflowRuns()">
               <LoadingSpinner v-if="loadingRuns" size="sm" label="Refreshing runs" />
@@ -23,18 +25,24 @@
               <span>Refresh</span>
             </button>
           </div>
-          <div class="runs-summary">
-            <div>
-              <span>Visible</span>
-              <strong>{{ workflows.recentWorkflowRuns.length }}</strong>
+          <div class="mb-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <div
+              class="grid gap-1 rounded-md border border-border-subtle bg-surface-subtle px-3 py-2.5"
+            >
+              <span class="text-xs text-fg-muted">Visible</span>
+              <strong class="text-sm text-fg">{{ workflows.recentWorkflowRuns.length }}</strong>
             </div>
-            <div>
-              <span>Active</span>
-              <strong>{{ activeRunCount }}</strong>
+            <div
+              class="grid gap-1 rounded-md border border-border-subtle bg-surface-subtle px-3 py-2.5"
+            >
+              <span class="text-xs text-fg-muted">Active</span>
+              <strong class="text-sm text-fg">{{ activeRunCount }}</strong>
             </div>
-            <div>
-              <span>Selected</span>
-              <strong>{{ selectedRunLabel }}</strong>
+            <div
+              class="grid gap-1 rounded-md border border-border-subtle bg-surface-subtle px-3 py-2.5"
+            >
+              <span class="text-xs text-fg-muted">Selected</span>
+              <strong class="truncate text-sm text-fg">{{ selectedRunLabel }}</strong>
             </div>
           </div>
           <EmptyState
@@ -57,8 +65,8 @@
           />
           <div
             v-else
-            class="table-scroll runs-table-scroll"
-            :class="{ 'is-refreshing': loadingRuns }"
+            class="table-scroll min-h-0 flex-1"
+            :class="{ 'opacity-60 transition-opacity duration-100': loadingRuns }"
           >
             <RunTable
               :runs="workflows.recentWorkflowRuns"
@@ -71,11 +79,11 @@
         </div>
       </template>
       <template #second>
-        <div class="runs-detail-shell">
+        <div class="flex min-h-0 flex-1 flex-col [&_.split-pane]:min-h-0 [&_.split-pane]:flex-1">
           <MobileBackBar label="Back to runs" @back="workflows.selectedWorkflowRunId = null" />
           <RunTabsBar />
           <SplitPane
-            class="runs-detail-split"
+            class="min-h-0 flex-1"
             orientation="vertical"
             storage-key="command-center.runs.detail-vertical-split"
             :initial-first-pct="55"
@@ -87,24 +95,24 @@
               <WorkflowRunGraph />
             </template>
             <template #second>
-              <div class="panel details runs-detail-panel">
+              <div class="panel details min-h-0 overflow-auto">
                 <WorkflowRunDetail />
-                <section class="runs-detail-section">
-                  <div class="runs-section-header">
-                    <h2 class="runs-detail-heading">Structured Result</h2>
-                    <span>Workflow output JSON</span>
+                <section class="grid gap-2 border-t border-border-subtle pt-3">
+                  <div class="flex items-baseline justify-between gap-2">
+                    <h2 class="m-0 text-base font-semibold text-fg">Structured Result</h2>
+                    <span class="text-xs text-fg-muted">Workflow output JSON</span>
                   </div>
                   <JsonEditor
-                    class="runs-detail-output"
+                    class="min-h-0 shrink-0 [&_.json-editor-container]:max-h-[260px]"
                     :model-value="selectedOutput"
                     readonly
                     title=""
                   />
                 </section>
-                <section class="runs-detail-section">
-                  <div class="runs-section-header">
-                    <h2 class="runs-detail-heading">Run Output Chunks</h2>
-                    <span>Streamed log and output segments</span>
+                <section class="grid gap-2 border-t border-border-subtle pt-3">
+                  <div class="flex items-baseline justify-between gap-2">
+                    <h2 class="m-0 text-base font-semibold text-fg">Run Output Chunks</h2>
+                    <span class="text-xs text-fg-muted">Streamed log and output segments</span>
                   </div>
                   <LogPanel
                     :chunks="logChunks"
@@ -112,10 +120,10 @@
                     :fallback-text="workflows.workflowRunDetailText"
                   />
                 </section>
-                <section class="runs-detail-section">
-                  <div class="runs-section-header">
-                    <h2 class="runs-detail-heading">Selected Node Artifacts</h2>
-                    <span>{{
+                <section class="grid gap-2 border-t border-border-subtle pt-3">
+                  <div class="flex items-baseline justify-between gap-2">
+                    <h2 class="m-0 text-base font-semibold text-fg">Selected Node Artifacts</h2>
+                    <span class="text-xs text-fg-muted">{{
                       artifacts.length
                         ? `${artifacts.length} attached`
                         : "No artifacts on the selected node"
@@ -153,10 +161,10 @@
                     </table>
                   </div>
                 </section>
-                <section class="runs-detail-section">
-                  <div class="runs-section-header">
-                    <h2 class="runs-detail-heading">Artifacts</h2>
-                    <span>{{
+                <section class="grid gap-2 border-t border-border-subtle pt-3">
+                  <div class="flex items-baseline justify-between gap-2">
+                    <h2 class="m-0 text-base font-semibold text-fg">Artifacts</h2>
+                    <span class="text-xs text-fg-muted">{{
                       runArtifacts.length
                         ? `${runArtifacts.length} for this run`
                         : "No artifacts for this run"
@@ -283,110 +291,3 @@ watch(
 const { chunks: logChunks, lastChunkAt: lastLogChunkAt } =
   useWorkflowNodeRunLogStream(selectedNodeRunIdRef);
 </script>
-
-<style scoped>
-.runs-pane {
-  overflow: hidden;
-}
-
-.runs-list-panel,
-.runs-detail-panel {
-  min-height: 0;
-}
-
-.runs-copy {
-  display: grid;
-  gap: 4px;
-}
-
-.runs-copy p {
-  margin: 0;
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.runs-summary {
-  display: grid;
-  gap: 8px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.runs-summary div {
-  display: grid;
-  gap: 4px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius);
-  background: var(--surface-subtle);
-  padding: 10px 12px;
-}
-
-.runs-summary span,
-.runs-section-header span {
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.runs-summary strong {
-  color: var(--text);
-  font-size: 14px;
-}
-
-.runs-table-scroll {
-  flex: 1 1 auto;
-}
-
-/* dim the existing rows during a background refresh instead of swapping in a loading placeholder. */
-.runs-table-scroll.is-refreshing {
-  opacity: 0.6;
-  transition: opacity 120ms ease-out;
-}
-
-.runs-detail-shell {
-  display: flex;
-  flex-direction: column;
-  flex: 1 1 auto;
-  min-height: 0;
-}
-
-.runs-detail-shell > .split-pane {
-  flex: 1 1 auto;
-  min-height: 0;
-}
-
-.runs-detail-panel {
-  overflow: auto;
-}
-
-.runs-detail-section {
-  display: grid;
-  gap: 8px;
-  border-top: 1px solid var(--border-subtle);
-  padding-top: 12px;
-}
-
-.runs-section-header {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.runs-detail-heading {
-  margin: 0;
-}
-
-.runs-detail-output {
-  flex: 0 0 auto;
-  min-height: 0;
-}
-
-.runs-detail-output :deep(.json-editor-container) {
-  max-height: 260px;
-}
-
-@media (max-width: 980px) {
-  .runs-summary {
-    grid-template-columns: 1fr;
-  }
-}
-</style>

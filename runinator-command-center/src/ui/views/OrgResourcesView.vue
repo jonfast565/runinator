@@ -1,13 +1,15 @@
 <template>
-  <section class="pane res-pane">
-    <div v-if="!orgs.activeOrg" class="panel empty-state">
+  <section class="pane flex flex-col gap-2.5 overflow-auto">
+    <div v-if="!orgs.activeOrg" class="panel py-3.5 text-fg-muted">
       Select an organization on the Organization tab to manage its resources.
     </div>
 
     <template v-else>
       <div class="panel">
         <div class="panel-toolbar">
-          <h2>Resources — {{ orgs.activeOrg.name }}</h2>
+          <h2 class="m-0 text-base font-semibold text-fg">
+            Resources — {{ orgs.activeOrg.name }}
+          </h2>
           <button class="btn" :disabled="refreshing" @click="refresh">
             <LoadingSpinner v-if="refreshing" size="sm" label="Refreshing org resources" />
             <Icon v-else name="refresh" />
@@ -20,18 +22,24 @@
           compact
           :message="refreshMessage || 'Loading org resources…'"
         />
-        <div v-else class="res-summary">
-          <div class="res-stat">
-            <label>Projected monthly</label>
-            <div class="res-stat-value">{{ fmtCents(projectedMonthlyCents) }}</div>
+        <div v-else class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <div>
+            <label class="mb-1 block text-xs tracking-wide text-fg-muted uppercase"
+              >Projected monthly</label
+            >
+            <div class="text-[22px] font-semibold">{{ fmtCents(projectedMonthlyCents) }}</div>
           </div>
-          <div class="res-stat">
-            <label>Accrued (30d)</label>
-            <div class="res-stat-value">{{ fmtCents(usage?.accrued_cents ?? 0) }}</div>
+          <div>
+            <label class="mb-1 block text-xs tracking-wide text-fg-muted uppercase"
+              >Accrued (30d)</label
+            >
+            <div class="text-[22px] font-semibold">{{ fmtCents(usage?.accrued_cents ?? 0) }}</div>
           </div>
-          <div class="res-stat">
-            <label>Monthly budget</label>
-            <div class="res-stat-value">
+          <div>
+            <label class="mb-1 block text-xs tracking-wide text-fg-muted uppercase"
+              >Monthly budget</label
+            >
+            <div class="text-[22px] font-semibold">
               {{
                 quota && quota.max_monthly_cents > 0
                   ? fmtCents(quota.max_monthly_cents)
@@ -41,76 +49,92 @@
           </div>
         </div>
 
-        <div v-if="budgetPct !== null" class="budget-bar">
+        <div
+          v-if="budgetPct !== null"
+          class="mt-3 h-2 overflow-hidden rounded-pill bg-surface-subtle"
+        >
           <div
-            class="budget-fill"
-            :class="{ over: budgetPct >= 100 }"
+            class="h-full bg-accent"
+            :class="{ 'bg-danger-fg': budgetPct >= 100 }"
             :style="{ width: Math.min(budgetPct, 100) + '%' }"
           ></div>
         </div>
       </div>
 
-      <div class="panel res-detail-panel">
-        <div class="res-grid">
-          <section class="res-card res-card-wide">
-            <h3 class="res-card-title">Dedicated allocations</h3>
+      <div class="panel">
+        <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <section
+            class="col-span-full rounded-md border border-border-subtle bg-surface-subtle px-3.5 py-3"
+          >
+            <h3 class="m-0 mb-2.5 text-sm font-semibold text-fg">Dedicated allocations</h3>
             <LoadingPanel
               v-if="refreshing && !groups.length"
               compact
               :message="refreshMessage || 'Loading node pools…'"
             />
-            <div v-else-if="!groups.length" class="empty-state">
+            <div v-else-if="!groups.length" class="py-3.5 text-fg-muted">
               No dedicated node pools. Scale one below.
             </div>
-            <table v-else class="res-table">
+            <table v-else class="w-full border-collapse">
               <thead>
                 <tr>
-                  <th>Backend</th>
-                  <th>Kind</th>
-                  <th>Desired</th>
-                  <th>Rate</th>
-                  <th>Monthly</th>
+                  <th class="border-b border-border px-1.5 py-2 text-left">Backend</th>
+                  <th class="border-b border-border px-1.5 py-2 text-left">Kind</th>
+                  <th class="border-b border-border px-1.5 py-2 text-left">Desired</th>
+                  <th class="border-b border-border px-1.5 py-2 text-left">Rate</th>
+                  <th class="border-b border-border px-1.5 py-2 text-left">Monthly</th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-for="g in groups" :key="g.backend + g.kind">
-                  <td>{{ g.backend }}</td>
-                  <td>{{ g.kind }}</td>
-                  <td>{{ g.desired }}</td>
-                  <td>{{ fmtCents(rate(g.backend, g.kind)) }}/h</td>
-                  <td>{{ fmtCents(g.desired * rate(g.backend, g.kind) * HOURS_PER_MONTH) }}</td>
+                  <td class="border-b border-border px-1.5 py-2 text-left">{{ g.backend }}</td>
+                  <td class="border-b border-border px-1.5 py-2 text-left">{{ g.kind }}</td>
+                  <td class="border-b border-border px-1.5 py-2 text-left">{{ g.desired }}</td>
+                  <td class="border-b border-border px-1.5 py-2 text-left">
+                    {{ fmtCents(rate(g.backend, g.kind)) }}/h
+                  </td>
+                  <td class="border-b border-border px-1.5 py-2 text-left">
+                    {{ fmtCents(g.desired * rate(g.backend, g.kind) * HOURS_PER_MONTH) }}
+                  </td>
                 </tr>
               </tbody>
             </table>
           </section>
 
-          <section class="res-card">
-            <h3 class="res-card-title">Node-hours (30d)</h3>
+          <section class="rounded-md border border-border-subtle bg-surface-subtle px-3.5 py-3">
+            <h3 class="m-0 mb-2.5 text-sm font-semibold text-fg">Node-hours (30d)</h3>
             <LoadingPanel
               v-if="refreshing && !usageKinds.length"
               compact
               message="Loading usage…"
             />
-            <div v-else-if="!usageKinds.length" class="empty-state">No usage recorded yet.</div>
-            <table v-else class="res-table">
+            <div v-else-if="!usageKinds.length" class="py-3.5 text-fg-muted">
+              No usage recorded yet.
+            </div>
+            <table v-else class="w-full border-collapse">
               <thead>
                 <tr>
-                  <th>Kind</th>
-                  <th>Node-hours</th>
+                  <th class="border-b border-border px-1.5 py-2 text-left">Kind</th>
+                  <th class="border-b border-border px-1.5 py-2 text-left">Node-hours</th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-for="[kind, hours] in usageKinds" :key="kind">
-                  <td>{{ kind }}</td>
-                  <td>{{ hours.toFixed(2) }}</td>
+                  <td class="border-b border-border px-1.5 py-2 text-left">{{ kind }}</td>
+                  <td class="border-b border-border px-1.5 py-2 text-left">
+                    {{ hours.toFixed(2) }}
+                  </td>
                 </tr>
               </tbody>
             </table>
           </section>
 
-          <section v-if="can('org:nodes:scale')" class="res-card res-card-wide">
-            <h3 class="res-card-title">Scale a pool</h3>
-            <form class="res-scale" @submit.prevent="scale">
+          <section
+            v-if="can('org:nodes:scale')"
+            class="col-span-full rounded-md border border-border-subtle bg-surface-subtle px-3.5 py-3"
+          >
+            <h3 class="m-0 mb-2.5 text-sm font-semibold text-fg">Scale a pool</h3>
+            <form class="flex flex-wrap items-center gap-2" @submit.prevent="scale">
               <select v-model="scaleBackend">
                 <option value="supervisor">supervisor</option>
                 <option value="kubernetes">kubernetes</option>
@@ -120,18 +144,18 @@
                 <option value="waker">waker</option>
                 <option value="webservice">webservice</option>
               </select>
-              <input v-model.number="scaleDesired" type="number" min="0" />
+              <input v-model.number="scaleDesired" class="w-[90px]" type="number" min="0" />
               <button class="btn btn-primary" type="submit" :disabled="scaling">
                 <LoadingSpinner v-if="scaling" size="sm" label="Scaling org nodes" />
                 {{ scaling ? "Scaling…" : "Set desired" }}
               </button>
-              <span class="res-preview">
+              <span class="text-[13px] text-fg-muted">
                 ≈ {{ fmtCents(scaleDesired * rate(scaleBackend, scaleKind) * HOURS_PER_MONTH) }}/mo
               </span>
             </form>
-            <p class="res-note">
+            <p class="mt-2.5 mb-0 text-[13px] text-fg-muted">
               A worker pool with a positive count makes this org's workflows route to its dedicated,
-              <span class="mono">org={{ orgs.activeOrg.slug }}</span
+              <span class="font-mono">org={{ orgs.activeOrg.slug }}</span
               >-labeled workers.
             </p>
           </section>
@@ -140,7 +164,6 @@
     </template>
   </section>
 </template>
-
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import Icon from "../components/shared/Icon.vue";
@@ -162,8 +185,7 @@ const HOURS_PER_MONTH = 730;
 const orgs = useOrgsStore();
 const { can } = useCan();
 const refreshing = ref(false);
-const { isLoading: loadingNodes, loadingMessage: refreshMessage } =
-  useOperationLoading("Loading org nodes");
+const { loadingMessage: refreshMessage } = useOperationLoading("Loading org nodes");
 const { isLoading: scalingNodes } = useOperationLoading("Scaling org nodes");
 const scaling = computed(() => scalingNodes.value);
 const groups = ref<OrgResourceGroup[]>([]);
@@ -246,118 +268,3 @@ watch(() => orgs.activeOrgId, refresh);
 onMounted(refresh);
 </script>
 
-<style scoped>
-.res-pane {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  overflow: auto;
-}
-
-.res-summary {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.res-stat label {
-  display: block;
-  margin-bottom: 4px;
-  color: var(--text-muted);
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.res-stat-value {
-  font-size: 22px;
-  font-weight: 600;
-}
-
-.budget-bar {
-  margin-top: 12px;
-  height: 8px;
-  border-radius: var(--radius-pill);
-  background: var(--surface-subtle);
-  overflow: hidden;
-}
-
-.budget-fill {
-  height: 100%;
-  background: var(--accent);
-}
-
-.budget-fill.over {
-  background: var(--danger-fg);
-}
-
-.res-grid {
-  display: grid;
-  gap: 12px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.res-card {
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius);
-  background: var(--surface-subtle);
-  padding: 12px 14px;
-}
-
-.res-card-wide {
-  grid-column: 1 / -1;
-}
-
-.res-card-title {
-  margin: 0 0 10px;
-  font-size: 14px;
-}
-
-.res-table {
-  width: 100%;
-  border-collapse: collapse;
-}
-
-.res-table th,
-.res-table td {
-  text-align: left;
-  padding: 8px 6px;
-  border-bottom: 1px solid var(--border);
-}
-
-.res-scale {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  flex-wrap: wrap;
-}
-
-.res-scale input {
-  width: 90px;
-}
-
-.res-preview {
-  color: var(--text-muted);
-  font-size: 13px;
-}
-
-.res-note {
-  color: var(--text-muted);
-  font-size: 13px;
-  margin: 10px 0 0;
-}
-
-.mono {
-  font-family: var(--font-mono);
-}
-
-@media (max-width: 820px) {
-  .res-summary {
-    grid-template-columns: 1fr;
-  }
-
-  .res-grid {
-    grid-template-columns: 1fr;
-  }
-}
-</style>

@@ -1,26 +1,21 @@
 <template>
-  <div class="modal-backdrop" @click.self="$emit('close')">
-    <div class="modal-card">
-      <header class="modal-header">
-        <h3>{{ title }}</h3>
-        <button class="modal-close" @click="$emit('close')">×</button>
-      </header>
-      <p v-if="hint" class="modal-hint">{{ hint }}</p>
-      <div class="modal-editor">
-        <JsonEditor :model-value="text" :title="editorTitle" @update:model-value="onChange" />
-      </div>
-      <div v-if="error" class="modal-error">{{ error }}</div>
-      <footer class="modal-footer">
-        <button @click="$emit('close')">Cancel</button>
-        <button class="primary" :disabled="!isValid" @click="onSubmit">{{ submitLabel }}</button>
-      </footer>
+  <Modal :title="title" width="min(640px, 90vw)" @close="$emit('close')">
+    <p v-if="hint" class="hint m-0">{{ hint }}</p>
+    <div class="min-h-0 flex-1 [&_.json-editor-container]:h-[280px]">
+      <JsonEditor :model-value="text" :title="editorTitle" @update:model-value="onChange" />
     </div>
-  </div>
+    <div v-if="error" class="error text-xs">{{ error }}</div>
+    <template #actions>
+      <button class="btn" @click="$emit('close')">Cancel</button>
+      <button class="btn btn-primary" :disabled="!isValid" @click="onSubmit">{{ submitLabel }}</button>
+    </template>
+  </Modal>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import JsonEditor from "../shared/JsonEditor.vue";
+import Modal from "../shared/Modal.vue";
 
 const props = defineProps<{
   title: string;
@@ -79,71 +74,3 @@ function onSubmit() {
   }
 }
 </script>
-
-<style scoped>
-.modal-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(15, 23, 42, 0.48);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-}
-.modal-card {
-  width: min(640px, 90vw);
-  max-height: 80vh;
-  background: var(--surface);
-  border-radius: 8px;
-  padding: 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  box-shadow: var(--shadow-modal);
-}
-.modal-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-.modal-header h3 {
-  margin: 0;
-}
-.modal-close {
-  background: transparent;
-  border: 0;
-  font-size: 20px;
-  cursor: pointer;
-  color: var(--text-muted);
-}
-.modal-hint {
-  font-size: 12px;
-  color: var(--text-muted);
-  margin: 0;
-}
-.modal-editor {
-  flex: 1;
-  min-height: 0;
-}
-.modal-editor :deep(.json-editor-container) {
-  height: 280px;
-}
-.modal-error {
-  color: var(--danger-fg);
-  font-size: 12px;
-}
-.modal-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-.modal-footer button.primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
-}
-.modal-footer button.primary:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-</style>

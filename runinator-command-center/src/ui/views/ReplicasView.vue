@@ -1,9 +1,11 @@
 <template>
-  <section class="pane replicas-pane">
-    <div class="replicas-layout">
-      <aside class="panel replicas-list-panel">
+  <section class="pane flex h-full flex-col gap-2.5 overflow-hidden max-md:overflow-auto">
+    <div
+      class="grid min-h-0 flex-1 gap-2.5 grid-cols-1 md:grid-cols-[minmax(260px,320px)_minmax(0,1fr)] max-md:flex-none"
+    >
+      <aside class="panel flex min-h-0 flex-col">
         <div class="panel-toolbar">
-          <h2>Replicas</h2>
+          <h2 class="m-0 text-base font-semibold text-fg">Replicas</h2>
           <button class="btn" :disabled="loadingReplicas" @click="refresh">
             <LoadingSpinner v-if="loadingReplicas" size="sm" label="Refreshing replicas" />
             <Icon v-else name="refresh" />
@@ -11,10 +13,16 @@
           </button>
         </div>
 
-        <div class="replica-list-summary">
-          <span class="replica-stat">{{ app.liveReplicaCount }} live</span>
-          <span class="replica-stat">{{ staleCount }} stale</span>
-          <span class="replica-stat">{{ offlineCount }} offline</span>
+        <div class="mb-2 flex flex-wrap gap-1.5">
+          <span class="rounded-pill bg-surface-subtle px-2 py-0.5 text-xs text-fg-subtle"
+            >{{ app.liveReplicaCount }} live</span
+          >
+          <span class="rounded-pill bg-surface-subtle px-2 py-0.5 text-xs text-fg-subtle"
+            >{{ staleCount }} stale</span
+          >
+          <span class="rounded-pill bg-surface-subtle px-2 py-0.5 text-xs text-fg-subtle"
+            >{{ offlineCount }} offline</span
+          >
         </div>
 
         <LoadingPanel
@@ -22,28 +30,38 @@
           compact
           :message="loadingReplicasMessage || 'Loading replicas…'"
         />
-        <div v-else-if="!filteredReplicas.length" class="empty-state">
+        <div v-else-if="!filteredReplicas.length" class="py-3.5 text-fg-muted">
           No replicas match the current filters.
         </div>
 
-        <div v-else class="replica-list">
+        <div v-else class="flex min-h-0 flex-1 flex-col gap-1.5 overflow-auto max-md:max-h-[340px]">
           <button
             v-for="replica in filteredReplicas"
             :key="replica.replica_id"
             type="button"
-            class="replica-row"
-            :class="{ selected: selectedReplica?.replica_id === replica.replica_id }"
+            class="w-full rounded-lg border border-border bg-surface p-2.5 text-left"
+            :class="
+              selectedReplica?.replica_id === replica.replica_id
+                ? 'border-accent bg-accent-soft'
+                : ''
+            "
             @click="selectedReplicaId = replica.replica_id"
           >
-            <div class="replica-row-top">
-              <span class="replica-row-name">{{
+            <div class="mb-1 flex items-center justify-between gap-2">
+              <span class="min-w-0 truncate font-semibold">{{
                 replica.display_name || replica.host || replica.instance_id
               }}</span>
-              <span class="replica-row-status" :class="`replica-row-status-${replica.status}`">{{
-                replica.status
-              }}</span>
+              <span
+                class="rounded-pill px-2 py-0.5 text-xs font-semibold capitalize"
+                :class="{
+                  'bg-success-bg text-success-fg': replica.status === 'live',
+                  'bg-warning-bg text-warning-fg': replica.status === 'stale',
+                  'bg-danger-bg text-danger-fg': replica.status === 'offline',
+                }"
+                >{{ replica.status }}</span
+              >
             </div>
-            <div class="replica-row-meta">
+            <div class="flex flex-wrap items-center justify-start gap-2 text-xs text-fg-muted">
               <span>{{ replicaKindLabel(replica.replica_type) }}</span>
               <span>{{ replica.observed_ip || replica.host || "ip unknown" }}</span>
               <span>#{{ replica.replica_id }}</span>
@@ -52,81 +70,111 @@
         </div>
       </aside>
 
-      <section class="panel replicas-detail-panel">
+      <section class="panel flex min-h-0 flex-col overflow-auto">
         <template v-if="selectedReplica">
-          <div class="replicas-detail-head">
+          <div class="mb-3.5 flex items-start justify-between gap-3">
             <div>
-              <h2>
+              <h2 class="m-0 mb-1 text-base font-semibold text-fg">
                 {{
                   selectedReplica.display_name ||
                   selectedReplica.host ||
                   selectedReplica.instance_id
                 }}
               </h2>
-              <p class="replicas-detail-subtitle">
+              <p class="m-0 text-fg-muted">
                 {{ replicaKindLabel(selectedReplica.replica_type) }} · runtime
                 {{ selectedReplica.runtime_id }}
               </p>
             </div>
             <span
-              class="replica-status-badge"
-              :class="`replica-status-badge-${selectedReplica.status}`"
+              class="rounded-pill px-2 py-0.5 text-xs font-semibold capitalize"
+              :class="{
+                'bg-success-bg text-success-fg': selectedReplica.status === 'live',
+                'bg-warning-bg text-warning-fg': selectedReplica.status === 'stale',
+                'bg-danger-bg text-danger-fg': selectedReplica.status === 'offline',
+              }"
             >
               {{ selectedReplica.status }}
             </span>
           </div>
 
-          <div class="replicas-grid">
-            <div class="replicas-field">
-              <label>Replica ID</label>
+          <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div>
+              <label
+                class="mb-1 block text-xs tracking-wide text-fg-muted uppercase"
+                >Replica ID</label
+              >
               <div>{{ selectedReplica.replica_id }}</div>
             </div>
-            <div class="replicas-field">
-              <label>Observed IP</label>
-              <div class="mono">{{ selectedReplica.observed_ip || "-" }}</div>
+            <div>
+              <label
+                class="mb-1 block text-xs tracking-wide text-fg-muted uppercase"
+                >Observed IP</label
+              >
+              <div class="font-mono">{{ selectedReplica.observed_ip || "-" }}</div>
             </div>
-            <div class="replicas-field">
-              <label>Host</label>
+            <div>
+              <label class="mb-1 block text-xs tracking-wide text-fg-muted uppercase">Host</label>
               <div>{{ selectedReplica.host || "-" }}</div>
             </div>
-            <div class="replicas-field">
-              <label>Port</label>
+            <div>
+              <label class="mb-1 block text-xs tracking-wide text-fg-muted uppercase">Port</label>
               <div>{{ selectedReplica.port ?? "-" }}</div>
             </div>
-            <div class="replicas-field">
-              <label>Base Path</label>
-              <div class="mono">{{ selectedReplica.base_path || "/" }}</div>
+            <div>
+              <label
+                class="mb-1 block text-xs tracking-wide text-fg-muted uppercase"
+                >Base Path</label
+              >
+              <div class="font-mono">{{ selectedReplica.base_path || "/" }}</div>
             </div>
-            <div class="replicas-field">
-              <label>Instance ID</label>
-              <div class="mono">{{ selectedReplica.instance_id }}</div>
+            <div>
+              <label
+                class="mb-1 block text-xs tracking-wide text-fg-muted uppercase"
+                >Instance ID</label
+              >
+              <div class="font-mono">{{ selectedReplica.instance_id }}</div>
             </div>
-            <div class="replicas-field">
-              <label>Version</label>
-              <div class="mono">{{ selectedReplica.version || "-" }}</div>
+            <div>
+              <label class="mb-1 block text-xs tracking-wide text-fg-muted uppercase"
+                >Version</label
+              >
+              <div class="font-mono">{{ selectedReplica.version || "-" }}</div>
             </div>
-            <div class="replicas-field">
-              <label>First Seen</label>
+            <div>
+              <label
+                class="mb-1 block text-xs tracking-wide text-fg-muted uppercase"
+                >First Seen</label
+              >
               <div>{{ formatDate(selectedReplica.first_seen_at) }}</div>
             </div>
-            <div class="replicas-field">
-              <label>Last Heartbeat</label>
+            <div>
+              <label
+                class="mb-1 block text-xs tracking-wide text-fg-muted uppercase"
+                >Last Heartbeat</label
+              >
               <div>{{ formatDate(selectedReplica.last_heartbeat_at) }}</div>
             </div>
-            <div class="replicas-field">
-              <label>Last Seen</label>
+            <div>
+              <label
+                class="mb-1 block text-xs tracking-wide text-fg-muted uppercase"
+                >Last Seen</label
+              >
               <div>{{ formatDate(selectedReplica.last_seen_at) }}</div>
             </div>
-            <div class="replicas-field">
-              <label>Offline At</label>
+            <div>
+              <label
+                class="mb-1 block text-xs tracking-wide text-fg-muted uppercase"
+                >Offline At</label
+              >
               <div>{{ formatDate(selectedReplica.offline_at) }}</div>
             </div>
           </div>
 
-          <div class="replicas-section">
-            <div class="replicas-section-head">
-              <h3>Telemetry</h3>
-              <span class="replicas-section-hint">
+          <div class="mt-[18px]">
+            <div class="mb-2 flex items-baseline justify-between gap-2">
+              <h3 class="m-0 text-sm font-semibold text-fg">Telemetry</h3>
+              <span class="text-xs text-fg-muted">
                 <LoadingSpinner v-if="samplesLoading" size="sm" label="Loading telemetry" />
                 {{
                   samplesLoading
@@ -135,7 +183,7 @@
                 }}
               </span>
             </div>
-            <div class="sparkline-grid">
+            <div class="grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-2.5">
               <Sparkline
                 label="CPU"
                 :values="cpuSeries"
@@ -169,10 +217,10 @@
             </div>
           </div>
 
-          <div class="replicas-section">
-            <h3>Attributes</h3>
+          <div class="mt-[18px]">
+            <h3 class="m-0 mb-2 text-sm font-semibold text-fg">Attributes</h3>
             <JsonEditor
-              class="replicas-attributes"
+              class="max-h-[360px]"
               :model-value="pretty(selectedReplica.attributes ?? {})"
               readonly
               title=""
@@ -180,7 +228,7 @@
           </div>
         </template>
 
-        <div v-else class="empty-state">
+        <div v-else class="py-3.5 text-fg-muted">
           Select a replica to inspect its health, address, and runtime details.
         </div>
       </section>
@@ -188,7 +236,6 @@
     <NodePoolsPanel />
   </section>
 </template>
-
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import Icon from "../components/shared/Icon.vue";
@@ -348,208 +395,3 @@ onMounted(async () => {
 });
 </script>
 
-<style scoped>
-.replicas-pane {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  overflow: hidden;
-}
-
-.replicas-layout {
-  display: grid;
-  flex: 1 1 auto;
-  min-height: 0;
-  gap: 10px;
-  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
-}
-
-.replicas-list-panel,
-.replicas-detail-panel {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
-
-.replica-list-summary {
-  display: flex;
-  gap: 6px;
-  margin-bottom: 8px;
-  flex-wrap: wrap;
-}
-
-.replica-stat {
-  border-radius: var(--radius-pill);
-  background: var(--surface-subtle);
-  color: var(--text-subtle);
-  padding: 3px 8px;
-  font-size: 12px;
-}
-
-.replica-list {
-  flex: 1 1 auto;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  overflow: auto;
-  min-height: 0;
-}
-
-.replica-row {
-  width: 100%;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--surface);
-  padding: 10px;
-  text-align: left;
-}
-
-.replica-row.selected {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-}
-
-.replica-row-top,
-.replica-row-meta {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.replica-row-top {
-  margin-bottom: 4px;
-}
-
-.replica-row-name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-weight: 600;
-}
-
-.replica-row-meta {
-  color: var(--text-muted);
-  font-size: 12px;
-  justify-content: flex-start;
-  flex-wrap: wrap;
-}
-
-.replica-row-status,
-.replica-status-badge {
-  border-radius: var(--radius-pill);
-  padding: 2px 8px;
-  font-size: 12px;
-  font-weight: 600;
-  text-transform: capitalize;
-}
-
-.replica-row-status-live,
-.replica-status-badge-live {
-  background: var(--success-bg);
-  color: var(--success-fg);
-}
-
-.replica-row-status-stale,
-.replica-status-badge-stale {
-  background: var(--warning-bg);
-  color: var(--warning-fg);
-}
-
-.replica-row-status-offline,
-.replica-status-badge-offline {
-  background: var(--danger-bg);
-  color: var(--danger-fg);
-}
-
-.replicas-detail-panel {
-  overflow: auto;
-}
-
-.replicas-detail-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 14px;
-}
-
-.replicas-detail-head h2 {
-  margin: 0 0 4px;
-}
-
-.replicas-detail-subtitle {
-  margin: 0;
-  color: var(--text-muted);
-}
-
-.replicas-grid {
-  display: grid;
-  gap: 12px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.replicas-field label {
-  display: block;
-  margin-bottom: 4px;
-  color: var(--text-muted);
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.mono {
-  font-family: var(--font-mono);
-}
-
-.replicas-section {
-  margin-top: 18px;
-}
-
-.replicas-section h3 {
-  margin: 0 0 8px;
-}
-
-.replicas-section-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-
-.replicas-section-hint {
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.sparkline-grid {
-  display: grid;
-  gap: 10px;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-}
-
-.replicas-attributes {
-  max-height: 360px;
-}
-
-@media (max-width: 900px) {
-  .replicas-pane {
-    overflow: auto;
-  }
-
-  .replicas-layout {
-    flex: 0 0 auto;
-    grid-template-columns: 1fr;
-  }
-
-  .replica-list {
-    max-height: 340px;
-  }
-
-  .replicas-grid {
-    grid-template-columns: 1fr;
-  }
-}
-</style>

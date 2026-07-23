@@ -1,18 +1,29 @@
 <template>
-  <div ref="rootEl" class="run-timeline">
+  <div ref="rootEl" class="flex min-h-0 flex-col gap-2">
     <!-- failure reason pinned at the top for an at-a-glance "what broke and where". -->
-    <div v-if="failure" class="rt-failure">
-      <div class="rt-failure-head">
-        <span class="rt-failure-icon"><Icon name="alert" :size="14" /></span>
-        <span class="rt-failure-title"
-          >Failed at <code class="rt-failure-node">{{ failure.nodeId }}</code></span
+    <div
+      v-if="failure"
+      class="overflow-hidden rounded-lg border border-danger-bg bg-danger-bg p-2.5 shadow-panel"
+    >
+      <div class="flex items-center gap-2 text-[13px] font-semibold text-danger-fg">
+        <span
+          class="inline-flex size-[22px] shrink-0 items-center justify-center rounded-full bg-surface text-danger-fg"
         >
+          <Icon name="alert" :size="14" />
+        </span>
+        <span class="inline-flex items-center gap-1.5 text-danger-fg">
+          Failed at
+          <code
+            class="rounded border border-danger-fg bg-surface px-1.5 py-px font-mono text-xs font-semibold text-danger-fg"
+            >{{ failure.nodeId }}</code
+          >
+        </span>
         <StatusBadge :status="failure.status" />
-        <span class="rt-spacer"></span>
+        <span class="flex-1"></span>
         <button
           v-if="failure.message"
           type="button"
-          class="rt-failure-copy"
+          class="inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-[5px] border border-danger-fg bg-surface px-2 py-[3px] text-[11px] font-semibold text-danger-fg transition-[background,border-color] duration-100 hover:border-danger hover:bg-surface-hover"
           :title="copied ? 'Copied' : 'Copy error'"
           @click="copyFailure"
         >
@@ -20,79 +31,139 @@
           <span>{{ copied ? "Copied" : "Copy" }}</span>
         </button>
       </div>
-      <pre v-if="failure.message" class="rt-failure-msg">{{ failure.message }}</pre>
+      <pre
+        v-if="failure.message"
+        class="mt-2 max-h-[180px] overflow-auto rounded-md border border-danger-fg bg-surface p-2 font-mono text-[11px] leading-[1.55] break-words whitespace-pre-wrap text-danger-fg"
+        >{{ failure.message }}</pre
+      >
     </div>
 
     <!-- quick status filter for long runs (opt-in via the filterable prop). -->
-    <div v-if="filterable && detail && orderedNodes.length" class="rt-filters">
+    <div v-if="filterable && detail && orderedNodes.length" class="flex flex-wrap gap-1.5">
       <button
         v-for="option in filterOptions"
         :key="option.id"
         type="button"
-        class="rt-filter"
-        :class="{ active: filter === option.id }"
+        class="cursor-pointer rounded-pill border border-border-strong bg-surface-subtle px-2 py-0.5 text-[11px] font-semibold text-fg-subtle"
+        :class="
+          filter === option.id
+            ? 'border-accent bg-accent-soft text-accent-text [&_.rt-filter-count]:text-accent-text'
+            : ''
+        "
         @click="filter = option.id"
       >
-        {{ option.label }} <span class="rt-filter-count">{{ option.count }}</span>
+        {{ option.label }}
+        <span class="rt-filter-count font-tabular text-fg-faint">{{ option.count }}</span>
       </button>
     </div>
 
-    <div v-if="!detail" class="rt-empty">No run selected.</div>
-    <ol v-else-if="visibleNodes.length" class="rt-list">
+    <div v-if="!detail" class="px-0 py-2.5 text-[13px] text-fg-muted">No run selected.</div>
+    <ol v-else-if="visibleNodes.length" class="m-0 min-h-0 list-none overflow-auto p-0">
       <li
         v-for="node in visibleNodes"
         :key="node.id"
         :data-node-run-id="node.id"
-        :class="['rt-item', { selected: node.node_id === selectedNodeId, active: isActive(node) }]"
+        class="run-timeline-item grid grid-cols-[22px_minmax(0,1fr)] gap-2"
+        :class="{ 'rounded-md': isActive(node) }"
       >
-        <div class="rt-rail">
-          <span class="rt-dot" :class="statusBadgeClass(node.status)"></span>
+        <div class="run-timeline-rail relative flex justify-center">
+          <span
+            class="run-timeline-dot"
+            :class="timelineDotClass(node.status)"
+          ></span>
         </div>
-        <div class="rt-body">
-          <button type="button" class="rt-head" @click="onSelect(node)">
+        <div class="min-w-0 pb-2">
+          <button
+            type="button"
+            class="flex w-full cursor-pointer items-center gap-2 rounded-md border border-transparent bg-transparent px-1.5 py-1 text-left text-fg hover:bg-surface-hover"
+            :class="{
+              'border-border-strong bg-accent-soft': node.node_id === selectedNodeId,
+              'border-accent': isActive(node),
+            }"
+            @click="onSelect(node)"
+          >
             <StatusBadge :status="node.status" />
-            <span class="rt-node-id">{{ node.node_id }}</span>
+            <span class="overflow-hidden font-semibold text-ellipsis whitespace-nowrap">{{
+              node.node_id
+            }}</span>
             <span
               v-if="executionOrdinal(node) > 1"
-              class="rt-execution"
+              class="inline-grid size-[18px] min-w-[18px] items-center justify-center rounded-full border border-border-strong bg-surface text-[11px] leading-none font-bold font-tabular text-fg-subtle"
               :title="`Execution ${executionOrdinal(node)}`"
               >{{ executionOrdinal(node) }}</span
             >
-            <span v-if="node.attempt > 1" class="rt-attempt" title="Attempts"
+            <span
+              v-if="node.attempt > 1"
+              class="rounded-pill bg-warning-bg px-[7px] text-[11px] font-semibold text-warning-fg"
+              title="Attempts"
               >↻ {{ node.attempt }}</span
             >
-            <span v-if="isActive(node)" class="rt-active">active</span>
-            <span class="rt-spacer"></span>
+            <span
+              v-if="isActive(node)"
+              class="rounded-pill bg-accent-soft px-[7px] text-[11px] font-semibold text-accent-text"
+              >active</span
+            >
+            <span class="flex-1"></span>
             <span
               v-if="nodeTiming(node)"
-              class="rt-duration"
-              :class="{ live: isRunningNode(node) }"
+              class="text-[11px] font-tabular text-fg-muted"
+              :class="{ 'font-semibold text-accent-text': isRunningNode(node) }"
               >{{ nodeTiming(node) }}</span
             >
-            <span class="rt-caret" :class="{ open: expandedId === node.id }">▸</span>
+            <span
+              class="text-[11px] text-fg-faint transition-transform duration-[120ms]"
+              :class="{ 'rotate-90': expandedId === node.id }"
+              >▸</span
+            >
           </button>
-          <div v-if="previewOf(node)" class="rt-preview">{{ previewOf(node) }}</div>
+          <div
+            v-if="previewOf(node)"
+            class="mx-1.5 mt-0.5 overflow-hidden font-mono text-[11px] leading-[1.4] text-ellipsis whitespace-nowrap text-fg-subtle"
+          >
+            {{ previewOf(node) }}
+          </div>
           <!-- quick actions on a node (feature 7) -->
-          <div v-if="node.node_id === selectedNodeId" class="rt-actions">
+          <div v-if="node.node_id === selectedNodeId" class="mx-1.5 mt-1.5 flex flex-wrap gap-1.5">
             <slot name="node-actions" :node="node" />
           </div>
-          <div v-if="expandedId === node.id" class="rt-expand">
+          <div
+            v-if="expandedId === node.id"
+            class="mx-1.5 mt-1.5 rounded-md border border-border-subtle bg-surface-subtle p-2"
+          >
             <!-- failed-node errors are surfaced once in the failure banner above; only show informational messages here. -->
             <template v-if="node.message && !isFailedNode(node)">
-              <div class="rt-expand-label">Message</div>
-              <div class="rt-message">{{ formatErrorMessage(node.message) }}</div>
+              <div class="mb-0.5 text-[10px] tracking-wide text-fg-muted uppercase">Message</div>
+              <div class="text-xs break-words whitespace-pre-wrap text-fg-subtle">
+                {{ formatErrorMessage(node.message) }}
+              </div>
             </template>
             <template v-if="outputText(node)">
-              <div class="rt-expand-label">Output</div>
-              <pre class="rt-json">{{ outputText(node) }}</pre>
+              <div
+                class="mb-0.5 text-[10px] tracking-wide text-fg-muted uppercase"
+                :class="{ 'mt-2': node.message && !isFailedNode(node) }"
+              >
+                Output
+              </div>
+              <pre
+                class="m-0 max-h-[200px] overflow-auto rounded border border-border-subtle bg-surface-sunken p-2 font-mono text-[11px] leading-[1.45] break-words whitespace-pre-wrap"
+                >{{ outputText(node) }}</pre
+              >
             </template>
-            <div class="rt-expand-label">Logs</div>
-            <pre class="rt-logs">{{ logState(node) }}</pre>
+            <div
+              class="mb-0.5 text-[10px] tracking-wide text-fg-muted uppercase"
+              :class="{ 'mt-2': (node.message && !isFailedNode(node)) || outputText(node) }"
+            >
+              Logs
+            </div>
+            <pre
+              class="m-0 max-h-[200px] overflow-auto rounded border border-border-subtle bg-surface-sunken p-2 font-mono text-[11px] leading-[1.45] break-words whitespace-pre-wrap"
+              >{{ logState(node) }}</pre
+            >
           </div>
         </div>
       </li>
     </ol>
-    <div v-else class="rt-empty">
+    <div v-else class="px-0 py-2.5 text-[13px] text-fg-muted">
       {{ orderedNodes.length ? "No steps match this filter." : "No steps recorded yet." }}
     </div>
   </div>
@@ -103,7 +174,6 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import Icon from "./Icon.vue";
 import StatusBadge from "./StatusBadge.vue";
 import { workflowRunExtrasService } from "../../../core/services";
-import { statusBadgeClass } from "../../../core/utils/status";
 import { formatErrorMessage } from "../../../core/utils/format";
 import type { WorkflowNodeRun, WorkflowRunDetail } from "../../../core/domain/models";
 
@@ -282,6 +352,29 @@ function isFailedNode(node: WorkflowNodeRun): boolean {
   return FAILED_STATUSES.has(node.status);
 }
 
+function timelineDotClass(status: string): string {
+  const base =
+    "relative z-[1] mt-[7px] size-[11px] rounded-full shadow-[0_0_0_2px_var(--surface)]";
+
+  if (status === "succeeded") {
+    return `${base} bg-success-fg`;
+  }
+
+  if (status === "failed" || status === "timed_out") {
+    return `${base} bg-danger`;
+  }
+
+  if (status === "running" || status === "retrying") {
+    return `${base} run-timeline-dot status-running bg-accent`;
+  }
+
+  if (status === "waiting" || status === "queued" || status === "debug_paused") {
+    return `${base} bg-warn`;
+  }
+
+  return `${base} bg-border-strong`;
+}
+
 function previewOf(node: WorkflowNodeRun): string {
   const output = node.output_json;
 
@@ -456,353 +549,3 @@ onBeforeUnmount(() => {
   window.clearInterval(clockTimer);
 });
 </script>
-
-<style scoped>
-.run-timeline {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  gap: 8px;
-}
-.rt-failure {
-  border: 1px solid var(--danger-bg);
-  border-radius: 8px;
-  background: var(--danger-bg);
-  box-shadow: var(--shadow-panel);
-  padding: 10px 12px;
-  overflow: hidden;
-}
-.rt-failure-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--danger-fg);
-  font-weight: 600;
-  font-size: 13px;
-}
-.rt-failure-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: var(--surface);
-  color: var(--danger-fg);
-}
-.rt-failure-title {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--danger-fg);
-}
-.rt-failure-node {
-  border: 1px solid var(--danger-fg);
-  border-radius: 4px;
-  background: var(--surface);
-  color: var(--danger-fg);
-  padding: 1px 6px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12px;
-  font-weight: 600;
-}
-.rt-failure-copy {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  flex: 0 0 auto;
-  border: 1px solid var(--danger-fg);
-  border-radius: 5px;
-  background: var(--surface);
-  color: var(--danger-fg);
-  cursor: pointer;
-  font: inherit;
-  font-size: 11px;
-  font-weight: 600;
-  padding: 3px 9px;
-  transition:
-    background 0.12s ease,
-    border-color 0.12s ease;
-}
-.rt-failure-copy:hover {
-  background: var(--surface-hover);
-  border-color: var(--danger-solid);
-}
-.rt-failure-msg {
-  margin: 8px 0 0;
-  max-height: 180px;
-  overflow: auto;
-  border: 1px solid var(--danger-fg);
-  border-radius: 6px;
-  background: var(--surface);
-  padding: 8px 10px;
-  color: var(--danger-fg);
-  font:
-    11px/1.55 ui-monospace,
-    SFMono-Regular,
-    Menlo,
-    Consolas,
-    monospace;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-.rt-empty {
-  color: var(--text-muted);
-  font-size: 13px;
-  padding: 10px 0;
-}
-.rt-filters {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.rt-filter {
-  border: 1px solid var(--border-strong);
-  border-radius: 999px;
-  background: var(--surface-subtle);
-  color: var(--text-subtle);
-  cursor: pointer;
-  font: inherit;
-  font-size: 11px;
-  font-weight: 600;
-  padding: 2px 9px;
-}
-.rt-filter.active {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  color: var(--accent-text);
-}
-.rt-filter-count {
-  color: var(--text-faint);
-  font-variant-numeric: tabular-nums;
-}
-.rt-filter.active .rt-filter-count {
-  color: var(--accent-text);
-}
-.rt-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  overflow: auto;
-  min-height: 0;
-}
-.rt-item {
-  display: grid;
-  grid-template-columns: 22px minmax(0, 1fr);
-  gap: 8px;
-}
-.rt-rail {
-  display: flex;
-  justify-content: center;
-  position: relative;
-}
-.rt-rail::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  background: var(--border-subtle);
-}
-.rt-item:first-child .rt-rail::before {
-  top: 12px;
-}
-.rt-item:last-child .rt-rail::before {
-  bottom: calc(100% - 16px);
-}
-.rt-dot {
-  position: relative;
-  z-index: 1;
-  width: 11px;
-  height: 11px;
-  margin-top: 7px;
-  border-radius: 50%;
-  background: var(--border-strong);
-  box-shadow: 0 0 0 2px var(--surface);
-}
-.rt-dot.status-succeeded {
-  background: var(--success-fg);
-}
-.rt-dot.status-failed {
-  background: var(--danger-solid);
-}
-.rt-dot.status-running {
-  background: var(--accent);
-  animation: rt-pulse 1.2s ease-in-out infinite;
-}
-.rt-dot.status-waiting {
-  background: var(--warn-solid);
-}
-.rt-caret {
-  color: var(--text-faint);
-  font-size: 11px;
-  transition: transform 0.12s ease;
-}
-.rt-caret.open {
-  transform: rotate(90deg);
-}
-@keyframes rt-pulse {
-  0%,
-  100% {
-    box-shadow:
-      0 0 0 2px var(--surface),
-      0 0 0 4px var(--accent-ring);
-  }
-  50% {
-    box-shadow:
-      0 0 0 2px var(--surface),
-      0 0 0 7px transparent;
-  }
-}
-.rt-body {
-  min-width: 0;
-  padding-bottom: 8px;
-}
-.rt-item.active .rt-body {
-  border-radius: 6px;
-}
-.rt-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background: transparent;
-  padding: 4px 6px;
-  cursor: pointer;
-  text-align: left;
-  color: var(--text);
-}
-.rt-head:hover {
-  background: var(--surface-hover);
-}
-.rt-item.selected .rt-head {
-  border-color: var(--border-strong);
-  background: var(--accent-soft);
-}
-.rt-item.active .rt-head {
-  border-color: var(--accent);
-}
-.rt-node-id {
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.rt-attempt {
-  color: var(--warning-fg);
-  background: var(--warning-bg);
-  border-radius: 999px;
-  padding: 0 7px;
-  font-size: 11px;
-  font-weight: 600;
-}
-.rt-execution {
-  display: inline-grid;
-  min-width: 18px;
-  height: 18px;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--border-strong);
-  border-radius: 50%;
-  background: var(--surface);
-  color: var(--text-subtle);
-  font-size: 11px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  line-height: 1;
-}
-.rt-active {
-  color: var(--accent-text);
-  background: var(--accent-soft);
-  border-radius: 999px;
-  padding: 0 7px;
-  font-size: 11px;
-  font-weight: 600;
-}
-.rt-spacer {
-  flex: 1 1 auto;
-}
-.rt-duration {
-  color: var(--text-muted);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-}
-.rt-duration.live {
-  color: var(--accent-text);
-  font-weight: 600;
-}
-.rt-preview {
-  margin: 2px 6px 0;
-  color: var(--text-subtle);
-  font:
-    11px/1.4 ui-monospace,
-    SFMono-Regular,
-    Menlo,
-    Consolas,
-    monospace;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.rt-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin: 6px 6px 0;
-}
-.rt-expand {
-  margin: 6px 6px 0;
-  border: 1px solid var(--border-subtle);
-  border-radius: 6px;
-  padding: 8px;
-  background: var(--surface-subtle);
-}
-.rt-expand-label {
-  color: var(--text-muted);
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  margin: 0 0 3px;
-}
-.rt-expand-label + .rt-expand-label,
-.rt-json + .rt-expand-label,
-.rt-message + .rt-expand-label {
-  margin-top: 8px;
-}
-.rt-message {
-  color: var(--text-subtle);
-  font-size: 12px;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-.rt-message.error {
-  border-left: 3px solid var(--danger-solid);
-  border-radius: 4px;
-  background: var(--danger-bg);
-  color: var(--danger-fg);
-  padding: 6px 8px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 11px;
-}
-.rt-json,
-.rt-logs {
-  margin: 0;
-  max-height: 200px;
-  overflow: auto;
-  background: var(--surface-sunken);
-  border: 1px solid var(--border-subtle);
-  border-radius: 4px;
-  padding: 6px 8px;
-  font:
-    11px/1.45 ui-monospace,
-    SFMono-Regular,
-    Menlo,
-    Consolas,
-    monospace;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-</style>

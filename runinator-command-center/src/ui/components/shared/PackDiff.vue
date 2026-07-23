@@ -1,59 +1,92 @@
 <template>
-  <div class="pack-diff">
-    <div class="pd-summary">
-      <span :class="['pd-pill', overwrites ? 'warn' : 'ok']">
+  <div class="flex min-w-0 flex-col gap-2">
+    <div class="flex flex-wrap gap-1.5">
+      <span
+        class="rounded-pill px-2 py-0.5 text-[11px] font-bold"
+        :class="overwrites ? 'bg-warning-bg text-warning-fg' : 'bg-success-bg text-success-fg'"
+      >
         {{
           overwrites
             ? `Overwrites ${overwriteCount} item${overwriteCount === 1 ? "" : "s"}`
             : "No overwrites"
         }}
       </span>
-      <span class="pd-pill muted"
+      <span class="rounded-pill bg-surface-muted px-2 py-0.5 text-[11px] font-bold text-fg-subtle"
         >{{ workflowRows.length }} workflow{{ workflowRows.length === 1 ? "" : "s" }}</span
       >
-      <span v-if="triggerRows.length" class="pd-pill muted"
+      <span
+        v-if="triggerRows.length"
+        class="rounded-pill bg-surface-muted px-2 py-0.5 text-[11px] font-bold text-fg-subtle"
         >{{ triggerRows.length }} trigger{{ triggerRows.length === 1 ? "" : "s" }}</span
       >
-      <span v-if="settingRows.length" class="pd-pill muted"
+      <span
+        v-if="settingRows.length"
+        class="rounded-pill bg-surface-muted px-2 py-0.5 text-[11px] font-bold text-fg-subtle"
         >{{ settingRows.length }} setting{{ settingRows.length === 1 ? "" : "s" }}</span
       >
     </div>
 
-    <div v-if="!pack" class="pd-empty">Inspect a pack to preview changes.</div>
+    <div v-if="!pack" class="text-xs text-fg-muted">Inspect a pack to preview changes.</div>
     <template v-else>
-      <section class="pd-section">
-        <h4>Workflows</h4>
-        <div v-if="!workflowRows.length" class="pd-none">No workflows in pack.</div>
-        <ul v-else class="pd-list">
-          <li v-for="row in workflowRows" :key="row.name">
-            <span class="pd-tag" :class="row.status">{{ statusLabel(row.status) }}</span>
-            <span class="pd-name">{{ row.name }}</span>
-            <span v-if="row.status === 'changed'" class="pd-detail"
-              >v{{ row.previousVersion }} → v{{ row.version }}</span
+      <section>
+        <h4 class="my-1 text-xs text-fg-subtle">Workflows</h4>
+        <div v-if="!workflowRows.length" class="text-xs text-fg-muted">No workflows in pack.</div>
+        <ul v-else class="m-0 grid list-none gap-0.5 p-0">
+          <li
+            v-for="row in workflowRows"
+            :key="row.name"
+            class="flex min-w-0 items-center gap-2 text-xs"
+          >
+            <span
+              class="min-w-16 shrink-0 rounded px-1.5 py-px text-center text-[10px] font-bold tracking-wide uppercase"
+              :class="tagClass(row.status)"
+              >{{ statusLabel(row.status) }}</span
             >
-            <span v-else class="pd-detail">v{{ row.version }}</span>
+            <span class="truncate font-semibold text-fg">{{ row.name }}</span>
+            <span class="truncate text-fg-muted tabular-nums">
+              <template v-if="row.status === 'changed'"
+                >v{{ row.previousVersion }} → v{{ row.version }}</template
+              >
+              <template v-else>v{{ row.version }}</template>
+            </span>
           </li>
         </ul>
       </section>
 
-      <section v-if="triggerRows.length" class="pd-section">
-        <h4>Triggers</h4>
-        <ul class="pd-list">
-          <li v-for="(row, index) in triggerRows" :key="`${row.workflow}-${row.cron}-${index}`">
-            <span class="pd-tag" :class="row.status">{{ statusLabel(row.status) }}</span>
-            <span class="pd-name">{{ row.workflow }}</span>
-            <span class="pd-detail">{{ row.cron }}</span>
+      <section v-if="triggerRows.length">
+        <h4 class="my-1 text-xs text-fg-subtle">Triggers</h4>
+        <ul class="m-0 grid list-none gap-0.5 p-0">
+          <li
+            v-for="(row, index) in triggerRows"
+            :key="`${row.workflow}-${row.cron}-${index}`"
+            class="flex min-w-0 items-center gap-2 text-xs"
+          >
+            <span
+              class="min-w-16 shrink-0 rounded px-1.5 py-px text-center text-[10px] font-bold tracking-wide uppercase"
+              :class="tagClass(row.status)"
+              >{{ statusLabel(row.status) }}</span
+            >
+            <span class="truncate font-semibold text-fg">{{ row.workflow }}</span>
+            <span class="truncate text-fg-muted tabular-nums">{{ row.cron }}</span>
           </li>
         </ul>
       </section>
 
-      <section v-if="settingRows.length" class="pd-section">
-        <h4>Settings</h4>
-        <ul class="pd-list">
-          <li v-for="row in settingRows" :key="`${row.kind}:${row.scope}:${row.name}`">
-            <span class="pd-tag" :class="row.status">{{ statusLabel(row.status) }}</span>
-            <span class="pd-name">{{ row.scope }}.{{ row.name }}</span>
-            <span class="pd-detail">{{ row.kind }}</span>
+      <section v-if="settingRows.length">
+        <h4 class="my-1 text-xs text-fg-subtle">Settings</h4>
+        <ul class="m-0 grid list-none gap-0.5 p-0">
+          <li
+            v-for="row in settingRows"
+            :key="`${row.kind}:${row.scope}:${row.name}`"
+            class="flex min-w-0 items-center gap-2 text-xs"
+          >
+            <span
+              class="min-w-16 shrink-0 rounded px-1.5 py-px text-center text-[10px] font-bold tracking-wide uppercase"
+              :class="tagClass(row.status)"
+              >{{ statusLabel(row.status) }}</span
+            >
+            <span class="truncate font-semibold text-fg">{{ row.scope }}.{{ row.name }}</span>
+            <span class="truncate text-fg-muted tabular-nums">{{ row.kind }}</span>
           </li>
         </ul>
       </section>
@@ -178,6 +211,18 @@ const overwriteCount = computed(
 );
 const overwrites = computed(() => overwriteCount.value > 0);
 
+function tagClass(status: DiffStatus): string {
+  if (status === "added") {
+    return "bg-success-bg text-success-fg";
+  }
+
+  if (status === "changed") {
+    return "bg-warning-bg text-warning-fg";
+  }
+
+  return "bg-surface-muted text-fg-muted";
+}
+
 function statusRank(status: DiffStatus): number {
   return status === "changed" ? 0 : status === "added" ? 1 : 2;
 }
@@ -255,96 +300,3 @@ function cronExpressionsFor(workflow: WorkflowDefinition): string[] {
   return crons;
 }
 </script>
-
-<style scoped>
-.pack-diff {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  min-width: 0;
-}
-.pd-summary {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.pd-pill {
-  border-radius: 999px;
-  padding: 2px 9px;
-  font-size: 11px;
-  font-weight: 700;
-}
-.pd-pill.ok {
-  background: var(--success-bg);
-  color: var(--success-fg);
-}
-.pd-pill.warn {
-  background: var(--warning-bg);
-  color: var(--warning-fg);
-}
-.pd-pill.muted {
-  background: var(--surface-muted);
-  color: var(--text-subtle);
-}
-.pd-empty,
-.pd-none {
-  color: var(--text-muted);
-  font-size: 12px;
-}
-.pd-section h4 {
-  margin: 4px 0 4px;
-  font-size: 12px;
-  color: var(--text-subtle);
-}
-.pd-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 3px;
-}
-.pd-list li {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  min-width: 0;
-}
-.pd-tag {
-  flex: 0 0 auto;
-  min-width: 64px;
-  text-align: center;
-  border-radius: 4px;
-  padding: 1px 6px;
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-}
-.pd-tag.added {
-  background: var(--success-bg);
-  color: var(--success-fg);
-}
-.pd-tag.changed {
-  background: var(--warning-bg);
-  color: var(--warning-fg);
-}
-.pd-tag.unchanged {
-  background: var(--surface-muted);
-  color: var(--text-muted);
-}
-.pd-name {
-  font-weight: 600;
-  color: var(--text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.pd-detail {
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-</style>

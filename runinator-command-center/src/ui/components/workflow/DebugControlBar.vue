@@ -1,6 +1,6 @@
 <template>
-  <div class="debug-control-bar">
-    <div class="debug-controls">
+  <div class="mb-2 flex flex-col gap-1.5">
+    <div class="flex flex-wrap gap-1">
       <button
         class="btn btn-primary btn-sm"
         :disabled="!workflows.canContinueWorkflowRun"
@@ -47,8 +47,8 @@
         <span>Re-run</span>
       </button>
     </div>
-    <div class="debug-mode-row">
-      <label>
+    <div class="flex flex-wrap gap-3 text-[11px] text-fg-subtle">
+      <label class="inline-flex cursor-pointer items-center gap-1">
         <input
           type="radio"
           name="debug-mode"
@@ -58,7 +58,7 @@
         />
         Pause every node
       </label>
-      <label>
+      <label class="inline-flex cursor-pointer items-center gap-1">
         <input
           type="radio"
           name="debug-mode"
@@ -149,30 +149,3 @@ function onSubmitRerun(value: unknown) {
   rerunOpen.value = false;
 }
 </script>
-
-<style scoped>
-.debug-control-bar {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-bottom: 8px;
-}
-.debug-controls {
-  display: flex;
-  gap: 4px;
-  flex-wrap: wrap;
-}
-.debug-mode-row {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-  font-size: 11px;
-  color: #475569;
-}
-.debug-mode-row label {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  cursor: pointer;
-}
-</style>
