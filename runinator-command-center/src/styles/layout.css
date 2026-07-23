@@ -300,7 +300,8 @@
 }
 
 .actions,
-.panel-toolbar > div,
+.panel-toolbar > .btn-row,
+.panel-toolbar > .actions,
 .workflow-toolbar {
   display: flex;
   gap: 6px;
@@ -521,22 +522,20 @@ main[inert] {
   overflow: hidden;
 }
 
-.panel h2 {
-  margin: 0;
-  font-size: 15px;
-}
-
+/* keep margin reset only — size/color come from utilities so Tailwind migration
+   titles (text-base / text-fg) are not flattened by unlayered heading rules. */
+.panel h2,
 .panel h3 {
   margin: 0;
-  color: var(--text-subtle);
-  font-size: 13px;
 }
 
 .panel-toolbar,
 .workflow-toolbar,
 .detail-header {
   display: flex;
-  align-items: center;
+  /* start-align so multi-line title+subtitle blocks sit flush with action buttons
+     instead of vertically centering the button against the whole text stack. */
+  align-items: flex-start;
   justify-content: space-between;
   gap: 8px;
   flex-wrap: wrap;
@@ -545,6 +544,14 @@ main[inert] {
 .panel-toolbar {
   border-bottom: 1px solid var(--border-subtle);
   padding-bottom: 10px;
+}
+
+.panel-toolbar > .btn,
+.panel-toolbar > .btn-row,
+.panel-toolbar > .actions,
+.workflow-toolbar > .btn,
+.detail-header > .btn {
+  align-self: center;
 }
 
 .detail-header span {

@@ -12,19 +12,16 @@
     >
       <template #first>
         <div class="panel min-h-0">
-          <div class="panel-toolbar">
-            <div class="grid gap-1">
-              <h2 class="m-0 text-base font-semibold text-fg">Pipeline Runs</h2>
-              <p class="m-0 text-xs text-fg-muted">
-                First-class pipeline executions and the member workflow runs they orchestrate.
-              </p>
-            </div>
+          <PanelHeader
+            title="Pipeline Runs"
+            description="First-class pipeline executions and the member workflow runs they orchestrate."
+          >
             <button class="btn" :disabled="store.loading" @click="store.refresh">
               <LoadingSpinner v-if="store.loading" size="sm" label="Refreshing pipeline runs" />
               <Icon v-else name="refresh" />
               <span>Refresh</span>
             </button>
-          </div>
+          </PanelHeader>
           <div class="flex gap-2">
             <select v-model="selectedPipelineId" class="input flex-1">
               <option value="">Start a pipeline…</option>
@@ -46,24 +43,9 @@
             </button>
           </div>
           <div class="mb-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
-            <div
-              class="grid gap-1 rounded-md border border-border-subtle bg-surface-subtle px-3 py-2.5"
-            >
-              <span class="text-xs text-fg-muted">Visible</span>
-              <strong class="truncate text-sm text-fg">{{ store.runs.length }}</strong>
-            </div>
-            <div
-              class="grid gap-1 rounded-md border border-border-subtle bg-surface-subtle px-3 py-2.5"
-            >
-              <span class="text-xs text-fg-muted">Active</span>
-              <strong class="truncate text-sm text-fg">{{ activeRunCount }}</strong>
-            </div>
-            <div
-              class="grid gap-1 rounded-md border border-border-subtle bg-surface-subtle px-3 py-2.5"
-            >
-              <span class="text-xs text-fg-muted">Selected</span>
-              <strong class="truncate text-sm text-fg">{{ selectedRunLabel }}</strong>
-            </div>
+            <MetricCard label="Visible" :value="store.runs.length" />
+            <MetricCard label="Active" :value="activeRunCount" />
+            <MetricCard label="Selected" :value="selectedRunLabel" />
           </div>
           <p v-if="store.error" class="error m-0 text-xs">{{ store.error }}</p>
           <EmptyState
@@ -198,7 +180,9 @@ import { computed, onMounted, ref } from "vue";
 import EmptyState from "../components/shared/EmptyState.vue";
 import Icon from "../components/shared/Icon.vue";
 import LoadingSpinner from "../components/shared/LoadingSpinner.vue";
+import MetricCard from "../components/shared/MetricCard.vue";
 import MobileBackBar from "../components/shared/MobileBackBar.vue";
+import PanelHeader from "../components/shared/PanelHeader.vue";
 import RunTable from "../components/shared/RunTable.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
 import StatusBadge from "../components/shared/StatusBadge.vue";

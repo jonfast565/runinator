@@ -1,27 +1,24 @@
 <template>
   <section class="pane">
     <div class="panel">
-      <div class="panel-toolbar">
-        <h2 class="m-0 text-base font-semibold text-fg">Notifications</h2>
-        <div class="btn-row">
-          <label class="inline-flex items-center gap-1.5 text-xs text-fg-muted">
-            <input v-model="store.unreadOnly" type="checkbox" class="w-auto" @change="refresh" />
-            <span>Unread only</span>
-          </label>
-          <Button variant="default" :loading="loading" @click="refresh">
-            <Icon name="refresh" />
-            <span>Refresh</span>
-          </Button>
-          <button class="btn" :disabled="loading || store.unreadCount === 0" @click="markAllRead">
-            <Icon name="check" />
-            <span>Mark all read</span>
-          </button>
-          <button class="btn" :disabled="loading || !hasRead" @click="deleteRead">
-            <Icon name="trash" />
-            <span>Delete read</span>
-          </button>
-        </div>
-      </div>
+      <PanelHeader title="Notifications">
+        <label class="inline-flex items-center gap-1.5 text-xs text-fg-muted">
+          <input v-model="store.unreadOnly" type="checkbox" class="w-auto" @change="refresh" />
+          <span>Unread only</span>
+        </label>
+        <Button variant="default" :loading="loading" @click="refresh">
+          <Icon name="refresh" />
+          <span>Refresh</span>
+        </Button>
+        <button class="btn" :disabled="loading || store.unreadCount === 0" @click="markAllRead">
+          <Icon name="check" />
+          <span>Mark all read</span>
+        </button>
+        <button class="btn" :disabled="loading || !hasRead" @click="deleteRead">
+          <Icon name="trash" />
+          <span>Delete read</span>
+        </button>
+      </PanelHeader>
       <DataTable
         :columns="columns"
         :rows="filteredNotifications"
@@ -73,6 +70,7 @@ import { computed, onMounted, ref } from "vue";
 import DataTable, { type DataTableColumn } from "../components/shared/DataTable.vue";
 import Button from "../components/shared/Button.vue";
 import Icon from "../components/shared/Icon.vue";
+import PanelHeader from "../components/shared/PanelHeader.vue";
 import { useNotificationsStore } from "../../ui/adapters/pinia/notifications";
 import { useAppStore } from "../../ui/adapters/pinia/app";
 import type { Notification } from "../../core/domain/models";

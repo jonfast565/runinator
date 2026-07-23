@@ -70,53 +70,67 @@
   --spacing-6: var(--space-6);
 }
 
+/*
+ * button vocabulary stays outside @layer so it remains a single source of truth
+ * for the shared .btn chrome (animations included). form-control defaults now
+ * live in @layer base (base.css), so colored variants and other component
+ * button states are no longer washed out by the global button reset.
+ */
+.btn {
+  @apply inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md border
+    border-border-strong bg-surface px-2.5 py-1.5 leading-none text-fg
+    transition-[border-color,background-color,color,box-shadow,transform,opacity] duration-150
+    ease-out hover:border-border-hover hover:bg-surface-hover
+    active:scale-[0.97] disabled:pointer-events-none disabled:cursor-default
+    disabled:text-fg-faint disabled:opacity-70 disabled:active:scale-100;
+}
+
+.btn-primary {
+  @apply border-accent bg-accent text-white shadow-[0_1px_0_rgba(0,0,0,0.04)]
+    hover:border-accent-hover hover:bg-accent-hover hover:text-white
+    hover:shadow-[0_4px_12px_-4px_color-mix(in_srgb,var(--accent)_55%,transparent)]
+    active:shadow-none;
+}
+
+.btn-danger {
+  @apply border-danger bg-danger text-white hover:border-danger-hover hover:bg-danger-hover
+    hover:text-white
+    hover:shadow-[0_4px_12px_-4px_color-mix(in_srgb,var(--danger-solid)_45%,transparent)]
+    active:shadow-none;
+}
+
+.btn-warn {
+  @apply border-warn bg-warn text-white hover:border-warn-hover hover:bg-warn-hover hover:text-white;
+}
+
+.btn-ghost {
+  @apply border-transparent bg-transparent text-fg hover:border-transparent hover:bg-surface-muted;
+}
+
+.btn-sm {
+  @apply gap-1 px-2 py-1 text-xs;
+}
+
+.btn-icon {
+  @apply size-7 gap-0 p-0;
+}
+
+.btn-close {
+  @apply inline-flex size-[18px] cursor-pointer items-center justify-center rounded-sm border-0
+    bg-transparent p-0 text-inherit transition-[background-color,color,transform] duration-150
+    ease-out hover:bg-black/10 active:scale-95;
+}
+
+[data-theme="dark"] .btn-close:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.btn-row {
+  @apply inline-flex items-center gap-1.5;
+}
+
 /* shared component vocabulary, expressed in Tailwind so templates can keep short class names. */
 @layer components {
-  .btn {
-    @apply inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md border
-      border-border-strong bg-surface px-2.5 py-1.5 leading-none text-fg
-      transition-[border-color,background-color,color,box-shadow,transform,opacity] duration-150
-      ease-out hover:border-border-hover hover:bg-surface-hover
-      active:scale-[0.97] disabled:pointer-events-none disabled:cursor-default
-      disabled:text-fg-faint disabled:opacity-70 disabled:active:scale-100;
-  }
-
-  .btn-primary {
-    @apply border-accent bg-accent text-white shadow-[0_1px_0_rgba(0,0,0,0.04)]
-      hover:border-accent-hover hover:bg-accent-hover hover:text-white
-      hover:shadow-[0_4px_12px_-4px_color-mix(in_srgb,var(--accent)_55%,transparent)]
-      active:shadow-none;
-  }
-
-  .btn-danger {
-    @apply border-danger bg-danger text-white hover:border-danger-hover hover:bg-danger-hover
-      hover:text-white
-      hover:shadow-[0_4px_12px_-4px_color-mix(in_srgb,var(--danger-solid)_45%,transparent)]
-      active:shadow-none;
-  }
-
-  .btn-warn {
-    @apply border-warn bg-warn text-white hover:border-warn-hover hover:bg-warn-hover hover:text-white;
-  }
-
-  .btn-ghost {
-    @apply border-transparent bg-transparent text-fg hover:border-transparent hover:bg-surface-hover;
-  }
-
-  .btn-sm {
-    @apply gap-1 px-2 py-1 text-xs;
-  }
-
-  .btn-icon {
-    @apply px-1.5 py-1.5;
-  }
-
-  .btn-close {
-    @apply inline-flex size-7 cursor-pointer items-center justify-center rounded-md border-0
-      bg-transparent text-fg-muted transition-[background-color,color,transform] duration-150
-      ease-out hover:bg-surface-hover hover:text-fg active:scale-95;
-  }
-
   .panel {
     @apply flex min-h-0 flex-col gap-2 overflow-auto rounded-md border border-border-faint
       bg-surface p-2 shadow-panel;
@@ -152,7 +166,8 @@
     @apply bg-surface-hover;
   }
 
-  .table-scroll tr.selected td {
+  .table-scroll tr.selected td,
+  .table-scroll tr.selected:hover td {
     @apply bg-accent-soft;
   }
 
@@ -177,19 +192,40 @@
   }
 
   .badge {
-    @apply inline-flex max-w-full items-center rounded-pill px-2 py-0.5 text-xs font-[650] leading-[1.35]
-      transition-[background-color,color,transform] duration-150 ease-out;
+    @apply inline-flex max-w-full items-center rounded-pill border border-transparent px-2 py-0.5
+      text-xs font-[650] leading-[1.35]
+      transition-[background-color,border-color,color,transform] duration-150 ease-out;
   }
 
   .connection-pill {
-    @apply rounded-pill px-[9px] py-[3px] text-xs font-[650]
-      transition-[background-color,color,transform] duration-150 ease-out;
+    @apply rounded-pill border border-transparent px-[9px] py-[3px] text-xs font-[650]
+      transition-[background-color,border-color,color,transform] duration-150 ease-out;
   }
 
   .metric-card {
-    @apply grid gap-1 rounded-md border border-border-subtle bg-surface-subtle px-3 py-2.5
+    @apply relative grid gap-1 overflow-hidden rounded-md border border-border-subtle
+      bg-surface-subtle px-3 py-2.5 pl-3.5
       transition-[border-color,background-color,box-shadow,transform] duration-150 ease-out
       hover:-translate-y-px hover:border-border hover:bg-surface hover:shadow-control;
+  }
+
+  .metric-card::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 3px;
+    background: var(--accent);
+    opacity: 0.55;
+  }
+
+  .metric-card:nth-child(3n + 2)::before {
+    background: var(--info-fg);
+  }
+
+  .metric-card:nth-child(3n)::before {
+    background: var(--success-fg);
   }
 
   .ui-fade-up {
@@ -198,25 +234,25 @@
 
   .connection-pill.connected,
   .status-succeeded {
-    @apply bg-success-bg text-success-fg;
+    @apply border-success-fg/25 bg-success-bg text-success-fg;
   }
 
   .connection-pill.waiting,
   .status-running {
-    @apply bg-warning-bg text-warning-fg;
+    @apply border-warning-fg/30 bg-warning-bg text-warning-fg;
   }
 
   .connection-pill.down,
   .status-failed {
-    @apply bg-danger-bg text-danger-fg;
+    @apply border-danger-fg/30 bg-danger-bg text-danger-fg;
   }
 
   .status-waiting {
-    @apply bg-info-bg text-info-fg;
+    @apply border-info-fg/30 bg-info-bg text-info-fg;
   }
 
   .status-muted {
-    @apply bg-surface-muted text-fg-muted;
+    @apply border-border-subtle bg-surface-muted text-fg-muted;
   }
 
   .compact th,

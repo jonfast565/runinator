@@ -12,38 +12,20 @@
     >
       <template #first>
         <div class="panel min-h-0">
-          <div class="panel-toolbar">
-            <div class="grid gap-1">
-              <h2 class="m-0 text-base font-semibold text-fg">Runs</h2>
-              <p class="m-0 text-xs text-fg-muted">
-                Recent workflow executions, filtered by the current search when present.
-              </p>
-            </div>
+          <PanelHeader
+            title="Runs"
+            description="Recent workflow executions, filtered by the current search when present."
+          >
             <button class="btn" :disabled="loadingRuns" @click="workflows.fetchRecentWorkflowRuns()">
               <LoadingSpinner v-if="loadingRuns" size="sm" label="Refreshing runs" />
               <Icon v-else name="refresh" />
               <span>Refresh</span>
             </button>
-          </div>
+          </PanelHeader>
           <div class="mb-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
-            <div
-              class="grid gap-1 rounded-md border border-border-subtle bg-surface-subtle px-3 py-2.5"
-            >
-              <span class="text-xs text-fg-muted">Visible</span>
-              <strong class="text-sm text-fg">{{ workflows.recentWorkflowRuns.length }}</strong>
-            </div>
-            <div
-              class="grid gap-1 rounded-md border border-border-subtle bg-surface-subtle px-3 py-2.5"
-            >
-              <span class="text-xs text-fg-muted">Active</span>
-              <strong class="text-sm text-fg">{{ activeRunCount }}</strong>
-            </div>
-            <div
-              class="grid gap-1 rounded-md border border-border-subtle bg-surface-subtle px-3 py-2.5"
-            >
-              <span class="text-xs text-fg-muted">Selected</span>
-              <strong class="truncate text-sm text-fg">{{ selectedRunLabel }}</strong>
-            </div>
+            <MetricCard label="Visible" :value="workflows.recentWorkflowRuns.length" />
+            <MetricCard label="Active" :value="activeRunCount" />
+            <MetricCard label="Selected" :value="selectedRunLabel" />
           </div>
           <EmptyState
             v-if="loadingRuns && !workflows.recentWorkflowRuns.length"
@@ -221,7 +203,9 @@ import EmptyState from "../components/shared/EmptyState.vue";
 import Icon from "../components/shared/Icon.vue";
 import JsonEditor from "../components/shared/JsonEditor.vue";
 import LoadingSpinner from "../components/shared/LoadingSpinner.vue";
+import MetricCard from "../components/shared/MetricCard.vue";
 import MobileBackBar from "../components/shared/MobileBackBar.vue";
+import PanelHeader from "../components/shared/PanelHeader.vue";
 import RunTable from "../components/shared/RunTable.vue";
 import RunTabsBar from "../components/shared/RunTabsBar.vue";
 import SplitPane from "../components/shared/SplitPane.vue";

@@ -15,7 +15,7 @@ The guiding constraint from `AGENTS.md`: keep dependency direction services→sh
 The desktop client is feature-complete but light on polish; these are user-facing wins.
 
 ### 1.1 Dark mode
-- Light theme only; hard-coded color tokens in `src/styles/base.css` (`--surface: #ffffff`, etc.). Introduce CSS theme variables + `prefers-color-scheme` + a toggle. Mechanical but broad.
+- Light theme only; hard-coded color tokens in `runinator-command-center/src/styles/base.css` (`--surface: #ffffff`, etc.). Introduce CSS theme variables + `prefers-color-scheme` + a toggle. Mechanical but broad.
 
 ### 1.2 Accessibility pass
 - ~29 ARIA attributes across 62 components. Add `aria-label`/`title` to icon buttons, focus trapping in modals (`WorkflowStepEditorModal.vue`), text fallback for color-only status badges, and a semantic heading hierarchy.
@@ -35,7 +35,7 @@ The desktop client is feature-complete but light on polish; these are user-facin
 - Add DB round-trip/migration tests in `runinator-database` (none currently exercise sqlite↔postgres schema parity).
 
 ### 2.2 Frontend test gaps
-- 0% component test coverage for the entire `components/workflow/` directory (canvas, node, step editor — the most complex, highest-LOC components). Utilities/stores are well covered (~80%); components are ~5%.
+- 0% component test coverage for `runinator-command-center/src/ui/components/workflow/` (canvas, node, step editor — the most complex, highest-LOC components). Core utilities and Pinia adapters are well covered; presentation components are not.
 
 ### 2.3 Panic hardening
 - `expect()` clusters in `runinator-wdl/src/parser.rs:92-132` (parser state) and `runinator-ws/src/openapi.rs` (11 calls). Convert runtime-path panics to structured `RuntimeError`s per the error-dictionary convention.

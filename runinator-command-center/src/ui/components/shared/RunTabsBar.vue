@@ -7,10 +7,10 @@
       v-for="runId in workflows.openRunIds"
       :key="runId"
       :class="[
-        'inline-flex max-w-[220px] cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-t-md border border-transparent px-2 py-1.5 text-xs text-fg-subtle',
+        'inline-flex max-w-[220px] cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-t-md border px-2 py-1.5 text-xs transition-[background-color,border-color,color] duration-150',
         runId === workflows.selectedWorkflowRunId
-          ? 'relative -bottom-px border-border border-b-0 bg-surface text-fg'
-          : 'hover:bg-surface-muted',
+          ? 'relative -bottom-px border-accent/30 border-b-0 bg-accent-soft text-accent-text'
+          : 'border-transparent text-fg-subtle hover:bg-surface-muted',
       ]"
       :title="tabTitle(runId)"
       @click="workflows.activateRunTab(runId)"

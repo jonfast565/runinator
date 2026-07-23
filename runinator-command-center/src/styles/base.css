@@ -188,63 +188,71 @@ body,
   overflow: hidden;
 }
 
-button,
-input,
-select,
-textarea {
-  font: inherit;
-}
+/*
+ * form-control defaults live in @layer base so Tailwind @layer components /
+ * utilities (status pills, active toggles, .btn-primary, etc.) can override
+ * them. unlayered `button {}` previously washed every colored button state
+ * back to the plain surface chrome.
+ */
+@layer base {
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+  }
 
-button {
-  border: 1px solid var(--border-strong);
-  background: var(--surface);
-  color: var(--text);
-  border-radius: var(--radius);
-  padding: 6px 10px;
-  cursor: pointer;
-}
+  button {
+    border: 1px solid var(--border-strong);
+    background: var(--surface);
+    color: var(--text);
+    border-radius: var(--radius);
+    padding: 6px 10px;
+    cursor: pointer;
+  }
 
-button:hover:not(:disabled) {
-  border-color: var(--border-hover);
-  background: var(--surface-hover);
-}
+  button:hover:not(:disabled) {
+    border-color: var(--border-hover);
+    background: var(--surface-hover);
+  }
 
-button:disabled {
-  color: var(--text-faint);
-  cursor: default;
-}
+  button:disabled {
+    color: var(--text-faint);
+    cursor: default;
+  }
 
-input,
-select,
-textarea {
-  width: 100%;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  padding: 6px 8px;
-  background: var(--surface);
-  color: var(--text);
-}
+  input,
+  select,
+  textarea {
+    width: 100%;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    padding: 6px 8px;
+    background: var(--surface);
+    color: var(--text);
+  }
 
-input[type="checkbox"],
-input[type="radio"] {
-  width: auto;
-  padding: 0;
-}
+  input[type="checkbox"],
+  input[type="radio"] {
+    width: auto;
+    padding: 0;
+  }
 
-input:focus,
-select:focus,
-textarea:focus {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-ring);
-}
+  input:focus,
+  select:focus,
+  textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-ring);
+  }
 
-textarea {
-  min-height: 86px;
-  resize: vertical;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 1.45;
+  textarea {
+    min-height: 86px;
+    resize: vertical;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.45;
+  }
 }
 
 .json-section .json-editor-container {

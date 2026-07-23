@@ -1,21 +1,18 @@
 <template>
   <section class="pane">
     <div class="panel flex min-h-0 flex-col">
-      <div class="panel-toolbar">
-        <h2 class="m-0 text-base font-semibold text-fg">Audit Log</h2>
-        <div class="flex items-center gap-2">
-          <input
-            v-model="action"
-            class="input"
-            placeholder="Filter by action (e.g. auth.login)"
-            @keyup.enter="refresh"
-          />
-          <Button variant="default" :loading="loading" @click="refresh">
-            <Icon name="refresh" />
-            <span>Refresh</span>
-          </Button>
-        </div>
-      </div>
+      <PanelHeader title="Audit Log">
+        <input
+          v-model="action"
+          class="input"
+          placeholder="Filter by action (e.g. auth.login)"
+          @keyup.enter="refresh"
+        />
+        <Button variant="default" :loading="loading" @click="refresh">
+          <Icon name="refresh" />
+          <span>Refresh</span>
+        </Button>
+      </PanelHeader>
 
       <DataTable
         :columns="columns"
@@ -65,6 +62,7 @@ import { onMounted, ref, watch } from "vue";
 import Icon from "../components/shared/Icon.vue";
 import Button from "../components/shared/Button.vue";
 import DataTable, { type DataTableColumn } from "../components/shared/DataTable.vue";
+import PanelHeader from "../components/shared/PanelHeader.vue";
 import { auditLogService } from "../../core/services";
 import { useAppStore } from "../../ui/adapters/pinia/app";
 import { useOrgsStore } from "../../ui/adapters/pinia/orgs";

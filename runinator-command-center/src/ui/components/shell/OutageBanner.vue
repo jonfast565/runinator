@@ -2,10 +2,14 @@
   <transition name="outage">
     <div
       v-if="app.showOutageBanner"
-      class="flex items-center gap-2.5 border-b border-danger-fg bg-danger-bg px-3.5 py-2 text-[13px] text-danger-fg"
+      class="flex items-center gap-2.5 border-b border-danger-fg/50 bg-danger-bg px-3.5 py-2 text-[13px] font-medium text-danger-fg"
       role="alert"
     >
-      <Icon name="alert" :size="16" class="shrink-0" />
+      <span
+        class="inline-flex size-7 shrink-0 items-center justify-center rounded-md bg-danger/15 text-danger-fg"
+      >
+        <Icon name="alert" :size="15" />
+      </span>
       <span class="min-w-0 flex-1">
         Runinator service is unreachable right now. Retrying automatically&mdash;changes may not be
         saved until it reconnects.

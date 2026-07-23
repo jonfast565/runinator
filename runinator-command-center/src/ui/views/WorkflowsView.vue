@@ -12,18 +12,15 @@
     >
       <template #first>
         <div class="panel min-h-0">
-          <div class="panel-toolbar">
-            <div class="grid gap-1">
-              <h2 class="m-0 text-base font-semibold text-fg">Workflows</h2>
-              <p class="m-0 text-xs text-fg-muted">
-                Browse definitions, select one to edit, or create a new workflow.
-              </p>
-            </div>
+          <PanelHeader
+            title="Workflows"
+            description="Browse definitions, select one to edit, or create a new workflow."
+          >
             <button class="btn btn-primary" @click="newWorkflow">
               <Icon name="plus" />
               <span>New</span>
             </button>
-          </div>
+          </PanelHeader>
           <div class="mb-2 flex items-center gap-2">
             <label class="text-xs uppercase tracking-wide text-fg-muted">Scope</label>
             <select v-model="scopeFilter" class="flex-1">
@@ -33,18 +30,9 @@
             </select>
           </div>
           <div class="mb-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
-            <div class="metric-card">
-              <span class="text-xs text-fg-muted">Visible</span>
-              <strong class="truncate text-sm text-fg">{{ scopedWorkflows.length }}</strong>
-            </div>
-            <div class="metric-card">
-              <span class="text-xs text-fg-muted">Disabled</span>
-              <strong class="truncate text-sm text-fg">{{ disabledWorkflowCount }}</strong>
-            </div>
-            <div class="metric-card">
-              <span class="text-xs text-fg-muted">Selected</span>
-              <strong class="truncate text-sm text-fg">{{ selectedWorkflowLabel }}</strong>
-            </div>
+            <MetricCard label="Visible" :value="scopedWorkflows.length" />
+            <MetricCard label="Disabled" :value="disabledWorkflowCount" />
+            <MetricCard label="Selected" :value="selectedWorkflowLabel" />
           </div>
           <EmptyState
             v-if="loadingWorkflows"
@@ -146,7 +134,9 @@ import WorkflowRunInputModal from "../components/workflow/WorkflowRunInputModal.
 import DataTable from "../components/shared/DataTable.vue";
 import EmptyState from "../components/shared/EmptyState.vue";
 import Icon from "../components/shared/Icon.vue";
+import MetricCard from "../components/shared/MetricCard.vue";
 import MobileBackBar from "../components/shared/MobileBackBar.vue";
+import PanelHeader from "../components/shared/PanelHeader.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
 import StatusBadge from "../components/shared/StatusBadge.vue";
 import { useWorkflowsStore } from "../../ui/adapters/pinia/workflows";

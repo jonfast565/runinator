@@ -110,14 +110,14 @@ const connectionPillClass = computed(() => {
 });
 const chipToneClass = computed(() => {
   if (app.serviceConnected) {
-    return "text-success-fg";
+    return "bg-success-bg text-success-fg";
   }
 
   if (app.serviceKnown) {
-    return "text-danger-fg";
+    return "bg-danger-bg text-danger-fg";
   }
 
-  return "text-warning-fg";
+  return "bg-warning-bg text-warning-fg";
 });
 const connectionPillLabel = computed(() => {
   if (app.serviceConnected) {

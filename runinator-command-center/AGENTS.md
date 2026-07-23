@@ -14,13 +14,12 @@ The frontend is split into a framework-agnostic core and a Vue presentation laye
 | --- | --- | --- |
 | **core/** | `src/core/` | Framework-agnostic TypeScript. No imports from `vue`, `pinia`, `@vue-flow/*`, `@codemirror/*`, `@tauri-apps/*`, or `src/ui/**`. |
 | **ui/** | `src/ui/` | Vue presentation: views, components, composables, adapters. |
-| **stores shims** | `src/stores/` | Re-export Pinia adapters from `src/ui/adapters/pinia/` for backward-compatible imports. |
 
 ### core/ layout
 
 - `core/domain/` — wire models (`models/`, `json.ts`)
 - `core/api/` — `commandCenterApi`, `httpRuntime`, injected `CommandRuntime`
-- `core/services/` — application logic (`AuthService`, `AppService`, `ResourcesService`, `GatesService`, `ArtifactsService`, `NotificationsService`, `SecretsService`, `ProvidersService`, `OrgsService`, `AdminSettingsService`, `DisplayPreferencesService`, `LocalWorkerService`, `PermissionsService`, `WorkflowCatalogService`, `WorkflowEditorService`, `WorkflowRunService`)
+- `core/services/` — framework-agnostic application logic; the singleton registry is `core/services/index.ts`
 - `core/realtime/` — WebSocket clients and event routing
 - `core/navigation/` — tabs, nav config, breakpoints, URL sync helpers
 - `core/workflow/` — workflow graph domain logic
@@ -54,6 +53,7 @@ The frontend is split into a framework-agnostic core and a Vue presentation laye
 - Graph transforms belong in `src/core/workflow/`; Vue Flow rendering in `src/ui/adapters/vue-flow/`.
 - Browser-only helpers live in `src/ui/adapters/browser/files.ts`.
 - Do not duplicate backend validation rules; client validation is fast feedback only.
+- The command center is an API client and pack-development surface. It must not depend on `runinator-worker`, load providers, manage a worker lifecycle, or expose start/stop-worker platform APIs. Machine-local execution belongs exclusively to the standalone `runinator-desktop-agent` application.
 
 ## Verification
 

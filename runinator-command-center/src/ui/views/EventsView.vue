@@ -12,15 +12,12 @@
     >
       <template #first>
         <div class="panel">
-          <div class="panel-toolbar">
-            <h2>Events</h2>
-            <div class="btn-row">
-              <button class="btn" @click="refresh">
-                <Icon name="refresh" />
-                <span>Refresh</span>
-              </button>
-            </div>
-          </div>
+          <PanelHeader title="Events">
+            <button class="btn" @click="refresh">
+              <Icon name="refresh" />
+              <span>Refresh</span>
+            </button>
+          </PanelHeader>
           <DataTable>
             <table>
               <thead>
@@ -76,6 +73,7 @@ import { onMounted, watch } from "vue";
 import DataTable from "../components/shared/DataTable.vue";
 import Icon from "../components/shared/Icon.vue";
 import MobileBackBar from "../components/shared/MobileBackBar.vue";
+import PanelHeader from "../components/shared/PanelHeader.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
 import { useOrgsStore } from "../../ui/adapters/pinia/orgs";
 import { useResourcesStore } from "../../ui/adapters/pinia/resources";

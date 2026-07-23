@@ -5,7 +5,7 @@ usage() {
   cat <<'USAGE'
 usage: scripts/package-macos-backend-apps.sh [--release] [--profile <profile>] [--skip-build] [--out-dir <path>] [--verbose]
 
-Creates macOS .app bundles for the Runinator backend runtime binaries using cargo-packager.
+Creates macOS .app bundles for the Runinator runtime binaries and desktop agent using cargo-packager.
 
 Options:
   --release            Package target/release binaries.
@@ -102,6 +102,7 @@ if [[ "$skip_build" -eq 0 ]]; then
     -p runinator-ws \
     -p runinator-waker \
     -p runinator-worker \
+    -p runinator-desktop-agent \
     -p runinator-ctl \
     -p runinator-supervisor
 fi
@@ -115,6 +116,7 @@ apps=(
   "runinator-ws|Runinator Web Service|dev.runinator.web-service|Runinator HTTP API service."
   "runinator-waker|Runinator Waker|dev.runinator.waker|Runinator waker service."
   "runinator-worker|Runinator Worker|dev.runinator.worker|Runinator worker service."
+  "runinator-desktop-agent|Runinator Desktop Agent|dev.runinator.desktop-agent|Runinator exclusive desktop worker and tray application."
   "runinatorctl|Runinator Control|dev.runinator.ctl|Runinator control and pack-import CLI."
   "runinator-supervisor|Runinator Supervisor|dev.runinator.supervisor|Runinator local stack supervisor."
 )

@@ -33,24 +33,17 @@
           </header>
 
           <div class="grid grid-cols-1 gap-2 sm:grid-cols-3">
-            <div
-              class="grid gap-1 rounded-md border border-border-subtle bg-surface-subtle px-3 py-2.5"
-            >
-              <span class="text-xs text-fg-muted">{{ isConfig ? "Configs" : "Secrets" }}</span>
-              <strong class="text-base text-fg">{{ filteredEntries.length }}</strong>
-            </div>
-            <div
-              class="grid gap-1 rounded-md border border-border-subtle bg-surface-subtle px-3 py-2.5"
-            >
-              <span class="text-xs text-fg-muted">Scopes</span>
-              <strong class="text-base text-fg">{{ knownScopes.length }}</strong>
-            </div>
-            <div
-              class="grid gap-1 rounded-md border border-border-subtle bg-surface-subtle px-3 py-2.5"
-            >
-              <span class="text-xs text-fg-muted">Values</span>
-              <strong class="text-base text-fg">{{ isConfig ? "Visible" : "Hidden" }}</strong>
-            </div>
+            <MetricCard
+              :label="isConfig ? 'Configs' : 'Secrets'"
+              :value="filteredEntries.length"
+              value-class="text-base"
+            />
+            <MetricCard label="Scopes" :value="knownScopes.length" value-class="text-base" />
+            <MetricCard
+              label="Values"
+              :value="isConfig ? 'Visible' : 'Hidden'"
+              value-class="text-base"
+            />
           </div>
 
           <div
@@ -224,6 +217,7 @@ import Icon from "../components/shared/Icon.vue";
 import JsonEditor from "../components/shared/JsonEditor.vue";
 import LoadingPanel from "../components/shared/LoadingPanel.vue";
 import LoadingSpinner from "../components/shared/LoadingSpinner.vue";
+import MetricCard from "../components/shared/MetricCard.vue";
 import SettingsTreeNode from "../components/shared/SettingsTreeNode.vue";
 import MobileBackBar from "../components/shared/MobileBackBar.vue";
 import SplitPane from "../components/shared/SplitPane.vue";

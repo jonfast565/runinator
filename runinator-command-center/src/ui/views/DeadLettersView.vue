@@ -1,20 +1,17 @@
 <template>
   <section class="pane">
     <div class="panel flex min-h-0 flex-col">
-      <div class="panel-toolbar">
-        <h2 class="m-0 text-base font-semibold text-fg">Dead Letters</h2>
-        <div class="flex items-center gap-2">
-          <select v-model="channel" class="input" @change="refresh">
-            <option value="">All channels</option>
-            <option value="result">result</option>
-            <option value="ingress">ingress</option>
-          </select>
-          <Button variant="default" :loading="loading" @click="refresh">
-            <Icon name="refresh" />
-            <span>Refresh</span>
-          </Button>
-        </div>
-      </div>
+      <PanelHeader title="Dead Letters">
+        <select v-model="channel" class="input" @change="refresh">
+          <option value="">All channels</option>
+          <option value="result">result</option>
+          <option value="ingress">ingress</option>
+        </select>
+        <Button variant="default" :loading="loading" @click="refresh">
+          <Icon name="refresh" />
+          <span>Refresh</span>
+        </Button>
+      </PanelHeader>
 
       <EmptyState
         v-if="loading && !rows.length"
@@ -88,6 +85,7 @@ import { onMounted, ref, watch } from "vue";
 import Icon from "../components/shared/Icon.vue";
 import Button from "../components/shared/Button.vue";
 import EmptyState from "../components/shared/EmptyState.vue";
+import PanelHeader from "../components/shared/PanelHeader.vue";
 import { deadLettersService } from "../../core/services";
 import { useAppStore } from "../../ui/adapters/pinia/app";
 import { useOrgsStore } from "../../ui/adapters/pinia/orgs";

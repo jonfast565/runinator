@@ -1,6 +1,6 @@
 //! the desktop agent's control surface: a small window to configure the sandbox folder, start/stop
-//! the worker loop, and watch its status. it starts hidden behind a tray icon (see [`crate::tray`]);
-//! the window's close button only hides it again, so "Exit" from the tray menu is the one real quit
+//! the worker loop, and watch its status. the window's close button hides it behind the tray icon
+//! (see [`crate::tray`]), so "Exit" from the tray menu is the one real quit
 //! path. deliberately minimal — this is a status console for the agent process, not a workflow editor.
 
 use std::time::Duration;
@@ -119,7 +119,7 @@ pub struct DesktopAgentApp {
     // never persisted or sent to the agent until committed as a tag.
     label_input: String,
     // `None` when the platform tray failed to initialize; the window is then the only way in, so it
-    // starts visible rather than stranding the user with no way to reach it.
+    // remains visible rather than stranding the user with no way to reach it.
     tray: Option<AgentTray>,
     // last tray icon/tooltip pushed, so we only touch the platform tray when the state actually
     // changes rather than on every 400ms repaint.
@@ -142,7 +142,7 @@ impl DesktopAgentApp {
             .expect("failed to build the desktop agent's tokio runtime");
         let tray = AgentTray::new();
         if tray.is_none() {
-            // no tray means no other way to reach the window, so don't start hidden.
+            // no tray means no other way to reach the window, so keep it visible.
             cc.egui_ctx
                 .send_viewport_cmd(egui::ViewportCommand::Visible(true));
         }

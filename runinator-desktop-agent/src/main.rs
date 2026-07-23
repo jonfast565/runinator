@@ -1,11 +1,11 @@
 //! standalone desktop worker with a small egui control panel. it derives its runtime behavior from
 //! `runinator-worker` (same `WorkerRuntime`/`start_worker_loop` the server-side worker binary uses)
 //! but only ever runs the local-files provider against a user-chosen sandbox folder, registered as an
-//! exclusive `desktop` replica. replaces the worker that used to be embedded in the Tauri command
-//! center: that app now only talks to a Runinator service, it does not execute actions itself.
+//! exclusive `desktop` replica. it supersedes the former Tauri-hosted execution path: the command
+//! center now only talks to a Runinator service and does not execute actions itself.
 //!
-//! the process lives in the tray by default (see [`tray`]): the window starts hidden and only opens
-//! when the tray icon is clicked, so running the agent doesn't clutter the dock/taskbar.
+//! closing the control window hides it in the tray (see [`tray`]); the tray's Exit action is the
+//! explicit process shutdown path.
 
 mod agent;
 mod config;

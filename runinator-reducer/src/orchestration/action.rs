@@ -179,7 +179,7 @@ pub(super) async fn process_action_node<T: DatabaseImpl>(
             arm_dispatch_liveness_poll(db, workflow_run.id, node).await?;
             return Ok(());
         }
-        // a node parked waiting for its bound desktop worker; honor the timeout, otherwise fall
+        // a node parked waiting for its bound desktop agent; honor the timeout, otherwise fall
         // through to re-resolve the target (the worker may have reconnected) reusing this run. a
         // parked run never touches `started_at` (only a `Running` transition sets it), so the
         // deadline is measured from `created_at` instead, with a fallback deadline when the node
@@ -192,7 +192,7 @@ pub(super) async fn process_action_node<T: DatabaseImpl>(
                 workflow_run,
                 node,
                 node_run,
-                "Local worker did not become available",
+                "Desktop agent did not become available",
                 node_runs,
             )
             .await;
@@ -545,7 +545,7 @@ async fn park_for_target<T: DatabaseImpl>(
             None,
             None,
             None,
-            Some("awaiting_local_worker".into()),
+            Some("awaiting_desktop_agent".into()),
             None,
         )
         .await?;

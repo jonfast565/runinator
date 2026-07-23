@@ -1,19 +1,16 @@
 <template>
   <section class="pane">
     <div class="panel">
-      <div class="panel-toolbar">
-        <h2 class="m-0 text-base font-semibold text-fg">Artifacts</h2>
-        <div class="btn-row">
-          <Button variant="default" :loading="loading" @click="refresh">
-            <Icon name="refresh" />
-            <span>Refresh</span>
-          </Button>
-          <button class="btn btn-primary" :disabled="loading" @click="onUpload">
-            <Icon name="upload" />
-            <span>Upload</span>
-          </button>
-        </div>
-      </div>
+      <PanelHeader title="Artifacts">
+        <Button variant="default" :loading="loading" @click="refresh">
+          <Icon name="refresh" />
+          <span>Refresh</span>
+        </Button>
+        <button class="btn btn-primary" :disabled="loading" @click="onUpload">
+          <Icon name="upload" />
+          <span>Upload</span>
+        </button>
+      </PanelHeader>
       <DataTable
         :columns="columns"
         :rows="filteredArtifacts"
@@ -56,6 +53,7 @@ import { computed, onMounted, ref } from "vue";
 import DataTable, { type DataTableColumn } from "../components/shared/DataTable.vue";
 import Button from "../components/shared/Button.vue";
 import Icon from "../components/shared/Icon.vue";
+import PanelHeader from "../components/shared/PanelHeader.vue";
 import { useArtifactsStore } from "../../ui/adapters/pinia/artifacts";
 import { useAppStore } from "../../ui/adapters/pinia/app";
 import type { RunArtifact } from "../../core/domain/models";

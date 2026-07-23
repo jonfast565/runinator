@@ -7,7 +7,7 @@ use runinator_provider_catalog::{StaticProvider, built_in_providers};
 
 // builds the provider set a worker resolves against. invoked fresh per resolution so each provider
 // instance is owned by the action that executes it. the default yields the shared built-in catalog;
-// an embedded worker (e.g. the desktop) supplies its own set.
+// an embedding host (such as the standalone desktop agent) supplies its own set.
 pub type ProviderFactory = Arc<dyn Fn() -> Vec<StaticProvider> + Send + Sync>;
 
 /// the default provider set: the shared built-in catalog.

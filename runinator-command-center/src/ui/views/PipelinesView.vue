@@ -12,18 +12,15 @@
     >
       <template #first>
         <div class="panel min-h-0">
-          <div class="panel-toolbar">
-            <div class="grid gap-1">
-              <h2 class="m-0 text-base font-semibold text-fg">Pipelines</h2>
-              <p class="m-0 text-xs text-fg-muted">
-                Browse named flows of chained workflows, or create a new pipeline.
-              </p>
-            </div>
+          <PanelHeader
+            title="Pipelines"
+            description="Browse named flows of chained workflows, or create a new pipeline."
+          >
             <button class="btn btn-primary" @click="openNewPipeline">
               <Icon name="plus" />
               <span>New</span>
             </button>
-          </div>
+          </PanelHeader>
 
           <div class="mb-2 flex items-center gap-2">
             <label class="text-xs uppercase tracking-wide text-fg-muted">Scope</label>
@@ -35,18 +32,9 @@
           </div>
 
           <div class="mb-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
-            <div class="metric-card">
-              <span class="text-xs text-fg-muted">Visible</span>
-              <strong class="truncate text-sm text-fg">{{ scopedPipelines.length }}</strong>
-            </div>
-            <div class="metric-card">
-              <span class="text-xs text-fg-muted">Workflows</span>
-              <strong class="truncate text-sm text-fg">{{ memberWorkflowCount }}</strong>
-            </div>
-            <div class="metric-card">
-              <span class="text-xs text-fg-muted">Selected</span>
-              <strong class="truncate text-sm text-fg">{{ selectedPipelineLabel }}</strong>
-            </div>
+            <MetricCard label="Visible" :value="scopedPipelines.length" />
+            <MetricCard label="Workflows" :value="memberWorkflowCount" />
+            <MetricCard label="Selected" :value="selectedPipelineLabel" />
           </div>
 
           <p v-if="pipeline.error" class="error m-0 px-3 py-1.5 text-sm">{{ pipeline.error }}</p>
@@ -121,40 +109,37 @@
           >
             <template #first>
               <div class="panel h-full min-h-0">
-                <div class="panel-toolbar">
-                  <div class="grid gap-1">
-                    <h2 class="m-0 text-base font-semibold text-fg">{{ selectedPipeline.name }}</h2>
-                    <p class="m-0 text-xs text-fg-muted">Drag between workflows to chain them.</p>
-                  </div>
-                  <div class="flex items-center gap-1.5">
-                    <select
-                      v-if="pipeline.availableWorkflows.length"
-                      class="max-w-40"
-                      :value="''"
-                      @change="onAddWorkflow"
+                <PanelHeader
+                  :title="selectedPipeline.name"
+                  description="Drag between workflows to chain them."
+                >
+                  <select
+                    v-if="pipeline.availableWorkflows.length"
+                    class="max-w-40"
+                    :value="''"
+                    @change="onAddWorkflow"
+                  >
+                    <option value="" disabled>+ Add workflow…</option>
+                    <option
+                      v-for="wf in pipeline.availableWorkflows"
+                      :key="wf.id"
+                      :value="wf.id"
                     >
-                      <option value="" disabled>+ Add workflow…</option>
-                      <option
-                        v-for="wf in pipeline.availableWorkflows"
-                        :key="wf.id"
-                        :value="wf.id"
-                      >
-                        {{ wf.name }}
-                      </option>
-                    </select>
-                    <button class="btn" @click="openDefaults">
-                      <Icon name="settings" />
-                      <span>Defaults</span>
-                    </button>
-                    <button class="btn" @click="openRename">
-                      <Icon name="edit" />
-                      <span>Settings</span>
-                    </button>
-                    <button class="btn btn-danger" @click="confirmDelete">
-                      <Icon name="trash" />
-                    </button>
-                  </div>
-                </div>
+                      {{ wf.name }}
+                    </option>
+                  </select>
+                  <button class="btn" @click="openDefaults">
+                    <Icon name="settings" />
+                    <span>Defaults</span>
+                  </button>
+                  <button class="btn" @click="openRename">
+                    <Icon name="edit" />
+                    <span>Settings</span>
+                  </button>
+                  <button class="btn btn-danger" @click="confirmDelete">
+                    <Icon name="trash" />
+                  </button>
+                </PanelHeader>
                 <div class="min-h-0 flex-1">
                   <PipelineCanvas @open-workflow="openWorkflow" />
                 </div>
@@ -307,7 +292,9 @@ import Icon from "../components/shared/Icon.vue";
 import Modal from "../components/shared/Modal.vue";
 import EmptyState from "../components/shared/EmptyState.vue";
 import DataTable from "../components/shared/DataTable.vue";
+import MetricCard from "../components/shared/MetricCard.vue";
 import MobileBackBar from "../components/shared/MobileBackBar.vue";
+import PanelHeader from "../components/shared/PanelHeader.vue";
 import PipelineCanvas from "../components/pipeline/PipelineCanvas.vue";
 import PipelineDefaultsEditor from "../components/pipeline/PipelineDefaultsEditor.vue";
 

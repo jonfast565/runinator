@@ -100,7 +100,7 @@ password: admin
 That seed happens even while HTTP auth is still disabled by default, so the usual local stack keeps working unchanged. If you later enable `RUNINATOR_AUTH_ENABLED=true` for the web service, you can immediately log in with that account and rotate it.
 
 The same bootstrap step also seeds a dev-only service API key and feeds it to
-the checked-in local worker, waker, one-shot `runinatorctl workflows apply`,
+the supervisor-managed development worker, waker, one-shot `runinatorctl workflows apply`,
 and the `bash scripts/run-local.sh sync|dev|smoke-sync` helpers. That means the
 default local stack continues to work unchanged with auth off, and starts
 working against an auth-enabled local web service without hand-editing
@@ -212,11 +212,12 @@ routing, such as an operator-managed primary/replica cluster fronted by
 PgBouncer. The checked-in `runinator-postgres` manifest is a single-primary
 development StatefulSet and should not be scaled out as-is.
 
-The web service owns the reducer and drives workflows over the broker: it
-publishes scheduled work on the `wake` channel, and the `runinator-waker` (a
-small, broker-only timer/relay) sleeps until each ready node is due and then
-publishes a `drive` on the `ingress` channel that the web service consumes to
-advance the run.
+The state-machine reducer lives in `runinator-reducer`, while
+`runinator-engine` persists its transitions and drives workflows over the
+broker. The engine publishes scheduled work on the `wake` channel, and the
+`runinator-waker` (a small, broker-only timer/relay) sleeps until each ready
+node is due and then publishes a `drive` on the `ingress` channel for the
+engine to consume.
 
 The durable orchestration engine — the reducer plus the wake/trigger/action/
 ingress loops, the result consumer, and the replica/ready-node/usage maintenance
@@ -235,8 +236,8 @@ active/active. Background workers register as `background` replicas and appear i
 the fleet/replica view. The Kubernetes base (`deploy/k8s/base`) and
 `deploy/docker-compose.yml` ship the split topology; flip ws back to
 `RUNINATOR_WS_RUN_ENGINE=true` and drop the background Deployment to fold it back
-in-process. The waker holds no state and reaches the web service only over
-the broker, so multiple waker replicas can run active/active. SQLite remains
+in-process. The waker holds no state and reaches the engine only over the
+broker, so multiple waker replicas can run active/active. SQLite remains
 the default for simple local development and single-process stacks. MariaDB and
 Postgres are also supported for local development when you want a server-backed
 database, and Postgres remains the intended path for multi-replica deployments.
@@ -246,7 +247,7 @@ broker can also serve the same broker contract over HTTP by setting
 `RUNINATOR_BROKER_TRANSPORT=http`; HTTP clients must use an endpoint like
 `http://127.0.0.1:7070/`, while TCP clients use `127.0.0.1:7070`.
 Kafka and RabbitMQ are available as feature-gated direct backends for the
-waker, worker, and web service. Build those binaries with `--features kafka`
+waker, worker, web service, and background worker. Build those binaries with `--features kafka`
 or `--features rabbitmq`, set `--broker-backend kafka|rabbitmq`, use
 `--broker-endpoint` for Kafka bootstrap servers or the RabbitMQ AMQP URI, and
 override `--broker-action-topic`, `--broker-control-topic`,
@@ -254,12 +255,13 @@ override `--broker-action-topic`, `--broker-control-topic`,
 not using the default `runinator.*` topics/queues.
 Do not scale the built-in `runinator-broker` process horizontally: each instance
 has its own in-memory queue. For multi-broker high availability, run Kafka or
-RabbitMQ and point every web-service, waker, and worker instance at the same
+RabbitMQ and point every web-service/background-engine, waker, and worker instance at the same
 shared broker topics or queues.
 
-Worker-originated control requests travel to the web service over the broker
-`ingress` channel; the web service issues `cancel`/`pause`/`resume` to workers
-over the `control` channel. There is no direct worker-to-waker channel.
+Worker-originated control requests travel to the engine over the broker
+`ingress` channel; API-originated `cancel`/`pause`/`resume` requests pass through
+the engine and reach workers over the `control` channel. There is no direct
+worker-to-waker channel.
 
 Local runtime files are written under `~/.runinator/` by default. When using
 SQLite, this includes the database at `~/.runinator/runinator.db` (which also
@@ -580,7 +582,7 @@ cluster.
 ### Dead letters and audit log
 
 Poison messages are no longer dropped silently. When a result or ingress event
-cannot be applied and is given up on, the web service persists a `dead_letters`
+cannot be applied and is given up on, the engine persists a `dead_letters`
 row before acking, so failed messages have a durable record. Auth and sensitive
 operations (login success/failure, authorization denials) are recorded to an
 `audit_log` table. Both are exposed as admin-only endpoints (`GET /dead_letters`,
@@ -791,34 +793,35 @@ desktop agent below to run actions on your own machine.
 
 ## Desktop Agent
 
-`runinator-desktop-agent` is a standalone binary that runs a machine as a
-sandboxed local-files worker, controlled through a small tray-icon GUI instead
-of a terminal. It shares its runtime with `runinator-worker` (same action
-loop), but only ever runs the local-files provider against a folder you pick,
-registered as an exclusive `desktop`-pool replica so it never picks up general
-workloads.
+`runinator-desktop-agent` is a standalone tray application that runs the shared
+`runinator-worker` action loop on an operator machine. It publishes the built-in
+provider catalog plus the sandboxed local-files provider, and registers as an
+exclusive `desktop`-pool replica. It therefore runs only work explicitly pinned
+to that replica or targeted to one of its labels; it never picks up unlabeled
+general-pool workloads. The Tauri command center is a separate API client and
+does not start, stop, embed, or communicate directly with this worker runtime.
 
 ```bash
 cargo run -p runinator-desktop-agent
 ```
 
-The process starts hidden in the tray; click the tray icon (or its "Open"
-menu item) to bring up the control window, fill in the service URL, broker
-URL, and sandbox folder, then start the agent. Closing the window just hides
-it again — use "Exit" from the tray menu to actually quit.
+The control window lets you set the service URL, sandbox folder, optional direct
+broker connection, routing labels, and startup behavior. Closing the window
+hides it in the tray; use "Exit" from the tray menu to actually quit.
 
-## Package macOS Backend Apps
+## Package macOS Runtime Apps
 
-The Rust backend services remain normal command-line binaries. On macOS, you can
-also package the runtime services as `.app` bundles with the Runinator icon:
+The Rust services and desktop agent remain normal binaries. On macOS, you can
+also package them as `.app` bundles with the Runinator icon:
 
 ```bash
 cargo install cargo-packager --version 0.11.8 --locked
 scripts/package-macos-backend-apps.sh --release
 ```
 
-The script creates `.app` bundles for broker, web service, waker, worker,
-the control CLI (`runinatorctl`), and supervisor under `target/macos-apps`.
+The script creates `.app` bundles for broker, web service, waker, headless
+worker, desktop agent, the control CLI (`runinatorctl`), and supervisor under
+`target/macos-apps`.
 
 ## Verification
 
