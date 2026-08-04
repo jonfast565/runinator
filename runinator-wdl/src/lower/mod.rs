@@ -217,6 +217,12 @@ fn lower_workflow(
     // import (unlike the render-only `wdl` sidecar).
     let triggers = lowerer.lower_triggers(&workflow.triggers)?;
     let watches = lowerer.lower_watches(&workflow.watches)?;
+    // header `correlate key <expr>`, carried as a runtime expression the engine resolves and stamps
+    // onto each run's correlation key so `await workflow ... key` joins can match.
+    let correlation = match &workflow.correlation {
+        Some(expr) => Some(lowerer.lower_expr(expr)?),
+        None => None,
+    };
     // user `fn` definitions, lowered to runtime-evaluable expression bodies the engine calls.
     let functions = lowerer.lower_functions(&document.functions)?;
     let mut metadata = Map::new();
@@ -228,6 +234,9 @@ fn lower_workflow(
     }
     if !watches.is_empty() {
         metadata.insert("watches".into(), Value::Array(watches));
+    }
+    if let Some(correlation) = correlation {
+        metadata.insert("correlation".into(), correlation);
     }
     if !functions.is_empty() {
         metadata.insert("functions".into(), Value::Array(functions));
@@ -1263,12 +1272,15 @@ impl Lowerer {
         next: &str,
     ) -> Result<(), WdlError> {
         let mut params = Map::new();
-        params.insert("run_ids".into(), self.lower_expr(&await_stmt.run_ids)?);
+        params.insert(
+            "workflow".into(),
+            Value::String(await_stmt.workflow.clone()),
+        );
+        if let Some(key) = &await_stmt.key {
+            params.insert("key".into(), self.lower_expr(key)?);
+        }
         if let Some(mode) = &await_stmt.mode {
             params.insert("mode".into(), Value::String(mode.clone()));
-        }
-        if let Some(poll) = await_stmt.poll_interval {
-            params.insert("poll_interval_seconds".into(), Value::from(poll));
         }
         let fields = self.leaf_fields(params, stmt, next, await_stmt.timeout)?;
         self.push(node(id, "await_run", fields));

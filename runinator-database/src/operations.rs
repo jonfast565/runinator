@@ -52,7 +52,7 @@ use crate::{
     queries::{self, SqlDialect},
 };
 
-const WORKFLOW_RUN_COLUMNS: &str = "id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message, name, pipeline_run_id, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_request_host, trigger_request_ip, trigger_metadata";
+const WORKFLOW_RUN_COLUMNS: &str = "id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message, name, correlation_key, pipeline_run_id, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_request_host, trigger_request_ip, trigger_metadata";
 const WORKFLOW_NODE_RUN_COLUMNS: &str = "id, workflow_run_id, node_id, status, attempt, parameters, output_json, state, transition_reason, prev_node_run_id, created_at, started_at, finished_at, message, current_executor_replica_id, last_executor_replica_id, executor_claimed_at, executor_released_at";
 const REPLICA_COLUMNS: &str = "replica_id, replica_type, instance_id, runtime_id, status, display_name, host, port, base_path, observed_ip, version, attributes, first_seen_at, last_heartbeat_at, last_seen_at, offline_at, registered_by_principal_id, registered_by_kind, registered_by_org_id";
 const REPLICA_PROVIDER_COLUMNS: &str = "replica_id, provider_name, provider_json, first_registered_at, last_registered_at, last_heartbeat_at";
@@ -2175,6 +2175,25 @@ where
                 sqlx::query(&self.render("UPDATE workflow_runs SET name = ? WHERE id = ?"))
                     .bind(name)
                     .bind(workflow_run_id),
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn set_run_correlation_key(
+        &self,
+        workflow_run_id: Uuid,
+        correlation_key: String,
+    ) -> Result<(), SendableError> {
+        // write-once: only stamp a run that has no correlation key yet, so repeated stamping across
+        // inline steps is idempotent.
+        self.pool()
+            .execute(
+                sqlx::query(&self.render(
+                    "UPDATE workflow_runs SET correlation_key = ? WHERE id = ? AND correlation_key IS NULL",
+                ))
+                .bind(correlation_key)
+                .bind(workflow_run_id),
             )
             .await?;
         Ok(())

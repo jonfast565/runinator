@@ -518,8 +518,15 @@ fn construct_completion_items() -> Vec<WdlCompletionItem> {
         (
             "await",
             "keyword",
-            "wait for other run(s)",
-            "await ${run_ids} mode \"all\"",
+            "wait for run(s) of a named workflow",
+            "await workflow \"${name}\" key ${correlation} mode \"all\"",
+            true,
+        ),
+        (
+            "correlate",
+            "keyword",
+            "declare this run's correlation key",
+            "correlate key ${expr}",
             true,
         ),
         (

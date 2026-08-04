@@ -60,6 +60,8 @@ pub async fn process_ready_node<T: DatabaseImpl>(
             // terminal state so the next waiter can acquire. no-op for runs holding no lease.
             if next_run.status.is_terminal() {
                 mutex::release_run_mutexes(db, next_run.id).await?;
+                // wake any `await workflow` nodes parked on a run of this workflow (by correlation).
+                transitions::maybe_wake_awaiters(db, &next_run).await?;
                 // start any workflows chained to this one via on_success/on_failure/on_complete. this
                 // also propagates the owning pipeline_run_id onto in-pipeline chained children.
                 chaining::maybe_start_chained_workflows(db, &next_run).await?;

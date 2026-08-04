@@ -143,9 +143,15 @@ pub fn emit_workflows_changed(events: &EventSender, org_id: Option<Uuid>) {
 }
 
 pub fn emit_workflow_run_activity(events: &EventSender, org_id: Option<Uuid>) {
-    emit(events, AppEvent::new(org_id, UiEventKind::WorkflowRunActivity));
+    emit(
+        events,
+        AppEvent::new(org_id, UiEventKind::WorkflowRunActivity),
+    );
 }
 
 pub fn emit_pipeline_run_activity(events: &EventSender, org_id: Option<Uuid>) {
-    emit(events, AppEvent::new(org_id, UiEventKind::PipelineRunActivity));
+    emit(
+        events,
+        AppEvent::new(org_id, UiEventKind::PipelineRunActivity),
+    );
 }

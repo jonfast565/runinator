@@ -756,8 +756,14 @@ mod tests {
 
         let a = broker.receive_event("ws-a").await.unwrap();
         let b = broker.receive_event("ws-b").await.unwrap();
-        assert!(matches!(a.event.kind, runinator_comm::UiEventKind::WorkflowsChanged));
-        assert!(matches!(b.event.kind, runinator_comm::UiEventKind::WorkflowsChanged));
+        assert!(matches!(
+            a.event.kind,
+            runinator_comm::UiEventKind::WorkflowsChanged
+        ));
+        assert!(matches!(
+            b.event.kind,
+            runinator_comm::UiEventKind::WorkflowsChanged
+        ));
     }
 
     #[tokio::test]

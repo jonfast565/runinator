@@ -334,7 +334,9 @@ fn resolve_stmt(
             }
         }
         StmtKind::Await(await_stmt) => {
-            resolve_expr(&await_stmt.run_ids, symbols, scope, ctx, diagnostics);
+            if let Some(key) = &await_stmt.key {
+                resolve_expr(key, symbols, scope, ctx, diagnostics);
+            }
         }
         StmtKind::Debounce(debounce) => {
             if let Some(key) = &debounce.key {

@@ -64,6 +64,7 @@ document_item = {
   | import_decl
   | trigger_decl
   | watch_decl
+  | correlate_decl
   | type_decl
   | alias_decl
   | start_decl
@@ -71,7 +72,7 @@ document_item = {
 }
 namespace_block = { "namespace" ~ ns_path ~ "{" ~ workflow* ~ "}" }
 workflow_decl = { "workflow" ~ string ~ version? ~ returns_decl? }
-workflow = { "workflow" ~ string ~ version? ~ returns_decl? ~ "{" ~ params_block? ~ (import_decl | trigger_decl | watch_decl | type_decl | alias_decl | start_decl | stmt)* ~ "}" }
+workflow = { "workflow" ~ string ~ version? ~ returns_decl? ~ "{" ~ params_block? ~ (import_decl | trigger_decl | watch_decl | correlate_decl | type_decl | alias_decl | start_decl | stmt)* ~ "}" }
 returns_decl = { "returns" ~ type_expr }
 
 // the namespace this workflow's identity lives in. a dotted path qualifying the workflow name so
@@ -102,6 +103,11 @@ version  = @{ "v" ~ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT+){0,2} }
 // re-evaluated on every reducer drive (including while parked), so it catches state changes a fixed
 // checkpoint would miss. fires at most once per run.
 watch_decl = { "watch" ~ cond ~ "->" ~ target }
+
+// declares the value this workflow's runs are awaitable by. the expression (over `input.*`, a step
+// output, etc.) is resolved as the run progresses and stamped write-once onto the run's correlation
+// key, so `await workflow ... key <expr>` in another workflow can match it. `correlate key input.batch_id`.
+correlate_decl = { "correlate" ~ "key" ~ expr }
 
 // a `trigger cron "<expr>"` schedules this workflow; a `trigger on_success workflow "<name>"`
 // (or on_failure/on_complete) starts another workflow when this one reaches that terminal state.
@@ -345,9 +351,11 @@ throttle_stmt = { "throttle" ~ string ~ "rate" ~ integer ~ "per" ~ duration ~ po
 // the run to success without running the body. `cooldown "sdlc-qa" every 900s`.
 cooldown_stmt = { "cooldown" ~ string ~ poll_every }
 
-// wait for other run(s) to reach a terminal state. the expression yields the run-id array; `mode`
-// is `all` (default) or `any`. `await context.prep_run_ids mode "all" timeout 1800s`.
-await_stmt   = { "await" ~ expr ~ await_mode? ~ poll_every? ~ node_timeout? }
+// wait for run(s) of a named workflow to reach a terminal state. `key` narrows to runs carrying a
+// matching correlation key; `mode` is `all` (default) or `any`.
+// `await workflow "orders" key input.batch_id mode "all" timeout 1800s`.
+await_stmt   = { "await" ~ "workflow" ~ string ~ await_key? ~ await_mode? ~ node_timeout? }
+await_key    = { "key" ~ expr }
 await_mode   = { "mode" ~ string }
 
 // a trailing-delay debounce. the window resets on each external reset call. `debounce "f" delay 30s`.

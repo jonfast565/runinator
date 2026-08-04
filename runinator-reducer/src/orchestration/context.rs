@@ -96,6 +96,19 @@ pub(super) fn artifact_descriptor(artifact: &WorkflowNodeRunArtifact) -> Value {
     })
 }
 
+/// coerce a resolved value into a flat correlation/routing string: null or empty -> `None`, strings
+/// trimmed, other scalars stringified. shared by the await-workflow key and correlation stamping.
+pub(super) fn coerce_scalar_string(value: &Value) -> Option<String> {
+    match value {
+        Value::Null => None,
+        Value::String(text) => {
+            let text = text.trim();
+            (!text.is_empty()).then(|| text.to_string())
+        }
+        other => Some(other.to_string()),
+    }
+}
+
 pub(super) fn set_step_output(scope: &mut Value, node_id: &str, output: Value) {
     if let Some(slot) = scope.pointer_mut(&format!("/steps/{node_id}/output")) {
         *slot = output;

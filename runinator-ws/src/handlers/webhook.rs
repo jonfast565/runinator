@@ -106,10 +106,7 @@ pub(crate) async fn webhook_signal<T: DatabaseImpl>(
     {
         Ok(response) => {
             // correlation delivery can span orgs; leave the coarse tip unscoped.
-            emit(
-                &events,
-                AppEvent::global(AppEventKind::WorkflowRunActivity),
-            );
+            emit(&events, AppEvent::global(AppEventKind::WorkflowRunActivity));
             nudge_wake_publisher(&events);
             (StatusCode::OK, Json(ApiResponse::TaskResponse(response)))
         }

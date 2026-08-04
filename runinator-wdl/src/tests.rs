@@ -407,6 +407,37 @@ fn watch_guard_lowers_to_metadata_and_round_trips() {
 }
 
 #[test]
+fn correlate_header_lowers_to_metadata_and_round_trips() {
+    let definition = compile(
+        r#"
+        workflow "Orders" v1 {
+            params { batch_id: string }
+            correlate key params.batch_id
+            node work <- console.run(command: "echo work")
+        }
+    "#,
+    );
+    assert!(
+        definition
+            .definition
+            .metadata
+            .pointer("/correlation")
+            .is_some(),
+        "correlation metadata"
+    );
+
+    assert_round_trips_unordered(
+        r#"
+        workflow "Orders" v1 {
+            params { batch_id: string }
+            correlate key params.batch_id
+            node work <- console.run(command: "echo work")
+        }
+    "#,
+    );
+}
+
+#[test]
 fn signal_correlation_key_lowers_and_round_trips() {
     let definition = compile(
         r#"
@@ -5921,7 +5952,7 @@ fn new_node_kinds_compile_and_round_trip() {
             mutex "deploy-lock" every 5s timeout 300s
             throttle "github-api" rate 10 per 60s
             cooldown "scan-gate" every 300s
-            await params.run_ids mode "all" timeout 1800s
+            await workflow "Prep" key params.user mode "all" timeout 1800s
             debounce "file-change" delay 30s
             collect "events" max 50 timeout 300s
             barrier "shard-sync" count 4 timeout 600s
@@ -5999,6 +6030,26 @@ fn new_node_kinds_compile_and_round_trip() {
         .expect("mutex node");
     assert_eq!(mutex.timeout_seconds, Some(300));
 
+    let await_node = definition
+        .definition
+        .nodes
+        .iter()
+        .find(|n| n.kind == WorkflowNodeKind::AwaitRun)
+        .expect("await node");
+    assert_eq!(
+        await_node
+            .parameters
+            .get("workflow")
+            .and_then(Value::as_str),
+        Some("Prep")
+    );
+    assert_eq!(
+        await_node.parameters.get("mode").and_then(Value::as_str),
+        Some("all")
+    );
+    assert!(await_node.parameters.get("key").is_some());
+    assert_eq!(await_node.timeout_seconds, Some(1800));
+
     assert_round_trips_unordered(src);
 }
 
@@ -6018,8 +6069,8 @@ fn new_node_kinds_optional_clauses_round_trip() {
         ),
         ("debounce-key", "debounce \"f\" delay 30s key params.user"),
         (
-            "await-mode-poll-timeout",
-            "await params.run_ids mode \"any\" every 15s timeout 1800s",
+            "await-key-mode-timeout",
+            "await workflow \"Prep\" key params.user mode \"any\" timeout 1800s",
         ),
         ("mutex-poll", "mutex \"deploy\" every 5s timeout 300s"),
         (

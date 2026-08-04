@@ -385,6 +385,7 @@ macro_rules! workflow_run_from_row {
                 .and_then(|ts| DateTime::<Utc>::from_timestamp(ts, 0)),
             message: $row.get("message"),
             name: $row.get("name"),
+            correlation_key: $row.try_get("correlation_key").ok().flatten(),
             pipeline_run_id: $row.try_get("pipeline_run_id").ok().flatten(),
             trigger_source_kind: $row
                 .try_get::<Option<String>, _>("trigger_source_kind")

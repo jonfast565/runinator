@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
-use std::path::PathBuf;
+use std::path::Path;
 use std::time::Duration;
 
 use runinator_models::errors::SendableError;
@@ -45,7 +45,7 @@ pub(crate) fn sanitize_file_stem(input: &str) -> String {
 pub(crate) fn next_available_stem(base: String, counts: &mut HashMap<String, usize>) -> String {
     let counter = counts.entry(base.clone()).or_insert(0usize);
     let stem = if base.is_empty() {
-        format!("query_{:02}", *counter + 1)
+        format!("statement_{:02}", *counter + 1)
     } else if *counter == 0 {
         base.clone()
     } else {
@@ -62,6 +62,17 @@ where
     Box::new(err)
 }
 
-pub(crate) fn file_size(path: &PathBuf) -> Result<i64, SendableError> {
+pub(crate) fn file_size(path: &Path) -> Result<i64, SendableError> {
     Ok(fs::metadata(path).map_err(to_sendable)?.len() as i64)
+}
+
+/// build the multi-thread runtime used to drive the async database drivers from the
+/// synchronous provider entry point. the worker already runs providers inside
+/// `spawn_blocking`, so blocking this thread is safe.
+pub(crate) fn build_runtime() -> Result<tokio::runtime::Runtime, SendableError> {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_name("runinator-db")
+        .build()
+        .map_err(to_sendable)
 }

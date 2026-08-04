@@ -108,6 +108,9 @@ pub fn resolve(document: &mut Document) -> Result<(), WdlError> {
                 resolve_expr(params, &scope)?;
             }
         }
+        if let Some(correlation) = workflow.correlation.as_mut() {
+            resolve_expr(correlation, &scope)?;
+        }
         if let Some(input) = workflow.input.as_mut() {
             resolve_type_defaults(input, &scope)?;
         }
@@ -357,7 +360,11 @@ fn resolve_stmt(stmt: &mut Stmt, scope: &Scope) -> Result<(), WdlError> {
                 resolve_expr(value, scope)?;
             }
         }
-        StmtKind::Await(await_stmt) => resolve_expr(&mut await_stmt.run_ids, scope)?,
+        StmtKind::Await(await_stmt) => {
+            if let Some(key) = await_stmt.key.as_mut() {
+                resolve_expr(key, scope)?;
+            }
+        }
         StmtKind::Debounce(debounce) => {
             if let Some(key) = debounce.key.as_mut() {
                 resolve_expr(key, scope)?;

@@ -198,7 +198,11 @@ fn collect_stmt(stmt: &Stmt, source_dir: &Path, paths: &mut Vec<PathBuf>) -> Res
                 collect_expr(value, source_dir, paths)?;
             }
         }
-        StmtKind::Await(await_stmt) => collect_expr(&await_stmt.run_ids, source_dir, paths)?,
+        StmtKind::Await(await_stmt) => {
+            if let Some(key) = &await_stmt.key {
+                collect_expr(key, source_dir, paths)?;
+            }
+        }
         StmtKind::Debounce(debounce) => {
             if let Some(key) = &debounce.key {
                 collect_expr(key, source_dir, paths)?;

@@ -83,6 +83,7 @@ pub fn parse_document(src: &str) -> Result<Document, WdlError> {
                     start: None,
                     triggers: Vec::new(),
                     watches: Vec::new(),
+                    correlation: None,
                     type_decls: Vec::new(),
                     body: Vec::new(),
                     span,
@@ -111,6 +112,10 @@ pub fn parse_document(src: &str) -> Result<Document, WdlError> {
             Rule::watch_decl => {
                 let workflow = require_active(&mut active, &inner)?;
                 workflow.watches.push(parse_watch_decl(inner)?);
+            }
+            Rule::correlate_decl => {
+                let workflow = require_active(&mut active, &inner)?;
+                workflow.correlation = Some(parse_correlate_decl(inner)?);
             }
             Rule::alias_decl => {
                 let workflow = require_active(&mut active, &inner)?;
@@ -489,6 +494,7 @@ fn parse_workflow(pair: Pair<Rule>, namespace: Option<String>) -> Result<Workflo
     let mut start = None;
     let mut triggers = Vec::new();
     let mut watches = Vec::new();
+    let mut correlation = None;
     let mut type_decls = Vec::new();
     let mut body = Vec::new();
     for inner in pair.into_inner() {
@@ -514,6 +520,7 @@ fn parse_workflow(pair: Pair<Rule>, namespace: Option<String>) -> Result<Workflo
             Rule::import_decl => imports.push(parse_import_decl(inner)?),
             Rule::trigger_decl => triggers.push(parse_trigger_decl(inner)?),
             Rule::watch_decl => watches.push(parse_watch_decl(inner)?),
+            Rule::correlate_decl => correlation = Some(parse_correlate_decl(inner)?),
             Rule::alias_decl => aliases.push(parse_alias_decl(inner)?),
             Rule::type_decl => type_decls.push(parse_type_decl(inner)?),
             Rule::start_decl => start = Some(parse_target(first_inner(inner)?)?),
@@ -532,6 +539,7 @@ fn parse_workflow(pair: Pair<Rule>, namespace: Option<String>) -> Result<Workflo
         start,
         triggers,
         watches,
+        correlation,
         type_decls,
         body,
         span,
@@ -1826,18 +1834,15 @@ fn parse_cooldown(pair: Pair<Rule>) -> Result<CooldownStmt, WdlError> {
 }
 
 fn parse_await(pair: Pair<Rule>) -> Result<AwaitStmt, WdlError> {
-    let mut run_ids = None;
+    let mut workflow = String::new();
+    let mut key = None;
     let mut mode = None;
-    let mut poll_interval = None;
     let mut timeout = None;
     for inner in pair.into_inner() {
         match inner.as_rule() {
-            Rule::expr => run_ids = Some(parse_expr(inner)?),
+            Rule::string => workflow = plain_string(inner)?,
+            Rule::await_key => key = Some(parse_expr(first_inner(inner)?)?),
             Rule::await_mode => mode = Some(plain_string(first_inner(inner)?)?),
-            Rule::poll_every => {
-                let value = first_inner(inner)?;
-                poll_interval = Some(parse_duration(value.as_str(), span_of(&value))?);
-            }
             Rule::node_timeout => {
                 let value = first_inner(inner)?;
                 timeout = Some(parse_duration(value.as_str(), span_of(&value))?);
@@ -1845,13 +1850,23 @@ fn parse_await(pair: Pair<Rule>) -> Result<AwaitStmt, WdlError> {
             _ => {}
         }
     }
-    let run_ids = run_ids.ok_or_else(|| WdlError::lower("await requires a run-id expression"))?;
+    if workflow.is_empty() {
+        return Err(WdlError::lower("await requires a workflow name"));
+    }
     Ok(AwaitStmt {
-        run_ids,
+        workflow,
+        key,
         mode,
-        poll_interval,
         timeout,
     })
+}
+
+fn parse_correlate_decl(pair: Pair<Rule>) -> Result<Expr, WdlError> {
+    let expr = pair
+        .into_inner()
+        .find(|inner| inner.as_rule() == Rule::expr)
+        .ok_or_else(|| WdlError::lower("correlate requires a key expression"))?;
+    parse_expr(expr)
 }
 
 fn parse_debounce(pair: Pair<Rule>) -> Result<DebounceStmt, WdlError> {

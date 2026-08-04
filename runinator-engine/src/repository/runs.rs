@@ -217,12 +217,8 @@ pub async fn publish_pending_wakes<T: DatabaseImpl>(
         let trace_id = Uuid::now_v7();
         if node.ready_at <= now {
             // already due: skip wake→waker→ingress and drive immediately.
-            let command = WsIngressCommand::drive(
-                node.id,
-                node.workflow_run_id,
-                node.node_id,
-                trace_id,
-            );
+            let command =
+                WsIngressCommand::drive(node.id, node.workflow_run_id, node.node_id, trace_id);
             let message = IngressMessage {
                 command,
                 dedupe_key: None,

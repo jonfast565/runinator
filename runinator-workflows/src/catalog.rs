@@ -817,8 +817,13 @@ fn node_kind_metadata(kind: WorkflowNodeKind) -> WorkflowNodeKindMetadata {
         WorkflowNodeKind::AwaitRun => WorkflowNodeKindMetadata {
             fields: vec![
                 field(
-                    opt("run_ids", RuninatorType::Any),
-                    FieldLocation::parameters(&["run_ids"]),
+                    req("workflow", RuninatorType::String),
+                    FieldLocation::parameters(&["workflow"]),
+                    None,
+                ),
+                field(
+                    opt("key", RuninatorType::Any),
+                    FieldLocation::parameters(&["key"]),
                     Some("expression"),
                 ),
                 field(
@@ -826,23 +831,18 @@ fn node_kind_metadata(kind: WorkflowNodeKind) -> WorkflowNodeKindMetadata {
                     FieldLocation::parameters(&["mode"]),
                     None,
                 ),
-                field(
-                    opt("poll_interval_seconds", RuninatorType::Integer),
-                    FieldLocation::parameters(&["poll_interval_seconds"]),
-                    None,
-                ),
             ],
             default_template: json!({
-                "kind": "await_run", "parameters": { "run_ids": [], "mode": "all" },
+                "kind": "await_run", "parameters": { "workflow": "", "mode": "all" },
                 "retry": { "max_attempts": 1 },
                 "transitions": { "on_success": end_ref(), "on_failure": end_ref() },
             }),
             ..base(
                 kind,
-                "Await Run",
+                "Await Workflow",
                 "runs",
                 "sync",
-                "Waits for one or more independently-started runs to reach a terminal state.",
+                "Pauses until run(s) of a named workflow (optionally matching a correlation key) reach a terminal state.",
             )
         },
         WorkflowNodeKind::Debounce => WorkflowNodeKindMetadata {

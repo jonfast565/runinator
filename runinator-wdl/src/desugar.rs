@@ -221,7 +221,9 @@ fn expand_stmt(stmt: &mut Stmt, aliases: &AliasTable) -> Result<(), WdlError> {
             }
         }
         StmtKind::Await(await_stmt) => {
-            expand_expr(&mut await_stmt.run_ids, aliases)?;
+            if let Some(key) = await_stmt.key.as_mut() {
+                expand_expr(key, aliases)?;
+            }
         }
         StmtKind::Debounce(debounce) => {
             if let Some(key) = debounce.key.as_mut() {

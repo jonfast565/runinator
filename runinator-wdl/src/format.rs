@@ -173,6 +173,16 @@ impl Formatter {
         {
             self.out.push('\n');
         }
+        // preserve the header `correlate key <expr>` declaration.
+        if let Some(correlation) = &workflow.correlation {
+            self.line(&format!("correlate key {}", format_expr(correlation)));
+            if !workflow.type_decls.is_empty()
+                || !workflow.aliases.is_empty()
+                || !workflow.body.is_empty()
+            {
+                self.out.push('\n');
+            }
+        }
         // preserve named `type <Name>` declarations; struct types render each field on its own line.
         for (index, decl) in workflow.type_decls.iter().enumerate() {
             if index > 0 {
@@ -887,12 +897,12 @@ impl Formatter {
     }
 
     fn await_node(&self, await_stmt: &AwaitStmt) -> String {
-        let mut text = format!("await {}", format_expr(&await_stmt.run_ids));
+        let mut text = format!("await workflow {}", quote(&await_stmt.workflow));
+        if let Some(key) = &await_stmt.key {
+            text.push_str(&format!(" key {}", format_expr(key)));
+        }
         if let Some(mode) = &await_stmt.mode {
             text.push_str(&format!(" mode {}", quote(mode)));
-        }
-        if let Some(poll) = await_stmt.poll_interval {
-            text.push_str(&format!(" every {poll}s"));
         }
         if let Some(timeout) = await_stmt.timeout {
             text.push_str(&format!(" timeout {timeout}s"));

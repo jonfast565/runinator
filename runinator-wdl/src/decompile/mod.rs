@@ -122,6 +122,7 @@ pub fn decompile_definition(
     decompiler.emit_params(&definition.input_type)?;
     decompiler.emit_triggers(&read_triggers(&graph.metadata))?;
     decompiler.emit_watches(&read_watches(&graph.metadata))?;
+    decompiler.emit_correlation(&graph.metadata)?;
     decompiler.emit_type_decls(&read_type_decls(&graph.metadata))?;
     decompiler.emit_alias_decls()?;
 
@@ -594,6 +595,19 @@ impl<'a> Decompiler<'a> {
             };
             self.line(&format!("watch {} -> {target}", self.cond(condition)?));
         }
+        self.out.push('\n');
+        Ok(())
+    }
+
+    /// emit the header `correlate key <expr>` declaration recovered from `metadata.correlation`.
+    fn emit_correlation(&mut self, metadata: &Value) -> Result<(), WdlError> {
+        let Some(expression) = metadata
+            .pointer("/correlation")
+            .filter(|value| !value.is_null())
+        else {
+            return Ok(());
+        };
+        self.line(&format!("correlate key {}", self.expr(expression)?));
         self.out.push('\n');
         Ok(())
     }
@@ -1720,21 +1734,17 @@ impl<'a> Decompiler<'a> {
     }
 
     fn await_text(&self, node: &WorkflowNode) -> Result<String, WdlError> {
-        let run_ids = node
+        let workflow = node
             .parameters
-            .get("run_ids")
-            .cloned()
-            .unwrap_or(Value::Null);
-        let mut text = format!("await {}", self.expr(&run_ids)?);
+            .get("workflow")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let mut text = format!("await workflow {}", quote(workflow));
+        if let Some(key) = node.parameters.get("key").filter(|value| !value.is_null()) {
+            text.push_str(&format!(" key {}", self.expr(key)?));
+        }
         if let Some(mode) = node.parameters.get("mode").and_then(Value::as_str) {
             text.push_str(&format!(" mode {}", quote(mode)));
-        }
-        if let Some(poll) = node
-            .parameters
-            .get("poll_interval_seconds")
-            .and_then(Value::as_i64)
-        {
-            text.push_str(&format!(" every {poll}s"));
         }
         Ok(text)
     }

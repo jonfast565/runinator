@@ -936,6 +936,11 @@ pub struct WorkflowRun {
     pub message: Option<String>,
     #[serde(default)]
     pub name: Option<String>,
+    /// optional stable identity for this run used by `await workflow ... key` joins. set at start
+    /// (trigger/api/subflow) or stamped by the engine from the workflow's `metadata.correlation`
+    /// expression as the run progresses; write-once.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub correlation_key: Option<String>,
     /// set when this run is a member of a pipeline run; the pipeline-run orchestrator uses it to
     /// aggregate member terminals and propagates it along in-pipeline chained links.
     #[serde(default, skip_serializing_if = "Option::is_none")]

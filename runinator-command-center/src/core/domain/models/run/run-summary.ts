@@ -17,4 +17,6 @@ export interface RunSummary {
   active_node_id?: string | null;
   state?: JsonRecord;
   name?: string | null;
+  /** optional correlation key, matched by `await workflow ... key` joins. */
+  correlation_key?: string | null;
 }

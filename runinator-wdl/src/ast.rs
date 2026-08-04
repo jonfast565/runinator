@@ -87,6 +87,9 @@ pub struct Workflow {
     pub triggers: Vec<TriggerDecl>,
     /// header `watch <cond> -> <target>` cancellation guards, evaluated on every reducer drive.
     pub watches: Vec<WatchDecl>,
+    /// optional header `correlate key <expr>`: the value this workflow's runs are awaitable by. rides
+    /// in `metadata.correlation` and is stamped onto each run's correlation key as it progresses.
+    pub correlation: Option<Expr>,
     /// header `type <Name> ...` declarations: reusable named types.
     pub type_decls: Vec<TypeDecl>,
     pub body: Block,
@@ -489,12 +492,13 @@ pub struct CooldownStmt {
     pub window_seconds: i64,
 }
 
-/// `await <expr> (mode <str>)? ...`: wait for other run(s) to reach a terminal state.
+/// `await workflow "name" (key <expr>)? (mode <str>)? (timeout <dur>)?`: wait for run(s) of a named
+/// workflow to reach a terminal state, optionally narrowed to a correlation key.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AwaitStmt {
-    pub run_ids: Expr,
+    pub workflow: String,
+    pub key: Option<Expr>,
     pub mode: Option<String>,
-    pub poll_interval: Option<i64>,
     pub timeout: Option<i64>,
 }
 

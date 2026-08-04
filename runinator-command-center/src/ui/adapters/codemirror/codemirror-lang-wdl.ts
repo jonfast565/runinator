@@ -31,6 +31,7 @@ const DECL_KW = new Set([
   "type",
   "alias",
   "trigger",
+  "correlate",
   "start",
   "set",
   "secret",
@@ -782,10 +783,15 @@ const snippets = [
     type: "keyword",
     detail: "cross-run cooldown; one pass per window",
   }),
-  snippetCompletion('await ${run_ids} mode "all"', {
+  snippetCompletion('await workflow "${name}" key ${correlation} mode "all"', {
     label: "await",
     type: "keyword",
-    detail: "wait for other run(s)",
+    detail: "wait for run(s) of a named workflow",
+  }),
+  snippetCompletion("correlate key ${expr}", {
+    label: "correlate",
+    type: "keyword",
+    detail: "declare this run's correlation key",
   }),
   snippetCompletion('debounce "${name}" delay ${delay}', {
     label: "debounce",

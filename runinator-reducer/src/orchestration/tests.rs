@@ -4,7 +4,7 @@ use super::action::{
     target_for_labels,
 };
 use super::assert::evaluate_assertions;
-use super::await_run::parse_await_mode;
+use super::await_run::{await_satisfied, parse_await_mode};
 use super::barrier::arrivals_complete;
 use super::circuit_breaker::is_circuit_open;
 use super::collect::threshold_reached;
@@ -450,6 +450,23 @@ fn await_run_node_defaults_to_all_mode() {
     assert_eq!(parse_await_mode(&params_all), "all");
     assert_eq!(parse_await_mode(&params_any), "any");
     assert_eq!(parse_await_mode(&params_missing), "all");
+}
+
+#[test]
+fn await_satisfaction_never_vacuously_succeeds_on_empty_match_set() {
+    // no matching runs: neither mode is satisfied (fixes the old vacuous-true bug).
+    assert!(!await_satisfied("all", false, false, true));
+    assert!(!await_satisfied("any", false, false, true));
+}
+
+#[test]
+fn await_satisfaction_all_vs_any_modes() {
+    // all: satisfied only when a match exists and none are still non-terminal.
+    assert!(await_satisfied("all", true, true, true));
+    assert!(!await_satisfied("all", true, true, false));
+    // any: satisfied as soon as one match is terminal, even with others in flight.
+    assert!(await_satisfied("any", true, true, false));
+    assert!(!await_satisfied("any", true, false, false));
 }
 
 #[test]

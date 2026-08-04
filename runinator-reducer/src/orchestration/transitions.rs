@@ -1,4 +1,4 @@
-use super::context::{runtime_context, set_step_output};
+use super::context::{coerce_scalar_string, runtime_context, set_step_output};
 use super::*;
 use runinator_models::workflows::WorkflowRetry;
 use uuid::Uuid;
@@ -251,6 +251,74 @@ pub(super) async fn maybe_wake_subflow_parent<T: DatabaseImpl>(
     Ok(())
 }
 
+/// when a run has no correlation key yet, resolve the workflow's `metadata.correlation` expression
+/// against the live context and stamp it write-once. lets `await workflow ... key` joins match this
+/// run by a value it derives from input or a mid-run step output.
+async fn maybe_stamp_correlation<T: DatabaseImpl>(
+    db: &T,
+    workflow_run: &WorkflowRun,
+    context: &Value,
+) -> Result<(), SendableError> {
+    if workflow_run.correlation_key.is_some() {
+        return Ok(());
+    }
+    let Some(snapshot) = workflow_run.workflow_snapshot.as_ref() else {
+        return Ok(());
+    };
+    let Some(expression) = snapshot.definition.metadata.get("correlation") else {
+        return Ok(());
+    };
+    let Ok(resolved) = runinator_workflows::resolve_value_refs(expression, context) else {
+        return Ok(());
+    };
+    if let Some(key) = coerce_scalar_string(&resolved) {
+        db.set_run_correlation_key(workflow_run.id, key).await?;
+    }
+    Ok(())
+}
+
+/// when any run reaches a terminal state, wake await-workflow nodes parked on a run of that workflow
+/// (optionally matching a correlation value and start-time window). scans waiting node runs and
+/// nudges each matching awaiter; the awaiter's handler re-checks satisfaction on wake.
+pub(super) async fn maybe_wake_awaiters<T: DatabaseImpl>(
+    db: &T,
+    run: &WorkflowRun,
+) -> Result<(), SendableError> {
+    if !run.status.is_terminal() {
+        return Ok(());
+    }
+    let waiting = db
+        .fetch_workflow_node_runs_by_status(WorkflowStatus::Waiting)
+        .await?;
+    for node_run in waiting {
+        let Ok(state) = AwaitWorkflowState::from_wire_value(&node_run.state) else {
+            continue;
+        };
+        if state.workflow_id != run.workflow_id {
+            continue;
+        }
+        if let Some(since) = state.since_unix
+            && run.created_at.timestamp() < since
+        {
+            continue;
+        }
+        if let Some(expected) = state.correlation_value.as_deref()
+            && run.correlation_key.as_deref() != Some(expected)
+        {
+            continue;
+        }
+        let event = NewOrchestrationEvent::new(
+            node_run.workflow_run_id,
+            Some(node_run.node_id.clone()),
+            "await_workflow_finished",
+            runinator_models::json!({ "finished_run_id": run.id, "status": run.status.as_str() }),
+        );
+        db.enqueue_ready_node(event, node_run.node_id.clone(), Utc::now())
+            .await?;
+    }
+    Ok(())
+}
+
 pub(super) async fn transition_from_node<T: DatabaseImpl>(
     db: &T,
     workflow_run: &WorkflowRun,
@@ -281,6 +349,7 @@ pub(super) async fn transition_from_node<T: DatabaseImpl>(
     if let Some(output) = output_json {
         set_step_output(&mut context, &node.id, output);
     }
+    maybe_stamp_correlation(db, workflow_run, &context).await?;
     let next = runinator_workflows::next_transition(node, status, &context)
         .map_err(|err| -> SendableError { Box::new(err) })?;
     match next {

@@ -539,20 +539,27 @@ pub struct CooldownOutput {
     pub remaining_seconds: i64,
 }
 
-/// await_run node-run state while parked watching sibling run(s).
+/// await_workflow node-run state while parked watching runs of a named workflow. matches runs by
+/// target workflow id, optionally narrowed to a resolved correlation value and to runs started at or
+/// after `since_unix`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AwaitRunState {
-    pub run_ids: Vec<Uuid>,
+pub struct AwaitWorkflowState {
+    pub workflow_id: Uuid,
+    pub workflow_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub correlation_value: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub since_unix: Option<i64>,
     pub mode: String,
-    pub poll_interval: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub deadline_unix: Option<i64>,
 }
 
-/// await_run node output when the satisfaction policy is met.
+/// await_workflow node output when the satisfaction policy is met.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AwaitRunOutput {
-    pub run_ids: Vec<Uuid>,
+pub struct AwaitWorkflowOutput {
+    pub workflow_id: Uuid,
+    pub matched_run_ids: Vec<Uuid>,
     pub mode: String,
     pub statuses: Vec<String>,
 }

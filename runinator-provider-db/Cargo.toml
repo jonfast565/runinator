@@ -1,0 +1,38 @@
+[package]
+name = "runinator-provider-db"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+log = "0.4"
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "time"] }
+uuid = { version = "1", features = ["serde"] }
+sqlx = { version = "0.8.6", features = [
+    "sqlite",
+    "postgres",
+    "mysql",
+    "runtime-tokio-rustls",
+    "chrono",
+    "uuid",
+    "json",
+] }
+mongodb = { version = "3", optional = true }
+
+runinator-plugin = { path = "../runinator-plugin" }
+runinator-utilities = { path = "../runinator-utilities" }
+runinator-models = { path = "../runinator-models" }
+runinator-provider-support = { path = "../runinator-provider-support" }
+
+[features]
+default = []
+# mongodb support is opt-in because its `bson` dependency hard-enables
+# `serde_json/preserve_order`, and cargo unifies features across the whole workspace: turning it
+# on silently switches every `serde_json::Value` in the product from sorted keys to insertion
+# order. build with `--features runinator-provider-db/mongo` to enable it.
+mongo = ["dep:mongodb"]
+
+[dev-dependencies]
+tempfile = "3"

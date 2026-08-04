@@ -362,7 +362,11 @@ fn check_stmt(stmt: &Stmt, env: &mut Env, diagnostics: &mut Vec<Diagnostic>) {
                 check_expr(value, env, diagnostics);
             }
         }
-        StmtKind::Await(await_stmt) => check_expr(&await_stmt.run_ids, env, diagnostics),
+        StmtKind::Await(await_stmt) => {
+            if let Some(key) = &await_stmt.key {
+                check_expr(key, env, diagnostics);
+            }
+        }
         StmtKind::Debounce(debounce) => {
             if let Some(key) = &debounce.key {
                 check_expr(key, env, diagnostics);

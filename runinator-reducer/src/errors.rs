@@ -109,10 +109,10 @@ pub const THROTTLE_NAME_MISSING: ErrorDescriptor = ErrorDescriptor::new(
     "workflow.throttle.name_missing",
     "Throttle node is missing a name parameter",
 );
-pub const AWAIT_RUN_IDS_MISSING: ErrorDescriptor = ErrorDescriptor::new(
+pub const AWAIT_WORKFLOW_MISSING: ErrorDescriptor = ErrorDescriptor::new(
     "RUNI154",
-    "workflow.await_run.run_ids_missing",
-    "AwaitRun node is missing a run_ids parameter",
+    "workflow.await_workflow.workflow_missing",
+    "Await node is missing a target workflow",
 );
 pub const DEBOUNCE_DELAY_MISSING: ErrorDescriptor = ErrorDescriptor::new(
     "RUNI155",
@@ -139,6 +139,11 @@ pub const EVENT_SOURCE_TYPE_MISSING: ErrorDescriptor = ErrorDescriptor::new(
     "workflow.event_source.type_missing",
     "EventSource node is missing an event_type parameter",
 );
+pub const AWAIT_WORKFLOW_UNKNOWN: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI160",
+    "workflow.await_workflow.unknown",
+    "Await node references an unknown target workflow",
+);
 
 pub const PIPELINE_NOT_FOUND: ErrorDescriptor =
     ErrorDescriptor::new("RUNI170", "pipeline.not_found", "Pipeline not found");
@@ -158,12 +163,13 @@ pub const DICTIONARY: &[ErrorDescriptor] = &[
     TRANSFORM_PARAMS_MISSING,
     MUTEX_NAME_MISSING,
     THROTTLE_NAME_MISSING,
-    AWAIT_RUN_IDS_MISSING,
+    AWAIT_WORKFLOW_MISSING,
     DEBOUNCE_DELAY_MISSING,
     COLLECT_NAME_MISSING,
     BARRIER_NAME_MISSING,
     CIRCUIT_BREAKER_NAME_MISSING,
     EVENT_SOURCE_TYPE_MISSING,
+    AWAIT_WORKFLOW_UNKNOWN,
     WORKFLOW_NOT_FOUND,
     WORKFLOW_RUN_NOT_FOUND,
     WORKFLOW_RUN_SNAPSHOT_MISSING,

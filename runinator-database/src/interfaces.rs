@@ -448,6 +448,13 @@ pub trait DatabaseImpl: Send + Sync + 'static {
         name: Option<String>,
     ) -> impl Future<Output = Result<(), SendableError>> + Send;
 
+    /// Stamp a run's correlation key write-once; a run that already has one is left untouched.
+    fn set_run_correlation_key(
+        &self,
+        workflow_run_id: Uuid,
+        correlation_key: String,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
+
     /// Fetch a workflow run summary by its identifier.
     fn fetch_workflow_run(
         &self,
