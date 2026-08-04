@@ -1,22 +1,32 @@
 import {
+  createNotificationPolicy,
   deleteNotification,
+  deleteNotificationPolicy,
+  fetchNotificationPolicies,
   fetchNotifications,
   markAllNotificationsRead,
   markNotificationRead,
+  updateNotificationPolicy,
 } from "../api/commandCenterApi";
-import type { Notification } from "../domain/models";
+import type {
+  NewNotificationPolicy,
+  Notification,
+  NotificationPolicy,
+} from "../domain/models";
 import { createStore } from "./event-bus";
 import type { AppService } from "./app";
 
 export interface NotificationsState {
   notifications: Notification[];
   unreadOnly: boolean;
+  policies: NotificationPolicy[];
 }
 
 export function createNotificationsService(app: AppService) {
   const store = createStore<NotificationsState>({
     notifications: [],
     unreadOnly: false,
+    policies: [],
   });
 
   function unreadCount(): number {
@@ -66,6 +76,44 @@ export function createNotificationsService(app: AppService) {
         notifications: state.notifications.filter((notification) => notification.id !== id),
       }));
       await service.refreshNotifications();
+    },
+    async refreshPolicies() {
+      const policies = await app
+        .runOperation("Loading notification policies", () => fetchNotificationPolicies())
+        .catch(() => []);
+      store.setState((state) => ({ ...state, policies }));
+    },
+    async savePolicy(policy: NewNotificationPolicy, policyId?: string) {
+      // a validation rejection from the backend is the useful signal here (an unroutable channel or
+      // a threshold-less duration event), so surface it rather than silently swallowing it.
+      try {
+        await app.runOperation("Saving notification policy", () =>
+          policyId
+            ? updateNotificationPolicy(policyId, policy)
+            : createNotificationPolicy(policy),
+        );
+      } catch (error: unknown) {
+        app.setError(String(error));
+        return false;
+      }
+
+      await service.refreshPolicies();
+
+      return true;
+    },
+    async removePolicy(policyId: string) {
+      try {
+        await app.runOperation("Deleting notification policy", () =>
+          deleteNotificationPolicy(policyId),
+        );
+      } catch (error: unknown) {
+        app.setError(String(error));
+        return false;
+      }
+
+      await service.refreshPolicies();
+
+      return true;
     },
     async removeAllRead() {
       const readIds = store

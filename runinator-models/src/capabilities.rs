@@ -52,6 +52,12 @@ pub enum Capability {
     /// manage platform/admin settings.
     #[serde(rename = "settings:manage")]
     SettingsManage,
+    /// create, update, and delete notification (failure-alerting) policies.
+    #[serde(rename = "notifications:manage")]
+    NotificationsManage,
+    /// manage freeze windows and replay missed cron slots (trigger backfill).
+    #[serde(rename = "schedules:manage")]
+    SchedulesManage,
 
     // ---- organization capabilities (admin of the caller's active org, or platform admin) ----
     /// manage membership and roles within the active organization.
@@ -78,6 +84,8 @@ impl Capability {
         Capability::OrgsManage,
         Capability::BillingManage,
         Capability::SettingsManage,
+        Capability::NotificationsManage,
+        Capability::SchedulesManage,
         Capability::OrgMembersManage,
         Capability::OrgNodesScale,
     ];
@@ -102,6 +110,8 @@ impl Capability {
             Capability::OrgsManage => "orgs:manage",
             Capability::BillingManage => "billing:manage",
             Capability::SettingsManage => "settings:manage",
+            Capability::NotificationsManage => "notifications:manage",
+            Capability::SchedulesManage => "schedules:manage",
             Capability::OrgMembersManage => "org:members:manage",
             Capability::OrgNodesScale => "org:nodes:scale",
         }

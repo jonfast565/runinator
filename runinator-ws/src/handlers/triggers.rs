@@ -127,7 +127,12 @@ pub(crate) async fn claim_due_workflow_trigger_firings<T: DatabaseImpl>(
     )
     .await
     {
-        Ok(runs) => (StatusCode::OK, Json(ApiResponse::WorkflowRunList(runs))),
+        // the compatibility endpoint reports only the runs created; slots the schedule policy
+        // declined are engine-side bookkeeping and have no run to report.
+        Ok(batch) => (
+            StatusCode::OK,
+            Json(ApiResponse::WorkflowRunList(batch.runs)),
+        ),
         Err(err) => api_error(err.to_string()),
     }
 }

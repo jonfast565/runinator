@@ -8,8 +8,8 @@ use runinator_models::pipelines::PipelineBundle;
 use runinator_models::value::Value;
 use runinator_models::{
     api_routes::{
-        api_approval_command, api_artifact_download, api_replica_heartbeat, api_replica_offline,
-        api_replica_providers, api_run, api_run_artifacts, api_run_chunks,
+        api_approval_command, api_artifact_download, api_freeze_window, api_replica_heartbeat,
+        api_replica_offline, api_replica_providers, api_run, api_run_artifacts, api_run_chunks,
         api_scheduler_action_dispatch_failed, api_scheduler_action_dispatch_published,
         api_scheduler_ready_node_process, api_scheduler_workflow_run_claim_release,
         api_scheduler_workflow_run_claim_renew, api_workflow, api_workflow_duplicate,
@@ -18,9 +18,10 @@ use runinator_models::{
         api_workflow_run, api_workflow_run_artifacts, api_workflow_run_command,
         api_workflow_run_nodes, api_workflow_run_rename, api_workflow_run_replay,
         api_workflow_run_transitions, api_workflow_runs, api_workflow_trigger,
-        api_workflow_trigger_runs, api_workflow_triggers, API_APPROVALS, API_AUTH_CONFIG,
-        API_AUTH_LOGIN, API_AUTH_LOGOUT, API_AUTH_REFRESH, API_CREDENTIALS, API_IDEMPOTENCY_KEYS,
-        API_PACKS_IMPORT, API_PROVIDERS, API_REPLICAS, API_RUNS, API_SCHEDULER_ACTION_DISPATCHES,
+        api_workflow_trigger_backfill, api_workflow_trigger_runs, api_workflow_triggers,
+        API_APPROVALS, API_AUTH_CONFIG, API_AUTH_LOGIN, API_AUTH_LOGOUT, API_AUTH_REFRESH,
+        API_CREDENTIALS, API_FREEZE_WINDOWS, API_IDEMPOTENCY_KEYS, API_PACKS_IMPORT, API_PROVIDERS,
+        API_REPLICAS, API_RUNS, API_SCHEDULER_ACTION_DISPATCHES,
         API_SCHEDULER_ACTION_DISPATCHES_CLAIM, API_SCHEDULER_ACTION_DISPATCHES_PENDING,
         API_SCHEDULER_READY_NODES_CLAIM, API_SCHEDULER_WORKFLOW_RUNS_CLAIM,
         API_SCHEDULER_WORKFLOW_TRIGGER_FIRINGS_CLAIM, API_SUPERVISOR_STATUS, API_WORKFLOWS,
@@ -40,6 +41,7 @@ use runinator_models::{
         ReplicaRegistrationRequest, ReplicaStatus,
     },
     runs::{RunStatus, RunSummary},
+    schedules::{BackfillRequest, BackfillResponse, FreezeWindow, NewFreezeWindow},
     settings::{SettingKind, SettingSummary},
     web::TaskResponse,
     workflows::{
@@ -605,6 +607,46 @@ where
         let response = self.http_get(url.clone()).send().await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Vec<WorkflowTrigger>>().await?)
+    }
+
+    /// replay a cron trigger's slots across a past range. slots the loop already fired keep their
+    /// original run, so an overlapping range is safe to re-issue.
+    pub async fn backfill_workflow_trigger(
+        &self,
+        trigger_id: Uuid,
+        request: &BackfillRequest,
+    ) -> Result<BackfillResponse> {
+        let url = self
+            .build_url(&api_workflow_trigger_backfill(trigger_id))
+            .await?;
+        let response = self.http_post(url.clone()).json(request).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<BackfillResponse>().await?)
+    }
+
+    pub async fn fetch_freeze_windows(&self, active_only: bool) -> Result<Vec<FreezeWindow>> {
+        let path = match active_only {
+            true => format!("{API_FREEZE_WINDOWS}?active=true"),
+            false => API_FREEZE_WINDOWS.to_string(),
+        };
+        let url = self.build_url(&path).await?;
+        let response = self.http_get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Vec<FreezeWindow>>().await?)
+    }
+
+    pub async fn create_freeze_window(&self, window: &NewFreezeWindow) -> Result<FreezeWindow> {
+        let url = self.build_url(API_FREEZE_WINDOWS).await?;
+        let response = self.http_post(url.clone()).json(window).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<FreezeWindow>().await?)
+    }
+
+    pub async fn delete_freeze_window(&self, window_id: Uuid) -> Result<TaskResponse> {
+        let url = self.build_url(&api_freeze_window(window_id)).await?;
+        let response = self.http_delete(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<TaskResponse>().await?)
     }
 
     pub async fn claim_due_workflow_trigger_firings(

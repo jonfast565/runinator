@@ -46,6 +46,7 @@ async fn http_broker_delivers_published_messages() {
             target: Default::default(),
             trace_id: Uuid::nil(),
             trace_context: Default::default(),
+            notification_delivery_id: None,
         },
         dedupe_key: Some("http-test".into()),
         enqueued_at: Utc::now(),
@@ -215,6 +216,7 @@ fn action_command() -> ActionCommand {
         target: Default::default(),
         trace_id: Uuid::nil(),
         trace_context: Default::default(),
+        notification_delivery_id: None,
     }
 }
 

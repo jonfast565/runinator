@@ -429,6 +429,93 @@ node per workflow, one edge per chained trigger — and lets you author them by
 dragging between workflows, editing an edge's `on` selector, or enabling/disabling
 and deleting chains through the normal trigger CRUD.
 
+#### Failure alerting
+
+Workflows declare alerting policies in the WDL header, materialized from
+`metadata.notifications` on import the same pack-managed way triggers are:
+
+- `notify on failure -> <channel> "<target>"` fires when a run ends `Failed`/`TimedOut`.
+- `notify on retry_exhausted -> ...` fires for the node that used up its retry budget.
+- `notify on sla -> ... after <duration>` fires when a run stays open past the threshold.
+- `notify on parked -> ... after <duration>` fires when a run sits waiting/approval/input/blocked
+  past the threshold.
+
+`<channel>` is `slack`, `email`, or `app` (in-app only). `severity info|warning|critical`
+defaults to `warning`; `with { ... }` overrides the generated provider configuration
+(notably the credential reference); `disabled` imports the policy switched off. The two
+duration events require `after`, and the compiler rejects them without it — a policy the
+scanner could never match is a silent failure during an incident.
+
+```wdl
+notify on failure -> slack "#oncall" severity critical
+notify on sla -> email "ops@example.com" after 30m
+```
+
+Policies can equally be managed from the command center's **Notifications** tab
+(capability `notifications:manage`); pack-managed rows are read-only there because an
+import reconciles them. Emission happens in `runinator-engine` at the terminal
+transition, plus a periodic scanner for the duration events. The engine never speaks a
+vendor protocol: an in-app policy writes the notifications row, and every other channel
+is enqueued on the normal action outbox so a worker delivers it through the
+`runinator-provider-slack` / `-email` provider like any other action. Delivery attempts
+are tracked per notification and readable at `GET /notifications/{id}/deliveries`.
+
+#### Schedule policy: concurrency, catch-up, and freeze windows
+
+A cron trigger fires without asking whether the last run finished. Two WDL header
+clauses change that, and both are evaluated at the claim point — the loop declines to
+create the run rather than creating one that immediately parks:
+
+```wdl
+trigger cron "0 * * * *" catchup fire_all max 10
+concurrency 1 on_conflict queue
+```
+
+`concurrency <n> on_conflict <policy>` caps overlapping runs of the workflow. The
+policies:
+
+- `skip` (the default when the clause is omitted) — drop the slot, record the firing so
+  it is never retried, and move the schedule on.
+- `queue` — leave the slot due and re-evaluate next tick, so it fires as soon as capacity
+  frees up. Nothing is created while blocked: the schedule itself is the queue, so a
+  backed-up workflow costs no runs and no wake-queue entries.
+- `cancel_previous` — cancel the workflow's in-flight runs, then start this one.
+- `allow` — the historical behavior, and what an absent header means.
+
+`catchup <policy>` decides what happens to slots that came due while nothing was firing
+them (engine downtime, a freeze window, or a `queue` policy holding the schedule back):
+
+- `fire_once` (default) — collapse the whole backlog into one run and re-anchor.
+- `fire_all [max <n>]` — replay each missed slot as its own run, at most `max` per pass
+  (25 by default) so a week of downtime cannot flood the run table in one tick.
+- `skip [grace <duration>]` — abandon slots more than `grace` late (60s by default) and
+  re-anchor. The grace matters: every firing is slightly late, so without it `skip` would
+  drop every run.
+
+The compiler rejects `grace` on a non-`skip` policy and `max` on a non-`fire_all` one
+rather than storing a knob the runtime never reads.
+
+**Freeze windows** suspend firing over a date range, independently of any pack. A window
+scopes to one workflow, one org, or the whole platform (and platform/org windows also
+hold pipeline cron triggers). Frozen triggers are excluded from the claim in SQL, and
+their due slot is deliberately left in place — when the window lifts, the trigger's
+catch-up policy decides whether the missed slots replay. Manage them under the command
+center's **Schedules** tab or from the CLI, both gated on the `schedules:manage`
+capability:
+
+```bash
+runinatorctl freeze create "December freeze" --from 2026-12-20T00:00:00Z --to 2027-01-02T00:00:00Z
+runinatorctl freeze list --active
+```
+
+**Backfill** replays a cron trigger's slots across a past range. Slots the loop already
+fired keep their original run — the firing row is the same uniqueness gate the loop
+claims through — so an overlapping range is safe to re-issue:
+
+```bash
+runinatorctl triggers backfill <trigger-id> --from 2026-08-01T00:00:00Z --dry-run
+```
+
 WDL references resolve runtime values into action arguments. Alongside `params.*`,
 `prev.*`, `run.*`, and bare node-output names, two roots read from the unified
 settings store:

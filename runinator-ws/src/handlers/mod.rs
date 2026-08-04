@@ -18,6 +18,7 @@ pub(crate) mod providers;
 pub(crate) mod provisioning;
 pub(crate) mod replicas;
 pub(crate) mod runs;
+pub(crate) mod schedules;
 pub(crate) mod supervisor;
 pub(crate) mod triggers;
 pub(crate) mod wdl;

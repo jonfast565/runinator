@@ -91,6 +91,7 @@ pub fn resolve(document: &mut Document) -> Result<(), WdlError> {
                     schedule,
                     blackout_start,
                     blackout_end,
+                    ..
                 } => {
                     resolve_expr(schedule, &scope)?;
                     if let Some(start) = blackout_start.as_mut() {

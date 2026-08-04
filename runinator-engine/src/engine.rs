@@ -53,6 +53,7 @@ pub async fn run_background_engine<T: DatabaseImpl>(
     ));
     loops.spawn(run_trigger_loop(
         pool.clone(),
+        broker.clone(),
         publisher.clone(),
         instance.clone(),
         shutdown.clone(),
@@ -67,6 +68,11 @@ pub async fn run_background_engine<T: DatabaseImpl>(
     loops.spawn(run_replica_reaper(pool.clone(), shutdown.clone()));
     loops.spawn(run_ready_node_reaper(pool.clone(), shutdown.clone()));
     loops.spawn(run_usage_sampler(pool.clone(), shutdown.clone()));
+    loops.spawn(crate::notifications::run_notification_scanner(
+        pool.clone(),
+        publisher.clone(),
+        shutdown.clone(),
+    ));
 
     info!("background engine started");
     tokio::select! {

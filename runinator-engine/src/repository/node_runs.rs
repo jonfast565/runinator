@@ -1,5 +1,6 @@
 use super::support;
 use super::*;
+use runinator_models::notifications::NotificationDeliveryStatus;
 use uuid::Uuid;
 
 pub async fn fetch_workflow_run<T: DatabaseImpl>(
@@ -121,6 +122,11 @@ pub async fn apply_workflow_result_event<T: DatabaseImpl>(
     db: &T,
     event: &WorkflowResultEvent,
 ) -> Result<bool, SendableError> {
+    // a notification delivery reuses the action path but owns no node run; settle its delivery row
+    // and stop, so the generic node-run apply never sees a synthetic node run id.
+    if let Some(delivery_id) = event.notification_delivery_id {
+        return apply_notification_delivery_result(db, event, delivery_id).await;
+    }
     let applied = db.apply_workflow_result_event(event).await?;
     // enqueue the drive even when the event is a duplicate: a redelivery usually means a prior
     // attempt failed between persisting the event and enqueueing this ready node, and skipping it
@@ -142,6 +148,32 @@ pub async fn apply_workflow_result_event<T: DatabaseImpl>(
         .await?;
     }
     Ok(applied)
+}
+
+/// settle the durable delivery row for a notification the worker just attempted. only the terminal
+/// status matters; chunk/artifact events from a delivery action carry no state worth keeping.
+async fn apply_notification_delivery_result<T: DatabaseImpl>(
+    db: &T,
+    event: &WorkflowResultEvent,
+    delivery_id: Uuid,
+) -> Result<bool, SendableError> {
+    let WorkflowResultEventKind::Status {
+        status, message, ..
+    } = &event.kind
+    else {
+        return Ok(false);
+    };
+    if !status.is_terminal() {
+        return Ok(false);
+    }
+    let delivery_status = if *status == WorkflowStatus::Succeeded {
+        NotificationDeliveryStatus::Delivered
+    } else {
+        NotificationDeliveryStatus::Failed
+    };
+    db.mark_notification_delivery(delivery_id, delivery_status, message.clone())
+        .await?;
+    Ok(true)
 }
 
 pub async fn create_workflow_node_run<T: DatabaseImpl>(

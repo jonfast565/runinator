@@ -18,6 +18,7 @@ export interface EventStreamRouterDeps {
   refreshWorkflowRunIfSelected: (runId: string) => void;
   refreshArtifactsIfActive: () => void;
   refreshNotifications: () => void;
+  refreshSchedulesIfActive: () => void;
   refreshPipelineRunsIfActive: () => void;
   refreshPipelineDetailIfMember: (runId: string) => void;
 }
@@ -73,6 +74,9 @@ export function createEventStreamRouter(deps: () => EventStreamRouterDeps): Even
         case "notification_created":
         case "notifications_changed":
           context.refreshNotifications();
+          break;
+        case "schedules_changed":
+          context.refreshSchedulesIfActive();
           break;
       }
     },

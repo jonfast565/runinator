@@ -167,6 +167,8 @@ pub async fn import_workflow_bundle_with<T: DatabaseImpl>(
         let imported = upsert_workflow(db, &workflow).await?;
         // materialize this workflow's declared `trigger cron` schedules (idempotent).
         materialize_workflow_triggers(db, &imported).await?;
+        // and its declared `notify on ...` alerting policies, reconciled the same way.
+        materialize_workflow_notifications(db, &imported).await?;
         workflows.push(imported);
     }
 
@@ -273,6 +275,63 @@ async fn validate_chained_targets<T: DatabaseImpl>(
     Ok(())
 }
 
+/// replace a workflow's `managed_by: wdl` notification policies with the ones declared in its
+/// `definition.metadata.notifications`. hand-authored policies on the same workflow are left
+/// untouched, and re-import is idempotent, mirroring how managed triggers reconcile.
+async fn materialize_workflow_notifications<T: DatabaseImpl>(
+    db: &T,
+    workflow: &WorkflowDefinition,
+) -> Result<(), SendableError> {
+    let Some(workflow_id) = workflow.id else {
+        return Ok(());
+    };
+    let specs = workflow
+        .definition
+        .metadata
+        .pointer("/notifications")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mut policies = Vec::with_capacity(specs.len());
+    for spec in &specs {
+        let event = spec
+            .get("event")
+            .and_then(Value::as_str)
+            .and_then(|event| NotificationEvent::try_from(event).ok())
+            .unwrap_or(NotificationEvent::RunFailed);
+        let channel = spec
+            .get("channel")
+            .and_then(Value::as_str)
+            .and_then(|channel| NotificationChannel::try_from(channel).ok())
+            .unwrap_or(NotificationChannel::InApp);
+        let severity = spec
+            .get("severity")
+            .and_then(Value::as_str)
+            .and_then(|severity| NotificationSeverity::try_from(severity).ok())
+            .unwrap_or(NotificationSeverity::Warning);
+        policies.push(NewNotificationPolicy {
+            workflow_id: Some(workflow_id),
+            // the declaration has no name of its own; derive a stable, readable one.
+            name: format!("{} {}", workflow.name, event.as_str()),
+            event,
+            severity,
+            channel,
+            target: spec
+                .get("target")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            threshold_seconds: spec.get("threshold_seconds").and_then(Value::as_i64),
+            enabled: spec.get("enabled").and_then(Value::as_bool).unwrap_or(true),
+            managed_by: Some("wdl".into()),
+            configuration: spec.get("configuration").cloned().unwrap_or(Value::Null),
+        });
+    }
+    // always call through, even with an empty list: removing the last `notify` line from a pack must
+    // delete the policy it previously materialized.
+    db.replace_managed_notification_policies(workflow_id, "wdl".into(), policies)
+        .await
+}
+
 /// replace a workflow's `managed_by: wdl` triggers with the ones declared in its
 /// `definition.metadata.triggers`. manually-added triggers are left untouched; re-import is
 /// idempotent (delete the pack-managed set, then insert the current declarations). each spec's
@@ -360,12 +419,21 @@ async fn materialize_workflow_triggers<T: DatabaseImpl>(
                     .and_then(Value::as_str)
                     .map(parse_trigger_datetime)
                     .transpose()?;
+                let mut configuration =
+                    runinator_models::json!({ "cron": cron, "parameters": parameters });
+                // the catch-up policy travels in the trigger's configuration, so a pack that drops
+                // the `catchup` clause reverts the trigger to the default on the next import.
+                if let (Some(catchup), Some(object)) =
+                    (spec.get("catchup"), configuration.as_object_mut())
+                {
+                    object.insert("catchup".into(), catchup.clone());
+                }
                 WorkflowTrigger {
                     id: None,
                     workflow_id,
                     kind: runinator_models::workflows::WorkflowTriggerKind::Cron,
                     enabled,
-                    configuration: runinator_models::json!({ "cron": cron, "parameters": parameters }),
+                    configuration,
                     next_execution: None,
                     blackout_start,
                     blackout_end,

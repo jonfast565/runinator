@@ -18,10 +18,29 @@ pub const READY_NODE_INVALID_SOURCE_EVENT_ID: ErrorDescriptor = ErrorDescriptor:
     "Stored ready-node source event id is invalid",
 );
 
+pub const TRIGGER_MISSING_ID: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI504",
+    "database.trigger.missing_id",
+    "Workflow trigger row has no id",
+);
+pub const TRIGGER_NOT_FOUND: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI505",
+    "database.trigger.not_found",
+    "Workflow trigger not found",
+);
+pub const TRIGGER_NOT_CRON: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI506",
+    "database.trigger.not_cron",
+    "Workflow trigger has no cron schedule to replay",
+);
+
 pub const DICTIONARY: &[ErrorDescriptor] = &[
     ACTION_DISPATCH_INVALID_JSON,
     ORCHESTRATION_EVENT_INVALID_ID,
     READY_NODE_INVALID_SOURCE_EVENT_ID,
+    TRIGGER_MISSING_ID,
+    TRIGGER_NOT_FOUND,
+    TRIGGER_NOT_CRON,
 ];
 
 /// database engine error dictionary.

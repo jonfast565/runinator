@@ -33,14 +33,96 @@ pub async fn claim_due_workflow_trigger_firings<T: DatabaseImpl>(
     db: &T,
     scheduler_id: String,
     limit: i64,
-) -> Result<Vec<WorkflowRun>, SendableError> {
-    let runs = db
+) -> Result<TriggerFiringBatch<WorkflowRun>, SendableError> {
+    let batch = db
         .claim_due_workflow_trigger_firings(scheduler_id, Utc::now(), limit)
         .await?;
+    for run in &batch.runs {
+        support::enqueue_start_ready_node(db, run).await?;
+    }
+    Ok(batch)
+}
+
+/// replay a cron trigger's missed slots across a past range. slots the loop already fired keep
+/// their original run, so a backfill is safe to re-issue over an overlapping range.
+pub async fn backfill_workflow_trigger<T: DatabaseImpl>(
+    db: &T,
+    trigger_id: Uuid,
+    request: &BackfillRequest,
+) -> Result<(BackfillResponse, Vec<WorkflowRun>), SendableError> {
+    let (response, runs) = db.backfill_workflow_trigger(trigger_id, request).await?;
     for run in &runs {
         support::enqueue_start_ready_node(db, run).await?;
     }
-    Ok(runs)
+    Ok((response, runs))
+}
+
+pub async fn fetch_freeze_windows<T: DatabaseImpl>(
+    db: &T,
+    org_id: Option<Uuid>,
+) -> Result<Vec<FreezeWindow>, SendableError> {
+    db.fetch_freeze_windows(org_id).await
+}
+
+pub async fn fetch_active_freeze_windows<T: DatabaseImpl>(
+    db: &T,
+) -> Result<Vec<FreezeWindow>, SendableError> {
+    db.fetch_active_freeze_windows(Utc::now()).await
+}
+
+pub async fn create_freeze_window<T: DatabaseImpl>(
+    db: &T,
+    window: &NewFreezeWindow,
+) -> Result<FreezeWindow, SendableError> {
+    validate_freeze_window(window)?;
+    db.create_freeze_window(window).await
+}
+
+pub async fn update_freeze_window<T: DatabaseImpl>(
+    db: &T,
+    window_id: Uuid,
+    window: &NewFreezeWindow,
+) -> Result<Option<FreezeWindow>, SendableError> {
+    validate_freeze_window(window)?;
+    db.update_freeze_window(window_id, window).await
+}
+
+pub async fn delete_freeze_window<T: DatabaseImpl>(
+    db: &T,
+    window_id: Uuid,
+) -> Result<TaskResponse, SendableError> {
+    if !db.delete_freeze_window(window_id).await? {
+        return Err(crate::errors::FREEZE_WINDOW_NOT_FOUND.error(window_id));
+    }
+    Ok(TaskResponse {
+        success: true,
+        message: "Freeze window deleted".into(),
+    })
+}
+
+/// reject windows that would store fine and then never freeze anything. an inverted range is the
+/// likely shape of a mistyped date, and silently accepting it means discovering during the change
+/// freeze that nothing was frozen.
+fn validate_freeze_window(window: &NewFreezeWindow) -> Result<(), SendableError> {
+    if window.name.trim().is_empty() {
+        return Err(crate::errors::FREEZE_WINDOW_INVALID.error("name must not be empty"));
+    }
+    if window.ends_at <= window.starts_at {
+        return Err(crate::errors::FREEZE_WINDOW_INVALID.error("ends_at must be after starts_at"));
+    }
+    Ok(())
+}
+
+/// the range a backfill is allowed to replay: bounded, ordered, and in the past. a forward-dated
+/// backfill would create runs for slots the trigger loop is about to fire on its own.
+pub fn validate_backfill_request(request: &BackfillRequest) -> Result<(), SendableError> {
+    if request.to <= request.from {
+        return Err(crate::errors::BACKFILL_INVALID_RANGE.error("to must be after from"));
+    }
+    if request.from > Utc::now() {
+        return Err(crate::errors::BACKFILL_INVALID_RANGE.error("from must be in the past"));
+    }
+    Ok(())
 }
 
 pub async fn delete_workflow_trigger<T: DatabaseImpl>(

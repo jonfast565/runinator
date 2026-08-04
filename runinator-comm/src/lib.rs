@@ -70,6 +70,11 @@ pub struct ActionCommand {
     /// joins the dispatching trace. empty when otel is off; defaults for older messages.
     #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
     pub trace_context: std::collections::HashMap<String, String>,
+    /// set when this action is a notification delivery rather than a workflow node's work. the
+    /// engine reuses the action outbox so alert delivery runs through the normal provider path, and
+    /// the result consumer settles this delivery row instead of a node run. `None` for node actions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notification_delivery_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -298,17 +303,33 @@ impl UiEvent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum UiEventKind {
-    RunStatusChanged { run_id: Uuid, terminal: bool },
-    RunChunkAdded { run_id: Uuid },
+    RunStatusChanged {
+        run_id: Uuid,
+        terminal: bool,
+    },
+    RunChunkAdded {
+        run_id: Uuid,
+    },
     WorkflowsChanged,
-    WorkflowRunChanged { run_id: Uuid },
+    WorkflowRunChanged {
+        run_id: Uuid,
+    },
     WorkflowRunActivity,
-    PipelineRunChanged { run_id: Uuid },
+    PipelineRunChanged {
+        run_id: Uuid,
+    },
     PipelineRunActivity,
     TasksChanged,
-    ArtifactCreated { artifact_id: Uuid, run_id: Uuid },
-    NotificationCreated { notification_id: Uuid },
+    ArtifactCreated {
+        artifact_id: Uuid,
+        run_id: Uuid,
+    },
+    NotificationCreated {
+        notification_id: Uuid,
+    },
     NotificationsChanged,
+    /// a freeze window was created, edited, or removed, so what is currently suspended changed.
+    SchedulesChanged,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -330,6 +351,10 @@ pub struct WorkflowResultEvent {
     /// stays on the same trace. defaults for backward-compatible deserialization of older messages.
     #[serde(default = "Uuid::now_v7")]
     pub trace_id: Uuid,
+    /// carried back from the originating [`ActionCommand`]; when set, this result settles a
+    /// notification delivery rather than a workflow node run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notification_delivery_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -418,6 +443,7 @@ impl WorkflowResultEvent {
             kind,
             timestamp: Utc::now(),
             trace_id: command.trace_id,
+            notification_delivery_id: command.notification_delivery_id,
         }
     }
 }

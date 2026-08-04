@@ -63,6 +63,8 @@ document_item = {
   | params_block
   | import_decl
   | trigger_decl
+  | notify_decl
+  | concurrency_decl
   | watch_decl
   | correlate_decl
   | type_decl
@@ -72,7 +74,7 @@ document_item = {
 }
 namespace_block = { "namespace" ~ ns_path ~ "{" ~ workflow* ~ "}" }
 workflow_decl = { "workflow" ~ string ~ version? ~ returns_decl? }
-workflow = { "workflow" ~ string ~ version? ~ returns_decl? ~ "{" ~ params_block? ~ (import_decl | trigger_decl | watch_decl | correlate_decl | type_decl | alias_decl | start_decl | stmt)* ~ "}" }
+workflow = { "workflow" ~ string ~ version? ~ returns_decl? ~ "{" ~ params_block? ~ (import_decl | trigger_decl | notify_decl | concurrency_decl | watch_decl | correlate_decl | type_decl | alias_decl | start_decl | stmt)* ~ "}" }
 returns_decl = { "returns" ~ type_expr }
 
 // the namespace this workflow's identity lives in. a dotted path qualifying the workflow name so
@@ -115,9 +117,38 @@ trigger_decl = { "trigger" ~ (cron_trigger | chained_trigger) }
 cron_trigger = { "cron" ~ expr ~ ("with" ~ object)? ~ trigger_option* }
 chained_trigger = { chain_event ~ "workflow" ~ expr ~ ("with" ~ object)? ~ trigger_disabled? }
 chain_event = { "on_success" | "on_failure" | "on_complete" }
-trigger_option = { trigger_disabled | trigger_blackout }
+trigger_option = { trigger_disabled | trigger_blackout | trigger_catchup }
 trigger_disabled = { "disabled" }
 trigger_blackout = { "blackout" ~ expr ~ "to" ~ expr }
+
+// what happens to cron slots that came due while nothing was firing them. `fire_once` (the default)
+// collapses the backlog into one run, `fire_all` replays each missed slot up to `max`, and `skip`
+// abandons slots later than `grace`.
+trigger_catchup = { "catchup" ~ catchup_policy ~ catchup_option* }
+catchup_policy = { "fire_all" | "fire_once" | "skip" }
+catchup_option = { catchup_grace | catchup_max }
+catchup_grace = { "grace" ~ duration }
+catchup_max = { "max" ~ number }
+
+// `concurrency <n> on_conflict <policy>` caps how many runs of this workflow may overlap. the
+// policy decides what a firing does when the cap is reached; declining to create the run is
+// cheaper and safer than creating one that immediately parks.
+concurrency_decl = { "concurrency" ~ number ~ ("on_conflict" ~ concurrency_policy)? }
+concurrency_policy = { "cancel_previous" | "skip" | "queue" | "allow" }
+
+// `notify on <event> -> <channel> "<target>"` declares a failure-alerting policy for this workflow.
+// the duration events (`sla`, `parked`) need an `after <duration>` threshold to be evaluable; the
+// transition events (`failure`, `retry_exhausted`) fire on the terminal transition itself. policies
+// ride in the compiled definition and are materialized as pack-managed rows on import, like triggers.
+notify_decl = { "notify" ~ "on" ~ notify_event ~ "->" ~ notify_channel ~ expr ~ notify_option* }
+notify_event = { "failure" | "retry_exhausted" | "sla" | "parked" }
+notify_channel = { "slack" | "email" | "app" }
+notify_option = { notify_after | notify_severity | notify_with | notify_disabled }
+notify_after = { "after" ~ duration }
+notify_severity = { "severity" ~ notify_level }
+notify_level = { "info" | "warning" | "critical" }
+notify_with = { "with" ~ object }
+notify_disabled = { "disabled" }
 
 // reusable named argument groups, declared in the workflow header. an alias binds a name to an
 // object of argument values (typically shared `config.*`/`secret.*` refs); `...name` then spreads

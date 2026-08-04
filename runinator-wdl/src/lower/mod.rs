@@ -216,6 +216,9 @@ fn lower_workflow(
     // header `trigger cron` declarations, carried as runtime data the web service materializes on
     // import (unlike the render-only `wdl` sidecar).
     let triggers = lowerer.lower_triggers(&workflow.triggers)?;
+    // header `notify on ...` policies, carried the same way triggers are: runtime data the web
+    // service materializes as pack-managed notification policy rows on import.
+    let notifications = lowerer.lower_notifications(&workflow.notifications)?;
     let watches = lowerer.lower_watches(&workflow.watches)?;
     // header `correlate key <expr>`, carried as a runtime expression the engine resolves and stamps
     // onto each run's correlation key so `await workflow ... key` joins can match.
@@ -231,6 +234,23 @@ fn lower_workflow(
     }
     if !triggers.is_empty() {
         metadata.insert("triggers".into(), Value::Array(triggers));
+    }
+    if !notifications.is_empty() {
+        metadata.insert("notifications".into(), Value::Array(notifications));
+    }
+    // the concurrency cap is read straight off the definition by the trigger loop, so it versions
+    // with the workflow rather than being materialized into a separate row.
+    if let Some(concurrency) = &workflow.concurrency {
+        let mut entry = Map::new();
+        entry.insert(
+            "max_concurrent_runs".into(),
+            Value::from(concurrency.max_concurrent_runs),
+        );
+        entry.insert(
+            "on_conflict".into(),
+            Value::String(concurrency.on_conflict.keyword().into()),
+        );
+        metadata.insert("concurrency".into(), Value::Object(entry));
     }
     if !watches.is_empty() {
         metadata.insert("watches".into(), Value::Array(watches));
@@ -387,6 +407,7 @@ impl Lowerer {
                     schedule,
                     blackout_start,
                     blackout_end,
+                    catchup,
                 } => {
                     let Value::String(cron) = self.lower_expr(schedule)? else {
                         return Err(WdlError::lower(
@@ -411,6 +432,22 @@ impl Lowerer {
                         };
                         spec.insert("blackout_end".into(), Value::String(end));
                     }
+                    // the catch-up policy rides in the trigger's own configuration, so it lands in
+                    // the same materialized row the cron expression does.
+                    if let Some(catchup) = catchup {
+                        let mut entry = Map::new();
+                        entry.insert(
+                            "policy".into(),
+                            Value::String(catchup.policy.keyword().into()),
+                        );
+                        if let Some(grace) = catchup.grace_seconds {
+                            entry.insert("grace_seconds".into(), Value::from(grace));
+                        }
+                        if let Some(max_slots) = catchup.max_slots {
+                            entry.insert("max_slots".into(), Value::from(max_slots));
+                        }
+                        spec.insert("catchup".into(), Value::Object(entry));
+                    }
                 }
                 TriggerDeclKind::Chained { event, target } => {
                     let Value::String(target) = self.lower_expr(target)? else {
@@ -423,6 +460,46 @@ impl Lowerer {
                     spec.insert("target_workflow".into(), Value::String(target));
                 }
             }
+            specs.push(Value::Object(spec));
+        }
+        Ok(specs)
+    }
+
+    /// lower header `notify on <event> -> <channel> <target>` policies into `metadata.notifications`:
+    /// `[{ event, channel, target, severity, threshold_seconds?, configuration?, enabled }]`. the
+    /// web service upserts these as `managed_by = "wdl"` rows on import.
+    fn lower_notifications(&self, policies: &[NotifyDecl]) -> Result<Vec<Value>, WdlError> {
+        let mut specs = Vec::with_capacity(policies.len());
+        for policy in policies {
+            let Value::String(target) = self.lower_expr(&policy.target)? else {
+                return Err(WdlError::lower("notify target must be a string literal"));
+            };
+            let mut spec = Map::new();
+            spec.insert(
+                "event".into(),
+                Value::String(policy.event.runtime_name().into()),
+            );
+            spec.insert(
+                "channel".into(),
+                Value::String(policy.channel.runtime_name().into()),
+            );
+            spec.insert("target".into(), Value::String(target));
+            spec.insert(
+                "severity".into(),
+                Value::String(
+                    policy
+                        .severity
+                        .clone()
+                        .unwrap_or_else(|| "warning".to_string()),
+                ),
+            );
+            if let Some(after) = policy.after_seconds {
+                spec.insert("threshold_seconds".into(), Value::from(after));
+            }
+            if let Some(configuration) = &policy.configuration {
+                spec.insert("configuration".into(), self.lower_expr(configuration)?);
+            }
+            spec.insert("enabled".into(), Value::Bool(policy.enabled));
             specs.push(Value::Object(spec));
         }
         Ok(specs)

@@ -34,6 +34,7 @@ fn collect_workflow(
                 schedule,
                 blackout_start,
                 blackout_end,
+                ..
             } => {
                 collect_expr(schedule, source_dir, paths)?;
                 for value in [blackout_start, blackout_end].into_iter().flatten() {

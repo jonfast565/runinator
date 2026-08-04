@@ -20,6 +20,7 @@
     <EventsView v-if="app.activeTab === 'Events'" />
     <ExternalItemsView v-if="app.activeTab === 'ExternalItems'" />
     <GatesView v-if="app.activeTab === 'Gates'" />
+    <SchedulesView v-if="app.activeTab === 'Schedules'" />
     <SecretsView v-if="app.activeTab === 'Configs'" setting-kind="config" />
     <SecretsView v-if="app.activeTab === 'Secrets'" setting-kind="secret" />
     <OrganizationView v-if="app.activeTab === 'Organization'" />
@@ -64,6 +65,7 @@ import PipelineRunsView from "./ui/views/PipelineRunsView.vue";
 import ApprovalsView from "./ui/views/ApprovalsView.vue";
 import ArtifactsView from "./ui/views/ArtifactsView.vue";
 import NotificationsView from "./ui/views/NotificationsView.vue";
+import SchedulesView from "./ui/views/SchedulesView.vue";
 import EventsView from "./ui/views/EventsView.vue";
 import ExternalItemsView from "./ui/views/ExternalItemsView.vue";
 import GatesView from "./ui/views/GatesView.vue";

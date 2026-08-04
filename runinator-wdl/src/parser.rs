@@ -82,6 +82,8 @@ pub fn parse_document(src: &str) -> Result<Document, WdlError> {
                     imports: Vec::new(),
                     start: None,
                     triggers: Vec::new(),
+                    notifications: Vec::new(),
+                    concurrency: None,
                     watches: Vec::new(),
                     correlation: None,
                     type_decls: Vec::new(),
@@ -108,6 +110,20 @@ pub fn parse_document(src: &str) -> Result<Document, WdlError> {
             Rule::trigger_decl => {
                 let workflow = require_active(&mut active, &inner)?;
                 workflow.triggers.push(parse_trigger_decl(inner)?);
+            }
+            Rule::notify_decl => {
+                let workflow = require_active(&mut active, &inner)?;
+                workflow.notifications.push(parse_notify_decl(inner)?);
+            }
+            Rule::concurrency_decl => {
+                let workflow = require_active(&mut active, &inner)?;
+                if workflow.concurrency.is_some() {
+                    return Err(WdlError::syntax(
+                        span_of(&inner),
+                        "workflow can only declare one concurrency header",
+                    ));
+                }
+                workflow.concurrency = Some(parse_concurrency_decl(inner)?);
             }
             Rule::watch_decl => {
                 let workflow = require_active(&mut active, &inner)?;
@@ -493,6 +509,8 @@ fn parse_workflow(pair: Pair<Rule>, namespace: Option<String>) -> Result<Workflo
     let mut imports = Vec::new();
     let mut start = None;
     let mut triggers = Vec::new();
+    let mut notifications = Vec::new();
+    let mut concurrency = None;
     let mut watches = Vec::new();
     let mut correlation = None;
     let mut type_decls = Vec::new();
@@ -519,6 +537,16 @@ fn parse_workflow(pair: Pair<Rule>, namespace: Option<String>) -> Result<Workflo
             Rule::params_block => input = Some(parse_params_block(inner)?),
             Rule::import_decl => imports.push(parse_import_decl(inner)?),
             Rule::trigger_decl => triggers.push(parse_trigger_decl(inner)?),
+            Rule::notify_decl => notifications.push(parse_notify_decl(inner)?),
+            Rule::concurrency_decl => {
+                if concurrency.is_some() {
+                    return Err(WdlError::syntax(
+                        span_of(&inner),
+                        "workflow can only declare one concurrency header",
+                    ));
+                }
+                concurrency = Some(parse_concurrency_decl(inner)?);
+            }
             Rule::watch_decl => watches.push(parse_watch_decl(inner)?),
             Rule::correlate_decl => correlation = Some(parse_correlate_decl(inner)?),
             Rule::alias_decl => aliases.push(parse_alias_decl(inner)?),
@@ -538,6 +566,8 @@ fn parse_workflow(pair: Pair<Rule>, namespace: Option<String>) -> Result<Workflo
         imports,
         start,
         triggers,
+        notifications,
+        concurrency,
         watches,
         correlation,
         type_decls,
@@ -615,6 +645,80 @@ fn parse_import_decl(pair: Pair<Rule>) -> Result<Import, WdlError> {
     })
 }
 
+fn parse_notify_decl(pair: Pair<Rule>) -> Result<NotifyDecl, WdlError> {
+    let span = span_of(&pair);
+    let mut event = None;
+    let mut channel = None;
+    let mut target = None;
+    let mut after_seconds = None;
+    let mut severity = None;
+    let mut configuration = None;
+    let mut enabled = true;
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::notify_event => {
+                event = Some(match inner.as_str() {
+                    "retry_exhausted" => NotifyEvent::RetryExhausted,
+                    "sla" => NotifyEvent::Sla,
+                    "parked" => NotifyEvent::Parked,
+                    _ => NotifyEvent::Failure,
+                });
+            }
+            Rule::notify_channel => {
+                channel = Some(match inner.as_str() {
+                    "email" => NotifyChannel::Email,
+                    "app" => NotifyChannel::App,
+                    _ => NotifyChannel::Slack,
+                });
+            }
+            Rule::expr => target = Some(parse_expr(inner)?),
+            Rule::notify_option => {
+                let option = first_inner(inner)?;
+                match option.as_rule() {
+                    Rule::notify_disabled => enabled = false,
+                    Rule::notify_after => {
+                        let duration = first_inner(option)?;
+                        after_seconds = Some(parse_duration(duration.as_str(), span)?);
+                    }
+                    Rule::notify_severity => {
+                        severity = Some(first_inner(option)?.as_str().to_string());
+                    }
+                    Rule::notify_with => {
+                        configuration = Some(parse_object(first_inner(option)?)?);
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+    let event = event.ok_or_else(|| WdlError::syntax(span, "notify is missing an event"))?;
+    let channel = channel.ok_or_else(|| WdlError::syntax(span, "notify is missing a channel"))?;
+    let target = target.ok_or_else(|| WdlError::syntax(span, "notify is missing a target"))?;
+    // a duration event with no threshold can never fire; reject at compile time rather than
+    // importing a policy the scanner will silently skip forever.
+    if event.requires_threshold() && after_seconds.is_none() {
+        return Err(WdlError::syntax(
+            span,
+            format!(
+                "notify on {} requires an `after <duration>` threshold",
+                event.keyword()
+            ),
+        ));
+    }
+    Ok(NotifyDecl {
+        event,
+        channel,
+        target,
+        after_seconds,
+        severity,
+        configuration,
+        enabled,
+        span,
+        comments: CommentSet::default(),
+    })
+}
+
 fn parse_trigger_decl(pair: Pair<Rule>) -> Result<TriggerDecl, WdlError> {
     let span = span_of(&pair);
     let inner = first_inner(pair)?;
@@ -631,6 +735,7 @@ fn parse_cron_trigger(pair: Pair<Rule>, span: Span) -> Result<TriggerDecl, WdlEr
     let mut enabled = true;
     let mut blackout_start = None;
     let mut blackout_end = None;
+    let mut catchup = None;
     for inner in pair.into_inner() {
         match inner.as_rule() {
             Rule::expr => schedule = Some(parse_expr(inner)?),
@@ -646,6 +751,7 @@ fn parse_cron_trigger(pair: Pair<Rule>, span: Span) -> Result<TriggerDecl, WdlEr
                         blackout_start = exprs.next().map(parse_expr).transpose()?;
                         blackout_end = exprs.next().map(parse_expr).transpose()?;
                     }
+                    Rule::trigger_catchup => catchup = Some(parse_trigger_catchup(option, span)?),
                     _ => {}
                 }
             }
@@ -659,12 +765,104 @@ fn parse_cron_trigger(pair: Pair<Rule>, span: Span) -> Result<TriggerDecl, WdlEr
             schedule,
             blackout_start,
             blackout_end,
+            catchup,
         },
         params,
         enabled,
         span,
         comments: CommentSet::default(),
     })
+}
+
+fn parse_trigger_catchup(pair: Pair<Rule>, span: Span) -> Result<CatchupDecl, WdlError> {
+    let mut policy = CatchupPolicy::FireOnce;
+    let mut grace_seconds = None;
+    let mut max_slots = None;
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::catchup_policy => {
+                policy = match inner.as_str() {
+                    "fire_all" => CatchupPolicy::FireAll,
+                    "skip" => CatchupPolicy::Skip,
+                    _ => CatchupPolicy::FireOnce,
+                };
+            }
+            Rule::catchup_option => {
+                let option = first_inner(inner)?;
+                match option.as_rule() {
+                    Rule::catchup_grace => {
+                        grace_seconds = Some(parse_duration(first_inner(option)?.as_str(), span)?);
+                    }
+                    Rule::catchup_max => {
+                        max_slots = Some(parse_slot_count(first_inner(option)?.as_str(), span)?);
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+    // an option that does not apply to the chosen policy is almost always a misunderstanding of
+    // which knob does what, and it would be silently ignored at runtime.
+    if grace_seconds.is_some() && policy != CatchupPolicy::Skip {
+        return Err(WdlError::syntax(
+            span,
+            "catchup `grace` only applies to `catchup skip`",
+        ));
+    }
+    if max_slots.is_some() && policy != CatchupPolicy::FireAll {
+        return Err(WdlError::syntax(
+            span,
+            "catchup `max` only applies to `catchup fire_all`",
+        ));
+    }
+    Ok(CatchupDecl {
+        policy,
+        grace_seconds,
+        max_slots,
+    })
+}
+
+fn parse_concurrency_decl(pair: Pair<Rule>) -> Result<ConcurrencyDecl, WdlError> {
+    let span = span_of(&pair);
+    let mut max_concurrent_runs = None;
+    let mut on_conflict = ConcurrencyPolicy::default();
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::number => {
+                max_concurrent_runs = Some(parse_slot_count(inner.as_str(), span)?);
+            }
+            Rule::concurrency_policy => {
+                on_conflict = match inner.as_str() {
+                    "allow" => ConcurrencyPolicy::Allow,
+                    "queue" => ConcurrencyPolicy::Queue,
+                    "cancel_previous" => ConcurrencyPolicy::CancelPrevious,
+                    _ => ConcurrencyPolicy::Skip,
+                };
+            }
+            _ => {}
+        }
+    }
+    let max_concurrent_runs = max_concurrent_runs
+        .ok_or_else(|| WdlError::syntax(span, "concurrency is missing a run limit"))?;
+    if max_concurrent_runs < 1 {
+        return Err(WdlError::syntax(
+            span,
+            "concurrency must be at least 1; omit the header for an unlimited workflow",
+        ));
+    }
+    Ok(ConcurrencyDecl {
+        max_concurrent_runs,
+        on_conflict,
+        span,
+        comments: CommentSet::default(),
+    })
+}
+
+/// a whole positive count from a `number` token, which the grammar also lets carry a fraction.
+fn parse_slot_count(raw: &str, span: Span) -> Result<i64, WdlError> {
+    raw.parse::<i64>()
+        .map_err(|_| WdlError::syntax(span, format!("expected a whole number, got `{raw}`")))
 }
 
 fn parse_chained_trigger(pair: Pair<Rule>, span: Span) -> Result<TriggerDecl, WdlError> {

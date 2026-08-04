@@ -150,6 +150,7 @@ fn delivery(target: ActionTarget) -> BrokerDelivery {
         target,
         trace_id: Uuid::nil(),
         trace_context: Default::default(),
+        notification_delivery_id: None,
     };
     BrokerDelivery::from(BrokerMessage {
         command,

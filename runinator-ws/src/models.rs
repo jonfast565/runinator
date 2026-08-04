@@ -2,12 +2,13 @@ use chrono::{DateTime, Utc};
 use runinator_models::value::Value;
 use runinator_models::{
     bundles::{PackImportResult, ProviderBundle, SecretBundle},
-    notifications::Notification,
+    notifications::{Notification, NotificationDelivery, NotificationPolicy},
     pipelines::{Pipeline, PipelineRun, PipelineRunDetail, PipelineTrigger},
     providers::ProviderMetadata,
     provisioning::{NodeBackendsResponse, ProvisionedGroup},
     replicas::{ReplicaListResponse, ReplicaProviderRegistration, ReplicaRecord, ReplicaStatus},
     runs::{RunArtifact, RunChunk, RunStatus, RunSummary},
+    schedules::{BackfillResponse, FreezeWindow},
     settings::SettingKind,
     telemetry::ReplicaSampleSeries,
     web::TaskResponse,
@@ -128,6 +129,12 @@ pub enum ApiResponse {
     JsonList(Vec<Value>),
     Notification(Notification),
     NotificationList(Vec<Notification>),
+    NotificationPolicy(NotificationPolicy),
+    NotificationPolicyList(Vec<NotificationPolicy>),
+    NotificationDeliveryList(Vec<NotificationDelivery>),
+    FreezeWindow(FreezeWindow),
+    FreezeWindowList(Vec<FreezeWindow>),
+    Backfill(BackfillResponse),
 }
 
 #[derive(Debug, Deserialize)]

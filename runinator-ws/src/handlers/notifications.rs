@@ -7,13 +7,21 @@ use axum::{
     http::StatusCode,
 };
 use runinator_database::interfaces::DatabaseImpl;
-use runinator_models::{notifications::NewNotification, web::TaskResponse};
+use runinator_models::{
+    auth::AuthContext,
+    capabilities::Capability,
+    notifications::{NewNotification, NewNotificationPolicy},
+    web::TaskResponse,
+};
 use serde::Deserialize;
 
+use crate::authz;
 use crate::events::{AppEvent, AppEventKind, EventSender, emit};
 use crate::models::ApiResponse;
 use crate::repository;
 use crate::responses::{api_error, not_found};
+
+type Reply = (StatusCode, Json<ApiResponse>);
 
 #[derive(Deserialize, Default)]
 pub(crate) struct NotificationsListQuery {
@@ -110,6 +118,98 @@ pub(crate) async fn delete_notification<T: DatabaseImpl>(
             )
         }
         Ok(false) => not_found(format!("Notification {notification_id} not found")),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+#[derive(Deserialize, Default)]
+pub(crate) struct NotificationPoliciesQuery {
+    /// narrow to one workflow's own policies; omit for every policy including the global ones.
+    #[serde(default)]
+    pub(crate) workflow_id: Option<Uuid>,
+}
+
+pub(crate) async fn list_notification_policies<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Query(query): Query<NotificationPoliciesQuery>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match repository::fetch_notification_policies(db.as_ref(), query.workflow_id).await {
+        Ok(policies) => (
+            StatusCode::OK,
+            Json(ApiResponse::NotificationPolicyList(policies)),
+        ),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+pub(crate) async fn create_notification_policy<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+    Json(policy): Json<NewNotificationPolicy>,
+) -> Reply {
+    if let Err(reply) = authz::require_capability(&ctx, Capability::NotificationsManage) {
+        return reply;
+    }
+    match repository::create_notification_policy(db.as_ref(), &policy).await {
+        Ok(policy) => (
+            StatusCode::CREATED,
+            Json(ApiResponse::NotificationPolicy(policy)),
+        ),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+pub(crate) async fn update_notification_policy<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(policy_id): Path<Uuid>,
+    Json(policy): Json<NewNotificationPolicy>,
+) -> Reply {
+    if let Err(reply) = authz::require_capability(&ctx, Capability::NotificationsManage) {
+        return reply;
+    }
+    match repository::update_notification_policy(db.as_ref(), policy_id, &policy).await {
+        Ok(Some(policy)) => (
+            StatusCode::OK,
+            Json(ApiResponse::NotificationPolicy(policy)),
+        ),
+        Ok(None) => not_found(format!("Notification policy {policy_id} not found")),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+pub(crate) async fn delete_notification_policy<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(policy_id): Path<Uuid>,
+) -> Reply {
+    if let Err(reply) = authz::require_capability(&ctx, Capability::NotificationsManage) {
+        return reply;
+    }
+    match repository::delete_notification_policy(db.as_ref(), policy_id).await {
+        Ok(true) => (
+            StatusCode::OK,
+            Json(ApiResponse::TaskResponse(TaskResponse {
+                success: true,
+                message: "Notification policy deleted".to_string(),
+            })),
+        ),
+        Ok(false) => not_found(format!("Notification policy {policy_id} not found")),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+/// the external-channel delivery attempts for one notification, so an operator can see whether the
+/// alert actually reached slack/email rather than only that it was raised.
+pub(crate) async fn list_notification_deliveries<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Path(notification_id): Path<Uuid>,
+) -> (StatusCode, Json<ApiResponse>) {
+    match repository::fetch_notification_deliveries(db.as_ref(), notification_id).await {
+        Ok(deliveries) => (
+            StatusCode::OK,
+            Json(ApiResponse::NotificationDeliveryList(deliveries)),
+        ),
         Err(err) => api_error(err.to_string()),
     }
 }

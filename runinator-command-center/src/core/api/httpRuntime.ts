@@ -529,6 +529,57 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     method: "DELETE",
     path: (args) => `notifications/${escape(arg(args, "notificationId"))}`,
   },
+  fetch_notification_deliveries: {
+    method: "GET",
+    path: (args) => `notifications/${escape(arg(args, "notificationId"))}/deliveries`,
+  },
+  fetch_notification_policies: {
+    method: "GET",
+    path: (args) => {
+      const workflowId = argOpt(args, "workflowId");
+      return workflowId
+        ? `notification_policies?workflow_id=${escape(workflowId as string)}`
+        : "notification_policies";
+    },
+  },
+  create_notification_policy: {
+    method: "POST",
+    path: () => "notification_policies",
+    body: (args) => arg(args, "policy") as object,
+  },
+  update_notification_policy: {
+    method: "PATCH",
+    path: (args) => `notification_policies/${escape(arg(args, "policyId"))}`,
+    body: (args) => arg(args, "policy") as object,
+  },
+  delete_notification_policy: {
+    method: "DELETE",
+    path: (args) => `notification_policies/${escape(arg(args, "policyId"))}`,
+  },
+  fetch_freeze_windows: {
+    method: "GET",
+    path: (args) =>
+      argOpt(args, "activeOnly") ? "freeze_windows?active=true" : "freeze_windows",
+  },
+  create_freeze_window: {
+    method: "POST",
+    path: () => "freeze_windows",
+    body: (args) => arg(args, "window") as object,
+  },
+  update_freeze_window: {
+    method: "PATCH",
+    path: (args) => `freeze_windows/${escape(arg(args, "windowId"))}`,
+    body: (args) => arg(args, "window") as object,
+  },
+  delete_freeze_window: {
+    method: "DELETE",
+    path: (args) => `freeze_windows/${escape(arg(args, "windowId"))}`,
+  },
+  backfill_workflow_trigger: {
+    method: "POST",
+    path: (args) => `workflow_triggers/${escape(arg(args, "triggerId"))}/backfill`,
+    body: (args) => arg(args, "request") as object,
+  },
   delete_artifact: {
     method: "DELETE",
     path: (args) => `artifacts/${escape(arg(args, "artifactId"))}`,

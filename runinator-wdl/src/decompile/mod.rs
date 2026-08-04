@@ -121,6 +121,8 @@ pub fn decompile_definition(
     decompiler.indent += 1;
     decompiler.emit_params(&definition.input_type)?;
     decompiler.emit_triggers(&read_triggers(&graph.metadata))?;
+    decompiler.emit_notifications(&read_notifications(&graph.metadata))?;
+    decompiler.emit_concurrency(&graph.metadata)?;
     decompiler.emit_watches(&read_watches(&graph.metadata))?;
     decompiler.emit_correlation(&graph.metadata)?;
     decompiler.emit_type_decls(&read_type_decls(&graph.metadata))?;
@@ -306,6 +308,15 @@ fn read_input_types(metadata: &Value) -> HashMap<String, String> {
 fn read_triggers(metadata: &Value) -> Vec<Value> {
     metadata
         .pointer("/triggers")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// recover header `notify` policies from runtime metadata at `/notifications`.
+fn read_notifications(metadata: &Value) -> Vec<Value> {
+    metadata
+        .pointer("/notifications")
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default()
@@ -568,9 +579,101 @@ impl<'a> Decompiler<'a> {
                 ) {
                     text.push_str(&format!(" blackout {} to {}", quote(start), quote(end)));
                 }
+                if let Some(catchup) = trigger.get("catchup") {
+                    // `fire_once` is the runtime default, so a spec carrying it explicitly still
+                    // re-emits as `catchup fire_once` rather than vanishing.
+                    let policy = catchup
+                        .get("policy")
+                        .and_then(Value::as_str)
+                        .unwrap_or("fire_once");
+                    text.push_str(&format!(" catchup {policy}"));
+                    if let Some(grace) = catchup.get("grace_seconds").and_then(Value::as_i64) {
+                        text.push_str(&format!(" grace {}", crate::format::format_duration(grace)));
+                    }
+                    if let Some(max_slots) = catchup.get("max_slots").and_then(Value::as_i64) {
+                        text.push_str(&format!(" max {max_slots}"));
+                    }
+                }
             }
             self.line(&text);
         }
+        self.out.push('\n');
+        Ok(())
+    }
+
+    /// emit header `notify on ...` policies recovered from runtime metadata.
+    fn emit_notifications(&mut self, policies: &[Value]) -> Result<(), WdlError> {
+        if policies.is_empty() {
+            return Ok(());
+        }
+        for policy in policies {
+            let event = match policy.get("event").and_then(Value::as_str) {
+                Some("node_retry_exhausted") => "retry_exhausted",
+                Some("run_sla_breached") => "sla",
+                Some("run_parked") => "parked",
+                _ => "failure",
+            };
+            let channel = match policy.get("channel").and_then(Value::as_str) {
+                Some("email") => "email",
+                Some("in_app") => "app",
+                _ => "slack",
+            };
+            let target = policy
+                .get("target")
+                .and_then(Value::as_str)
+                .ok_or_else(|| WdlError::Decompile("notify policy missing target".into()))?;
+            let mut text = format!("notify on {event} -> {channel} {}", quote(target));
+            if let Some(threshold) = policy.get("threshold_seconds").and_then(Value::as_i64) {
+                text.push_str(&format!(
+                    " after {}",
+                    crate::format::format_duration(threshold)
+                ));
+            }
+            // `warning` is the surface default, so re-emitting it would not round-trip.
+            if let Some(severity) = policy
+                .get("severity")
+                .and_then(Value::as_str)
+                .filter(|severity| *severity != "warning")
+            {
+                text.push_str(&format!(" severity {severity}"));
+            }
+            let configuration = policy.get("configuration");
+            let has_configuration = configuration
+                .and_then(Value::as_object)
+                .is_some_and(|object| !object.is_empty());
+            if has_configuration {
+                let rendered = self.expr(configuration.unwrap_or(&Value::Null))?;
+                text.push_str(&format!(" with {rendered}"));
+            }
+            if policy.get("enabled").and_then(Value::as_bool) == Some(false) {
+                text.push_str(" disabled");
+            }
+            self.line(&text);
+        }
+        self.out.push('\n');
+        Ok(())
+    }
+
+    /// emit the header `concurrency <n> on_conflict <policy>` cap recovered from runtime metadata.
+    fn emit_concurrency(&mut self, metadata: &Value) -> Result<(), WdlError> {
+        let Some(concurrency) = metadata.pointer("/concurrency") else {
+            return Ok(());
+        };
+        let Some(max_concurrent_runs) = concurrency
+            .get("max_concurrent_runs")
+            .and_then(Value::as_i64)
+            .filter(|max| *max > 0)
+        else {
+            // an unlimited cap is what no header at all means, so emitting one would be noise.
+            return Ok(());
+        };
+        let policy = concurrency
+            .get("on_conflict")
+            .and_then(Value::as_str)
+            .unwrap_or("skip");
+        self.line(&format!(
+            "concurrency {max_concurrent_runs} on_conflict {policy}"
+        ));
         self.out.push('\n');
         Ok(())
     }

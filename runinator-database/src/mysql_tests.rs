@@ -106,6 +106,7 @@ fn sample_action(workflow_run_id: Uuid, workflow_node_run_id: Uuid) -> ActionCom
         target: Default::default(),
         trace_id: Uuid::nil(),
         trace_context: Default::default(),
+        notification_delivery_id: None,
     }
 }
 
@@ -204,6 +205,7 @@ async fn mariadb_full_lifecycle() {
             message: None,
         },
         trace_id: Uuid::nil(),
+        notification_delivery_id: None,
     };
     assert!(
         db.apply_workflow_result_event(&event).await.unwrap(),

@@ -6,6 +6,7 @@ use std::{
 };
 use uuid::Uuid;
 
+use chrono::Utc;
 use runinator_api::{AsyncApiClient, StaticLocator};
 use runinator_models::json;
 use runinator_models::value::{Map, Value};
@@ -14,6 +15,7 @@ use runinator_models::{
     providers::ProviderMetadata,
     provisioning::{NodeSpec, ProvisionedGroup, ScaleNodesRequest, StopNodeRequest},
     replicas::ReplicaKind,
+    schedules::{BackfillRequest, FreezeWindow, NewFreezeWindow},
     settings::SettingKind,
     workflows::{
         WorkflowBundle, WorkflowDefinition, WorkflowNodeRun, WorkflowRun, WorkflowStatus,
@@ -26,8 +28,8 @@ use runinator_pack::source as pack;
 
 use crate::{
     cli::{
-        ApprovalCommands, ArtifactCommands, Cli, CliTyping, Commands, NodeCommands, OrgCommands,
-        ProviderCommands, RunCommands, SettingsCommands, TriggerCommands, WdlCommands,
+        ApprovalCommands, ArtifactCommands, Cli, CliTyping, Commands, FreezeCommands, NodeCommands,
+        OrgCommands, ProviderCommands, RunCommands, SettingsCommands, TriggerCommands, WdlCommands,
         WorkflowCommands,
     },
     output, params,
@@ -70,6 +72,7 @@ pub async fn run(client: &Client, cli: &Cli) -> Result<()> {
         Commands::Runs { command } => runs(client, command, cli.json).await,
         Commands::Approvals { command } => approvals(client, command, cli.json).await,
         Commands::Triggers { command } => triggers(client, command, cli.json).await,
+        Commands::Freeze { command } => freeze(client, command, cli.json).await,
         Commands::Providers { command } => providers(client, command, cli.json).await,
         Commands::Artifacts { command } => artifacts(client, command, cli.json).await,
         Commands::Wdl { command } => wdl(command, cli.json),
@@ -1164,6 +1167,42 @@ async fn triggers(client: &Client, command: &TriggerCommands, json_output: bool)
             }
             print_triggers(&triggers);
         }
+        TriggerCommands::Backfill {
+            trigger_id,
+            from,
+            to,
+            limit,
+            dry_run,
+        } => {
+            let request = BackfillRequest {
+                from: *from,
+                to: to.unwrap_or_else(Utc::now),
+                limit: *limit,
+                dry_run: *dry_run,
+            };
+            let response = client
+                .backfill_workflow_trigger(*trigger_id, &request)
+                .await?;
+            if json_output {
+                return output::json(&response);
+            }
+            let verb = match response.dry_run {
+                true => "would fire",
+                false => "fired",
+            };
+            println!(
+                "{verb} {} slot(s); {} already fired{}",
+                response.fired,
+                response.already_fired,
+                match response.truncated {
+                    true => " (range truncated by limit)",
+                    false => "",
+                }
+            );
+            for slot in &response.slots {
+                println!("  {slot}");
+            }
+        }
         TriggerCommands::Run {
             trigger_id,
             params: cli_params,
@@ -1181,6 +1220,75 @@ async fn triggers(client: &Client, command: &TriggerCommands, json_output: bool)
         }
     }
     Ok(())
+}
+
+async fn freeze(client: &Client, command: &FreezeCommands, json_output: bool) -> Result<()> {
+    match command {
+        FreezeCommands::List { active } => {
+            let windows = client.fetch_freeze_windows(*active).await?;
+            if json_output {
+                return output::json(&windows);
+            }
+            print_freeze_windows(&windows);
+        }
+        FreezeCommands::Create {
+            name,
+            from,
+            to,
+            workflow_id,
+            org_id,
+            reason,
+        } => {
+            let window = client
+                .create_freeze_window(&NewFreezeWindow {
+                    org_id: *org_id,
+                    workflow_id: *workflow_id,
+                    name: name.clone(),
+                    reason: reason.clone(),
+                    starts_at: *from,
+                    ends_at: *to,
+                    enabled: true,
+                })
+                .await?;
+            if json_output {
+                return output::json(&window);
+            }
+            print_freeze_windows(std::slice::from_ref(&window));
+        }
+        FreezeCommands::Delete { window_id } => {
+            let response = client.delete_freeze_window(*window_id).await?;
+            if json_output {
+                return output::json(&response);
+            }
+            println!("{}", response.message);
+        }
+    }
+    Ok(())
+}
+
+fn print_freeze_windows(windows: &[FreezeWindow]) {
+    if windows.is_empty() {
+        println!("No freeze windows.");
+        return;
+    }
+    for window in windows {
+        let scope = match (window.workflow_id, window.org_id) {
+            (Some(workflow_id), _) => format!("workflow {workflow_id}"),
+            (None, Some(org_id)) => format!("org {org_id}"),
+            (None, None) => "platform".to_string(),
+        };
+        let state = match window.enabled {
+            true => "enabled",
+            false => "disabled",
+        };
+        println!(
+            "{}  {}  {} -> {}  [{scope}, {state}]",
+            window.id, window.name, window.starts_at, window.ends_at
+        );
+        if let Some(reason) = &window.reason {
+            println!("    {reason}");
+        }
+    }
 }
 
 async fn providers(client: &Client, command: &ProviderCommands, json_output: bool) -> Result<()> {

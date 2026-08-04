@@ -9,7 +9,10 @@ use runinator_models::{
     auth::{ApiKey, ApiKeyRecord, AuthContext, AuthSession, Grant, LocalCredential, Team, User},
     billing::{OrgQuota, OrgResourceGroup, UsageSample},
     errors::SendableError,
-    notifications::{NewNotification, Notification},
+    notifications::{
+        NewNotification, NewNotificationPolicy, Notification, NotificationChannel,
+        NotificationDelivery, NotificationDeliveryStatus, NotificationEvent, NotificationPolicy,
+    },
     orchestration::{
         NewOrchestrationEvent, NodeTransition, NodeTransitionStat, OrchestrationEvent,
         ReadyNodeRecord,
@@ -22,6 +25,9 @@ use runinator_models::{
         ReplicaStatus, WorkflowRunProvenance,
     },
     runs::{NewRunArtifact, NewRunChunk, RunArtifact, RunChunk, RunStatus, RunSummary},
+    schedules::{
+        BackfillRequest, BackfillResponse, FreezeWindow, NewFreezeWindow, TriggerFiringBatch,
+    },
     settings::{SettingKind, SettingRecord},
     telemetry::ReplicaSample,
     workflows::{
@@ -353,13 +359,51 @@ pub trait DatabaseImpl: Send + Sync + 'static {
         next_execution: Option<DateTime<Utc>>,
     ) -> impl Future<Output = Result<(), SendableError>> + Send;
 
-    /// Atomically fire due cron triggers and return the workflow runs created by this claim.
+    /// Atomically fire due cron triggers, honouring each workflow's concurrency policy, each
+    /// trigger's catch-up policy, and any active freeze window. Returns the runs created plus the
+    /// runs a `cancel_previous` policy set terminal, which the caller still has to tell workers about.
     fn claim_due_workflow_trigger_firings(
         &self,
         scheduler_id: String,
         now: DateTime<Utc>,
         limit: i64,
-    ) -> impl Future<Output = Result<Vec<WorkflowRun>, SendableError>> + Send;
+    ) -> impl Future<Output = Result<TriggerFiringBatch<WorkflowRun>, SendableError>> + Send;
+
+    /// Replay the cron slots of one trigger across a past time range. Slots that already have a
+    /// firing recorded are left alone, so a backfill can never double-run a slot the loop fired.
+    fn backfill_workflow_trigger(
+        &self,
+        trigger_id: Uuid,
+        request: &BackfillRequest,
+    ) -> impl Future<Output = Result<(BackfillResponse, Vec<WorkflowRun>), SendableError>> + Send;
+
+    /// List freeze windows, optionally narrowed to one org's windows plus the platform-wide ones.
+    fn fetch_freeze_windows(
+        &self,
+        org_id: Option<Uuid>,
+    ) -> impl Future<Output = Result<Vec<FreezeWindow>, SendableError>> + Send;
+
+    /// The freeze windows in effect at `now`, used to explain why a schedule is not firing.
+    fn fetch_active_freeze_windows(
+        &self,
+        now: DateTime<Utc>,
+    ) -> impl Future<Output = Result<Vec<FreezeWindow>, SendableError>> + Send;
+
+    fn create_freeze_window(
+        &self,
+        window: &NewFreezeWindow,
+    ) -> impl Future<Output = Result<FreezeWindow, SendableError>> + Send;
+
+    fn update_freeze_window(
+        &self,
+        window_id: Uuid,
+        window: &NewFreezeWindow,
+    ) -> impl Future<Output = Result<Option<FreezeWindow>, SendableError>> + Send;
+
+    fn delete_freeze_window(
+        &self,
+        window_id: Uuid,
+    ) -> impl Future<Output = Result<bool, SendableError>> + Send;
 
     /// Record a one-off trigger firing keyed on `(trigger_id, fire_key)`, returning `true` only when
     /// this call inserted the row. used by workflow-to-workflow chaining to start a target at most
@@ -953,6 +997,88 @@ pub trait DatabaseImpl: Send + Sync + 'static {
         &self,
         notification_id: Uuid,
     ) -> impl Future<Output = Result<bool, SendableError>> + Send;
+
+    /// Persist a notification only if its dedupe key is unclaimed; `None` means one already exists.
+    fn create_notification_if_absent(
+        &self,
+        notification: &NewNotification,
+    ) -> impl Future<Output = Result<Option<Notification>, SendableError>> + Send;
+
+    /// List notification policies, optionally narrowed to one workflow's own policies.
+    fn fetch_notification_policies(
+        &self,
+        workflow_id: Option<Uuid>,
+    ) -> impl Future<Output = Result<Vec<NotificationPolicy>, SendableError>> + Send;
+
+    /// Fetch the enabled policies that apply to a workflow for one event: the workflow's own plus
+    /// the global (`workflow_id IS NULL`) ones.
+    fn fetch_matching_notification_policies(
+        &self,
+        event: NotificationEvent,
+        workflow_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<NotificationPolicy>, SendableError>> + Send;
+
+    /// Fetch every enabled policy for a duration-based event, across all workflows.
+    fn fetch_notification_policies_by_event(
+        &self,
+        event: NotificationEvent,
+    ) -> impl Future<Output = Result<Vec<NotificationPolicy>, SendableError>> + Send;
+
+    fn create_notification_policy(
+        &self,
+        policy: &NewNotificationPolicy,
+    ) -> impl Future<Output = Result<NotificationPolicy, SendableError>> + Send;
+
+    fn update_notification_policy(
+        &self,
+        policy_id: Uuid,
+        policy: &NewNotificationPolicy,
+    ) -> impl Future<Output = Result<Option<NotificationPolicy>, SendableError>> + Send;
+
+    fn delete_notification_policy(
+        &self,
+        policy_id: Uuid,
+    ) -> impl Future<Output = Result<bool, SendableError>> + Send;
+
+    /// Replace a workflow's pack-managed policies wholesale, the way managed triggers reconcile:
+    /// policies carrying `managed_by` are deleted and re-created, hand-authored ones are untouched.
+    fn replace_managed_notification_policies(
+        &self,
+        workflow_id: Uuid,
+        managed_by: String,
+        policies: Vec<NewNotificationPolicy>,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
+
+    /// Record an external-channel delivery attributed to a notification.
+    fn create_notification_delivery(
+        &self,
+        notification_id: Uuid,
+        policy_id: Option<Uuid>,
+        channel: NotificationChannel,
+        target: Option<String>,
+    ) -> impl Future<Output = Result<NotificationDelivery, SendableError>> + Send;
+
+    /// Settle a delivery after the worker reported back.
+    fn mark_notification_delivery(
+        &self,
+        delivery_id: Uuid,
+        status: NotificationDeliveryStatus,
+        error: Option<String>,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
+
+    /// List deliveries for a notification, newest first.
+    fn fetch_notification_deliveries(
+        &self,
+        notification_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<NotificationDelivery>, SendableError>> + Send;
+
+    /// Fetch runs that are still open (non-terminal) and were created before `cutoff`, for the
+    /// duration-based notification scanner.
+    fn fetch_open_workflow_runs_created_before(
+        &self,
+        cutoff: DateTime<Utc>,
+        limit: i64,
+    ) -> impl Future<Output = Result<Vec<WorkflowRun>, SendableError>> + Send;
 
     /// Delete a run artifact row; returns true when a row was removed.
     fn delete_artifact(

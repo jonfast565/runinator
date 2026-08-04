@@ -196,6 +196,7 @@ pub async fn run_usage_sampler<T: DatabaseImpl>(db: Arc<T>, shutdown: Arc<Notify
 /// periodically turn due workflow triggers into runs (formerly a waker loop, now in-process).
 pub async fn run_trigger_loop<T: DatabaseImpl>(
     db: Arc<T>,
+    broker: Arc<dyn Broker>,
     events: EventSender,
     instance_id: String,
     shutdown: Arc<Notify>,
@@ -209,12 +210,31 @@ pub async fn run_trigger_loop<T: DatabaseImpl>(
         )
         .await
         {
-            Ok(runs) => {
+            Ok(batch) => {
+                let runs = &batch.runs;
                 stability::triggers_fired(runs.len() as u64);
                 if !runs.is_empty() {
                     info!(count = runs.len(), "fired due workflow trigger(s)");
                 }
-                for run in &runs {
+                // a slot that deliberately produced no run is still worth a line: "the schedule
+                // stopped" and "the policy declined" look identical from the run list alone.
+                if batch.declined_any() {
+                    info!(
+                        concurrency_skipped = batch.concurrency_skipped,
+                        concurrency_deferred = batch.concurrency_deferred,
+                        catchup_skipped = batch.catchup_skipped,
+                        "declined due workflow trigger slot(s) by schedule policy"
+                    );
+                }
+                // a `cancel_previous` policy already settled the superseded runs durably; the
+                // workers holding their in-flight actions still have to be told.
+                for run_id in &batch.canceled_run_ids {
+                    repository::publish_run_cancel_commands(db.as_ref(), broker.as_ref(), *run_id)
+                        .await;
+                    let org_id = repository::org_id_for_workflow_run(db.as_ref(), *run_id).await;
+                    emit_workflow_run(&events, *run_id, org_id);
+                }
+                for run in runs {
                     let org_id = repository::org_id_for_workflow_run(db.as_ref(), run.id).await;
                     emit_workflow_run(&events, run.id, org_id);
                 }
@@ -472,6 +492,12 @@ async fn apply_ingress<T: DatabaseImpl>(
                         let pipeline_org =
                             repository::org_id_for_pipeline_run(db, pipeline_run_id).await;
                         emit_pipeline_run(events, pipeline_run_id, pipeline_org);
+                    }
+                    // the drive is where a run reaches a terminal state, so it is also where the
+                    // failure-alerting policies are evaluated. best-effort: alerting never fails the
+                    // drive that produced the run it is reporting on.
+                    if run.status.is_terminal() {
+                        crate::notifications::on_run_terminal(db, events, run_id).await;
                     }
                 }
                 // drive may have enqueued the next ready node(s) and/or action-dispatch outbox rows.

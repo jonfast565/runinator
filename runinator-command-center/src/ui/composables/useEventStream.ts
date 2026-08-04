@@ -3,6 +3,7 @@ import { endpointForTab, isResourceTab, useAppStore } from "../../ui/adapters/pi
 import { useArtifactsStore } from "../../ui/adapters/pinia/artifacts";
 import { useAuthStore } from "../../ui/adapters/pinia/auth";
 import { useNotificationsStore } from "../../ui/adapters/pinia/notifications";
+import { useSchedulesStore } from "../../ui/adapters/pinia/schedules";
 import { usePipelineRunsStore } from "../../ui/adapters/pinia/pipeline-runs";
 import { useResourcesStore } from "../../ui/adapters/pinia/resources";
 import { useWorkflowsStore } from "../../ui/adapters/pinia/workflows";
@@ -15,6 +16,7 @@ export function useEventStream() {
   const resources = useResourcesStore();
   const artifacts = useArtifactsStore();
   const notifications = useNotificationsStore();
+  const schedules = useSchedulesStore();
   const pipelineRuns = usePipelineRunsStore();
   const auth = useAuthStore();
 
@@ -86,6 +88,11 @@ export function useEventStream() {
     },
     refreshNotifications: () => {
       void notifications.refreshNotifications();
+    },
+    refreshSchedulesIfActive: () => {
+      if (app.activeTab === "Schedules") {
+        void schedules.refreshFreezeWindows();
+      }
     },
     refreshPipelineRunsIfActive: () => {
       if (app.activeTab === "PipelineRuns") {

@@ -8,6 +8,7 @@
 pub mod audit;
 pub mod errors;
 pub mod events;
+pub mod notifications;
 pub mod repository;
 pub mod repository_runs;
 pub mod repository_state;

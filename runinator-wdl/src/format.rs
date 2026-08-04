@@ -154,9 +154,37 @@ impl Formatter {
             self.append_trailing(&trigger.comments);
         }
         if !workflow.triggers.is_empty()
-            && (!workflow.aliases.is_empty() || !workflow.body.is_empty())
+            && (!workflow.notifications.is_empty()
+                || !workflow.aliases.is_empty()
+                || !workflow.body.is_empty())
         {
             self.out.push('\n');
+        }
+        // preserve header `notify on ...` alerting policies.
+        for policy in &workflow.notifications {
+            self.emit_leading(&policy.comments.leading);
+            self.notify_decl(policy);
+            self.append_trailing(&policy.comments);
+        }
+        if !workflow.notifications.is_empty()
+            && (workflow.concurrency.is_some()
+                || !workflow.aliases.is_empty()
+                || !workflow.body.is_empty())
+        {
+            self.out.push('\n');
+        }
+        // preserve the header `concurrency <n> on_conflict <policy>` cap.
+        if let Some(concurrency) = &workflow.concurrency {
+            self.emit_leading(&concurrency.comments.leading);
+            self.concurrency_decl(concurrency);
+            self.append_trailing(&concurrency.comments);
+            if !workflow.watches.is_empty()
+                || !workflow.type_decls.is_empty()
+                || !workflow.aliases.is_empty()
+                || !workflow.body.is_empty()
+            {
+                self.out.push('\n');
+            }
         }
         // preserve header `watch <cond> -> <target>` cancellation guards.
         for watch in &workflow.watches {
@@ -283,6 +311,53 @@ impl Formatter {
                 format_expr(start),
                 format_expr(end)
             ));
+        }
+        if let TriggerDeclKind::Cron {
+            catchup: Some(catchup),
+            ..
+        } = &trigger.kind
+        {
+            text.push_str(&format!(" catchup {}", catchup.policy.keyword()));
+            if let Some(grace) = catchup.grace_seconds {
+                text.push_str(&format!(" grace {}", format_duration(grace)));
+            }
+            if let Some(max_slots) = catchup.max_slots {
+                text.push_str(&format!(" max {max_slots}"));
+            }
+        }
+        self.line(&text);
+    }
+
+    fn concurrency_decl(&mut self, concurrency: &ConcurrencyDecl) {
+        // the policy is always rendered: `concurrency 1` alone reads as a cap with no stated
+        // behavior, and which one it defaults to is exactly what a reader needs to know.
+        self.line(&format!(
+            "concurrency {} on_conflict {}",
+            concurrency.max_concurrent_runs,
+            concurrency.on_conflict.keyword()
+        ));
+    }
+
+    fn notify_decl(&mut self, policy: &NotifyDecl) {
+        let mut text = format!(
+            "notify on {} -> {} {}",
+            policy.event.keyword(),
+            policy.channel.keyword(),
+            format_expr(&policy.target)
+        );
+        if let Some(after) = policy.after_seconds {
+            text.push_str(&format!(" after {}", format_duration(after)));
+        }
+        // `warning` is the parse-time default, so re-emitting it would not round-trip idempotently
+        // for a source that omitted it.
+        if let Some(severity) = policy.severity.as_ref().filter(|s| s.as_str() != "warning") {
+            text.push_str(&format!(" severity {severity}"));
+        }
+        if let Some(configuration) = &policy.configuration {
+            text.push_str(&format!(" with {}", format_expr(configuration)));
+        }
+        if !policy.enabled {
+            text.push_str(" disabled");
         }
         self.line(&text);
     }
@@ -1225,6 +1300,20 @@ pub(crate) fn format_fn_signature(function: &FunctionDef) -> String {
         .map(|ty| format!(" -> {}", format_type(ty)))
         .unwrap_or_default();
     format!("({params}){ret}")
+}
+
+/// render seconds back as a `duration` literal, using the largest unit that divides exactly.
+///
+/// the grammar's `duration` is `<digits><s|m|h|d>`, so every parsed value is an exact multiple of
+/// its unit and this is the inverse of `parse_duration` up to unit normalization (`60m` -> `1h`).
+/// exactness matters: emitting a non-dividing unit would round and silently change the threshold.
+pub(crate) fn format_duration(seconds: i64) -> String {
+    for (unit, size) in [("d", 86_400), ("h", 3_600), ("m", 60)] {
+        if seconds >= size && seconds % size == 0 {
+            return format!("{}{unit}", seconds / size);
+        }
+    }
+    format!("{seconds}s")
 }
 
 fn format_expr(expr: &Expr) -> String {

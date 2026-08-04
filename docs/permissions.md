@@ -44,6 +44,8 @@ synthetic platform admin, so nothing is gated.
 | `orgs:manage` | platform-wide org administration (list all) | `handlers/orgs.rs` |
 | `billing:manage` | set organization billing quotas | `handlers/billing.rs` |
 | `settings:manage` | manage platform/admin settings | command center admin settings |
+| `notifications:manage` | create, update, and delete notification (failure-alerting) policies | `handlers/notifications.rs` |
+| `schedules:manage` | manage freeze windows and replay missed cron slots (trigger backfill) | `handlers/schedules.rs` |
 
 ### Organization capabilities (active-org admin, or platform admin)
 

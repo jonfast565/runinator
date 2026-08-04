@@ -74,6 +74,13 @@ export const navSections: NavSection[] = [
     items: [
       { tab: "Gates", label: "Gates", icon: "gate", searchPlaceholder: "Search gates" },
       {
+        tab: "Schedules",
+        label: "Schedules",
+        icon: "clock",
+        requires: "schedules:manage",
+        searchPlaceholder: "Search freeze windows",
+      },
+      {
         tab: "Configs",
         label: "Configs",
         icon: "settings",

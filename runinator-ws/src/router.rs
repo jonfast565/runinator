@@ -71,8 +71,10 @@ use crate::handlers::{
         release_workflow_node_run_executor, resolve_workflow_input, update_workflow_node_run,
     },
     notifications::{
-        create_notification, delete_notification, list_notifications, mark_all_notifications_read,
-        mark_notification_read,
+        create_notification, create_notification_policy, delete_notification,
+        delete_notification_policy, list_notification_deliveries, list_notification_policies,
+        list_notifications, mark_all_notifications_read, mark_notification_read,
+        update_notification_policy,
     },
     observability::{get_audit_log, get_dead_letters},
     orgs::{
@@ -99,6 +101,10 @@ use crate::handlers::{
         pause_workflow_run, process_ready_node, release_workflow_run_claim, rename_workflow_run,
         renew_workflow_run_claim, replay_workflow_run, resume_workflow_run, update_run,
         update_workflow_run,
+    },
+    schedules::{
+        backfill_workflow_trigger, create_freeze_window, delete_freeze_window, list_freeze_windows,
+        update_freeze_window,
     },
     supervisor::get_supervisor_status,
     triggers::{
@@ -391,6 +397,38 @@ pub fn build_router<T: DatabaseImpl>(
         .route(
             "/notifications/mark_all_read",
             post(mark_all_notifications_read::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/notifications/{id}/deliveries",
+            get(list_notification_deliveries::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/notification_policies",
+            get(list_notification_policies::<T>)
+                .post(create_notification_policy::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/notification_policies/{id}",
+            patch(update_notification_policy::<T>)
+                .delete(delete_notification_policy::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/freeze_windows",
+            get(list_freeze_windows::<T>)
+                .post(create_freeze_window::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/freeze_windows/{id}",
+            patch(update_freeze_window::<T>)
+                .delete(delete_freeze_window::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflow_triggers/{id}/backfill",
+            post(backfill_workflow_trigger::<T>).layer(Extension(pool.clone())),
         )
         .route(
             "/workflows/{id}/runs",

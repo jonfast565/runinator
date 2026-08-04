@@ -8,7 +8,10 @@ use runinator_models::{
     },
     billing::{OrgQuota, OrgResourceGroup, UsageSample},
     errors::SendableError,
-    notifications::Notification,
+    notifications::{
+        Notification, NotificationChannel, NotificationDelivery, NotificationDeliveryStatus,
+        NotificationEvent, NotificationPolicy, NotificationSeverity,
+    },
     orchestration::{OrchestrationEvent, ReadyNodeRecord},
     orgs::{OrgMembership, OrgRole, Organization},
     pipelines::{Pipeline, PipelineDefaults, PipelineRun, PipelineTrigger},
@@ -18,6 +21,7 @@ use runinator_models::{
         TriggerSourceKind,
     },
     runs::{RunArtifact, RunChunk, RunStatus, RunSummary},
+    schedules::FreezeWindow,
     settings::{SettingKind, SettingRecord},
     telemetry::ReplicaSample,
     types::RuninatorType,
@@ -936,6 +940,85 @@ macro_rules! notification_from_row {
 }
 
 row_mapper!(row_to_notification(row) -> Notification { notification_from_row!(row) });
+
+macro_rules! notification_policy_from_row {
+    ($row:expr) => {{
+        NotificationPolicy {
+            id: $row.get::<Uuid, _>("id"),
+            workflow_id: $row.get::<Option<Uuid>, _>("workflow_id"),
+            name: $row.get::<String, _>("name"),
+            // an unrecognized event/severity/channel means a newer writer or hand-edited row; fall
+            // back to the safest interpretation rather than dropping the policy entirely.
+            event: NotificationEvent::try_from($row.get::<String, _>("event").as_str())
+                .unwrap_or(NotificationEvent::RunFailed),
+            severity: NotificationSeverity::try_from($row.get::<String, _>("severity").as_str())
+                .unwrap_or(NotificationSeverity::Warning),
+            channel: NotificationChannel::try_from($row.get::<String, _>("channel").as_str())
+                .unwrap_or(NotificationChannel::InApp),
+            target: $row.get::<Option<String>, _>("target"),
+            threshold_seconds: $row.get::<Option<i64>, _>("threshold_seconds"),
+            enabled: $row.get("enabled"),
+            managed_by: $row.get::<Option<String>, _>("managed_by"),
+            configuration: parse_json($row.get::<String, _>("configuration")),
+            created_at: DateTime::<Utc>::from_timestamp($row.get::<i64, _>("created_at"), 0)
+                .unwrap_or_else(Utc::now),
+            updated_at: DateTime::<Utc>::from_timestamp($row.get::<i64, _>("updated_at"), 0)
+                .unwrap_or_else(Utc::now),
+        }
+    }};
+}
+
+row_mapper!(row_to_notification_policy(row) -> NotificationPolicy {
+    notification_policy_from_row!(row)
+});
+
+macro_rules! notification_delivery_from_row {
+    ($row:expr) => {{
+        NotificationDelivery {
+            id: $row.get::<Uuid, _>("id"),
+            notification_id: $row.get::<Uuid, _>("notification_id"),
+            policy_id: $row.get::<Option<Uuid>, _>("policy_id"),
+            channel: NotificationChannel::try_from($row.get::<String, _>("channel").as_str())
+                .unwrap_or(NotificationChannel::InApp),
+            target: $row.get::<Option<String>, _>("target"),
+            status: NotificationDeliveryStatus::try_from($row.get::<String, _>("status").as_str())
+                .unwrap_or(NotificationDeliveryStatus::Pending),
+            attempts: $row.get::<i64, _>("attempts"),
+            last_error: $row.get::<Option<String>, _>("last_error"),
+            created_at: DateTime::<Utc>::from_timestamp($row.get::<i64, _>("created_at"), 0)
+                .unwrap_or_else(Utc::now),
+            updated_at: DateTime::<Utc>::from_timestamp($row.get::<i64, _>("updated_at"), 0)
+                .unwrap_or_else(Utc::now),
+        }
+    }};
+}
+
+row_mapper!(row_to_notification_delivery(row) -> NotificationDelivery {
+    notification_delivery_from_row!(row)
+});
+
+macro_rules! freeze_window_from_row {
+    ($row:expr) => {{
+        FreezeWindow {
+            id: $row.get::<Uuid, _>("id"),
+            org_id: $row.get::<Option<Uuid>, _>("org_id"),
+            workflow_id: $row.get::<Option<Uuid>, _>("workflow_id"),
+            name: $row.get::<String, _>("name"),
+            reason: $row.get::<Option<String>, _>("reason"),
+            starts_at: DateTime::<Utc>::from_timestamp($row.get::<i64, _>("starts_at"), 0)
+                .unwrap_or_else(Utc::now),
+            ends_at: DateTime::<Utc>::from_timestamp($row.get::<i64, _>("ends_at"), 0)
+                .unwrap_or_else(Utc::now),
+            enabled: $row.get("enabled"),
+            created_at: DateTime::<Utc>::from_timestamp($row.get::<i64, _>("created_at"), 0)
+                .unwrap_or_else(Utc::now),
+            updated_at: DateTime::<Utc>::from_timestamp($row.get::<i64, _>("updated_at"), 0)
+                .unwrap_or_else(Utc::now),
+        }
+    }};
+}
+
+row_mapper!(row_to_freeze_window(row) -> FreezeWindow { freeze_window_from_row!(row) });
 
 #[cfg(test)]
 #[path = "mappers_tests.rs"]

@@ -7,13 +7,20 @@ import type {
   CredentialSummary,
   CredentialDetail,
   DevPackApplyResult,
+  BackfillRequest,
+  BackfillResponse,
   DevPackInspectResult,
   DevPackTextFile,
+  FreezeWindow,
   GateRecord,
   Grant,
   NodeTransition,
   NodeTransitionStat,
+  NewFreezeWindow,
+  NewNotificationPolicy,
   Notification,
+  NotificationDelivery,
+  NotificationPolicy,
   PermissionLevel,
   PrincipalType,
   ProviderMetadata,
@@ -563,6 +570,52 @@ export async function markAllNotificationsRead() {
 
 export async function deleteNotification(notificationId: string) {
   return command<TaskResponse>("delete_notification", { notificationId });
+}
+
+export async function fetchNotificationDeliveries(notificationId: string) {
+  return command<NotificationDelivery[]>("fetch_notification_deliveries", { notificationId });
+}
+
+export async function fetchNotificationPolicies(workflowId?: string) {
+  return command<NotificationPolicy[]>("fetch_notification_policies", { workflowId });
+}
+
+export async function createNotificationPolicy(policy: NewNotificationPolicy) {
+  return command<NotificationPolicy>("create_notification_policy", { policy });
+}
+
+export async function updateNotificationPolicy(
+  policyId: string,
+  policy: NewNotificationPolicy,
+) {
+  return command<NotificationPolicy>("update_notification_policy", { policyId, policy });
+}
+
+export async function deleteNotificationPolicy(policyId: string) {
+  return command<TaskResponse>("delete_notification_policy", { policyId });
+}
+
+export async function fetchFreezeWindows(activeOnly = false) {
+  return command<FreezeWindow[]>("fetch_freeze_windows", { activeOnly });
+}
+
+export async function createFreezeWindow(window: NewFreezeWindow) {
+  return command<FreezeWindow>("create_freeze_window", { window });
+}
+
+export async function updateFreezeWindow(windowId: string, window: NewFreezeWindow) {
+  return command<FreezeWindow>("update_freeze_window", { windowId, window });
+}
+
+export async function deleteFreezeWindow(windowId: string) {
+  return command<TaskResponse>("delete_freeze_window", { windowId });
+}
+
+export async function backfillWorkflowTrigger(
+  triggerId: string,
+  request: BackfillRequest,
+) {
+  return command<BackfillResponse>("backfill_workflow_trigger", { triggerId, request });
 }
 
 export async function deleteArtifact(artifactId: string) {

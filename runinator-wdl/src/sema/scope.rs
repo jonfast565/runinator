@@ -111,6 +111,7 @@ pub(super) fn analyze(
                 schedule,
                 blackout_start,
                 blackout_end,
+                ..
             } => {
                 require_literal(
                     schedule,

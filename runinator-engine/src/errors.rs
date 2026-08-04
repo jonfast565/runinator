@@ -90,6 +90,34 @@ pub const BACKGROUND_LOOP_EXITED: ErrorDescriptor = ErrorDescriptor::new(
     "A background orchestration loop exited unexpectedly",
 );
 
+// notification policy emission and delivery.
+pub const NOTIFY_UNROUTABLE_CHANNEL: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI142",
+    "notification.policy.unroutable_channel",
+    "Notification policy targets a channel with no delivery provider",
+);
+pub const NOTIFY_MISSING_TARGET: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI143",
+    "notification.policy.missing_target",
+    "Notification policy has an external channel but no target",
+);
+
+pub const FREEZE_WINDOW_INVALID: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI144",
+    "schedule.freeze_window.invalid",
+    "Freeze window is not a usable range",
+);
+pub const FREEZE_WINDOW_NOT_FOUND: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI145",
+    "schedule.freeze_window.not_found",
+    "Freeze window not found",
+);
+pub const BACKFILL_INVALID_RANGE: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI146",
+    "schedule.backfill.invalid_range",
+    "Backfill range is not replayable",
+);
+
 pub const DICTIONARY: &[ErrorDescriptor] = &[
     IMPORT_UNKNOWN_SUBFLOW,
     IMPORT_INVALID_TRIGGER_BLACKOUT,
@@ -107,6 +135,11 @@ pub const DICTIONARY: &[ErrorDescriptor] = &[
     REPLAY_NOT_FOUND,
     REPLAY_MISSING_STEP,
     REPLAY_CONTROL_FLOW,
+    NOTIFY_UNROUTABLE_CHANNEL,
+    NOTIFY_MISSING_TARGET,
+    FREEZE_WINDOW_INVALID,
+    FREEZE_WINDOW_NOT_FOUND,
+    BACKFILL_INVALID_RANGE,
     BACKGROUND_LOOP_EXITED,
 ];
 

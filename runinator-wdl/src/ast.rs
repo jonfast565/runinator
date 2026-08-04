@@ -85,6 +85,11 @@ pub struct Workflow {
     pub start: Option<Target>,
     /// header `trigger cron "..."` declarations scheduling runs of this workflow.
     pub triggers: Vec<TriggerDecl>,
+    /// header `notify on <event> -> <channel> "..."` failure-alerting policies for this workflow.
+    pub notifications: Vec<NotifyDecl>,
+    /// optional header `concurrency <n> on_conflict <policy>`: how many runs of this workflow may
+    /// overlap, and what a firing does once the cap is reached.
+    pub concurrency: Option<ConcurrencyDecl>,
     /// header `watch <cond> -> <target>` cancellation guards, evaluated on every reducer drive.
     pub watches: Vec<WatchDecl>,
     /// optional header `correlate key <expr>`: the value this workflow's runs are awaitable by. rides
@@ -140,15 +145,85 @@ impl ChainEvent {
 #[derive(Debug, Clone, PartialEq)]
 pub enum TriggerDeclKind {
     /// `trigger cron <schedule>`: `schedule` is a string expression (the cron expression), with an
-    /// optional blackout window.
+    /// optional blackout window and catch-up policy.
     Cron {
         schedule: Expr,
         blackout_start: Option<Expr>,
         blackout_end: Option<Expr>,
+        catchup: Option<CatchupDecl>,
     },
     /// `trigger on_<event> workflow <target>`: start `target` when this workflow run reaches the
     /// matching terminal state.
     Chained { event: ChainEvent, target: Expr },
+}
+
+/// what a cron trigger does with slots that came due while nothing was firing them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CatchupPolicy {
+    /// collapse the backlog into a single run. the runtime default.
+    #[default]
+    FireOnce,
+    /// replay each missed slot as its own run, up to `max`.
+    FireAll,
+    /// abandon slots later than `grace` and re-anchor to the next future one.
+    Skip,
+}
+
+impl CatchupPolicy {
+    /// the keyword this policy renders as, which is also its runtime name.
+    pub fn keyword(self) -> &'static str {
+        match self {
+            CatchupPolicy::FireOnce => "fire_once",
+            CatchupPolicy::FireAll => "fire_all",
+            CatchupPolicy::Skip => "skip",
+        }
+    }
+}
+
+/// a `catchup <policy> [grace <duration>] [max <n>]` option on a header cron trigger. `grace`
+/// applies to `skip` (how late a slot may be before it is abandoned) and `max` to `fire_all` (how
+/// many missed slots one pass replays).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CatchupDecl {
+    pub policy: CatchupPolicy,
+    pub grace_seconds: Option<i64>,
+    pub max_slots: Option<i64>,
+}
+
+/// what a firing does when the workflow is already at its concurrency cap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ConcurrencyPolicy {
+    /// start the run anyway. the runtime default, and what an absent `concurrency` header means.
+    Allow,
+    /// drop the slot and move on.
+    #[default]
+    Skip,
+    /// hold the slot due until capacity frees up, without creating anything.
+    Queue,
+    /// cancel the in-flight runs and start this one.
+    CancelPrevious,
+}
+
+impl ConcurrencyPolicy {
+    /// the keyword this policy renders as, which is also its runtime name.
+    pub fn keyword(self) -> &'static str {
+        match self {
+            ConcurrencyPolicy::Allow => "allow",
+            ConcurrencyPolicy::Skip => "skip",
+            ConcurrencyPolicy::Queue => "queue",
+            ConcurrencyPolicy::CancelPrevious => "cancel_previous",
+        }
+    }
+}
+
+/// a header `concurrency <n> on_conflict <policy>` declaration. the policy defaults to `skip`:
+/// writing a cap at all means the overlap is unwanted.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConcurrencyDecl {
+    pub max_concurrent_runs: i64,
+    pub on_conflict: ConcurrencyPolicy,
+    pub span: Span,
+    pub comments: CommentSet,
 }
 
 /// a header `trigger ...` declaration. `params` is the optional run parameter object shared by both
@@ -157,6 +232,85 @@ pub enum TriggerDeclKind {
 pub struct TriggerDecl {
     pub kind: TriggerDeclKind,
     pub params: Option<Expr>,
+    pub enabled: bool,
+    pub span: Span,
+    pub comments: CommentSet,
+}
+
+/// the runtime condition a header `notify` policy fires on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NotifyEvent {
+    Failure,
+    RetryExhausted,
+    Sla,
+    Parked,
+}
+
+impl NotifyEvent {
+    /// the keyword this event renders as.
+    pub fn keyword(self) -> &'static str {
+        match self {
+            NotifyEvent::Failure => "failure",
+            NotifyEvent::RetryExhausted => "retry_exhausted",
+            NotifyEvent::Sla => "sla",
+            NotifyEvent::Parked => "parked",
+        }
+    }
+
+    /// the runtime `NotificationEvent` name this lowers to.
+    pub fn runtime_name(self) -> &'static str {
+        match self {
+            NotifyEvent::Failure => "run_failed",
+            NotifyEvent::RetryExhausted => "node_retry_exhausted",
+            NotifyEvent::Sla => "run_sla_breached",
+            NotifyEvent::Parked => "run_parked",
+        }
+    }
+
+    /// duration events are evaluated by a periodic scan and are meaningless without a threshold.
+    pub fn requires_threshold(self) -> bool {
+        matches!(self, NotifyEvent::Sla | NotifyEvent::Parked)
+    }
+}
+
+/// where a header `notify` policy delivers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NotifyChannel {
+    Slack,
+    Email,
+    App,
+}
+
+impl NotifyChannel {
+    pub fn keyword(self) -> &'static str {
+        match self {
+            NotifyChannel::Slack => "slack",
+            NotifyChannel::Email => "email",
+            NotifyChannel::App => "app",
+        }
+    }
+
+    /// the runtime `NotificationChannel` name this lowers to.
+    pub fn runtime_name(self) -> &'static str {
+        match self {
+            NotifyChannel::Slack => "slack",
+            NotifyChannel::Email => "email",
+            NotifyChannel::App => "in_app",
+        }
+    }
+}
+
+/// a header `notify on <event> -> <channel> <target>` declaration. `after` carries the threshold
+/// seconds for the duration events; `severity` defaults to `warning` when omitted.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NotifyDecl {
+    pub event: NotifyEvent,
+    pub channel: NotifyChannel,
+    pub target: Expr,
+    pub after_seconds: Option<i64>,
+    pub severity: Option<String>,
+    /// optional `with { ... }` provider configuration overriding the generated delivery fields.
+    pub configuration: Option<Expr>,
     pub enabled: bool,
     pub span: Span,
     pub comments: CommentSet,

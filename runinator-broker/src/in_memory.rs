@@ -926,6 +926,7 @@ mod tests {
             target: Default::default(),
             trace_id: Uuid::nil(),
             trace_context: Default::default(),
+            notification_delivery_id: None,
         }
     }
 }

@@ -95,8 +95,22 @@ export type { GateRecord } from "./gate/gate-record";
 export type {
   Notification,
   NotificationChannel,
+  NotificationDelivery,
+  NotificationDeliveryStatus,
+  NotificationEvent,
+  NotificationPolicy,
+  NotificationPolicySeverity,
   NotificationSeverity,
+  NewNotificationPolicy,
 } from "./notification";
+export { DURATION_NOTIFICATION_EVENTS } from "./notification";
+
+export type {
+  BackfillRequest,
+  BackfillResponse,
+  FreezeWindow,
+  NewFreezeWindow,
+} from "./schedule";
 
 export type {
   WdlCompletionItem,

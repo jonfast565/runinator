@@ -17,6 +17,8 @@ export type Capability =
   | "orgs:manage"
   | "billing:manage"
   | "settings:manage"
+  | "notifications:manage"
+  | "schedules:manage"
   // organization capabilities (admin of the caller's active org, or platform admin)
   | "org:members:manage"
   | "org:nodes:scale";
@@ -36,6 +38,8 @@ export const ALL_CAPABILITIES: readonly Capability[] = [
   "orgs:manage",
   "billing:manage",
   "settings:manage",
+  "notifications:manage",
+  "schedules:manage",
   "org:members:manage",
   "org:nodes:scale",
 ];

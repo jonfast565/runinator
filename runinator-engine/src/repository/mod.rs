@@ -7,9 +7,15 @@ use runinator_models::value::Value;
 use runinator_models::{
     debug::{DEBUG_RERUN, DEBUG_SKIPPED, DEBUG_SUPERSEDED},
     errors::SendableError,
+    notifications::{
+        NewNotificationPolicy, NotificationChannel, NotificationEvent, NotificationSeverity,
+    },
     orchestration::{NewOrchestrationEvent, ReadyNodeRecord},
     pipelines::Pipeline,
     runs::{NewRunArtifact, NewRunChunk},
+    schedules::{
+        BackfillRequest, BackfillResponse, FreezeWindow, NewFreezeWindow, TriggerFiringBatch,
+    },
     web::TaskResponse,
     workflow_state::{ControlFrame, DebugFrame, DebugMode, WorkflowRunState},
     workflows::{
@@ -29,6 +35,7 @@ pub use catalog::*;
 pub use debug::*;
 pub use definitions::*;
 pub use node_runs::*;
+pub use notification_policies::*;
 pub use org_scope::{org_id_for_pipeline_run, org_id_for_workflow_run};
 pub use pipelines::*;
 pub use provider_meta::{provider_metadata_from_item, provider_metadata_from_items};
@@ -40,6 +47,7 @@ mod catalog;
 mod debug;
 mod definitions;
 mod node_runs;
+mod notification_policies;
 mod org_scope;
 mod pipelines;
 mod provider_meta;

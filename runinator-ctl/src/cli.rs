@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use uuid::Uuid;
 
+use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand, ValueEnum};
 use runinator_models::provisioning::ProvisionBackend;
 use runinator_models::replicas::ReplicaKind;
@@ -155,6 +156,11 @@ pub enum Commands {
     Triggers {
         #[command(subcommand)]
         command: TriggerCommands,
+    },
+    /// Manage freeze windows that suspend trigger firing.
+    Freeze {
+        #[command(subcommand)]
+        command: FreezeCommands,
     },
     /// Inspect provider/action metadata.
     Providers {
@@ -509,6 +515,53 @@ pub enum TriggerCommands {
         #[arg(long)]
         debug: bool,
     },
+    /// Replay a cron trigger's slots across a past range. Slots already fired keep their original
+    /// run, so an overlapping range is safe to re-issue.
+    Backfill {
+        trigger_id: Uuid,
+        /// Start of the range, exclusive (RFC 3339, e.g. 2026-08-01T00:00:00Z).
+        #[arg(long)]
+        from: DateTime<Utc>,
+        /// End of the range, inclusive (RFC 3339). Defaults to now.
+        #[arg(long)]
+        to: Option<DateTime<Utc>>,
+        /// Cap on slots replayed.
+        #[arg(long)]
+        limit: Option<i64>,
+        /// Report the slots that would fire without creating any runs.
+        #[arg(long)]
+        dry_run: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum FreezeCommands {
+    /// List freeze windows.
+    List {
+        /// Show only the windows in effect right now.
+        #[arg(long)]
+        active: bool,
+    },
+    /// Suspend trigger firing over a time range.
+    Create {
+        name: String,
+        /// Start of the window (RFC 3339).
+        #[arg(long)]
+        from: DateTime<Utc>,
+        /// End of the window (RFC 3339).
+        #[arg(long)]
+        to: DateTime<Utc>,
+        /// Freeze one workflow rather than everything in scope.
+        #[arg(long)]
+        workflow_id: Option<Uuid>,
+        /// Freeze one org rather than the whole platform.
+        #[arg(long)]
+        org_id: Option<Uuid>,
+        #[arg(long)]
+        reason: Option<String>,
+    },
+    /// Remove a freeze window.
+    Delete { window_id: Uuid },
 }
 
 #[derive(Debug, Subcommand)]

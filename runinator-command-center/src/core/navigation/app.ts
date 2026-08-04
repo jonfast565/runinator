@@ -15,6 +15,7 @@ export type AppTab =
   | "Events"
   | "ExternalItems"
   | "Gates"
+  | "Schedules"
   | "Configs"
   | "Secrets"
   | "AdminSettings"

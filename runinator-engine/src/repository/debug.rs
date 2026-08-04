@@ -321,6 +321,21 @@ pub async fn cancel_workflow_run<T: DatabaseImpl>(
     Ok(response)
 }
 
+/// tell the workers holding a run's in-flight actions that it is over, for a run whose terminal
+/// state was already settled durably elsewhere (a `cancel_previous` schedule policy, say). same
+/// two-step fan-out as [`cancel_workflow_run`], minus the state write.
+pub async fn publish_run_cancel_commands<T: DatabaseImpl>(
+    db: &T,
+    broker: &dyn Broker,
+    workflow_run_id: Uuid,
+) {
+    publish_targeted_run_cancels(db, broker, workflow_run_id).await;
+    let command = ControlCommand::new(workflow_run_id, ControlKind::Cancel);
+    if let Err(err) = publish_worker_control_command(broker, command).await {
+        log::warn!("Failed to publish run-wide cancel for run {workflow_run_id}: {err}");
+    }
+}
+
 /// publish a node-run cancel targeted at the executor-holding replica for every node run of this
 /// run still claimed by a worker. best-effort: a publish failure falls back to the untargeted
 /// run-wide cancel and, past that, the node's own timeout backstop.

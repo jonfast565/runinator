@@ -15,6 +15,7 @@ pub mod providers;
 pub mod provisioning;
 pub mod replicas;
 pub mod runs;
+pub mod schedules;
 pub mod semver;
 pub mod settings;
 pub mod telemetry;

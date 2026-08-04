@@ -1024,6 +1024,11 @@ fn trigger_kind_metadata(kind: WorkflowTriggerKind) -> WorkflowTriggerKindMetada
                         .with_description("Cron expression, e.g. `0 * * * *`."),
                 )
                 .with_widget("cron"),
+                UiField::new(
+                    ParameterMetadata::optional("catchup", RuninatorType::String).with_description(
+                        "What happens to slots missed while nothing was firing them: `fire_once` (default, collapse the backlog into one run), `fire_all` (replay each), or `skip` (abandon them).",
+                    ),
+                ),
             ],
             default_configuration: json!({ "cron": "0 * * * *", "parameters": {} }),
         },

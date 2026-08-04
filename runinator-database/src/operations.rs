@@ -15,7 +15,10 @@ use runinator_models::{
     auth::{ApiKey, ApiKeyRecord, AuthContext, AuthSession, Grant, LocalCredential, Team, User},
     billing::{OrgQuota, OrgResourceGroup, UsageSample},
     errors::SendableError,
-    notifications::{NewNotification, Notification},
+    notifications::{
+        NewNotification, NewNotificationPolicy, Notification, NotificationChannel,
+        NotificationDelivery, NotificationDeliveryStatus, NotificationEvent, NotificationPolicy,
+    },
     orchestration::{
         NewOrchestrationEvent, NodeTransition, NodeTransitionStat, OrchestrationEvent,
         ReadyNodeRecord,
@@ -28,6 +31,11 @@ use runinator_models::{
         ReplicaStatus, WorkflowRunProvenance,
     },
     runs::{NewRunArtifact, NewRunChunk, RunArtifact, RunChunk, RunStatus, RunSummary},
+    schedules::{
+        BackfillRequest, BackfillResponse, CatchupPolicy, ConcurrencyPolicy,
+        DEFAULT_BACKFILL_LIMIT, FiringOutcome, FreezeWindow, MAX_BACKFILL_LIMIT, NewFreezeWindow,
+        TriggerCatchup, TriggerFiringBatch, WorkflowConcurrency,
+    },
     settings::{SettingKind, SettingRecord},
     telemetry::ReplicaSample,
     workflows::{
@@ -42,10 +50,10 @@ use crate::{
     archive::{ArchiveMark, ArchiveRow, ArchiveTable},
     backend::{RowsAffected, SqlBackend},
     common::{
-        is_pipeline_trigger_in_blackout, is_trigger_in_blackout, json_metadata, json_opt_i64,
-        json_opt_str, json_opt_uuid, json_str, next_execution_for_cron,
+        cron_slots_between, is_pipeline_trigger_in_blackout, is_trigger_in_blackout, json_metadata,
+        json_opt_i64, json_opt_str, json_opt_uuid, json_str, next_execution_for_cron,
         pipeline_trigger_parameters, pipeline_trigger_state, status_list, trigger_parameters,
-        trigger_state, workflow_result_event_type,
+        trigger_state_for_slot, workflow_result_event_type,
     },
     interfaces::DatabaseImpl,
     mappers,
@@ -60,6 +68,289 @@ const PIPELINE_COLUMNS: &str =
     "id, name, description, org_id, workflow_ids, defaults, metadata, created_at, updated_at";
 const PIPELINE_TRIGGER_COLUMNS: &str = "id, pipeline_id, kind, enabled, configuration, next_execution, blackout_start, blackout_end, metadata, created_at, updated_at";
 const PIPELINE_RUN_COLUMNS: &str = "id, pipeline_id, pipeline_snapshot, status, parameters, state, created_at, started_at, finished_at, message, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_metadata";
+
+const NOTIFICATION_POLICY_COLUMNS: &str = "id, workflow_id, name, event, severity, channel, target, threshold_seconds, enabled, managed_by, configuration, created_at, updated_at";
+const NOTIFICATION_DELIVERY_COLUMNS: &str = "id, notification_id, policy_id, channel, target, status, attempts, last_error, created_at, updated_at";
+
+/// shared insert for the create and pack-reconcile paths, which differ only in how the id is chosen.
+trait NotificationSqlExt: SqlBackend {
+    async fn insert_notification_policy(
+        &self,
+        id: Uuid,
+        policy: &NewNotificationPolicy,
+    ) -> Result<(), SendableError>;
+}
+
+impl<B> NotificationSqlExt for B
+where
+    B: SqlBackend,
+    for<'q> i64: Encode<'q, B::Db> + Type<B::Db>,
+    for<'q> bool: Encode<'q, B::Db> + Type<B::Db>,
+    for<'q> Uuid: Encode<'q, B::Db> + Type<B::Db>,
+    for<'q> &'q str: Encode<'q, B::Db> + Type<B::Db>,
+    for<'q> String: Encode<'q, B::Db> + Type<B::Db>,
+    for<'q> Option<i64>: Encode<'q, B::Db> + Type<B::Db>,
+    for<'q> Option<String>: Encode<'q, B::Db> + Type<B::Db>,
+    for<'q> Option<Uuid>: Encode<'q, B::Db> + Type<B::Db>,
+    for<'q> <B::Db as Database>::Arguments<'q>: IntoArguments<'q, B::Db>,
+    for<'c> &'c mut <B::Db as Database>::Connection: Executor<'c, Database = B::Db>,
+{
+    async fn insert_notification_policy(
+        &self,
+        id: Uuid,
+        policy: &NewNotificationPolicy,
+    ) -> Result<(), SendableError> {
+        let now = Utc::now().timestamp();
+        sqlx::query(&self.render(&format!(
+            "INSERT INTO notification_policies ({NOTIFICATION_POLICY_COLUMNS})
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        )))
+        .bind(id)
+        .bind(policy.workflow_id)
+        .bind(policy.name.as_str())
+        .bind(policy.event.as_str())
+        .bind(policy.severity.as_str())
+        .bind(policy.channel.as_str())
+        .bind(policy.target.clone())
+        .bind(policy.threshold_seconds)
+        .bind(policy.enabled)
+        .bind(policy.managed_by.clone())
+        .bind(policy.configuration.to_string())
+        .bind(now)
+        .bind(now)
+        .execute(self.pool())
+        .await?;
+        Ok(())
+    }
+}
+
+const FREEZE_WINDOW_COLUMNS: &str =
+    "id, org_id, workflow_id, name, reason, starts_at, ends_at, enabled, created_at, updated_at";
+
+/// which freeze windows apply to a `workflow_triggers` row: the ones naming its workflow, plus the
+/// blanket windows for its org and for the platform.
+const WORKFLOW_FREEZE_SCOPE: &str = "(f.workflow_id IS NULL OR f.workflow_id = workflow_triggers.workflow_id) AND (f.org_id IS NULL OR f.org_id = (SELECT w.org_id FROM workflows w WHERE w.id = workflow_triggers.workflow_id))";
+
+/// which freeze windows apply to a `pipeline_triggers` row. a window naming one workflow does not
+/// freeze a pipeline: it is the member workflow's own schedule that is frozen, not the pipeline's.
+const PIPELINE_FREEZE_SCOPE: &str = "f.workflow_id IS NULL AND (f.org_id IS NULL OR f.org_id = (SELECT p.org_id FROM pipelines p WHERE p.id = pipeline_triggers.pipeline_id))";
+
+/// a correlated `EXISTS` body over the freeze windows in effect at a bound timestamp. binds two
+/// copies of `now` (window start, window end); `scope` decides which windows reach the outer row.
+fn active_freeze_window_sql(dialect: SqlDialect, scope: &str) -> String {
+    format!(
+        "SELECT 1 FROM freeze_windows f WHERE f.enabled = {} AND f.starts_at <= ? AND f.ends_at > ? AND {scope}",
+        queries::bool_true(dialect),
+    )
+}
+
+/// the per-slot steps of a cron firing, shared by the trigger loop and the manual backfill so both
+/// paths record firings, snapshot workflows, and start runs the same way.
+trait ScheduleSqlExt: SqlBackend {
+    /// how many of a workflow's runs have not reached a terminal state.
+    async fn active_run_count(
+        &self,
+        conn: &mut <Self::Db as Database>::Connection,
+        workflow_id: Uuid,
+    ) -> Result<i64, SendableError>;
+
+    /// set every non-terminal run of a workflow to `canceled`, returning the ids. the caller still
+    /// has to tell the workers holding those runs' actions; this only settles durable state.
+    async fn cancel_active_runs(
+        &self,
+        conn: &mut <Self::Db as Database>::Connection,
+        workflow_id: Uuid,
+        now: DateTime<Utc>,
+    ) -> Result<Vec<Uuid>, SendableError>;
+
+    /// claim a slot by recording its firing. `false` means another replica already claimed it.
+    async fn claim_firing_slot(
+        &self,
+        conn: &mut <Self::Db as Database>::Connection,
+        trigger_id: Uuid,
+        fire_key: &str,
+        scheduler_id: &str,
+        outcome: FiringOutcome,
+        now: DateTime<Utc>,
+    ) -> Result<bool, SendableError>;
+
+    /// create the run for a claimed slot and point the firing row at it.
+    async fn insert_trigger_run(
+        &self,
+        conn: &mut <Self::Db as Database>::Connection,
+        trigger: &WorkflowTrigger,
+        snapshot: &WorkflowDefinition,
+        scheduler_id: &str,
+        slot: DateTime<Utc>,
+        now: DateTime<Utc>,
+    ) -> Result<WorkflowRun, SendableError>;
+}
+
+impl<B> ScheduleSqlExt for B
+where
+    B: SqlBackend,
+    for<'q> i64: Encode<'q, B::Db> + Type<B::Db>,
+    for<'q> Uuid: Encode<'q, B::Db> + Type<B::Db>,
+    for<'q> &'q str: Encode<'q, B::Db> + Type<B::Db>,
+    for<'q> String: Encode<'q, B::Db> + Type<B::Db>,
+    for<'q> Option<Uuid>: Encode<'q, B::Db> + Type<B::Db>,
+    for<'q> <B::Db as Database>::Arguments<'q>: IntoArguments<'q, B::Db>,
+    for<'r> i64: Decode<'r, B::Db> + Type<B::Db>,
+    for<'r> String: Decode<'r, B::Db> + Type<B::Db>,
+    for<'r> bool: Decode<'r, B::Db> + Type<B::Db>,
+    for<'r> Uuid: Decode<'r, B::Db> + Type<B::Db>,
+    for<'r> Option<i64>: Decode<'r, B::Db> + Type<B::Db>,
+    for<'r> Option<String>: Decode<'r, B::Db> + Type<B::Db>,
+    for<'r> Option<Uuid>: Decode<'r, B::Db> + Type<B::Db>,
+    for<'r> Vec<u8>: Decode<'r, B::Db> + Type<B::Db>,
+    usize: ColumnIndex<<B::Db as Database>::Row>,
+    for<'c> &'c str: ColumnIndex<<B::Db as Database>::Row>,
+    for<'c> &'c mut <B::Db as Database>::Connection: Executor<'c, Database = B::Db>,
+    <B::Db as Database>::QueryResult: RowsAffected,
+{
+    async fn active_run_count(
+        &self,
+        conn: &mut <Self::Db as Database>::Connection,
+        workflow_id: Uuid,
+    ) -> Result<i64, SendableError> {
+        let row = sqlx::query(&self.render(&format!(
+            "SELECT COUNT(*) AS active FROM workflow_runs WHERE workflow_id = ? AND status NOT IN ({})",
+            status_list(&WorkflowStatus::TERMINAL),
+        )))
+        .bind(workflow_id)
+        .fetch_one(conn)
+        .await?;
+        Ok(row.get::<i64, _>("active"))
+    }
+
+    async fn cancel_active_runs(
+        &self,
+        conn: &mut <Self::Db as Database>::Connection,
+        workflow_id: Uuid,
+        now: DateTime<Utc>,
+    ) -> Result<Vec<Uuid>, SendableError> {
+        let terminal = status_list(&WorkflowStatus::TERMINAL);
+        let rows = sqlx::query(&self.render(&format!(
+            "SELECT id FROM workflow_runs WHERE workflow_id = ? AND status NOT IN ({terminal})"
+        )))
+        .bind(workflow_id)
+        .fetch_all(&mut *conn)
+        .await?;
+        let ids: Vec<Uuid> = rows.iter().map(|row| row.get::<Uuid, _>("id")).collect();
+        if ids.is_empty() {
+            return Ok(ids);
+        }
+
+        sqlx::query(&self.render(&format!(
+            "UPDATE workflow_runs SET status = ?, finished_at = ?, message = ? WHERE workflow_id = ? AND status NOT IN ({terminal})"
+        )))
+        .bind(WorkflowStatus::Canceled.as_str())
+        .bind(now.timestamp())
+        .bind("Canceled by a newer run of this workflow (cancel_previous concurrency policy)")
+        .bind(workflow_id)
+        .execute(conn)
+        .await?;
+
+        Ok(ids)
+    }
+
+    async fn claim_firing_slot(
+        &self,
+        conn: &mut <Self::Db as Database>::Connection,
+        trigger_id: Uuid,
+        fire_key: &str,
+        scheduler_id: &str,
+        outcome: FiringOutcome,
+        now: DateTime<Utc>,
+    ) -> Result<bool, SendableError> {
+        let sql = self.render(&queries::insert_ignore(
+            self.dialect(),
+            "workflow_trigger_firings",
+            "id, trigger_id, fire_key, scheduler_id, outcome, created_at",
+            "?, ?, ?, ?, ?, ?",
+            "trigger_id, fire_key",
+            None,
+        ));
+        let insert = sqlx::query(&sql)
+            .bind(Uuid::now_v7())
+            .bind(trigger_id)
+            .bind(fire_key)
+            .bind(scheduler_id)
+            .bind(outcome.as_str())
+            .bind(now.timestamp())
+            .execute(conn)
+            .await?;
+        Ok(insert.affected() > 0)
+    }
+
+    async fn insert_trigger_run(
+        &self,
+        conn: &mut <Self::Db as Database>::Connection,
+        trigger: &WorkflowTrigger,
+        snapshot: &WorkflowDefinition,
+        scheduler_id: &str,
+        slot: DateTime<Utc>,
+        now: DateTime<Utc>,
+    ) -> Result<WorkflowRun, SendableError> {
+        let Some(trigger_id) = trigger.id else {
+            return Err(crate::errors::TRIGGER_MISSING_ID.bare());
+        };
+        let new_run_id = Uuid::now_v7();
+        let snapshot_json = serde_json::to_string(snapshot)?;
+        let parameters = trigger_parameters(trigger).to_string();
+        let state = trigger_state_for_slot(trigger, slot).to_string();
+        let insert_sql = "INSERT INTO workflow_runs (id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, name, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_request_host, trigger_request_ip, trigger_metadata) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, NULL, ?, ?, NULL, ?, NULL, NULL, ?)";
+        let run_row = if self.dialect() == SqlDialect::MySql {
+            sqlx::query(&self.render(insert_sql))
+                .bind(new_run_id)
+                .bind(trigger.workflow_id)
+                .bind(&snapshot_json)
+                .bind(WorkflowStatus::Queued.as_str())
+                .bind(&parameters)
+                .bind(&state)
+                .bind(now.timestamp())
+                .bind("cron")
+                .bind("replica")
+                .bind(scheduler_id)
+                .bind(trigger.metadata.to_string())
+                .execute(&mut *conn)
+                .await?;
+            sqlx::query(&self.render(&format!(
+                "SELECT {WORKFLOW_RUN_COLUMNS} FROM workflow_runs WHERE id = ?"
+            )))
+            .bind(new_run_id)
+            .fetch_one(&mut *conn)
+            .await?
+        } else {
+            sqlx::query(&self.render(&format!("{insert_sql} RETURNING {WORKFLOW_RUN_COLUMNS}")))
+                .bind(new_run_id)
+                .bind(trigger.workflow_id)
+                .bind(&snapshot_json)
+                .bind(WorkflowStatus::Queued.as_str())
+                .bind(&parameters)
+                .bind(&state)
+                .bind(now.timestamp())
+                .bind("cron")
+                .bind("replica")
+                .bind(scheduler_id)
+                .bind(trigger.metadata.to_string())
+                .fetch_one(&mut *conn)
+                .await?
+        };
+        let run = mappers::row_to_workflow_run(&run_row);
+
+        sqlx::query(&self.render(
+            "UPDATE workflow_trigger_firings SET workflow_run_id = ? WHERE trigger_id = ? AND fire_key = ?",
+        ))
+        .bind(run.id)
+        .bind(trigger_id)
+        .bind(slot.timestamp().to_string())
+        .execute(conn)
+        .await?;
+
+        Ok(run)
+    }
+}
 
 trait ArchiveSqlExt: SqlBackend {
     async fn archive_candidate_ids(
@@ -1383,11 +1674,17 @@ where
     ) -> Result<Vec<PipelineRun>, SendableError> {
         let mut tx = self.pool().begin().await?;
         let select_sql = self.render(&format!(
-            "SELECT {PIPELINE_TRIGGER_COLUMNS} FROM pipeline_triggers WHERE enabled = {} AND kind = 'cron' AND (next_execution IS NULL OR next_execution <= ?) ORDER BY COALESCE(next_execution, 0), id LIMIT ?{}",
+            "SELECT {PIPELINE_TRIGGER_COLUMNS} FROM pipeline_triggers \
+             WHERE enabled = {} AND kind = 'cron' AND (next_execution IS NULL OR next_execution <= ?) \
+               AND NOT EXISTS ({}) \
+             ORDER BY COALESCE(next_execution, 0), id LIMIT ?{}",
             queries::bool_true(self.dialect()),
+            active_freeze_window_sql(self.dialect(), PIPELINE_FREEZE_SCOPE),
             queries::skip_locked(self.dialect()),
         ));
         let rows = sqlx::query(&select_sql)
+            .bind(now.timestamp())
+            .bind(now.timestamp())
             .bind(now.timestamp())
             .bind(limit.max(1))
             .fetch_all(&mut *tx)
@@ -1752,31 +2049,33 @@ where
         scheduler_id: String,
         now: DateTime<Utc>,
         limit: i64,
-    ) -> Result<Vec<WorkflowRun>, SendableError> {
+    ) -> Result<TriggerFiringBatch<WorkflowRun>, SendableError> {
         let mut tx = self.pool().begin().await?;
+        // frozen triggers are excluded in sql rather than skipped in the loop below. a freeze leaves
+        // the slot due, so a frozen trigger would otherwise sit at the head of the due ordering for
+        // the whole window and crowd every other trigger out of the claim limit.
         let select_sql = self.render(&format!(
-            "SELECT id, workflow_id, kind, enabled, configuration, next_execution, blackout_start, blackout_end, metadata, created_at, updated_at FROM workflow_triggers WHERE enabled = {} AND kind = 'cron' AND (next_execution IS NULL OR next_execution <= ?) ORDER BY COALESCE(next_execution, 0), id LIMIT ?{}",
+            "SELECT id, workflow_id, kind, enabled, configuration, next_execution, blackout_start, blackout_end, metadata, created_at, updated_at \
+             FROM workflow_triggers \
+             WHERE enabled = {} AND kind = 'cron' AND (next_execution IS NULL OR next_execution <= ?) \
+               AND NOT EXISTS ({}) \
+             ORDER BY COALESCE(next_execution, 0), id LIMIT ?{}",
             queries::bool_true(self.dialect()),
+            active_freeze_window_sql(self.dialect(), WORKFLOW_FREEZE_SCOPE),
             queries::skip_locked(self.dialect()),
         ));
         let rows = sqlx::query(&select_sql)
+            .bind(now.timestamp())
+            .bind(now.timestamp())
             .bind(now.timestamp())
             .bind(limit.max(1))
             .fetch_all(&mut *tx)
             .await?;
 
-        let firing_sql = self.render(&queries::insert_ignore(
-            self.dialect(),
-            "workflow_trigger_firings",
-            "id, trigger_id, fire_key, scheduler_id, created_at",
-            "?, ?, ?, ?, ?",
-            "trigger_id, fire_key",
-            None,
-        ));
         let update_next_sql = self
             .render("UPDATE workflow_triggers SET next_execution = ?, updated_at = ? WHERE id = ?");
 
-        let mut runs = Vec::new();
+        let mut batch = TriggerFiringBatch::default();
         for row in rows {
             let mut trigger = mappers::row_to_workflow_trigger(&row);
             let Some(trigger_id) = trigger.id else {
@@ -1786,10 +2085,13 @@ where
                 .configuration
                 .get("cron")
                 .and_then(Value::as_str)
-                .unwrap_or_default();
+                .unwrap_or_default()
+                .to_string();
 
+            // first sighting: anchor the schedule without firing, so a freshly created trigger does
+            // not read "never ran" as a missed slot.
             if trigger.next_execution.is_none() {
-                trigger.next_execution = Some(next_execution_for_cron(cron_schedule, now)?);
+                trigger.next_execution = Some(next_execution_for_cron(&cron_schedule, now)?);
                 sqlx::query(&update_next_sql)
                     .bind(trigger.next_execution.map(|dt| dt.timestamp()))
                     .bind(now.timestamp())
@@ -1811,92 +2113,348 @@ where
                 continue;
             }
 
-            let fire_key = trigger
-                .next_execution
-                .map(|dt| dt.timestamp().to_string())
-                .unwrap_or_else(|| "initial".into());
-            let insert = sqlx::query(&firing_sql)
-                .bind(Uuid::now_v7())
-                .bind(trigger_id)
-                .bind(fire_key.as_str())
-                .bind(scheduler_id.as_str())
-                .bind(now.timestamp())
-                .execute(&mut *tx)
-                .await?;
-            if insert.affected() == 0 {
+            let Some(due) = trigger.next_execution else {
+                continue;
+            };
+            let catchup = TriggerCatchup::from_configuration(&trigger.configuration);
+
+            // a `skip` catch-up abandons slots that came due while nothing was firing them. the
+            // grace matters: every firing is a little late, so without it `skip` would drop them all.
+            if catchup.policy == CatchupPolicy::Skip
+                && now.timestamp() - due.timestamp() > catchup.grace()
+            {
+                if self
+                    .claim_firing_slot(
+                        &mut tx,
+                        trigger_id,
+                        &due.timestamp().to_string(),
+                        &scheduler_id,
+                        FiringOutcome::CatchupSkipped,
+                        now,
+                    )
+                    .await?
+                {
+                    batch.catchup_skipped += 1;
+                }
+                sqlx::query(&update_next_sql)
+                    .bind(next_execution_for_cron(&cron_schedule, now)?.timestamp())
+                    .bind(now.timestamp())
+                    .bind(trigger_id)
+                    .execute(&mut *tx)
+                    .await?;
                 continue;
             }
+
+            // `fire_all` replays each missed slot as its own run, capped per pass; the re-anchor
+            // then lands on the first slot it did not reach, so any remainder drains next tick.
+            // every other policy collapses the backlog into the one due slot.
+            let (slots, next_execution) = match catchup.policy {
+                CatchupPolicy::FireAll => {
+                    let (mut slots, _) = cron_slots_between(
+                        &cron_schedule,
+                        due,
+                        now,
+                        catchup.max_slots().saturating_sub(1),
+                    )?;
+                    slots.insert(0, due);
+                    let last = slots.last().copied().unwrap_or(due);
+                    let next = next_execution_for_cron(&cron_schedule, last)?;
+                    (slots, next)
+                }
+                _ => (vec![due], next_execution_for_cron(&cron_schedule, now)?),
+            };
 
             let workflow_row = sqlx::query(&self.render("SELECT id, name, namespace, org_id, version, enabled, input_schema, definition, created_at, updated_at FROM workflows WHERE id = ?"))
                 .bind(trigger.workflow_id)
                 .fetch_one(&mut *tx)
                 .await?;
             let workflow_snapshot = mappers::row_to_workflow(&workflow_row);
-            let new_run_id = Uuid::now_v7();
-            let run_row = if self.dialect() == SqlDialect::MySql {
-                sqlx::query(&self.render(
-                    "INSERT INTO workflow_runs (id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, name, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_request_host, trigger_request_ip, trigger_metadata) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, NULL, ?, ?, NULL, ?, NULL, NULL, ?)",
-                ))
-                .bind(new_run_id)
-                .bind(trigger.workflow_id)
-                .bind(serde_json::to_string(&workflow_snapshot)?)
-                .bind(WorkflowStatus::Queued.as_str())
-                .bind(trigger_parameters(&trigger).to_string())
-                .bind(trigger_state(&trigger).to_string())
-                .bind(now.timestamp())
-                .bind("cron")
-                .bind("replica")
-                .bind(scheduler_id.as_str())
-                .bind(trigger.metadata.to_string())
-                .execute(&mut *tx)
-                .await?;
-                sqlx::query(&self.render(&format!(
-                    "SELECT {WORKFLOW_RUN_COLUMNS} FROM workflow_runs WHERE id = ?"
-                )))
-                .bind(new_run_id)
-                .fetch_one(&mut *tx)
-                .await?
-            } else {
-                sqlx::query(&self.render(&format!(
-                    "INSERT INTO workflow_runs (id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, name, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_request_host, trigger_request_ip, trigger_metadata)
-                     VALUES (?, ?, ?, ?, NULL, ?, ?, ?, NULL, ?, ?, NULL, ?, NULL, NULL, ?)
-                     RETURNING {WORKFLOW_RUN_COLUMNS}",
-                )))
-                .bind(new_run_id)
-                .bind(trigger.workflow_id)
-                .bind(serde_json::to_string(&workflow_snapshot)?)
-                .bind(WorkflowStatus::Queued.as_str())
-                .bind(trigger_parameters(&trigger).to_string())
-                .bind(trigger_state(&trigger).to_string())
-                .bind(now.timestamp())
-                .bind("cron")
-                .bind("replica")
-                .bind(scheduler_id.as_str())
-                .bind(trigger.metadata.to_string())
-                .fetch_one(&mut *tx)
-                .await?
+            // the concurrency limit rides in the definition, so it versions with the workflow the
+            // same way its triggers and alert policies do. the count is taken once per trigger and
+            // then tracked locally as this pass creates runs.
+            let concurrency =
+                WorkflowConcurrency::from_metadata(&workflow_snapshot.definition.metadata);
+            let mut active = match concurrency.is_enforced() {
+                true => self.active_run_count(&mut tx, trigger.workflow_id).await?,
+                false => 0,
             };
-            let run = mappers::row_to_workflow_run(&run_row);
 
-            sqlx::query(&self.render("UPDATE workflow_trigger_firings SET workflow_run_id = ? WHERE trigger_id = ? AND fire_key = ?"))
-                .bind(run.id)
-                .bind(trigger_id)
-                .bind(fire_key.as_str())
-                .execute(&mut *tx)
-                .await?;
+            let mut deferred = false;
+            for slot in slots {
+                if concurrency.is_enforced() && active >= concurrency.max_concurrent_runs {
+                    match concurrency.on_conflict {
+                        ConcurrencyPolicy::Skip => {
+                            if self
+                                .claim_firing_slot(
+                                    &mut tx,
+                                    trigger_id,
+                                    &slot.timestamp().to_string(),
+                                    &scheduler_id,
+                                    FiringOutcome::ConcurrencySkipped,
+                                    now,
+                                )
+                                .await?
+                            {
+                                batch.concurrency_skipped += 1;
+                            }
+                            continue;
+                        }
+                        ConcurrencyPolicy::Queue => {
+                            batch.concurrency_deferred += 1;
+                            deferred = true;
+                            break;
+                        }
+                        ConcurrencyPolicy::CancelPrevious => {
+                            let canceled = self
+                                .cancel_active_runs(&mut tx, trigger.workflow_id, now)
+                                .await?;
+                            active = 0;
+                            batch.canceled_run_ids.extend(canceled);
+                        }
+                        ConcurrencyPolicy::Allow => {}
+                    }
+                }
 
-            let next_execution = next_execution_for_cron(cron_schedule, now)?;
+                // the firing row is the real gate on double-firing a slot: two replicas may both
+                // pass the concurrency check, but only one insert wins.
+                if !self
+                    .claim_firing_slot(
+                        &mut tx,
+                        trigger_id,
+                        &slot.timestamp().to_string(),
+                        &scheduler_id,
+                        FiringOutcome::Fired,
+                        now,
+                    )
+                    .await?
+                {
+                    continue;
+                }
+                let run = self
+                    .insert_trigger_run(
+                        &mut tx,
+                        &trigger,
+                        &workflow_snapshot,
+                        &scheduler_id,
+                        slot,
+                        now,
+                    )
+                    .await?;
+                active += 1;
+                batch.runs.push(run);
+            }
+
+            // a `queue` deferral leaves next_execution alone on purpose: the slot stays due and
+            // fires as soon as capacity frees up, so the schedule itself is the queue and no run is
+            // created to sit parked.
+            if deferred {
+                continue;
+            }
+            // a still-past `next_execution` here is deliberate and only happens under `fire_all`:
+            // it is the first slot the per-pass cap did not reach, so the next tick keeps draining.
+            // every other policy anchored from `now`, so its value is already in the future.
             sqlx::query(&update_next_sql)
                 .bind(next_execution.timestamp())
                 .bind(now.timestamp())
                 .bind(trigger_id)
                 .execute(&mut *tx)
                 .await?;
-            runs.push(run);
         }
 
         tx.commit().await?;
-        Ok(runs)
+        Ok(batch)
+    }
+
+    async fn backfill_workflow_trigger(
+        &self,
+        trigger_id: Uuid,
+        request: &BackfillRequest,
+    ) -> Result<(BackfillResponse, Vec<WorkflowRun>), SendableError> {
+        let Some(trigger) = self.fetch_workflow_trigger(trigger_id).await? else {
+            return Err(crate::errors::TRIGGER_NOT_FOUND.error(trigger_id));
+        };
+        let cron_schedule = trigger
+            .configuration
+            .get("cron")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        if cron_schedule.is_empty() {
+            return Err(crate::errors::TRIGGER_NOT_CRON.error(trigger_id));
+        }
+
+        let limit = request
+            .limit
+            .unwrap_or(DEFAULT_BACKFILL_LIMIT)
+            .clamp(1, MAX_BACKFILL_LIMIT);
+        let (slots, truncated) =
+            cron_slots_between(&cron_schedule, request.from, request.to, limit)?;
+        let mut response = BackfillResponse {
+            trigger_id,
+            workflow_id: trigger.workflow_id,
+            already_fired: 0,
+            fired: 0,
+            truncated,
+            dry_run: request.dry_run,
+            run_ids: Vec::new(),
+            slots: slots.clone(),
+        };
+        if request.dry_run {
+            response.fired = slots.len() as i64;
+            return Ok((response, Vec::new()));
+        }
+
+        let now = Utc::now();
+        let mut tx = self.pool().begin().await?;
+        let workflow_row = sqlx::query(&self.render("SELECT id, name, namespace, org_id, version, enabled, input_schema, definition, created_at, updated_at FROM workflows WHERE id = ?"))
+            .bind(trigger.workflow_id)
+            .fetch_one(&mut *tx)
+            .await?;
+        let workflow_snapshot = mappers::row_to_workflow(&workflow_row);
+
+        let mut runs = Vec::new();
+        for slot in &slots {
+            // a slot the loop already fired keeps its original run: the firing row is the same
+            // uniqueness gate the trigger loop claims through, so a backfill can never double-run.
+            if !self
+                .claim_firing_slot(
+                    &mut tx,
+                    trigger_id,
+                    &slot.timestamp().to_string(),
+                    "backfill",
+                    FiringOutcome::Fired,
+                    now,
+                )
+                .await?
+            {
+                response.already_fired += 1;
+                continue;
+            }
+            let run = self
+                .insert_trigger_run(
+                    &mut tx,
+                    &trigger,
+                    &workflow_snapshot,
+                    "backfill",
+                    *slot,
+                    now,
+                )
+                .await?;
+            response.fired += 1;
+            response.run_ids.push(run.id);
+            runs.push(run);
+        }
+        tx.commit().await?;
+
+        Ok((response, runs))
+    }
+
+    async fn fetch_freeze_windows(
+        &self,
+        org_id: Option<Uuid>,
+    ) -> Result<Vec<FreezeWindow>, SendableError> {
+        // an org listing includes the platform-wide windows, because those are what is actually
+        // freezing that org's schedules.
+        let sql = match org_id {
+            Some(_) => format!(
+                "SELECT {FREEZE_WINDOW_COLUMNS} FROM freeze_windows WHERE org_id = ? OR org_id IS NULL ORDER BY starts_at DESC"
+            ),
+            None => format!(
+                "SELECT {FREEZE_WINDOW_COLUMNS} FROM freeze_windows ORDER BY starts_at DESC"
+            ),
+        };
+        let sql = self.render(&sql);
+        let mut query = sqlx::query(&sql);
+        if let Some(org_id) = org_id {
+            query = query.bind(org_id);
+        }
+        let rows = query.fetch_all(self.pool()).await?;
+        Ok(rows.iter().map(mappers::row_to_freeze_window).collect())
+    }
+
+    async fn fetch_active_freeze_windows(
+        &self,
+        now: DateTime<Utc>,
+    ) -> Result<Vec<FreezeWindow>, SendableError> {
+        let rows = sqlx::query(&self.render(&format!(
+            "SELECT {FREEZE_WINDOW_COLUMNS} FROM freeze_windows WHERE enabled = {} AND starts_at <= ? AND ends_at > ? ORDER BY ends_at",
+            queries::bool_true(self.dialect()),
+        )))
+        .bind(now.timestamp())
+        .bind(now.timestamp())
+        .fetch_all(self.pool())
+        .await?;
+        Ok(rows.iter().map(mappers::row_to_freeze_window).collect())
+    }
+
+    async fn create_freeze_window(
+        &self,
+        window: &NewFreezeWindow,
+    ) -> Result<FreezeWindow, SendableError> {
+        let id = Uuid::now_v7();
+        let now = Utc::now().timestamp();
+        sqlx::query(&self.render(&format!(
+            "INSERT INTO freeze_windows ({FREEZE_WINDOW_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        )))
+        .bind(id)
+        .bind(window.org_id)
+        .bind(window.workflow_id)
+        .bind(window.name.as_str())
+        .bind(window.reason.clone())
+        .bind(window.starts_at.timestamp())
+        .bind(window.ends_at.timestamp())
+        .bind(window.enabled)
+        .bind(now)
+        .bind(now)
+        .execute(self.pool())
+        .await?;
+        let row = sqlx::query(&self.render(&format!(
+            "SELECT {FREEZE_WINDOW_COLUMNS} FROM freeze_windows WHERE id = ?"
+        )))
+        .bind(id)
+        .fetch_one(self.pool())
+        .await?;
+        Ok(mappers::row_to_freeze_window(&row))
+    }
+
+    async fn update_freeze_window(
+        &self,
+        window_id: Uuid,
+        window: &NewFreezeWindow,
+    ) -> Result<Option<FreezeWindow>, SendableError> {
+        let result = sqlx::query(&self.render(
+            "UPDATE freeze_windows SET org_id = ?, workflow_id = ?, name = ?, reason = ?, starts_at = ?, ends_at = ?, enabled = ?, updated_at = ? WHERE id = ?",
+        ))
+        .bind(window.org_id)
+        .bind(window.workflow_id)
+        .bind(window.name.as_str())
+        .bind(window.reason.clone())
+        .bind(window.starts_at.timestamp())
+        .bind(window.ends_at.timestamp())
+        .bind(window.enabled)
+        .bind(Utc::now().timestamp())
+        .bind(window_id)
+        .execute(self.pool())
+        .await?;
+        if result.affected() == 0 {
+            return Ok(None);
+        }
+
+        let row = sqlx::query(&self.render(&format!(
+            "SELECT {FREEZE_WINDOW_COLUMNS} FROM freeze_windows WHERE id = ?"
+        )))
+        .bind(window_id)
+        .fetch_optional(self.pool())
+        .await?;
+        Ok(row.as_ref().map(mappers::row_to_freeze_window))
+    }
+
+    async fn delete_freeze_window(&self, window_id: Uuid) -> Result<bool, SendableError> {
+        let result = sqlx::query(&self.render("DELETE FROM freeze_windows WHERE id = ?"))
+            .bind(window_id)
+            .execute(self.pool())
+            .await?;
+        Ok(result.affected() > 0)
     }
 
     async fn try_record_trigger_firing(
@@ -4459,7 +5017,7 @@ where
         if self.dialect() == SqlDialect::MySql {
             let mut conn = self.pool().acquire().await?;
             sqlx::query(&self.render(
-                "INSERT INTO notifications (id, workflow_run_id, workflow_node_id, channel, severity, title, body, target, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO notifications (id, workflow_run_id, workflow_node_id, channel, severity, title, body, target, metadata, dedupe_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             ))
             .bind(id)
             .bind(notification.workflow_run_id)
@@ -4470,6 +5028,7 @@ where
             .bind(notification.body.clone())
             .bind(notification.target.clone())
             .bind(notification.metadata.to_string())
+            .bind(notification.dedupe_key.clone())
             .bind(created_at)
             .execute(&mut *conn)
             .await?;
@@ -4482,8 +5041,8 @@ where
             return Ok(mappers::row_to_notification(&row));
         }
         let row = sqlx::query(&self.render(&format!(
-            "INSERT INTO notifications (id, workflow_run_id, workflow_node_id, channel, severity, title, body, target, metadata, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "INSERT INTO notifications (id, workflow_run_id, workflow_node_id, channel, severity, title, body, target, metadata, dedupe_key, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              RETURNING {columns}",
         )))
         .bind(id)
@@ -4495,10 +5054,305 @@ where
         .bind(notification.body.clone())
         .bind(notification.target.clone())
         .bind(notification.metadata.to_string())
+        .bind(notification.dedupe_key.clone())
         .bind(created_at)
         .fetch_one(self.pool())
         .await?;
         Ok(mappers::row_to_notification(&row))
+    }
+
+    async fn create_notification_if_absent(
+        &self,
+        notification: &NewNotification,
+    ) -> Result<Option<Notification>, SendableError> {
+        let Some(dedupe_key) = notification.dedupe_key.clone() else {
+            return self.create_notification(notification).await.map(Some);
+        };
+        let columns = "id, workflow_run_id, workflow_node_id, channel, severity, title, body, target, metadata, read_at, created_at";
+        let id = Uuid::now_v7();
+        let created_at = Utc::now().timestamp();
+        let sql = queries::insert_ignore(
+            self.dialect(),
+            "notifications",
+            "id, workflow_run_id, workflow_node_id, channel, severity, title, body, target, metadata, dedupe_key, created_at",
+            "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?",
+            "dedupe_key",
+            None,
+        );
+        let result = sqlx::query(&self.render(&sql))
+            .bind(id)
+            .bind(notification.workflow_run_id)
+            .bind(notification.workflow_node_id.clone())
+            .bind(notification.channel.as_str())
+            .bind(notification.severity.as_str())
+            .bind(notification.title.as_str())
+            .bind(notification.body.clone())
+            .bind(notification.target.clone())
+            .bind(notification.metadata.to_string())
+            .bind(dedupe_key.clone())
+            .bind(created_at)
+            .execute(self.pool())
+            .await?;
+        // no row inserted means another replica already emitted for this key; the caller skips.
+        if result.affected() == 0 {
+            return Ok(None);
+        }
+        let row = sqlx::query(&self.render(&format!(
+            "SELECT {columns} FROM notifications WHERE dedupe_key = ?"
+        )))
+        .bind(dedupe_key)
+        .fetch_optional(self.pool())
+        .await?;
+        Ok(row.map(|row| mappers::row_to_notification(&row)))
+    }
+
+    async fn fetch_notification_policies(
+        &self,
+        workflow_id: Option<Uuid>,
+    ) -> Result<Vec<NotificationPolicy>, SendableError> {
+        let columns = NOTIFICATION_POLICY_COLUMNS;
+        let rows = match workflow_id {
+            Some(workflow_id) => {
+                sqlx::query(&self.render(&format!(
+                    "SELECT {columns} FROM notification_policies WHERE workflow_id = ? ORDER BY created_at DESC"
+                )))
+                .bind(workflow_id)
+                .fetch_all(self.pool())
+                .await?
+            }
+            None => {
+                sqlx::query(&self.render(&format!(
+                    "SELECT {columns} FROM notification_policies ORDER BY created_at DESC"
+                )))
+                .fetch_all(self.pool())
+                .await?
+            }
+        };
+        Ok(rows
+            .iter()
+            .map(mappers::row_to_notification_policy)
+            .collect())
+    }
+
+    async fn fetch_matching_notification_policies(
+        &self,
+        event: NotificationEvent,
+        workflow_id: Uuid,
+    ) -> Result<Vec<NotificationPolicy>, SendableError> {
+        let columns = NOTIFICATION_POLICY_COLUMNS;
+        let enabled = queries::bool_true(self.dialect());
+        let rows = sqlx::query(&self.render(&format!(
+            "SELECT {columns} FROM notification_policies
+             WHERE enabled = {enabled} AND event = ? AND (workflow_id = ? OR workflow_id IS NULL)
+             ORDER BY created_at",
+        )))
+        .bind(event.as_str())
+        .bind(workflow_id)
+        .fetch_all(self.pool())
+        .await?;
+        Ok(rows
+            .iter()
+            .map(mappers::row_to_notification_policy)
+            .collect())
+    }
+
+    async fn fetch_notification_policies_by_event(
+        &self,
+        event: NotificationEvent,
+    ) -> Result<Vec<NotificationPolicy>, SendableError> {
+        let columns = NOTIFICATION_POLICY_COLUMNS;
+        let enabled = queries::bool_true(self.dialect());
+        let rows = sqlx::query(&self.render(&format!(
+            "SELECT {columns} FROM notification_policies
+             WHERE enabled = {enabled} AND event = ? ORDER BY created_at",
+        )))
+        .bind(event.as_str())
+        .fetch_all(self.pool())
+        .await?;
+        Ok(rows
+            .iter()
+            .map(mappers::row_to_notification_policy)
+            .collect())
+    }
+
+    async fn create_notification_policy(
+        &self,
+        policy: &NewNotificationPolicy,
+    ) -> Result<NotificationPolicy, SendableError> {
+        let id = Uuid::now_v7();
+        self.insert_notification_policy(id, policy).await?;
+        let columns = NOTIFICATION_POLICY_COLUMNS;
+        let row = sqlx::query(&self.render(&format!(
+            "SELECT {columns} FROM notification_policies WHERE id = ?"
+        )))
+        .bind(id)
+        .fetch_one(self.pool())
+        .await?;
+        Ok(mappers::row_to_notification_policy(&row))
+    }
+
+    async fn update_notification_policy(
+        &self,
+        policy_id: Uuid,
+        policy: &NewNotificationPolicy,
+    ) -> Result<Option<NotificationPolicy>, SendableError> {
+        let updated_at = Utc::now().timestamp();
+        let result = sqlx::query(&self.render(
+            "UPDATE notification_policies
+             SET workflow_id = ?, name = ?, event = ?, severity = ?, channel = ?, target = ?,
+                 threshold_seconds = ?, enabled = ?, managed_by = ?, configuration = ?, updated_at = ?
+             WHERE id = ?",
+        ))
+        .bind(policy.workflow_id)
+        .bind(policy.name.as_str())
+        .bind(policy.event.as_str())
+        .bind(policy.severity.as_str())
+        .bind(policy.channel.as_str())
+        .bind(policy.target.clone())
+        .bind(policy.threshold_seconds)
+        .bind(policy.enabled)
+        .bind(policy.managed_by.clone())
+        .bind(policy.configuration.to_string())
+        .bind(updated_at)
+        .bind(policy_id)
+        .execute(self.pool())
+        .await?;
+        if result.affected() == 0 {
+            return Ok(None);
+        }
+        let columns = NOTIFICATION_POLICY_COLUMNS;
+        let row = sqlx::query(&self.render(&format!(
+            "SELECT {columns} FROM notification_policies WHERE id = ?"
+        )))
+        .bind(policy_id)
+        .fetch_optional(self.pool())
+        .await?;
+        Ok(row.map(|row| mappers::row_to_notification_policy(&row)))
+    }
+
+    async fn delete_notification_policy(&self, policy_id: Uuid) -> Result<bool, SendableError> {
+        let result = sqlx::query(&self.render("DELETE FROM notification_policies WHERE id = ?"))
+            .bind(policy_id)
+            .execute(self.pool())
+            .await?;
+        Ok(result.affected() > 0)
+    }
+
+    async fn replace_managed_notification_policies(
+        &self,
+        workflow_id: Uuid,
+        managed_by: String,
+        policies: Vec<NewNotificationPolicy>,
+    ) -> Result<(), SendableError> {
+        // drop only this manager's rows so hand-authored policies on the same workflow survive an
+        // import, matching how managed triggers reconcile.
+        sqlx::query(
+            &self.render(
+                "DELETE FROM notification_policies WHERE workflow_id = ? AND managed_by = ?",
+            ),
+        )
+        .bind(workflow_id)
+        .bind(managed_by.as_str())
+        .execute(self.pool())
+        .await?;
+        for policy in policies {
+            self.insert_notification_policy(Uuid::now_v7(), &policy)
+                .await?;
+        }
+        Ok(())
+    }
+
+    async fn create_notification_delivery(
+        &self,
+        notification_id: Uuid,
+        policy_id: Option<Uuid>,
+        channel: NotificationChannel,
+        target: Option<String>,
+    ) -> Result<NotificationDelivery, SendableError> {
+        let id = Uuid::now_v7();
+        let now = Utc::now().timestamp();
+        sqlx::query(&self.render(
+            "INSERT INTO notification_deliveries (id, notification_id, policy_id, channel, target, status, attempts, last_error, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, 0, NULL, ?, ?)",
+        ))
+        .bind(id)
+        .bind(notification_id)
+        .bind(policy_id)
+        .bind(channel.as_str())
+        .bind(target)
+        .bind(NotificationDeliveryStatus::Pending.as_str())
+        .bind(now)
+        .bind(now)
+        .execute(self.pool())
+        .await?;
+        let columns = NOTIFICATION_DELIVERY_COLUMNS;
+        let row = sqlx::query(&self.render(&format!(
+            "SELECT {columns} FROM notification_deliveries WHERE id = ?"
+        )))
+        .bind(id)
+        .fetch_one(self.pool())
+        .await?;
+        Ok(mappers::row_to_notification_delivery(&row))
+    }
+
+    async fn mark_notification_delivery(
+        &self,
+        delivery_id: Uuid,
+        status: NotificationDeliveryStatus,
+        error: Option<String>,
+    ) -> Result<(), SendableError> {
+        sqlx::query(&self.render(
+            "UPDATE notification_deliveries
+             SET status = ?, attempts = attempts + 1, last_error = ?, updated_at = ?
+             WHERE id = ?",
+        ))
+        .bind(status.as_str())
+        .bind(error)
+        .bind(Utc::now().timestamp())
+        .bind(delivery_id)
+        .execute(self.pool())
+        .await?;
+        Ok(())
+    }
+
+    async fn fetch_notification_deliveries(
+        &self,
+        notification_id: Uuid,
+    ) -> Result<Vec<NotificationDelivery>, SendableError> {
+        let columns = NOTIFICATION_DELIVERY_COLUMNS;
+        let rows = sqlx::query(&self.render(&format!(
+            "SELECT {columns} FROM notification_deliveries WHERE notification_id = ? ORDER BY created_at DESC"
+        )))
+        .bind(notification_id)
+        .fetch_all(self.pool())
+        .await?;
+        Ok(rows
+            .iter()
+            .map(mappers::row_to_notification_delivery)
+            .collect())
+    }
+
+    async fn fetch_open_workflow_runs_created_before(
+        &self,
+        cutoff: DateTime<Utc>,
+        limit: i64,
+    ) -> Result<Vec<WorkflowRun>, SendableError> {
+        let columns = WORKFLOW_RUN_COLUMNS;
+        let terminal = WorkflowStatus::TERMINAL
+            .iter()
+            .map(|status| format!("'{}'", status.as_str()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let rows = sqlx::query(&self.render(&format!(
+            "SELECT {columns} FROM workflow_runs
+             WHERE status NOT IN ({terminal}) AND created_at < ?
+             ORDER BY created_at LIMIT ?",
+        )))
+        .bind(cutoff.timestamp())
+        .bind(limit.clamp(1, 1000))
+        .fetch_all(self.pool())
+        .await?;
+        Ok(rows.iter().map(mappers::row_to_workflow_run).collect())
     }
 
     async fn fetch_notifications(

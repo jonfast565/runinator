@@ -377,6 +377,8 @@ fn build_action_command(
         trace_id: Uuid::now_v7(),
         // capture the dispatching trace so the worker's execution span joins this trace.
         trace_context: runinator_utilities::telemetry::current_trace_context(),
+        // node work, not a notification delivery.
+        notification_delivery_id: None,
     }
 }
 

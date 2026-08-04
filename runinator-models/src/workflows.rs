@@ -442,14 +442,17 @@ impl WorkflowStatus {
         }
     }
 
+    /// the statuses a run can no longer leave. exposed so sql callers can build an `IN (...)` list
+    /// without restating the set and drifting from [`WorkflowStatus::is_terminal`].
+    pub const TERMINAL: [WorkflowStatus; 4] = [
+        WorkflowStatus::Succeeded,
+        WorkflowStatus::Failed,
+        WorkflowStatus::TimedOut,
+        WorkflowStatus::Canceled,
+    ];
+
     pub fn is_terminal(self) -> bool {
-        matches!(
-            self,
-            WorkflowStatus::Succeeded
-                | WorkflowStatus::Failed
-                | WorkflowStatus::TimedOut
-                | WorkflowStatus::Canceled
-        )
+        Self::TERMINAL.contains(&self)
     }
 
     pub fn is_active(self) -> bool {
