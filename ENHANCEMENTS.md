@@ -4,7 +4,7 @@
 
 This is an advisory survey, not a single implementation task. It tracks the remaining gaps in **operational maturity**, **frontend polish/accessibility**, and **runtime/product completeness**, ordered by priority rather than by the survey that discovered them.
 
-Item IDs are **stable** — an item keeps the number it was first filed under (5.3, 6.1, …) even as its priority moves, so "do 6.1" keeps meaning the same thing. The ordering lives in the priority bands below; the tier numbers are just names.
+Item IDs are **stable** — an item keeps the number it was first filed under (5.3, 6.3, …) even as its priority moves, so "do 6.3" keeps meaning the same thing. The ordering lives in the priority bands below; the tier numbers are just names.
 
 The guiding constraint from `AGENTS.md`: keep dependency direction services→shared-contracts, keep changes scoped to the crate that owns the behavior, and thread any shared-contract change through every broker backend, mapper, and config file.
 
@@ -153,7 +153,7 @@ These are unbounded-effort quality work rather than discrete features. None bloc
 
 ---
 
-## Appendix A — Worker / job authoring pitfalls (reference, not a work queue)
+## Appendix — Worker / job authoring pitfalls (reference, not a work queue)
 
 These are footguns when creating new providers and workflow jobs, grounded in `runinator-worker/src/executor.rs` and `worker.rs`. They are **standing authoring guidance**, not scheduled work — they belong in a provider-authoring checklist so new jobs inherit the right defaults. (Formerly Tier 4; A.1 and A.7 are the ones **6.4** would convert from convention into a platform guarantee.)
 
@@ -180,21 +180,6 @@ These are footguns when creating new providers and workflow jobs, grounded in `r
 
 ---
 
-## Appendix B — Retired (implemented)
-
-Kept as a record of what the roadmap no longer covers.
-
-- **Operational hardening** (former Tiers 1–2): tracing + `trace_id`, `/metrics`, DLQ/audit, retry backoff + jitter, rate limiting, `/health` + `/ready`, graceful shutdown, executor lease, per-node cancellation.
-- **Runtime/language completeness:** poll/while, race-branch cancellation, plugin FFI cancellation, authorization phase 2.
-- **1.1 Dark mode** — ✅ shipped. `:root[data-theme="dark"]` token set in `styles/base.css:101`, driven by the `displayPreferences` store through `ui/adapters/browser/theme.ts`, with a `system` mode that follows `prefers-color-scheme` live.
-- **1.3 Live expression preview** — ✅ shipped. Backed by a server-side `POST /wdl/evaluate` (`API_WDL_EVALUATE`) called through `core/services/expression.ts`; `ExpressionJsonEditor.vue` renders a debounced preview pane distinguishing a resolved result, an evaluation error, and a reference that is unresolved only because it is absent from the sample.
-- **5.1 Workflow test harness + dry-run simulation** — ✅ shipped. `SimulationEnv` in `runinator-workflows/simulate.rs` with a `MockEnv` (`testkit.rs`, `.wdlt`-driven) and a `DbSimulationEnv` in `runinator-engine/simulate.rs`. `simulate_workflow` reuses the reducer's own `next_transition` / `evaluate_switch` / `evaluate_toggle` / `evaluate_percentage` / condition evaluators and publishes no `ActionCommand`s. `runinatorctl workflows test <pack>` runs suites offline; `POST /workflows/simulate` backs the command center's **Dry run** modal. Fan-out kinds (loop/parallel/join/map/race/try/subflow) report as unsupported rather than simulating incorrectly.
-- **5.5 Run timeline / Gantt visualization** — ✅ shipped. `core/workflow/run-gantt.ts` (`buildGanttLayout`, unit-tested) + `ui/components/shared/RunGantt.vue`: proportional bars on a shared axis, dashed queued/parked segments, retry (`attempt`) badges, critical-path highlight, live count-up. No backend change.
-- **Waker had zero tests** (former 3.1, the survey's "highest residual risk") — ✅ largely closed; see the continuous-track entry 2.1 for what remains.
-- **`runinator-wdl/src/parser.rs` panic cluster** (half of 2.3/3.3) — ✅ clean, 0 `expect(` calls.
-
----
-
 ## Verification (per area, when implemented)
 
 - **Backend:** `cargo fmt --all --check`, `cargo test -p <crate>`, then `cargo test --workspace` for shared-contract changes. Confirm the local stack still runs: `cargo run -p runinator-supervisor -- start|status|stop`.
@@ -205,4 +190,4 @@ Kept as a record of what the roadmap no longer covers.
 
 ## Note
 
-This roadmap is a survey for prioritization — no single item is fully specified for execution yet. Pick one (e.g. "do 6.1") to get a detailed, file-by-file implementation plan.
+This roadmap is a survey for prioritization — no single item is fully specified for execution yet. Pick one (e.g. "do 6.3") to get a detailed, file-by-file implementation plan.
