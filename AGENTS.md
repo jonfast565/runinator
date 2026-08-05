@@ -67,6 +67,26 @@ Keep dependency direction boring and predictable, structured with domains in min
 - `runinator-worker`: task execution loop and provider resolution. It should not calculate schedules or mutate state except through API calls intended for worker results.
 - `runinator-desktop-agent`: standalone GUI host for an exclusive desktop `WorkerRuntime`. Desktop-only configuration and tray UX live here; reusable execution behavior stays in `runinator-worker`. Never add this lifecycle to `runinator-command-center`.
 - `runinator-workflows`: workflow validation, graph cycle detection, and condition evaluation logic.
+
+  Per-kind knowledge lives in `node_kinds/`, one `NodeKindSpec` per `WorkflowNodeKind`, grouped by
+  catalog category (`terminal`/`task`/`control_flow`/`concurrency`/`io`/`sync`). A spec owns the
+  kind's palette metadata, its `GraphRole`, the node targets its parameters carry (`TargetSlot`),
+  its parameter shape check, and its statically-known output type. `catalog.rs`, `parameters.rs`,
+  `validation.rs`, `typing.rs`, and `simulate.rs` read those facts from `spec_for(kind)` rather
+  than each keeping a parallel `match`. Adding a node kind is a new spec plus one arm in
+  `spec_for`, which is exhaustive.
+
+  Two things deliberately stay outside the registry: `typing.rs`'s per-kind type checks need the
+  private inference context, and `simulate.rs`'s per-kind evaluation needs the simulator's private
+  outcome type and its `&mut dyn SimulationEnv`. Both are single-sited and exhaustively matched, so
+  neither can silently disagree with anything; they read the *facts* they used to re-derive
+  (`GraphRole`, `NodeKindSpec::output_type`) from the registry. Do not widen those private types to
+  move the bodies in — the coupling costs more than the colocation buys.
+
+  A kind's catalog `edge_slots` and its `target_slots` describe the same edges from two angles
+  (where the ui writes a target vs. where the graph walkers read one). `node_kinds/tests.rs` pins
+  them together in both directions; that is what keeps the palette from advertising an edge the
+  runtime ignores.
 - `runinator-wdl`: the WDL surface language (grammar, parser, lowering to the JSON workflow model, and decompiling back), plus the `.wdls` secrets front end and the `.wdlp` pipeline front end (`parse_pipeline_str` → `PipelineBundle`, `pipeline_to_wdlp` back). It must round-trip every node kind's parameters, but its grammar must only express well-formed graphs. Do not add WDL syntax for degenerate or malformed graphs (e.g. a parallel with no matching join, a condition with no branches, a missing start node); the decompiler may error on such JSON instead. Keep the grammar a description of valid programs, not a serializer for every possible JSON shape. Header `trigger cron "..."` declarations and input-field defaults are carried in `definition.metadata.triggers` / the field's `default`; the web service materializes pack-managed triggers (`metadata.managed_by = "wdl"`) on import. A `.wdlp` pipeline lowers to a portable `PipelineBundle` (members + links by workflow name); on import the web service resolves names to ids, upserts the `Pipeline`, and materializes each link as a managed `chained` trigger carrying `configuration.pipeline_id` (reconciled by pipeline id; header-trigger reconciliation skips triggers that carry a `pipeline_id`). The pipeline itself never runs — its chained triggers are the runtime linkage.
 - `runinator-plugin`: dynamic plugin loading and `Provider` trait integration. Keep FFI details contained here.
 - `runinator-provider-*`: provider implementations. Always implement a new library for a new provider. Keep provider-specific configuration and external system behavior out of core crates.

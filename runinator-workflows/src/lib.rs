@@ -10,6 +10,7 @@ mod expressions;
 mod functions;
 mod intrinsic_typing;
 mod keys;
+mod node_kinds;
 mod normalize;
 mod parameters;
 mod refs;
@@ -20,7 +21,7 @@ mod types;
 mod typing;
 mod validation;
 
-pub use catalog::{enum_catalogs, node_kind_catalog, trigger_kind_catalog};
+pub use catalog::{enum_catalogs, node_kind_catalog, node_metadata, trigger_kind_catalog};
 pub use compute::{
     ComputeOutcome, EFFECTFUL_INTRINSIC_NAMES, HIGHER_ORDER_NAMES, IntrinsicLibrary,
     PureIntrinsics, STD_MODULES, STD_NAMESPACE, call_pure, effectful_signatures, intrinsic_arity,
@@ -38,6 +39,10 @@ pub use expressions::{
 };
 pub use functions::{FunctionTable, RuntimeFunction, intrinsic_catalog};
 pub use intrinsic_typing::intrinsic_result_type;
+pub use node_kinds::{
+    ActionCatalog, GraphRole, NodeKindSpec, TargetRule, TargetSlot, graph_role, spec_for,
+    target_slots,
+};
 pub use normalize::{normalize_definition, normalize_workflow};
 pub use parameters::{
     evaluate_percentage, evaluate_switch, evaluate_toggle, parse_approval_parameters,

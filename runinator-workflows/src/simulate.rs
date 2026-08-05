@@ -213,7 +213,7 @@ pub fn simulate_workflow(
         }
 
         // terminal nodes settle the run.
-        if matches!(node.kind, WorkflowNodeKind::End | WorkflowNodeKind::Fail) {
+        if crate::node_kinds::graph_role(&node.kind).terminal {
             steps.push(SimStep {
                 node_id: node.id.clone(),
                 kind: node.kind.clone(),
@@ -287,16 +287,7 @@ fn kind_label(kind: &WorkflowNodeKind) -> String {
 
 // kinds the simulator does not model; they need real fan-out/frame bookkeeping the walk lacks.
 fn is_unsupported(kind: &WorkflowNodeKind) -> bool {
-    matches!(
-        kind,
-        WorkflowNodeKind::Loop
-            | WorkflowNodeKind::Parallel
-            | WorkflowNodeKind::Join
-            | WorkflowNodeKind::Map
-            | WorkflowNodeKind::Race
-            | WorkflowNodeKind::Try
-            | WorkflowNodeKind::Subflow
-    )
+    !crate::node_kinds::graph_role(kind).simulatable
 }
 
 // a single node's computed result: its status, optional output, a short reason, and — for router

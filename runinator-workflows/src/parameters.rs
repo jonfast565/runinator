@@ -1,11 +1,10 @@
 use runinator_models::value::{Map, Value};
 use runinator_models::workflows::{
-    WorkflowCondition, WorkflowNode, WorkflowNodeKind, WorkflowNodeRef, WorkflowStatus,
-    WorkflowWaitSeconds,
+    WorkflowCondition, WorkflowNode, WorkflowNodeRef, WorkflowStatus, WorkflowWaitSeconds,
 };
 
 use crate::compute::call_pure;
-use crate::conditions::{evaluate_workflow_condition, validate_condition};
+use crate::conditions::evaluate_workflow_condition;
 use crate::errors::WorkflowValidationError;
 use crate::expressions::{evaluate_expression, parse_expression, parse_value_ref};
 use crate::keys::{COND_EQUALS, COND_EXISTS, COND_NOT_EQUALS, COND_VALUE};
@@ -437,91 +436,6 @@ pub fn evaluate_percentage(
         }
     }
     Ok(default())
-}
-
-pub(crate) fn validate_control_node_parameters(
-    node: &WorkflowNode,
-) -> Result<(), WorkflowValidationError> {
-    match node.kind {
-        WorkflowNodeKind::Switch => {
-            let params = parse_switch_parameters(node)?;
-            for case in params.cases {
-                validate_condition(&case.condition.to_value())?;
-            }
-        }
-        WorkflowNodeKind::Toggle => {
-            parse_toggle_parameters(node)?;
-        }
-        WorkflowNodeKind::Percentage => {
-            parse_percentage_parameters(node)?;
-        }
-        WorkflowNodeKind::Parallel => {
-            parse_parallel_parameters(node)?;
-        }
-        WorkflowNodeKind::Join => {
-            parse_join_parameters(node)?;
-        }
-        WorkflowNodeKind::Try => {
-            parse_try_parameters(node)?;
-        }
-        WorkflowNodeKind::Map => {
-            parse_map_parameters(node)?;
-        }
-        WorkflowNodeKind::Race => {
-            parse_race_parameters(node)?;
-        }
-        WorkflowNodeKind::Output => {
-            parse_output_parameters(node)?;
-        }
-        WorkflowNodeKind::Input => {
-            let _ = parse_input_parameters(node);
-        }
-        _ => {}
-    }
-    Ok(())
-}
-
-pub(crate) fn parameter_targets(
-    node: &WorkflowNode,
-) -> Result<Vec<WorkflowNodeRef>, WorkflowValidationError> {
-    let mut targets = Vec::new();
-    match node.kind {
-        WorkflowNodeKind::Switch => {
-            let params = parse_switch_parameters(node)?;
-            targets.extend(params.cases.into_iter().map(|case| case.target));
-            targets.extend(params.default);
-        }
-        WorkflowNodeKind::Toggle => {
-            let params = parse_toggle_parameters(node)?;
-            targets.push(params.on);
-            targets.push(params.off);
-        }
-        WorkflowNodeKind::Percentage => {
-            let params = parse_percentage_parameters(node)?;
-            targets.extend(params.buckets.into_iter().map(|bucket| bucket.target));
-            targets.extend(params.default);
-        }
-        WorkflowNodeKind::Parallel => {
-            targets.extend(parse_parallel_parameters(node)?.branches);
-        }
-        WorkflowNodeKind::Join => {
-            targets.extend(parse_join_parameters(node)?.wait_for);
-        }
-        WorkflowNodeKind::Try => {
-            let params = parse_try_parameters(node)?;
-            targets.push(params.body);
-            targets.extend(params.catch);
-            targets.extend(params.finally);
-        }
-        WorkflowNodeKind::Map => {
-            targets.push(parse_map_parameters(node)?.target);
-        }
-        WorkflowNodeKind::Race => {
-            targets.extend(parse_race_parameters(node)?.branches);
-        }
-        _ => {}
-    }
-    Ok(targets)
 }
 
 pub(crate) fn parameter_object(node: &WorkflowNode) -> Result<&Map, WorkflowValidationError> {

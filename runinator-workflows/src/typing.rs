@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use runinator_models::value::Value;
 use runinator_models::{
-    providers::{ActionMetadata, ParameterMetadata, ProviderMetadata, validate_provider_metadata},
+    providers::{ParameterMetadata, ProviderMetadata, validate_provider_metadata},
     types::{RuninatorType, TypeViolation},
     workflows::{WorkflowDefinition, WorkflowNode, WorkflowNodeKind, WorkflowWaitSeconds},
 };
@@ -16,6 +16,7 @@ use crate::{
         COND_GREATER_THAN, COND_GREATER_THAN_OR_EQUAL, COND_IN, COND_LEFT, COND_LESS_THAN,
         COND_LESS_THAN_OR_EQUAL, COND_NOT, COND_NOT_EQUALS, COND_STARTS_WITH, COND_VALUE,
     },
+    node_kinds::{ActionCatalog, spec_for},
     parameters::{
         parse_join_parameters, parse_map_parameters, parse_parallel_parameters,
         parse_percentage_parameters, parse_race_parameters, parse_switch_parameters,
@@ -43,7 +44,7 @@ pub fn validate_workflow_types(
     providers: &[ProviderMetadata],
     config_type: &WorkflowType,
 ) -> Result<(), WorkflowValidationError> {
-    let provider_actions = provider_actions(providers);
+    let provider_actions = ActionCatalog::new(providers);
     validate_provider_metadata_set(providers)?;
     let mut context = TypeContext {
         input: workflow.input_type.clone(),
@@ -54,7 +55,7 @@ pub fn validate_workflow_types(
     };
 
     for node in nodes {
-        if let Some(output_type) = static_node_output_type(node, &provider_actions)? {
+        if let Some(output_type) = spec_for(&node.kind).output_type(node, &provider_actions)? {
             context
                 .node_outputs
                 .insert(node.id.as_str().to_string(), output_type);
@@ -118,62 +119,6 @@ fn validate_provider_metadata_set(
     Ok(())
 }
 
-fn provider_actions(providers: &[ProviderMetadata]) -> HashMap<(String, String), &ActionMetadata> {
-    providers
-        .iter()
-        .flat_map(|provider| {
-            provider.actions.iter().map(move |action| {
-                (
-                    (provider.name.clone(), action.function_name.clone()),
-                    action,
-                )
-            })
-        })
-        .collect()
-}
-
-fn static_node_output_type(
-    node: &WorkflowNode,
-    provider_actions: &HashMap<(String, String), &ActionMetadata>,
-) -> Result<Option<WorkflowType>, WorkflowValidationError> {
-    match node.kind {
-        WorkflowNodeKind::Action => {
-            let action = node.action.as_ref().ok_or_else(|| {
-                WorkflowValidationError::MissingAction(node.id.as_str().to_string())
-            })?;
-            let metadata = provider_actions
-                .get(&(action.provider.clone(), action.function.clone()))
-                .ok_or_else(|| {
-                    WorkflowValidationError::TypeError(format!(
-                        "node '{}' references unknown provider action '{}.{}'",
-                        node.id, action.provider, action.function
-                    ))
-                })?;
-            Ok(Some(metadata.results_type()))
-        }
-        WorkflowNodeKind::Subflow => Ok(Some(WorkflowType::structure([
-            ("subflow_run_id", WorkflowType::String),
-            ("subflow_workflow_id", WorkflowType::String),
-            ("run_name", WorkflowType::String),
-            ("reused", WorkflowType::Boolean),
-            ("status", WorkflowType::String),
-            ("state", WorkflowType::Any),
-            ("parameters", WorkflowType::Any),
-        ]))),
-        WorkflowNodeKind::Config => Ok(Some(WorkflowType::structure([
-            ("name", WorkflowType::String),
-            ("metadata", WorkflowType::Any),
-        ]))),
-        WorkflowNodeKind::Output => Ok(Some(WorkflowType::structure([
-            ("event_type", WorkflowType::String),
-            ("data", WorkflowType::Any),
-            ("artifacts", WorkflowType::Any),
-        ]))),
-        WorkflowNodeKind::Input => Ok(Some(WorkflowType::Any)),
-        _ => Ok(None),
-    }
-}
-
 fn collection_node_output_type(
     node: &WorkflowNode,
     context: &TypeContext,
@@ -205,7 +150,7 @@ fn collection_node_output_type(
 fn validate_node_types(
     node: &WorkflowNode,
     context: &TypeContext,
-    provider_actions: &HashMap<(String, String), &ActionMetadata>,
+    provider_actions: &ActionCatalog<'_>,
 ) -> Result<(), WorkflowValidationError> {
     match node.kind {
         WorkflowNodeKind::Action => validate_action_configuration(node, context, provider_actions),
@@ -371,14 +316,14 @@ fn validate_node_types(
 fn validate_action_configuration(
     node: &WorkflowNode,
     context: &TypeContext,
-    provider_actions: &HashMap<(String, String), &ActionMetadata>,
+    provider_actions: &ActionCatalog<'_>,
 ) -> Result<(), WorkflowValidationError> {
     let action = node
         .action
         .as_ref()
         .ok_or_else(|| WorkflowValidationError::MissingAction(node.id.as_str().to_string()))?;
     let metadata = provider_actions
-        .get(&(action.provider.clone(), action.function.clone()))
+        .get(&action.provider, &action.function)
         .ok_or_else(|| {
             WorkflowValidationError::TypeError(format!(
                 "node '{}' references unknown provider action '{}.{}'",
