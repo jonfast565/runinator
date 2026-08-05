@@ -216,7 +216,7 @@ pub(crate) async fn download_artifact<T: DatabaseImpl>(
     if let Err(reply) = crate::authz::require_service_or_admin(&ctx) {
         return reply.into_response();
     }
-    let artifact = match db.fetch_artifact(artifact_id).await {
+    let artifact = match repository::fetch_artifact(db.as_ref(), artifact_id).await {
         Ok(Some(artifact)) => artifact,
         Ok(None) => {
             return (StatusCode::NOT_FOUND, "artifact not found").into_response();

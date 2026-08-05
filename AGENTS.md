@@ -103,7 +103,7 @@ If a change requires a dependency from a lower-level/shared crate back into a se
 - Favor comments as appropriate for Rust but make them lower case, single line, with a period at the end.
 - Use RustDoc comments (`///`) where necessary on public methods, but keep them short, succinct, dense, and dispassionate.
 - Do not put all the code for a library in `lib.rs`; break it out into smaller, focused files.
-- Do not put tests in the same files as code; break them out into a `tests.rs` file (or a `tests` module in a separate file).
+- Do not put tests in the same files as code; break them out into a `tests.rs` file (or a `tests` module in a separate file). Once that file covers several unrelated subjects, make it a `tests/` directory: `tests/mod.rs` holds the imports, the shared fixtures, and the `mod` list, and each submodule owns one subject and opens with `use super::*;` plus a `//!` line saying what it covers. `runinator-wdl`, `runinator-ws`, `runinator-database`, and `runinator-workflows` are laid out this way. A per-module suite that pairs with exactly one source file may instead stay beside it as `<module>_tests.rs`.
 
 ## Runtime Contracts
 
@@ -152,6 +152,27 @@ The database crate owns persistence behavior. The web service owns HTTP behavior
 - Keep SQLx row mapping centralized in `runinator-database`, especially `mappers.rs`.
 - Keep repository functions in `runinator-engine/src/repository/` focused on persistence orchestration. HTTP response mapping belongs in `runinator-ws/src/handlers/`, and SQL belongs in `runinator-database`.
 - Keep public API payloads in shared model/API crates when they must be consumed by multiple binaries or the command center.
+
+### When a ws handler may call the store directly
+
+A `runinator-ws` handler may call `db.*` itself **only** when the endpoint is thin CRUD over a row
+the runtime does not orchestrate: authentication, orgs/memberships, and billing
+(`handlers/{auth,orgs,billing,credentials,catalog}.rs`). Those have no engine counterpart on
+purpose — routing them through a repository module would add a call layer and no behavior. The one
+other direct call is `handlers/health.rs`'s readiness probe, which reads one row to test database
+connectivity and does not care what the row says.
+
+Anything carrying orchestration semantics goes through `runinator-engine/src/repository/`, even
+when the body is a single delegating call: runs, node runs, triggers/firings, action dispatches,
+notifications and their policies, pipelines, replicas. The test is not how short the function is —
+it is whether a future version of the operation would need to touch run state, the dispatch outbox,
+the ready-node queue, or emit an event. Those all belong to the engine, and a handler that reached
+past it would be the place the next rule gets broken. `create_notification` is the worked example:
+it looks like a one-line insert, but it must also resolve the run's owning org so the ui event is
+scoped, so it lives in `repository/notifications.rs` and returns `CreatedNotification`.
+
+When in doubt, put it in the engine — that direction is always safe, and the CRUD exemption above
+is a closed list, not a pattern to extend.
 
 ## Authorization
 

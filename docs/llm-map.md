@@ -18,11 +18,11 @@ Use this map to load the smallest useful part of the repo for a task. The root `
 - Change runtime context or `$ref` inputs available to the reducer: `runinator-reducer/src/orchestration/context.rs`.
 - Change workflow validation or graph invariants shared by JSON and WDL: `runinator-workflows/src/validation.rs` and nearby modules.
 - Add or change a node kind's authoring behavior (palette entry, graph role, parameter targets, output type): its file in `runinator-workflows/src/node_kinds/<category>/`, plus an arm in `spec_for`.
-- Change WDL syntax or compile/decompile behavior: `runinator-wdl/src/wdl.pest`, `parser.rs`, `lower/`, `decompile/`, `format.rs`, and `tests.rs`.
+- Change WDL syntax or compile/decompile behavior: `runinator-wdl/src/wdl.pest`, `parser.rs`, `lower/`, `decompile/`, `format.rs`, and the matching subject file in `tests/`.
 - Change editor completion or hover: `runinator-wdl-ide/src/`; if it needs something new from the language core, add it to `runinator-wdl/src/analysis.rs`.
 - Change persistence behavior: add to the owning role trait in `runinator-store/src/roles/`, then the matching file in `runinator-database/src/operations/`.
 - Change durable orchestration/repository behavior: `runinator-engine/src/repository/` and its background loops.
-- Change web API behavior: `runinator-ws/src/handlers/` and `runinator-ws/src/router.rs`.
+- Change web API behavior: `runinator-ws/src/handlers/` and `runinator-ws/src/router.rs`. A handler reaches persistence through `runinator-engine/src/repository/`; only the allowlist in `handlers/store_access_tests.rs` calls the store directly.
 - Change API client behavior: `runinator-api/src/`.
 - Change broker channel payloads: update `runinator-comm` contracts first, then every relevant broker transport/backend and service consumer.
 - Change worker execution/provider resolution: `runinator-worker/src/` and provider crates; do not put provider behavior in core runtime crates.

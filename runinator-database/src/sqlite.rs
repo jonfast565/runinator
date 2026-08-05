@@ -22,7 +22,7 @@ pub struct SqliteBackend {
 }
 
 #[cfg(test)]
-#[path = "sqlite_tests.rs"]
+#[path = "sqlite_tests/mod.rs"]
 mod tests;
 
 impl SqliteBackend {

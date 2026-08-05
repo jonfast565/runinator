@@ -161,40 +161,6 @@ async fn fail_driven_ready_node<T: DatabaseImpl>(
 
 const READY_NODE_DRIVE_LEASE_SECONDS: i64 = 60;
 
-/// drain durable action-dispatch intents and publish them to the broker action channel. moved into
-/// the web service (which owns the database and the reducer) so the waker no longer relays them.
-pub async fn publish_pending_action_dispatches<T: DatabaseImpl>(
-    db: &T,
-    broker: &dyn Broker,
-    publisher_id: &str,
-    lease_seconds: i64,
-    limit: i64,
-) -> Result<(), SendableError> {
-    let now = Utc::now();
-    let lease_until = now + Duration::seconds(lease_seconds);
-    let dispatches = db
-        .claim_pending_action_dispatches(publisher_id.to_string(), now, lease_until, limit)
-        .await?;
-    for dispatch in dispatches {
-        let dispatch_id = dispatch.id;
-        let message = BrokerMessage {
-            command: dispatch.command,
-            dedupe_key: Some(dispatch.dedupe_key),
-            enqueued_at: Utc::now(),
-        };
-        match broker.publish(message).await {
-            Ok(()) | Err(BrokerError::Duplicate(_)) => {
-                db.mark_action_dispatch_published(dispatch_id).await?;
-            }
-            Err(err) => {
-                db.mark_action_dispatch_failed(dispatch_id, err.to_string())
-                    .await?;
-            }
-        }
-    }
-    Ok(())
-}
-
 // how long a wake announcement stays leased in the database. a pending ready node is announced at
 // most once per window, so backends without broker-side dedupe (rabbitmq, kafka) do not accumulate
 // duplicate wakes; a wake lost in flight is re-announced once the lease lapses after its due time.

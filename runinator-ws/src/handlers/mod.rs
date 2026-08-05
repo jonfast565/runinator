@@ -24,3 +24,6 @@ pub(crate) mod triggers;
 pub(crate) mod wdl;
 pub(crate) mod webhook;
 pub(crate) mod workflows;
+
+#[cfg(test)]
+mod store_access_tests;

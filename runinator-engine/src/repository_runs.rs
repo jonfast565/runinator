@@ -67,6 +67,13 @@ pub async fn fetch_all_artifacts<T: DatabaseImpl>(
     db.fetch_all_artifacts().await
 }
 
+pub async fn fetch_artifact<T: DatabaseImpl>(
+    db: &T,
+    artifact_id: Uuid,
+) -> Result<Option<RunArtifact>, SendableError> {
+    db.fetch_artifact(artifact_id).await
+}
+
 /// delete an artifact: unlink its on-disk file (best-effort) then remove the db row. returns false
 /// when no such artifact exists.
 pub async fn delete_artifact<T: DatabaseImpl>(

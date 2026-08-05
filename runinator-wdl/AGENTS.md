@@ -18,7 +18,7 @@ Guidance for agents working in `runinator-wdl`.
 - Editor seam: `src/analysis.rs` — the only items `runinator-wdl-ide` may reach into `lower`/`namespace` for. Add to it deliberately rather than widening a module.
 - Decompilation: `src/decompile/`.
 - Public compile/decompile facade: `src/lib.rs`.
-- Regression coverage: `src/tests.rs`.
+- Regression coverage: `src/tests/`, one file per subject; shared round-trip helpers in `tests/mod.rs`.
 
 ## Boundaries
 
