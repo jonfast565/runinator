@@ -41,6 +41,7 @@ runinator-workflows = { path = "../runinator-workflows" }
 runinator-supervisor = { path = "../runinator-supervisor" }
 runinator-provisioner = { path = "../runinator-provisioner" }
 runinator-wdl = { path = "../runinator-wdl" }
+runinator-wdl-ide = { path = "../runinator-wdl-ide" }
 runinator-provider-catalog = { path = "../runinator-provider-catalog" }
 
 [dev-dependencies]

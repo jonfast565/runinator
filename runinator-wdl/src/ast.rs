@@ -952,7 +952,7 @@ pub enum StrPart {
 /// the statically-known string keys an expression denotes, used to type key-driven intrinsics
 /// (`at`/`pick`/`omit`): a plain string literal yields one key, a literal array of string literals
 /// yields several, and anything else (interpolation, a reference, a non-string) yields `None`.
-pub(crate) fn static_string_keys(expr: &Expr) -> Option<Vec<String>> {
+pub fn static_string_keys(expr: &Expr) -> Option<Vec<String>> {
     match &expr.kind {
         ExprKind::Str(parts) => literal_string(parts).map(|key| vec![key]),
         ExprKind::Array(items) => items

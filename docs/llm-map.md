@@ -17,8 +17,10 @@ Use this map to load the smallest useful part of the repo for a task. The root `
 - Change a node transition or retry/timeout rule: `runinator-reducer/src/orchestration/transitions.rs`.
 - Change runtime context or `$ref` inputs available to the reducer: `runinator-reducer/src/orchestration/context.rs`.
 - Change workflow validation or graph invariants shared by JSON and WDL: `runinator-workflows/src/validation.rs` and nearby modules.
+- Add or change a node kind's authoring behavior (palette entry, graph role, parameter targets, output type): its file in `runinator-workflows/src/node_kinds/<category>/`, plus an arm in `spec_for`.
 - Change WDL syntax or compile/decompile behavior: `runinator-wdl/src/wdl.pest`, `parser.rs`, `lower/`, `decompile/`, `format.rs`, and `tests.rs`.
-- Change persistence behavior: add to `runinator-database/src/interfaces.rs`, then SQLite and Postgres implementations.
+- Change editor completion or hover: `runinator-wdl-ide/src/`; if it needs something new from the language core, add it to `runinator-wdl/src/analysis.rs`.
+- Change persistence behavior: add to the owning role trait in `runinator-store/src/roles/`, then the matching file in `runinator-database/src/operations/`.
 - Change durable orchestration/repository behavior: `runinator-engine/src/repository/` and its background loops.
 - Change web API behavior: `runinator-ws/src/handlers/` and `runinator-ws/src/router.rs`.
 - Change API client behavior: `runinator-api/src/`.
@@ -46,7 +48,7 @@ When adding or renaming shared fields, inspect:
 
 - Web service only: `cargo check -p runinator-ws`.
 - Database behavior: `cargo test -p runinator-database`.
-- WDL behavior: `cargo test -p runinator-wdl`.
+- WDL behavior: `cargo test -p runinator-wdl`; editor completion/hover: `cargo test -p runinator-wdl-ide`.
 - Broker behavior: `cargo test -p runinator-broker`.
 - Command center: `pnpm --dir runinator-command-center test -- --run` and `pnpm --dir runinator-command-center build`.
 - Shared contracts: prefer `cargo test --workspace` after narrow checks.

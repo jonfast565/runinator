@@ -8,12 +8,12 @@ use crate::ast::{TypeDecl, TypeExpr};
 use crate::errors::WdlError;
 
 /// a table of resolved `type <Name>` declarations consulted when a named type is referenced.
-pub(crate) type NamedTypes = BTreeMap<String, RuninatorType>;
+pub type NamedTypes = BTreeMap<String, RuninatorType>;
 
 /// resolve `type <Name>` declarations into `RuninatorType` in dependency order. each declaration
 /// may reference earlier ones; cyclic or duplicate declarations are rejected. shared by lowering
 /// and sema so both type-check against the same resolved names.
-pub(crate) fn resolve_named_types(decls: &[TypeDecl]) -> Result<NamedTypes, WdlError> {
+pub fn resolve_named_types(decls: &[TypeDecl]) -> Result<NamedTypes, WdlError> {
     let mut named = NamedTypes::new();
     let mut seen = HashSet::new();
     for decl in decls {
@@ -87,11 +87,11 @@ fn is_primitive_type_name(name: &str) -> bool {
     )
 }
 
-pub(crate) fn lower_type(type_expr: &TypeExpr) -> Result<RuninatorType, WdlError> {
+pub fn lower_type(type_expr: &TypeExpr) -> Result<RuninatorType, WdlError> {
     lower_type_with(type_expr, &NamedTypes::new())
 }
 
-pub(crate) fn lower_type_with(
+pub fn lower_type_with(
     type_expr: &TypeExpr,
     named: &NamedTypes,
 ) -> Result<RuninatorType, WdlError> {

@@ -12,7 +12,7 @@ use crate::position::{position_to_byte, span_to_range};
 pub fn hover(text: &str, path: Option<&Path>, position: Position) -> Option<Hover> {
     let offset = position_to_byte(text, position);
     let providers = runinator_provider_catalog::metadata();
-    if let Some(hover) = runinator_wdl::hover_source(runinator_wdl::WdlHoverRequest {
+    if let Some(hover) = runinator_wdl_ide::hover_source(runinator_wdl_ide::WdlHoverRequest {
         source: text.to_string(),
         cursor_byte: offset,
         providers: providers.clone(),
@@ -80,7 +80,7 @@ fn markdown_diagnostic(code: &str, message: &str) -> Hover {
     markdown_hover(format!("**{code} - {summary}**\n\n{message}"), None)
 }
 
-fn hover_markdown(hover: &runinator_wdl::WdlHoverResponse) -> String {
+fn hover_markdown(hover: &runinator_wdl_ide::WdlHoverResponse) -> String {
     let mut out = format!("**{}**\n\n_{}_", hover.title, hover.kind);
     if let Some(detail) = &hover.detail {
         out.push_str("\n\n```wdl\n");

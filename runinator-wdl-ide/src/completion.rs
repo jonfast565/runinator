@@ -8,9 +8,9 @@ use runinator_models::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{
+use runinator_wdl::{
+    analysis::lower_type,
     ast::{Block, Expr, ExprKind, PathSeg, Stmt, StmtKind},
-    lower::types::lower_type,
     parse_document,
 };
 
@@ -940,7 +940,7 @@ pub(crate) fn completion_context(
     // best-effort: rewrite namespaced/aliased calls to their bare runtime form so expression-type
     // inference (intrinsic and higher-order result typing) sees the same names sema does. errors
     // (e.g. an unknown module mid-edit) leave the partially-resolved document, which is fine here.
-    let _ = crate::namespace::resolve(&mut document);
+    let _ = runinator_wdl::analysis::resolve_namespaces(&mut document);
     let workflow = document.workflows.first();
     let input = workflow
         .and_then(|workflow| workflow.input.as_ref().and_then(|ty| lower_type(ty).ok()))
@@ -1013,7 +1013,7 @@ fn completion_child_blocks(kind: &StmtKind) -> Vec<&Block> {
 
 // gather the bare/aliased names in scope from the document's imports and user functions, mirroring
 // the namespace resolution pass so completion only offers names that resolve.
-fn collect_namespace_scope(document: &crate::ast::Document) -> NamespaceScope {
+fn collect_namespace_scope(document: &runinator_wdl::ast::Document) -> NamespaceScope {
     let mut scope = NamespaceScope {
         user_fns: document
             .functions
@@ -1252,7 +1252,7 @@ fn infer_expr_type(expr: &Expr, context: &CompletionContext) -> Option<Runinator
                     .iter()
                     .map(|arg| infer_expr_type(arg, context).unwrap_or(RuninatorType::Any))
                     .collect::<Vec<_>>();
-                let literal_keys = args.get(1).and_then(crate::ast::static_string_keys);
+                let literal_keys = args.get(1).and_then(runinator_wdl::ast::static_string_keys);
                 Some(
                     runinator_workflows::intrinsic_result_type(
                         name,

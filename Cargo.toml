@@ -45,6 +45,7 @@ members = [
     "runinator-mcp",
     "runinator-workflows",
     "runinator-wdl",
+    "runinator-wdl-ide",
     "runinator-e2e",
     "xtask"
 ]

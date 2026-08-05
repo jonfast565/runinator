@@ -7381,6 +7381,7 @@ dependencies = [
  "runinator-provider-catalog",
  "runinator-utilities",
  "runinator-wdl",
+ "runinator-wdl-ide",
  "runinator-workflows",
  "serde",
  "serde_json",
@@ -7518,6 +7519,7 @@ dependencies = [
  "runinator-pack",
  "runinator-provider-catalog",
  "runinator-wdl",
+ "runinator-wdl-ide",
  "serde_json",
  "tokio",
  "tower-lsp",
@@ -7902,6 +7904,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "runinator-wdl-ide"
+version = "0.1.0"
+dependencies = [
+ "runinator-models",
+ "runinator-wdl",
+ "runinator-workflows",
+ "serde",
+]
+
+[[package]]
 name = "runinator-worker"
 version = "0.1.0"
 dependencies = [
@@ -7969,6 +7981,7 @@ dependencies = [
  "runinator-supervisor",
  "runinator-utilities",
  "runinator-wdl",
+ "runinator-wdl-ide",
  "runinator-workflows",
  "rustls 0.23.40",
  "serde",

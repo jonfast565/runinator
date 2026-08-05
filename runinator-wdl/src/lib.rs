@@ -11,14 +11,13 @@ use runinator_models::workflows::WorkflowDefinition;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+pub mod analysis;
 pub mod ast;
 pub mod comments;
-pub mod completion;
 mod decompile;
 mod desugar;
 pub mod errors;
 mod format;
-mod hover;
 mod includes;
 pub(crate) mod lower;
 mod namespace;
@@ -38,11 +37,6 @@ pub use parser::{
 pub use pipeline::{parse_pipeline_str, pipeline_to_wdlp};
 pub use secrets::{parse_secrets_str, secrets_to_wdls};
 pub use sema::{Diagnostic, Severity};
-
-pub use completion::{
-    WdlCompletionItem, WdlCompletionRequest, WdlCompletionResponse, complete_source,
-};
-pub use hover::{WdlHoverRequest, WdlHoverResponse, hover_source};
 
 /// options that fill in the WorkflowDefinition fields that the source does not carry.
 #[derive(Debug, Clone)]

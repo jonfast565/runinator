@@ -4,7 +4,7 @@ Guidance for agents working in `runinator-wdl`.
 
 ## Ownership
 
-`runinator-wdl` owns the author-time workflow language: grammar, parser, semantic diagnostics, lowering to JSON workflow definitions, formatting, completion, desugaring, and decompilation. Runtime execution belongs to `runinator-ws` and validation shared with JSON workflows belongs in `runinator-workflows`.
+`runinator-wdl` owns the author-time workflow language: grammar, parser, semantic diagnostics, lowering to JSON workflow definitions, formatting, desugaring, and decompilation. Runtime execution belongs to `runinator-ws`, validation shared with JSON workflows belongs in `runinator-workflows`, and the editor surface (completion, hover) belongs in `runinator-wdl-ide`.
 
 ## Where To Start
 
@@ -14,7 +14,8 @@ Guidance for agents working in `runinator-wdl`.
 - Semantic passes: `src/sema/`.
 - Lowering to workflow JSON: `src/lower/`.
 - Desugaring: `src/desugar.rs`.
-- Formatting and completion: `src/format.rs`, `src/completion.rs`.
+- Formatting: `src/format.rs`.
+- Editor seam: `src/analysis.rs` — the only items `runinator-wdl-ide` may reach into `lower`/`namespace` for. Add to it deliberately rather than widening a module.
 - Decompilation: `src/decompile/`.
 - Public compile/decompile facade: `src/lib.rs`.
 - Regression coverage: `src/tests.rs`.
@@ -22,7 +23,7 @@ Guidance for agents working in `runinator-wdl`.
 ## Boundaries
 
 - Keep the grammar a syntax for valid authoring forms, not a serializer for every malformed JSON graph.
-- New node kinds or fields must round-trip through parse, lower, format, completion if applicable, and decompile when structurally representable.
+- New node kinds or fields must round-trip through parse, lower, format, and decompile when structurally representable; update `runinator-wdl-ide` completion when the surface gains something an author would want offered.
 - Use `runinator-workflows` validation after lowering; do not duplicate shared graph invariants here unless they are language-specific diagnostics.
 - Do not add runtime scheduling, broker, database, worker, or provider behavior to this crate.
 

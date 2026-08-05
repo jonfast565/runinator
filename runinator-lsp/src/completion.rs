@@ -1,7 +1,7 @@
 //! turn `complete_source` results into lsp completion items. provider/action/setting metadata is
 //! supplied from the cache; with an empty cache the wdl completer still returns language items.
 
-use runinator_wdl::{WdlCompletionItem, WdlCompletionRequest, complete_source};
+use runinator_wdl_ide::{WdlCompletionItem, WdlCompletionRequest, complete_source};
 use tower_lsp::lsp_types::{
     CompletionItem, CompletionItemKind, CompletionList, CompletionResponse, CompletionTextEdit,
     Documentation, InsertTextFormat, Position, Range, TextEdit,

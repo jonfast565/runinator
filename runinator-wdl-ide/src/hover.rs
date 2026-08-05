@@ -5,15 +5,16 @@ use runinator_models::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{
+use runinator_wdl::{
+    analysis::{lower_type_with, resolve_named_types},
     ast::{Document, FnBody, FunctionDef},
-    completion::{
-        CompletionContext, action_signature, clamp_to_char_boundary, completion_context,
-        find_provider, navigate_type, path_context, root_type, type_fields, unmatched_open_paren,
-        workflow_context_type,
-    },
-    lower::types::{lower_type_with, resolve_named_types},
     parse_document,
+};
+
+use crate::completion::{
+    CompletionContext, action_signature, clamp_to_char_boundary, completion_context, find_provider,
+    navigate_type, path_context, root_type, type_fields, unmatched_open_paren,
+    workflow_context_type,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

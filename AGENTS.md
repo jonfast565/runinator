@@ -68,13 +68,14 @@ Keep dependency direction boring and predictable, structured with domains in min
 - `runinator-desktop-agent`: standalone GUI host for an exclusive desktop `WorkerRuntime`. Desktop-only configuration and tray UX live here; reusable execution behavior stays in `runinator-worker`. Never add this lifecycle to `runinator-command-center`.
 - `runinator-workflows`: workflow validation, graph cycle detection, and condition evaluation logic.
 
-  Per-kind knowledge lives in `node_kinds/`, one `NodeKindSpec` per `WorkflowNodeKind`, grouped by
-  catalog category (`terminal`/`task`/`control_flow`/`concurrency`/`io`/`sync`). A spec owns the
-  kind's palette metadata, its `GraphRole`, the node targets its parameters carry (`TargetSlot`),
-  its parameter shape check, and its statically-known output type. `catalog.rs`, `parameters.rs`,
-  `validation.rs`, `typing.rs`, and `simulate.rs` read those facts from `spec_for(kind)` rather
-  than each keeping a parallel `match`. Adding a node kind is a new spec plus one arm in
-  `spec_for`, which is exhaustive.
+  Per-kind knowledge lives in `node_kinds/`, one `NodeKindSpec` per `WorkflowNodeKind`, in its own
+  file under the kind's catalog category (`terminal`/`task`/`control_flow`/`concurrency`/`io`/
+  `sync`). A spec owns the kind's palette metadata, its `GraphRole`, the node targets its
+  parameters carry (`TargetSlot`), its parameter shape check, and its statically-known output type.
+  `catalog.rs`, `parameters.rs`, `validation.rs`, `typing.rs`, and `simulate.rs` read those facts
+  from `spec_for(kind)` rather than each keeping a parallel `match`. Adding a node kind is a new
+  file, a `mod`/`pub(super) use` pair in the category's `mod.rs`, and one arm in `spec_for`, which
+  is exhaustive.
 
   Two things deliberately stay outside the registry: `typing.rs`'s per-kind type checks need the
   private inference context, and `simulate.rs`'s per-kind evaluation needs the simulator's private
@@ -88,6 +89,7 @@ Keep dependency direction boring and predictable, structured with domains in min
   them together in both directions; that is what keeps the palette from advertising an edge the
   runtime ignores.
 - `runinator-wdl`: the WDL surface language (grammar, parser, lowering to the JSON workflow model, and decompiling back), plus the `.wdls` secrets front end and the `.wdlp` pipeline front end (`parse_pipeline_str` → `PipelineBundle`, `pipeline_to_wdlp` back). It must round-trip every node kind's parameters, but its grammar must only express well-formed graphs. Do not add WDL syntax for degenerate or malformed graphs (e.g. a parallel with no matching join, a condition with no branches, a missing start node); the decompiler may error on such JSON instead. Keep the grammar a description of valid programs, not a serializer for every possible JSON shape. Header `trigger cron "..."` declarations and input-field defaults are carried in `definition.metadata.triggers` / the field's `default`; the web service materializes pack-managed triggers (`metadata.managed_by = "wdl"`) on import. A `.wdlp` pipeline lowers to a portable `PipelineBundle` (members + links by workflow name); on import the web service resolves names to ids, upserts the `Pipeline`, and materializes each link as a managed `chained` trigger carrying `configuration.pipeline_id` (reconciled by pipeline id; header-trigger reconciliation skips triggers that carry a `pipeline_id`). The pipeline itself never runs — its chained triggers are the runtime linkage.
+- `runinator-wdl-ide`: the editor surface over the language core — completion and hover. It answers "what can go here" and "what is this" for a cursor in a buffer; it never affects what a compiled workflow means. It reads the core through `parse_document`, `ast`, and the `analysis` seam (`runinator-wdl/src/analysis.rs`), which is the whole reason anything inside `lower` or `namespace` is public. An editor feature needing a new item from the core gets it added to `analysis` deliberately — do not widen a module to reach it. `runinator-lsp`, `runinator-ws`'s `/wdl/complete` and `/wdl/hover` handlers, and the command center's Tauri commands depend on this crate; ctl, the worker, and every compile path depend only on the core. Keep `decompile/` and `format.rs` in the core: decompile must round-trip against lowering, and format-idempotence is coupled to decompile.
 - `runinator-plugin`: dynamic plugin loading and `Provider` trait integration. Keep FFI details contained here.
 - `runinator-provider-*`: provider implementations. Always implement a new library for a new provider. Keep provider-specific configuration and external system behavior out of core crates.
 - `runinator-utilities`: small cross-cutting helpers such as startup/logging, credential store trait, and data export. Do not turn this into a dumping ground for domain logic.

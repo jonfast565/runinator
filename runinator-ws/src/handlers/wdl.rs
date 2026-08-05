@@ -20,15 +20,15 @@ use crate::repository;
 use crate::responses::{api_error, bad_request};
 
 pub(crate) async fn complete_wdl(
-    Json(request): Json<runinator_wdl::WdlCompletionRequest>,
-) -> Json<runinator_wdl::WdlCompletionResponse> {
-    Json(runinator_wdl::complete_source(request))
+    Json(request): Json<runinator_wdl_ide::WdlCompletionRequest>,
+) -> Json<runinator_wdl_ide::WdlCompletionResponse> {
+    Json(runinator_wdl_ide::complete_source(request))
 }
 
 pub(crate) async fn hover_wdl(
-    Json(request): Json<runinator_wdl::WdlHoverRequest>,
-) -> Json<Option<runinator_wdl::WdlHoverResponse>> {
-    Json(runinator_wdl::hover_source(request))
+    Json(request): Json<runinator_wdl_ide::WdlHoverRequest>,
+) -> Json<Option<runinator_wdl_ide::WdlHoverResponse>> {
+    Json(runinator_wdl_ide::hover_source(request))
 }
 
 #[derive(Deserialize)]

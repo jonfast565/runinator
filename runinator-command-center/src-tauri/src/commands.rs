@@ -603,16 +603,16 @@ pub fn analyze_wdl(
 
 #[tauri::command]
 pub fn complete_wdl(
-    request: runinator_wdl::WdlCompletionRequest,
-) -> CommandResult<runinator_wdl::WdlCompletionResponse> {
-    Ok(runinator_wdl::complete_source(request))
+    request: runinator_wdl_ide::WdlCompletionRequest,
+) -> CommandResult<runinator_wdl_ide::WdlCompletionResponse> {
+    Ok(runinator_wdl_ide::complete_source(request))
 }
 
 #[tauri::command]
 pub fn hover_wdl(
-    request: runinator_wdl::WdlHoverRequest,
-) -> CommandResult<Option<runinator_wdl::WdlHoverResponse>> {
-    Ok(runinator_wdl::hover_source(request))
+    request: runinator_wdl_ide::WdlHoverRequest,
+) -> CommandResult<Option<runinator_wdl_ide::WdlHoverResponse>> {
+    Ok(runinator_wdl_ide::hover_source(request))
 }
 
 #[tauri::command]
