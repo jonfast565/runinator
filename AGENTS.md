@@ -51,8 +51,14 @@ Keep dependency direction boring and predictable, structured with domains in min
 - `runinator-models`: shared domain and wire structs only. Avoid service logic, database details, HTTP clients, broker behavior, or runtime configuration here.
 - `runinator-comm`: shared communication contracts and gossip/discovery types. It can depend on models, but should not know about concrete services, databases, providers, or broker backends.
 - `runinator-api`: HTTP client facade for talking to the web service. Keep URL discovery behind locator types; do not spread raw web-service endpoint construction through worker or ctl code.
-- `runinator-store`: the persistence **contract** — trait definitions and the plain types they exchange, with no sqlx and no backend. `DatabaseImpl` is the full surface; `ReducerStore` is the subset the state machine calls, and `DatabaseImpl: ReducerStore` so every existing `T: DatabaseImpl` caller satisfies both. Add a new operation here first. Because the two traits are separate, a caller that uses methods from both must import both (`use runinator_database::interfaces::{DatabaseImpl, ReducerStore}`).
+- `runinator-store`: the persistence **contract** — trait definitions and the plain types they exchange, with no sqlx and no backend. The surface is split two ways:
+  - `roles/` holds one trait per domain (`RunStore`, `ScheduleStore`, `AuthStore`, `OrgStore`, `DefinitionStore`, `DispatchStore`, `NotificationStore`, `ReplicaStore`, `AutomationStore`, `TaskRunStore`, `SettingStore`, `ArchiveStore`). `DatabaseImpl` composes all of them and keeps only `run_init_scripts` of its own.
+  - `ReducerStore` is a **use-case** trait, cut to exactly what the state machine calls. It deliberately spans several domains — keeping it small is what makes the reducer's in-memory fake practical.
+
+  Add a new operation to the role that owns it (or `ReducerStore` if the reducer calls it), never to `DatabaseImpl`. Bound as narrowly as the caller allows: `runinator-archiver` bounds on `ArchiveStore`, not `DatabaseImpl`. Because the roles are separate traits, a caller using several must import each — glob `runinator_database::interfaces::prelude::*` when that list would be long and uninformative.
 - `runinator-database`: the concrete SQLite/Postgres/MySQL implementation of `runinator-store`'s traits, plus row mapping. Database-specific mapping belongs here, not in `runinator-ws`. Method bodies are written **once**, generically over `SqlBackend`, and implemented on the local `SqlStore<B>` wrapper — the traits are foreign now, so the orphan rule forbids a blanket impl on a bare type parameter. `SqliteDb`/`PostgresDb`/`MySqlDb` are aliases for `SqlStore<…Backend>`, so callers name them as before. It re-exports `runinator_store::{archive, interfaces}` at their historical paths.
+
+  `operations/` mirrors the role split one file per trait, with shared helpers and the SQL-dialect plumbing in `operations/mod.rs`. Each role impl repeats the same thirty-line sqlx `where` block; that is deliberate, not an oversight — a macro would make every type error inside the query bodies point at an expansion instead of a real line. Rust does **not** elaborate trait `where` clauses into implied bounds, so a "bundle the bounds in one trait" shortcut does not compile.
 - `runinator-reducer`: state-machine transitions and node-kind orchestration, bounded on `ReducerStore` rather than the whole store. Keep HTTP, concrete broker transports, and service hosting out of it — and keep sqlx out: the crate deliberately does not depend on `runinator-database`, which is what makes `test_support::FakeStore` (behind the `test-support` feature) viable for testing handlers without a database. Prefer adding node-handler tests there over reaching for the web service's sqlite-backed suite.
 - `runinator-engine`: durable repository orchestration and background runtime loops shared by the web service and `runinator-background-worker`.
 - `runinator-ws`: HTTP/WebSocket server and auth/API adapters over `runinator-engine`. It should not grow duplicate reducer, repository, or worker implementations.
@@ -96,9 +102,9 @@ When adding fields to shared structs, check every boundary that serializes, pers
 
 - `runinator-models`
 - `runinator-comm`
-- `runinator-store` (the trait declaration: `interfaces.rs` for most operations, `reducer_store.rs` if the state machine calls it)
+- `runinator-store` (the trait declaration: `roles/<domain>.rs`, or `reducer_store.rs` if the state machine calls it)
 - `runinator-database/src/mappers.rs`
-- SQLite/Postgres implementations (`operations.rs` — the body goes in the impl block matching the trait the declaration went into)
+- SQLite/Postgres implementations (`operations/<same file name as the role>.rs`)
 - `runinator-reducer/src/test_support.rs`, if the operation lands on `ReducerStore`
 - `runinator-api`
 - ctl task/pack import (WDL compile + `workflows apply` compiled-pack zip)
@@ -120,7 +126,7 @@ Providers execute task actions; they are not schedulers, API clients, or persist
 
 The database crate owns persistence behavior. The web service owns HTTP behavior.
 
-- Add new persistence operations to `DatabaseImpl` first, then implement them for SQLite and Postgres together.
+- Add a new persistence operation to the `runinator-store` role trait that owns its domain (`roles/<domain>.rs`), then write the body in the matching `runinator-database/src/operations/<domain>.rs`. One generic body covers SQLite, Postgres, and MySQL together. Do not add methods to `DatabaseImpl` itself — it only composes the roles.
 - Keep SQLx row mapping centralized in `runinator-database`, especially `mappers.rs`.
 - Keep repository functions in `runinator-engine/src/repository/` focused on persistence orchestration. HTTP response mapping belongs in `runinator-ws/src/handlers/`, and SQL belongs in `runinator-database`.
 - Keep public API payloads in shared model/API crates when they must be consumed by multiple binaries or the command center.

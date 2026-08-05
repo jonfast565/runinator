@@ -1,6 +1,5 @@
 use super::*;
 use crate::archive::ArchiveTable;
-use crate::interfaces::DatabaseImpl;
 use chrono::{Duration, Utc};
 use runinator_comm::{ActionCommand, WorkflowResultEvent};
 use runinator_models::value::Value;
@@ -17,7 +16,7 @@ use runinator_models::{
         WorkflowTrigger, WorkflowTriggerKind,
     },
 };
-use runinator_store::ReducerStore;
+use runinator_store::prelude::*;
 use uuid::Uuid;
 
 #[tokio::test]

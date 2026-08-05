@@ -12,10 +12,8 @@ use runinator_broker::{
 };
 use runinator_comm::{ActionCommand, WorkflowResultEvent};
 use runinator_database::{
-    BootstrapOptions, bootstrap_database,
-    interfaces::{DatabaseImpl, ReducerStore},
-    load_jwt_secret, seed_bootstrap_admin, seed_bootstrap_service_api_key,
-    sqlite::SqliteDb,
+    BootstrapOptions, bootstrap_database, interfaces::prelude::*, load_jwt_secret,
+    seed_bootstrap_admin, seed_bootstrap_service_api_key, sqlite::SqliteDb,
 };
 use runinator_models::json;
 use runinator_models::value::Value;
@@ -1681,8 +1679,10 @@ async fn action_node_timeout_recovers_parked_run() {
         .await
         .unwrap();
 
-    // no worker result ever arrives; the armed timeout wake must settle the parked node.
-    tokio::time::sleep(Duration::from_millis(1500)).await;
+    // no worker result ever arrives; the armed timeout wake must settle the parked node. the margin
+    // over the node's 1s timeout is generous on purpose: at 1500ms this test failed intermittently
+    // when the workspace suite ran in parallel and the sleep lost its slack to scheduler pressure.
+    tokio::time::sleep(Duration::from_millis(2500)).await;
     drain_ready_nodes(&db).await;
 
     let (run, nodes) = crate::repository::fetch_workflow_run(&db, run_id)

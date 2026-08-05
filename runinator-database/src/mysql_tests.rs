@@ -17,7 +17,7 @@ use runinator_models::{
         WorkflowTrigger, WorkflowTriggerKind,
     },
 };
-use runinator_store::ReducerStore;
+use runinator_store::prelude::*;
 use sqlx::{Connection, MySqlConnection};
 use uuid::Uuid;
 

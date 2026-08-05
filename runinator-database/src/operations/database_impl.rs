@@ -1,0 +1,43 @@
+//! the composed surface: schema bootstrap, the one operation that is not a domain operation.
+//!
+//! the `DatabaseImpl` half of the generic sql implementation. bodies are written once, over any
+//! `SqlBackend`; see `super` for the shared helpers they call.
+
+use super::*;
+
+// the bound list is repeated verbatim in every role impl in this directory. it stays spelled out
+// rather than hidden behind a macro so that type errors inside the query bodies — the part that
+// actually gets edited — keep pointing at real source lines instead of a macro expansion.
+impl<B> DatabaseImpl for SqlStore<B>
+where
+    B: SqlBackend,
+    // encode bounds for every bound value type.
+    for<'q> i64: Encode<'q, B::Db> + Type<B::Db>,
+    for<'q> bool: Encode<'q, B::Db> + Type<B::Db>,
+    for<'q> &'q str: Encode<'q, B::Db> + Type<B::Db>,
+    for<'q> String: Encode<'q, B::Db> + Type<B::Db>,
+    for<'q> Vec<u8>: Encode<'q, B::Db> + Type<B::Db>,
+    for<'q> Uuid: Encode<'q, B::Db> + Type<B::Db>,
+    for<'q> Option<i64>: Encode<'q, B::Db> + Type<B::Db>,
+    for<'q> Option<String>: Encode<'q, B::Db> + Type<B::Db>,
+    for<'q> Option<Uuid>: Encode<'q, B::Db> + Type<B::Db>,
+    // decode bounds (operations read a couple of columns directly; mappers read the rest).
+    for<'r> i64: Decode<'r, B::Db> + Type<B::Db>,
+    for<'r> String: Decode<'r, B::Db> + Type<B::Db>,
+    for<'r> bool: Decode<'r, B::Db> + Type<B::Db>,
+    for<'r> Uuid: Decode<'r, B::Db> + Type<B::Db>,
+    for<'r> Option<i64>: Decode<'r, B::Db> + Type<B::Db>,
+    for<'r> Option<String>: Decode<'r, B::Db> + Type<B::Db>,
+    for<'r> Option<Uuid>: Decode<'r, B::Db> + Type<B::Db>,
+    for<'r> Vec<u8>: Decode<'r, B::Db> + Type<B::Db>,
+    // row indexing + executor plumbing.
+    usize: ColumnIndex<<B::Db as Database>::Row>,
+    for<'c> &'c str: ColumnIndex<<B::Db as Database>::Row>,
+    for<'q> <B::Db as Database>::Arguments<'q>: IntoArguments<'q, B::Db>,
+    for<'c> &'c mut <B::Db as Database>::Connection: Executor<'c, Database = B::Db>,
+    <B::Db as Database>::QueryResult: RowsAffected,
+{
+    async fn run_init_scripts(&self, paths: &[String]) -> Result<(), SendableError> {
+        self.init(paths).await
+    }
+}

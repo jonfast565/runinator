@@ -24,7 +24,7 @@ use runinator_api::{
 };
 use runinator_database::{
     archive::{ArchiveRow, ArchiveTable},
-    interfaces::DatabaseImpl,
+    interfaces::ArchiveStore,
 };
 use runinator_db_cli::dispatch_database;
 use runinator_models::errors::SendableError;
@@ -72,7 +72,7 @@ async fn run() -> Result<(), SendableError> {
     )
 }
 
-async fn run_loop<T: DatabaseImpl>(db: Arc<T>, config: Config) -> Result<(), SendableError> {
+async fn run_loop<T: ArchiveStore>(db: Arc<T>, config: Config) -> Result<(), SendableError> {
     fs::create_dir_all(&config.archive_dir)?;
     let archiver_id = format!("runinator-archiver-{}", Uuid::new_v4());
     info!(archiver_id = %archiver_id, "archiver started");
@@ -231,7 +231,7 @@ async fn register_archiver_replica_with_retry(
     }
 }
 
-async fn run_once<T: DatabaseImpl>(
+async fn run_once<T: ArchiveStore>(
     db: &T,
     config: &Config,
     archiver_id: &str,
@@ -285,7 +285,7 @@ async fn run_once<T: DatabaseImpl>(
     Ok(())
 }
 
-async fn mark_all<T: DatabaseImpl>(db: &T, config: &Config) -> Result<(), SendableError> {
+async fn mark_all<T: ArchiveStore>(db: &T, config: &Config) -> Result<(), SendableError> {
     let policies = [
         (ArchiveTable::WorkflowRuns, config.workflow_run_retention),
         (ArchiveTable::WorkflowNodeChunks, config.node_log_retention),

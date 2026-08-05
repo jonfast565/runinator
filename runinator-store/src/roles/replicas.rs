@@ -1,0 +1,112 @@
+//! the fleet: replica registration, heartbeats, reaping, telemetry samples, and provider registrations.
+//!
+//! one of the role traits `DatabaseImpl` composes. bound on this directly when a caller only
+//! needs this slice of the store.
+
+use std::future::Future;
+
+use chrono::{DateTime, Utc};
+use uuid::Uuid;
+
+use runinator_models::{
+    auth::AuthContext,
+    errors::SendableError,
+    replicas::{
+        ReplicaHeartbeatRequest, ReplicaProviderRegistration, ReplicaProviderRegistrationRequest,
+        ReplicaRecord, ReplicaRegistrationRequest,
+    },
+    telemetry::ReplicaSample,
+};
+
+// re-exported here so callers that reach for the contract at its historical path
+// (`runinator_database::interfaces::*`) can import both halves from one place.
+pub use crate::reducer_store::ReducerStore;
+
+/// Core persistence operations for Runinator.
+/// The fleet: replica registration, heartbeats, reaping, telemetry samples, and provider registrations.
+pub trait ReplicaStore: Send + Sync + 'static {
+    /// Register or refresh a runtime replica. `registered_by` is only recorded on the initial
+    /// insert (a later re-registration of the same instance_id/runtime_id upserts the rest of the
+    /// row but never reassigns ownership).
+    fn register_replica(
+        &self,
+        request: ReplicaRegistrationRequest,
+        observed_ip: Option<String>,
+        registered_by: &AuthContext,
+    ) -> impl Future<Output = Result<ReplicaRecord, SendableError>> + Send;
+
+    /// Refresh a replica heartbeat if the runtime id still matches.
+    fn heartbeat_replica(
+        &self,
+        replica_id: Uuid,
+        request: ReplicaHeartbeatRequest,
+        observed_ip: Option<String>,
+    ) -> impl Future<Output = Result<Option<ReplicaRecord>, SendableError>> + Send;
+
+    /// Mark a replica offline if the runtime id still matches.
+    fn mark_replica_offline(
+        &self,
+        replica_id: Uuid,
+        runtime_id: String,
+    ) -> impl Future<Output = Result<Option<ReplicaRecord>, SendableError>> + Send;
+
+    /// Mark replicas offline that have not sent a heartbeat since the cutoff. returns the count
+    /// reaped so callers can log activity.
+    fn reap_inactive_replicas(
+        &self,
+        cutoff: DateTime<Utc>,
+    ) -> impl Future<Output = Result<u64, SendableError>> + Send;
+
+    /// Hard-delete replicas whose last heartbeat predates the cutoff, clearing historical attribution
+    /// pointers first so restrict-mode foreign keys do not block the delete. returns the count purged.
+    fn delete_expired_replicas(
+        &self,
+        cutoff: DateTime<Utc>,
+    ) -> impl Future<Output = Result<u64, SendableError>> + Send;
+
+    /// Fetch a single replica by id, so a caller presenting a `replica_id` (e.g. over the ws broker
+    /// relay) can be checked against who registered it.
+    fn fetch_replica(
+        &self,
+        replica_id: Uuid,
+    ) -> impl Future<Output = Result<Option<ReplicaRecord>, SendableError>> + Send;
+
+    /// Count node runs currently held by each executor replica, keyed by replica id. reflects live
+    /// executor claims, so the count is the number of tasks actively running on each worker.
+    fn count_running_node_runs_by_executor(
+        &self,
+    ) -> impl Future<Output = Result<Vec<(Uuid, i64)>, SendableError>> + Send;
+
+    /// Append a telemetry sample to the replica time-series.
+    fn insert_replica_sample(
+        &self,
+        sample: ReplicaSample,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
+
+    /// Fetch a replica's telemetry samples taken at or after `since`, oldest first.
+    fn fetch_replica_samples(
+        &self,
+        replica_id: Uuid,
+        since: DateTime<Utc>,
+        limit: i64,
+    ) -> impl Future<Output = Result<Vec<ReplicaSample>, SendableError>> + Send;
+
+    /// Delete telemetry samples older than `cutoff`. returns the count purged.
+    fn prune_replica_samples(
+        &self,
+        cutoff: DateTime<Utc>,
+    ) -> impl Future<Output = Result<u64, SendableError>> + Send;
+
+    /// Upsert a provider registration for a worker replica.
+    fn upsert_replica_provider_registration(
+        &self,
+        replica_id: Uuid,
+        request: ReplicaProviderRegistrationRequest,
+    ) -> impl Future<Output = Result<ReplicaProviderRegistration, SendableError>> + Send;
+
+    /// Fetch provider registrations for a replica.
+    fn fetch_replica_provider_registrations(
+        &self,
+        replica_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<ReplicaProviderRegistration>, SendableError>> + Send;
+}
