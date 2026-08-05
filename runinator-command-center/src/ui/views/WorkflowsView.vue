@@ -64,33 +64,59 @@
                 : 'No workflows match the current scope filter.'
             "
           />
-          <DataTable v-else>
-            <table>
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Version</th>
-                  <th>State</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr
-                  v-for="workflow in scopedWorkflows"
-                  :key="workflow.id ?? workflow.name"
-                  class="cursor-pointer"
-                  :class="{
-                    selected: workflows.selectedWorkflowId === workflow.id,
-                    muted: !workflow.enabled,
-                  }"
-                  @click="chooseWorkflow(workflow)"
-                >
-                  <td>{{ workflow.name }}</td>
-                  <td>{{ workflow.version }}</td>
-                  <td><StatusBadge :status="workflow.enabled" /></td>
-                </tr>
-              </tbody>
-            </table>
-          </DataTable>
+          <template v-else>
+            <BulkActionBar
+              class="mb-2"
+              noun="workflow"
+              :count="selection.count.value"
+              :actions="bulkActions"
+              :busy="bulkBusy"
+              @run="runBulkAction"
+              @clear="selection.clear"
+            />
+            <DataTable>
+              <table>
+                <thead>
+                  <tr>
+                    <th class="w-9" scope="col">
+                      <SelectCheckbox
+                        :checked="selection.allSelected.value"
+                        :indeterminate="selection.someSelected.value"
+                        :label="selection.allSelected.value ? 'Deselect all' : 'Select all'"
+                        @toggle="selection.toggleAll"
+                      />
+                    </th>
+                    <th>Name</th>
+                    <th>Version</th>
+                    <th>State</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr
+                    v-for="workflow in scopedWorkflows"
+                    :key="workflow.id ?? workflow.name"
+                    class="cursor-pointer"
+                    :class="{
+                      selected: workflows.selectedWorkflowId === workflow.id,
+                      muted: !workflow.enabled,
+                    }"
+                    @click="chooseWorkflow(workflow)"
+                  >
+                    <td class="w-9">
+                      <SelectCheckbox
+                        :checked="selection.isSelected(workflow)"
+                        :label="`Select workflow ${workflow.name}`"
+                        @toggle="selection.toggle(workflow, $event)"
+                      />
+                    </td>
+                    <td>{{ workflow.name }}</td>
+                    <td>{{ workflow.version }}</td>
+                    <td><StatusBadge :status="workflow.enabled" /></td>
+                  </tr>
+                </tbody>
+              </table>
+            </DataTable>
+          </template>
         </div>
       </template>
 
@@ -131,17 +157,20 @@ import WorkflowCanvas from "../components/workflow/WorkflowCanvas.vue";
 import WorkflowInspector from "../components/workflow/WorkflowInspector.vue";
 import WorkflowStepEditorModal from "../components/workflow/WorkflowStepEditorModal.vue";
 import WorkflowRunInputModal from "../components/workflow/WorkflowRunInputModal.vue";
+import BulkActionBar, { type BulkAction } from "../components/shared/BulkActionBar.vue";
 import DataTable from "../components/shared/DataTable.vue";
 import EmptyState from "../components/shared/EmptyState.vue";
 import Icon from "../components/shared/Icon.vue";
 import MetricCard from "../components/shared/MetricCard.vue";
 import MobileBackBar from "../components/shared/MobileBackBar.vue";
 import PanelHeader from "../components/shared/PanelHeader.vue";
+import SelectCheckbox from "../components/shared/SelectCheckbox.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
 import StatusBadge from "../components/shared/StatusBadge.vue";
 import { useWorkflowsStore } from "../../ui/adapters/pinia/workflows";
 import { useOrgsStore } from "../../ui/adapters/pinia/orgs";
 import { useAppStore } from "../../ui/adapters/pinia/app";
+import { useBulkSelection } from "../composables/useBulkSelection";
 import { useOperationLoading } from "../composables/useOperationLoading";
 
 const workflows = useWorkflowsStore();
@@ -171,6 +200,55 @@ const disabledWorkflowCount = computed(
   () => scopedWorkflows.value.filter((workflow) => !workflow.enabled).length,
 );
 const selectedWorkflowLabel = computed(() => workflows.selectedWorkflow?.name ?? "None");
+
+// bulk selection tracks the scoped (filtered) list, so changing the scope or the search drops rows
+// that are no longer visible out of the selection.
+const selection = useBulkSelection(scopedWorkflows, (workflow) => workflow.id ?? workflow.name);
+const bulkBusy = ref("");
+
+const bulkActions = computed<BulkAction[]>(() => [
+  {
+    key: "enable",
+    label: "Enable",
+    icon: "check",
+    disabled: selection.selectedRows.value.every((workflow) => workflow.enabled),
+  },
+  {
+    key: "disable",
+    label: "Disable",
+    icon: "close",
+    disabled: selection.selectedRows.value.every((workflow) => !workflow.enabled),
+  },
+  { key: "delete", label: "Delete", icon: "trash", variant: "danger" },
+]);
+
+async function runBulkAction(key: string) {
+  const selected = selection.selectedRows.value;
+
+  if (!selected.length || bulkBusy.value) {
+    return;
+  }
+
+  // a bulk edit rewrites rows the open draft may be derived from; make the user resolve their
+  // unsaved changes first rather than silently discarding or double-applying them.
+  if (!confirmDiscardIfDirty()) {
+    return;
+  }
+
+  bulkBusy.value = key;
+
+  try {
+    if (key === "delete") {
+      await workflows.deleteWorkflows(selected);
+    } else {
+      await workflows.setWorkflowsEnabled(selected, key === "enable");
+    }
+  } finally {
+    bulkBusy.value = "";
+  }
+
+  selection.clear();
+}
 
 function confirmDiscardIfDirty(): boolean {
   if (!workflows.isDirty) {

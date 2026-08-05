@@ -1,7 +1,7 @@
 use super::action::{
     TARGET_PARK_DEFAULT_TIMEOUT_SECONDS, TargetResolution, default_foreign_language_runtime,
-    foreign_language_runtime, has_dedicated_workers, replica_labels_match, target_for,
-    target_for_labels,
+    foreign_language_runtime, has_dedicated_workers, replica_labels_match, resolve_idempotency_key,
+    target_for, target_for_labels,
 };
 use super::assert::evaluate_assertions;
 use super::await_run::{await_satisfied, parse_await_mode};
@@ -579,4 +579,57 @@ fn target_park_times_out_even_without_a_configured_node_timeout() {
         &run,
         TARGET_PARK_DEFAULT_TIMEOUT_SECONDS
     ));
+}
+
+/// the compiled `.idempotent(key: <expr>)` expression, resolved per dispatch against the run context.
+fn action_with_key(key: Option<Value>) -> runinator_models::workflows::WorkflowAction {
+    runinator_models::workflows::WorkflowAction {
+        provider: "billing".into(),
+        function: "charge".into(),
+        timeout_seconds: 60,
+        configuration: Default::default(),
+        mcp_enabled: false,
+        tags: Vec::new(),
+        required_labels: Default::default(),
+        idempotency_key: key,
+    }
+}
+
+#[test]
+fn idempotency_key_resolves_against_the_run_context_and_is_workflow_scoped() {
+    let workflow_id = Uuid::now_v7();
+    let context = Value::from(serde_json::json!({ "input": { "invoice": "inv-42" } }));
+    let expression = Value::from(serde_json::json!({ "$ref": { "input": ["invoice"] } }));
+
+    // the key is qualified by workflow, so an unrelated workflow computing "inv-42" does not collide.
+    assert_eq!(
+        resolve_idempotency_key(&action_with_key(Some(expression)), workflow_id, &context),
+        Some(format!("workflow:{workflow_id}:inv-42"))
+    );
+
+    // an action that declared nothing stays non-idempotent.
+    assert_eq!(
+        resolve_idempotency_key(&action_with_key(None), workflow_id, &context),
+        None
+    );
+}
+
+#[test]
+fn an_unresolvable_or_empty_idempotency_key_is_absent_rather_than_shared() {
+    let workflow_id = Uuid::now_v7();
+    let context = Value::from(serde_json::json!({ "input": {} }));
+
+    // a reference that resolves to nothing must not collapse every run onto one key: that would
+    // silently skip real work, which is far worse than not deduping.
+    let missing = Value::from(serde_json::json!({ "$ref": { "input": ["absent"] } }));
+    assert_eq!(
+        resolve_idempotency_key(&action_with_key(Some(missing)), workflow_id, &context),
+        None
+    );
+
+    let empty = Value::from(serde_json::json!(""));
+    assert_eq!(
+        resolve_idempotency_key(&action_with_key(Some(empty)), workflow_id, &context),
+        None
+    );
 }

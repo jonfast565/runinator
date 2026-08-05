@@ -829,6 +829,10 @@ impl Lowerer {
             labels.insert("runner".into(), Value::String(runner.clone()));
             action_obj.insert("required_labels".into(), Value::Object(labels));
         }
+        if let Some(key) = &action.modifiers.idempotency_key {
+            let lowered = self.lower_expr(key)?;
+            action_obj.insert("idempotency_key".into(), lowered);
+        }
 
         let mut fields = vec![
             ("action", Value::Object(action_obj)),
@@ -882,6 +886,10 @@ impl Lowerer {
             let mut labels = Map::new();
             labels.insert("runner".into(), Value::String(runner.clone()));
             obj.insert("required_labels".into(), Value::Object(labels));
+        }
+        if let Some(key) = &action.modifiers.idempotency_key {
+            let lowered = self.lower_expr(key)?;
+            obj.insert("idempotency_key".into(), lowered);
         }
         Ok(Value::Object(obj))
     }

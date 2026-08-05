@@ -561,6 +561,56 @@ fn runner_modifier_lowers_and_round_trips() {
 }
 
 #[test]
+fn idempotent_modifier_lowers_and_round_trips() {
+    // the key is an expression, not a literal: it names *this* run's effect, so it has to be able to
+    // read run inputs the way any other action argument does.
+    let src = r#"
+        workflow "Charges" v1 {
+            node charge <- billing.charge(amount: 100)
+                .idempotent(key: run.run_id)
+        }
+    "#;
+    let definition = compile(src);
+    let action = definition
+        .definition
+        .nodes
+        .iter()
+        .find(|node| node.kind == runinator_models::workflows::WorkflowNodeKind::Action)
+        .and_then(|node| node.action.as_ref())
+        .expect("action node");
+    assert!(
+        action.idempotency_key.is_some(),
+        "idempotent modifier should lower to action.idempotency_key"
+    );
+
+    let wdl = decompile(&definition).expect("decompile");
+    assert!(
+        wdl.contains(".idempotent(key: run.run_id)"),
+        "decompiled source missing idempotent modifier:\n{wdl}"
+    );
+    assert_round_trips(src);
+}
+
+#[test]
+fn action_without_idempotent_modifier_carries_no_key() {
+    // the default has to stay off: a key nobody asked for would silently dedupe real work.
+    let src = r#"
+        workflow "Plain" v1 {
+            node go <- console.run(command: "echo hi")
+        }
+    "#;
+    let definition = compile(src);
+    let action = definition
+        .definition
+        .nodes
+        .iter()
+        .find(|node| node.kind == runinator_models::workflows::WorkflowNodeKind::Action)
+        .and_then(|node| node.action.as_ref())
+        .expect("action node");
+    assert!(action.idempotency_key.is_none());
+}
+
+#[test]
 fn explicit_decompile_surfaces_loop_edges_and_none_caps() {
     // a for-loop with no limit: the back-edge, the continuation, the block id, and `limit none`.
     let wdl = assert_round_trips_explicit(

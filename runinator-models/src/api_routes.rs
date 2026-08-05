@@ -42,6 +42,12 @@ pub const API_WORKFLOW_NODE_RUNS: &str = "/workflow_node_runs";
 pub const API_SUPERVISOR_STATUS: &str = "/supervisor/status";
 pub const API_APPROVALS: &str = "/approvals";
 pub const API_IDEMPOTENCY_KEYS: &str = "/idempotency_keys";
+/// reserve an action node's idempotency key before its provider is invoked.
+pub const API_IDEMPOTENCY_KEYS_CLAIM: &str = "/idempotency_keys/claim";
+/// record a completed execution against a reserved key so a redelivery replays it.
+pub const API_IDEMPOTENCY_KEYS_COMPLETE: &str = "/idempotency_keys/complete";
+/// free an unfinished reservation after a non-success outcome.
+pub const API_IDEMPOTENCY_KEYS_RELEASE: &str = "/idempotency_keys/release";
 pub const API_CREDENTIALS: &str = "/credentials";
 pub const API_REPLICAS: &str = "/replicas";
 

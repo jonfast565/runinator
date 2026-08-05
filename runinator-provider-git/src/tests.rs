@@ -11,6 +11,7 @@ fn test_git_provider_unsupported_action() {
         timeout_secs: 30,
         artifact_dir: "".into(),
         events_jsonl_path: "".into(),
+        idempotency_key: None,
     };
 
     let result = provider.execute_service(
@@ -52,6 +53,7 @@ fn push_requires_branch_before_execution() {
         timeout_secs: 30,
         artifact_dir: "".into(),
         events_jsonl_path: "".into(),
+        idempotency_key: None,
     };
 
     let result = provider.execute_service(

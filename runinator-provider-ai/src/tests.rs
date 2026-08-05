@@ -14,6 +14,7 @@ fn test_ai_command_provider_execution() {
         timeout_secs: 30,
         artifact_dir: "".into(),
         events_jsonl_path: "".into(),
+        idempotency_key: None,
     };
 
     let result = provider
@@ -41,6 +42,7 @@ fn test_ai_command_fails_on_nonzero_exit() {
         timeout_secs: 30,
         artifact_dir: "".into(),
         events_jsonl_path: "".into(),
+        idempotency_key: None,
     };
 
     let result = provider.execute_service(
@@ -70,6 +72,7 @@ fn test_claude_code_stub_binary_passes_argv() {
         timeout_secs: 30,
         artifact_dir: "".into(),
         events_jsonl_path: "".into(),
+        idempotency_key: None,
     };
 
     let result = provider
@@ -137,6 +140,7 @@ fn test_claude_code_nonzero_exit() {
         timeout_secs: 30,
         artifact_dir: "".into(),
         events_jsonl_path: "".into(),
+        idempotency_key: None,
     };
 
     let result = provider.execute_service(
@@ -160,6 +164,7 @@ fn test_claude_code_invalid_params_missing_prompt() {
         timeout_secs: 30,
         artifact_dir: "".into(),
         events_jsonl_path: "".into(),
+        idempotency_key: None,
     };
 
     let err = provider
@@ -193,6 +198,7 @@ fn test_claude_code_json_output_parsed() {
         timeout_secs: 30,
         artifact_dir: "".into(),
         events_jsonl_path: "".into(),
+        idempotency_key: None,
     };
 
     let result = provider

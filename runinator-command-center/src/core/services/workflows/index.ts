@@ -20,6 +20,7 @@ import {
 } from "../../workflow/index";
 import type { GraphEdgeModel, GraphNodeModel } from "../../workflow/graph-model";
 import type { AppTab } from "../../navigation/app";
+import type { RunOperationOptions, ToastAction } from "../app";
 import { isLockedWorkflowNode } from "../../workflow/editor-defaults";
 import { createStore } from "../event-bus";
 import { createWorkflowCatalogService } from "./catalog";
@@ -73,13 +74,13 @@ export function createWorkflowServices(inputDeps: WorkflowServiceDeps) {
   });
 
   const ctx = {
-    runOperation: <T>(label: string, operation: () => Promise<T>, options?: { silent?: boolean }) =>
+    runOperation: <T>(label: string, operation: () => Promise<T>, options?: RunOperationOptions) =>
       deps.app.runOperation(label, operation, options),
     setStatus: (text: string) => {
       deps.app.setStatus(text);
     },
-    setError: (text: string) => {
-      deps.app.setError(text);
+    setError: (text: string, action?: ToastAction) => {
+      deps.app.setError(text, action);
     },
     get normalizedSearch() {
       return deps.app.normalizedSearch;

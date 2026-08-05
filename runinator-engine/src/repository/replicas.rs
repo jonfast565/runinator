@@ -7,7 +7,10 @@ use runinator_models::replicas::{
 use runinator_models::telemetry::{ReplicaSample, ReplicaSampleSeries, ResourceTelemetry};
 use uuid::Uuid;
 
-const REPLICA_STALE_SECONDS: i64 = 30;
+// inactivity window after which a replica stops counting as live. shared by replica listing and by
+// executor-lease invalidation, so a worker declared dead in the ui is the same one whose lease is
+// reclaimable. three missed heartbeats at the 10s worker interval.
+pub const REPLICA_STALE_SECONDS: i64 = 30;
 // inactivity window after which a stale replica is reaped to offline.
 pub const REPLICA_REAP_SECONDS: i64 = 600;
 // inactivity window after which an offline replica row is hard-deleted (60 minutes).

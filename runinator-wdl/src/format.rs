@@ -694,6 +694,9 @@ impl Formatter {
         if let Some(runner) = &action.modifiers.runner {
             modifiers.push(format!(".runner({})", quote(runner)));
         }
+        if let Some(key) = &action.modifiers.idempotency_key {
+            modifiers.push(format!(".idempotent(key: {})", format_expr(key)));
+        }
         if let Some(reentry) = &action.modifiers.reentry {
             let mut modifier = format!(".reentry(max: {}", reentry.max_visits);
             if let Some(target) = &reentry.on_exhausted {

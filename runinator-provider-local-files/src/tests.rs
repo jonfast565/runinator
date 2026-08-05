@@ -54,6 +54,7 @@ impl Sandbox {
             timeout_secs: 30,
             artifact_dir: self.artifacts.to_string_lossy().into_owned(),
             events_jsonl_path: String::new(),
+            idempotency_key: None,
         }
     }
 

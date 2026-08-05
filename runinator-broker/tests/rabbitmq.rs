@@ -288,6 +288,7 @@ fn action_command() -> ActionCommand {
             mcp_enabled: false,
             tags: Vec::new(),
             required_labels: Default::default(),
+            idempotency_key: None,
         },
         attempt: 1,
         parameters: json!({ "value": true }),

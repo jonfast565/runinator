@@ -31,6 +31,13 @@
           toast.text
         }}</span>
         <button
+          v-if="toast.action"
+          class="shrink-0 cursor-pointer rounded-sm border border-current/40 bg-transparent px-2 py-1 text-xs font-semibold text-inherit transition-colors duration-150 hover:bg-current/10"
+          @click="runAction(toast.id)"
+        >
+          {{ toast.action.label }}
+        </button>
+        <button
           class="inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-sm border-0 bg-transparent p-0 text-inherit opacity-60 transition-opacity duration-150 hover:opacity-100"
           aria-label="Dismiss"
           @click="app.dismissToast(toast.id)"
@@ -47,6 +54,14 @@ import Icon, { type IconName } from "../shared/Icon.vue";
 import { useAppStore, type ToastKind } from "../../../ui/adapters/pinia/app";
 
 const app = useAppStore();
+
+// dismiss before running: the action usually raises its own toast (a retry pushes a fresh loading
+// toast, then a success or a new error), and leaving the stale error behind reads as a second failure.
+function runAction(id: number) {
+  const toast = app.toasts.find((candidate) => candidate.id === id);
+  app.dismissToast(id);
+  toast?.action?.run();
+}
 
 function iconFor(kind: ToastKind): IconName {
   switch (kind) {

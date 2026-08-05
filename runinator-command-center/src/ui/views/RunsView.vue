@@ -45,19 +45,35 @@
                 : 'Runs appear here once a workflow is executed. Run one from the Workflows tab.'
             "
           />
-          <div
-            v-else
-            class="table-scroll min-h-0 flex-1"
-            :class="{ 'opacity-60 transition-opacity duration-100': loadingRuns }"
-          >
-            <RunTable
-              :runs="workflows.recentWorkflowRuns"
-              :selected-run-id="workflows.selectedWorkflowRunId"
-              :workflow-names="workflowNames"
-              show-workflow
-              @select="workflows.selectWorkflowRun"
+          <template v-else>
+            <BulkActionBar
+              class="mb-2"
+              noun="run"
+              :count="selection.count.value"
+              :actions="bulkActions"
+              :busy="bulkBusy"
+              @run="runBulkAction"
+              @clear="selection.clear"
             />
-          </div>
+            <div
+              class="table-scroll min-h-0 flex-1"
+              :class="{ 'opacity-60 transition-opacity duration-100': loadingRuns }"
+            >
+              <RunTable
+                :runs="workflows.recentWorkflowRuns"
+                :selected-run-id="workflows.selectedWorkflowRunId"
+                :workflow-names="workflowNames"
+                show-workflow
+                selectable
+                :selected-run-ids="selection.selectedKeys.value as string[]"
+                :all-selected="selection.allSelected.value"
+                :some-selected="selection.someSelected.value"
+                @select="workflows.selectWorkflowRun"
+                @toggle-row="selection.toggle"
+                @toggle-all="selection.toggleAll"
+              />
+            </div>
+          </template>
         </div>
       </template>
       <template #second>
@@ -199,6 +215,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { workflowRunExtrasService } from "../../core/services";
+import BulkActionBar, { type BulkAction } from "../components/shared/BulkActionBar.vue";
 import EmptyState from "../components/shared/EmptyState.vue";
 import Icon from "../components/shared/Icon.vue";
 import JsonEditor from "../components/shared/JsonEditor.vue";
@@ -212,6 +229,7 @@ import SplitPane from "../components/shared/SplitPane.vue";
 import LogPanel from "../components/workflow/LogPanel.vue";
 import WorkflowRunDetail from "../components/workflow/WorkflowRunDetail.vue";
 import WorkflowRunGraph from "../components/workflow/WorkflowRunGraph.vue";
+import { useBulkSelection } from "../composables/useBulkSelection";
 import { useWorkflowRunStream } from "../composables/useWorkflowRunStream";
 import { useWorkflowNodeRunLogStream } from "../composables/useWorkflowNodeRunLogStream";
 import { useOperationLoading } from "../composables/useOperationLoading";
@@ -219,7 +237,7 @@ import { useAppStore } from "../../ui/adapters/pinia/app";
 import { useWorkflowsStore } from "../../ui/adapters/pinia/workflows";
 import type { RunArtifact, WorkflowRunArtifact } from "../../core/domain/models";
 import { formatDate, pretty } from "../../core/utils/format";
-import { countActiveRuns } from "../../core/utils/status";
+import { countActiveRuns, isActiveRunStatus } from "../../core/utils/status";
 
 const app = useAppStore();
 const workflows = useWorkflowsStore();
@@ -247,6 +265,53 @@ const activeRunCount = computed(() => countActiveRuns(workflows.recentWorkflowRu
 const selectedRunLabel = computed(() =>
   workflows.selectedWorkflowRunId ? `#${workflows.selectedWorkflowRunId}` : "None",
 );
+
+const recentRuns = computed(() => workflows.recentWorkflowRuns);
+const selection = useBulkSelection(recentRuns, (run) => run.id);
+const bulkBusy = ref("");
+
+const bulkActions = computed<BulkAction[]>(() => [
+  {
+    key: "cancel",
+    label: "Cancel",
+    icon: "stop",
+    variant: "danger",
+    // cancelling a settled run is a guaranteed failure, so offer it only when one is still active.
+    disabled: !selection.selectedRows.value.some((run) => isActiveRunStatus(run.status)),
+  },
+  { key: "replay", label: "Replay", icon: "replay" },
+]);
+
+async function runBulkAction(key: string) {
+  const selected = selection.selectedRows.value;
+
+  if (!selected.length || bulkBusy.value) {
+    return;
+  }
+
+  if (
+    key === "replay" &&
+    !window.confirm(
+      `Replay ${String(selected.length)} run${selected.length === 1 ? "" : "s"}?\n\nEach replay starts a new run from the beginning.`,
+    )
+  ) {
+    return;
+  }
+
+  bulkBusy.value = key;
+
+  try {
+    if (key === "cancel") {
+      await workflows.cancelWorkflowRuns(selected);
+    } else {
+      await workflows.replayWorkflowRuns(selected);
+    }
+  } finally {
+    bulkBusy.value = "";
+  }
+
+  selection.clear();
+}
 
 useWorkflowRunStream();
 

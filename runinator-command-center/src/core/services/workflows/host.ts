@@ -11,7 +11,7 @@ import type {
 } from "../../domain/models";
 import type { GraphEdgeModel, GraphNodeModel } from "../../workflow/graph-model";
 import type { AppTab } from "../../navigation/app";
-import type { AppService } from "../app";
+import type { AppService, RunOperationOptions, ToastAction } from "../app";
 import { createStore } from "../event-bus";
 import type { WorkflowServicesInternal, WorkflowServicesState } from "./state";
 
@@ -36,10 +36,10 @@ export interface WorkflowServiceHost {
     runOperation: <T>(
       label: string,
       operation: () => Promise<T>,
-      options?: { silent?: boolean },
+      options?: RunOperationOptions,
     ) => Promise<T>;
     setStatus: (text: string) => void;
-    setError: (text: string) => void;
+    setError: (text: string, action?: ToastAction) => void;
     readonly normalizedSearch: string;
     activeTab: AppTab;
   };

@@ -6,7 +6,9 @@ export function createDeadLettersService(app: AppService) {
   return {
     async list(channel?: string, limit = 200): Promise<JsonRecord[]> {
       return app
-        .runOperation("Loading dead letters", () => listDeadLetters(channel, limit))
+        .runOperation("Loading dead letters", () => listDeadLetters(channel, limit), {
+          retryable: true,
+        })
         .catch(() => []);
     },
   };

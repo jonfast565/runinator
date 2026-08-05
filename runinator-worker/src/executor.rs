@@ -40,12 +40,14 @@ pub async fn execute_task(
     action: WorkflowAction,
     workflow_node_run_id: Uuid,
     parameters: Value,
+    idempotency_key: Option<String>,
     sink: Option<Arc<dyn ProviderEventSink>>,
     token: CancellationToken,
 ) -> ExecutionOutcome {
     let started_at = Utc::now();
     let timeout = action.timeout_seconds.max(1) as u64;
-    let request = build_provider_request(&action, workflow_node_run_id, parameters);
+    let request =
+        build_provider_request(&action, workflow_node_run_id, parameters, idempotency_key);
 
     if token.is_cancelled() {
         return canceled_outcome(started_at);
@@ -257,6 +259,7 @@ fn build_provider_request(
     action: &WorkflowAction,
     workflow_node_run_id: Uuid,
     parameters: Value,
+    idempotency_key: Option<String>,
 ) -> ProviderExecutionRequest {
     let base_dir = run_work_dir(Some(workflow_node_run_id));
     let artifact_dir = base_dir.join("artifacts");
@@ -276,6 +279,7 @@ fn build_provider_request(
         timeout_secs: action.timeout_seconds,
         artifact_dir: artifact_dir.to_string_lossy().into_owned(),
         events_jsonl_path: base_dir.join("events.jsonl").to_string_lossy().into_owned(),
+        idempotency_key,
     }
 }
 

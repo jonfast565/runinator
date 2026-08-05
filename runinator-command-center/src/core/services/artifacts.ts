@@ -46,7 +46,7 @@ export function createArtifactsService(app: AppService) {
     },
     async refreshArtifacts() {
       const artifacts = await app
-        .runOperation("Loading artifacts", () => fetchAllArtifacts())
+        .runOperation("Loading artifacts", () => fetchAllArtifacts(), { retryable: true })
         .catch(() => []);
       store.setState((state) => ({ ...state, artifacts }));
     },

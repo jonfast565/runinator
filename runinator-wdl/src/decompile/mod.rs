@@ -1368,6 +1368,9 @@ impl<'a> Decompiler<'a> {
         if let Some(runner) = action.required_labels.get("runner") {
             modifiers.push(format!(".runner({})", quote(runner)));
         }
+        if let Some(key) = &action.idempotency_key {
+            modifiers.push(format!(".idempotent(key: {})", self.expr(key)?));
+        }
         if node.reentry.enabled {
             modifiers.push(format!(".reentry({})", node.reentry.max_visits));
         }

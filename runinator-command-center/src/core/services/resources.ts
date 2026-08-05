@@ -41,9 +41,9 @@ export function createResourcesService(app: AppService) {
 
   function operationContext(): OperationContext {
     return {
-      runOperation: (label, operation) => app.runOperation(label, operation),
+      runOperation: (label, operation, options) => app.runOperation(label, operation, options),
       setStatus: (text) => { app.setStatus(text); },
-      setError: (text) => { app.setError(text); },
+      setError: (text, action) => { app.setError(text, action); },
       normalizedSearch: app.normalizedSearch,
     };
   }
@@ -136,7 +136,9 @@ export function createResourcesService(app: AppService) {
     async refreshResources() {
       const endpoint = store.getState().selectedResourceEndpoint;
       const records = await operationContext()
-        .runOperation("Refreshing resources", () => fetchResourceRecords(endpoint))
+        .runOperation("Refreshing resources", () => fetchResourceRecords(endpoint), {
+          retryable: true,
+        })
         .catch(() => []);
       store.setState((state) => ({
         ...state,

@@ -81,13 +81,20 @@
                 <tr v-else-if="!resourcesStore.filteredResourceRecords.length">
                   <td
                     :colspan="endpoint === 'approvals' ? 7 : 6"
-                    class="px-3.5 py-3.5 text-center text-fg-muted"
+                    class="!p-0 hover:!bg-transparent"
                   >
-                    {{
-                      resourcesStore.resourceRecords.length
-                        ? `No records match “${app.searchQuery}”.`
-                        : `No ${title.toLowerCase()} yet.`
-                    }}
+                    <EmptyState
+                      compact
+                      :icon="resourcesStore.resourceRecords.length ? 'search' : 'box'"
+                      :title="
+                        resourcesStore.resourceRecords.length ? 'No matches' : `No ${title.toLowerCase()} yet`
+                      "
+                      :description="
+                        resourcesStore.resourceRecords.length
+                          ? `No records match “${app.searchQuery}”.`
+                          : `${title} raised by providers and workflow runs appear here.`
+                      "
+                    />
                   </td>
                 </tr>
                 <tr
@@ -142,6 +149,7 @@
 <script setup lang="ts">
 import { computed, onMounted, watch } from "vue";
 import DataTable from "../components/shared/DataTable.vue";
+import EmptyState from "../components/shared/EmptyState.vue";
 import Icon from "../components/shared/Icon.vue";
 import LoadingPanel from "../components/shared/LoadingPanel.vue";
 import LoadingSpinner from "../components/shared/LoadingSpinner.vue";

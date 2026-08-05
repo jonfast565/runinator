@@ -607,6 +607,12 @@ pub struct WorkflowAction {
     /// is live.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub required_labels: BTreeMap<String, String>,
+    /// unresolved expression naming this action's external effect, from `.idempotent(key: <expr>)`.
+    /// the reducer resolves it against the run context at dispatch and stamps the result on the
+    /// action command; the worker reserves that key before invoking the provider. `None` leaves the
+    /// action non-idempotent, which is the default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idempotency_key: Option<Value>,
 }
 
 fn default_timeout_seconds() -> i64 {
@@ -632,6 +638,8 @@ impl<'de> Deserialize<'de> for WorkflowAction {
             pub tags: Vec<String>,
             #[serde(default)]
             pub required_labels: BTreeMap<String, String>,
+            #[serde(default)]
+            pub idempotency_key: Option<Value>,
             #[serde(flatten)]
             pub extra: Map,
         }
@@ -652,6 +660,7 @@ impl<'de> Deserialize<'de> for WorkflowAction {
             mcp_enabled: raw.mcp_enabled,
             tags: raw.tags,
             required_labels: raw.required_labels,
+            idempotency_key: raw.idempotency_key,
         })
     }
 }

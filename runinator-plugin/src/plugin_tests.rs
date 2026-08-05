@@ -79,6 +79,7 @@ fn cancel_signal_path_is_sibling_of_events() {
         timeout_secs: 1,
         artifact_dir: "/tmp/run/artifacts".into(),
         events_jsonl_path: "/tmp/run/events.jsonl".into(),
+        idempotency_key: None,
     };
     assert_eq!(
         request.cancel_signal_path(),
@@ -86,6 +87,7 @@ fn cancel_signal_path_is_sibling_of_events() {
     );
     let empty = ProviderExecutionRequest {
         events_jsonl_path: String::new(),
+        idempotency_key: None,
         ..request
     };
     assert_eq!(empty.cancel_signal_path(), None);

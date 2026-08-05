@@ -4,7 +4,7 @@ import {
   fetchWorkflowNodeRunChunks, fetchWorkflowRun, fetchWorkflowRuns, fetchWorkflowTriggers, fetchWorkflows,
   openGate, patchWorkflowRunDebug, pauseWorkflowRun, renameWorkflowRun as renameWorkflowRunApi,
   replayWorkflowRun as replayWorkflowRunApi, resumeWorkflowRun, rerunWorkflowNode, runToCursorWorkflowRun,
-  saveWorkflowWdl, saveWorkflowTrigger, skipWorkflowNode, stepWorkflowRun,
+  saveWorkflow, saveWorkflowWdl, saveWorkflowTrigger, skipWorkflowNode, stepWorkflowRun,
   type WorkflowDebugPatch, type WorkflowWdlSaveRequest,
 } from "../../api/commandCenterApi";
 import type {
@@ -14,6 +14,7 @@ import type {
   WorkflowTriggerKind, WorkflowValidationIssue,
 } from "../../domain/models";
 import { asJsonValue, isJsonObject } from "../../domain/json";
+import { describeBulkResult, runBulk, type BulkResult } from "../../utils/bulk";
 import { pretty } from "../../utils/format";
 import { cloneJson, parseObject, parseRequiredJson, parseRequiredObject } from "../../utils/json";
 import { displayValue, isBlankValue } from "../../utils/values";
@@ -67,7 +68,7 @@ export function createWorkflowCatalogService(
     // under a `host.state.x = await ...` assignment, since the getter is read before the await
     // resolves; writing into a local first keeps the final assignment on the live object.
     const fetched = (await host.ctx
-      .runOperation("Refreshing workflows", () => fetchWorkflows())
+      .runOperation("Refreshing workflows", () => fetchWorkflows(), { retryable: true })
       .catch(() => [])) as WorkflowDefinition[];
     host.state.workflows = fetched;
 
@@ -548,5 +549,119 @@ export function createWorkflowCatalogService(
     host.notify();
   }
 
-  return { refreshWorkflows, clearServiceState, selectWorkflow, addWorkflow, workflowNameForRun, exportWorkflowWdl, exportWorkflowPack, moveWorkflowSelection, openWorkflowSettings, closeWorkflowSettings, refreshWorkflowTriggers, clearWorkflowTriggerState, addWorkflowTrigger, editWorkflowTrigger, closeTriggerEditor, setTriggerKind, submitWorkflowTrigger, deleteSelectedWorkflowTrigger, triggerCronSummary, triggerDateForInput, workflowSaveTriggers, workflowWdlSaveRequest, saveSelectedWorkflowBundle, deleteSelectedWorkflow, duplicateSelectedWorkflow };
+  // reports a bulk outcome once: a clean batch as a status, anything with failures as an error
+  // carrying a retry that re-runs only the items that failed.
+  function reportBulk(
+    result: BulkResult<WorkflowDefinition>,
+    verb: string,
+    retry: (workflows: WorkflowDefinition[]) => void,
+  ) {
+    const text = describeBulkResult(result, verb, "workflow");
+
+    if (!result.failed.length) {
+      host.ctx.setStatus(text);
+      return;
+    }
+
+    const retryable = result.failed.map((failure) => failure.item);
+    host.ctx.setError(text, {
+      label: `Retry ${String(retryable.length)} failed`,
+      run: () => { retry(retryable); },
+    });
+  }
+
+  /// enable or disable many workflows. each is a full upsert of the stored definition with only
+  /// `enabled` changed, so a workflow the caller cannot edit fails on its own without blocking the rest.
+  async function setWorkflowsEnabled(workflows: WorkflowDefinition[], enabled: boolean) {
+    if (!workflows.length) {
+      return;
+    }
+
+    const verb = enabled ? "Enabling" : "Disabling";
+    const result = await host.ctx.runOperation(
+      `${verb} ${String(workflows.length)} workflows`,
+      () =>
+        runBulk(workflows, (workflow) =>
+          saveWorkflow({ ...cloneJson(workflow), enabled }),
+        ),
+    );
+
+    await refreshWorkflows();
+    // the open draft may be one of the toggled workflows; re-sync its flag rather than leaving the
+    // editor showing the pre-toggle state.
+    const draftId = host.state.workflowDraft.id;
+
+    if (draftId && result.succeeded.some((workflow) => workflow.id === draftId)) {
+      host.state.workflowDraft.enabled = enabled;
+    }
+
+    reportBulk(result, enabled ? "Enabled" : "Disabled", (failed) => {
+      void setWorkflowsEnabled(failed, enabled);
+    });
+    host.notify();
+  }
+
+  /// delete many workflows, taking the same confirmation the single-workflow delete does.
+  async function deleteWorkflows(workflows: WorkflowDefinition[], options?: { confirmed?: boolean }) {
+    const deletable = workflows.filter((workflow) => workflow.id);
+
+    if (!deletable.length) {
+      return;
+    }
+
+    if (
+      !options?.confirmed &&
+      !host.deps.confirm(
+        `Delete ${String(deletable.length)} workflow${deletable.length === 1 ? "" : "s"}?\n\n${deletable
+          .map((workflow) => `• ${workflow.name}`)
+          .join(
+            "\n",
+          )}\n\nThis permanently deletes each workflow along with ALL of its runs and their execution history. This cannot be undone.`,
+      )
+    ) {
+      return;
+    }
+
+    const result = await host.ctx.runOperation(
+      `Deleting ${String(deletable.length)} workflows`,
+      () =>
+        runBulk(deletable, async (workflow) => {
+          const response = await deleteWorkflow(workflow.id as string);
+
+          if (!response.success) {
+            throw new Error(response.message || `Failed to delete ${workflow.name}`);
+          }
+        }),
+    );
+
+    const deletedIds = new Set(
+      result.succeeded.flatMap((workflow) => (workflow.id ? [workflow.id] : [])),
+    );
+
+    if (deletedIds.size) {
+      host.state.workflows = host.state.workflows.filter(
+        (workflow) => !workflow.id || !deletedIds.has(workflow.id),
+      );
+
+      // the selection may have just been deleted out from under the editor.
+      if (host.state.selectedWorkflowId && deletedIds.has(host.state.selectedWorkflowId)) {
+        closeWorkflowSettings();
+        const next = host.state.workflows[0] ?? null;
+        host.state.selectedWorkflowId = next?.id ?? null;
+
+        if (next) {
+          await selectWorkflow(next);
+        }
+      }
+    }
+
+    await refreshWorkflows();
+    // a retry re-confirms nothing: the user already confirmed this exact set.
+    reportBulk(result, "Deleted", (failed) => {
+      void deleteWorkflows(failed, { confirmed: true });
+    });
+    host.notify();
+  }
+
+  return { refreshWorkflows, clearServiceState, selectWorkflow, addWorkflow, workflowNameForRun, exportWorkflowWdl, exportWorkflowPack, moveWorkflowSelection, openWorkflowSettings, closeWorkflowSettings, refreshWorkflowTriggers, clearWorkflowTriggerState, addWorkflowTrigger, editWorkflowTrigger, closeTriggerEditor, setTriggerKind, submitWorkflowTrigger, deleteSelectedWorkflowTrigger, triggerCronSummary, triggerDateForInput, workflowSaveTriggers, workflowWdlSaveRequest, saveSelectedWorkflowBundle, deleteSelectedWorkflow, duplicateSelectedWorkflow, setWorkflowsEnabled, deleteWorkflows };
 }

@@ -110,7 +110,7 @@ export function createSecretsService(app: AppService) {
     },
     async refreshSecrets() {
       let secrets = await app
-        .runOperation("Refreshing secrets", () => fetchCredentials())
+        .runOperation("Refreshing secrets", () => fetchCredentials(), { retryable: true })
         .catch(() => []);
       secrets = [...secrets].sort(
         (left, right) => left.scope.localeCompare(right.scope) || left.name.localeCompare(right.name),

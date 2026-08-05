@@ -14,8 +14,8 @@ use runinator_models::{
         NotificationDelivery, NotificationDeliveryStatus, NotificationEvent, NotificationPolicy,
     },
     orchestration::{
-        NewOrchestrationEvent, NodeTransition, NodeTransitionStat, OrchestrationEvent,
-        ReadyNodeRecord,
+        IdempotencyClaim, NewOrchestrationEvent, NodeTransition, NodeTransitionStat,
+        OrchestrationEvent, ReadyNodeRecord,
     },
     orgs::{OrgMembership, OrgRole, Organization},
     pipelines::{Pipeline, PipelineRun, PipelineTrigger},
@@ -537,15 +537,18 @@ pub trait DatabaseImpl: Send + Sync + 'static {
     ) -> impl Future<Output = Result<Vec<WorkflowNodeRun>, SendableError>> + Send;
 
     /// Acquire the executor lease for a node run, returning whether it was acquired. The claim only
-    /// succeeds when no live executor holds the slot (unclaimed, or the prior claim predates
-    /// `stale_before`), making duplicate/redelivered executions of the same node run mutually
-    /// exclusive.
+    /// succeeds when no live executor holds the slot, making duplicate/redelivered executions of the
+    /// same node run mutually exclusive. A slot is free when unclaimed, when the prior claim predates
+    /// `stale_before` (the action's own deadline), or when the holding replica is no longer live —
+    /// offline, or last heartbeating before `heartbeat_stale_before`. The heartbeat arm is what keeps
+    /// a crashed worker from stranding the node for its full timeout window.
     fn claim_workflow_node_run_executor(
         &self,
         node_run_id: Uuid,
         replica_id: Uuid,
         claimed_at: DateTime<Utc>,
         stale_before: DateTime<Utc>,
+        heartbeat_stale_before: DateTime<Utc>,
     ) -> impl Future<Output = Result<bool, SendableError>> + Send;
 
     /// Clear the current executor and record the last executor for a node run. A no-op unless
@@ -932,6 +935,45 @@ pub trait DatabaseImpl: Send + Sync + 'static {
         scope: String,
         key: String,
     ) -> impl Future<Output = Result<Option<Value>, SendableError>> + Send;
+
+    /// Reserve an idempotency key for an action node before its provider is invoked. Decides in one
+    /// statement, so of two concurrent claimants exactly one is `Acquired`. Returns `Completed` when
+    /// an execution already finished under this key (the caller replays that result instead of
+    /// executing), and `Held` when a *different* node run owns an unfinished reservation. A caller
+    /// re-claiming its own unfinished reservation is `Acquired` again: a redelivery of the same node
+    /// run may have crashed before doing any work, and refusing it would strand the node. A
+    /// reservation older than `stale_before` is likewise takeable, so a worker that died holding one
+    /// does not block the key forever.
+    fn claim_idempotency_key(
+        &self,
+        scope: String,
+        key: String,
+        owner_node_run_id: Uuid,
+        now: DateTime<Utc>,
+        stale_before: DateTime<Utc>,
+    ) -> impl Future<Output = Result<IdempotencyClaim, SendableError>> + Send;
+
+    /// Record a completed execution against a key the caller reserved, making it replayable. A no-op
+    /// unless `owner_node_run_id` still owns the reservation, so a late write from a superseded
+    /// claimant cannot overwrite the winner's result.
+    fn complete_idempotency_key(
+        &self,
+        scope: String,
+        key: String,
+        owner_node_run_id: Uuid,
+        result: Value,
+        now: DateTime<Utc>,
+    ) -> impl Future<Output = Result<bool, SendableError>> + Send;
+
+    /// Free the caller's own unfinished reservation, so a non-success outcome does not hold the key
+    /// for the whole staleness window. A no-op unless the caller still owns an uncompleted row, so it
+    /// can never clear a recorded result or another claimant's live reservation.
+    fn release_idempotency_key(
+        &self,
+        scope: String,
+        key: String,
+        owner_node_run_id: Uuid,
+    ) -> impl Future<Output = Result<bool, SendableError>> + Send;
 
     /// Store an action dispatch intent for durable scheduler recovery.
     fn enqueue_action_dispatch(

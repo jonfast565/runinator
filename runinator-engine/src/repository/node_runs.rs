@@ -28,12 +28,18 @@ pub async fn claim_workflow_node_run_executor<T: DatabaseImpl>(
     claimed_at: DateTime<Utc>,
     stale_before: DateTime<Utc>,
 ) -> Result<TaskResponse, SendableError> {
+    // liveness is a platform policy, not the caller's: a worker knows its own action deadline but not
+    // how long another replica may go quiet before it counts as dead. deriving the heartbeat cutoff
+    // here keeps that one definition (`REPLICA_STALE_SECONDS`) shared with replica listing and action
+    // routing, and keeps it off the claim's wire payload.
+    let heartbeat_stale_before = claimed_at - Duration::seconds(REPLICA_STALE_SECONDS);
     let acquired = db
         .claim_workflow_node_run_executor(
             workflow_node_run_id,
             replica_id,
             claimed_at,
             stale_before,
+            heartbeat_stale_before,
         )
         .await?;
     Ok(TaskResponse {

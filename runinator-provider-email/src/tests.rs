@@ -40,6 +40,7 @@ fn notification_action_posts_notification_record() {
         timeout_secs: 30,
         artifact_dir: String::new(),
         events_jsonl_path: String::new(),
+        idempotency_key: None,
     };
 
     let result = runtime.block_on(send_notification(&request)).unwrap();

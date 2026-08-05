@@ -146,6 +146,10 @@ async fn dispatch_compensation<T: DatabaseImpl>(
         trace_id: Uuid::now_v7(),
         trace_context: runinator_utilities::telemetry::current_trace_context(),
         notification_delivery_id: None,
+        // a compensation is the undo of an effect that already happened, so it is its own effect and
+        // must not share the forward action's key. declaring one on the compensating handler itself
+        // is the way to make an undo idempotent.
+        idempotency_key: None,
     };
     db.enqueue_action_dispatch(
         format!("compensation:{}:{}", workflow_run.id, node_run.id),

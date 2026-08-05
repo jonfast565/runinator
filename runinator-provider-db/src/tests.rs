@@ -632,6 +632,7 @@ fn an_unsupported_action_names_the_call_it_rejected() {
         timeout_secs: 5,
         artifact_dir: String::new(),
         events_jsonl_path: String::new(),
+        idempotency_key: None,
     };
 
     let error = crate::DbProvider

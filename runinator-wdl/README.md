@@ -62,7 +62,24 @@ node deploy <- github.deploy()
 `done` and `fail` are reserved targets (the terminal nodes).
 
 **Chaining is configuration.** `.timeout(60s) .retry(3) .tags("ci","release") .mcp()
-.reentry(5) .runner("creds-sync")` on actions.
+.reentry(5) .runner("creds-sync") .idempotent(key: input.invoice_id)` on actions.
+
+`.idempotent(key: <expr>)` names the external effect this action has, so the platform can refuse to
+produce it twice. The expression is resolved per dispatch against the same run context the action's
+arguments see, then qualified by workflow (`workflow:<id>:<key>`) — two runs of the same workflow
+computing the same key dedupe against each other; an unrelated workflow computing the same string
+does not. Lowers to the action's `idempotency_key`.
+
+The worker reserves the key before invoking the provider. Once an execution *succeeds* under a key,
+any later delivery carrying it replays the recorded result instead of re-invoking; because the result
+is recorded before the status publish, a failed publish no longer re-runs the side effect. A failed
+attempt records nothing and frees the reservation, so `.retry(...)` still works. A key that resolves
+to null or empty is treated as absent rather than shared, since collapsing every run onto one key
+would silently skip real work.
+
+What it cannot do: when a worker dies mid-invocation, nothing can know whether the side effect
+landed. The resolved key is therefore also passed to the provider (`ProviderExecutionRequest
+.idempotency_key`) so providers with native idempotency can dedupe on it upstream.
 
 `.runner("<type>")` requires the action to run on a worker advertising the `runner=<type>` label
 (`RUNINATOR_WORKER_LABELS`). The reducer dispatches it to a live matching worker and parks the node

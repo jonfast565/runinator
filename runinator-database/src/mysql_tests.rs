@@ -100,6 +100,7 @@ fn sample_action(workflow_run_id: Uuid, workflow_node_run_id: Uuid) -> ActionCom
             mcp_enabled: false,
             tags: Vec::new(),
             required_labels: Default::default(),
+            idempotency_key: None,
         },
         attempt: 1,
         parameters: runinator_models::json!({}),
@@ -107,6 +108,7 @@ fn sample_action(workflow_run_id: Uuid, workflow_node_run_id: Uuid) -> ActionCom
         trace_id: Uuid::nil(),
         trace_context: Default::default(),
         notification_delivery_id: None,
+        idempotency_key: None,
     }
 }
 

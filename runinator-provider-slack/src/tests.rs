@@ -15,6 +15,7 @@ fn missing_token_is_invalid() {
         timeout_secs: 30,
         artifact_dir: "".into(),
         events_jsonl_path: "".into(),
+        idempotency_key: None,
     };
 
     let result = provider.execute_service(

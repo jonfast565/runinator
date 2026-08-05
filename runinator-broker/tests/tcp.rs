@@ -33,6 +33,7 @@ async fn tcp_broker_delivers_published_messages() {
                 mcp_enabled: false,
                 tags: Vec::new(),
                 required_labels: Default::default(),
+                idempotency_key: None,
             },
             attempt: 1,
             parameters: json!({ "value": true }),
@@ -40,6 +41,7 @@ async fn tcp_broker_delivers_published_messages() {
             trace_id: Uuid::nil(),
             trace_context: Default::default(),
             notification_delivery_id: None,
+            idempotency_key: None,
         },
         dedupe_key: Some("tcp-test".into()),
         enqueued_at: Utc::now(),
@@ -165,6 +167,7 @@ fn action_command() -> ActionCommand {
             mcp_enabled: false,
             tags: Vec::new(),
             required_labels: Default::default(),
+            idempotency_key: None,
         },
         attempt: 1,
         parameters: json!({ "value": true }),
@@ -172,5 +175,6 @@ fn action_command() -> ActionCommand {
         trace_id: Uuid::nil(),
         trace_context: Default::default(),
         notification_delivery_id: None,
+        idempotency_key: None,
     }
 }

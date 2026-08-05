@@ -14,6 +14,7 @@ fn test_github_provider_missing_token() {
         timeout_secs: 30,
         artifact_dir: "".into(),
         events_jsonl_path: "".into(),
+        idempotency_key: None,
     };
 
     let result = provider.execute_service(
@@ -100,6 +101,7 @@ fn request_reviewers_requires_a_reviewer() {
         timeout_secs: 30,
         artifact_dir: "".into(),
         events_jsonl_path: "".into(),
+        idempotency_key: None,
     };
 
     let result = provider.execute_service(

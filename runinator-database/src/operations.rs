@@ -20,8 +20,8 @@ use runinator_models::{
         NotificationDelivery, NotificationDeliveryStatus, NotificationEvent, NotificationPolicy,
     },
     orchestration::{
-        NewOrchestrationEvent, NodeTransition, NodeTransitionStat, OrchestrationEvent,
-        ReadyNodeRecord,
+        IdempotencyClaim, NewOrchestrationEvent, NodeTransition, NodeTransitionStat,
+        OrchestrationEvent, ReadyNodeRecord,
     },
     orgs::{OrgMembership, OrgRole, Organization},
     pipelines::{Pipeline, PipelineRun, PipelineTrigger},
@@ -534,6 +534,30 @@ fn timestamp_to_utc(timestamp: i64) -> Result<DateTime<Utc>, SendableError> {
             format!("invalid unix timestamp {timestamp}"),
         )) as SendableError
     })
+}
+
+/// read a claim upsert's row back as the outcome the caller acts on. a completed row is a replayable
+/// result whoever owns it; otherwise the owner decides between acquiring and losing.
+fn row_to_idempotency_claim<R>(row: &R, owner_node_run_id: Uuid) -> IdempotencyClaim
+where
+    R: Row,
+    for<'a> &'a str: ColumnIndex<R>,
+    for<'a> Option<Uuid>: Decode<'a, R::Database> + Type<R::Database>,
+    for<'a> Option<i64>: Decode<'a, R::Database> + Type<R::Database>,
+    for<'a> String: Decode<'a, R::Database> + Type<R::Database>,
+{
+    let completed_at: Option<i64> = row.get("completed_at");
+    if completed_at.is_some() {
+        let raw: String = row.get("result");
+        let result = serde_json::from_str::<Value>(&raw).unwrap_or(Value::Null);
+        return IdempotencyClaim::Completed { result };
+    }
+    match row.get::<Option<Uuid>, _>("owner_node_run_id") {
+        Some(owner) if owner != owner_node_run_id => IdempotencyClaim::Held {
+            owner_node_run_id: owner,
+        },
+        _ => IdempotencyClaim::Acquired,
+    }
 }
 
 fn row_to_archive_mark<R>(row: &R) -> Result<ArchiveMark, SendableError>
@@ -2937,10 +2961,15 @@ where
         replica_id: Uuid,
         claimed_at: DateTime<Utc>,
         stale_before: DateTime<Utc>,
+        heartbeat_stale_before: DateTime<Utc>,
     ) -> Result<bool, SendableError> {
         // compare-and-swap lease: only acquire when no live executor holds the slot. a redelivered
-        // or timeout-raced duplicate of the same node run thus cannot execute concurrently; the slot
-        // frees on release or once the prior claim ages past `stale_before` (the caller's deadline).
+        // or timeout-raced duplicate of the same node run thus cannot execute concurrently. the slot
+        // frees on release, once the prior claim ages past `stale_before` (the caller's deadline), or
+        // as soon as the holder stops being live. the liveness arm is the fast path: a crashed worker
+        // is detected by its missing heartbeat rather than by the action's timeout, so failover no
+        // longer waits out a long job's whole deadline. a holder that shut down gracefully is already
+        // marked offline and frees the slot on the next claim.
         let result = self
             .pool()
             .execute(
@@ -2948,12 +2977,22 @@ where
                     "UPDATE workflow_node_runs
                      SET current_executor_replica_id = ?, executor_claimed_at = ?, executor_released_at = NULL
                      WHERE id = ?
-                       AND (current_executor_replica_id IS NULL OR executor_claimed_at < ?)",
+                       AND (
+                         current_executor_replica_id IS NULL
+                         OR executor_claimed_at < ?
+                         OR NOT EXISTS (
+                           SELECT 1 FROM replicas r
+                           WHERE r.replica_id = workflow_node_runs.current_executor_replica_id
+                             AND r.status <> 'offline'
+                             AND r.last_heartbeat_at >= ?
+                         )
+                       )",
                 ))
                 .bind(replica_id)
                 .bind(claimed_at.timestamp())
                 .bind(node_run_id)
-                .bind(stale_before.timestamp()),
+                .bind(stale_before.timestamp())
+                .bind(heartbeat_stale_before.timestamp()),
             )
             .await?;
         Ok(result.affected() > 0)
@@ -4838,6 +4877,147 @@ where
             .fetch_optional(self.pool())
             .await?;
         Ok(row.map(|row| mappers::row_to_idempotency_key(&row)))
+    }
+
+    async fn claim_idempotency_key(
+        &self,
+        scope: String,
+        key: String,
+        owner_node_run_id: Uuid,
+        now: DateTime<Utc>,
+        stale_before: DateTime<Utc>,
+    ) -> Result<IdempotencyClaim, SendableError> {
+        let key_col = queries::ident(self.dialect(), "key");
+        let id = Uuid::now_v7();
+        let ts = now.timestamp();
+        let stale_ts = stale_before.timestamp();
+        // one upsert decides the whole thing, so two concurrent claimants cannot both acquire. the
+        // owner moves to us only when the row is unfinished *and* takeable: never claimed, left by the
+        // manual put/get store, already ours, or abandoned (a reservation older than `stale_before`,
+        // which is how a crashed worker's claim stops blocking the key forever). a completed row keeps
+        // its owner so we read it back as a replayable result instead of taking it over.
+        let claim_case = "CASE
+               WHEN idempotency_keys.completed_at IS NOT NULL THEN idempotency_keys.owner_node_run_id
+               WHEN idempotency_keys.owner_node_run_id IS NULL
+                 OR idempotency_keys.owner_node_run_id = ?
+                 OR idempotency_keys.claimed_at IS NULL
+                 OR idempotency_keys.claimed_at < ? THEN excluded.owner_node_run_id
+               ELSE idempotency_keys.owner_node_run_id
+             END";
+
+        if self.dialect() == SqlDialect::MySql {
+            // mysql has no RETURNING. the read-back is still safe: once this statement leaves the row
+            // owned by us no other claimant can move it, and if we lost, the only state the winner can
+            // reach meanwhile is `completed` — which is a better answer for us, not a wrong one.
+            let mysql_case =
+                claim_case.replace("excluded.owner_node_run_id", "VALUES(owner_node_run_id)");
+            sqlx::query(&self.render(&format!(
+                "INSERT INTO idempotency_keys (id, scope, {key_col}, result, created_at, owner_node_run_id, claimed_at)
+                 VALUES (?, ?, ?, '{{}}', ?, ?, ?)
+                 ON DUPLICATE KEY UPDATE
+                   claimed_at = CASE WHEN owner_node_run_id = {mysql_case} THEN VALUES(claimed_at) ELSE claimed_at END,
+                   owner_node_run_id = {mysql_case}",
+            )))
+            .bind(id)
+            .bind(scope.as_str())
+            .bind(key.as_str())
+            .bind(ts)
+            .bind(owner_node_run_id)
+            .bind(ts)
+            .bind(owner_node_run_id)
+            .bind(stale_ts)
+            .bind(owner_node_run_id)
+            .bind(stale_ts)
+            .execute(self.pool())
+            .await?;
+            let row = sqlx::query(&self.render(&format!(
+                "SELECT owner_node_run_id, completed_at, result FROM idempotency_keys
+                 WHERE scope = ? AND {key_col} = ?",
+            )))
+            .bind(scope)
+            .bind(key)
+            .fetch_one(self.pool())
+            .await?;
+            return Ok(row_to_idempotency_claim(&row, owner_node_run_id));
+        }
+
+        let row = sqlx::query(&self.render(&format!(
+            "INSERT INTO idempotency_keys (id, scope, {key_col}, result, created_at, owner_node_run_id, claimed_at)
+             VALUES (?, ?, ?, '{{}}', ?, ?, ?)
+             ON CONFLICT(scope, {key_col}) DO UPDATE SET
+               claimed_at = CASE WHEN {claim_case} = excluded.owner_node_run_id
+                 THEN excluded.claimed_at ELSE idempotency_keys.claimed_at END,
+               owner_node_run_id = {claim_case}
+             RETURNING owner_node_run_id, completed_at, result",
+        )))
+        .bind(id)
+        .bind(scope)
+        .bind(key)
+        .bind(ts)
+        .bind(owner_node_run_id)
+        .bind(ts)
+        .bind(owner_node_run_id)
+        .bind(stale_ts)
+        .bind(owner_node_run_id)
+        .bind(stale_ts)
+        .fetch_one(self.pool())
+        .await?;
+        Ok(row_to_idempotency_claim(&row, owner_node_run_id))
+    }
+
+    async fn complete_idempotency_key(
+        &self,
+        scope: String,
+        key: String,
+        owner_node_run_id: Uuid,
+        result: Value,
+        now: DateTime<Utc>,
+    ) -> Result<bool, SendableError> {
+        let key_col = queries::ident(self.dialect(), "key");
+        // conditional on still owning an unfinished reservation, so a superseded claimant writing
+        // late cannot overwrite the winner's recorded result. first completion wins.
+        let updated = self
+            .pool()
+            .execute(
+                sqlx::query(&self.render(&format!(
+                    "UPDATE idempotency_keys SET result = ?, completed_at = ?
+                     WHERE scope = ? AND {key_col} = ?
+                       AND owner_node_run_id = ? AND completed_at IS NULL",
+                )))
+                .bind(result.to_string())
+                .bind(now.timestamp())
+                .bind(scope)
+                .bind(key)
+                .bind(owner_node_run_id),
+            )
+            .await?;
+        Ok(updated.affected() > 0)
+    }
+
+    async fn release_idempotency_key(
+        &self,
+        scope: String,
+        key: String,
+        owner_node_run_id: Uuid,
+    ) -> Result<bool, SendableError> {
+        let key_col = queries::ident(self.dialect(), "key");
+        // free our own unfinished reservation so a retry or a later run is not held off for the whole
+        // staleness window. conditional on ownership and on still being unfinished, so this can never
+        // clear a completed result or another claimant's live reservation.
+        let updated = self
+            .pool()
+            .execute(
+                sqlx::query(&self.render(&format!(
+                    "UPDATE idempotency_keys SET owner_node_run_id = NULL, claimed_at = NULL
+                     WHERE scope = ? AND {key_col} = ?
+                       AND owner_node_run_id = ? AND completed_at IS NULL",
+                )))
+                .bind(scope)
+                .bind(key)
+                .bind(owner_node_run_id),
+            )
+            .await?;
+        Ok(updated.affected() > 0)
     }
 
     async fn enqueue_action_dispatch(

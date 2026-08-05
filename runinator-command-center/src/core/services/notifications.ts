@@ -42,7 +42,9 @@ export function createNotificationsService(app: AppService) {
     async refreshNotifications() {
       const { unreadOnly } = store.getState();
       const notifications = await app
-        .runOperation("Loading notifications", () => fetchNotifications({ unreadOnly }))
+        .runOperation("Loading notifications", () => fetchNotifications({ unreadOnly }), {
+          retryable: true,
+        })
         .catch(() => []);
       store.setState((state) => ({ ...state, notifications }));
     },
@@ -79,7 +81,9 @@ export function createNotificationsService(app: AppService) {
     },
     async refreshPolicies() {
       const policies = await app
-        .runOperation("Loading notification policies", () => fetchNotificationPolicies())
+        .runOperation("Loading notification policies", () => fetchNotificationPolicies(), {
+          retryable: true,
+        })
         .catch(() => []);
       store.setState((state) => ({ ...state, policies }));
     },

@@ -44,10 +44,11 @@ use crate::handlers::{
         update_team, update_user,
     },
     automation::{
-        approve_request, close_gate, create_approval, create_automation_event,
-        create_external_item, create_gate, delete_automation_event, delete_gate, get_approvals,
-        get_automation_events, get_external_items, get_gate, get_gates, get_idempotency_key,
-        open_gate, put_idempotency_key, reject_request,
+        approve_request, claim_idempotency_key, close_gate, complete_idempotency_key,
+        create_approval, create_automation_event, create_external_item, create_gate,
+        delete_automation_event, delete_gate, get_approvals, get_automation_events,
+        get_external_items, get_gate, get_gates, get_idempotency_key, open_gate,
+        put_idempotency_key, reject_request, release_idempotency_key,
     },
     billing::{
         get_org_nodes, get_org_quota, get_org_usage, get_rate_card, put_org_quota, scale_org_nodes,
@@ -638,6 +639,18 @@ pub fn build_router<T: DatabaseImpl>(
             get(get_idempotency_key::<T>)
                 .post(put_idempotency_key::<T>)
                 .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/idempotency_keys/claim",
+            post(claim_idempotency_key::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/idempotency_keys/complete",
+            post(complete_idempotency_key::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/idempotency_keys/release",
+            post(release_idempotency_key::<T>).layer(Extension(pool.clone())),
         )
         .route(
             "/credentials",

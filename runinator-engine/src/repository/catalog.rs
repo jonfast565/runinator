@@ -59,6 +59,45 @@ pub async fn fetch_idempotency_key<T: DatabaseImpl>(
     db.fetch_idempotency_key(scope, key).await
 }
 
+/// reserve an action node's idempotency key on behalf of the worker about to invoke its provider.
+/// `lease_seconds` is the caller's own execution deadline: a reservation older than that is treated
+/// as abandoned by a dead worker and taken over.
+pub async fn claim_idempotency_key<T: DatabaseImpl>(
+    db: &T,
+    scope: String,
+    key: String,
+    owner_node_run_id: Uuid,
+    lease_seconds: i64,
+) -> Result<runinator_models::orchestration::IdempotencyClaim, SendableError> {
+    let now = Utc::now();
+    let stale_before = now - Duration::seconds(lease_seconds.max(1));
+    db.claim_idempotency_key(scope, key, owner_node_run_id, now, stale_before)
+        .await
+}
+
+/// free an unfinished reservation after a non-success outcome, so a retry is not held off.
+pub async fn release_idempotency_key<T: DatabaseImpl>(
+    db: &T,
+    scope: String,
+    key: String,
+    owner_node_run_id: Uuid,
+) -> Result<bool, SendableError> {
+    db.release_idempotency_key(scope, key, owner_node_run_id)
+        .await
+}
+
+/// record a completed execution against a reserved key so a redelivery replays it.
+pub async fn complete_idempotency_key<T: DatabaseImpl>(
+    db: &T,
+    scope: String,
+    key: String,
+    owner_node_run_id: Uuid,
+    result: Value,
+) -> Result<bool, SendableError> {
+    db.complete_idempotency_key(scope, key, owner_node_run_id, result, Utc::now())
+        .await
+}
+
 pub async fn resolve_approval<T: DatabaseImpl>(
     db: &T,
     approval_id: Uuid,

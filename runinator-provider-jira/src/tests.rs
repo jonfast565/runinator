@@ -71,6 +71,7 @@ fn test_jira_provider_missing_base_url() {
         timeout_secs: 30,
         artifact_dir: "".into(),
         events_jsonl_path: "".into(),
+        idempotency_key: None,
     };
 
     let result = provider.execute_service(
@@ -97,6 +98,7 @@ fn test_jira_search_placeholder_base_url_is_clear() {
         timeout_secs: 30,
         artifact_dir: "".into(),
         events_jsonl_path: "".into(),
+        idempotency_key: None,
     };
 
     let err = provider
@@ -127,6 +129,7 @@ fn test_jira_search_empty_base_url_is_clear() {
         timeout_secs: 30,
         artifact_dir: "".into(),
         events_jsonl_path: "".into(),
+        idempotency_key: None,
     };
 
     let err = provider

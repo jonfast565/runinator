@@ -128,6 +128,7 @@ async fn worker_rejects_resolved_parameters_that_do_not_match_provider_metadata(
         command.workflow_node_run_id,
         command.parameters,
         None,
+        None,
         runinator_plugin::cancel::CancellationToken::new(),
     )
     .await;
@@ -159,6 +160,7 @@ async fn worker_accepts_std_exec_program_with_context() {
         mcp_enabled: false,
         tags: Vec::new(),
         required_labels: Default::default(),
+        idempotency_key: None,
     };
     let parameters = json!({
         "program": [ { "$return": { "ok": true } } ],
@@ -171,6 +173,7 @@ async fn worker_accepts_std_exec_program_with_context() {
         action,
         Uuid::new_v4(),
         parameters,
+        None,
         None,
         runinator_plugin::cancel::CancellationToken::new(),
     )
@@ -195,6 +198,7 @@ async fn worker_rejects_undeclared_std_exec_parameter() {
         mcp_enabled: false,
         tags: Vec::new(),
         required_labels: Default::default(),
+        idempotency_key: None,
     };
     let parameters = json!({
         "program": [ { "$return": true } ],
@@ -208,6 +212,7 @@ async fn worker_rejects_undeclared_std_exec_parameter() {
         action,
         Uuid::new_v4(),
         parameters,
+        None,
         None,
         runinator_plugin::cancel::CancellationToken::new(),
     )
@@ -239,6 +244,7 @@ fn worker_validates_provider_output_fields_when_present() {
         mcp_enabled: false,
         tags: Vec::new(),
         required_labels: Default::default(),
+        idempotency_key: None,
     };
     let result = TaskExecutionResult {
         message: None,
@@ -585,6 +591,7 @@ fn action_command() -> ActionCommand {
             mcp_enabled: false,
             tags: Vec::new(),
             required_labels: Default::default(),
+            idempotency_key: None,
         },
         attempt: 1,
         parameters: json!({}),
@@ -592,6 +599,7 @@ fn action_command() -> ActionCommand {
         trace_id: Uuid::nil(),
         trace_context: Default::default(),
         notification_delivery_id: None,
+        idempotency_key: None,
     }
 }
 

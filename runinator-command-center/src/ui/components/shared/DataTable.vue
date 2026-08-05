@@ -18,8 +18,10 @@ export interface DataTableColumn<Row = Record<string, unknown>> {
 import { computed, ref, watch } from "vue";
 import Icon, { type IconName } from "./Icon.vue";
 import EmptyState from "./EmptyState.vue";
-import LoadingPanel from "./LoadingPanel.vue";
+import SelectCheckbox from "./SelectCheckbox.vue";
+import TableSkeleton from "./TableSkeleton.vue";
 import { useBreakpoint } from "../../composables/useBreakpoint";
+import type { SelectionKey } from "../../composables/useBulkSelection";
 import { displayValue } from "../../../core/utils/values";
 
 // dual-mode table. with `columns` it renders a sortable/paginated/selectable table; without
@@ -45,6 +47,14 @@ const props = withDefaults(
     initialSortDir?: "asc" | "desc";
     // 'cards' renders label:value cards on mobile; 'scroll' keeps the table and hides low-priority columns.
     responsive?: "scroll" | "cards";
+    // render a leading checkbox column. selection state is owned by the caller (useBulkSelection),
+    // so this component only displays it and reports intent.
+    selectable?: boolean;
+    selectedKeys?: SelectionKey[];
+    allSelected?: boolean;
+    someSelected?: boolean;
+    // singular noun used in per-row checkbox labels, e.g. "Select workflow alpha".
+    selectionNoun?: string;
   }>(),
   {
     rows: () => [],
@@ -62,6 +72,11 @@ const props = withDefaults(
     initialSortKey: undefined,
     initialSortDir: undefined,
     responsive: "scroll",
+    selectable: false,
+    selectedKeys: () => [],
+    allSelected: false,
+    someSelected: false,
+    selectionNoun: "row",
   },
 );
 
@@ -75,7 +90,24 @@ const cardMode = computed(() => props.responsive === "cards" && isMobile.value);
 const showLoadingPanel = computed(() => props.loading && !props.rows.length);
 const refreshing = computed(() => props.loading && props.rows.length > 0);
 
-const emit = defineEmits<{ select: [row: Row] }>();
+const emit = defineEmits<{
+  select: [row: Row];
+  "toggle-row": [row: Row, event: MouseEvent];
+  "toggle-all": [];
+}>();
+
+const selectedSet = computed(() => new Set(props.selectedKeys));
+
+function isRowSelected(row: Row, index: number): boolean {
+  return selectedSet.value.has(keyForRow(row, index));
+}
+
+// a readable checkbox label beats "Select row 7": prefer the first column's rendered value.
+function selectionLabelFor(row: Row, index: number): string {
+  const first = props.columns?.[0];
+  const value = first ? displayValue(cellValue(row, first)) : "";
+  return `Select ${props.selectionNoun} ${value || String(keyForRow(row, index))}`;
+}
 
 const sortKey = ref(props.initialSortKey ?? "");
 const sortDir = ref<"asc" | "desc">(props.initialSortDir ?? "asc");
@@ -97,7 +129,10 @@ function keyForRow(row: Row, index: number): string | number {
   const record = row as Record<string, unknown>;
 
   if (typeof props.rowKey === "string") {
-    return displayValue(record[props.rowKey] ?? index);
+    const value = record[props.rowKey] ?? index;
+    // keep a string or number as-is: stringifying a numeric id would make it stop matching the
+    // caller's own keys (selectedKey, and the selection set from useBulkSelection).
+    return typeof value === "string" || typeof value === "number" ? value : displayValue(value);
   }
 
   return record.id as string | number;
@@ -231,9 +266,9 @@ function compareValues(left: unknown, right: unknown): number {
     <slot />
   </div>
   <div v-else class="flex min-h-0 flex-1 flex-col gap-2">
-    <LoadingPanel
+    <TableSkeleton
       v-if="showLoadingPanel"
-      compact
+      :columns="columns.length"
       :message="loadingMessage || 'Loading…'"
     />
     <!-- mobile card layout: each row becomes a stack of label:value pairs. -->
@@ -242,6 +277,15 @@ function compareValues(left: unknown, right: unknown): number {
       class="flex min-h-0 flex-1 flex-col gap-2 overflow-auto"
       :class="refreshing ? 'opacity-60 transition-opacity duration-[120ms]' : ''"
     >
+      <div v-if="selectable && pagedRows.length" class="flex items-center gap-2 px-1">
+        <SelectCheckbox
+          :checked="allSelected"
+          :indeterminate="someSelected"
+          :label="allSelected ? 'Deselect all' : 'Select all'"
+          @toggle="emit('toggle-all')"
+        />
+        <span class="text-xs text-fg-muted">{{ allSelected ? "Deselect all" : "Select all" }}</span>
+      </div>
       <EmptyState
         v-if="!pagedRows.length && emptyTitle"
         compact
@@ -259,6 +303,14 @@ function compareValues(left: unknown, right: unknown): number {
         :class="cardToneClass(row, index)"
         @click="emit('select', row)"
       >
+        <div v-if="selectable" class="mb-0.5 flex items-center gap-2">
+          <SelectCheckbox
+            :checked="isRowSelected(row, index)"
+            :label="selectionLabelFor(row, index)"
+            @toggle="emit('toggle-row', row, $event)"
+          />
+          <span class="text-xs text-fg-muted">Select</span>
+        </div>
         <div
           v-for="column in columns"
           :key="column.key"
@@ -281,6 +333,14 @@ function compareValues(left: unknown, right: unknown): number {
       <table :class="{ compact }">
         <thead>
           <tr>
+            <th v-if="selectable" class="w-9" scope="col">
+              <SelectCheckbox
+                :checked="allSelected"
+                :indeterminate="someSelected"
+                :label="allSelected ? 'Deselect all' : 'Select all'"
+                @toggle="emit('toggle-all')"
+              />
+            </th>
             <th
               v-for="column in columns"
               :key="column.key"
@@ -305,7 +365,7 @@ function compareValues(left: unknown, right: unknown): number {
         </thead>
         <tbody>
           <tr v-if="!pagedRows.length" class="data-table-empty-row">
-            <td :colspan="columns.length" class="!p-0 hover:!bg-transparent">
+            <td :colspan="columns.length + (selectable ? 1 : 0)" class="!p-0 hover:!bg-transparent">
               <EmptyState
                 v-if="emptyTitle"
                 compact
@@ -322,6 +382,13 @@ function compareValues(left: unknown, right: unknown): number {
             :class="rowClasses(row, index)"
             @click="emit('select', row)"
           >
+            <td v-if="selectable" class="w-9">
+              <SelectCheckbox
+                :checked="isRowSelected(row, index)"
+                :label="selectionLabelFor(row, index)"
+                @toggle="emit('toggle-row', row, $event)"
+              />
+            </td>
             <td
               v-for="column in columns"
               :key="column.key"

@@ -15,8 +15,10 @@ import type {
 } from "../../domain/models";
 import { asJsonValue } from "../../domain/json";
 import { coerceDebugFrame } from "../../domain/models/workflow-state";
+import { describeBulkResult, runBulk } from "../../utils/bulk";
 import { pretty } from "../../utils/format";
 import { mergeById } from "../../utils/merge";
+import { isActiveRunStatus } from "../../utils/status";
 import { cloneJson, parseObject, parseRequiredJson, parseRequiredObject } from "../../utils/json";
 import { displayValue, isBlankValue } from "../../utils/values";
 import { createZip, type ZipEntry } from "../../utils/zip";
@@ -519,6 +521,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     const runs = (await host.ctx
       .runOperation("Loading workflow runs", () => fetchWorkflowRuns(), {
         silent: options?.background,
+        retryable: true,
       })
       .catch(() => [])) as RunSummary[];
     host.state.workflowRuns = mergeById(host.state.workflowRuns, runs);
@@ -1014,5 +1017,89 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     host.notify();
   }
 
-  return { isBreakpointed, getTransition, setTransition, runSelectedWorkflow, runSelectedWorkflowDebug, closeRunInput, confirmRunInput, launchWorkflowRun, stepSelectedWorkflowRun, continueSelectedWorkflowRun, cancelSelectedWorkflowRun, pauseSelectedWorkflowRun, resumeSelectedWorkflowRun, patchSelectedWorkflowRunDebug, toggleBreakpoint, runToCursor, skipCurrentNode, rerunCurrentNode, replaySelectedWorkflowRun, renameSelectedWorkflowRun, loadAllWatchExpressions, persistWatchExpressions, addWatchExpression, removeWatchExpression, fetchWorkflowRunsForSelected, fetchRecentWorkflowRuns, scheduleRecentWorkflowRunsRefresh, scheduleWorkflowRunDetailRefresh, selectWorkflowRun, openRunInTab, activateRunTab, closeRunTab, fetchWorkflowRunDetail, setWorkflowRunDetail, selectWorkflowRunNode, clearWorkflowRunGates, workflowRunGateIds, workflowRunGateFingerprintForDetail, refreshWorkflowRunGates, syncWorkflowRunGatesForDetail, resolveWorkflowRunGate, applyWorkflowRunDetail, reapplyPendingBreakpointPatch, confirmPendingBreakpointPatch, clearPendingBreakpointPatch, applyBreakpointPatch, readBreakpoints, sameBreakpoints, updateSelectedWorkflowNodeDetail };
+  /// cancel many runs. terminal runs are dropped rather than sent — cancelling a finished run is a
+  /// guaranteed failure that would only pollute the outcome.
+  async function cancelWorkflowRuns(runs: RunSummary[]) {
+    const cancellable = runs.filter((run) => isActiveRunStatus(run.status));
+
+    if (!cancellable.length) {
+      host.ctx.setError("None of the selected runs are still active.");
+      return;
+    }
+
+    const result = await host.ctx.runOperation(
+      `Canceling ${String(cancellable.length)} workflow runs`,
+      () =>
+        runBulk(cancellable, async (run) => {
+          const response = await cancelWorkflowRun(run.id);
+
+          if (!response.success) {
+            throw new Error(response.message || `Failed to cancel run ${run.id}`);
+          }
+        }),
+    );
+
+    await fetchRecentWorkflowRuns();
+
+    if (host.state.selectedWorkflowRunId) {
+      await fetchWorkflowRunDetail(host.state.selectedWorkflowRunId, true);
+    }
+
+    const text = describeBulkResult(result, "Canceled", "run");
+
+    if (!result.failed.length) {
+      host.ctx.setStatus(text);
+    } else {
+      // cancel is idempotent, so retrying only the failures is safe.
+      const retryable = result.failed.map((failure) => failure.item);
+      host.ctx.setError(text, {
+        label: `Retry ${String(retryable.length)} failed`,
+        run: () => { void cancelWorkflowRuns(retryable); },
+      });
+    }
+
+    host.notify();
+  }
+
+  /// replay many runs, each starting a fresh run from the beginning.
+  ///
+  /// deliberately offers no retry affordance: a replay creates a run, and a failure that surfaced
+  /// after the run was created would double-start it on retry. the user re-selects instead.
+  async function replayWorkflowRuns(runs: RunSummary[]) {
+    if (!runs.length) {
+      return;
+    }
+
+    const result = await host.ctx.runOperation(
+      `Replaying ${String(runs.length)} workflow runs`,
+      () =>
+        runBulk(
+          runs,
+          async (run) => {
+            const created = await replayWorkflowRunApi(run.id, {});
+
+            if (!created.id) {
+              throw new Error(`Replay of run ${run.id} returned no run id`);
+            }
+          },
+          // replays are new work, not a status flip: keep the fan-out narrow so a large selection
+          // does not stampede the action queue.
+          { concurrency: 2 },
+        ),
+    );
+
+    await fetchRecentWorkflowRuns();
+    const text = describeBulkResult(result, "Replayed", "run");
+
+    if (result.failed.length) {
+      host.ctx.setError(text);
+    } else {
+      host.ctx.setStatus(text);
+    }
+
+    host.ctx.activeTab = "Runs";
+    host.notify();
+  }
+
+  return { isBreakpointed, getTransition, setTransition, runSelectedWorkflow, runSelectedWorkflowDebug, closeRunInput, confirmRunInput, launchWorkflowRun, stepSelectedWorkflowRun, continueSelectedWorkflowRun, cancelSelectedWorkflowRun, pauseSelectedWorkflowRun, resumeSelectedWorkflowRun, patchSelectedWorkflowRunDebug, toggleBreakpoint, runToCursor, skipCurrentNode, rerunCurrentNode, replaySelectedWorkflowRun, renameSelectedWorkflowRun, cancelWorkflowRuns, replayWorkflowRuns, loadAllWatchExpressions, persistWatchExpressions, addWatchExpression, removeWatchExpression, fetchWorkflowRunsForSelected, fetchRecentWorkflowRuns, scheduleRecentWorkflowRunsRefresh, scheduleWorkflowRunDetailRefresh, selectWorkflowRun, openRunInTab, activateRunTab, closeRunTab, fetchWorkflowRunDetail, setWorkflowRunDetail, selectWorkflowRunNode, clearWorkflowRunGates, workflowRunGateIds, workflowRunGateFingerprintForDetail, refreshWorkflowRunGates, syncWorkflowRunGatesForDetail, resolveWorkflowRunGate, applyWorkflowRunDetail, reapplyPendingBreakpointPatch, confirmPendingBreakpointPatch, clearPendingBreakpointPatch, applyBreakpointPatch, readBreakpoints, sameBreakpoints, updateSelectedWorkflowNodeDetail };
 }

@@ -32,6 +32,25 @@
                 </tr>
               </thead>
               <tbody>
+                <tr v-if="loadingEvents && !resourcesStore.resourceRecords.length">
+                  <td colspan="7" class="!p-0 hover:!bg-transparent">
+                    <LoadingPanel compact :message="loadingEventsMessage || 'Loading events…'" />
+                  </td>
+                </tr>
+                <tr v-else-if="!resourcesStore.filteredResourceRecords.length">
+                  <td colspan="7" class="!p-0 hover:!bg-transparent">
+                    <EmptyState
+                      compact
+                      :icon="app.searchQuery ? 'search' : 'bell'"
+                      :title="app.searchQuery ? 'No matches' : 'No events yet'"
+                      :description="
+                        app.searchQuery
+                          ? `No events match “${app.searchQuery}”.`
+                          : 'Automation events appear here as providers and workflow runs report them.'
+                      "
+                    />
+                  </td>
+                </tr>
                 <tr
                   v-for="record in resourcesStore.filteredResourceRecords"
                   :key="String(record.id ?? JSON.stringify(record))"
@@ -71,18 +90,25 @@
 <script setup lang="ts">
 import { onMounted, watch } from "vue";
 import DataTable from "../components/shared/DataTable.vue";
+import EmptyState from "../components/shared/EmptyState.vue";
 import Icon from "../components/shared/Icon.vue";
+import LoadingPanel from "../components/shared/LoadingPanel.vue";
 import MobileBackBar from "../components/shared/MobileBackBar.vue";
 import PanelHeader from "../components/shared/PanelHeader.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
+import { useAppStore } from "../../ui/adapters/pinia/app";
 import { useOrgsStore } from "../../ui/adapters/pinia/orgs";
 import { useResourcesStore } from "../../ui/adapters/pinia/resources";
 import type { JsonRecord } from "../../core/domain/models";
 import { pretty } from "../../core/utils/format";
 import { displayValue } from "../../core/utils/values";
+import { useOperationLoading } from "../composables/useOperationLoading";
 
+const app = useAppStore();
 const resourcesStore = useResourcesStore();
 const orgs = useOrgsStore();
+const { isLoading: loadingEvents, loadingMessage: loadingEventsMessage } =
+  useOperationLoading("Refreshing resources");
 const endpoint = "automation_events";
 
 async function refresh() {

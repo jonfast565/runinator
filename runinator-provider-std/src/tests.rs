@@ -24,6 +24,7 @@ fn request_for(
         timeout_secs: 30,
         artifact_dir: String::new(),
         events_jsonl_path: String::new(),
+        idempotency_key: None,
     }
 }
 

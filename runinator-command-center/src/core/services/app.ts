@@ -11,10 +11,25 @@ import { createStore } from "./event-bus";
 export type EventStreamState = "disconnected" | "connecting" | "connected" | "fallback";
 export type ToastKind = "info" | "loading" | "success" | "error";
 
+// an inline recovery affordance on a toast. an error the user can do something about should offer
+// the doing, rather than leaving the only next step "notice it and go find the button again".
+export interface ToastAction {
+  label: string;
+  run: () => void;
+}
+
 export interface Toast {
   id: number;
   kind: ToastKind;
   text: string;
+  action?: ToastAction;
+}
+
+export interface RunOperationOptions {
+  // skip the global loading flag and the loading toast (background refreshes).
+  silent?: boolean;
+  // offer a Retry button on the error toast. only for reads and idempotent writes.
+  retryable?: boolean;
 }
 
 export interface AppState {
@@ -99,13 +114,15 @@ export function createAppService() {
     }
   }
 
-  function pushToast(kind: ToastKind, text: string): number {
+  function pushToast(kind: ToastKind, text: string, action?: ToastAction): number {
     const id = ++toastSeq;
     store.setState((state) => ({
       ...state,
-      toasts: [...state.toasts, { id, kind, text }].slice(-MAX_TOASTS),
+      toasts: [...state.toasts, { id, kind, text, action }].slice(-MAX_TOASTS),
     }));
-    const timeout = TOAST_TIMEOUTS[kind];
+    // a toast carrying an action stays until it is acted on or dismissed; auto-dismissing it would
+    // retract the recovery affordance while the user is still reading the error.
+    const timeout = action ? null : TOAST_TIMEOUTS[kind];
 
     if (timeout !== null) {
       toastTimers.set(
@@ -117,6 +134,68 @@ export function createAppService() {
     }
 
     return id;
+  }
+
+  // `silent` runs the operation without flipping the global loading flag or the loading toast, so
+  // background refreshes (poll/event-driven) update in place instead of dimming the UI. error and
+  // backend-reachability handling still apply.
+  //
+  // `retryable` opts the operation into a Retry button on its error toast. it is opt-in rather than
+  // automatic because a retry re-sends the request: safe for reads and idempotent writes, not for a
+  // create/launch that may already have partially applied before the error surfaced.
+  async function runOperation<T>(
+    label: string,
+    operation: () => Promise<T>,
+    options?: RunOperationOptions,
+  ): Promise<T> {
+    const silent = options?.silent ?? false;
+
+    if (!silent) {
+      store.setState((state) => ({ ...state, loading: true, opLabel: label, errorText: "" }));
+    }
+
+    const toastId = silent ? null : pushToast("loading", `${label}...`);
+
+    try {
+      const result = await operation();
+      store.setState((state) => ({ ...state, backendReachable: true, outageDismissed: false }));
+      return result;
+    } catch (error) {
+      if (isNetworkError(error)) {
+        store.setState((state) => ({ ...state, backendReachable: false }));
+      }
+
+      const message = String(error);
+      store.setState((state) => ({
+        ...state,
+        errorText: message,
+        statusText: "",
+        initialLoading: false,
+      }));
+      pushToast(
+        "error",
+        message,
+        options?.retryable
+          ? {
+              label: "Retry",
+              // the retry re-enters runOperation, so a second failure raises its own toast. swallow
+              // the rejection here: nothing is awaiting this call.
+              run: () => {
+                void runOperation(label, operation, options).catch(() => undefined);
+              },
+            }
+          : undefined,
+      );
+      throw error;
+    } finally {
+      if (!silent) {
+        store.setState((state) => ({ ...state, loading: false, opLabel: "" }));
+      }
+
+      if (toastId !== null) {
+        dismissToast(toastId);
+      }
+    }
   }
 
   return {
@@ -192,14 +271,16 @@ export function createAppService() {
       }, 5000);
       pushToast("success", text);
     },
-    setError(text: string) {
+    // `action` attaches a recovery affordance (e.g. "Retry failed") to the error toast for callers
+    // that know how to redo the failed part, such as a partially-failed bulk action.
+    setError(text: string, action?: ToastAction) {
       store.setState((state) => ({
         ...state,
         errorText: text,
         statusText: "",
         initialLoading: false,
       }));
-      pushToast("error", text);
+      pushToast("error", text, action);
     },
     pushToast,
     dismissToast,
@@ -294,50 +375,7 @@ export function createAppService() {
         replicaCounts: response.counts,
       }));
     },
-    // `silent` runs the operation without flipping the global loading flag or the loading toast, so
-    // background refreshes (poll/event-driven) update in place instead of dimming the UI. error and
-    // backend-reachability handling still apply.
-    async runOperation<T>(
-      label: string,
-      operation: () => Promise<T>,
-      options?: { silent?: boolean },
-    ): Promise<T> {
-      const silent = options?.silent ?? false;
-
-      if (!silent) {
-        store.setState((state) => ({ ...state, loading: true, opLabel: label, errorText: "" }));
-      }
-
-      const toastId = silent ? null : pushToast("loading", `${label}...`);
-
-      try {
-        const result = await operation();
-        store.setState((state) => ({ ...state, backendReachable: true, outageDismissed: false }));
-        return result;
-      } catch (error) {
-        if (isNetworkError(error)) {
-          store.setState((state) => ({ ...state, backendReachable: false }));
-        }
-
-        const message = String(error);
-        store.setState((state) => ({
-          ...state,
-          errorText: message,
-          statusText: "",
-          initialLoading: false,
-        }));
-        pushToast("error", message);
-        throw error;
-      } finally {
-        if (!silent) {
-          store.setState((state) => ({ ...state, loading: false, opLabel: "" }));
-        }
-
-        if (toastId !== null) {
-          dismissToast(toastId);
-        }
-      }
-    },
+    runOperation,
     dispose() {
       window.clearTimeout(statusTimer);
 

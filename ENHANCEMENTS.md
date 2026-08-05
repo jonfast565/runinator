@@ -17,8 +17,6 @@ The guiding constraint from `AGENTS.md`: keep dependency direction services→sh
 | # | Item | Band | Owning crates |
 |---|------|------|---------------|
 | 6.3 | Workflow revision history + diff + rollback | **P0** | database, engine, ws, command-center |
-| 6.4 | Declarative idempotency on action nodes | **P1** | worker, comm, models, wdl |
-| 3.2 | Heartbeat-driven executor-lease invalidation | **P1** | worker, engine |
 | 6.8 | Secret expiry warnings | **P1** | engine, utilities |
 | 5.3 | Inbound webhook triggers | **P2** | ws, models |
 | 6.5 | Cross-run analytics | **P2** | database, ws, command-center |
@@ -28,7 +26,7 @@ The guiding constraint from `AGENTS.md`: keep dependency direction services→sh
 | 5.7 | Pack environments + promotion | **P3** | ctl, ws, settings store |
 | 6.6 | Action priority / fairness | **P4** | comm, broker (all backends), engine, worker |
 | 6.7 | Retention & redaction policy | **P4** | archiver, database, models |
-| 1.2 / 1.4 / 2.2 / 2.3 / 3.4 / 2.1 | Continuous quality track | parallel | varies |
+| 1.2 / 2.2 / 2.3 / 3.4 / 2.1 | Continuous quality track | parallel | varies |
 
 ---
 
@@ -47,23 +45,11 @@ This covers the runtime's blind spots around work that is *already in production
 
 ## P1 — close the known correctness gaps
 
-### 6.4 Declarative idempotency on action nodes
-- **Owning crates:** `runinator-worker` (claim before invoke), `runinator-engine`, `runinator-models`/`runinator-comm` (action contract), `runinator-wdl`.
-- **Verified 2026-08-04:** still open — `runinator-worker/src` and `runinator-comm/src` contain **no** references to idempotency. The `idempotency_keys` table and `/idempotency_keys` endpoints exist, but only as a **manual** store a workflow can call (`runinator-ws/src/handlers/automation.rs:347-376`); the executor path never touches them. Meanwhile the authoring guidance below (A.1) asks every provider author to hand-roll dedupe as a convention.
-- **Approach:** `.idempotent(key: <expr>)` on an action node. The worker claims the key before invoking the provider and replays the stored result on redelivery, converting a documented footgun into a platform guarantee. Fixes **A.7** (result-publish failure re-running the whole action) for free.
-- **Boundary note:** adding the key to the action contract is a `runinator-comm`/`runinator-models` change — thread through every broker backend, `mappers.rs`, both DB backends, and the WDL compile path.
-- **Why P1 and not P0:** it converts existing-but-unused infrastructure into a guarantee, but no current production incident traces to it.
-
-### 3.2 Slow failover on a dead worker
-- **Owning crates:** `runinator-worker`, `runinator-engine`.
-- **Verified 2026-08-04:** still open. `EXECUTOR_LEASE_GRACE_SECONDS = 60` (now at `runinator-worker/src/worker.rs:37`, used at :490) means a crashed worker's node run is not reclaimable until `timeout_seconds + 60s` elapses. With long job timeouts, a pod crash strands that node for the full timeout window.
-- **Approach:** Invalidate the lease off the worker replica heartbeat (already tracked via `register_replica_session` / `spawn_replica_heartbeat`) rather than only off the action deadline. Small, localized, and directly reduces MTTR on a pod crash.
-
 ### 6.8 Secret expiry warnings
 - **Owning crates:** `runinator-engine` (settings store), `runinator-utilities` (credential store).
 - **Problem:** The creds-sync pack copies credentials on a cron, but nothing warns **before** one expires — the first signal is a failed job.
 - **Approach:** Optional expiry metadata on settings-store secrets and a scan that raises a notification ahead of expiry.
-- Delivered through the shipped notification-policy layer (`notification_policies` / `notification_deliveries`); it is the cheapest proof that layer generalizes beyond run failures.
+- Delivered through the shipped notification-policy layer (**6.1**, Appendix B); it is the cheapest proof that layer generalizes beyond run failures.
 
 ---
 
@@ -74,7 +60,7 @@ This covers the runtime's blind spots around work that is *already in production
 - **Verified 2026-08-04:** still open. `WorkflowTriggerKind` remains exactly three variants — `Cron`, `Manual`, `Chained` (`runinator-models/src/workflows.rs:196-229`). `handlers/webhook.rs` only *wakes/signals an already-parked run*; there is no way to **start** one from an inbound event.
 - **Approach:** Add a `trigger webhook "..."` header declaration that mints a signed inbound URL to start a new run, with a payload-mapping expression into workflow inputs. Reuse the existing pack-managed-trigger materialization path (`metadata.managed_by = "wdl"`).
 - **Boundary note:** a new trigger kind is a shared-contract change — thread through `runinator-models` triggers, ctl WDL compile, mappers, and the command-center trigger catalog.
-- **Ranking note:** the highest-reach item for *new* work, and ranked below P0 only because that protects workflows already running. The shipped per-workflow concurrency policy makes it meaningfully safer — an unthrottled inbound webhook is precisely the source that makes such a policy mandatory.
+- **Ranking note:** the highest-reach item for *new* work, and ranked below P0 only because that protects workflows already running. The shipped per-workflow concurrency policy (**6.2**, Appendix B) makes it meaningfully safer — an unthrottled inbound webhook is precisely the source that makes such a policy mandatory.
 
 ### 6.5 Cross-run analytics
 - **Owning crates:** `runinator-database` (aggregate queries), `runinator-ws`, `runinator-command-center`.
@@ -135,9 +121,6 @@ These are unbounded-effort quality work rather than discrete features. None bloc
 ### 1.2 Accessibility pass
 - **Verified 2026-08-04:** ~46 ARIA attributes across 62 components (up from 29, still thin). Remaining: `aria-label`/`title` on icon buttons, focus trapping in modals (`WorkflowStepEditorModal.vue`), text fallback for color-only status badges, semantic heading hierarchy.
 
-### 1.4 Bulk actions, loading/empty states, error recovery
-- **Verified 2026-08-04:** still open. `DataTable.vue` has no multi-select; no bulk enable/disable/delete/rerun across workflows or runs. Only one skeleton/loading affordance exists in the whole `ui/` tree. Add skeletons, richer empty states, and a "Retry" affordance on the error toast (`ToastHost.vue`) instead of console-only errors.
-
 ### 2.2 Frontend test gaps
 - **Verified 2026-08-04:** **0 test files across 21 components** in `runinator-command-center/src/ui/components/workflow/` (canvas, node, step editor — the most complex, highest-LOC components). Core utilities and Pinia adapters remain well covered; presentation components are not.
 
@@ -153,12 +136,12 @@ These are unbounded-effort quality work rather than discrete features. None bloc
 
 ---
 
-## Appendix — Worker / job authoring pitfalls (reference, not a work queue)
+## Appendix A — Worker / job authoring pitfalls (reference, not a work queue)
 
-These are footguns when creating new providers and workflow jobs, grounded in `runinator-worker/src/executor.rs` and `worker.rs`. They are **standing authoring guidance**, not scheduled work — they belong in a provider-authoring checklist so new jobs inherit the right defaults. (Formerly Tier 4; A.1 and A.7 are the ones **6.4** would convert from convention into a platform guarantee.)
+These are footguns when creating new providers and workflow jobs, grounded in `runinator-worker/src/executor.rs` and `worker.rs`. They are **standing authoring guidance**, not scheduled work — they belong in a provider-authoring checklist so new jobs inherit the right defaults. (Formerly Tier 4. **6.4** has since converted the A.1/A.7 pair from pure convention into a platform guarantee for actions that declare `.idempotent(key: ...)` — the notes below still apply verbatim to actions that do not, and to the crash window no reservation can close.)
 
 ### A.1 Make every provider action idempotent (the big one)
-- The executor lease (`claim_workflow_node_run_executor`) prevents *concurrent* duplicate execution, but it **fail-opens on a transport error** and only protects while held. A worker that crashes *after* a side effect but *before* `broker.ack` will redeliver and re-execute. Any action with external side effects (charges, posts, writes) must dedupe on its own key — `workflow_node_run_id` is available in the request and is a natural idempotency key.
+- The executor lease (`claim_workflow_node_run_executor`) prevents *concurrent* duplicate execution, but it **fail-opens on a transport error** and only protects while held. A worker that crashes *after* a side effect but *before* `broker.ack` will redeliver and re-execute. Any action with external side effects (charges, posts, writes) must dedupe on its own key — `workflow_node_run_id` is available in the request and is a natural idempotency key. **Since 6.4**, a node can instead declare `.idempotent(key: <expr>)` and the platform reserves the key and replays a recorded success; the resolved key also arrives as `ProviderExecutionRequest.idempotency_key`, so a provider with native idempotency should forward it upstream rather than hand-rolling dedupe.
 
 ### A.2 A timeout stops *waiting*, not the work
 - Provider code runs in `spawn_blocking` (`executor.rs:69`). On timeout the `CancellationToken` is cancelled, but a provider that never polls the token (or has no internal client timeout) keeps running on a blocking thread after the node is already marked `TimedOut`. Consequences: (a) Tokio blocking-pool thread leak (default 512 — exhaust it and the worker wedges), and (b) a "timed out" job still mutating the outside world. **Rule for new providers:** honor the cancellation token in any loop, and set an explicit client timeout ≤ `request.timeout_secs`.
@@ -176,7 +159,60 @@ These are footguns when creating new providers and workflow jobs, grounded in `r
 - `resolve_secret_refs` runs per delivery. If the settings store is unavailable, the job publishes `Failed` and acks — it does *not* retry at the broker level. Jobs touching `secret://` refs should carry a node-level `retry` policy so a transient secret-store blip recovers. (**6.8** warns before the credential dies; this handles the store being briefly unreachable.)
 
 ### A.7 Result-publish failures redeliver the whole action
-- If a job succeeds but `publish_status`/`flush` fails, the delivery is nacked and the entire action re-runs — looping back to A.1. Idempotency (A.1, and **6.4** as a platform feature) is the mitigation here too.
+- If a job succeeds but `publish_status`/`flush` fails, the delivery is nacked and the entire action re-runs — looping back to A.1. **6.4 closes this for declared keys**: the result is recorded against the key *before* the publish, so the redelivery replays it instead of re-executing. Actions with no declared key still re-run, and A.1 remains the mitigation there.
+
+---
+
+## Appendix B — Retired (implemented)
+
+Kept as a record of what the roadmap no longer covers. Item IDs stay stable, so a retired number is never reused.
+
+### 6.1 Failure alerting + SLA — shipped 2026-08-04
+- **Shipped:** `notification_policies` + `notification_deliveries`, engine emission at the terminal transition plus a scanner for the duration events, the `notify on failure|retry_exhausted|sla|parked -> slack|email|app "<target>"` WDL header (pack-managed like triggers), a `notifications:manage` capability with CRUD endpoints, and the command-center Alert policies panel. Delivery reuses the action outbox via a new optional `ActionCommand.notification_delivery_id`, so alerts go out through the normal provider path and the engine holds no vendor client.
+- **Was:** the `notifications` table, model, UI view, and API all existed, but the only writer was the inbound `POST` — a 3am cron failure stayed silent until somebody opened the Runs view, and there was no SLA concept in the models at all.
+- **Residual:** slack/email delivery needs a `secret://slack/bot_token` (or an overriding `with { ... }`) in the settings store; a missing credential surfaces as a failed delivery row rather than a failed run.
+
+### 6.2 Per-workflow concurrency & misfire policy (absorbed 5.4) — shipped 2026-08-04
+- **Shipped:** `concurrency <n> on_conflict skip|queue|cancel_previous|allow` (WDL header → `definition.metadata.concurrency`, so it versions with the workflow) and `trigger cron "..." catchup fire_once|fire_all|skip [grace <d>] [max <n>]` (→ the trigger's own `configuration.catchup`). Both are evaluated inside the claim transaction in `claim_due_workflow_trigger_firings`, which now returns a `TriggerFiringBatch` carrying the created runs, the runs a `cancel_previous` settled (the loop publishes their worker cancels), and per-policy declined counters. `queue` deliberately leaves the slot due instead of creating a run that parks — the schedule *is* the queue, which is the shape that avoids the 2026-07-13 wake flood. Firing rows gained an `outcome` column so a slot that produced no run is explainable after the fact.
+- **5.4 shipped with it:** a `freeze_windows` table (workflow-, org-, or platform-scoped) excluded from the claim in SQL — frozen triggers keep their due slot, so catch-up decides what replays when the window lifts — plus `POST /workflow_triggers/{id}/backfill` (idempotent against already-fired slots via the same firing row, with a dry run and a hard cap), `runinatorctl freeze` / `runinatorctl triggers backfill`, and a command-center **Schedules** tab. Both surfaces are gated on the new `schedules:manage` capability.
+- **Was:** `run_trigger_loop` unconditionally claimed and started a run for every due firing — no `singleton`, no `max_concurrent_runs`, no catch-up policy. The workaround was a `mutex` node *inside* the workflow, which **starts** the run and parks it: exactly the shape that produced the 2026-07-13 wake flood (thousands of parked creds-sync runs, a 9k-message wake queue, head-of-line blocking in the waker).
+- **Residual:** concurrency is enforced per *workflow*, counted inside the claim transaction. Two triggers of the same workflow claimed concurrently on two replicas can each pass the count, so the cap is best-effort under that specific race; the firing row remains the exact gate against double-firing one slot. Pipeline cron triggers honor freeze windows but have no concurrency policy of their own — their member workflows do. On mysql, a locking read also locks rows scanned in subqueries, so the freeze-window `NOT EXISTS` can make a concurrent replica `SKIP LOCKED` past a trigger; the effect is a one-tick (1s) delay, never a lost slot.
+
+### 1.4 Bulk actions, loading/empty states, error recovery — shipped 2026-08-04
+- **Shipped (command center only; no backend change):** three separable pieces.
+  - **Bulk actions.** `core/utils/bulk.ts` (`runBulk` + `describeBulkResult`) fans one operation over a selection with bounded concurrency and *collects* failures instead of propagating the first — the backend has no batch endpoints, so partial failure is the normal outcome, not an edge case. `ui/composables/useBulkSelection.ts` holds keyed selection (survives re-sort, prunes rows that leave the filtered list, shift-click ranges), rendered by `SelectCheckbox.vue` + `BulkActionBar.vue`. Wired into **Workflows** (enable / disable / delete) and **Runs** (cancel / replay). `DataTable.vue` and `RunTable.vue` both gained an opt-in `selectable` column and stay presentational — they report intent, the composable owns the state.
+  - **Error recovery.** `Toast` gained an optional `action`; `ToastHost.vue` renders it as a button, and a toast carrying one no longer auto-dismisses (retracting the affordance mid-read). `runOperation` gained an opt-in `retryable` that attaches Retry to the error toast — opt-in, not automatic, because a retry re-sends the request: safe for reads and idempotent writes, wrong for a create that may have partially applied. Enabled on the ten list-refresh paths. A partially-failed bulk action reports through `setError` with a **"Retry N failed"** action that re-runs only the failed items.
+  - **Loading/empty states.** `TableSkeleton.vue` replaces the centered spinner on a table's *first* load, holding the pane height and column rhythm so rows arrive in place instead of shifting the layout; a background refresh still dims the existing rows. Events/Gates/Resources moved from bare `"No records."` text (Events had **no** empty or loading state at all) to `EmptyState` with a search-aware title and a line explaining what would populate the table.
+- **Was:** no multi-select anywhere; no bulk enable/disable/delete/rerun; errors surfaced as a toast that told you what broke and then expired. (The survey's "only one skeleton/loading affordance exists" was overstated — `EmptyState`/`LoadingPanel`/`LoadingSpinner`/`useOperationLoading` already existed and `DataTable` already distinguished first-load from refresh. What was missing was a *content-shaped* placeholder and coverage on three views.)
+- **Fixed in passing:** `DataTable.keyForRow` stringified the row key whenever `rowKey` was a field name, so a numeric id never matched the caller's own keys — latent for `selectedKey`, and a hard break for selection. It now preserves string/number as-is.
+- **Tests:** `bulk.test.ts` (11 — concurrency ceiling, abort, partial/total failure), `useBulkSelection.test.ts` (11 — ranges, re-sort survival, pruning, anchor reset), and 8 added to `DataTable.test.ts` (skeleton vs. dimmed refresh, checkbox rendering/labelling, colspan). 242 pass; `npm run lint` and `npm run build` clean.
+- **Residual:** bulk work is **client-side fan-out** over per-item endpoints — N requests, not one transaction, so a large selection is N round trips and there is no server-side atomicity. Bulk **replay** deliberately offers no retry affordance (a replay creates a run; retrying a failure that surfaced after creation would double-start it), and runs at concurrency 2 so a wide selection cannot stampede the action queue. Bulk actions are gated only by the per-item backend permission check, so a mixed selection reports per-row 403s as ordinary failures rather than hiding the button. `BulkActionBar`/`SelectCheckbox`/`TableSkeleton` have no component tests of their own — they are covered indirectly through `DataTable`. Selection is not yet wired into the other nine `DataTable` views (Schedules, Pipelines, Notifications, …); the machinery is generic, so each is a small opt-in.
+
+### 3.2 Heartbeat-driven executor-lease invalidation — shipped 2026-08-04
+- **Shipped:** `claim_workflow_node_run_executor` gained a `heartbeat_stale_before` cutoff, and the lease predicate a third arm — a slot now frees when unclaimed, when the claim ages past the action deadline (as before), **or** when the holding replica is no longer live (`status <> 'offline' AND last_heartbeat_at >= ?` against `replicas`, as a correlated `NOT EXISTS`). Failover after a pod crash is now bounded by the heartbeat window rather than by the job's timeout. Graceful shutdown frees the lease too, via the `offline` status, without waiting for a heartbeat to lapse.
+- **Where the cutoff is decided:** `runinator-engine/src/repository/node_runs.rs`, from the existing `REPLICA_STALE_SECONDS` (30s = three missed heartbeats at the worker's 10s interval), now `pub` in `repository/replicas.rs`. Liveness is a platform policy — a worker knows its own deadline but not how long *another* replica may go quiet — so deriving it server-side keeps one definition shared with replica listing and action routing, and keeps it off the claim's wire payload. **The HTTP contract is unchanged**; `WorkflowNodeRunExecutorClaimRequest` did not grow a field.
+- **Was:** `EXECUTOR_LEASE_GRACE_SECONDS = 60` (`runinator-worker/src/worker.rs:37`) made `timeout_seconds + 60s` the *only* path back to a crashed worker's node run. With long job timeouts a pod crash stranded that node for the full timeout window. The deadline arm is retained as the backstop for a holder that is still live but has lost the action.
+- **Tests:** `executor_lease_frees_when_the_holder_stops_heartbeating` (`sqlite_tests.rs`) covers all three: lease holds while the holder heartbeats even past a long deadline, frees once the heartbeat lapses, and frees on graceful offline with a fresh heartbeat. The existing mutual-exclusion test was kept on the deadline arm alone.
+- **Residual:** the `NOT EXISTS` correlates `replicas` from an `UPDATE` on `workflow_node_runs`. That is valid on all three dialects (the mysql target-table restriction applies to selecting *from* the updated table, not to correlating against it), but it is exercised only by the sqlite suite — the mysql/postgres tests are `#[ignore]`d without a live server. `runinator-reducer/src/orchestration/action.rs:21` still keeps its own private copy of `REPLICA_STALE_SECONDS`; the two agree at 30s but are not yet one constant.
+
+### 6.4 Declarative idempotency on action nodes — shipped 2026-08-04
+- **Shipped:** `.idempotent(key: <expr>)` on an action node (WDL modifier → `WorkflowAction.idempotency_key`, so it versions with the workflow). The reducer resolves the expression per dispatch against the same run context the action's arguments see, qualifies it as `workflow:<workflow_id>:<key>`, and stamps it on a new optional `ActionCommand.idempotency_key`. The worker reserves that key before invoking the provider, via new `claim`/`complete`/`release` operations over the previously manual `idempotency_keys` table (now carrying `owner_node_run_id` / `claimed_at` / `completed_at`, under the reserved `action` scope). The claim is a single upsert, so of two concurrent claimants exactly one acquires.
+- **The guarantee, precisely:** once an execution *succeeds* under a key, any later delivery carrying it replays the recorded result instead of re-invoking. The result is recorded **before** the status publish, which is what fixes **A.7** — a failed publish/flush nacks the delivery, and the redelivery now replays rather than re-running the side effect. A concurrent claimant on a live reservation is dropped as a duplicate, the same way the executor lease drops one.
+- **What it deliberately does not claim:** when a worker dies mid-invocation nothing can know whether the side effect landed, so the resolved key is also passed to the provider as `ProviderExecutionRequest.idempotency_key` for providers with native (stripe-style) idempotency. That is the honest boundary between what the platform can enforce and what **A.1** still asks of provider authors.
+- **Failure semantics:** a failed attempt records nothing and *releases* the reservation, so the node's own `.retry(...)` — and every later run — is not blocked behind a reservation that no longer describes anything. A reservation whose holder died is takeable once it ages past the claimant's own action deadline. A key resolving to null or empty is treated as absent rather than as a shared empty key, since collapsing every run onto one key would silently skip real work.
+- **Was:** the `idempotency_keys` table and `/idempotency_keys` endpoints existed but only as a manual store a workflow could call; the executor path never touched them, and A.1 asked every provider author to hand-roll dedupe as a convention.
+- **Residual:** the claim/complete SQL is exercised only by the sqlite suite (`idempotency_claim_is_exclusive_and_replays_a_recorded_result`, `idempotency_reservation_frees_on_release_and_on_staleness`) — the mysql/postgres suites are `#[ignore]`d without a live server, and the mysql path is a two-statement read-back rather than a `RETURNING` upsert. The archive column list for `idempotency_keys` was left at the original five columns, so archived rows drop the reservation state. No command-center surface shows which keys are reserved or replayed; the `runinator_worker_actions_replayed_total` counter is the only signal.
+
+### Earlier
+
+- **Operational hardening** (former Tiers 1–2): tracing + `trace_id`, `/metrics`, DLQ/audit, retry backoff + jitter, rate limiting, `/health` + `/ready`, graceful shutdown, executor lease, per-node cancellation.
+- **Runtime/language completeness:** poll/while, race-branch cancellation, plugin FFI cancellation, authorization phase 2.
+- **1.1 Dark mode** — ✅ shipped. `:root[data-theme="dark"]` token set in `styles/base.css:101`, driven by the `displayPreferences` store through `ui/adapters/browser/theme.ts`, with a `system` mode that follows `prefers-color-scheme` live.
+- **1.3 Live expression preview** — ✅ shipped. Backed by a server-side `POST /wdl/evaluate` (`API_WDL_EVALUATE`) called through `core/services/expression.ts`; `ExpressionJsonEditor.vue` renders a debounced preview pane distinguishing a resolved result, an evaluation error, and a reference that is unresolved only because it is absent from the sample.
+- **5.1 Workflow test harness + dry-run simulation** — ✅ shipped. `SimulationEnv` in `runinator-workflows/simulate.rs` with a `MockEnv` (`testkit.rs`, `.wdlt`-driven) and a `DbSimulationEnv` in `runinator-engine/simulate.rs`. `simulate_workflow` reuses the reducer's own `next_transition` / `evaluate_switch` / `evaluate_toggle` / `evaluate_percentage` / condition evaluators and publishes no `ActionCommand`s. `runinatorctl workflows test <pack>` runs suites offline; `POST /workflows/simulate` backs the command center's **Dry run** modal. Fan-out kinds (loop/parallel/join/map/race/try/subflow) report as unsupported rather than simulating incorrectly.
+- **5.5 Run timeline / Gantt visualization** — ✅ shipped. `core/workflow/run-gantt.ts` (`buildGanttLayout`, unit-tested) + `ui/components/shared/RunGantt.vue`: proportional bars on a shared axis, dashed queued/parked segments, retry (`attempt`) badges, critical-path highlight, live count-up. No backend change.
+- **Waker had zero tests** (former 3.1, the survey's "highest residual risk") — ✅ largely closed; see the continuous-track entry 2.1 for what remains.
+- **`runinator-wdl/src/parser.rs` panic cluster** (half of 2.3/3.3) — ✅ clean, 0 `expect(` calls.
 
 ---
 

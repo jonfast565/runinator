@@ -135,6 +135,70 @@ pub struct IdempotencyKey {
     pub created_at: DateTime<Utc>,
 }
 
+/// scope every action-node idempotency key is stored under, keeping the reserved keys the platform
+/// manages separate from the caller-chosen scopes of the manual put/get store. the workflow
+/// qualification lives inside the key itself, stamped by the reducer.
+pub const ACTION_IDEMPOTENCY_SCOPE: &str = "action";
+
+/// outcome of reserving an idempotency key for an action node, decided in one statement so
+/// concurrent claimants cannot both acquire.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum IdempotencyClaim {
+    /// the caller now owns the key and must execute, then record the outcome against it.
+    Acquired,
+    /// an execution already completed under this key; replay `result` instead of executing.
+    Completed { result: Value },
+    /// a different node run holds an unfinished reservation, so this delivery is a concurrent
+    /// duplicate.
+    Held { owner_node_run_id: Uuid },
+}
+
+/// request body for reserving an action node's idempotency key.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IdempotencyClaimRequest {
+    pub scope: String,
+    pub key: String,
+    pub owner_node_run_id: Uuid,
+    /// the claimant's own execution deadline in seconds; a reservation older than this is treated as
+    /// abandoned and taken over. defaults to the action default timeout for older callers.
+    #[serde(default = "default_idempotency_lease_seconds")]
+    pub lease_seconds: i64,
+}
+
+fn default_idempotency_lease_seconds() -> i64 {
+    60
+}
+
+/// request body for releasing an unfinished reservation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IdempotencyReleaseRequest {
+    pub scope: String,
+    pub key: String,
+    pub owner_node_run_id: Uuid,
+}
+
+/// request body for recording a completed execution against a reserved key.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IdempotencyCompleteRequest {
+    pub scope: String,
+    pub key: String,
+    pub owner_node_run_id: Uuid,
+    #[serde(default)]
+    pub result: Value,
+}
+
+/// the stored replay payload for a completed action: enough to settle a redelivered node run
+/// exactly as the original execution settled it, without re-invoking the provider.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct IdempotentActionResult {
+    pub success: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_json: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrchestrationEvent {
     pub event_id: Uuid,

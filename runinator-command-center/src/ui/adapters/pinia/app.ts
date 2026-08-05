@@ -12,6 +12,7 @@ import {
   visibleNavSections,
 } from "../../../core/navigation/nav-config";
 import { appService } from "../../../core/services";
+import type { ToastAction } from "../../../core/services/app";
 import type { AppTab } from "../../../core/navigation/app";
 import { mirrorServiceState } from "./sync";
 
@@ -23,7 +24,7 @@ export {
   tabs,
   visibleNavSections,
 };
-export type { EventStreamState, ToastKind, Toast } from "../../../core/services/app";
+export type { EventStreamState, ToastKind, Toast, ToastAction } from "../../../core/services/app";
 export { isNetworkError } from "../../../core/services/app";
 export type { AppTab } from "../../../core/navigation/app";
 
@@ -155,7 +156,7 @@ export const useAppStore = defineStore("app", () => {
     toggleMobileNav: () => { appService.toggleMobileNav(); },
     toggleSidebar: () => { appService.toggleSidebar(); },
     setStatus: (text: string) => { appService.setStatus(text); },
-    setError: (text: string) => { appService.setError(text); },
+    setError: (text: string, action?: ToastAction) => { appService.setError(text, action); },
     pushToast: appService.pushToast,
     dismissToast: appService.dismissToast,
     clearToasts: () => { appService.clearToasts(); },

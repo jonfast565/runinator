@@ -8,7 +8,11 @@ use axum::{
 };
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::auth::{AuthContext, Permission, PrincipalKind};
+use runinator_models::orchestration::{
+    IdempotencyClaimRequest, IdempotencyCompleteRequest, IdempotencyReleaseRequest,
+};
 use runinator_models::value::Value;
+use runinator_models::web::TaskResponse;
 
 use crate::models::{
     ApiResponse, ApprovalResolutionRequest, AutomationRecordQuery, GateQuery,
@@ -377,6 +381,94 @@ pub(crate) async fn put_idempotency_key<T: DatabaseImpl>(
         .await
     {
         Ok(record) => (StatusCode::OK, Json(ApiResponse::JsonValue(record))),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+pub(crate) async fn claim_idempotency_key<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+    Json(request): Json<IdempotencyClaimRequest>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = crate::authz::require_service_or_admin(&ctx) {
+        return reply;
+    }
+    match repository::claim_idempotency_key(
+        db.as_ref(),
+        request.scope,
+        request.key,
+        request.owner_node_run_id,
+        request.lease_seconds,
+    )
+    .await
+    {
+        Ok(claim) => match Value::encode(&claim) {
+            Ok(value) => (StatusCode::OK, Json(ApiResponse::JsonValue(value))),
+            Err(err) => api_error(err.to_string()),
+        },
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+pub(crate) async fn complete_idempotency_key<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+    Json(request): Json<IdempotencyCompleteRequest>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = crate::authz::require_service_or_admin(&ctx) {
+        return reply;
+    }
+    match repository::complete_idempotency_key(
+        db.as_ref(),
+        request.scope,
+        request.key,
+        request.owner_node_run_id,
+        request.result,
+    )
+    .await
+    {
+        Ok(recorded) => (
+            StatusCode::OK,
+            Json(ApiResponse::TaskResponse(TaskResponse {
+                success: recorded,
+                message: if recorded {
+                    "Idempotency key completed".into()
+                } else {
+                    "Idempotency key not owned by this node run, or already completed".into()
+                },
+            })),
+        ),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+pub(crate) async fn release_idempotency_key<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+    Json(request): Json<IdempotencyReleaseRequest>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = crate::authz::require_service_or_admin(&ctx) {
+        return reply;
+    }
+    match repository::release_idempotency_key(
+        db.as_ref(),
+        request.scope,
+        request.key,
+        request.owner_node_run_id,
+    )
+    .await
+    {
+        Ok(released) => (
+            StatusCode::OK,
+            Json(ApiResponse::TaskResponse(TaskResponse {
+                success: released,
+                message: if released {
+                    "Idempotency reservation released".into()
+                } else {
+                    "Idempotency key not held by this node run, or already completed".into()
+                },
+            })),
+        ),
         Err(err) => api_error(err.to_string()),
     }
 }

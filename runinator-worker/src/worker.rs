@@ -10,10 +10,10 @@ use std::{
 use chrono::Utc;
 use runinator_api::{AsyncApiClient, StaticLocator};
 use runinator_broker::{Broker, BrokerDelivery, ControlDelivery};
-use runinator_comm::{ConsumerProfile, ControlKind, WireCodec};
+use runinator_comm::{ActionCommand, ConsumerProfile, ControlKind, WireCodec};
 use runinator_models::errors::{SendableError, error_code_or_unknown};
 use runinator_models::workflow_state::TaskStatusOutput;
-use runinator_models::workflows::WorkflowStatus;
+use runinator_models::workflows::{WorkflowAction, WorkflowStatus};
 use runinator_plugin::{
     cancel::CancellationToken, load_libraries_from_path, plugin::Plugin, print_libs,
 };
@@ -484,7 +484,9 @@ async fn process_delivery(
     );
     // acquire the execution lease before anything observable runs. a redelivered or timeout-raced
     // duplicate of this node run loses the claim and is dropped here, so the action never executes
-    // twice concurrently. the lease is treated as abandoned once it ages past the action's deadline.
+    // twice concurrently. this deadline is only the backstop for a holder that is still live but has
+    // lost the action; the server also frees the lease as soon as the holding replica stops
+    // heartbeating, which is what bounds failover after a worker crash.
     if let Some(replica_id) = replica_id {
         let stale_before = Utc::now()
             - chrono::Duration::seconds(action.timeout_seconds + EXECUTOR_LEASE_GRACE_SECONDS);
@@ -575,6 +577,50 @@ async fn process_delivery(
             return Ok(());
         }
     }
+    // reserve the declared idempotency key before anything the outside world can observe. a key whose
+    // execution already completed settles this delivery from the recorded result; one held by another
+    // node run makes this delivery a duplicate.
+    let idempotency_key = match crate::idempotency::open_gate(&api_client, &command).await {
+        crate::idempotency::IdempotencyGate::Execute { key } => key,
+        crate::idempotency::IdempotencyGate::Replay { result } => {
+            return settle_from_idempotent_replay(
+                broker,
+                consumer_id,
+                &api_client,
+                replica_id,
+                &stale_leases,
+                &in_flight,
+                &events,
+                &sink,
+                &command,
+                &action,
+                delivery.delivery_id,
+                result,
+            )
+            .await;
+        }
+        crate::idempotency::IdempotencyGate::Duplicate => {
+            metrics::action_duplicate();
+            events.handle(WorkerEvent::ActionSkippedDuplicate {
+                node_run_id: command.workflow_node_run_id,
+            });
+            in_flight.lock().await.remove(&command.workflow_node_run_id);
+            if let Some(replica_id) = replica_id {
+                release_executor_lease(
+                    &api_client,
+                    &stale_leases,
+                    replica_id,
+                    command.workflow_node_run_id,
+                    command.attempt,
+                )
+                .await;
+            }
+            return broker
+                .ack(consumer_id, delivery.delivery_id)
+                .await
+                .map_err(|err| broker_error("ack", err));
+        }
+    };
     events.handle(WorkerEvent::ActionStarted {
         workflow_run_id: command.workflow_run_id,
         node_id: command.node_id.clone(),
@@ -659,6 +705,11 @@ async fn process_delivery(
                 message: Some(message.clone()),
             }
             .to_wire_value()?;
+            // the provider never ran, so free the reservation taken above rather than leaving the key
+            // blocked until it ages out.
+            if let Some(key) = idempotency_key.as_deref() {
+                crate::idempotency::release(&api_client, key, command.workflow_node_run_id).await;
+            }
             if let Err(err) = sink
                 .publish_status(
                     WorkflowStatus::Failed,
@@ -716,6 +767,7 @@ async fn process_delivery(
             action.clone(),
             command.workflow_node_run_id,
             parameters,
+            idempotency_key.clone(),
             Some(Arc::new(sink.clone())),
             token,
         )
@@ -839,6 +891,22 @@ async fn process_delivery(
                 }
                 .to_wire_value()
             })?;
+        // record against the reserved key *before* publishing. that ordering is the whole point: if
+        // the publish below fails and the delivery is nacked, the redelivery replays this result
+        // instead of re-running the side effect (appendix A.7).
+        if let Some(key) = idempotency_key.as_deref() {
+            crate::idempotency::record_success(
+                &api_client,
+                key,
+                command.workflow_node_run_id,
+                &runinator_models::orchestration::IdempotentActionResult {
+                    success: true,
+                    output_json: Some(output_json.clone()),
+                    message: provider_message.clone(),
+                },
+            )
+            .await;
+        }
         if let Err(err) = sink
             .publish_status(
                 WorkflowStatus::Succeeded,
@@ -908,6 +976,11 @@ async fn process_delivery(
             message: provider_message.clone(),
         }
         .to_wire_value()?;
+        // a failed attempt records nothing and frees the reservation: the node's own `.retry()` must
+        // be able to run again, and replaying a failure forever would be the opposite of the point.
+        if let Some(key) = idempotency_key.as_deref() {
+            crate::idempotency::release(&api_client, key, command.workflow_node_run_id).await;
+        }
         if let Err(err) = sink
             .publish_status(status, Some(output_json), provider_message.clone())
             .await
@@ -1003,4 +1076,111 @@ async fn release_executor_lease(
             stale_leases.record(node_run_id, min_reclaim_attempt).await;
         }
     }
+}
+
+/// settle a delivery from a result already recorded under its idempotency key, without invoking the
+/// provider. the node run reaches the same terminal status the original execution reached, which is
+/// what makes a redelivery after a failed publish harmless rather than a second side effect.
+#[allow(clippy::too_many_arguments)]
+async fn settle_from_idempotent_replay(
+    broker: &Arc<dyn Broker>,
+    consumer_id: &str,
+    api_client: &AsyncApiClient<StaticLocator>,
+    replica_id: Option<Uuid>,
+    stale_leases: &Arc<OwnStaleLeases>,
+    in_flight: &Arc<Mutex<HashMap<Uuid, InFlightAction>>>,
+    events: &Arc<dyn WorkerEventSink>,
+    sink: &RunOutputSink,
+    command: &ActionCommand,
+    action: &WorkflowAction,
+    delivery_id: Uuid,
+    result: runinator_models::orchestration::IdempotentActionResult,
+) -> Result<(), SendableError> {
+    metrics::action_replayed();
+    let status = match result.success {
+        true => WorkflowStatus::Succeeded,
+        false => WorkflowStatus::Failed,
+    };
+    let output_json = match result.output_json.clone() {
+        Some(output) => output,
+        None => TaskStatusOutput {
+            success: result.success,
+            duration_ms: Some(0),
+            message: result.message.clone(),
+        }
+        .to_wire_value()?,
+    };
+    sink.emit_log(format!(
+        "Action {}.{} skipped: replaying the result already recorded for this idempotency key.",
+        action.provider, action.function
+    ));
+    if let Err(err) = sink.flush().await {
+        in_flight.lock().await.remove(&command.workflow_node_run_id);
+        nack_action_delivery(
+            broker,
+            consumer_id,
+            api_client,
+            replica_id,
+            stale_leases,
+            command.workflow_node_run_id,
+            command.attempt,
+            delivery_id,
+        )
+        .await?;
+        return Err(broker_error("publish_result", err));
+    }
+    if let Err(err) = sink
+        .publish_status(status, Some(output_json), result.message.clone())
+        .await
+    {
+        error!(
+            node_run_id = %command.workflow_node_run_id,
+            error_code = error_code_or_unknown(&err),
+            "failed to publish replayed status: {}",
+            err
+        );
+        in_flight.lock().await.remove(&command.workflow_node_run_id);
+        nack_action_delivery(
+            broker,
+            consumer_id,
+            api_client,
+            replica_id,
+            stale_leases,
+            command.workflow_node_run_id,
+            command.attempt,
+            delivery_id,
+        )
+        .await?;
+        return Err(broker_error("publish_result", err));
+    }
+    events.handle(WorkerEvent::ActionFinished {
+        workflow_run_id: command.workflow_run_id,
+        node_id: command.node_id.clone(),
+        node_run_id: command.workflow_node_run_id,
+        provider: action.provider.clone(),
+        function: action.function.clone(),
+        outcome: match result.success {
+            true => ActionOutcome::Succeeded,
+            false => ActionOutcome::Failed,
+        },
+        duration_ms: 0,
+        message: result.message.clone(),
+    });
+    broker
+        .ack(consumer_id, delivery_id)
+        .await
+        .map_err(|err| broker_error("ack", err))?;
+    if let Some(replica_id) = replica_id {
+        // settled terminally, so only the next attempt may reclaim.
+        release_executor_lease(
+            api_client,
+            stale_leases,
+            replica_id,
+            command.workflow_node_run_id,
+            command.attempt + 1,
+        )
+        .await;
+    }
+    in_flight.lock().await.remove(&command.workflow_node_run_id);
+    Ok(())
 }

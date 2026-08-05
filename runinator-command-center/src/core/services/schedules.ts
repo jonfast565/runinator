@@ -42,7 +42,9 @@ export function createSchedulesService(app: AppService) {
     async refreshFreezeWindows() {
       const { activeOnly } = store.getState();
       const freezeWindows = await app
-        .runOperation("Loading freeze windows", () => fetchFreezeWindows(activeOnly))
+        .runOperation("Loading freeze windows", () => fetchFreezeWindows(activeOnly), {
+          retryable: true,
+        })
         .catch(() => []);
       store.setState((state) => ({ ...state, freezeWindows }));
     },

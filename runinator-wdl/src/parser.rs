@@ -1598,6 +1598,17 @@ fn apply_modifier(modifiers: &mut Modifiers, pair: Pair<Rule>) -> Result<(), Wdl
                 .ok_or_else(|| WdlError::syntax(span, "runner requires a string argument"))?;
             modifiers.runner = Some(expect_string(value, "runner")?);
         }
+        "idempotent" => {
+            let value = named
+                .iter()
+                .find(|(key, _)| key == "key")
+                .map(|(_, value)| value)
+                .or_else(|| positional.first())
+                .ok_or_else(|| {
+                    WdlError::syntax(span, "idempotent requires a `key:` expression argument")
+                })?;
+            modifiers.idempotency_key = Some(value.clone());
+        }
         "reentry" => {
             let max = named
                 .iter()

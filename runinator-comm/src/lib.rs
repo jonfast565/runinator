@@ -75,6 +75,13 @@ pub struct ActionCommand {
     /// the result consumer settles this delivery row instead of a node run. `None` for node actions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notification_delivery_id: Option<Uuid>,
+    /// resolved idempotency key for this action's external effect, from the node's
+    /// `.idempotent(key: <expr>)`. the reducer evaluates the expression against the run context and
+    /// stamps the result here; the worker reserves it before invoking the provider and replays a
+    /// previously recorded result instead of executing again. `None` for non-idempotent actions,
+    /// which is the default and the behaviour of every pre-existing message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idempotency_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

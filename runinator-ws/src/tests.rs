@@ -1760,6 +1760,7 @@ async fn action_node_fails_promptly_when_its_executing_worker_disconnects() {
             dead_replica,
             chrono::Utc::now(),
             chrono::Utc::now() - chrono::Duration::seconds(60),
+            chrono::Utc::now() - chrono::Duration::seconds(30),
         )
         .await
         .unwrap()
@@ -2626,6 +2627,7 @@ fn action_command(
             mcp_enabled: false,
             tags: Vec::new(),
             required_labels: Default::default(),
+            idempotency_key: None,
         },
         attempt: 1,
         parameters: json!({}),
@@ -2633,6 +2635,7 @@ fn action_command(
         trace_id: Uuid::nil(),
         trace_context: Default::default(),
         notification_delivery_id: None,
+        idempotency_key: None,
     }
 }
 

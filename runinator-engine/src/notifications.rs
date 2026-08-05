@@ -304,6 +304,7 @@ async fn enqueue_delivery<T: DatabaseImpl>(
             mcp_enabled: false,
             tags: Vec::new(),
             required_labels: Default::default(),
+            idempotency_key: None,
         },
         attempt: 0,
         parameters: Value::Null,
@@ -311,6 +312,9 @@ async fn enqueue_delivery<T: DatabaseImpl>(
         trace_id: Uuid::now_v7(),
         trace_context: Default::default(),
         notification_delivery_id: Some(delivery.id),
+        // the delivery row is already the dedupe record for an alert, and its id keys the outbox
+        // entry, so a delivery needs no second idempotency reservation.
+        idempotency_key: None,
     };
     db.enqueue_action_dispatch(format!("notification:{}", delivery.id), command)
         .await?;

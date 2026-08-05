@@ -12,6 +12,7 @@ struct WorkerMetrics {
     actions_received: Counter<u64>,
     actions_completed: Counter<u64>,
     actions_duplicate: Counter<u64>,
+    actions_replayed: Counter<u64>,
     action_duration_ms: Histogram<f64>,
     actions_in_flight: UpDownCounter<i64>,
     control_commands: Counter<u64>,
@@ -32,6 +33,9 @@ fn metrics() -> &'static WorkerMetrics {
                 .build(),
             actions_duplicate: meter
                 .u64_counter("runinator_worker_actions_duplicate_total")
+                .build(),
+            actions_replayed: meter
+                .u64_counter("runinator_worker_actions_replayed_total")
                 .build(),
             action_duration_ms: meter
                 .f64_histogram("runinator_worker_action_duration_ms")
@@ -58,6 +62,12 @@ pub(crate) fn action_received() {
 /// a delivery was dropped as a duplicate because its executor lease is held elsewhere.
 pub(crate) fn action_duplicate() {
     metrics().actions_duplicate.add(1, &[]);
+}
+
+/// a delivery settled from a result already recorded under its idempotency key, so the provider was
+/// not invoked. a rising count means redeliveries are being absorbed rather than re-executed.
+pub(crate) fn action_replayed() {
+    metrics().actions_replayed.add(1, &[]);
 }
 
 /// an action finished executing. `outcome` is one of succeeded/failed/timed_out/canceled; the same

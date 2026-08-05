@@ -20,8 +20,9 @@ use runinator_models::{
         api_workflow_run_transitions, api_workflow_runs, api_workflow_trigger,
         api_workflow_trigger_backfill, api_workflow_trigger_runs, api_workflow_triggers,
         API_APPROVALS, API_AUTH_CONFIG, API_AUTH_LOGIN, API_AUTH_LOGOUT, API_AUTH_REFRESH,
-        API_CREDENTIALS, API_FREEZE_WINDOWS, API_IDEMPOTENCY_KEYS, API_PACKS_IMPORT, API_PROVIDERS,
-        API_REPLICAS, API_RUNS, API_SCHEDULER_ACTION_DISPATCHES,
+        API_CREDENTIALS, API_FREEZE_WINDOWS, API_IDEMPOTENCY_KEYS, API_IDEMPOTENCY_KEYS_CLAIM,
+        API_IDEMPOTENCY_KEYS_COMPLETE, API_IDEMPOTENCY_KEYS_RELEASE, API_PACKS_IMPORT,
+        API_PROVIDERS, API_REPLICAS, API_RUNS, API_SCHEDULER_ACTION_DISPATCHES,
         API_SCHEDULER_ACTION_DISPATCHES_CLAIM, API_SCHEDULER_ACTION_DISPATCHES_PENDING,
         API_SCHEDULER_READY_NODES_CLAIM, API_SCHEDULER_WORKFLOW_RUNS_CLAIM,
         API_SCHEDULER_WORKFLOW_TRIGGER_FIRINGS_CLAIM, API_SUPERVISOR_STATUS, API_WORKFLOWS,
@@ -32,7 +33,10 @@ use runinator_models::{
     auth::{AuthConfigResponse, LoginRequest, LoginResponse, RefreshRequest},
     billing::ScaleOrgNodesRequest,
     bundles::{Bundle, PackImportResult, ProviderBundle, SecretBundle},
-    orchestration::ReadyNodeRecord,
+    orchestration::{
+        IdempotencyClaim, IdempotencyClaimRequest, IdempotencyCompleteRequest,
+        IdempotencyReleaseRequest, ReadyNodeRecord, ACTION_IDEMPOTENCY_SCOPE,
+    },
     providers::ProviderMetadata,
     provisioning::{NodeBackendsResponse, ProvisionedGroup, ScaleNodesRequest, StopNodeRequest},
     replicas::{
@@ -1398,6 +1402,72 @@ where
         }
         let response = Self::handle_response(url, response).await?;
         Ok(Some(response.json::<Value>().await?))
+    }
+
+    /// reserve an action node's idempotency key before invoking its provider. the reply says whether
+    /// this node run may execute, must replay an already-recorded result, or lost to another claimant.
+    pub async fn claim_idempotency_key(
+        &self,
+        key: &str,
+        owner_node_run_id: Uuid,
+        lease_seconds: i64,
+    ) -> Result<IdempotencyClaim> {
+        let url = self.build_url(API_IDEMPOTENCY_KEYS_CLAIM).await?;
+        let response = self
+            .http_post(url.clone())
+            .json(&IdempotencyClaimRequest {
+                scope: ACTION_IDEMPOTENCY_SCOPE.into(),
+                key: key.to_string(),
+                owner_node_run_id,
+                lease_seconds,
+            })
+            .send()
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<IdempotencyClaim>().await?)
+    }
+
+    /// record this node run's terminal outcome against the key it reserved, so a redelivery replays
+    /// it instead of re-invoking the provider. `Ok(false)` means the reservation was no longer ours.
+    pub async fn complete_idempotency_key(
+        &self,
+        key: &str,
+        owner_node_run_id: Uuid,
+        result: Value,
+    ) -> Result<bool> {
+        let url = self.build_url(API_IDEMPOTENCY_KEYS_COMPLETE).await?;
+        let response = self
+            .http_post(url.clone())
+            .json(&IdempotencyCompleteRequest {
+                scope: ACTION_IDEMPOTENCY_SCOPE.into(),
+                key: key.to_string(),
+                owner_node_run_id,
+                result,
+            })
+            .send()
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<TaskResponse>().await?.success)
+    }
+
+    /// free an unfinished reservation after a non-success outcome, so a retry is not held off.
+    pub async fn release_idempotency_key(
+        &self,
+        key: &str,
+        owner_node_run_id: Uuid,
+    ) -> Result<bool> {
+        let url = self.build_url(API_IDEMPOTENCY_KEYS_RELEASE).await?;
+        let response = self
+            .http_post(url.clone())
+            .json(&IdempotencyReleaseRequest {
+                scope: ACTION_IDEMPOTENCY_SCOPE.into(),
+                key: key.to_string(),
+                owner_node_run_id,
+            })
+            .send()
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<TaskResponse>().await?.success)
     }
 
     pub async fn put_idempotency_key(

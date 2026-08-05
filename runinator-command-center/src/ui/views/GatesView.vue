@@ -65,12 +65,17 @@
                   </td>
                 </tr>
                 <tr v-else-if="!gates.filteredGates.length">
-                  <td colspan="5" class="px-3.5 py-3.5 text-center text-fg-muted">
-                    {{
-                      gates.gates.length
-                        ? `No gates match “${app.searchQuery}”.`
-                        : "No gates are currently blocking a workflow."
-                    }}
+                  <td colspan="5" class="!p-0 hover:!bg-transparent">
+                    <EmptyState
+                      compact
+                      :icon="gates.gates.length ? 'search' : 'lock'"
+                      :title="gates.gates.length ? 'No matches' : 'No gates blocking'"
+                      :description="
+                        gates.gates.length
+                          ? `No gates match “${app.searchQuery}”.`
+                          : 'A gate holds a run until its condition passes or an operator opens it. None are blocking right now.'
+                      "
+                    />
                   </td>
                 </tr>
                 <tr
@@ -113,6 +118,7 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from "vue";
 import DataTable from "../components/shared/DataTable.vue";
+import EmptyState from "../components/shared/EmptyState.vue";
 import Icon from "../components/shared/Icon.vue";
 import LoadingPanel from "../components/shared/LoadingPanel.vue";
 import LoadingSpinner from "../components/shared/LoadingSpinner.vue";

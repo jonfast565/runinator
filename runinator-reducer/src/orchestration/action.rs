@@ -253,12 +253,23 @@ pub(super) async fn process_action_node<T: DatabaseImpl>(
     let attempt = node_run.attempt + 1;
     let parameters =
         build_node_parameters(db, workflow, action, node, workflow_run, node_runs).await?;
+    // resolve the idempotency key from the same context the parameters saw, so the key describes the
+    // effect this attempt is about to have. it is deliberately not attempt-scoped: a retry of the same
+    // node must reach the same key, or retrying would defeat the whole point.
+    let idempotency_key = match action.idempotency_key {
+        Some(_) => {
+            let context = runtime_context(db, workflow_run, node_runs).await;
+            resolve_idempotency_key(action, workflow_run.workflow_id, &context)
+        }
+        None => None,
+    };
     let command = build_action_command(
         workflow_run.id,
         &node_run,
         action,
         parameters.clone(),
         target,
+        idempotency_key,
     );
     // scope the dedupe key to the attempt: outbox rows persist after publish, so a retry reusing
     // the node run's key would collide with the already-published row and never dispatch again.
@@ -358,12 +369,37 @@ async fn build_node_parameters<T: DatabaseImpl>(
         .map_err(|err| -> SendableError { Box::new(err) })
 }
 
+/// resolve an action's `.idempotent(key: <expr>)` expression against the run context into the key the
+/// worker will reserve. the key names an external effect, so it is qualified by the workflow: two runs
+/// of the same workflow producing the same key dedupe against each other, while an unrelated workflow
+/// computing the same string does not. a key that resolves to null or empty is treated as absent
+/// rather than as the empty key, so a reference that is simply missing cannot collapse every run of
+/// the workflow onto one shared key — the failure mode there is silently skipping real work.
+pub(super) fn resolve_idempotency_key(
+    action: &WorkflowAction,
+    workflow_id: Uuid,
+    context: &Value,
+) -> Option<String> {
+    let expression = action.idempotency_key.as_ref()?;
+    let resolved = runinator_workflows::resolve_value_refs(expression, context).ok()?;
+    let key = match &resolved {
+        Value::String(key) => key.clone(),
+        Value::Null => return None,
+        other => other.to_string(),
+    };
+    if key.is_empty() {
+        return None;
+    }
+    Some(format!("workflow:{workflow_id}:{key}"))
+}
+
 fn build_action_command(
     workflow_run_id: Uuid,
     node_run: &WorkflowNodeRun,
     action: &WorkflowAction,
     parameters: Value,
     target: ActionTarget,
+    idempotency_key: Option<String>,
 ) -> ActionCommand {
     ActionCommand {
         command_id: Uuid::new_v4(),
@@ -379,6 +415,7 @@ fn build_action_command(
         trace_context: runinator_utilities::telemetry::current_trace_context(),
         // node work, not a notification delivery.
         notification_delivery_id: None,
+        idempotency_key,
     }
 }
 

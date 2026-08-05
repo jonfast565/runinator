@@ -74,4 +74,75 @@ describe("DataTable (column mode)", () => {
     expect(html).toContain("table-scroll");
     expect(html).toContain("custom");
   });
+
+  it("renders a table skeleton, not rows, on a first load", async () => {
+    const html = await render({ columns, rows: [], loading: true, loadingMessage: "Loading rows…" });
+    expect(html).toContain("Loading rows…");
+    expect(html).toContain("animate-pulse");
+  });
+
+  it("keeps rows mounted and dimmed while refreshing", async () => {
+    const html = await render({ columns, rows, rowKey: "id", loading: true });
+    expect(html).toContain("alpha");
+    expect(html).toContain("opacity-60");
+    expect(html).not.toContain("animate-pulse");
+  });
+});
+
+describe("DataTable (selection)", () => {
+  it("renders no checkbox column unless selectable", async () => {
+    const html = await render({ columns, rows, rowKey: "id" });
+    expect(html).not.toContain('type="checkbox"');
+  });
+
+  it("renders a header checkbox and one per row", async () => {
+    const html = await render({ columns, rows, rowKey: "id", selectable: true });
+    // one header + five rows.
+    expect(html.match(/type="checkbox"/g)).toHaveLength(6);
+    expect(html).toContain('aria-label="Select all"');
+  });
+
+  it("labels each row checkbox from the first column and the caller's noun", async () => {
+    const html = await render({
+      columns: [{ key: "name", label: "Name" }, { key: "id", label: "ID" }],
+      rows,
+      rowKey: "id",
+      selectable: true,
+      selectionNoun: "workflow",
+    });
+    expect(html).toContain('aria-label="Select workflow alpha"');
+  });
+
+  it("checks exactly the rows named in selectedKeys", async () => {
+    const html = await render({
+      columns,
+      rows,
+      rowKey: "id",
+      selectable: true,
+      selectedKeys: [1, 3],
+    });
+    expect(html.match(/<input[^>]*\bchecked\b[^>]*>/g)).toHaveLength(2);
+  });
+
+  it("flips the header label once everything is selected", async () => {
+    const html = await render({
+      columns,
+      rows,
+      rowKey: "id",
+      selectable: true,
+      selectedKeys: [1, 2, 3, 4, 5],
+      allSelected: true,
+    });
+    expect(html).toContain('aria-label="Deselect all"');
+  });
+
+  it("spans the checkbox column in the empty row so the empty state stays centered", async () => {
+    const html = await render({
+      columns,
+      rows: [],
+      selectable: true,
+      emptyTitle: "No records yet",
+    });
+    expect(html).toContain('colspan="3"');
+  });
 });
