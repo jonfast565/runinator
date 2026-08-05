@@ -7424,6 +7424,7 @@ dependencies = [
  "runinator-auth",
  "runinator-comm",
  "runinator-models",
+ "runinator-store",
  "runinator-utilities",
  "serde_json",
  "sqlx",
@@ -7804,13 +7805,24 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "runinator-comm",
- "runinator-database",
  "runinator-models",
+ "runinator-store",
  "runinator-utilities",
  "runinator-workflows",
  "serde",
  "serde_json",
+ "tokio",
  "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "runinator-store"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "runinator-comm",
+ "runinator-models",
  "uuid",
 ]
 

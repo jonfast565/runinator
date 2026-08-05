@@ -5,7 +5,7 @@ use crate::errors::ARTIFACT_SOURCE_UNRESOLVED;
 use runinator_models::json;
 use runinator_models::workflows::NewWorkflowRunArtifact;
 
-pub(super) async fn process_output_node<T: DatabaseImpl>(
+pub(super) async fn process_output_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
@@ -140,7 +140,7 @@ fn build_artifact(
 
 pub(super) struct OutputHandler;
 
-impl<T: DatabaseImpl> super::handler::NodeHandler<T> for OutputHandler {
+impl<T: ReducerStore> super::handler::NodeHandler<T> for OutputHandler {
     fn process<'a>(
         &'a self,
         ctx: &'a super::handler::NodeHandlerContext<'a, T>,

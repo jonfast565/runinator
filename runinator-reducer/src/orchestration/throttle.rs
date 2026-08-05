@@ -55,7 +55,7 @@ pub(super) fn bucket_has_tokens(record: &Value, max_per_window: i64, window_seco
     tokens_used < max_per_window
 }
 
-async fn fetch_bucket<T: DatabaseImpl>(db: &T, name: &str) -> Result<Option<Value>, SendableError> {
+async fn fetch_bucket<T: ReducerStore>(db: &T, name: &str) -> Result<Option<Value>, SendableError> {
     let records = db
         .fetch_automation_records(RECORD_TYPE.into(), None, None)
         .await?;
@@ -64,7 +64,7 @@ async fn fetch_bucket<T: DatabaseImpl>(db: &T, name: &str) -> Result<Option<Valu
         .find(|r| r.get("name").and_then(Value::as_str) == Some(name)))
 }
 
-async fn consume_token<T: DatabaseImpl>(
+async fn consume_token<T: ReducerStore>(
     db: &T,
     name: &str,
     max_per_window: i64,
@@ -121,7 +121,7 @@ async fn consume_token<T: DatabaseImpl>(
     }
 }
 
-async fn enqueue_throttle_poll<T: DatabaseImpl>(
+async fn enqueue_throttle_poll<T: ReducerStore>(
     db: &T,
     workflow_run_id: Uuid,
     node: &WorkflowNode,
@@ -141,7 +141,7 @@ async fn enqueue_throttle_poll<T: DatabaseImpl>(
 
 /// process a throttle node: consume one token from a named sliding-window bucket. parks and polls
 /// until a token is available or the optional timeout elapses.
-pub(super) async fn process_throttle_node<T: DatabaseImpl>(
+pub(super) async fn process_throttle_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
@@ -268,7 +268,7 @@ pub(super) async fn process_throttle_node<T: DatabaseImpl>(
 
 pub(super) struct ThrottleHandler;
 
-impl<T: DatabaseImpl> super::handler::NodeHandler<T> for ThrottleHandler {
+impl<T: ReducerStore> super::handler::NodeHandler<T> for ThrottleHandler {
     fn process<'a>(
         &'a self,
         ctx: &'a super::handler::NodeHandlerContext<'a, T>,

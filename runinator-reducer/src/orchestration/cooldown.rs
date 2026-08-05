@@ -23,7 +23,7 @@ fn parse_cooldown_params(node: &WorkflowNode) -> CooldownParams {
     }
 }
 
-async fn fetch_record<T: DatabaseImpl>(db: &T, name: &str) -> Result<Option<Value>, SendableError> {
+async fn fetch_record<T: ReducerStore>(db: &T, name: &str) -> Result<Option<Value>, SendableError> {
     let records = db
         .fetch_automation_records(RECORD_TYPE.into(), None, None)
         .await?;
@@ -43,7 +43,7 @@ pub(super) fn remaining_seconds(record: &Value, window_seconds: i64, now_unix: i
 
 /// stamp `last_run_at = now` on the named record, creating it on first use, so the next pass within
 /// the window is short-circuited.
-async fn stamp_cooldown<T: DatabaseImpl>(
+async fn stamp_cooldown<T: ReducerStore>(
     db: &T,
     name: &str,
     existing: Option<&Value>,
@@ -76,7 +76,7 @@ async fn stamp_cooldown<T: DatabaseImpl>(
 /// process a cooldown node: a named cross-run gate. if the prior pass ran within the window, the run
 /// is completed as `Succeeded` without entering the body (a clean no-op). otherwise the window is
 /// stamped and the node proceeds via `on_success` into the body.
-pub(super) async fn process_cooldown_node<T: DatabaseImpl>(
+pub(super) async fn process_cooldown_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
@@ -150,7 +150,7 @@ pub(super) async fn process_cooldown_node<T: DatabaseImpl>(
 
 pub(super) struct CooldownHandler;
 
-impl<T: DatabaseImpl> super::handler::NodeHandler<T> for CooldownHandler {
+impl<T: ReducerStore> super::handler::NodeHandler<T> for CooldownHandler {
     fn process<'a>(
         &'a self,
         ctx: &'a super::handler::NodeHandlerContext<'a, T>,

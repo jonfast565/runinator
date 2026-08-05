@@ -9,12 +9,15 @@ use runinator_models::settings::SettingKind;
 use runinator_utilities::secret_cipher::SecretCipher;
 use uuid::Uuid;
 
-pub mod archive;
 pub mod backend;
 mod common;
 pub mod errors;
-pub mod interfaces;
 mod mappers;
+
+// the persistence contract now lives in `runinator-store`, which has no sqlx dependency. these
+// re-exports keep `runinator_database::interfaces::*` and `runinator_database::archive::*` working
+// for the callers that already use those paths.
+pub use runinator_store::{archive, interfaces};
 pub mod mysql;
 mod operations;
 mod pool;

@@ -9,11 +9,15 @@ use sqlx::{
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
 };
 
-use crate::{backend::SqlBackend, pool::pool_acquire_timeout, queries::SqlDialect};
+use crate::{
+    backend::{SqlBackend, SqlStore},
+    pool::pool_acquire_timeout,
+    queries::SqlDialect,
+};
 
 static SQLITE_MIGRATOR: Migrator = sqlx::migrate!("./migrations/sqlite");
 
-pub struct SqliteDb {
+pub struct SqliteBackend {
     pub pool: SqlitePool,
 }
 
@@ -21,7 +25,7 @@ pub struct SqliteDb {
 #[path = "sqlite_tests.rs"]
 mod tests;
 
-impl SqliteDb {
+impl SqliteBackend {
     pub async fn new(filename: &str) -> Result<Self, SendableError> {
         let options = SqliteConnectOptions::new()
             .filename(filename)
@@ -37,7 +41,7 @@ impl SqliteDb {
             .acquire_timeout(pool_acquire_timeout())
             .connect_with(unmutable_options)
             .await?;
-        Ok(SqliteDb { pool: connection })
+        Ok(SqliteBackend { pool: connection })
     }
 
     pub async fn bootstrap(&self) -> Result<(), SendableError> {
@@ -77,7 +81,7 @@ impl SqliteDb {
     }
 }
 
-impl SqlBackend for SqliteDb {
+impl SqlBackend for SqliteBackend {
     type Db = sqlx::Sqlite;
 
     fn pool(&self) -> &SqlitePool {
@@ -99,5 +103,17 @@ impl SqlBackend for SqliteDb {
             }
         }
         Ok(())
+    }
+}
+
+/// the sqlite-backed store.
+///
+/// `SqlStore` is what carries the `DatabaseImpl` implementation; this alias keeps `SqliteDb` the name
+/// callers use, so the wrapper is invisible outside this crate.
+pub type SqliteDb = SqlStore<SqliteBackend>;
+
+impl SqlStore<SqliteBackend> {
+    pub async fn new(filename: &str) -> Result<Self, SendableError> {
+        Ok(SqlStore::from_backend(SqliteBackend::new(filename).await?))
     }
 }

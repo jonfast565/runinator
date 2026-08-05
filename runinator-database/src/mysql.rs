@@ -10,14 +10,14 @@ use sqlx::{
 };
 
 use crate::{
-    backend::SqlBackend,
+    backend::{SqlBackend, SqlStore},
     pool::{pool_acquire_timeout, pool_max_connections},
     queries::SqlDialect,
 };
 
 static MYSQL_MIGRATOR: Migrator = sqlx::migrate!("./migrations/mysql");
 
-pub struct MySqlDb {
+pub struct MySqlBackend {
     pub pool: MySqlPool,
 }
 
@@ -25,7 +25,7 @@ pub struct MySqlDb {
 #[path = "mysql_tests.rs"]
 mod tests;
 
-impl MySqlDb {
+impl MySqlBackend {
     pub async fn new(connection_str: &str) -> Result<Self, SendableError> {
         let options = MySqlConnectOptions::from_str(connection_str)?
             .log_statements(log::LevelFilter::Debug)
@@ -76,7 +76,7 @@ impl MySqlDb {
     }
 }
 
-impl SqlBackend for MySqlDb {
+impl SqlBackend for MySqlBackend {
     type Db = sqlx::MySql;
 
     fn pool(&self) -> &MySqlPool {
@@ -98,5 +98,19 @@ impl SqlBackend for MySqlDb {
             }
         }
         Ok(())
+    }
+}
+
+/// the mysql-backed store.
+///
+/// `SqlStore` is what carries the `DatabaseImpl` implementation; this alias keeps `MySqlDb` the name
+/// callers use, so the wrapper is invisible outside this crate.
+pub type MySqlDb = SqlStore<MySqlBackend>;
+
+impl SqlStore<MySqlBackend> {
+    pub async fn new(connection_str: &str) -> Result<Self, SendableError> {
+        Ok(SqlStore::from_backend(
+            MySqlBackend::new(connection_str).await?,
+        ))
     }
 }

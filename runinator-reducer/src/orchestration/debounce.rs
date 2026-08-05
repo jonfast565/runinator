@@ -15,7 +15,7 @@ fn parse_delay_seconds(node: &WorkflowNode) -> i64 {
         .unwrap_or(30)
 }
 
-async fn enqueue_debounce_poll<T: DatabaseImpl>(
+async fn enqueue_debounce_poll<T: ReducerStore>(
     db: &T,
     workflow_run_id: Uuid,
     node: &WorkflowNode,
@@ -40,7 +40,7 @@ async fn enqueue_debounce_poll<T: DatabaseImpl>(
 ///
 /// external reset: `POST /workflow_runs/{id}/debounce/{node_id}/reset` should update the
 /// `DebounceState.deadline_unix` in the node run state and re-enqueue at the new deadline.
-pub(super) async fn process_debounce_node<T: DatabaseImpl>(
+pub(super) async fn process_debounce_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
@@ -131,7 +131,7 @@ pub(super) async fn process_debounce_node<T: DatabaseImpl>(
 
 pub(super) struct DebounceHandler;
 
-impl<T: DatabaseImpl> super::handler::NodeHandler<T> for DebounceHandler {
+impl<T: ReducerStore> super::handler::NodeHandler<T> for DebounceHandler {
     fn process<'a>(
         &'a self,
         ctx: &'a super::handler::NodeHandlerContext<'a, T>,

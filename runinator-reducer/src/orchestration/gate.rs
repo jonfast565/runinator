@@ -7,7 +7,7 @@ use super::*;
 /// `condition` gates, read from the gate row for `manual`/`external` gates) and transitions on pass,
 /// times out at the optional deadline, or re-arms the next poll. mirrors `wait` (poll/re-arm) and
 /// `approval` (park + record), but resolves by policy rather than by a human decision.
-pub(super) async fn process_gate_node<T: DatabaseImpl>(
+pub(super) async fn process_gate_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
@@ -121,7 +121,7 @@ pub(super) async fn process_gate_node<T: DatabaseImpl>(
 
 /// is the gate currently passable? condition gates auto-evaluate their `when`; manual/external gates
 /// read the persisted gate row's status (opened by the ui or an external system via the api).
-async fn gate_is_open<T: DatabaseImpl>(
+async fn gate_is_open<T: ReducerStore>(
     db: &T,
     params: &runinator_workflows::GateParameters,
     gate_id: Option<Uuid>,
@@ -151,7 +151,7 @@ async fn gate_is_open<T: DatabaseImpl>(
 }
 
 /// apply a terminal status to the gate row (passed/timed_out), stamping resolution fields.
-async fn mark_gate<T: DatabaseImpl>(
+async fn mark_gate<T: ReducerStore>(
     db: &T,
     gate_id: Uuid,
     status: &str,
@@ -177,7 +177,7 @@ async fn mark_gate<T: DatabaseImpl>(
 
 /// schedule the next gate re-check. the event-driven ready queue does not re-poll parked nodes, so a
 /// gate re-arms its own wake like the wait node.
-async fn enqueue_gate_poll<T: DatabaseImpl>(
+async fn enqueue_gate_poll<T: ReducerStore>(
     db: &T,
     workflow_run_id: Uuid,
     node: &WorkflowNode,
@@ -197,7 +197,7 @@ async fn enqueue_gate_poll<T: DatabaseImpl>(
 
 pub(super) struct GateHandler;
 
-impl<T: DatabaseImpl> super::handler::NodeHandler<T> for GateHandler {
+impl<T: ReducerStore> super::handler::NodeHandler<T> for GateHandler {
     fn process<'a>(
         &'a self,
         ctx: &'a super::handler::NodeHandlerContext<'a, T>,

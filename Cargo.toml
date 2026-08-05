@@ -9,6 +9,7 @@ members = [
     "runinator-lsp",
     "runinator-reducer",
     "runinator-engine",
+    "runinator-store",
     "runinator-database",
     "runinator-db-cli",
     "runinator-provider-support",

@@ -12,7 +12,7 @@ pub(super) fn resolve_bindings(params: &Value, context: &Value) -> Value {
 
 /// process a transform node: resolve all named expression bindings against the runtime context
 /// and emit the result as the node output. pure inline, no parking, no side effects.
-pub(super) async fn process_transform_node<T: DatabaseImpl>(
+pub(super) async fn process_transform_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
@@ -46,7 +46,7 @@ pub(super) async fn process_transform_node<T: DatabaseImpl>(
 
 pub(super) struct TransformHandler;
 
-impl<T: DatabaseImpl> super::handler::NodeHandler<T> for TransformHandler {
+impl<T: ReducerStore> super::handler::NodeHandler<T> for TransformHandler {
     fn process<'a>(
         &'a self,
         ctx: &'a super::handler::NodeHandlerContext<'a, T>,

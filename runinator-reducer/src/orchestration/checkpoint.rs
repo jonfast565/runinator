@@ -16,7 +16,7 @@ pub(super) fn parse_checkpoint_name(params: &Value, node_id: &str) -> String {
 /// process a checkpoint node: snapshot the current run state and active_node_id into an
 /// automation_record row so a control-plane rollback api can restore the run to this point.
 /// completes inline with no parking.
-pub(super) async fn process_checkpoint_node<T: DatabaseImpl>(
+pub(super) async fn process_checkpoint_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
@@ -66,7 +66,7 @@ pub(super) async fn process_checkpoint_node<T: DatabaseImpl>(
 
 pub(super) struct CheckpointHandler;
 
-impl<T: DatabaseImpl> super::handler::NodeHandler<T> for CheckpointHandler {
+impl<T: ReducerStore> super::handler::NodeHandler<T> for CheckpointHandler {
     fn process<'a>(
         &'a self,
         ctx: &'a super::handler::NodeHandlerContext<'a, T>,

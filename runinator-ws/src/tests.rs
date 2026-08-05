@@ -12,8 +12,10 @@ use runinator_broker::{
 };
 use runinator_comm::{ActionCommand, WorkflowResultEvent};
 use runinator_database::{
-    BootstrapOptions, bootstrap_database, interfaces::DatabaseImpl, load_jwt_secret,
-    seed_bootstrap_admin, seed_bootstrap_service_api_key, sqlite::SqliteDb,
+    BootstrapOptions, bootstrap_database,
+    interfaces::{DatabaseImpl, ReducerStore},
+    load_jwt_secret, seed_bootstrap_admin, seed_bootstrap_service_api_key,
+    sqlite::SqliteDb,
 };
 use runinator_models::json;
 use runinator_models::value::Value;

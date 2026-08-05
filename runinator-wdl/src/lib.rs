@@ -396,4 +396,6 @@ pub fn decompile_with(
 }
 
 #[cfg(test)]
+mod conformance_tests;
+#[cfg(test)]
 mod tests;

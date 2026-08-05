@@ -795,7 +795,8 @@ impl<'a> Decompiler<'a> {
                 WorkflowNodeKind::Toggle => (self.emit_toggle(node, stop)?, false),
                 WorkflowNodeKind::Percentage => (self.emit_split(node, stop)?, false),
                 WorkflowNodeKind::Fail => {
-                    self.line("fail");
+                    let text = self.fail_text(node)?;
+                    self.line(&text);
                     (None, true)
                 }
                 WorkflowNodeKind::Action
@@ -1523,6 +1524,19 @@ impl<'a> Decompiler<'a> {
                     text.push_str(&format!(" ({rendered})"));
                 }
             }
+        }
+        Ok(text)
+    }
+
+    /// `fail` with its optional message. the message is an ordinary expression, so it must be
+    /// rendered back or `fail "reason"` silently loses its reason on every editor round trip.
+    fn fail_text(&self, node: &WorkflowNode) -> Result<String, WdlError> {
+        let mut text = "fail".to_string();
+        if let Some(message) = node.parameters.get("message")
+            && !matches!(message, Value::Null)
+        {
+            text.push(' ');
+            text.push_str(&self.expr(message)?);
         }
         Ok(text)
     }

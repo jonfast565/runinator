@@ -60,7 +60,7 @@ fn failure_count_in_window(record: &Value, window_seconds: i64, now_unix: i64) -
         .unwrap_or(0)
 }
 
-async fn fetch_cb_record<T: DatabaseImpl>(
+async fn fetch_cb_record<T: ReducerStore>(
     db: &T,
     name: &str,
 ) -> Result<Option<Value>, SendableError> {
@@ -72,7 +72,7 @@ async fn fetch_cb_record<T: DatabaseImpl>(
         .find(|r| r.get("name").and_then(Value::as_str) == Some(name)))
 }
 
-async fn record_failure<T: DatabaseImpl>(
+async fn record_failure<T: ReducerStore>(
     db: &T,
     name: &str,
     threshold: i64,
@@ -127,7 +127,7 @@ async fn record_failure<T: DatabaseImpl>(
 /// is open (too many recent failures across all runs), routes via `on_failure`. if closed,
 /// succeeds and allows the downstream body to proceed. a downstream body's failure should call
 /// the record-failure api endpoint to increment the counter.
-pub(super) async fn process_circuit_breaker_node<T: DatabaseImpl>(
+pub(super) async fn process_circuit_breaker_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
@@ -181,7 +181,7 @@ pub(super) async fn process_circuit_breaker_node<T: DatabaseImpl>(
 
 pub(super) struct CircuitBreakerHandler;
 
-impl<T: DatabaseImpl> super::handler::NodeHandler<T> for CircuitBreakerHandler {
+impl<T: ReducerStore> super::handler::NodeHandler<T> for CircuitBreakerHandler {
     fn process<'a>(
         &'a self,
         ctx: &'a super::handler::NodeHandlerContext<'a, T>,

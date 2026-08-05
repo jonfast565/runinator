@@ -1,4 +1,3 @@
-#![allow(unused_imports)]
 use chrono::{DateTime, Duration, Utc};
 use runinator_broker::{Broker, BrokerError, BrokerMessage, ControlCommand};
 use runinator_comm::{ControlKind, DebugVerb, WorkflowResultEvent, WorkflowResultEventKind};

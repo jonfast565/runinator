@@ -2,8 +2,7 @@ use std::collections::HashMap;
 
 use super::*;
 use runinator_models::pipelines::{
-    PipelineBundle, PipelineLinkSpec, PipelineRun, PipelineRunDetail, PipelineSpec,
-    PipelineTrigger, PipelineTriggerSpec,
+    PipelineBundle, PipelineLinkSpec, PipelineRun, PipelineRunDetail, PipelineSpec, PipelineTrigger,
 };
 use runinator_models::replicas::{TriggerActorType, TriggerSourceKind, WorkflowRunProvenance};
 use runinator_models::workflows::WorkflowTriggerKind;

@@ -8,7 +8,7 @@ const MAX_CHAIN_DEPTH: i64 = 32;
 /// `on_success` / `on_failure` / `on_complete` triggers. fire-and-forget: each target starts as a
 /// fresh top-level run and no data flows back. deduped per (trigger, source-run) so a re-drive of
 /// the same terminal run never double-starts a target.
-pub(super) async fn maybe_start_chained_workflows<T: DatabaseImpl>(
+pub(super) async fn maybe_start_chained_workflows<T: ReducerStore>(
     db: &T,
     run: &WorkflowRun,
 ) -> Result<(), SendableError> {
@@ -81,7 +81,7 @@ fn chain_status_matches(trigger: &WorkflowTrigger, status: WorkflowStatus) -> bo
 }
 
 /// create the target run, stamp chaining provenance, and enqueue its start node.
-async fn start_chained_run<T: DatabaseImpl>(
+async fn start_chained_run<T: ReducerStore>(
     db: &T,
     trigger: &WorkflowTrigger,
     target_name: &str,

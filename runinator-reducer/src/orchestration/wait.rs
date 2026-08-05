@@ -1,7 +1,7 @@
 use super::transitions::transition_from_node;
 use super::*;
 
-pub(super) async fn process_wait_node<T: DatabaseImpl>(
+pub(super) async fn process_wait_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
@@ -83,7 +83,7 @@ pub(super) async fn process_wait_node<T: DatabaseImpl>(
 
 pub(super) struct WaitHandler;
 
-impl<T: DatabaseImpl> super::handler::NodeHandler<T> for WaitHandler {
+impl<T: ReducerStore> super::handler::NodeHandler<T> for WaitHandler {
     fn process<'a>(
         &'a self,
         ctx: &'a super::handler::NodeHandlerContext<'a, T>,

@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) async fn runtime_context<T: DatabaseImpl>(
+pub(super) async fn runtime_context<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     node_runs: &[WorkflowNodeRun],
@@ -48,7 +48,7 @@ pub(super) async fn runtime_context<T: DatabaseImpl>(
 }
 
 // attach `steps.<node_id>.artifacts` for every node run that produced artifacts.
-async fn inject_node_artifacts<T: DatabaseImpl>(
+async fn inject_node_artifacts<T: ReducerStore>(
     db: &T,
     workflow_run_id: Uuid,
     node_runs: &[WorkflowNodeRun],

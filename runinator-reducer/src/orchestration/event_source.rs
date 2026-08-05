@@ -47,7 +47,7 @@ fn event_passes_filter(event: &Value, filter: &Value, context: &Value) -> bool {
     runinator_workflows::evaluate_condition(filter, &ctx).unwrap_or(false)
 }
 
-async fn park_event_source<T: DatabaseImpl>(
+async fn park_event_source<T: ReducerStore>(
     db: &T,
     workflow_run_id: Uuid,
     node: &WorkflowNode,
@@ -92,7 +92,7 @@ async fn park_event_source<T: DatabaseImpl>(
 /// event delivery: `POST /workflow_runs/{id}/events/{node_id}` with the event payload. the ws
 /// layer drives the run with the event in state, the body executes one iteration, then the node
 /// re-parks.
-pub(super) async fn process_event_source_node<T: DatabaseImpl>(
+pub(super) async fn process_event_source_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
@@ -220,7 +220,7 @@ pub(super) async fn process_event_source_node<T: DatabaseImpl>(
 
 pub(super) struct EventSourceHandler;
 
-impl<T: DatabaseImpl> super::handler::NodeHandler<T> for EventSourceHandler {
+impl<T: ReducerStore> super::handler::NodeHandler<T> for EventSourceHandler {
     fn process<'a>(
         &'a self,
         ctx: &'a super::handler::NodeHandlerContext<'a, T>,

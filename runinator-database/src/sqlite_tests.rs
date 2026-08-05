@@ -17,6 +17,7 @@ use runinator_models::{
         WorkflowTrigger, WorkflowTriggerKind,
     },
 };
+use runinator_store::ReducerStore;
 use uuid::Uuid;
 
 #[tokio::test]
@@ -740,7 +741,7 @@ async fn malformed_action_dispatch_command_returns_error() {
     sqlx::query("UPDATE workflow_action_dispatches SET command_json = ? WHERE id = ?")
         .bind("{")
         .bind(dispatch.id)
-        .execute(&db.pool)
+        .execute(db.pool())
         .await
         .unwrap();
 
@@ -2690,13 +2691,13 @@ async fn archive_marks_are_idempotent_and_sweep_deletes_source_rows() {
     sqlx::query("UPDATE dead_letters SET created_at = ? WHERE id = ?")
         .bind(old_timestamp)
         .bind(old_id)
-        .execute(&db.pool)
+        .execute(db.pool())
         .await
         .unwrap();
     sqlx::query("UPDATE dead_letters SET created_at = ? WHERE id = ?")
         .bind(recent_timestamp)
         .bind(recent_id)
-        .execute(&db.pool)
+        .execute(db.pool())
         .await
         .unwrap();
 
@@ -2785,7 +2786,7 @@ async fn archive_marking_skips_unread_notifications() {
         sqlx::query("UPDATE notifications SET created_at = ? WHERE id = ?")
             .bind(old_timestamp)
             .bind(id)
-            .execute(&db.pool)
+            .execute(db.pool())
             .await
             .unwrap();
     }

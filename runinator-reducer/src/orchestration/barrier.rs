@@ -27,7 +27,7 @@ fn parse_barrier_params(node: &WorkflowNode) -> (String, i64, i64) {
     (name, expected, poll_interval)
 }
 
-async fn fetch_barrier_record<T: DatabaseImpl>(
+async fn fetch_barrier_record<T: ReducerStore>(
     db: &T,
     name: &str,
 ) -> Result<Option<Value>, SendableError> {
@@ -40,7 +40,7 @@ async fn fetch_barrier_record<T: DatabaseImpl>(
 }
 
 /// register this run's arrival at the barrier and return the updated arrivals list.
-async fn register_arrival<T: DatabaseImpl>(
+async fn register_arrival<T: ReducerStore>(
     db: &T,
     name: &str,
     run_id: Uuid,
@@ -90,7 +90,7 @@ async fn register_arrival<T: DatabaseImpl>(
     }
 }
 
-async fn enqueue_barrier_poll<T: DatabaseImpl>(
+async fn enqueue_barrier_poll<T: ReducerStore>(
     db: &T,
     workflow_run_id: Uuid,
     node: &WorkflowNode,
@@ -111,7 +111,7 @@ async fn enqueue_barrier_poll<T: DatabaseImpl>(
 /// process a barrier node: register this run's arrival and park until N runs have all arrived.
 /// the last arrival wakes all others via their poll loop (or the others wake naturally on their
 /// next poll interval).
-pub(super) async fn process_barrier_node<T: DatabaseImpl>(
+pub(super) async fn process_barrier_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
@@ -218,7 +218,7 @@ pub(super) async fn process_barrier_node<T: DatabaseImpl>(
 
 pub(super) struct BarrierHandler;
 
-impl<T: DatabaseImpl> super::handler::NodeHandler<T> for BarrierHandler {
+impl<T: ReducerStore> super::handler::NodeHandler<T> for BarrierHandler {
     fn process<'a>(
         &'a self,
         ctx: &'a super::handler::NodeHandlerContext<'a, T>,

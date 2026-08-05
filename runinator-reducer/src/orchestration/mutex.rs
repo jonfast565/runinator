@@ -72,7 +72,7 @@ pub(super) fn lease_is_expired(record: &Value) -> bool {
 /// terminal state (or no longer exists) is stale: the run ended without releasing — e.g. via
 /// cancellation, a crash, or a code path that bypassed the terminal-release hook — so its lock is
 /// reclaimable. this keeps a named mutex from deadlocking waiters behind a finished run.
-async fn holder_run_is_active<T: DatabaseImpl>(
+async fn holder_run_is_active<T: ReducerStore>(
     db: &T,
     record: &Value,
 ) -> Result<bool, SendableError> {
@@ -85,7 +85,7 @@ async fn holder_run_is_active<T: DatabaseImpl>(
     }
 }
 
-async fn mutex_is_locked<T: DatabaseImpl>(
+async fn mutex_is_locked<T: ReducerStore>(
     db: &T,
     name: &str,
     skip_run_id: Uuid,
@@ -116,7 +116,7 @@ async fn mutex_is_locked<T: DatabaseImpl>(
 /// release every mutex lease held by `run_id` by stamping `released_at`. called when a run reaches a
 /// terminal state so a shared named lock passes to the next waiter. idempotent: records already
 /// released or held by a different run are left untouched.
-pub(super) async fn release_run_mutexes<T: DatabaseImpl>(
+pub(super) async fn release_run_mutexes<T: ReducerStore>(
     db: &T,
     run_id: Uuid,
 ) -> Result<(), SendableError> {
@@ -126,7 +126,7 @@ pub(super) async fn release_run_mutexes<T: DatabaseImpl>(
 /// release only the lease(s) named `name` held by `run_id`. drives an end-of-section release node so
 /// the critical section ends before the run terminates. idempotent and a no-op when the run holds no
 /// such lock.
-pub(super) async fn release_run_mutex_named<T: DatabaseImpl>(
+pub(super) async fn release_run_mutex_named<T: ReducerStore>(
     db: &T,
     run_id: Uuid,
     name: &str,
@@ -136,7 +136,7 @@ pub(super) async fn release_run_mutex_named<T: DatabaseImpl>(
 
 /// stamp `released_at` on every unreleased lease held by `run_id`, optionally restricted to a single
 /// `name`. shared by the terminal-release hook and the end-of-section release node.
-async fn release_run_leases<T: DatabaseImpl>(
+async fn release_run_leases<T: ReducerStore>(
     db: &T,
     run_id: Uuid,
     name: Option<&str>,
@@ -176,7 +176,7 @@ async fn release_run_leases<T: DatabaseImpl>(
 /// true when `run_id` already holds a live, unexpired lease for `name`. re-reaching an acquire node in
 /// a loop reinforces this lock rather than recording a second lease. an expired hold does not count,
 /// so a run whose bounded hold lapsed re-contends normally instead of assuming it still holds.
-async fn run_holds_mutex<T: DatabaseImpl>(
+async fn run_holds_mutex<T: ReducerStore>(
     db: &T,
     name: &str,
     run_id: Uuid,
@@ -196,7 +196,7 @@ async fn run_holds_mutex<T: DatabaseImpl>(
 // driving the reducer one node at a time per replica, so the check-then-acquire above is atomic
 // within a replica; a multi-replica ws deployment would need a db-level compare-and-swap to make it
 // airtight across replicas.
-async fn acquire_mutex<T: DatabaseImpl>(
+async fn acquire_mutex<T: ReducerStore>(
     db: &T,
     name: &str,
     run_id: Uuid,
@@ -227,7 +227,7 @@ async fn acquire_mutex<T: DatabaseImpl>(
 
 /// acquire `name` for `run_id`, or reinforce an existing hold. re-reaching an acquire node in a loop
 /// must not record a second lease for a lock the run already holds; it simply keeps the current one.
-async fn acquire_or_reinforce<T: DatabaseImpl>(
+async fn acquire_or_reinforce<T: ReducerStore>(
     db: &T,
     name: &str,
     run_id: Uuid,
@@ -240,7 +240,7 @@ async fn acquire_or_reinforce<T: DatabaseImpl>(
     Ok(())
 }
 
-async fn enqueue_mutex_poll<T: DatabaseImpl>(
+async fn enqueue_mutex_poll<T: ReducerStore>(
     db: &T,
     workflow_run_id: Uuid,
     node: &WorkflowNode,
@@ -261,7 +261,7 @@ async fn enqueue_mutex_poll<T: DatabaseImpl>(
 /// process a mutex node. an acquire node tries to take a named distributed lease, parking and polling
 /// until it is free or the wait timeout elapses; a release node (`release: true`) ends the section by
 /// releasing the run's hold on the named lease and completing inline.
-pub(super) async fn process_mutex_node<T: DatabaseImpl>(
+pub(super) async fn process_mutex_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
@@ -411,7 +411,7 @@ pub(super) async fn process_mutex_node<T: DatabaseImpl>(
 
 pub(super) struct MutexHandler;
 
-impl<T: DatabaseImpl> super::handler::NodeHandler<T> for MutexHandler {
+impl<T: ReducerStore> super::handler::NodeHandler<T> for MutexHandler {
     fn process<'a>(
         &'a self,
         ctx: &'a super::handler::NodeHandlerContext<'a, T>,

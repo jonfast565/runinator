@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 /// settle a node run, retrying while attempts remain, otherwise transitioning.
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn retry_or_transition<T: DatabaseImpl>(
+pub(super) async fn retry_or_transition<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
@@ -50,7 +50,7 @@ fn retry_backoff_delay(retry: &WorkflowRetry, attempt: i64) -> chrono::Duration 
 }
 
 /// time out the in-flight run with a node-specific message, retrying if attempts remain.
-pub(super) async fn time_out<T: DatabaseImpl>(
+pub(super) async fn time_out<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
@@ -72,7 +72,7 @@ pub(super) async fn time_out<T: DatabaseImpl>(
 }
 
 /// create a node run and block the workflow with a message.
-pub(super) async fn block_node<T: DatabaseImpl>(
+pub(super) async fn block_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
@@ -108,7 +108,7 @@ pub(super) async fn block_node<T: DatabaseImpl>(
 }
 
 /// advance a try node into a phase (body/catch/finally), recording the phase frame.
-pub(super) async fn start_try_phase<T: DatabaseImpl>(
+pub(super) async fn start_try_phase<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     node_run: &WorkflowNodeRun,
@@ -178,7 +178,7 @@ pub(super) fn timed_out_since_created_or(
 /// enqueue a delayed self ready node at a node's timeout deadline. the event-driven ready queue does
 /// not re-poll parked nodes, so a node that parks (approval/join/subflow) re-arms its own timeout so
 /// the timeout check fires even when no external wake-up arrives.
-pub(super) async fn arm_node_timeout<T: DatabaseImpl>(
+pub(super) async fn arm_node_timeout<T: ReducerStore>(
     db: &T,
     workflow_run_id: Uuid,
     node: &WorkflowNode,
@@ -191,7 +191,7 @@ pub(super) async fn arm_node_timeout<T: DatabaseImpl>(
 
 /// like `arm_node_timeout`, but always arms, falling back to `default_timeout_seconds` when the
 /// node declares no timeout — for parks whose timeout check must fire even without one configured.
-pub(super) async fn arm_node_timeout_or<T: DatabaseImpl>(
+pub(super) async fn arm_node_timeout_or<T: ReducerStore>(
     db: &T,
     workflow_run_id: Uuid,
     node: &WorkflowNode,
@@ -201,7 +201,7 @@ pub(super) async fn arm_node_timeout_or<T: DatabaseImpl>(
     arm_node_timeout_in(db, workflow_run_id, node, timeout).await
 }
 
-async fn arm_node_timeout_in<T: DatabaseImpl>(
+async fn arm_node_timeout_in<T: ReducerStore>(
     db: &T,
     workflow_run_id: Uuid,
     node: &WorkflowNode,
@@ -221,7 +221,7 @@ async fn arm_node_timeout_in<T: DatabaseImpl>(
 
 /// when a child workflow run reaches a terminal state, wake the parent subflow node waiting on it.
 /// the parent linkage is stamped into the child run's `state.subflow_parent` at creation.
-pub(super) async fn maybe_wake_subflow_parent<T: DatabaseImpl>(
+pub(super) async fn maybe_wake_subflow_parent<T: ReducerStore>(
     db: &T,
     run: &WorkflowRun,
 ) -> Result<(), SendableError> {
@@ -254,7 +254,7 @@ pub(super) async fn maybe_wake_subflow_parent<T: DatabaseImpl>(
 /// when a run has no correlation key yet, resolve the workflow's `metadata.correlation` expression
 /// against the live context and stamp it write-once. lets `await workflow ... key` joins match this
 /// run by a value it derives from input or a mid-run step output.
-async fn maybe_stamp_correlation<T: DatabaseImpl>(
+async fn maybe_stamp_correlation<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     context: &Value,
@@ -280,7 +280,7 @@ async fn maybe_stamp_correlation<T: DatabaseImpl>(
 /// when any run reaches a terminal state, wake await-workflow nodes parked on a run of that workflow
 /// (optionally matching a correlation value and start-time window). scans waiting node runs and
 /// nudges each matching awaiter; the awaiter's handler re-checks satisfaction on wake.
-pub(super) async fn maybe_wake_awaiters<T: DatabaseImpl>(
+pub(super) async fn maybe_wake_awaiters<T: ReducerStore>(
     db: &T,
     run: &WorkflowRun,
 ) -> Result<(), SendableError> {
@@ -319,7 +319,7 @@ pub(super) async fn maybe_wake_awaiters<T: DatabaseImpl>(
     Ok(())
 }
 
-pub(super) async fn transition_from_node<T: DatabaseImpl>(
+pub(super) async fn transition_from_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
@@ -389,7 +389,7 @@ pub(super) async fn transition_from_node<T: DatabaseImpl>(
     }
 }
 
-async fn schedule_node_retry<T: DatabaseImpl>(
+async fn schedule_node_retry<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
@@ -442,7 +442,7 @@ async fn schedule_node_retry<T: DatabaseImpl>(
     Ok(())
 }
 
-pub(super) async fn ensure_node_run<T: DatabaseImpl>(
+pub(super) async fn ensure_node_run<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
@@ -461,7 +461,7 @@ pub(super) async fn ensure_node_run<T: DatabaseImpl>(
     .await
 }
 
-pub(super) async fn ensure_completed_node_run<T: DatabaseImpl>(
+pub(super) async fn ensure_completed_node_run<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,

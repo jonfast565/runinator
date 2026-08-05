@@ -103,7 +103,7 @@ pub(super) fn default_foreign_language_runtime(image: &str) -> Value {
     })
 }
 
-pub(super) async fn process_action_node<T: DatabaseImpl>(
+pub(super) async fn process_action_node<T: ReducerStore>(
     db: &T,
     workflow: &runinator_models::workflows::WorkflowDefinition,
     workflow_run: &WorkflowRun,
@@ -307,7 +307,7 @@ pub(super) async fn process_action_node<T: DatabaseImpl>(
     Ok(())
 }
 
-async fn build_node_parameters<T: DatabaseImpl>(
+async fn build_node_parameters<T: ReducerStore>(
     db: &T,
     workflow: &runinator_models::workflows::WorkflowDefinition,
     action: &WorkflowAction,
@@ -422,7 +422,7 @@ fn build_action_command(
 /// decide which worker(s) may run this action. general-pool actions go to `Any`; the session-bound
 /// local-files provider is pinned to the desktop replica that launched the run, and parks when that
 /// replica is not currently connected so the action is never published into a queue no one drains.
-async fn resolve_action_target<T: DatabaseImpl>(
+async fn resolve_action_target<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     workflow: &runinator_models::workflows::WorkflowDefinition,
@@ -460,7 +460,7 @@ async fn resolve_action_target<T: DatabaseImpl>(
 /// default, dedicated opt-in). org-less or non-dedicated workflows keep running on the shared pool.
 /// shared by dispatch-time routing and the post-dispatch liveness recheck so both apply identical
 /// policy.
-async fn effective_required_labels<T: DatabaseImpl>(
+async fn effective_required_labels<T: ReducerStore>(
     db: &T,
     workflow: &runinator_models::workflows::WorkflowDefinition,
     action: &WorkflowAction,
@@ -477,7 +477,7 @@ async fn effective_required_labels<T: DatabaseImpl>(
 /// whether the worker(s) a dispatched action is pinned to are still live: `Some(true)`/`Some(false)`
 /// for a pinned target (label selector or the session-bound local provider), `None` for a
 /// general-pool dispatch, which has no single worker to go stale (the broker redelivers it instead).
-async fn dispatch_target_still_live<T: DatabaseImpl>(
+async fn dispatch_target_still_live<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     workflow: &runinator_models::workflows::WorkflowDefinition,
@@ -498,7 +498,7 @@ async fn dispatch_target_still_live<T: DatabaseImpl>(
 }
 
 /// schedule the next liveness recheck of a dispatched action's executing worker.
-async fn arm_dispatch_liveness_poll<T: DatabaseImpl>(
+async fn arm_dispatch_liveness_poll<T: ReducerStore>(
     db: &T,
     workflow_run_id: Uuid,
     node: &WorkflowNode,
@@ -517,7 +517,7 @@ async fn arm_dispatch_liveness_poll<T: DatabaseImpl>(
 
 /// the org's slug when it has a dedicated worker allocation (`desired > 0`), else `None`. used to
 /// add an `org=<slug>` routing label so a dedicated tenant's work lands on its own labeled workers.
-async fn org_dedicated_worker_slug<T: DatabaseImpl>(
+async fn org_dedicated_worker_slug<T: ReducerStore>(
     db: &T,
     org_id: Uuid,
 ) -> Result<Option<String>, SendableError> {
@@ -538,7 +538,7 @@ pub(crate) fn has_dedicated_workers(
 }
 
 /// whether any live worker replica advertises labels that satisfy the action's required selector.
-async fn live_worker_matches_labels<T: DatabaseImpl>(
+async fn live_worker_matches_labels<T: ReducerStore>(
     db: &T,
     required_labels: &std::collections::BTreeMap<String, String>,
 ) -> Result<bool, SendableError> {
@@ -556,7 +556,7 @@ async fn live_worker_matches_labels<T: DatabaseImpl>(
 }
 
 /// whether a worker replica has heartbeated recently enough to receive work.
-async fn replica_is_live<T: DatabaseImpl>(db: &T, replica_id: Uuid) -> Result<bool, SendableError> {
+async fn replica_is_live<T: ReducerStore>(db: &T, replica_id: Uuid) -> Result<bool, SendableError> {
     let stale_before = Utc::now() - chrono::Duration::seconds(REPLICA_STALE_SECONDS);
     let live = db
         .fetch_replicas(
@@ -570,7 +570,7 @@ async fn replica_is_live<T: DatabaseImpl>(db: &T, replica_id: Uuid) -> Result<bo
 
 /// park an action node whose bound worker is unavailable: mark it waiting (once) with the node's
 /// timeout armed, then re-arm a poll so it re-checks when the worker reconnects.
-async fn park_for_target<T: DatabaseImpl>(
+async fn park_for_target<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
@@ -608,7 +608,7 @@ async fn park_for_target<T: DatabaseImpl>(
 }
 
 /// schedule the next re-check of a parked action node's bound worker.
-async fn enqueue_target_poll<T: DatabaseImpl>(
+async fn enqueue_target_poll<T: ReducerStore>(
     db: &T,
     workflow_run_id: Uuid,
     node: &WorkflowNode,
@@ -627,7 +627,7 @@ async fn enqueue_target_poll<T: DatabaseImpl>(
 
 pub(super) struct ActionHandler;
 
-impl<T: DatabaseImpl> NodeHandler<T> for ActionHandler {
+impl<T: ReducerStore> NodeHandler<T> for ActionHandler {
     fn process<'a>(
         &'a self,
         ctx: &'a NodeHandlerContext<'a, T>,

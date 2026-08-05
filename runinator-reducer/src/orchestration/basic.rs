@@ -5,7 +5,7 @@ use super::handler::{NodeHandler, NodeHandlerContext};
 use super::transitions::{ensure_completed_node_run, ensure_node_run, transition_from_node};
 use super::*;
 
-pub(super) async fn process_config_node<T: DatabaseImpl>(
+pub(super) async fn process_config_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
@@ -49,7 +49,7 @@ pub(super) async fn process_config_node<T: DatabaseImpl>(
     Ok(())
 }
 
-pub(super) async fn process_skipped_node<T: DatabaseImpl>(
+pub(super) async fn process_skipped_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
@@ -82,7 +82,7 @@ pub(super) async fn process_skipped_node<T: DatabaseImpl>(
     Ok(())
 }
 
-pub(super) async fn process_start_node<T: DatabaseImpl>(
+pub(super) async fn process_start_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
@@ -111,7 +111,7 @@ pub(super) async fn process_start_node<T: DatabaseImpl>(
     Ok(())
 }
 
-pub(super) async fn process_end_node<T: DatabaseImpl>(
+pub(super) async fn process_end_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
@@ -129,7 +129,7 @@ pub(super) async fn process_end_node<T: DatabaseImpl>(
     Ok(())
 }
 
-pub(super) async fn process_condition_node<T: DatabaseImpl>(
+pub(super) async fn process_condition_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
@@ -165,7 +165,7 @@ pub(super) async fn process_condition_node<T: DatabaseImpl>(
     Ok(())
 }
 
-pub(super) async fn process_switch_node<T: DatabaseImpl>(
+pub(super) async fn process_switch_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
@@ -197,7 +197,7 @@ pub(super) async fn process_switch_node<T: DatabaseImpl>(
     .await
 }
 
-pub(super) async fn process_toggle_node<T: DatabaseImpl>(
+pub(super) async fn process_toggle_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
@@ -230,7 +230,7 @@ pub(super) async fn process_toggle_node<T: DatabaseImpl>(
     .await
 }
 
-pub(super) async fn process_percentage_node<T: DatabaseImpl>(
+pub(super) async fn process_percentage_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
@@ -264,7 +264,7 @@ pub(super) async fn process_percentage_node<T: DatabaseImpl>(
 
 // record the router node run's chosen target and route the run: `Some` drives the run to the target
 // (Running), `None` blocks the node and follows its failure transition. shared by switch/toggle/percentage.
-async fn finish_route<T: DatabaseImpl>(
+async fn finish_route<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
@@ -329,7 +329,7 @@ pub(super) struct ToggleHandler;
 pub(super) struct PercentageHandler;
 pub(super) struct ConfigHandler;
 
-impl<T: DatabaseImpl> NodeHandler<T> for StartHandler {
+impl<T: ReducerStore> NodeHandler<T> for StartHandler {
     fn process<'a>(
         &'a self,
         ctx: &'a NodeHandlerContext<'a, T>,
@@ -351,7 +351,7 @@ impl<T: DatabaseImpl> NodeHandler<T> for StartHandler {
     }
 }
 
-impl<T: DatabaseImpl> NodeHandler<T> for EndHandler {
+impl<T: ReducerStore> NodeHandler<T> for EndHandler {
     fn process<'a>(
         &'a self,
         ctx: &'a NodeHandlerContext<'a, T>,
@@ -366,7 +366,7 @@ impl<T: DatabaseImpl> NodeHandler<T> for EndHandler {
     }
 }
 
-impl<T: DatabaseImpl> NodeHandler<T> for ConditionHandler {
+impl<T: ReducerStore> NodeHandler<T> for ConditionHandler {
     fn process<'a>(
         &'a self,
         ctx: &'a NodeHandlerContext<'a, T>,
@@ -381,7 +381,7 @@ impl<T: DatabaseImpl> NodeHandler<T> for ConditionHandler {
     }
 }
 
-impl<T: DatabaseImpl> NodeHandler<T> for SwitchHandler {
+impl<T: ReducerStore> NodeHandler<T> for SwitchHandler {
     fn process<'a>(
         &'a self,
         ctx: &'a NodeHandlerContext<'a, T>,
@@ -396,7 +396,7 @@ impl<T: DatabaseImpl> NodeHandler<T> for SwitchHandler {
     }
 }
 
-impl<T: DatabaseImpl> NodeHandler<T> for ToggleHandler {
+impl<T: ReducerStore> NodeHandler<T> for ToggleHandler {
     fn process<'a>(
         &'a self,
         ctx: &'a NodeHandlerContext<'a, T>,
@@ -411,7 +411,7 @@ impl<T: DatabaseImpl> NodeHandler<T> for ToggleHandler {
     }
 }
 
-impl<T: DatabaseImpl> NodeHandler<T> for PercentageHandler {
+impl<T: ReducerStore> NodeHandler<T> for PercentageHandler {
     fn process<'a>(
         &'a self,
         ctx: &'a NodeHandlerContext<'a, T>,
@@ -426,7 +426,7 @@ impl<T: DatabaseImpl> NodeHandler<T> for PercentageHandler {
     }
 }
 
-impl<T: DatabaseImpl> NodeHandler<T> for ConfigHandler {
+impl<T: ReducerStore> NodeHandler<T> for ConfigHandler {
     fn process<'a>(
         &'a self,
         ctx: &'a NodeHandlerContext<'a, T>,
@@ -443,6 +443,6 @@ impl<T: DatabaseImpl> NodeHandler<T> for ConfigHandler {
 
 // --- rich control-flow nodes -------------------------------------------------
 //
-// the reducer lives here and calls `DatabaseImpl` directly. control-flow bookkeeping lives in
+// the reducer lives here and calls `ReducerStore` directly. control-flow bookkeeping lives in
 // named frames inside `workflow_run.state` (the typed `WorkflowRunState` from runinator-models).
 // predicates that read sibling node-run history come from runinator-workflows.

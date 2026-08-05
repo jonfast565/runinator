@@ -1,15 +1,15 @@
 use std::future::Future;
 
-use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::{
     errors::SendableError,
     workflows::{WorkflowDefinition, WorkflowNode, WorkflowNodeRun, WorkflowRun},
 };
+use runinator_store::ReducerStore;
 
 use super::ReadyNodeDisposition;
 
 /// all context a node handler needs to process a single reducer step.
-pub(super) struct NodeHandlerContext<'a, T: DatabaseImpl> {
+pub(super) struct NodeHandlerContext<'a, T: ReducerStore> {
     pub db: &'a T,
     pub workflow: &'a WorkflowDefinition,
     pub workflow_run: &'a WorkflowRun,
@@ -25,7 +25,7 @@ pub(super) struct NodeHandlerContext<'a, T: DatabaseImpl> {
 ///
 /// implementors return `KeepClaim` when the workflow must stay parked (e.g. a timer
 /// that has not yet elapsed) and `Complete` in all other cases.
-pub(super) trait NodeHandler<T: DatabaseImpl> {
+pub(super) trait NodeHandler<T: ReducerStore> {
     fn process<'a>(
         &'a self,
         ctx: &'a NodeHandlerContext<'a, T>,

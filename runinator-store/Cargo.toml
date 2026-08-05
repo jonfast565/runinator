@@ -1,0 +1,17 @@
+[package]
+name = "runinator-store"
+version = "0.1.0"
+edition = "2024"
+
+# the persistence contract, with no database driver behind it.
+#
+# `runinator-database` implements these traits over sqlx; the reducer and the engine only need to
+# *call* them. keeping the contract in its own crate is what lets those callers depend on the
+# operations they use without pulling sqlx (and three drivers) into their compile graph, and what
+# makes an in-memory fake possible for tests.
+[dependencies]
+chrono = "0.4"
+uuid = { version = "1.18", features = ["v4", "v7", "serde"] }
+
+runinator-comm = { path = "../runinator-comm" }
+runinator-models = { path = "../runinator-models" }

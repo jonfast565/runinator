@@ -125,6 +125,10 @@ pub(crate) async fn openapi_docs() -> Html<&'static str> {
 #[path = "openapi_tests.rs"]
 mod tests;
 
+#[cfg(test)]
+#[path = "route_parity_tests.rs"]
+mod route_parity;
+
 const SCALAR_HTML: &str = r#"<!doctype html>
 <html>
   <head>

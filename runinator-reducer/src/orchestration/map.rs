@@ -8,7 +8,7 @@ use super::*;
 /// body outputs in item order, and fail fast if any item fails. each item runs the body subgraph as
 /// an isolated child run (see [`create_map_child_run`]); the body returns to the map node, where the
 /// engine stop-boundary finalizes the child and wakes this parent.
-pub(super) async fn process_map_node<T: DatabaseImpl>(
+pub(super) async fn process_map_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
@@ -168,7 +168,7 @@ pub(super) async fn process_map_node<T: DatabaseImpl>(
 /// finalize a map fan-out child when its body returns to the controlling map node. captures the
 /// body output into `state.map_child.result`, marks the child `Succeeded`, and lets
 /// `maybe_wake_subflow_parent` wake the parent map node. invoked from the engine stop-boundary.
-pub(super) async fn finalize_map_child<T: DatabaseImpl>(
+pub(super) async fn finalize_map_child<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     child: MapChildState,
@@ -208,7 +208,7 @@ fn map_child_result(child_run: &WorkflowRun) -> Value {
 /// create one child run that executes the map body bound to a single item. the child shares the
 /// parent's workflow snapshot and run parameters, starts at the body entry, stops when it returns to
 /// the map node, and is linked back to the parent via `state.subflow_parent` for wake-up.
-async fn create_map_child_run<T: DatabaseImpl>(
+async fn create_map_child_run<T: ReducerStore>(
     db: &T,
     parent_run: &WorkflowRun,
     map_node: &WorkflowNode,
@@ -295,7 +295,7 @@ async fn create_map_child_run<T: DatabaseImpl>(
 }
 
 /// cancel any map children that are still running (fail-fast on a sibling failure).
-async fn cancel_children<T: DatabaseImpl>(
+async fn cancel_children<T: ReducerStore>(
     db: &T,
     children: &[MapChild],
 ) -> Result<(), SendableError> {
@@ -320,7 +320,7 @@ async fn cancel_children<T: DatabaseImpl>(
 
 pub(super) struct MapHandler;
 
-impl<T: DatabaseImpl> super::handler::NodeHandler<T> for MapHandler {
+impl<T: ReducerStore> super::handler::NodeHandler<T> for MapHandler {
     fn process<'a>(
         &'a self,
         ctx: &'a super::handler::NodeHandlerContext<'a, T>,

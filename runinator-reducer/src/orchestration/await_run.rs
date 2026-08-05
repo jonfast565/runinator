@@ -44,7 +44,7 @@ fn parse_await_params(node: &WorkflowNode) -> AwaitParams {
 }
 
 /// resolve the await target to `(workflow id, name)` from an explicit id or a workflow name.
-async fn resolve_target<T: DatabaseImpl>(
+async fn resolve_target<T: ReducerStore>(
     db: &T,
     node: &WorkflowNode,
     params: &AwaitParams,
@@ -71,7 +71,7 @@ async fn resolve_target<T: DatabaseImpl>(
 }
 
 /// resolve the optional correlation-key expression against the run context into a flat string.
-async fn resolve_key<T: DatabaseImpl>(
+async fn resolve_key<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     node_runs: &[WorkflowNodeRun],
@@ -106,7 +106,7 @@ pub(super) fn await_satisfied(
 /// scan runs of the target workflow and decide whether the await policy is met. only runs started at
 /// or after `since_unix` (and, when a correlation is set, carrying that key) count; the awaiter's own
 /// run is excluded. an empty match set is never satisfied, so `all` does not vacuously succeed.
-async fn evaluate_matches<T: DatabaseImpl>(
+async fn evaluate_matches<T: ReducerStore>(
     db: &T,
     self_run_id: Uuid,
     target_id: Uuid,
@@ -151,7 +151,7 @@ async fn evaluate_matches<T: DatabaseImpl>(
 
 /// enqueue an immediate self ready-node so the parked await re-drives at once. used to close the
 /// check-then-park race when a matching run reached terminal while this node was parking.
-async fn enqueue_await_wake<T: DatabaseImpl>(
+async fn enqueue_await_wake<T: ReducerStore>(
     db: &T,
     workflow_run_id: Uuid,
     node: &WorkflowNode,
@@ -170,7 +170,7 @@ async fn enqueue_await_wake<T: DatabaseImpl>(
 /// process an await node: park the run until run(s) of a named workflow (optionally matching a
 /// correlation key) reach a terminal state. resumption is event-driven — a matching terminal run
 /// wakes this node via `maybe_wake_awaiters`; the optional node timeout fails the wait.
-pub(super) async fn process_await_run_node<T: DatabaseImpl>(
+pub(super) async fn process_await_run_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
@@ -309,7 +309,7 @@ pub(super) async fn process_await_run_node<T: DatabaseImpl>(
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn transition_await<T: DatabaseImpl>(
+async fn transition_await<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
@@ -341,7 +341,7 @@ async fn transition_await<T: DatabaseImpl>(
 
 pub(super) struct AwaitRunHandler;
 
-impl<T: DatabaseImpl> super::handler::NodeHandler<T> for AwaitRunHandler {
+impl<T: ReducerStore> super::handler::NodeHandler<T> for AwaitRunHandler {
     fn process<'a>(
         &'a self,
         ctx: &'a super::handler::NodeHandlerContext<'a, T>,

@@ -3,7 +3,7 @@ use super::transitions::{arm_node_timeout, timed_out_since_created, transition_f
 use super::*;
 use uuid::Uuid;
 
-pub(super) async fn process_subflow_node<T: DatabaseImpl>(
+pub(super) async fn process_subflow_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
@@ -233,7 +233,7 @@ pub(super) async fn process_subflow_node<T: DatabaseImpl>(
 }
 
 /// resolve a subflow node's target workflow id from an explicit id or workflow name.
-pub(super) async fn resolve_subflow_id<T: DatabaseImpl>(
+pub(super) async fn resolve_subflow_id<T: ReducerStore>(
     db: &T,
     node: &WorkflowNode,
 ) -> Result<Uuid, SendableError> {
@@ -258,7 +258,7 @@ pub(super) async fn resolve_subflow_id<T: DatabaseImpl>(
 
 /// create a child workflow run, stamp its parent linkage into state, and enqueue its start node so
 /// the reducer drives it. the parent linkage lets a terminal child wake the waiting parent node.
-pub(super) async fn create_subflow_run<T: DatabaseImpl>(
+pub(super) async fn create_subflow_run<T: ReducerStore>(
     db: &T,
     workflow_id: Uuid,
     parameters: Value,
@@ -328,7 +328,7 @@ pub(super) fn resolve_optional_string(
 
 pub(super) struct SubflowHandler;
 
-impl<T: DatabaseImpl> super::handler::NodeHandler<T> for SubflowHandler {
+impl<T: ReducerStore> super::handler::NodeHandler<T> for SubflowHandler {
     fn process<'a>(
         &'a self,
         ctx: &'a super::handler::NodeHandlerContext<'a, T>,

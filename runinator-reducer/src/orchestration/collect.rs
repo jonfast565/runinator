@@ -1,7 +1,5 @@
 use super::context::is_reentry_stale;
-use super::transitions::{
-    arm_node_timeout, time_out, timed_out_since_created, transition_from_node,
-};
+use super::transitions::{arm_node_timeout, timed_out_since_created, transition_from_node};
 use super::*;
 
 /// true when the collect buffer has reached or exceeded the item threshold.
@@ -21,7 +19,7 @@ fn parse_collect_params(node: &WorkflowNode) -> (String, i64, Option<i64>) {
     (name, threshold, timeout_seconds)
 }
 
-async fn enqueue_collect_deadline<T: DatabaseImpl>(
+async fn enqueue_collect_deadline<T: ReducerStore>(
     db: &T,
     workflow_run_id: Uuid,
     node: &WorkflowNode,
@@ -43,7 +41,7 @@ async fn enqueue_collect_deadline<T: DatabaseImpl>(
 /// process a collect node: parks and accumulates items delivered via an external api endpoint.
 /// succeeds when either the item count reaches `max` or the timeout elapses. delivery endpoint:
 /// `POST /workflow_runs/{id}/collect/{node_id}/items`.
-pub(super) async fn process_collect_node<T: DatabaseImpl>(
+pub(super) async fn process_collect_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
@@ -150,7 +148,7 @@ pub(super) async fn process_collect_node<T: DatabaseImpl>(
 
 pub(super) struct CollectHandler;
 
-impl<T: DatabaseImpl> super::handler::NodeHandler<T> for CollectHandler {
+impl<T: ReducerStore> super::handler::NodeHandler<T> for CollectHandler {
     fn process<'a>(
         &'a self,
         ctx: &'a super::handler::NodeHandlerContext<'a, T>,

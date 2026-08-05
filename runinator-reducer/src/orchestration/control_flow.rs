@@ -5,7 +5,7 @@ use super::transitions::{
 };
 use super::*;
 
-pub(super) async fn process_loop_node<T: DatabaseImpl>(
+pub(super) async fn process_loop_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
@@ -149,7 +149,7 @@ pub(super) async fn process_loop_node<T: DatabaseImpl>(
     .await
 }
 
-pub(super) async fn process_parallel_node<T: DatabaseImpl>(
+pub(super) async fn process_parallel_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
@@ -220,7 +220,7 @@ pub(super) async fn process_parallel_node<T: DatabaseImpl>(
     .await
 }
 
-pub(super) async fn process_join_node<T: DatabaseImpl>(
+pub(super) async fn process_join_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
@@ -324,7 +324,7 @@ pub(super) async fn process_join_node<T: DatabaseImpl>(
     arm_node_timeout(db, workflow_run.id, node).await
 }
 
-pub(super) async fn process_race_node<T: DatabaseImpl>(
+pub(super) async fn process_race_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
@@ -430,7 +430,7 @@ pub(super) async fn process_race_node<T: DatabaseImpl>(
     Ok(())
 }
 
-pub(super) async fn process_try_node<T: DatabaseImpl>(
+pub(super) async fn process_try_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
@@ -616,7 +616,7 @@ pub(super) async fn process_try_node<T: DatabaseImpl>(
 // cancel the latest non-terminal node run of each losing race branch. marking it `Canceled` makes
 // the run record consistent immediately; the ws drive path then publishes a node-run-targeted worker
 // control so an in-flight execution actually stops.
-async fn cancel_losing_race_branches<T: DatabaseImpl>(
+async fn cancel_losing_race_branches<T: ReducerStore>(
     db: &T,
     branches: &[String],
     winner: &str,
@@ -673,7 +673,7 @@ pub(super) struct JoinHandler;
 pub(super) struct RaceHandler;
 pub(super) struct TryHandler;
 
-impl<T: DatabaseImpl> super::handler::NodeHandler<T> for LoopHandler {
+impl<T: ReducerStore> super::handler::NodeHandler<T> for LoopHandler {
     fn process<'a>(
         &'a self,
         ctx: &'a super::handler::NodeHandlerContext<'a, T>,
@@ -695,7 +695,7 @@ impl<T: DatabaseImpl> super::handler::NodeHandler<T> for LoopHandler {
     }
 }
 
-impl<T: DatabaseImpl> super::handler::NodeHandler<T> for ParallelHandler {
+impl<T: ReducerStore> super::handler::NodeHandler<T> for ParallelHandler {
     fn process<'a>(
         &'a self,
         ctx: &'a super::handler::NodeHandlerContext<'a, T>,
@@ -717,7 +717,7 @@ impl<T: DatabaseImpl> super::handler::NodeHandler<T> for ParallelHandler {
     }
 }
 
-impl<T: DatabaseImpl> super::handler::NodeHandler<T> for JoinHandler {
+impl<T: ReducerStore> super::handler::NodeHandler<T> for JoinHandler {
     fn process<'a>(
         &'a self,
         ctx: &'a super::handler::NodeHandlerContext<'a, T>,
@@ -739,7 +739,7 @@ impl<T: DatabaseImpl> super::handler::NodeHandler<T> for JoinHandler {
     }
 }
 
-impl<T: DatabaseImpl> super::handler::NodeHandler<T> for RaceHandler {
+impl<T: ReducerStore> super::handler::NodeHandler<T> for RaceHandler {
     fn process<'a>(
         &'a self,
         ctx: &'a super::handler::NodeHandlerContext<'a, T>,
@@ -761,7 +761,7 @@ impl<T: DatabaseImpl> super::handler::NodeHandler<T> for RaceHandler {
     }
 }
 
-impl<T: DatabaseImpl> super::handler::NodeHandler<T> for TryHandler {
+impl<T: ReducerStore> super::handler::NodeHandler<T> for TryHandler {
     fn process<'a>(
         &'a self,
         ctx: &'a super::handler::NodeHandlerContext<'a, T>,

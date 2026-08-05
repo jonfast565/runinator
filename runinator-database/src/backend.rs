@@ -61,3 +61,44 @@ pub trait SqlBackend: Send + Sync + 'static {
     /// so this stays backend-owned rather than living in the generic operations blanket impl.
     fn init(&self, paths: &[String]) -> impl Future<Output = Result<(), SendableError>> + Send;
 }
+
+/// a backend wearing the `DatabaseImpl` contract.
+///
+/// `DatabaseImpl` is defined in `runinator-store`, which is deliberately sqlx-free, so the orphan
+/// rule forbids implementing it on a bare type parameter here. wrapping the backend in a type this
+/// crate owns restores that: the 200-plus method bodies in `crate::operations` stay written once,
+/// generically, rather than once per driver.
+///
+/// each driver module aliases this (`pub type SqliteDb = SqlStore<SqliteBackend>`) and supplies its
+/// own `new`, so callers keep naming `SqliteDb`/`PostgresDb`/`MySqlDb` exactly as before.
+pub struct SqlStore<B: SqlBackend> {
+    backend: B,
+}
+
+impl<B: SqlBackend> SqlStore<B> {
+    /// wrap an already-connected backend. driver modules expose a `new` that connects first; this
+    /// is the seam a test or a caller with its own pool uses.
+    pub fn from_backend(backend: B) -> Self {
+        Self { backend }
+    }
+
+    pub fn backend(&self) -> &B {
+        &self.backend
+    }
+}
+
+impl<B: SqlBackend> SqlBackend for SqlStore<B> {
+    type Db = B::Db;
+
+    fn pool(&self) -> &Pool<Self::Db> {
+        self.backend.pool()
+    }
+
+    fn dialect(&self) -> SqlDialect {
+        self.backend.dialect()
+    }
+
+    fn init(&self, paths: &[String]) -> impl Future<Output = Result<(), SendableError>> + Send {
+        self.backend.init(paths)
+    }
+}

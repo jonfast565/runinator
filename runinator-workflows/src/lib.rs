@@ -86,6 +86,8 @@ pub fn outputs_context(parameters: &Value, outputs: &HashMap<String, Value>) -> 
 #[cfg(test)]
 mod compute_tests;
 #[cfg(test)]
+mod conformance_tests;
+#[cfg(test)]
 mod functions_tests;
 #[cfg(test)]
 mod tests;

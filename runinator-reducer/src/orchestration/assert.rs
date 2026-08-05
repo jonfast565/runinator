@@ -34,7 +34,7 @@ pub(super) fn evaluate_assertions(params: &Value, context: &Value) -> Vec<Assert
 
 /// process an assert node: evaluates all named assertions inline; fails with a structured
 /// violation list if any assertion does not hold.
-pub(super) async fn process_assert_node<T: DatabaseImpl>(
+pub(super) async fn process_assert_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
@@ -74,7 +74,7 @@ pub(super) async fn process_assert_node<T: DatabaseImpl>(
 
 pub(super) struct AssertHandler;
 
-impl<T: DatabaseImpl> super::handler::NodeHandler<T> for AssertHandler {
+impl<T: ReducerStore> super::handler::NodeHandler<T> for AssertHandler {
     fn process<'a>(
         &'a self,
         ctx: &'a super::handler::NodeHandlerContext<'a, T>,

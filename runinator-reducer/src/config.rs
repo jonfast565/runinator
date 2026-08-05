@@ -1,7 +1,7 @@
-use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::settings::SettingKind;
 use runinator_models::types::RuninatorType;
 use runinator_models::value::{Map, Value};
+use runinator_store::ReducerStore;
 use runinator_utilities::secret_cipher::SecretCipher;
 use std::collections::BTreeMap;
 
@@ -19,7 +19,7 @@ fn settings_cipher() -> SecretCipher {
 }
 
 /// the config reference tree `{ <scope>: { <name>: <value> } }`.
-pub async fn config_tree<T: DatabaseImpl>(db: &T) -> Value {
+pub async fn config_tree<T: ReducerStore>(db: &T) -> Value {
     let cipher = settings_cipher();
     let Ok(entries) = db.list_settings().await else {
         return Value::Object(Map::new());
@@ -44,7 +44,7 @@ pub async fn config_tree<T: DatabaseImpl>(db: &T) -> Value {
 }
 
 /// fetch one config value by scope/name, decrypting and decoding the persisted payload.
-pub async fn config_value<T: DatabaseImpl>(
+pub async fn config_value<T: ReducerStore>(
     db: &T,
     scope: &str,
     name: &str,
@@ -63,7 +63,7 @@ pub async fn config_value<T: DatabaseImpl>(
 }
 
 /// the config type tree `{ <scope>: { <name>: <type> } }` used to type-check config refs.
-pub async fn config_type_tree<T: DatabaseImpl>(db: &T) -> RuninatorType {
+pub async fn config_type_tree<T: ReducerStore>(db: &T) -> RuninatorType {
     let cipher = settings_cipher();
     let Ok(entries) = db.list_settings().await else {
         return RuninatorType::map(RuninatorType::Any);

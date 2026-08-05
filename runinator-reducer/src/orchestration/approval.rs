@@ -4,7 +4,7 @@ use super::transitions::{
 };
 use super::*;
 
-pub(super) async fn process_approval_node<T: DatabaseImpl>(
+pub(super) async fn process_approval_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
@@ -98,7 +98,7 @@ pub(super) async fn process_approval_node<T: DatabaseImpl>(
 
 pub(super) struct ApprovalHandler;
 
-impl<T: DatabaseImpl> super::handler::NodeHandler<T> for ApprovalHandler {
+impl<T: ReducerStore> super::handler::NodeHandler<T> for ApprovalHandler {
     fn process<'a>(
         &'a self,
         ctx: &'a super::handler::NodeHandlerContext<'a, T>,

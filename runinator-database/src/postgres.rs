@@ -10,18 +10,18 @@ use sqlx::{
 };
 
 use crate::{
-    backend::SqlBackend,
+    backend::{SqlBackend, SqlStore},
     pool::{pool_acquire_timeout, pool_max_connections},
     queries::SqlDialect,
 };
 
 static POSTGRES_MIGRATOR: Migrator = sqlx::migrate!("./migrations/postgres");
 
-pub struct PostgresDb {
+pub struct PostgresBackend {
     pub pool: PgPool,
 }
 
-impl PostgresDb {
+impl PostgresBackend {
     pub async fn new(connection_str: &str) -> Result<Self, SendableError> {
         let options = PgConnectOptions::from_str(connection_str)?
             .log_statements(log::LevelFilter::Debug)
@@ -73,7 +73,7 @@ impl PostgresDb {
     }
 }
 
-impl SqlBackend for PostgresDb {
+impl SqlBackend for PostgresBackend {
     type Db = sqlx::Postgres;
 
     fn pool(&self) -> &PgPool {
@@ -95,5 +95,19 @@ impl SqlBackend for PostgresDb {
             }
         }
         Ok(())
+    }
+}
+
+/// the postgres-backed store.
+///
+/// `SqlStore` is what carries the `DatabaseImpl` implementation; this alias keeps `PostgresDb` the name
+/// callers use, so the wrapper is invisible outside this crate.
+pub type PostgresDb = SqlStore<PostgresBackend>;
+
+impl SqlStore<PostgresBackend> {
+    pub async fn new(connection_str: &str) -> Result<Self, SendableError> {
+        Ok(SqlStore::from_backend(
+            PostgresBackend::new(connection_str).await?,
+        ))
     }
 }

@@ -10,7 +10,7 @@ const MAX_PIPELINE_CHAIN_DEPTH: i64 = 32;
 /// create a pipeline run for `pipeline` and start its entry members. used by manual/api starts and by
 /// chained-to-pipeline firing. returns the created run (already advanced to `running`, or settled
 /// `failed` when the pipeline has no entry members).
-pub async fn create_and_start_pipeline_run<T: DatabaseImpl>(
+pub async fn create_and_start_pipeline_run<T: ReducerStore>(
     db: &T,
     pipeline: &Pipeline,
     parameters: Value,
@@ -30,7 +30,7 @@ pub async fn create_and_start_pipeline_run<T: DatabaseImpl>(
 /// start a pipeline run's entry members. the pipeline_runs row already exists (queued). computes the
 /// entry members (members with no in-pipeline inbound link), starts each as a tagged workflow run, and
 /// flips the pipeline run to `running`; settles `failed` when there are no entry members to start.
-pub async fn start_pipeline_run<T: DatabaseImpl>(
+pub async fn start_pipeline_run<T: ReducerStore>(
     db: &T,
     run: &PipelineRun,
 ) -> Result<(), SendableError> {
@@ -62,7 +62,7 @@ pub async fn start_pipeline_run<T: DatabaseImpl>(
 
 /// resolve the entry member workflow ids of a pipeline: members that are never the target of an
 /// in-pipeline `chained` link (a chained trigger carrying this pipeline's `configuration.pipeline_id`).
-async fn pipeline_entry_members<T: DatabaseImpl>(
+async fn pipeline_entry_members<T: ReducerStore>(
     db: &T,
     pipeline: &Pipeline,
 ) -> Result<Vec<Uuid>, SendableError> {
@@ -110,7 +110,7 @@ async fn pipeline_entry_members<T: DatabaseImpl>(
 }
 
 /// start a single member workflow run tagged with the owning pipeline run and enqueue its start node.
-async fn start_member_run<T: DatabaseImpl>(
+async fn start_member_run<T: ReducerStore>(
     db: &T,
     pipeline_run: &PipelineRun,
     workflow_id: Uuid,
@@ -155,7 +155,7 @@ async fn start_member_run<T: DatabaseImpl>(
 
 /// when a member workflow run reaches terminal, settle its owning pipeline run if the whole reachable
 /// member graph is now terminal. no-op for runs not tagged with a pipeline run or already-settled runs.
-pub(super) async fn maybe_settle_pipeline_run<T: DatabaseImpl>(
+pub(super) async fn maybe_settle_pipeline_run<T: ReducerStore>(
     db: &T,
     member_run: &WorkflowRun,
 ) -> Result<(), SendableError> {
@@ -208,7 +208,7 @@ pub(super) async fn maybe_settle_pipeline_run<T: DatabaseImpl>(
 
 /// start any pipelines chained to a terminal workflow run via an enabled `chained` pipeline trigger
 /// whose `configuration.source_workflow` matches. deduped per (trigger, source run).
-pub(super) async fn maybe_start_chained_pipelines<T: DatabaseImpl>(
+pub(super) async fn maybe_start_chained_pipelines<T: ReducerStore>(
     db: &T,
     source_run: &WorkflowRun,
 ) -> Result<(), SendableError> {
@@ -239,7 +239,7 @@ pub(super) async fn maybe_start_chained_pipelines<T: DatabaseImpl>(
 
 /// start any pipelines chained to a terminal pipeline run via a `chained` pipeline trigger whose
 /// `configuration.source_pipeline` matches. bounds cycles with a chain-depth guard.
-async fn maybe_start_chained_pipelines_from_pipeline<T: DatabaseImpl>(
+async fn maybe_start_chained_pipelines_from_pipeline<T: ReducerStore>(
     db: &T,
     source_run: &PipelineRun,
 ) -> Result<(), SendableError> {
@@ -275,7 +275,7 @@ async fn maybe_start_chained_pipelines_from_pipeline<T: DatabaseImpl>(
 
 /// shared chained-pipeline start: match the `on` selector, dedupe per (trigger, source run), then
 /// create and start a pipeline run for the trigger's pipeline.
-async fn start_chained_pipeline<T: DatabaseImpl>(
+async fn start_chained_pipeline<T: ReducerStore>(
     db: &T,
     trigger: &PipelineTrigger,
     source_status: WorkflowStatus,
@@ -335,7 +335,7 @@ fn pipeline_chain_status_matches(trigger: &PipelineTrigger, status: WorkflowStat
 }
 
 /// the display name of a workflow run's workflow, from its snapshot or a fetch.
-async fn workflow_run_name<T: DatabaseImpl>(
+async fn workflow_run_name<T: ReducerStore>(
     db: &T,
     run: &WorkflowRun,
 ) -> Result<String, SendableError> {

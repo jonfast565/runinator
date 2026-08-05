@@ -27,7 +27,7 @@ pub(super) fn is_inprocess_compute(node: &WorkflowNode) -> bool {
 /// evaluate a pure `std.run` compute node in the reducer, mirroring the Switch arm: create a node
 /// run, run the program against the runtime context, and either transition on `return`/fallthrough
 /// or set the active node directly on `goto`.
-pub(super) async fn process_compute_node<T: DatabaseImpl>(
+pub(super) async fn process_compute_node<T: ReducerStore>(
     db: &T,
     workflow: &WorkflowDefinition,
     workflow_run: &WorkflowRun,

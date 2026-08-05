@@ -11,7 +11,7 @@ const COMPENSATION_NODE_PREFIX: &str = "__compensate__";
 /// every succeeded node (most-recently-completed first) and unwinds them one at a time through the
 /// action outbox; once the stack is empty the run finalizes `Failed`. compensation is best-effort:
 /// a failed compensation action does not stop the unwind.
-pub(super) async fn process_fail_node<T: DatabaseImpl>(
+pub(super) async fn process_fail_node<T: ReducerStore>(
     db: &T,
     workflow: &WorkflowDefinition,
     workflow_run: &WorkflowRun,
@@ -102,7 +102,7 @@ fn collect_compensations(
 /// dispatch one compensation action through the action outbox, recording the synthetic run on the
 /// frame. parameters are resolved against the live context so a rollback can read the origin node's
 /// output (e.g. a created resource id).
-async fn dispatch_compensation<T: DatabaseImpl>(
+async fn dispatch_compensation<T: ReducerStore>(
     db: &T,
     workflow: &WorkflowDefinition,
     workflow_run: &WorkflowRun,
@@ -172,7 +172,7 @@ async fn dispatch_compensation<T: DatabaseImpl>(
 }
 
 /// persist the run state while keeping the run parked on the fail node, `Running`.
-async fn persist_frame<T: DatabaseImpl>(
+async fn persist_frame<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
@@ -189,7 +189,7 @@ async fn persist_frame<T: DatabaseImpl>(
 }
 
 /// the original `fail` terminal behavior: mark the fail node-run complete and the run `Failed`.
-async fn finalize_fail<T: DatabaseImpl>(
+async fn finalize_fail<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
@@ -211,7 +211,7 @@ async fn finalize_fail<T: DatabaseImpl>(
 
 pub(super) struct FailHandler;
 
-impl<T: DatabaseImpl> super::handler::NodeHandler<T> for FailHandler {
+impl<T: ReducerStore> super::handler::NodeHandler<T> for FailHandler {
     fn process<'a>(
         &'a self,
         ctx: &'a super::handler::NodeHandlerContext<'a, T>,

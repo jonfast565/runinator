@@ -14,7 +14,7 @@ const MAX_INLINE_WORKFLOW_STEPS: usize = 64;
     skip_all,
     fields(run_id = %ready_node.workflow_run_id, node_id = %ready_node.node_id)
 )]
-pub async fn process_ready_node<T: DatabaseImpl>(
+pub async fn process_ready_node<T: ReducerStore>(
     db: &T,
     ready_node: &ReadyNodeRecord,
 ) -> Result<ReadyNodeDisposition, SendableError> {
@@ -91,7 +91,7 @@ pub async fn process_ready_node<T: DatabaseImpl>(
     Ok(ReadyNodeDisposition::Complete)
 }
 
-async fn process_workflow_run_step<T: DatabaseImpl>(
+async fn process_workflow_run_step<T: ReducerStore>(
     db: &T,
     workflow_run: WorkflowRun,
 ) -> Result<ReadyNodeDisposition, SendableError> {
@@ -264,7 +264,7 @@ pub(super) struct WorkflowProgressKey {
 }
 
 impl WorkflowProgressKey {
-    async fn from_run<T: DatabaseImpl>(
+    async fn from_run<T: ReducerStore>(
         db: &T,
         workflow_run_id: Uuid,
     ) -> Result<Self, SendableError> {
@@ -353,7 +353,7 @@ fn should_stop_inline_progress(
 /// evaluate the workflow's `metadata.watches` guards against the live run context. returns the
 /// handler node id of the first guard whose condition holds, or `None`. skips evaluation once a
 /// guard has already fired (`state.watch_fired`) and never redirects to the node already active.
-async fn evaluate_watches<T: DatabaseImpl>(
+async fn evaluate_watches<T: ReducerStore>(
     db: &T,
     workflow: &runinator_models::workflows::WorkflowDefinition,
     workflow_run: &WorkflowRun,
@@ -391,7 +391,7 @@ async fn evaluate_watches<T: DatabaseImpl>(
 
 /// true when the run's active node is an action node, the one node kind that parks the run `Running`
 /// awaiting a worker result that will not arrive inline. control nodes re-enter inline instead.
-async fn active_node_awaits_worker<T: DatabaseImpl>(
+async fn active_node_awaits_worker<T: ReducerStore>(
     db: &T,
     run: &WorkflowRun,
 ) -> Result<bool, SendableError> {

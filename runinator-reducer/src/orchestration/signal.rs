@@ -9,7 +9,7 @@ use super::*;
 /// signal payload and wakes the reducer, which then follows the success edge. mirrors `approval`
 /// (park + arm_node_timeout + out-of-band resolution), but resolved by an arbitrary signal rather
 /// than a human decision. the optional node timeout fails the wait via `on_timeout`/`on_failure`.
-pub(super) async fn process_signal_node<T: DatabaseImpl>(
+pub(super) async fn process_signal_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
@@ -90,7 +90,7 @@ pub(super) async fn process_signal_node<T: DatabaseImpl>(
 /// resolve a signal node's correlation-key value (often a `$ref` into the run context) into a flat
 /// string. a null/empty key yields `None`; numbers and other scalars coerce to their string form so
 /// an external webhook can match a ticket key, PR number, etc.
-async fn resolve_correlation_key<T: DatabaseImpl>(
+async fn resolve_correlation_key<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     node_runs: &[WorkflowNodeRun],
@@ -117,7 +117,7 @@ async fn resolve_correlation_key<T: DatabaseImpl>(
 
 pub(super) struct SignalHandler;
 
-impl<T: DatabaseImpl> super::handler::NodeHandler<T> for SignalHandler {
+impl<T: ReducerStore> super::handler::NodeHandler<T> for SignalHandler {
     fn process<'a>(
         &'a self,
         ctx: &'a super::handler::NodeHandlerContext<'a, T>,

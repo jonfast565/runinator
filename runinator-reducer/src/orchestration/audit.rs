@@ -18,7 +18,7 @@ pub(super) fn build_audit_record(workflow_run_id: Uuid, node_id: &str, resolved:
 /// process an audit node: resolves parameters, inserts an immutable audit-log row, and emits a
 /// structured output. the existing `record_audit_log` database method is used so no new schema is
 /// required.
-pub(super) async fn process_audit_node<T: DatabaseImpl>(
+pub(super) async fn process_audit_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
     node: &WorkflowNode,
@@ -74,7 +74,7 @@ pub(super) async fn process_audit_node<T: DatabaseImpl>(
 
 pub(super) struct AuditHandler;
 
-impl<T: DatabaseImpl> super::handler::NodeHandler<T> for AuditHandler {
+impl<T: ReducerStore> super::handler::NodeHandler<T> for AuditHandler {
     fn process<'a>(
         &'a self,
         ctx: &'a super::handler::NodeHandlerContext<'a, T>,
