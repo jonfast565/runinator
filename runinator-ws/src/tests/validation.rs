@@ -95,7 +95,7 @@ async fn validate_workflow_rejects_invalid_subflow_id() {
     let (db, path) = test_db().await;
 
     // create a valid target workflow
-    let target = crate::repository::upsert_workflow(&db, &workflow(None, "target-workflow"))
+    let target = save_workflow(&db, &workflow(None, "target-workflow"))
         .await
         .unwrap();
     let target_id = target.id.unwrap();

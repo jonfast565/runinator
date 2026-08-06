@@ -6,12 +6,8 @@ use super::*;
 #[tokio::test]
 async fn visible_workflow_ids_include_direct_and_team_grants() {
     let (db, path) = test_db().await;
-    let direct = crate::repository::upsert_workflow(&db, &workflow(None, "direct"))
-        .await
-        .unwrap();
-    let team = crate::repository::upsert_workflow(&db, &workflow(None, "team"))
-        .await
-        .unwrap();
+    let direct = save_workflow(&db, &workflow(None, "direct")).await.unwrap();
+    let team = save_workflow(&db, &workflow(None, "team")).await.unwrap();
     let user = db
         .create_user("member".into(), None, false, None)
         .await
@@ -75,11 +71,9 @@ async fn workflow_listing_is_isolated_by_org() {
     let org_b = Uuid::now_v7();
     let mut wf_a = workflow(None, "alpha");
     wf_a.org_id = Some(org_a);
-    let wf_a = crate::repository::upsert_workflow(db.as_ref(), &wf_a)
-        .await
-        .unwrap();
+    let wf_a = save_workflow(db.as_ref(), &wf_a).await.unwrap();
     let wf_a_id = wf_a.id.unwrap();
-    let shared = crate::repository::upsert_workflow(db.as_ref(), &workflow(None, "shared"))
+    let shared = save_workflow(db.as_ref(), &workflow(None, "shared"))
         .await
         .unwrap();
     let shared_id = shared.id.unwrap();
@@ -172,9 +166,7 @@ fn workflow_list_names(body: &Json<crate::models::ApiResponse>) -> Vec<String> {
 #[tokio::test]
 async fn workflow_permission_takes_highest_of_user_and_team_grants() {
     let (db, path) = test_db().await;
-    let wf = crate::repository::upsert_workflow(&db, &workflow(None, "shared"))
-        .await
-        .unwrap();
+    let wf = save_workflow(&db, &workflow(None, "shared")).await.unwrap();
     let workflow_id = wf.id.expect("workflow id");
     let user_id = db
         .create_user("member".into(), None, false, None)
@@ -234,7 +226,7 @@ async fn workflow_permission_takes_highest_of_user_and_team_grants() {
 #[tokio::test]
 async fn workflow_permission_is_none_without_a_grant() {
     let (db, path) = test_db().await;
-    let wf = crate::repository::upsert_workflow(&db, &workflow(None, "private"))
+    let wf = save_workflow(&db, &workflow(None, "private"))
         .await
         .unwrap();
     let workflow_id = wf.id.expect("workflow id");
@@ -262,9 +254,7 @@ async fn workflow_permission_is_none_without_a_grant() {
 #[tokio::test]
 async fn workflow_permission_admin_owns_everything_without_grants() {
     let (db, path) = test_db().await;
-    let wf = crate::repository::upsert_workflow(&db, &workflow(None, "any"))
-        .await
-        .unwrap();
+    let wf = save_workflow(&db, &workflow(None, "any")).await.unwrap();
     let workflow_id = wf.id.expect("workflow id");
 
     let admin = AuthContext {

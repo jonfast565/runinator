@@ -20,6 +20,7 @@ use runinator_models::{
         ReplicaKind, ReplicaProviderRegistration, ReplicaRecord, ReplicaStatus, TriggerActorType,
         TriggerSourceKind,
     },
+    revisions::{RevisionSource, WorkflowRevision},
     runs::{RunArtifact, RunChunk, RunStatus, RunSummary},
     schedules::FreezeWindow,
     settings::{SettingKind, SettingRecord},
@@ -316,6 +317,29 @@ macro_rules! workflow_from_row {
 }
 
 row_mapper!(row_to_workflow(row) -> WorkflowDefinition { workflow_from_row!(row) });
+
+macro_rules! workflow_revision_from_row {
+    ($row:expr) => {{
+        WorkflowRevision {
+            id: $row.get("id"),
+            workflow_id: $row.get("workflow_id"),
+            revision: $row.get("revision"),
+            version: $row.get::<String, _>("version").parse().unwrap_or_default(),
+            name: $row.get("name"),
+            input_type: parse_type($row.get::<String, _>("input_schema")),
+            definition: WorkflowGraph::from_value(parse_json($row.get::<String, _>("definition")))
+                .unwrap_or_default(),
+            source: RevisionSource::try_from($row.get::<String, _>("source").as_str())
+                .unwrap_or_default(),
+            actor_id: $row.get("actor_id"),
+            actor_kind: $row.get("actor_kind"),
+            note: $row.get::<Option<String>, _>("note"),
+            created_at: DateTime::<Utc>::from_timestamp($row.get("created_at"), 0),
+        }
+    }};
+}
+
+row_mapper!(row_to_workflow_revision(row) -> WorkflowRevision { workflow_revision_from_row!(row) });
 
 macro_rules! workflow_trigger_from_row {
     ($row:expr) => {{

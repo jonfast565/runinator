@@ -5,7 +5,7 @@
 #   RUNINATOR_TEST_POSTGRES_URL=postgres://runi:runi@127.0.0.1:55432/runi \
 #   RUNINATOR_TEST_MYSQL_URL=mysql://root:runi@127.0.0.1:53306/runi \
 #   RUNINATOR_TEST_MONGO_URL=mongodb://127.0.0.1:57017/runi \
-#     cargo test -p runinator-provider-db --features mongo --test live -- --ignored
+#     cargo test -p runinator-provider-db --test live -- --ignored
 #   docker compose -f runinator-provider-db/tests/docker-compose.yml down -v
 
 name: runinator-provider-db-tests

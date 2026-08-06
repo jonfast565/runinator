@@ -15,5 +15,7 @@ CREATE TABLE IF NOT EXISTS archive_marks (
     UNIQUE(table_name(191), primary_key)
 );
 
-CREATE INDEX idx_archive_marks_claim ON archive_marks(status, archive_day(32), claimed_until);
-CREATE INDEX idx_archive_marks_table_status ON archive_marks(table_name(191), status);
+-- every TEXT column in a key needs a prefix length: mysql otherwise indexes the declared maximum
+-- and rejects the key as too long, which used to fail this migration and every one after it.
+CREATE INDEX idx_archive_marks_claim ON archive_marks(status(32), archive_day(32), claimed_until);
+CREATE INDEX idx_archive_marks_table_status ON archive_marks(table_name(191), status(32));

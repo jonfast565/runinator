@@ -677,6 +677,73 @@ fn provider_metadata_is_valid_and_covers_every_action() {
     }
 }
 
+/// DECIMAL/NUMERIC is the one column type with no lossless json representation: a json number is
+/// an f64, and both engines allow precisions well past what that holds. these pin the boundary
+/// where the decoder stops emitting a number and starts preserving digits as text.
+mod decimals {
+    use crate::connector::sql::decode::decimal_to_json;
+    use bigdecimal::BigDecimal;
+    use serde_json::{Value, json};
+    use std::str::FromStr;
+
+    fn rendered(literal: &str) -> Value {
+        decimal_to_json(&BigDecimal::from_str(literal).expect("literal should parse"))
+    }
+
+    #[test]
+    fn ordinary_precision_stays_a_json_number() {
+        assert_eq!(rendered("9.99"), json!(9.99));
+        assert_eq!(rendered("2.50"), json!(2.5));
+        assert_eq!(rendered("-123.456"), json!(-123.456));
+        assert_eq!(rendered("0"), json!(0.0));
+        assert_eq!(rendered("1000000"), json!(1000000.0));
+    }
+
+    #[test]
+    fn precision_wider_than_f64_keeps_every_digit_as_text() {
+        // 30 significant digits: an f64 carries ~15-17, so emitting a number here would drop
+        // digits silently. the exact value survives as a string instead.
+        let wide = "123456789012345678901234567890";
+        assert_eq!(rendered(wide), json!(wide));
+
+        let wide_fraction = "0.123456789012345678901234567890";
+        assert_eq!(rendered(wide_fraction), json!(wide_fraction));
+    }
+
+    #[test]
+    fn the_string_fallback_preserves_the_columns_declared_scale() {
+        // decimal(40,10) holding a value too wide for f64 keeps its trailing zeros, so callers can
+        // still see the scale the column was declared with.
+        assert_eq!(
+            rendered("12345678901234567890.1234500000"),
+            json!("12345678901234567890.1234500000")
+        );
+    }
+
+    #[test]
+    fn a_number_is_only_emitted_when_it_round_trips_exactly() {
+        // whatever the decoder emits as a json number must parse back to the identical decimal.
+        for literal in [
+            "9.99",
+            "2.50",
+            "0.1",
+            "-0.0001",
+            "123456789012345678901234567890",
+            "0.123456789012345678901234567890",
+        ] {
+            let original = BigDecimal::from_str(literal).expect("literal should parse");
+            if let Value::Number(number) = decimal_to_json(&original) {
+                let round_tripped =
+                    BigDecimal::from_str(&number.to_string()).expect("emitted number should parse");
+                assert_eq!(
+                    round_tripped, original,
+                    "{literal} was emitted as a lossy number"
+                );
+            }
+        }
+    }
+}
+
 #[test]
 fn the_error_dictionary_is_numbered_in_order() {
     use runinator_models::errors::ProviderErrors;

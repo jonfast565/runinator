@@ -30,6 +30,7 @@ use runinator_models::{
         ReplicaProviderRegistrationRequest, ReplicaRecord, ReplicaRegistrationRequest,
         ReplicaStatus, WorkflowRunProvenance,
     },
+    revisions::WorkflowRevision,
     runs::{NewRunArtifact, NewRunChunk, RunArtifact, RunChunk, RunStatus, RunSummary},
     schedules::{
         BackfillRequest, BackfillResponse, CatchupPolicy, ConcurrencyPolicy,
@@ -71,6 +72,12 @@ const PIPELINE_RUN_COLUMNS: &str = "id, pipeline_id, pipeline_snapshot, status, 
 
 const NOTIFICATION_POLICY_COLUMNS: &str = "id, workflow_id, name, event, severity, channel, target, threshold_seconds, enabled, managed_by, configuration, created_at, updated_at";
 const NOTIFICATION_DELIVERY_COLUMNS: &str = "id, notification_id, policy_id, channel, target, status, attempts, last_error, created_at, updated_at";
+
+/// true when an insert lost a unique-constraint race rather than failing for a reason worth
+/// surfacing. lets a caller that assigns its own sequence number recompute and retry.
+fn is_unique_violation(err: &sqlx::Error) -> bool {
+    matches!(err, sqlx::Error::Database(db) if db.is_unique_violation())
+}
 
 /// shared insert for the create and pack-reconcile paths, which differ only in how the id is chosen.
 trait NotificationSqlExt: SqlBackend {

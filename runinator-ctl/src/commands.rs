@@ -15,6 +15,7 @@ use runinator_models::{
     providers::ProviderMetadata,
     provisioning::{NodeSpec, ProvisionedGroup, ScaleNodesRequest, StopNodeRequest},
     replicas::ReplicaKind,
+    revisions::WorkflowRevision,
     schedules::{BackfillRequest, FreezeWindow, NewFreezeWindow},
     settings::SettingKind,
     workflows::{
@@ -393,6 +394,60 @@ async fn workflows(client: &Client, command: &WorkflowCommands, json_output: boo
             if json_output || path.is_none() {
                 output::json(&bundle)?;
             }
+        }
+        WorkflowCommands::Revisions { workflow, limit } => {
+            let existing = fetch_workflow_ref(client, workflow).await?;
+            let workflow_id = existing
+                .id
+                .ok_or_else(|| err("workflow has no persisted id"))?;
+            let revisions = client
+                .fetch_workflow_revisions(workflow_id, Some(*limit))
+                .await?;
+            if json_output {
+                return output::json(&revisions);
+            }
+            print_workflow_revisions(&revisions);
+        }
+        WorkflowCommands::Revision { workflow, revision } => {
+            let existing = fetch_workflow_ref(client, workflow).await?;
+            let workflow_id = existing
+                .id
+                .ok_or_else(|| err("workflow has no persisted id"))?;
+            let found = client
+                .fetch_workflow_revision(workflow_id, *revision)
+                .await?;
+            if json_output {
+                return output::json(&found);
+            }
+            println!("revision: {}", found.revision);
+            println!("name: {}", found.name);
+            println!("version: {}", found.version);
+            println!("source: {}", found.source);
+            println!("author: {}", revision_author_label(&found));
+            if let Some(note) = &found.note {
+                println!("note: {note}");
+            }
+            println!("created_at: {}", output::time(found.created_at));
+            println!(
+                "definition: {}",
+                serde_json::to_string_pretty(&found.definition)?
+            );
+        }
+        WorkflowCommands::Rollback { workflow, revision } => {
+            let existing = fetch_workflow_ref(client, workflow).await?;
+            let workflow_id = existing
+                .id
+                .ok_or_else(|| err("workflow has no persisted id"))?;
+            let restored = client
+                .restore_workflow_revision(workflow_id, *revision)
+                .await?;
+            if json_output {
+                return output::json(&restored);
+            }
+            println!(
+                "restored {} to revision {} (saved as a new revision)",
+                restored.name, revision
+            );
         }
         WorkflowCommands::Duplicate { workflow, bump } => {
             let existing = fetch_workflow_ref(client, workflow).await?;
@@ -1529,6 +1584,32 @@ fn print_workflows(workflows: &[WorkflowDefinition]) {
             workflow.enabled,
             output::time(workflow.updated_at)
         );
+    }
+}
+
+fn print_workflow_revisions(revisions: &[WorkflowRevision]) {
+    println!(
+        "{:<4} {:<7} {:<10} {:<38} {:<28} created_at",
+        "rev", "version", "source", "name", "author"
+    );
+    for revision in revisions {
+        println!(
+            "{:<4} {:<7} {:<10} {:<38} {:<28} {}",
+            revision.revision,
+            revision.version,
+            revision.source,
+            output::truncate(&revision.name, 38),
+            output::truncate(&revision_author_label(revision), 28),
+            output::time(revision.created_at)
+        );
+    }
+}
+
+// an unattributed write shows its kind rather than a bare uuid-shaped blank.
+fn revision_author_label(revision: &WorkflowRevision) -> String {
+    match revision.actor_id {
+        Some(id) => format!("{} {id}", revision.actor_kind),
+        None => revision.actor_kind.clone(),
     }
 }
 

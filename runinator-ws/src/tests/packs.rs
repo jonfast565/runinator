@@ -6,7 +6,7 @@ use super::*;
 #[tokio::test]
 async fn export_all_includes_workflows_and_matching_triggers() {
     let (db, path) = test_db().await;
-    let saved = crate::repository::upsert_workflow(&db, &workflow(None, "export-all"))
+    let saved = save_workflow(&db, &workflow(None, "export-all"))
         .await
         .unwrap();
     let workflow_id = saved.id.unwrap();
@@ -28,12 +28,8 @@ async fn export_all_includes_workflows_and_matching_triggers() {
 #[tokio::test]
 async fn export_one_includes_only_that_workflow_and_its_triggers() {
     let (db, path) = test_db().await;
-    let first = crate::repository::upsert_workflow(&db, &workflow(None, "first"))
-        .await
-        .unwrap();
-    let second = crate::repository::upsert_workflow(&db, &workflow(None, "second"))
-        .await
-        .unwrap();
+    let first = save_workflow(&db, &workflow(None, "first")).await.unwrap();
+    let second = save_workflow(&db, &workflow(None, "second")).await.unwrap();
     let first_id = first.id.unwrap();
     let second_id = second.id.unwrap();
     crate::repository::upsert_workflow_trigger(&db, &trigger(None, first_id))
@@ -451,6 +447,9 @@ async fn duplicate_workflow_creates_bumped_sibling() {
         &db,
         original_id,
         runinator_models::semver::SemVerBump::Minor,
+        &runinator_models::revisions::RevisionAuthor::system(
+            runinator_models::revisions::RevisionSource::Duplicate,
+        ),
     )
     .await
     .unwrap();

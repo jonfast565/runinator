@@ -11,8 +11,13 @@ use uuid::Uuid;
 
 pub mod backend;
 mod common;
+#[cfg(test)]
+mod dialect_parity;
 pub mod errors;
 mod mappers;
+#[cfg(test)]
+#[path = "migration_parity_tests.rs"]
+mod migration_parity;
 
 // the persistence contract now lives in `runinator-store`, which has no sqlx dependency. these
 // re-exports keep `runinator_database::interfaces::*` and `runinator_database::archive::*` working

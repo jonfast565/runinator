@@ -241,6 +241,8 @@ broker, so multiple waker replicas can run active/active. SQLite remains
 the default for simple local development and single-process stacks. MariaDB and
 Postgres are also supported for local development when you want a server-backed
 database, and Postgres remains the intended path for multi-replica deployments.
+All three run the same persistence test suite; see the dialect-parity section of
+`AGENTS.md` for how to exercise the server-backed engines locally.
 
 The local stack uses the built-in broker over raw TCP by default. The standalone
 broker can also serve the same broker contract over HTTP by setting
@@ -344,6 +346,18 @@ cp -R packs/sdlc/wdl ~/.runinator/workflows/wdl
 
 Compiled JSON workflow packs are no longer checked in. Use `sdlc.wdlm` plus the
 referenced `.wdl` sources for imports.
+
+Because `workflows apply` overwrites stored definitions wholesale, every accepted
+definition is also captured as an immutable revision. `runinatorctl workflows
+revisions <workflow>` lists that history (revision number, version, source —
+`ui`/`pack`/`api`/`duplicate`/`rollback` — author, and timestamp), `workflows
+revision <workflow> <n>` prints one revision with the definition it captured, and
+`workflows rollback <workflow> <n>` restores it. A rollback re-validates the old
+definition against the current provider catalog and saves it as a *new* revision,
+so nothing is overwritten and the rollback itself stays in the history. The same
+history is available per workflow in the command center's Workflow Settings
+dialog, with a diff between any two revisions. An unchanged re-apply records
+nothing, so a pack imported on a schedule does not bury real edits.
 
 `runinatorctl workflows dev <path>` runs the same client-side pack compile and
 compiled zip upload in a watch loop. It watches the pack manifest, referenced

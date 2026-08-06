@@ -120,7 +120,8 @@ use crate::handlers::{
     webhook::{webhook_signal, webhook_wake},
     workflows::{
         delete_workflow, duplicate_workflow, export_single_workflow_bundle, export_workflow_bundle,
-        get_workflow, get_workflows, import_workflow_bundle, set_workflow_owner, simulate_workflow,
+        get_workflow, get_workflow_revision, get_workflow_revisions, get_workflows,
+        import_workflow_bundle, restore_workflow_revision, set_workflow_owner, simulate_workflow,
         upsert_workflow, validate_workflow,
     },
 };
@@ -227,6 +228,18 @@ pub fn build_router<T: DatabaseImpl>(
         .route(
             "/workflows/{id}/duplicate",
             post(duplicate_workflow::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflows/{id}/revisions",
+            get(get_workflow_revisions::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflows/{id}/revisions/{revision}",
+            get(get_workflow_revision::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflows/{id}/revisions/{revision}/restore",
+            post(restore_workflow_revision::<T>).layer(Extension(pool.clone())),
         )
         .route(
             "/workflows/{id}/owner",

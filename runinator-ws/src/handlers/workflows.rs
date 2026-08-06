@@ -47,7 +47,7 @@ pub(crate) async fn upsert_workflow<T: DatabaseImpl>(
         // a new workflow is owned by the creator's active org (None = platform-global).
         workflow.org_id = ctx.org_id;
     }
-    match repository::upsert_workflow(db.as_ref(), &workflow).await {
+    match repository::upsert_workflow(db.as_ref(), &workflow, &authz::revision_author(&ctx)).await {
         Ok(workflow) => {
             if !is_update {
                 if let Some(id) = workflow.id {
@@ -350,6 +350,126 @@ pub(crate) async fn get_workflow<T: DatabaseImpl>(
     }
 }
 
+/// how many revisions a list returns by default, and the ceiling a caller can ask for. history is
+/// small per row but unbounded over time, so the endpoint pages rather than returning everything.
+const DEFAULT_REVISION_LIMIT: i64 = 50;
+const MAX_REVISION_LIMIT: i64 = 500;
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct RevisionListQuery {
+    limit: Option<i64>,
+}
+
+/// list a workflow's revision history, newest first.
+#[utoipa::path(
+    get,
+    path = "/workflows/{id}/revisions",
+    tag = "Workflows",
+    params(
+        ("id" = Uuid, Path, description = "workflow id"),
+        ("limit" = Option<i64>, Query, description = "maximum revisions to return (default 50, max 500)"),
+    ),
+    responses((status = 200, description = "revision history", body = serde_json::Value)),
+)]
+pub(crate) async fn get_workflow_revisions<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(workflow_id): Path<Uuid>,
+    Query(query): Query<RevisionListQuery>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) =
+        authz::require_workflow(db.as_ref(), &ctx, workflow_id, Permission::View).await
+    {
+        return reply;
+    }
+    let limit = query
+        .limit
+        .unwrap_or(DEFAULT_REVISION_LIMIT)
+        .clamp(1, MAX_REVISION_LIMIT);
+    match repository::fetch_workflow_revisions(db.as_ref(), workflow_id, limit).await {
+        Ok(revisions) => (
+            StatusCode::OK,
+            Json(ApiResponse::WorkflowRevisionList(revisions)),
+        ),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+/// fetch one revision, including the full definition it captured.
+#[utoipa::path(
+    get,
+    path = "/workflows/{id}/revisions/{revision}",
+    tag = "Workflows",
+    params(
+        ("id" = Uuid, Path, description = "workflow id"),
+        ("revision" = i64, Path, description = "per-workflow revision number"),
+    ),
+    responses(
+        (status = 200, description = "the revision", body = serde_json::Value),
+        (status = 404, description = "no such revision"),
+    ),
+)]
+pub(crate) async fn get_workflow_revision<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+    Path((workflow_id, revision)): Path<(Uuid, i64)>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) =
+        authz::require_workflow(db.as_ref(), &ctx, workflow_id, Permission::View).await
+    {
+        return reply;
+    }
+    match repository::fetch_workflow_revision(db.as_ref(), workflow_id, revision).await {
+        Ok(Some(found)) => (StatusCode::OK, Json(ApiResponse::WorkflowRevision(found))),
+        Ok(None) => not_found(format!("Workflow {workflow_id} has no revision {revision}")),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+/// restore an earlier revision as the workflow's current definition.
+///
+/// gated on `Edit` rather than a platform capability: rollback is a write to one workflow, so the
+/// resource grant that governs editing it governs this too.
+#[utoipa::path(
+    post,
+    path = "/workflows/{id}/revisions/{revision}/restore",
+    tag = "Workflows",
+    params(
+        ("id" = Uuid, Path, description = "workflow id"),
+        ("revision" = i64, Path, description = "revision to restore"),
+    ),
+    responses(
+        (status = 200, description = "the restored definition, saved as a new revision", body = serde_json::Value),
+        (status = 404, description = "no such workflow or revision"),
+    ),
+)]
+pub(crate) async fn restore_workflow_revision<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(events): Extension<EventSender>,
+    Extension(ctx): Extension<AuthContext>,
+    Path((workflow_id, revision)): Path<(Uuid, i64)>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) =
+        authz::require_workflow(db.as_ref(), &ctx, workflow_id, Permission::Edit).await
+    {
+        return reply;
+    }
+    match repository::restore_workflow_revision(
+        db.as_ref(),
+        workflow_id,
+        revision,
+        &authz::revision_author(&ctx),
+    )
+    .await
+    {
+        Ok(workflow) => {
+            emit_workflows_changed(&events, workflow.org_id);
+            (StatusCode::OK, Json(ApiResponse::Workflow(workflow)))
+        }
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
 pub(crate) async fn duplicate_workflow<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
@@ -362,7 +482,14 @@ pub(crate) async fn duplicate_workflow<T: DatabaseImpl>(
     {
         return reply;
     }
-    match repository::duplicate_workflow(db.as_ref(), workflow_id, request.bump).await {
+    match repository::duplicate_workflow(
+        db.as_ref(),
+        workflow_id,
+        request.bump,
+        &authz::revision_author(&ctx),
+    )
+    .await
+    {
         Ok(workflow) => {
             if let Some(id) = workflow.id {
                 authz::grant_owner(db.as_ref(), &ctx, id).await;

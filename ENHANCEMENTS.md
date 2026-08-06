@@ -8,7 +8,7 @@ Item IDs are **stable** — an item keeps the number it was first filed under (5
 
 The guiding constraint from `AGENTS.md`: keep dependency direction services→shared-contracts, keep changes scoped to the crate that owns the behavior, and thread any shared-contract change through every broker backend, mapper, and config file.
 
-**Last reprioritized:** 2026-08-04, after re-verifying every open item against the codebase.
+**Last reprioritized:** 2026-08-05, after shipping 6.3 and re-verifying every open item against the codebase.
 
 ---
 
@@ -16,7 +16,6 @@ The guiding constraint from `AGENTS.md`: keep dependency direction services→sh
 
 | # | Item | Band | Owning crates |
 |---|------|------|---------------|
-| 6.3 | Workflow revision history + diff + rollback | **P0** | database, engine, ws, command-center |
 | 6.8 | Secret expiry warnings | **P1** | engine, utilities |
 | 5.3 | Inbound webhook triggers | **P2** | ws, models |
 | 6.5 | Cross-run analytics | **P2** | database, ws, command-center |
@@ -26,20 +25,7 @@ The guiding constraint from `AGENTS.md`: keep dependency direction services→sh
 | 5.7 | Pack environments + promotion | **P3** | ctl, ws, settings store |
 | 6.6 | Action priority / fairness | **P4** | comm, broker (all backends), engine, worker |
 | 6.7 | Retention & redaction policy | **P4** | archiver, database, models |
-| 1.2 / 2.2 / 2.3 / 3.4 / 2.1 | Continuous quality track | parallel | varies |
-
----
-
-## P0 — protect the workflows already running
-
-This covers the runtime's blind spots around work that is *already in production*. Its absence is felt at the worst possible moment, and it is cheap relative to its payoff because the supporting machinery already exists.
-
-### 6.3 Workflow revision history + diff + rollback
-- **Owning crates:** `runinator-database` (revision store + migrations), `runinator-engine` (repository), `runinator-ws`, `runinator-command-center`.
-- **Verified 2026-08-04:** still open. `workflows` remains one **mutable** row per workflow (`runinator-database/migrations/sqlite/20260101000001_init.sql:40`); `version` became a semver string (`20260608000001_workflow_semver.sql`) but no revision migration exists — the latest migration is `20260726000001_run_correlation_key.sql`.
-- **Problem:** In-flight runs are already safe (`workflow_runs.workflow_snapshot`), so the hard part is done — but you cannot see what changed, who changed it, or roll back. Since `runinatorctl workflows apply` overwrites definitions wholesale from a pack, a bad apply is currently unrecoverable.
-- **Approach:** Persist each accepted definition as an immutable revision (definition + author + source: ui/pack/api). Yields diff-on-import, "which revision did this run execute", and rollback-to-revision.
-- **Boundary note:** this is the foundation **5.7 (pack environments)** needs — sequence 6.3 first.
+| 1.2 / 2.2 / 2.3 / 2.1 | Continuous quality track | parallel | varies |
 
 ---
 
@@ -60,7 +46,7 @@ This covers the runtime's blind spots around work that is *already in production
 - **Verified 2026-08-04:** still open. `WorkflowTriggerKind` remains exactly three variants — `Cron`, `Manual`, `Chained` (`runinator-models/src/workflows.rs:196-229`). `handlers/webhook.rs` only *wakes/signals an already-parked run*; there is no way to **start** one from an inbound event.
 - **Approach:** Add a `trigger webhook "..."` header declaration that mints a signed inbound URL to start a new run, with a payload-mapping expression into workflow inputs. Reuse the existing pack-managed-trigger materialization path (`metadata.managed_by = "wdl"`).
 - **Boundary note:** a new trigger kind is a shared-contract change — thread through `runinator-models` triggers, ctl WDL compile, mappers, and the command-center trigger catalog.
-- **Ranking note:** the highest-reach item for *new* work, and ranked below P0 only because that protects workflows already running. The shipped per-workflow concurrency policy (**6.2**, Appendix B) makes it meaningfully safer — an unthrottled inbound webhook is precisely the source that makes such a policy mandatory.
+- **Ranking note:** the highest-reach item for *new* work. The shipped per-workflow concurrency policy (**6.2**, Appendix B) makes it meaningfully safer — an unthrottled inbound webhook is precisely the source that makes such a policy mandatory.
 
 ### 6.5 Cross-run analytics
 - **Owning crates:** `runinator-database` (aggregate queries), `runinator-ws`, `runinator-command-center`.
@@ -95,7 +81,7 @@ This covers the runtime's blind spots around work that is *already in production
 - **Owning crates:** `runinator-ctl`, `runinator-ws` (packs), settings store.
 - **Problem:** `semver.rs` exists but there is no dev→staging→prod lifecycle; a pack imports with one fixed set of config/secret bindings.
 - **Approach:** Environment-scoped pack deployment with a diff/promote flow (`runinatorctl workflows promote <pack> staging→prod`) and per-environment config/secret binding, so the same compiled pack runs against different settings-store values per environment.
-- **Blocked on 6.3** — promotion without revision history has nothing to diff or roll back to.
+- **Unblocked** by 6.3 (shipped 2026-08-05) — `workflow_revisions` is the thing a promotion diffs against and rolls back to.
 
 ---
 
@@ -105,7 +91,7 @@ This covers the runtime's blind spots around work that is *already in production
 - **Owning crates:** `runinator-comm` (action contract), `runinator-broker` (all backends), `runinator-engine` (dispatch outbox), `runinator-worker`.
 - **Problem:** `ActionCommand` has no priority — the only `priority` in the models is edge-selection ordering (`runinator-models/src/workflows.rs:884`). One `map` fan-out of 5,000 items can starve an interactive run behind it on a shared consumer group.
 - **Approach:** A priority lane, or weighted fair queueing per org/workflow, pairing with the quota machinery already in `runinator-models/src/billing.rs`.
-- **Boundary note:** the most invasive item in the roadmap — priority must be honored by **every** broker backend (in-memory/http/tcp/kafka/rabbitmq) and both wire transports, or ordering silently differs per deployment. Do not start this before P0 is done.
+- **Boundary note:** the most invasive item in the roadmap — priority must be honored by **every** broker backend (in-memory/http/tcp/kafka/rabbitmq) and both wire transports, or ordering silently differs per deployment. Do not start this before **6.5** gives you the numbers to show queue starvation is real.
 
 ### 6.7 Retention & redaction policy
 - **Owning crates:** `runinator-archiver`, `runinator-database`, `runinator-models`.
@@ -126,9 +112,6 @@ These are unbounded-effort quality work rather than discrete features. None bloc
 
 ### 2.3 / 3.3 Panic hardening — narrowed
 - **Verified 2026-08-04:** `runinator-wdl/src/parser.rs` is now **clean (0 `expect(` calls)** — that half is done. The remaining cluster is `runinator-ws/src/openapi.rs` (11 calls, e.g. `:114`, `:2407-2572`). These are document-generation paths over structures the file itself just built, so the residual risk is low — convert opportunistically per the error-dictionary convention rather than as a project.
-
-### 3.4 DB migration parity tests
-- **Verified 2026-08-04:** still open. `sqlite_tests.rs`, `mysql_tests.rs`, and `mappers_tests.rs` exist, but nothing exercises sqlite↔postgres(↔mysql) **schema parity**. Schema drift between backends is a classic production surprise; add round-trip/migration parity tests in `runinator-database`.
 
 ### 2.1 Remaining backend test gaps
 - **Verified 2026-08-04, partially closed:** `runinator-waker` now has tests (`src/tests.rs`, 5 cases, including the head-of-line `due_wake_is_not_blocked_by_a_not_yet_due_wake` regression) and metrics (`runinator_waker_wakes_received/driven/requeued_total`, `runinator_waker_drive_failures_total`, `runinator_waker_wake_lead_ms`). `runinator-supervisor` has one test file. Still at zero: `runinator-bootstrap` and `runinator-provider-aws`.
@@ -166,6 +149,22 @@ These are footguns when creating new providers and workflow jobs, grounded in `r
 ## Appendix B — Retired (implemented)
 
 Kept as a record of what the roadmap no longer covers. Item IDs stay stable, so a retired number is never reused.
+
+### 6.3 Workflow revision history + diff + rollback — shipped 2026-08-05
+- **Shipped:** a `workflow_revisions` table (all three dialects) holding an immutable capture of every accepted definition — definition + input schema + name + version, plus `source` (`ui`/`pack`/`api`/`duplicate`/`rollback`), actor, and an optional note. Three `DefinitionStore` operations back it (`insert_workflow_revision`, `fetch_workflow_revisions`, `fetch_workflow_revision`); the store assigns the per-workflow sequence number rather than the caller, under a unique `(workflow_id, revision)` index. Surfaced as `GET /workflows/{id}/revisions`, `GET /workflows/{id}/revisions/{n}`, and `POST /workflows/{id}/revisions/{n}/restore`; as `runinatorctl workflows revisions|revision|rollback`; and as a Revision history panel in the command center's Workflow Settings dialog that diffs any two revisions through the existing `JsonDiff.vue`.
+- **The single chokepoint:** `repository::upsert_workflow` already funnelled every production write (the ws handler serving both `POST /workflows` and `PATCH /workflows/{id}`, pack import, and ctl via the API), so recording happens there and catches all of them. It gained a `&RevisionAuthor` parameter — deliberately a plain struct in `runinator-models` rather than `AuthContext`, mirroring `record_audit`, so the engine still does not depend on the web service's auth extraction.
+- **Rollback semantics:** restoring is a *forward write*. The old definition is re-validated against today's provider catalog and saved as a new revision, so a definition referencing an action that has since been removed fails loudly instead of persisting something unrunnable, and the rollback itself stays in the history. It restores the graph only — the current org and enabled flag are preserved, since re-tenanting or re-enabling a deliberately disabled workflow would be a surprise. Gated on the workflow's `Permission::Edit` resource grant, not a new capability.
+- **Two writes deliberately excluded:** `normalize_persisted_workflow` bypasses recording because it fires on a *read* and only canonicalizes a stored definition — a lazy migration, not an authored change. `duplicate_workflow` records a revision, but as the new row's own revision 1, since the copy diverges from the original from that point.
+- **Unchanged saves record nothing:** the store compares the incoming name/version/definition/input-schema against the head revision and returns `None` on a match, so a pack applied on a cron does not bury real edits under identical rows. Recording is best-effort like the audit trail — failing a legitimate save because its history could not be written would be the worse outcome.
+- **Was:** `workflows` was one mutable row per workflow with no history at all. In-flight runs were already insulated by `workflow_runs.workflow_snapshot`, but there was no way to see what changed, who changed it, or get back — and since `runinatorctl workflows apply` overwrites definitions wholesale, a bad apply was unrecoverable.
+- **Tests:** 4 in `runinator-database/src/sqlite_tests/revisions.rs` (sequence assignment, dedupe including the rename-with-unchanged-graph case, lookup by number, removal with the workflow), a parity block in `mysql_tests.rs` covering the head read-back that is most likely to differ off sqlite, and 6 in `runinator-ws/src/tests/revisions.rs` (recording, pack attribution, unchanged re-apply, rollback-writes-forward, owner/enabled preservation, missing revision). 5 frontend tests in `workflow-revisions.test.ts`. Workspace: 95 test binaries green; command center 247 tests, build and lint clean.
+- **Residual:** History is unbounded: there is no per-workflow cap and `workflow_revisions` is deliberately **not** registered with the archiver, since aging out the rollback target would defeat the feature. `RevisionSource::Ui` vs `Api` is inferred from principal kind (user token vs service key), which is a proxy — a human with a user token and curl records as `ui`; the distinction that matters, pack versus hand edit, is stamped by the import path itself. `workflow_runs` still has no `workflow_revision_id`, so "which revision did this run execute" is answerable only by comparing against `workflow_snapshot`. The command center diffs the JSON definition; diffing the decompiled WDL through the existing `POST /wdl/decompile` would read closer to how workflows are actually authored.
+
+### 3.4 DB migration parity tests — shipped 2026-08-05
+- **Shipped:** one shared lifecycle body (`runinator-database/src/dialect_parity.rs`) that all three backends run — workflow upsert by insert/id/name, revision sequencing and dedupe, trigger upsert, the scheduler claim and its lease, result-event replay, idempotency keys, the action-dispatch outbox, notifications, settings, catalog, and automation records. `sqlite_lifecycle` runs it unconditionally; `postgres_full_lifecycle` and `mariadb_full_lifecycle` run the identical body against a live engine when `RUNINATOR_TEST_POSTGRES_URL` / `RUNINATOR_TEST_MYSQL_URL` are set, each provisioning and dropping its own throwaway database. `runinator-database/tests/docker-compose.yml` brings both engines up on ports that collide with neither a local install nor `runinator-provider-db`'s compose. Separately, `migration_parity_tests.rs` asserts the three migration directories carry the same version set with no database at all, so a migration written for one dialect and forgotten for another fails in a plain `cargo test` rather than on someone's first deploy.
+- **Found two real bugs, both invisible to the previous suite:** the mysql `archive_marks` migration indexed a `TEXT` column with no prefix length, which MariaDB rejects — so **every mysql migration from 2026-06-21 onward had never applied**, and any mysql deployment was pinned to a schema eleven migrations behind. And `runinator-database` had no postgres coverage whatsoever. The mysql suite existed but was written before the archive work and had evidently not been run against a live engine since.
+- **Was:** `mysql_tests.rs` held its own copy of a lifecycle test with no postgres counterpart, so the two server-backed dialects were covered by one unrun file and nothing respectively. Adding a store operation meant a sqlite test and, at best, remembering to hand-copy assertions into the mysql file.
+- **Residual:** neither suite runs in CI — `.github/workflows/` has only `release-builds.yml`, so the live-engine runs still depend on a developer bringing docker up. The parity body covers the operations the dialects actually branch on, not all ~200 `DatabaseImpl` methods; a dialect-specific bug in an uncovered method still escapes. And `migration_parity_tests.rs` compares version *sets*, not the schemas the migrations produce — three files sharing a version number but declaring different columns would pass.
 
 ### 6.1 Failure alerting + SLA — shipped 2026-08-04
 - **Shipped:** `notification_policies` + `notification_deliveries`, engine emission at the terminal transition plus a scanner for the duration events, the `notify on failure|retry_exhausted|sla|parked -> slack|email|app "<target>"` WDL header (pack-managed like triggers), a `notifications:manage` capability with CRUD endpoints, and the command-center Alert policies panel. Delivery reuses the action outbox via a new optional `ActionCommand.notification_delivery_id`, so alerts go out through the normal provider path and the engine holds no vendor client.

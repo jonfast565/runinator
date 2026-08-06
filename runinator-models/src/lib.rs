@@ -14,6 +14,7 @@ pub mod pipelines;
 pub mod providers;
 pub mod provisioning;
 pub mod replicas;
+pub mod revisions;
 pub mod runs;
 pub mod schedules;
 pub mod semver;

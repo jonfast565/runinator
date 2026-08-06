@@ -1,0 +1,239 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  rust:
+    name: Rust workspace
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    # the dialect-parity suites in runinator-database and the live connector tests in
+    # runinator-provider-db skip themselves unless these are reachable, so CI brings them up
+    # rather than running a sqlite-only subset of the suite.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: runi
+          POSTGRES_PASSWORD: runi
+          POSTGRES_DB: runi
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U runi -d runi"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
+
+      mariadb:
+        image: mariadb:11
+        env:
+          MARIADB_ROOT_PASSWORD: runi
+          MARIADB_DATABASE: runi
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "healthcheck.sh --connect --innodb_initialized"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
+
+    env:
+      RUNINATOR_TEST_POSTGRES_URL: postgres://runi:runi@127.0.0.1:5432/runi
+      RUNINATOR_TEST_MYSQL_URL: mysql://root:runi@127.0.0.1:3306/runi
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      # the workspace includes runinator-command-center/src-tauri and the tray/dialog stack in
+      # runinator-desktop-agent, so a workspace-wide build needs the same gtk/webkit headers the
+      # release build installs.
+      - name: Install Linux build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            file \
+            libayatana-appindicator3-dev \
+            libgtk-3-dev \
+            librsvg2-dev \
+            libsoup-3.0-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            patchelf \
+            pkg-config
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Run workspace tests
+        run: cargo test --workspace
+
+  # runinator-provider-db's connectors talk to the real engines, and mysql and mariadb disagree in
+  # ways no single image would catch: mariadb reports a `json` column as BLOB, mysql 8 uppercases
+  # its `information_schema` labels and serves them as VARBINARY. running the same suite against
+  # both is what keeps `connector/sql/decode.rs` honest about the difference.
+  db-connectors:
+    name: DB connectors (${{ matrix.mysql_image }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        mysql_image: [mariadb:11, mysql:8]
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: runi
+          POSTGRES_PASSWORD: runi
+          POSTGRES_DB: runi
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U runi -d runi"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
+
+      mongo:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ ping: 1 })'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
+
+    env:
+      RUNINATOR_TEST_POSTGRES_URL: postgres://runi:runi@127.0.0.1:5432/runi
+      RUNINATOR_TEST_MYSQL_URL: mysql://root:runi@127.0.0.1:3306/runi
+      RUNINATOR_TEST_MONGO_URL: mongodb://127.0.0.1:27017/runi
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # started by hand rather than as a service: the two images want different env vars and
+      # health probes, and `services:` cannot vary those off one matrix axis.
+      - name: Start ${{ matrix.mysql_image }}
+        run: |
+          if [ "${{ matrix.mysql_image }}" = "mysql:8" ]; then
+            docker run -d --name ci-mysql -p 3306:3306 \
+              -e MYSQL_ROOT_PASSWORD=runi -e MYSQL_DATABASE=runi \
+              --health-cmd "mysqladmin ping -h 127.0.0.1 -uroot -pruni" \
+              --health-interval 5s --health-retries 40 mysql:8
+          else
+            docker run -d --name ci-mysql -p 3306:3306 \
+              -e MARIADB_ROOT_PASSWORD=runi -e MARIADB_DATABASE=runi \
+              --health-cmd "healthcheck.sh --connect --innodb_initialized" \
+              --health-interval 5s --health-retries 40 mariadb:11
+          fi
+          for _ in $(seq 1 60); do
+            status=$(docker inspect -f '{{.State.Health.Status}}' ci-mysql)
+            [ "$status" = "healthy" ] && exit 0
+            sleep 5
+          done
+          echo "::error::${{ matrix.mysql_image }} never became healthy"
+          docker logs ci-mysql
+          exit 1
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run live connector tests
+        run: cargo test -p runinator-provider-db --test live -- --ignored
+
+  # the release workflow only runs on dispatch/publish, so a macos- or windows-only compile break
+  # would otherwise stay hidden until release day. this is a compile check, not a test run: the
+  # assertions all live in the linux job above.
+  cross-platform:
+    name: Compile ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Set up MSVC toolchain
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Check workspace
+        run: cargo check --workspace --all-targets
+
+  command-center:
+    name: Command Center
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: runinator-command-center
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: runinator-command-center/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run tests
+        run: pnpm test
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Type-check and build
+        run: pnpm build

@@ -425,8 +425,17 @@ fn inspect_sql(engine: Engine) -> &'static str {
              where table_schema not in ('pg_catalog', 'information_schema') \
              order by table_schema, table_name, ordinal_position"
         }
+        // the casts and aliases are load-bearing, not decoration. mysql 8 serves
+        // `information_schema` out of the data dictionary: it labels the columns `TABLE_SCHEMA`
+        // rather than `table_schema`, and hands the values over as VARBINARY, which decodes to a
+        // hex blob instead of text. an explicit alias pins the label and the cast pins the type,
+        // so both engines answer in the same shape. mariadb already does this and is unaffected.
         Engine::Mysql => {
-            "select table_schema, table_name, column_name, data_type, is_nullable \
+            "select cast(table_schema as char) as table_schema, \
+             cast(table_name as char) as table_name, \
+             cast(column_name as char) as column_name, \
+             cast(data_type as char) as data_type, \
+             cast(is_nullable as char) as is_nullable \
              from information_schema.columns where table_schema = database() \
              order by table_name, ordinal_position"
         }
@@ -436,7 +445,13 @@ fn inspect_sql(engine: Engine) -> &'static str {
 
 /// fold the flat column listing into one entry per table, preserving query order.
 fn group_tables(rows: &RowSet) -> Vec<TableInfo> {
-    let index_of = |name: &str| rows.columns.iter().position(|column| column.name == name);
+    // case-insensitive: engines disagree on how they label `information_schema` columns, and the
+    // query above pins the case only for the engines whose text we control.
+    let index_of = |name: &str| {
+        rows.columns
+            .iter()
+            .position(|column| column.name.eq_ignore_ascii_case(name))
+    };
     let (Some(schema_idx), Some(table_idx), Some(column_idx), Some(type_idx), Some(null_idx)) = (
         index_of("table_schema"),
         index_of("table_name"),

@@ -11,6 +11,7 @@ use runinator_models::value::Value;
 use runinator_models::{
     errors::SendableError,
     pipelines::{Pipeline, PipelineRun},
+    revisions::WorkflowRevision,
     workflows::WorkflowDefinition,
 };
 
@@ -58,6 +59,30 @@ pub trait DefinitionStore: Send + Sync + 'static {
         &self,
         workflow_id: Uuid,
     ) -> impl Future<Output = Result<(), SendableError>> + Send;
+
+    /// Append an immutable revision capturing an accepted definition.
+    ///
+    /// The revision number is assigned by the store, not the caller. Returns `None` when the
+    /// incoming definition is identical to the workflow's current head revision, so a repeated
+    /// pack apply does not mint an unbroken run of identical rows.
+    fn insert_workflow_revision(
+        &self,
+        revision: &WorkflowRevision,
+    ) -> impl Future<Output = Result<Option<WorkflowRevision>, SendableError>> + Send;
+
+    /// Fetch a workflow's revisions, newest first, capped at `limit`.
+    fn fetch_workflow_revisions(
+        &self,
+        workflow_id: Uuid,
+        limit: i64,
+    ) -> impl Future<Output = Result<Vec<WorkflowRevision>, SendableError>> + Send;
+
+    /// Fetch one revision by its per-workflow sequence number.
+    fn fetch_workflow_revision(
+        &self,
+        workflow_id: Uuid,
+        revision: i64,
+    ) -> impl Future<Output = Result<Option<WorkflowRevision>, SendableError>> + Send;
 
     /// Create or update a pipeline instance.
     fn upsert_pipeline(

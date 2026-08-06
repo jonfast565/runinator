@@ -45,6 +45,8 @@ export type { WorkflowLayoutDirection, WorkflowLayoutPosition } from "./workflow
 export type { WorkflowEditorNodeRecord } from "./workflow/editor-node";
 export type { WorkflowDefinition } from "./workflow/definition";
 export { workflowInputType } from "./workflow/definition";
+export type { RevisionSource, WorkflowRevision } from "./workflow/revision";
+export { revisionAuthorLabel } from "./workflow/revision";
 export type { WorkflowBundle } from "./workflow/bundle";
 export type { WorkflowTrigger, WorkflowTriggerKind } from "./workflow/trigger";
 export type {

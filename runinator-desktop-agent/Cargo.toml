@@ -15,7 +15,13 @@ reqwest = { version = "0.13.3", default-features = false, features = ["json", "r
 eframe = "0.29"
 tray-icon = "0.24"
 open = "5"
-rfd = "0.16"
+# must match the feature set tauri-plugin-dialog picks for rfd. rfd's build script panics when
+# `gtk3` and `xdg-portal` are both on, which cargo's feature unification would do to any linux
+# build that has this crate and runinator-command-center in the same invocation.
+rfd = { version = "0.16", default-features = false, features = [
+    "gtk3",
+    "common-controls-v6",
+] }
 notify-rust = "4"
 
 runinator-api = { path = "../runinator-api" }

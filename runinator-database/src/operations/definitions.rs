@@ -236,6 +236,9 @@ where
                  (SELECT id FROM workflow_runs WHERE workflow_id = ?)"
                 .to_string(),
             "DELETE FROM workflow_runs WHERE workflow_id = ?".to_string(),
+            // deleted explicitly rather than left to the declared cascade: sqlite only enforces
+            // foreign keys when the pragma is on, so the history would otherwise outlive its workflow.
+            "DELETE FROM workflow_revisions WHERE workflow_id = ?".to_string(),
             "DELETE FROM workflows WHERE id = ?".to_string(),
         ] {
             sqlx::query(&self.render(&sql))
@@ -245,6 +248,116 @@ where
         }
         tx.commit().await?;
         Ok(())
+    }
+
+    async fn insert_workflow_revision(
+        &self,
+        revision: &WorkflowRevision,
+    ) -> Result<Option<WorkflowRevision>, SendableError> {
+        // serialized exactly as `workflows.definition` is, so the two columns stay comparable.
+        let definition = revision.definition.to_string();
+        let input_schema = serde_json::to_string(&revision.input_type)?;
+
+        // the unique (workflow_id, revision) index is what actually prevents a forked sequence, so a
+        // concurrent writer that wins the number makes this insert fail rather than duplicate it.
+        // recompute once against the new head instead of surfacing a conflict the caller cannot act on.
+        for attempt in 0..2 {
+            let head = sqlx::query(&self.render(
+                "SELECT revision, name, version, definition, input_schema FROM workflow_revisions \
+                 WHERE workflow_id = ? ORDER BY revision DESC LIMIT 1",
+            ))
+            .bind(revision.workflow_id)
+            .fetch_optional(self.pool())
+            .await?;
+
+            let next = match head {
+                Some(row) => {
+                    // an unchanged re-save records nothing: a pack that reapplies hourly would
+                    // otherwise bury the edits worth seeing under identical rows.
+                    let unchanged = row.get::<String, _>("definition") == definition
+                        && row.get::<String, _>("input_schema") == input_schema
+                        && row.get::<String, _>("name") == revision.name
+                        && row.get::<String, _>("version") == revision.version.to_string();
+                    if unchanged {
+                        return Ok(None);
+                    }
+                    row.get::<i64, _>("revision") + 1
+                }
+                None => 1,
+            };
+
+            let id = Uuid::now_v7();
+            let created_at = Utc::now().timestamp();
+            let result = sqlx::query(&self.render(
+                "INSERT INTO workflow_revisions \
+                 (id, workflow_id, revision, version, name, definition, input_schema, source, actor_id, actor_kind, note, created_at) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ))
+            .bind(id)
+            .bind(revision.workflow_id)
+            .bind(next)
+            .bind(revision.version.to_string())
+            .bind(revision.name.as_str())
+            .bind(definition.as_str())
+            .bind(input_schema.as_str())
+            .bind(revision.source.as_str())
+            .bind(revision.actor_id)
+            .bind(revision.actor_kind.as_str())
+            .bind(revision.note.clone())
+            .bind(created_at)
+            .execute(self.pool())
+            .await;
+
+            match result {
+                Ok(_) => {
+                    return Ok(Some(WorkflowRevision {
+                        id,
+                        revision: next,
+                        created_at: DateTime::<Utc>::from_timestamp(created_at, 0),
+                        ..revision.clone()
+                    }));
+                }
+                // only the sequence collision is retryable; anything else is a real failure.
+                Err(err) if attempt == 0 && is_unique_violation(&err) => continue,
+                Err(err) => return Err(Box::new(err)),
+            }
+        }
+
+        Ok(None)
+    }
+
+    async fn fetch_workflow_revisions(
+        &self,
+        workflow_id: Uuid,
+        limit: i64,
+    ) -> Result<Vec<WorkflowRevision>, SendableError> {
+        let rows = sqlx::query(&self.render(
+            "SELECT id, workflow_id, revision, version, name, definition, input_schema, source, \
+             actor_id, actor_kind, note, created_at FROM workflow_revisions \
+             WHERE workflow_id = ? ORDER BY revision DESC LIMIT ?",
+        ))
+        .bind(workflow_id)
+        .bind(limit.max(1))
+        .fetch_all(self.pool())
+        .await?;
+        Ok(rows.iter().map(mappers::row_to_workflow_revision).collect())
+    }
+
+    async fn fetch_workflow_revision(
+        &self,
+        workflow_id: Uuid,
+        revision: i64,
+    ) -> Result<Option<WorkflowRevision>, SendableError> {
+        let row = sqlx::query(&self.render(
+            "SELECT id, workflow_id, revision, version, name, definition, input_schema, source, \
+             actor_id, actor_kind, note, created_at FROM workflow_revisions \
+             WHERE workflow_id = ? AND revision = ?",
+        ))
+        .bind(workflow_id)
+        .bind(revision)
+        .fetch_optional(self.pool())
+        .await?;
+        Ok(row.as_ref().map(mappers::row_to_workflow_revision))
     }
 
     async fn upsert_pipeline(&self, pipeline: &Pipeline) -> Result<Pipeline, SendableError> {

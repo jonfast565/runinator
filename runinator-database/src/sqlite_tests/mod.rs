@@ -10,8 +10,10 @@ mod auth;
 mod definitions;
 mod dispatch;
 mod leases;
+mod parity;
 mod ready_nodes;
 mod results;
+mod revisions;
 mod runs;
 mod schedules;
 mod settings;
@@ -27,6 +29,7 @@ use runinator_models::{
     notifications::NewNotification,
     orchestration::IdempotencyClaim,
     orgs::OrgRole,
+    revisions::{RevisionSource, WorkflowRevision},
     runs::NewRunChunk,
     schedules::{BackfillRequest, NewFreezeWindow},
     settings::SettingKind,

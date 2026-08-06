@@ -243,6 +243,69 @@ Use `cargo check -p <crate>` when a full test run is slow or when the crate has 
 
 For command center changes, use the existing Tauri build path and verify UI behavior separately.
 
+`.github/workflows/ci.yml` runs the same checks on push/PR: `cargo fmt --all --check` and
+`cargo test --workspace` on linux with postgres/mariadb service containers (so the dialect-parity
+suites actually execute rather than skipping), `runinator-provider-db`'s live connector suite
+against postgres, mongo, **and both mariadb:11 and mysql:8**, a `cargo check --workspace
+--all-targets` compile job on macos and windows, and the command center's `pnpm test`/`lint`/`build`.
+`.github/workflows/release-builds.yml` is separate and only runs on dispatch or a published release.
+
+The two-engine mysql matrix is not redundancy. mysql and mariadb report the same column types
+under different names, and each hides bugs the other exposes: mariadb implements `json` as
+`longtext` and reports it as BLOB (mysql 8 reports JSON), while mysql 8 serves `information_schema`
+from the data dictionary, uppercasing its column labels and returning them as VARBINARY. Both
+engines also report `boolean` and `tinyint(1)` as the same BOOLEAN, which sqlx's `bool` decode
+flattens. `connector/sql/decode.rs` resolves each of these from the payload rather than the type
+name, and column metadata is reconciled against the decoded value so `kind` never contradicts it.
+Test a connector change against both images.
+
+DECIMAL/NUMERIC decodes through `BigDecimal` (the sqlx `bigdecimal` feature), because a json number
+is an f64 and both engines allow precisions far past what that holds. `decimal_to_json` emits a
+number only when the value round-trips through f64 unchanged, and the exact digits as a string
+otherwise — so a `numeric(40,8)` never silently rounds. Note that postgres's wire format drops
+trailing zero groups, so a value's *scale* does not survive it; do not write assertions that depend
+on trailing zeros.
+
+MongoDB is a first-class store backend and ships by default (`mongo` is a default feature of
+`runinator-provider-db`; `--no-default-features` opts out). Its `bson` dependency hard-enables
+`serde_json/preserve_order`, and cargo unifies that across the workspace — which is fine, because
+the domain and wire type is `runinator_models::value::Value`, whose `Map` is its own `BTreeMap`.
+Every value crossing a workflow, the reducer, or the database stays sorted-key by construction, and
+`preserve_order` reaches only raw `serde_json::Value` in provider internals, where insertion order
+is the better answer anyway. Do not reintroduce a "keep bson out of the workspace" workaround. The
+one thing this does change: `serde_json::Value` is no longer a sorted-key reference, so assert our
+wire form against a literal rather than against a serde_json round trip — see
+`runinator-models/src/tests.rs`.
+
+A workspace-wide cargo invocation unifies features across every member, including
+`runinator-command-center/src-tauri`. That is why `runinator-desktop-agent` pins `rfd` to the same
+feature set `tauri-plugin-dialog` selects — the two default backends (`xdg-portal` vs `gtk3`) are
+mutually exclusive and rfd's build script panics on linux if unification turns both on. Check for
+this whenever a workspace crate and the tauri crate share a transitive dependency.
+
+### Verifying a schema or persistence change
+
+A migration or `operations/` change is only half-tested by `cargo test -p runinator-database`: the
+default run has no postgres or mysql, so both dialect suites skip themselves. Bring the engines up
+and run it again:
+
+```bash
+docker compose -f runinator-database/tests/docker-compose.yml up -d --wait
+RUNINATOR_TEST_POSTGRES_URL=postgres://runi:runi@127.0.0.1:55433/runi \
+RUNINATOR_TEST_MYSQL_URL=mysql://root:runi@127.0.0.1:53307/runi \
+  cargo test -p runinator-database
+docker compose -f runinator-database/tests/docker-compose.yml down -v
+```
+
+The assertions are shared: `src/dialect_parity.rs` holds one lifecycle body that all three backends
+run, so cover a new operation by adding to it rather than to one dialect's file. `sqlite_lifecycle`
+runs it unconditionally, which is what keeps the body honest when nobody has docker up.
+
+Adding a migration means adding it to all three directories under `runinator-database/migrations/`.
+`migration_parity_tests.rs` enforces that the version sets match and needs no database, so it fails
+in a plain `cargo test` rather than on someone's first postgres deploy. A migration only one engine
+can have goes in that file's `DIALECT_ONLY` list with a reason.
+
 ## Change Hygiene
 
 - Read nearby code before editing; mirror existing naming, async style, and error conventions.

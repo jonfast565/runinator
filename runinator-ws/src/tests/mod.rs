@@ -19,6 +19,7 @@ mod orgs;
 mod packs;
 mod reducer;
 mod result_consumer;
+mod revisions;
 mod runs;
 mod users;
 mod validation;
@@ -51,6 +52,7 @@ use runinator_models::{
     orgs::{
         AddOrgMemberRequest, CreateOrgRequest, OrgRole, UpdateOrgMemberRequest, UpdateOrgRequest,
     },
+    revisions::{RevisionAuthor, RevisionSource},
     runs::{NewRunArtifact, NewRunChunk},
     workflows::{
         NewWorkflowRunArtifact, WorkflowAction, WorkflowBundle, WorkflowDefinition, WorkflowGraph,
@@ -72,8 +74,24 @@ async fn test_db() -> (SqliteDb, std::path::PathBuf) {
     (db, path)
 }
 
+/// save a workflow the way a test wants to: attributed to the platform rather than to a caller.
+/// the revision-recording path still runs, so tests exercise it without restating an author.
+async fn save_workflow<T: runinator_database::interfaces::DatabaseImpl>(
+    db: &T,
+    workflow: &WorkflowDefinition,
+) -> Result<WorkflowDefinition, runinator_models::errors::SendableError> {
+    crate::repository::upsert_workflow(
+        db,
+        workflow,
+        &runinator_models::revisions::RevisionAuthor::system(
+            runinator_models::revisions::RevisionSource::Api,
+        ),
+    )
+    .await
+}
+
 async fn create_node_run(db: &SqliteDb) -> WorkflowNodeRun {
-    let workflow = crate::repository::upsert_workflow(db, &workflow(None, "result-consumer"))
+    let workflow = save_workflow(db, &workflow(None, "result-consumer"))
         .await
         .unwrap();
     let workflow_id = workflow.id.unwrap();

@@ -216,6 +216,11 @@
         </div>
       </section>
 
+      <WorkflowRevisionsPanel
+        :workflow-id="workflows.workflowDraft.id ?? null"
+        @restored="onRevisionRestored"
+      />
+
       <div class="modal-actions">
         <button
           type="button"
@@ -246,9 +251,11 @@ import { useAppStore } from "../../../ui/adapters/pinia/app";
 import { useCatalogMetadataStore } from "../../../ui/adapters/pinia/catalogMetadata";
 import { workflowSharingService } from "../../../core/services";
 import type { NodeFieldMetadata, UiField } from "../../../core/domain/models";
+import type { WorkflowDefinition } from "../../../core/domain/models";
 import JsonEditor from "../shared/JsonEditor.vue";
 import LoadingSpinner from "../shared/LoadingSpinner.vue";
 import CatalogFieldEditor from "./CatalogFieldEditor.vue";
+import WorkflowRevisionsPanel from "./WorkflowRevisionsPanel.vue";
 
 const workflows = useWorkflowsStore();
 const orgs = useOrgsStore();
@@ -319,6 +326,13 @@ async function saveOwner() {
   } finally {
     ownerSaving.value = false;
   }
+}
+
+// a rollback changed the stored definition under the open editor, so reset the draft to it rather
+// than leaving the now-stale one in place to be saved back over the restore.
+async function onRevisionRestored(restored: WorkflowDefinition) {
+  await workflows.selectWorkflow(restored);
+  await workflows.refreshWorkflows();
 }
 
 if (!orgs.memberships.length) {

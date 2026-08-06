@@ -15,6 +15,7 @@ use runinator_models::{
         api_scheduler_workflow_run_claim_renew, api_workflow, api_workflow_duplicate,
         api_workflow_node_run, api_workflow_node_run_artifacts, api_workflow_node_run_chunks,
         api_workflow_node_run_claim, api_workflow_node_run_release, api_workflow_node_transitions,
+        api_workflow_revision, api_workflow_revision_restore, api_workflow_revisions,
         api_workflow_run, api_workflow_run_artifacts, api_workflow_run_command,
         api_workflow_run_nodes, api_workflow_run_rename, api_workflow_run_replay,
         api_workflow_run_transitions, api_workflow_runs, api_workflow_trigger,
@@ -44,6 +45,7 @@ use runinator_models::{
         ReplicaProviderRegistration, ReplicaProviderRegistrationRequest, ReplicaRecord,
         ReplicaRegistrationRequest, ReplicaStatus,
     },
+    revisions::WorkflowRevision,
     runs::{RunStatus, RunSummary},
     schedules::{BackfillRequest, BackfillResponse, FreezeWindow, NewFreezeWindow},
     settings::{SettingKind, SettingSummary},
@@ -470,6 +472,51 @@ where
             Some(_) => self.http_patch(url.clone()).json(workflow).send().await?,
             None => self.http_post(url.clone()).json(workflow).send().await?,
         };
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<WorkflowDefinition>().await?)
+    }
+
+    /// list a workflow's revision history, newest first.
+    pub async fn fetch_workflow_revisions(
+        &self,
+        workflow_id: Uuid,
+        limit: Option<i64>,
+    ) -> Result<Vec<WorkflowRevision>> {
+        let mut url = self.build_url(&api_workflow_revisions(workflow_id)).await?;
+        if let Some(limit) = limit {
+            url.query_pairs_mut()
+                .append_pair("limit", &limit.to_string());
+        }
+        let response = self.http_get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Vec<WorkflowRevision>>().await?)
+    }
+
+    /// fetch one revision, including the definition it captured.
+    pub async fn fetch_workflow_revision(
+        &self,
+        workflow_id: Uuid,
+        revision: i64,
+    ) -> Result<WorkflowRevision> {
+        let url = self
+            .build_url(&api_workflow_revision(workflow_id, revision))
+            .await?;
+        let response = self.http_get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<WorkflowRevision>().await?)
+    }
+
+    /// restore an earlier revision as the workflow's current definition. the restore is saved as a
+    /// new revision rather than rewriting history.
+    pub async fn restore_workflow_revision(
+        &self,
+        workflow_id: Uuid,
+        revision: i64,
+    ) -> Result<WorkflowDefinition> {
+        let url = self
+            .build_url(&api_workflow_revision_restore(workflow_id, revision))
+            .await?;
+        let response = self.http_post(url.clone()).send().await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<WorkflowDefinition>().await?)
     }

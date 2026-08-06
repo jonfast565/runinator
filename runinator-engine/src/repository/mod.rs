@@ -11,6 +11,7 @@ use runinator_models::{
     },
     orchestration::{NewOrchestrationEvent, ReadyNodeRecord},
     pipelines::Pipeline,
+    revisions::{RevisionAuthor, RevisionSource, WorkflowRevision},
     runs::{NewRunArtifact, NewRunChunk},
     schedules::{
         BackfillRequest, BackfillResponse, FreezeWindow, NewFreezeWindow, TriggerFiringBatch,

@@ -177,10 +177,12 @@ fn postgres_decodes_its_native_types_into_json() {
                 "drop table if exists live_types",
                 "create table live_types (\
                    small smallint, medium integer, big bigint, ratio real, amount double precision, \
-                   exact numeric(10,2), flag boolean, name text, payload jsonb, uid uuid, \
+                   exact numeric(10,2), wide numeric(40,8), \
+                   flag boolean, name text, payload jsonb, uid uuid, \
                    moment timestamptz, day date, raw bytea, nothing text)",
                 "insert into live_types values (\
-                   1, 2, 3, 1.5, 2.5, 9.99, true, 'hello', '{\"k\":[1,2]}'::jsonb, \
+                   1, 2, 3, 1.5, 2.5, 9.99, 12345678901234567890.12345678, \
+                   true, 'hello', '{\"k\":[1,2]}'::jsonb, \
                    '00000000-0000-0000-0000-000000000001'::uuid, \
                    '2026-07-26T12:00:00Z'::timestamptz, '2026-07-26'::date, '\\x0102'::bytea, null)"
             ]
@@ -218,11 +220,13 @@ fn postgres_decodes_its_native_types_into_json() {
     );
     assert_eq!(row["raw"], json!("\\x0102"));
     assert_eq!(row["nothing"], Value::Null);
-    // numeric has no lossless rust mapping without an extra dependency, so it degrades to text
-    // rather than failing the query.
-    assert!(
-        !row["exact"].is_null(),
-        "numeric should decode to something"
+    // numeric decodes exactly, and renders as a json number while the value still fits an f64.
+    assert_eq!(row["exact"], json!(9.99), "{queried}");
+    // past that it keeps every digit as text rather than rounding without saying so.
+    assert_eq!(
+        row["wide"],
+        json!("12345678901234567890.12345678"),
+        "{queried}"
     );
 
     ok(
@@ -395,8 +399,9 @@ fn mysql_round_trips_the_whole_action_surface() {
     assert_eq!(queried["row_count"], json!(1), "{queried}");
     assert_eq!(queried["rows"][0]["id"], json!(1));
     assert_eq!(queried["rows"][0]["score"], json!(1.5));
-    // mysql has no real boolean: `boolean` is tinyint(1), so it reads back as 1/0.
-    assert_eq!(queried["rows"][0]["active"], json!(1));
+    // mysql has no distinct boolean type — `boolean` is `tinyint(1)` — but both engines report the
+    // column as BOOLEAN, and a value of 0/1 is exactly what a real boolean holds, so it narrows.
+    assert_eq!(queried["rows"][0]["active"], json!(true));
 
     let nulls = ok(
         "query",
@@ -474,10 +479,11 @@ fn mysql_decodes_its_native_types_into_json() {
                 "drop table if exists live_types",
                 "create table live_types (\
                    tiny tinyint, small smallint, medium int, big bigint, ubig bigint unsigned, \
-                   ratio float, amount double, exact decimal(10,2), name varchar(32), \
+                   ratio float, amount double, exact decimal(10,2), wide decimal(40,8), \
+                   name varchar(32), \
                    payload json, moment datetime, day date, raw blob, nothing varchar(8))",
                 "insert into live_types values (\
-                   1, 2, 3, 4, 5, 1.5, 2.5, 9.99, 'hello', '{\"k\":[1,2]}', \
+                   1, 2, 3, 4, 5, 1.5, 2.5, 9.99, 12345678901234567890.12345678, 'hello', '{\"k\":[1,2]}', \
                    '2026-07-26 12:00:00', '2026-07-26', x'0102', null)"
             ]
         }),
@@ -513,9 +519,11 @@ fn mysql_decodes_its_native_types_into_json() {
     );
     assert_eq!(row["raw"], json!("\\x0102"));
     assert_eq!(row["nothing"], Value::Null);
-    assert!(
-        !row["exact"].is_null(),
-        "decimal should decode to something"
+    assert_eq!(row["exact"], json!(9.99), "{queried}");
+    assert_eq!(
+        row["wide"],
+        json!("12345678901234567890.12345678"),
+        "{queried}"
     );
 
     ok(
@@ -524,6 +532,83 @@ fn mysql_decodes_its_native_types_into_json() {
             "engine": "mysql",
             "connection": connection,
             "sql": "drop table live_types"
+        }),
+    );
+}
+
+/// the cases where the mysql protocol, or mariadb specifically, reports two different things under
+/// one type name. this must pass identically against mysql 8 and mariadb 11 — that is the point.
+#[test]
+#[ignore = "requires a reachable MySQL or MariaDB server; set RUNINATOR_TEST_MYSQL_URL"]
+fn mysql_resolves_the_type_names_both_engines_overload() {
+    let Some(connection) = url("RUNINATOR_TEST_MYSQL_URL") else {
+        return;
+    };
+
+    ok(
+        "script",
+        json!({
+            "engine": "mysql",
+            "connection": connection,
+            "statements": [
+                "drop table if exists live_ambiguous",
+                "create table live_ambiguous (\
+                   flag boolean, counter tinyint(1), doc json, scalar_doc json, \
+                   blob_bin blob, blob_digits blob, width bit(8), made year)",
+                "insert into live_ambiguous values (\
+                   true, 4, '{\"k\":[1,2]}', '123', x'0304', '123', b'10101010', 2026)"
+            ]
+        }),
+    );
+
+    let queried = ok(
+        "query",
+        json!({
+            "engine": "mysql",
+            "connection": connection,
+            "sql": "select * from live_ambiguous"
+        }),
+    );
+    let row = &queried["rows"][0];
+
+    // `boolean` and `tinyint(1)` are the same column type and both report BOOLEAN. 0/1 is what a
+    // real boolean holds, so it narrows; anything else keeps its value instead of becoming `true`.
+    assert_eq!(row["flag"], json!(true), "{queried}");
+    assert_eq!(row["counter"], json!(4), "{queried}");
+
+    // mariadb reports a `json` column as BLOB, mysql 8 as JSON. both land on the document.
+    assert_eq!(row["doc"], json!({"k": [1, 2]}), "{queried}");
+
+    // a blob is still a blob, even when its bytes happen to parse as json.
+    assert_eq!(row["blob_bin"], json!("\\x0304"), "{queried}");
+    assert_eq!(row["blob_digits"], json!("\\x313233"), "{queried}");
+
+    assert_eq!(row["width"], json!(170), "{queried}");
+    assert_eq!(row["made"], json!(2026), "{queried}");
+
+    // column metadata has to agree with the values above, not with the raw type name.
+    let kind = |name: &str| {
+        queried["columns"]
+            .as_array()
+            .expect("columns")
+            .iter()
+            .find(|column| column["name"] == json!(name))
+            .unwrap_or_else(|| panic!("no column {name} in {queried}"))["type"]
+            .clone()
+    };
+    assert_eq!(kind("flag"), json!("boolean"), "{queried}");
+    assert_eq!(kind("counter"), json!("integer"), "{queried}");
+    assert_eq!(kind("doc"), json!("json"), "{queried}");
+    assert_eq!(kind("blob_bin"), json!("binary"), "{queried}");
+    assert_eq!(kind("width"), json!("integer"), "{queried}");
+    assert_eq!(kind("made"), json!("integer"), "{queried}");
+
+    ok(
+        "execute",
+        json!({
+            "engine": "mysql",
+            "connection": connection,
+            "sql": "drop table live_ambiguous"
         }),
     );
 }

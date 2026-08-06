@@ -6,7 +6,7 @@ use super::*;
 #[tokio::test]
 async fn workflow_runs_can_be_named_and_fetched_by_open_name() {
     let (db, path) = test_db().await;
-    let workflow = crate::repository::upsert_workflow(&db, &workflow(None, "Ticket Work"))
+    let workflow = save_workflow(&db, &workflow(None, "Ticket Work"))
         .await
         .unwrap();
     let workflow_id = workflow.id.unwrap();

@@ -12,6 +12,7 @@ use runinator_models::auth::{
 };
 use runinator_models::capabilities::Capability;
 use runinator_models::orgs::OrgRole;
+use runinator_models::revisions::{RevisionAuthor, RevisionSource};
 use runinator_models::value::Value;
 use uuid::Uuid;
 
@@ -166,6 +167,24 @@ fn actor_kind(ctx: &AuthContext) -> &'static str {
     match ctx.kind {
         PrincipalKind::User => "user",
         PrincipalKind::Service => "service",
+    }
+}
+
+/// describe the caller as the author of a definition write, for the revision history.
+///
+/// the source is inferred from the principal kind: a user token is a person working through the
+/// command center, a service key is automation. that is a proxy, not a certainty — a human with a
+/// user token and curl records as `ui`. the distinction that actually matters, pack apply versus
+/// hand edit, is stamped by the import path itself rather than inferred here.
+pub(crate) fn revision_author(ctx: &AuthContext) -> RevisionAuthor {
+    RevisionAuthor {
+        actor_id: ctx.principal_id,
+        actor_kind: actor_kind(ctx).to_string(),
+        source: match ctx.kind {
+            PrincipalKind::User => RevisionSource::Ui,
+            PrincipalKind::Service => RevisionSource::Api,
+        },
+        note: None,
     }
 }
 

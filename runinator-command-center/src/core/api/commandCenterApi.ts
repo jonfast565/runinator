@@ -43,6 +43,7 @@ import type {
   WdlHoverResponse,
   WorkflowBundle,
   WorkflowDefinition,
+  WorkflowRevision,
   WorkflowRunCreated,
   WorkflowRunArtifact,
   WorkflowRunDetail,
@@ -371,6 +372,18 @@ export async function duplicateWorkflow(
   bump: "major" | "minor" | "patch" = "minor",
 ) {
   return command<WorkflowDefinition>("duplicate_workflow", { workflowId, bump });
+}
+
+export async function fetchWorkflowRevisions(workflowId: string, limit?: number) {
+  return command<WorkflowRevision[]>("fetch_workflow_revisions", { workflowId, limit });
+}
+
+export async function fetchWorkflowRevision(workflowId: string, revision: number) {
+  return command<WorkflowRevision>("fetch_workflow_revision", { workflowId, revision });
+}
+
+export async function restoreWorkflowRevision(workflowId: string, revision: number) {
+  return command<WorkflowDefinition>("restore_workflow_revision", { workflowId, revision });
 }
 
 export async function fetchWorkflowTriggers(workflowId: string) {

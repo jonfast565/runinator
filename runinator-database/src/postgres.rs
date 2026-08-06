@@ -21,6 +21,10 @@ pub struct PostgresBackend {
     pub pool: PgPool,
 }
 
+#[cfg(test)]
+#[path = "postgres_tests.rs"]
+mod tests;
+
 impl PostgresBackend {
     pub async fn new(connection_str: &str) -> Result<Self, SendableError> {
         let options = PgConnectOptions::from_str(connection_str)?

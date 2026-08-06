@@ -23,9 +23,97 @@ pub fn merge_json_object(defaults: &Value, parameters: &Value) -> Value {
 pub async fn upsert_workflow<T: DatabaseImpl>(
     db: &T,
     workflow: &WorkflowDefinition,
+    author: &RevisionAuthor,
 ) -> Result<WorkflowDefinition, SendableError> {
     let workflow = validate_workflow_definition_with_catalog(db, workflow).await?;
-    db.upsert_workflow(&workflow).await
+    let saved = db.upsert_workflow(&workflow).await?;
+    record_workflow_revision(db, &saved, author).await;
+    Ok(saved)
+}
+
+/// capture an accepted definition as an immutable revision.
+///
+/// best-effort, like the audit trail: history is worth having, but failing a legitimate save
+/// because it could not be written would be the worse outcome. a `None` result is the store
+/// reporting the definition was unchanged, not a failure.
+pub async fn record_workflow_revision<T: DatabaseImpl>(
+    db: &T,
+    saved: &WorkflowDefinition,
+    author: &RevisionAuthor,
+) {
+    let Some(workflow_id) = saved.id else {
+        return;
+    };
+    let revision = WorkflowRevision {
+        id: Uuid::nil(),
+        workflow_id,
+        revision: 0,
+        version: saved.version,
+        name: saved.name.clone(),
+        input_type: saved.input_type.clone(),
+        definition: saved.definition.clone(),
+        source: author.source,
+        actor_id: author.actor_id,
+        actor_kind: author.actor_kind.clone(),
+        note: author.note.clone(),
+        created_at: None,
+    };
+    if let Err(err) = db.insert_workflow_revision(&revision).await {
+        log::warn!(
+            "failed to record revision for workflow {workflow_id} ('{}'): {err}",
+            saved.name
+        );
+    }
+}
+
+pub async fn fetch_workflow_revisions<T: DatabaseImpl>(
+    db: &T,
+    workflow_id: Uuid,
+    limit: i64,
+) -> Result<Vec<WorkflowRevision>, SendableError> {
+    db.fetch_workflow_revisions(workflow_id, limit).await
+}
+
+pub async fn fetch_workflow_revision<T: DatabaseImpl>(
+    db: &T,
+    workflow_id: Uuid,
+    revision: i64,
+) -> Result<Option<WorkflowRevision>, SendableError> {
+    db.fetch_workflow_revision(workflow_id, revision).await
+}
+
+/// restore an earlier revision as the workflow's current definition.
+///
+/// the restore is a forward write, never a rewrite of history: the old definition is re-validated
+/// against today's provider catalog and saved as a *new* revision. that is what stops a rollback
+/// from resurrecting a definition referencing an action that has since been removed — it fails
+/// loudly instead of persisting something that cannot run.
+pub async fn restore_workflow_revision<T: DatabaseImpl>(
+    db: &T,
+    workflow_id: Uuid,
+    revision: i64,
+    author: &RevisionAuthor,
+) -> Result<WorkflowDefinition, SendableError> {
+    let Some(current) = fetch_workflow(db, workflow_id).await? else {
+        return Err(
+            runinator_reducer::errors::WORKFLOW_NOT_FOUND.error(format!("id {workflow_id}"))
+        );
+    };
+    let Some(target) = db.fetch_workflow_revision(workflow_id, revision).await? else {
+        return Err(runinator_reducer::errors::WORKFLOW_NOT_FOUND
+            .error(format!("workflow {workflow_id} has no revision {revision}")));
+    };
+
+    let restored = target.to_definition(&current);
+    let author = RevisionAuthor {
+        source: RevisionSource::Rollback,
+        note: author
+            .note
+            .clone()
+            .or_else(|| Some(format!("restored revision {revision}"))),
+        ..author.clone()
+    };
+    upsert_workflow(db, &restored, &author).await
 }
 
 pub async fn validate_workflow_definition_with_catalog<T: DatabaseImpl>(
@@ -146,6 +234,10 @@ pub async fn import_workflow_bundle_with<T: DatabaseImpl>(
     // likewise reject a chaining trigger whose target workflow cannot be resolved.
     validate_chained_targets(db, &bundle).await?;
 
+    // a pack apply overwrites definitions wholesale, which is exactly the change most worth being
+    // able to see and undo later. the store drops a revision whose definition is unchanged, so a
+    // pack that reapplies on a schedule leaves history alone.
+    let pack_author = RevisionAuthor::system(RevisionSource::Pack);
     let mut workflows = Vec::with_capacity(bundle.workflows.len());
     for workflow in bundle.workflows {
         // an incoming id is an explicit save (e.g. the command center) and always wins.
@@ -164,7 +256,7 @@ pub async fn import_workflow_bundle_with<T: DatabaseImpl>(
             workflows.push(existing);
             continue;
         }
-        let imported = upsert_workflow(db, &workflow).await?;
+        let imported = upsert_workflow(db, &workflow, &pack_author).await?;
         // materialize this workflow's declared `trigger cron` schedules (idempotent).
         materialize_workflow_triggers(db, &imported).await?;
         // and its declared `notify on ...` alerting policies, reconciled the same way.
@@ -490,6 +582,9 @@ async fn normalize_persisted_workflow<T: DatabaseImpl>(
     if normalized.definition == workflow.definition {
         return Ok(workflow);
     }
+    // deliberately writes past the revision-recording path: this fires on a *read* and only rewrites
+    // a stored definition into its canonical form. it is a lazy migration, not an authored change,
+    // and recording it would fill a workflow's history with revisions nobody made.
     db.upsert_workflow(&normalized).await
 }
 
@@ -500,6 +595,7 @@ pub async fn duplicate_workflow<T: DatabaseImpl>(
     db: &T,
     workflow_id: Uuid,
     bump: SemVerBump,
+    author: &RevisionAuthor,
 ) -> Result<WorkflowDefinition, SendableError> {
     let Some(existing) = fetch_workflow(db, workflow_id).await? else {
         return Err(
@@ -513,7 +609,19 @@ pub async fn duplicate_workflow<T: DatabaseImpl>(
     copy.created_at = None;
     copy.updated_at = None;
     let copy = validate_workflow_definition_with_catalog(db, &copy).await?;
-    db.insert_workflow(&copy).await
+    let created = db.insert_workflow(&copy).await?;
+    // the copy is a new workflow, so it starts its own history at revision 1 rather than inheriting
+    // the original's — the two rows diverge from here.
+    let author = RevisionAuthor {
+        source: RevisionSource::Duplicate,
+        note: author
+            .note
+            .clone()
+            .or_else(|| Some(format!("duplicated from workflow {workflow_id}"))),
+        ..author.clone()
+    };
+    record_workflow_revision(db, &created, &author).await;
+    Ok(created)
 }
 
 pub async fn delete_workflow<T: DatabaseImpl>(

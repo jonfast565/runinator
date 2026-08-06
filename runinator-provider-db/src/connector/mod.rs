@@ -119,11 +119,14 @@ pub fn connector_for(
         )?)),
         #[cfg(feature = "mongo")]
         Engine::Mongodb => Ok(Box::new(mongo::MongoConnector::new(connection, runtime)?)),
+        // `mongo` is a default feature, so this arm is only reachable in a build that opted out
+        // with --no-default-features.
         #[cfg(not(feature = "mongo"))]
         Engine::Mongodb => {
             let _ = runtime;
             Err(crate::errors::UNSUPPORTED_ENGINE.error(
-                "this build has no mongodb support; rebuild with --features runinator-provider-db/mongo",
+                "this build opted out of mongodb support; drop --no-default-features, or re-add \
+                 --features runinator-provider-db/mongo",
             ))
         }
     }

@@ -248,6 +248,24 @@ const REGISTRY: Record<string, HttpDescriptor> = {
       return `workflows/${escape(arg(args, "workflowId"))}/duplicate?bump=${escape(bump)}`;
     },
   },
+  fetch_workflow_revisions: {
+    method: "GET",
+    path: (args) => {
+      const limit = argOpt(args, "limit");
+      const base = `workflows/${escape(arg(args, "workflowId"))}/revisions`;
+      return limit ? `${base}?limit=${escape(String(limit))}` : base;
+    },
+  },
+  fetch_workflow_revision: {
+    method: "GET",
+    path: (args) =>
+      `workflows/${escape(arg(args, "workflowId"))}/revisions/${escape(String(arg(args, "revision")))}`,
+  },
+  restore_workflow_revision: {
+    method: "POST",
+    path: (args) =>
+      `workflows/${escape(arg(args, "workflowId"))}/revisions/${escape(String(arg(args, "revision")))}/restore`,
+  },
   fetch_workflow_triggers: {
     method: "GET",
     path: (args) => `workflows/${escape(arg(args, "workflowId"))}/triggers`,

@@ -79,19 +79,27 @@ fn debug_mode_defaults_to_step_all() {
     assert_eq!(frame.config.mode.unwrap_or_default(), DebugMode::StepAll);
 }
 
-// the custom value must serialize byte-identically to serde_json::Value so the http edge, the
-// database text columns, and the frontend keep seeing the same wire form.
+// the custom value's wire form is sorted-key with serde_json-compatible number formatting, so the
+// http edge, the database text columns, and the frontend all keep seeing one stable spelling.
+//
+// this is asserted against a literal rather than against `serde_json::Value`. it used to compare
+// the two serializations, which worked only while serde_json also sorted: the mongodb connector
+// pulls in `bson`, which hard-enables `serde_json/preserve_order`, so `serde_json::Value` now
+// keeps insertion order and is no longer a sorted-key reference. our `Map` is its own `BTreeMap`
+// and is unaffected — which is the property this test exists to pin.
 #[test]
-fn value_round_trips_byte_identically_to_serde_json() {
+fn value_serializes_sorted_keys_and_bridges_losslessly() {
     let raw = r#"{"b":2,"a":{"nested":[1,2.5,null,"x"],"flag":true},"z":-7,"big":9007199254740993,"empty":{}}"#;
     let theirs: serde_json::Value = serde_json::from_str(raw).unwrap();
     let ours: Value = serde_json::from_str(raw).unwrap();
-    // sorted keys + number formatting must match exactly.
+
     assert_eq!(
         serde_json::to_string(&ours).unwrap(),
-        serde_json::to_string(&theirs).unwrap()
+        r#"{"a":{"flag":true,"nested":[1,2.5,null,"x"]},"b":2,"big":9007199254740993,"empty":{},"z":-7}"#
     );
-    // and the bridge in either direction is lossless.
+
+    // the bridge in either direction stays lossless whatever order the serde_json side is in:
+    // value equality compares contents, not key order.
     assert_eq!(serde_json::Value::from(ours.clone()), theirs);
     assert_eq!(Value::from(theirs), ours);
 }

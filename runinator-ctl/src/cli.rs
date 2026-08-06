@@ -387,6 +387,28 @@ pub enum WorkflowCommands {
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
+    /// List a workflow's revision history, newest first.
+    Revisions {
+        /// Workflow id or name.
+        workflow: String,
+        #[arg(long, default_value_t = 20)]
+        limit: i64,
+    },
+    /// Show one revision, including the definition it captured.
+    Revision {
+        /// Workflow id or name.
+        workflow: String,
+        /// Revision number, as listed by `workflows revisions`.
+        revision: i64,
+    },
+    /// Restore an earlier revision as the workflow's current definition. The restore is saved as a
+    /// new revision, so nothing is overwritten and the rollback itself stays in the history.
+    Rollback {
+        /// Workflow id or name.
+        workflow: String,
+        /// Revision number to restore.
+        revision: i64,
+    },
     /// Duplicate a workflow into a new version sharing its name (default bump: minor).
     Duplicate {
         /// Workflow id or name to duplicate.

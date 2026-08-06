@@ -63,6 +63,18 @@ pub fn api_workflow_duplicate(workflow_id: Uuid) -> String {
     format!("{API_WORKFLOWS}/{workflow_id}/duplicate")
 }
 
+pub fn api_workflow_revisions(workflow_id: Uuid) -> String {
+    format!("{API_WORKFLOWS}/{workflow_id}/revisions")
+}
+
+pub fn api_workflow_revision(workflow_id: Uuid, revision: i64) -> String {
+    format!("{API_WORKFLOWS}/{workflow_id}/revisions/{revision}")
+}
+
+pub fn api_workflow_revision_restore(workflow_id: Uuid, revision: i64) -> String {
+    format!("{API_WORKFLOWS}/{workflow_id}/revisions/{revision}/restore")
+}
+
 pub fn api_workflow_triggers(workflow_id: Uuid) -> String {
     format!("{API_WORKFLOWS}/{workflow_id}/triggers")
 }
