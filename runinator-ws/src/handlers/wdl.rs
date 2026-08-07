@@ -16,6 +16,7 @@ use crate::authz;
 use crate::events::{EventSender, emit_workflows_changed};
 use crate::handlers::providers::provider_metadata_from_items;
 use crate::models::ApiResponse;
+use crate::openapi::docs::{EndpointDoc, Example, endpoint, json_body};
 use crate::repository;
 use crate::responses::{api_error, bad_request};
 
@@ -386,3 +387,165 @@ fn wdl_error_to_summary(err: WdlError, source: &str) -> DiagnosticSummary {
         message: err.to_string(),
     }
 }
+
+/// the `wdl` endpoints.
+pub(crate) fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
+    use axum::Extension;
+    use axum::routing::post;
+    axum::Router::new()
+        .route(
+            runinator_models::api_routes::API_WDL_COMPLETE,
+            post(complete_wdl),
+        )
+        .route(runinator_models::api_routes::API_WDL_HOVER, post(hover_wdl))
+        .route(
+            runinator_models::api_routes::API_WDL_COMPILE,
+            post(compile_wdl::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            runinator_models::api_routes::API_WDL_ANALYZE,
+            post(analyze_wdl::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            runinator_models::api_routes::API_WDL_FORMAT,
+            post(format_wdl),
+        )
+        .route(
+            runinator_models::api_routes::API_WDL_DECOMPILE,
+            post(decompile_to_wdl),
+        )
+        .route(
+            runinator_models::api_routes::API_WDL_EVALUATE,
+            post(evaluate_expression),
+        )
+        .route(
+            runinator_models::api_routes::API_WDL_IMPORT,
+            post(import_wdl::<T>).layer(Extension(pool.clone())),
+        )
+}
+
+/// the openapi entries for the routes above.
+pub(crate) const DOCS: &[EndpointDoc] = &[
+    endpoint(
+        "post",
+        "/wdl/complete",
+        "WDL",
+        "Complete WDL source",
+        "Returns editor completions for a WDL source buffer and cursor position.",
+        false,
+        json_body(
+            "Completion request with WDL source and cursor position.",
+            Example::WdlCompletion,
+        ),
+        &[],
+        200,
+        "completion candidates",
+        Example::WdlCompletion,
+    ),
+    endpoint(
+        "post",
+        "/wdl/hover",
+        "WDL",
+        "Hover WDL source",
+        "Returns editor hover documentation and type information for a WDL source buffer and cursor position.",
+        false,
+        json_body(
+            "Hover request with WDL source, cursor byte offset, and optional metadata.",
+            Example::WdlCompletion,
+        ),
+        &[],
+        200,
+        "hover information",
+        Example::WdlHover,
+    ),
+    endpoint(
+        "post",
+        "/wdl/compile",
+        "WDL",
+        "Compile WDL source",
+        "Compiles WDL into a workflow definition using registered provider metadata for validation.",
+        false,
+        json_body("WDL source and initial enabled flag.", Example::WdlCompile),
+        &[],
+        200,
+        "compiled workflow definition",
+        Example::Workflow,
+    ),
+    endpoint(
+        "post",
+        "/wdl/analyze",
+        "WDL",
+        "Analyze WDL source",
+        "Returns parser, semantic, and provider-aware diagnostics for a WDL source buffer or fragment.",
+        false,
+        json_body(
+            "WDL source, optionally scoped to a fragment kind.",
+            Example::WdlSource,
+        ),
+        &[],
+        200,
+        "diagnostics",
+        Example::WdlDiagnostics,
+    ),
+    endpoint(
+        "post",
+        "/wdl/format",
+        "WDL",
+        "Format WDL source",
+        "Formats WDL source text and returns the formatted source string.",
+        false,
+        json_body("WDL source to format.", Example::WdlSource),
+        &[],
+        200,
+        "formatted source",
+        Example::WdlSource,
+    ),
+    endpoint(
+        "post",
+        "/wdl/decompile",
+        "WDL",
+        "Decompile workflow JSON to WDL",
+        "Converts a workflow definition back into WDL source when the graph can be represented by the language.",
+        false,
+        json_body(
+            "Workflow definition to render as WDL.",
+            Example::WdlDecompile,
+        ),
+        &[],
+        200,
+        "WDL source",
+        Example::WdlSource,
+    ),
+    endpoint(
+        "post",
+        "/wdl/evaluate",
+        "WDL",
+        "Evaluate a WDL expression or fragment",
+        "Evaluates a pure WDL expression, condition, or compute fragment against a supplied preview context.",
+        false,
+        json_body(
+            "Expression or fragment source plus context.",
+            Example::WdlEvaluate,
+        ),
+        &[],
+        200,
+        "evaluated value",
+        Example::WdlEvaluate,
+    ),
+    endpoint(
+        "post",
+        "/wdl/import",
+        "WDL",
+        "Compile and import WDL",
+        "Compiles WDL source client-style on the web service path used by the command center, then imports the resulting workflow bundle.",
+        false,
+        json_body(
+            "WDL source, target workflow id, triggers, and UI metadata.",
+            Example::WdlCompile,
+        ),
+        &[],
+        200,
+        "imported workflow bundle",
+        Example::WorkflowBundle,
+    ),
+];

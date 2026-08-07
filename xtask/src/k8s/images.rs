@@ -1,6 +1,7 @@
-//! builds (and optionally pushes) the runinator container images, mirroring build.ps1's
-//! `Build-ContainerImages`. all rust services share `deploy/Dockerfile`, selected via `--target`;
-//! BuildKit caches the shared builder stage so the cargo compile runs once for the whole set.
+//! builds (and optionally pushes) the runinator container images. all rust services share
+//! `deploy/Dockerfile`, selected via `--target`; BuildKit caches the shared builder stage so the
+//! cargo compile runs once for the whole set, and the builder's cargo cache mounts make each
+//! subsequent compile incremental rather than from scratch.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -126,7 +127,14 @@ pub fn build_container_images(
         args.push(image.context.to_string());
 
         let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
-        exec::run("docker", &arg_refs, workspace_root)?;
+        // deploy/Dockerfile's cargo cache mounts are BuildKit-only syntax; forcing it on keeps a
+        // daemon still defaulting to the legacy builder from failing on `--mount=type=cache`.
+        exec::run_with_env(
+            "docker",
+            &arg_refs,
+            workspace_root,
+            &[("DOCKER_BUILDKIT", "1")],
+        )?;
         built.insert(image.name.to_string(), tagged_name.clone());
 
         if push_images {

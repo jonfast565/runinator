@@ -2,6 +2,7 @@ use axum::{Json, http::StatusCode};
 use runinator_utilities::app_data;
 
 use crate::handlers::runs::compute_stale_seconds;
+use crate::openapi::docs::{EndpointDoc, Example, endpoint};
 
 pub(crate) async fn get_supervisor_status() -> (StatusCode, Json<serde_json::Value>) {
     let path = std::env::var("RUNINATOR_SUPERVISOR_STATE_PATH").unwrap_or_else(|_| {
@@ -39,3 +40,24 @@ pub(crate) async fn get_supervisor_status() -> (StatusCode, Json<serde_json::Val
         ),
     }
 }
+
+/// the `supervisor` endpoints.
+pub(crate) fn routes() -> axum::Router {
+    use axum::routing::get;
+    axum::Router::new().route("/supervisor/status", get(get_supervisor_status))
+}
+
+/// the openapi entries for the routes above.
+pub(crate) const DOCS: &[EndpointDoc] = &[endpoint(
+    "get",
+    "/supervisor/status",
+    "Supervisor",
+    "Get local supervisor status",
+    "Returns status for the local supervisor stack when the web service is running under it.",
+    false,
+    None,
+    &[],
+    200,
+    "supervisor status",
+    Example::Supervisor,
+)];

@@ -10,6 +10,7 @@ use runinator_models::{
 };
 
 use crate::models::ApiResponse;
+use crate::openapi::docs::{EndpointDoc, Example, endpoint, json_body};
 use crate::repository;
 use crate::responses::{api_error, bad_request};
 
@@ -119,3 +120,63 @@ pub(crate) fn provider_catalog_item(provider: &ProviderMetadata) -> Value {
         "metadata": {}
     })
 }
+
+/// the `providers` endpoints.
+pub(crate) fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
+    use axum::Extension;
+    use axum::routing::{get, post};
+    axum::Router::new()
+        .route(
+            runinator_models::api_routes::API_PROVIDERS,
+            get(get_providers::<T>)
+                .post(upsert_provider::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/providers/import",
+            post(import_provider_bundle::<T>).layer(Extension(pool.clone())),
+        )
+}
+
+/// the openapi entries for the routes above.
+pub(crate) const DOCS: &[EndpointDoc] = &[
+    endpoint(
+        "get",
+        "/providers",
+        "Providers",
+        "List providers",
+        "Lists registered provider metadata used by workers and workflow authoring.",
+        false,
+        None,
+        &[],
+        200,
+        "providers",
+        Example::ProviderList,
+    ),
+    endpoint(
+        "post",
+        "/providers",
+        "Providers",
+        "Upsert a provider",
+        "Stores provider metadata for a provider implementation.",
+        false,
+        json_body("Provider metadata.", Example::Provider),
+        &[],
+        200,
+        "provider stored",
+        Example::Provider,
+    ),
+    endpoint(
+        "post",
+        "/providers/import",
+        "Providers",
+        "Import provider bundle",
+        "Imports provider metadata from a provider bundle.",
+        false,
+        json_body("Provider bundle.", Example::ProviderBundle),
+        &[],
+        200,
+        "provider bundle imported",
+        Example::ProviderBundle,
+    ),
+];

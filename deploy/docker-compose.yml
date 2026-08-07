@@ -3,6 +3,9 @@
 # waker.yaml/postgres.yaml) but swaps rabbitmq for the broker's built-in tcp transport to avoid an
 # extra dependency, since a single-host deployment has no need for rabbitmq's clustering/fan-out.
 #
+# Every service builds from deploy/Dockerfile with a different --target, so compose shares the one
+# builder stage and the dependency graph compiles once for the whole stack.
+#
 # The admin login and service api key below are dev-only defaults (same convention as the local
 # supervisor stack's runinator-supervisor.json); replace them for anything beyond local evaluation.
 #
@@ -28,7 +31,8 @@ services:
   broker:
     build:
       context: ..
-      dockerfile: runinator-broker/Dockerfile
+      dockerfile: deploy/Dockerfile
+      target: broker
     ports:
       - "7070:7070"
 

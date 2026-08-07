@@ -1,4 +1,4 @@
-//! per-os naming conventions, mirroring the equivalents build.ps1 used to hardcode.
+//! per-os naming conventions for host builds.
 
 /// filename of the console plugin dynamic library for the current target os.
 pub fn plugin_library_name() -> &'static str {

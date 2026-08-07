@@ -10,13 +10,98 @@
 //! reduced to data without boxing every handler and losing the typed extractors. instead this reads
 //! both sources of truth as text and diffs them. it is a lint over the source, and it costs nothing
 //! at runtime.
+//!
+//! registration is spread across one `routes()` fn per handler module, so the "source" side is
+//! [`ROUTER_SOURCES`] rather than a single file. that list is itself a thing that can rot — a module
+//! missing from it would drop its routes out of this guard entirely — so
+//! [`route_sources_cover_every_module`] reads the handler directory and fails if one is unlisted.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::openapi_document;
 
-const ROUTER_SRC: &str = include_str!("router.rs");
-const API_ROUTES_SRC: &str = include_str!("../../runinator-models/src/api_routes.rs");
+/// every module that registers routes, as `(module path, source)`.
+///
+/// `include_str!` cannot be globbed, so this is written out; `route_sources_cover_every_module`
+/// checks it against the directory rather than trusting it.
+const ROUTER_SOURCES: &[(&str, &str)] = &[
+    ("websocket", include_str!("../websocket.rs")),
+    ("openapi", include_str!("mod.rs")),
+    (
+        "handlers/action_dispatches",
+        include_str!("../handlers/action_dispatches.rs"),
+    ),
+    (
+        "handlers/artifacts",
+        include_str!("../handlers/artifacts.rs"),
+    ),
+    ("handlers/auth", include_str!("../handlers/auth.rs")),
+    (
+        "handlers/automation",
+        include_str!("../handlers/automation.rs"),
+    ),
+    ("handlers/billing", include_str!("../handlers/billing.rs")),
+    ("handlers/catalog", include_str!("../handlers/catalog.rs")),
+    (
+        "handlers/catalog_metadata",
+        include_str!("../handlers/catalog_metadata.rs"),
+    ),
+    (
+        "handlers/credentials",
+        include_str!("../handlers/credentials.rs"),
+    ),
+    ("handlers/debug", include_str!("../handlers/debug.rs")),
+    ("handlers/health", include_str!("../handlers/health.rs")),
+    (
+        "handlers/node_runs",
+        include_str!("../handlers/node_runs.rs"),
+    ),
+    (
+        "handlers/notifications",
+        include_str!("../handlers/notifications.rs"),
+    ),
+    (
+        "handlers/observability",
+        include_str!("../handlers/observability.rs"),
+    ),
+    ("handlers/orgs", include_str!("../handlers/orgs.rs")),
+    ("handlers/packs", include_str!("../handlers/packs.rs")),
+    (
+        "handlers/pipelines",
+        include_str!("../handlers/pipelines.rs"),
+    ),
+    (
+        "handlers/providers",
+        include_str!("../handlers/providers.rs"),
+    ),
+    (
+        "handlers/provisioning",
+        include_str!("../handlers/provisioning.rs"),
+    ),
+    ("handlers/replicas", include_str!("../handlers/replicas.rs")),
+    ("handlers/runs", include_str!("../handlers/runs.rs")),
+    (
+        "handlers/schedules",
+        include_str!("../handlers/schedules.rs"),
+    ),
+    (
+        "handlers/supervisor",
+        include_str!("../handlers/supervisor.rs"),
+    ),
+    ("handlers/triggers", include_str!("../handlers/triggers.rs")),
+    ("handlers/wdl", include_str!("../handlers/wdl.rs")),
+    ("handlers/webhook", include_str!("../handlers/webhook.rs")),
+    (
+        "handlers/workflows",
+        include_str!("../handlers/workflows.rs"),
+    ),
+];
+
+const API_ROUTES_SRC: &str = include_str!("../../../runinator-models/src/api_routes.rs");
+
+/// the `API_*` consts are referenced by full path from the handler modules, so the bare name this
+/// resolves against has to be recovered before looking it up.
+const API_ROUTES_PREFIX: &str = "runinator_models::api_routes::";
 
 /// http verbs axum route registrations use. an identifier only counts as a verb when it is called
 /// as `verb(` at the head of the method router or chained as `.verb(`, so a handler named
@@ -218,37 +303,43 @@ fn verbs_in(expr: &str) -> BTreeSet<String> {
     found
 }
 
-/// every `(method, path)` the router registers.
+/// every `(method, path)` the router registers, across all of [`ROUTER_SOURCES`].
 fn registered_routes() -> BTreeSet<(String, String)> {
     let constants = route_constants();
     let mut routes = BTreeSet::new();
-    let mut cursor = 0usize;
 
-    while let Some(offset) = ROUTER_SRC[cursor..].find(".route(") {
-        let open = cursor + offset + ".route".len();
-        let Some((start, end)) = balanced(ROUTER_SRC, open) else {
-            break;
-        };
-        let args = split_args(&ROUTER_SRC[start..end]);
-        cursor = end;
+    for (module, src) in ROUTER_SOURCES {
+        let mut cursor = 0usize;
+        while let Some(offset) = src[cursor..].find(".route(") {
+            let open = cursor + offset + ".route".len();
+            let Some((start, end)) = balanced(src, open) else {
+                break;
+            };
+            let args = split_args(&src[start..end]);
+            cursor = end;
 
-        let (Some(path_arg), Some(method_arg)) = (args.first(), args.get(1)) else {
-            continue;
-        };
-        // a path is either a literal or one of the shared `API_*` constants.
-        let path = match path_arg.strip_prefix('"').and_then(|p| p.strip_suffix('"')) {
-            Some(literal) => literal.to_string(),
-            None => match constants.get(*path_arg) {
-                Some(resolved) => resolved.clone(),
-                // an unresolvable path expression would silently drop a route from this guard.
-                None => panic!(
-                    "route path `{path_arg}` is neither a string literal nor a known constant in \
-                     runinator-models/src/api_routes.rs; this test cannot see the route"
-                ),
-            },
-        };
-        for verb in verbs_in(method_arg) {
-            routes.insert((verb, path.clone()));
+            let (Some(path_arg), Some(method_arg)) = (args.first(), args.get(1)) else {
+                continue;
+            };
+            // a path is either a literal or one of the shared `API_*` constants.
+            let path = match path_arg.strip_prefix('"').and_then(|p| p.strip_suffix('"')) {
+                Some(literal) => literal.to_string(),
+                None => {
+                    let name = path_arg.strip_prefix(API_ROUTES_PREFIX).unwrap_or(path_arg);
+                    match constants.get(name) {
+                        Some(resolved) => resolved.clone(),
+                        // an unresolvable path expression would silently drop a route from this guard.
+                        None => panic!(
+                            "route path `{path_arg}` in {module} is neither a string literal nor a \
+                             known constant in runinator-models/src/api_routes.rs; this test cannot \
+                             see the route"
+                        ),
+                    }
+                }
+            };
+            for verb in verbs_in(method_arg) {
+                routes.insert((verb, path.clone()));
+            }
         }
     }
     routes
@@ -319,7 +410,7 @@ fn every_route_is_documented() {
     assert!(
         missing.is_empty(),
         "these routes are served but absent from the openapi spec; add an ENDPOINT_DOCS entry in \
-         openapi.rs, or list the path in UNDOCUMENTED with a reason:\n  {}",
+         `DOCS` slice, or list the path in UNDOCUMENTED with a reason:\n  {}",
         missing.join("\n  ")
     );
 }
@@ -368,9 +459,63 @@ fn every_documented_route_exists() {
 
     assert!(
         phantom.is_empty(),
-        "these routes are documented in openapi.rs but not registered in router.rs, so callers \
+        "these routes are documented but no module registers them, so callers \
          following the spec get a 404:\n  {}",
         phantom.join("\n  ")
+    );
+}
+
+/// `ROUTER_SOURCES` names every module that registers routes.
+///
+/// registration is per-module now, so this list is the seam the whole guard hangs from: a handler
+/// module that grows a `routes()` fn without being added here would have all of its routes drop out
+/// of `registered_routes`, and `every_route_is_documented` would pass while documenting nothing.
+/// `include_str!` takes a literal, so the list cannot be globbed — it is checked instead.
+#[test]
+fn route_sources_cover_every_module() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let listed: BTreeSet<&str> = ROUTER_SOURCES.iter().map(|(module, _)| *module).collect();
+
+    let mut registrars = BTreeSet::new();
+    for entry in std::fs::read_dir(root.join("handlers")).expect("handlers dir is readable") {
+        let path = entry.expect("handler dir entry").path();
+        if path.extension().is_none_or(|ext| ext != "rs") {
+            continue;
+        }
+        let stem = path.file_stem().unwrap_or_default().to_string_lossy();
+        let source = std::fs::read_to_string(&path).expect("handler source is readable");
+        if source.contains("fn routes") {
+            registrars.insert(format!("handlers/{stem}"));
+        }
+    }
+    // the two registrars outside `handlers/`.
+    for (module, file) in [("websocket", "websocket.rs"), ("openapi", "openapi/mod.rs")] {
+        let source = std::fs::read_to_string(root.join(file)).expect("source is readable");
+        assert!(
+            source.contains("fn routes"),
+            "{module} no longer registers routes; drop it from ROUTER_SOURCES"
+        );
+        registrars.insert(module.to_string());
+    }
+
+    let unlisted: Vec<&String> = registrars
+        .iter()
+        .filter(|module| !listed.contains(module.as_str()))
+        .collect();
+    assert!(
+        unlisted.is_empty(),
+        "these modules register routes but are missing from ROUTER_SOURCES, so their routes are \
+         invisible to this guard; add an include_str! entry for each:\n  {unlisted:?}"
+    );
+
+    let stale: Vec<&str> = listed
+        .iter()
+        .filter(|module| !registrars.contains(**module))
+        .copied()
+        .collect();
+    assert!(
+        stale.is_empty(),
+        "ROUTER_SOURCES lists modules that no longer register routes: {stale:?}"
     );
 }
 

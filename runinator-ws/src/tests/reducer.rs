@@ -352,7 +352,9 @@ async fn action_failure_schedules_retry_with_backoff() {
                     "function": "execute",
                     "configuration": { "message": "hello" }
                 },
-                "retry": { "max_attempts": 3 },
+                // pinned rather than left to the model default, so the window asserted below
+                // stays meaningful if that default ever moves.
+                "retry": { "max_attempts": 3, "backoff_base_seconds": 1 },
                 "transitions": { "on_failure": { "$node": "failed" } }
             },
             { "id": "failed", "kind": "fail" },
@@ -378,11 +380,17 @@ async fn action_failure_schedules_retry_with_backoff() {
         .await
         .unwrap();
     let event = WorkflowResultEvent::status(&dispatch.command, WorkflowStatus::Failed, None, None);
+
+    // `ready_at` is `backoff` past the clock reading taken when the retry is scheduled, so bracket
+    // that moment from both sides. asserting `ready_at > Utc::now()` at the end instead gave the
+    // whole tail of the test a budget equal to the backoff itself, and a loaded machine loses it.
+    let before_schedule = chrono::Utc::now();
     crate::repository::apply_workflow_result_event(&db, &event)
         .await
         .unwrap();
 
     drain_ready_nodes(&db).await;
+    let after_schedule = chrono::Utc::now();
 
     let (updated, nodes) = crate::repository::fetch_workflow_run(&db, run.id)
         .await
@@ -400,7 +408,20 @@ async fn action_failure_schedules_retry_with_backoff() {
         .into_iter()
         .find(|ready| ready.workflow_run_id == run.id && ready.node_id == "run")
         .expect("retry ready node is pending");
-    assert!(retry_ready.ready_at > chrono::Utc::now());
+    // the backoff was applied, and applied once: a zero delay or a doubled one both fail here,
+    // where the old `> now()` check passed for any future instant at all. compared at whole-second
+    // resolution because that is what the column stores — a `ready_at` of 10.653 persists as 10 —
+    // and both bounds are derived from the same bracket, so a slow machine moves them together
+    // instead of eating into a fixed margin.
+    let backoff = chrono::Duration::seconds(1);
+    let window = (before_schedule + backoff).timestamp()..=(after_schedule + backoff).timestamp();
+    assert!(
+        window.contains(&retry_ready.ready_at.timestamp()),
+        "retry ready_at {} outside the expected backoff window [{}, {}]",
+        retry_ready.ready_at,
+        before_schedule + backoff,
+        after_schedule + backoff
+    );
     assert!(
         db.fetch_pending_action_dispatches(10)
             .await
@@ -446,13 +467,26 @@ async fn action_retry_republishes_dispatch_after_backoff() {
         .unwrap();
     drain_ready_nodes(&db).await;
 
-    // wait out the first retry backoff, then drive the retry ready node to its re-dispatch.
-    tokio::time::sleep(Duration::from_millis(1500)).await;
-    drain_ready_nodes(&db).await;
+    // wait out the first retry backoff, then drive the retry ready node to its re-dispatch. this
+    // polls rather than sleeping a flat span: a fixed sleep has to guess how much longer than the
+    // backoff the machine will need, and a loaded machine beats the guess. the deadline is what
+    // fails the test if the retry genuinely never comes due.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    let pending = loop {
+        drain_ready_nodes(&db).await;
+        let pending = db.fetch_pending_action_dispatches(10).await.unwrap();
+        if !pending.is_empty() {
+            break pending;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "retry dispatch never came due"
+        );
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    };
 
     // the retried attempt must publish a fresh outbox row; reusing the first attempt's dedupe key
     // would collide with the already-published row and park the run in `running` forever.
-    let pending = db.fetch_pending_action_dispatches(10).await.unwrap();
     assert_eq!(pending.len(), 1, "retry must enqueue a fresh dispatch");
     assert_eq!(pending[0].command.attempt, 2);
     assert_ne!(pending[0].dedupe_key, dispatch.dedupe_key);

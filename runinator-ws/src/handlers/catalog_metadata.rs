@@ -52,3 +52,12 @@ pub(crate) async fn get_trigger_kinds() -> (StatusCode, Json<ApiResponse>) {
 pub(crate) async fn get_enum_catalogs() -> (StatusCode, Json<ApiResponse>) {
     json_response(serde_json::to_value(enum_catalogs()))
 }
+
+/// the `catalog_metadata` endpoints.
+pub(crate) fn routes() -> axum::Router {
+    use axum::routing::get;
+    axum::Router::new()
+        .route("/node-kinds", get(get_node_kinds))
+        .route("/trigger-kinds", get(get_trigger_kinds))
+        .route("/catalog/enums", get(get_enum_catalogs))
+}

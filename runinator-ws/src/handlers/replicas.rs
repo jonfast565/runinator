@@ -16,6 +16,7 @@ use runinator_models::{
 };
 
 use crate::models::{ApiResponse, ReplicaQuery, ReplicaSampleQuery};
+use crate::openapi::docs::{EndpointDoc, Example, REPLICA_FILTERS, endpoint, json_body};
 use crate::repository;
 use crate::responses::{api_error, not_found};
 
@@ -155,3 +156,118 @@ fn observed_ip(headers: &HeaderMap, connect: SocketAddr) -> Option<String> {
         .map(str::to_string)
         .or_else(|| Some(connect.ip().to_string()))
 }
+
+/// the `replicas` endpoints.
+pub(crate) fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
+    use axum::Extension;
+    use axum::routing::{get, post};
+    axum::Router::new()
+        .route(
+            runinator_models::api_routes::API_REPLICAS,
+            get(get_replicas::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/replicas/register",
+            post(register_replica::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/replicas/{replica_id}/heartbeat",
+            post(heartbeat_replica::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/replicas/{replica_id}/offline",
+            post(mark_replica_offline::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/replicas/{replica_id}/providers",
+            get(get_replica_providers::<T>)
+                .post(upsert_replica_provider::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/replicas/{replica_id}/samples",
+            get(get_replica_samples::<T>).layer(Extension(pool.clone())),
+        )
+}
+
+/// the openapi entries for the routes above.
+pub(crate) const DOCS: &[EndpointDoc] = &[
+    endpoint(
+        "get",
+        "/replicas",
+        "Replicas",
+        "List service replicas",
+        "Lists registered web, worker, waker, scheduler, and other runtime replicas, optionally filtered by kind or status.",
+        false,
+        None,
+        REPLICA_FILTERS,
+        200,
+        "replicas",
+        Example::ReplicaList,
+    ),
+    endpoint(
+        "post",
+        "/replicas/register",
+        "Replicas",
+        "Register a replica",
+        "Registers a runtime replica and its advertised identity.",
+        false,
+        json_body("Replica registration record.", Example::Replica),
+        &[],
+        200,
+        "registered replica",
+        Example::Replica,
+    ),
+    endpoint(
+        "post",
+        "/replicas/{replica_id}/heartbeat",
+        "Replicas",
+        "Heartbeat a replica",
+        "Updates a replica heartbeat and status so the service can track liveness.",
+        false,
+        json_body("Replica heartbeat fields.", Example::Replica),
+        &[],
+        200,
+        "heartbeat recorded",
+        Example::Replica,
+    ),
+    endpoint(
+        "post",
+        "/replicas/{replica_id}/offline",
+        "Replicas",
+        "Mark a replica offline",
+        "Marks a registered replica offline.",
+        false,
+        None,
+        &[],
+        200,
+        "replica marked offline",
+        Example::TaskResponse,
+    ),
+    endpoint(
+        "get",
+        "/replicas/{replica_id}/providers",
+        "Replicas",
+        "List replica providers",
+        "Lists provider registrations advertised by one replica.",
+        false,
+        None,
+        &[],
+        200,
+        "replica providers",
+        Example::ProviderList,
+    ),
+    endpoint(
+        "post",
+        "/replicas/{replica_id}/providers",
+        "Replicas",
+        "Upsert a replica provider",
+        "Stores provider metadata advertised by one replica.",
+        false,
+        json_body("Replica provider registration.", Example::ReplicaProvider),
+        &[],
+        200,
+        "replica provider stored",
+        Example::ReplicaProvider,
+    ),
+];

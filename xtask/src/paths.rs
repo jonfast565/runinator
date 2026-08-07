@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 /// the workspace root, resolved from xtask's own manifest directory. xtask lives directly under
-/// the workspace root, mirroring how `$PSScriptRoot` located the root for build.ps1.
+/// the workspace root, so its manifest dir's parent is the root.
 pub fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()

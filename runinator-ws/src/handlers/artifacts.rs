@@ -14,6 +14,7 @@ use runinator_models::runs::NewRunArtifact;
 
 use crate::events::{AppEvent, AppEventKind, EventSender, emit};
 use crate::models::ApiResponse;
+use crate::openapi::docs::{EndpointDoc, Example, RequestDoc, endpoint, json_body};
 use crate::repository;
 use crate::responses::{api_error, bad_request};
 
@@ -251,3 +252,105 @@ pub(crate) async fn download_artifact<T: DatabaseImpl>(
             (StatusCode::INTERNAL_SERVER_ERROR, "response build failed").into_response()
         })
 }
+
+/// the `artifacts` endpoints.
+pub(crate) fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
+    use axum::Extension;
+    use axum::routing::{delete, get, post};
+    axum::Router::new()
+        .route(
+            "/runs/{id}/artifacts",
+            get(get_run_artifacts::<T>)
+                .post(add_run_artifact::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            runinator_models::api_routes::API_ARTIFACTS,
+            get(list_artifacts::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/artifacts/upload",
+            post(upload_artifact::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/artifacts/{id}/download",
+            get(download_artifact::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/artifacts/{id}",
+            delete(delete_artifact::<T>).layer(Extension(pool.clone())),
+        )
+}
+
+/// the openapi entries for the routes above.
+pub(crate) const DOCS: &[EndpointDoc] = &[
+    endpoint(
+        "get",
+        "/runs/{id}/artifacts",
+        "Artifacts",
+        "List task run artifacts",
+        "Lists artifacts linked to a low-level task run.",
+        false,
+        None,
+        &[],
+        200,
+        "run artifacts",
+        Example::Artifact,
+    ),
+    endpoint(
+        "post",
+        "/runs/{id}/artifacts",
+        "Artifacts",
+        "Attach a task run artifact",
+        "Registers an artifact produced by a low-level task run.",
+        false,
+        json_body("Artifact metadata to attach.", Example::Artifact),
+        &[],
+        202,
+        "run artifact attached",
+        Example::Artifact,
+    ),
+    endpoint(
+        "get",
+        "/artifacts",
+        "Artifacts",
+        "List artifacts",
+        "Lists stored artifacts across runs when permitted by the caller.",
+        false,
+        None,
+        &[],
+        200,
+        "artifacts",
+        Example::Artifact,
+    ),
+    endpoint(
+        "post",
+        "/artifacts/upload",
+        "Artifacts",
+        "Upload artifact bytes",
+        "Uploads artifact content as multipart form data and records artifact metadata.",
+        false,
+        Some(RequestDoc {
+            description: "Multipart artifact upload payload.",
+            example: Example::Artifact,
+            content_type: "multipart/form-data",
+        }),
+        &[],
+        200,
+        "artifact uploaded",
+        Example::Artifact,
+    ),
+    endpoint(
+        "get",
+        "/artifacts/{id}/download",
+        "Artifacts",
+        "Download an artifact",
+        "Downloads artifact bytes for the requested artifact id.",
+        false,
+        None,
+        &[],
+        200,
+        "artifact bytes",
+        Example::None,
+    ),
+];

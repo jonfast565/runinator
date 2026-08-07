@@ -18,6 +18,7 @@ use serde::Deserialize;
 use crate::authz;
 use crate::events::{AppEvent, AppEventKind, EventSender, emit};
 use crate::models::ApiResponse;
+use crate::openapi::docs::{EndpointDoc, Example, endpoint, json_body};
 use crate::repository;
 use crate::responses::{api_error, not_found};
 
@@ -230,3 +231,100 @@ pub(crate) async fn mark_all_notifications_read<T: DatabaseImpl>(
         Err(err) => api_error(err.to_string()),
     }
 }
+
+/// the `notifications` endpoints.
+pub(crate) fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
+    use axum::Extension;
+    use axum::routing::{delete, get, patch, post};
+    axum::Router::new()
+        .route(
+            "/notifications",
+            get(list_notifications::<T>)
+                .post(create_notification::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/notifications/{id}",
+            delete(delete_notification::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/notifications/{id}/mark_read",
+            post(mark_notification_read::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/notifications/mark_all_read",
+            post(mark_all_notifications_read::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/notifications/{id}/deliveries",
+            get(list_notification_deliveries::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/notification_policies",
+            get(list_notification_policies::<T>)
+                .post(create_notification_policy::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/notification_policies/{id}",
+            patch(update_notification_policy::<T>)
+                .delete(delete_notification_policy::<T>)
+                .layer(Extension(pool.clone())),
+        )
+}
+
+/// the openapi entries for the routes above.
+pub(crate) const DOCS: &[EndpointDoc] = &[
+    endpoint(
+        "get",
+        "/notifications",
+        "Notifications",
+        "List notifications",
+        "Lists notifications for the current principal.",
+        false,
+        None,
+        &[],
+        200,
+        "notifications",
+        Example::NotificationList,
+    ),
+    endpoint(
+        "post",
+        "/notifications",
+        "Notifications",
+        "Create a notification",
+        "Creates a notification record.",
+        false,
+        json_body("Notification payload.", Example::Notification),
+        &[],
+        200,
+        "created notification",
+        Example::Notification,
+    ),
+    endpoint(
+        "post",
+        "/notifications/{id}/mark_read",
+        "Notifications",
+        "Mark a notification read",
+        "Marks one notification as read.",
+        false,
+        None,
+        &[],
+        200,
+        "notification marked read",
+        Example::TaskResponse,
+    ),
+    endpoint(
+        "post",
+        "/notifications/mark_all_read",
+        "Notifications",
+        "Mark all notifications read",
+        "Marks all notifications visible to the caller as read.",
+        false,
+        None,
+        &[],
+        200,
+        "notifications marked read",
+        Example::TaskResponse,
+    ),
+];

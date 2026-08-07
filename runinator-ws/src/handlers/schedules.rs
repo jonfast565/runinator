@@ -137,3 +137,26 @@ pub(crate) async fn backfill_workflow_trigger<T: DatabaseImpl>(
         Err(err) => api_error(err.to_string()),
     }
 }
+
+/// the `schedules` endpoints.
+pub(crate) fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
+    use axum::Extension;
+    use axum::routing::{get, patch, post};
+    axum::Router::new()
+        .route(
+            "/freeze_windows",
+            get(list_freeze_windows::<T>)
+                .post(create_freeze_window::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/freeze_windows/{id}",
+            patch(update_freeze_window::<T>)
+                .delete(delete_freeze_window::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflow_triggers/{id}/backfill",
+            post(backfill_workflow_trigger::<T>).layer(Extension(pool.clone())),
+        )
+}

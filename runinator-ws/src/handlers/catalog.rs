@@ -10,6 +10,7 @@ use runinator_models::value::Value;
 
 use crate::handlers::providers::provider_catalog_item;
 use crate::models::{ApiResponse, CatalogQuery};
+use crate::openapi::docs::{CATALOG_FILTERS, EndpointDoc, Example, endpoint, json_body};
 use crate::repository;
 use crate::responses::{api_error, not_found};
 
@@ -79,3 +80,45 @@ fn wdl_pack_catalog_item(raw: &str) -> Result<Value, SendableError> {
         }
     }))
 }
+
+/// the `catalog` endpoints.
+pub(crate) fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
+    use axum::Extension;
+    use axum::routing::get;
+    axum::Router::new().route(
+        "/catalog/items",
+        get(get_catalog_items::<T>)
+            .post(upsert_catalog_item::<T>)
+            .layer(Extension(pool.clone())),
+    )
+}
+
+/// the openapi entries for the routes above.
+pub(crate) const DOCS: &[EndpointDoc] = &[
+    endpoint(
+        "get",
+        "/catalog/items",
+        "Catalog",
+        "List catalog items",
+        "Lists catalog entries such as provider metadata used by authoring clients.",
+        false,
+        None,
+        CATALOG_FILTERS,
+        200,
+        "catalog items",
+        Example::CatalogItem,
+    ),
+    endpoint(
+        "post",
+        "/catalog/items",
+        "Catalog",
+        "Upsert a catalog item",
+        "Creates or replaces a catalog entry.",
+        false,
+        json_body("Catalog item payload.", Example::CatalogItem),
+        &[],
+        200,
+        "catalog item stored",
+        Example::CatalogItem,
+    ),
+];

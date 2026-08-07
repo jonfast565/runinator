@@ -1,6 +1,6 @@
-//! Cross-platform replacement for the old `build.ps1`: build the workspace and start it via
-//! `runinator-supervisor`, or build+deploy the Kubernetes stack. See `README.md`'s "Run
-//! Locally"/"Kubernetes" sections for usage.
+//! Cross-platform workspace tasks: build the workspace and start it via `runinator-supervisor`, or
+//! build+deploy the Kubernetes stack. See `README.md`'s "Run Locally"/"Kubernetes" sections for
+//! usage.
 
 mod credential_tools;
 mod exec;

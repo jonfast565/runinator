@@ -139,6 +139,13 @@ Providers execute task actions; they are not schedulers, API clients, or persist
 - Keep provider resolution in `runinator-worker`.
 - Keep dynamic library loading and FFI safety wrappers in `runinator-plugin`.
 - Treat plugin ABI names (`runinator_marker`, `name`, `call_service`) as public contracts.
+- Dynamic plugins are a **host-only** capability. `deploy/Dockerfile` links statically (`+crt-static`
+  is the musl default), and a static binary has no dynamic loader, so containerized workers cannot
+  `dlopen` a `.so`; they run only the providers compiled into them. Do not add a plugin directory,
+  a `--dll-path` argument, or a plugin-staging init container to the container images or the k8s
+  manifests. `runinator-desktop-agent`, `xtask local up`, and the release bundles are the paths that
+  ship plugins. A new provider that must work in k8s has to be a compiled-in `runinator-provider-*`
+  crate, not a plugin.
 - Provider/action metadata belongs next to the executable provider: built-ins expose it through `Provider::metadata()`, and plugins expose it through the `metadata` ABI function. Do not duplicate provider metadata in workflow or provider packs.
 - For third-party integrations, look for a well-maintained client library before hand-rolling HTTP payloads and API semantics.
 - Always add a new provider as a separate crate: `runinator-provider-<name>`.
@@ -173,6 +180,38 @@ scoped, so it lives in `repository/notifications.rs` and returns `CreatedNotific
 
 When in doubt, put it in the engine — that direction is always safe, and the CRUD exemption above
 is a closed list, not a pattern to extend.
+
+### Adding an endpoint to `runinator-ws`
+
+An endpoint lives in exactly one file. Each `handlers/<domain>.rs` — plus `websocket.rs` and
+`openapi/mod.rs`, which serve their own routes — owns three things side by side: the handler fns, a
+`pub(crate) fn routes<T: DatabaseImpl>(pool: Arc<T>) -> Router` holding that domain's `.route()`
+registrations, and a `pub(crate) const DOCS: &[EndpointDoc]` holding its openapi entries. Adding an
+endpoint is one file, three additions.
+
+`router.rs` only merges those fragments and applies the middleware stack; `openapi/mod.rs` only
+concatenates the `DOCS` slices through `DOC_SETS` and enriches the generated document. Do not add a
+`.route()` call or an endpoint doc to either — they hold no per-endpoint knowledge, which is what
+keeps them ~190 and ~400 lines against 166 routes.
+
+The shared doc vocabulary stays central in `openapi/docs.rs`: the `EndpointDoc`/`RequestDoc`/
+`ParamDoc` model, the `endpoint()`/`json_body()` constructors, and the reusable query-param consts
+(`CURSOR`, `WORKFLOW_FILTERS`, …), several of which are used by more than one domain. Examples live
+in `openapi/examples.rs`, one `Example` arm plus one match arm each.
+
+Two source lints guard the layout, and both are ratchets in each direction:
+
+- `openapi/route_parity.rs` diffs the registered routes against the documented ones. Because
+  registration is now per-module, it reads `ROUTER_SOURCES` — an `include_str!` list that cannot be
+  globbed — so `route_sources_cover_every_module` reads the handler directory and fails if a module
+  with a `routes()` fn is missing from that list. A module left off would silently drop all of its
+  routes out of the parity check.
+- `handlers/store_access_tests.rs` keys on bare filenames in `src/handlers/`, so moving a handler
+  between files means updating its allowlist entry.
+
+`Router::merge` panics on a duplicate method+path, so the split cannot silently shadow a route.
+Note that path prefix does not imply owning module: `/workflows/{id}/grants` is served and
+documented by `handlers/auth.rs`, because that is where its handlers are.
 
 ## Authorization
 

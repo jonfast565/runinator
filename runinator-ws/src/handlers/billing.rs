@@ -331,3 +331,29 @@ pub(crate) fn integrate_usage(
         accrued_cents: accrued_cents.round() as u64,
     }
 }
+
+/// the `billing` endpoints.
+pub(crate) fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
+    use axum::Extension;
+    use axum::routing::{get, post};
+    axum::Router::new()
+        .route("/rate-card", get(get_rate_card))
+        .route(
+            "/orgs/{id}/nodes",
+            get(get_org_nodes::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/orgs/{id}/nodes/scale",
+            post(scale_org_nodes::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/orgs/{id}/quota",
+            get(get_org_quota::<T>)
+                .put(put_org_quota::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/orgs/{id}/usage",
+            get(get_org_usage::<T>).layer(Extension(pool.clone())),
+        )
+}

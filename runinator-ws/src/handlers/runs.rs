@@ -23,6 +23,9 @@ use crate::models::{
     WorkflowRunRequest, WorkflowRunStatusQuery, WorkflowRunStatusRequest,
     WorkflowTriggerRunRequest,
 };
+use crate::openapi::docs::{
+    CURSOR, EndpointDoc, Example, RUN_FILTERS, WORKFLOW_RUN_FILTERS, endpoint, json_body,
+};
 use crate::repository;
 use crate::responses::{api_error, bad_request, not_found};
 
@@ -774,3 +777,365 @@ fn filter_runs(
         None => runs,
     }
 }
+
+/// the `runs` endpoints.
+pub(crate) fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
+    use axum::Extension;
+    use axum::routing::{get, patch, post};
+    axum::Router::new()
+        .route(
+            "/workflow_triggers/{id}/runs",
+            post(create_workflow_trigger_run::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            runinator_models::api_routes::API_WORKFLOW_RUNS,
+            get(get_workflow_runs::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            runinator_models::api_routes::API_SCHEDULER_WORKFLOW_RUNS_CLAIM,
+            post(claim_workflow_runs_for_scheduler::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            runinator_models::api_routes::API_SCHEDULER_READY_NODES_CLAIM,
+            post(claim_ready_nodes::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            runinator_models::api_routes::API_RUNS,
+            get(get_runs::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/runs/{id}",
+            patch(update_run::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/runs/{id}/chunks",
+            get(get_run_chunks::<T>)
+                .post(append_run_chunk::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflows/{id}/runs",
+            post(create_workflow_run::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflow_runs/{id}",
+            get(get_workflow_run::<T>)
+                .patch(update_workflow_run::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/scheduler/workflow_runs/{id}/claim/renew",
+            post(renew_workflow_run_claim::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/scheduler/workflow_runs/{id}/claim/release",
+            post(release_workflow_run_claim::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/scheduler/ready_nodes/{id}/process",
+            post(process_ready_node::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflow_runs/{id}/cancel",
+            post(cancel_workflow_run::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflow_runs/{id}/pause",
+            post(pause_workflow_run::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflow_runs/{id}/resume",
+            post(resume_workflow_run::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflow_runs/{id}/signals",
+            post(deliver_signal::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflow_runs/{id}/replay",
+            post(replay_workflow_run::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflow_runs/{id}/rename",
+            post(rename_workflow_run::<T>).layer(Extension(pool.clone())),
+        )
+}
+
+/// the openapi entries for the routes above.
+pub(crate) const DOCS: &[EndpointDoc] = &[
+    endpoint(
+        "post",
+        "/workflow_triggers/{id}/runs",
+        "Workflow Runs",
+        "Start a run from a trigger",
+        "Creates a workflow run using a trigger id and the supplied parameters.",
+        false,
+        json_body("Trigger run parameters.", Example::WorkflowRunRequest),
+        &[],
+        202,
+        "workflow run accepted",
+        Example::WorkflowRun,
+    ),
+    endpoint(
+        "get",
+        "/workflow_runs",
+        "Workflow Runs",
+        "List workflow runs",
+        "Lists recent workflow runs visible to the caller, with optional filters by status, workflow id, name, or open state.",
+        false,
+        None,
+        WORKFLOW_RUN_FILTERS,
+        200,
+        "workflow runs",
+        Example::WorkflowRunList,
+    ),
+    endpoint(
+        "post",
+        "/scheduler/workflow_runs/claim",
+        "Control Plane",
+        "Claim workflow runs for scheduling",
+        "Service-control endpoint used by scheduler loops to claim runnable workflow runs with a lease.",
+        false,
+        json_body(
+            "Scheduler id, lease deadline, statuses, and limit.",
+            Example::SchedulerRunClaim,
+        ),
+        &[],
+        200,
+        "claimed workflow runs",
+        Example::WorkflowRunList,
+    ),
+    endpoint(
+        "post",
+        "/scheduler/ready_nodes/claim",
+        "Control Plane",
+        "Claim ready nodes",
+        "Service-control endpoint used by scheduler loops to claim ready workflow nodes before dispatching wakes or actions.",
+        false,
+        json_body(
+            "Scheduler id, lease deadline, and limit.",
+            Example::SchedulerReadyNodeClaim,
+        ),
+        &[],
+        200,
+        "claimed ready nodes",
+        Example::WorkflowRunList,
+    ),
+    endpoint(
+        "get",
+        "/runs",
+        "Runs",
+        "List task runs by status",
+        "Service-control endpoint that lists low-level task runs for a required status.",
+        false,
+        None,
+        RUN_FILTERS,
+        200,
+        "task runs",
+        Example::RunList,
+    ),
+    endpoint(
+        "patch",
+        "/runs/{id}",
+        "Runs",
+        "Update a task run",
+        "Service-control endpoint used by workers to update low-level task-run status and output.",
+        false,
+        json_body("Task run status update.", Example::RunStatus),
+        &[],
+        200,
+        "task run updated",
+        Example::TaskResponse,
+    ),
+    endpoint(
+        "get",
+        "/runs/{id}/chunks",
+        "Runs",
+        "List task run chunks",
+        "Service-control endpoint that returns streamed chunks for a low-level task run.",
+        false,
+        None,
+        CURSOR,
+        200,
+        "task run chunks",
+        Example::RunChunk,
+    ),
+    endpoint(
+        "post",
+        "/runs/{id}/chunks",
+        "Runs",
+        "Append a task run chunk",
+        "Service-control endpoint used by workers to append stdout, stderr, log, or structured chunks.",
+        false,
+        json_body("Run chunk to append.", Example::RunChunk),
+        &[],
+        202,
+        "task run chunk appended",
+        Example::RunChunk,
+    ),
+    endpoint(
+        "post",
+        "/workflows/{id}/runs",
+        "Workflow Runs",
+        "Start a workflow run",
+        "Creates a workflow run from a workflow definition and supplied parameters.",
+        false,
+        json_body("Workflow run parameters.", Example::WorkflowRunRequest),
+        &[],
+        202,
+        "workflow run accepted",
+        Example::WorkflowRun,
+    ),
+    endpoint(
+        "get",
+        "/workflow_runs/{id}",
+        "Workflow Runs",
+        "Get a workflow run",
+        "Fetches a workflow run plus node-run records.",
+        false,
+        None,
+        &[],
+        200,
+        "workflow run",
+        Example::WorkflowRun,
+    ),
+    endpoint(
+        "patch",
+        "/workflow_runs/{id}",
+        "Control Plane",
+        "Update a workflow run",
+        "Service-control endpoint used by runtime loops to update workflow-run status, state, and active node.",
+        false,
+        json_body("Workflow run status update.", Example::WorkflowRunStatus),
+        &[],
+        200,
+        "workflow run updated",
+        Example::TaskResponse,
+    ),
+    endpoint(
+        "post",
+        "/scheduler/workflow_runs/{id}/claim/renew",
+        "Control Plane",
+        "Renew a workflow-run claim",
+        "Renews a scheduler lease for a claimed workflow run.",
+        false,
+        json_body(
+            "Scheduler id and new lease deadline.",
+            Example::SchedulerRunLease,
+        ),
+        &[],
+        200,
+        "workflow-run claim renewed",
+        Example::TaskResponse,
+    ),
+    endpoint(
+        "post",
+        "/scheduler/workflow_runs/{id}/claim/release",
+        "Control Plane",
+        "Release a workflow-run claim",
+        "Releases a scheduler lease for a claimed workflow run.",
+        false,
+        json_body(
+            "Scheduler id releasing the claim.",
+            Example::SchedulerRunLease,
+        ),
+        &[],
+        200,
+        "workflow-run claim released",
+        Example::TaskResponse,
+    ),
+    endpoint(
+        "post",
+        "/scheduler/ready_nodes/{id}/process",
+        "Control Plane",
+        "Complete a ready-node claim",
+        "Marks a ready node processed and optionally records the next wake that should be scheduled.",
+        false,
+        json_body("Ready-node completion payload.", Example::ReadyNodeProcess),
+        &[],
+        200,
+        "ready node processed",
+        Example::TaskResponse,
+    ),
+    endpoint(
+        "post",
+        "/workflow_runs/{id}/cancel",
+        "Workflow Runs",
+        "Cancel a workflow run",
+        "Requests cancellation for a workflow run and publishes the required runtime control signals.",
+        false,
+        None,
+        &[],
+        200,
+        "workflow run cancel requested",
+        Example::TaskResponse,
+    ),
+    endpoint(
+        "post",
+        "/workflow_runs/{id}/pause",
+        "Workflow Runs",
+        "Pause a workflow run",
+        "Requests that the reducer pause a workflow run at a safe runtime boundary.",
+        false,
+        None,
+        &[],
+        200,
+        "workflow run pause requested",
+        Example::TaskResponse,
+    ),
+    endpoint(
+        "post",
+        "/workflow_runs/{id}/resume",
+        "Workflow Runs",
+        "Resume a workflow run",
+        "Requests that a paused workflow run resume execution.",
+        false,
+        None,
+        &[],
+        200,
+        "workflow run resume requested",
+        Example::TaskResponse,
+    ),
+    endpoint(
+        "post",
+        "/workflow_runs/{id}/signals",
+        "Workflow Runs",
+        "Deliver a signal to a run",
+        "Delivers an external signal payload to a parked node in one workflow run.",
+        false,
+        json_body("Signal name and payload.", Example::WebhookSignal),
+        &[],
+        200,
+        "signal delivered",
+        Example::TaskResponse,
+    ),
+    endpoint(
+        "post",
+        "/workflow_runs/{id}/replay",
+        "Workflow Runs",
+        "Replay a workflow run",
+        "Creates a replay of a workflow run, optionally starting from a specific node id.",
+        false,
+        json_body("Optional replay start node.", Example::WorkflowRunReplay),
+        &[],
+        202,
+        "workflow run replay accepted",
+        Example::WorkflowRun,
+    ),
+    endpoint(
+        "post",
+        "/workflow_runs/{id}/rename",
+        "Workflow Runs",
+        "Rename a workflow run",
+        "Sets or clears the human-readable name of a workflow run.",
+        false,
+        json_body(
+            "New workflow-run name; null clears it.",
+            Example::WorkflowRunRename,
+        ),
+        &[],
+        200,
+        "workflow run renamed",
+        Example::TaskResponse,
+    ),
+];

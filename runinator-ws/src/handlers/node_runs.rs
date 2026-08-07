@@ -15,6 +15,7 @@ use crate::models::{
     ApiResponse, WorkflowNodeRunExecutorClaimRequest, WorkflowNodeRunExecutorReleaseRequest,
     WorkflowNodeRunInputRequest, WorkflowNodeRunRequest, WorkflowNodeRunStatusRequest,
 };
+use crate::openapi::docs::{CURSOR, EndpointDoc, Example, endpoint, json_body};
 use crate::repository;
 use crate::responses::api_error;
 
@@ -345,3 +346,188 @@ pub(crate) async fn add_workflow_node_run_artifact<T: DatabaseImpl>(
         Err(err) => api_error(err.to_string()),
     }
 }
+
+/// the `node_runs` endpoints.
+pub(crate) fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
+    use axum::Extension;
+    use axum::routing::{get, patch, post};
+    axum::Router::new()
+        .route(
+            "/workflow_runs/{id}/nodes",
+            post(create_workflow_node_run::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflow_node_runs/{id}/claim",
+            post(claim_workflow_node_run_executor::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflow_node_runs/{id}/release",
+            post(release_workflow_node_run_executor::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflow_node_runs/{id}",
+            patch(update_workflow_node_run::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflow_node_runs/{id}/input",
+            post(resolve_workflow_input::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflow_node_runs/{id}/chunks",
+            get(get_workflow_node_run_chunks::<T>)
+                .post(append_workflow_node_run_chunk::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflow_node_runs/{id}/artifacts",
+            get(get_workflow_node_run_artifacts::<T>)
+                .post(add_workflow_node_run_artifact::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflow_runs/{id}/artifacts",
+            get(get_workflow_run_artifacts::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflow_runs/{id}/transitions",
+            get(get_workflow_run_transitions::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflows/{id}/nodes/{node_id}/transitions",
+            get(get_workflow_node_transitions::<T>).layer(Extension(pool.clone())),
+        )
+}
+
+/// the openapi entries for the routes above.
+pub(crate) const DOCS: &[EndpointDoc] = &[
+    endpoint(
+        "post",
+        "/workflow_runs/{id}/nodes",
+        "Control Plane",
+        "Create a workflow node run",
+        "Service-control endpoint used by the reducer to create a node-run record.",
+        false,
+        json_body("Node-run creation payload.", Example::NodeRun),
+        &[],
+        200,
+        "workflow node run",
+        Example::NodeRun,
+    ),
+    endpoint(
+        "post",
+        "/workflow_node_runs/{id}/claim",
+        "Control Plane",
+        "Claim a node run for execution",
+        "Worker-control endpoint used to claim a node run before executing the provider action.",
+        false,
+        json_body("Executor claim payload.", Example::NodeRunClaim),
+        &[],
+        200,
+        "node run claimed",
+        Example::NodeRun,
+    ),
+    endpoint(
+        "post",
+        "/workflow_node_runs/{id}/release",
+        "Control Plane",
+        "Release a node-run claim",
+        "Worker-control endpoint used to release a node-run execution claim.",
+        false,
+        json_body("Executor release payload.", Example::NodeRunRelease),
+        &[],
+        200,
+        "node-run claim released",
+        Example::TaskResponse,
+    ),
+    endpoint(
+        "patch",
+        "/workflow_node_runs/{id}",
+        "Control Plane",
+        "Update a workflow node run",
+        "Worker-control endpoint used to update node-run status, attempt, parameters, output, state, or message.",
+        false,
+        json_body("Node-run status update.", Example::NodeRunStatus),
+        &[],
+        200,
+        "node run updated",
+        Example::NodeRun,
+    ),
+    endpoint(
+        "post",
+        "/workflow_node_runs/{id}/input",
+        "Control Plane",
+        "Resolve a node-run input",
+        "Records a human or external input resolution for a node run waiting on input.",
+        false,
+        json_body("Resolved input payload.", Example::NodeRunInput),
+        &[],
+        200,
+        "node-run input resolved",
+        Example::NodeRun,
+    ),
+    endpoint(
+        "get",
+        "/workflow_node_runs/{id}/chunks",
+        "Control Plane",
+        "List node-run chunks",
+        "Returns streamed chunks for a workflow node run.",
+        false,
+        None,
+        CURSOR,
+        200,
+        "node-run chunks",
+        Example::RunChunk,
+    ),
+    endpoint(
+        "post",
+        "/workflow_node_runs/{id}/chunks",
+        "Control Plane",
+        "Append a node-run chunk",
+        "Appends stdout, stderr, log, or structured chunks for a workflow node run.",
+        false,
+        json_body("Node-run chunk to append.", Example::RunChunk),
+        &[],
+        202,
+        "node-run chunk appended",
+        Example::RunChunk,
+    ),
+    endpoint(
+        "get",
+        "/workflow_node_runs/{id}/artifacts",
+        "Artifacts",
+        "List node-run artifacts",
+        "Lists artifacts attached to one workflow node run.",
+        false,
+        None,
+        &[],
+        200,
+        "node-run artifacts",
+        Example::Artifact,
+    ),
+    endpoint(
+        "post",
+        "/workflow_node_runs/{id}/artifacts",
+        "Artifacts",
+        "Attach a node-run artifact",
+        "Registers an artifact produced by one workflow node run.",
+        false,
+        json_body("Artifact metadata to attach.", Example::Artifact),
+        &[],
+        202,
+        "node-run artifact attached",
+        Example::Artifact,
+    ),
+    endpoint(
+        "get",
+        "/workflow_runs/{id}/artifacts",
+        "Workflow Runs",
+        "List workflow run artifacts",
+        "Lists artifacts declared by output nodes in one workflow run.",
+        false,
+        None,
+        &[],
+        200,
+        "workflow run artifacts",
+        Example::ArtifactList,
+    ),
+];

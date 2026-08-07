@@ -405,3 +405,59 @@ async fn pipeline_org<T: DatabaseImpl>(
         _ => fallback,
     }
 }
+
+/// the `pipelines` endpoints.
+pub(crate) fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
+    use axum::Extension;
+    use axum::routing::{get, patch, post};
+    axum::Router::new()
+        .route(
+            runinator_models::api_routes::API_PIPELINES,
+            get(get_pipelines::<T>)
+                .post(create_pipeline::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/pipelines/{id}",
+            get(get_pipeline::<T>)
+                .patch(update_pipeline::<T>)
+                .delete(delete_pipeline::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/pipelines/{id}/owner",
+            patch(set_pipeline_owner::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/pipelines/{id}/triggers",
+            get(get_pipeline_triggers::<T>)
+                .post(upsert_pipeline_trigger::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/pipeline_triggers/{id}",
+            patch(update_pipeline_trigger::<T>)
+                .delete(delete_pipeline_trigger::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/pipeline_triggers/{id}/runs",
+            post(create_pipeline_trigger_run::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/pipelines/{id}/runs",
+            post(create_pipeline_run::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/pipeline_runs",
+            get(get_pipeline_runs::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/pipeline_runs/{id}",
+            get(get_pipeline_run::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/pipeline_runs/{id}/cancel",
+            post(cancel_pipeline_run::<T>).layer(Extension(pool.clone())),
+        )
+}

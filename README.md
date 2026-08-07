@@ -293,10 +293,10 @@ cargo run -p runinator-supervisor -- logs --watch --lines 40
 
 ## Cross-platform Local Run (xtask)
 
-`xtask` is a plain Rust binary (`cargo run -p xtask -- <subcommand>`) that replaces the
-old PowerShell `build.ps1` — it builds the workspace and starts the same local stack,
-against the same checked-in `runinator-supervisor.json` that `bash scripts/run-local.sh`
-uses, identically on Windows, macOS, or Linux, with no PowerShell or Bash dependency:
+`xtask` is a plain Rust binary (`cargo run -p xtask -- <subcommand>`) that builds the
+workspace and starts the local stack against the same checked-in
+`runinator-supervisor.json` that `bash scripts/run-local.sh` uses, identically on Windows,
+macOS, or Linux, with no PowerShell or Bash dependency:
 
 ```bash
 cargo run -p xtask -- local up
@@ -704,7 +704,34 @@ deploy/k8s/
 
 The K8s stack uses **Postgres** in-cluster (StatefulSet + PVC) and **RabbitMQ**
 as the broker (via the `rabbitmq` Cargo feature, baked into the ws/waker/
-worker images). The standalone `runinator-broker` binary is not deployed in K8s.
+worker images). The standalone `runinator-broker` binary is not deployed in K8s;
+it is built as `deploy/Dockerfile --target broker` for the single-host
+`deploy/docker-compose.yml` topology, which swaps RabbitMQ for the broker's
+built-in tcp transport.
+
+### Container images and plugins
+
+Every rust service is one `--target` of the shared `deploy/Dockerfile`, so the
+whole dependency graph compiles once for the entire set:
+
+```bash
+for t in ws background waker worker archiver ctl bootstrap broker; do
+  docker build -f deploy/Dockerfile --target "$t" -t "runinator-$t:dev" .
+done
+```
+
+`cargo run -p xtask -- k8s deploy` does this for you and pushes when
+`--image-repository` is set. The builder mounts cargo's registry, git checkouts,
+and the workspace `target/` as BuildKit caches, so an image rebuild after a
+source edit is an *incremental* cargo build rather than a cold one. That syntax
+requires BuildKit; xtask sets `DOCKER_BUILDKIT=1` on every invocation.
+
+Image binaries are **statically linked** (`+crt-static` is the musl default).
+A static binary has no dynamic loader, so containerized workers cannot `dlopen`
+a `.so` and ship no plugin directory — they run only the providers compiled into
+them. Dynamic plugins are a host capability and are unaffected: `cargo run -p
+xtask -- local up` still stages the console plugin into `~/.runinator/plugins/`,
+and `runinator-desktop-agent` still loads plugins normally.
 
 Schema is applied by the `runinator-bootstrap` image, which runs the embedded
 SQL bootstrap from `runinator-database/migrations/` and can also seed the first

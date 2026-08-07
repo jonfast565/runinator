@@ -1,7 +1,7 @@
-//! orchestrates a kustomize-based apply/delete against a running cluster, mirroring build.ps1's
-//! `Deploy-KubernetesStack`: renders image overrides into a disposable overlay copy, preserves
-//! already-running postgres/rabbitmq state unless asked to recreate it, cleans up resources that
-//! were superseded by earlier renames, and waits for rollouts + the pack-import job.
+//! orchestrates a kustomize-based apply/delete against a running cluster: renders image overrides
+//! into a disposable overlay copy, preserves already-running postgres/rabbitmq state unless asked
+//! to recreate it, cleans up resources that were superseded by earlier renames, and waits for
+//! rollouts + the pack-import job.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

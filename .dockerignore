@@ -1,8 +1,16 @@
-# Ignore build outputs and tooling artefacts when sending Docker contexts
-target
+# Docker build context for deploy/Dockerfile. The builder compiles from source inside the image, so
+# the context only needs the cargo workspace, the packs the ctl stage bakes in, and tools/.
+# Everything below is a build output or an editor/VCS artefact that no image stage reads. Keeping
+# them out matters: runinator-command-center/node_modules alone is ~150MB that would otherwise be
+# hashed and shipped on every one of the per-target builds.
+#
+# Note that runinator-command-center/src-tauri is NOT excluded: it is a cargo workspace member, so
+# its manifest has to be present for the workspace to resolve even though no stage builds it.
+
+# build outputs
 **/target
-!target/linux-artifacts
-!target/linux-artifacts/**
+**/dist
+**/node_modules
 
 # VCS and local tooling
 .git
@@ -10,5 +18,10 @@ target
 .github
 .vscode
 .idea
+.claude
 .clj-kondo
 .lsp
+**/.DS_Store
+
+# local runtime state
+.runinator-supervisor

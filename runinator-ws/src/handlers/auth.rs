@@ -28,6 +28,7 @@ use crate::models::{
     ApiError, ApiResponse, AuthConfigResponseSchema, LoginRequestSchema, LoginResponseSchema,
     RefreshRequestSchema,
 };
+use crate::openapi::docs::{EndpointDoc, Example, endpoint, json_body};
 use crate::responses::{api_error, not_found, task_response_success};
 
 type Reply = (StatusCode, Json<ApiResponse>);
@@ -789,3 +790,417 @@ pub(crate) async fn remove_team_member<T: DatabaseImpl>(
         Err(err) => api_error(err.to_string()),
     }
 }
+
+/// the `auth` endpoints.
+pub(crate) fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
+    use axum::Extension;
+    use axum::routing::{delete, get, patch, post};
+    axum::Router::new()
+        .route("/auth/config", get(auth_config))
+        .route(
+            "/auth/login",
+            post(login::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/auth/refresh",
+            post(refresh::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/auth/logout",
+            post(logout::<T>).layer(Extension(pool.clone())),
+        )
+        .route("/auth/me", get(me::<T>).layer(Extension(pool.clone())))
+        .route(
+            "/users",
+            get(list_users::<T>)
+                .post(create_user::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/users/{id}",
+            patch(update_user::<T>)
+                .delete(delete_user::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/users/{id}/teams",
+            get(list_user_teams::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/api_keys",
+            get(list_api_keys::<T>)
+                .post(create_api_key::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/api_keys/{id}",
+            patch(update_api_key::<T>)
+                .delete(revoke_api_key::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/api_keys/{id}/rotate",
+            post(rotate_api_key::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflows/{id}/grants",
+            get(list_workflow_grants::<T>)
+                .post(create_workflow_grant::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflows/{id}/grants/{grant_id}",
+            delete(revoke_workflow_grant::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/teams",
+            get(list_teams::<T>)
+                .post(create_team::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/teams/{id}",
+            patch(update_team::<T>)
+                .delete(delete_team::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/teams/{id}/members",
+            get(list_team_members::<T>)
+                .post(add_team_member::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/teams/{id}/members/{user_id}",
+            delete(remove_team_member::<T>).layer(Extension(pool.clone())),
+        )
+}
+
+/// the openapi entries for the routes above.
+pub(crate) const DOCS: &[EndpointDoc] = &[
+    endpoint(
+        "get",
+        "/auth/config",
+        "Auth",
+        "Read auth configuration",
+        "Public endpoint that tells clients whether authentication is enabled.",
+        true,
+        None,
+        &[],
+        200,
+        "auth configuration",
+        Example::AuthConfig,
+    ),
+    endpoint(
+        "post",
+        "/auth/login",
+        "Auth",
+        "Log in",
+        "Exchanges a local username and password for an access token and refresh token.",
+        true,
+        json_body("Username and password.", Example::LoginRequest),
+        &[],
+        200,
+        "token pair",
+        Example::LoginResponse,
+    ),
+    endpoint(
+        "post",
+        "/auth/refresh",
+        "Auth",
+        "Refresh a session",
+        "Rotates a refresh token and returns a new access token, refresh token, and user record.",
+        true,
+        json_body("Refresh token to rotate.", Example::RefreshRequest),
+        &[],
+        200,
+        "rotated token pair",
+        Example::LoginResponse,
+    ),
+    endpoint(
+        "post",
+        "/auth/logout",
+        "Auth",
+        "Log out",
+        "Revokes a refresh token. The response is successful even if the token is already gone.",
+        false,
+        json_body("Refresh token to revoke.", Example::RefreshRequest),
+        &[],
+        200,
+        "refresh session revoked",
+        Example::TaskResponse,
+    ),
+    endpoint(
+        "get",
+        "/auth/me",
+        "Auth",
+        "Get current principal",
+        "Returns the current authenticated user, or a service principal marker for service API keys.",
+        false,
+        None,
+        &[],
+        200,
+        "current principal",
+        Example::User,
+    ),
+    endpoint(
+        "get",
+        "/users",
+        "Auth",
+        "List users",
+        "Admin endpoint that lists local users.",
+        false,
+        None,
+        &[],
+        200,
+        "users",
+        Example::UserList,
+    ),
+    endpoint(
+        "post",
+        "/users",
+        "Auth",
+        "Create a user",
+        "Admin endpoint that creates a local user and password credential.",
+        false,
+        json_body("User creation payload.", Example::User),
+        &[],
+        200,
+        "created user",
+        Example::User,
+    ),
+    endpoint(
+        "patch",
+        "/users/{id}",
+        "Auth",
+        "Update a user",
+        "Admin endpoint that updates user flags, email, or password.",
+        false,
+        json_body("User update payload.", Example::User),
+        &[],
+        200,
+        "updated user",
+        Example::User,
+    ),
+    endpoint(
+        "delete",
+        "/users/{id}",
+        "Auth",
+        "Delete a user",
+        "Admin endpoint that deletes a local user unless it is the last enabled admin.",
+        false,
+        None,
+        &[],
+        200,
+        "user deleted",
+        Example::TaskResponse,
+    ),
+    endpoint(
+        "get",
+        "/users/{id}/teams",
+        "Auth",
+        "List user teams",
+        "Admin endpoint that lists the teams a user belongs to.",
+        false,
+        None,
+        &[],
+        200,
+        "user teams",
+        Example::Team,
+    ),
+    endpoint(
+        "get",
+        "/api_keys",
+        "Auth",
+        "List API keys",
+        "Lists API keys visible to the caller. Admins see all keys; users see their own keys.",
+        false,
+        None,
+        &[],
+        200,
+        "api keys",
+        Example::ApiKeyList,
+    ),
+    endpoint(
+        "post",
+        "/api_keys",
+        "Auth",
+        "Create an API key",
+        "Creates a personal or, for admins, service API key and returns the secret once.",
+        false,
+        json_body("API key creation payload.", Example::ApiKey),
+        &[],
+        200,
+        "created api key and secret",
+        Example::ApiKey,
+    ),
+    endpoint(
+        "delete",
+        "/api_keys/{id}",
+        "Auth",
+        "Revoke an API key",
+        "Admin endpoint that revokes an API key.",
+        false,
+        None,
+        &[],
+        200,
+        "api key revoked",
+        Example::TaskResponse,
+    ),
+    endpoint(
+        "patch",
+        "/api_keys/{id}",
+        "Auth",
+        "Update an API key",
+        "Admin endpoint that updates API key metadata such as name, expiry, or disabled state.",
+        false,
+        json_body("API key update payload.", Example::ApiKey),
+        &[],
+        200,
+        "updated api key",
+        Example::ApiKeyList,
+    ),
+    endpoint(
+        "post",
+        "/api_keys/{id}/rotate",
+        "Auth",
+        "Rotate an API key",
+        "Admin endpoint that disables an API key and returns a replacement secret once.",
+        false,
+        None,
+        &[],
+        200,
+        "rotated api key and secret",
+        Example::ApiKey,
+    ),
+    endpoint(
+        "get",
+        "/workflows/{id}/grants",
+        "Auth",
+        "List workflow grants",
+        "Lists sharing grants for one workflow. Owner or admin access is required.",
+        false,
+        None,
+        &[],
+        200,
+        "workflow grants",
+        Example::Grant,
+    ),
+    endpoint(
+        "post",
+        "/workflows/{id}/grants",
+        "Auth",
+        "Create a workflow grant",
+        "Creates a sharing grant for one workflow. Owner or admin access is required.",
+        false,
+        json_body("Workflow grant payload.", Example::Grant),
+        &[],
+        200,
+        "workflow grant created",
+        Example::Grant,
+    ),
+    endpoint(
+        "delete",
+        "/workflows/{id}/grants/{grant_id}",
+        "Auth",
+        "Revoke a workflow grant",
+        "Revokes a sharing grant for one workflow. Owner or admin access is required.",
+        false,
+        None,
+        &[],
+        200,
+        "workflow grant revoked",
+        Example::TaskResponse,
+    ),
+    endpoint(
+        "get",
+        "/teams",
+        "Auth",
+        "List teams",
+        "Admin endpoint that lists teams.",
+        false,
+        None,
+        &[],
+        200,
+        "teams",
+        Example::Team,
+    ),
+    endpoint(
+        "post",
+        "/teams",
+        "Auth",
+        "Create a team",
+        "Admin endpoint that creates a team.",
+        false,
+        json_body("Team creation payload.", Example::Team),
+        &[],
+        200,
+        "team created",
+        Example::Team,
+    ),
+    endpoint(
+        "delete",
+        "/teams/{id}",
+        "Auth",
+        "Delete a team",
+        "Admin endpoint that deletes a team.",
+        false,
+        None,
+        &[],
+        200,
+        "team deleted",
+        Example::TaskResponse,
+    ),
+    endpoint(
+        "patch",
+        "/teams/{id}",
+        "Auth",
+        "Update a team",
+        "Admin endpoint that renames a team.",
+        false,
+        json_body("Team update payload.", Example::Team),
+        &[],
+        200,
+        "team updated",
+        Example::Team,
+    ),
+    endpoint(
+        "get",
+        "/teams/{id}/members",
+        "Auth",
+        "List team members",
+        "Admin endpoint that lists users assigned to a team.",
+        false,
+        None,
+        &[],
+        200,
+        "team members",
+        Example::UserList,
+    ),
+    endpoint(
+        "post",
+        "/teams/{id}/members",
+        "Auth",
+        "Add a team member",
+        "Admin endpoint that adds a user to a team.",
+        false,
+        json_body("Team member payload.", Example::Team),
+        &[],
+        200,
+        "member added",
+        Example::TaskResponse,
+    ),
+    endpoint(
+        "delete",
+        "/teams/{id}/members/{user_id}",
+        "Auth",
+        "Remove a team member",
+        "Admin endpoint that removes a user from a team.",
+        false,
+        None,
+        &[],
+        200,
+        "member removed",
+        Example::TaskResponse,
+    ),
+];

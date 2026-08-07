@@ -14,6 +14,7 @@ use runinator_models::{
 use runinator_utilities::secret_cipher::SecretCipher;
 
 use crate::models::{ApiResponse, CredentialPutRequest, CredentialQuery};
+use crate::openapi::docs::{CREDENTIAL_QUERY, EndpointDoc, Example, endpoint, json_body};
 use crate::responses::{api_error, bad_request, not_found};
 use crate::settings::{decode_config_schema, decode_config_value, validate_and_encode};
 
@@ -377,3 +378,94 @@ pub(crate) async fn delete_credential<T: DatabaseImpl>(
         Err(err) => api_error(err.to_string()),
     }
 }
+
+/// the `credentials` endpoints.
+pub(crate) fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
+    use axum::Extension;
+    use axum::routing::{get, post};
+    axum::Router::new()
+        .route(
+            "/credentials",
+            get(get_credential::<T>)
+                .post(put_credential::<T>)
+                .delete(delete_credential::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/credentials/import",
+            post(import_secret_bundle::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/credentials/reencrypt",
+            post(reencrypt_settings::<T>).layer(Extension(pool.clone())),
+        )
+}
+
+/// the openapi entries for the routes above.
+pub(crate) const DOCS: &[EndpointDoc] = &[
+    endpoint(
+        "get",
+        "/credentials",
+        "Credentials",
+        "Get credentials or config",
+        "Fetches a credential/config entry or lists entries by scope/kind. Secret values remain protected by the credential store behavior.",
+        false,
+        None,
+        CREDENTIAL_QUERY,
+        200,
+        "credential metadata",
+        Example::Credential,
+    ),
+    endpoint(
+        "post",
+        "/credentials",
+        "Credentials",
+        "Store a credential or config value",
+        "Stores a secret or typed config value. Config values carry or infer a JSON schema pinned for future updates.",
+        false,
+        json_body("Credential or config value.", Example::Credential),
+        &[],
+        200,
+        "credential stored",
+        Example::Credential,
+    ),
+    endpoint(
+        "delete",
+        "/credentials",
+        "Credentials",
+        "Delete a credential or config value",
+        "Deletes a secret or config setting selected by query parameters.",
+        false,
+        None,
+        CREDENTIAL_QUERY,
+        200,
+        "credential deleted",
+        Example::TaskResponse,
+    ),
+    endpoint(
+        "post",
+        "/credentials/import",
+        "Credentials",
+        "Import a secret bundle",
+        "Imports secret/config entries from a compiled pack secret bundle.",
+        false,
+        json_body("Secret bundle to import.", Example::SecretBundle),
+        &[],
+        200,
+        "secret bundle imported",
+        Example::SecretBundle,
+    ),
+    endpoint(
+        "post",
+        "/credentials/reencrypt",
+        "Credentials",
+        "Re-encrypt stored settings",
+        "Re-encrypts stored secrets/config values after credential-store rotation.",
+        false,
+        None,
+        &[],
+        200,
+        "settings re-encrypted",
+        Example::TaskResponse,
+    ),
+];

@@ -128,6 +128,10 @@
                       {{ wf.name }}
                     </option>
                   </select>
+                  <button class="btn btn-primary" :disabled="starting" @click="startRun">
+                    <Icon name="runs" />
+                    <span>Run</span>
+                  </button>
                   <button class="btn" @click="openDefaults">
                     <Icon name="settings" />
                     <span>Defaults</span>
@@ -282,6 +286,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from "vue";
 import { usePipelineStore } from "../adapters/pinia/pipeline";
+import { usePipelineRunsStore } from "../adapters/pinia/pipeline-runs";
 import { useWorkflowsStore } from "../adapters/pinia/workflows";
 import { useAppStore } from "../adapters/pinia/app";
 import { useOrgsStore } from "../adapters/pinia/orgs";
@@ -299,6 +304,7 @@ import PipelineCanvas from "../components/pipeline/PipelineCanvas.vue";
 import PipelineDefaultsEditor from "../components/pipeline/PipelineDefaultsEditor.vue";
 
 const pipeline = usePipelineStore();
+const pipelineRuns = usePipelineRunsStore();
 const workflows = useWorkflowsStore();
 const app = useAppStore();
 const orgs = useOrgsStore();
@@ -346,6 +352,7 @@ const nameModal = reactive({
   description: "",
 });
 const defaultsModalOpen = ref(false);
+const starting = ref(false);
 
 function choosePipeline(item: Pipeline) {
   if (item.id === pipeline.selectedPipelineId) {
@@ -412,6 +419,27 @@ async function submitNameModal() {
   }
 
   nameModal.open = false;
+}
+
+// start the selected pipeline and hand off to the pipeline-runs monitor with the new run selected.
+async function startRun() {
+  const current = selectedPipeline.value;
+
+  if (!current?.id || starting.value) {
+    return;
+  }
+
+  starting.value = true;
+
+  try {
+    await pipelineRuns.startRun(current.id);
+    app.activeTab = "PipelineRuns";
+    app.setStatus(`Started ${current.name}`);
+  } catch (error) {
+    app.setError(error instanceof Error ? error.message : String(error));
+  } finally {
+    starting.value = false;
+  }
 }
 
 function openDefaults() {

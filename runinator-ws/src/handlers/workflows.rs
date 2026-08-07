@@ -22,6 +22,9 @@ use serde::Deserialize;
 use crate::authz;
 use crate::events::{EventSender, emit_workflows_changed};
 use crate::models::ApiResponse;
+use crate::openapi::docs::{
+    EndpointDoc, Example, WORKFLOW_FILTERS, WORKFLOW_IMPORT_HEADERS, endpoint, json_body,
+};
 use crate::repository;
 use crate::responses::{api_error, bad_request, not_found, validation_error};
 
@@ -516,3 +519,200 @@ pub(crate) async fn delete_workflow<T: DatabaseImpl>(
         Err(err) => api_error(err.to_string()),
     }
 }
+
+/// the `workflows` endpoints.
+pub(crate) fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
+    use axum::Extension;
+    use axum::routing::{get, patch, post};
+    axum::Router::new()
+        .route(
+            runinator_models::api_routes::API_WORKFLOWS,
+            get(get_workflows::<T>)
+                .post(upsert_workflow::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            runinator_models::api_routes::API_WORKFLOWS_VALIDATE,
+            post(validate_workflow::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            runinator_models::api_routes::API_WORKFLOWS_SIMULATE,
+            post(simulate_workflow::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            runinator_models::api_routes::API_WORKFLOWS_IMPORT,
+            post(import_workflow_bundle::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            runinator_models::api_routes::API_WORKFLOWS_EXPORT,
+            get(export_workflow_bundle::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflows/{id}",
+            get(get_workflow::<T>)
+                .patch(upsert_workflow::<T>)
+                .delete(delete_workflow::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflows/{id}/export",
+            get(export_single_workflow_bundle::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflows/{id}/duplicate",
+            post(duplicate_workflow::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflows/{id}/revisions",
+            get(get_workflow_revisions::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflows/{id}/revisions/{revision}",
+            get(get_workflow_revision::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflows/{id}/revisions/{revision}/restore",
+            post(restore_workflow_revision::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflows/{id}/owner",
+            patch(set_workflow_owner::<T>).layer(Extension(pool.clone())),
+        )
+}
+
+/// the openapi entries for the routes above.
+pub(crate) const DOCS: &[EndpointDoc] = &[
+    endpoint(
+        "get",
+        "/workflows",
+        "Workflows",
+        "List workflow definitions",
+        "Lists workflow definitions visible to the caller. Supplying `name` returns the matching workflow instead of the full list.",
+        false,
+        None,
+        WORKFLOW_FILTERS,
+        200,
+        "workflow definitions",
+        Example::WorkflowList,
+    ),
+    endpoint(
+        "post",
+        "/workflows",
+        "Workflows",
+        "Create or replace a workflow",
+        "Stores a workflow definition. New workflows are owned by the creator; updating an existing workflow requires edit access.",
+        false,
+        json_body(
+            "Workflow definition to create or replace.",
+            Example::Workflow,
+        ),
+        &[],
+        200,
+        "stored workflow definition",
+        Example::Workflow,
+    ),
+    endpoint(
+        "post",
+        "/workflows/validate",
+        "Workflows",
+        "Validate a workflow definition",
+        "Validates a workflow against graph, typing, provider, and config rules without saving it.",
+        false,
+        json_body("Workflow definition to validate.", Example::Workflow),
+        &[],
+        200,
+        "validated workflow definition",
+        Example::Workflow,
+    ),
+    endpoint(
+        "post",
+        "/workflows/import",
+        "Packs",
+        "Import a raw workflow bundle",
+        "Legacy JSON bundle import. This is intentionally guarded because raw JSON can bypass WDL well-formedness constraints.",
+        false,
+        json_body("Raw workflow bundle JSON.", Example::WorkflowBundle),
+        WORKFLOW_IMPORT_HEADERS,
+        200,
+        "imported workflow bundle",
+        Example::WorkflowBundle,
+    ),
+    endpoint(
+        "get",
+        "/workflows/export",
+        "Packs",
+        "Export visible workflows",
+        "Exports the caller's visible workflow definitions and triggers as a JSON workflow bundle.",
+        false,
+        None,
+        &[],
+        200,
+        "workflow bundle",
+        Example::WorkflowBundle,
+    ),
+    endpoint(
+        "get",
+        "/workflows/{id}",
+        "Workflows",
+        "Get a workflow",
+        "Fetches one workflow definition by id if the caller has view access.",
+        false,
+        None,
+        &[],
+        200,
+        "workflow definition",
+        Example::Workflow,
+    ),
+    endpoint(
+        "patch",
+        "/workflows/{id}",
+        "Workflows",
+        "Update a workflow",
+        "Replaces the stored workflow definition for the id in the path. The request body should carry the full workflow definition.",
+        false,
+        json_body("Workflow definition to store.", Example::Workflow),
+        &[],
+        200,
+        "updated workflow definition",
+        Example::Workflow,
+    ),
+    endpoint(
+        "delete",
+        "/workflows/{id}",
+        "Workflows",
+        "Delete a workflow",
+        "Deletes a workflow definition. The caller must have edit access.",
+        false,
+        None,
+        &[],
+        200,
+        "workflow deleted",
+        Example::TaskResponse,
+    ),
+    endpoint(
+        "get",
+        "/workflows/{id}/export",
+        "Packs",
+        "Export one workflow",
+        "Exports one workflow definition and its triggers as a JSON workflow bundle.",
+        false,
+        None,
+        &[],
+        200,
+        "workflow bundle",
+        Example::WorkflowBundle,
+    ),
+    endpoint(
+        "post",
+        "/workflows/{id}/duplicate",
+        "Workflows",
+        "Duplicate a workflow",
+        "Creates a copy of a workflow. The optional `bump` query in the model controls version bump behavior.",
+        false,
+        None,
+        &[],
+        200,
+        "duplicated workflow",
+        Example::Workflow,
+    ),
+];

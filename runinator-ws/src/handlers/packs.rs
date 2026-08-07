@@ -21,6 +21,7 @@ use crate::handlers::workflows::{
     json_workflow_import_risk_acknowledged, json_workflow_import_risk_required,
 };
 use crate::models::ApiResponse;
+use crate::openapi::docs::{EndpointDoc, Example, PACK_IMPORT_PARAMS, RequestDoc, endpoint};
 use crate::repository;
 use crate::responses::{api_error, bad_request};
 
@@ -189,3 +190,32 @@ fn is_json_content_type(headers: &HeaderMap) -> bool {
                 .is_some_and(|kind| kind.trim() == "application/json")
         })
 }
+
+/// the `packs` endpoints.
+pub(crate) fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
+    use axum::Extension;
+    use axum::routing::post;
+    axum::Router::new().route(
+        runinator_models::api_routes::API_PACKS_IMPORT,
+        post(import_pack::<T>).layer(Extension(pool.clone())),
+    )
+}
+
+/// the openapi entries for the routes above.
+pub(crate) const DOCS: &[EndpointDoc] = &[endpoint(
+    "post",
+    "/packs/import",
+    "Packs",
+    "Import a compiled pack zip",
+    "Imports a compiled `.wdlm`/pack zip containing `workflows.json` and optional `secrets.json`. The backend reads compiled JSON only; it does not compile WDL.",
+    false,
+    Some(RequestDoc {
+        description: "Compiled pack zip, or JSON in compatibility mode.",
+        example: Example::WorkflowBundle,
+        content_type: "application/zip",
+    }),
+    PACK_IMPORT_PARAMS,
+    200,
+    "pack import result",
+    Example::WorkflowBundle,
+)];

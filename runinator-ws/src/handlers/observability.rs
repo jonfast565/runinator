@@ -66,3 +66,18 @@ pub(crate) async fn get_audit_log<T: DatabaseImpl>(
         Err(err) => api_error(err.to_string()),
     }
 }
+
+/// the `observability` endpoints.
+pub(crate) fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
+    use axum::Extension;
+    use axum::routing::get;
+    axum::Router::new()
+        .route(
+            "/dead_letters",
+            get(get_dead_letters::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/audit_log",
+            get(get_audit_log::<T>).layer(Extension(pool.clone())),
+        )
+}

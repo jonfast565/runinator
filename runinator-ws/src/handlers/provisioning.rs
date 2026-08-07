@@ -93,3 +93,13 @@ pub(crate) async fn stop_node(
         Err(err) => api_error(err.to_string()),
     }
 }
+
+/// the `provisioning` endpoints.
+pub(crate) fn routes() -> axum::Router {
+    use axum::routing::{get, post};
+    axum::Router::new()
+        .route("/nodes/backends", get(get_node_backends))
+        .route("/nodes", get(get_nodes))
+        .route("/nodes/scale", post(scale_nodes))
+        .route("/nodes/stop", post(stop_node))
+}

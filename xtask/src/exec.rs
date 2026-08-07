@@ -1,5 +1,5 @@
-//! subprocess helpers, mirroring build.ps1's `Invoke-ExternalCommand`/`Invoke-Kubectl` family but
-//! without a shell dependency: every call goes straight through `std::process::Command`.
+//! subprocess helpers with no shell dependency: every call goes straight through
+//! `std::process::Command`.
 
 use std::io::Write;
 use std::path::Path;
@@ -96,8 +96,8 @@ pub fn run_with_stdin(program: &str, args: &[&str], cwd: &Path, stdin_data: &str
     Ok(())
 }
 
-/// runs `f`, logging (but not propagating) any error. mirrors build.ps1's best-effort
-/// `try { ... } catch { Write-Warning ... }` cleanup/diagnostic steps.
+/// runs `f`, logging (but not propagating) any error. for best-effort cleanup and diagnostic steps
+/// that must not fail the surrounding command.
 pub fn warn_on_err(context: &str, f: impl FnOnce() -> Result<()>) {
     if let Err(err) = f() {
         eprintln!("warning: {context}: {err:#}");

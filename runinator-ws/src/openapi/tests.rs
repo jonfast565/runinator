@@ -1,4 +1,4 @@
-use super::{ENDPOINT_DOCS, openapi_document};
+use super::{endpoint_docs, openapi_document};
 
 #[test]
 fn document_builds_and_serializes() {
@@ -119,7 +119,7 @@ fn pack_import_docs_cover_zip_and_json_inputs() {
 #[test]
 fn every_cataloged_route_has_operation_text_and_curl_sample() {
     let json = openapi_document();
-    for doc in ENDPOINT_DOCS {
+    for doc in endpoint_docs() {
         let operation = &json["paths"][doc.path][doc.method];
         assert!(operation.is_object(), "missing {} {}", doc.method, doc.path);
         assert!(

@@ -8,6 +8,7 @@ use crate::events::{
     AppEvent, AppEventKind, EventSender, emit, emit_workflow_run, nudge_wake_publisher,
 };
 use crate::models::{ApiResponse, WebhookSignalRequest, WebhookWakeRequest};
+use crate::openapi::docs::{EndpointDoc, Example, endpoint, json_body};
 use crate::repository;
 use crate::responses::{api_error, not_found, task_response_success};
 use crate::websocket::merge_json;
@@ -113,3 +114,48 @@ pub(crate) async fn webhook_signal<T: DatabaseImpl>(
         Err(err) => api_error(err.to_string()),
     }
 }
+
+/// the `webhook` endpoints.
+pub(crate) fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
+    use axum::Extension;
+    use axum::routing::post;
+    axum::Router::new()
+        .route(
+            "/webhooks/wake",
+            post(webhook_wake::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/webhooks/signal",
+            post(webhook_signal::<T>).layer(Extension(pool.clone())),
+        )
+}
+
+/// the openapi entries for the routes above.
+pub(crate) const DOCS: &[EndpointDoc] = &[
+    endpoint(
+        "post",
+        "/webhooks/wake",
+        "Webhooks",
+        "Drive a waiting run by webhook",
+        "External webhook ingress that wakes or updates a parked workflow node by run id.",
+        false,
+        json_body("Webhook wake payload.", Example::WebhookWake),
+        &[],
+        202,
+        "webhook accepted",
+        Example::TaskResponse,
+    ),
+    endpoint(
+        "post",
+        "/webhooks/signal",
+        "Webhooks",
+        "Deliver a signal by correlation key",
+        "External webhook ingress that routes a signal to a parked node by business correlation key.",
+        false,
+        json_body("Webhook signal payload.", Example::WebhookSignal),
+        &[],
+        202,
+        "signal accepted",
+        Example::TaskResponse,
+    ),
+];

@@ -325,3 +325,43 @@ async fn guard_last_owner<T: DatabaseImpl>(
     }
     Ok(())
 }
+
+/// the `orgs` endpoints.
+pub(crate) fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
+    use axum::Extension;
+    use axum::routing::{get, patch, post};
+    axum::Router::new()
+        .route(
+            "/auth/switch-org",
+            post(switch_org::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/orgs",
+            get(list_orgs::<T>)
+                .post(create_org::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/orgs/me",
+            get(list_my_orgs::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/orgs/{id}",
+            get(get_org::<T>)
+                .patch(update_org::<T>)
+                .delete(delete_org::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/orgs/{id}/members",
+            get(list_org_members::<T>)
+                .post(add_org_member::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/orgs/{id}/members/{user_id}",
+            patch(update_org_member::<T>)
+                .delete(remove_org_member::<T>)
+                .layer(Extension(pool.clone())),
+        )
+}

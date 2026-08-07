@@ -18,6 +18,9 @@ use crate::models::{
     ApiResponse, ApprovalResolutionRequest, AutomationRecordQuery, GateQuery,
     GateResolutionRequest, IdempotencyRequest,
 };
+use crate::openapi::docs::{
+    AUTOMATION_FILTERS, EndpointDoc, Example, GATE_FILTERS, IDEMPOTENCY_QUERY, endpoint, json_body,
+};
 use crate::repository;
 use crate::responses::{api_error, not_found};
 
@@ -501,3 +504,277 @@ async fn filter_records<T: DatabaseImpl>(
     }
     Ok(filtered)
 }
+
+/// the `automation` endpoints.
+pub(crate) fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
+    use axum::Extension;
+    use axum::routing::{delete, get, post};
+    axum::Router::new()
+        .route(
+            "/external_items",
+            get(get_external_items::<T>)
+                .post(create_external_item::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/gates",
+            get(get_gates::<T>)
+                .post(create_gate::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/gates/{id}",
+            get(get_gate::<T>)
+                .delete(delete_gate::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/gates/{id}/open",
+            post(open_gate::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/gates/{id}/close",
+            post(close_gate::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/automation_events",
+            get(get_automation_events::<T>)
+                .post(create_automation_event::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/automation_events/{id}",
+            delete(delete_automation_event::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/approvals",
+            get(get_approvals::<T>)
+                .post(create_approval::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/approvals/{id}/approve",
+            post(approve_request::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/approvals/{id}/reject",
+            post(reject_request::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/idempotency_keys",
+            get(get_idempotency_key::<T>)
+                .post(put_idempotency_key::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/idempotency_keys/claim",
+            post(claim_idempotency_key::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/idempotency_keys/complete",
+            post(complete_idempotency_key::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/idempotency_keys/release",
+            post(release_idempotency_key::<T>).layer(Extension(pool.clone())),
+        )
+}
+
+/// the openapi entries for the routes above.
+pub(crate) const DOCS: &[EndpointDoc] = &[
+    endpoint(
+        "get",
+        "/external_items",
+        "Automation",
+        "List external items",
+        "Lists external automation records, optionally filtered by workflow run or linked item.",
+        false,
+        None,
+        AUTOMATION_FILTERS,
+        200,
+        "external items",
+        Example::AutomationRecord,
+    ),
+    endpoint(
+        "post",
+        "/external_items",
+        "Automation",
+        "Create an external item",
+        "Creates an external automation record. Service credentials or admin privileges are required.",
+        false,
+        json_body("External item record.", Example::AutomationRecord),
+        &[],
+        202,
+        "external item created",
+        Example::AutomationRecord,
+    ),
+    endpoint(
+        "get",
+        "/gates",
+        "Automation",
+        "List gates",
+        "Lists gate records, optionally filtered by workflow run or status.",
+        false,
+        None,
+        GATE_FILTERS,
+        200,
+        "gates",
+        Example::AutomationRecord,
+    ),
+    endpoint(
+        "post",
+        "/gates",
+        "Automation",
+        "Create a gate",
+        "Creates a gate automation record. Service credentials or admin privileges are required.",
+        false,
+        json_body("Gate record.", Example::AutomationRecord),
+        &[],
+        202,
+        "gate created",
+        Example::AutomationRecord,
+    ),
+    endpoint(
+        "get",
+        "/gates/{id}",
+        "Automation",
+        "Get a gate",
+        "Fetches one gate record by id if the caller can view the owning workflow.",
+        false,
+        None,
+        &[],
+        200,
+        "gate",
+        Example::AutomationRecord,
+    ),
+    endpoint(
+        "post",
+        "/gates/{id}/open",
+        "Automation",
+        "Open a gate",
+        "Resolves a gate as open and unblocks any reducer path waiting on it.",
+        false,
+        json_body("Gate resolution metadata.", Example::GateResolution),
+        &[],
+        200,
+        "gate opened",
+        Example::AutomationRecord,
+    ),
+    endpoint(
+        "post",
+        "/gates/{id}/close",
+        "Automation",
+        "Close a gate",
+        "Resolves a gate as closed and unblocks any reducer path waiting on it.",
+        false,
+        json_body("Gate resolution metadata.", Example::GateResolution),
+        &[],
+        200,
+        "gate closed",
+        Example::AutomationRecord,
+    ),
+    endpoint(
+        "get",
+        "/automation_events",
+        "Automation",
+        "List automation events",
+        "Lists generic automation event records.",
+        false,
+        None,
+        AUTOMATION_FILTERS,
+        200,
+        "automation events",
+        Example::AutomationRecord,
+    ),
+    endpoint(
+        "post",
+        "/automation_events",
+        "Automation",
+        "Create an automation event",
+        "Creates a generic automation event record. Service credentials or admin privileges are required.",
+        false,
+        json_body("Automation event record.", Example::AutomationRecord),
+        &[],
+        202,
+        "automation event created",
+        Example::AutomationRecord,
+    ),
+    endpoint(
+        "get",
+        "/approvals",
+        "Automation",
+        "List approval requests",
+        "Lists approval request records, optionally filtered by workflow run or linked item.",
+        false,
+        None,
+        AUTOMATION_FILTERS,
+        200,
+        "approval requests",
+        Example::AutomationRecord,
+    ),
+    endpoint(
+        "post",
+        "/approvals",
+        "Automation",
+        "Create an approval request",
+        "Creates an approval request record. Service credentials or admin privileges are required.",
+        false,
+        json_body("Approval request record.", Example::AutomationRecord),
+        &[],
+        202,
+        "approval request created",
+        Example::AutomationRecord,
+    ),
+    endpoint(
+        "post",
+        "/approvals/{id}/approve",
+        "Automation",
+        "Approve a request",
+        "Resolves an approval request as approved and stores optional output.",
+        false,
+        json_body("Approval resolution payload.", Example::ApprovalResolution),
+        &[],
+        200,
+        "approval request approved",
+        Example::AutomationRecord,
+    ),
+    endpoint(
+        "post",
+        "/approvals/{id}/reject",
+        "Automation",
+        "Reject a request",
+        "Resolves an approval request as rejected and stores optional output.",
+        false,
+        json_body("Approval resolution payload.", Example::ApprovalResolution),
+        &[],
+        200,
+        "approval request rejected",
+        Example::AutomationRecord,
+    ),
+    endpoint(
+        "get",
+        "/idempotency_keys",
+        "Control Plane",
+        "Get an idempotency key",
+        "Fetches a stored idempotency result by scope and key. Service credentials or admin privileges are required.",
+        false,
+        None,
+        IDEMPOTENCY_QUERY,
+        200,
+        "idempotency result",
+        Example::Idempotency,
+    ),
+    endpoint(
+        "post",
+        "/idempotency_keys",
+        "Control Plane",
+        "Put an idempotency key",
+        "Stores an idempotency result for later duplicate-request suppression.",
+        false,
+        json_body("Idempotency scope, key, and result.", Example::Idempotency),
+        &[],
+        200,
+        "idempotency key stored",
+        Example::Idempotency,
+    ),
+];

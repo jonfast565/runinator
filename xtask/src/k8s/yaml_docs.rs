@@ -1,7 +1,7 @@
-//! multi-document k8s yaml handling, replacing build.ps1's regex-based `Get-K8sRenderedYamlDocuments`
-//! family with real yaml parsing (`kubectl kustomize` output is machine-rendered, so round-tripping
-//! it through `serde_yaml` is safe — unlike hand-maintained `kustomization.yaml` files, which
-//! [`super::kustomize`] edits with text surgery instead, to preserve comments/formatting).
+//! multi-document k8s yaml handling. `kubectl kustomize` output is machine-rendered, so
+//! round-tripping it through `serde_yaml` is safe — unlike hand-maintained `kustomization.yaml`
+//! files, which [`super::kustomize`] edits with text surgery instead, to preserve
+//! comments/formatting.
 
 use anyhow::Result;
 use serde::Deserialize;

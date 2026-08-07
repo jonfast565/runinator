@@ -9,6 +9,7 @@ use serde::Serialize;
 use std::sync::Arc;
 use utoipa::ToSchema;
 
+use crate::openapi::docs::{EndpointDoc, Example, endpoint};
 use crate::stability;
 
 #[derive(Serialize, ToSchema)]
@@ -90,3 +91,43 @@ pub(crate) async fn ready<T: DatabaseImpl>(
         }),
     )
 }
+
+/// the `health` endpoints.
+pub(crate) fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
+    use axum::Extension;
+    use axum::routing::get;
+    axum::Router::new()
+        .route("/health", get(health))
+        .route("/metrics", get(metrics))
+        .route("/ready", get(ready::<T>).layer(Extension(pool.clone())))
+}
+
+/// the openapi entries for the routes above.
+pub(crate) const DOCS: &[EndpointDoc] = &[
+    endpoint(
+        "get",
+        "/health",
+        "Meta",
+        "Check service health",
+        "Returns a lightweight liveness response. This endpoint is public and does not touch the database.",
+        true,
+        None,
+        &[],
+        200,
+        "service is alive",
+        Example::Health,
+    ),
+    endpoint(
+        "get",
+        "/ready",
+        "Meta",
+        "Check service readiness",
+        "Verifies that the web service can answer readiness checks, including database-dependent readiness.",
+        true,
+        None,
+        &[],
+        200,
+        "service is ready",
+        Example::Ready,
+    ),
+];

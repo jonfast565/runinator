@@ -12,6 +12,7 @@ use runinator_models::web::TaskResponse;
 use runinator_models::{auth::AuthContext, orchestration::ActionDispatchClaimRequest};
 use serde::Deserialize;
 
+use crate::openapi::docs::{EndpointDoc, Example, endpoint, json_body};
 use crate::repository;
 use crate::responses::api_error;
 
@@ -105,3 +106,99 @@ fn success(message: impl Into<String>) -> TaskResponse {
         message: message.into(),
     }
 }
+
+/// the `action_dispatches` endpoints.
+pub(crate) fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
+    use axum::Extension;
+    use axum::routing::{get, post};
+    axum::Router::new()
+        .route(
+            runinator_models::api_routes::API_SCHEDULER_ACTION_DISPATCHES,
+            post(enqueue_action_dispatch::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            runinator_models::api_routes::API_SCHEDULER_ACTION_DISPATCHES_PENDING,
+            get(pending_action_dispatches::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            runinator_models::api_routes::API_SCHEDULER_ACTION_DISPATCHES_CLAIM,
+            post(claim_action_dispatches::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/scheduler/action_dispatches/{id}/published",
+            post(mark_action_dispatch_published::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/scheduler/action_dispatches/{id}/failed",
+            post(mark_action_dispatch_failed::<T>).layer(Extension(pool.clone())),
+        )
+}
+
+/// the openapi entries for the routes above.
+pub(crate) const DOCS: &[EndpointDoc] = &[
+    endpoint(
+        "post",
+        "/scheduler/action_dispatches",
+        "Control Plane",
+        "Enqueue an action dispatch",
+        "Durable outbox endpoint for scheduling an action command that a worker will execute.",
+        false,
+        json_body("Action dispatch record.", Example::ActionDispatch),
+        &[],
+        200,
+        "action dispatch queued",
+        Example::ActionDispatch,
+    ),
+    endpoint(
+        "get",
+        "/scheduler/action_dispatches/pending",
+        "Control Plane",
+        "List pending action dispatches",
+        "Lists action dispatches waiting to be published to the broker action channel.",
+        false,
+        None,
+        &[],
+        200,
+        "pending action dispatches",
+        Example::ActionDispatchList,
+    ),
+    endpoint(
+        "post",
+        "/scheduler/action_dispatches/claim",
+        "Control Plane",
+        "Claim action dispatches",
+        "Claims pending action dispatches for the action publisher loop.",
+        false,
+        json_body("Claim owner and limit.", Example::ActionDispatch),
+        &[],
+        200,
+        "claimed action dispatches",
+        Example::ActionDispatchList,
+    ),
+    endpoint(
+        "post",
+        "/scheduler/action_dispatches/{id}/published",
+        "Control Plane",
+        "Mark action dispatch published",
+        "Marks an action dispatch as successfully published to the broker.",
+        false,
+        None,
+        &[],
+        200,
+        "action dispatch marked published",
+        Example::TaskResponse,
+    ),
+    endpoint(
+        "post",
+        "/scheduler/action_dispatches/{id}/failed",
+        "Control Plane",
+        "Mark action dispatch failed",
+        "Records a publish failure for an action dispatch.",
+        false,
+        json_body("Failure detail.", Example::ActionDispatch),
+        &[],
+        200,
+        "action dispatch marked failed",
+        Example::TaskResponse,
+    ),
+];

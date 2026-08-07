@@ -12,15 +12,13 @@
 # For an end-to-end build and deploy, prefer:
 #   cargo run -p xtask -- k8s deploy
 #
-# Manual local images use the overlay's default dev tag. all rust services share
+# Manual local images use the overlay's default dev tag. All rust services share
 # deploy/Dockerfile and are selected with --target; BuildKit caches the common
 # builder stage so the cargo compile runs once for the whole set:
-#   docker build -f deploy/Dockerfile --target ws        -t runinator-ws:dev        .
-#   docker build -f deploy/Dockerfile --target waker     -t runinator-waker:dev     .
-#   docker build -f deploy/Dockerfile --target worker    -t runinator-worker:dev    .
-#   docker build -f deploy/Dockerfile --target archiver  -t runinator-archiver:dev  .
-#   docker build -f deploy/Dockerfile --target ctl       -t runinator-ctl:dev       .
-#   docker build -f deploy/Dockerfile --target bootstrap -t runinator-bootstrap:dev .
+#   for t in ws background waker worker archiver ctl bootstrap; do
+#     docker build -f deploy/Dockerfile --target "$t" -t "runinator-$t:dev" .
+#   done
+# (`ctl` produces runinator-ctl:dev; `background` produces runinator-background:dev.)
 
 set -euo pipefail
 

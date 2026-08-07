@@ -25,6 +25,7 @@ use tokio::sync::broadcast;
 use crate::authz;
 use crate::events::{AppEventKind, EventSender};
 use crate::models;
+use crate::openapi::docs::{EndpointDoc, Example, endpoint};
 use crate::repository;
 
 pub(crate) async fn send_json<T: Serialize>(
@@ -475,3 +476,83 @@ async fn refuse_unowned_replica<T: DatabaseImpl>(
         }),
     }
 }
+
+/// the websocket upgrade endpoints.
+pub(crate) fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
+    use axum::Extension;
+    use axum::routing::get;
+    axum::Router::new()
+        .route("/ws/events", get(ws_events))
+        .route(
+            "/ws/workflow-runs/{id}",
+            get(ws_workflow_run::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/ws/run-stream/{id}",
+            get(ws_run_stream::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/ws/workflow-node-runs/{id}/stream",
+            get(ws_workflow_node_run_stream::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/ws/desktop-worker",
+            get(ws_desktop_worker::<T>).layer(Extension(pool.clone())),
+        )
+}
+
+/// the openapi entries for the routes above.
+pub(crate) const DOCS: &[EndpointDoc] = &[
+    endpoint(
+        "get",
+        "/ws/events",
+        "WebSockets",
+        "Subscribe to UI events",
+        "Upgrades to a websocket stream of fan-out UI events emitted by this web-service replica.",
+        false,
+        None,
+        &[],
+        101,
+        "websocket upgrade accepted",
+        Example::None,
+    ),
+    endpoint(
+        "get",
+        "/ws/workflow-runs/{id}",
+        "WebSockets",
+        "Subscribe to one workflow run",
+        "Upgrades to a websocket stream for workflow-run changes and node activity for one run.",
+        false,
+        None,
+        &[],
+        101,
+        "websocket upgrade accepted",
+        Example::None,
+    ),
+    endpoint(
+        "get",
+        "/ws/run-stream/{id}",
+        "WebSockets",
+        "Subscribe to task run output",
+        "Upgrades to a websocket stream for chunks emitted by one low-level task run.",
+        false,
+        None,
+        &[],
+        101,
+        "websocket upgrade accepted",
+        Example::None,
+    ),
+    endpoint(
+        "get",
+        "/ws/workflow-node-runs/{id}/stream",
+        "WebSockets",
+        "Subscribe to node-run output",
+        "Upgrades to a websocket stream for chunks emitted by one workflow node run.",
+        false,
+        None,
+        &[],
+        101,
+        "websocket upgrade accepted",
+        Example::None,
+    ),
+];

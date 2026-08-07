@@ -1,8 +1,13 @@
 # Workers run as a plain Deployment: they are stateless broker competing-consumers with no
-# persistent volumes (the plugins dir is an emptyDir repopulated by the init container each start),
-# and broker ack/redelivery handles failover regardless of pod identity. The pod name is still folded
-# into a deterministic worker id (Uuid::new_v5) so a pod keeps a coherent replica identity for its
-# lifetime; the ws replica reaper marks gone pods offline and purges long-stale rows.
+# persistent volumes, and broker ack/redelivery handles failover regardless of pod identity. The pod
+# name is still folded into a deterministic worker id (Uuid::new_v5) so a pod keeps a coherent
+# replica identity for its lifetime; the ws replica reaper marks gone pods offline and purges
+# long-stale rows.
+#
+# There is no plugin staging here. deploy/Dockerfile links the worker statically, so it has no
+# dynamic loader and cannot dlopen a .so; container workers run only the providers compiled into
+# them. Dynamic plugins remain a host/desktop-agent capability (see runinator-desktop-agent and
+# `cargo run -p xtask -- local up`).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -18,25 +23,12 @@ spec:
       labels:
         app: runinator-worker
     spec:
-      initContainers:
-        - name: plugin-stage
-          image: runinator-worker:dev
-          imagePullPolicy: IfNotPresent
-          command:
-            - sh
-            - -c
-            - "cp -R /home/runinator/.runinator/plugins/. /opt/runinator/plugins/"
-          volumeMounts:
-            - name: plugins
-              mountPath: /opt/runinator/plugins
       containers:
         - name: worker
           image: runinator-worker:dev
           imagePullPolicy: IfNotPresent
           command: ["runinator-worker"]
           args:
-            - "--dll-path"
-            - "/opt/runinator/plugins"
             - "--broker-backend"
             - "rabbitmq"
             - "--broker-endpoint"
@@ -64,10 +56,6 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
-          volumeMounts:
-            - name: plugins
-              mountPath: /opt/runinator/plugins
-              readOnly: true
           livenessProbe:
             exec:
               command:
@@ -85,6 +73,3 @@ spec:
             limits:
               cpu: "1000m"
               memory: "1Gi"
-      volumes:
-        - name: plugins
-          emptyDir: {}
