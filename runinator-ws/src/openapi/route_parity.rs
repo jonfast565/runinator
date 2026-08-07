@@ -11,89 +11,134 @@
 //! both sources of truth as text and diffs them. it is a lint over the source, and it costs nothing
 //! at runtime.
 //!
-//! registration is spread across one `routes()` fn per handler module, so the "source" side is
-//! [`ROUTER_SOURCES`] rather than a single file. that list is itself a thing that can rot — a module
-//! missing from it would drop its routes out of this guard entirely — so
-//! [`route_sources_cover_every_module`] reads the handler directory and fails if one is unlisted.
+//! registration is spread across one `routes()` fn per handler module — and those modules now live
+//! in three sibling crates — so the "source" side is [`ROUTER_SOURCES`] rather than a single file.
+//! that list is itself a thing that can rot — a module missing from it would drop its routes out of
+//! this guard entirely — so [`route_sources_cover_every_module`] reads every handler directory in
+//! [`HANDLER_CRATES`] and fails if one is unlisted.
+//!
+//! this is the one place that still sees the whole surface at once: the split put each domain's
+//! routes and docs in its own crate, and nothing there can tell whether the *merged* router matches
+//! the *merged* spec. that is why the guard stays here, reaching across crate boundaries by path,
+//! rather than being cut into three per-crate lints that each check only their own slice.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::openapi_document;
 
+use crate::{HANDLER_CRATES, workspace_root};
+
 /// every module that registers routes, as `(module path, source)`.
 ///
-/// `include_str!` cannot be globbed, so this is written out; `route_sources_cover_every_module`
-/// checks it against the directory rather than trusting it.
+/// `include_str!` cannot be globbed and cannot reach a crate by name, so the handler entries are
+/// written out as relative paths into the sibling crates; `route_sources_cover_every_module` checks
+/// the list against those directories rather than trusting it.
 const ROUTER_SOURCES: &[(&str, &str)] = &[
     ("websocket", include_str!("../websocket.rs")),
     ("openapi", include_str!("mod.rs")),
     (
-        "handlers/action_dispatches",
-        include_str!("../handlers/action_dispatches.rs"),
+        "runinator-ws-identity/handlers/auth",
+        include_str!("../../../runinator-ws-identity/src/handlers/auth.rs"),
     ),
     (
-        "handlers/artifacts",
-        include_str!("../handlers/artifacts.rs"),
-    ),
-    ("handlers/auth", include_str!("../handlers/auth.rs")),
-    (
-        "handlers/automation",
-        include_str!("../handlers/automation.rs"),
-    ),
-    ("handlers/billing", include_str!("../handlers/billing.rs")),
-    ("handlers/catalog", include_str!("../handlers/catalog.rs")),
-    (
-        "handlers/catalog_metadata",
-        include_str!("../handlers/catalog_metadata.rs"),
+        "runinator-ws-identity/handlers/billing",
+        include_str!("../../../runinator-ws-identity/src/handlers/billing.rs"),
     ),
     (
-        "handlers/credentials",
-        include_str!("../handlers/credentials.rs"),
-    ),
-    ("handlers/debug", include_str!("../handlers/debug.rs")),
-    ("handlers/health", include_str!("../handlers/health.rs")),
-    (
-        "handlers/node_runs",
-        include_str!("../handlers/node_runs.rs"),
+        "runinator-ws-identity/handlers/orgs",
+        include_str!("../../../runinator-ws-identity/src/handlers/orgs.rs"),
     ),
     (
-        "handlers/notifications",
-        include_str!("../handlers/notifications.rs"),
+        "runinator-ws-authoring/handlers/catalog",
+        include_str!("../../../runinator-ws-authoring/src/handlers/catalog.rs"),
     ),
     (
-        "handlers/observability",
-        include_str!("../handlers/observability.rs"),
-    ),
-    ("handlers/orgs", include_str!("../handlers/orgs.rs")),
-    ("handlers/packs", include_str!("../handlers/packs.rs")),
-    (
-        "handlers/pipelines",
-        include_str!("../handlers/pipelines.rs"),
+        "runinator-ws-authoring/handlers/credentials",
+        include_str!("../../../runinator-ws-authoring/src/handlers/credentials.rs"),
     ),
     (
-        "handlers/providers",
-        include_str!("../handlers/providers.rs"),
+        "runinator-ws-authoring/handlers/packs",
+        include_str!("../../../runinator-ws-authoring/src/handlers/packs.rs"),
     ),
     (
-        "handlers/provisioning",
-        include_str!("../handlers/provisioning.rs"),
-    ),
-    ("handlers/replicas", include_str!("../handlers/replicas.rs")),
-    ("handlers/runs", include_str!("../handlers/runs.rs")),
-    (
-        "handlers/schedules",
-        include_str!("../handlers/schedules.rs"),
+        "runinator-ws-authoring/handlers/pipelines",
+        include_str!("../../../runinator-ws-authoring/src/handlers/pipelines.rs"),
     ),
     (
-        "handlers/supervisor",
-        include_str!("../handlers/supervisor.rs"),
+        "runinator-ws-authoring/handlers/providers",
+        include_str!("../../../runinator-ws-authoring/src/handlers/providers.rs"),
     ),
-    ("handlers/triggers", include_str!("../handlers/triggers.rs")),
-    ("handlers/wdl", include_str!("../handlers/wdl.rs")),
-    ("handlers/webhook", include_str!("../handlers/webhook.rs")),
     (
-        "handlers/workflows",
-        include_str!("../handlers/workflows.rs"),
+        "runinator-ws-authoring/handlers/wdl",
+        include_str!("../../../runinator-ws-authoring/src/handlers/wdl.rs"),
+    ),
+    (
+        "runinator-ws-authoring/handlers/workflows",
+        include_str!("../../../runinator-ws-authoring/src/handlers/workflows.rs"),
+    ),
+    (
+        "runinator-ws-runtime/handlers/action_dispatches",
+        include_str!("../../../runinator-ws-runtime/src/handlers/action_dispatches.rs"),
+    ),
+    (
+        "runinator-ws-runtime/handlers/artifacts",
+        include_str!("../../../runinator-ws-runtime/src/handlers/artifacts.rs"),
+    ),
+    (
+        "runinator-ws-runtime/handlers/automation",
+        include_str!("../../../runinator-ws-runtime/src/handlers/automation.rs"),
+    ),
+    (
+        "runinator-ws-runtime/handlers/catalog_metadata",
+        include_str!("../../../runinator-ws-runtime/src/handlers/catalog_metadata.rs"),
+    ),
+    (
+        "runinator-ws-runtime/handlers/debug",
+        include_str!("../../../runinator-ws-runtime/src/handlers/debug.rs"),
+    ),
+    (
+        "runinator-ws-runtime/handlers/health",
+        include_str!("../../../runinator-ws-runtime/src/handlers/health.rs"),
+    ),
+    (
+        "runinator-ws-runtime/handlers/node_runs",
+        include_str!("../../../runinator-ws-runtime/src/handlers/node_runs.rs"),
+    ),
+    (
+        "runinator-ws-runtime/handlers/notifications",
+        include_str!("../../../runinator-ws-runtime/src/handlers/notifications.rs"),
+    ),
+    (
+        "runinator-ws-runtime/handlers/observability",
+        include_str!("../../../runinator-ws-runtime/src/handlers/observability.rs"),
+    ),
+    (
+        "runinator-ws-runtime/handlers/provisioning",
+        include_str!("../../../runinator-ws-runtime/src/handlers/provisioning.rs"),
+    ),
+    (
+        "runinator-ws-runtime/handlers/replicas",
+        include_str!("../../../runinator-ws-runtime/src/handlers/replicas.rs"),
+    ),
+    (
+        "runinator-ws-runtime/handlers/runs",
+        include_str!("../../../runinator-ws-runtime/src/handlers/runs.rs"),
+    ),
+    (
+        "runinator-ws-runtime/handlers/schedules",
+        include_str!("../../../runinator-ws-runtime/src/handlers/schedules.rs"),
+    ),
+    (
+        "runinator-ws-runtime/handlers/supervisor",
+        include_str!("../../../runinator-ws-runtime/src/handlers/supervisor.rs"),
+    ),
+    (
+        "runinator-ws-runtime/handlers/triggers",
+        include_str!("../../../runinator-ws-runtime/src/handlers/triggers.rs"),
+    ),
+    (
+        "runinator-ws-runtime/handlers/webhook",
+        include_str!("../../../runinator-ws-runtime/src/handlers/webhook.rs"),
     ),
 ];
 
@@ -474,18 +519,24 @@ fn every_documented_route_exists() {
 #[test]
 fn route_sources_cover_every_module() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let workspace = workspace_root();
     let listed: BTreeSet<&str> = ROUTER_SOURCES.iter().map(|(module, _)| *module).collect();
 
     let mut registrars = BTreeSet::new();
-    for entry in std::fs::read_dir(root.join("handlers")).expect("handlers dir is readable") {
-        let path = entry.expect("handler dir entry").path();
-        if path.extension().is_none_or(|ext| ext != "rs") {
-            continue;
-        }
-        let stem = path.file_stem().unwrap_or_default().to_string_lossy();
-        let source = std::fs::read_to_string(&path).expect("handler source is readable");
-        if source.contains("fn routes") {
-            registrars.insert(format!("handlers/{stem}"));
+    for crate_name in HANDLER_CRATES {
+        let dir = workspace.join(crate_name).join("src").join("handlers");
+        for entry in std::fs::read_dir(&dir)
+            .unwrap_or_else(|err| panic!("{crate_name} handlers dir is readable: {err}"))
+        {
+            let path = entry.expect("handler dir entry").path();
+            if path.extension().is_none_or(|ext| ext != "rs") {
+                continue;
+            }
+            let stem = path.file_stem().unwrap_or_default().to_string_lossy();
+            let source = std::fs::read_to_string(&path).expect("handler source is readable");
+            if source.contains("fn routes") {
+                registrars.insert(format!("{crate_name}/handlers/{stem}"));
+            }
         }
     }
     // the two registrars outside `handlers/`.

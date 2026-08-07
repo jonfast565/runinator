@@ -30,6 +30,11 @@ opentelemetry = "0.32"
 
 runinator-auth = { path = "../runinator-auth" }
 runinator-broker = { path = "../runinator-broker" }
+runinator-ws-core = { path = "../runinator-ws-core" }
+runinator-ws-middleware = { path = "../runinator-ws-middleware" }
+runinator-ws-identity = { path = "../runinator-ws-identity" }
+runinator-ws-authoring = { path = "../runinator-ws-authoring" }
+runinator-ws-runtime = { path = "../runinator-ws-runtime" }
 runinator-engine = { path = "../runinator-engine" }
 runinator-reducer = { path = "../runinator-reducer" }
 runinator-database = { path = "../runinator-database" }

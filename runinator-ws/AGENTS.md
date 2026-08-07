@@ -6,12 +6,22 @@ Guidance for agents working in `runinator-ws`.
 
 `runinator-ws` owns HTTP/WebSocket transport, authentication/authorization, discovery, and API response mapping. Durable orchestration and background loops live in `runinator-engine`; state-machine transitions live in `runinator-reducer`. The web service hosts the engine by default but must not duplicate its implementation. It should not depend on worker, waker, provider, or plugin internals.
 
+This crate is the **assembly** layer. The surface itself lives in five sibling crates —
+`runinator-ws-core` (wire types, responses, events, openapi vocabulary), `runinator-ws-middleware`
+(auth, authz, rate limiting, overload), and `runinator-ws-{identity,authoring,runtime}` (the handler
+modules). See the root `AGENTS.md` section "The web service crates" for the layering and for which
+crate a new endpoint belongs in.
+
 ## Where To Start
 
-- HTTP routes and handler wiring: `src/router.rs`, `src/handlers/`.
+- Route merging and the middleware stack: `src/router.rs`.
+- Handlers: `../runinator-ws-{identity,authoring,runtime}/src/handlers/`; they call the engine
+  repository facade directly, and `src/lib.rs` re-exports them at `crate::handlers::<domain>` for the
+  openapi `paths(...)` table and the test suite.
 - Engine startup/hosting: `src/server.rs`; shared engine implementation: `../runinator-engine/src/`.
 - Workflow reducer and node behavior: `../runinator-reducer/src/orchestration/`.
-- API handlers: `src/handlers/`; handlers call the engine repository facade re-exported in `src/lib.rs`.
+- The two source lints over the merged surface: `src/openapi/route_parity.rs` and
+  `src/store_access_tests.rs`; both read `HANDLER_CRATES` in `src/lib.rs`.
 - Workflow definitions/import/export: `../runinator-engine/src/repository/definitions.rs`.
 - Ready-node driving, action dispatch publishing, wake publishing, and run queries: `../runinator-engine/src/repository/runs.rs` plus `../runinator-engine/src/loops.rs`.
 - Debug and pause/resume/cancel behavior: `../runinator-engine/src/repository/debug.rs`.

@@ -85,26 +85,6 @@ pub(crate) async fn send_workflow_run<T: DatabaseImpl>(
     Ok(())
 }
 
-pub(crate) fn merge_json(
-    target: &mut runinator_models::value::Value,
-    overlay: runinator_models::value::Value,
-) {
-    use runinator_models::value::Value;
-    match (target, overlay) {
-        (Value::Object(target), Value::Object(overlay)) => {
-            for (key, value) in overlay {
-                match target.get_mut(&key) {
-                    Some(existing) => merge_json(existing, value),
-                    None => {
-                        target.insert(key, value);
-                    }
-                }
-            }
-        }
-        (target, overlay) => *target = overlay,
-    }
-}
-
 pub(crate) async fn ws_events(
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<AuthContext>,

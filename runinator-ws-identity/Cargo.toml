@@ -1,0 +1,21 @@
+[package]
+name = "runinator-ws-identity"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+axum = { version = "0.8.9", features = ["ws", "multipart"] }
+chrono = { version = "0.4", features = ["serde"] }
+log = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+utoipa = { version = "5", features = ["axum_extras", "uuid", "chrono"] }
+uuid = { version = "1.18", features = ["v4"] }
+
+runinator-auth = { path = "../runinator-auth" }
+runinator-database = { path = "../runinator-database" }
+runinator-engine = { path = "../runinator-engine" }
+runinator-models = { path = "../runinator-models" }
+runinator-provisioner = { path = "../runinator-provisioner" }
+runinator-ws-core = { path = "../runinator-ws-core" }
+runinator-ws-middleware = { path = "../runinator-ws-middleware" }

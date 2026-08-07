@@ -1,0 +1,20 @@
+[package]
+name = "runinator-ws-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+axum = { version = "0.8.9", features = ["ws", "multipart"] }
+chrono = { version = "0.4", features = ["serde"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1", features = ["full"] }
+utoipa = { version = "5", features = ["axum_extras", "uuid", "chrono"] }
+uuid = { version = "1.18", features = ["v4"] }
+
+runinator-broker = { path = "../runinator-broker" }
+runinator-comm = { path = "../runinator-comm" }
+runinator-database = { path = "../runinator-database" }
+runinator-engine = { path = "../runinator-engine" }
+runinator-models = { path = "../runinator-models" }
+runinator-workflows = { path = "../runinator-workflows" }

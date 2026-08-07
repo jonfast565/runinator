@@ -16,8 +16,9 @@ use crate::handlers;
 use crate::models::ApiError;
 use crate::websocket;
 
-pub(crate) mod docs;
-pub(crate) mod examples;
+// the doc vocabulary is shared with every handler crate, so it lives in runinator-ws-core; these
+// re-exports keep the `crate::openapi::docs` path the handlers and the WebSocket module already use.
+pub(crate) use runinator_ws_core::openapi::{docs, examples};
 
 use docs::{EndpointDoc, Example, RequestDoc, endpoint};
 use examples::{UUID_EXAMPLE, example_value};

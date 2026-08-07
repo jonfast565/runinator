@@ -56,7 +56,7 @@ annotations on its handlers and serves it at:
 
 Both are public (reachable without a credential). To document an endpoint, add a
 `#[utoipa::path(...)]` attribute to its handler and list the handler in the
-`paths(...)` set in `runinator-ws/src/openapi.rs`; derive `ToSchema` on any struct
+`paths(...)` set in `runinator-ws/src/openapi/mod.rs`; derive `ToSchema` on any struct
 referenced by `body = ...`. Endpoints without an annotation still work — they are
 simply absent from the spec until annotated, so coverage can grow incrementally.
 

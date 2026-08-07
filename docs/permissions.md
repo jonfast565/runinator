@@ -6,7 +6,7 @@ first; the code enforces both.
 1. **Capabilities** — named, global/organization-scoped privileges (this document). The catalog lives
    in `runinator-models/src/capabilities.rs` (`Capability`), is mirrored to the command center in
    `src/core/domain/models/auth/capability.ts`, and is resolved per-request by
-   `runinator-ws/src/authz.rs::capabilities_for`.
+   `runinator-ws-middleware/src/authz.rs::capabilities_for`.
 2. **Resource grants** — a per-resource ladder (`View < Run < Edit < Own`) on individual workflows and
    pipelines, held by a user or a team. Defined by `Permission` in `runinator-models/src/auth.rs` and
    enforced by `authz::require_workflow` / `require_pipeline` (and the `require_*_workflow` helpers for

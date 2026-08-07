@@ -8,7 +8,7 @@ Runinator is a Rust workspace for scheduling and executing tasks across a small 
 
 Primary runtime flow:
 
-1. `runinator-ws` owns the HTTP API, authentication/authorization, WebSockets, and transport adapters. It embeds `runinator-engine` by default, but does not own reducer or repository implementation code.
+1. `runinator-ws` owns the HTTP API, authentication/authorization, WebSockets, and transport adapters. It embeds `runinator-engine` by default, but does not own reducer or repository implementation code. The surface is spread over six crates — `runinator-ws` itself only assembles them; see "The web service crates" below.
 2. `runinator-engine` owns persistence orchestration and the background loops that consume broker ingress/results, fire triggers, publish wakes/actions, and reconcile durable work. It calls the pure state-machine transition logic in `runinator-reducer`. The engine can run inside `runinator-ws` or in the standalone `runinator-background-worker`; do not fork those execution paths.
 3. `runinator-waker` is a small, horizontally scalable, broker-only timer/relay: it consumes the `wake` channel, sleeps until each ready node is due, then publishes a drive on the `ingress` channel. It has no database, no HTTP client to the web service, and shares no channel with the worker.
 4. `runinator-worker` polls the broker action channel, resolves a provider/plugin, executes the task, and publishes results on the broker result channel (records also reachable through `runinator-api` compatibility endpoints). It self-publishes its built-in provider metadata to the web service on startup.
@@ -61,7 +61,10 @@ Keep dependency direction boring and predictable, structured with domains in min
   `operations/` mirrors the role split one file per trait, with shared helpers and the SQL-dialect plumbing in `operations/mod.rs`. Each role impl repeats the same thirty-line sqlx `where` block; that is deliberate, not an oversight — a macro would make every type error inside the query bodies point at an expansion instead of a real line. Rust does **not** elaborate trait `where` clauses into implied bounds, so a "bundle the bounds in one trait" shortcut does not compile.
 - `runinator-reducer`: state-machine transitions and node-kind orchestration, bounded on `ReducerStore` rather than the whole store. Keep HTTP, concrete broker transports, and service hosting out of it — and keep sqlx out: the crate deliberately does not depend on `runinator-database`, which is what makes `test_support::FakeStore` (behind the `test-support` feature) viable for testing handlers without a database. Prefer adding node-handler tests there over reaching for the web service's sqlite-backed suite.
 - `runinator-engine`: durable repository orchestration and background runtime loops shared by the web service and `runinator-background-worker`.
-- `runinator-ws`: HTTP/WebSocket server and auth/API adapters over `runinator-engine`. It should not grow duplicate reducer, repository, or worker implementations.
+- `runinator-ws`: HTTP/WebSocket server and auth/API adapters over `runinator-engine`. It should not grow duplicate reducer, repository, or worker implementations. It is the assembly crate for the five below; see "The web service crates".
+- `runinator-ws-core`: wire payloads (`models`), the json response envelope (`responses`), the ui event bus (`events`), the openapi documentation vocabulary (`openapi::{docs,examples}`), and small json helpers. No routes, no middleware, and no knowledge of any endpoint.
+- `runinator-ws-middleware`: the request-gating layers — `auth` (credential resolution and the gating middleware), `authz` (capabilities and resource grants), `rate_limit`, `overload`. It depends on `runinator-ws-core` for the envelope it replies with and registers no routes.
+- `runinator-ws-identity`, `runinator-ws-authoring`, `runinator-ws-runtime`: the handler modules, one `src/handlers/<domain>.rs` per domain. Each owns its handler fns, its `routes()` registrations, and its `DOCS` entries, exactly as before the split.
 - `runinator-broker`: broker trait, message/delivery types, in-memory backend, HTTP backend/client/server, and future broker adapters. Channels are `action`, `control` (ws→worker), `result` (worker→ws), `wake` (ws→waker), `ingress` (waker/worker→ws), and `events` (ws→every ws replica). All channels except `events` are competing-consumer (one delivery per consumer group); `events` is **fan-out** — every subscriber receives every message (rabbitmq fanout exchange, per-replica kafka group, per-consumer in-memory/wire receiver), so ws replicas can fan UI events to all connected WebSocket clients. The `action` and `control` channels are additionally **target-routed**: commands carry an `ActionTarget` and consumers use `receive_for`/`receive_control_for` with a `ConsumerProfile`, so a pinned action or a cancel stamped with the executor-holding replica reaches only a matching worker (backends without native routing bounce mismatches via nack; a targeted control nobody can match is dropped after `STALE_CONTROL_TTL_SECONDS`). Waker, worker, and web service should talk to the `Broker` trait where practical. A new channel must be implemented across every backend (in-memory/http/tcp/kafka/rabbitmq) and both wire transports.
 - `runinator-waker`: broker-only timer/relay. It consumes the `wake` channel, sleeps until due, and publishes a drive on the `ingress` channel. It must not execute task providers, must not write to the database, and must not depend on `runinator-api` or the worker.
 - `runinator-worker`: task execution loop and provider resolution. It should not calculate schedules or mutate state except through API calls intended for worker results.
@@ -157,17 +160,18 @@ The database crate owns persistence behavior. The web service owns HTTP behavior
 
 - Add a new persistence operation to the `runinator-store` role trait that owns its domain (`roles/<domain>.rs`), then write the body in the matching `runinator-database/src/operations/<domain>.rs`. One generic body covers SQLite, Postgres, and MySQL together. Do not add methods to `DatabaseImpl` itself — it only composes the roles.
 - Keep SQLx row mapping centralized in `runinator-database`, especially `mappers.rs`.
-- Keep repository functions in `runinator-engine/src/repository/` focused on persistence orchestration. HTTP response mapping belongs in `runinator-ws/src/handlers/`, and SQL belongs in `runinator-database`.
+- Keep repository functions in `runinator-engine/src/repository/` focused on persistence orchestration. HTTP response mapping belongs in a handler crate's `src/handlers/`, and SQL belongs in `runinator-database`.
 - Keep public API payloads in shared model/API crates when they must be consumed by multiple binaries or the command center.
 
 ### When a ws handler may call the store directly
 
-A `runinator-ws` handler may call `db.*` itself **only** when the endpoint is thin CRUD over a row
-the runtime does not orchestrate: authentication, orgs/memberships, and billing
-(`handlers/{auth,orgs,billing,credentials,catalog}.rs`). Those have no engine counterpart on
-purpose — routing them through a repository module would add a call layer and no behavior. The one
-other direct call is `handlers/health.rs`'s readiness probe, which reads one row to test database
-connectivity and does not care what the row says.
+A handler may call `db.*` itself **only** when the endpoint is thin CRUD over a row the runtime does
+not orchestrate: authentication, orgs/memberships, and billing (`runinator-ws-identity`'s
+`handlers/{auth,orgs,billing}.rs`) plus `runinator-ws-authoring`'s `handlers/{credentials,catalog}.rs`.
+Those have no engine counterpart on purpose — routing them through a repository module would add a
+call layer and no behavior. The one other direct call is `runinator-ws-runtime`'s
+`handlers/health.rs` readiness probe, which reads one row to test database connectivity and does not
+care what the row says.
 
 Anything carrying orchestration semantics goes through `runinator-engine/src/repository/`, even
 when the body is a single delegating call: runs, node runs, triggers/firings, action dispatches,
@@ -181,37 +185,73 @@ scoped, so it lives in `repository/notifications.rs` and returns `CreatedNotific
 When in doubt, put it in the engine — that direction is always safe, and the CRUD exemption above
 is a closed list, not a pattern to extend.
 
-### Adding an endpoint to `runinator-ws`
+### The web service crates
 
-An endpoint lives in exactly one file. Each `handlers/<domain>.rs` — plus `websocket.rs` and
-`openapi/mod.rs`, which serve their own routes — owns three things side by side: the handler fns, a
-`pub(crate) fn routes<T: DatabaseImpl>(pool: Arc<T>) -> Router` holding that domain's `.route()`
-registrations, and a `pub(crate) const DOCS: &[EndpointDoc]` holding its openapi entries. Adding an
-endpoint is one file, three additions.
+The http surface is six crates, layered so nothing depends back up:
 
-`router.rs` only merges those fragments and applies the middleware stack; `openapi/mod.rs` only
-concatenates the `DOCS` slices through `DOC_SETS` and enriches the generated document. Do not add a
-`.route()` call or an endpoint doc to either — they hold no per-endpoint knowledge, which is what
-keeps them ~190 and ~400 lines against 166 routes.
+```
+runinator-ws                    router/server/websocket/openapi assembly, config, binary
+  ├── runinator-ws-identity     handlers/{auth,orgs,billing}
+  ├── runinator-ws-authoring    handlers/{workflows,wdl,packs,pipelines,credentials,catalog,providers}
+  ├── runinator-ws-runtime      handlers/{runs,node_runs,artifacts,triggers,schedules,
+  │                                       action_dispatches,replicas,notifications,debug,automation,
+  │                                       observability,health,supervisor,provisioning,
+  │                                       catalog_metadata,webhook}
+  ├── runinator-ws-middleware   auth, authz, rate_limit, overload
+  └── runinator-ws-core         models, responses, events, json, openapi::{docs,examples}
+```
 
-The shared doc vocabulary stays central in `openapi/docs.rs`: the `EndpointDoc`/`RequestDoc`/
-`ParamDoc` model, the `endpoint()`/`json_body()` constructors, and the reusable query-param consts
-(`CURSOR`, `WORKFLOW_FILTERS`, …), several of which are used by more than one domain. Examples live
-in `openapi/examples.rs`, one `Example` arm plus one match arm each.
+The domain line is what an endpoint *is about*, not its url prefix: `runinator-ws-authoring`
+describes what can run, `runinator-ws-runtime` drives and observes what is running, and
+`runinator-ws-identity` is who may do either. A handler crate depends on core and middleware and on
+nothing else in this list.
 
-Two source lints guard the layout, and both are ratchets in each direction:
+`runinator-ws` keeps only assembly and the pieces that need the whole surface at once: `router.rs`,
+`server.rs`, `websocket.rs`, `openapi/`, `config.rs`, `main.rs`, and the behavior test suite (which
+boots a real `SqliteDb` and drives handler + reducer + persistence together, so it cannot live in any
+one domain crate). Its `lib.rs` re-exports `handlers`, `models`, `events`, `auth`, `authz`, and the
+engine's `repository`/`stability` at their historical `crate::…` paths, so assembly code and tests
+read the same as before.
+
+### Adding an endpoint
+
+An endpoint lives in exactly one file. Each handler crate's `handlers/<domain>.rs` — plus
+`runinator-ws`'s `websocket.rs` and `openapi/mod.rs`, which serve their own routes — owns three
+things side by side: the handler fns, a `pub fn routes<T: DatabaseImpl>(pool: Arc<T>) -> Router`
+holding that domain's `.route()` registrations, and a `pub const DOCS: &[EndpointDoc]` holding its
+openapi entries. Adding an endpoint is one file, three additions.
+
+Pick the file by domain, and if the domain is new, add the module to that crate's `handlers/mod.rs`
+— not a new crate. `router.rs` only merges the fragments and applies the middleware stack;
+`openapi/mod.rs` only concatenates the `DOCS` slices through `DOC_SETS` and enriches the generated
+document. Do not add a `.route()` call or an endpoint doc to either — they hold no per-endpoint
+knowledge, which is what keeps them ~190 and ~400 lines against 166 routes.
+
+The shared doc vocabulary stays central in `runinator-ws-core`'s `openapi/docs.rs`: the
+`EndpointDoc`/`RequestDoc`/`ParamDoc` model, the `endpoint()`/`json_body()` constructors, and the
+reusable query-param consts (`CURSOR`, `WORKFLOW_FILTERS`, …), several of which are used by more than
+one domain. Examples live in `openapi/examples.rs`, one `Example` arm plus one match arm each.
+
+Two source lints guard the layout. Both live in `runinator-ws` because they are the only checks that
+see the merged surface, both read the sibling crates by path, and both are ratchets in each
+direction:
 
 - `openapi/route_parity.rs` diffs the registered routes against the documented ones. Because
-  registration is now per-module, it reads `ROUTER_SOURCES` — an `include_str!` list that cannot be
-  globbed — so `route_sources_cover_every_module` reads the handler directory and fails if a module
-  with a `routes()` fn is missing from that list. A module left off would silently drop all of its
-  routes out of the parity check.
-- `handlers/store_access_tests.rs` keys on bare filenames in `src/handlers/`, so moving a handler
-  between files means updating its allowlist entry.
+  registration is per-module and the modules are in three crates, it reads `ROUTER_SOURCES` — an
+  `include_str!` list that cannot be globbed and cannot reach a crate by name, so its handler entries
+  are relative paths like `../../../runinator-ws-runtime/src/handlers/runs.rs`.
+  `route_sources_cover_every_module` walks every handler directory and fails if a module with a
+  `routes()` fn is missing from that list; a module left off would silently drop all of its routes
+  out of the parity check.
+- `store_access_tests.rs` keys its allowlist on `<crate>/<file>`, so moving a handler between files
+  *or between crates* means updating its entry.
+
+Both read the crate list from `runinator-ws`'s `HANDLER_CRATES`, so a new handler crate must be added
+there or it is invisible to both guards.
 
 `Router::merge` panics on a duplicate method+path, so the split cannot silently shadow a route.
 Note that path prefix does not imply owning module: `/workflows/{id}/grants` is served and
-documented by `handlers/auth.rs`, because that is where its handlers are.
+documented by `runinator-ws-identity`'s `handlers/auth.rs`, because that is where its handlers are.
 
 ## Authorization
 

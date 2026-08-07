@@ -22,7 +22,7 @@ Use this map to load the smallest useful part of the repo for a task. The root `
 - Change editor completion or hover: `runinator-wdl-ide/src/`; if it needs something new from the language core, add it to `runinator-wdl/src/analysis.rs`.
 - Change persistence behavior: add to the owning role trait in `runinator-store/src/roles/`, then the matching file in `runinator-database/src/operations/`.
 - Change durable orchestration/repository behavior: `runinator-engine/src/repository/` and its background loops.
-- Change web API behavior: `runinator-ws/src/handlers/` and `runinator-ws/src/router.rs`. A handler reaches persistence through `runinator-engine/src/repository/`; only the allowlist in `handlers/store_access_tests.rs` calls the store directly.
+- Change web API behavior: the handler's file in `runinator-ws-identity/`, `runinator-ws-authoring/`, or `runinator-ws-runtime/`'s `src/handlers/` (authoring = what can run, runtime = what is running, identity = who may do either); `runinator-ws/src/router.rs` only merges them. Shared wire types and the response envelope are in `runinator-ws-core`; auth/authz/rate-limit/overload are in `runinator-ws-middleware`. A handler reaches persistence through `runinator-engine/src/repository/`; only the allowlist in `runinator-ws/src/store_access_tests.rs` calls the store directly.
 - Change API client behavior: `runinator-api/src/`.
 - Change broker channel payloads: update `runinator-comm` contracts first, then every relevant broker transport/backend and service consumer.
 - Change worker execution/provider resolution: `runinator-worker/src/` and provider crates; do not put provider behavior in core runtime crates.
