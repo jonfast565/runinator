@@ -44,6 +44,8 @@ struct State {
     ready_nodes: Vec<ReadyNodeRecord>,
     dispatches: Vec<ActionDispatchRecord>,
     audit: Vec<Value>,
+    /// keyed by record type, matching `automation_records` rows.
+    automation: HashMap<String, Vec<Value>>,
 }
 
 /// an in-memory store for driving node handlers in a unit test.
@@ -128,6 +130,25 @@ impl FakeStore {
             run.output_json = output;
             run.finished_at = Some(Utc::now());
         }
+    }
+
+    /// insert an automation row directly, for a test that needs a gate already stamped.
+    pub async fn seed_automation_record(&self, record_type: &str, record: Value) {
+        use runinator_store::ReducerStore;
+        self.create_automation_record(record_type.to_string(), record)
+            .await
+            .expect("seed automation record");
+    }
+
+    /// automation rows of a type, newest last. the cooldown gate's window lives here.
+    pub fn automation_records(&self, record_type: &str) -> Vec<Value> {
+        self.state
+            .lock()
+            .expect("state")
+            .automation
+            .get(record_type)
+            .cloned()
+            .unwrap_or_default()
     }
 
     pub fn audit_records(&self) -> Vec<Value> {
@@ -517,21 +538,49 @@ impl ReducerStore for FakeStore {
         unimplemented!("FakeStore::add_workflow_run_artifact is not needed by any handler test yet")
     }
 
+    /// stamp the row's identity into the payload exactly as `mappers::row_to_automation_record`
+    /// does. a fake that returned the bare `data` would hide every bug that depends on reading the
+    /// record's `id` back — which is precisely how the cooldown gate re-stamps its window.
     async fn create_automation_record(
         &self,
-        _record_type: String,
-        _record: Value,
+        record_type: String,
+        record: Value,
     ) -> Result<Value, SendableError> {
-        Ok(Value::Null)
+        let mut stored = record;
+
+        if let Some(object) = stored.as_object_mut() {
+            object.insert("id".into(), Value::from(Uuid::now_v7().to_string()));
+            object.insert("record_type".into(), Value::from(record_type.clone()));
+        }
+
+        self.state
+            .lock()
+            .expect("state")
+            .automation
+            .entry(record_type)
+            .or_default()
+            .push(stored.clone());
+        Ok(stored)
     }
 
     async fn update_automation_record(
         &self,
-        _record_type: String,
-        _record_id: Uuid,
-        _record: Value,
+        record_type: String,
+        record_id: Uuid,
+        record: Value,
     ) -> Result<Value, SendableError> {
-        Ok(Value::Null)
+        let mut guard = self.state.lock().expect("state");
+        let rows = guard.automation.entry(record_type).or_default();
+        let target = record_id.to_string();
+
+        if let Some(slot) = rows
+            .iter_mut()
+            .find(|row| row.get("id").and_then(Value::as_str) == Some(target.as_str()))
+        {
+            *slot = record.clone();
+        }
+
+        Ok(record)
     }
 
     async fn create_gate(&self, _record: Value) -> Result<Value, SendableError> {
@@ -640,11 +689,29 @@ impl ReducerStore for FakeStore {
 
     async fn fetch_automation_records(
         &self,
-        _record_type: String,
-        _workflow_run_id: Option<Uuid>,
+        record_type: String,
+        workflow_run_id: Option<Uuid>,
         _external_item_id: Option<Uuid>,
     ) -> Result<Vec<Value>, SendableError> {
-        Ok(Vec::new())
+        let guard = self.state.lock().expect("state");
+        let mut rows = guard
+            .automation
+            .get(&record_type)
+            .cloned()
+            .unwrap_or_default();
+        // the sql query is `ORDER BY created_at DESC, id DESC`; callers use `.find()` and so read
+        // the newest matching record. a fake returning insertion order would disagree with the
+        // database precisely when duplicates exist, which is when it matters.
+        rows.reverse();
+        Ok(rows
+            .into_iter()
+            .filter(|row| {
+                workflow_run_id.is_none_or(|id| {
+                    row.get("workflow_run_id").and_then(Value::as_str)
+                        == Some(id.to_string().as_str())
+                })
+            })
+            .collect())
     }
 
     async fn fetch_setting(

@@ -64,9 +64,24 @@ async fn stamp_cooldown<T: ReducerStore>(
             if let Some(obj) = updated.as_object_mut() {
                 obj.insert("last_run_at".into(), now.into());
             }
-            if let Some(id) = record_id {
-                db.update_automation_record(RECORD_TYPE.into(), id, updated)
-                    .await?;
+            match record_id {
+                Some(id) => {
+                    db.update_automation_record(RECORD_TYPE.into(), id, updated)
+                        .await?;
+                }
+                // a record we cannot address is a record we cannot move forward, and silently
+                // skipping the stamp leaves the window permanently elapsed — the gate stops gating
+                // with no error anywhere. write a fresh one instead; `fetch_record` reads
+                // newest-first, so the new stamp is the one that counts.
+                None => {
+                    tracing::warn!(
+                        name,
+                        "cooldown record has no addressable id; writing a fresh stamp"
+                    );
+                    let record = runinator_models::json!({ "name": name, "last_run_at": now });
+                    db.create_automation_record(RECORD_TYPE.into(), record)
+                        .await?;
+                }
             }
         }
     }
