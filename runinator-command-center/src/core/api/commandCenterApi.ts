@@ -466,12 +466,30 @@ export async function fetchWorkflowRun(workflowRunId: string) {
   return command<WorkflowRunDetail>("fetch_workflow_run", { workflowRunId });
 }
 
-export async function stepWorkflowRun(workflowRunId: string) {
-  return command<TaskResponse>("step_workflow_run", { workflowRunId });
+export async function stepWorkflowRun(workflowRunId: string, cursor?: string | null) {
+  return command<TaskResponse>("step_workflow_run", { workflowRunId, cursor });
 }
 
-export async function continueWorkflowRun(workflowRunId: string) {
-  return command<TaskResponse>("continue_workflow_run", { workflowRunId });
+export async function continueWorkflowRun(workflowRunId: string, cursor?: string | null) {
+  return command<TaskResponse>("continue_workflow_run", { workflowRunId, cursor });
+}
+
+/** fork a speculative "what if" branch beside the run's real threads of control. */
+export async function forkWorkflowRunCursor(
+  workflowRunId: string,
+  options: {
+    fromCursor?: string | null;
+    atNode?: string | null;
+    label?: string | null;
+    contextPatch?: unknown;
+  } = {},
+) {
+  return command<TaskResponse>("fork_workflow_run_cursor", { workflowRunId, ...options });
+}
+
+/** send any DebugVerb; the verbs without a route of their own ride this. */
+export async function sendDebugCommand(workflowRunId: string, verb: Record<string, unknown>) {
+  return command<TaskResponse>("debug_command", { workflowRunId, verb });
 }
 
 export async function cancelWorkflowRun(workflowRunId: string) {
@@ -597,10 +615,7 @@ export async function createNotificationPolicy(policy: NewNotificationPolicy) {
   return command<NotificationPolicy>("create_notification_policy", { policy });
 }
 
-export async function updateNotificationPolicy(
-  policyId: string,
-  policy: NewNotificationPolicy,
-) {
+export async function updateNotificationPolicy(policyId: string, policy: NewNotificationPolicy) {
   return command<NotificationPolicy>("update_notification_policy", { policyId, policy });
 }
 
@@ -624,10 +639,7 @@ export async function deleteFreezeWindow(windowId: string) {
   return command<TaskResponse>("delete_freeze_window", { windowId });
 }
 
-export async function backfillWorkflowTrigger(
-  triggerId: string,
-  request: BackfillRequest,
-) {
+export async function backfillWorkflowTrigger(triggerId: string, request: BackfillRequest) {
   return command<BackfillResponse>("backfill_workflow_trigger", { triggerId, request });
 }
 

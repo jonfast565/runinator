@@ -1,12 +1,6 @@
 import { MarkerType, type Edge, type Node } from "@vue-flow/core";
-import type {
-  GraphEdgeModel,
-  GraphNodeModel,
-} from "../../../core/workflow/graph-model";
-import {
-  buildGraphEdgeModels,
-  buildGraphNodeModels,
-} from "../../../core/workflow/index";
+import type { GraphEdgeModel, GraphNodeModel } from "../../../core/workflow/graph-model";
+import { buildGraphEdgeModels, buildGraphNodeModels } from "../../../core/workflow/index";
 import type {
   ProviderMetadata,
   WorkflowDefinition,
@@ -29,8 +23,11 @@ export function buildGraphNodes(
   detail: WorkflowRunDetail | null,
   subflowNames?: Map<string, string>,
   providers: ProviderMetadata[] = [],
+  selectedCursorId?: string | null,
 ): Node[] {
-  return buildGraphNodeModels(workflow, detail, subflowNames, providers).map(toVueFlowNode);
+  return buildGraphNodeModels(workflow, detail, subflowNames, providers, selectedCursorId).map(
+    toVueFlowNode,
+  );
 }
 
 export function buildGraphEdges(

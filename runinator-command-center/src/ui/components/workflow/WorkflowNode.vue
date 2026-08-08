@@ -13,6 +13,16 @@
   >
     <span v-if="isNodeRunning" class="node-sheen" aria-hidden="true" />
     <span v-if="data.debugBreakpoint" class="breakpoint-dot" title="Breakpoint set" />
+    <span v-if="nodeCursors.length" class="cursor-chips">
+      <span
+        v-for="cursor in nodeCursors"
+        :key="cursor.id"
+        class="cursor-chip"
+        :class="{ 'is-selected': cursor.selected, 'is-speculative': cursor.speculative }"
+        :style="{ background: cursorColor(cursor.paletteIndex) }"
+        :title="`${cursor.label} (${cursor.paused ? 'paused' : 'running'})`"
+      />
+    </span>
     <span v-if="data.locked" class="lock-dot" title="Locked node"
       ><Icon name="lock" :size="11"
     /></span>
@@ -210,6 +220,7 @@
 
 <script setup lang="ts">
 import { Handle, Position } from "@vue-flow/core";
+import type { CursorMarker } from "../../../core/domain/models";
 import { computed, ref, watch } from "vue";
 import { useWorkflowsStore } from "../../../ui/adapters/pinia/workflows";
 import { useResourcesStore } from "../../../ui/adapters/pinia/resources";
@@ -261,6 +272,8 @@ const props = defineProps<{
     allowGateResolution?: boolean;
     gate?: GateRecord | null;
     debugBreakpoint?: boolean;
+    /** threads of control standing on this node; a node may carry several. */
+    cursors?: CursorMarker[];
   };
 }>();
 
@@ -291,9 +304,7 @@ const kindLabel = computed(() => {
   void catalogMetadata.nodeKinds;
   return workflowNodeKindLabel(props.data.kind);
 });
-const executionCount = computed(() =>
-  Math.max(0, Math.floor(props.data.executionCount ?? 0)),
-);
+const executionCount = computed(() => Math.max(0, Math.floor(props.data.executionCount ?? 0)));
 const isApprovalPending = computed(() => isApprovalWaitingStatus(props.data.status));
 const isInputPending = computed(() => isInputWaitingStatus(props.data.status));
 const isWaitingState = computed(() =>
@@ -343,16 +354,24 @@ const isWaiting = computed(() => {
   return isApprovalPending.value || isInputPending.value;
 });
 
-const isDebugActive = computed(() => {
-  const debug = workflows.debugState;
-
-  if (!debug?.paused) {
-    return false;
-  }
-
-  return debug.current_node_id === props.id;
-});
+// a node is "active" when any thread of control is parked on it. keying this to the run's single
+// `current_node_id` showed only the primary cursor, so a parked branch of a fan-out was invisible.
+const nodeCursors = computed(() => props.data.cursors ?? []);
+const isDebugActive = computed(() => nodeCursors.value.some((cursor) => cursor.paused));
 // the inline mini-editor opens on double-click only, tracked separately from selection.
+const CURSOR_PALETTE = [
+  "#3b82f6",
+  "#f59e0b",
+  "#10b981",
+  "#a855f7",
+  "#ef4444",
+  "#14b8a6",
+  "#eab308",
+  "#ec4899",
+];
+function cursorColor(index: number): string {
+  return CURSOR_PALETTE[index % CURSOR_PALETTE.length] as string;
+}
 const isInlineEditing = computed(() => workflows.inlineEditNodeId === props.id);
 // surface the step id in the topline whenever a custom display name hides it from the title.
 const showNodeId = computed(() => props.data.title !== props.id);
@@ -553,12 +572,7 @@ async function onSubmitInput() {
   submitting.value = true;
 
   try {
-    await workflowRunExtrasService.resolveInput(
-      nodeRun.id,
-      parsed,
-      undefined,
-      "Input submitted",
-    );
+    await workflowRunExtrasService.resolveInput(nodeRun.id, parsed, undefined, "Input submitted");
     await workflows.fetchWorkflowRunDetail(detail.run.id);
   } finally {
     submitting.value = false;
@@ -982,6 +996,34 @@ function formatInputDraft(value: unknown): string {
 .reject {
   background: var(--danger-solid);
   color: #ffffff;
+}
+
+.cursor-chips {
+  position: absolute;
+  top: -0.3rem;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 0.15rem;
+  z-index: 3;
+}
+
+/* one chip per thread of control standing here, so two cursors on one node stay distinguishable. */
+.cursor-chip {
+  width: 0.42rem;
+  height: 0.42rem;
+  border-radius: 9999px;
+  border: 1px solid var(--surface, #111827);
+}
+
+.cursor-chip.is-selected {
+  outline: 1px solid var(--accent, #f59e0b);
+  outline-offset: 1px;
+}
+
+.cursor-chip.is-speculative {
+  border-style: dashed;
+  opacity: 0.85;
 }
 
 .breakpoint-dot {

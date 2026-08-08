@@ -187,8 +187,7 @@ const REGISTRY: Record<string, HttpDescriptor> = {
   },
   remove_team_member: {
     method: "DELETE",
-    path: (args) =>
-      `teams/${escape(arg(args, "teamId"))}/members/${escape(arg(args, "userId"))}`,
+    path: (args) => `teams/${escape(arg(args, "teamId"))}/members/${escape(arg(args, "userId"))}`,
   },
   list_api_keys: { method: "GET", path: () => "api_keys" },
   create_api_key: {
@@ -374,6 +373,21 @@ const REGISTRY: Record<string, HttpDescriptor> = {
   cancel_workflow_run: workflowRunAction("cancel"),
   pause_workflow_run: workflowRunAction("pause"),
   resume_workflow_run: workflowRunAction("resume"),
+  fork_workflow_run_cursor: {
+    method: "POST",
+    path: (args) => `workflow_runs/${escape(arg(args, "workflowRunId"))}/debug/fork`,
+    body: (args) => ({
+      from_cursor: argOpt(args, "fromCursor") ?? null,
+      at_node: argOpt(args, "atNode") ?? null,
+      label: argOpt(args, "label") ?? null,
+      context_patch: argOpt(args, "contextPatch") ?? null,
+    }),
+  },
+  debug_command: {
+    method: "POST",
+    path: (args) => `workflow_runs/${escape(arg(args, "workflowRunId"))}/debug/command`,
+    body: (args) => argOpt(args, "verb") ?? {},
+  },
   patch_workflow_run_debug: {
     method: "PATCH",
     path: (args) => `workflow_runs/${escape(arg(args, "workflowRunId"))}/debug`,
@@ -381,8 +395,7 @@ const REGISTRY: Record<string, HttpDescriptor> = {
   },
   run_to_cursor_workflow_run: {
     method: "POST",
-    path: (args) =>
-      `workflow_runs/${escape(arg(args, "workflowRunId"))}/debug/run_to_cursor`,
+    path: (args) => `workflow_runs/${escape(arg(args, "workflowRunId"))}/debug/run_to_cursor`,
     body: (args) => ({ node_id: arg(args, "nodeId") }),
   },
   skip_workflow_node: {
@@ -556,19 +569,19 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     path: (args) => {
       const workflowId = argOpt(args, "workflowId");
       return workflowId
-        ? `notification_policies?workflow_id=${escape(workflowId as string)}`
+        ? `notification_policies?workflow_id=${escape(workflowId)}`
         : "notification_policies";
     },
   },
   create_notification_policy: {
     method: "POST",
     path: () => "notification_policies",
-    body: (args) => arg(args, "policy") as object,
+    body: (args) => arg(args, "policy"),
   },
   update_notification_policy: {
     method: "PATCH",
     path: (args) => `notification_policies/${escape(arg(args, "policyId"))}`,
-    body: (args) => arg(args, "policy") as object,
+    body: (args) => arg(args, "policy"),
   },
   delete_notification_policy: {
     method: "DELETE",
@@ -576,18 +589,17 @@ const REGISTRY: Record<string, HttpDescriptor> = {
   },
   fetch_freeze_windows: {
     method: "GET",
-    path: (args) =>
-      argOpt(args, "activeOnly") ? "freeze_windows?active=true" : "freeze_windows",
+    path: (args) => (argOpt(args, "activeOnly") ? "freeze_windows?active=true" : "freeze_windows"),
   },
   create_freeze_window: {
     method: "POST",
     path: () => "freeze_windows",
-    body: (args) => arg(args, "window") as object,
+    body: (args) => arg(args, "window"),
   },
   update_freeze_window: {
     method: "PATCH",
     path: (args) => `freeze_windows/${escape(arg(args, "windowId"))}`,
-    body: (args) => arg(args, "window") as object,
+    body: (args) => arg(args, "window"),
   },
   delete_freeze_window: {
     method: "DELETE",
@@ -596,7 +608,7 @@ const REGISTRY: Record<string, HttpDescriptor> = {
   backfill_workflow_trigger: {
     method: "POST",
     path: (args) => `workflow_triggers/${escape(arg(args, "triggerId"))}/backfill`,
-    body: (args) => arg(args, "request") as object,
+    body: (args) => arg(args, "request"),
   },
   delete_artifact: {
     method: "DELETE",
@@ -649,15 +661,13 @@ const REGISTRY: Record<string, HttpDescriptor> = {
   },
   update_org_member: {
     method: "PATCH",
-    path: (args) =>
-      `orgs/${escape(arg(args, "orgId"))}/members/${escape(arg(args, "userId"))}`,
+    path: (args) => `orgs/${escape(arg(args, "orgId"))}/members/${escape(arg(args, "userId"))}`,
     headers: (args) => ({ "x-org-id": String(arg(args, "orgId")) }),
     body: (args) => ({ role: arg(args, "role") }),
   },
   remove_org_member: {
     method: "DELETE",
-    path: (args) =>
-      `orgs/${escape(arg(args, "orgId"))}/members/${escape(arg(args, "userId"))}`,
+    path: (args) => `orgs/${escape(arg(args, "orgId"))}/members/${escape(arg(args, "userId"))}`,
     headers: (args) => ({ "x-org-id": String(arg(args, "orgId")) }),
   },
   fetch_rate_card: { method: "GET", path: () => "rate-card" },
@@ -696,7 +706,9 @@ function workflowRunDebugAction(action: string): HttpDescriptor {
   return {
     method: "POST",
     path: (args) => `workflow_runs/${escape(arg(args, "workflowRunId"))}/debug/${action}`,
-    body: () => ({}),
+    // the cursor is optional end to end: omitted, the backend targets whichever branch is parked,
+    // which is what keeps a single-cursor client's payloads working against a forked run.
+    body: (args) => ({ cursor: argOpt(args, "cursor") ?? null }),
   };
 }
 

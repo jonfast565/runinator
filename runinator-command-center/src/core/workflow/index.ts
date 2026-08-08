@@ -25,7 +25,12 @@ import type {
 } from "../domain/models";
 import { asJsonRecord, asJsonValue } from "../domain/json";
 import { isJsonRecord } from "../domain/json";
-import { coerceDebugFrame } from "../domain/models/workflow-state";
+import {
+  buildCursorMarkers,
+  coerceDebugFrame,
+  coerceRunCursors,
+  cursorsByNode,
+} from "../domain/models/workflow-state";
 import type { IconName } from "../domain/icons";
 import type { GraphEdgeLike, GraphEdgeModel, GraphNodeModel } from "./graph-model";
 import { statusClassForNode } from "../utils/status";
@@ -83,6 +88,7 @@ export function buildGraphNodeModels(
   detail: WorkflowRunDetail | null,
   subflowNames?: Map<string, string>,
   providers: ProviderMetadata[] = [],
+  selectedCursorId?: string | null,
 ): GraphNodeModel[] {
   const definition = workflow.definition;
   const nodes = recordArray(definition.nodes);
@@ -94,6 +100,11 @@ export function buildGraphNodeModels(
   const executionCounts = workflowRunExecutionCounts(detailNodes);
   const debug = coerceDebugFrame(detail?.run.state?.debug);
   const breakpointSet = new Set<string>(debug?.breakpoints ?? []);
+  // one lookup built once, so a node carrying two cursors draws two markers rather than the
+  // single "current node" highlight the debugger used to have.
+  const markersByNode = cursorsByNode(
+    buildCursorMarkers(coerceRunCursors(detail?.run.state?.cursors), debug, selectedCursorId),
+  );
   return nodes.map((node: JsonRecord, index: number) => {
     const id = displayValue(node.id) || `step_${String(index + 1)}`;
     const layoutPosition = layout[id] ?? fallbackLayout[id];
@@ -127,6 +138,7 @@ export function buildGraphNodeModels(
         locked: kind === "start" || kind === "end" || kind === "fail" || node.locked === true,
         skipped: node.skipped === true,
         debugBreakpoint: breakpointSet.has(id),
+        cursors: markersByNode.get(id) ?? [],
       },
       class: statusClassForNode(status),
     };
@@ -1288,7 +1300,7 @@ export function createWorkflowNode(
 
   const template = cloneTemplate(metadata.default_template);
   template.id = uniqueWorkflowNodeId(nodes, kind);
-  return template as WorkflowEditorNodeRecord;
+  return template;
 }
 
 export function uniqueWorkflowNodeId(nodes: JsonRecord[], base: string): string {
@@ -2187,7 +2199,7 @@ function separateParallelEdges(edges: GraphEdgeModel[]): GraphEdgeModel[] {
     const parallelOffset = 18 + index * 18;
     return {
       ...edge,
-      data: { ...(edge.data), parallelOffset },
+      data: { ...edge.data, parallelOffset },
       pathOptions: { offset: parallelOffset, borderRadius: 8 },
       zIndex: index + 1,
     };

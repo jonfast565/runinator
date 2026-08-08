@@ -54,6 +54,11 @@ export interface WorkflowServicesState {
   inlineEditNodeId: string;
   selectedGraphEdgeId: string;
   selectedWorkflowRunNodeId: string;
+  /**
+   * which thread of control the debugger controls act on. empty means "whichever is parked",
+   * matching how the backend resolves an omitted cursor.
+   */
+  selectedCursorId: string;
   selectedWorkflowNodeRunId: string | null;
   isDirty: boolean;
   watchExpressionsByWorkflowId: Record<string, string[]>;
@@ -139,6 +144,7 @@ export function createWorkflowServicesState(): WorkflowServicesState {
     inlineEditNodeId: "",
     selectedGraphEdgeId: "",
     selectedWorkflowRunNodeId: "",
+    selectedCursorId: "",
     selectedWorkflowNodeRunId: null,
     isDirty: false,
     watchExpressionsByWorkflowId: {},

@@ -1,5 +1,5 @@
 import { defineStore } from "pinia";
-import { computed, reactive, watch } from "vue";
+import { computed, reactive, watch, ref } from "vue";
 import type {
   Connection,
   Edge,
@@ -48,7 +48,11 @@ import { buildGraphEdges, buildGraphNodes } from "../../vue-flow/builder";
 import { isCompletedNodeStatus } from "../../../../core/utils/status";
 import { mirrorServiceState } from "../sync";
 
-export { buildInputSkeleton, newWorkflowDraft, newWorkflowTriggerDraft } from "../../../../core/workflow/editor-defaults";
+export {
+  buildInputSkeleton,
+  newWorkflowDraft,
+  newWorkflowTriggerDraft,
+} from "../../../../core/workflow/editor-defaults";
 
 const WORKFLOW_WDL_SYNC_DELAY_MS = 1500;
 
@@ -137,8 +141,12 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     }, WORKFLOW_WDL_SYNC_DELAY_MS);
   }
 
-  const selectedWorkflow = mirroredComputed((): WorkflowDefinition | null => svc.getSelectedWorkflow());
-  const canRunWorkflow = mirroredComputed(() => Boolean(selectedWorkflow.value?.enabled && selectedWorkflow.value.id));
+  const selectedWorkflow = mirroredComputed((): WorkflowDefinition | null =>
+    svc.getSelectedWorkflow(),
+  );
+  const canRunWorkflow = mirroredComputed(() =>
+    Boolean(selectedWorkflow.value?.enabled && selectedWorkflow.value.id),
+  );
   const selectedWorkflowInputType = mirroredComputed((): RuninatorType | null =>
     selectedWorkflow.value ? workflowInputType(selectedWorkflow.value) : null,
   );
@@ -147,6 +155,15 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   const canStepWorkflowRun = mirroredComputed(() => svc.canStepWorkflowRun());
   const debugState = mirroredComputed<DebugFrame | null>(() => svc.getDebugState());
   const isDebugRun = mirroredComputed(() => svc.isDebugRun());
+  const cursorMarkers = mirroredComputed(() => svc.getCursorMarkers());
+  const selectedCursorId = mirroredComputed(() => svc.getSelectedCursorId());
+  // camera-follow is a view preference, not run state, so it lives here rather than in core.
+  const followCursor = ref(true);
+
+  function setFollowCursor(value: boolean) {
+    followCursor.value = value;
+  }
+
   const canContinueWorkflowRun = mirroredComputed(() => svc.canContinueWorkflowRun());
   const controlState = mirroredComputed<ControlFrame | null>(() => svc.getControlState());
   const pauseRequested = mirroredComputed(() => Boolean(controlState.value?.pause_requested));
@@ -160,7 +177,9 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     return node ? !svc.canRemoveSelectedStep() && Boolean(node) : false;
   });
   const canRemoveSelectedStep = mirroredComputed(() => svc.canRemoveSelectedStep());
-  const filteredWorkflows = mirroredComputed((): WorkflowDefinition[] => svc.getFilteredWorkflows());
+  const filteredWorkflows = mirroredComputed((): WorkflowDefinition[] =>
+    svc.getFilteredWorkflows(),
+  );
   const recentWorkflowRuns = computed((): RunSummary[] => {
     const query = app.normalizedSearch;
     const runs = state.value.workflowRuns;
@@ -210,11 +229,11 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     const nodeDraft = state.value.stepEditor.nodeDraft;
     const transitions =
       nodeDraft && typeof nodeDraft === "object" && !Array.isArray(nodeDraft)
-        ? ((nodeDraft).transitions as JsonRecord | undefined) ?? {}
+        ? ((nodeDraft.transitions as JsonRecord | undefined) ?? {})
         : {};
     return ["next", "on_success", "on_failure", "on_timeout", "on_reject"]
-      .filter((key) => (transitions)[key])
-      .map((key) => `${key}:${String((transitions)[key])}`)
+      .filter((key) => transitions[key])
+      .map((key) => `${key}:${String(transitions[key])}`)
       .join(",");
   });
   const subflowNames = mirroredComputed(() => svc.getSubflowNames());
@@ -225,8 +244,12 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     buildGraphNodes(workflowDraft, null, subflowNames.value, providerCatalog()),
   );
   const graphEdges = mirroredComputed((): Edge[] => buildGraphEdges(workflowDraft));
-  const graphValidationIssues = mirroredComputed((): WorkflowValidationIssue[] => svc.getGraphValidationIssues());
-  const workflowRunWorkflow = mirroredComputed((): WorkflowDefinition | null => svc.getWorkflowRunWorkflow());
+  const graphValidationIssues = mirroredComputed((): WorkflowValidationIssue[] =>
+    svc.getGraphValidationIssues(),
+  );
+  const workflowRunWorkflow = mirroredComputed((): WorkflowDefinition | null =>
+    svc.getWorkflowRunWorkflow(),
+  );
   const workflowRunGatesByNodeId = computed((): Map<string, GateRecord> => {
     const gates = new Map<string, GateRecord>();
 
@@ -248,6 +271,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
       state.value.workflowRunDetail,
       subflowNames.value,
       providerCatalog(),
+      svc.getSelectedCursorId(),
     ).map((node) => ({
       ...node,
       data: {
@@ -288,7 +312,8 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   });
   const selectedNode = mirroredComputed((): JsonRecord | null => svc.getSelectedNode());
   const selectedGraphEdge = computed(
-    () => graphEdges.value.find((edge: Edge) => edge.id === state.value.selectedGraphEdgeId) ?? null,
+    () =>
+      graphEdges.value.find((edge: Edge) => edge.id === state.value.selectedGraphEdgeId) ?? null,
   );
   const selectedNodeIssues = computed<WorkflowValidationIssue[]>(() =>
     graphValidationIssues.value.filter((issue) => issue.nodeId === state.value.selectedStepId),
@@ -300,7 +325,12 @@ export const useWorkflowsStore = defineStore("workflows", () => {
       return [];
     }
 
-    const data = edge.data as { transitionKey?: string; branchIndex?: number; parameterKey?: string; parameterIndex?: number };
+    const data = edge.data as {
+      transitionKey?: string;
+      branchIndex?: number;
+      parameterKey?: string;
+      parameterIndex?: number;
+    };
     const semanticKey =
       data?.transitionKey ??
       (typeof data?.branchIndex === "number"
@@ -454,33 +484,47 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     setTransition: svc.runs.setTransition,
     workflows: computed({
       get: () => state.value.workflows,
-      set: (workflows) => { svc.setState((current) => ({ ...current, workflows })); },
+      set: (workflows) => {
+        svc.setState((current) => ({ ...current, workflows }));
+      },
     }),
     selectedWorkflowId: computed({
       get: () => state.value.selectedWorkflowId,
-      set: (selectedWorkflowId) => { svc.setState((current) => ({ ...current, selectedWorkflowId })); },
+      set: (selectedWorkflowId) => {
+        svc.setState((current) => ({ ...current, selectedWorkflowId }));
+      },
     }),
     workflowDraft,
     workflowJson: computed({
       get: () => state.value.workflowJson,
-      set: (workflowJson) => { svc.setState((current) => ({ ...current, workflowJson })); },
+      set: (workflowJson) => {
+        svc.setState((current) => ({ ...current, workflowJson }));
+      },
     }),
     workflowWdl: computed({
       get: () => state.value.workflowWdl,
-      set: (workflowWdl) => { svc.setState((current) => ({ ...current, workflowWdl })); },
+      set: (workflowWdl) => {
+        svc.setState((current) => ({ ...current, workflowWdl }));
+      },
     }),
     workflowWdlError: computed(() => state.value.workflowWdlError),
     workflowConcurrency: computed({
       get: () => state.value.workflowConcurrency,
-      set: (workflowConcurrency) => { svc.setState((current) => ({ ...current, workflowConcurrency })); },
+      set: (workflowConcurrency) => {
+        svc.setState((current) => ({ ...current, workflowConcurrency }));
+      },
     }),
     workflowSettingsOpen: computed({
       get: () => state.value.workflowSettingsOpen,
-      set: (workflowSettingsOpen) => { svc.setState((current) => ({ ...current, workflowSettingsOpen })); },
+      set: (workflowSettingsOpen) => {
+        svc.setState((current) => ({ ...current, workflowSettingsOpen }));
+      },
     }),
     workflowTriggers: computed({
       get: () => state.value.workflowTriggers,
-      set: (workflowTriggers) => { svc.setState((current) => ({ ...current, workflowTriggers })); },
+      set: (workflowTriggers) => {
+        svc.setState((current) => ({ ...current, workflowTriggers }));
+      },
     }),
     triggerEditorOpen: computed(() => state.value.triggerEditorOpen),
     triggerEditorCreating: computed(() => state.value.triggerEditorCreating),
@@ -489,12 +533,15 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     triggerJson,
     workflowEditorMode: computed({
       get: () => state.value.workflowEditorMode,
-      set: (workflowEditorMode) => { svc.setState((current) => ({ ...current, workflowEditorMode })); },
+      set: (workflowEditorMode) => {
+        svc.setState((current) => ({ ...current, workflowEditorMode }));
+      },
     }),
     workflowLayoutDirection: computed({
       get: () => state.value.workflowLayoutDirection,
-      set: (workflowLayoutDirection) =>
-        { svc.setState((current) => ({ ...current, workflowLayoutDirection })); },
+      set: (workflowLayoutDirection) => {
+        svc.setState((current) => ({ ...current, workflowLayoutDirection }));
+      },
     }),
     workflowInspectorMode: computed(() => state.value.workflowInspectorMode),
     stepEditorOpen: computed(() => state.value.stepEditorOpen),
@@ -502,33 +549,43 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     stepEditorError: computed(() => state.value.stepEditorError),
     workflowRuns: computed({
       get: () => state.value.workflowRuns,
-      set: (workflowRuns) => { svc.setState((current) => ({ ...current, workflowRuns })); },
+      set: (workflowRuns) => {
+        svc.setState((current) => ({ ...current, workflowRuns }));
+      },
     }),
     workflowLayoutVersion: computed(() => state.value.workflowLayoutVersion),
     selectedWorkflowRunId: computed({
       get: () => state.value.selectedWorkflowRunId,
-      set: (selectedWorkflowRunId) => { svc.setState((current) => ({ ...current, selectedWorkflowRunId })); },
+      set: (selectedWorkflowRunId) => {
+        svc.setState((current) => ({ ...current, selectedWorkflowRunId }));
+      },
     }),
     workflowRunDetail: computed(() => state.value.workflowRunDetail),
     workflowRunGates: computed(() => state.value.workflowRunGates),
     workflowNodeDetailExtra: computed(() => state.value.workflowNodeDetailExtra),
     selectedStepId: computed({
       get: () => state.value.selectedStepId,
-      set: (selectedStepId) => { svc.setState((current) => ({ ...current, selectedStepId })); },
+      set: (selectedStepId) => {
+        svc.setState((current) => ({ ...current, selectedStepId }));
+      },
     }),
     inlineEditNodeId: computed({
       get: () => state.value.inlineEditNodeId,
-      set: (inlineEditNodeId) => { svc.setState((current) => ({ ...current, inlineEditNodeId })); },
+      set: (inlineEditNodeId) => {
+        svc.setState((current) => ({ ...current, inlineEditNodeId }));
+      },
     }),
     selectedWorkflowRunNodeId: computed({
       get: () => state.value.selectedWorkflowRunNodeId,
-      set: (selectedWorkflowRunNodeId) =>
-        { svc.setState((current) => ({ ...current, selectedWorkflowRunNodeId })); },
+      set: (selectedWorkflowRunNodeId) => {
+        svc.setState((current) => ({ ...current, selectedWorkflowRunNodeId }));
+      },
     }),
     selectedWorkflowNodeRunId: computed({
       get: () => state.value.selectedWorkflowNodeRunId,
-      set: (selectedWorkflowNodeRunId) =>
-        { svc.setState((current) => ({ ...current, selectedWorkflowNodeRunId })); },
+      set: (selectedWorkflowNodeRunId) => {
+        svc.setState((current) => ({ ...current, selectedWorkflowNodeRunId }));
+      },
     }),
     stepEditor,
     selectedWorkflow,
@@ -538,7 +595,9 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     runInputOpen: computed(() => state.value.runInputOpen),
     runInputDraft: computed({
       get: () => state.value.runInputDraft,
-      set: (runInputDraft) => { svc.setState((current) => ({ ...current, runInputDraft })); },
+      set: (runInputDraft) => {
+        svc.setState((current) => ({ ...current, runInputDraft }));
+      },
     }),
     runInputDebug: computed(() => state.value.runInputDebug),
     closeRunInput: svc.runs.closeRunInput,
@@ -558,7 +617,9 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     selectedStepKindLocked,
     selectedGraphEdgeId: computed({
       get: () => state.value.selectedGraphEdgeId,
-      set: (selectedGraphEdgeId) => { svc.setState((current) => ({ ...current, selectedGraphEdgeId })); },
+      set: (selectedGraphEdgeId) => {
+        svc.setState((current) => ({ ...current, selectedGraphEdgeId }));
+      },
     }),
     selectedGraphEdge,
     selectedNodeIssues,
@@ -570,6 +631,10 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     canResumeWorkflowRun,
     canCancelWorkflowRun,
     debugState,
+    cursorMarkers,
+    selectedCursorId,
+    followCursor,
+    setFollowCursor,
     controlState,
     isDebugRun,
     currentBreakpoints,
@@ -591,6 +656,10 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     runSelectedWorkflow: svc.runs.runSelectedWorkflow,
     runSelectedWorkflowDebug: svc.runs.runSelectedWorkflowDebug,
     stepSelectedWorkflowRun: svc.runs.stepSelectedWorkflowRun,
+    selectCursor: svc.runs.selectCursor,
+    forkCursor: svc.runs.forkCursor,
+    retireCursor: svc.runs.retireCursor,
+    armNodeForReal: svc.runs.armNodeForReal,
     continueSelectedWorkflowRun: svc.runs.continueSelectedWorkflowRun,
     pauseSelectedWorkflowRun: svc.runs.pauseSelectedWorkflowRun,
     resumeSelectedWorkflowRun: svc.runs.resumeSelectedWorkflowRun,

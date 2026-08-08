@@ -8,7 +8,15 @@ import type {
   WorkflowValidationIssue,
 } from "../../domain/models";
 import { runWorkflowSnapshot, workflowInputType } from "../../domain/models";
-import { coerceControlFrame, coerceDebugFrame } from "../../domain/models/workflow-state";
+import {
+  buildCursorMarkers,
+  coerceControlFrame,
+  coerceDebugFrame,
+  coerceRunCursors,
+  isCursorPaused,
+  type CursorMarker,
+  type RunCursor,
+} from "../../domain/models/workflow-state";
 import {
   asArray,
   buildGraphEdgeModels,
@@ -119,12 +127,67 @@ export function createWorkflowServices(inputDeps: WorkflowServiceDeps) {
     return coerceControlFrame(state.workflowRunDetail?.run.state?.control) ?? null;
   }
 
+  /** every thread of control the run currently holds, in persisted order. */
+  function getCursors(): RunCursor[] {
+    return coerceRunCursors(state.workflowRunDetail?.run.state?.cursors);
+  }
+
+  /** draw-ready markers for the graph and the cursor rail. */
+  function getCursorMarkers(): CursorMarker[] {
+    return buildCursorMarkers(getCursors(), getDebugState(), getSelectedCursorId());
+  }
+
+  /**
+   * the branch the debugger controls act on: the operator's selection while it is still live, else
+   * the first parked one, else the primary. mirrors the backend's `resolve_target_cursor`.
+   */
+  function getSelectedCursorId(): string | null {
+    const cursors = getCursors();
+
+    if (cursors.length === 0) {
+      return null;
+    }
+
+    const chosen = state.selectedCursorId;
+
+    if (chosen && cursors.some((cursor) => cursor.id === chosen)) {
+      return chosen;
+    }
+
+    const frame = getDebugState();
+    const parked = cursors.find((cursor) => isCursorPaused(cursors, cursor.id, frame));
+    return (parked ?? cursors[0]).id;
+  }
+
+  function getSelectedCursor(): RunCursor | null {
+    const id = getSelectedCursorId();
+    return getCursors().find((cursor) => cursor.id === id) ?? null;
+  }
+
+  /**
+   * whether the selected branch is parked.
+   *
+   * deliberately not `run.status === "debug_paused"`: the run only takes that status once *every*
+   * cursor is parked, so gating on it disabled every debug control for the whole of a forked
+   * session -- exactly the case this feature exists for.
+   */
+  function isSelectedCursorPaused(): boolean {
+    const cursors = getCursors();
+    const id = getSelectedCursorId();
+
+    if (!id) {
+      return state.workflowRunDetail?.run.status === "debug_paused";
+    }
+
+    return isCursorPaused(cursors, id, getDebugState());
+  }
+
   function canStepWorkflowRun(): boolean {
-    return state.workflowRunDetail?.run.status === "debug_paused";
+    return isSelectedCursorPaused();
   }
 
   function canContinueWorkflowRun(): boolean {
-    return state.workflowRunDetail?.run.status === "debug_paused";
+    return isSelectedCursorPaused();
   }
 
   function canPauseWorkflowRun(): boolean {
@@ -303,6 +366,11 @@ export function createWorkflowServices(inputDeps: WorkflowServiceDeps) {
     getSelectedGraphEdge,
     getDebugState,
     getControlState,
+    getCursors,
+    getCursorMarkers,
+    getSelectedCursorId,
+    getSelectedCursor,
+    isSelectedCursorPaused,
     canStepWorkflowRun,
     canContinueWorkflowRun,
     canPauseWorkflowRun,

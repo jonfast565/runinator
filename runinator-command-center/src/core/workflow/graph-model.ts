@@ -1,3 +1,4 @@
+import type { CursorMarker } from "../domain/models/workflow-state";
 import type {
   WorkflowEditorEdgeData,
   WorkflowInlineEditDescriptor,
@@ -26,6 +27,11 @@ export interface GraphNodeData {
   locked: boolean;
   skipped: boolean;
   debugBreakpoint: boolean;
+  /**
+   * threads of control standing on this node. a node may carry several -- a fan-out whose branches
+   * converge, or a speculative fork walking beside the branch it came from.
+   */
+  cursors: CursorMarker[];
 }
 
 export interface GraphNodeModel {

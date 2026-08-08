@@ -21,10 +21,7 @@ export type { ApiKey, CreateApiKeyResponse } from "./auth/api-key";
 
 export type { WorkflowNodeKind } from "./workflow/node-kind";
 export type { WorkflowNodeId, WorkflowNodeRef, WorkflowPathSegment } from "./workflow/node-ref";
-export type {
-  WorkflowConnectionHandle,
-  WorkflowDirectTransitionKey,
-} from "./workflow/transitions";
+export type { WorkflowConnectionHandle, WorkflowDirectTransitionKey } from "./workflow/transitions";
 export type {
   WorkflowEditorEdgeData,
   WorkflowEditorEdgeKind,
@@ -49,11 +46,7 @@ export type { RevisionSource, WorkflowRevision } from "./workflow/revision";
 export { revisionAuthorLabel } from "./workflow/revision";
 export type { WorkflowBundle } from "./workflow/bundle";
 export type { WorkflowTrigger, WorkflowTriggerKind } from "./workflow/trigger";
-export type {
-  Pipeline,
-  PipelineDefaults,
-  PipelineFailurePolicy,
-} from "./pipeline/pipeline";
+export type { Pipeline, PipelineDefaults, PipelineFailurePolicy } from "./pipeline/pipeline";
 export { defaultPipelineDefaults } from "./pipeline/pipeline";
 export type { PipelineTrigger } from "./pipeline/pipeline-trigger";
 export type { PipelineRun } from "./pipeline/pipeline-run";
@@ -107,12 +100,7 @@ export type {
 } from "./notification";
 export { DURATION_NOTIFICATION_EVENTS } from "./notification";
 
-export type {
-  BackfillRequest,
-  BackfillResponse,
-  FreezeWindow,
-  NewFreezeWindow,
-} from "./schedule";
+export type { BackfillRequest, BackfillResponse, FreezeWindow, NewFreezeWindow } from "./schedule";
 
 export type {
   WdlCompletionItem,
@@ -145,6 +133,7 @@ export type {
 export type {
   CompensationFrame,
   ControlFrame,
+  CursorMarker,
   DebugFrame,
   DebugMode,
   LoopFrame,
@@ -152,10 +141,13 @@ export type {
   MapFrame,
   ParallelFrame,
   RaceFrame,
+  RunCursor,
+  SpeculativeFrame,
   TryFrame,
   WorkflowRunState,
 } from "./workflow-state";
 export {
+  buildCursorMarkers,
   coerceCompensationFrame,
   coerceControlFrame,
   coerceDebugFrame,
@@ -163,6 +155,12 @@ export {
   coerceMapFrame,
   coerceParallelFrame,
   coerceRaceFrame,
+  coerceRunCursors,
   coerceTryFrame,
   coerceWorkflowRunState,
+  cursorDebug,
+  cursorLabel,
+  cursorsByNode,
+  isCursorPaused,
+  isSpeculative,
 } from "./workflow-state";

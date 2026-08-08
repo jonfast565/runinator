@@ -6,6 +6,15 @@ export type { LoopFrame } from "./loop-frame";
 export type { MapChild, MapFrame } from "./map-frame";
 export type { ParallelFrame } from "./parallel-frame";
 export type { RaceFrame } from "./race-frame";
+export type { CursorMarker, RunCursor, SpeculativeFrame } from "./run-cursor";
+export {
+  buildCursorMarkers,
+  cursorDebug,
+  cursorLabel,
+  cursorsByNode,
+  isCursorPaused,
+  isSpeculative,
+} from "./run-cursor";
 export type { TryFrame } from "./try-frame";
 export type { WorkflowRunState } from "./workflow-run-state";
 export {
@@ -16,6 +25,7 @@ export {
   coerceMapFrame,
   coerceParallelFrame,
   coerceRaceFrame,
+  coerceRunCursors,
   coerceTryFrame,
   coerceWorkflowRunState,
 } from "./coerce";

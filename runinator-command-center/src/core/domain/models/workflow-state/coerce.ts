@@ -14,6 +14,7 @@ import type { LoopFrame } from "./loop-frame";
 import type { MapFrame } from "./map-frame";
 import type { ParallelFrame } from "./parallel-frame";
 import type { RaceFrame } from "./race-frame";
+import type { RunCursor } from "./run-cursor";
 import type { TryFrame } from "./try-frame";
 import type { WorkflowRunState } from "./workflow-run-state";
 
@@ -61,8 +62,55 @@ export function coerceControlFrame(value: unknown): ControlFrame | undefined {
   }
 
   return {
-    pause_requested: typeof record.pause_requested === "boolean" ? record.pause_requested : undefined,
+    pause_requested:
+      typeof record.pause_requested === "boolean" ? record.pause_requested : undefined,
   };
+}
+
+/**
+ * parse `state.cursors`. tolerant by design: a cursor missing its id or node id is dropped rather
+ * than poisoning the whole list, matching how the backend treats a malformed frame.
+ */
+export function coerceRunCursors(value: unknown): RunCursor[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const cursors: RunCursor[] = [];
+
+  for (const entry of value) {
+    if (!isJsonRecord(entry)) {
+      continue;
+    }
+
+    const id = entry.id;
+    const nodeId = entry.node_id;
+
+    if (typeof id !== "string" || typeof nodeId !== "string") {
+      continue;
+    }
+
+    cursors.push({
+      id,
+      node_id: nodeId,
+      forked_by: typeof entry.forked_by === "string" ? entry.forked_by : null,
+      speculative: isJsonRecord(entry.speculative)
+        ? {
+            forked_from_cursor:
+              typeof entry.speculative.forked_from_cursor === "string"
+                ? entry.speculative.forked_from_cursor
+                : "",
+            label: typeof entry.speculative.label === "string" ? entry.speculative.label : null,
+            armed_nodes: stringArray(asJsonValue(entry.speculative.armed_nodes)) ?? [],
+            context_patch: asJsonValue(entry.speculative.context_patch),
+          }
+        : null,
+      debug: coerceDebugFrame(entry.debug) ?? null,
+      last_output: asJsonValue(entry.last_output),
+    });
+  }
+
+  return cursors;
 }
 
 export function coerceDebugFrame(value: unknown): DebugFrame | undefined {

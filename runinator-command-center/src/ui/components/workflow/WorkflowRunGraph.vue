@@ -67,16 +67,31 @@ function onNodeClick(event: NodeMouseEvent) {
 onPaneReady(() => {
   void recenter();
 });
-watch(() => workflows.selectedWorkflowRunId, () => {
-  void recenter();
-});
-watch(() => workflows.runGraphNodes.length, () => {
-  void recenter();
-});
 watch(
-  () => workflows.debugState?.current_node_id,
+  () => workflows.selectedWorkflowRunId,
+  () => {
+    void recenter();
+  },
+);
+watch(
+  () => workflows.runGraphNodes.length,
+  () => {
+    void recenter();
+  },
+);
+// follow only the *selected* thread of control, and only when asked.
+//
+// this used to watch the run's single `current_node_id` and refit on every change. with several
+// branches stepping independently that fires on every step of every branch, so the camera thrashes
+// between them; scoping it to one cursor behind an opt-in toggle is what makes a forked session
+// readable.
+watch(
+  () => {
+    const selected = workflows.cursorMarkers.find((cursor) => cursor.selected);
+    return selected?.paused ? selected.nodeId : null;
+  },
   async (nodeId) => {
-    if (typeof nodeId !== "string" || !nodeId) {
+    if (!workflows.followCursor || typeof nodeId !== "string" || !nodeId) {
       return;
     }
 

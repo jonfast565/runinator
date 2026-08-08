@@ -75,6 +75,7 @@
           >
         </div>
       </div>
+      <CursorRail />
       <DebugControlBar />
       <WatchExpressions />
       <details class="debug-json-group" open>
@@ -265,6 +266,7 @@ import JsonEditor from "../shared/JsonEditor.vue";
 import RunTimeline from "../shared/RunTimeline.vue";
 import RunGantt from "../shared/RunGantt.vue";
 import RunNodeActions, { type RunNodeActionType } from "../shared/RunNodeActions.vue";
+import CursorRail from "./CursorRail.vue";
 import DebugControlBar from "./DebugControlBar.vue";
 import RunControlBar from "./RunControlBar.vue";
 import JsonDiff from "./JsonDiff.vue";
@@ -612,9 +614,7 @@ const sortedNodeStats = computed<NodeTransitionStat[]>(() =>
   [...nodeStats.value].sort((a, b) => b.count - a.count),
 );
 
-const nodeStatTotal = computed(() =>
-  nodeStats.value.reduce((sum, stat) => sum + stat.count, 0),
-);
+const nodeStatTotal = computed(() => nodeStats.value.reduce((sum, stat) => sum + stat.count, 0));
 
 function statPercent(count: number): string {
   const total = nodeStatTotal.value;
@@ -626,4 +626,3 @@ function statPercent(count: number): string {
   return `${String(Math.round((count / total) * 100))}%`;
 }
 </script>
-

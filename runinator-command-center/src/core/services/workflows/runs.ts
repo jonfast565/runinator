@@ -1,19 +1,59 @@
 import {
-  cancelWorkflowRun, closeGate, compileWdl, continueWorkflowRun, createWorkflowRun, decompileToWdl,
-  deleteWorkflow, deleteWorkflowTrigger, duplicateWorkflow, fetchGates, fetchWorkflowNodeRunArtifacts,
-  fetchWorkflowNodeRunChunks, fetchWorkflowRun, fetchWorkflowRuns, fetchWorkflowTriggers, fetchWorkflows,
-  openGate, patchWorkflowRunDebug, pauseWorkflowRun, renameWorkflowRun as renameWorkflowRunApi,
-  replayWorkflowRun as replayWorkflowRunApi, resumeWorkflowRun, rerunWorkflowNode, runToCursorWorkflowRun,
-  saveWorkflowWdl, saveWorkflowTrigger, skipWorkflowNode, stepWorkflowRun,
-  type WorkflowDebugPatch, type WorkflowWdlSaveRequest,
+  cancelWorkflowRun,
+  closeGate,
+  compileWdl,
+  continueWorkflowRun,
+  createWorkflowRun,
+  decompileToWdl,
+  deleteWorkflow,
+  deleteWorkflowTrigger,
+  duplicateWorkflow,
+  fetchGates,
+  fetchWorkflowNodeRunArtifacts,
+  fetchWorkflowNodeRunChunks,
+  fetchWorkflowRun,
+  fetchWorkflowRuns,
+  fetchWorkflowTriggers,
+  fetchWorkflows,
+  openGate,
+  patchWorkflowRunDebug,
+  pauseWorkflowRun,
+  renameWorkflowRun as renameWorkflowRunApi,
+  replayWorkflowRun as replayWorkflowRunApi,
+  resumeWorkflowRun,
+  rerunWorkflowNode,
+  runToCursorWorkflowRun,
+  forkWorkflowRunCursor,
+  sendDebugCommand,
+  saveWorkflowWdl,
+  saveWorkflowTrigger,
+  skipWorkflowNode,
+  stepWorkflowRun,
+  type WorkflowDebugPatch,
+  type WorkflowWdlSaveRequest,
 } from "../../api/commandCenterApi";
 import type {
-  GateRecord, JsonRecord, JsonValue, ProviderMetadata, RunArtifact, RunChunk, RunSummary,
-  RuninatorType, WorkflowDefinition, WorkflowEdgeEditorDraft, WorkflowEditorEdgeData,
-  WorkflowLayoutDirection, WorkflowNodeKind, WorkflowNodeRun, WorkflowRunDetail, WorkflowTrigger,
-  WorkflowTriggerKind, WorkflowValidationIssue,
+  GateRecord,
+  JsonRecord,
+  JsonValue,
+  ProviderMetadata,
+  RunArtifact,
+  RunChunk,
+  RunSummary,
+  RuninatorType,
+  WorkflowDefinition,
+  WorkflowEdgeEditorDraft,
+  WorkflowEditorEdgeData,
+  WorkflowLayoutDirection,
+  WorkflowNodeKind,
+  WorkflowNodeRun,
+  WorkflowRunDetail,
+  WorkflowTrigger,
+  WorkflowTriggerKind,
+  WorkflowValidationIssue,
 } from "../../domain/models";
 import { asJsonValue } from "../../domain/json";
+import { coerceRunCursors, isCursorPaused } from "../../domain/models/workflow-state";
 import { coerceDebugFrame } from "../../domain/models/workflow-state";
 import { describeBulkResult, runBulk } from "../../utils/bulk";
 import { pretty } from "../../utils/format";
@@ -23,20 +63,56 @@ import { cloneJson, parseObject, parseRequiredJson, parseRequiredObject } from "
 import { displayValue, isBlankValue } from "../../utils/values";
 import { createZip, type ZipEntry } from "../../utils/zip";
 import {
-  applyWorkflowEdgeEditorDraft, applyWorkflowInlineNodeEdit, asArray, asRecord, isRecord,
-  autoArrangeWorkflowEdgeHandles, autoArrangeWorkflowLayout, createWorkflowNode, directTransitionKeys,
-  isSameConnectionPointLoop, nodeRef, nodeRefId, normalizeWorkflowDefinition, parameterSemanticKey,
-  removeConditionBranch, removeWorkflowEdge, removeWorkflowEdgeHandles, removeWorkflowNodeReferences,
-  setConditionBranch, setWorkflowEdgeHandles, setWorkflowEdgeLabelAnchor, setWorkflowEdgeLabelOffset,
-  moveWorkflowEdgeEditorDraft, optionIdForSourceHandle, workflowEdgeOptionId, workflowEdgeEditorDraft,
-  workflowEdgeSemanticOptions, uniqueWorkflowNodeId, validateWorkflowReferenceSyntax, valueRef,
-  workflowNodeActionConfig, workflowNodeActionInputs,
+  applyWorkflowEdgeEditorDraft,
+  applyWorkflowInlineNodeEdit,
+  asArray,
+  asRecord,
+  isRecord,
+  autoArrangeWorkflowEdgeHandles,
+  autoArrangeWorkflowLayout,
+  createWorkflowNode,
+  directTransitionKeys,
+  isSameConnectionPointLoop,
+  nodeRef,
+  nodeRefId,
+  normalizeWorkflowDefinition,
+  parameterSemanticKey,
+  removeConditionBranch,
+  removeWorkflowEdge,
+  removeWorkflowEdgeHandles,
+  removeWorkflowNodeReferences,
+  setConditionBranch,
+  setWorkflowEdgeHandles,
+  setWorkflowEdgeLabelAnchor,
+  setWorkflowEdgeLabelOffset,
+  moveWorkflowEdgeEditorDraft,
+  optionIdForSourceHandle,
+  workflowEdgeOptionId,
+  workflowEdgeEditorDraft,
+  workflowEdgeSemanticOptions,
+  uniqueWorkflowNodeId,
+  validateWorkflowReferenceSyntax,
+  valueRef,
+  workflowNodeActionConfig,
+  workflowNodeActionInputs,
 } from "../../workflow/index";
 import type { GraphEdgeLike, GraphEdgeModel } from "../../workflow/graph-model";
 import {
-  branchPolicyName, boundedIndex, defaultEdgeEditorDraft, defaultTriggerConfiguration, errorMessage,
-  formatMaybeDate, dateTimeLocalToIso, isLockedWorkflowNode, isProtectedWorkflowNode, newWorkflowDraft,
-  newWorkflowTriggerDraft, nextNodePosition, nodeRefArray, switchCaseEditor, validateJsonValueType,
+  branchPolicyName,
+  boundedIndex,
+  defaultEdgeEditorDraft,
+  defaultTriggerConfiguration,
+  errorMessage,
+  formatMaybeDate,
+  dateTimeLocalToIso,
+  isLockedWorkflowNode,
+  isProtectedWorkflowNode,
+  newWorkflowDraft,
+  newWorkflowTriggerDraft,
+  nextNodePosition,
+  nodeRefArray,
+  switchCaseEditor,
+  validateJsonValueType,
   buildInputSkeleton,
 } from "../../workflow/editor-defaults";
 import type { WorkflowServiceHost } from "./host";
@@ -142,8 +218,9 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     }
 
     const runId = host.state.workflowRunDetail.run.id;
+    const cursor = selectedCursorId();
     const response = await host.ctx.runOperation(`Stepping workflow run ${runId}`, () =>
-      stepWorkflowRun(runId),
+      stepWorkflowRun(runId, cursor),
     );
 
     if (!response.success) {
@@ -156,6 +233,108 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     host.notify();
   }
 
+  /**
+   * the branch the debugger controls act on: the operator's selection while it is still live, else
+   * the first parked one, else the primary. resolved from state rather than by calling back into
+   * the service, which would make the service's inferred type circular.
+   */
+  function selectedCursorId(): string | null {
+    const detail = host.state.workflowRunDetail;
+    const cursors = coerceRunCursors(detail?.run.state?.cursors);
+    if (cursors.length === 0) {
+      return null;
+    }
+    const chosen = host.state.selectedCursorId;
+    if (chosen && cursors.some((cursor) => cursor.id === chosen)) {
+      return chosen;
+    }
+    const frame = coerceDebugFrame(detail?.run.state?.debug) ?? null;
+    const parked = cursors.find((cursor) => isCursorPaused(cursors, cursor.id, frame));
+    return (parked ?? cursors[0])?.id ?? null;
+  }
+
+  /** point the debugger controls at one thread of control. */
+  function selectCursor(cursorId: string) {
+    host.state.selectedCursorId = cursorId;
+    host.notify();
+  }
+
+  /** fork a speculative "what if" branch from the selected cursor. */
+  async function forkCursor(
+    options: { atNode?: string; label?: string; contextPatch?: unknown } = {},
+  ) {
+    if (!host.state.workflowRunDetail) {
+      return;
+    }
+    const runId = host.state.workflowRunDetail.run.id;
+    const response = await host.ctx.runOperation(`Forking a branch of run ${runId}`, () =>
+      forkWorkflowRunCursor(runId, {
+        fromCursor: selectedCursorId(),
+        atNode: options.atNode ?? null,
+        label: options.label ?? null,
+        contextPatch: options.contextPatch ?? null,
+      }),
+    );
+
+    if (!response.success) {
+      host.ctx.setError(response.message || "Failed to fork a speculative branch");
+      return;
+    }
+
+    // the fork's id comes back as the response message; follow it, since forking is an act of
+    // deciding to look at the new branch.
+    if (response.message) {
+      selectCursor(response.message);
+    }
+    await fetchWorkflowRunDetail(runId, true);
+  }
+
+  /** abandon a speculative branch. */
+  async function retireCursor(cursorId: string) {
+    if (!host.state.workflowRunDetail) {
+      return;
+    }
+    const runId = host.state.workflowRunDetail.run.id;
+    const response = await host.ctx.runOperation(`Retiring branch ${cursorId}`, () =>
+      sendDebugCommand(runId, { verb: "retire_cursor", cursor: cursorId }),
+    );
+
+    if (!response.success) {
+      host.ctx.setError(response.message || "Failed to retire the branch");
+      return;
+    }
+
+    if (host.state.selectedCursorId === cursorId) {
+      selectCursor("");
+    }
+    await fetchWorkflowRunDetail(runId, true);
+  }
+
+  /** let a speculative branch dispatch one node for real instead of shadowing it. */
+  async function armNodeForReal(cursorId: string, nodeId: string, armed: boolean) {
+    if (!host.state.workflowRunDetail) {
+      return;
+    }
+    const runId = host.state.workflowRunDetail.run.id;
+    const response = await host.ctx.runOperation(
+      `${armed ? "Arming" : "Disarming"} ${nodeId}`,
+      () =>
+        sendDebugCommand(runId, {
+          verb: "arm_for_real",
+          cursor: cursorId,
+          node_id: nodeId,
+          armed,
+        }),
+    );
+
+    if (!response.success) {
+      host.ctx.setError(response.message || "Failed to change arming");
+      return;
+    }
+
+    await fetchWorkflowRunDetail(runId, true);
+  }
+
   async function continueSelectedWorkflowRun() {
     if (!host.state.workflowRunDetail || !host.canContinueWorkflowRun()) {
       return;
@@ -163,7 +342,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
 
     const runId = host.state.workflowRunDetail.run.id;
     const response = await host.ctx.runOperation(`Continuing workflow run ${runId}`, () =>
-      continueWorkflowRun(runId),
+      continueWorkflowRun(runId, selectedCursorId()),
     );
 
     if (!response.success) {
@@ -538,7 +717,10 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
 
     const currentRunId = host.state.selectedWorkflowRunId;
 
-    if (currentRunId !== null && (!host.state.workflowRunDetail || previousRunId !== currentRunId)) {
+    if (
+      currentRunId !== null &&
+      (!host.state.workflowRunDetail || previousRunId !== currentRunId)
+    ) {
       await fetchWorkflowRunDetail(currentRunId, true);
     }
 
@@ -737,7 +919,10 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
 
   function setWorkflowRunDetail(detail: WorkflowRunDetail | null) {
     if (detail) {
-      internal.latestWorkflowRunPushVersion.set(detail.run.id, ++internal.nextWorkflowRunDetailVersion);
+      internal.latestWorkflowRunPushVersion.set(
+        detail.run.id,
+        ++internal.nextWorkflowRunDetailVersion,
+      );
     }
 
     applyWorkflowRunDetail(detail, { source: "ws" });
@@ -795,7 +980,10 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
       return;
     }
 
-    if (host.state.selectedWorkflowRunId !== runId && host.state.workflowRunDetail?.run.id !== runId) {
+    if (
+      host.state.selectedWorkflowRunId !== runId &&
+      host.state.workflowRunDetail?.run.id !== runId
+    ) {
       return;
     }
 
@@ -911,7 +1099,9 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     }
 
     if (detail) {
-      const hasWaiting = detail.nodes.some((n) => n.status === "waiting" || n.status === "approval_required" || n.status === "pending");
+      const hasWaiting = detail.nodes.some(
+        (n) => n.status === "waiting" || n.status === "approval_required" || n.status === "pending",
+      );
 
       if (hasWaiting) {
         host.deps.refreshResources();
@@ -1054,7 +1244,9 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
       const retryable = result.failed.map((failure) => failure.item);
       host.ctx.setError(text, {
         label: `Retry ${String(retryable.length)} failed`,
-        run: () => { void cancelWorkflowRuns(retryable); },
+        run: () => {
+          void cancelWorkflowRuns(retryable);
+        },
       });
     }
 
@@ -1101,5 +1293,61 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     host.notify();
   }
 
-  return { isBreakpointed, getTransition, setTransition, runSelectedWorkflow, runSelectedWorkflowDebug, closeRunInput, confirmRunInput, launchWorkflowRun, stepSelectedWorkflowRun, continueSelectedWorkflowRun, cancelSelectedWorkflowRun, pauseSelectedWorkflowRun, resumeSelectedWorkflowRun, patchSelectedWorkflowRunDebug, toggleBreakpoint, runToCursor, skipCurrentNode, rerunCurrentNode, replaySelectedWorkflowRun, renameSelectedWorkflowRun, cancelWorkflowRuns, replayWorkflowRuns, loadAllWatchExpressions, persistWatchExpressions, addWatchExpression, removeWatchExpression, fetchWorkflowRunsForSelected, fetchRecentWorkflowRuns, scheduleRecentWorkflowRunsRefresh, scheduleWorkflowRunDetailRefresh, selectWorkflowRun, openRunInTab, activateRunTab, closeRunTab, fetchWorkflowRunDetail, setWorkflowRunDetail, selectWorkflowRunNode, clearWorkflowRunGates, workflowRunGateIds, workflowRunGateFingerprintForDetail, refreshWorkflowRunGates, syncWorkflowRunGatesForDetail, resolveWorkflowRunGate, applyWorkflowRunDetail, reapplyPendingBreakpointPatch, confirmPendingBreakpointPatch, clearPendingBreakpointPatch, applyBreakpointPatch, readBreakpoints, sameBreakpoints, updateSelectedWorkflowNodeDetail };
+  return {
+    isBreakpointed,
+    getTransition,
+    setTransition,
+    runSelectedWorkflow,
+    runSelectedWorkflowDebug,
+    closeRunInput,
+    confirmRunInput,
+    launchWorkflowRun,
+    stepSelectedWorkflowRun,
+    continueSelectedWorkflowRun,
+    selectCursor,
+    forkCursor,
+    retireCursor,
+    armNodeForReal,
+    cancelSelectedWorkflowRun,
+    pauseSelectedWorkflowRun,
+    resumeSelectedWorkflowRun,
+    patchSelectedWorkflowRunDebug,
+    toggleBreakpoint,
+    runToCursor,
+    skipCurrentNode,
+    rerunCurrentNode,
+    replaySelectedWorkflowRun,
+    renameSelectedWorkflowRun,
+    cancelWorkflowRuns,
+    replayWorkflowRuns,
+    loadAllWatchExpressions,
+    persistWatchExpressions,
+    addWatchExpression,
+    removeWatchExpression,
+    fetchWorkflowRunsForSelected,
+    fetchRecentWorkflowRuns,
+    scheduleRecentWorkflowRunsRefresh,
+    scheduleWorkflowRunDetailRefresh,
+    selectWorkflowRun,
+    openRunInTab,
+    activateRunTab,
+    closeRunTab,
+    fetchWorkflowRunDetail,
+    setWorkflowRunDetail,
+    selectWorkflowRunNode,
+    clearWorkflowRunGates,
+    workflowRunGateIds,
+    workflowRunGateFingerprintForDetail,
+    refreshWorkflowRunGates,
+    syncWorkflowRunGatesForDetail,
+    resolveWorkflowRunGate,
+    applyWorkflowRunDetail,
+    reapplyPendingBreakpointPatch,
+    confirmPendingBreakpointPatch,
+    clearPendingBreakpointPatch,
+    applyBreakpointPatch,
+    readBreakpoints,
+    sameBreakpoints,
+    updateSelectedWorkflowNodeDetail,
+  };
 }
