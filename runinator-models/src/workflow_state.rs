@@ -184,6 +184,31 @@ impl WorkflowRunState {
         found
     }
 
+    /// `id` plus every speculative cursor it was forked from, walking up to the first real one.
+    ///
+    /// this is a fork's *history*: a branch forked from another continues that other's exploration,
+    /// so the parent's recorded work is part of this branch's past. the descendants in
+    /// [`Self::speculative_subtree`] are the opposite relation — divergent continuations, whose work
+    /// this branch must not see — which is why draining and visibility use different walks.
+    pub fn speculative_ancestry(&self, id: Uuid) -> Vec<Uuid> {
+        let mut chain = vec![id];
+        let mut current = id;
+        // bounded by the cursor count: each step moves to a strictly different cursor, and a cursor
+        // already in the chain stops the walk, so a corrupted cycle cannot spin here.
+        while let Some(parent) = self
+            .cursor(current)
+            .and_then(|cursor| cursor.speculative.as_ref())
+            .map(|frame| frame.forked_from_cursor)
+        {
+            if chain.contains(&parent) {
+                break;
+            }
+            chain.push(parent);
+            current = parent;
+        }
+        chain
+    }
+
     /// fork a speculative branch of `from`, entering at `node_id`. returns the new cursor's id, or
     /// `None` when `from` has already been retired.
     pub fn fork_speculative(

@@ -20,8 +20,10 @@ pub(super) fn visible_node_runs(
             .cloned()
             .collect();
     }
-    // this fork's own lineage: itself plus anything forked from it.
-    let visible = state.speculative_subtree(cursor.id);
+    // this fork's own lineage: itself and the forks it descends from. *not* its descendants —
+    // those are divergent explorations forked off later, and letting a branch read them would show
+    // it work that happened on a path it did not take.
+    let visible = state.speculative_ancestry(cursor.id);
     node_runs
         .iter()
         .filter(|run| !run.speculative || run.cursor_id.is_some_and(|id| visible.contains(&id)))

@@ -139,6 +139,40 @@ fn a_speculative_subtree_collects_nested_forks() {
     assert_eq!(subtree.len(), 2);
 }
 
+// visibility walks *up* the fork chain and draining walks *down* it. getting these the same way
+// round would either hide a fork's own history from it, or show it a path it never took.
+#[test]
+fn ancestry_and_subtree_walk_opposite_directions() {
+    let mut parsed = WorkflowRunState::default();
+    let root = parsed.ensure_cursor("start");
+    let child = parsed
+        .fork_speculative(root, "start", None, Value::Null)
+        .expect("child");
+    let grandchild = parsed
+        .fork_speculative(child, "start", None, Value::Null)
+        .expect("grandchild");
+
+    let ancestry = parsed.speculative_ancestry(grandchild);
+    assert!(
+        ancestry.contains(&grandchild) && ancestry.contains(&child),
+        "a fork's history includes the fork it continued from"
+    );
+    assert!(
+        ancestry.contains(&root),
+        "the walk stops at the real cursor it ultimately came from, inclusive"
+    );
+
+    let subtree = parsed.speculative_subtree(child);
+    assert!(
+        subtree.contains(&grandchild),
+        "draining a fork takes the forks made from it"
+    );
+    assert!(
+        !subtree.contains(&root),
+        "draining a fork must never touch what it forked from"
+    );
+}
+
 #[test]
 fn forking_a_retired_cursor_reports_failure() {
     let mut parsed = WorkflowRunState::default();

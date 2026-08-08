@@ -231,11 +231,14 @@ async fn process_workflow_run_step<T: ReducerStore>(
     }
     let Some(node) = nodes.iter().find(|node| cursor.is_at(&node.id)) else {
         tracing::error!(active_node_id = %cursor, "active workflow node is missing from the graph");
-        db.update_workflow_run_status(
+        // a failing terminal ends the run and drains every branch; going through `advance_cursor`
+        // is what applies that rule, rather than leaving a finished run holding live cursors.
+        run_state::advance_cursor(
+            db,
             workflow_run.id,
+            cursor.id,
             WorkflowStatus::Failed,
-            Some(cursor.into_node_id()),
-            None,
+            run_state::CursorMove::Retire,
             Some("Active workflow node is missing".into()),
         )
         .await?;

@@ -509,6 +509,119 @@ async fn a_failing_speculative_branch_leaves_the_real_run_alone() {
     assert!(state.cursors.is_empty());
 }
 
+// a blocked thread of control is stuck, not finished. retiring it would leave a live run with no
+// cursor to drive and silently discard the loop/try frames that say where it was.
+#[tokio::test]
+async fn a_blocked_node_keeps_its_cursor_in_place() {
+    let store = FakeStore::new();
+    // the reentry safety bound with no `on_exhausted` target is a real `block_node` caller.
+    store.insert_workflow(workflow(serde_json::json!([
+        { "id": "start", "kind": "start", "transitions": { "next": { "$node": "capped" } } },
+        { "id": "capped", "kind": "audit",
+          "parameters": { "action": "noted" },
+          "reentry": { "enabled": true, "max_visits": 1 },
+          "transitions": { "on_success": { "$node": "done" } } },
+        { "id": "done", "kind": "end" }
+    ])));
+    store.insert_run(run_with_state(serde_json::json!({})));
+    // a prior completed visit, so entering it again is already over the bound.
+    store.insert_node_run(
+        serde_json::from_value(serde_json::json!({
+            "id": Uuid::now_v7(),
+            "workflow_run_id": RUN_ID,
+            "node_id": "capped",
+            "status": "succeeded",
+            "attempt": 1,
+            "parameters": {},
+            "output_json": null,
+            "state": null,
+            "transition_reason": null,
+            "created_at": Utc::now(),
+            "started_at": null,
+            "finished_at": Utc::now(),
+            "message": null,
+        }))
+        .expect("prior visit"),
+    );
+
+    process_ready_node(&store, &ready_node("capped"))
+        .await
+        .expect("drive");
+
+    let run = store.run(RUN_ID.parse().unwrap()).expect("run");
+    assert_eq!(run.status, WorkflowStatus::Blocked);
+    let state = WorkflowRunState::from_state(&run.state);
+    let cursor = state
+        .primary_cursor()
+        .expect("a blocked run keeps the cursor so it can be inspected and retried");
+    assert!(
+        cursor.is_at("capped"),
+        "it stays on the node it blocked at, got {cursor}"
+    );
+}
+
+// a short-circuiting cooldown finishes its own branch. writing `Succeeded` on the run directly --
+// as it used to -- would end the whole run while sibling branches were still executing.
+#[tokio::test]
+async fn a_terminal_settles_through_the_cursor_and_drains_it() {
+    let store = FakeStore::new();
+    store.insert_workflow(workflow(linear()));
+    store.insert_run(run_with_state(serde_json::json!({})));
+
+    process_ready_node(&store, &ready_node("start"))
+        .await
+        .expect("drive");
+
+    let run = store.run(RUN_ID.parse().unwrap()).expect("run");
+    assert_eq!(run.status, WorkflowStatus::Succeeded);
+    assert!(
+        WorkflowRunState::from_state(&run.state).cursors.is_empty(),
+        "a finished run holds no threads of control"
+    );
+}
+
+// a nested fork continues its parent's exploration, so the parent's recorded work is its history.
+// reading the *subtree* instead would hide that and show it divergent branches it never took.
+#[test]
+fn a_nested_fork_sees_its_parents_work_and_not_its_siblings() {
+    let mut state = WorkflowRunState::default();
+    let real = state.ensure_cursor("gate");
+    let parent = state
+        .fork_speculative(real, "gate", None, Value::Null)
+        .expect("parent fork");
+    let child = state
+        .fork_speculative(parent, "gate", None, Value::Null)
+        .expect("nested fork");
+    let sibling = state
+        .fork_speculative(real, "gate", None, Value::Null)
+        .expect("sibling fork");
+
+    let node_runs: Vec<runinator_models::workflows::WorkflowNodeRun> = serde_json::from_value(
+        serde_json::json!([
+            { "id": Uuid::now_v7(), "workflow_run_id": RUN_ID, "node_id": "call",
+              "status": "succeeded", "attempt": 1, "parameters": {}, "output_json": { "from": "parent" },
+              "state": null, "transition_reason": null, "created_at": Utc::now(),
+              "started_at": null, "finished_at": null, "message": null,
+              "speculative": true, "cursor_id": parent },
+            { "id": Uuid::now_v7(), "workflow_run_id": RUN_ID, "node_id": "call",
+              "status": "succeeded", "attempt": 1, "parameters": {}, "output_json": { "from": "sibling" },
+              "state": null, "transition_reason": null, "created_at": Utc::now(),
+              "started_at": null, "finished_at": null, "message": null,
+              "speculative": true, "cursor_id": sibling },
+        ]),
+    )
+    .expect("node runs");
+
+    let child_cursor = state.cursor(child).expect("child").clone();
+    let visible = super::context::visible_node_runs(&child_cursor, &state, &node_runs);
+    assert_eq!(
+        visible.len(),
+        1,
+        "exactly one of the two is this fork's history"
+    );
+    assert_eq!(visible[0].cursor_id, Some(parent));
+}
+
 // isolation in the direction that matters: a real branch must never read a hypothetical's output.
 #[test]
 fn a_real_cursor_cannot_see_speculative_output() {

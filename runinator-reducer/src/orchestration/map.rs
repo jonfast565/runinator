@@ -186,15 +186,18 @@ pub(super) async fn finalize_map_child<T: ReducerStore>(
         .max_by_key(|run| run.id)
         .and_then(|run| run.output_json.clone())
         .unwrap_or(Value::Null);
-    let mut state = workflow_run.state.clone();
-    if let Some(map_child) = state.get_mut("map_child").and_then(Value::as_object_mut) {
-        map_child.insert("result".into(), output);
+    let mut typed = WorkflowRunState::from_state(&workflow_run.state);
+    if let Some(child_state) = typed.map_child.as_mut() {
+        child_state.result = Some(output);
     }
+    // the child is finished, so it holds no threads of control. leaving them would make a terminal
+    // run disagree with the invariant every other terminal path maintains.
+    typed.cursors.clear();
     db.update_workflow_run_status(
         workflow_run.id,
         WorkflowStatus::Succeeded,
         workflow_run.active_node_id.clone(),
-        Some(state),
+        Some(typed.to_state()),
         Some("map_child_finished".into()),
     )
     .await

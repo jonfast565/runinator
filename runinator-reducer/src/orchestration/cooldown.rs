@@ -118,11 +118,15 @@ pub(super) async fn process_cooldown_node<T: ReducerStore>(
             None,
         )
         .await?;
-        db.update_workflow_run_status(
+        // settle through the cursor: the run only succeeds once its last thread of control
+        // retires. writing `Succeeded` directly would let one branch inside its cooldown window
+        // end the whole run while its siblings were still executing.
+        run_state::advance_cursor(
+            db,
             workflow_run.id,
+            cursor.id,
             WorkflowStatus::Succeeded,
-            Some(node.id.clone()),
-            None,
+            run_state::CursorMove::Retire,
             None,
         )
         .await?;

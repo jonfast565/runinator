@@ -104,14 +104,15 @@ pub(super) async fn block_node<T: ReducerStore>(
         Some(message.into()),
     )
     .await?;
-    // a blocked thread of control is finished: retire it and let the run settle `Blocked`. going
-    // through `advance_cursor` is what keeps a blocked branch from stranding its live siblings.
-    run_state::advance_cursor(
-        db,
+    // a blocked thread of control is *stuck*, not finished: it stays exactly where it is, keeping
+    // its loop/try frames, so an operator can inspect it and a later drive can retry from the same
+    // place. retiring it here would leave a live (non-terminal) run with no cursor to drive, and
+    // silently discard the frames that say which iteration it was on.
+    db.update_workflow_run_status(
         workflow_run.id,
-        cursor.id,
         WorkflowStatus::Blocked,
-        run_state::CursorMove::Retire,
+        Some(node.id.clone()),
+        None,
         Some(message.into()),
     )
     .await
