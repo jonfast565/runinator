@@ -107,6 +107,7 @@ pub(super) async fn process_action_node<T: ReducerStore>(
     db: &T,
     workflow: &runinator_models::workflows::WorkflowDefinition,
     workflow_run: &WorkflowRun,
+    cursor: &RunCursor,
     node: &WorkflowNode,
     latest: Option<&WorkflowNodeRun>,
     node_runs: &[WorkflowNodeRun],
@@ -117,7 +118,7 @@ pub(super) async fn process_action_node<T: ReducerStore>(
         .ok_or_else(|| crate::errors::ACTION_CONFIG_MISSING.error(&node.id))?;
     // a loop body re-entering this node sees the prior iteration's terminal run; treat it as a
     // fresh visit so the action dispatches again instead of transitioning from the stale run.
-    let latest = latest.filter(|run| !is_reentry_stale(run, node_runs));
+    let latest = latest.filter(|run| !is_reentry_stale(run, node_runs, cursor));
     if let Some(node_run) = latest {
         if node_run.status == WorkflowStatus::Running {
             // a dispatched action otherwise waits on its worker result indefinitely; honor the
@@ -128,6 +129,7 @@ pub(super) async fn process_action_node<T: ReducerStore>(
                 return time_out(
                     db,
                     workflow_run,
+                    cursor,
                     node,
                     node_run,
                     "Action node timed out",
@@ -148,6 +150,7 @@ pub(super) async fn process_action_node<T: ReducerStore>(
                 return time_out(
                     db,
                     workflow_run,
+                    cursor,
                     node,
                     node_run,
                     "Worker executing this action disconnected",
@@ -166,6 +169,7 @@ pub(super) async fn process_action_node<T: ReducerStore>(
                 return time_out(
                     db,
                     workflow_run,
+                    cursor,
                     node,
                     node_run,
                     "Worker executing this action disconnected",
@@ -190,6 +194,7 @@ pub(super) async fn process_action_node<T: ReducerStore>(
             return time_out(
                 db,
                 workflow_run,
+                cursor,
                 node,
                 node_run,
                 "Desktop agent did not become available",
@@ -201,6 +206,7 @@ pub(super) async fn process_action_node<T: ReducerStore>(
             retry_or_transition(
                 db,
                 workflow_run,
+                cursor,
                 node,
                 node_run,
                 node_run.status,
@@ -223,6 +229,7 @@ pub(super) async fn process_action_node<T: ReducerStore>(
                 node.id.clone(),
                 node.parameters.clone().into(),
                 super::context::most_recently_finished_node_run(node_runs),
+                Some(cursor),
             )
             .await?
         }
@@ -247,18 +254,18 @@ pub(super) async fn process_action_node<T: ReducerStore>(
                 required_labels = ?required_labels,
                 "action node parking: no live worker matches its target; will fail on node timeout"
             );
-            return park_for_target(db, workflow_run, node, &node_run).await;
+            return park_for_target(db, workflow_run, cursor, node, &node_run).await;
         }
     };
     let attempt = node_run.attempt + 1;
     let parameters =
-        build_node_parameters(db, workflow, action, node, workflow_run, node_runs).await?;
+        build_node_parameters(db, workflow, action, node, workflow_run, cursor, node_runs).await?;
     // resolve the idempotency key from the same context the parameters saw, so the key describes the
     // effect this attempt is about to have. it is deliberately not attempt-scoped: a retry of the same
     // node must reach the same key, or retrying would defeat the whole point.
     let idempotency_key = match action.idempotency_key {
         Some(_) => {
-            let context = runtime_context(db, workflow_run, node_runs).await;
+            let context = runtime_context(db, workflow_run, cursor, node_runs).await;
             resolve_idempotency_key(action, workflow_run.workflow_id, &context)
         }
         None => None,
@@ -299,7 +306,7 @@ pub(super) async fn process_action_node<T: ReducerStore>(
     .await?;
     // no ready node is pending while the run awaits the worker, so a configured timeout must arm
     // its own wake-up to be checked at the deadline.
-    arm_node_timeout(db, workflow_run.id, node).await?;
+    arm_node_timeout(db, workflow_run.id, cursor, node).await?;
     // the executing worker can die mid-run with no result ever arriving; re-check its liveness
     // (executor claim holder, or the pinned target's worker set) well before the possibly long,
     // or unset, node timeout would otherwise catch it.
@@ -313,13 +320,14 @@ async fn build_node_parameters<T: ReducerStore>(
     action: &WorkflowAction,
     node: &WorkflowNode,
     workflow_run: &WorkflowRun,
+    cursor: &RunCursor,
     node_runs: &[WorkflowNodeRun],
 ) -> Result<Value, SendableError> {
     // an effectful `std.exec` program is interpreted by the worker, not resolved here: ship the
     // program verbatim alongside the full runtime context and the workflow's user-function table so
     // the worker's interpreter can resolve refs/calls (with the effectful library) against it.
     if action.provider == "std" && action.function == "exec" {
-        let context = runtime_context(db, workflow_run, node_runs).await;
+        let context = runtime_context(db, workflow_run, cursor, node_runs).await;
         let program = action
             .configuration
             .as_value()
@@ -339,7 +347,7 @@ async fn build_node_parameters<T: ReducerStore>(
     // foreign compute source is passed verbatim to `std.code`; only the live context is appended.
     if action.provider == "std" && action.function == "code" {
         let mut parameters = action.configuration.as_value().clone();
-        let context = runtime_context(db, workflow_run, node_runs).await;
+        let context = runtime_context(db, workflow_run, cursor, node_runs).await;
         if let Value::Object(object) = &mut parameters {
             let language = object
                 .get("language")
@@ -364,7 +372,7 @@ async fn build_node_parameters<T: ReducerStore>(
         return Ok(runinator_models::json!({ "context": context }));
     }
     let base = merge_parameters(&action.configuration, &node.parameters);
-    let context = runtime_context(db, workflow_run, node_runs).await;
+    let context = runtime_context(db, workflow_run, cursor, node_runs).await;
     runinator_workflows::resolve_value_refs(&base, &context)
         .map_err(|err| -> SendableError { Box::new(err) })
 }
@@ -573,6 +581,7 @@ async fn replica_is_live<T: ReducerStore>(db: &T, replica_id: Uuid) -> Result<bo
 async fn park_for_target<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
+    cursor: &RunCursor,
     node: &WorkflowNode,
     node_run: &WorkflowNodeRun,
 ) -> Result<(), SendableError> {
@@ -599,6 +608,7 @@ async fn park_for_target<T: ReducerStore>(
         arm_node_timeout_or(
             db,
             workflow_run.id,
+            cursor,
             node,
             TARGET_PARK_DEFAULT_TIMEOUT_SECONDS,
         )
@@ -641,6 +651,7 @@ impl<T: ReducerStore> NodeHandler<T> for ActionHandler {
                     ctx.db,
                     ctx.workflow,
                     ctx.workflow_run,
+                    ctx.cursor,
                     ctx.node,
                     ctx.node_runs,
                     ctx.nodes,
@@ -651,6 +662,7 @@ impl<T: ReducerStore> NodeHandler<T> for ActionHandler {
                     ctx.db,
                     ctx.workflow,
                     ctx.workflow_run,
+                    ctx.cursor,
                     ctx.node,
                     ctx.latest,
                     ctx.node_runs,

@@ -145,7 +145,10 @@ fn forking_a_retired_cursor_reports_failure() {
     let root = parsed.ensure_cursor("start");
     parsed.retire_cursor(root);
 
-    assert_eq!(parsed.fork_speculative(root, "start", None, Value::Null), None);
+    assert_eq!(
+        parsed.fork_speculative(root, "start", None, Value::Null),
+        None
+    );
 }
 
 // the whole point of per-cursor runtime: stepping one branch must not step its siblings.
@@ -198,7 +201,12 @@ fn the_flat_frame_mirrors_the_primary_cursor() {
         },
     );
     assert_eq!(
-        parsed.debug.as_ref().expect("frame").runtime.current_node_id,
+        parsed
+            .debug
+            .as_ref()
+            .expect("frame")
+            .runtime
+            .current_node_id,
         None,
         "a non-primary cursor must not overwrite the mirror"
     );

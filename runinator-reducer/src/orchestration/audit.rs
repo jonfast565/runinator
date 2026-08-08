@@ -21,6 +21,7 @@ pub(super) fn build_audit_record(workflow_run_id: Uuid, node_id: &str, resolved:
 pub(super) async fn process_audit_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
+    cursor: &RunCursor,
     node: &WorkflowNode,
     node_runs: &[WorkflowNodeRun],
 ) -> Result<(), SendableError> {
@@ -30,9 +31,10 @@ pub(super) async fn process_audit_node<T: ReducerStore>(
             node.id.clone(),
             node.parameters.clone().into(),
             super::context::most_recently_finished_node_run(node_runs),
+            Some(cursor),
         )
         .await?;
-    let context = runtime_context(db, workflow_run, node_runs).await;
+    let context = runtime_context(db, workflow_run, cursor, node_runs).await;
     let params: Value = node.parameters.clone().into();
     let resolved = runinator_workflows::resolve_value_refs(&params, &context)
         .map_err(|err| -> SendableError { Box::new(err) })?;
@@ -61,6 +63,7 @@ pub(super) async fn process_audit_node<T: ReducerStore>(
     transition_from_node(
         db,
         workflow_run,
+        cursor,
         node,
         &node_run,
         WorkflowStatus::Succeeded,
@@ -83,7 +86,14 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for AuditHandler {
         T: 'a,
     {
         async move {
-            process_audit_node(ctx.db, ctx.workflow_run, ctx.node, ctx.node_runs).await?;
+            process_audit_node(
+                ctx.db,
+                ctx.workflow_run,
+                ctx.cursor,
+                ctx.node,
+                ctx.node_runs,
+            )
+            .await?;
             Ok(ReadyNodeDisposition::Complete)
         }
     }

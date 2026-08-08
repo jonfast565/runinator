@@ -11,6 +11,7 @@ use super::*;
 pub(super) async fn process_map_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
+    cursor: &RunCursor,
     node: &WorkflowNode,
     latest: Option<&WorkflowNodeRun>,
     node_runs: &[WorkflowNodeRun],
@@ -20,6 +21,7 @@ pub(super) async fn process_map_node<T: ReducerStore>(
     let node_run = ensure_node_run(
         db,
         workflow_run,
+        cursor,
         node,
         latest,
         super::context::most_recently_finished_node_run(node_runs),
@@ -29,6 +31,7 @@ pub(super) async fn process_map_node<T: ReducerStore>(
         return time_out(
             db,
             workflow_run,
+            cursor,
             node,
             &node_run,
             "Map node timed out",
@@ -42,7 +45,7 @@ pub(super) async fn process_map_node<T: ReducerStore>(
         Some(frame) if frame.node_id == node.id => frame,
         _ => {
             // first visit: resolve the item list and initialize the fan-out frame.
-            let context = runtime_context(db, workflow_run, node_runs).await;
+            let context = runtime_context(db, workflow_run, cursor, node_runs).await;
             let items = runinator_workflows::evaluate_expression(&params.items, &context)
                 .map_err(|err| -> SendableError { Box::new(err) })?;
             let items = items.as_array().cloned().unwrap_or_default();
@@ -95,6 +98,7 @@ pub(super) async fn process_map_node<T: ReducerStore>(
         transition_from_node(
             db,
             workflow_run,
+            cursor,
             node,
             &node_run,
             WorkflowStatus::Failed,
@@ -129,6 +133,7 @@ pub(super) async fn process_map_node<T: ReducerStore>(
         transition_from_node(
             db,
             workflow_run,
+            cursor,
             node,
             &node_run,
             WorkflowStatus::Succeeded,
@@ -162,7 +167,7 @@ pub(super) async fn process_map_node<T: ReducerStore>(
         None,
     )
     .await?;
-    arm_node_timeout(db, workflow_run.id, node).await
+    arm_node_timeout(db, workflow_run.id, cursor, node).await
 }
 
 /// finalize a map fan-out child when its body returns to the controlling map node. captures the
@@ -266,6 +271,9 @@ async fn create_map_child_run<T: ReducerStore>(
             map_node.parameters.clone().into(),
             // the seed is the first node run in the child run; it has no in-run predecessor.
             None,
+            // and no cursor: the parent's belongs to the parent run. the child seeds its own on
+            // its first drive, so stamping this one would attribute the row to a foreign run.
+            None,
         )
         .await?;
     db.update_workflow_node_run(
@@ -332,6 +340,7 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for MapHandler {
             process_map_node(
                 ctx.db,
                 ctx.workflow_run,
+                ctx.cursor,
                 ctx.node,
                 ctx.latest,
                 ctx.node_runs,

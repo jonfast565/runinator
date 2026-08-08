@@ -10,6 +10,7 @@ use super::*;
 pub(super) async fn process_gate_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
+    cursor: &RunCursor,
     node: &WorkflowNode,
     latest: Option<&WorkflowNodeRun>,
     node_runs: &[WorkflowNodeRun],
@@ -17,7 +18,7 @@ pub(super) async fn process_gate_node<T: ReducerStore>(
     let params = runinator_workflows::parse_gate_parameters(node);
     // a loop body re-entering this node sees the prior iteration's resolved run; treat it as a fresh
     // visit so a new gate is opened instead of transitioning from the stale run.
-    let latest = latest.filter(|run| !is_reentry_stale(run, node_runs));
+    let latest = latest.filter(|run| !is_reentry_stale(run, node_runs, cursor));
 
     if let Some(node_run) = latest.filter(|run| run.status == WorkflowStatus::Waiting) {
         let gate_state = serde_json::from_value::<GateState>(node_run.state.clone().into()).ok();
@@ -32,6 +33,7 @@ pub(super) async fn process_gate_node<T: ReducerStore>(
                 time_out(
                     db,
                     workflow_run,
+                    cursor,
                     node,
                     node_run,
                     "Gate timed out",
@@ -42,13 +44,14 @@ pub(super) async fn process_gate_node<T: ReducerStore>(
             }
         }
 
-        if gate_is_open(db, &params, gate_id, workflow_run, node_runs).await? {
+        if gate_is_open(db, &params, gate_id, workflow_run, cursor, node_runs).await? {
             if let Some(gate_id) = gate_id {
                 mark_gate(db, gate_id, "passed", None, None).await?;
             }
             transition_from_node(
                 db,
                 workflow_run,
+                cursor,
                 node,
                 node_run,
                 WorkflowStatus::Succeeded,
@@ -72,6 +75,7 @@ pub(super) async fn process_gate_node<T: ReducerStore>(
             node.id.clone(),
             node.parameters.clone().into(),
             super::context::most_recently_finished_node_run(node_runs),
+            Some(cursor),
         )
         .await?;
     let deadline_unix = params
@@ -126,11 +130,12 @@ async fn gate_is_open<T: ReducerStore>(
     params: &runinator_workflows::GateParameters,
     gate_id: Option<Uuid>,
     workflow_run: &WorkflowRun,
+    cursor: &RunCursor,
     node_runs: &[WorkflowNodeRun],
 ) -> Result<bool, SendableError> {
     match params.kind {
         GateKind::Condition => {
-            let context = runtime_context(db, workflow_run, node_runs).await;
+            let context = runtime_context(db, workflow_run, cursor, node_runs).await;
             runinator_workflows::evaluate_workflow_condition(&params.condition, &context)
                 .map_err(|err| -> SendableError { Box::new(err) })
         }
@@ -209,6 +214,7 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for GateHandler {
             process_gate_node(
                 ctx.db,
                 ctx.workflow_run,
+                ctx.cursor,
                 ctx.node,
                 ctx.latest,
                 ctx.node_runs,

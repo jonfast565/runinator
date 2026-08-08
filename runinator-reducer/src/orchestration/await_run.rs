@@ -74,11 +74,12 @@ async fn resolve_target<T: ReducerStore>(
 async fn resolve_key<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
+    cursor: &RunCursor,
     node_runs: &[WorkflowNodeRun],
     key_expr: Option<&Value>,
 ) -> Option<String> {
     let expr = key_expr?;
-    let context = runtime_context(db, workflow_run, node_runs).await;
+    let context = runtime_context(db, workflow_run, cursor, node_runs).await;
     let resolved = runinator_workflows::resolve_value_refs(expr, &context).ok()?;
     coerce_scalar_string(&resolved)
 }
@@ -173,12 +174,13 @@ async fn enqueue_await_wake<T: ReducerStore>(
 pub(super) async fn process_await_run_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
+    cursor: &RunCursor,
     node: &WorkflowNode,
     latest: Option<&WorkflowNodeRun>,
     node_runs: &[WorkflowNodeRun],
 ) -> Result<ReadyNodeDisposition, SendableError> {
     let params = parse_await_params(node);
-    let latest = latest.filter(|run| !is_reentry_stale(run, node_runs));
+    let latest = latest.filter(|run| !is_reentry_stale(run, node_runs, cursor));
 
     // parked re-entry: woken by a matching terminal run or the timeout re-arm.
     if let Some(node_run) = latest.filter(|run| run.status == WorkflowStatus::Waiting) {
@@ -189,6 +191,7 @@ pub(super) async fn process_await_run_node<T: ReducerStore>(
             time_out(
                 db,
                 workflow_run,
+                cursor,
                 node,
                 node_run,
                 "Await workflow timed out",
@@ -210,6 +213,7 @@ pub(super) async fn process_await_run_node<T: ReducerStore>(
             transition_await(
                 db,
                 workflow_run,
+                cursor,
                 node,
                 node_run,
                 state.workflow_id,
@@ -225,7 +229,14 @@ pub(super) async fn process_await_run_node<T: ReducerStore>(
 
     // first visit: resolve the target + correlation, check immediately, else park.
     let (target_id, target_name) = resolve_target(db, node, &params).await?;
-    let correlation = resolve_key(db, workflow_run, node_runs, params.key_expr.as_ref()).await;
+    let correlation = resolve_key(
+        db,
+        workflow_run,
+        cursor,
+        node_runs,
+        params.key_expr.as_ref(),
+    )
+    .await;
     let since_unix = Some(
         workflow_run
             .started_at
@@ -238,6 +249,7 @@ pub(super) async fn process_await_run_node<T: ReducerStore>(
             node.id.clone(),
             node.parameters.clone().into(),
             super::context::most_recently_finished_node_run(node_runs),
+            Some(cursor),
         )
         .await?;
     let matches = evaluate_matches(
@@ -253,6 +265,7 @@ pub(super) async fn process_await_run_node<T: ReducerStore>(
         transition_await(
             db,
             workflow_run,
+            cursor,
             node,
             &node_run,
             target_id,
@@ -290,7 +303,7 @@ pub(super) async fn process_await_run_node<T: ReducerStore>(
         None,
     )
     .await?;
-    arm_node_timeout(db, workflow_run.id, node).await?;
+    arm_node_timeout(db, workflow_run.id, cursor, node).await?;
     // re-check after committing the park: a matching run that reached terminal during the first-visit
     // window would otherwise be missed, since the wake path only finds this node once it is `Waiting`.
     let recheck = evaluate_matches(
@@ -312,6 +325,7 @@ pub(super) async fn process_await_run_node<T: ReducerStore>(
 async fn transition_await<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
+    cursor: &RunCursor,
     node: &WorkflowNode,
     node_run: &WorkflowNodeRun,
     workflow_id: Uuid,
@@ -328,6 +342,7 @@ async fn transition_await<T: ReducerStore>(
     transition_from_node(
         db,
         workflow_run,
+        cursor,
         node,
         node_run,
         WorkflowStatus::Succeeded,
@@ -353,6 +368,7 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for AwaitRunHandler {
             process_await_run_node(
                 ctx.db,
                 ctx.workflow_run,
+                ctx.cursor,
                 ctx.node,
                 ctx.latest,
                 ctx.node_runs,

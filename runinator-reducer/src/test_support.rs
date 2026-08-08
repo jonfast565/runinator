@@ -18,6 +18,7 @@ use std::sync::Mutex;
 use chrono::{DateTime, Utc};
 use runinator_comm::{ActionCommand, ActionDispatchRecord};
 use runinator_models::billing::OrgResourceGroup;
+use runinator_models::cursor::RunCursor;
 use runinator_models::errors::SendableError;
 use runinator_models::orchestration::{NewOrchestrationEvent, ReadyNodeRecord};
 use runinator_models::orgs::Organization;
@@ -190,17 +191,71 @@ impl ReducerStore for FakeStore {
         Ok(())
     }
 
+    /// compare-and-swap the whole state blob. the version is bumped on every accepted write, so a
+    /// caller that read an older one loses and rebuilds — the same contract the sql backend has.
+    async fn update_workflow_run_state_cas(
+        &self,
+        workflow_run_id: Uuid,
+        expected_version: i64,
+        state: Value,
+    ) -> Result<bool, SendableError> {
+        let mut guard = self.state.lock().expect("state");
+        let Some(run) = guard.runs.get_mut(&workflow_run_id) else {
+            return Ok(false);
+        };
+        if run.state_version != expected_version {
+            return Ok(false);
+        }
+        run.state = state;
+        run.state_version += 1;
+        Ok(true)
+    }
+
+    async fn update_workflow_run_status_cas(
+        &self,
+        workflow_run_id: Uuid,
+        expected_version: i64,
+        status: WorkflowStatus,
+        active_node_id: Option<String>,
+        state: Value,
+        message: Option<String>,
+    ) -> Result<bool, SendableError> {
+        let mut guard = self.state.lock().expect("state");
+        let Some(run) = guard.runs.get_mut(&workflow_run_id) else {
+            return Ok(false);
+        };
+        if run.state_version != expected_version {
+            return Ok(false);
+        }
+        run.status = status;
+        if active_node_id.is_some() {
+            run.active_node_id = active_node_id;
+        }
+        run.state = state;
+        run.state_version += 1;
+        if message.is_some() {
+            run.message = message;
+        }
+        if status.is_terminal() {
+            run.finished_at = Some(Utc::now());
+        }
+        Ok(true)
+    }
+
     async fn create_workflow_node_run(
         &self,
         workflow_run_id: Uuid,
         node_id: String,
         parameters: Value,
         _prev_node_run_id: Option<Uuid>,
+        cursor: Option<&RunCursor>,
     ) -> Result<WorkflowNodeRun, SendableError> {
         let node_run: WorkflowNodeRun = serde_json::from_value(serde_json::json!({
             "id": Uuid::now_v7(),
             "workflow_run_id": workflow_run_id,
             "node_id": node_id,
+            "cursor_id": cursor.map(|cursor| cursor.id),
+            "speculative": cursor.is_some_and(RunCursor::is_speculative),
             "status": "running",
             "attempt": 1,
             "parameters": serde_json::to_value(&parameters)?,
@@ -322,6 +377,7 @@ impl ReducerStore for FakeStore {
             "source_event_id": Uuid::now_v7(),
             "workflow_run_id": event.workflow_run_id,
             "node_id": node_id,
+            "cursor_id": event.cursor_id,
             "status": "queued",
             "ready_at": ready_at,
             "attempts": 0,

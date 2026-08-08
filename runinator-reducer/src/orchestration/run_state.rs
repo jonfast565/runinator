@@ -45,9 +45,18 @@ pub(super) async fn advance_cursor<T: ReducerStore>(
             .cursor(cursor_id)
             .map(|cursor| cursor.node_id().to_string())
             .or_else(|| run.active_node_id.clone());
+        // read before mutating: a drain removes the cursor this question is about.
+        let speculative = state.is_speculative(cursor_id);
 
         let fails = status.is_terminal() && status != WorkflowStatus::Succeeded;
         match (&movement, fails) {
+            // a failing "what if" branch takes only its own subtree with it. draining the run would
+            // let a hypothetical failure kill the real work it was forked from.
+            (_, true) if speculative => {
+                for id in state.speculative_subtree(cursor_id) {
+                    state.retire_cursor(id);
+                }
+            }
             (_, true) => state.cursors.clear(),
             (CursorMove::To(next), false) => {
                 state.ensure_cursor(next);
@@ -60,16 +69,26 @@ pub(super) async fn advance_cursor<T: ReducerStore>(
             }
         }
 
-        // a successful retirement that leaves siblings behind keeps the run running.
-        let run_status = if !fails
+        let run_status = if speculative {
+            // a speculative cursor never moves the run's status: the run means what its real threads
+            // of control say it means.
+            run.status
+        } else if !fails
             && status.is_terminal()
             && matches!(movement, CursorMove::Retire)
-            && !state.cursors.is_empty()
+            && state.real_cursors().next().is_some()
         {
+            // a successful retirement that leaves real siblings behind keeps the run running. the
+            // test is on *real* cursors so an abandoned "what if" fork cannot pin a finished run open.
             WorkflowStatus::Running
         } else {
             status
         };
+        // the run is settling for good: drop any speculative branches still walking, so the ready
+        // queue reaper and the terminal accounting see no live cursors.
+        if !speculative && run_status.is_terminal() {
+            state.cursors.clear();
+        }
         let position = state
             .primary_cursor()
             .map(|cursor| cursor.node_id().to_string())
@@ -138,6 +157,60 @@ pub(super) async fn fork_cursors<T: ReducerStore>(
             run_id = %workflow_run_id,
             attempt = attempt + 1,
             "run state changed under a fan-out; rebuilding on the winner"
+        );
+    }
+    Err(crate::errors::RUN_STATE_CONFLICT.error(workflow_run_id))
+}
+
+/// park one cursor under the debugger: persist its runtime snapshot, refresh the run-scoped mirror,
+/// and take `DebugPaused` only when no thread of control can still advance.
+///
+/// one branch stopping at a breakpoint leaves the run `Running` — its siblings are still executing.
+/// this is the same shape as the rule in [`advance_cursor`] that keeps a run alive while any branch
+/// remains, and it is why the debugger's ui gates on the *cursor's* state rather than the run's.
+pub(super) async fn park_cursor_for_debug<T: ReducerStore>(
+    db: &T,
+    workflow_run_id: Uuid,
+    cursor_id: Uuid,
+    runtime: runinator_models::workflow_state::DebugRuntime,
+    message: Option<String>,
+) -> Result<(), SendableError> {
+    for attempt in 0..MAX_STATE_CAS_ATTEMPTS {
+        let Some(run) = db.fetch_workflow_run(workflow_run_id).await? else {
+            return Ok(());
+        };
+        let mut state = WorkflowRunState::from_state(&run.state);
+        if state.cursor(cursor_id).is_none() {
+            // retired under us; nothing to park.
+            return Ok(());
+        }
+        state.set_cursor_debug(cursor_id, runtime.clone());
+        let status = if state.all_cursors_paused() {
+            WorkflowStatus::DebugPaused
+        } else {
+            run.status
+        };
+        let position = state
+            .primary_cursor()
+            .map(|cursor| cursor.node_id().to_string())
+            .or_else(|| run.active_node_id.clone());
+        if db
+            .update_workflow_run_status_cas(
+                workflow_run_id,
+                run.state_version,
+                status,
+                position,
+                state.to_state(),
+                message.clone(),
+            )
+            .await?
+        {
+            return Ok(());
+        }
+        tracing::debug!(
+            run_id = %workflow_run_id,
+            attempt = attempt + 1,
+            "run state changed under a debug park; rebuilding on the winner"
         );
     }
     Err(crate::errors::RUN_STATE_CONFLICT.error(workflow_run_id))

@@ -547,7 +547,8 @@ where
                  WHERE workflow_run_id = ? AND node_id = ? AND completed_at IS NULL AND ready_at <= ?"
             }
         };
-        let mut supersede = sqlx::query(&self.render(supersede))
+        let supersede_sql = self.render(supersede);
+        let mut supersede = sqlx::query(&supersede_sql)
             .bind(now)
             .bind(now)
             .bind(event.workflow_run_id)

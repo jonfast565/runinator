@@ -8,6 +8,7 @@ use runinator_models::workflows::NewWorkflowRunArtifact;
 pub(super) async fn process_output_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
+    cursor: &RunCursor,
     node: &WorkflowNode,
     node_runs: &[WorkflowNodeRun],
 ) -> Result<(), SendableError> {
@@ -17,11 +18,12 @@ pub(super) async fn process_output_node<T: ReducerStore>(
             node.id.clone(),
             node.parameters.clone().into(),
             super::context::most_recently_finished_node_run(node_runs),
+            Some(cursor),
         )
         .await?;
     let params = runinator_workflows::parse_output_parameters(node)
         .map_err(|err| -> SendableError { Box::new(err) })?;
-    let context = runtime_context(db, workflow_run, node_runs).await;
+    let context = runtime_context(db, workflow_run, cursor, node_runs).await;
     let data = runinator_workflows::evaluate_expression(&params.data, &context)
         .map_err(|err| -> SendableError { Box::new(err) })?;
 
@@ -77,6 +79,7 @@ pub(super) async fn process_output_node<T: ReducerStore>(
     transition_from_node(
         db,
         workflow_run,
+        cursor,
         node,
         &node_run,
         WorkflowStatus::Succeeded,
@@ -149,7 +152,14 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for OutputHandler {
         T: 'a,
     {
         async move {
-            process_output_node(ctx.db, ctx.workflow_run, ctx.node, ctx.node_runs).await?;
+            process_output_node(
+                ctx.db,
+                ctx.workflow_run,
+                ctx.cursor,
+                ctx.node,
+                ctx.node_runs,
+            )
+            .await?;
             Ok(ReadyNodeDisposition::Complete)
         }
     }

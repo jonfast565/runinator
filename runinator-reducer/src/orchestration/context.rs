@@ -1,8 +1,59 @@
 use super::*;
 
+/// the node runs one thread of control may read.
+///
+/// a real cursor never sees a speculative branch's output, or a "what if" fork could change what the
+/// run means — including making a join think a branch arrived. a speculative cursor sees its own
+/// subtree layered over the real run, which is what makes the fork explore from where it forked.
+///
+/// filtering once, at the dispatch site, is what isolates all ~35 handlers (and the join's
+/// satisfaction check with them) without any of them having to know the concept exists.
+pub(super) fn visible_node_runs(
+    cursor: &RunCursor,
+    state: &WorkflowRunState,
+    node_runs: &[WorkflowNodeRun],
+) -> Vec<WorkflowNodeRun> {
+    if !cursor.is_speculative() {
+        return node_runs
+            .iter()
+            .filter(|run| !run.speculative)
+            .cloned()
+            .collect();
+    }
+    // this fork's own lineage: itself plus anything forked from it.
+    let visible = state.speculative_subtree(cursor.id);
+    node_runs
+        .iter()
+        .filter(|run| !run.speculative || run.cursor_id.is_some_and(|id| visible.contains(&id)))
+        .cloned()
+        .collect()
+}
+
+/// recursively overlay `patch` onto `target`, object by object. unlike [`merge_parameters`], which
+/// is one level deep, this reaches nested paths so a fork can patch `steps.<node>.output.status`
+/// without replacing the whole step.
+pub(super) fn deep_merge(target: &mut Value, patch: &Value) {
+    let (Some(target_object), Some(patch_object)) = (target.as_object_mut(), patch.as_object())
+    else {
+        *target = patch.clone();
+        return;
+    };
+    for (key, value) in patch_object {
+        match target_object.get_mut(key) {
+            Some(existing) if existing.is_object() && value.is_object() => {
+                deep_merge(existing, value)
+            }
+            _ => {
+                target_object.insert(key.clone(), value.clone());
+            }
+        }
+    }
+}
+
 pub(super) async fn runtime_context<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
+    cursor: &RunCursor,
     node_runs: &[WorkflowNodeRun],
 ) -> Value {
     let prev_output = node_runs
@@ -44,6 +95,14 @@ pub(super) async fn runtime_context<T: ReducerStore>(
     // expose each node's emitted artifacts under `steps.<node_id>.artifacts` so downstream nodes
     // (and output nodes declaring artifacts) can ref them like any other output value.
     inject_node_artifacts(db, workflow_run.id, node_runs, &mut context).await;
+    // a speculative fork's "what if": overlaid last so it wins over everything resolved above. a
+    // patch rather than a synthetic node run, because this way it reaches `input.*`, `config.*`, and
+    // `workflow.state` too, not just step outputs.
+    if let Some(frame) = &cursor.speculative
+        && !frame.context_patch.is_null()
+    {
+        deep_merge(&mut context, &frame.context_patch);
+    }
     context
 }
 
@@ -169,6 +228,18 @@ pub(super) fn most_recently_finished_node_run(node_runs: &[WorkflowNodeRun]) -> 
 // run as `latest`; the intervening control node always records a newer node run, so a node run
 // created after `latest` means control already left and came back. such a node must start a fresh
 // visit instead of resuming or transitioning from the stale run, otherwise the body only runs once.
-pub(super) fn is_reentry_stale(latest: &WorkflowNodeRun, node_runs: &[WorkflowNodeRun]) -> bool {
-    latest.status.is_terminal() && node_runs.iter().any(|run| run.id > latest.id)
+//
+// "control left and came back" is a question about one thread of control, so only this cursor's own
+// newer runs count. a sibling branch recording a node run is not this branch re-entering, and
+// counting it would restart a node that never actually looped. runs from before node runs carried a
+// cursor are counted, so a run mid-upgrade keeps its previous behavior.
+pub(super) fn is_reentry_stale(
+    latest: &WorkflowNodeRun,
+    node_runs: &[WorkflowNodeRun],
+    cursor: &RunCursor,
+) -> bool {
+    latest.status.is_terminal()
+        && node_runs
+            .iter()
+            .any(|run| run.id > latest.id && run.cursor_id.is_none_or(|id| id == cursor.id))
 }

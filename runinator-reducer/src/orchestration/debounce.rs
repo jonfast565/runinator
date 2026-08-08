@@ -43,17 +43,19 @@ async fn enqueue_debounce_poll<T: ReducerStore>(
 pub(super) async fn process_debounce_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
+    cursor: &RunCursor,
     node: &WorkflowNode,
     latest: Option<&WorkflowNodeRun>,
     node_runs: &[WorkflowNodeRun],
 ) -> Result<ReadyNodeDisposition, SendableError> {
-    let latest = latest.filter(|run| !is_reentry_stale(run, node_runs));
+    let latest = latest.filter(|run| !is_reentry_stale(run, node_runs, cursor));
 
     if let Some(node_run) = latest.filter(|run| run.status == WorkflowStatus::Waiting) {
         if timed_out_since_created(node, node_run) {
             time_out(
                 db,
                 workflow_run,
+                cursor,
                 node,
                 node_run,
                 "Debounce timed out",
@@ -76,6 +78,7 @@ pub(super) async fn process_debounce_node<T: ReducerStore>(
         transition_from_node(
             db,
             workflow_run,
+            cursor,
             node,
             node_run,
             WorkflowStatus::Succeeded,
@@ -104,6 +107,7 @@ pub(super) async fn process_debounce_node<T: ReducerStore>(
             node.id.clone(),
             node.parameters.clone().into(),
             super::context::most_recently_finished_node_run(node_runs),
+            Some(cursor),
         )
         .await?;
     db.update_workflow_node_run(
@@ -143,6 +147,7 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for DebounceHandler {
             process_debounce_node(
                 ctx.db,
                 ctx.workflow_run,
+                ctx.cursor,
                 ctx.node,
                 ctx.latest,
                 ctx.node_runs,

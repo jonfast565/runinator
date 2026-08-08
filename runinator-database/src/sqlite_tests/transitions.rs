@@ -32,7 +32,13 @@ async fn transitions_reconstruct_from_explicit_origins() {
 
     // start -> parallel, then parallel fans out to two branches that both point back at the parent.
     let start = db
-        .create_workflow_node_run(run.id, "start".into(), runinator_models::json!({}), None, None)
+        .create_workflow_node_run(
+            run.id,
+            "start".into(),
+            runinator_models::json!({}),
+            None,
+            None,
+        )
         .await
         .unwrap();
     db.update_workflow_node_run(
@@ -53,7 +59,8 @@ async fn transitions_reconstruct_from_explicit_origins() {
             "fork".into(),
             runinator_models::json!({}),
             Some(start.id),
-            cursor,)
+            None,
+        )
         .await
         .unwrap();
     let branch_a = db
@@ -62,7 +69,8 @@ async fn transitions_reconstruct_from_explicit_origins() {
             "a".into(),
             runinator_models::json!({}),
             Some(parent.id),
-            cursor,)
+            None,
+        )
         .await
         .unwrap();
     let branch_b = db
@@ -71,7 +79,8 @@ async fn transitions_reconstruct_from_explicit_origins() {
             "b".into(),
             runinator_models::json!({}),
             Some(parent.id),
-            cursor,)
+            None,
+        )
         .await
         .unwrap();
 

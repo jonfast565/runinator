@@ -1,6 +1,7 @@
 use std::future::Future;
 
 use runinator_models::{
+    cursor::RunCursor,
     errors::SendableError,
     workflows::{WorkflowDefinition, WorkflowNode, WorkflowNodeRun, WorkflowRun},
 };
@@ -13,6 +14,10 @@ pub(super) struct NodeHandlerContext<'a, T: ReducerStore> {
     pub db: &'a T,
     pub workflow: &'a WorkflowDefinition,
     pub workflow_run: &'a WorkflowRun,
+    /// the thread of control this step advances. handlers that reason about the run's placement
+    /// should read this rather than `workflow_run.active_node_id`, which mirrors only the primary
+    /// cursor and carries no start-node fallback.
+    pub cursor: &'a RunCursor,
     pub node: &'a WorkflowNode,
     pub latest: Option<&'a WorkflowNodeRun>,
     pub node_runs: &'a [WorkflowNodeRun],

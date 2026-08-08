@@ -190,7 +190,16 @@ pub const DICTIONARY: &[ErrorDescriptor] = &[
     PIPELINE_NOT_FOUND,
     PIPELINE_TRIGGER_NOT_FOUND,
     PIPELINE_NO_ENTRY_MEMBERS,
+    RUN_STATE_CONFLICT,
 ];
+
+/// a cursor write lost its compare-and-swap too many times in a row. means several threads of
+/// control of one run were writing state concurrently and none could rebuild on a stable read.
+pub const RUN_STATE_CONFLICT: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI173",
+    "workflow.run_state.conflict",
+    "Workflow run state changed under concurrent cursors",
+);
 
 /// reducer error dictionary.
 pub struct ReducerErrors;

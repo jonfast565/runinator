@@ -8,6 +8,7 @@ use super::*;
 pub(super) async fn process_config_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
+    cursor: &RunCursor,
     node: &WorkflowNode,
     node_runs: &[WorkflowNodeRun],
 ) -> Result<(), SendableError> {
@@ -17,9 +18,10 @@ pub(super) async fn process_config_node<T: ReducerStore>(
             node.id.clone(),
             node.parameters.clone().into(),
             super::context::most_recently_finished_node_run(node_runs),
+            Some(cursor),
         )
         .await?;
-    let context = runtime_context(db, workflow_run, node_runs).await;
+    let context = runtime_context(db, workflow_run, cursor, node_runs).await;
     let resolved = runinator_workflows::resolve_value_refs(&node.parameters, &context)
         .map_err(|err| -> SendableError { Box::new(err) })?;
     let new_name = resolved.get("name").and_then(|value| match value {
@@ -38,6 +40,7 @@ pub(super) async fn process_config_node<T: ReducerStore>(
     transition_from_node(
         db,
         workflow_run,
+        cursor,
         node,
         &node_run,
         WorkflowStatus::Succeeded,
@@ -52,6 +55,7 @@ pub(super) async fn process_config_node<T: ReducerStore>(
 pub(super) async fn process_skipped_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
+    cursor: &RunCursor,
     node: &WorkflowNode,
     latest: Option<&WorkflowNodeRun>,
     node_runs: &[WorkflowNodeRun],
@@ -59,6 +63,7 @@ pub(super) async fn process_skipped_node<T: ReducerStore>(
     let node_run = ensure_node_run(
         db,
         workflow_run,
+        cursor,
         node,
         latest,
         super::context::most_recently_finished_node_run(node_runs),
@@ -71,6 +76,7 @@ pub(super) async fn process_skipped_node<T: ReducerStore>(
     transition_from_node(
         db,
         workflow_run,
+        cursor,
         node,
         &node_run,
         WorkflowStatus::Succeeded,
@@ -85,6 +91,7 @@ pub(super) async fn process_skipped_node<T: ReducerStore>(
 pub(super) async fn process_start_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
+    cursor: &RunCursor,
     node: &WorkflowNode,
     latest: Option<&WorkflowNodeRun>,
     node_runs: &[WorkflowNodeRun],
@@ -92,6 +99,7 @@ pub(super) async fn process_start_node<T: ReducerStore>(
     let node_run = ensure_node_run(
         db,
         workflow_run,
+        cursor,
         node,
         latest,
         super::context::most_recently_finished_node_run(node_runs),
@@ -100,6 +108,7 @@ pub(super) async fn process_start_node<T: ReducerStore>(
     transition_from_node(
         db,
         workflow_run,
+        cursor,
         node,
         &node_run,
         WorkflowStatus::Succeeded,
@@ -114,10 +123,11 @@ pub(super) async fn process_start_node<T: ReducerStore>(
 pub(super) async fn process_end_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
+    cursor: &RunCursor,
     node: &WorkflowNode,
     latest: Option<&WorkflowNodeRun>,
 ) -> Result<(), SendableError> {
-    ensure_completed_node_run(db, workflow_run, node, latest, "end_reached").await?;
+    ensure_completed_node_run(db, workflow_run, cursor, node, latest, "end_reached").await?;
     db.update_workflow_run_status(
         workflow_run.id,
         WorkflowStatus::Succeeded,
@@ -132,6 +142,7 @@ pub(super) async fn process_end_node<T: ReducerStore>(
 pub(super) async fn process_condition_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
+    cursor: &RunCursor,
     node: &WorkflowNode,
     node_runs: &[WorkflowNodeRun],
 ) -> Result<(), SendableError> {
@@ -141,9 +152,10 @@ pub(super) async fn process_condition_node<T: ReducerStore>(
             node.id.clone(),
             node.parameters.clone().into(),
             super::context::most_recently_finished_node_run(node_runs),
+            Some(cursor),
         )
         .await?;
-    let context = runtime_context(db, workflow_run, node_runs).await;
+    let context = runtime_context(db, workflow_run, cursor, node_runs).await;
     let matched = runinator_workflows::evaluate_workflow_condition(&node.condition, &context)
         .map_err(|err| -> SendableError { Box::new(err) })?;
     let (status, reason) = if matched {
@@ -154,6 +166,7 @@ pub(super) async fn process_condition_node<T: ReducerStore>(
     transition_from_node(
         db,
         workflow_run,
+        cursor,
         node,
         &node_run,
         status,
@@ -168,6 +181,7 @@ pub(super) async fn process_condition_node<T: ReducerStore>(
 pub(super) async fn process_switch_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
+    cursor: &RunCursor,
     node: &WorkflowNode,
     node_runs: &[WorkflowNodeRun],
 ) -> Result<(), SendableError> {
@@ -177,16 +191,18 @@ pub(super) async fn process_switch_node<T: ReducerStore>(
             node.id.clone(),
             node.parameters.clone().into(),
             super::context::most_recently_finished_node_run(node_runs),
+            Some(cursor),
         )
         .await?;
     let params = runinator_workflows::parse_switch_parameters(node)
         .map_err(|err| -> SendableError { Box::new(err) })?;
-    let context = runtime_context(db, workflow_run, node_runs).await;
+    let context = runtime_context(db, workflow_run, cursor, node_runs).await;
     let target = runinator_workflows::evaluate_switch(&params, &context)
         .map_err(|err| -> SendableError { Box::new(err) })?;
     finish_route(
         db,
         workflow_run,
+        cursor,
         node,
         &node_run,
         target,
@@ -200,6 +216,7 @@ pub(super) async fn process_switch_node<T: ReducerStore>(
 pub(super) async fn process_toggle_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
+    cursor: &RunCursor,
     node: &WorkflowNode,
     node_runs: &[WorkflowNodeRun],
 ) -> Result<(), SendableError> {
@@ -209,17 +226,19 @@ pub(super) async fn process_toggle_node<T: ReducerStore>(
             node.id.clone(),
             node.parameters.clone().into(),
             super::context::most_recently_finished_node_run(node_runs),
+            Some(cursor),
         )
         .await?;
     let params = runinator_workflows::parse_toggle_parameters(node)
         .map_err(|err| -> SendableError { Box::new(err) })?;
-    let context = runtime_context(db, workflow_run, node_runs).await;
+    let context = runtime_context(db, workflow_run, cursor, node_runs).await;
     // a toggle always yields a target, so it never blocks the run.
     let target = runinator_workflows::evaluate_toggle(&params, &context)
         .map_err(|err| -> SendableError { Box::new(err) })?;
     finish_route(
         db,
         workflow_run,
+        cursor,
         node,
         &node_run,
         Some(target),
@@ -233,6 +252,7 @@ pub(super) async fn process_toggle_node<T: ReducerStore>(
 pub(super) async fn process_percentage_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
+    cursor: &RunCursor,
     node: &WorkflowNode,
     node_runs: &[WorkflowNodeRun],
 ) -> Result<(), SendableError> {
@@ -242,16 +262,18 @@ pub(super) async fn process_percentage_node<T: ReducerStore>(
             node.id.clone(),
             node.parameters.clone().into(),
             super::context::most_recently_finished_node_run(node_runs),
+            Some(cursor),
         )
         .await?;
     let params = runinator_workflows::parse_percentage_parameters(node)
         .map_err(|err| -> SendableError { Box::new(err) })?;
-    let context = runtime_context(db, workflow_run, node_runs).await;
+    let context = runtime_context(db, workflow_run, cursor, node_runs).await;
     let target = runinator_workflows::evaluate_percentage(&params, &context)
         .map_err(|err| -> SendableError { Box::new(err) })?;
     finish_route(
         db,
         workflow_run,
+        cursor,
         node,
         &node_run,
         target,
@@ -267,6 +289,7 @@ pub(super) async fn process_percentage_node<T: ReducerStore>(
 async fn finish_route<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
+    cursor: &RunCursor,
     node: &WorkflowNode,
     node_run: &WorkflowNodeRun,
     target: Option<String>,
@@ -308,6 +331,7 @@ async fn finish_route<T: ReducerStore>(
             transition_from_node(
                 db,
                 workflow_run,
+                cursor,
                 node,
                 node_run,
                 WorkflowStatus::Blocked,
@@ -341,6 +365,7 @@ impl<T: ReducerStore> NodeHandler<T> for StartHandler {
             process_start_node(
                 ctx.db,
                 ctx.workflow_run,
+                ctx.cursor,
                 ctx.node,
                 ctx.latest,
                 ctx.node_runs,
@@ -360,7 +385,7 @@ impl<T: ReducerStore> NodeHandler<T> for EndHandler {
         T: 'a,
     {
         async move {
-            process_end_node(ctx.db, ctx.workflow_run, ctx.node, ctx.latest).await?;
+            process_end_node(ctx.db, ctx.workflow_run, ctx.cursor, ctx.node, ctx.latest).await?;
             Ok(ReadyNodeDisposition::Complete)
         }
     }
@@ -375,7 +400,14 @@ impl<T: ReducerStore> NodeHandler<T> for ConditionHandler {
         T: 'a,
     {
         async move {
-            process_condition_node(ctx.db, ctx.workflow_run, ctx.node, ctx.node_runs).await?;
+            process_condition_node(
+                ctx.db,
+                ctx.workflow_run,
+                ctx.cursor,
+                ctx.node,
+                ctx.node_runs,
+            )
+            .await?;
             Ok(ReadyNodeDisposition::Complete)
         }
     }
@@ -390,7 +422,14 @@ impl<T: ReducerStore> NodeHandler<T> for SwitchHandler {
         T: 'a,
     {
         async move {
-            process_switch_node(ctx.db, ctx.workflow_run, ctx.node, ctx.node_runs).await?;
+            process_switch_node(
+                ctx.db,
+                ctx.workflow_run,
+                ctx.cursor,
+                ctx.node,
+                ctx.node_runs,
+            )
+            .await?;
             Ok(ReadyNodeDisposition::Complete)
         }
     }
@@ -405,7 +444,14 @@ impl<T: ReducerStore> NodeHandler<T> for ToggleHandler {
         T: 'a,
     {
         async move {
-            process_toggle_node(ctx.db, ctx.workflow_run, ctx.node, ctx.node_runs).await?;
+            process_toggle_node(
+                ctx.db,
+                ctx.workflow_run,
+                ctx.cursor,
+                ctx.node,
+                ctx.node_runs,
+            )
+            .await?;
             Ok(ReadyNodeDisposition::Complete)
         }
     }
@@ -420,7 +466,14 @@ impl<T: ReducerStore> NodeHandler<T> for PercentageHandler {
         T: 'a,
     {
         async move {
-            process_percentage_node(ctx.db, ctx.workflow_run, ctx.node, ctx.node_runs).await?;
+            process_percentage_node(
+                ctx.db,
+                ctx.workflow_run,
+                ctx.cursor,
+                ctx.node,
+                ctx.node_runs,
+            )
+            .await?;
             Ok(ReadyNodeDisposition::Complete)
         }
     }
@@ -435,7 +488,14 @@ impl<T: ReducerStore> NodeHandler<T> for ConfigHandler {
         T: 'a,
     {
         async move {
-            process_config_node(ctx.db, ctx.workflow_run, ctx.node, ctx.node_runs).await?;
+            process_config_node(
+                ctx.db,
+                ctx.workflow_run,
+                ctx.cursor,
+                ctx.node,
+                ctx.node_runs,
+            )
+            .await?;
             Ok(ReadyNodeDisposition::Complete)
         }
     }

@@ -37,6 +37,7 @@ pub(super) fn evaluate_assertions(params: &Value, context: &Value) -> Vec<Assert
 pub(super) async fn process_assert_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
+    cursor: &RunCursor,
     node: &WorkflowNode,
     node_runs: &[WorkflowNodeRun],
 ) -> Result<(), SendableError> {
@@ -46,9 +47,10 @@ pub(super) async fn process_assert_node<T: ReducerStore>(
             node.id.clone(),
             node.parameters.clone().into(),
             super::context::most_recently_finished_node_run(node_runs),
+            Some(cursor),
         )
         .await?;
-    let context = runtime_context(db, workflow_run, node_runs).await;
+    let context = runtime_context(db, workflow_run, cursor, node_runs).await;
     let params: Value = node.parameters.clone().into();
     let violations = evaluate_assertions(&params, &context);
     let passed = violations.is_empty();
@@ -61,6 +63,7 @@ pub(super) async fn process_assert_node<T: ReducerStore>(
     transition_from_node(
         db,
         workflow_run,
+        cursor,
         node,
         &node_run,
         status,
@@ -83,7 +86,14 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for AssertHandler {
         T: 'a,
     {
         async move {
-            process_assert_node(ctx.db, ctx.workflow_run, ctx.node, ctx.node_runs).await?;
+            process_assert_node(
+                ctx.db,
+                ctx.workflow_run,
+                ctx.cursor,
+                ctx.node,
+                ctx.node_runs,
+            )
+            .await?;
             Ok(ReadyNodeDisposition::Complete)
         }
     }

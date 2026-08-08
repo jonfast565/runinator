@@ -463,8 +463,14 @@ pub async fn skip_debug_workflow_node<T: DatabaseImpl>(
     let node_run = match latest_node_run {
         Some(n) => n,
         None => {
-            db.create_workflow_node_run(workflow_run_id, active_node_id.clone(), Value::Null, None)
-                .await?
+            db.create_workflow_node_run(
+                workflow_run_id,
+                active_node_id.clone(),
+                Value::Null,
+                None,
+                None,
+            )
+            .await?
         }
     };
     let skip_message = message.clone().unwrap_or_else(|| "Skipped in debug".into());
@@ -527,7 +533,13 @@ pub async fn rerun_debug_workflow_node<T: DatabaseImpl>(
         .await?;
     }
     let new_run = db
-        .create_workflow_node_run(workflow_run_id, active_node_id.clone(), parameters, None)
+        .create_workflow_node_run(
+            workflow_run_id,
+            active_node_id.clone(),
+            parameters,
+            None,
+            None,
+        )
         .await?;
     db.update_workflow_node_run(
         new_run.id,
@@ -625,6 +637,9 @@ pub async fn replay_workflow_run<T: DatabaseImpl>(
                             new_run.id,
                             node_id.clone(),
                             source_node.parameters.clone(),
+                            None,
+                            // copied ancestor state, not a step any cursor took: the replay run
+                            // seeds its own cursor on its first drive.
                             None,
                         )
                         .await?;

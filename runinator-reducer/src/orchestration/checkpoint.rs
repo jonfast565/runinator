@@ -19,6 +19,7 @@ pub(super) fn parse_checkpoint_name(params: &Value, node_id: &str) -> String {
 pub(super) async fn process_checkpoint_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
+    cursor: &RunCursor,
     node: &WorkflowNode,
     node_runs: &[WorkflowNodeRun],
 ) -> Result<(), SendableError> {
@@ -28,6 +29,7 @@ pub(super) async fn process_checkpoint_node<T: ReducerStore>(
             node.id.clone(),
             node.parameters.clone().into(),
             super::context::most_recently_finished_node_run(node_runs),
+            Some(cursor),
         )
         .await?;
     let params: Value = node.parameters.clone().into();
@@ -53,6 +55,7 @@ pub(super) async fn process_checkpoint_node<T: ReducerStore>(
     transition_from_node(
         db,
         workflow_run,
+        cursor,
         node,
         &node_run,
         WorkflowStatus::Succeeded,
@@ -75,7 +78,14 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for CheckpointHandler {
         T: 'a,
     {
         async move {
-            process_checkpoint_node(ctx.db, ctx.workflow_run, ctx.node, ctx.node_runs).await?;
+            process_checkpoint_node(
+                ctx.db,
+                ctx.workflow_run,
+                ctx.cursor,
+                ctx.node,
+                ctx.node_runs,
+            )
+            .await?;
             Ok(ReadyNodeDisposition::Complete)
         }
     }

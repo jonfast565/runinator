@@ -114,18 +114,20 @@ async fn enqueue_barrier_poll<T: ReducerStore>(
 pub(super) async fn process_barrier_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
+    cursor: &RunCursor,
     node: &WorkflowNode,
     latest: Option<&WorkflowNodeRun>,
     node_runs: &[WorkflowNodeRun],
 ) -> Result<ReadyNodeDisposition, SendableError> {
     let (name, expected, poll_interval) = parse_barrier_params(node);
-    let latest = latest.filter(|run| !is_reentry_stale(run, node_runs));
+    let latest = latest.filter(|run| !is_reentry_stale(run, node_runs, cursor));
 
     if let Some(node_run) = latest.filter(|run| run.status == WorkflowStatus::Waiting) {
         if timed_out_since_created(node, node_run) {
             time_out(
                 db,
                 workflow_run,
+                cursor,
                 node,
                 node_run,
                 "Barrier timed out",
@@ -144,6 +146,7 @@ pub(super) async fn process_barrier_node<T: ReducerStore>(
             transition_from_node(
                 db,
                 workflow_run,
+                cursor,
                 node,
                 node_run,
                 WorkflowStatus::Succeeded,
@@ -166,6 +169,7 @@ pub(super) async fn process_barrier_node<T: ReducerStore>(
             node.id.clone(),
             node.parameters.clone().into(),
             super::context::most_recently_finished_node_run(node_runs),
+            Some(cursor),
         )
         .await?;
     if arrivals_complete(arrivals.len(), expected) {
@@ -176,6 +180,7 @@ pub(super) async fn process_barrier_node<T: ReducerStore>(
         transition_from_node(
             db,
             workflow_run,
+            cursor,
             node,
             &node_run,
             WorkflowStatus::Succeeded,
@@ -212,7 +217,7 @@ pub(super) async fn process_barrier_node<T: ReducerStore>(
     )
     .await?;
     enqueue_barrier_poll(db, workflow_run.id, node, poll_interval).await?;
-    arm_node_timeout(db, workflow_run.id, node).await?;
+    arm_node_timeout(db, workflow_run.id, cursor, node).await?;
     Ok(ReadyNodeDisposition::Complete)
 }
 
@@ -230,6 +235,7 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for BarrierHandler {
             process_barrier_node(
                 ctx.db,
                 ctx.workflow_run,
+                ctx.cursor,
                 ctx.node,
                 ctx.latest,
                 ctx.node_runs,

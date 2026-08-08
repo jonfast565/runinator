@@ -10,6 +10,7 @@ use chrono::{DateTime, Utc};
 use runinator_comm::{
     ActionCommand, ActionDispatchRecord, WorkflowResultEvent, WorkflowResultEventKind,
 };
+use runinator_models::cursor::RunCursor;
 use runinator_models::value::Value;
 use runinator_models::{
     auth::{ApiKey, ApiKeyRecord, AuthContext, AuthSession, Grant, LocalCredential, Team, User},

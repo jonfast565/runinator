@@ -7,13 +7,14 @@ use super::*;
 pub(super) async fn process_approval_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
+    cursor: &RunCursor,
     node: &WorkflowNode,
     latest: Option<&WorkflowNodeRun>,
     node_runs: &[WorkflowNodeRun],
 ) -> Result<(), SendableError> {
     // a loop body re-entering this node sees the prior iteration's resolved run; treat it as a
     // fresh visit so a new approval is requested instead of transitioning from the stale run.
-    let latest = latest.filter(|run| !is_reentry_stale(run, node_runs));
+    let latest = latest.filter(|run| !is_reentry_stale(run, node_runs, cursor));
     if let Some(node_run) = latest {
         if node_run.status == WorkflowStatus::ApprovalRequired
             && timed_out_since_created(node, node_run)
@@ -21,6 +22,7 @@ pub(super) async fn process_approval_node<T: ReducerStore>(
             return time_out(
                 db,
                 workflow_run,
+                cursor,
                 node,
                 node_run,
                 "Approval timed out",
@@ -32,6 +34,7 @@ pub(super) async fn process_approval_node<T: ReducerStore>(
             transition_from_node(
                 db,
                 workflow_run,
+                cursor,
                 node,
                 node_run,
                 WorkflowStatus::Succeeded,
@@ -50,6 +53,7 @@ pub(super) async fn process_approval_node<T: ReducerStore>(
             node.id.clone(),
             node.parameters.clone().into(),
             super::context::most_recently_finished_node_run(node_runs),
+            Some(cursor),
         )
         .await?;
     let params = runinator_workflows::parse_approval_parameters(node);
@@ -93,7 +97,7 @@ pub(super) async fn process_approval_node<T: ReducerStore>(
         None,
     )
     .await?;
-    arm_node_timeout(db, workflow_run.id, node).await
+    arm_node_timeout(db, workflow_run.id, cursor, node).await
 }
 
 pub(super) struct ApprovalHandler;
@@ -110,6 +114,7 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for ApprovalHandler {
             process_approval_node(
                 ctx.db,
                 ctx.workflow_run,
+                ctx.cursor,
                 ctx.node,
                 ctx.latest,
                 ctx.node_runs,

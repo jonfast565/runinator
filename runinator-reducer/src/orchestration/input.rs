@@ -5,6 +5,7 @@ use super::*;
 pub(super) async fn process_input_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
+    cursor: &RunCursor,
     node: &WorkflowNode,
     latest: Option<&WorkflowNodeRun>,
     node_runs: &[WorkflowNodeRun],
@@ -17,6 +18,7 @@ pub(super) async fn process_input_node<T: ReducerStore>(
             return transitions::time_out(
                 db,
                 workflow_run,
+                cursor,
                 node,
                 node_run,
                 "Input timed out",
@@ -28,6 +30,7 @@ pub(super) async fn process_input_node<T: ReducerStore>(
             transition_from_node(
                 db,
                 workflow_run,
+                cursor,
                 node,
                 node_run,
                 WorkflowStatus::Succeeded,
@@ -49,6 +52,7 @@ pub(super) async fn process_input_node<T: ReducerStore>(
             node.id.clone(),
             node.parameters.clone().into(),
             super::context::most_recently_finished_node_run(node_runs),
+            Some(cursor),
         )
         .await?;
     let state = InputState {
@@ -91,6 +95,7 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for InputHandler {
             process_input_node(
                 ctx.db,
                 ctx.workflow_run,
+                ctx.cursor,
                 ctx.node,
                 ctx.latest,
                 ctx.node_runs,

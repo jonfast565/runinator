@@ -35,17 +35,32 @@ pub async fn process_ready_node<T: ReducerStore>(
         workflow_run.active_node_id = Some(ready_node.node_id.clone());
     }
 
+    // a drive follows one cursor from the ready row that woke it to wherever that thread of control
+    // settles. picking it once and holding it is what keeps a fan-out's branches from stealing each
+    // other's position when several are live.
+    let mut driving: Option<Uuid> = None;
     for step in 0..MAX_INLINE_WORKFLOW_STEPS {
-        let before = WorkflowProgressKey::from_run(db, workflow_run.id).await?;
-        let disposition = process_workflow_run_step(db, workflow_run.clone()).await?;
+        let before = WorkflowProgressKey::from_run(db, workflow_run.id, driving).await?;
+        let disposition =
+            process_workflow_run_step(db, workflow_run.clone(), ready_node, &mut driving).await?;
         let Some(next_run) = db.fetch_workflow_run(workflow_run.id).await? else {
             return Ok(ReadyNodeDisposition::Complete);
         };
         let node_runs = db.fetch_workflow_node_runs(workflow_run.id).await?;
-        let after = WorkflowProgressKey::from_parts(&next_run, &node_runs);
-        let awaits_worker = active_node_awaits_worker(db, &next_run).await?;
+        let after = WorkflowProgressKey::from_parts(&next_run, &node_runs, driving);
+        // both of these judge the run against the thread of control this drive follows. reading
+        // `active_node_id` instead judges the primary cursor's position while driving another, which
+        // stops a live branch after a single step whenever a sibling is parked on an action.
+        let driving_node_id = driving_position(&next_run, driving);
+        let awaits_worker =
+            active_node_awaits_worker(db, &next_run, driving_node_id.as_deref()).await?;
         if disposition == ReadyNodeDisposition::KeepClaim
-            || should_stop_inline_progress(&next_run, &node_runs, awaits_worker)
+            || should_stop_inline_progress(
+                &next_run,
+                &node_runs,
+                driving_node_id.as_deref(),
+                awaits_worker,
+            )
             || before == after
         {
             tracing::debug!(
@@ -56,6 +71,10 @@ pub async fn process_ready_node<T: ReducerStore>(
                 "workflow run step settled"
             );
             transitions::maybe_wake_subflow_parent(db, &next_run).await?;
+            // the run reaches a *successful* terminal only when its last cursor retires (see
+            // `run_state::advance_cursor`), so this gate already means "every thread of control is
+            // done" — a finished fan-out branch leaves the run `Running` and does not fire these.
+            // a failing terminal drains every cursor, which is the other way to get here.
             // a run that acquired a named mutex holds it for the rest of the run; release on any
             // terminal state so the next waiter can acquire. no-op for runs holding no lease.
             if next_run.status.is_terminal() {
@@ -91,9 +110,73 @@ pub async fn process_ready_node<T: ReducerStore>(
     Ok(ReadyNodeDisposition::Complete)
 }
 
+/// where the cursor this drive follows currently sits, falling back to the run's mirrored primary
+/// for a drive that has not resolved a cursor yet.
+pub(super) fn driving_position(run: &WorkflowRun, driving: Option<Uuid>) -> Option<String> {
+    let state = WorkflowRunState::from_state(&run.state);
+    driving
+        .and_then(|id| state.cursor(id))
+        .map(|cursor| cursor.node_id().to_string())
+        .or_else(|| run.active_node_id.clone())
+}
+
+/// the cursor this drive advances, with a stable identity so its frames survive across drives.
+///
+/// a run that has never been placed gets one seeded at `start`. a linear run's list is reconciled
+/// against `active_node_id`, which every transition already writes; that keeps the single-cursor
+/// fast path at one write per transition while still giving the position an id.
+async fn resolve_cursor<T: ReducerStore>(
+    db: &T,
+    workflow_run: &WorkflowRun,
+    start: &str,
+    woken: &ReadyNodeRecord,
+    driving: Option<Uuid>,
+) -> Result<RunCursor, SendableError> {
+    let state = WorkflowRunState::from_state(&workflow_run.state);
+    // already following a cursor in this drive: stay on it wherever it has moved to.
+    if let Some(id) = driving
+        && let Some(cursor) = state.cursor(id)
+    {
+        return Ok(cursor.clone());
+    }
+    // the ready row names the thread of control it was armed for. this is what lets one branch be
+    // woken without disturbing its siblings, and what lets two cursors share a node.
+    if let Some(id) = woken.cursor_id
+        && let Some(cursor) = state.cursor(id)
+    {
+        return Ok(cursor.clone());
+    }
+    // a forked run has several live positions, and a row armed before wakes carried a cursor names
+    // which one only by the node it was armed for.
+    if state.cursors.len() > 1
+        && let Some(cursor) = state.cursor_at(&woken.node_id)
+    {
+        return Ok(cursor.clone());
+    }
+    let node_id = RunCursor::resolve(workflow_run, start).into_node_id();
+    if let Some(cursor) = state.primary_cursor()
+        && cursor.is_at(&node_id)
+    {
+        return Ok(cursor.clone());
+    }
+    let placed = run_state::mutate_run_state(db, workflow_run.id, |state| {
+        state.ensure_cursor(&node_id);
+        if let Some(primary) = state.cursors.first_mut() {
+            primary.move_to(node_id.clone());
+        }
+    })
+    .await?;
+    Ok(placed
+        .primary_cursor()
+        .cloned()
+        .unwrap_or_else(|| RunCursor::at(node_id)))
+}
+
 async fn process_workflow_run_step<T: ReducerStore>(
     db: &T,
     workflow_run: WorkflowRun,
+    woken: &ReadyNodeRecord,
+    driving: &mut Option<Uuid>,
 ) -> Result<ReadyNodeDisposition, SendableError> {
     if workflow_run.status.is_terminal() || workflow_run.status == WorkflowStatus::Paused {
         return Ok(ReadyNodeDisposition::Complete);
@@ -107,18 +190,22 @@ async fn process_workflow_run_step<T: ReducerStore>(
     };
     let (start, nodes) = runinator_workflows::validate_workflow(&workflow)
         .map_err(|err| -> SendableError { Box::new(err) })?;
-    let node_runs = db.fetch_workflow_node_runs(workflow_run.id).await?;
-    let active_node_id = workflow_run
-        .active_node_id
-        .clone()
-        .unwrap_or_else(|| start.clone());
+    let all_node_runs = db.fetch_workflow_node_runs(workflow_run.id).await?;
+    // resolve where this drive is: the run's persisted position, or its start node when the run has
+    // not been placed yet. a linear run keeps `active_node_id` as the truth and the cursor list as
+    // a mirror, so the position is reconciled onto the primary cursor here rather than written back
+    // on every transition; a forked run's list becomes authoritative in its own right.
+    let cursor = resolve_cursor(db, &workflow_run, &start, woken, *driving).await?;
+    *driving = Some(cursor.id);
+    let run_state_snapshot = WorkflowRunState::from_state(&workflow_run.state);
+    // what this thread of control may see. a real cursor never reads a speculative branch's output;
+    // a speculative one reads its own subtree shadowing the real run. filtering once here isolates
+    // every handler — and the join's satisfaction check with them — without any of them knowing.
+    let node_runs = context::visible_node_runs(&cursor, &run_state_snapshot, &all_node_runs);
     // a map fan-out child stops when its body returns to the controlling map node, instead of
     // re-entering the map and fanning out again. finalize the child so it wakes the parent.
-    if let Some(child) = workflow_run
-        .state
-        .get("map_child")
-        .and_then(|value| MapChildState::from_wire_value(value).ok())
-        && active_node_id == child.stop_node
+    if let Some(child) = run_state_snapshot.map_child.clone()
+        && cursor.is_at(&child.stop_node)
     {
         map::finalize_map_child(db, &workflow_run, child, &node_runs).await?;
         return Ok(ReadyNodeDisposition::Complete);
@@ -127,36 +214,44 @@ async fn process_workflow_run_step<T: ReducerStore>(
     // state change a fixed checkpoint would miss still pre-empts the active node and jumps to the
     // handler. fires at most once per run.
     if let Some(handler) =
-        evaluate_watches(db, &workflow, &workflow_run, &node_runs, &active_node_id).await?
+        evaluate_watches(db, &workflow, &workflow_run, &node_runs, &cursor).await?
     {
-        tracing::info!(active_node_id = %active_node_id, handler = %handler, "watch guard fired");
-        let mut run_state = WorkflowRunState::from_state(&workflow_run.state);
-        run_state.watch_fired = true;
-        db.update_workflow_run_status(
+        tracing::info!(active_node_id = %cursor, handler = %handler, "watch guard fired");
+        run_state::mutate_run_state(db, workflow_run.id, |state| state.watch_fired = true).await?;
+        run_state::advance_cursor(
+            db,
             workflow_run.id,
+            cursor.id,
             WorkflowStatus::Running,
-            Some(handler.clone()),
-            Some(run_state.to_state()),
+            run_state::CursorMove::To(handler.clone()),
             Some(format!("watch guard fired; jumping to {handler}")),
         )
         .await?;
         return Ok(ReadyNodeDisposition::Complete);
     }
-    let Some(node) = nodes.iter().find(|node| node.id == active_node_id) else {
-        tracing::error!(active_node_id = %active_node_id, "active workflow node is missing from the graph");
+    let Some(node) = nodes.iter().find(|node| cursor.is_at(&node.id)) else {
+        tracing::error!(active_node_id = %cursor, "active workflow node is missing from the graph");
         db.update_workflow_run_status(
             workflow_run.id,
             WorkflowStatus::Failed,
-            Some(active_node_id),
+            Some(cursor.into_node_id()),
             None,
             Some("Active workflow node is missing".into()),
         )
         .await?;
         return Ok(ReadyNodeDisposition::Complete);
     };
-    let latest = context::latest_node_run(&node_runs, &active_node_id).cloned();
+    let latest = context::latest_node_run(&node_runs, cursor.node_id()).cloned();
     if node.skipped {
-        basic::process_skipped_node(db, &workflow_run, node, latest.as_ref(), &node_runs).await?;
+        basic::process_skipped_node(
+            db,
+            &workflow_run,
+            &cursor,
+            node,
+            latest.as_ref(),
+            &node_runs,
+        )
+        .await?;
         return Ok(ReadyNodeDisposition::Complete);
     }
 
@@ -174,11 +269,12 @@ async fn process_workflow_run_step<T: ReducerStore>(
                     target = target.as_str(),
                     "reentry max_visits exhausted; exiting to on_exhausted target"
                 );
-                db.update_workflow_run_status(
+                run_state::advance_cursor(
+                    db,
                     workflow_run.id,
+                    cursor.id,
                     WorkflowStatus::Running,
-                    Some(target.as_str().to_string()),
-                    None,
+                    run_state::CursorMove::To(target.as_str().to_string()),
                     Some(format!("reentry_exhausted:{}", node.id)),
                 )
                 .await?;
@@ -192,6 +288,7 @@ async fn process_workflow_run_step<T: ReducerStore>(
                 transitions::block_node(
                     db,
                     &workflow_run,
+                    &cursor,
                     node,
                     "Reentry max_visits exhausted with no on_exhausted target",
                 )
@@ -201,10 +298,23 @@ async fn process_workflow_run_step<T: ReducerStore>(
         return Ok(ReadyNodeDisposition::Complete);
     }
 
+    // the debugger gate sits here, after every branch that pre-empts the node entirely: pausing
+    // "before" a node that is never going to execute strands the session on a step no command can
+    // clear. a speculative cursor's externally-visible nodes are shadowed rather than dispatched.
+    match debug::debug_gate(db, &workflow_run, &cursor, node, &node_runs).await? {
+        debug::DebugGate::Park => return Ok(ReadyNodeDisposition::Complete),
+        debug::DebugGate::Shadow => {
+            debug::shadow_node(db, &workflow_run, &cursor, node, &node_runs).await?;
+            return Ok(ReadyNodeDisposition::Complete);
+        }
+        debug::DebugGate::Proceed => {}
+    }
+
     let ctx = NodeHandlerContext {
         db,
         workflow: &workflow,
         workflow_run: &workflow_run,
+        cursor: &cursor,
         node,
         latest: latest.as_ref(),
         node_runs: &node_runs,
@@ -261,31 +371,46 @@ pub(super) struct WorkflowProgressKey {
     node_count: usize,
     latest_active_node_run_id: Option<Uuid>,
     latest_active_node_status: Option<WorkflowStatus>,
+    paused: bool,
 }
 
 impl WorkflowProgressKey {
     async fn from_run<T: ReducerStore>(
         db: &T,
         workflow_run_id: Uuid,
+        driving: Option<Uuid>,
     ) -> Result<Self, SendableError> {
         let Some(run) = db.fetch_workflow_run(workflow_run_id).await? else {
             return Err(crate::errors::WORKFLOW_RUN_NOT_FOUND.error(workflow_run_id));
         };
         let nodes = db.fetch_workflow_node_runs(workflow_run_id).await?;
-        Ok(Self::from_parts(&run, &nodes))
+        Ok(Self::from_parts(&run, &nodes, driving))
     }
 
-    fn from_parts(workflow_run: &WorkflowRun, node_runs: &[WorkflowNodeRun]) -> Self {
-        let latest_active = workflow_run
-            .active_node_id
+    // progress is measured for the cursor this drive follows, not for the run: a sibling branch
+    // advancing is not progress for *this* thread of control, and must not keep its loop spinning.
+    fn from_parts(
+        workflow_run: &WorkflowRun,
+        node_runs: &[WorkflowNodeRun],
+        driving: Option<Uuid>,
+    ) -> Self {
+        let state = WorkflowRunState::from_state(&workflow_run.state);
+        let position = driving
+            .and_then(|id| state.cursor(id))
+            .map(|cursor| cursor.node_id().to_string())
+            .or_else(|| workflow_run.active_node_id.clone());
+        let latest_active = position
             .as_deref()
             .and_then(|active| context::latest_node_run(node_runs, active));
         Self {
             status: workflow_run.status,
-            active_node_id: workflow_run.active_node_id.clone(),
+            active_node_id: position,
             node_count: node_runs.len(),
             latest_active_node_run_id: latest_active.map(|run| run.id),
             latest_active_node_status: latest_active.map(|run| run.status),
+            // a debugger park is progress on the step that creates it and a fixpoint on the next, so
+            // the inline loop exits on the parking step rather than wasting an iteration.
+            paused: driving.is_some_and(|id| state.cursor_debug(id).paused),
         }
     }
 }
@@ -318,6 +443,7 @@ pub(super) fn reentry_exhausted(
 fn should_stop_inline_progress(
     workflow_run: &WorkflowRun,
     node_runs: &[WorkflowNodeRun],
+    driving_node_id: Option<&str>,
     active_node_awaits_worker: bool,
 ) -> bool {
     if workflow_run.status.is_terminal()
@@ -339,7 +465,7 @@ fn should_stop_inline_progress(
     if !active_node_awaits_worker {
         return false;
     }
-    let Some(active_node_id) = workflow_run.active_node_id.as_deref() else {
+    let Some(active_node_id) = driving_node_id else {
         return false;
     };
     context::latest_node_run(node_runs, active_node_id).is_some_and(|run| {
@@ -358,7 +484,7 @@ async fn evaluate_watches<T: ReducerStore>(
     workflow: &runinator_models::workflows::WorkflowDefinition,
     workflow_run: &WorkflowRun,
     node_runs: &[WorkflowNodeRun],
-    active_node_id: &str,
+    cursor: &RunCursor,
 ) -> Result<Option<String>, SendableError> {
     let Some(watches) = workflow
         .definition
@@ -371,7 +497,7 @@ async fn evaluate_watches<T: ReducerStore>(
     if watches.is_empty() || WorkflowRunState::from_state(&workflow_run.state).watch_fired {
         return Ok(None);
     }
-    let context = runtime_context(db, workflow_run, node_runs).await;
+    let context = runtime_context(db, workflow_run, cursor, node_runs).await;
     for watch in watches {
         let (Some(condition), Some(handler)) = (
             watch.get("condition"),
@@ -379,7 +505,7 @@ async fn evaluate_watches<T: ReducerStore>(
         ) else {
             continue;
         };
-        if handler == active_node_id {
+        if cursor.is_at(handler) {
             continue;
         }
         if runinator_workflows::evaluate_condition(condition, &context).unwrap_or(false) {
@@ -389,13 +515,15 @@ async fn evaluate_watches<T: ReducerStore>(
     Ok(None)
 }
 
-/// true when the run's active node is an action node, the one node kind that parks the run `Running`
-/// awaiting a worker result that will not arrive inline. control nodes re-enter inline instead.
+/// true when the thread of control this drive follows sits on an action node, the one node kind that
+/// parks the run `Running` awaiting a worker result that will not arrive inline. control nodes
+/// re-enter inline instead.
 async fn active_node_awaits_worker<T: ReducerStore>(
     db: &T,
     run: &WorkflowRun,
+    driving_node_id: Option<&str>,
 ) -> Result<bool, SendableError> {
-    let Some(active_node_id) = run.active_node_id.as_deref() else {
+    let Some(active_node_id) = driving_node_id else {
         return Ok(false);
     };
     let workflow = match run.workflow_snapshot.clone() {

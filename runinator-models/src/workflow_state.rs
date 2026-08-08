@@ -153,7 +153,9 @@ impl WorkflowRunState {
 
     /// the real threads of control — everything the run's completion actually depends on.
     pub fn real_cursors(&self) -> impl Iterator<Item = &RunCursor> {
-        self.cursors.iter().filter(|cursor| !cursor.is_speculative())
+        self.cursors
+            .iter()
+            .filter(|cursor| !cursor.is_speculative())
     }
 
     /// is the cursor with this id a debugger "what if" branch?
@@ -230,7 +232,10 @@ impl WorkflowRunState {
     /// the frame is the wire contract single-position clients read, so it has to follow whichever
     /// cursor `active_node_id` is reporting.
     pub fn mirror_primary_debug(&mut self) {
-        let Some(runtime) = self.primary_cursor().and_then(|cursor| cursor.debug.clone()) else {
+        let Some(runtime) = self
+            .primary_cursor()
+            .and_then(|cursor| cursor.debug.clone())
+        else {
             return;
         };
         if let Some(frame) = self.debug.as_mut() {

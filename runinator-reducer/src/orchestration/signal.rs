@@ -12,18 +12,20 @@ use super::*;
 pub(super) async fn process_signal_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
+    cursor: &RunCursor,
     node: &WorkflowNode,
     latest: Option<&WorkflowNodeRun>,
     node_runs: &[WorkflowNodeRun],
 ) -> Result<(), SendableError> {
     // a loop body re-entering this node sees the prior iteration's resolved run; treat it as a fresh
     // visit so a new wait is armed instead of transitioning from the stale run.
-    let latest = latest.filter(|run| !is_reentry_stale(run, node_runs));
+    let latest = latest.filter(|run| !is_reentry_stale(run, node_runs, cursor));
     if let Some(node_run) = latest {
         if node_run.status == WorkflowStatus::Waiting && timed_out_since_created(node, node_run) {
             return time_out(
                 db,
                 workflow_run,
+                cursor,
                 node,
                 node_run,
                 "Signal timed out",
@@ -36,6 +38,7 @@ pub(super) async fn process_signal_node<T: ReducerStore>(
             transition_from_node(
                 db,
                 workflow_run,
+                cursor,
                 node,
                 node_run,
                 WorkflowStatus::Succeeded,
@@ -57,10 +60,11 @@ pub(super) async fn process_signal_node<T: ReducerStore>(
             node.id.clone(),
             node.parameters.clone().into(),
             super::context::most_recently_finished_node_run(node_runs),
+            Some(cursor),
         )
         .await?;
     let correlation_key =
-        resolve_correlation_key(db, workflow_run, node_runs, &params.correlation_key).await;
+        resolve_correlation_key(db, workflow_run, cursor, node_runs, &params.correlation_key).await;
     let state = SignalState {
         name: params.name,
         correlation_key,
@@ -84,7 +88,7 @@ pub(super) async fn process_signal_node<T: ReducerStore>(
         None,
     )
     .await?;
-    arm_node_timeout(db, workflow_run.id, node).await
+    arm_node_timeout(db, workflow_run.id, cursor, node).await
 }
 
 /// resolve a signal node's correlation-key value (often a `$ref` into the run context) into a flat
@@ -93,6 +97,7 @@ pub(super) async fn process_signal_node<T: ReducerStore>(
 async fn resolve_correlation_key<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
+    cursor: &RunCursor,
     node_runs: &[WorkflowNodeRun],
     expression: &runinator_models::workflow_ast::WorkflowExpression,
 ) -> Option<String> {
@@ -100,7 +105,7 @@ async fn resolve_correlation_key<T: ReducerStore>(
     if matches!(expression, WorkflowExpression::Literal(Value::Null)) {
         return None;
     }
-    let context = runtime_context(db, workflow_run, node_runs).await;
+    let context = runtime_context(db, workflow_run, cursor, node_runs).await;
     let resolved = runinator_workflows::evaluate_expression(expression, &context)
         .unwrap_or_else(|_| Value::from(expression));
     if let Some(text) = resolved.as_str() {
@@ -129,6 +134,7 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for SignalHandler {
             process_signal_node(
                 ctx.db,
                 ctx.workflow_run,
+                ctx.cursor,
                 ctx.node,
                 ctx.latest,
                 ctx.node_runs,

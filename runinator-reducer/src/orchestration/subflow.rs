@@ -6,13 +6,14 @@ use uuid::Uuid;
 pub(super) async fn process_subflow_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
+    cursor: &RunCursor,
     node: &WorkflowNode,
     latest: Option<&WorkflowNodeRun>,
     node_runs: &[WorkflowNodeRun],
 ) -> Result<(), SendableError> {
     // a loop body re-entering this node sees the prior iteration's linked subflow; treat it as a
     // fresh visit so a new child run is spawned instead of re-linking the stale one.
-    let latest = latest.filter(|run| !is_reentry_stale(run, node_runs));
+    let latest = latest.filter(|run| !is_reentry_stale(run, node_runs, cursor));
     if let Some(node_run) = latest
         && let Ok(subflow_state) = SubflowState::from_wire_value(&node_run.state)
     {
@@ -21,6 +22,7 @@ pub(super) async fn process_subflow_node<T: ReducerStore>(
             transition_from_node(
                 db,
                 workflow_run,
+                cursor,
                 node,
                 node_run,
                 WorkflowStatus::Succeeded,
@@ -45,6 +47,7 @@ pub(super) async fn process_subflow_node<T: ReducerStore>(
                 transition_from_node(
                     db,
                     workflow_run,
+                    cursor,
                     node,
                     node_run,
                     WorkflowStatus::Succeeded,
@@ -68,6 +71,7 @@ pub(super) async fn process_subflow_node<T: ReducerStore>(
                 transition_from_node(
                     db,
                     workflow_run,
+                    cursor,
                     node,
                     node_run,
                     WorkflowStatus::Failed,
@@ -93,6 +97,7 @@ pub(super) async fn process_subflow_node<T: ReducerStore>(
                     transition_from_node(
                         db,
                         workflow_run,
+                        cursor,
                         node,
                         node_run,
                         WorkflowStatus::TimedOut,
@@ -112,7 +117,7 @@ pub(super) async fn process_subflow_node<T: ReducerStore>(
     }
 
     let subflow_id = resolve_subflow_id(db, node).await?;
-    let context = runtime_context(db, workflow_run, node_runs).await;
+    let context = runtime_context(db, workflow_run, cursor, node_runs).await;
     let parameters = runinator_workflows::resolve_value_refs(&node.parameters, &context)
         .map_err(|err| -> SendableError { Box::new(err) })?;
     let run_name = resolve_optional_string(node.subflow.run_name.as_ref(), &context)?;
@@ -171,6 +176,7 @@ pub(super) async fn process_subflow_node<T: ReducerStore>(
             node.id.clone(),
             parameters,
             super::context::most_recently_finished_node_run(node_runs),
+            Some(cursor),
         )
         .await?;
     let state = SubflowState {
@@ -199,6 +205,7 @@ pub(super) async fn process_subflow_node<T: ReducerStore>(
         transition_from_node(
             db,
             workflow_run,
+            cursor,
             node,
             &node_run,
             WorkflowStatus::Succeeded,
@@ -229,7 +236,7 @@ pub(super) async fn process_subflow_node<T: ReducerStore>(
         None,
     )
     .await?;
-    arm_node_timeout(db, workflow_run.id, node).await
+    arm_node_timeout(db, workflow_run.id, cursor, node).await
 }
 
 /// resolve a subflow node's target workflow id from an explicit id or workflow name.
@@ -340,6 +347,7 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for SubflowHandler {
             if let Err(err) = process_subflow_node(
                 ctx.db,
                 ctx.workflow_run,
+                ctx.cursor,
                 ctx.node,
                 ctx.latest,
                 ctx.node_runs,
@@ -351,6 +359,7 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for SubflowHandler {
                 let node_run = super::transitions::ensure_node_run(
                     ctx.db,
                     ctx.workflow_run,
+                    ctx.cursor,
                     ctx.node,
                     ctx.latest,
                     super::context::most_recently_finished_node_run(ctx.node_runs),
@@ -359,6 +368,7 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for SubflowHandler {
                 super::transitions::transition_from_node(
                     ctx.db,
                     ctx.workflow_run,
+                    ctx.cursor,
                     ctx.node,
                     &node_run,
                     WorkflowStatus::Failed,

@@ -189,7 +189,7 @@ pub async fn create_workflow_node_run<T: DatabaseImpl>(
     parameters: Value,
     prev_node_run_id: Option<Uuid>,
 ) -> Result<WorkflowNodeRun, SendableError> {
-    db.create_workflow_node_run(workflow_run_id, node_id, parameters, prev_node_run_id)
+    db.create_workflow_node_run(workflow_run_id, node_id, parameters, prev_node_run_id, None)
         .await
 }
 

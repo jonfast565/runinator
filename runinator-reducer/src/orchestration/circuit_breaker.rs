@@ -130,6 +130,7 @@ async fn record_failure<T: ReducerStore>(
 pub(super) async fn process_circuit_breaker_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
+    cursor: &RunCursor,
     node: &WorkflowNode,
     node_runs: &[WorkflowNodeRun],
 ) -> Result<(), SendableError> {
@@ -140,6 +141,7 @@ pub(super) async fn process_circuit_breaker_node<T: ReducerStore>(
             node.id.clone(),
             node.parameters.clone().into(),
             super::context::most_recently_finished_node_run(node_runs),
+            Some(cursor),
         )
         .await?;
     let now = Utc::now().timestamp();
@@ -168,6 +170,7 @@ pub(super) async fn process_circuit_breaker_node<T: ReducerStore>(
     transition_from_node(
         db,
         workflow_run,
+        cursor,
         node,
         &node_run,
         status,
@@ -190,7 +193,14 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for CircuitBreakerHandler {
         T: 'a,
     {
         async move {
-            process_circuit_breaker_node(ctx.db, ctx.workflow_run, ctx.node, ctx.node_runs).await?;
+            process_circuit_breaker_node(
+                ctx.db,
+                ctx.workflow_run,
+                ctx.cursor,
+                ctx.node,
+                ctx.node_runs,
+            )
+            .await?;
             Ok(ReadyNodeDisposition::Complete)
         }
     }

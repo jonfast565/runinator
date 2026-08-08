@@ -1,5 +1,6 @@
 use super::context::{coerce_scalar_string, runtime_context, set_step_output};
 use super::*;
+use chrono::DateTime;
 use runinator_models::workflows::WorkflowRetry;
 use uuid::Uuid;
 
@@ -10,6 +11,7 @@ use uuid::Uuid;
 pub(super) async fn retry_or_transition<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
+    cursor: &RunCursor,
     node: &WorkflowNode,
     node_run: &WorkflowNodeRun,
     status: WorkflowStatus,
@@ -20,6 +22,7 @@ pub(super) async fn retry_or_transition<T: ReducerStore>(
     transition_from_node(
         db,
         workflow_run,
+        cursor,
         node,
         node_run,
         status,
@@ -53,6 +56,7 @@ fn retry_backoff_delay(retry: &WorkflowRetry, attempt: i64) -> chrono::Duration 
 pub(super) async fn time_out<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
+    cursor: &RunCursor,
     node: &WorkflowNode,
     node_run: &WorkflowNodeRun,
     message: &str,
@@ -61,6 +65,7 @@ pub(super) async fn time_out<T: ReducerStore>(
     retry_or_transition(
         db,
         workflow_run,
+        cursor,
         node,
         node_run,
         WorkflowStatus::TimedOut,
@@ -71,10 +76,11 @@ pub(super) async fn time_out<T: ReducerStore>(
     .await
 }
 
-/// create a node run and block the workflow with a message.
+/// create a node run and block this thread of control with a message.
 pub(super) async fn block_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
+    cursor: &RunCursor,
     node: &WorkflowNode,
     message: &str,
 ) -> Result<(), SendableError> {
@@ -84,6 +90,7 @@ pub(super) async fn block_node<T: ReducerStore>(
             node.id.clone(),
             node.parameters.clone().into(),
             None,
+            Some(cursor),
         )
         .await?;
     db.update_workflow_node_run(
@@ -97,20 +104,29 @@ pub(super) async fn block_node<T: ReducerStore>(
         Some(message.into()),
     )
     .await?;
-    db.update_workflow_run_status(
+    // a blocked thread of control is finished: retire it and let the run settle `Blocked`. going
+    // through `advance_cursor` is what keeps a blocked branch from stranding its live siblings.
+    run_state::advance_cursor(
+        db,
         workflow_run.id,
+        cursor.id,
         WorkflowStatus::Blocked,
-        Some(node.id.clone()),
-        None,
+        run_state::CursorMove::Retire,
         Some(message.into()),
     )
     .await
 }
 
 /// advance a try node into a phase (body/catch/finally), recording the phase frame.
+/// advance a try node into a phase (body/catch/finally), recording the phase frame on the cursor.
+///
+/// the frame belongs to this thread of control, not the run: two branches inside a try region would
+/// otherwise share one phase and each would see the other's.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn start_try_phase<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
+    cursor: &RunCursor,
     node_run: &WorkflowNodeRun,
     node: &WorkflowNode,
     target: &str,
@@ -124,9 +140,6 @@ pub(super) async fn start_try_phase<T: ReducerStore>(
         pending_status,
         pending_output,
     };
-    let mut run_state = WorkflowRunState::from_state(&workflow_run.state);
-    run_state.try_frame = Some(frame.clone());
-    let state = run_state.to_state();
     db.update_workflow_node_run(
         node_run.id,
         WorkflowStatus::Running,
@@ -138,11 +151,17 @@ pub(super) async fn start_try_phase<T: ReducerStore>(
         None,
     )
     .await?;
-    db.update_workflow_run_status(
+    let staged = frame.clone();
+    run_state::mutate_cursor(db, workflow_run.id, cursor.id, move |cursor| {
+        cursor.try_frame = Some(staged.clone());
+    })
+    .await?;
+    run_state::advance_cursor(
+        db,
         workflow_run.id,
+        cursor.id,
         WorkflowStatus::Running,
-        Some(target.into()),
-        Some(state),
+        run_state::CursorMove::To(target.to_string()),
         None,
     )
     .await
@@ -181,12 +200,13 @@ pub(super) fn timed_out_since_created_or(
 pub(super) async fn arm_node_timeout<T: ReducerStore>(
     db: &T,
     workflow_run_id: Uuid,
+    cursor: &RunCursor,
     node: &WorkflowNode,
 ) -> Result<(), SendableError> {
     let Some(timeout) = node.timeout_seconds else {
         return Ok(());
     };
-    arm_node_timeout_in(db, workflow_run_id, node, timeout).await
+    arm_node_timeout_in(db, workflow_run_id, cursor, node, timeout).await
 }
 
 /// like `arm_node_timeout`, but always arms, falling back to `default_timeout_seconds` when the
@@ -194,29 +214,32 @@ pub(super) async fn arm_node_timeout<T: ReducerStore>(
 pub(super) async fn arm_node_timeout_or<T: ReducerStore>(
     db: &T,
     workflow_run_id: Uuid,
+    cursor: &RunCursor,
     node: &WorkflowNode,
     default_timeout_seconds: i64,
 ) -> Result<(), SendableError> {
     let timeout = node.timeout_seconds.unwrap_or(default_timeout_seconds);
-    arm_node_timeout_in(db, workflow_run_id, node, timeout).await
+    arm_node_timeout_in(db, workflow_run_id, cursor, node, timeout).await
 }
 
-async fn arm_node_timeout_in<T: ReducerStore>(
+pub(super) async fn arm_node_timeout_in<T: ReducerStore>(
     db: &T,
     workflow_run_id: Uuid,
+    cursor: &RunCursor,
     node: &WorkflowNode,
     timeout_seconds: i64,
 ) -> Result<(), SendableError> {
     let deadline = Utc::now() + chrono::Duration::seconds(timeout_seconds);
-    let event = NewOrchestrationEvent::new(
+    arm_cursor_wake(
+        db,
         workflow_run_id,
-        Some(node.id.clone()),
+        cursor,
+        &node.id,
         "node_timeout_rearm",
         runinator_models::json!({ "node_id": node.id }),
-    );
-    db.enqueue_ready_node(event, node.id.clone(), deadline)
-        .await?;
-    Ok(())
+        deadline,
+    )
+    .await
 }
 
 /// when a child workflow run reaches a terminal state, wake the parent subflow node waiting on it.
@@ -319,9 +342,17 @@ pub(super) async fn maybe_wake_awaiters<T: ReducerStore>(
     Ok(())
 }
 
+/// settle a node and move the thread of control that ran it.
+///
+/// every write to the run's position goes through [`run_state::advance_cursor`], which applies the
+/// move and the run status in one compare-and-swap. that is what lets several branches settle
+/// concurrently without discarding each other's frames — and what encodes the rule that a run only
+/// *succeeds* when its last cursor retires, while a failure ends it immediately.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn transition_from_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
+    cursor: &RunCursor,
     node: &WorkflowNode,
     node_run: &WorkflowNodeRun,
     status: WorkflowStatus,
@@ -330,7 +361,16 @@ pub(super) async fn transition_from_node<T: ReducerStore>(
     node_runs: &[WorkflowNodeRun],
 ) -> Result<Option<String>, SendableError> {
     if node.retry.retry_on.retryable(status) && node_run.attempt < node.retry.max_attempts {
-        schedule_node_retry(db, workflow_run, node, node_run, output_json, message).await?;
+        schedule_node_retry(
+            db,
+            workflow_run,
+            cursor,
+            node,
+            node_run,
+            output_json,
+            message,
+        )
+        .await?;
         return Ok(Some(node.id.clone()));
     }
 
@@ -345,42 +385,47 @@ pub(super) async fn transition_from_node<T: ReducerStore>(
         message.clone(),
     )
     .await?;
-    let mut context = runtime_context(db, workflow_run, node_runs).await;
-    if let Some(output) = output_json {
+    let mut context = runtime_context(db, workflow_run, cursor, node_runs).await;
+    if let Some(output) = output_json.clone() {
         set_step_output(&mut context, &node.id, output);
+    }
+    // the debugger's "last output" pane is per-branch; run-wide "most recently finished" is simply
+    // the wrong answer under fan-out. only paid for by runs that are actually being debugged.
+    if WorkflowRunState::from_state(&workflow_run.state)
+        .debug
+        .is_some()
+    {
+        let last = output_json.clone().unwrap_or(Value::Null);
+        run_state::mutate_cursor(db, workflow_run.id, cursor.id, |cursor| {
+            cursor.last_output = Some(last.clone());
+        })
+        .await?;
     }
     maybe_stamp_correlation(db, workflow_run, &context).await?;
     let next = runinator_workflows::next_transition(node, status, &context)
         .map_err(|err| -> SendableError { Box::new(err) })?;
     match next {
         Some(next) => {
-            db.update_workflow_run_status(
+            run_state::advance_cursor(
+                db,
                 workflow_run.id,
+                cursor.id,
                 WorkflowStatus::Running,
-                Some(next.clone()),
-                None,
+                run_state::CursorMove::To(next.clone()),
                 message,
             )
             .await?;
             Ok(Some(next))
         }
-        None if status == WorkflowStatus::Succeeded => {
-            db.update_workflow_run_status(
-                workflow_run.id,
-                WorkflowStatus::Succeeded,
-                Some(node.id.clone()),
-                None,
-                message,
-            )
-            .await?;
-            Ok(None)
-        }
+        // no outgoing edge: this thread of control is done. the run takes the terminal only once
+        // every other branch has also retired.
         None => {
-            db.update_workflow_run_status(
+            run_state::advance_cursor(
+                db,
                 workflow_run.id,
+                cursor.id,
                 status,
-                Some(node.id.clone()),
-                None,
+                run_state::CursorMove::Retire,
                 message,
             )
             .await?;
@@ -389,9 +434,11 @@ pub(super) async fn transition_from_node<T: ReducerStore>(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn schedule_node_retry<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
+    cursor: &RunCursor,
     node: &WorkflowNode,
     node_run: &WorkflowNodeRun,
     output_json: Option<Value>,
@@ -436,8 +483,31 @@ async fn schedule_node_retry<T: ReducerStore>(
             "max_attempts": node.retry.max_attempts,
             "backoff_seconds": delay.num_seconds(),
         }),
-    );
+    )
+    .for_cursor(cursor.id);
     db.enqueue_ready_node(event, node.id.clone(), ready_at)
+        .await?;
+    Ok(())
+}
+
+/// arm a wake for one thread of control at `ready_at`.
+///
+/// stamping the cursor is what lets a fan-out's branches each hold a live ready row for the same
+/// node: the supersede-on-arm rule narrows to the cursor, so re-arming one branch no longer silently
+/// cancels its sibling's pending wake.
+pub(super) async fn arm_cursor_wake<T: ReducerStore>(
+    db: &T,
+    workflow_run_id: Uuid,
+    cursor: &RunCursor,
+    node_id: &str,
+    reason: &str,
+    payload: Value,
+    ready_at: DateTime<Utc>,
+) -> Result<(), SendableError> {
+    let event =
+        NewOrchestrationEvent::new(workflow_run_id, Some(node_id.to_string()), reason, payload)
+            .for_cursor(cursor.id);
+    db.enqueue_ready_node(event, node_id.to_string(), ready_at)
         .await?;
     Ok(())
 }
@@ -445,6 +515,7 @@ async fn schedule_node_retry<T: ReducerStore>(
 pub(super) async fn ensure_node_run<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
+    cursor: &RunCursor,
     node: &WorkflowNode,
     latest: Option<&WorkflowNodeRun>,
     prev_node_run_id: Option<Uuid>,
@@ -457,6 +528,7 @@ pub(super) async fn ensure_node_run<T: ReducerStore>(
         node.id.clone(),
         node.parameters.clone().into(),
         prev_node_run_id,
+        Some(cursor),
     )
     .await
 }
@@ -464,6 +536,7 @@ pub(super) async fn ensure_node_run<T: ReducerStore>(
 pub(super) async fn ensure_completed_node_run<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
+    cursor: &RunCursor,
     node: &WorkflowNode,
     latest: Option<&WorkflowNodeRun>,
     reason: &str,
@@ -471,7 +544,7 @@ pub(super) async fn ensure_completed_node_run<T: ReducerStore>(
     if latest.is_some_and(|run| run.status == WorkflowStatus::Succeeded) {
         return Ok(());
     }
-    let node_run = ensure_node_run(db, workflow_run, node, latest, None).await?;
+    let node_run = ensure_node_run(db, workflow_run, cursor, node, latest, None).await?;
     db.update_workflow_node_run(
         node_run.id,
         WorkflowStatus::Succeeded,

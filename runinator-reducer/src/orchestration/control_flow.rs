@@ -8,17 +8,24 @@ use super::*;
 pub(super) async fn process_loop_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
+    cursor: &RunCursor,
     node: &WorkflowNode,
     latest: Option<&WorkflowNodeRun>,
     node_runs: &[WorkflowNodeRun],
 ) -> Result<(), SendableError> {
-    let context = runtime_context(db, workflow_run, node_runs).await;
+    let context = runtime_context(db, workflow_run, cursor, node_runs).await;
     let parameters = runinator_workflows::resolve_value_refs(&node.parameters, &context)
         .map_err(|err| -> SendableError { Box::new(err) })?;
     let items = runinator_workflows::parse_loop_items(&parameters).items;
+    // iterations belong to this thread of control. two branches looping over the same node would
+    // otherwise each count the other's laps and exit early.
     let prior_iterations = node_runs
         .iter()
-        .filter(|run| run.node_id == node.id && run.status == WorkflowStatus::Succeeded)
+        .filter(|run| {
+            run.node_id == node.id
+                && run.status == WorkflowStatus::Succeeded
+                && run.cursor_id.is_none_or(|id| id == cursor.id)
+        })
         .count() as i64;
     // an expression cap is resolved into the parameters; fall back to the typed field.
     let max_iterations = parameters
@@ -42,6 +49,7 @@ pub(super) async fn process_loop_node<T: ReducerStore>(
                 return time_out(
                     db,
                     workflow_run,
+                    cursor,
                     node,
                     latest,
                     "Loop node timed out",
@@ -57,6 +65,7 @@ pub(super) async fn process_loop_node<T: ReducerStore>(
                 node.id.clone(),
                 parameters.clone(),
                 super::context::most_recently_finished_node_run(node_runs),
+                Some(cursor),
             )
             .await?
         }
@@ -98,21 +107,16 @@ pub(super) async fn process_loop_node<T: ReducerStore>(
     .await?;
 
     if exhausted {
-        // clear loop bookkeeping before exiting so the loop frame does not survive into the exit
-        // path and route a downstream node back into the loop.
-        let mut state = WorkflowRunState::from_state(&workflow_run.state);
-        state.loop_frame = None;
-        db.update_workflow_run_status(
-            workflow_run.id,
-            workflow_run.status,
-            workflow_run.active_node_id.clone(),
-            Some(state.to_state()),
-            None,
-        )
+        // clear this cursor's loop bookkeeping before exiting, so the frame does not survive into
+        // the exit path and route a downstream node back into the loop.
+        run_state::mutate_cursor(db, workflow_run.id, cursor.id, |cursor| {
+            cursor.loop_frame = None;
+        })
         .await?;
         transition_from_node(
             db,
             workflow_run,
+            cursor,
             node,
             &node_run,
             WorkflowStatus::Succeeded,
@@ -130,28 +134,40 @@ pub(super) async fn process_loop_node<T: ReducerStore>(
         .as_ref()
         .map(|target| target.as_str().to_string())
         .unwrap_or_else(|| node.id.clone());
-    // a fresh state intentionally drops sibling frames so the loop body re-enters cleanly.
-    let state = WorkflowRunState {
-        loop_frame: Some(LoopFrame {
-            index,
-            item: items[index as usize].clone(),
-            return_to: node.id.clone(),
-        }),
-        ..WorkflowRunState::default()
+    // reset only this thread of control's frames so the body re-enters cleanly. run-scoped state
+    // and any sibling branch's frames are deliberately untouched — resetting the whole run state
+    // here is what used to discard every other frame the run was tracking.
+    let frame = LoopFrame {
+        index,
+        item: items[index as usize].clone(),
+        return_to: node.id.clone(),
     };
-    db.update_workflow_run_status(
+    run_state::mutate_cursor(db, workflow_run.id, cursor.id, move |cursor| {
+        cursor.clear_frames();
+        cursor.loop_frame = Some(frame.clone());
+    })
+    .await?;
+    run_state::advance_cursor(
+        db,
         workflow_run.id,
+        cursor.id,
         WorkflowStatus::Running,
-        Some(return_to),
-        Some(state.to_state()),
+        run_state::CursorMove::To(return_to),
         None,
     )
     .await
 }
 
+/// fan a `parallel` node out into one cursor per branch.
+///
+/// every branch starts at once. the previous design ran the first branch and queued the rest on a
+/// run-scoped frame, so "parallel" branches actually executed one after another; a cursor per branch
+/// is what makes them concurrent. the forking cursor retires — its thread of control *becomes* the
+/// branches — and the matching join settles when they arrive.
 pub(super) async fn process_parallel_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
+    cursor: &RunCursor,
     node: &WorkflowNode,
     latest: Option<&WorkflowNodeRun>,
     node_runs: &[WorkflowNodeRun],
@@ -161,6 +177,7 @@ pub(super) async fn process_parallel_node<T: ReducerStore>(
             return time_out(
                 db,
                 workflow_run,
+                cursor,
                 node,
                 node_run,
                 "Parallel node timed out",
@@ -173,32 +190,34 @@ pub(super) async fn process_parallel_node<T: ReducerStore>(
     }
     let params = runinator_workflows::parse_parallel_parameters(node)
         .map_err(|err| -> SendableError { Box::new(err) })?;
-    let Some(first) = params.branches.first().cloned() else {
-        return block_node(db, workflow_run, node, "Parallel node has no branches").await;
-    };
+    if params.branches.is_empty() {
+        return block_node(
+            db,
+            workflow_run,
+            cursor,
+            node,
+            "Parallel node has no branches",
+        )
+        .await;
+    }
     let branches = params
         .branches
         .iter()
         .map(|branch| branch.as_str().to_string())
         .collect::<Vec<_>>();
-    let remaining = branches.iter().skip(1).cloned().collect::<Vec<_>>();
     let node_run = db
         .create_workflow_node_run(
             workflow_run.id,
             node.id.clone(),
             node.parameters.clone().into(),
             super::context::most_recently_finished_node_run(node_runs),
+            Some(cursor),
         )
         .await?;
     let output = ParallelOutput {
-        branches,
+        branches: branches.clone(),
         outputs: Vec::new(),
     };
-    let mut state = WorkflowRunState::from_state(&workflow_run.state);
-    state.parallel = Some(ParallelFrame {
-        node_id: node.id.clone(),
-        remaining,
-    });
     db.update_workflow_node_run(
         node_run.id,
         WorkflowStatus::Succeeded,
@@ -210,19 +229,59 @@ pub(super) async fn process_parallel_node<T: ReducerStore>(
         None,
     )
     .await?;
-    db.update_workflow_run_status(
-        workflow_run.id,
-        WorkflowStatus::Running,
-        Some(first.into_string()),
-        Some(state.to_state()),
-        None,
-    )
-    .await
+    let forked =
+        run_state::fork_cursors(db, workflow_run.id, cursor.id, &node.id, &branches).await?;
+    for (branch_cursor, branch) in forked {
+        enqueue_branch(
+            db,
+            workflow_run.id,
+            branch_cursor,
+            &branch,
+            &node.id,
+            "parallel_branch_started",
+        )
+        .await?;
+    }
+    Ok(())
 }
 
+/// wake a freshly forked branch on its own cursor.
+///
+/// the ready row carries the cursor id, so two branches entering the same node stay distinguishable
+/// and re-arming one never supersedes the other's pending wake.
+async fn enqueue_branch<T: ReducerStore>(
+    db: &T,
+    workflow_run_id: Uuid,
+    cursor_id: Uuid,
+    branch: &str,
+    forked_by: &str,
+    reason: &str,
+) -> Result<(), SendableError> {
+    let event = NewOrchestrationEvent::new(
+        workflow_run_id,
+        Some(branch.to_string()),
+        reason,
+        runinator_models::json!({
+            "branch": branch,
+            "forked_by": forked_by,
+            "cursor_id": cursor_id,
+        }),
+    )
+    .for_cursor(cursor_id);
+    db.enqueue_ready_node(event, branch.to_string(), Utc::now())
+        .await?;
+    Ok(())
+}
+
+/// settle a `join` when the branches it waits on have arrived.
+///
+/// satisfaction is read from **node runs**, not from the cursor list: a branch counts once its work
+/// is recorded, whether or not its cursor is still live. because `visible_node_runs` already hid any
+/// speculative output before this handler ran, a "what if" fork can never satisfy a real join.
 pub(super) async fn process_join_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
+    cursor: &RunCursor,
     node: &WorkflowNode,
     latest: Option<&WorkflowNodeRun>,
     node_runs: &[WorkflowNodeRun],
@@ -238,6 +297,7 @@ pub(super) async fn process_join_node<T: ReducerStore>(
         let node_run = ensure_node_run(
             db,
             workflow_run,
+            cursor,
             node,
             latest,
             super::context::most_recently_finished_node_run(node_runs),
@@ -254,6 +314,7 @@ pub(super) async fn process_join_node<T: ReducerStore>(
         transition_from_node(
             db,
             workflow_run,
+            cursor,
             node,
             &node_run,
             WorkflowStatus::Succeeded,
@@ -270,6 +331,7 @@ pub(super) async fn process_join_node<T: ReducerStore>(
         return time_out(
             db,
             workflow_run,
+            cursor,
             node,
             node_run,
             "Join node timed out",
@@ -277,26 +339,39 @@ pub(super) async fn process_join_node<T: ReducerStore>(
         )
         .await;
     }
-    // dispatch the next parallel branch the matching parallel node fanned out, if any.
-    let mut state = WorkflowRunState::from_state(&workflow_run.state);
-    if let Some(target) = state
-        .parallel
-        .as_mut()
-        .and_then(|frame| frame.pop_remaining())
-    {
-        db.update_workflow_run_status(
+    // a speculative fork reaching a join stops here: it must not wait for real branches, and it must
+    // not be counted as one. the fork's purpose ends where the real graph reconverges.
+    if cursor.is_speculative() {
+        return run_state::advance_cursor(
+            db,
             workflow_run.id,
-            WorkflowStatus::Running,
-            Some(target),
-            Some(state.to_state()),
-            Some("join_waiting_for_parallel_branch".into()),
+            cursor.id,
+            WorkflowStatus::Succeeded,
+            run_state::CursorMove::Retire,
+            Some("speculative_join_reached".into()),
         )
-        .await?;
-        return Ok(());
+        .await;
+    }
+    // an early-arriving branch retires instead of parking. the last branch to arrive is the one that
+    // finds the join satisfied above and carries the run onward, so exactly one cursor leaves a join.
+    // the `real_cursors` count is what stops a genuinely-alone branch retiring itself into a stall
+    // just because a speculative fork happens to be live.
+    let state = WorkflowRunState::from_state(&workflow_run.state);
+    if cursor.forked_by.is_some() && state.real_cursors().count() > 1 {
+        return run_state::advance_cursor(
+            db,
+            workflow_run.id,
+            cursor.id,
+            WorkflowStatus::Succeeded,
+            run_state::CursorMove::Retire,
+            Some("join_branch_arrived".into()),
+        )
+        .await;
     }
     let node_run = ensure_node_run(
         db,
         workflow_run,
+        cursor,
         node,
         latest,
         super::context::most_recently_finished_node_run(node_runs),
@@ -321,12 +396,18 @@ pub(super) async fn process_join_node<T: ReducerStore>(
         None,
     )
     .await?;
-    arm_node_timeout(db, workflow_run.id, node).await
+    arm_node_timeout(db, workflow_run.id, cursor, node).await
 }
 
+/// run every contender of a `race` at once and take the first to finish.
+///
+/// contenders fan out on their own cursors, exactly like `parallel`. running them one after another
+/// — as the run-scoped frame did — made a race a race in name only: the first branch always won
+/// because no other branch had started.
 pub(super) async fn process_race_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
+    cursor: &RunCursor,
     node: &WorkflowNode,
     latest: Option<&WorkflowNodeRun>,
     node_runs: &[WorkflowNodeRun],
@@ -336,6 +417,7 @@ pub(super) async fn process_race_node<T: ReducerStore>(
     let node_run = ensure_node_run(
         db,
         workflow_run,
+        cursor,
         node,
         latest,
         super::context::most_recently_finished_node_run(node_runs),
@@ -345,6 +427,7 @@ pub(super) async fn process_race_node<T: ReducerStore>(
         return time_out(
             db,
             workflow_run,
+            cursor,
             node,
             &node_run,
             "Race node timed out",
@@ -357,11 +440,49 @@ pub(super) async fn process_race_node<T: ReducerStore>(
         .iter()
         .map(|branch| branch.as_str().to_string())
         .collect::<Vec<_>>();
+    if branches.is_empty() {
+        return block_node(db, workflow_run, cursor, node, "Race node has no branches").await;
+    }
+
+    // the race is already settled and this is a straggler arriving late: its thread of control ends
+    // here rather than transitioning a second time.
+    if node_run.status.is_terminal() && cursor.forked_by.as_deref() == Some(node.id.as_str()) {
+        return run_state::advance_cursor(
+            db,
+            workflow_run.id,
+            cursor.id,
+            WorkflowStatus::Succeeded,
+            run_state::CursorMove::Retire,
+            Some("race_branch_lost".into()),
+        )
+        .await;
+    }
+
     if let Some(winner) = race_winner(&branches, params.winner, node_runs) {
         // the race is decided: mark any still-running losing branch as canceled so its node run is
-        // terminal and the ws drive path can signal the worker to stop wasted work (the v1 limitation
-        // noted in the README). branches that never started or already settled are left untouched.
+        // terminal and the ws drive path can signal the worker to stop wasted work. branches that
+        // never started or already settled are left untouched.
         cancel_losing_race_branches(db, &branches, &winner, node_runs).await?;
+        // retire the losing branches' cursors too, so they cannot carry the run past the race.
+        let losing = {
+            let state = WorkflowRunState::from_state(&workflow_run.state);
+            state
+                .cursors_forked_by(&node.id)
+                .filter(|contender| contender.id != cursor.id)
+                .map(|contender| contender.id)
+                .collect::<Vec<_>>()
+        };
+        for loser in losing {
+            run_state::advance_cursor(
+                db,
+                workflow_run.id,
+                loser,
+                WorkflowStatus::Succeeded,
+                run_state::CursorMove::Retire,
+                Some("race_branch_lost".into()),
+            )
+            .await?;
+        }
         let output = RaceOutput {
             output: latest_succeeded_output_for(node_runs, &winner),
             winner,
@@ -369,6 +490,7 @@ pub(super) async fn process_race_node<T: ReducerStore>(
         transition_from_node(
             db,
             workflow_run,
+            cursor,
             node,
             &node_run,
             WorkflowStatus::Succeeded,
@@ -379,22 +501,14 @@ pub(super) async fn process_race_node<T: ReducerStore>(
         .await?;
         return Ok(());
     }
-    let mut state = WorkflowRunState::from_state(&workflow_run.state);
-    let race_owned = state
-        .race
-        .as_ref()
-        .is_some_and(|frame| frame.node_id == node.id);
-    let next_target = if race_owned {
-        state.race.as_mut().and_then(|frame| frame.pop_remaining())
-    } else {
-        let remaining = branches.iter().skip(1).cloned().collect::<Vec<_>>();
-        state.race = Some(RaceFrame {
-            node_id: node.id.clone(),
-            remaining,
-        });
-        branches.first().cloned()
+
+    // first visit: start every contender. `cursors_forked_by` is the "have I already fanned out"
+    // test, so a re-entry while contenders are still running falls through and simply waits.
+    let already_started = {
+        let state = WorkflowRunState::from_state(&workflow_run.state);
+        state.cursors_forked_by(&node.id).next().is_some()
     };
-    if let Some(target) = next_target {
+    if !already_started {
         db.update_workflow_node_run(
             node_run.id,
             WorkflowStatus::Running,
@@ -402,23 +516,35 @@ pub(super) async fn process_race_node<T: ReducerStore>(
             None,
             None,
             None,
-            Some("race_branch_started".into()),
+            Some("race_branches_started".into()),
             None,
         )
         .await?;
-        db.update_workflow_run_status(
-            workflow_run.id,
-            WorkflowStatus::Running,
-            Some(target),
-            Some(state.to_state()),
-            None,
-        )
-        .await?;
+        let forked =
+            run_state::fork_cursors(db, workflow_run.id, cursor.id, &node.id, &branches).await?;
+        for (branch_cursor, branch) in forked {
+            enqueue_branch(
+                db,
+                workflow_run.id,
+                branch_cursor,
+                &branch,
+                &node.id,
+                "race_branch_started",
+            )
+            .await?;
+        }
+        return Ok(());
+    }
+
+    // contenders are live but none has won yet: this thread of control has nothing to do until one
+    // does, and the branch cursors carry the work.
+    if cursor.forked_by.as_deref() != Some(node.id.as_str()) {
         return Ok(());
     }
     transition_from_node(
         db,
         workflow_run,
+        cursor,
         node,
         &node_run,
         WorkflowStatus::Failed,
@@ -433,6 +559,7 @@ pub(super) async fn process_race_node<T: ReducerStore>(
 pub(super) async fn process_try_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
+    cursor: &RunCursor,
     node: &WorkflowNode,
     latest: Option<&WorkflowNodeRun>,
     node_runs: &[WorkflowNodeRun],
@@ -442,6 +569,7 @@ pub(super) async fn process_try_node<T: ReducerStore>(
     let node_run = ensure_node_run(
         db,
         workflow_run,
+        cursor,
         node,
         latest,
         super::context::most_recently_finished_node_run(node_runs),
@@ -451,6 +579,7 @@ pub(super) async fn process_try_node<T: ReducerStore>(
         return time_out(
             db,
             workflow_run,
+            cursor,
             node,
             &node_run,
             "Try node timed out",
@@ -458,20 +587,20 @@ pub(super) async fn process_try_node<T: ReducerStore>(
         )
         .await;
     }
-    let frame = WorkflowRunState::from_state(&workflow_run.state)
-        .try_frame
-        .clone()
-        .unwrap_or_else(|| TryFrame {
-            node_id: node.id.clone(),
-            phase: "body".into(),
-            pending_status: None,
-            pending_output: None,
-        });
+    // the phase belongs to this thread of control: two branches inside one try region would
+    // otherwise share a phase and each would observe the other's.
+    let frame = cursor.try_frame.clone().unwrap_or_else(|| TryFrame {
+        node_id: node.id.clone(),
+        phase: "body".into(),
+        pending_status: None,
+        pending_output: None,
+    });
     let phase = frame.phase.clone();
     if latest.is_none() {
         return start_try_phase(
             db,
             workflow_run,
+            cursor,
             &node_run,
             node,
             params.body.as_str(),
@@ -492,6 +621,7 @@ pub(super) async fn process_try_node<T: ReducerStore>(
                     return start_try_phase(
                         db,
                         workflow_run,
+                        cursor,
                         &node_run,
                         node,
                         finally.as_str(),
@@ -504,6 +634,7 @@ pub(super) async fn process_try_node<T: ReducerStore>(
                 transition_from_node(
                     db,
                     workflow_run,
+                    cursor,
                     node,
                     &node_run,
                     status,
@@ -518,6 +649,7 @@ pub(super) async fn process_try_node<T: ReducerStore>(
                 return start_try_phase(
                     db,
                     workflow_run,
+                    cursor,
                     &node_run,
                     node,
                     catch.as_str(),
@@ -531,6 +663,7 @@ pub(super) async fn process_try_node<T: ReducerStore>(
                 return start_try_phase(
                     db,
                     workflow_run,
+                    cursor,
                     &node_run,
                     node,
                     finally.as_str(),
@@ -543,6 +676,7 @@ pub(super) async fn process_try_node<T: ReducerStore>(
             transition_from_node(
                 db,
                 workflow_run,
+                cursor,
                 node,
                 &node_run,
                 status,
@@ -566,6 +700,7 @@ pub(super) async fn process_try_node<T: ReducerStore>(
                 return start_try_phase(
                     db,
                     workflow_run,
+                    cursor,
                     &node_run,
                     node,
                     finally.as_str(),
@@ -578,6 +713,7 @@ pub(super) async fn process_try_node<T: ReducerStore>(
             transition_from_node(
                 db,
                 workflow_run,
+                cursor,
                 node,
                 &node_run,
                 status,
@@ -599,6 +735,7 @@ pub(super) async fn process_try_node<T: ReducerStore>(
             transition_from_node(
                 db,
                 workflow_run,
+                cursor,
                 node,
                 &node_run,
                 status,
@@ -609,7 +746,7 @@ pub(super) async fn process_try_node<T: ReducerStore>(
             .await?;
             Ok(())
         }
-        _ => block_node(db, workflow_run, node, "Try node has invalid phase").await,
+        _ => block_node(db, workflow_run, cursor, node, "Try node has invalid phase").await,
     }
 }
 
@@ -685,6 +822,7 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for LoopHandler {
             process_loop_node(
                 ctx.db,
                 ctx.workflow_run,
+                ctx.cursor,
                 ctx.node,
                 ctx.latest,
                 ctx.node_runs,
@@ -707,6 +845,7 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for ParallelHandler {
             process_parallel_node(
                 ctx.db,
                 ctx.workflow_run,
+                ctx.cursor,
                 ctx.node,
                 ctx.latest,
                 ctx.node_runs,
@@ -729,6 +868,7 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for JoinHandler {
             process_join_node(
                 ctx.db,
                 ctx.workflow_run,
+                ctx.cursor,
                 ctx.node,
                 ctx.latest,
                 ctx.node_runs,
@@ -751,6 +891,7 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for RaceHandler {
             process_race_node(
                 ctx.db,
                 ctx.workflow_run,
+                ctx.cursor,
                 ctx.node,
                 ctx.latest,
                 ctx.node_runs,
@@ -773,6 +914,7 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for TryHandler {
             process_try_node(
                 ctx.db,
                 ctx.workflow_run,
+                ctx.cursor,
                 ctx.node,
                 ctx.latest,
                 ctx.node_runs,

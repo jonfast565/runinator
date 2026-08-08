@@ -31,6 +31,7 @@ pub(super) async fn process_compute_node<T: ReducerStore>(
     db: &T,
     workflow: &WorkflowDefinition,
     workflow_run: &WorkflowRun,
+    cursor: &RunCursor,
     node: &WorkflowNode,
     node_runs: &[WorkflowNodeRun],
     nodes: &[WorkflowNode],
@@ -56,9 +57,10 @@ pub(super) async fn process_compute_node<T: ReducerStore>(
             node.id.clone(),
             node.parameters.clone().into(),
             super::context::most_recently_finished_node_run(node_runs),
+            Some(cursor),
         )
         .await?;
-    let context = runtime_context(db, workflow_run, node_runs).await;
+    let context = runtime_context(db, workflow_run, cursor, node_runs).await;
     let functions = FunctionTable::from_metadata(workflow.definition.metadata.get("functions"))
         .map_err(|err| -> SendableError { Box::new(err) })?;
     let outcome = run_program_with(&program, &context, &PureIntrinsics, Some(&functions))
@@ -69,6 +71,7 @@ pub(super) async fn process_compute_node<T: ReducerStore>(
             transitions::transition_from_node(
                 db,
                 workflow_run,
+                cursor,
                 node,
                 &node_run,
                 WorkflowStatus::Succeeded,
