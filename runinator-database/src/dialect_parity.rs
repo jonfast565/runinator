@@ -109,6 +109,7 @@ pub(crate) async fn assert_dialect_parity<T: DatabaseImpl>(db: &T) {
     assert_automation_records(db, run_id).await;
     assert_run_state_cas(db, run_id).await;
     assert_cursor_scoped_ready_nodes(db, run_id).await;
+    assert_cooldown_claim(db).await;
 
     // the legacy run mapper reads a column named `trigger`, which is reserved in mysql and has to
     // be quoted per dialect; an unquoted build fails here rather than in production.
@@ -347,6 +348,64 @@ async fn assert_run_claim_and_results<T: DatabaseImpl>(
     );
 
     (run.id, node.id)
+}
+
+// the cooldown gate admits exactly one caller per window, decided by an UPDATE's affected-row
+// count and settled on first use by insert-or-ignore.
+//
+// both halves are dialect-shaped: `insert_ignore` renders three different ways, and the affected
+// count for an UPDATE that matches a row but changes nothing is the classic mysql divergence
+// (CLIENT_FOUND_ROWS). If mysql ever reported "matched" rather than "changed" here, a caller inside
+// the window would be admitted, which is the gate silently not gating.
+async fn assert_cooldown_claim<T: DatabaseImpl>(db: &T) {
+    let now = Utc::now().timestamp();
+    let name = "parity-gate".to_string();
+
+    assert_eq!(
+        db.claim_cooldown(name.clone(), 3600, now).await.unwrap(),
+        None,
+        "first use of a gate takes the window"
+    );
+    let held = db
+        .claim_cooldown(name.clone(), 3600, now)
+        .await
+        .unwrap()
+        .expect("a second caller inside the window is turned away");
+    assert!(
+        held > 0 && held <= 3600,
+        "the loser is told how long is left, got {held}"
+    );
+
+    // re-claiming with the same timestamp must still refuse: an UPDATE that matched the row but
+    // wrote an identical value reports zero changed rows on some engines and one on others, and
+    // reading that as a win would admit everyone.
+    assert!(
+        db.claim_cooldown(name.clone(), 3600, now)
+            .await
+            .unwrap()
+            .is_some(),
+        "a repeat claim inside the window stays refused"
+    );
+
+    // once the window has elapsed the next caller takes it, and the one after is refused again.
+    let later = now + 3601;
+    assert_eq!(
+        db.claim_cooldown(name.clone(), 3600, later).await.unwrap(),
+        None,
+        "an elapsed window is claimable"
+    );
+    assert!(
+        db.claim_cooldown(name.clone(), 3600, later)
+            .await
+            .unwrap()
+            .is_some(),
+        "and claiming it re-closes the gate behind the winner"
+    );
+
+    // a zero-length window is always claimable and must not underflow the cutoff.
+    let open = "parity-open".to_string();
+    assert_eq!(db.claim_cooldown(open.clone(), 0, now).await.unwrap(), None);
+    assert_eq!(db.claim_cooldown(open, 0, now).await.unwrap(), None);
 }
 
 // arming a wake supersedes the *same cursor's* earlier live generation, and nothing else.

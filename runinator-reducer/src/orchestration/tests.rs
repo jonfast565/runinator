@@ -419,23 +419,11 @@ fn throttle_bucket_has_tokens_resets_on_expired_window() {
 fn cooldown_remaining_seconds_reflects_window() {
     let now = chrono::Utc::now().timestamp();
     // ran 100s ago with a 300s window → 200s left, still inside the window (skip).
-    let recent = serde_json::from_str::<Value>(&format!(r#"{{ "last_run_at": {} }}"#, now - 100))
-        .unwrap()
-        .into();
-    assert_eq!(remaining_seconds(&recent, 300, now), 200);
+    assert_eq!(remaining_seconds(now - 100, 300, now), 200);
     // ran 400s ago with a 300s window → window elapsed, 0 remaining (proceed).
-    let stale = serde_json::from_str::<Value>(&format!(r#"{{ "last_run_at": {} }}"#, now - 400))
-        .unwrap()
-        .into();
-    assert_eq!(remaining_seconds(&stale, 300, now), 0);
+    assert_eq!(remaining_seconds(now - 400, 300, now), 0);
     // exactly at the boundary → 0 remaining (proceed).
-    let boundary = serde_json::from_str::<Value>(&format!(r#"{{ "last_run_at": {} }}"#, now - 300))
-        .unwrap()
-        .into();
-    assert_eq!(remaining_seconds(&boundary, 300, now), 0);
-    // missing timestamp → treated as long past, 0 remaining.
-    let empty = serde_json::from_str::<Value>("{}").unwrap().into();
-    assert_eq!(remaining_seconds(&empty, 300, now), 0);
+    assert_eq!(remaining_seconds(now - 300, 300, now), 0);
 }
 
 #[test]

@@ -16,7 +16,6 @@ use crate::process_ready_node;
 use crate::test_support::FakeStore;
 
 const WORKFLOW_ID: &str = "11111111-1111-1111-1111-111111111111";
-const RECORD_TYPE: &str = "workflow_cooldown";
 
 fn workflow(nodes: serde_json::Value) -> WorkflowDefinition {
     serde_json::from_value(serde_json::json!({
@@ -74,11 +73,7 @@ fn gated(window_seconds: i64) -> serde_json::Value {
 }
 
 fn window(store: &FakeStore) -> Option<i64> {
-    store
-        .automation_records(RECORD_TYPE)
-        .into_iter()
-        .find(|record| record.get("name").and_then(Value::as_str) == Some("nightly"))
-        .and_then(|record| record.get("last_run_at").and_then(Value::as_i64))
+    store.cooldown_window("nightly")
 }
 
 // the first pass through an unstamped gate runs the body and opens the window.
@@ -161,12 +156,7 @@ async fn an_elapsed_window_is_re_stamped_rather_than_left_open() {
     // forward. seeding it stale rather than driving a first run is what makes the assertion sharp
     // -- two passes in the same second would both satisfy a `>=` even if the update never happened.
     let stale = Utc::now().timestamp() - 10_000;
-    store
-        .seed_automation_record(
-            RECORD_TYPE,
-            serde_json::json!({ "name": "nightly", "last_run_at": stale }).into(),
-        )
-        .await;
+    store.seed_cooldown("nightly", stale);
 
     let run_id = Uuid::now_v7();
     store.insert_run(run(run_id, serde_json::json!({})));
@@ -177,11 +167,6 @@ async fn an_elapsed_window_is_re_stamped_rather_than_left_open() {
     assert!(
         store.latest_node_run("body").is_some(),
         "an elapsed window runs the body"
-    );
-    assert_eq!(
-        store.automation_records(RECORD_TYPE).len(),
-        1,
-        "re-stamping updates the record in place rather than growing a duplicate per pass"
     );
     assert!(
         window(&store).expect("the record still exists") > stale,
@@ -210,12 +195,7 @@ async fn a_skipped_gate_ends_only_its_own_branch() {
     ])));
 
     // pre-stamp the window so the gate branch short-circuits on its first visit.
-    store
-        .seed_automation_record(
-            RECORD_TYPE,
-            serde_json::json!({ "name": "nightly", "last_run_at": Utc::now().timestamp() }).into(),
-        )
-        .await;
+    store.seed_cooldown("nightly", Utc::now().timestamp());
 
     let run_id = Uuid::now_v7();
     store.insert_run(run(run_id, serde_json::json!({})));
@@ -245,5 +225,76 @@ async fn a_skipped_gate_ends_only_its_own_branch() {
     assert!(
         !state.cursors.iter().any(|cursor| cursor.is_at("gate")),
         "and the skipped branch retired itself"
+    );
+}
+
+// the race the atomic claim exists for: two runs reaching one gate at the same moment.
+//
+// read-decide-write let both observe an elapsed window and both enter the body, which is the single
+// thing a gate must prevent. `FakeStore` decides and stamps under one lock with no await between,
+// so it stands in for the sql statement doing both at once -- a fake that read and then wrote would
+// let this pass against a racy backend.
+#[tokio::test]
+async fn concurrent_runs_cannot_both_claim_one_window() {
+    let store = FakeStore::new();
+    store.insert_workflow(workflow(gated(3600)));
+
+    let first = Uuid::now_v7();
+    let second = Uuid::now_v7();
+    store.insert_run(run(first, serde_json::json!({})));
+    store.insert_run(run(second, serde_json::json!({})));
+
+    let first_ready = ready_node(first, "start");
+    let second_ready = ready_node(second, "start");
+    let (left, right) = tokio::join!(
+        process_ready_node(&store, &first_ready),
+        process_ready_node(&store, &second_ready),
+    );
+    left.expect("first run");
+    right.expect("second run");
+
+    let bodies = store
+        .node_runs()
+        .into_iter()
+        .filter(|node_run| node_run.node_id == "body")
+        .count();
+    assert_eq!(
+        bodies, 1,
+        "exactly one of two concurrent runs may pass the gate; {bodies} entered the body"
+    );
+
+    let skipped = store
+        .node_runs()
+        .into_iter()
+        .filter(|node_run| {
+            node_run.node_id == "gate"
+                && node_run.transition_reason.as_deref() == Some("cooldown_skipped")
+        })
+        .count();
+    assert_eq!(skipped, 1, "and the loser skips rather than failing");
+}
+
+// a window whose seconds are zero or negative is always claimable, and must not panic or wrap.
+#[tokio::test]
+async fn a_zero_window_admits_every_pass() {
+    let store = FakeStore::new();
+    store.insert_workflow(workflow(gated(0)));
+
+    for _ in 0..2 {
+        let run_id = Uuid::now_v7();
+        store.insert_run(run(run_id, serde_json::json!({})));
+        process_ready_node(&store, &ready_node(run_id, "start"))
+            .await
+            .expect("drive");
+    }
+
+    assert_eq!(
+        store
+            .node_runs()
+            .into_iter()
+            .filter(|node_run| node_run.node_id == "body")
+            .count(),
+        2,
+        "a zero-length window never holds anyone back"
     );
 }

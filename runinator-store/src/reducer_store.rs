@@ -136,10 +136,22 @@ pub trait ReducerStore: Send + Sync + 'static {
         workflow_run_id: Uuid,
     ) -> impl Future<Output = Result<Option<WorkflowRun>, SendableError>> + Send;
 
+    /// Atomically claim a named cooldown window, admitting at most one caller per window.
+    ///
+    /// Returns `None` when this caller took the window (and stamped it to `now_unix`), or
+    /// `Some(remaining_seconds)` when another already holds it. The decision and the stamp are one
+    /// statement: reading the window and then writing it lets two concurrent runs both observe an
+    /// elapsed window and both enter the body, which defeats the gate entirely.
+    fn claim_cooldown(
+        &self,
+        name: String,
+        window_seconds: i64,
+        now_unix: i64,
+    ) -> impl Future<Output = Result<Option<i64>, SendableError>> + Send;
+
     /// Create a new node execution record within a workflow run. `prev_node_run_id` is the
     /// origin node run this one transitioned from (the reducer supplies it; `None` for the
     /// first node or when unknown).
-    /// Record a new attempt of a node.
     ///
     /// `cursor` is the thread of control producing it, and supplies both the attribution and the
     /// speculative marker. passing the cursor rather than the two columns it implies is what keeps

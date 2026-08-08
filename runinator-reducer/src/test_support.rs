@@ -44,6 +44,8 @@ struct State {
     ready_nodes: Vec<ReadyNodeRecord>,
     dispatches: Vec<ActionDispatchRecord>,
     audit: Vec<Value>,
+    /// named cooldown windows: `name -> last_run_at`.
+    cooldowns: HashMap<String, i64>,
     /// keyed by record type, matching `automation_records` rows.
     automation: HashMap<String, Vec<Value>>,
 }
@@ -130,6 +132,25 @@ impl FakeStore {
             run.output_json = output;
             run.finished_at = Some(Utc::now());
         }
+    }
+
+    /// the `last_run_at` a named cooldown window currently holds.
+    pub fn cooldown_window(&self, name: &str) -> Option<i64> {
+        self.state
+            .lock()
+            .expect("state")
+            .cooldowns
+            .get(name)
+            .copied()
+    }
+
+    /// open a cooldown window directly, for a test that needs a gate already held.
+    pub fn seed_cooldown(&self, name: &str, last_run_at: i64) {
+        self.state
+            .lock()
+            .expect("state")
+            .cooldowns
+            .insert(name.to_string(), last_run_at);
     }
 
     /// insert an automation row directly, for a test that needs a gate already stamped.
@@ -541,6 +562,30 @@ impl ReducerStore for FakeStore {
     /// stamp the row's identity into the payload exactly as `mappers::row_to_automation_record`
     /// does. a fake that returned the bare `data` would hide every bug that depends on reading the
     /// record's `id` back — which is precisely how the cooldown gate re-stamps its window.
+    /// atomic by construction: the decide-and-stamp happens under the one state lock, with no
+    /// await inside it, which is the fake's stand-in for the sql statement doing both at once. a
+    /// fake that read and then wrote would let a concurrency test pass against a racy backend.
+    async fn claim_cooldown(
+        &self,
+        name: String,
+        window_seconds: i64,
+        now_unix: i64,
+    ) -> Result<Option<i64>, SendableError> {
+        let cutoff = now_unix.saturating_sub(window_seconds.max(0));
+        let mut guard = self.state.lock().expect("state");
+
+        match guard.cooldowns.get(&name).copied() {
+            Some(last_run_at) if last_run_at > cutoff => {
+                Ok(Some((last_run_at + window_seconds - now_unix).max(0)))
+            }
+            _ => {
+                guard.cooldowns.insert(name, now_unix);
+                Ok(None)
+            }
+        }
+    }
+
+    /// the window a gate currently holds, for assertions.
     async fn create_automation_record(
         &self,
         record_type: String,

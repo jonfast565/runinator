@@ -620,6 +620,61 @@ where
         row.as_ref().map(mappers::row_to_ready_node).transpose()
     }
 
+    async fn claim_cooldown(
+        &self,
+        name: String,
+        window_seconds: i64,
+        now_unix: i64,
+    ) -> Result<Option<i64>, SendableError> {
+        // a window is claimable once `last_run_at` is at or before this.
+        let cutoff = now_unix.saturating_sub(window_seconds.max(0));
+
+        // take an existing, elapsed window. the predicate and the stamp are the same statement, so
+        // two racers cannot both satisfy it: the second blocks on the row lock, re-evaluates against
+        // the winner's `last_run_at = now`, and matches nothing.
+        let taken = sqlx::query(&self.render(
+            "UPDATE workflow_cooldowns SET last_run_at = ? WHERE name = ? AND last_run_at <= ?",
+        ))
+        .bind(now_unix)
+        .bind(name.as_str())
+        .bind(cutoff)
+        .execute(self.pool())
+        .await?;
+        if taken.affected() > 0 {
+            return Ok(None);
+        }
+
+        // no row yet: first use of this gate. insert-or-ignore settles the race between two callers
+        // both finding it absent — exactly one insert lands.
+        let created = sqlx::query(&self.render(&queries::insert_ignore(
+            self.dialect(),
+            "workflow_cooldowns",
+            "name, last_run_at",
+            "?, ?",
+            "name",
+            None,
+        )))
+        .bind(name.as_str())
+        .bind(now_unix)
+        .execute(self.pool())
+        .await?;
+        if created.affected() > 0 {
+            return Ok(None);
+        }
+
+        // lost: somebody holds the window. read it back for the caller's benefit only — this value
+        // is reported, never acted on, so a stale read here cannot admit anyone.
+        let row =
+            sqlx::query(&self.render("SELECT last_run_at FROM workflow_cooldowns WHERE name = ?"))
+                .bind(name.as_str())
+                .fetch_optional(self.pool())
+                .await?;
+        let last_run_at = row
+            .map(|row| row.get::<i64, _>("last_run_at"))
+            .unwrap_or(now_unix);
+        Ok(Some((last_run_at + window_seconds - now_unix).max(0)))
+    }
+
     async fn create_automation_record(
         &self,
         record_type: String,

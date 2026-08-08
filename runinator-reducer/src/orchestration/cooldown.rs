@@ -1,8 +1,6 @@
 use super::transitions::transition_from_node;
 use super::*;
 
-const RECORD_TYPE: &str = "workflow_cooldown";
-
 struct CooldownParams {
     name: String,
     window_seconds: i64,
@@ -23,74 +21,18 @@ fn parse_cooldown_params(node: &WorkflowNode) -> CooldownParams {
     }
 }
 
-async fn fetch_record<T: ReducerStore>(db: &T, name: &str) -> Result<Option<Value>, SendableError> {
-    let records = db
-        .fetch_automation_records(RECORD_TYPE.into(), None, None)
-        .await?;
-    Ok(records
-        .into_iter()
-        .find(|r| r.get("name").and_then(Value::as_str) == Some(name)))
-}
-
-/// seconds left in the cooldown window for a named record; 0 once the window has elapsed.
-pub(super) fn remaining_seconds(record: &Value, window_seconds: i64, now_unix: i64) -> i64 {
-    let last_run_at = record
-        .get("last_run_at")
-        .and_then(Value::as_i64)
-        .unwrap_or(0);
+/// seconds left in a cooldown window that was last stamped at `last_run_at`; 0 once elapsed.
+pub(super) fn remaining_seconds(last_run_at: i64, window_seconds: i64, now_unix: i64) -> i64 {
     (last_run_at + window_seconds - now_unix).max(0)
 }
 
-/// stamp `last_run_at = now` on the named record, creating it on first use, so the next pass within
-/// the window is short-circuited.
-async fn stamp_cooldown<T: ReducerStore>(
-    db: &T,
-    name: &str,
-    existing: Option<&Value>,
-) -> Result<(), SendableError> {
-    let now = Utc::now().timestamp();
-    match existing {
-        None => {
-            let record = runinator_models::json!({ "name": name, "last_run_at": now });
-            db.create_automation_record(RECORD_TYPE.into(), record)
-                .await?;
-        }
-        Some(record) => {
-            let record_id = record
-                .get("id")
-                .and_then(Value::as_str)
-                .and_then(|s| s.parse::<Uuid>().ok());
-            let mut updated = record.clone();
-            if let Some(obj) = updated.as_object_mut() {
-                obj.insert("last_run_at".into(), now.into());
-            }
-            match record_id {
-                Some(id) => {
-                    db.update_automation_record(RECORD_TYPE.into(), id, updated)
-                        .await?;
-                }
-                // a record we cannot address is a record we cannot move forward, and silently
-                // skipping the stamp leaves the window permanently elapsed — the gate stops gating
-                // with no error anywhere. write a fresh one instead; `fetch_record` reads
-                // newest-first, so the new stamp is the one that counts.
-                None => {
-                    tracing::warn!(
-                        name,
-                        "cooldown record has no addressable id; writing a fresh stamp"
-                    );
-                    let record = runinator_models::json!({ "name": name, "last_run_at": now });
-                    db.create_automation_record(RECORD_TYPE.into(), record)
-                        .await?;
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-/// process a cooldown node: a named cross-run gate. if the prior pass ran within the window, the run
-/// is completed as `Succeeded` without entering the body (a clean no-op). otherwise the window is
-/// stamped and the node proceeds via `on_success` into the body.
+/// process a cooldown node: a named cross-run gate. if another run holds the window, this thread of
+/// control finishes without entering the body (a clean no-op). otherwise the window is claimed and
+/// the node proceeds via `on_success` into the body.
+///
+/// the claim is one atomic store operation. reading the window, deciding, and then stamping it —
+/// which is what this did — let two runs hitting the same gate concurrently both see it elapsed and
+/// both enter the body, which is the one thing a gate must not allow.
 pub(super) async fn process_cooldown_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
@@ -109,14 +51,12 @@ pub(super) async fn process_cooldown_node<T: ReducerStore>(
         )
         .await?;
     let now = Utc::now().timestamp();
-    let record = fetch_record(db, &params.name).await?;
-    let remaining = record
-        .as_ref()
-        .map(|r| remaining_seconds(r, params.window_seconds, now))
-        .unwrap_or(0);
+    let held = db
+        .claim_cooldown(params.name.clone(), params.window_seconds, now)
+        .await?;
 
-    // still inside the window: short-circuit the run to success without touching the body.
-    if remaining > 0 {
+    // somebody holds the window: skip the body without entering it.
+    if let Some(remaining) = held {
         let output = CooldownOutput {
             name: params.name.clone(),
             skipped: true,
@@ -148,8 +88,7 @@ pub(super) async fn process_cooldown_node<T: ReducerStore>(
         return Ok(());
     }
 
-    // window elapsed: record this pass and proceed into the body.
-    stamp_cooldown(db, &params.name, record.as_ref()).await?;
+    // the window is ours, already stamped by the claim: proceed into the body.
     let output = CooldownOutput {
         name: params.name.clone(),
         skipped: false,
