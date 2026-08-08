@@ -218,11 +218,14 @@ async fn finalize_fail<T: ReducerStore>(
         "fail_reached",
     )
     .await?;
-    db.update_workflow_run_status(
+    // a failing terminal ends the whole run: `advance_cursor` drains every thread of control, so no
+    // sibling branch keeps walking after the run has failed.
+    run_state::advance_cursor(
+        db,
         workflow_run.id,
+        cursor.id,
         WorkflowStatus::Failed,
-        Some(node.id.clone()),
-        None,
+        run_state::CursorMove::Retire,
         Some("Workflow reached fail node".into()),
     )
     .await?;

@@ -46,17 +46,49 @@ pub async fn debug_command<T: DatabaseImpl>(
 #[derive(Deserialize)]
 pub struct RunToCursorRequest {
     pub node_id: String,
+    /// which thread of control to run; omit for the one the operator is looking at.
+    #[serde(default)]
+    pub cursor: Option<Uuid>,
+}
+
+/// body of the bare cursor-scoped verbs. optional in full, so `POST /debug/step` with no body at
+/// all still means "step whatever is parked" — exactly what it meant before runs had branches.
+#[derive(Deserialize, Default)]
+pub struct CursorRequest {
+    #[serde(default)]
+    pub cursor: Option<Uuid>,
+}
+
+/// body of `POST /debug/fork`.
+#[derive(Deserialize)]
+pub struct ForkCursorRequest {
+    #[serde(default)]
+    pub from_cursor: Option<Uuid>,
+    #[serde(default)]
+    pub at_node: Option<String>,
+    #[serde(default)]
+    pub label: Option<String>,
+    #[serde(default)]
+    pub context_patch: Value,
+}
+
+fn cursor_of(body: &Option<Json<CursorRequest>>) -> Option<Uuid> {
+    body.as_ref().and_then(|Json(req)| req.cursor)
 }
 
 #[derive(Deserialize)]
 pub struct SkipDebugRequest {
     pub output_json: Value,
     pub message: Option<String>,
+    #[serde(default)]
+    pub cursor: Option<Uuid>,
 }
 
 #[derive(Deserialize)]
 pub struct RerunNodeRequest {
     pub parameters: Value,
+    #[serde(default)]
+    pub cursor: Option<Uuid>,
 }
 
 pub async fn step_debug_workflow_run<T: DatabaseImpl>(
@@ -64,6 +96,7 @@ pub async fn step_debug_workflow_run<T: DatabaseImpl>(
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<AuthContext>,
     Path(workflow_run_id): Path<Uuid>,
+    body: Option<Json<CursorRequest>>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = runinator_ws_middleware::authz::require_run_workflow(
         db.as_ref(),
@@ -75,7 +108,7 @@ pub async fn step_debug_workflow_run<T: DatabaseImpl>(
     {
         return reply;
     }
-    match repository::step_debug_workflow_run(db.as_ref(), workflow_run_id).await {
+    match repository::step_debug_cursor(db.as_ref(), workflow_run_id, cursor_of(&body)).await {
         Ok(resp) => {
             let org_id = repository::org_id_for_workflow_run(db.as_ref(), workflow_run_id).await;
             emit_workflow_run(&events, workflow_run_id, org_id);
@@ -90,6 +123,7 @@ pub async fn continue_debug_workflow_run<T: DatabaseImpl>(
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<AuthContext>,
     Path(workflow_run_id): Path<Uuid>,
+    body: Option<Json<CursorRequest>>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = runinator_ws_middleware::authz::require_run_workflow(
         db.as_ref(),
@@ -101,7 +135,7 @@ pub async fn continue_debug_workflow_run<T: DatabaseImpl>(
     {
         return reply;
     }
-    match repository::continue_debug_workflow_run(db.as_ref(), workflow_run_id).await {
+    match repository::continue_debug_cursor(db.as_ref(), workflow_run_id, cursor_of(&body)).await {
         Ok(resp) => {
             let org_id = repository::org_id_for_workflow_run(db.as_ref(), workflow_run_id).await;
             emit_workflow_run(&events, workflow_run_id, org_id);
@@ -155,7 +189,14 @@ pub async fn run_to_cursor_workflow_run<T: DatabaseImpl>(
     {
         return reply;
     }
-    match repository::run_to_cursor_workflow_run(db.as_ref(), workflow_run_id, req.node_id).await {
+    match repository::run_to_cursor_workflow_run(
+        db.as_ref(),
+        workflow_run_id,
+        req.node_id,
+        req.cursor,
+    )
+    .await
+    {
         Ok(resp) => {
             let org_id = repository::org_id_for_workflow_run(db.as_ref(), workflow_run_id).await;
             emit_workflow_run(&events, workflow_run_id, org_id);
@@ -187,6 +228,7 @@ pub async fn skip_debug_workflow_node<T: DatabaseImpl>(
         workflow_run_id,
         req.output_json,
         req.message,
+        req.cursor,
     )
     .await
     {
@@ -216,7 +258,54 @@ pub async fn rerun_debug_workflow_node<T: DatabaseImpl>(
     {
         return reply;
     }
-    match repository::rerun_debug_workflow_node(db.as_ref(), workflow_run_id, req.parameters).await
+    match repository::rerun_debug_workflow_node(
+        db.as_ref(),
+        workflow_run_id,
+        req.parameters,
+        req.cursor,
+    )
+    .await
+    {
+        Ok(resp) => {
+            let org_id = repository::org_id_for_workflow_run(db.as_ref(), workflow_run_id).await;
+            emit_workflow_run(&events, workflow_run_id, org_id);
+            (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
+        }
+        Err(err) => bad_request(err.to_string()),
+    }
+}
+
+/// fork a speculative "what if" branch that walks the graph beside the real threads of control.
+///
+/// the other fork operations (`retire_cursor`, `arm_for_real`) ride `/debug/command`, which already
+/// accepts any [`DebugVerb`]; this one gets a route of its own because creating a branch is the
+/// operation a rest client would reasonably reach for as a resource.
+pub async fn fork_debug_cursor<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(events): Extension<EventSender>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(workflow_run_id): Path<Uuid>,
+    Json(req): Json<ForkCursorRequest>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = runinator_ws_middleware::authz::require_run_workflow(
+        db.as_ref(),
+        &ctx,
+        workflow_run_id,
+        Permission::Run,
+    )
+    .await
+    {
+        return reply;
+    }
+    match repository::fork_debug_cursor(
+        db.as_ref(),
+        workflow_run_id,
+        req.from_cursor,
+        req.at_node,
+        req.label,
+        req.context_patch,
+    )
+    .await
     {
         Ok(resp) => {
             let org_id = repository::org_id_for_workflow_run(db.as_ref(), workflow_run_id).await;
@@ -260,10 +349,28 @@ pub fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
             "/workflow_runs/{id}/debug/rerun_node",
             post(rerun_debug_workflow_node::<T>).layer(Extension(pool.clone())),
         )
+        .route(
+            "/workflow_runs/{id}/debug/fork",
+            post(fork_debug_cursor::<T>).layer(Extension(pool.clone())),
+        )
 }
 
 /// the openapi entries for the routes above.
 pub const DOCS: &[EndpointDoc] = &[
+    endpoint(
+        "post",
+        "/workflow_runs/{id}/debug/fork",
+        "Debug",
+        "Fork a speculative branch",
+        "Forks a speculative \"what if\" cursor that walks beside the run's real threads of \
+         control. External-effect nodes are shadowed rather than dispatched unless explicitly armed.",
+        false,
+        json_body("Fork request payload.", Example::AutomationRecord),
+        &[],
+        200,
+        "speculative branch forked",
+        Example::TaskResponse,
+    ),
     endpoint(
         "post",
         "/workflow_runs/{id}/debug/command",

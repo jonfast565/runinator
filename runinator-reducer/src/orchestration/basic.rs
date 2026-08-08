@@ -128,11 +128,16 @@ pub(super) async fn process_end_node<T: ReducerStore>(
     latest: Option<&WorkflowNodeRun>,
 ) -> Result<(), SendableError> {
     ensure_completed_node_run(db, workflow_run, cursor, node, latest, "end_reached").await?;
-    db.update_workflow_run_status(
+    // reaching `end` finishes *this* thread of control, not necessarily the run. settling through
+    // `advance_cursor` is what applies that rule: the run takes `Succeeded` only once the last
+    // cursor retires, so one branch of a fan-out arriving here cannot end the run under its
+    // still-running siblings.
+    run_state::advance_cursor(
+        db,
         workflow_run.id,
+        cursor.id,
         WorkflowStatus::Succeeded,
-        Some(node.id.clone()),
-        None,
+        run_state::CursorMove::Retire,
         None,
     )
     .await?;
@@ -317,12 +322,16 @@ async fn finish_route<T: ReducerStore>(
     )
     .await?;
     match target {
+        // a router moves *this* thread of control. writing `active_node_id` instead would leave the
+        // cursor on the router, and the drive would re-process it until the inline-step limit
+        // blocked the run.
         Some(target) => {
-            db.update_workflow_run_status(
+            run_state::advance_cursor(
+                db,
                 workflow_run.id,
+                cursor.id,
                 WorkflowStatus::Running,
-                Some(target),
-                None,
+                run_state::CursorMove::To(target),
                 None,
             )
             .await?;

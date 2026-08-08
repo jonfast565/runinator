@@ -94,11 +94,14 @@ pub(super) async fn process_compute_node<T: ReducerStore>(
                 None,
             )
             .await?;
-            db.update_workflow_run_status(
+            // `goto` jumps this thread of control, so it moves the cursor. setting only
+            // `active_node_id` left the cursor on the compute node and the drive spun on it.
+            run_state::advance_cursor(
+                db,
                 workflow_run.id,
+                cursor.id,
                 WorkflowStatus::Running,
-                Some(target),
-                None,
+                run_state::CursorMove::To(target),
                 None,
             )
             .await?;

@@ -230,31 +230,81 @@ impl WsIngressCommand {
 /// per-endpoint shapes so every layer (frontend, web service, future broker paths) names debug
 /// operations identically. payload-carrying verbs (skip/rerun/set_*) live here rather than on the
 /// unit-variant [`ControlKind`].
+/// which thread of control a debug verb addresses.
+///
+/// `None` means "the one the operator is looking at" — the first parked cursor, else the primary.
+/// every verb that acts on a position carries this, because a run with fan-out has several and
+/// stepping the wrong one is not a recoverable mistake. omitting it keeps single-cursor clients
+/// working unchanged: the field is absent from the wire in that case.
+pub type CursorTarget = Option<Uuid>;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "verb", rename_all = "snake_case")]
 pub enum DebugVerb {
     /// advance exactly one node, then pause again.
-    Step,
+    Step {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cursor: CursorTarget,
+    },
     /// resume normal execution (still honoring breakpoints).
-    Continue,
-    /// run until `cursor` is reached, pausing there once.
-    RunToCursor { cursor: String },
+    Continue {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cursor: CursorTarget,
+    },
+    /// run until `node_id` is reached, pausing there once.
+    RunToCursor {
+        /// the node to stop at. named `cursor` on the wire before threads of control had ids; the
+        /// alias keeps every existing client working.
+        #[serde(alias = "cursor")]
+        node_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cursor: CursorTarget,
+    },
     /// mark the active node succeeded with a synthetic `output` and advance.
     Skip {
         #[serde(default)]
         output: Value,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         message: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cursor: CursorTarget,
     },
     /// supersede the active node's latest attempt and re-execute it with `parameters`.
     Rerun {
         #[serde(default)]
         parameters: Value,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cursor: CursorTarget,
     },
     /// replace the configured breakpoint set.
+    ///
+    /// run-scoped on purpose: a breakpoint is a property of the graph as authored, so every thread
+    /// of control honors the same set. only the one-shot stop is per-cursor.
     SetBreakpoints { breakpoints: Vec<String> },
     /// set the step granularity.
     SetMode { mode: DebugMode },
+    /// fork a speculative "what if" branch that walks beside the real ones.
+    Fork {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        from_cursor: CursorTarget,
+        /// where the fork enters; defaults to wherever its parent is standing.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        at_node: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        label: Option<String>,
+        /// merge-patch overlaid on the fork's context, for "what if this value were different".
+        #[serde(default)]
+        context_patch: Value,
+    },
+    /// abandon a speculative branch.
+    RetireCursor { cursor: Uuid },
+    /// let a speculative cursor dispatch one node for real instead of shadowing it.
+    ArmForReal {
+        cursor: Uuid,
+        node_id: String,
+        #[serde(default)]
+        armed: bool,
+    },
 }
 
 /// a [`DebugVerb`] addressed to a specific workflow run.

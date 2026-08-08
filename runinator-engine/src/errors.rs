@@ -44,6 +44,28 @@ pub const DEBUG_TERMINAL: ErrorDescriptor = ErrorDescriptor::new(
 );
 pub const DEBUG_NO_ACTIVE_NODE: ErrorDescriptor =
     ErrorDescriptor::new("RUNI133", "workflow.debug.no_active_node", "No active node");
+/// a debug verb named a thread of control the run does not hold.
+pub const DEBUG_CURSOR_NOT_FOUND: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI147",
+    "workflow.debug.cursor_not_found",
+    "Workflow run has no such cursor",
+);
+
+/// a speculative fork could not be created: no such parent, no such entry node, or the run already
+/// carries as many "what if" branches as its state blob may hold.
+pub const DEBUG_FORK_INVALID: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI148",
+    "workflow.debug.fork_invalid",
+    "Cannot fork a speculative branch here",
+);
+
+/// an operation valid only on a speculative branch was aimed at a real thread of control.
+pub const DEBUG_SPECULATIVE_ONLY: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI149",
+    "workflow.debug.speculative_only",
+    "Only a speculative cursor supports this operation",
+);
+
 pub const DEBUG_INVALID_PATCH: ErrorDescriptor = ErrorDescriptor::new(
     "RUNI134",
     "workflow.debug.invalid_patch",
@@ -127,6 +149,9 @@ pub const DICTIONARY: &[ErrorDescriptor] = &[
     DEBUG_DISABLED,
     DEBUG_TERMINAL,
     DEBUG_NO_ACTIVE_NODE,
+    DEBUG_CURSOR_NOT_FOUND,
+    DEBUG_FORK_INVALID,
+    DEBUG_SPECULATIVE_ONLY,
     DEBUG_INVALID_PATCH,
     PAUSE_NOT_FOUND,
     RESUME_NOT_FOUND,
