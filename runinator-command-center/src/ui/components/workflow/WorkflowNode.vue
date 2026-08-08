@@ -369,9 +369,11 @@ const CURSOR_PALETTE = [
   "#eab308",
   "#ec4899",
 ];
+
 function cursorColor(index: number): string {
-  return CURSOR_PALETTE[index % CURSOR_PALETTE.length] as string;
+  return CURSOR_PALETTE[index % CURSOR_PALETTE.length];
 }
+
 const isInlineEditing = computed(() => workflows.inlineEditNodeId === props.id);
 // surface the step id in the topline whenever a custom display name hides it from the title.
 const showNodeId = computed(() => props.data.title !== props.id);

@@ -12,6 +12,7 @@ export {
   cursorDebug,
   cursorLabel,
   cursorsByNode,
+  isArmedHere,
   isCursorPaused,
   isSpeculative,
 } from "./run-cursor";

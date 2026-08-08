@@ -47,6 +47,19 @@
           </button>
           <button
             v-if="marker.speculative"
+            class="btn btn-2xs"
+            :class="{ 'is-armed': marker.armed }"
+            :title="
+              marker.armed
+                ? `Disarm ${marker.nodeId}: shadow it again instead of dispatching for real`
+                : `Arm ${marker.nodeId}: let this branch dispatch it for real, once`
+            "
+            @click.stop="toggleArm(marker)"
+          >
+            {{ marker.armed ? "Armed" : "Arm" }}
+          </button>
+          <button
+            v-if="marker.speculative"
             class="btn btn-2xs btn-danger"
             title="Abandon this speculative branch"
             @click.stop="retire(marker.id)"
@@ -98,6 +111,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import type { CursorMarker } from "../../../core/domain/models";
 import { useWorkflowsStore } from "../../adapters/pinia/workflows";
 import DebugJsonModal from "./DebugJsonModal.vue";
 import JsonDiff from "./JsonDiff.vue";
@@ -189,6 +203,14 @@ function retire(cursorId: string) {
   void workflows.retireCursor(cursorId);
 }
 
+/**
+ * arm or disarm the node this speculative branch is standing on. arming is per node, so the rail
+ * offers it only for the branch's current position -- the one node it is about to execute.
+ */
+function toggleArm(marker: CursorMarker) {
+  void workflows.armNodeForReal(marker.id, marker.nodeId, !marker.armed);
+}
+
 function openFork() {
   forkOpen.value = true;
 }
@@ -245,6 +267,13 @@ function confirmFork(value: unknown) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* an armed node is the one place a "what if" branch reaches the outside world; make it read as a
+   live state rather than another idle button. */
+.btn.is-armed {
+  border-color: var(--danger, #ef4444);
+  color: var(--danger, #ef4444);
 }
 
 .cursor-state.is-paused {

@@ -81,6 +81,34 @@ describe("buildCursorMarkers", () => {
 
     expect(cursorsByNode(markers).get("join")).toHaveLength(2);
   });
+
+  // arming is per node: the rail's toggle must reflect the branch's *current* position, not that it
+  // armed some other node earlier. reporting a stale arm would tell the operator a shadowed node is
+  // about to dispatch for real, or the reverse.
+  it("flags a speculative branch as armed only on the node it is standing on", () => {
+    const [armed, elsewhere, real] = buildCursorMarkers(
+      [
+        cursor({
+          id: "a",
+          node_id: "charge",
+          speculative: { forked_from_cursor: "root", armed_nodes: ["charge"] },
+        }),
+        cursor({
+          id: "b",
+          node_id: "notify",
+          speculative: { forked_from_cursor: "root", armed_nodes: ["charge"] },
+        }),
+        cursor({ id: "c", node_id: "charge" }),
+      ],
+      null,
+      null,
+    );
+
+    expect(armed?.armed).toBe(true);
+    expect(elsewhere?.armed).toBe(false);
+    // a real cursor never shadows, so "armed" is not a state it can be in.
+    expect(real?.armed).toBe(false);
+  });
 });
 
 describe("coerceRunCursors", () => {

@@ -241,13 +241,17 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
   function selectedCursorId(): string | null {
     const detail = host.state.workflowRunDetail;
     const cursors = coerceRunCursors(detail?.run.state?.cursors);
+
     if (cursors.length === 0) {
       return null;
     }
+
     const chosen = host.state.selectedCursorId;
+
     if (chosen && cursors.some((cursor) => cursor.id === chosen)) {
       return chosen;
     }
+
     const frame = coerceDebugFrame(detail?.run.state?.debug) ?? null;
     const parked = cursors.find((cursor) => isCursorPaused(cursors, cursor.id, frame));
     return (parked ?? cursors[0])?.id ?? null;
@@ -266,6 +270,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     if (!host.state.workflowRunDetail) {
       return;
     }
+
     const runId = host.state.workflowRunDetail.run.id;
     const response = await host.ctx.runOperation(`Forking a branch of run ${runId}`, () =>
       forkWorkflowRunCursor(runId, {
@@ -286,6 +291,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     if (response.message) {
       selectCursor(response.message);
     }
+
     await fetchWorkflowRunDetail(runId, true);
   }
 
@@ -294,6 +300,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     if (!host.state.workflowRunDetail) {
       return;
     }
+
     const runId = host.state.workflowRunDetail.run.id;
     const response = await host.ctx.runOperation(`Retiring branch ${cursorId}`, () =>
       sendDebugCommand(runId, { verb: "retire_cursor", cursor: cursorId }),
@@ -307,6 +314,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     if (host.state.selectedCursorId === cursorId) {
       selectCursor("");
     }
+
     await fetchWorkflowRunDetail(runId, true);
   }
 
@@ -315,6 +323,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     if (!host.state.workflowRunDetail) {
       return;
     }
+
     const runId = host.state.workflowRunDetail.run.id;
     const response = await host.ctx.runOperation(
       `${armed ? "Arming" : "Disarming"} ${nodeId}`,

@@ -45,12 +45,31 @@ export interface CursorMarker {
   label: string;
   paused: boolean;
   speculative: boolean;
+  /** does this speculative branch dispatch the node it is standing on for real? */
+  armed: boolean;
   selected: boolean;
 }
 
 /** is this cursor a debugger "what if" branch? */
 export function isSpeculative(cursor: RunCursor): boolean {
   return Boolean(cursor.speculative);
+}
+
+/**
+ * is the cursor's current node armed for real dispatch?
+ *
+ * arming is per node, not per branch, so this answers only for where the branch is standing now --
+ * which is the only node the rail can offer to arm. a real cursor is always "armed" in the sense
+ * that it never shadows, but the control is speculative-only, so this reports false for it.
+ */
+export function isArmedHere(cursor: RunCursor): boolean {
+  const speculative = cursor.speculative;
+
+  if (!speculative) {
+    return false;
+  }
+
+  return (speculative.armed_nodes ?? []).includes(cursor.node_id);
 }
 
 /**
@@ -123,6 +142,7 @@ export function buildCursorMarkers(
     label: cursorLabel(cursor, index),
     paused: isCursorPaused(cursors, cursor.id, runFrame),
     speculative: isSpeculative(cursor),
+    armed: isArmedHere(cursor),
     selected: cursor.id === selectedCursorId,
   }));
 }
