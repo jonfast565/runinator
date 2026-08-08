@@ -15,6 +15,7 @@ use chrono::{Duration, Utc};
 use runinator_comm::{ActionCommand, WorkflowResultEvent, WorkflowResultEventKind};
 use runinator_models::{
     json,
+    orchestration::NewOrchestrationEvent,
     revisions::{RevisionSource, WorkflowRevision},
     runs::RunStatus,
     settings::SettingKind,
@@ -107,6 +108,7 @@ pub(crate) async fn assert_dialect_parity<T: DatabaseImpl>(db: &T) {
     assert_catalog_upsert(db).await;
     assert_automation_records(db, run_id).await;
     assert_run_state_cas(db, run_id).await;
+    assert_cursor_scoped_ready_nodes(db, run_id).await;
 
     // the legacy run mapper reads a column named `trigger`, which is reserved in mysql and has to
     // be quoted per dialect; an unquoted build fails here rather than in production.
@@ -345,6 +347,90 @@ async fn assert_run_claim_and_results<T: DatabaseImpl>(
     );
 
     (run.id, node.id)
+}
+
+// arming a wake supersedes the *same cursor's* earlier live generation, and nothing else.
+//
+// two threads of control can sit on one node — a fan-out whose branches converge, or a speculative
+// fork walking beside the branch it came from. before the cursor scoped it, re-arming either one
+// settled both, so a branch silently lost its pending wake and the run stalled with no error.
+//
+// this is dialect-sensitive twice over: `enqueue_ready_node` returns the inserted row through
+// postgres `RETURNING` but through a second SELECT on mysql, and the supersede predicate is
+// string-built per dialect because the three disagree on `? IS NULL`.
+async fn assert_cursor_scoped_ready_nodes<T: DatabaseImpl>(db: &T, run_id: Uuid) {
+    let node = "converge";
+    let left = Uuid::now_v7();
+    let right = Uuid::now_v7();
+    let armed_at = Utc::now();
+
+    let arm = async |cursor: Uuid| {
+        db.enqueue_ready_node(
+            NewOrchestrationEvent::new(run_id, Some(node.to_string()), "parity_arm", json!({}))
+                .for_cursor(cursor),
+            node.to_string(),
+            armed_at,
+        )
+        .await
+        .unwrap()
+        .expect("a fresh event always inserts a row")
+    };
+
+    let left_first = arm(left).await;
+    let right_first = arm(right).await;
+    assert_eq!(
+        left_first.cursor_id,
+        Some(left),
+        "the row must carry the cursor it was armed for, through both the RETURNING and the \
+         read-back path"
+    );
+
+    let live = |rows: &[runinator_models::orchestration::ReadyNodeRecord]| {
+        rows.iter()
+            .filter(|row| row.node_id == node && row.completed_at.is_none())
+            .count()
+    };
+    let pending = db.fetch_pending_ready_nodes(Utc::now(), 50).await.unwrap();
+    assert_eq!(
+        live(&pending),
+        2,
+        "two cursors on one node hold two live rows; a run-and-node-wide supersede would leave one"
+    );
+
+    // re-arm the left branch: it settles its own earlier generation and leaves the right alone.
+    let left_second = arm(left).await;
+    let pending = db.fetch_pending_ready_nodes(Utc::now(), 50).await.unwrap();
+    let live_ids: Vec<Uuid> = pending
+        .iter()
+        .filter(|row| row.node_id == node && row.completed_at.is_none())
+        .map(|row| row.id)
+        .collect();
+    assert!(
+        !live_ids.contains(&left_first.id),
+        "re-arming a cursor supersedes its own earlier generation"
+    );
+    assert!(
+        live_ids.contains(&right_first.id),
+        "re-arming one branch must not cancel a sibling's pending wake"
+    );
+    assert!(live_ids.contains(&left_second.id));
+
+    // and both remain independently claimable and completable.
+    for row in [left_second.id, right_first.id] {
+        let claimed = db
+            .claim_ready_node(
+                row,
+                "parity".into(),
+                Utc::now(),
+                Utc::now() + Duration::seconds(30),
+            )
+            .await
+            .unwrap();
+        assert!(claimed.is_some(), "each branch's row claims on its own");
+        db.complete_ready_node(row, "parity".into()).await.unwrap();
+    }
+    let pending = db.fetch_pending_ready_nodes(Utc::now(), 50).await.unwrap();
+    assert_eq!(live(&pending), 0, "both branches settle independently");
 }
 
 // `key` is reserved in mysql, so this exercises identifier quoting as well as first-writer-wins:

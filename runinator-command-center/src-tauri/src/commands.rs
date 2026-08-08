@@ -1068,6 +1068,7 @@ pub async fn create_workflow_run(
 pub async fn step_workflow_run(
     state: State<'_, CommandCenterState>,
     workflow_run_id: Uuid,
+    cursor: Option<Uuid>,
 ) -> CommandResult<TaskResponse> {
     let url = build_state_url(
         &state,
@@ -1079,7 +1080,7 @@ pub async fn step_workflow_run(
         .read()
         .await
         .post(url.clone())
-        .json(&json!({}))
+        .json(&json!({ "cursor": cursor }))
         .send()
         .await?;
     let response = handle_response(url, response).await?;
@@ -1090,6 +1091,7 @@ pub async fn step_workflow_run(
 pub async fn continue_workflow_run(
     state: State<'_, CommandCenterState>,
     workflow_run_id: Uuid,
+    cursor: Option<Uuid>,
 ) -> CommandResult<TaskResponse> {
     let url = build_state_url(
         &state,
@@ -1101,7 +1103,64 @@ pub async fn continue_workflow_run(
         .read()
         .await
         .post(url.clone())
-        .json(&json!({}))
+        .json(&json!({ "cursor": cursor }))
+        .send()
+        .await?;
+    let response = handle_response(url, response).await?;
+    Ok(response.json::<TaskResponse>().await?)
+}
+
+/// fork a speculative "what if" branch beside the run's real threads of control.
+#[tauri::command]
+pub async fn fork_workflow_run_cursor(
+    state: State<'_, CommandCenterState>,
+    workflow_run_id: Uuid,
+    from_cursor: Option<Uuid>,
+    at_node: Option<String>,
+    label: Option<String>,
+    context_patch: Option<Value>,
+) -> CommandResult<TaskResponse> {
+    let url = build_state_url(
+        &state,
+        &format!("workflow_runs/{workflow_run_id}/debug/fork"),
+    )
+    .await?;
+    let response = state
+        .client
+        .read()
+        .await
+        .post(url.clone())
+        .json(&json!({
+            "from_cursor": from_cursor,
+            "at_node": at_node,
+            "label": label,
+            "context_patch": context_patch,
+        }))
+        .send()
+        .await?;
+    let response = handle_response(url, response).await?;
+    Ok(response.json::<TaskResponse>().await?)
+}
+
+/// send any `DebugVerb`. the verbs without a route of their own (retire_cursor, arm_for_real,
+/// set_breakpoints, set_mode) ride this one, so the desktop path does not need a command each.
+#[tauri::command]
+pub async fn debug_command(
+    state: State<'_, CommandCenterState>,
+    workflow_run_id: Uuid,
+    verb: Value,
+) -> CommandResult<TaskResponse> {
+    let url = build_state_url(
+        &state,
+        &format!("workflow_runs/{workflow_run_id}/debug/command"),
+    )
+    .await?;
+    let response = state
+        .client
+        .read()
+        .await
+        .post(url.clone())
+        .json(&verb)
         .send()
         .await?;
     let response = handle_response(url, response).await?;

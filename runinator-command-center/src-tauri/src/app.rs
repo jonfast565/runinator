@@ -58,6 +58,8 @@ pub fn run() {
             crate::commands::create_workflow_run,
             crate::commands::step_workflow_run,
             crate::commands::continue_workflow_run,
+            crate::commands::fork_workflow_run_cursor,
+            crate::commands::debug_command,
             crate::commands::cancel_workflow_run,
             crate::commands::pause_workflow_run,
             crate::commands::resume_workflow_run,

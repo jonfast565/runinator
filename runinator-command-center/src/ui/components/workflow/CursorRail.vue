@@ -61,10 +61,28 @@
       <button class="btn btn-2xs" title="Fork a speculative branch here" @click="openFork">
         Fork here
       </button>
+      <button
+        v-if="markers.length > 1"
+        class="btn btn-2xs"
+        :title="compareWith ? 'Stop comparing' : 'Compare two branches'"
+        @click="toggleCompare"
+      >
+        {{ compareWith ? "Stop compare" : "Compare" }}
+      </button>
       <span class="text-2xs text-muted">
         A forked branch shadows external effects unless a node is explicitly armed.
       </span>
     </div>
+
+    <!-- two branches side by side: the same diff the debugger already uses for input vs output,
+         pointed at two threads of control instead of two moments of one. -->
+    <JsonDiff
+      v-if="comparison"
+      :before="comparison.before"
+      :after="comparison.after"
+      :title="comparison.title"
+      open
+    />
 
     <DebugJsonModal
       v-if="forkOpen"
@@ -82,6 +100,7 @@
 import { computed, ref } from "vue";
 import { useWorkflowsStore } from "../../adapters/pinia/workflows";
 import DebugJsonModal from "./DebugJsonModal.vue";
+import JsonDiff from "./JsonDiff.vue";
 
 const workflows = useWorkflowsStore();
 
@@ -97,6 +116,43 @@ const followCursor = computed({
 
 const markers = computed(() => workflows.cursorMarkers);
 const forkOpen = ref(false);
+/** the branch being compared *against* the selected one, if the operator asked for a comparison. */
+const compareWith = ref<string>("");
+
+/** pick the next branch that is not the selected one, so one click gives a useful pair. */
+function toggleCompare() {
+  if (compareWith.value) {
+    compareWith.value = "";
+    return;
+  }
+
+  const other = markers.value.find((marker) => !marker.selected);
+
+  compareWith.value = other?.id ?? "";
+}
+
+const comparison = computed(() => {
+  if (!compareWith.value) {
+    return null;
+  }
+
+  const cursors = workflows.cursors;
+  const selectedId = workflows.selectedCursorId;
+  const left = cursors.find((cursor) => cursor.id === selectedId);
+  const right = cursors.find((cursor) => cursor.id === compareWith.value);
+
+  if (!left || !right) {
+    return null;
+  }
+
+  const name = (id: string) => markers.value.find((marker) => marker.id === id)?.label ?? id;
+
+  return {
+    before: left.debug?.last_output_json ?? left.last_output ?? null,
+    after: right.debug?.last_output_json ?? right.last_output ?? null,
+    title: `${name(left.id)} vs ${name(right.id)}`,
+  };
+});
 
 // a fixed, colour-blind-safe rotation; index comes from the cursor's position in the persisted
 // list, so a branch keeps its colour for as long as it is alive.

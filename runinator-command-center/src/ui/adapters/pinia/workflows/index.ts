@@ -156,6 +156,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   const debugState = mirroredComputed<DebugFrame | null>(() => svc.getDebugState());
   const isDebugRun = mirroredComputed(() => svc.isDebugRun());
   const cursorMarkers = mirroredComputed(() => svc.getCursorMarkers());
+  const cursors = mirroredComputed(() => svc.getCursors());
   const selectedCursorId = mirroredComputed(() => svc.getSelectedCursorId());
   // camera-follow is a view preference, not run state, so it lives here rather than in core.
   const followCursor = ref(true);
@@ -632,6 +633,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     canCancelWorkflowRun,
     debugState,
     cursorMarkers,
+    cursors,
     selectedCursorId,
     followCursor,
     setFollowCursor,
