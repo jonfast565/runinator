@@ -3,6 +3,7 @@
 // when to pause) and the web service (which applies debug commands) share one implementation
 // instead of each re-deriving the rules against raw json.
 
+use crate::cursor::RunCursor;
 use crate::value::Value;
 use crate::workflow_state::{DebugConfig, DebugFrame, DebugMode, DebugRuntime};
 use crate::workflows::WorkflowRun;
@@ -13,6 +14,12 @@ pub const DEBUG_SKIPPED: &str = "debug_skipped";
 pub const DEBUG_SUPERSEDED: &str = "debug_superseded";
 /// node-run provenance marker for the fresh attempt created by a debug re-run.
 pub const DEBUG_RERUN: &str = "debug_rerun";
+/// node-run provenance marker for a shadowed node whose output was replayed from a real run.
+pub const DEBUG_SHADOW_REPLAY: &str = "debug_shadow_replay";
+/// node-run provenance marker for a shadowed node with no recorded output to replay.
+pub const DEBUG_SHADOW_STUB: &str = "debug_shadow_stub";
+/// node-run provenance marker for any node run produced by a speculative cursor.
+pub const DEBUG_SPECULATIVE: &str = "debug_speculative";
 
 /// pure break decision: should a target paused at `key` halt before executing it.
 ///
@@ -45,10 +52,19 @@ pub trait Debuggable {
     /// stable string key for `cursor`, matched against breakpoints and the one-shot cursor.
     fn cursor_key(&self, cursor: &Self::Cursor) -> String;
 
+    /// the runtime state governing `cursor`. defaults to the target's run-scoped runtime, which is
+    /// the right answer for any target whose cursors do not carry one of their own.
+    fn cursor_runtime(&self, _cursor: &Self::Cursor, frame: &DebugFrame) -> DebugRuntime {
+        frame.runtime.clone()
+    }
+
     /// whether execution must halt before `cursor` runs, per this target's debug frame.
     fn should_break_at(&self, cursor: &Self::Cursor) -> bool {
         match self.debug_frame() {
-            Some(frame) => should_break_at(&frame.config, &frame.runtime, &self.cursor_key(cursor)),
+            Some(frame) => {
+                let runtime = self.cursor_runtime(cursor, &frame);
+                should_break_at(&frame.config, &runtime, &self.cursor_key(cursor))
+            }
             None => false,
         }
     }
@@ -61,13 +77,22 @@ pub fn parse_frame(state: &Value) -> Option<DebugFrame> {
 }
 
 impl Debuggable for WorkflowRun {
-    type Cursor = String;
+    type Cursor = RunCursor;
 
     fn debug_frame(&self) -> Option<DebugFrame> {
         parse_frame(&self.state)
     }
 
     fn cursor_key(&self, cursor: &Self::Cursor) -> String {
-        cursor.clone()
+        cursor.node_id().to_string()
+    }
+
+    /// each thread of control carries its own runtime, so two branches can be paused at different
+    /// nodes. a cursor without one predates per-cursor debug state and reads the run's frame.
+    fn cursor_runtime(&self, cursor: &Self::Cursor, frame: &DebugFrame) -> DebugRuntime {
+        cursor
+            .debug
+            .clone()
+            .unwrap_or_else(|| frame.runtime.clone())
     }
 }

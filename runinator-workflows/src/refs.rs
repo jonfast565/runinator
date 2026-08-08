@@ -1,7 +1,7 @@
 use runinator_models::value::Value;
 use runinator_models::workflows::{WorkflowDefinition, WorkflowGraph};
 
-use crate::errors::WorkflowValidationError;
+use runinator_compute::WorkflowValidationError;
 
 pub fn expand_workflow_refs(
     workflow: &WorkflowDefinition,

@@ -16,7 +16,7 @@ tokio-util = { version = "0.7", features = ["io"] }
 utoipa = { version = "5", features = ["axum_extras", "uuid", "chrono"] }
 uuid = { version = "1.18", features = ["v4"] }
 
-runinator-broker = { path = "../runinator-broker" }
+runinator-broker-core = { path = "../runinator-broker-core" }
 runinator-comm = { path = "../runinator-comm" }
 runinator-database = { path = "../runinator-database" }
 runinator-engine = { path = "../runinator-engine" }

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use uuid::Uuid;
 
-use runinator_broker::Broker;
+use runinator_broker_core::Broker;
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_engine::EnginePublisher;
 use runinator_models::runs::RunStatus;

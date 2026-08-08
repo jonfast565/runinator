@@ -176,7 +176,7 @@ fn complete_bare(
         });
     }
     for leaf in &context.namespace.bare_intrinsics {
-        let detail = runinator_workflows::intrinsic_module(leaf)
+        let detail = runinator_compute::intrinsic_module(leaf)
             .map(|module| format!("std.{module}.{leaf}"))
             .unwrap_or_else(|| "std".into());
         items.push(WdlCompletionItem {
@@ -756,7 +756,7 @@ fn complete_std_path(path: PathContext) -> WdlCompletionResponse {
     let mut items = Vec::new();
     match path.completed.as_slice() {
         [] => {
-            for module in runinator_workflows::STD_MODULES {
+            for module in runinator_compute::STD_MODULES {
                 items.push(WdlCompletionItem {
                     label: (*module).into(),
                     kind: "module".into(),
@@ -796,17 +796,17 @@ fn complete_alias_path(module: &str, path: PathContext) -> WdlCompletionResponse
 
 // every intrinsic leaf name, across pure, effectful, and higher-order builtins.
 fn intrinsic_leaf_names() -> impl Iterator<Item = &'static str> {
-    runinator_workflows::PureIntrinsics::names()
+    runinator_compute::PureIntrinsics::names()
         .iter()
-        .chain(runinator_workflows::EFFECTFUL_INTRINSIC_NAMES.iter())
-        .chain(runinator_workflows::HIGHER_ORDER_NAMES.iter())
+        .chain(runinator_compute::EFFECTFUL_INTRINSIC_NAMES.iter())
+        .chain(runinator_compute::HIGHER_ORDER_NAMES.iter())
         .copied()
 }
 
 // completion items for every intrinsic leaf in a std module, labelled by their qualified name.
 fn module_leaf_items(module: &str) -> Vec<WdlCompletionItem> {
     intrinsic_leaf_names()
-        .filter(|leaf| runinator_workflows::intrinsic_module(leaf) == Some(module))
+        .filter(|leaf| runinator_compute::intrinsic_module(leaf) == Some(module))
         .map(|leaf| WdlCompletionItem {
             label: leaf.into(),
             kind: "function".into(),
@@ -1028,10 +1028,10 @@ fn collect_namespace_scope(document: &runinator_wdl::ast::Document) -> Namespace
         .flat_map(|workflow| &workflow.imports)
     {
         let segments: Vec<&str> = import.path.split('.').collect();
-        let is_std = segments.first() == Some(&runinator_workflows::STD_NAMESPACE);
+        let is_std = segments.first() == Some(&runinator_compute::STD_NAMESPACE);
         match (import.alias.as_deref(), segments.as_slice()) {
             // `import std` opens every intrinsic leaf into bare scope.
-            (None, [ns]) if *ns == runinator_workflows::STD_NAMESPACE => {
+            (None, [ns]) if *ns == runinator_compute::STD_NAMESPACE => {
                 scope
                     .bare_intrinsics
                     .extend(intrinsic_leaf_names().map(str::to_string));
@@ -1040,7 +1040,7 @@ fn collect_namespace_scope(document: &runinator_wdl::ast::Document) -> Namespace
             (None, [_, module]) if is_std => {
                 scope.bare_intrinsics.extend(
                     intrinsic_leaf_names()
-                        .filter(|leaf| runinator_workflows::intrinsic_module(leaf) == Some(*module))
+                        .filter(|leaf| runinator_compute::intrinsic_module(leaf) == Some(*module))
                         .map(str::to_string),
                 );
             }
@@ -1237,7 +1237,7 @@ fn infer_expr_type(expr: &Expr, context: &CompletionContext) -> Option<Runinator
         | ExprKind::Mod(_)
         | ExprKind::Neg(_) => Some(RuninatorType::Number),
         ExprKind::Call { name, args, .. } => {
-            if runinator_workflows::is_higher_order(name) {
+            if runinator_compute::is_higher_order(name) {
                 // recover the higher-order result from the collection + lambda body, falling back to
                 // `any` when the collection type or lambda shape is not statically determinable.
                 infer_higher_order_type(name, args, context).or(Some(RuninatorType::Any))
@@ -1254,13 +1254,13 @@ fn infer_expr_type(expr: &Expr, context: &CompletionContext) -> Option<Runinator
                     .collect::<Vec<_>>();
                 let literal_keys = args.get(1).and_then(runinator_wdl::ast::static_string_keys);
                 Some(
-                    runinator_workflows::intrinsic_result_type(
+                    runinator_compute::intrinsic_result_type(
                         name,
                         &arg_types,
                         literal_keys.as_deref(),
                     )
                     .or_else(|| {
-                        runinator_workflows::intrinsic_signature(name)
+                        runinator_compute::intrinsic_signature(name)
                             .and_then(|sig| sig.results.first().map(|result| result.ty.clone()))
                     })
                     .unwrap_or(RuninatorType::Any),

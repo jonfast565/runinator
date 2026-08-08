@@ -234,7 +234,7 @@ async fn delete_workflow_cascades_runs_and_execution_records() {
         .await
         .unwrap();
     let node_run = db
-        .create_workflow_node_run(run.id, "node-a".into(), runinator_models::json!({}), None)
+        .create_workflow_node_run(run.id, "node-a".into(), runinator_models::json!({}), None, None)
         .await
         .unwrap();
     // a chunk result event populates workflow_node_chunks + workflow_result_events.
@@ -317,7 +317,7 @@ async fn waiting_signal_runs_are_routable_by_correlation_key() {
                     "wait_review".into(),
                     runinator_models::json!({}),
                     None,
-                )
+            cursor,)
                 .await
                 .unwrap();
             let state = runinator_models::workflow_state::SignalState {

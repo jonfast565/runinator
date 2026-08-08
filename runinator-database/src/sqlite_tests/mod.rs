@@ -80,7 +80,7 @@ async fn create_node_run(db: &SqliteDb) -> WorkflowNodeRun {
         "node-a".into(),
         runinator_models::json!({}),
         None,
-    )
+            cursor,)
     .await
     .unwrap()
 }

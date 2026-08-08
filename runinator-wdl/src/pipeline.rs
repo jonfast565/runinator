@@ -13,7 +13,7 @@ use runinator_models::workflows::WorkflowTriggerKind;
 
 use crate::ast::{PipelineDecl, PipelineLinkDecl, PipelineTriggerDecl};
 use crate::errors::WdlError;
-use crate::parser::parse_pipeline_document;
+use runinator_wdl_syntax::parser::parse_pipeline_document;
 
 /// parse `.wdlp` source into a `PipelineBundle`. rejects empty names, empty member lists, and links
 /// whose endpoints are not declared members so a compiled pipeline is always well-formed.

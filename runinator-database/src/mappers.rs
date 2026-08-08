@@ -403,6 +403,7 @@ macro_rules! workflow_run_from_row {
             active_node_id: $row.get("active_node_id"),
             parameters: parse_json($row.get::<String, _>("parameters")),
             state: parse_json($row.get::<String, _>("state")),
+            state_version: $row.try_get("state_version").unwrap_or(0),
             created_at: DateTime::<Utc>::from_timestamp($row.get("created_at"), 0)
                 .unwrap_or_else(Utc::now),
             started_at: $row
@@ -541,6 +542,8 @@ macro_rules! workflow_node_run_from_row {
             state: parse_json($row.get::<String, _>("state")),
             transition_reason: $row.get("transition_reason"),
             prev_node_run_id: $row.try_get("prev_node_run_id").ok().flatten(),
+            cursor_id: $row.try_get("cursor_id").ok().flatten(),
+            speculative: $row.try_get("speculative").unwrap_or(false),
             created_at: DateTime::<Utc>::from_timestamp($row.get("created_at"), 0)
                 .unwrap_or_else(Utc::now),
             started_at: $row
@@ -829,6 +832,7 @@ macro_rules! ready_node_from_row {
             source_event_id: $row.get::<Uuid, _>("source_event_id"),
             workflow_run_id: $row.get("workflow_run_id"),
             node_id: $row.get("node_id"),
+            cursor_id: $row.try_get("cursor_id").ok().flatten(),
             status: WorkflowStatus::try_from($row.get::<String, _>("status").as_str())
                 .unwrap_or(WorkflowStatus::Failed),
             ready_at: DateTime::<Utc>::from_timestamp($row.get("ready_at"), 0)

@@ -1,5 +1,9 @@
 use std::sync::Arc;
 
+use runinator_compute::{
+    ComputeOutcome, FunctionTable, PureIntrinsics, WorkflowValidationError, effectful_signatures,
+    parse_program, run_program_with,
+};
 use runinator_models::{
     errors::SendableError,
     providers::{ActionMetadata, ParameterMetadata, ProviderMetadata, ProviderRuntimeMetadata},
@@ -8,10 +12,6 @@ use runinator_models::{
     value::Value,
 };
 use runinator_plugin::provider::{Provider, ProviderEventSink};
-use runinator_workflows::{
-    ComputeOutcome, FunctionTable, PureIntrinsics, WorkflowValidationError, effectful_signatures,
-    parse_program, run_program_with,
-};
 
 use crate::code::execute_code;
 use crate::errors::{GOTO_NOT_ALLOWED, HTTP_ERROR, INTRINSIC_FAILED, INVALID_PROGRAM};

@@ -6,10 +6,10 @@ use runinator_models::providers::RuninatorType;
 use runinator_models::types::RuninatorType as WorkflowType;
 use runinator_models::workflows::{WorkflowNode, WorkflowNodeKind};
 
-use crate::errors::WorkflowValidationError;
 use crate::node_kinds::builders::{base, field, opt};
 use crate::node_kinds::{ActionCatalog, GraphRole, NodeKindSpec};
 use crate::parameters::parse_output_parameters;
+use runinator_compute::WorkflowValidationError;
 
 pub(in crate::node_kinds) struct Output;
 

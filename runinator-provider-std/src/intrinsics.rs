@@ -1,10 +1,10 @@
 use std::time::Duration;
 
-use runinator_models::value::{Map, Value};
-use runinator_plugin::cancel::CancellationToken;
-use runinator_workflows::{
+use runinator_compute::{
     EFFECTFUL_INTRINSIC_NAMES, IntrinsicLibrary, PureIntrinsics, WorkflowValidationError, call_pure,
 };
+use runinator_models::value::{Map, Value};
+use runinator_plugin::cancel::CancellationToken;
 
 /// the worker-side superset library: it delegates pure names to the shared pure intrinsics and adds
 /// effectful operations (http, time, identifiers, environment). it carries an HTTP client bounded

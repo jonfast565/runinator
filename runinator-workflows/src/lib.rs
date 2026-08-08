@@ -3,13 +3,6 @@ use std::collections::HashMap;
 use runinator_models::value::{Map, Value};
 
 mod catalog;
-mod compute;
-mod conditions;
-mod errors;
-mod expressions;
-mod functions;
-mod intrinsic_typing;
-mod keys;
 mod node_kinds;
 mod normalize;
 mod parameters;
@@ -22,23 +15,10 @@ mod typing;
 mod validation;
 
 pub use catalog::{enum_catalogs, node_kind_catalog, node_metadata, trigger_kind_catalog};
-pub use compute::{
-    ComputeOutcome, EFFECTFUL_INTRINSIC_NAMES, HIGHER_ORDER_NAMES, IntrinsicLibrary,
-    PureIntrinsics, STD_MODULES, STD_NAMESPACE, call_pure, effectful_signatures, intrinsic_arity,
-    intrinsic_module, intrinsic_signature, is_higher_order, is_known_intrinsic, parse_program,
-    qualified_intrinsic_name, resolve_std_path, run_program, run_program_with,
-};
-pub use conditions::{
-    evaluate_condition, evaluate_condition_with, evaluate_workflow_condition, next_transition,
-    validate_condition_value,
-};
-pub use errors::{WorkflowTypeDiagnostic, WorkflowValidationError};
-pub use expressions::{
-    apply_input_defaults, evaluate_expression, resolve_value_refs, resolve_value_refs_pure,
-    resolve_value_refs_with_functions, validate_expression,
-};
-pub use functions::{FunctionTable, RuntimeFunction, intrinsic_catalog};
-pub use intrinsic_typing::intrinsic_result_type;
+// the expression/compute language lives in `runinator-compute`; re-exported here at its historical
+// `runinator_workflows::…` paths so graph-layer consumers need not name both crates. a consumer
+// that only evaluates values (a provider, the wdl front end) should depend on `runinator-compute`
+// directly rather than pulling the graph layer in for these.
 pub use node_kinds::{
     ActionCatalog, GraphRole, NodeKindSpec, TargetRule, TargetSlot, graph_role, spec_for,
     target_slots,
@@ -54,6 +34,17 @@ pub use parameters::{
 pub use refs::expand_workflow_refs;
 pub use run_state::{
     branch_policy_name, join_satisfied, latest_node_run, latest_status, race_winner,
+};
+pub use runinator_compute::{
+    ComputeOutcome, EFFECTFUL_INTRINSIC_NAMES, FunctionTable, HIGHER_ORDER_NAMES, IntrinsicLibrary,
+    PureIntrinsics, RuntimeFunction, STD_MODULES, STD_NAMESPACE, WorkflowTypeDiagnostic,
+    WorkflowValidationError, apply_input_defaults, call_pure, effectful_signatures,
+    evaluate_condition, evaluate_condition_with, evaluate_expression, evaluate_workflow_condition,
+    intrinsic_arity, intrinsic_catalog, intrinsic_module, intrinsic_result_type,
+    intrinsic_signature, is_higher_order, is_known_intrinsic, next_transition, parse_program,
+    qualified_intrinsic_name, resolve_std_path, resolve_value_refs, resolve_value_refs_pure,
+    resolve_value_refs_with_functions, run_program, run_program_with, validate_condition_value,
+    validate_expression,
 };
 pub use runinator_models::workflow_ast::{
     ComputeProgram, ComputeStmt, WorkflowExpression, WorkflowPathSegment, WorkflowRefSource,
@@ -89,11 +80,7 @@ pub fn outputs_context(parameters: &Value, outputs: &HashMap<String, Value>) -> 
 }
 
 #[cfg(test)]
-mod compute_tests;
-#[cfg(test)]
 mod conformance_tests;
-#[cfg(test)]
-mod functions_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

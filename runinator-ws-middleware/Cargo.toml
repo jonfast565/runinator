@@ -6,7 +6,6 @@ edition = "2024"
 [dependencies]
 axum = { version = "0.8.9", features = ["ws", "multipart"] }
 chrono = { version = "0.4", features = ["serde"] }
-log = "0.4"
 tower = { version = "0.5", features = ["limit", "load-shed"] }
 tower-http = { version = "0.6.2", features = ["cors", "catch-panic", "timeout"] }
 uuid = { version = "1.18", features = ["v4"] }

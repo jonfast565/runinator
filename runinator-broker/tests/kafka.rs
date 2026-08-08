@@ -198,5 +198,7 @@ fn action_command() -> ActionCommand {
         target: Default::default(),
         trace_id: Uuid::nil(),
         trace_context: Default::default(),
+        notification_delivery_id: None,
+        idempotency_key: None,
     }
 }

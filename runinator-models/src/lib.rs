@@ -5,6 +5,7 @@ pub mod bundles;
 pub mod capabilities;
 pub mod catalog_metadata;
 pub mod core;
+pub mod cursor;
 pub mod debug;
 pub mod errors;
 pub mod notifications;

@@ -7,15 +7,17 @@ use runinator_models::{
     workflows::{WorkflowDefinition, WorkflowNode, WorkflowNodeKind, WorkflowWaitSeconds},
 };
 
+use runinator_compute::keys::{
+    COND_ALL, COND_ANY, COND_CONTAINS, COND_ENDS_WITH, COND_EQUALS, COND_EXISTS, COND_GREATER_THAN,
+    COND_GREATER_THAN_OR_EQUAL, COND_IN, COND_LEFT, COND_LESS_THAN, COND_LESS_THAN_OR_EQUAL,
+    COND_NOT, COND_NOT_EQUALS, COND_STARTS_WITH, COND_VALUE,
+};
+use runinator_compute::{
+    WorkflowTypeDiagnostic, WorkflowValidationError, parse_expression, serialize_value_ref,
+    validate_condition,
+};
+
 use crate::{
-    conditions::validate_condition,
-    errors::{WorkflowTypeDiagnostic, WorkflowValidationError},
-    expressions::{parse_expression, serialize_value_ref},
-    keys::{
-        COND_ALL, COND_ANY, COND_CONTAINS, COND_ENDS_WITH, COND_EQUALS, COND_EXISTS,
-        COND_GREATER_THAN, COND_GREATER_THAN_OR_EQUAL, COND_IN, COND_LEFT, COND_LESS_THAN,
-        COND_LESS_THAN_OR_EQUAL, COND_NOT, COND_NOT_EQUALS, COND_STARTS_WITH, COND_VALUE,
-    },
     node_kinds::{ActionCatalog, spec_for},
     parameters::{
         parse_join_parameters, parse_map_parameters, parse_parallel_parameters,

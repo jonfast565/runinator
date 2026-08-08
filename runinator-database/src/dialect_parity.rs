@@ -14,6 +14,7 @@
 use chrono::{Duration, Utc};
 use runinator_comm::{ActionCommand, WorkflowResultEvent, WorkflowResultEventKind};
 use runinator_models::{
+    json,
     revisions::{RevisionSource, WorkflowRevision},
     runs::RunStatus,
     settings::SettingKind,
@@ -105,6 +106,7 @@ pub(crate) async fn assert_dialect_parity<T: DatabaseImpl>(db: &T) {
     assert_settings(db).await;
     assert_catalog_upsert(db).await;
     assert_automation_records(db, run_id).await;
+    assert_run_state_cas(db, run_id).await;
 
     // the legacy run mapper reads a column named `trigger`, which is reserved in mysql and has to
     // be quoted per dialect; an unquoted build fails here rather than in production.
@@ -209,6 +211,62 @@ async fn assert_trigger_upsert<T: DatabaseImpl>(db: &T, workflow_id: Uuid) {
 // the scheduler claim is a multi-row conditional UPDATE plus a read of the rows it took. dialects
 // without RETURNING emulate it with a marker column and a follow-up SELECT, so a broken lease
 // shows up here as a second scheduler claiming work the first already holds.
+// the compare-and-swap that keeps two cursors of one run from discarding each other's state. the
+// interesting case is the losing writer: it must be told it lost rather than silently overwriting,
+// and every dialect has to report the affected-row count for that to work.
+async fn assert_run_state_cas<T: DatabaseImpl>(db: &T, run_id: Uuid) {
+    let before = db.fetch_workflow_run(run_id).await.unwrap().expect("run");
+    let version = before.state_version;
+
+    assert!(
+        db.update_workflow_run_state_cas(run_id, version, json!({ "watch_fired": true }))
+            .await
+            .unwrap(),
+        "a write against the current version must land"
+    );
+
+    let after = db.fetch_workflow_run(run_id).await.unwrap().expect("run");
+    assert_eq!(
+        after.state_version,
+        version + 1,
+        "a landed write bumps the version"
+    );
+    assert_eq!(after.state.get("watch_fired"), Some(&Value::Bool(true)));
+
+    assert!(
+        !db.update_workflow_run_state_cas(run_id, version, json!({ "watch_fired": false }))
+            .await
+            .unwrap(),
+        "a write against a stale version must be rejected"
+    );
+    let unchanged = db.fetch_workflow_run(run_id).await.unwrap().expect("run");
+    assert_eq!(
+        unchanged.state.get("watch_fired"),
+        Some(&Value::Bool(true)),
+        "the rejected write must not have applied"
+    );
+
+    // a plain status write also moves the version, so a reader that snapshotted before it cannot
+    // then win a compare-and-swap against the blob it never saw.
+    db.update_workflow_run_status(
+        run_id,
+        WorkflowStatus::Running,
+        None,
+        Some(json!({ "watch_fired": true, "run_metadata": { "n": 1 } })),
+        None,
+    )
+    .await
+    .unwrap();
+    let bumped = db.fetch_workflow_run(run_id).await.unwrap().expect("run");
+    assert_eq!(bumped.state_version, after.state_version + 1);
+    assert!(
+        !db.update_workflow_run_state_cas(run_id, after.state_version, json!({}))
+            .await
+            .unwrap(),
+        "a status write that touched state must invalidate an earlier read"
+    );
+}
+
 async fn assert_run_claim_and_results<T: DatabaseImpl>(
     db: &T,
     workflow: &WorkflowDefinition,
@@ -258,7 +316,7 @@ async fn assert_run_claim_and_results<T: DatabaseImpl>(
     // three ways (INSERT IGNORE / ON CONFLICT DO NOTHING / INSERT OR IGNORE) and the boolean they
     // return is what stops a redelivered worker result from being applied twice.
     let node = db
-        .create_workflow_node_run(run.id, "task-1".into(), Value::Null, None)
+        .create_workflow_node_run(run.id, "task-1".into(), Value::Null, None, None)
         .await
         .unwrap();
     let event = WorkflowResultEvent {

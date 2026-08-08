@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use uuid::Uuid;
 
-use runinator_broker::{Broker, EventMessage};
+use runinator_broker_core::{Broker, EventMessage};
 use runinator_comm::UiEventKind;
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::runs::RunStatus;

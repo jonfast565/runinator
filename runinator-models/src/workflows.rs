@@ -942,6 +942,10 @@ pub struct WorkflowRun {
     pub active_node_id: Option<String>,
     pub parameters: Value,
     pub state: Value,
+    /// optimistic-concurrency guard for `state`. bumped by every write that touches the blob;
+    /// a compare-and-swap writer passes the value it read and retries when the row has moved on.
+    #[serde(default)]
+    pub state_version: i64,
     pub created_at: DateTime<Utc>,
     pub started_at: Option<DateTime<Utc>>,
     pub finished_at: Option<DateTime<Utc>>,
@@ -988,6 +992,14 @@ pub struct WorkflowNodeRun {
     /// guid-linked execution chain that is easier to debug than the nested `steps` output tree.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prev_node_run_id: Option<Uuid>,
+    /// the thread of control that produced this node run, so a run with fan-out can attribute each
+    /// step to a branch instead of inferring it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor_id: Option<Uuid>,
+    /// true when a debugger "what if" cursor produced this. persisted independently of the cursor
+    /// because a retired speculative cursor is gone from run state and this answer must outlive it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub speculative: bool,
     pub created_at: DateTime<Utc>,
     pub started_at: Option<DateTime<Utc>>,
     pub finished_at: Option<DateTime<Utc>>,

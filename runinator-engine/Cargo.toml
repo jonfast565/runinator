@@ -16,7 +16,7 @@ metrics-exporter-prometheus = { version = "0.16", default-features = false }
 opentelemetry = "0.32"
 utoipa = { version = "5", features = ["axum_extras", "uuid", "chrono"] }
 
-runinator-broker = { path = "../runinator-broker" }
+runinator-broker-core = { path = "../runinator-broker-core" }
 runinator-reducer = { path = "../runinator-reducer" }
 runinator-database = { path = "../runinator-database" }
 runinator-models = { path = "../runinator-models" }
@@ -25,8 +25,8 @@ runinator-utilities = { path = "../runinator-utilities" }
 runinator-workflows = { path = "../runinator-workflows" }
 
 [features]
-kafka = ["runinator-broker/kafka"]
-rabbitmq = ["runinator-broker/rabbitmq"]
+# no broker-backend features here: this crate has no `cfg(feature)` code and depends only on
+# `runinator-broker-core` (the trait), so the backend is selected by whichever binary builds it.
 # exposes in-crate test hooks (forced-failure injection, small test helpers) to downstream crates
 # so their integration tests can drive engine behavior. enabled only via dev-dependencies.
 test-support = []

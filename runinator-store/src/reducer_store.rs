@@ -12,6 +12,7 @@ use runinator_comm::{ActionCommand, ActionDispatchRecord};
 use runinator_models::value::Value;
 use runinator_models::{
     billing::OrgResourceGroup,
+    cursor::RunCursor,
     errors::SendableError,
     orchestration::{NewOrchestrationEvent, ReadyNodeRecord},
     orgs::Organization,
@@ -89,6 +90,32 @@ pub trait ReducerStore: Send + Sync + 'static {
         message: Option<String>,
     ) -> impl Future<Output = Result<(), SendableError>> + Send;
 
+    /// Replace a run's state blob only if its version still matches `expected_version`, bumping the
+    /// version on success. Returns false when another writer moved the row first, meaning the caller
+    /// must re-read and reapply its change.
+    fn update_workflow_run_state_cas(
+        &self,
+        workflow_run_id: Uuid,
+        expected_version: i64,
+        state: Value,
+    ) -> impl Future<Output = Result<bool, SendableError>> + Send;
+
+    /// Apply a run's status, position and state in one guarded write, only if the state version
+    /// still matches. Returns false when another writer moved the row first.
+    ///
+    /// One statement, so the cursor list and the position mirrored into `active_node_id` can never
+    /// be observed disagreeing — a fan-out is either wholly applied or not at all.
+    #[allow(clippy::too_many_arguments)]
+    fn update_workflow_run_status_cas(
+        &self,
+        workflow_run_id: Uuid,
+        expected_version: i64,
+        status: WorkflowStatus,
+        active_node_id: Option<String>,
+        state: Value,
+        message: Option<String>,
+    ) -> impl Future<Output = Result<bool, SendableError>> + Send;
+
     /// Set or clear the user-facing display name of a workflow run.
     fn set_workflow_run_name(
         &self,
@@ -112,12 +139,19 @@ pub trait ReducerStore: Send + Sync + 'static {
     /// Create a new node execution record within a workflow run. `prev_node_run_id` is the
     /// origin node run this one transitioned from (the reducer supplies it; `None` for the
     /// first node or when unknown).
+    /// Record a new attempt of a node.
+    ///
+    /// `cursor` is the thread of control producing it, and supplies both the attribution and the
+    /// speculative marker. passing the cursor rather than the two columns it implies is what keeps
+    /// a node run from ever claiming a cursor it did not come from. `None` for callers outside the
+    /// state machine (the api's compatibility endpoints), which have no cursor.
     fn create_workflow_node_run(
         &self,
         workflow_run_id: Uuid,
         node_id: String,
         parameters: Value,
         prev_node_run_id: Option<Uuid>,
+        cursor: Option<&RunCursor>,
     ) -> impl Future<Output = Result<WorkflowNodeRun, SendableError>> + Send;
 
     /// Update the status and state of a specific node execution.

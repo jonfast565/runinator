@@ -6,7 +6,7 @@ use axum::{
     extract::{ConnectInfo, Path, Query},
     http::{HeaderMap, StatusCode},
 };
-use runinator_broker::Broker;
+use runinator_broker_core::Broker;
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::orchestration::{ReadyNodeClaimRequest, ReadyNodeProcessRequest};
 use runinator_models::replicas::{TriggerActorType, TriggerSourceKind, WorkflowRunProvenance};
@@ -466,6 +466,41 @@ pub async fn replay_workflow_run<T: DatabaseImpl>(
     }
 }
 
+/// deliver an event to a parked `event_source` node in one run. the node consumes it on the next
+/// drive and re-parks, so repeated deliveries drive repeated iterations of its body.
+pub async fn deliver_run_event<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(events): Extension<EventSender>,
+    Extension(ctx): Extension<runinator_models::auth::AuthContext>,
+    Path((workflow_run_id, node_id)): Path<(Uuid, String)>,
+    Json(request): Json<runinator_ws_core::models::EventDeliveryRequest>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = runinator_ws_middleware::authz::require_run_workflow(
+        db.as_ref(),
+        &ctx,
+        workflow_run_id,
+        runinator_models::auth::Permission::Run,
+    )
+    .await
+    {
+        return reply;
+    }
+    // the reducer matches on the event's `type` and evaluates the node's filter against the whole
+    // object, so the declared type rides alongside the payload rather than replacing it.
+    let mut event = request.data;
+    if let (Some(event_type), Some(object)) = (request.event_type, event.as_object_mut()) {
+        object.insert("type".into(), event_type.into());
+    }
+    match repository::deliver_run_event(db.as_ref(), workflow_run_id, node_id, event).await {
+        Ok(response) => {
+            let org_id = repository::org_id_for_workflow_run(db.as_ref(), workflow_run_id).await;
+            emit_workflow_run(&events, workflow_run_id, org_id);
+            (StatusCode::OK, Json(ApiResponse::TaskResponse(response)))
+        }
+        Err(err) => bad_request(err.to_string()),
+    }
+}
+
 pub async fn deliver_signal<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
@@ -852,6 +887,10 @@ pub fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
             post(deliver_signal::<T>).layer(Extension(pool.clone())),
         )
         .route(
+            "/workflow_runs/{id}/events/{node_id}",
+            post(deliver_run_event::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
             "/workflow_runs/{id}/replay",
             post(replay_workflow_run::<T>).layer(Extension(pool.clone())),
         )
@@ -1107,6 +1146,19 @@ pub const DOCS: &[EndpointDoc] = &[
         &[],
         200,
         "signal delivered",
+        Example::TaskResponse,
+    ),
+    endpoint(
+        "post",
+        "/workflow_runs/{id}/events/{node_id}",
+        "Workflow Runs",
+        "Deliver an event to a run",
+        "Delivers an event to a parked event_source node, which consumes it and re-subscribes.",
+        false,
+        json_body("Event type and payload.", Example::EventDelivery),
+        &[],
+        200,
+        "event delivered",
         Example::TaskResponse,
     ),
     endpoint(

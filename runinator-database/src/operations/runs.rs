@@ -599,7 +599,7 @@ where
         lease_until: DateTime<Utc>,
         limit: i64,
     ) -> Result<Vec<ReadyNodeRecord>, SendableError> {
-        let columns = "id, source_event_id, workflow_run_id, node_id, status, ready_at, attempts, claimed_by, claimed_until, completed_at, created_at, updated_at";
+        let columns = super::READY_NODE_COLUMNS;
 
         // mysql has no UPDATE ... RETURNING and cannot subquery the table being updated, so claim
         // via a derived-table subselect, then read the claimed rows back by the lease just written.
@@ -668,11 +668,12 @@ where
         &self,
         ready_node_id: Uuid,
     ) -> Result<Option<ReadyNodeRecord>, SendableError> {
-        let row = sqlx::query(&self.render(
-            "SELECT id, source_event_id, workflow_run_id, node_id, status, ready_at, attempts, claimed_by, claimed_until, completed_at, created_at, updated_at
+        let row = sqlx::query(&self.render(&format!(
+            "SELECT {}
              FROM workflow_ready_nodes
              WHERE id = ?",
-        ))
+            super::READY_NODE_COLUMNS
+        )))
         .bind(ready_node_id)
         .fetch_optional(self.pool())
         .await?;
@@ -704,14 +705,15 @@ where
         now: DateTime<Utc>,
         limit: i64,
     ) -> Result<Vec<ReadyNodeRecord>, SendableError> {
-        let rows = sqlx::query(&self.render(
-            "SELECT id, source_event_id, workflow_run_id, node_id, status, ready_at, attempts, claimed_by, claimed_until, completed_at, created_at, updated_at
+        let rows = sqlx::query(&self.render(&format!(
+            "SELECT {}
              FROM workflow_ready_nodes
              WHERE completed_at IS NULL
                AND (claimed_until IS NULL OR claimed_until <= ?)
              ORDER BY ready_at, id
              LIMIT ?",
-        ))
+            super::READY_NODE_COLUMNS
+        )))
         .bind(now.timestamp())
         .bind(limit.max(1))
         .fetch_all(self.pool())
@@ -725,7 +727,7 @@ where
         lease_seconds: i64,
         limit: i64,
     ) -> Result<Vec<ReadyNodeRecord>, SendableError> {
-        let columns = "id, source_event_id, workflow_run_id, node_id, status, ready_at, attempts, claimed_by, claimed_until, completed_at, created_at, updated_at";
+        let columns = super::READY_NODE_COLUMNS;
         let now_ts = now.timestamp();
         let lease = lease_seconds.max(1);
 
@@ -800,7 +802,7 @@ where
         now: DateTime<Utc>,
         lease_until: DateTime<Utc>,
     ) -> Result<Option<ReadyNodeRecord>, SendableError> {
-        let columns = "id, source_event_id, workflow_run_id, node_id, status, ready_at, attempts, claimed_by, claimed_until, completed_at, created_at, updated_at";
+        let columns = super::READY_NODE_COLUMNS;
 
         // mysql has no UPDATE ... RETURNING: claim by id, then read back only if we hold the lease.
         if self.dialect() == SqlDialect::MySql {

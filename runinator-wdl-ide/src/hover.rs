@@ -177,7 +177,7 @@ fn std_path_hover(path: HoverPath<'_>, index: usize) -> Option<WdlHoverResponse>
             detail: Some(format!("std.{module}")),
             documentation: None,
         }),
-        (2, [_, module, leaf]) if runinator_workflows::intrinsic_module(leaf) == Some(*module) => {
+        (2, [_, module, leaf]) if runinator_compute::intrinsic_module(leaf) == Some(*module) => {
             intrinsic_response(leaf, path.ranges[2])
         }
         _ => None,
@@ -197,7 +197,7 @@ fn alias_path_hover(path: HoverPath<'_>, index: usize, module: &str) -> Option<W
     }
     if index == 1 && path.parts.len() == 2 {
         let leaf = path.parts[1];
-        if runinator_workflows::intrinsic_module(leaf) == Some(module) {
+        if runinator_compute::intrinsic_module(leaf) == Some(module) {
             return intrinsic_response(leaf, path.ranges[1]);
         }
     }
@@ -462,7 +462,7 @@ fn action_response(
 }
 
 fn intrinsic_response(name: &str, range: (usize, usize)) -> Option<WdlHoverResponse> {
-    let action = runinator_workflows::intrinsic_signature(name)?;
+    let action = runinator_compute::intrinsic_signature(name)?;
     Some(WdlHoverResponse {
         range_start_byte: range.0,
         range_end_byte: range.1,

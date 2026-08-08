@@ -76,6 +76,7 @@ pub enum Example {
     Team,
     WebhookWake,
     WebhookSignal,
+    EventDelivery,
     Supervisor,
 }
 
@@ -233,6 +234,9 @@ pub fn example_value(example: Example) -> Option<Value> {
         }
         Example::WebhookSignal => {
             json!({ "name": "ticket.closed", "correlation_key": "PROJ-123", "payload": { "status": "done" } })
+        }
+        Example::EventDelivery => {
+            json!({ "type": "deploy.finished", "data": { "environment": "prod", "revision": "abc123" } })
         }
         Example::Supervisor => {
             json!({ "running": true, "services": [{ "name": "runinator-ws", "status": "running" }] })

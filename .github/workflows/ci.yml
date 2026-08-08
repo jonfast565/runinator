@@ -172,6 +172,177 @@ jobs:
       - name: Run live connector tests
         run: cargo test -p runinator-provider-db --test live -- --ignored
 
+  # the kafka and rabbitmq suites are the only backend tests that need a live broker, so they are
+  # `#[ignore]`d and no job ran them. worse than unrun: their helpers return early when the env var
+  # is absent, so the tests report "ok" while asserting nothing — which is how both files came to
+  # sit with stale `ActionCommand` literals unnoticed. the guard on the final step is what makes
+  # this job mean something; without it a wrong env var name would leave 11 green tests that never
+  # touched a broker.
+  broker-backends:
+    name: Broker backends
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    services:
+      rabbitmq:
+        image: rabbitmq:4-alpine
+        ports:
+          - 5672:5672
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
+
+    env:
+      RUNINATOR_KAFKA_BOOTSTRAP: 127.0.0.1:9092
+      RUNINATOR_RABBITMQ_URI: amqp://guest:guest@127.0.0.1:5672/%2f
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # started by hand rather than as a service: the image ships no HEALTHCHECK, so readiness has
+      # to be polled with an admin command, and the topics have to be created after the broker is
+      # up — neither of which a `services:` block can express.
+      - name: Start Kafka
+        run: |
+          docker run -d --name ci-kafka -p 9092:9092 \
+            -e KAFKA_NODE_ID=1 \
+            -e KAFKA_PROCESS_ROLES=broker,controller \
+            -e KAFKA_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093 \
+            -e KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://127.0.0.1:9092 \
+            -e KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER \
+            -e KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT \
+            -e KAFKA_CONTROLLER_QUORUM_VOTERS=1@localhost:9093 \
+            -e KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1 \
+            -e KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1 \
+            -e KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1 \
+            -e KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS=0 \
+            apache/kafka:3.9.0
+
+          for _ in $(seq 1 60); do
+            if docker exec ci-kafka /opt/kafka/bin/kafka-topics.sh \
+                 --bootstrap-server 127.0.0.1:9092 --list >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 5
+          done
+          if [ "${ready:-0}" != "1" ]; then
+            echo "::error::kafka never became ready"
+            docker logs ci-kafka
+            exit 1
+          fi
+
+          # the suite names fixed topics and does not create them itself.
+          for topic in runinator.actions runinator.control runinator.results; do
+            docker exec ci-kafka /opt/kafka/bin/kafka-topics.sh \
+              --bootstrap-server 127.0.0.1:9092 \
+              --create --if-not-exists --topic "$topic" --partitions 1 --replication-factor 1
+          done
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      # rdkafka is pinned to `cmake-build`, so it compiles librdkafka from vendored source.
+      - name: Install Linux build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake libssl-dev pkg-config
+
+      - name: Run broker backend tests
+        run: |
+          set -o pipefail
+          log="${RUNNER_TEMP:-/tmp}/broker-tests.log"
+          cargo test --locked -p runinator-broker --features kafka,rabbitmq \
+            --test kafka --test rabbitmq -- --ignored --nocapture 2>&1 | tee "$log"
+
+          # the suites self-skip into a green run when a broker is unreachable, so a passing exit
+          # code alone does not mean anything was exercised.
+          if grep -q "skipping .* integration test" "$log"; then
+            echo "::error::broker tests skipped themselves - the services or env vars are wrong, so this job proved nothing"
+            exit 1
+          fi
+
+  # every job above builds default features, which leaves the opt-in broker backends and the
+  # kubernetes provisioner compiled by nobody — including the exact feature set deploy/Dockerfile
+  # ships. that gap is not theoretical: the kafka and rabbitmq backends' test files sat with stale
+  # `ActionCommand` literals (missing `notification_delivery_id`/`idempotency_key`) because no job
+  # ever built them. `--all-targets` is load-bearing here for that reason — it is what compiles the
+  # per-backend integration tests, not just the library.
+  #
+  # this is a compile check, not a test run: the kafka/rabbitmq suites need live brokers, so they
+  # are built and never executed. `ws` is unified on by runinator-desktop-agent's
+  # `runinator-worker/ws` forward today, but it is checked explicitly rather than left to depend on
+  # one dependency line staying put.
+  optional-features:
+    name: Optional features
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      # rdkafka is pinned to `cmake-build`, so it compiles librdkafka from vendored source rather
+      # than looking for a system copy.
+      - name: Install Linux build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake libssl-dev pkg-config
+
+      # mirrors deploy/Dockerfile's build line exactly. if this step fails, the container image
+      # cannot be built, which no other job would tell us until a release.
+      - name: Check deployed feature set (rabbitmq + kubernetes)
+        run: |
+          cargo check --locked --all-targets \
+            -p runinator-ws \
+            -p runinator-background-worker \
+            -p runinator-worker \
+            -p runinator-archiver \
+            -p runinator-waker \
+            -p runinator-ctl \
+            -p runinator-bootstrap \
+            -p runinator-broker \
+            --features runinator-ws/rabbitmq,runinator-ws/kubernetes,runinator-background-worker/rabbitmq,runinator-worker/rabbitmq,runinator-waker/rabbitmq
+
+      - name: Check kafka backend
+        run: |
+          cargo check --locked --all-targets \
+            -p runinator-broker \
+            -p runinator-ws \
+            -p runinator-worker \
+            -p runinator-waker \
+            -p runinator-background-worker \
+            --features runinator-broker/kafka,runinator-ws/kafka,runinator-worker/kafka,runinator-waker/kafka,runinator-background-worker/kafka
+
+      - name: Check ws relay backend
+        run: |
+          cargo check --locked --all-targets \
+            -p runinator-broker \
+            -p runinator-ws \
+            -p runinator-worker \
+            --features runinator-broker/ws,runinator-ws/ws,runinator-worker/ws
+
+      # the reducer's in-memory FakeStore is the documented way to test node handlers without a
+      # database, and nothing in the workspace turns its feature on.
+      - name: Check reducer test-support
+        run: cargo check --locked --all-targets -p runinator-reducer --features test-support
+
+      # mongo ships as a default feature, so the opt-out path is the one that goes unbuilt.
+      - name: Check provider-db without mongo
+        run: cargo check --locked --all-targets -p runinator-provider-db --no-default-features
+
   # the release workflow only runs on dispatch/publish, so a macos- or windows-only compile break
   # would otherwise stay hidden until release day. this is a compile check, not a test run: the
   # assertions all live in the linux job above.

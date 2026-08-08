@@ -22,7 +22,7 @@ use runinator_models::providers::{ActionMetadata, ProviderMetadata};
 use runinator_models::types::RuninatorType;
 use runinator_models::workflows::{WorkflowNode, WorkflowNodeKind, WorkflowNodeRef};
 
-use crate::errors::WorkflowValidationError;
+use runinator_compute::WorkflowValidationError;
 
 mod builders;
 mod concurrency;

@@ -9,12 +9,12 @@ use runinator_models::{
     },
 };
 
-use crate::conditions::validate_condition;
-use crate::errors::WorkflowValidationError;
 use crate::node_kinds::{TargetRule, graph_role, spec_for, target_slots};
 use crate::parameters::{parse_map_parameters, value_refs};
 use crate::refs::expand_workflow_refs;
 use crate::typing::validate_workflow_types;
+use runinator_compute::WorkflowValidationError;
+use runinator_compute::validate_condition;
 use runinator_models::workflow_ast::WorkflowRefSource;
 
 pub fn parse_nodes(

@@ -6,5 +6,5 @@ edition = "2024"
 [dependencies]
 runinator-models = { path = "../runinator-models" }
 runinator-wdl = { path = "../runinator-wdl" }
-runinator-workflows = { path = "../runinator-workflows" }
+runinator-compute = { path = "../runinator-compute" }
 serde = { version = "1", features = ["derive"] }

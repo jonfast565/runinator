@@ -2,8 +2,7 @@ use std::sync::Arc;
 
 use crate::{
     adapters::{kafka::KafkaBrokerConfig, rabbitmq::RabbitMqBrokerConfig},
-    errors::BrokerError,
-    Broker,
+    Broker, BrokerError,
 };
 
 // construct a kafka-backed broker, or fail when the kafka feature is disabled.

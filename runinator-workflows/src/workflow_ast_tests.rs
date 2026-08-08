@@ -86,7 +86,7 @@ fn canonical_compute_program_round_trips() {
           "else": [ { "$goto": "recover" } ] },
         { "$call": "add", "args": [1, 2] }
     ]);
-    let parsed = crate::compute::parse_program(&program).expect("parse program");
+    let parsed = runinator_compute::parse_program(&program).expect("parse program");
     assert_eq!(
         Value::from(&parsed),
         program,

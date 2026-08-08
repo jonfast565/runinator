@@ -3,7 +3,7 @@ use axum::{
     http::{StatusCode, header},
     response::IntoResponse,
 };
-use runinator_broker::Broker;
+use runinator_broker_core::Broker;
 use runinator_database::interfaces::DatabaseImpl;
 use serde::Serialize;
 use std::sync::Arc;

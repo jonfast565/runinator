@@ -5,11 +5,11 @@ use runinator_models::json;
 use runinator_models::providers::RuninatorType;
 use runinator_models::workflows::{WorkflowNode, WorkflowNodeKind};
 
-use crate::conditions::validate_condition;
-use crate::errors::WorkflowValidationError;
 use crate::node_kinds::builders::{base, control, end_ref, field, req};
 use crate::node_kinds::{GraphRole, NodeKindSpec, TargetSlot};
 use crate::parameters::parse_switch_parameters;
+use runinator_compute::WorkflowValidationError;
+use runinator_compute::validate_condition;
 
 pub(in crate::node_kinds) struct Switch;
 

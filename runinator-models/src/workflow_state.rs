@@ -5,33 +5,68 @@
 // `runinator_comm::WireCodec`. the web service still owns the same wire shapes, so these structs
 // mirror the keys it reads and writes. unmodeled keys round-trip through `#[serde(flatten)]` bags.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::cursor::RunCursor;
 use crate::orchestration::GateKind;
 use crate::value::{Map, Value};
 
 use crate::workflows::WorkflowNodeKind;
 
+/// the top-level key prefix older runs used for a per-node event_source delivery slot, before those
+/// slots were consolidated under [`WorkflowRunState::event_sources`].
+const LEGACY_EVENT_SOURCE_PREFIX: &str = "event_source_";
+
+// deserialize a frame tolerantly: a malformed payload becomes `None` rather than failing the parse
+// of the whole state blob. these frames were previously read out of the untyped bag with
+// `from_wire_value(..).ok()`, and that tolerance is what stops one bad frame from discarding a
+// run's entire state.
+fn lenient_frame<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::de::DeserializeOwned,
+{
+    let raw = serde_json::Value::deserialize(deserializer)?;
+    Ok(serde_json::from_value(raw).ok())
+}
+
 /// typed view of `workflow_run.state`: a container of named control-flow frames plus user bags.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WorkflowRunState {
+    /// where the run is on its track. one entry for a linear run; `parallel`/`race` fan out more.
+    /// empty for a run that has not been placed yet, which the reducer seeds on its first drive.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cursors: Vec<RunCursor>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub control: Option<ControlFrame>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub debug: Option<DebugFrame>,
-    #[serde(rename = "loop", default, skip_serializing_if = "Option::is_none")]
-    pub loop_frame: Option<LoopFrame>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub parallel: Option<ParallelFrame>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub map: Option<MapFrame>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub race: Option<RaceFrame>,
-    #[serde(rename = "try", default, skip_serializing_if = "Option::is_none")]
-    pub try_frame: Option<TryFrame>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compensation: Option<CompensationFrame>,
+    /// set on a child run (subflow or map item) so reaching a terminal can wake the parent node
+    /// that started it.
+    #[serde(
+        default,
+        deserialize_with = "lenient_frame",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub subflow_parent: Option<SubflowParent>,
+    /// set on a map fan-out child: the item it is bound to and where its body must stop.
+    #[serde(
+        default,
+        deserialize_with = "lenient_frame",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub map_child: Option<MapChildState>,
+    /// per-node event_source delivery slots, keyed by node id. older runs carried these as dynamic
+    /// top-level `event_source_<node_id>` keys; [`WorkflowRunState::from_state`] folds that shape in.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub event_sources: BTreeMap<String, EventSourceEntry>,
     /// dynamic per-run metadata bag accumulated by config nodes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_metadata: Option<Value>,
@@ -46,7 +81,216 @@ pub struct WorkflowRunState {
 impl WorkflowRunState {
     /// parse a run's `state` blob into the typed container. malformed state collapses to empty.
     pub fn from_state(value: &Value) -> Self {
-        serde_json::from_value(value.clone().into()).unwrap_or_default()
+        let mut parsed: Self = serde_json::from_value(value.clone().into()).unwrap_or_default();
+        parsed.absorb_legacy_event_sources();
+        parsed
+    }
+
+    /// the cursor with this id, if the run still holds it.
+    pub fn cursor(&self, id: Uuid) -> Option<&RunCursor> {
+        self.cursors.iter().find(|cursor| cursor.id == id)
+    }
+
+    /// mutable access to the cursor with this id.
+    pub fn cursor_mut(&mut self, id: Uuid) -> Option<&mut RunCursor> {
+        self.cursors.iter_mut().find(|cursor| cursor.id == id)
+    }
+
+    /// the first cursor sitting on `node_id`. used to resolve a ready-queue row enqueued before
+    /// cursors carried ids.
+    pub fn cursor_at(&self, node_id: &str) -> Option<&RunCursor> {
+        self.cursors.iter().find(|cursor| cursor.is_at(node_id))
+    }
+
+    /// the cursor mirrored into `workflow_runs.active_node_id`, and the one single-threaded
+    /// consumers (the debugger, the run detail ui) follow.
+    pub fn primary_cursor(&self) -> Option<&RunCursor> {
+        self.cursors.first()
+    }
+
+    /// place a run that has no cursors yet, returning the seeded cursor's id. a no-op returning the
+    /// existing primary when the run is already placed.
+    pub fn ensure_cursor(&mut self, node_id: &str) -> Uuid {
+        if let Some(cursor) = self.cursors.first() {
+            return cursor.id;
+        }
+        let cursor = RunCursor::at(node_id);
+        let id = cursor.id;
+        self.cursors.push(cursor);
+        id
+    }
+
+    /// fork a branch cursor entering `node_id`, attributed to the fan-out node `forked_by`.
+    pub fn fork_cursor(&mut self, node_id: &str, forked_by: &str) -> Uuid {
+        let cursor = RunCursor::forked(node_id, forked_by);
+        let id = cursor.id;
+        self.cursors.push(cursor);
+        id
+    }
+
+    /// drop a cursor that has reached the end of its thread of control. returns whether it was
+    /// still there, so a caller can tell a first retirement from a repeat.
+    pub fn retire_cursor(&mut self, id: Uuid) -> bool {
+        let before = self.cursors.len();
+        self.cursors.retain(|cursor| cursor.id != id);
+        self.cursors.len() != before
+    }
+
+    /// every *real* cursor forked by `forked_by`, for a join deciding whether its branches have all
+    /// arrived and for a race retiring its losers.
+    ///
+    /// speculative cursors are excluded: a debugger "what if" branch must not be able to make a
+    /// join think a real branch arrived, nor a race think it has already fanned out.
+    pub fn cursors_forked_by(&self, forked_by: &str) -> impl Iterator<Item = &RunCursor> {
+        self.cursors.iter().filter(move |cursor| {
+            cursor.speculative.is_none()
+                && cursor
+                    .forked_by
+                    .as_deref()
+                    .is_some_and(|origin| origin == forked_by)
+        })
+    }
+
+    /// the real threads of control — everything the run's completion actually depends on.
+    pub fn real_cursors(&self) -> impl Iterator<Item = &RunCursor> {
+        self.cursors.iter().filter(|cursor| !cursor.is_speculative())
+    }
+
+    /// is the cursor with this id a debugger "what if" branch?
+    pub fn is_speculative(&self, id: Uuid) -> bool {
+        self.cursor(id).is_some_and(RunCursor::is_speculative)
+    }
+
+    /// `root` plus every speculative cursor transitively forked from it, so an abandoned or failed
+    /// fork drains as a unit instead of leaving orphaned children behind.
+    pub fn speculative_subtree(&self, root: Uuid) -> Vec<Uuid> {
+        let mut found = vec![root];
+        let mut index = 0;
+        while index < found.len() {
+            let parent = found[index];
+            index += 1;
+            for cursor in &self.cursors {
+                let forked_from = cursor
+                    .speculative
+                    .as_ref()
+                    .map(|frame| frame.forked_from_cursor);
+                if forked_from == Some(parent) && !found.contains(&cursor.id) {
+                    found.push(cursor.id);
+                }
+            }
+        }
+        found
+    }
+
+    /// fork a speculative branch of `from`, entering at `node_id`. returns the new cursor's id, or
+    /// `None` when `from` has already been retired.
+    pub fn fork_speculative(
+        &mut self,
+        from: Uuid,
+        node_id: &str,
+        label: Option<String>,
+        context_patch: Value,
+    ) -> Option<Uuid> {
+        let parent = self.cursor(from)?;
+        let cursor = RunCursor::speculative_from(parent, node_id, label, context_patch);
+        let id = cursor.id;
+        self.cursors.push(cursor);
+        Some(id)
+    }
+
+    /// the debugger runtime governing one cursor.
+    ///
+    /// falls back to the run-scoped frame only while *no* cursor carries a runtime of its own —
+    /// which is exactly a run persisted before per-cursor debug state, so it resumes intact. once
+    /// any cursor has been written, the flat frame is the primary's mirror rather than the run's
+    /// state, and a sibling without a runtime is simply not under the debugger.
+    pub fn cursor_debug(&self, id: Uuid) -> DebugRuntime {
+        if let Some(runtime) = self.cursor(id).and_then(|cursor| cursor.debug.clone()) {
+            return runtime;
+        }
+        if self.cursors.iter().any(|cursor| cursor.debug.is_some()) {
+            return DebugRuntime::default();
+        }
+        self.debug
+            .as_ref()
+            .map(|frame| frame.runtime.clone())
+            .unwrap_or_default()
+    }
+
+    /// write one cursor's debugger runtime, then refresh the run-scoped mirror.
+    pub fn set_cursor_debug(&mut self, id: Uuid, runtime: DebugRuntime) {
+        if let Some(cursor) = self.cursor_mut(id) {
+            cursor.debug = Some(runtime);
+        }
+        self.mirror_primary_debug();
+    }
+
+    /// copy the primary cursor's runtime into the flat `debug` object.
+    ///
+    /// the frame is the wire contract single-position clients read, so it has to follow whichever
+    /// cursor `active_node_id` is reporting.
+    pub fn mirror_primary_debug(&mut self) {
+        let Some(runtime) = self.primary_cursor().and_then(|cursor| cursor.debug.clone()) else {
+            return;
+        };
+        if let Some(frame) = self.debug.as_mut() {
+            frame.runtime = runtime;
+        }
+    }
+
+    /// is every live cursor parked under the debugger?
+    ///
+    /// this is the whole condition for the run itself being `DebugPaused`: one branch stopping at a
+    /// breakpoint leaves the run `Running`, because its siblings are still executing.
+    pub fn all_cursors_paused(&self) -> bool {
+        !self.cursors.is_empty()
+            && self
+                .cursors
+                .iter()
+                .all(|cursor| self.cursor_debug(cursor.id).paused)
+    }
+
+    /// is this run a child of another run's node (a subflow child or a map item)? child runs must
+    /// not fan out further chained workflows or pipelines — only top-level runs chain.
+    pub fn is_child_run(&self) -> bool {
+        self.subflow_parent.is_some() || self.map_child.is_some()
+    }
+
+    /// the delivery slot an event_source node reads, if one has been stamped.
+    pub fn event_source(&self, node_id: &str) -> Option<&EventSourceEntry> {
+        self.event_sources.get(node_id)
+    }
+
+    /// stamp an inbound event for `node_id`, replacing any undelivered one.
+    pub fn deliver_event(&mut self, node_id: &str, event: Value) {
+        self.event_sources
+            .entry(node_id.to_string())
+            .or_default()
+            .pending_event = Some(event);
+    }
+
+    // fold the older top-level `event_source_<node_id>` keys into `event_sources` on read, so both
+    // shapes drive the same code and the next write persists only the consolidated form. an
+    // already-consolidated entry wins, since it is the newer of the two.
+    fn absorb_legacy_event_sources(&mut self) {
+        let legacy = self
+            .extra
+            .keys()
+            .filter(|key| key.starts_with(LEGACY_EVENT_SOURCE_PREFIX))
+            .cloned()
+            .collect::<Vec<_>>();
+        for key in legacy {
+            let Some(raw) = self.extra.remove(&key) else {
+                continue;
+            };
+            let Some(node_id) = key.strip_prefix(LEGACY_EVENT_SOURCE_PREFIX) else {
+                continue;
+            };
+            let entry = serde_json::from_value::<EventSourceEntry>(raw.into()).unwrap_or_default();
+            self.event_sources
+                .entry(node_id.to_string())
+                .or_insert(entry);
+        }
     }
 
     /// serialize back into a `state` blob for persistence.
@@ -55,6 +299,26 @@ impl WorkflowRunState {
             .map(Value::from)
             .unwrap_or(Value::Null)
     }
+}
+
+#[cfg(test)]
+#[path = "workflow_state_tests.rs"]
+mod workflow_state_tests;
+
+/// `state.subflow_parent`: the parent run and node a child run reports back to. stamped at child
+/// creation by the subflow and map fan-out paths.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SubflowParent {
+    pub run_id: Uuid,
+    pub node_id: String,
+}
+
+/// one entry of `state.event_sources`: the slot an inbound event is stamped into for a parked
+/// event_source node, consumed on the next drive.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct EventSourceEntry {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_event: Option<Value>,
 }
 
 /// `state.control` bookkeeping.
@@ -78,8 +342,13 @@ pub enum DebugMode {
 }
 
 /// `state.debug` bookkeeping pushed to the debugger UI. the frame is split into user-owned
-/// configuration ([`DebugConfig`]) and scheduler-owned runtime state ([`DebugRuntime`]); both are
+/// configuration ([`DebugConfig`]) and reducer-owned runtime state ([`DebugRuntime`]); both are
 /// flattened so the persisted/wire json stays a single flat `debug` object.
+///
+/// the config is run-scoped: a breakpoint is a property of the graph as authored, so every cursor
+/// honors the same set. the runtime is **the primary cursor's mirror** — the authoritative copy for
+/// each thread of control lives on its own [`crate::cursor::RunCursor`]. a client that only ever
+/// showed one position keeps reading this frame unchanged.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DebugFrame {
     /// user-owned settings that survive across pauses and steps.
@@ -104,8 +373,12 @@ pub struct DebugConfig {
     pub breakpoints: Vec<String>,
 }
 
-/// scheduler-owned debug runtime state. the scheduler overwrites these as a run pauses and steps.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// reducer-owned debug runtime state, rewritten as a thread of control pauses and steps.
+///
+/// this is **per-cursor** state: it lives on [`crate::cursor::RunCursor::debug`], and the copy on
+/// [`DebugFrame`] is the primary cursor's mirror, exactly as `workflow_runs.active_node_id` mirrors
+/// the primary cursor's position. a run with fan-out has one of these per live branch.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct DebugRuntime {
     #[serde(default)]
     pub paused: bool,
@@ -127,7 +400,7 @@ pub struct DebugRuntime {
 
 /// `state.loop` iteration bookkeeping for a loop body. fields default so a transient `{}` marker
 /// (written when a loop body re-enters the loop node) deserializes without error.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct LoopFrame {
     #[serde(default)]
     pub index: i64,
@@ -135,14 +408,6 @@ pub struct LoopFrame {
     pub item: Value,
     #[serde(default)]
     pub return_to: String,
-}
-
-/// `state.parallel` fan-out bookkeeping.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ParallelFrame {
-    pub node_id: String,
-    #[serde(default)]
-    pub remaining: Vec<String>,
 }
 
 /// `state.map` bookkeeping. the parent map node owns the fan-out cursor
@@ -198,14 +463,6 @@ fn default_concurrency() -> i64 {
     1
 }
 
-/// `state.race` fan-out bookkeeping.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RaceFrame {
-    pub node_id: String,
-    #[serde(default)]
-    pub remaining: Vec<String>,
-}
-
 /// `state.compensation` saga-rollback bookkeeping. populated when a run reaches a failed terminal
 /// while succeeded nodes carry `compensation` actions; the engine unwinds `remaining` in order
 /// (already reverse of completion), dispatching one compensation action at a time.
@@ -220,7 +477,7 @@ pub struct CompensationFrame {
 }
 
 /// `state.try` / try node-run phase bookkeeping.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TryFrame {
     pub node_id: String,
     pub phase: String,
@@ -228,26 +485,6 @@ pub struct TryFrame {
     pub pending_status: Option<crate::workflows::WorkflowStatus>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_output: Option<Value>,
-}
-
-impl ParallelFrame {
-    /// pop the head branch off `remaining`, leaving the rest for the next visit.
-    pub fn pop_remaining(&mut self) -> Option<String> {
-        if self.remaining.is_empty() {
-            return None;
-        }
-        Some(self.remaining.remove(0))
-    }
-}
-
-impl RaceFrame {
-    /// pop the head branch off `remaining`, leaving the rest for the next visit.
-    pub fn pop_remaining(&mut self) -> Option<String> {
-        if self.remaining.is_empty() {
-            return None;
-        }
-        Some(self.remaining.remove(0))
-    }
 }
 
 // node-run `state` snapshots (workflow_node_run.state).

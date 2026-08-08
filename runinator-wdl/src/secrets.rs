@@ -9,7 +9,7 @@ use runinator_models::value::{Map, Value};
 
 use crate::ast::{Expr, ExprKind, PathSeg, SecretDecl, StrPart};
 use crate::errors::{Span, WdlError};
-use crate::parser::parse_secrets_document;
+use runinator_wdl_syntax::parser::parse_secrets_document;
 
 /// parse `.wdls` source into a `SecretBundle`. values must be literals; references and
 /// interpolation are rejected with a span-anchored error.

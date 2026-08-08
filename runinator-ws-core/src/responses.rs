@@ -1,6 +1,6 @@
 use axum::{Json, http::StatusCode};
+use runinator_compute::WorkflowValidationError;
 use runinator_models::web::TaskResponse;
-use runinator_workflows::WorkflowValidationError;
 
 use crate::models::{ApiError, ApiResponse};
 

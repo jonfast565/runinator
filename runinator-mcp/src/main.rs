@@ -49,6 +49,8 @@ struct McpServer {
 }
 
 impl McpServer {
+    /// unauthenticated constructor, used only by the tests.
+    #[cfg(test)]
     fn new(api_base_url: String) -> Result<Self, reqwest::Error> {
         Self::with_credentials(api_base_url, None)
     }

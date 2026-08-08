@@ -1,0 +1,10 @@
+[package]
+name = "runinator-wdl-codegen"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+runinator-models = { path = "../runinator-models" }
+runinator-compute = { path = "../runinator-compute" }
+runinator-wdl-syntax = { path = "../runinator-wdl-syntax" }
+runinator-wdl-sema = { path = "../runinator-wdl-sema" }

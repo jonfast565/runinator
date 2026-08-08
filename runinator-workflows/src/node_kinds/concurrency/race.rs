@@ -4,10 +4,10 @@ use runinator_models::catalog_metadata::{FieldLocation, WorkflowNodeKindMetadata
 use runinator_models::json;
 use runinator_models::workflows::{WorkflowNode, WorkflowNodeKind};
 
-use crate::errors::WorkflowValidationError;
 use crate::node_kinds::builders::{base, control, enum_ty, field, opt};
 use crate::node_kinds::{GraphRole, NodeKindSpec, TargetSlot};
 use crate::parameters::parse_race_parameters;
+use runinator_compute::WorkflowValidationError;
 
 pub(in crate::node_kinds) struct Race;
 

@@ -65,11 +65,15 @@ Keep dependency direction boring and predictable, structured with domains in min
 - `runinator-ws-core`: wire payloads (`models`), the json response envelope (`responses`), the ui event bus (`events`), the openapi documentation vocabulary (`openapi::{docs,examples}`), and small json helpers. No routes, no middleware, and no knowledge of any endpoint.
 - `runinator-ws-middleware`: the request-gating layers — `auth` (credential resolution and the gating middleware), `authz` (capabilities and resource grants), `rate_limit`, `overload`. It depends on `runinator-ws-core` for the envelope it replies with and registers no routes.
 - `runinator-ws-identity`, `runinator-ws-authoring`, `runinator-ws-runtime`: the handler modules, one `src/handlers/<domain>.rs` per domain. Each owns its handler fns, its `routes()` registrations, and its `DOCS` entries, exactly as before the split.
-- `runinator-broker`: broker trait, message/delivery types, in-memory backend, HTTP backend/client/server, and future broker adapters. Channels are `action`, `control` (ws→worker), `result` (worker→ws), `wake` (ws→waker), `ingress` (waker/worker→ws), and `events` (ws→every ws replica). All channels except `events` are competing-consumer (one delivery per consumer group); `events` is **fan-out** — every subscriber receives every message (rabbitmq fanout exchange, per-replica kafka group, per-consumer in-memory/wire receiver), so ws replicas can fan UI events to all connected WebSocket clients. The `action` and `control` channels are additionally **target-routed**: commands carry an `ActionTarget` and consumers use `receive_for`/`receive_control_for` with a `ConsumerProfile`, so a pinned action or a cancel stamped with the executor-holding replica reaches only a matching worker (backends without native routing bounce mismatches via nack; a targeted control nobody can match is dropped after `STALE_CONTROL_TTL_SECONDS`). Waker, worker, and web service should talk to the `Broker` trait where practical. A new channel must be implemented across every backend (in-memory/http/tcp/kafka/rabbitmq) and both wire transports.
+- `runinator-broker-core`: the broker **contract** — the `Broker` trait, the per-channel message/delivery types, `BrokerError`, the channel-capability checks, the otel `instrument` wrapper, and the in-memory backend. It depends on no transport and no external system. A crate that only publishes and receives through a `dyn Broker` (the ws handler crates, `runinator-engine`) depends on **this** crate, not `runinator-broker` — that is what keeps the axum/reqwest/kafka/rabbitmq dependency surface confined to the binaries that actually build a backend.
+- `runinator-broker`: the concrete transports and adapters over `runinator-broker-core` — HTTP backend/client/server, tcp, ws, kafka, rabbitmq, and the `factory` that builds one from configuration. It re-exports the core surface at its historical `runinator_broker::…` paths, so a binary that builds a backend needs only this crate. Backend selection stays a feature of the crate that builds the broker (`runinator-ws`, `-worker`, `-waker`, `-background-worker`); do not add a `kafka`/`rabbitmq` forward to a crate with no `cfg(feature)` code of its own. Channels are `action`, `control` (ws→worker), `result` (worker→ws), `wake` (ws→waker), `ingress` (waker/worker→ws), and `events` (ws→every ws replica). All channels except `events` are competing-consumer (one delivery per consumer group); `events` is **fan-out** — every subscriber receives every message (rabbitmq fanout exchange, per-replica kafka group, per-consumer in-memory/wire receiver), so ws replicas can fan UI events to all connected WebSocket clients. The `action` and `control` channels are additionally **target-routed**: commands carry an `ActionTarget` and consumers use `receive_for`/`receive_control_for` with a `ConsumerProfile`, so a pinned action or a cancel stamped with the executor-holding replica reaches only a matching worker (backends without native routing bounce mismatches via nack; a targeted control nobody can match is dropped after `STALE_CONTROL_TTL_SECONDS`). Waker, worker, and web service should talk to the `Broker` trait where practical. A new channel must be implemented across every backend (in-memory/http/tcp/kafka/rabbitmq) and both wire transports.
 - `runinator-waker`: broker-only timer/relay. It consumes the `wake` channel, sleeps until due, and publishes a drive on the `ingress` channel. It must not execute task providers, must not write to the database, and must not depend on `runinator-api` or the worker.
 - `runinator-worker`: task execution loop and provider resolution. It should not calculate schedules or mutate state except through API calls intended for worker results.
 - `runinator-desktop-agent`: standalone GUI host for an exclusive desktop `WorkerRuntime`. Desktop-only configuration and tray UX live here; reusable execution behavior stays in `runinator-worker`. Never add this lifecycle to `runinator-command-center`.
-- `runinator-workflows`: workflow validation, graph cycle detection, and condition evaluation logic.
+- `runinator-compute`: the expression and compute language — `$ref`/`$template` resolution, the declarative condition form, the compute-program interpreter, the `std` intrinsic library, user-defined function tables, and argument-dependent intrinsic result typing. It knows nothing about workflow graphs: no nodes, no transitions, no definition validation. Depend on **this** crate when you only need to evaluate a value; `runinator-wdl-sema`, `-wdl-ide`, `-wdl-codegen`, and `runinator-provider-std` do exactly that rather than linking the graph layer for it.
+
+  The `WORKFLOW` error dictionary lives here, not in `runinator-workflows`, because both crates emit the same `WorkflowValidationError`. This is the same arrangement as the `WDL` dictionary in `runinator-wdl-syntax` — see "Error Dictionaries".
+- `runinator-workflows`: the graph layer over `runinator-compute` — workflow validation, cycle detection, node-kind registry, type checking, and simulation. It re-exports the compute surface at its historical `runinator_workflows::…` paths, so a graph-layer consumer need not name both crates; a consumer that only evaluates values should depend on `runinator-compute` directly instead.
 
   Per-kind knowledge lives in `node_kinds/`, one `NodeKindSpec` per `WorkflowNodeKind`, in its own
   file under the kind's catalog category (`terminal`/`task`/`control_flow`/`concurrency`/`io`/
@@ -92,12 +96,48 @@ Keep dependency direction boring and predictable, structured with domains in min
   them together in both directions; that is what keeps the palette from advertising an edge the
   runtime ignores.
 - `runinator-wdl`: the WDL surface language (grammar, parser, lowering to the JSON workflow model, and decompiling back), plus the `.wdls` secrets front end and the `.wdlp` pipeline front end (`parse_pipeline_str` → `PipelineBundle`, `pipeline_to_wdlp` back). It must round-trip every node kind's parameters, but its grammar must only express well-formed graphs. Do not add WDL syntax for degenerate or malformed graphs (e.g. a parallel with no matching join, a condition with no branches, a missing start node); the decompiler may error on such JSON instead. Keep the grammar a description of valid programs, not a serializer for every possible JSON shape. Header `trigger cron "..."` declarations and input-field defaults are carried in `definition.metadata.triggers` / the field's `default`; the web service materializes pack-managed triggers (`metadata.managed_by = "wdl"`) on import. A `.wdlp` pipeline lowers to a portable `PipelineBundle` (members + links by workflow name); on import the web service resolves names to ids, upserts the `Pipeline`, and materializes each link as a managed `chained` trigger carrying `configuration.pipeline_id` (reconciled by pipeline id; header-trigger reconciliation skips triggers that carry a `pipeline_id`). The pipeline itself never runs — its chained triggers are the runtime linkage.
-- `runinator-wdl-ide`: the editor surface over the language core — completion and hover. It answers "what can go here" and "what is this" for a cursor in a buffer; it never affects what a compiled workflow means. It reads the core through `parse_document`, `ast`, and the `analysis` seam (`runinator-wdl/src/analysis.rs`), which is the whole reason anything inside `lower` or `namespace` is public. An editor feature needing a new item from the core gets it added to `analysis` deliberately — do not widen a module to reach it. `runinator-lsp`, `runinator-ws`'s `/wdl/complete` and `/wdl/hover` handlers, and the command center's Tauri commands depend on this crate; ctl, the worker, and every compile path depend only on the core. Keep `decompile/` and `format.rs` in the core: decompile must round-trip against lowering, and format-idempotence is coupled to decompile.
+
+  The language core is four crates split by compile stage; see "The WDL crates" below. `runinator-wdl` itself is the assembly crate and the only one consumers link.
+- `runinator-wdl-syntax`: text ↔ ast. The pest grammar, the ast, comment attachment, the canonical formatter, `file(...)`/include resolution, and `WdlError`/`Span` with the shared `WDL` error dictionary. It depends on no runinator crate but `runinator-models` and knows nothing of diagnostics or the workflow JSON model.
+- `runinator-wdl-sema`: ast → diagnostics. Namespace resolution, alias desugaring, the callable registry (intrinsics + user `fn`s), purity classification, named-type resolution, and the four semantic passes. `CompileOptions`/`TypePolicy`/`WorkflowSignature` live here because it is the lowest crate that reads them.
+- `runinator-wdl-codegen`: ast ↔ JSON model. `lower` (ast → `WorkflowDefinition`) and `decompile` (`WorkflowDefinition` → text). They share no code but share the round-trip contract, so they share a crate.
+- `runinator-wdl-ide`: the editor surface over the language core — completion and hover. It answers "what can go here" and "what is this" for a cursor in a buffer; it never affects what a compiled workflow means. It reads the core through `parse_document`, `ast`, and the `analysis` seam (`runinator-wdl/src/analysis.rs`), which is the whole reason `runinator-wdl-sema`'s `types` and `namespace` modules are public. An editor feature needing a new item from the core gets it added to `analysis` deliberately — do not reach into a core crate to get it. `runinator-lsp`, `runinator-ws`'s `/wdl/complete` and `/wdl/hover` handlers, and the command center's Tauri commands depend on this crate; ctl, the worker, and every compile path depend only on the core.
 - `runinator-plugin`: dynamic plugin loading and `Provider` trait integration. Keep FFI details contained here.
 - `runinator-provider-*`: provider implementations. Always implement a new library for a new provider. Keep provider-specific configuration and external system behavior out of core crates.
 - `runinator-utilities`: small cross-cutting helpers such as startup/logging, credential store trait, and data export. Do not turn this into a dumping ground for domain logic.
 
 If a change requires a dependency from a lower-level/shared crate back into a service crate, stop and redesign the boundary.
+
+### The WDL crates
+
+The language is four crates, layered by compile stage so nothing depends back up:
+
+```
+runinator-wdl                    public api, `.wdlp`/`.wdls` front ends,
+                                 `analysis` seam, cross-stage test suite
+  ├── runinator-wdl-codegen      lower/ (ast -> json), decompile/ (json -> text)
+  │     └── runinator-wdl-sema
+  ├── runinator-wdl-sema         namespace, desugar, registry, purity, types,
+  │                              sema/, options
+  │     └── runinator-wdl-syntax
+  └── runinator-wdl-syntax       errors, ast, comments, parser, format, includes
+```
+
+Pick a crate by compile stage. Syntax must never name sema; sema must never name codegen. If a
+pass appears to need the reverse direction, the pass is in the wrong crate.
+
+`runinator-wdl` re-exports `ast`, `comments`, `errors`, `sema`, `CompileOptions`,
+`WorkflowSignature`, and the rest at their historical `runinator_wdl::…` paths, so a consumer
+should never need to name a core crate directly. Nine crates depend on the facade; only
+`runinator-wdl-ide` reads a narrower seam, and it does so through `analysis`.
+
+The **round-trip and format-idempotence assertions live in `runinator-wdl`'s test suite** — it is
+the first crate that can see parse, lower, decompile, and format at once, and those contracts are
+cross-stage by nature. Do not try to pin them from inside one stage.
+
+The **`WDL` error dictionary is shared, not per-crate**: all four emit the same `WdlError`, so
+`DICTIONARY` is defined once in `runinator-wdl-syntax`'s `errors.rs` and re-exported. This is the
+one documented exception to the per-crate rule in "Error Dictionaries" below.
 
 ## Coding Standards
 
@@ -303,7 +343,7 @@ and the settings store's `secret://` references, all of which are OS-agnostic.
 
 Every error a crate emits carries a stable numbered code from a per-crate dictionary built on `ErrorDescriptor` (`runinator-models::errors`). A descriptor pairs a numbered code, a dotted runtime key (kept for back-compat lookups), and a short summary; it renders as `"CODE - summary: detail"`. Each crate's `errors.rs` keeps an ordered `DICTIONARY: &[ErrorDescriptor]` exposed through a trait: providers implement `ProviderErrors`, every other crate implements `EngineErrors`.
 
-- Prefixes name the domain, like providers (`JIRA`, `SLACK`, …). `RUNI` is the fallback for the engine *runtime* crates that have no self-contained error vocabulary — `runinator-ws`, `-worker`, `-waker`, `-plugin`, `-database`, `-utilities` — partitioned by per-crate number range (ws=`RUNI1xx`, worker=`RUNI2xx`, …). Crates with their own domain vocabulary get a crate-specific prefix instead: `runinator-broker`=`BROKER`, `-comm`=`COMM`, `-api`=`API`, `-wdl`=`WDL`, `-workflows`=`WORKFLOW`.
+- Prefixes name the domain, like providers (`JIRA`, `SLACK`, …). `RUNI` is the fallback for the engine *runtime* crates that have no self-contained error vocabulary — `runinator-ws`, `-worker`, `-waker`, `-plugin`, `-database`, `-utilities` — partitioned by per-crate number range (ws=`RUNI1xx`, worker=`RUNI2xx`, …). Crates with their own domain vocabulary get a crate-specific prefix instead: `runinator-broker`=`BROKER`, `-comm`=`COMM`, `-api`=`API`, `-wdl`=`WDL`, `-workflows`=`WORKFLOW`. Two dictionaries are shared across a crate family rather than per-crate, in both cases because the family emits one error type: `WDL` is defined once in `runinator-wdl-syntax`'s `errors.rs` for `runinator-wdl`, `-wdl-syntax`, `-wdl-sema`, and `-wdl-codegen`, which all emit `WdlError`; `WORKFLOW` is defined once in `runinator-compute`'s `errors.rs` for it and `runinator-workflows`, which both emit `WorkflowValidationError`. `BROKER` is defined in `runinator-broker-core` and re-exported by `runinator-broker`.
 - For ad-hoc errors, build a descriptor and call `.error(detail)` (or `.bare()`); do not hand-roll `RuntimeError::new` with a one-off code string. Add new errors as the next number in that crate's range.
 - For crates whose errors are a `thiserror` enum, keep the enum (matching, `#[from]`/`#[source]` stay intact) and apply the code two ways: prefix each variant's `#[error("CODE - …")]` string, and add a parallel `ErrorDescriptor` `DICTIONARY` + `EngineErrors` impl in the same `errors.rs`. Keep the `#[error]` literal and its dictionary entry in sync.
 - lib crates expose `pub mod errors;` so their bins reference descriptors by path; a bin that owns its `errors.rs` may need `#![allow(dead_code)]` since bins flag unused `pub` items. The desktop `runinator-command-center` is out of scope for this catalog.
@@ -325,9 +365,35 @@ For command center changes, use the existing Tauri build path and verify UI beha
 `.github/workflows/ci.yml` runs the same checks on push/PR: `cargo fmt --all --check` and
 `cargo test --workspace` on linux with postgres/mariadb service containers (so the dialect-parity
 suites actually execute rather than skipping), `runinator-provider-db`'s live connector suite
-against postgres, mongo, **and both mariadb:11 and mysql:8**, a `cargo check --workspace
+against postgres, mongo, **and both mariadb:11 and mysql:8**, the broker-backend suites against
+live kafka and rabbitmq, a compile job over the optional features, a `cargo check --workspace
 --all-targets` compile job on macos and windows, and the command center's `pnpm test`/`lint`/`build`.
 `.github/workflows/release-builds.yml` is separate and only runs on dispatch or a published release.
+
+### Verifying a broker-backend or optional-feature change
+
+A default `cargo test --workspace` builds default features only, which leaves the opt-in broker
+backends and the kubernetes provisioner compiled by nobody — including the exact feature set
+`deploy/Dockerfile` ships. The `optional-features` job compiles those, and it uses `--all-targets`
+deliberately: that is what builds the per-backend integration tests, which is what stops them
+drifting out of sync with a changed `ActionCommand`.
+
+The `broker-backends` job runs the kafka and rabbitmq suites against real brokers. Both are
+`#[ignore]`d and **self-skip into a green run** when their env var is missing, so the job greps the
+output for the skip line and fails on it — a passing exit code alone does not mean a broker was ever
+touched. Keep that guard if you touch the step, and keep `--nocapture`, which is what makes the skip
+visible.
+
+To run them locally:
+
+```bash
+docker run -d --name ci-rabbit -p 5672:5672 rabbitmq:4-alpine
+RUNINATOR_RABBITMQ_URI=amqp://guest:guest@127.0.0.1:5672/%2f \
+  cargo test -p runinator-broker --features rabbitmq --test rabbitmq -- --ignored
+```
+
+Kafka additionally needs its topics created first (`runinator.actions`, `runinator.control`,
+`runinator.results`); see the `Start Kafka` step in `ci.yml` for the single-node KRaft invocation.
 
 The two-engine mysql matrix is not redundancy. mysql and mariadb report the same column types
 under different names, and each hides bugs the other exposes: mariadb implements `json` as

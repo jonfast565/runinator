@@ -1,0 +1,13 @@
+[package]
+name = "runinator-compute"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+runinator-models = { path = "../runinator-models" }
+base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+thiserror = "2.0.18"
+uuid = { version = "1.18", features = ["serde", "v4", "v7"] }

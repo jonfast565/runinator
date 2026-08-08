@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
-use runinator_broker::Broker;
+use runinator_broker_core::Broker;
 use runinator_comm::{ControlCommand, ControlKind, WsIngressCommand};
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::errors::error_code_or_unknown;

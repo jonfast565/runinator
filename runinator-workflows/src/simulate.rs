@@ -5,13 +5,13 @@ use runinator_models::workflows::{
     WorkflowDefinition, WorkflowNode, WorkflowNodeKind, WorkflowStatus,
 };
 
-use crate::conditions::{evaluate_workflow_condition, next_transition};
-use crate::errors::WorkflowValidationError;
-use crate::expressions::{apply_input_defaults, evaluate_expression, resolve_value_refs};
 use crate::parameters::{
     evaluate_percentage, evaluate_switch, evaluate_toggle, parse_output_parameters,
     parse_percentage_parameters, parse_switch_parameters, parse_toggle_parameters,
 };
+use runinator_compute::WorkflowValidationError;
+use runinator_compute::{apply_input_defaults, evaluate_expression, resolve_value_refs};
+use runinator_compute::{evaluate_workflow_condition, next_transition};
 
 // upper bound on simulated steps; a runaway back-edge stops here instead of spinning forever.
 const MAX_SIM_STEPS: usize = 10_000;

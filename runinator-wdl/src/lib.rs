@@ -2,70 +2,42 @@
 // runinator json workflow model. parse wdl text -> ast -> WorkflowDefinition, and
 // decompile a WorkflowDefinition back to wdl text. the runtime is unchanged; this crate
 // is purely an author-time front end.
+//
+// the language core is split by compile stage — `runinator-wdl-syntax` (text <-> ast),
+// `runinator-wdl-sema` (ast -> diagnostics), `runinator-wdl-codegen` (ast <-> json model) —
+// and this crate assembles them. it owns the public api every consumer links against, the
+// `.wdlp`/`.wdls` front ends, the `analysis` seam published for the editor crate, and the
+// test suite, which is the first place parse, lower, decompile, and format are all visible at
+// once (round-trip and format-idempotence are exactly those cross-stage contracts).
 
 use runinator_models::providers::ProviderMetadata;
-use runinator_models::semver::SemVer;
 use runinator_models::types::{RuninatorField, RuninatorType};
 use runinator_models::value::{Map, Value};
 use runinator_models::workflows::WorkflowDefinition;
+use runinator_wdl_syntax::format;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 
 pub mod analysis;
-pub mod ast;
-pub mod comments;
-mod decompile;
-mod desugar;
-pub mod errors;
-mod format;
-mod includes;
-pub(crate) mod lower;
-mod namespace;
-mod parser;
 mod pipeline;
-mod purity;
-mod registry;
 mod secrets;
-pub mod sema;
 
-pub use decompile::DecompileOptions;
+// the language core, re-exported at its historical paths so consumers name one crate.
+pub use runinator_wdl_codegen::DecompileOptions;
+pub use runinator_wdl_sema::sema;
+pub use runinator_wdl_sema::{CompileOptions, TypePolicy, WorkflowSignature};
+pub use runinator_wdl_syntax::{ast, comments, errors};
+
 pub use errors::{Span, WdlError};
-pub use includes::included_file_paths;
-pub use parser::{
+pub use pipeline::{parse_pipeline_str, pipeline_to_wdlp};
+pub use runinator_wdl_syntax::included_file_paths;
+pub use runinator_wdl_syntax::{
     parse_compute_fragment, parse_condition_fragment, parse_document, parse_expression_fragment,
 };
-pub use pipeline::{parse_pipeline_str, pipeline_to_wdlp};
 pub use secrets::{parse_secrets_str, secrets_to_wdls};
 pub use sema::{Diagnostic, Severity};
 
-/// options that fill in the WorkflowDefinition fields that the source does not carry.
-#[derive(Debug, Clone)]
-pub struct CompileOptions {
-    pub enabled: bool,
-    /// fallback version when the source omits `vN`.
-    pub default_version: SemVer,
-    /// directory used to resolve `file("...")` includes.
-    pub source_dir: Option<PathBuf>,
-    /// provider metadata available while compiling, used to infer action output types.
-    pub providers: Vec<ProviderMetadata>,
-    /// strictness for author-time type diagnostics.
-    pub type_policy: TypePolicy,
-    /// pack-local or caller-supplied workflow signatures used to type subflow calls.
-    pub workflow_signatures: Vec<WorkflowSignature>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TypePolicy {
-    Strict,
-    Permissive,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct WorkflowSignature {
-    pub name: String,
-    pub input: RuninatorType,
-    pub output: RuninatorType,
-}
+use runinator_wdl_codegen::{decompile, lower};
+use runinator_wdl_sema::{desugar, namespace};
 
 /// the supported standalone WDL fragment surfaces.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -74,19 +46,6 @@ pub enum WdlFragmentKind {
     Expression,
     Condition,
     Compute,
-}
-
-impl Default for CompileOptions {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            default_version: SemVer::default(),
-            source_dir: None,
-            providers: Vec::new(),
-            type_policy: TypePolicy::Strict,
-            workflow_signatures: Vec::new(),
-        }
-    }
 }
 
 /// compile wdl source into a validated WorkflowDefinition. semantic errors block the
@@ -99,13 +58,13 @@ pub fn workflow_signature_from_source(src: &str) -> Result<Vec<WorkflowSignature
     let document = parse_document(src)?;
     let mut signatures = Vec::new();
     for workflow in &document.workflows {
-        let named = lower::types::resolve_named_types(&workflow.type_decls)?;
+        let named = runinator_wdl_sema::types::resolve_named_types(&workflow.type_decls)?;
         let input = match &workflow.input {
             Some(input) => lower_signature_input_type(input, &named)?,
             None => RuninatorType::Any,
         };
         let output = match &workflow.output {
-            Some(output) => lower::types::lower_type_with(output, &named)?,
+            Some(output) => runinator_wdl_sema::types::lower_type_with(output, &named)?,
             None => RuninatorType::Any,
         };
         signatures.push(WorkflowSignature {
@@ -126,14 +85,14 @@ pub fn workflow_signature_from_source(src: &str) -> Result<Vec<WorkflowSignature
 
 fn lower_signature_input_type(
     type_expr: &ast::TypeExpr,
-    named: &lower::types::NamedTypes,
+    named: &runinator_wdl_sema::types::NamedTypes,
 ) -> Result<RuninatorType, WdlError> {
     let ast::TypeExpr::Struct { fields, additional } = type_expr else {
-        return lower::types::lower_type_with(type_expr, named);
+        return runinator_wdl_sema::types::lower_type_with(type_expr, named);
     };
     let mut mapped = std::collections::BTreeMap::new();
     for field in fields {
-        let ty = lower::types::lower_type_with(&field.ty, named)?;
+        let ty = runinator_wdl_sema::types::lower_type_with(&field.ty, named)?;
         let runinator_field = if field.optional || field.default.is_some() {
             RuninatorField::optional(ty)
         } else {
@@ -143,7 +102,7 @@ fn lower_signature_input_type(
     }
     let additional = additional
         .as_ref()
-        .map(|ty| lower::types::lower_type_with(ty, named))
+        .map(|ty| runinator_wdl_sema::types::lower_type_with(ty, named))
         .transpose()?
         .map(Box::new);
     Ok(RuninatorType::Struct {

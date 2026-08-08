@@ -240,6 +240,16 @@ pub struct SignalDeliveryRequest {
     pub payload: Value,
 }
 
+/// an event delivered to a parked `event_source` node. `type` selects which subscriptions match;
+/// the rest of the body is the payload the node's filter and body see.
+#[derive(Debug, Deserialize)]
+pub struct EventDeliveryRequest {
+    #[serde(rename = "type", default)]
+    pub event_type: Option<String>,
+    #[serde(default)]
+    pub data: Value,
+}
+
 /// inbound webhook that routes a signal to a parked node by business correlation key (e.g. a ticket
 /// key or PR number) rather than a run id, so external systems need not track run ids.
 #[derive(Debug, Deserialize)]

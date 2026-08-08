@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use runinator_broker::Broker;
+use runinator_broker_core::Broker;
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::errors::SendableError;
 use tokio::sync::Notify;

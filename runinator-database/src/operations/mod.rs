@@ -61,8 +61,12 @@ use crate::{
 };
 use runinator_store::prelude::*;
 
-const WORKFLOW_RUN_COLUMNS: &str = "id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message, name, correlation_key, pipeline_run_id, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_request_host, trigger_request_ip, trigger_metadata";
-const WORKFLOW_NODE_RUN_COLUMNS: &str = "id, workflow_run_id, node_id, status, attempt, parameters, output_json, state, transition_reason, prev_node_run_id, created_at, started_at, finished_at, message, current_executor_replica_id, last_executor_replica_id, executor_claimed_at, executor_released_at";
+const WORKFLOW_RUN_COLUMNS: &str = "id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, state_version, created_at, started_at, finished_at, message, name, correlation_key, pipeline_run_id, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_request_host, trigger_request_ip, trigger_metadata";
+const WORKFLOW_NODE_RUN_COLUMNS: &str = "id, workflow_run_id, node_id, cursor_id, speculative, status, attempt, parameters, output_json, state, transition_reason, prev_node_run_id, created_at, started_at, finished_at, message, current_executor_replica_id, last_executor_replica_id, executor_claimed_at, executor_released_at";
+/// every column `mappers::row_to_ready_node` reads. hoisted because this list appeared verbatim in
+/// seven places, and a mapper reading a column one of them forgot to select panics only on that one
+/// code path.
+pub(super) const READY_NODE_COLUMNS: &str = "id, source_event_id, workflow_run_id, node_id, cursor_id, status, ready_at, attempts, claimed_by, claimed_until, completed_at, created_at, updated_at";
 const REPLICA_COLUMNS: &str = "replica_id, replica_type, instance_id, runtime_id, status, display_name, host, port, base_path, observed_ip, version, attributes, first_seen_at, last_heartbeat_at, last_seen_at, offline_at, registered_by_principal_id, registered_by_kind, registered_by_org_id";
 const REPLICA_PROVIDER_COLUMNS: &str = "replica_id, provider_name, provider_json, first_registered_at, last_registered_at, last_heartbeat_at";
 const PIPELINE_COLUMNS: &str =
@@ -507,7 +511,9 @@ fn archive_source_sql(dialect: SqlDialect, table: ArchiveTable) -> String {
             "SELECT id, workflow_node_run_id, sequence, stream, content, created_at FROM workflow_node_chunks WHERE id = ?".to_string()
         }
         ArchiveTable::WorkflowReadyNodes => {
-            "SELECT id, source_event_id, workflow_run_id, node_id, status, ready_at, attempts, claimed_by, claimed_until, completed_at, created_at, updated_at FROM workflow_ready_nodes WHERE id = ? AND completed_at IS NOT NULL".to_string()
+            format!(
+                "SELECT {READY_NODE_COLUMNS} FROM workflow_ready_nodes WHERE id = ? AND completed_at IS NOT NULL"
+            )
         }
         ArchiveTable::RunChunks => {
             "SELECT id, run_id, sequence, stream, content, created_at FROM run_chunks WHERE id = ?"

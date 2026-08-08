@@ -25,7 +25,6 @@ rfd = { version = "0.16", default-features = false, features = [
 notify-rust = "4"
 
 runinator-api = { path = "../runinator-api" }
-runinator-broker = { path = "../runinator-broker", features = ["ws"] }
 runinator-comm = { path = "../runinator-comm" }
 runinator-models = { path = "../runinator-models" }
 runinator-plugin = { path = "../runinator-plugin" }

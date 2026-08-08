@@ -205,14 +205,18 @@ where
     ) -> Result<(), SendableError> {
         let now = Utc::now().timestamp();
         let terminal = status.is_terminal();
+        let state_json = state.map(|value| value.to_string());
         self.pool()
             .execute(
+                // `state_version` moves whenever `state` does, so a compare-and-swap writer that
+                // read an older blob cannot land on top of this write.
                 sqlx::query(&self.render(
-                    "UPDATE workflow_runs SET status = ?, active_node_id = COALESCE(?, active_node_id), state = COALESCE(?, state), message = COALESCE(?, message), started_at = CASE WHEN ? = 'running' AND started_at IS NULL THEN ? ELSE started_at END, finished_at = CASE WHEN ? THEN ? ELSE finished_at END WHERE id = ?",
+                    "UPDATE workflow_runs SET status = ?, active_node_id = COALESCE(?, active_node_id), state = COALESCE(?, state), state_version = CASE WHEN ? IS NULL THEN state_version ELSE state_version + 1 END, message = COALESCE(?, message), started_at = CASE WHEN ? = 'running' AND started_at IS NULL THEN ? ELSE started_at END, finished_at = CASE WHEN ? THEN ? ELSE finished_at END WHERE id = ?",
                 ))
                 .bind(status.as_str())
                 .bind(active_node_id)
-                .bind(state.map(|value| value.to_string()))
+                .bind(state_json.clone())
+                .bind(state_json)
                 .bind(message)
                 .bind(status.as_str())
                 .bind(now)
@@ -240,26 +244,87 @@ where
         Ok(())
     }
 
+    async fn update_workflow_run_status_cas(
+        &self,
+        workflow_run_id: Uuid,
+        expected_version: i64,
+        status: WorkflowStatus,
+        active_node_id: Option<String>,
+        state: Value,
+        message: Option<String>,
+    ) -> Result<bool, SendableError> {
+        let now = Utc::now().timestamp();
+        let terminal = status.is_terminal();
+        let result = self
+            .pool()
+            .execute(
+                sqlx::query(&self.render(
+                    "UPDATE workflow_runs SET status = ?, active_node_id = COALESCE(?, active_node_id), state = ?, state_version = state_version + 1, message = COALESCE(?, message), started_at = CASE WHEN ? = 'running' AND started_at IS NULL THEN ? ELSE started_at END, finished_at = CASE WHEN ? THEN ? ELSE finished_at END WHERE id = ? AND state_version = ?",
+                ))
+                .bind(status.as_str())
+                .bind(active_node_id)
+                .bind(state.to_string())
+                .bind(message)
+                .bind(status.as_str())
+                .bind(now)
+                .bind(terminal)
+                .bind(now)
+                .bind(workflow_run_id)
+                .bind(expected_version),
+            )
+            .await?;
+        Ok(result.affected() > 0)
+    }
+
+    async fn update_workflow_run_state_cas(
+        &self,
+        workflow_run_id: Uuid,
+        expected_version: i64,
+        state: Value,
+    ) -> Result<bool, SendableError> {
+        let result = self
+            .pool()
+            .execute(
+                sqlx::query(&self.render(
+                    "UPDATE workflow_runs SET state = ?, state_version = state_version + 1 WHERE id = ? AND state_version = ?",
+                ))
+                .bind(state.to_string())
+                .bind(workflow_run_id)
+                .bind(expected_version),
+            )
+            .await?;
+        // no row matched: another writer bumped the version between the caller's read and this
+        // write, so the caller's blob is stale and must be rebuilt.
+        Ok(result.affected() > 0)
+    }
+
     async fn create_workflow_node_run(
         &self,
         workflow_run_id: Uuid,
         node_id: String,
         parameters: Value,
         prev_node_run_id: Option<Uuid>,
+        cursor: Option<&RunCursor>,
     ) -> Result<WorkflowNodeRun, SendableError> {
         let empty_state = Value::Object(Default::default()).to_string();
         let id = Uuid::now_v7();
         let created_at = Utc::now().timestamp();
+        // both derived from the one cursor, so they can never disagree about which thread of control
+        // produced this attempt.
+        let cursor_id = cursor.map(|cursor| cursor.id);
+        let speculative = cursor.is_some_and(RunCursor::is_speculative);
         // the origin node run is supplied by the reducer, which knows the true edge taken
         // (including fan-out parents); the database no longer infers it from insertion order.
         if self.dialect() == SqlDialect::MySql {
             let mut conn = self.pool().acquire().await?;
             sqlx::query(&self.render(
-                "INSERT INTO workflow_node_runs (id, workflow_run_id, node_id, status, attempt, parameters, state, prev_node_run_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO workflow_node_runs (id, workflow_run_id, node_id, cursor_id, speculative, status, attempt, parameters, state, prev_node_run_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             ))
             .bind(id)
             .bind(workflow_run_id)
             .bind(node_id)
+            .bind(cursor_id)
+            .bind(speculative)
             .bind(WorkflowStatus::Queued.as_str())
             .bind(0i64)
             .bind(parameters.to_string())
@@ -277,13 +342,15 @@ where
             return Ok(mappers::row_to_workflow_node_run(&row));
         }
         let row = sqlx::query(&self.render(&format!(
-            "INSERT INTO workflow_node_runs (id, workflow_run_id, node_id, status, attempt, parameters, state, prev_node_run_id, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "INSERT INTO workflow_node_runs (id, workflow_run_id, node_id, cursor_id, speculative, status, attempt, parameters, state, prev_node_run_id, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              RETURNING {WORKFLOW_NODE_RUN_COLUMNS}",
         )))
         .bind(id)
         .bind(workflow_run_id)
         .bind(node_id)
+        .bind(cursor_id)
+        .bind(speculative)
         .bind(WorkflowStatus::Queued.as_str())
         .bind(0i64)
         .bind(parameters.to_string())
@@ -451,37 +518,56 @@ where
 
         let now = Utc::now().timestamp();
 
-        // invariant: a `(run, node)` has at most one live pending ready-node generation. every node
-        // kind re-arms by enqueuing a fresh row (poll re-checks, timeout wakes, retries, re-entry);
-        // if a prior generation's completion is lost — e.g. a db timeout after this new row was
-        // already armed — the stale, already-due rows would pile up and feed a runaway that the wake
-        // publisher rescans forever. settle any already-due pending rows for this node before adding
-        // the new one, so the backlog self-heals to a single live generation. future-dated rows (a
-        // node timeout, a not-yet-due poll) are left untouched, and the new row is inserted after, so
+        // invariant: a `(run, node, cursor)` has at most one live pending ready-node generation. every
+        // node kind re-arms by enqueuing a fresh row (poll re-checks, timeout wakes, retries,
+        // re-entry); if a prior generation's completion is lost — e.g. a db timeout after this new
+        // row was already armed — the stale, already-due rows would pile up and feed a runaway that
+        // the wake publisher rescans forever. settle any already-due pending rows before adding the
+        // new one, so the backlog self-heals to a single live generation. future-dated rows (a node
+        // timeout, a not-yet-due poll) are left untouched, and the new row is inserted after, so
         // neither is affected.
-        sqlx::query(&self.render(
-            "UPDATE workflow_ready_nodes
-             SET completed_at = ?, status = 'succeeded', updated_at = ?
-             WHERE workflow_run_id = ? AND node_id = ? AND completed_at IS NULL AND ready_at <= ?",
-        ))
-        .bind(now)
-        .bind(now)
-        .bind(event.workflow_run_id)
-        .bind(node_id.as_str())
-        .bind(now)
-        .execute(&mut *tx)
-        .await?;
+        //
+        // the cursor scopes it. two threads of control can sit on the same node — a fan-out whose
+        // branches converge, or a speculative fork walking beside the branch it came from — and a
+        // run-and-node-wide supersede would have each arming silently cancel the other's wake. the
+        // predicate is built rather than bound because the three dialects disagree on `? IS NULL`.
+        let supersede = match event.cursor_id {
+            // legacy untagged rows are superseded too: they are this cursor's own earlier
+            // generations, armed before wakes carried a cursor.
+            Some(_) => {
+                "UPDATE workflow_ready_nodes
+                 SET completed_at = ?, status = 'succeeded', updated_at = ?
+                 WHERE workflow_run_id = ? AND node_id = ? AND completed_at IS NULL AND ready_at <= ?
+                   AND (cursor_id = ? OR cursor_id IS NULL)"
+            }
+            // an untagged arming keeps the original run-and-node-wide behavior byte for byte.
+            None => {
+                "UPDATE workflow_ready_nodes
+                 SET completed_at = ?, status = 'succeeded', updated_at = ?
+                 WHERE workflow_run_id = ? AND node_id = ? AND completed_at IS NULL AND ready_at <= ?"
+            }
+        };
+        let mut supersede = sqlx::query(&self.render(supersede))
+            .bind(now)
+            .bind(now)
+            .bind(event.workflow_run_id)
+            .bind(node_id.as_str())
+            .bind(now);
+        if let Some(cursor_id) = event.cursor_id {
+            supersede = supersede.bind(cursor_id);
+        }
+        supersede.execute(&mut *tx).await?;
 
         let ready_id = Uuid::now_v7();
-        let ready_columns = "id, source_event_id, workflow_run_id, node_id, status, ready_at, attempts, claimed_by, claimed_until, completed_at, created_at, updated_at";
+        let ready_columns = super::READY_NODE_COLUMNS;
 
         // mysql has no RETURNING on INSERT IGNORE, so insert then read the row back on the same tx.
         let row = if self.dialect() == SqlDialect::MySql {
             let inserted = sqlx::query(&self.render(&queries::insert_ignore(
                 SqlDialect::MySql,
                 "workflow_ready_nodes",
-                "id, source_event_id, workflow_run_id, node_id, status, ready_at, attempts, created_at, updated_at",
-                "?, ?, ?, ?, 'queued', ?, 0, ?, ?",
+                "id, source_event_id, workflow_run_id, node_id, cursor_id, status, ready_at, attempts, created_at, updated_at",
+                "?, ?, ?, ?, ?, 'queued', ?, 0, ?, ?",
                 "source_event_id, workflow_run_id, node_id",
                 None,
             )))
@@ -489,6 +575,7 @@ where
             .bind(event.event_id)
             .bind(event.workflow_run_id)
             .bind(node_id.as_str())
+            .bind(event.cursor_id)
             .bind(ready_at.timestamp())
             .bind(now)
             .bind(now)
@@ -512,8 +599,8 @@ where
             sqlx::query(&self.render(&queries::insert_ignore(
                 self.dialect(),
                 "workflow_ready_nodes",
-                "id, source_event_id, workflow_run_id, node_id, status, ready_at, attempts, created_at, updated_at",
-                "?, ?, ?, ?, 'queued', ?, 0, ?, ?",
+                "id, source_event_id, workflow_run_id, node_id, cursor_id, status, ready_at, attempts, created_at, updated_at",
+                "?, ?, ?, ?, ?, 'queued', ?, 0, ?, ?",
                 "source_event_id, workflow_run_id, node_id",
                 Some(ready_columns),
             )))
@@ -521,6 +608,7 @@ where
             .bind(event.event_id)
             .bind(event.workflow_run_id)
             .bind(node_id.as_str())
+            .bind(event.cursor_id)
             .bind(ready_at.timestamp())
             .bind(now)
             .bind(now)

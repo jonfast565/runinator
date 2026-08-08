@@ -1,6 +1,6 @@
 use super::support;
 use super::*;
-use runinator_broker::IngressMessage;
+use runinator_broker_core::IngressMessage;
 use runinator_comm::WsIngressCommand;
 use uuid::Uuid;
 
@@ -211,7 +211,7 @@ pub async fn publish_pending_wakes<T: DatabaseImpl>(
             node.source_event_id,
             trace_id,
         );
-        let message = runinator_broker::WakeMessage {
+        let message = runinator_broker_core::WakeMessage {
             command,
             dedupe_key: None,
             enqueued_at: Utc::now(),
@@ -316,6 +316,75 @@ pub async fn update_workflow_run_status<T: DatabaseImpl>(
 
 /// deliver a named signal to a run: find the latest node parked on that signal, stamp it
 /// `Succeeded` with the payload, and wake the reducer so it follows the success edge.
+/// how many times a losing state writer rebuilds its change before giving up. a conflict means the
+/// reducer wrote first, and is resolved by re-reading rather than waiting.
+const MAX_EVENT_DELIVERY_ATTEMPTS: usize = 8;
+
+/// stamp an inbound event into the delivery slot a parked `event_source` node reads, then wake the
+/// run so the reducer consumes it on its next drive.
+///
+/// the slot lives in the run state rather than on the node run because the node re-parks after each
+/// event, and the state object is what survives that. delivering to a node that is not waiting is
+/// reported back rather than silently dropped, so a misrouted webhook is visible.
+pub async fn deliver_run_event<T: DatabaseImpl>(
+    db: &T,
+    workflow_run_id: Uuid,
+    node_id: String,
+    event: Value,
+) -> Result<TaskResponse, SendableError> {
+    let node_runs = db.fetch_workflow_node_runs(workflow_run_id).await?;
+    let waiting = node_runs
+        .iter()
+        .any(|run| run.node_id == node_id && run.status == WorkflowStatus::Waiting);
+    if !waiting {
+        return Ok(TaskResponse {
+            success: false,
+            message: format!(
+                "No event_source node '{node_id}' is waiting in run {workflow_run_id}"
+            ),
+        });
+    }
+
+    let mut delivered = false;
+    for _ in 0..MAX_EVENT_DELIVERY_ATTEMPTS {
+        let Some(run) = db.fetch_workflow_run(workflow_run_id).await? else {
+            return Ok(TaskResponse {
+                success: false,
+                message: format!("Workflow run {workflow_run_id} not found"),
+            });
+        };
+        let mut state = WorkflowRunState::from_state(&run.state);
+        state.deliver_event(&node_id, event.clone());
+        if db
+            .update_workflow_run_state_cas(workflow_run_id, run.state_version, state.to_state())
+            .await?
+        {
+            delivered = true;
+            break;
+        }
+    }
+    if !delivered {
+        return Ok(TaskResponse {
+            success: false,
+            message: format!("Run {workflow_run_id} state kept changing; event not delivered"),
+        });
+    }
+
+    support::enqueue_node_ready(
+        db,
+        workflow_run_id,
+        node_id.clone(),
+        "event_delivered",
+        Utc::now(),
+        runinator_models::json!({ "node_id": node_id }),
+    )
+    .await?;
+    Ok(TaskResponse {
+        success: true,
+        message: format!("Event delivered to '{node_id}'"),
+    })
+}
+
 pub async fn deliver_signal<T: DatabaseImpl>(
     db: &T,
     workflow_run_id: Uuid,

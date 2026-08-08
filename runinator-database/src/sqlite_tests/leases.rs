@@ -31,7 +31,7 @@ async fn executor_lease_is_mutually_exclusive_until_stale_or_released() {
         .await
         .unwrap();
     let node_run = db
-        .create_workflow_node_run(run.id, "node-a".into(), runinator_models::json!({}), None)
+        .create_workflow_node_run(run.id, "node-a".into(), runinator_models::json!({}), None, None)
         .await
         .unwrap();
 
@@ -167,7 +167,7 @@ async fn executor_lease_frees_when_the_holder_stops_heartbeating() {
         .await
         .unwrap();
     let node_run = db
-        .create_workflow_node_run(run.id, "node-a".into(), runinator_models::json!({}), None)
+        .create_workflow_node_run(run.id, "node-a".into(), runinator_models::json!({}), None, None)
         .await
         .unwrap();
 

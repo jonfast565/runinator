@@ -448,3 +448,222 @@ async fn reducer_subflow_waits_for_child_and_child_terminal_wakes_parent() {
     );
     let _ = std::fs::remove_file(path);
 }
+
+// a fan-out now creates one cursor per branch instead of pointing the single position at each in
+// turn, so both branches are live at once and neither can be observed carrying the run alone.
+#[tokio::test]
+async fn parallel_branches_are_live_at_the_same_time() {
+    let (db, path) = test_db().await;
+    let run_id = seed_run(
+        &db,
+        "parallel-concurrency",
+        json!({
+            "start": "start",
+            "nodes": [
+                { "id": "start", "kind": "start", "transitions": { "next": { "$node": "fork" } } },
+                {
+                    "id": "fork",
+                    "kind": "parallel",
+                    "parameters": { "branches": [{ "$node": "a" }, { "$node": "b" }] },
+                    "transitions": {}
+                },
+                {
+                    "id": "a",
+                    "kind": "action",
+                    "action": { "provider": "test", "function": "execute" },
+                    "transitions": { "on_success": { "$node": "join" } }
+                },
+                {
+                    "id": "b",
+                    "kind": "action",
+                    "action": { "provider": "test", "function": "execute" },
+                    "transitions": { "on_success": { "$node": "join" } }
+                },
+                {
+                    "id": "join",
+                    "kind": "join",
+                    "parameters": { "wait_for": [{ "$node": "a" }, { "$node": "b" }], "mode": "all" },
+                    "transitions": { "on_success": { "$node": "done" } }
+                },
+                { "id": "done", "kind": "end" }
+            ]
+        }),
+    )
+    .await;
+
+    // drive only as far as the fan-out, before either branch has reported back.
+    drain_ready_nodes(&db).await;
+    let (run, _) = crate::repository::fetch_workflow_run(&db, run_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let state = runinator_models::workflow_state::WorkflowRunState::from_state(&run.state);
+    let branches: Vec<_> = state
+        .cursors
+        .iter()
+        .map(|cursor| cursor.node_id().to_string())
+        .collect();
+    assert!(
+        branches.contains(&"a".to_string()) && branches.contains(&"b".to_string()),
+        "both branches should hold a live cursor, got {branches:?}"
+    );
+    assert!(
+        state
+            .cursors
+            .iter()
+            .all(|c| c.forked_by.as_deref() == Some("fork")),
+        "branch cursors should record the node that forked them"
+    );
+
+    // and both dispatch their action, rather than the second waiting on the first.
+    let dispatches = db.fetch_pending_action_dispatches(50).await.unwrap();
+    let dispatched: Vec<_> = dispatches
+        .iter()
+        .map(|d| d.command.node_id.clone())
+        .collect();
+    assert!(
+        dispatched.contains(&"a".to_string()) && dispatched.contains(&"b".to_string()),
+        "both branches should have dispatched, got {dispatched:?}"
+    );
+
+    let run = run_to_completion(&db, run_id).await;
+    assert_eq!(run.status, WorkflowStatus::Succeeded);
+    let drained = runinator_models::workflow_state::WorkflowRunState::from_state(&run.state);
+    assert!(
+        drained.cursors.is_empty(),
+        "a finished run should have retired every cursor"
+    );
+    let _ = std::fs::remove_file(path);
+}
+
+// nested fan-outs shared one `state.parallel` frame, and the inner one clobbered the outer's
+// remaining branches. cursors are per-thread, so the shapes no longer interfere.
+#[tokio::test]
+async fn nested_parallel_fan_outs_do_not_clobber_each_other() {
+    let (db, path) = test_db().await;
+    let run_id = seed_run(
+        &db,
+        "nested-parallel",
+        json!({
+            "start": "start",
+            "nodes": [
+                { "id": "start", "kind": "start", "transitions": { "next": { "$node": "outer" } } },
+                {
+                    "id": "outer",
+                    "kind": "parallel",
+                    "parameters": { "branches": [{ "$node": "inner" }, { "$node": "y" }] },
+                    "transitions": {}
+                },
+                {
+                    "id": "inner",
+                    "kind": "parallel",
+                    "parameters": { "branches": [{ "$node": "i1" }, { "$node": "i2" }] },
+                    "transitions": {}
+                },
+                {
+                    "id": "i1",
+                    "kind": "action",
+                    "action": { "provider": "test", "function": "execute" },
+                    "transitions": { "on_success": { "$node": "inner_join" } }
+                },
+                {
+                    "id": "i2",
+                    "kind": "action",
+                    "action": { "provider": "test", "function": "execute" },
+                    "transitions": { "on_success": { "$node": "inner_join" } }
+                },
+                {
+                    "id": "inner_join",
+                    "kind": "join",
+                    "parameters": { "wait_for": [{ "$node": "i1" }, { "$node": "i2" }], "mode": "all" },
+                    "transitions": { "on_success": { "$node": "outer_join" } }
+                },
+                {
+                    "id": "y",
+                    "kind": "action",
+                    "action": { "provider": "test", "function": "execute" },
+                    "transitions": { "on_success": { "$node": "outer_join" } }
+                },
+                {
+                    "id": "outer_join",
+                    "kind": "join",
+                    "parameters": { "wait_for": [{ "$node": "inner" }, { "$node": "y" }], "mode": "all" },
+                    "transitions": { "on_success": { "$node": "done" } }
+                },
+                { "id": "done", "kind": "end" }
+            ]
+        }),
+    )
+    .await;
+
+    let run = run_to_completion(&db, run_id).await;
+    assert_eq!(run.status, WorkflowStatus::Succeeded);
+    let nodes = db.fetch_workflow_node_runs(run_id).await.unwrap();
+    for node_id in ["i1", "i2", "y", "inner_join", "outer_join"] {
+        assert!(
+            nodes
+                .iter()
+                .any(|n| n.node_id == node_id && n.status == WorkflowStatus::Succeeded),
+            "{node_id} should have succeeded"
+        );
+    }
+    let _ = std::fs::remove_file(path);
+}
+
+// a race dispatches every contender at once; the winner carries the run on and the losers' cursors
+// retire rather than each getting a turn at the position.
+#[tokio::test]
+async fn race_contenders_all_start_and_losers_retire() {
+    let (db, path) = test_db().await;
+    let run_id = seed_run(
+        &db,
+        "race-flow",
+        json!({
+            "start": "start",
+            "nodes": [
+                { "id": "start", "kind": "start", "transitions": { "next": { "$node": "race" } } },
+                {
+                    "id": "race",
+                    "kind": "race",
+                    "parameters": { "branches": [{ "$node": "fast" }, { "$node": "slow" }], "winner": "any" },
+                    "transitions": { "on_success": { "$node": "done" } }
+                },
+                {
+                    "id": "fast",
+                    "kind": "action",
+                    "action": { "provider": "test", "function": "execute" },
+                    "transitions": { "on_success": { "$node": "race" } }
+                },
+                {
+                    "id": "slow",
+                    "kind": "action",
+                    "action": { "provider": "test", "function": "execute" },
+                    "transitions": { "on_success": { "$node": "race" } }
+                },
+                { "id": "done", "kind": "end" }
+            ]
+        }),
+    )
+    .await;
+
+    drain_ready_nodes(&db).await;
+    let dispatches = db.fetch_pending_action_dispatches(50).await.unwrap();
+    let dispatched: Vec<_> = dispatches
+        .iter()
+        .map(|d| d.command.node_id.clone())
+        .collect();
+    assert!(
+        dispatched.contains(&"fast".to_string()) && dispatched.contains(&"slow".to_string()),
+        "every contender should start, got {dispatched:?}"
+    );
+
+    let run = run_to_completion(&db, run_id).await;
+    assert_eq!(run.status, WorkflowStatus::Succeeded);
+    let drained = runinator_models::workflow_state::WorkflowRunState::from_state(&run.state);
+    assert!(
+        drained.cursors.is_empty(),
+        "losing cursors should have retired, got {:?}",
+        drained.cursors
+    );
+    let _ = std::fs::remove_file(path);
+}

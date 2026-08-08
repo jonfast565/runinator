@@ -5,10 +5,10 @@ use runinator_models::json;
 use runinator_models::providers::RuninatorType;
 use runinator_models::workflows::{WorkflowNode, WorkflowNodeKind};
 
-use crate::errors::WorkflowValidationError;
 use crate::node_kinds::builders::{base, control, end_ref, field, req};
 use crate::node_kinds::{GraphRole, NodeKindSpec, TargetSlot};
 use crate::parameters::parse_percentage_parameters;
+use runinator_compute::WorkflowValidationError;
 
 pub(in crate::node_kinds) struct Percentage;
 
