@@ -69,6 +69,8 @@ mod transitions;
 mod wait;
 
 #[cfg(test)]
+mod debug_tests;
+#[cfg(test)]
 mod handler_tests;
 #[cfg(test)]
 mod tests;
