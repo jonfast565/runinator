@@ -3,6 +3,87 @@
 
 use super::*;
 
+/// the requested-interrupt path end to end against a real database: the endpoint records the ask,
+/// the reducer picks it up on the next drive, and the handler region runs on its own cursor.
+#[tokio::test]
+async fn a_requested_interrupt_runs_its_handler_region() {
+    let (db, path) = test_db().await;
+    let mut workflow = workflow(None, "requested-interrupt");
+    workflow.definition = WorkflowGraph::from_value(json!({
+        "start": "start",
+        "nodes": [
+            { "id": "start", "kind": "start", "transitions": { "next": { "$node": "hold" } } },
+            {
+                "id": "hold", "kind": "signal", "parameters": { "name": "later" },
+                "transitions": { "on_success": { "$node": "done" } }
+            },
+            { "id": "done", "kind": "end" },
+            {
+                "id": "note", "kind": "transform",
+                "parameters": { "bindings": { "touched": true } },
+                "transitions": { "on_success": { "$node": "handed_back" } }
+            },
+            { "id": "handed_back", "kind": "resume" }
+        ],
+        "metadata": { "interrupts": [{ "on": "external", "handler": "note" }] }
+    }))
+    .unwrap();
+    let workflow = db.upsert_workflow(&workflow).await.unwrap();
+    let run = crate::repository::create_workflow_run(
+        &db,
+        workflow.id.unwrap(),
+        json!({}),
+        false,
+        None,
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    drain_ready_nodes(&db).await;
+    let (parked, _) = crate::repository::fetch_workflow_run(&db, run.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(parked.active_node_id.as_deref(), Some("hold"));
+
+    let response = crate::repository::request_run_interrupt(
+        &db,
+        run.id,
+        runinator_models::interrupt::InterruptSource::External,
+        json!({ "reason": "credentials rotated" }),
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(response.success, "{}", response.message);
+
+    drain_ready_nodes(&db).await;
+
+    let (_, nodes) = crate::repository::fetch_workflow_run(&db, run.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        nodes.iter().any(|node| node.node_id == "note"),
+        "the handler region ran: {:?}",
+        nodes.iter().map(|n| &n.node_id).collect::<Vec<_>>()
+    );
+    let (settled, _) = crate::repository::fetch_workflow_run(&db, run.id)
+        .await
+        .unwrap()
+        .unwrap();
+    let state = runinator_models::workflow_state::WorkflowRunState::from_state(&settled.state);
+    assert!(
+        state.pending_interrupts.is_empty(),
+        "the request is consumed by the drive that raised it"
+    );
+    assert!(
+        state.cursors.iter().all(|cursor| !cursor.is_suspended()),
+        "control came back to the parked signal"
+    );
+    let _ = std::fs::remove_file(path);
+}
+
 #[tokio::test]
 async fn ready_node_processing_reduces_start_to_action_dispatch() {
     let (db, path) = test_db().await;

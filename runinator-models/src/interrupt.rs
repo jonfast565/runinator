@@ -14,31 +14,79 @@ use crate::workflow_state::{LoopFrame, TryFrame};
 
 /// what raised an interrupt.
 ///
-/// every park and resume already flows through a typed orchestration event, so a drive always
-/// arrives carrying its reason; a source is a predicate over that drive. adding one is a variant
-/// here plus an arm in the reducer's `source_for_drive`.
+/// two families. most sources are **drive-matched**: every park and resume already flows through a
+/// typed orchestration event, so a drive always arrives carrying its reason, and a source is a
+/// predicate over the node state that drive finds. the rest are **requested** — recorded on the run
+/// from outside it and raised by the next drive of the target thread. [`InterruptSource::requested`]
+/// is what tells the two apart.
+///
+/// adding a source is a variant here, an entry in [`InterruptSource::ALL`], and an arm in the
+/// reducer's `detect`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InterruptSource {
     /// a parked cursor's timer elapsed. bound to a `wait` node's deadline.
     #[default]
     Wake,
+    /// the node's own deadline is about to blow while its run is still in flight. raised *before*
+    /// the node times out, so a handler can extend the window with `resume restart` or step past it
+    /// with `resume next` instead of only reacting to the failure.
+    Timeout,
+    /// a failed node run is about to be re-dispatched by the retry policy.
+    Retry,
+    /// a node run settled `Failed` and the thread is about to take its failure route.
+    Failure,
+    /// an out-of-band park resolution landed: a signal delivered, an approval decided, an input
+    /// submitted. a polled park (`gate`) resolves inline and never produces this.
+    Resolved,
+    /// a child run a `subflow` node is parked on reached a terminal.
+    Child,
+    /// requested through `POST /workflow_runs/{id}/interrupts`.
+    External,
+    /// a signal arrived that no node in the run was parked on. without a handler declared for this
+    /// source the delivery is rejected exactly as it always was.
+    OrphanSignal,
 }
 
 impl InterruptSource {
+    /// every source, in the precedence the reducer matches them in. the order only decides which
+    /// source wins when a single drive satisfies more than one — the more specific reading first.
+    pub const ALL: [Self; 8] = [
+        Self::External,
+        Self::OrphanSignal,
+        Self::Wake,
+        Self::Timeout,
+        Self::Retry,
+        Self::Failure,
+        Self::Resolved,
+        Self::Child,
+    ];
+
     /// the stable wire/author-facing name, matching the serde rename.
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Wake => "wake",
+            Self::Timeout => "timeout",
+            Self::Retry => "retry",
+            Self::Failure => "failure",
+            Self::Resolved => "resolved",
+            Self::Child => "child",
+            Self::External => "external",
+            Self::OrphanSignal => "orphan_signal",
         }
     }
 
     /// parse an author-facing source name, for the wdl front end and definition metadata.
     pub fn from_str(value: &str) -> Option<Self> {
-        match value {
-            "wake" => Some(Self::Wake),
-            _ => None,
-        }
+        Self::ALL
+            .into_iter()
+            .find(|source| source.as_str() == value)
+    }
+
+    /// true when this source is raised from a [`PendingInterrupt`] recorded on the run rather than
+    /// matched against the node state a drive finds.
+    pub fn requested(&self) -> bool {
+        matches!(self, Self::External | Self::OrphanSignal)
     }
 }
 
@@ -126,6 +174,45 @@ pub struct InterruptFrame {
     pub resume: ResumePoint,
     #[serde(default = "Utc::now")]
     pub raised_at: DateTime<Utc>,
+}
+
+/// an interrupt asked for from outside the run, waiting for the next drive of its target thread.
+///
+/// requested sources cannot be a predicate over node state — nothing about the run changed when the
+/// caller asked — so the ask is parked here and the ordinary raise path picks it up. it is consumed
+/// by the drive that decides about it, raised or refused, so there is no ghost request that can fire
+/// at an arbitrary later point in the run.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PendingInterrupt {
+    #[serde(default = "Uuid::now_v7")]
+    pub id: Uuid,
+    #[serde(default)]
+    pub source: InterruptSource,
+    #[serde(default, skip_serializing_if = "Value::is_null")]
+    pub payload: Value,
+    /// the thread to interrupt. `None` lets whichever real cursor drives next take it, which is what
+    /// a run-scoped ask (an orphan signal) wants.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor_id: Option<Uuid>,
+    #[serde(default = "Utc::now")]
+    pub requested_at: DateTime<Utc>,
+}
+
+impl PendingInterrupt {
+    pub fn new(source: InterruptSource, payload: Value, cursor_id: Option<Uuid>) -> Self {
+        Self {
+            id: Uuid::now_v7(),
+            source,
+            payload,
+            cursor_id,
+            requested_at: Utc::now(),
+        }
+    }
+
+    /// may this request be raised on `cursor_id`? an untargeted request is for any real thread.
+    pub fn targets(&self, cursor_id: Uuid) -> bool {
+        self.cursor_id.is_none_or(|target| target == cursor_id)
+    }
 }
 
 /// one declared handler: which source it answers, and the node its region starts at.

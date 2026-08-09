@@ -24,7 +24,7 @@ export interface SpeculativeFrame {
 export interface InterruptFrame {
   /** the cursor this handler suspended, and will hand control back to. */
   interrupted_cursor: string;
-  /** what raised it (`wake`, ...). */
+  /** what raised it: `wake`, `timeout`, `retry`, `failure`, `resolved`, `child`, `external`, `orphan_signal`. */
   source: string;
   payload?: JsonValue;
   /** where the suspended thread resumes. */

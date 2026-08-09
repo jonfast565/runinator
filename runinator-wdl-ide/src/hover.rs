@@ -419,7 +419,12 @@ fn keyword_hover(word: WordAt<'_>) -> Option<WdlHoverResponse> {
         "signal" => "Waits for an external signal.",
         "interrupt" => {
             "Declares a handler region that runs when the named source fires, suspending the run's \
-             thread of control until a `resume` inside it hands control back."
+             thread of control until a `resume` inside it hands control back. Sources: `wake` (a \
+             wait deadline elapsed), `timeout` (the node's deadline is about to blow), `retry` \
+             (before a re-dispatch), `failure` (a node run settled failed), `resolved` (a signal, \
+             approval or input landed), `child` (a subflow child reached a terminal), `external` \
+             (POST /workflow_runs/{id}/interrupts), `orphan_signal` (a signal nothing was waiting \
+             for)."
         }
         "resume" => {
             "Ends an interrupt handler and returns control to the interrupted thread: bare resumes \

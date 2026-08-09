@@ -6,7 +6,10 @@
 //! stalled cursor, a re-raised interrupt, a double-dispatched action.
 
 use chrono::{Duration, Utc};
+use runinator_models::interrupt::{InterruptSource, PendingInterrupt};
 use runinator_models::orchestration::ReadyNodeRecord;
+use runinator_models::value::Value;
+
 use runinator_models::workflow_state::WorkflowRunState;
 use runinator_models::workflows::{WorkflowDefinition, WorkflowRun, WorkflowStatus};
 use uuid::Uuid;
@@ -806,4 +809,571 @@ async fn the_suspension_credit_does_not_disable_the_timeout() {
 /// a plain workflow fixture with no interrupts declared, for the timeout tests above.
 fn workflow(nodes: serde_json::Value) -> WorkflowDefinition {
     workflow_with(nodes, serde_json::json!([]))
+}
+
+// --- the other sources -------------------------------------------------------
+//
+// each source is a predicate over the node state a drive finds, so each test below builds that
+// state the way the runtime does — park it, land a result, schedule a retry — rather than writing
+// the node run by hand. that is what keeps a source honest about the shape it claims to match.
+
+fn handler_for(source: &str) -> serde_json::Value {
+    serde_json::json!([{ "on": source, "handler": "refresh" }])
+}
+
+/// start → hold (whatever `node` is) → end, plus a `resume`-terminated region.
+fn flow_around(node: serde_json::Value, mode: &str) -> serde_json::Value {
+    let mut nodes = serde_json::json!([
+        { "id": "start", "kind": "start", "transitions": { "next": { "$node": "hold" } } },
+        { "id": "end", "kind": "end" },
+        { "id": "gave_up", "kind": "end" },
+    ]);
+    let list = nodes.as_array_mut().expect("array");
+    list.push(node);
+    for entry in region(mode).as_array().expect("array") {
+        list.push(entry.clone());
+    }
+    nodes
+}
+
+/// the handler cursor's armed ready row, or `None` when nothing was raised.
+fn armed_handler(store: &FakeStore) -> Option<ReadyNodeRecord> {
+    store
+        .ready_nodes()
+        .into_iter()
+        .find(|row| row.node_id == "refresh" && row.completed_at.is_none())
+}
+
+fn raised(store: &FakeStore) -> bool {
+    state(store)
+        .cursors
+        .iter()
+        .any(|cursor| cursor.is_interrupt_handler())
+}
+
+/// an action node whose worker result the test lands by hand, the way the engine's result loop does.
+fn action_node(extra: serde_json::Value) -> serde_json::Value {
+    let mut node = serde_json::json!({
+        "id": "hold", "kind": "action",
+        "action": { "provider": "test", "function": "ship_it", "configuration": {} },
+        "transitions": {
+            "on_success": { "$node": "end" },
+            "on_failure": { "$node": "gave_up" }
+        }
+    });
+    for (key, value) in extra.as_object().expect("object") {
+        node[key] = value.clone();
+    }
+    node
+}
+
+/// `timeout` fires *before* the node times out, which is the whole point: the handler still has a
+/// live node run to decide about, so it can extend the window instead of only reacting to a failure.
+#[tokio::test]
+async fn a_blown_deadline_raises_timeout_before_the_node_gives_up() {
+    let store = FakeStore::new();
+    let hold = serde_json::json!({
+        "id": "hold", "kind": "signal",
+        "parameters": { "name": "later" },
+        "timeout_seconds": 60,
+        "transitions": {
+            "on_success": { "$node": "end" },
+            "on_timeout": { "$node": "gave_up" }
+        }
+    });
+    store.insert_workflow(workflow_with(
+        flow_around(hold, "restart"),
+        handler_for("timeout"),
+    ));
+    store.insert_run(queued_run());
+
+    process_ready_node(&store, &ready_node("hold"))
+        .await
+        .expect("park");
+    let parked = store.latest_node_run("hold").expect("the signal parked");
+    store.age_node_run(parked.id, Duration::seconds(120));
+
+    process_ready_node(&store, &ready_node("hold"))
+        .await
+        .expect("the blown deadline raises the interrupt");
+
+    assert!(
+        raised(&store),
+        "120s into a 60s window must raise `timeout`"
+    );
+    assert_eq!(
+        store.latest_node_run("hold").expect("node run").status,
+        WorkflowStatus::Waiting,
+        "the node must not have been timed out yet — the handler decides what happens to it"
+    );
+
+    // `resume restart` cancels the overrun run and re-enters the node fresh, which is how a handler
+    // buys the park another window.
+    process_ready_node(&store, &armed_handler(&store).expect("armed"))
+        .await
+        .expect("handler");
+
+    let runs: Vec<_> = store
+        .node_runs()
+        .into_iter()
+        .filter(|run| run.node_id == "hold")
+        .collect();
+    assert_eq!(runs.len(), 2, "restart re-enters the node with a fresh run");
+    assert_eq!(
+        store.latest_node_run("hold").expect("node run").status,
+        WorkflowStatus::Waiting,
+        "the new park starts its clock over rather than inheriting a blown deadline"
+    );
+    assert_ne!(
+        store
+            .run(RUN_ID.parse().unwrap())
+            .expect("run")
+            .active_node_id
+            .as_deref(),
+        Some("gave_up"),
+        "the handler extended the window; the node never took its on_timeout edge"
+    );
+}
+
+/// the same node with no `timeout` handler declared must time out exactly as it always did.
+#[tokio::test]
+async fn a_blown_deadline_without_a_handler_still_times_out() {
+    let store = FakeStore::new();
+    let hold = serde_json::json!({
+        "id": "hold", "kind": "signal",
+        "parameters": { "name": "later" },
+        "timeout_seconds": 60,
+        "transitions": {
+            "on_success": { "$node": "end" },
+            "on_timeout": { "$node": "gave_up" }
+        }
+    });
+    store.insert_workflow(workflow_with(
+        flow_around(hold, "resume"),
+        serde_json::json!([]),
+    ));
+    store.insert_run(queued_run());
+
+    process_ready_node(&store, &ready_node("hold"))
+        .await
+        .expect("park");
+    let parked = store.latest_node_run("hold").expect("node run");
+    store.age_node_run(parked.id, Duration::seconds(120));
+    process_ready_node(&store, &ready_node("hold"))
+        .await
+        .expect("drive");
+
+    assert_eq!(
+        store
+            .run(RUN_ID.parse().unwrap())
+            .expect("run")
+            .active_node_id
+            .as_deref(),
+        Some("gave_up"),
+        "the feature stays invisible to a workflow that declared no handler for it"
+    );
+}
+
+/// a deadline the author never wrote down does not raise `timeout`. the parks that fall back to an
+/// implicit default do so to stop a run hanging forever, which is not an authoring decision the
+/// handler should be reacting to.
+#[tokio::test]
+async fn a_node_with_no_declared_timeout_never_raises_timeout() {
+    let store = FakeStore::new();
+    let hold = serde_json::json!({
+        "id": "hold", "kind": "signal",
+        "parameters": { "name": "later" },
+        "transitions": { "on_success": { "$node": "end" } }
+    });
+    store.insert_workflow(workflow_with(
+        flow_around(hold, "resume"),
+        handler_for("timeout"),
+    ));
+    store.insert_run(queued_run());
+
+    process_ready_node(&store, &ready_node("hold"))
+        .await
+        .expect("park");
+    let parked = store.latest_node_run("hold").expect("node run");
+    store.age_node_run(parked.id, Duration::days(365));
+    process_ready_node(&store, &ready_node("hold"))
+        .await
+        .expect("drive");
+
+    assert!(!raised(&store), "no declared deadline, nothing to overrun");
+}
+
+/// `failure` is the error-handler source: a worker result lands `Failed` and the handler runs before
+/// the thread takes its failure route. `resume next` is what lets a handler swallow the failure.
+#[tokio::test]
+async fn a_landed_failure_raises_the_failure_interrupt() {
+    let store = FakeStore::new();
+    store.insert_workflow(workflow_with(
+        flow_around(action_node(serde_json::json!({})), "continue"),
+        handler_for("failure"),
+    ));
+    store.insert_run(queued_run());
+
+    process_ready_node(&store, &ready_node("hold"))
+        .await
+        .expect("dispatch");
+    let dispatched = store
+        .latest_node_run("hold")
+        .expect("the action dispatched");
+    assert_eq!(dispatched.status, WorkflowStatus::Running);
+    store.resolve_node_run(dispatched.id, WorkflowStatus::Failed, None);
+
+    process_ready_node(&store, &ready_node("hold"))
+        .await
+        .expect("the landed failure raises the interrupt");
+    assert!(raised(&store));
+    assert_eq!(
+        store.dispatches().len(),
+        1,
+        "raising an interrupt must not re-dispatch the action"
+    );
+
+    process_ready_node(&store, &armed_handler(&store).expect("armed"))
+        .await
+        .expect("handler");
+
+    assert_eq!(
+        store
+            .run(RUN_ID.parse().unwrap())
+            .expect("run")
+            .active_node_id
+            .as_deref(),
+        Some("end"),
+        "`resume next` settles the failed node Succeeded and takes its success edge"
+    );
+}
+
+/// `retry` runs the handler in the gap between a failed attempt and the next dispatch, so it can fix
+/// whatever the attempt needs first.
+#[tokio::test]
+async fn a_queued_retry_raises_the_retry_interrupt_before_re_dispatching() {
+    let store = FakeStore::new();
+    let hold = action_node(serde_json::json!({
+        "retry": { "max_attempts": 5, "retry_on": "failure" }
+    }));
+    store.insert_workflow(workflow_with(
+        flow_around(hold, "resume"),
+        handler_for("retry"),
+    ));
+    store.insert_run(queued_run());
+
+    process_ready_node(&store, &ready_node("hold"))
+        .await
+        .expect("dispatch");
+    let dispatched = store.latest_node_run("hold").expect("node run");
+    store.resolve_node_run(dispatched.id, WorkflowStatus::Failed, None);
+
+    // the failure lands and the retry policy queues another attempt, parking the run until the
+    // backoff elapses.
+    process_ready_node(&store, &ready_node("hold"))
+        .await
+        .expect("drive");
+    let queued = store.latest_node_run("hold").expect("node run");
+    assert_eq!(queued.status, WorkflowStatus::Queued);
+    assert_eq!(queued.transition_reason.as_deref(), Some("retry_queued"));
+
+    // the backoff elapses and the retry row drives the node again — the interrupt fires in that gap.
+    process_ready_node(&store, &ready_node("hold"))
+        .await
+        .expect("the retry drive raises the interrupt");
+
+    assert!(
+        raised(&store),
+        "a queued retry raises before the re-dispatch"
+    );
+    assert_eq!(
+        store.dispatches().len(),
+        1,
+        "the second attempt must not be dispatched while the handler is deciding"
+    );
+    assert_eq!(
+        store.latest_node_run("hold").expect("node run").status,
+        WorkflowStatus::Queued
+    );
+}
+
+/// `resolved` covers the parks an endpoint resolves out of band — a signal delivered, an approval
+/// decided, an input submitted.
+#[tokio::test]
+async fn an_out_of_band_park_resolution_raises_resolved() {
+    let store = FakeStore::new();
+    let hold = serde_json::json!({
+        "id": "hold", "kind": "signal",
+        "parameters": { "name": "later" },
+        "transitions": { "on_success": { "$node": "end" } }
+    });
+    store.insert_workflow(workflow_with(
+        flow_around(hold, "resume"),
+        handler_for("resolved"),
+    ));
+    store.insert_run(queued_run());
+
+    process_ready_node(&store, &ready_node("hold"))
+        .await
+        .expect("park");
+    let parked = store.latest_node_run("hold").expect("node run");
+    // exactly what the delivery endpoint does: stamp the parked run and wake the reducer.
+    store.resolve_node_run(
+        parked.id,
+        WorkflowStatus::Succeeded,
+        Some(runinator_models::json!({ "signal": "later", "payload": { "ok": true } })),
+    );
+
+    process_ready_node(&store, &ready_node("hold"))
+        .await
+        .expect("the delivery raises the interrupt");
+    assert!(raised(&store));
+    assert_eq!(
+        store.latest_node_run("hold").expect("node run").status,
+        WorkflowStatus::Succeeded,
+        "the resolution stands; the handler decides only what the thread does next"
+    );
+
+    process_ready_node(&store, &armed_handler(&store).expect("armed"))
+        .await
+        .expect("handler");
+    assert_eq!(
+        store
+            .run(RUN_ID.parse().unwrap())
+            .expect("run")
+            .active_node_id
+            .as_deref(),
+        Some("end"),
+        "control returns and the resolved signal follows its own success edge"
+    );
+}
+
+/// `resolved` means *a park someone else resolved*, not "a node succeeded". an action's worker
+/// result lands in exactly the same shape — a terminal node run found by a later drive with the
+/// cursor still on the node — so without the kind filter every successful action in the workflow
+/// would raise this.
+///
+/// (a polled `gate` needs no such guard: it opens and transitions inside one drive, so it never
+/// leaves a resolved run for a later drive to find.)
+#[tokio::test]
+async fn a_successful_action_is_not_an_out_of_band_park_resolution() {
+    let store = FakeStore::new();
+    store.insert_workflow(workflow_with(
+        flow_around(action_node(serde_json::json!({})), "resume"),
+        handler_for("resolved"),
+    ));
+    store.insert_run(queued_run());
+
+    process_ready_node(&store, &ready_node("hold"))
+        .await
+        .expect("dispatch");
+    let dispatched = store.latest_node_run("hold").expect("node run");
+    store.resolve_node_run(dispatched.id, WorkflowStatus::Succeeded, None);
+
+    process_ready_node(&store, &ready_node("hold"))
+        .await
+        .expect("the result lands");
+
+    assert!(
+        !raised(&store),
+        "an action finishing is the ordinary path, not something a park handler should see"
+    );
+    assert_eq!(
+        store
+            .run(RUN_ID.parse().unwrap())
+            .expect("run")
+            .active_node_id
+            .as_deref(),
+        Some("end"),
+        "and the action follows its own success edge untouched"
+    );
+}
+
+/// `external` has no node state to match: the ask is recorded on the run and the next drive of the
+/// target thread raises it.
+#[tokio::test]
+async fn a_requested_interrupt_is_raised_by_the_next_drive_and_consumed() {
+    let store = FakeStore::new();
+    let hold = serde_json::json!({
+        "id": "hold", "kind": "signal",
+        "parameters": { "name": "later" },
+        "transitions": { "on_success": { "$node": "end" } }
+    });
+    store.insert_workflow(workflow_with(
+        flow_around(hold, "resume"),
+        handler_for("external"),
+    ));
+    store.insert_run(queued_run());
+
+    process_ready_node(&store, &ready_node("hold"))
+        .await
+        .expect("park");
+    assert!(!raised(&store), "nothing has been asked for yet");
+
+    request_interrupt(&store, InterruptSource::External, None).await;
+    process_ready_node(&store, &ready_node("hold"))
+        .await
+        .expect("the request is picked up by the next drive");
+
+    assert!(raised(&store));
+    assert!(
+        state(&store).pending_interrupts.is_empty(),
+        "the request is consumed by the drive that raises it, or a retried write raises it twice"
+    );
+
+    let refresh = store.latest_node_run("refresh");
+    assert!(refresh.is_none(), "the region has not been driven yet");
+    process_ready_node(&store, &armed_handler(&store).expect("armed"))
+        .await
+        .expect("handler");
+    assert!(store.latest_node_run("refresh").is_some());
+}
+
+/// a request nobody can service is dropped by the drive that looks at it. leaving it parked would
+/// let it fire at an arbitrary later point in the run, long after the caller stopped expecting it.
+#[tokio::test]
+async fn a_requested_interrupt_with_no_handler_is_dropped_not_left_pending() {
+    let store = FakeStore::new();
+    let hold = serde_json::json!({
+        "id": "hold", "kind": "signal",
+        "parameters": { "name": "later" },
+        "transitions": { "on_success": { "$node": "end" } }
+    });
+    // a `wake` handler is declared, so the feature is on — but nothing answers `external`.
+    store.insert_workflow(workflow_with(flow_around(hold, "resume"), wake_handler()));
+    store.insert_run(queued_run());
+
+    process_ready_node(&store, &ready_node("hold"))
+        .await
+        .expect("park");
+    request_interrupt(&store, InterruptSource::External, None).await;
+    process_ready_node(&store, &ready_node("hold"))
+        .await
+        .expect("drive");
+
+    assert!(!raised(&store));
+    assert!(
+        state(&store).pending_interrupts.is_empty(),
+        "an unserviceable request must not linger and fire later"
+    );
+}
+
+/// a request naming another thread is not stolen by the one that happens to drive first.
+#[tokio::test]
+async fn a_targeted_request_is_left_alone_by_other_threads() {
+    let store = FakeStore::new();
+    let hold = serde_json::json!({
+        "id": "hold", "kind": "signal",
+        "parameters": { "name": "later" },
+        "transitions": { "on_success": { "$node": "end" } }
+    });
+    store.insert_workflow(workflow_with(
+        flow_around(hold, "resume"),
+        handler_for("external"),
+    ));
+    store.insert_run(queued_run());
+
+    process_ready_node(&store, &ready_node("hold"))
+        .await
+        .expect("park");
+    request_interrupt(&store, InterruptSource::External, Some(Uuid::now_v7())).await;
+    process_ready_node(&store, &ready_node("hold"))
+        .await
+        .expect("drive");
+
+    assert!(!raised(&store));
+    assert_eq!(
+        state(&store).pending_interrupts.len(),
+        1,
+        "the request still belongs to the thread it named"
+    );
+}
+
+/// `child` fires when the run a `subflow` node is parked on reaches a terminal, so a handler can
+/// look at the outcome before the parent's own edges decide anything about it.
+#[tokio::test]
+async fn a_terminal_child_run_raises_the_child_interrupt() {
+    let store = FakeStore::new();
+    let child = serde_json::from_value::<WorkflowDefinition>(serde_json::json!({
+        "id": "33333333-3333-3333-3333-333333333333",
+        "name": "child",
+        "version": "1.0.0",
+        "enabled": true,
+        "definition": {
+            "start": "start",
+            "nodes": [{ "id": "start", "kind": "start", "transitions": { "next": { "$node": "done" } } },
+                      { "id": "done", "kind": "end" }],
+        }
+    }))
+    .expect("child workflow");
+    store.insert_workflow(child);
+
+    let hold = serde_json::json!({
+        "id": "hold", "kind": "subflow",
+        "subflow": { "workflow_name": "child", "subflow_type": "wait" },
+        "transitions": {
+            "on_success": { "$node": "end" },
+            "on_failure": { "$node": "gave_up" }
+        }
+    });
+    store.insert_workflow(workflow_with(
+        flow_around(hold, "resume"),
+        handler_for("child"),
+    ));
+    store.insert_run(queued_run());
+
+    process_ready_node(&store, &ready_node("hold"))
+        .await
+        .expect("spawn the child and park");
+    assert_eq!(
+        store.latest_node_run("hold").expect("node run").status,
+        WorkflowStatus::Waiting
+    );
+    let spawned = store
+        .runs()
+        .into_iter()
+        .find(|run| run.id.to_string() != RUN_ID)
+        .expect("the subflow spawned a child run");
+
+    // still running: the parent is parked and nothing raises.
+    process_ready_node(&store, &ready_node("hold"))
+        .await
+        .expect("drive while the child is in flight");
+    assert!(!raised(&store), "a child still running is not an event");
+
+    store.settle_run(spawned.id, WorkflowStatus::Failed);
+    process_ready_node(&store, &ready_node("hold"))
+        .await
+        .expect("the terminal child raises the interrupt");
+
+    assert!(raised(&store));
+    assert_eq!(
+        store.latest_node_run("hold").expect("node run").status,
+        WorkflowStatus::Waiting,
+        "the parent must not settle while the handler is deciding about the child"
+    );
+
+    process_ready_node(&store, &armed_handler(&store).expect("armed"))
+        .await
+        .expect("handler");
+    assert_eq!(
+        store
+            .run(RUN_ID.parse().unwrap())
+            .expect("run")
+            .active_node_id
+            .as_deref(),
+        Some("gave_up"),
+        "control returns and the subflow node reads the failed child exactly as it would have"
+    );
+}
+
+/// record an interrupt request the way the web service's endpoint does.
+async fn request_interrupt(store: &FakeStore, source: InterruptSource, cursor_id: Option<Uuid>) {
+    super::run_state::mutate_run_state(store, RUN_ID.parse().unwrap(), move |state| {
+        state
+            .pending_interrupts
+            .push(PendingInterrupt::new(source, Value::Null, cursor_id));
+    })
+    .await
+    .expect("record the request");
 }

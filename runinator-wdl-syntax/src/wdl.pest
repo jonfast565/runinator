@@ -112,9 +112,23 @@ watch_decl = { "watch" ~ cond ~ "->" ~ target }
 // is a region rather than a loose node reference so its entry and its exit are both well defined —
 // the first statement is where the interrupt enters, and every path out ends at a `resume`.
 //
-// `wake` is the only source so far; adding one is a new alternative here and an arm in the reducer.
+// the sources, in the reducer's own precedence order. most are read off the node state the drive
+// finds; `external` and `orphan_signal` are asked for from outside the run. adding one is a new
+// alternative here, a variant on `InterruptSource`, and an arm in the reducer's `detect`.
+//
+// `orphan_signal` is listed before `wake` only because pest takes the first matching alternative and
+// these must not prefix one another.
 interrupt_decl   = { "interrupt" ~ "on" ~ interrupt_source ~ block }
-interrupt_source = { "wake" }
+interrupt_source = {
+    "external"
+  | "orphan_signal"
+  | "wake"
+  | "timeout"
+  | "retry"
+  | "failure"
+  | "resolved"
+  | "child"
+}
 
 // declares the value this workflow's runs are awaitable by. the expression (over `input.*`, a step
 // output, etc.) is resolved as the run progresses and stamped write-once onto the run's correlation

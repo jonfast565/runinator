@@ -530,6 +530,50 @@ pub async fn deliver_signal<T: DatabaseImpl>(
     }
 }
 
+/// ask a run to raise an interrupt, running the handler region declared for that source.
+///
+/// nothing about serviceability is decided here — the request is recorded on the run and the reducer
+/// raises or drops it on the next drive of the target thread. that keeps one copy of the fail-open
+/// rules, in the crate that owns them.
+pub async fn request_interrupt<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(events): Extension<EventSender>,
+    Extension(ctx): Extension<runinator_models::auth::AuthContext>,
+    Path(workflow_run_id): Path<Uuid>,
+    Json(request): Json<runinator_ws_core::models::InterruptRequest>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = runinator_ws_middleware::authz::require_run_workflow(
+        db.as_ref(),
+        &ctx,
+        workflow_run_id,
+        runinator_models::auth::Permission::Run,
+    )
+    .await
+    {
+        return reply;
+    }
+    let raw = request.source.as_deref().unwrap_or("external");
+    let Some(source) = runinator_models::interrupt::InterruptSource::from_str(raw) else {
+        return bad_request(format!("Unknown interrupt source '{raw}'"));
+    };
+    match repository::request_run_interrupt(
+        db.as_ref(),
+        workflow_run_id,
+        source,
+        request.payload,
+        request.cursor_id,
+    )
+    .await
+    {
+        Ok(response) => {
+            let org_id = repository::org_id_for_workflow_run(db.as_ref(), workflow_run_id).await;
+            emit_workflow_run(&events, workflow_run_id, org_id);
+            (StatusCode::OK, Json(ApiResponse::TaskResponse(response)))
+        }
+        Err(err) => bad_request(err.to_string()),
+    }
+}
+
 #[utoipa::path(
     post,
     path = "/workflow_runs/{id}/rename",
@@ -887,6 +931,10 @@ pub fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
             post(deliver_signal::<T>).layer(Extension(pool.clone())),
         )
         .route(
+            "/workflow_runs/{id}/interrupts",
+            post(request_interrupt::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
             "/workflow_runs/{id}/events/{node_id}",
             post(deliver_run_event::<T>).layer(Extension(pool.clone())),
         )
@@ -1146,6 +1194,23 @@ pub const DOCS: &[EndpointDoc] = &[
         &[],
         200,
         "signal delivered",
+        Example::TaskResponse,
+    ),
+    endpoint(
+        "post",
+        "/workflow_runs/{id}/interrupts",
+        "Workflow Runs",
+        "Request an interrupt on a run",
+        "Asks a run to raise an interrupt on its next drive, running the handler region declared \
+         for that source. The request is refused and dropped when nothing can service it.",
+        false,
+        json_body(
+            "Interrupt source, payload, and optional target cursor.",
+            Example::InterruptRequest,
+        ),
+        &[],
+        200,
+        "interrupt requested",
         Example::TaskResponse,
     ),
     endpoint(

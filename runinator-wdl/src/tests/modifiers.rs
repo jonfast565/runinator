@@ -360,6 +360,38 @@ fn interrupt_region_lowers_to_metadata_and_round_trips() {
     );
 }
 
+/// every source the runtime knows must be spellable, lower to its own name, and round-trip. the
+/// grammar lists them as alternatives, so a name that prefixes another (or one simply left out) is
+/// the failure this catches — silently, since the parser would just reject the program.
+#[test]
+fn every_interrupt_source_parses_and_round_trips() {
+    for source in runinator_models::interrupt::InterruptSource::ALL {
+        let src = format!(
+            r#"
+            workflow "Sources" v1 {{
+                interrupt on {source} {{
+                    node refresh <- console.run(command: "echo refresh")
+                    resume
+                }}
+
+                wait 30s
+            }}
+        "#
+        );
+        let definition = compile(&src);
+        assert_eq!(
+            definition
+                .definition
+                .metadata
+                .pointer("/interrupts/0/on")
+                .and_then(|on| on.as_str()),
+            Some(source.as_str()),
+            "`{source}` must lower to its own name"
+        );
+        assert_round_trips_unordered(&src);
+    }
+}
+
 /// every `resume` mode survives the round trip. the compiled form of `resume next` is
 /// `mode: "continue"`, so this is also the guard on that one-way spelling.
 #[test]

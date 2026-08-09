@@ -77,6 +77,7 @@ pub enum Example {
     WebhookWake,
     WebhookSignal,
     EventDelivery,
+    InterruptRequest,
     Supervisor,
 }
 
@@ -237,6 +238,9 @@ pub fn example_value(example: Example) -> Option<Value> {
         }
         Example::EventDelivery => {
             json!({ "type": "deploy.finished", "data": { "environment": "prod", "revision": "abc123" } })
+        }
+        Example::InterruptRequest => {
+            json!({ "source": "external", "payload": { "reason": "credentials rotated" } })
         }
         Example::Supervisor => {
             json!({ "running": true, "services": [{ "name": "runinator-ws", "status": "running" }] })

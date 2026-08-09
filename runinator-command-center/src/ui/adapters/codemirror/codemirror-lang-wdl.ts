@@ -146,7 +146,14 @@ const ATOMS = new Set([
   "none",
   "manual",
   "condition",
+  // interrupt sources. `external` and `timeout` are already spelled here / among the modifiers.
   "external",
+  "wake",
+  "retry",
+  "failure",
+  "resolved",
+  "child",
+  "orphan_signal",
 ]);
 // coercion and compile-time intrinsics, highlighted as functions only when called.
 const BUILTINS = new Set(["string", "json", "file", "dir", "inline"]);

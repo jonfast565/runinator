@@ -116,7 +116,35 @@ impl FakeStore {
         let mut guard = self.state.lock().expect("state");
         if let Some(run) = guard.node_runs.iter_mut().find(|run| run.id == node_run_id) {
             run.created_at -= by;
+            // a dispatched node's deadline runs from `started_at`, a park's from `created_at`.
+            // moving only one of them would leave half the timeout checks looking at the present.
+            if let Some(started) = run.started_at.as_mut() {
+                *started -= by;
+            }
         }
+    }
+
+    /// settle a run the way its own reducer drive would, for a parent waiting on a child.
+    pub fn settle_run(&self, run_id: Uuid, status: WorkflowStatus) {
+        let mut guard = self.state.lock().expect("state");
+        if let Some(run) = guard.runs.get_mut(&run_id) {
+            run.status = status;
+            run.finished_at = Some(Utc::now());
+        }
+    }
+
+    /// every run this store holds, oldest first, for finding a child a node spawned.
+    pub fn runs(&self) -> Vec<WorkflowRun> {
+        let mut runs: Vec<WorkflowRun> = self
+            .state
+            .lock()
+            .expect("state")
+            .runs
+            .values()
+            .cloned()
+            .collect();
+        runs.sort_by_key(|run| run.id);
+        runs
     }
 
     /// stamp a parked node run the way an out-of-band delivery endpoint would.
@@ -657,9 +685,16 @@ impl ReducerStore for FakeStore {
 
     async fn fetch_workflow_by_name(
         &self,
-        _name: String,
+        name: String,
     ) -> Result<Option<WorkflowDefinition>, SendableError> {
-        Ok(None)
+        Ok(self
+            .state
+            .lock()
+            .expect("state")
+            .workflows
+            .iter()
+            .find(|workflow| workflow.name == name)
+            .cloned())
     }
 
     async fn try_record_pipeline_trigger_firing(
@@ -698,14 +733,35 @@ impl ReducerStore for FakeStore {
 
     async fn create_workflow_run(
         &self,
-        _workflow_id: Uuid,
-        _workflow_snapshot: WorkflowDefinition,
-        _parameters: Value,
-        _state: Value,
-        _name: Option<String>,
+        workflow_id: Uuid,
+        workflow_snapshot: WorkflowDefinition,
+        parameters: Value,
+        state: Value,
+        name: Option<String>,
         _provenance: WorkflowRunProvenance,
     ) -> Result<WorkflowRun, SendableError> {
-        unimplemented!("FakeStore::create_workflow_run is not needed by any handler test yet")
+        // enough of a run for a subflow parent to find its child and read its status. provenance is
+        // dropped: nothing the reducer does reads it back.
+        let run: WorkflowRun = serde_json::from_value(serde_json::json!({
+            "id": Uuid::now_v7(),
+            "workflow_id": workflow_id,
+            "workflow_snapshot": workflow_snapshot,
+            "status": "queued",
+            "active_node_id": null,
+            "parameters": parameters,
+            "state": state,
+            "name": name,
+            "created_at": Utc::now(),
+            "started_at": null,
+            "finished_at": null,
+            "message": null,
+        }))?;
+        self.state
+            .lock()
+            .expect("state")
+            .runs
+            .insert(run.id, run.clone());
+        Ok(run)
     }
 
     async fn fetch_workflow_runs_by_name(

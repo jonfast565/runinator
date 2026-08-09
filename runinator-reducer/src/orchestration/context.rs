@@ -275,6 +275,13 @@ pub(super) fn is_reentry_stale(
     node_runs: &[WorkflowNodeRun],
     cursor: &RunCursor,
 ) -> bool {
+    // a run an interrupt handler canceled to re-enter the node is stale by construction: `resume
+    // restart` exists precisely to make the next visit a fresh one, and unlike a loop back-edge it
+    // leaves no newer node run behind to say so. without this the parking kinds that return early on
+    // an unrecognized status (signal, approval, gate, subflow) wedge on the canceled run forever.
+    if latest.transition_reason.as_deref() == Some(super::interrupt::RESTARTED_REASON) {
+        return true;
+    }
     latest.status.is_terminal()
         && node_runs
             .iter()

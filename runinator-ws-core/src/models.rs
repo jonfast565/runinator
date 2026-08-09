@@ -240,6 +240,20 @@ pub struct SignalDeliveryRequest {
     pub payload: Value,
 }
 
+/// an interrupt asked for from outside the run. `source` defaults to `external`, which is the one
+/// a caller normally has any business raising; the field exists so an operator can also drive the
+/// other sources by hand. `cursor_id` names one thread of control in a fanned-out run, and is
+/// omitted to let whichever real thread drives next take it.
+#[derive(Debug, Deserialize)]
+pub struct InterruptRequest {
+    #[serde(default)]
+    pub source: Option<String>,
+    #[serde(default)]
+    pub payload: Value,
+    #[serde(default)]
+    pub cursor_id: Option<Uuid>,
+}
+
 /// an event delivered to a parked `event_source` node. `type` selects which subscriptions match;
 /// the rest of the body is the payload the node's filter and body see.
 #[derive(Debug, Deserialize)]

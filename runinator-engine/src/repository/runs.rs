@@ -2,6 +2,7 @@ use super::support;
 use super::*;
 use runinator_broker_core::IngressMessage;
 use runinator_comm::WsIngressCommand;
+use runinator_models::interrupt::{InterruptSource, PendingInterrupt};
 use uuid::Uuid;
 
 pub async fn create_workflow_run<T: DatabaseImpl>(
@@ -385,6 +386,127 @@ pub async fn deliver_run_event<T: DatabaseImpl>(
     })
 }
 
+/// does this run's workflow declare a handler for `source`?
+///
+/// asked before changing an existing behaviour on a run's behalf, so a workflow that never opted in
+/// keeps the behaviour it had.
+async fn declares_interrupt<T: DatabaseImpl>(
+    db: &T,
+    workflow_run_id: Uuid,
+    source: InterruptSource,
+) -> Result<bool, SendableError> {
+    let Some(run) = db.fetch_workflow_run(workflow_run_id).await? else {
+        return Ok(false);
+    };
+    let workflow = match run.workflow_snapshot {
+        Some(snapshot) => snapshot,
+        None => match db.fetch_workflow(run.workflow_id).await? {
+            Some(workflow) => workflow,
+            None => return Ok(false),
+        },
+    };
+    Ok(runinator_workflows::interrupt_declarations(&workflow)
+        .into_iter()
+        .any(|declaration| declaration.source() == Some(source)))
+}
+
+/// ask a run to raise an interrupt on its next drive.
+///
+/// the request is recorded on the run rather than raised here: every rule about whether an interrupt
+/// can be serviced lives in the reducer, and duplicating any of it in the web service is how the two
+/// come to disagree. the reducer consumes the request on the drive that decides about it, so a
+/// request nobody can service is dropped rather than left to fire at some arbitrary later point.
+///
+/// `cursor_id` names one thread of control; `None` lets whichever real thread drives next take it.
+pub async fn request_run_interrupt<T: DatabaseImpl>(
+    db: &T,
+    workflow_run_id: Uuid,
+    source: InterruptSource,
+    payload: Value,
+    cursor_id: Option<Uuid>,
+) -> Result<TaskResponse, SendableError> {
+    let Some(run) = db.fetch_workflow_run(workflow_run_id).await? else {
+        return Ok(TaskResponse {
+            success: false,
+            message: format!("Workflow run {workflow_run_id} not found"),
+        });
+    };
+    if run.status.is_terminal() {
+        return Ok(TaskResponse {
+            success: false,
+            message: format!("Workflow run {workflow_run_id} has already finished"),
+        });
+    }
+    let request = PendingInterrupt::new(source, payload, cursor_id);
+
+    let mut recorded = false;
+    for _ in 0..MAX_EVENT_DELIVERY_ATTEMPTS {
+        let Some(run) = db.fetch_workflow_run(workflow_run_id).await? else {
+            return Ok(TaskResponse {
+                success: false,
+                message: format!("Workflow run {workflow_run_id} not found"),
+            });
+        };
+        let mut state = WorkflowRunState::from_state(&run.state);
+        // replayable: the request carries its own id, so a losing writer re-adds the same one on top
+        // of whatever won rather than accumulating duplicates.
+        state.take_pending_interrupt(request.id);
+        state.pending_interrupts.push(request.clone());
+        if db
+            .update_workflow_run_state_cas(workflow_run_id, run.state_version, state.to_state())
+            .await?
+        {
+            recorded = true;
+            break;
+        }
+    }
+    if !recorded {
+        return Ok(TaskResponse {
+            success: false,
+            message: format!("Run {workflow_run_id} state kept changing; interrupt not requested"),
+        });
+    }
+
+    // wake the thread so the request is looked at now rather than whenever the run next happens to
+    // move. an untargeted request rides the run's mirrored position, which is the primary cursor.
+    let node_id = match cursor_id
+        .and_then(|id| WorkflowRunState::from_state(&run.state).cursor(id).cloned())
+    {
+        Some(cursor) => Some(cursor.node_id().to_string()),
+        None => run.active_node_id.clone(),
+    };
+    if let Some(node_id) = node_id {
+        match cursor_id {
+            Some(cursor_id) => {
+                support::enqueue_node_ready_for_cursor(
+                    db,
+                    workflow_run_id,
+                    cursor_id,
+                    node_id,
+                    "interrupt_requested",
+                    Utc::now(),
+                )
+                .await?
+            }
+            None => {
+                support::enqueue_node_ready(
+                    db,
+                    workflow_run_id,
+                    node_id,
+                    "interrupt_requested",
+                    Utc::now(),
+                    runinator_models::json!({ "source": source.as_str() }),
+                )
+                .await?
+            }
+        }
+    }
+    Ok(TaskResponse {
+        success: true,
+        message: format!("Interrupt '{source}' requested for run {workflow_run_id}"),
+    })
+}
+
 pub async fn deliver_signal<T: DatabaseImpl>(
     db: &T,
     workflow_run_id: Uuid,
@@ -404,6 +526,19 @@ pub async fn deliver_signal<T: DatabaseImpl>(
         })
         .max_by_key(|run| run.created_at);
     let Some(node_run) = target else {
+        // nothing is parked on this signal. a run that declared an `orphan_signal` handler wants to
+        // hear about that; every other run keeps the old behaviour of reporting it back, so a
+        // misrouted webhook stays visible rather than being quietly absorbed.
+        if declares_interrupt(db, workflow_run_id, InterruptSource::OrphanSignal).await? {
+            return request_run_interrupt(
+                db,
+                workflow_run_id,
+                InterruptSource::OrphanSignal,
+                runinator_models::json!({ "signal": name, "payload": payload }),
+                None,
+            )
+            .await;
+        }
         return Ok(TaskResponse {
             success: false,
             message: format!("No node is waiting for signal '{name}' in run {workflow_run_id}"),

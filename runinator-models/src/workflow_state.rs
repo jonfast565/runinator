@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::cursor::RunCursor;
+use crate::interrupt::PendingInterrupt;
 use crate::orchestration::GateKind;
 use crate::value::{Map, Value};
 
@@ -73,6 +74,10 @@ pub struct WorkflowRunState {
     /// set once a workflow-level `watch` guard has fired, so it redirects to its handler at most once.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub watch_fired: bool,
+    /// interrupts asked for from outside the run, waiting for the next drive of their target thread
+    /// to raise or refuse them. empty for every run that is never interrupted from outside.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pending_interrupts: Vec<PendingInterrupt>,
     /// preserves any keys not modeled above (e.g. wait/subflow node snapshots mirrored into state).
     #[serde(flatten)]
     pub extra: Map,
@@ -144,6 +149,25 @@ impl WorkflowRunState {
                     .is_none_or(|frame| frame.interrupted_cursor != id)
         });
         self.cursors.len() != before
+    }
+
+    /// the oldest interrupt request this cursor may take, if any.
+    ///
+    /// oldest-first so a burst of requests is served in the order it was made rather than the order
+    /// the run happens to drive.
+    pub fn pending_interrupt_for(&self, cursor_id: Uuid) -> Option<&PendingInterrupt> {
+        self.pending_interrupts
+            .iter()
+            .filter(|request| request.targets(cursor_id))
+            .min_by_key(|request| request.requested_at)
+    }
+
+    /// drop a request once a drive has decided about it. returns whether it was still there, so a
+    /// caller can tell a first decision from a duplicated drive re-deciding.
+    pub fn take_pending_interrupt(&mut self, id: Uuid) -> bool {
+        let before = self.pending_interrupts.len();
+        self.pending_interrupts.retain(|request| request.id != id);
+        self.pending_interrupts.len() != before
     }
 
     /// the handler cursor currently suspending `id`, if one is running.

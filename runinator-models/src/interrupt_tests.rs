@@ -21,7 +21,7 @@ fn frame(interrupted: Uuid) -> InterruptFrame {
 
 #[test]
 fn source_and_mode_names_round_trip() {
-    for source in [InterruptSource::Wake] {
+    for source in InterruptSource::ALL {
         assert_eq!(InterruptSource::from_str(source.as_str()), Some(source));
     }
     for mode in [
@@ -47,6 +47,92 @@ fn source_and_mode_serialize_to_their_author_facing_names() {
     assert_eq!(
         serde_json::to_value(InterruptMode::Restart).unwrap(),
         serde_json::json!("restart")
+    );
+}
+
+/// `ALL` drives source matching, the wdl keyword list, and the docs. a variant missing from it is
+/// simply never raised, which is silent — so pin the count and the serde names together.
+#[test]
+fn every_source_is_listed_exactly_once_with_its_wire_name() {
+    let names: Vec<&str> = InterruptSource::ALL.iter().map(|s| s.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "external",
+            "orphan_signal",
+            "wake",
+            "timeout",
+            "retry",
+            "failure",
+            "resolved",
+            "child",
+        ],
+        "ALL is the precedence order the reducer matches in; changing it changes which source wins"
+    );
+    for source in InterruptSource::ALL {
+        assert_eq!(
+            serde_json::to_value(source).unwrap(),
+            serde_json::Value::String(source.as_str().into()),
+            "the serde name is the author-facing name"
+        );
+    }
+}
+
+/// a requested source has no node state to match against, so the reducer must never look for one on
+/// a drive; a drive-matched source must never sit waiting in the pending queue.
+#[test]
+fn only_the_out_of_band_sources_are_requested() {
+    let requested: Vec<&str> = InterruptSource::ALL
+        .iter()
+        .filter(|source| source.requested())
+        .map(|source| source.as_str())
+        .collect();
+    assert_eq!(requested, ["external", "orphan_signal"]);
+}
+
+#[test]
+fn a_pending_request_is_taken_oldest_first_by_its_target() {
+    let mine = Uuid::now_v7();
+    let other = Uuid::now_v7();
+    let mut state = WorkflowRunState::default();
+    let mut newer = PendingInterrupt::new(InterruptSource::External, json!({ "n": 2 }), None);
+    newer.requested_at = Utc::now();
+    let mut older = PendingInterrupt::new(InterruptSource::External, json!({ "n": 1 }), None);
+    older.requested_at = Utc::now() - chrono::Duration::seconds(30);
+    let older_id = older.id;
+    let mut targeted = PendingInterrupt::new(InterruptSource::External, Value::Null, Some(other));
+    targeted.requested_at = Utc::now() - chrono::Duration::seconds(60);
+    let targeted_id = targeted.id;
+    state.pending_interrupts = vec![newer, older, targeted];
+
+    assert_eq!(
+        state.pending_interrupt_for(mine).map(|request| request.id),
+        Some(older_id),
+        "a burst is served in the order it was made, and never from another thread's request"
+    );
+    assert_eq!(
+        state.pending_interrupt_for(other).map(|request| request.id),
+        Some(targeted_id),
+        "a request naming this thread is visible to it"
+    );
+
+    assert!(state.take_pending_interrupt(older_id));
+    assert!(
+        !state.take_pending_interrupt(older_id),
+        "a duplicated drive must be able to tell it already decided"
+    );
+    assert_eq!(state.pending_interrupts.len(), 2);
+}
+
+#[test]
+fn a_run_with_no_pending_interrupts_serializes_exactly_as_before() {
+    let encoded = serde_json::to_value(WorkflowRunState::default()).unwrap();
+    assert!(
+        !encoded
+            .as_object()
+            .expect("state encodes as an object")
+            .contains_key("pending_interrupts"),
+        "the key must not appear on runs nobody interrupts, or every persisted run churns"
     );
 }
 

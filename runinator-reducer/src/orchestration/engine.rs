@@ -342,6 +342,7 @@ async fn process_workflow_run_step<T: ReducerStore>(
         node,
         &nodes,
         latest.as_ref(),
+        &node_runs,
     )
     .await?
     {

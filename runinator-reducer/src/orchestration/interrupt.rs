@@ -14,34 +14,229 @@ use runinator_models::interrupt::{
 };
 use runinator_workflows::interrupt_declarations;
 
+use super::context::is_reentry_stale;
 use super::handler::{NodeHandler, NodeHandlerContext};
-use super::transitions::{block_node, transition_from_node};
+use super::transitions::{block_node, timed_out, timed_out_since_created, transition_from_node};
 use super::*;
 
-/// which interrupt source, if any, this drive represents.
-///
-/// exhaustive by construction: every source is one arm. adding a source means adding a variant to
-/// [`InterruptSource`] and an arm here, and nothing else in this file changes.
-pub(super) fn source_for_drive(
-    node: &WorkflowNode,
-    latest: Option<&WorkflowNodeRun>,
-) -> Option<InterruptSource> {
-    // `wake`: a parked node's timer elapsed. v1 binds this to a `wait` deadline, which is the one
-    // park whose resumption is purely a function of the clock.
-    if node.kind == WorkflowNodeKind::Wait && super::wait::deadline_elapsed(latest) {
-        return Some(InterruptSource::Wake);
-    }
-    None
+/// the transition reason stamped on a node run `resume restart` cancels. read back by
+/// [`super::context::is_reentry_stale`], which is what makes the next visit a fresh one.
+pub(super) const RESTARTED_REASON: &str = "interrupt_restarted";
+
+/// a raise this drive has decided to make, carrying everything the write needs.
+struct Raised {
+    source: InterruptSource,
+    /// what the region reads as `interrupt.payload`.
+    payload: Value,
+    /// the out-of-band request this came from, consumed by the same write that raises it.
+    request_id: Option<Uuid>,
 }
 
-/// what the raising drive carries into the region as `interrupt.payload`.
-fn payload_for(source: InterruptSource, latest: Option<&WorkflowNodeRun>) -> Value {
-    match source {
-        InterruptSource::Wake => latest
-            .and_then(|run| run.state.decode::<WaitState>().ok())
-            .map(|state| runinator_models::json!({ "deadline_unix": state.deadline_unix }))
-            .unwrap_or(Value::Null),
+/// does this drive represent `source`, and if so what does it carry into the region?
+///
+/// one arm per source, each answering both questions at once: a predicate that matched and then had
+/// to re-derive its own evidence to build a payload is exactly how the two drift apart. adding a
+/// source is a variant on [`InterruptSource`], an entry in its `ALL`, and an arm here.
+///
+/// `latest` has already had a stale re-entry filtered out, so a loop body returning to a node whose
+/// previous iteration failed does not read that iteration as a fresh failure.
+async fn detect<T: ReducerStore>(
+    db: &T,
+    source: InterruptSource,
+    node: &WorkflowNode,
+    cursor: &RunCursor,
+    latest: Option<&WorkflowNodeRun>,
+) -> Result<Option<Value>, SendableError> {
+    let payload = match source {
+        // a parked node's timer elapsed. bound to a `wait` deadline, the one park whose resumption
+        // is purely a function of the clock.
+        InterruptSource::Wake => {
+            if node.kind != WorkflowNodeKind::Wait || !super::wait::deadline_elapsed(latest) {
+                return Ok(None);
+            }
+            let deadline = latest
+                .and_then(|run| run.state.decode::<WaitState>().ok())
+                .map(|state| state.deadline_unix);
+            runinator_models::json!({ "node_id": node.id, "deadline_unix": deadline })
+        }
+        // the node's own deadline has blown while its run is still in flight, so the thread is about
+        // to be timed out. raising here rather than after the fact is the point: the handler still
+        // has a live node run to decide about. an implicit default deadline is deliberately not
+        // enough — only a timeout the author wrote down raises this.
+        InterruptSource::Timeout => {
+            let Some(run) = latest.filter(|run| !run.status.is_terminal()) else {
+                return Ok(None);
+            };
+            let Some(timeout) = node.timeout_seconds else {
+                return Ok(None);
+            };
+            // a park never goes `Running`, so its clock runs from creation; a dispatched node's runs
+            // from `started_at`. reading the wrong one would fire before the node itself agrees it
+            // has overrun.
+            let blown = match run.status {
+                WorkflowStatus::Running => timed_out(node, cursor, run),
+                _ => timed_out_since_created(node, cursor, run),
+            };
+            if !blown {
+                return Ok(None);
+            }
+            let since = run.started_at.unwrap_or(run.created_at);
+            runinator_models::json!({
+                "node_id": node.id,
+                "timeout_seconds": timeout,
+                "elapsed_seconds": (Utc::now() - since).num_seconds(),
+            })
+        }
+        // a failed node run is queued for another attempt. the handler runs before the re-dispatch,
+        // so it can fix whatever the attempt needs, or step past the node entirely.
+        //
+        // the retry scheduler is the only thing that leaves a node run `Queued`, so the status alone
+        // would do today; the reason is checked as well so this keeps meaning "a retry" if something
+        // else ever parks a run there.
+        InterruptSource::Retry => {
+            let Some(run) = latest.filter(|run| {
+                run.status == WorkflowStatus::Queued
+                    && run.transition_reason.as_deref() == Some("retry_queued")
+            }) else {
+                return Ok(None);
+            };
+            runinator_models::json!({
+                "node_id": node.id,
+                "attempt": run.attempt + 1,
+                "max_attempts": node.retry.max_attempts,
+                "message": run.message,
+            })
+        }
+        // the node settled badly and the thread is about to take its failure route. a `TimedOut` run
+        // lands here rather than under `timeout`, which only ever matches a run still in flight.
+        InterruptSource::Failure => {
+            let Some(run) = latest.filter(|run| {
+                matches!(
+                    run.status,
+                    WorkflowStatus::Failed | WorkflowStatus::TimedOut
+                )
+            }) else {
+                return Ok(None);
+            };
+            runinator_models::json!({
+                "node_id": node.id,
+                "status": run.status.as_str(),
+                "message": run.message,
+                "output": run.output_json,
+            })
+        }
+        // an out-of-band park resolution landed: an endpoint stamped the node run `Succeeded` and
+        // woke the run. a polled park (`gate`) transitions inline on the poll that opens it and so
+        // never produces a drive in this shape — which is what keeps a 30s poll from raising an
+        // interrupt every 30s.
+        InterruptSource::Resolved => {
+            if !matches!(
+                node.kind,
+                WorkflowNodeKind::Signal | WorkflowNodeKind::Approval | WorkflowNodeKind::Input
+            ) {
+                return Ok(None);
+            }
+            let Some(run) = latest.filter(|run| run.status == WorkflowStatus::Succeeded) else {
+                return Ok(None);
+            };
+            runinator_models::json!({
+                "node_id": node.id,
+                "kind": serde_json::to_value(&node.kind).unwrap_or_default(),
+                "output": run.output_json,
+            })
+        }
+        // a child run this thread is parked on reached a terminal. the read is only paid for by a
+        // run that both parked on a subflow and declared a handler for this source.
+        InterruptSource::Child => {
+            if node.kind != WorkflowNodeKind::Subflow {
+                return Ok(None);
+            }
+            let Some(state) = latest
+                .filter(|run| run.status == WorkflowStatus::Waiting)
+                .and_then(|run| SubflowState::from_wire_value(&run.state).ok())
+            else {
+                return Ok(None);
+            };
+            let Some(child) = db.fetch_workflow_run(state.subflow_run_id).await? else {
+                return Ok(None);
+            };
+            if !child.status.is_terminal() {
+                return Ok(None);
+            }
+            runinator_models::json!({
+                "node_id": node.id,
+                "child_run_id": child.id,
+                "status": child.status.as_str(),
+            })
+        }
+        // requested from outside the run: there is no node state to match, so these are raised from
+        // the pending queue in `maybe_raise` and never from a drive.
+        InterruptSource::External | InterruptSource::OrphanSignal => return Ok(None),
+    };
+    Ok(Some(payload))
+}
+
+/// the raise this drive should make, considering only sources a handler actually answers.
+///
+/// filtering by declaration before matching is what keeps the feature free for a workflow that uses
+/// none of it, and what confines a predicate's database read to a run that asked for that source.
+async fn resolve_raise<T: ReducerStore>(
+    db: &T,
+    declared: &[InterruptSource],
+    state: &WorkflowRunState,
+    node: &WorkflowNode,
+    cursor: &RunCursor,
+    latest: Option<&WorkflowNodeRun>,
+) -> Result<Option<Raised>, SendableError> {
+    let pending = state.pending_interrupt_for(cursor.id);
+    for source in InterruptSource::ALL {
+        if !declared.contains(&source) {
+            continue;
+        }
+        if source.requested() {
+            if let Some(request) = pending.filter(|request| request.source == source) {
+                return Ok(Some(Raised {
+                    source,
+                    payload: request.payload.clone(),
+                    request_id: Some(request.id),
+                }));
+            }
+            continue;
+        }
+        if let Some(payload) = detect(db, source, node, cursor, latest).await? {
+            return Ok(Some(Raised {
+                source,
+                payload,
+                request_id: None,
+            }));
+        }
     }
+    Ok(None)
+}
+
+/// drop a request the drive looked at and refused, so it cannot fire at some arbitrary later point
+/// in the run. every refusal that reaches here is a standing fact about the run — no handler, an
+/// unsupported region, a node that cannot be interrupted — not a condition the next drive would
+/// answer differently.
+async fn refuse_request<T: ReducerStore>(
+    db: &T,
+    workflow_run_id: Uuid,
+    request_id: Option<Uuid>,
+    reason: &str,
+) -> Result<(), SendableError> {
+    let Some(request_id) = request_id else {
+        return Ok(());
+    };
+    tracing::warn!(
+        run_id = %workflow_run_id,
+        reason,
+        "an interrupt requested from outside the run cannot be serviced; dropping it"
+    );
+    run_state::mutate_run_state(db, workflow_run_id, move |state| {
+        state.take_pending_interrupt(request_id);
+    })
+    .await?;
+    Ok(())
 }
 
 /// raise `source` against this cursor if a handler is declared and everything about the interrupt
@@ -49,6 +244,7 @@ fn payload_for(source: InterruptSource, latest: Option<&WorkflowNodeRun>) -> Val
 ///
 /// every refusal below is silent and leaves no run-visible trace: an interrupt that cannot run is
 /// simply not raised.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn maybe_raise<T: ReducerStore>(
     db: &T,
     workflow: &runinator_models::workflows::WorkflowDefinition,
@@ -57,28 +253,74 @@ pub(super) async fn maybe_raise<T: ReducerStore>(
     node: &WorkflowNode,
     nodes: &[WorkflowNode],
     latest: Option<&WorkflowNodeRun>,
+    node_runs: &[WorkflowNodeRun],
 ) -> Result<bool, SendableError> {
     // a speculative branch must not be able to run a handler: its "what if" is not a real thread,
-    // and the handler would write node runs the real cursor can see.
+    // and the handler would write node runs the real cursor can see. a pending request is left
+    // alone here rather than refused — these cursors are not the thread it is waiting for.
     if cursor.is_speculative() || cursor.is_suspended() || cursor.is_interrupt_handler() {
         return Ok(false);
     }
-    if !runinator_workflows::graph_role(&node.kind).interruptible {
+    // no handler declared for any source this binary knows, and nothing asked from outside: the
+    // whole feature costs one metadata lookup and one key probe. every predicate below, including
+    // the ones that read the database, is only reached by a run that asked for that source.
+    let declarations = interrupt_declarations(workflow);
+    let declared: Vec<InterruptSource> = declarations.iter().filter_map(|d| d.source()).collect();
+    let requested = workflow_run
+        .state
+        .get("pending_interrupts")
+        .is_some_and(|value| !value.is_null());
+    if declared.is_empty() && !requested {
         return Ok(false);
     }
-    let Some(source) = source_for_drive(node, latest) else {
+
+    let state = WorkflowRunState::from_state(&workflow_run.state);
+    // a request nobody answers is dropped by the drive that looks at it rather than left parked: a
+    // handler that appears later in the run's life would fire it long after the caller gave up.
+    if let Some(request) = state.pending_interrupt_for(cursor.id)
+        && !declared.contains(&request.source)
+    {
+        refuse_request(
+            db,
+            workflow_run.id,
+            Some(request.id),
+            "no handler is declared for the requested source",
+        )
+        .await?;
+        return Ok(false);
+    }
+    // a node run left behind by a previous loop iteration is not evidence about this one — the
+    // node handlers all filter it out before reading a status, and so must the sources.
+    let latest = latest.filter(|run| !is_reentry_stale(run, node_runs, cursor));
+    let Some(raised) = resolve_raise(db, &declared, &state, node, cursor, latest).await? else {
         return Ok(false);
     };
+    let source = raised.source;
+
+    if !runinator_workflows::graph_role(&node.kind).interruptible {
+        refuse_request(
+            db,
+            workflow_run.id,
+            raised.request_id,
+            "the thread is on a node that cannot be interrupted",
+        )
+        .await?;
+        return Ok(false);
+    }
     // the fired-interrupt record is keyed to the node run, so a plain `resume` — after which the
     // raising condition is usually still true — does not immediately raise the same interrupt again.
-    let key = latest.map(|run| handled_key(source, run.id));
+    // a requested source is exempt: it is consumed by this drive either way, so it cannot loop, and
+    // an explicit second ask at the same node deserves a second handler run.
+    let key = (!source.requested())
+        .then(|| latest.map(|run| handled_key(source, run.id)))
+        .flatten();
     if let Some(key) = key.as_deref()
         && cursor.has_handled(key)
     {
         return Ok(false);
     }
 
-    let Some(declaration) = interrupt_declarations(workflow)
+    let Some(declaration) = declarations
         .into_iter()
         .find(|declaration| declaration.source() == Some(source))
     else {
@@ -94,13 +336,26 @@ pub(super) async fn maybe_raise<T: ReducerStore>(
             handler = %entry,
             "interrupt handler region is not supported by this binary; not raising"
         );
+        refuse_request(
+            db,
+            workflow_run.id,
+            raised.request_id,
+            "the declared handler region is not supported by this binary",
+        )
+        .await?;
         return Ok(false);
     }
 
-    let state = WorkflowRunState::from_state(&workflow_run.state);
     // an unwinding run is already running synthetic compensation work on this cursor; the two would
     // compete for it.
     if state.compensation.is_some() {
+        refuse_request(
+            db,
+            workflow_run.id,
+            raised.request_id,
+            "the run is unwinding compensation",
+        )
+        .await?;
         return Ok(false);
     }
 
@@ -110,7 +365,7 @@ pub(super) async fn maybe_raise<T: ReducerStore>(
     let frame = InterruptFrame {
         interrupted_cursor: cursor.id,
         source,
-        payload: payload_for(source, latest),
+        payload: raised.payload,
         resume: ResumePoint {
             node_id: cursor.node_id().to_string(),
             loop_frame: cursor.loop_frame.clone(),
@@ -121,6 +376,7 @@ pub(super) async fn maybe_raise<T: ReducerStore>(
     let interrupted = cursor.id;
     let entry_node = entry.clone();
     let handled = key.clone();
+    let request_id = raised.request_id;
     let persisted = run_state::mutate_run_state(db, workflow_run.id, move |state| {
         // replayable: re-derived from scratch on each attempt, so a losing writer rebuilds the same
         // suspension on top of whatever won.
@@ -138,6 +394,11 @@ pub(super) async fn maybe_raise<T: ReducerStore>(
             let mut handler = RunCursor::interrupt_handler(entry_node.clone(), frame.clone());
             handler.id = handler_cursor_id;
             state.cursors.push(handler);
+        }
+        // consuming the request in the same write that raises it is what stops a retried
+        // compare-and-swap raising the same ask twice.
+        if let Some(request_id) = request_id {
+            state.take_pending_interrupt(request_id);
         }
     })
     .await?;
@@ -261,7 +522,7 @@ async fn finish_interrupt<T: ReducerStore>(
         && let Some(stale) = in_flight.as_ref()
     {
         let reason = match mode {
-            InterruptMode::Restart => "interrupt_restarted",
+            InterruptMode::Restart => RESTARTED_REASON,
             _ => "interrupt_skipped",
         };
         db.update_workflow_node_run(
