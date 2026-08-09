@@ -56,6 +56,7 @@ mod event_source;
 mod gate;
 mod handler;
 mod input;
+mod interrupt;
 mod map;
 mod mutex;
 mod output;
@@ -74,6 +75,9 @@ mod cooldown_tests;
 mod debug_tests;
 #[cfg(test)]
 mod handler_tests;
+
+#[cfg(test)]
+mod interrupt_tests;
 #[cfg(test)]
 mod tests;
 

@@ -11,6 +11,7 @@
 mod catalog;
 mod concurrency;
 mod control_flow;
+mod interrupts;
 mod provider_parameters;
 mod references;
 mod state_machine;

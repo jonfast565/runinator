@@ -19,7 +19,7 @@ impl NodeKindSpec for Switch {
     }
 
     fn graph_role(&self) -> GraphRole {
-        GraphRole::STEP
+        GraphRole::STEP.handler_safe()
     }
 
     fn check_parameters(&self, node: &WorkflowNode) -> Result<(), WorkflowValidationError> {

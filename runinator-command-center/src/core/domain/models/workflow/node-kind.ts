@@ -33,4 +33,5 @@ export type WorkflowNodeKind =
   | "circuit_breaker"
   | "event_source"
   | "end"
-  | "fail";
+  | "fail"
+  | "resume";

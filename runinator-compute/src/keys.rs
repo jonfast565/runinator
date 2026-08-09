@@ -2,8 +2,8 @@
 // the structural parse/serialize lives); re-exported here for the evaluation and compute code. the
 // expression/lambda keys are no longer referenced in this crate now that parse/serialize moved out.
 pub(crate) use runinator_models::workflow_ast::{
-    REF_CONFIG, REF_INPUT, REF_LOCAL, REF_OUTPUT, REF_PREV, REF_WORKFLOW, STMT_GOTO, STMT_LET,
-    STMT_RETURN, STMT_VALUE,
+    REF_CONFIG, REF_INPUT, REF_INTERRUPT, REF_LOCAL, REF_OUTPUT, REF_PREV, REF_WORKFLOW, STMT_GOTO,
+    STMT_LET, STMT_RETURN, STMT_VALUE,
 };
 
 pub const COND_ALL: &str = "all";

@@ -125,7 +125,7 @@ pub(super) async fn process_action_node<T: ReducerStore>(
             // node's timeout so a lost worker or dropped result cannot park the run forever. this
             // is a backstop for a missing/very long timeout_seconds; the liveness checks below are
             // what actually catch a worker dying mid-run in a timely fashion.
-            if timed_out(node, node_run) {
+            if timed_out(node, cursor, node_run) {
                 return time_out(
                     db,
                     workflow_run,
@@ -189,7 +189,12 @@ pub(super) async fn process_action_node<T: ReducerStore>(
         // deadline is measured from `created_at` instead, with a fallback deadline when the node
         // declares no timeout of its own.
         if node_run.status == WorkflowStatus::Waiting
-            && timed_out_since_created_or(node, node_run, TARGET_PARK_DEFAULT_TIMEOUT_SECONDS)
+            && timed_out_since_created_or(
+                node,
+                cursor,
+                node_run,
+                TARGET_PARK_DEFAULT_TIMEOUT_SECONDS,
+            )
         {
             return time_out(
                 db,

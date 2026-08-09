@@ -5,7 +5,7 @@ use crate::compute::{cmp_values, is_higher_order};
 use crate::errors::WorkflowValidationError;
 use crate::functions::{EvalEnv, FunctionTable, invoke_user_function};
 use crate::keys::{
-    REF_CONFIG, REF_INPUT, REF_LOCAL, REF_OUTPUT, REF_PREV, REF_STEPS, REF_WORKFLOW,
+    REF_CONFIG, REF_INPUT, REF_INTERRUPT, REF_LOCAL, REF_OUTPUT, REF_PREV, REF_STEPS, REF_WORKFLOW,
 };
 use runinator_models::workflow_ast::{
     WorkflowExpression, WorkflowPathSegment, WorkflowRefSource, WorkflowValueRef,
@@ -692,6 +692,7 @@ pub(crate) fn resolve_value_ref(
         WorkflowRefSource::Prev => context.get(REF_PREV),
         WorkflowRefSource::Workflow => context.get(REF_WORKFLOW),
         WorkflowRefSource::Config => context.get(REF_CONFIG),
+        WorkflowRefSource::Interrupt => context.get(REF_INTERRUPT),
         WorkflowRefSource::Local => context.get(REF_LOCAL),
         // node-output refs are resolved before this point; treat any that reach here as unresolved
         // rather than panicking, so a malformed reference surfaces as a validation error.

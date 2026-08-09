@@ -613,7 +613,8 @@ fn a_nested_fork_sees_its_parents_work_and_not_its_siblings() {
     .expect("node runs");
 
     let child_cursor = state.cursor(child).expect("child").clone();
-    let visible = super::context::visible_node_runs(&child_cursor, &state, &node_runs);
+    let visible =
+        super::context::visible_node_runs(&child_cursor, &state, &node_runs, &Default::default());
     assert_eq!(
         visible.len(),
         1,
@@ -647,12 +648,14 @@ fn a_real_cursor_cannot_see_speculative_output() {
     .expect("node runs");
 
     let real_cursor = state.cursor(real).expect("real").clone();
-    let visible = super::context::visible_node_runs(&real_cursor, &state, &node_runs);
+    let visible =
+        super::context::visible_node_runs(&real_cursor, &state, &node_runs, &Default::default());
     assert_eq!(visible.len(), 1, "a real cursor sees only real output");
     assert!(!visible[0].speculative);
 
     let spec_cursor = state.cursor(spec).expect("spec").clone();
-    let visible = super::context::visible_node_runs(&spec_cursor, &state, &node_runs);
+    let visible =
+        super::context::visible_node_runs(&spec_cursor, &state, &node_runs, &Default::default());
     assert_eq!(
         visible.len(),
         2,

@@ -153,7 +153,7 @@ pub(super) async fn process_throttle_node<T: ReducerStore>(
     let latest = latest.filter(|run| !is_reentry_stale(run, node_runs, cursor));
 
     if let Some(node_run) = latest.filter(|run| run.status == WorkflowStatus::Waiting) {
-        if timed_out_since_created(node, node_run) {
+        if timed_out_since_created(node, cursor, node_run) {
             time_out(
                 db,
                 workflow_run,

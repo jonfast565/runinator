@@ -16,8 +16,10 @@ impl NodeKindSpec for Join {
         WorkflowNodeKind::Join
     }
 
+    /// not interruptible: a cursor here is a branch waiting to be counted, not a thread doing work.
+    /// suspending one would stall every sibling behind a join that can no longer be satisfied.
     fn graph_role(&self) -> GraphRole {
-        GraphRole::STEP.not_simulatable()
+        GraphRole::STEP.not_simulatable().not_interruptible()
     }
 
     fn check_parameters(&self, node: &WorkflowNode) -> Result<(), WorkflowValidationError> {

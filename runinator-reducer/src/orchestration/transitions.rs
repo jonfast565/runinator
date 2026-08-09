@@ -169,35 +169,40 @@ pub(super) async fn start_try_phase<T: ReducerStore>(
 }
 
 /// true when the run started more than `node.timeout_seconds` ago.
-pub(super) fn timed_out(node: &WorkflowNode, run: &WorkflowNodeRun) -> bool {
-    let (Some(timeout), Some(started_at)) = (node.timeout_seconds, run.started_at) else {
-        return false;
-    };
-    Utc::now() - started_at > chrono::Duration::seconds(timeout)
-}
-
-/// like `timed_out`, but measured from run creation (used by subflow waits).
-pub(super) fn timed_out_since_created(node: &WorkflowNode, run: &WorkflowNodeRun) -> bool {
+pub(super) fn timed_out(node: &WorkflowNode, cursor: &RunCursor, run: &WorkflowNodeRun) -> bool {
     let Some(timeout) = node.timeout_seconds else {
         return false;
     };
-    Utc::now() - run.created_at > chrono::Duration::seconds(timeout)
+    let Some(started) = run.started_at else {
+        return false;
+    };
+    Utc::now() - started > chrono::Duration::seconds(timeout) + cursor.suspension_credit()
 }
 
-/// like `timed_out_since_created`, but falls back to `default_timeout_seconds` when the node
-/// declares no timeout — for parks that must not wait forever.
+/// a park never goes `Running`, so its deadline runs from when the node run was created rather than
+/// from `started_at`. every timeout here is extended by whatever time the thread spent frozen behind
+/// an interrupt: a handler is not the thing the node is waiting for, so its duration must not be
+/// charged to the wait.
+pub(super) fn timed_out_since_created(
+    node: &WorkflowNode,
+    cursor: &RunCursor,
+    run: &WorkflowNodeRun,
+) -> bool {
+    let Some(timeout) = node.timeout_seconds else {
+        return false;
+    };
+    Utc::now() - run.created_at > chrono::Duration::seconds(timeout) + cursor.suspension_credit()
+}
 pub(super) fn timed_out_since_created_or(
     node: &WorkflowNode,
+    cursor: &RunCursor,
     run: &WorkflowNodeRun,
     default_timeout_seconds: i64,
 ) -> bool {
     let timeout = node.timeout_seconds.unwrap_or(default_timeout_seconds);
-    Utc::now() - run.created_at > chrono::Duration::seconds(timeout)
+    Utc::now() - run.created_at > chrono::Duration::seconds(timeout) + cursor.suspension_credit()
 }
 
-/// enqueue a delayed self ready node at a node's timeout deadline. the event-driven ready queue does
-/// not re-poll parked nodes, so a node that parks (approval/join/subflow) re-arms its own timeout so
-/// the timeout check fires even when no external wake-up arrives.
 pub(super) async fn arm_node_timeout<T: ReducerStore>(
     db: &T,
     workflow_run_id: Uuid,

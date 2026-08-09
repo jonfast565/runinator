@@ -45,7 +45,7 @@ pub(super) async fn process_loop_node<T: ReducerStore>(
     // left running from a prior interrupted visit.
     let node_run = match latest.filter(|run| run.status == WorkflowStatus::Running) {
         Some(latest) => {
-            if timed_out(node, latest) {
+            if timed_out(node, cursor, latest) {
                 return time_out(
                     db,
                     workflow_run,
@@ -173,7 +173,7 @@ pub(super) async fn process_parallel_node<T: ReducerStore>(
     node_runs: &[WorkflowNodeRun],
 ) -> Result<(), SendableError> {
     if let Some(node_run) = latest {
-        if node_run.status == WorkflowStatus::Running && timed_out(node, node_run) {
+        if node_run.status == WorkflowStatus::Running && timed_out(node, cursor, node_run) {
             return time_out(
                 db,
                 workflow_run,
@@ -326,7 +326,7 @@ pub(super) async fn process_join_node<T: ReducerStore>(
         return Ok(());
     }
     if let Some(node_run) = latest.filter(|run| run.status == WorkflowStatus::Waiting)
-        && timed_out(node, node_run)
+        && timed_out(node, cursor, node_run)
     {
         return time_out(
             db,
@@ -354,10 +354,11 @@ pub(super) async fn process_join_node<T: ReducerStore>(
     }
     // an early-arriving branch retires instead of parking. the last branch to arrive is the one that
     // finds the join satisfied above and carries the run onward, so exactly one cursor leaves a join.
-    // the `real_cursors` count is what stops a genuinely-alone branch retiring itself into a stall
-    // just because a speculative fork happens to be live.
+    // the `joinable_cursors` count is what stops a genuinely-alone branch retiring itself into a
+    // stall just because a speculative fork or an interrupt handler happens to be live. neither is
+    // a sibling branch; counting one as company is exactly the bug this filter exists to prevent.
     let state = WorkflowRunState::from_state(&workflow_run.state);
-    if cursor.forked_by.is_some() && state.real_cursors().count() > 1 {
+    if cursor.forked_by.is_some() && state.joinable_cursors().count() > 1 {
         return run_state::advance_cursor(
             db,
             workflow_run.id,
@@ -423,7 +424,7 @@ pub(super) async fn process_race_node<T: ReducerStore>(
         super::context::most_recently_finished_node_run(node_runs),
     )
     .await?;
-    if node_run.status == WorkflowStatus::Running && timed_out(node, &node_run) {
+    if node_run.status == WorkflowStatus::Running && timed_out(node, cursor, &node_run) {
         return time_out(
             db,
             workflow_run,
@@ -575,7 +576,7 @@ pub(super) async fn process_try_node<T: ReducerStore>(
         super::context::most_recently_finished_node_run(node_runs),
     )
     .await?;
-    if node_run.status == WorkflowStatus::Running && timed_out(node, &node_run) {
+    if node_run.status == WorkflowStatus::Running && timed_out(node, cursor, &node_run) {
         return time_out(
             db,
             workflow_run,

@@ -330,6 +330,8 @@ fn check_stmt(stmt: &Stmt, env: &mut Env, diagnostics: &mut Vec<Diagnostic>) {
                 check_block(branch, env, diagnostics);
             }
         }
+        // `resume` carries no expressions, names, or bindings, so every pass is a no-op.
+        StmtKind::Resume(_) => {}
         StmtKind::Try(try_stmt) => {
             check_block(&try_stmt.body, env, diagnostics);
             if let Some(catch) = &try_stmt.catch {

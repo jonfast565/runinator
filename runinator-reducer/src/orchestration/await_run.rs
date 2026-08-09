@@ -187,7 +187,7 @@ pub(super) async fn process_await_run_node<T: ReducerStore>(
         let Ok(state) = AwaitWorkflowState::from_wire_value(&node_run.state) else {
             return Ok(ReadyNodeDisposition::Complete);
         };
-        if timed_out_since_created(node, node_run) {
+        if timed_out_since_created(node, cursor, node_run) {
             time_out(
                 db,
                 workflow_run,

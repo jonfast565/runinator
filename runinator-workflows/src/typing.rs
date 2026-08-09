@@ -721,6 +721,9 @@ fn resolve_ref_type(
         // config is typed from the stored settings schema (`{ scope: { name: type } }`); an
         // open struct keeps not-yet-configured keys permissive (`any`) instead of erroring.
         WorkflowRefSource::Config => &context.config,
+        // what an interrupt carries depends on the source that raised it, so the payload has no
+        // statically-known shape; stay permissive rather than inventing one per source.
+        WorkflowRefSource::Interrupt => return Ok(WorkflowType::Any),
         // local refs are fully resolved by the block above; if one ever reaches here, stay permissive
         // (`any`) like the local fallback rather than panicking.
         WorkflowRefSource::Local => return Ok(WorkflowType::Any),

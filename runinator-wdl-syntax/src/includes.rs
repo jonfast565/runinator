@@ -52,6 +52,10 @@ fn collect_workflow(
     for alias in &workflow.aliases {
         collect_entries(&alias.entries, source_dir, paths)?;
     }
+    // a handler region is ordinary statements, so a `file(...)` inside one resolves like any other.
+    for interrupt in &workflow.interrupts {
+        collect_block(&interrupt.body, source_dir, paths)?;
+    }
     collect_block(&workflow.body, source_dir, paths)
 }
 
@@ -158,6 +162,8 @@ fn collect_stmt(stmt: &Stmt, source_dir: &Path, paths: &mut Vec<PathBuf>) -> Res
                 collect_block(branch, source_dir, paths)?;
             }
         }
+        // `resume` carries no expressions, so there is nothing to resolve inside it.
+        StmtKind::Resume(_) => {}
         StmtKind::Try(try_stmt) => {
             collect_block(&try_stmt.body, source_dir, paths)?;
             if let Some(body) = &try_stmt.catch {

@@ -107,6 +107,31 @@ export function coerceRunCursors(value: unknown): RunCursor[] {
         : null,
       debug: coerceDebugFrame(entry.debug) ?? null,
       last_output: asJsonValue(entry.last_output),
+      interrupt: isJsonRecord(entry.interrupt)
+        ? {
+            interrupted_cursor:
+              typeof entry.interrupt.interrupted_cursor === "string"
+                ? entry.interrupt.interrupted_cursor
+                : "",
+            source: typeof entry.interrupt.source === "string" ? entry.interrupt.source : "",
+            payload: asJsonValue(entry.interrupt.payload),
+            resume: isJsonRecord(entry.interrupt.resume)
+              ? {
+                  node_id:
+                    typeof entry.interrupt.resume.node_id === "string"
+                      ? entry.interrupt.resume.node_id
+                      : undefined,
+                }
+              : null,
+            raised_at:
+              typeof entry.interrupt.raised_at === "string"
+                ? entry.interrupt.raised_at
+                : undefined,
+          }
+        : null,
+      suspended_by: typeof entry.suspended_by === "string" ? entry.suspended_by : null,
+      suspended_seconds:
+        typeof entry.suspended_seconds === "number" ? entry.suspended_seconds : undefined,
     });
   }
 

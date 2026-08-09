@@ -13,7 +13,7 @@ pub(super) async fn process_input_node<T: ReducerStore>(
     let latest = latest.filter(|run| run.node_id == node.id);
     if let Some(node_run) = latest {
         if node_run.status == WorkflowStatus::InputRequired
-            && timed_out_since_created(node, node_run)
+            && timed_out_since_created(node, cursor, node_run)
         {
             return transitions::time_out(
                 db,

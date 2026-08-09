@@ -195,6 +195,21 @@ impl Formatter {
             ));
         }
         if !workflow.watches.is_empty()
+            && (!workflow.interrupts.is_empty()
+                || !workflow.type_decls.is_empty()
+                || !workflow.aliases.is_empty()
+                || !workflow.body.is_empty())
+        {
+            self.out.push('\n');
+        }
+        // preserve header `interrupt on <source> { ... }` handler regions. the block renders with
+        // the same body machinery as any other block, so a region formats like the code it is.
+        for interrupt in &workflow.interrupts {
+            let header = format!("interrupt on {} {{", interrupt.source);
+            let rendered = self.render_block(&header, &interrupt.body, "}");
+            self.line(rendered.trim_end_matches('\n'));
+        }
+        if !workflow.interrupts.is_empty()
             && (!workflow.type_decls.is_empty()
                 || !workflow.aliases.is_empty()
                 || !workflow.body.is_empty())
@@ -540,6 +555,10 @@ impl Formatter {
             StmtKind::Match(match_stmt) => self.match_stmt(match_stmt),
             StmtKind::Parallel(parallel) => self.parallel(parallel),
             StmtKind::Try(try_stmt) => self.try_stmt(try_stmt),
+            StmtKind::Resume(resume) => match &resume.mode {
+                Some(mode) => format!("resume {mode}"),
+                None => "resume".to_string(),
+            },
             StmtKind::Race(race) => self.race(race),
             StmtKind::Map(map) => self.map(map),
         }

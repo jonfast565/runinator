@@ -460,6 +460,20 @@ fn construct_completion_items() -> Vec<WdlCompletionItem> {
             true,
         ),
         (
+            "interrupt",
+            "keyword",
+            "interrupt handler region",
+            "interrupt on wake {\n    ${}\n    resume\n}",
+            true,
+        ),
+        (
+            "resume",
+            "keyword",
+            "return control from an interrupt handler",
+            "resume",
+            true,
+        ),
+        (
             "compensate",
             "keyword",
             "compensating action",

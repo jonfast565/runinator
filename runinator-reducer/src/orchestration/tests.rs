@@ -533,8 +533,9 @@ fn timed_out_since_created_catches_a_run_that_never_reached_running() {
     // so the db layer never populates `started_at`. the deadline-from-dispatch check must therefore
     // be blind to a stale park, while the deadline-from-creation check must still catch it.
     let run = node_run("wait", "waiting");
-    assert!(!timed_out(&node, &run));
-    assert!(timed_out_since_created(&node, &run));
+    let cursor = runinator_models::cursor::RunCursor::at("wait");
+    assert!(!timed_out(&node, &cursor, &run));
+    assert!(timed_out_since_created(&node, &cursor, &run));
 }
 
 #[test]
@@ -549,9 +550,11 @@ fn target_park_times_out_even_without_a_configured_node_timeout() {
     // the config-driven check must stay blind (other node kinds park indefinitely by design), but
     // the target park must trip its fallback deadline instead of holding the run forever.
     let run = node_run("sync", "waiting");
-    assert!(!timed_out_since_created(&node, &run));
+    let cursor = runinator_models::cursor::RunCursor::at("sync");
+    assert!(!timed_out_since_created(&node, &cursor, &run));
     assert!(timed_out_since_created_or(
         &node,
+        &cursor,
         &run,
         TARGET_PARK_DEFAULT_TIMEOUT_SECONDS
     ));
@@ -564,6 +567,7 @@ fn target_park_times_out_even_without_a_configured_node_timeout() {
     .expect("node");
     assert!(!timed_out_since_created_or(
         &node,
+        &cursor,
         &run,
         TARGET_PARK_DEFAULT_TIMEOUT_SECONDS
     ));

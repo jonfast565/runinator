@@ -92,6 +92,8 @@ pub struct Workflow {
     pub concurrency: Option<ConcurrencyDecl>,
     /// header `watch <cond> -> <target>` cancellation guards, evaluated on every reducer drive.
     pub watches: Vec<WatchDecl>,
+    /// header `interrupt on <source> { ... }` handler regions.
+    pub interrupts: Vec<InterruptDecl>,
     /// optional header `correlate key <expr>`: the value this workflow's runs are awaitable by. rides
     /// in `metadata.correlation` and is stamped onto each run's correlation key as it progresses.
     pub correlation: Option<Expr>,
@@ -323,6 +325,16 @@ pub struct WatchDecl {
     pub handler: Target,
 }
 
+/// a header `interrupt on <source> { ... }` handler. the block is a region: its first statement is
+/// where the interrupt enters, and every path out of it ends at a `resume`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InterruptDecl {
+    /// the author-facing source name (`wake`). kept as a string so a source this binary does not
+    /// know is a lowering-time diagnostic rather than a parse failure.
+    pub source: String,
+    pub body: Block,
+}
+
 /// a header `import <path> (as <alias>)?` declaration. `path` is the dotted namespace
 /// (`std.strings`, `some_pack`); `alias` binds a short local name when present.
 #[derive(Debug, Clone, PartialEq)]
@@ -402,6 +414,8 @@ pub enum StmtKind {
     Match(MatchStmt),
     Parallel(ParallelStmt),
     Try(TryStmt),
+    /// `resume`, `resume next`, `resume restart`, `resume fail` — ends an interrupt handler region.
+    Resume(ResumeStmt),
     Race(RaceStmt),
     Map(MapStmt),
 }
@@ -770,6 +784,12 @@ pub struct TryStmt {
     pub body: Block,
     pub catch: Option<Block>,
     pub finally: Option<Block>,
+}
+
+/// `resume [next|restart|fail]`. `None` is the bare form: resume at the interrupted node.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResumeStmt {
+    pub mode: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

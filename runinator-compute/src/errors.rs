@@ -86,6 +86,16 @@ pub enum WorkflowValidationError {
         "WORKFLOW029 - mutex release node '{node}' for lock '{name}' can be reached before the lock is acquired"
     )]
     MutexReleaseBeforeAcquire { node: String, name: String },
+    // note: the source field is named `on`, not `source` — thiserror reserves `source` for the
+    // error cause and would try to treat a plain String as one.
+    #[error(
+        "WORKFLOW030 - interrupt handler '{handler}' for source '{on}' is not a valid region: {reason}"
+    )]
+    InterruptHandlerNotIsolatable {
+        handler: String,
+        on: String,
+        reason: String,
+    },
 }
 
 // numbered error dictionary for the workflow validator.
@@ -232,6 +242,12 @@ pub const MUTEX_RELEASE_BEFORE_ACQUIRE: ErrorDescriptor = ErrorDescriptor::new(
     "Mutex release can be reached before the lock is acquired",
 );
 
+pub const INTERRUPT_HANDLER_NOT_ISOLATABLE: ErrorDescriptor = ErrorDescriptor::new(
+    "WORKFLOW030",
+    "workflow.interrupt_handler_not_isolatable",
+    "Interrupt handler region is not single-entry/single-exit",
+);
+
 pub const DICTIONARY: &[ErrorDescriptor] = &[
     MISSING_NODES,
     MISSING_START,
@@ -262,6 +278,7 @@ pub const DICTIONARY: &[ErrorDescriptor] = &[
     INVALID_GOTO_TARGET,
     INVALID_NODE_REFERENCE_TYPE,
     MUTEX_RELEASE_BEFORE_ACQUIRE,
+    INTERRUPT_HANDLER_NOT_ISOLATABLE,
 ];
 
 impl EngineErrors for WorkflowValidationError {

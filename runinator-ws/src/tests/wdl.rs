@@ -43,7 +43,11 @@ async fn get_node_kinds_returns_catalog_json() {
     let crate::models::ApiResponse::JsonValue(value) = response else {
         panic!("node catalog response must be json");
     };
-    assert_eq!(value.as_array().map(Vec::len), Some(35));
+    assert_eq!(
+        value.as_array().map(Vec::len),
+        Some(runinator_models::workflows::WorkflowNodeKind::ALL.len()),
+        "the catalog serves every node kind; a new kind must reach the ui palette"
+    );
 }
 
 #[tokio::test]

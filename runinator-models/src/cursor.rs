@@ -15,6 +15,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::interrupt::InterruptFrame;
 use crate::value::Value;
 use crate::workflow_state::{DebugRuntime, LoopFrame, TryFrame};
 use crate::workflows::WorkflowRun;
@@ -69,6 +70,33 @@ pub struct RunCursor {
     /// "most recently finished output" is the wrong answer once a run has fan-out.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_output: Option<Value>,
+    /// set when this cursor is an interrupt handler rather than an ordinary thread of control.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interrupt: Option<InterruptFrame>,
+    /// the handler cursor that froze this one. a suspended cursor is never driven, and never moved
+    /// by anything but the handler returning control to it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suspended_by: Option<Uuid>,
+    /// interrupts already raised at this position, keyed by `<source>:<node_run_id>`.
+    ///
+    /// this is what stops a plain `resume` from re-raising forever: after resuming, the condition
+    /// that raised the interrupt (an elapsed wait deadline, say) is still true, so without a record
+    /// the source would match again on the very next drive. cleared by [`RunCursor::move_to`],
+    /// because a different position is a different question.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub handled: BTreeSet<String>,
+    /// seconds this cursor spent frozen behind an interrupt while standing where it stands now.
+    ///
+    /// a parked node's deadline is measured from its node run's `created_at`, so without this a
+    /// ten-minute handler would silently eat ten minutes of an approval's window and the park would
+    /// time out the moment control came back. credited by the timeout checks and cleared by
+    /// [`RunCursor::move_to`], because the debt belongs to the position that incurred it.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub suspended_seconds: i64,
+}
+
+fn is_zero(value: &i64) -> bool {
+    *value == 0
 }
 
 impl RunCursor {
@@ -83,6 +111,10 @@ impl RunCursor {
             speculative: None,
             debug: None,
             last_output: None,
+            interrupt: None,
+            suspended_by: None,
+            handled: BTreeSet::new(),
+            suspended_seconds: 0,
         }
     }
 
@@ -114,6 +146,17 @@ impl RunCursor {
             }),
             loop_frame: parent.loop_frame.clone(),
             try_frame: parent.try_frame.clone(),
+            // the interrupt fields are deliberately *not* inherited: a fork of a suspended cursor
+            // would otherwise be born frozen, and a fork of a handler would claim to be one too.
+            // `Self::at` leaves all three empty, which is the answer we want.
+            ..Self::at(node_id)
+        }
+    }
+
+    /// a handler cursor entering `node_id`, the region entry of the interrupt it answers.
+    pub fn interrupt_handler(node_id: impl Into<String>, frame: InterruptFrame) -> Self {
+        Self {
+            interrupt: Some(frame),
             ..Self::at(node_id)
         }
     }
@@ -121,6 +164,37 @@ impl RunCursor {
     /// is this a debugger "what if" branch rather than a real thread of control?
     pub fn is_speculative(&self) -> bool {
         self.speculative.is_some()
+    }
+
+    /// is this cursor running an interrupt handler region rather than the run's own flow?
+    ///
+    /// a handler is a side-channel: it never satisfies a join, never moves the run's status, and
+    /// retires without ending the run — the same carve-outs a speculative cursor gets, for the
+    /// same reason. it must not be able to decide what the run means.
+    pub fn is_interrupt_handler(&self) -> bool {
+        self.interrupt.is_some()
+    }
+
+    /// is this cursor frozen while an interrupt handler runs? a suspended cursor is not driven and
+    /// cannot be moved; only the handler returning control releases it.
+    pub fn is_suspended(&self) -> bool {
+        self.suspended_by.is_some()
+    }
+
+    /// has this interrupt already been raised at this position?
+    pub fn has_handled(&self, key: &str) -> bool {
+        self.handled.contains(key)
+    }
+
+    /// record that an interrupt fired here, so it does not immediately re-raise after a `resume`.
+    pub fn mark_handled(&mut self, key: impl Into<String>) {
+        self.handled.insert(key.into());
+    }
+
+    /// how long a deadline measured at this position should be extended by, to discount the time
+    /// this thread spent frozen rather than waiting for the thing it is actually waiting on.
+    pub fn suspension_credit(&self) -> chrono::Duration {
+        chrono::Duration::seconds(self.suspended_seconds.max(0))
     }
 
     /// may this cursor dispatch `node_id` for real, rather than shadowing it? always true for a real
@@ -159,8 +233,16 @@ impl RunCursor {
     }
 
     /// move this cursor to `node_id`, leaving its frames alone.
+    ///
+    /// the fired-interrupt record is dropped, because it is keyed to the position being left: an
+    /// interrupt that already answered for the previous node has nothing to say about the next one.
     pub fn move_to(&mut self, node_id: impl Into<String>) {
-        self.node_id = node_id.into();
+        let node_id = node_id.into();
+        if node_id != self.node_id {
+            self.handled.clear();
+            self.suspended_seconds = 0;
+        }
+        self.node_id = node_id;
     }
 
     /// clear the frames belonging to this thread of control, for a loop body re-entering cleanly.

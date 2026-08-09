@@ -6,17 +6,36 @@ use super::*;
 /// run means — including making a join think a branch arrived. a speculative cursor sees its own
 /// subtree layered over the real run, which is what makes the fork explore from where it forked.
 ///
+/// an interrupt handler's work is invisible to the thread it suspended, and vice versa is not: the
+/// handler reads the run's context normally, but nothing it does leaks into `steps.*` for the
+/// resumed thread. a handler is a side-channel, so the only way it may influence the thread it
+/// interrupted is the decision its `resume` node carries.
+///
+/// membership is keyed on the *node*, not the cursor, and that is the whole point: a handler cursor
+/// retires the moment its region ends, so a cursor-keyed test would let the region's node runs
+/// become visible again the instant control returned. region membership is a static property of the
+/// graph and outlives the cursor, exactly as `WorkflowNodeRun::speculative` is persisted rather than
+/// inferred for the same reason.
+///
 /// filtering once, at the dispatch site, is what isolates all ~35 handlers (and the join's
 /// satisfaction check with them) without any of them having to know the concept exists.
 pub(super) fn visible_node_runs(
     cursor: &RunCursor,
     state: &WorkflowRunState,
     node_runs: &[WorkflowNodeRun],
+    interrupt_region_nodes: &std::collections::HashSet<String>,
 ) -> Vec<WorkflowNodeRun> {
+    // a handler sees the region's work; every other thread sees none of it. regions are disjoint
+    // from each other and only one interrupt is live at a time, so "am i a handler" is a complete
+    // answer without naming which region.
+    let in_region = |run: &WorkflowNodeRun| interrupt_region_nodes.contains(run.node_id.as_str());
+    let region_visible = cursor.is_interrupt_handler();
+
     if !cursor.is_speculative() {
         return node_runs
             .iter()
             .filter(|run| !run.speculative)
+            .filter(|run| region_visible || !in_region(run))
             .cloned()
             .collect();
     }
@@ -27,6 +46,7 @@ pub(super) fn visible_node_runs(
     node_runs
         .iter()
         .filter(|run| !run.speculative || run.cursor_id.is_some_and(|id| visible.contains(&id)))
+        .filter(|run| region_visible || !in_region(run))
         .cloned()
         .collect()
 }
@@ -104,6 +124,21 @@ pub(super) async fn runtime_context<T: ReducerStore>(
         && !frame.context_patch.is_null()
     {
         deep_merge(&mut context, &frame.context_patch);
+    }
+    // an interrupt handler region reads what raised it under `interrupt.*`. only a handler cursor
+    // carries the frame, so the root simply does not exist for ordinary threads of control.
+    if let Some(frame) = &cursor.interrupt
+        && let Some(root) = context.as_object_mut()
+    {
+        root.insert(
+            "interrupt".to_string(),
+            runinator_models::json!({
+                "source": frame.source.as_str(),
+                "payload": frame.payload.clone(),
+                "raised_at": frame.raised_at.to_rfc3339(),
+                "node_id": frame.resume.node_id.clone(),
+            }),
+        );
     }
     context
 }

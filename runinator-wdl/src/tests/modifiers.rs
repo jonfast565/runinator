@@ -312,3 +312,131 @@ fn action_without_idempotent_modifier_carries_no_key() {
         .expect("action node");
     assert!(action.idempotency_key.is_none());
 }
+
+/// a header `interrupt on <source> { ... }` region lowers into `metadata.interrupts` and survives
+/// the round trip, including the region's own nodes.
+#[test]
+fn interrupt_region_lowers_to_metadata_and_round_trips() {
+    let definition = compile(
+        r#"
+        workflow "Interrupt" v1 {
+            interrupt on wake {
+                node refresh <- console.run(command: "echo refresh")
+                resume next
+            }
+
+            wait 30s
+        }
+    "#,
+    );
+    let interrupts = definition
+        .definition
+        .metadata
+        .pointer("/interrupts")
+        .and_then(|value| value.as_array())
+        .expect("interrupts metadata");
+    assert_eq!(interrupts.len(), 1);
+    assert_eq!(
+        interrupts[0].get("on").and_then(|on| on.as_str()),
+        Some("wake")
+    );
+    assert_eq!(
+        interrupts[0].get("handler").and_then(|h| h.as_str()),
+        Some("refresh"),
+        "the region's entry is its first statement"
+    );
+
+    assert_round_trips_unordered(
+        r#"
+        workflow "Interrupt" v1 {
+            interrupt on wake {
+                node refresh <- console.run(command: "echo refresh")
+                resume next
+            }
+
+            wait 30s
+        }
+    "#,
+    );
+}
+
+/// every `resume` mode survives the round trip. the compiled form of `resume next` is
+/// `mode: "continue"`, so this is also the guard on that one-way spelling.
+#[test]
+fn every_resume_mode_round_trips() {
+    for (source, compiled) in [
+        ("resume", "resume"),
+        ("resume next", "continue"),
+        ("resume restart", "restart"),
+        ("resume fail", "fail"),
+    ] {
+        let src = format!(
+            r#"
+            workflow "Resume Mode" v1 {{
+                interrupt on wake {{
+                    node refresh <- console.run(command: "echo refresh")
+                    {source}
+                }}
+
+                wait 30s
+            }}
+        "#
+        );
+        let definition = compile(&src);
+        let node = definition
+            .definition
+            .nodes
+            .iter()
+            .find(|node| node.kind == runinator_models::workflows::WorkflowNodeKind::Resume)
+            .unwrap_or_else(|| panic!("`{source}` produced no resume node"));
+        assert_eq!(
+            node.parameters.get("mode").and_then(|m| m.as_str()),
+            Some(compiled),
+            "`{source}` must compile to mode {compiled}"
+        );
+        assert_round_trips_unordered(&src);
+    }
+}
+
+/// a region whose block does not end in a `resume` still gets one, so no path can run off the end
+/// of a handler and leave the suspended thread with nothing to release it.
+#[test]
+fn a_region_without_an_explicit_resume_gets_a_synthetic_one() {
+    let definition = compile(
+        r#"
+        workflow "Implicit Resume" v1 {
+            interrupt on wake {
+                node refresh <- console.run(command: "echo refresh")
+            }
+
+            wait 30s
+        }
+    "#,
+    );
+    let resumes: Vec<_> = definition
+        .definition
+        .nodes
+        .iter()
+        .filter(|node| node.kind == runinator_models::workflows::WorkflowNodeKind::Resume)
+        .collect();
+    assert_eq!(
+        resumes.len(),
+        1,
+        "the lowerer terminates the region for the author"
+    );
+    let refresh = definition
+        .definition
+        .nodes
+        .iter()
+        .find(|node| node.id.as_str() == "refresh")
+        .expect("region body");
+    assert_eq!(
+        refresh
+            .transitions
+            .on_success
+            .as_ref()
+            .map(|target| target.as_str()),
+        Some(resumes[0].id.as_str()),
+        "the block's continuation is the synthetic resume"
+    );
+}

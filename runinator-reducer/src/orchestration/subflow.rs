@@ -86,7 +86,7 @@ pub(super) async fn process_subflow_node<T: ReducerStore>(
             }
             other => {
                 // wait-type subflow still in flight; fail fast once it overruns the timeout.
-                if timed_out_since_created(node, node_run) {
+                if timed_out_since_created(node, cursor, node_run) {
                     let timeout = node.timeout_seconds.unwrap_or_default();
                     let output = SubflowOutcome {
                         subflow_run_id,

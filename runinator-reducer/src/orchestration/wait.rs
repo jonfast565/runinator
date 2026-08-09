@@ -1,6 +1,22 @@
 use super::transitions::transition_from_node;
 use super::*;
 
+/// has a parked wait's deadline passed?
+///
+/// shared with the interrupt layer, which binds the `wake` source to exactly this condition. one
+/// definition so "the wait is up" cannot mean two different things to the two callers.
+pub(super) fn deadline_elapsed(latest: Option<&WorkflowNodeRun>) -> bool {
+    let Some(node_run) = latest.filter(|run| run.status == WorkflowStatus::Waiting) else {
+        return false;
+    };
+    let deadline = node_run
+        .state
+        .decode::<WaitState>()
+        .map(|state| state.deadline_unix)
+        .unwrap_or(i64::MAX);
+    Utc::now().timestamp() >= deadline
+}
+
 pub(super) async fn process_wait_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,

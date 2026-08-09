@@ -1,4 +1,6 @@
 import type { WorkflowNodeRun, WorkflowRunDetail } from "../domain/models";
+import { runWorkflowSnapshot } from "../domain/models";
+import { type InterruptOrigin, interruptRegionOrigins } from "./interrupt-regions";
 
 // statuses that mean a node run has settled; anything else is still in flight and its bar counts up.
 const TERMINAL = new Set(["succeeded", "failed", "timed_out", "canceled"]);
@@ -27,6 +29,14 @@ export interface GanttRow {
   running: boolean;
   /** true for the run's bottleneck node — the longest active segment (the critical path driver). */
   critical: boolean;
+  /** the thread of control that produced this row, or null for a run recorded before cursor ids. */
+  cursorId: string | null;
+  /** set when the row came from an interrupt handler region rather than the main flow. resolved
+   * from the graph rather than from live cursors, so it still explains a row whose ephemeral
+   * handler cursor retired long ago. */
+  interrupt: InterruptOrigin | null;
+  /** true for a debugger "what if" branch's row. */
+  speculative: boolean;
 }
 
 export interface GanttTick {
@@ -157,6 +167,8 @@ export function buildGanttLayout(
     return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
   });
 
+  const regions = interruptRegionOrigins(runWorkflowSnapshot(detail));
+
   const rows: GanttRow[] = ordered.map((node) => {
     const created = parseMs(node.created_at) ?? nodeStart(node) ?? t0;
     const start = nodeStart(node) ?? created;
@@ -177,6 +189,9 @@ export function buildGanttLayout(
       waitMs: Math.max(0, start - created),
       running: isRunning(node),
       critical: false,
+      cursorId: node.cursor_id ?? null,
+      interrupt: regions.get(node.node_id) ?? null,
+      speculative: Boolean(node.speculative),
     };
   });
 
@@ -185,6 +200,10 @@ export function buildGanttLayout(
   let bottleneck: GanttRow | null = null;
 
   for (const row of rows) {
+    if (row.interrupt !== null || row.speculative) {
+      continue;
+    }
+
     if (row.durationMs > 0 && (bottleneck === null || row.durationMs > bottleneck.durationMs)) {
       bottleneck = row;
     }

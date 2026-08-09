@@ -27,10 +27,18 @@
           v-for="row in layout.rows"
           :key="row.id"
           class="rg-row"
-          :class="{ selected: row.nodeId === selectedNodeId }"
+          :class="{ selected: row.nodeId === selectedNodeId, interrupt: row.interrupt !== null }"
           @click="emit('select', row.nodeId)"
         >
-          <div class="rg-label" :title="row.nodeId">
+          <div class="rg-label" :title="rowTitle(row)">
+            <!-- a handler region's steps are indented under the main flow and badged with what
+                 raised them: they are a side-channel, not part of the run's own sequence. -->
+            <span
+              v-if="row.interrupt"
+              class="rg-interrupt"
+              :title="`Interrupt handler for '${row.interrupt.source}' (entry ${row.interrupt.handler})`"
+              >⤷ {{ row.interrupt.source }}</span
+            >
             <span class="rg-node">{{ row.nodeId }}</span>
             <span v-if="row.attempt > 1" class="rg-attempt" title="Attempts">↻{{ row.attempt }}</span>
           </div>
@@ -96,6 +104,20 @@ const runInFlight = computed(() => {
 });
 
 const layout = computed(() => buildGanttLayout(props.detail, now.value));
+
+/** the row's own tooltip: which thread produced it, and — for a handler — which interrupt.
+ *
+ * the cursor id is shown because a handler cursor is ephemeral: once the region ends the cursor is
+ * gone from run state, so the row would otherwise have nothing to attribute it to. */
+function rowTitle(row: GanttRow): string {
+  const thread = row.cursorId ? `thread ${row.cursorId.slice(0, 8)}` : "thread unknown";
+
+  if (row.interrupt) {
+    return `${row.nodeId} — interrupt handler for '${row.interrupt.source}' (${thread})`;
+  }
+
+  return `${row.nodeId} — ${thread}`;
+}
 
 function barTitle(row: GanttRow): string {
   const active = `${row.nodeId} · ${formatDuration(row.durationMs)}`;

@@ -17,7 +17,7 @@ pub(super) async fn process_approval_node<T: ReducerStore>(
     let latest = latest.filter(|run| !is_reentry_stale(run, node_runs, cursor));
     if let Some(node_run) = latest {
         if node_run.status == WorkflowStatus::ApprovalRequired
-            && timed_out_since_created(node, node_run)
+            && timed_out_since_created(node, cursor, node_run)
         {
             return time_out(
                 db,

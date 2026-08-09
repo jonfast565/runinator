@@ -13,6 +13,9 @@ pub type AliasTable = HashMap<String, Vec<(String, Expr)>>;
 pub fn desugar(document: &mut Document) -> Result<(), WdlError> {
     for workflow in document.workflows.iter_mut() {
         let aliases = collect_aliases(&workflow.aliases)?;
+        for interrupt in &mut workflow.interrupts {
+            expand_block(&mut interrupt.body, &aliases)?;
+        }
         expand_block(&mut workflow.body, &aliases)?;
     }
     Ok(())
@@ -188,6 +191,8 @@ fn expand_stmt(stmt: &mut Stmt, aliases: &AliasTable) -> Result<(), WdlError> {
                 expand_block(branch, aliases)?;
             }
         }
+        // `resume` carries no expressions, names, or bindings, so every pass is a no-op.
+        StmtKind::Resume(_) => {}
         StmtKind::Try(try_stmt) => {
             expand_block(&mut try_stmt.body, aliases)?;
             if let Some(body) = try_stmt.catch.as_mut() {

@@ -273,6 +273,9 @@ impl Lowerer {
             "run" => Ok(scoped_ref("workflow", rest)),
             // config resolves eagerly in the web service, so it is a plain ref.
             "config" => Ok(scoped_ref("config", rest)),
+            // what raised the interrupt this handler region is answering. only resolves inside a
+            // region — on an ordinary thread of control the root is simply absent.
+            "interrupt" => Ok(scoped_ref("interrupt", rest)),
             // secrets resolve late at the worker; lower to the `secret://scope/name` form it
             // already understands. the whole value must be a single secret (no interpolation).
             "secret" => lower_secret(rest),

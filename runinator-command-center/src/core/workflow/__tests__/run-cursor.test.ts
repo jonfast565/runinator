@@ -140,3 +140,47 @@ describe("coerceRunCursors", () => {
     expect(coerceRunCursors([{ id: "a", node_id: "x" }])).toHaveLength(1);
   });
 });
+
+describe("interrupt cursors", () => {
+  const wireCursors = [
+    { id: "main", node_id: "poll", suspended_by: "handler", suspended_seconds: 42 },
+    {
+      id: "handler",
+      node_id: "refresh",
+      interrupt: {
+        interrupted_cursor: "main",
+        source: "wake",
+        payload: { deadline_unix: 42 },
+        resume: { node_id: "poll" },
+      },
+    },
+  ];
+
+  it("parses the interrupt frame and the suspension off the wire", () => {
+    const cursors = coerceRunCursors(wireCursors);
+
+    expect(cursors[0]?.suspended_by).toBe("handler");
+    expect(cursors[0]?.suspended_seconds).toBe(42);
+    expect(cursors[1]?.interrupt?.source).toBe("wake");
+    expect(cursors[1]?.interrupt?.interrupted_cursor).toBe("main");
+    expect(cursors[1]?.interrupt?.resume?.node_id).toBe("poll");
+  });
+
+  it("names a handler for what raised it rather than where it stands", () => {
+    const cursors = coerceRunCursors(wireCursors);
+    const markers = buildCursorMarkers(cursors);
+
+    expect(markers[1]?.label).toBe("wake handler");
+    expect(markers[1]?.interruptSource).toBe("wake");
+    expect(markers[0]?.suspended).toBe(true);
+    expect(markers[1]?.suspended).toBe(false);
+  });
+
+  it("leaves an ordinary thread unmarked", () => {
+    const markers = buildCursorMarkers(coerceRunCursors([{ id: "a", node_id: "call" }]));
+
+    expect(markers[0]?.interruptSource).toBeNull();
+    expect(markers[0]?.suspended).toBe(false);
+    expect(markers[0]?.label).toBe("main");
+  });
+});

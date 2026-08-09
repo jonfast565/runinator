@@ -28,6 +28,9 @@ pub enum WorkflowRefSource {
     Prev,
     Workflow,
     Config,
+    /// `interrupt.*` — what raised the interrupt this handler region is answering. only resolves
+    /// inside a region; the root simply does not exist on an ordinary thread of control.
+    Interrupt,
     // a compute-block local introduced by `let`, resolved from the `let` slot of the context.
     Local,
     NodeOutput(WorkflowNodeRef),
@@ -339,6 +342,8 @@ pub const REF_INPUT: &str = "input";
 pub const REF_PREV: &str = "prev";
 pub const REF_WORKFLOW: &str = "workflow";
 pub const REF_CONFIG: &str = "config";
+/// the root an interrupt handler region reads what raised it under.
+pub const REF_INTERRUPT: &str = "interrupt";
 pub const REF_LOCAL: &str = "let";
 
 /// a malformed workflow expression (rejected by the structural parser). the string is the offending
@@ -373,6 +378,7 @@ impl From<&WorkflowValueRef> for Value {
             WorkflowRefSource::Prev => single(REF_PREV, path),
             WorkflowRefSource::Workflow => single(REF_WORKFLOW, path),
             WorkflowRefSource::Config => single(REF_CONFIG, path),
+            WorkflowRefSource::Interrupt => single(REF_INTERRUPT, path),
             WorkflowRefSource::Local => single(REF_LOCAL, path),
             WorkflowRefSource::NodeOutput(node) => {
                 let mut map = Map::new();
@@ -417,6 +423,12 @@ impl TryFrom<&Value> for WorkflowValueRef {
         if let Some(path) = object.get(REF_CONFIG) {
             return Ok(WorkflowValueRef {
                 source: WorkflowRefSource::Config,
+                path: parse_path(path)?,
+            });
+        }
+        if let Some(path) = object.get(REF_INTERRUPT) {
+            return Ok(WorkflowValueRef {
+                source: WorkflowRefSource::Interrupt,
                 path: parse_path(path)?,
             });
         }

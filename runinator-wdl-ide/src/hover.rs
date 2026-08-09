@@ -417,6 +417,15 @@ fn keyword_hover(word: WordAt<'_>) -> Option<WdlHoverResponse> {
         "approve" => "Parks the workflow for human approval.",
         "gate" => "Parks the workflow behind an external or condition gate.",
         "signal" => "Waits for an external signal.",
+        "interrupt" => {
+            "Declares a handler region that runs when the named source fires, suspending the run's \
+             thread of control until a `resume` inside it hands control back."
+        }
+        "resume" => {
+            "Ends an interrupt handler and returns control to the interrupted thread: bare resumes \
+             at that node, `next` takes its success edge, `restart` re-enters it, `fail` takes its \
+             on_failure edge."
+        }
         "emit" => "Emits workflow output data (shorthand for an output node with no artifacts).",
         "output" => "Declares run-level artifacts and/or emits an event from an output block.",
         "yield" => "Returns a value from a control region.",

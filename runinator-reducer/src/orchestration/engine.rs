@@ -197,11 +197,28 @@ async fn process_workflow_run_step<T: ReducerStore>(
     // on every transition; a forked run's list becomes authoritative in its own right.
     let cursor = resolve_cursor(db, &workflow_run, &start, woken, *driving).await?;
     *driving = Some(cursor.id);
+    // a thread frozen behind an interrupt is not driven. this sits before every other branch on
+    // purpose: a suspended map child would otherwise finalize itself below, and a suspended cursor
+    // would be a legal answer for the `cursor_at(node_id)` fallback in `resolve_cursor`. armed wakes
+    // that land here are simply dropped — the resume path enqueues a fresh drive, and every parking
+    // handler re-arms what it needs on its next visit.
+    if cursor.is_suspended() {
+        tracing::debug!(
+            run_id = %workflow_run.id,
+            node_id = %cursor,
+            "drive for a cursor suspended by an interrupt; ignoring"
+        );
+        return Ok(ReadyNodeDisposition::Complete);
+    }
     let run_state_snapshot = WorkflowRunState::from_state(&workflow_run.state);
     // what this thread of control may see. a real cursor never reads a speculative branch's output;
     // a speculative one reads its own subtree shadowing the real run. filtering once here isolates
     // every handler — and the join's satisfaction check with them — without any of them knowing.
-    let node_runs = context::visible_node_runs(&cursor, &run_state_snapshot, &all_node_runs);
+    // computed per drive rather than cached: it is a pure function of the definition, and a run
+    // with no interrupt handlers gets an empty set for the cost of one metadata lookup.
+    let region_nodes = runinator_workflows::interrupt_region_nodes(&workflow, &nodes);
+    let node_runs =
+        context::visible_node_runs(&cursor, &run_state_snapshot, &all_node_runs, &region_nodes);
     // a map fan-out child stops when its body returns to the controlling map node, instead of
     // re-entering the map and fanning out again. finalize the child so it wakes the parent.
     if let Some(child) = run_state_snapshot.map_child.clone()
@@ -313,6 +330,24 @@ async fn process_workflow_run_step<T: ReducerStore>(
         debug::DebugGate::Proceed => {}
     }
 
+    // interrupts sit after the debugger gate — a paused thread should stay paused rather than be
+    // diverted — and before dispatch, because the point is to run the handler *instead of* letting
+    // this node settle. every refusal inside is silent, so a run with no handler declared reaches
+    // dispatch on exactly the path it always did.
+    if interrupt::maybe_raise(
+        db,
+        &workflow,
+        &workflow_run,
+        &cursor,
+        node,
+        &nodes,
+        latest.as_ref(),
+    )
+    .await?
+    {
+        return Ok(ReadyNodeDisposition::Complete);
+    }
+
     let ctx = NodeHandlerContext {
         db,
         workflow: &workflow,
@@ -363,6 +398,7 @@ async fn process_workflow_run_step<T: ReducerStore>(
             circuit_breaker::CircuitBreakerHandler.process(&ctx).await?
         }
         WorkflowNodeKind::EventSource => event_source::EventSourceHandler.process(&ctx).await?,
+        WorkflowNodeKind::Resume => interrupt::ResumeHandler.process(&ctx).await?,
     };
     Ok(disposition)
 }

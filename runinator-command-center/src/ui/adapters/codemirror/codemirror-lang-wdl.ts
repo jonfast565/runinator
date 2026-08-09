@@ -75,6 +75,8 @@ const CONTROL_KW = new Set([
   "gate",
   "signal",
   "watch",
+  "interrupt",
+  "resume",
   "compensate",
   "assert",
   "transform",
@@ -727,6 +729,16 @@ const snippets = [
     label: "trigger on_success",
     type: "keyword",
     detail: "chained trigger",
+  }),
+  snippetCompletion("interrupt on wake {\n    ${}\n    resume\n}", {
+    label: "interrupt",
+    detail: "interrupt handler region",
+    type: "keyword",
+  }),
+  snippetCompletion("resume", {
+    label: "resume",
+    detail: "return control from an interrupt handler",
+    type: "keyword",
   }),
   snippetCompletion("watch ${condition} -> ${target}", {
     label: "watch",

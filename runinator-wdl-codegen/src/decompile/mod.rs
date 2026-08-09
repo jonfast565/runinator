@@ -124,6 +124,7 @@ pub fn decompile_definition(
     decompiler.emit_notifications(&read_notifications(&graph.metadata))?;
     decompiler.emit_concurrency(&graph.metadata)?;
     decompiler.emit_watches(&read_watches(&graph.metadata))?;
+    decompiler.emit_interrupts(&read_interrupts(&graph.metadata))?;
     decompiler.emit_correlation(&graph.metadata)?;
     decompiler.emit_type_decls(&read_type_decls(&graph.metadata))?;
     decompiler.emit_alias_decls()?;
@@ -317,6 +318,15 @@ fn read_triggers(metadata: &Value) -> Vec<Value> {
 fn read_notifications(metadata: &Value) -> Vec<Value> {
     metadata
         .pointer("/notifications")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// recover header `interrupt` handlers from runtime metadata at `/interrupts`.
+fn read_interrupts(metadata: &Value) -> Vec<Value> {
+    metadata
+        .pointer("/interrupts")
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default()
@@ -705,6 +715,34 @@ impl<'a> Decompiler<'a> {
         Ok(())
     }
 
+    /// emit header `interrupt on <source> { ... }` regions recovered from `metadata.interrupts`.
+    ///
+    /// walking each region here — before the main flow — is also what keeps its nodes out of the
+    /// orphan pass at the end. a region is unreachable from `start` by design, so without this it
+    /// would be re-emitted as a pile of loose top-level statements.
+    fn emit_interrupts(&mut self, interrupts: &[Value]) -> Result<(), WdlError> {
+        if interrupts.is_empty() {
+            return Ok(());
+        }
+        for interrupt in interrupts {
+            let source = interrupt
+                .get("on")
+                .and_then(Value::as_str)
+                .ok_or_else(|| WdlError::Decompile("interrupt missing source".into()))?;
+            let handler = interrupt
+                .get("handler")
+                .and_then(Value::as_str)
+                .ok_or_else(|| WdlError::Decompile("interrupt missing handler".into()))?;
+            self.line(&format!("interrupt on {source} {{"));
+            self.indent += 1;
+            self.emit_region(handler, None)?;
+            self.indent -= 1;
+            self.line("}");
+        }
+        self.out.push('\n');
+        Ok(())
+    }
+
     /// emit the header `correlate key <expr>` declaration recovered from `metadata.correlation`.
     fn emit_correlation(&mut self, metadata: &Value) -> Result<(), WdlError> {
         let Some(expression) = metadata
@@ -799,6 +837,13 @@ impl<'a> Decompiler<'a> {
                 WorkflowNodeKind::Percentage => (self.emit_split(node, stop)?, false),
                 WorkflowNodeKind::Fail => {
                     let text = self.fail_text(node)?;
+                    self.line(&text);
+                    (None, true)
+                }
+                // terminal like `fail`: it ends its thread by handing control back, so the walk
+                // stops here rather than looking for a successor.
+                WorkflowNodeKind::Resume => {
+                    let text = self.resume_text(node);
                     self.line(&text);
                     (None, true)
                 }
@@ -1111,6 +1156,7 @@ impl<'a> Decompiler<'a> {
                 Ok((self.action_text(node)?, true))
             }
             WorkflowNodeKind::Subflow => Ok((self.subflow_text(node)?, true)),
+            WorkflowNodeKind::Resume => Ok((self.resume_text(node), false)),
             WorkflowNodeKind::Wait => Ok((self.wait_text(node)?, false)),
             WorkflowNodeKind::Output => Ok((self.output_text(node)?, false)),
             WorkflowNodeKind::Input => Ok((self.input_text(node)?, false)),
@@ -1542,6 +1588,17 @@ impl<'a> Decompiler<'a> {
             text.push_str(&self.expr(message)?);
         }
         Ok(text)
+    }
+
+    /// `resume`, `resume next`, `resume restart`, `resume fail`. the compiled `continue` mode is
+    /// spelled `next` in source, and the default mode renders bare.
+    fn resume_text(&self, node: &WorkflowNode) -> String {
+        match node.parameters.get("mode").and_then(Value::as_str) {
+            Some("continue") => "resume next".to_string(),
+            Some("restart") => "resume restart".to_string(),
+            Some("fail") => "resume fail".to_string(),
+            _ => "resume".to_string(),
+        }
     }
 
     fn input_text(&self, node: &WorkflowNode) -> Result<String, WdlError> {

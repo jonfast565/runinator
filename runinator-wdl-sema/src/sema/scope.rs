@@ -14,7 +14,7 @@ use super::{Diagnostic, child_blocks, effective_id};
 const RESERVED: [&str; 3] = ["start", "end", "fail"];
 
 /// reserved path roots that always resolve regardless of declared labels.
-const ROOTS: [&str; 5] = ["params", "prev", "run", "config", "secret"];
+const ROOTS: [&str; 6] = ["params", "prev", "run", "config", "secret", "interrupt"];
 
 /// roots a workflow-parameter default may reference. defaults run at workflow start, before any
 /// step, so `prev` and step outputs are not yet available; only start-time sources are allowed.
@@ -302,6 +302,8 @@ fn resolve_stmt(
                 resolve_block(branch, symbols, scope, diagnostics);
             }
         }
+        // `resume` carries no expressions, names, or bindings, so every pass is a no-op.
+        StmtKind::Resume(_) => {}
         StmtKind::Try(try_stmt) => {
             resolve_block(&try_stmt.body, symbols, scope, diagnostics);
             if let Some(catch) = &try_stmt.catch {

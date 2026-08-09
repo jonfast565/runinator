@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use runinator_models::{
+    interrupt::InterruptDeclaration,
     providers::ProviderMetadata,
     types::RuninatorType,
     value::Value,
@@ -123,6 +124,7 @@ pub fn validate_workflow(
     validate_graph_cycles(&start, &nodes)?;
     validate_map_concurrency_bodies(&nodes)?;
     validate_mutex_sections(&start, &nodes)?;
+    validate_interrupt_handlers(workflow, &start, &nodes)?;
 
     Ok((start, nodes))
 }
@@ -215,6 +217,192 @@ fn validate_map_concurrency_bodies(nodes: &[WorkflowNode]) -> Result<(), Workflo
                 {
                     return Err(not_isolatable(format!(
                         "node '{other_id}' reads body output of '{}'",
+                        target.as_str()
+                    )));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// the nodes making up the interrupt handler region entered at `entry`.
+///
+/// shared with the reducer, which re-checks the region at runtime rather than trusting that the
+/// definition it is executing was validated by a binary with this same allowlist. sharing the walk
+/// is the point: a region the validator accepted and the runtime rejected would be a silent stall.
+pub fn interrupt_region(
+    entry: &str,
+    nodes: &[WorkflowNode],
+) -> Result<HashSet<String>, WorkflowValidationError> {
+    let node_map: HashMap<&str, &WorkflowNode> =
+        nodes.iter().map(|node| (node.id.as_str(), node)).collect();
+    // "\0" is an id no node can carry, so the walk stops only where the graph does.
+    collect_body_region(entry, "\0", &node_map)
+}
+
+/// every node belonging to any declared interrupt handler region.
+///
+/// this is how "was this node run produced by a handler?" is answered without asking a cursor. a
+/// handler cursor is ephemeral — it retires the moment the region ends — but region membership is a
+/// static property of the graph, so it stays true for as long as the run's history does.
+pub fn interrupt_region_nodes(
+    workflow: &WorkflowDefinition,
+    nodes: &[WorkflowNode],
+) -> HashSet<String> {
+    let mut all = HashSet::new();
+    for declaration in interrupt_declarations(workflow) {
+        if let Ok(region) = interrupt_region(&declaration.handler, nodes) {
+            all.extend(region);
+        }
+    }
+    all
+}
+
+/// is every kind in the region entered at `entry` one this binary supports inside a handler, and
+/// can the region actually return control?
+pub fn interrupt_region_is_supported(entry: &str, nodes: &[WorkflowNode]) -> bool {
+    let Ok(region) = interrupt_region(entry, nodes) else {
+        return false;
+    };
+    let by_id: HashMap<&str, &WorkflowNode> =
+        nodes.iter().map(|node| (node.id.as_str(), node)).collect();
+    let mut saw_resume = false;
+    for id in &region {
+        let Some(node) = by_id.get(id.as_str()) else {
+            return false;
+        };
+        if !graph_role(&node.kind).handler_safe {
+            return false;
+        }
+        saw_resume |= node.kind == WorkflowNodeKind::Resume;
+    }
+    saw_resume
+}
+
+/// the declared interrupt handlers, ignoring any whose source this binary does not know.
+///
+/// an unknown source is not an error: a definition written against a newer binary must still load,
+/// and the runtime simply never matches a source it cannot name. that is the fail-open rule.
+pub fn interrupt_declarations(workflow: &WorkflowDefinition) -> Vec<InterruptDeclaration> {
+    workflow
+        .definition
+        .metadata
+        .get("interrupts")
+        .and_then(|value| value.decode::<Vec<InterruptDeclaration>>().ok())
+        .unwrap_or_default()
+}
+
+/// an interrupt handler region must be a bounded side-channel: entered only by the interrupt,
+/// exiting only by handing control back, and built from kinds that cannot park or fan out.
+///
+/// this is the `map` body rule with two extra clauses — the region is unreachable from `start`, and
+/// every kind in it opted into [`GraphRole::handler_safe`]. the shared requirement is why it reuses
+/// [`collect_body_region`] rather than growing a second reachability walk.
+fn validate_interrupt_handlers(
+    workflow: &WorkflowDefinition,
+    start: &str,
+    nodes: &[WorkflowNode],
+) -> Result<(), WorkflowValidationError> {
+    let declarations = interrupt_declarations(workflow);
+    if declarations.is_empty() {
+        return Ok(());
+    }
+    let node_map: HashMap<&str, &WorkflowNode> =
+        nodes.iter().map(|node| (node.id.as_str(), node)).collect();
+    // an id no node can carry, so the walk from `start` stops only where the graph does.
+    let main_flow = collect_body_region(start, "\0", &node_map)?;
+
+    let mut claimed: HashMap<String, String> = HashMap::new();
+    let mut sources_seen: HashSet<String> = HashSet::new();
+
+    for declaration in &declarations {
+        let handler = declaration.handler.as_str();
+        let source = declaration.on.as_str();
+        let not_isolatable =
+            |reason: String| WorkflowValidationError::InterruptHandlerNotIsolatable {
+                handler: handler.to_string(),
+                on: source.to_string(),
+                reason,
+            };
+
+        if !sources_seen.insert(source.to_string()) {
+            return Err(not_isolatable(format!(
+                "source '{source}' already has a handler; one handler per source"
+            )));
+        }
+        let entry = node_map
+            .get(handler)
+            .ok_or_else(|| not_isolatable("handler node does not exist".into()))?;
+        if !graph_role(&entry.kind).runnable_entry {
+            return Err(not_isolatable(format!(
+                "handler node is a {:?} node, which cannot be entered",
+                entry.kind
+            )));
+        }
+        if main_flow.contains(handler) {
+            return Err(not_isolatable(
+                "handler is reachable from the workflow start; a region must be entered only by \
+                 its interrupt"
+                    .into(),
+            ));
+        }
+
+        let region = interrupt_region(handler, nodes)?;
+        let mut has_resume = false;
+        for region_id in &region {
+            let region_node = node_map.get(region_id.as_str()).ok_or_else(|| {
+                not_isolatable(format!("region node '{region_id}' does not exist"))
+            })?;
+            if region_node.kind == WorkflowNodeKind::Resume {
+                has_resume = true;
+            }
+            if !graph_role(&region_node.kind).handler_safe {
+                return Err(not_isolatable(format!(
+                    "region node '{region_id}' is a {:?} node, which is not supported inside an \
+                     interrupt handler",
+                    region_node.kind
+                )));
+            }
+            if main_flow.contains(region_id.as_str()) {
+                return Err(not_isolatable(format!(
+                    "region node '{region_id}' is also reachable from the workflow start"
+                )));
+            }
+            if let Some(owner) = claimed.insert(region_id.clone(), handler.to_string())
+                && owner != handler
+            {
+                return Err(not_isolatable(format!(
+                    "region node '{region_id}' is already part of handler '{owner}'"
+                )));
+            }
+        }
+        if !has_resume {
+            return Err(not_isolatable(
+                "region never reaches a resume node, so it can never return control".into(),
+            ));
+        }
+
+        // nothing outside the region may enter it or read its outputs.
+        for other in nodes {
+            let other_id = other.id.as_str();
+            if region.contains(other_id) {
+                continue;
+            }
+            for target in body_edges(other)? {
+                if region.contains(target.as_str()) {
+                    return Err(not_isolatable(format!(
+                        "node '{other_id}' enters the region at '{}'",
+                        target.as_str()
+                    )));
+                }
+            }
+            for reference in value_refs(other)? {
+                if let WorkflowRefSource::NodeOutput(target) = reference.source
+                    && region.contains(target.as_str())
+                {
+                    return Err(not_isolatable(format!(
+                        "node '{other_id}' reads region output of '{}'",
                         target.as_str()
                     )));
                 }

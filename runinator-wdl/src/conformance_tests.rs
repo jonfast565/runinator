@@ -56,6 +56,20 @@ fn fixtures() -> Vec<(WorkflowNodeKind, &'static str)> {
             WorkflowNodeKind::Wait,
             r#"workflow "Conf Wait" v1 { wait 30s }"#,
         ),
+        // `resume` only ever appears inside an interrupt handler region, so its fixture has to
+        // carry the region that gives it meaning.
+        (
+            WorkflowNodeKind::Resume,
+            r#"
+            workflow "Conf Resume" v1 {
+                interrupt on wake {
+                    console.run(command: "echo refresh")
+                    resume next
+                }
+
+                wait 30s
+            }"#,
+        ),
         (
             WorkflowNodeKind::Condition,
             r#"

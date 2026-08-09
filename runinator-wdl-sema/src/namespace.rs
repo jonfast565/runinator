@@ -21,7 +21,15 @@ use runinator_wdl_syntax::ast::*;
 use runinator_wdl_syntax::errors::{Span, WdlError};
 
 /// reserved roots that may not be shadowed by an import alias.
-const RESERVED_ROOTS: &[&str] = &[STD_NAMESPACE, "params", "prev", "run", "config", "secret"];
+const RESERVED_ROOTS: &[&str] = &[
+    STD_NAMESPACE,
+    "params",
+    "prev",
+    "run",
+    "config",
+    "secret",
+    "interrupt",
+];
 
 /// the per-workflow name scope: imports, the leaves they bring into bare scope, and user functions.
 struct Scope {
@@ -114,6 +122,9 @@ pub fn resolve(document: &mut Document) -> Result<(), WdlError> {
         }
         if let Some(input) = workflow.input.as_mut() {
             resolve_type_defaults(input, &scope)?;
+        }
+        for interrupt in &mut workflow.interrupts {
+            resolve_block(&mut interrupt.body, &scope)?;
         }
         resolve_block(&mut workflow.body, &scope)?;
     }
@@ -329,6 +340,8 @@ fn resolve_stmt(stmt: &mut Stmt, scope: &Scope) -> Result<(), WdlError> {
                 resolve_block(branch, scope)?;
             }
         }
+        // `resume` carries no expressions, names, or bindings, so every pass is a no-op.
+        StmtKind::Resume(_) => {}
         StmtKind::Try(try_stmt) => {
             resolve_block(&mut try_stmt.body, scope)?;
             if let Some(body) = try_stmt.catch.as_mut() {

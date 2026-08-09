@@ -21,7 +21,9 @@ pub(super) async fn process_signal_node<T: ReducerStore>(
     // visit so a new wait is armed instead of transitioning from the stale run.
     let latest = latest.filter(|run| !is_reentry_stale(run, node_runs, cursor));
     if let Some(node_run) = latest {
-        if node_run.status == WorkflowStatus::Waiting && timed_out_since_created(node, node_run) {
+        if node_run.status == WorkflowStatus::Waiting
+            && timed_out_since_created(node, cursor, node_run)
+        {
             return time_out(
                 db,
                 workflow_run,

@@ -27,7 +27,7 @@ pub(super) async fn process_map_node<T: ReducerStore>(
         super::context::most_recently_finished_node_run(node_runs),
     )
     .await?;
-    if node_run.status == WorkflowStatus::Running && timed_out(node, &node_run) {
+    if node_run.status == WorkflowStatus::Running && timed_out(node, cursor, &node_run) {
         return time_out(
             db,
             workflow_run,

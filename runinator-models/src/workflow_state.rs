@@ -130,10 +130,30 @@ impl WorkflowRunState {
 
     /// drop a cursor that has reached the end of its thread of control. returns whether it was
     /// still there, so a caller can tell a first retirement from a repeat.
+    /// retiring a cursor also retires the interrupt handler attached to it. a handler exists only
+    /// to hand control back to the thread it suspended, so once that thread is gone the handler has
+    /// nowhere to return to and would otherwise keep the run open forever. nesting is not
+    /// supported, so this cascade is exactly one level deep.
     pub fn retire_cursor(&mut self, id: Uuid) -> bool {
         let before = self.cursors.len();
-        self.cursors.retain(|cursor| cursor.id != id);
+        self.cursors.retain(|cursor| {
+            cursor.id != id
+                && cursor
+                    .interrupt
+                    .as_ref()
+                    .is_none_or(|frame| frame.interrupted_cursor != id)
+        });
         self.cursors.len() != before
+    }
+
+    /// the handler cursor currently suspending `id`, if one is running.
+    pub fn handler_for(&self, id: Uuid) -> Option<&RunCursor> {
+        self.cursors.iter().find(|cursor| {
+            cursor
+                .interrupt
+                .as_ref()
+                .is_some_and(|frame| frame.interrupted_cursor == id)
+        })
     }
 
     /// every *real* cursor forked by `forked_by`, for a join deciding whether its branches have all
@@ -152,10 +172,25 @@ impl WorkflowRunState {
     }
 
     /// the real threads of control — everything the run's completion actually depends on.
+    ///
+    /// a *suspended* cursor is deliberately included: it is a real thread that will resume, so it
+    /// must keep the run alive in the reducer's terminal accounting. an interrupt handler is
+    /// included too, for the same reason — the run is not finished while one is executing.
     pub fn real_cursors(&self) -> impl Iterator<Item = &RunCursor> {
         self.cursors
             .iter()
             .filter(|cursor| !cursor.is_speculative())
+    }
+
+    /// the cursors a `join` may count as arrived branches, and a `race` may retire as losers.
+    ///
+    /// this excludes interrupt handlers on the same grounds as speculative cursors: a handler is a
+    /// side-channel, so counting one as a sibling would let a genuinely-alone branch conclude it
+    /// has company and retire itself into a stall.
+    pub fn joinable_cursors(&self) -> impl Iterator<Item = &RunCursor> {
+        self.cursors
+            .iter()
+            .filter(|cursor| !cursor.is_speculative() && !cursor.is_interrupt_handler())
     }
 
     /// is the cursor with this id a debugger "what if" branch?
@@ -272,12 +307,16 @@ impl WorkflowRunState {
     ///
     /// this is the whole condition for the run itself being `DebugPaused`: one branch stopping at a
     /// breakpoint leaves the run `Running`, because its siblings are still executing.
+    /// suspended cursors are skipped: one frozen behind an interrupt is not going to reach a
+    /// breakpoint on its own, so counting it as unpaused would keep a run out of `DebugPaused`
+    /// while the handler itself sits at one.
     pub fn all_cursors_paused(&self) -> bool {
-        !self.cursors.is_empty()
-            && self
-                .cursors
-                .iter()
-                .all(|cursor| self.cursor_debug(cursor.id).paused)
+        let mut live = self
+            .cursors
+            .iter()
+            .filter(|cursor| !cursor.is_suspended())
+            .peekable();
+        live.peek().is_some() && live.all(|cursor| self.cursor_debug(cursor.id).paused)
     }
 
     /// is this run a child of another run's node (a subflow child or a map item)? child runs must

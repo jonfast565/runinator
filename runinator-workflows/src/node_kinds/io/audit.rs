@@ -16,7 +16,7 @@ impl NodeKindSpec for Audit {
     }
 
     fn graph_role(&self) -> GraphRole {
-        GraphRole::STEP
+        GraphRole::STEP.handler_safe()
     }
 
     fn metadata(&self) -> WorkflowNodeKindMetadata {

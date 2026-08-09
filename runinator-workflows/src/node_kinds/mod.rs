@@ -88,6 +88,18 @@ pub struct GraphRole {
     pub reentrant: bool,
     /// modelled by the dry-run simulator; the rest need fan-out bookkeeping the walk lacks.
     pub simulatable: bool,
+    /// may appear inside an interrupt handler region.
+    ///
+    /// this is an opt-in allowlist, defaulting to `false` on every role: a kind is unsupported in a
+    /// handler until someone deliberately supports it. that is what keeps the blast radius of the
+    /// feature small — a handler is a bounded side-channel, so it may not park (which would pin the
+    /// suspended thread open), fan out (whose cursors have no handler to belong to), or run away.
+    pub handler_safe: bool,
+    /// a cursor sitting on this kind may be interrupted.
+    ///
+    /// false where a cursor is not a thread doing work: the graph endpoints, and `join`, where the
+    /// cursor represents coordination state rather than a position to come back to.
+    pub interruptible: bool,
 }
 
 impl GraphRole {
@@ -98,6 +110,8 @@ impl GraphRole {
         produces_output: true,
         reentrant: false,
         simulatable: true,
+        handler_safe: false,
+        interruptible: true,
     };
 
     /// `start`: entered only as the run's entry point, and produces nothing addressable.
@@ -107,6 +121,8 @@ impl GraphRole {
         produces_output: false,
         reentrant: false,
         simulatable: true,
+        handler_safe: false,
+        interruptible: false,
     };
 
     /// `end`/`fail`: settles the run, and produces nothing addressable.
@@ -116,6 +132,8 @@ impl GraphRole {
         produces_output: false,
         reentrant: false,
         simulatable: true,
+        handler_safe: false,
+        interruptible: false,
     };
 
     /// a step whose output is not addressable downstream.
@@ -138,6 +156,23 @@ impl GraphRole {
     pub const fn reentrant(self) -> Self {
         Self {
             reentrant: true,
+            ..self
+        }
+    }
+
+    /// a step an interrupt handler region may contain. opt in only for kinds that cannot park, fan
+    /// out, or run unbounded — a handler must finish and hand control back.
+    pub const fn handler_safe(self) -> Self {
+        Self {
+            handler_safe: true,
+            ..self
+        }
+    }
+
+    /// a step a cursor may not be interrupted while sitting on.
+    pub const fn not_interruptible(self) -> Self {
+        Self {
+            interruptible: false,
             ..self
         }
     }
@@ -243,6 +278,7 @@ pub fn spec_for(kind: &WorkflowNodeKind) -> &'static dyn NodeKindSpec {
         WorkflowNodeKind::Start => &terminal::Start,
         WorkflowNodeKind::End => &terminal::End,
         WorkflowNodeKind::Fail => &terminal::Fail,
+        WorkflowNodeKind::Resume => &terminal::Resume,
         WorkflowNodeKind::Action => &task::Action,
         WorkflowNodeKind::Subflow => &task::Subflow,
         WorkflowNodeKind::Wait => &control_flow::Wait,

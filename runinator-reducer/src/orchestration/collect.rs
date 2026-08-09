@@ -53,7 +53,7 @@ pub(super) async fn process_collect_node<T: ReducerStore>(
     let latest = latest.filter(|run| !is_reentry_stale(run, node_runs, cursor));
 
     if let Some(node_run) = latest.filter(|run| run.status == WorkflowStatus::Waiting) {
-        if timed_out_since_created(node, node_run) {
+        if timed_out_since_created(node, cursor, node_run) {
             // emit whatever was collected before timing out.
             let state = node_run.state.decode::<CollectState>().ok();
             let items = state.map(|s| s.items).unwrap_or_default();

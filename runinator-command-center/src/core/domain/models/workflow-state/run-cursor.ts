@@ -18,6 +18,21 @@ export interface SpeculativeFrame {
 }
 
 /**
+ * marks a cursor as an interrupt handler rather than an ordinary thread of control.
+ * mirrors runinator-models::InterruptFrame.
+ */
+export interface InterruptFrame {
+  /** the cursor this handler suspended, and will hand control back to. */
+  interrupted_cursor: string;
+  /** what raised it (`wake`, ...). */
+  source: string;
+  payload?: JsonValue;
+  /** where the suspended thread resumes. */
+  resume?: { node_id?: string } | null;
+  raised_at?: string;
+}
+
+/**
  * one position on a run's track. mirrors runinator-models::RunCursor.
  *
  * a linear run holds one; `parallel`/`race` fan out more, and the debugger can add speculative
@@ -34,6 +49,12 @@ export interface RunCursor {
   speculative?: SpeculativeFrame | null;
   debug?: DebugFrame | null;
   last_output?: JsonValue;
+  /** set when this cursor is running an interrupt handler region. */
+  interrupt?: InterruptFrame | null;
+  /** the handler cursor that froze this one; a suspended thread is not advancing. */
+  suspended_by?: string | null;
+  /** seconds this thread spent frozen behind an interrupt at its current position. */
+  suspended_seconds?: number;
 }
 
 /** how a cursor is drawn on the graph and named in the rail. */
@@ -48,6 +69,10 @@ export interface CursorMarker {
   /** does this speculative branch dispatch the node it is standing on for real? */
   armed: boolean;
   selected: boolean;
+  /** what raised the interrupt this cursor is handling, or null for an ordinary thread. */
+  interruptSource: string | null;
+  /** true while this thread is frozen behind an interrupt handler. */
+  suspended: boolean;
 }
 
 /**
@@ -134,11 +159,25 @@ export function isCursorPaused(
  * a short human name for a branch: its speculative label, else the fan-out that forked it, else
  * `main` for the run's original thread of control.
  */
+export function isInterruptHandler(cursor: RunCursor): boolean {
+  return Boolean(cursor.interrupt);
+}
+
+export function isSuspended(cursor: RunCursor): boolean {
+  return Boolean(cursor.suspended_by);
+}
+
 export function cursorLabel(cursor: RunCursor, index: number): string {
   const speculative = cursor.speculative;
 
   if (speculative) {
     return speculative.label?.trim() || `what-if ${index + 1}`;
+  }
+
+  // a handler is named for what raised it rather than where it stands: it is a side-channel, and
+  // "wake handler" says more about why the branch exists than its entry node id does.
+  if (cursor.interrupt) {
+    return `${cursor.interrupt.source} handler`;
   }
 
   if (cursor.forked_by) {
@@ -166,6 +205,8 @@ export function buildCursorMarkers(
     speculative: isSpeculative(cursor),
     armed: isArmedHere(cursor),
     selected: cursor.id === selectedCursorId,
+    interruptSource: cursor.interrupt?.source ?? null,
+    suspended: isSuspended(cursor),
   }));
 }
 

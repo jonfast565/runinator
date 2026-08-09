@@ -47,8 +47,38 @@ pub(super) async fn advance_cursor<T: ReducerStore>(
             .or_else(|| run.active_node_id.clone());
         // read before mutating: a drain removes the cursor this question is about.
         let speculative = state.is_speculative(cursor_id);
+        // a handler leaving without having reached a `resume` still owes the thread it suspended its
+        // release; capture the frame now, because the write below removes the cursor holding it.
+        let handler_frame = state
+            .cursor(cursor_id)
+            .and_then(|cursor| cursor.interrupt.clone());
+        let handler_node_id = state
+            .cursor(cursor_id)
+            .map(|cursor| cursor.node_id().to_string());
+        let handler = handler_frame.is_some();
 
         let fails = status.is_terminal() && status != WorkflowStatus::Succeeded;
+
+        // a suspended thread may not be *moved* — only the handler returning control moves it, and
+        // it does so through `finish_interrupt` rather than here. this guard is what closes the race
+        // between a worker result landing and an interrupt being installed: `transition_from_node`
+        // stamps the node run and then advances, so without it a concurrent result could walk the
+        // cursor off the node the interrupt just snapshotted. every settle path funnels through
+        // here, so one check covers action results, timeouts, joins, races, and try phases.
+        //
+        // retiring is still allowed: a race loser or a failing run must be able to drain a
+        // suspended cursor, and `retire_cursor` takes its handler with it.
+        if matches!(movement, CursorMove::To(_))
+            && state.cursor(cursor_id).is_some_and(RunCursor::is_suspended)
+        {
+            tracing::debug!(
+                run_id = %workflow_run_id,
+                cursor_id = %cursor_id,
+                "refusing to move a cursor suspended by an interrupt"
+            );
+            return Ok(());
+        }
+
         match (&movement, fails) {
             // a failing "what if" branch takes only its own subtree with it. draining the run would
             // let a hypothetical failure kill the real work it was forked from.
@@ -56,6 +86,13 @@ pub(super) async fn advance_cursor<T: ReducerStore>(
                 for id in state.speculative_subtree(cursor_id) {
                     state.retire_cursor(id);
                 }
+            }
+            // a failing handler takes only itself. an interrupt is a side-channel, so it must not be
+            // able to end the run it was observing — the thread it suspended is still valid work.
+            // the caller releases that thread; here we only make sure the failure stops at the
+            // handler instead of draining every cursor.
+            (_, true) if handler => {
+                state.retire_cursor(cursor_id);
             }
             (_, true) => state.cursors.clear(),
             (CursorMove::To(next), false) => {
@@ -69,9 +106,10 @@ pub(super) async fn advance_cursor<T: ReducerStore>(
             }
         }
 
-        let run_status = if speculative {
-            // a speculative cursor never moves the run's status: the run means what its real threads
-            // of control say it means.
+        let run_status = if speculative || handler {
+            // neither a speculative cursor nor an interrupt handler moves the run's status: the run
+            // means what its real threads of control say it means, and both of these are commentary
+            // on a thread rather than a thread themselves.
             run.status
         } else if !fails
             && status.is_terminal()
@@ -86,7 +124,7 @@ pub(super) async fn advance_cursor<T: ReducerStore>(
         };
         // the run is settling for good: drop any speculative branches still walking, so the ready
         // queue reaper and the terminal accounting see no live cursors.
-        if !speculative && run_status.is_terminal() {
+        if !speculative && !handler && run_status.is_terminal() {
             state.cursors.clear();
         }
         let position = state
@@ -105,6 +143,23 @@ pub(super) async fn advance_cursor<T: ReducerStore>(
             )
             .await?
         {
+            // the handler's thread of control just ended without going through `finish_interrupt`,
+            // so nothing has released the thread it suspended. do it now, as a plain resume: a
+            // frozen cursor with no handler alive to free it would hang the run forever.
+            if let Some(frame) = handler_frame
+                && matches!(movement, CursorMove::Retire)
+            {
+                super::interrupt::release_suspended_thread(
+                    db,
+                    workflow_run_id,
+                    &frame,
+                    handler_node_id.as_deref().unwrap_or_default(),
+                    message
+                        .as_deref()
+                        .unwrap_or("handler ended without a resume"),
+                )
+                .await?;
+            }
             return Ok(());
         }
         tracing::debug!(

@@ -8,6 +8,7 @@ pub mod core;
 pub mod cursor;
 pub mod debug;
 pub mod errors;
+pub mod interrupt;
 pub mod notifications;
 pub mod orchestration;
 pub mod orgs;

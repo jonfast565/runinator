@@ -18,7 +18,7 @@ impl NodeKindSpec for Config {
     }
 
     fn graph_role(&self) -> GraphRole {
-        GraphRole::STEP
+        GraphRole::STEP.handler_safe()
     }
 
     fn output_type(

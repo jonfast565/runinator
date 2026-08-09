@@ -66,6 +66,7 @@ document_item = {
   | notify_decl
   | concurrency_decl
   | watch_decl
+  | interrupt_decl
   | correlate_decl
   | type_decl
   | alias_decl
@@ -74,7 +75,7 @@ document_item = {
 }
 namespace_block = { "namespace" ~ ns_path ~ "{" ~ workflow* ~ "}" }
 workflow_decl = { "workflow" ~ string ~ version? ~ returns_decl? }
-workflow = { "workflow" ~ string ~ version? ~ returns_decl? ~ "{" ~ params_block? ~ (import_decl | trigger_decl | notify_decl | concurrency_decl | watch_decl | correlate_decl | type_decl | alias_decl | start_decl | stmt)* ~ "}" }
+workflow = { "workflow" ~ string ~ version? ~ returns_decl? ~ "{" ~ params_block? ~ (import_decl | trigger_decl | notify_decl | concurrency_decl | watch_decl | interrupt_decl | correlate_decl | type_decl | alias_decl | start_decl | stmt)* ~ "}" }
 returns_decl = { "returns" ~ type_expr }
 
 // the namespace this workflow's identity lives in. a dotted path qualifying the workflow name so
@@ -105,6 +106,15 @@ version  = @{ "v" ~ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT+){0,2} }
 // re-evaluated on every reducer drive (including while parked), so it catches state changes a fixed
 // checkpoint would miss. fires at most once per run.
 watch_decl = { "watch" ~ cond ~ "->" ~ target }
+
+// an interrupt handler: when `source` fires, the run's thread of control is suspended, the block
+// runs beside it on its own cursor, and a `resume` inside the block hands control back. the block
+// is a region rather than a loose node reference so its entry and its exit are both well defined —
+// the first statement is where the interrupt enters, and every path out ends at a `resume`.
+//
+// `wake` is the only source so far; adding one is a new alternative here and an arm in the reducer.
+interrupt_decl   = { "interrupt" ~ "on" ~ interrupt_source ~ block }
+interrupt_source = { "wake" }
 
 // declares the value this workflow's runs are awaitable by. the expression (over `input.*`, a step
 // output, etc.) is resolved as the run progresses and stamped write-once onto the run's correlation
@@ -225,6 +235,7 @@ stmt_body = {
   | split_stmt
   | parallel_stmt
   | try_stmt
+  | resume_stmt
   | race_stmt
   | map_stmt
   | wait_cond_stmt
@@ -452,6 +463,14 @@ toggle_off    = { "off" ~ "->" ~ arm_body }
 // a weighted percentage split, hash-bucketed on the subject key; `else` names the default arm.
 split_stmt    = { "split" ~ "on" ~ expr ~ "{" ~ split_arm+ ~ match_default? ~ "}" }
 split_arm     = { integer ~ "%" ~ "->" ~ arm_body }
+
+// ends an interrupt handler region and hands control back to the thread the interrupt suspended.
+// the bare form resumes at the node the thread was on; `next` takes that node's success edge,
+// `restart` re-enters it fresh, and `fail` settles it failed so the main flow's own `on_failure`
+// edge decides what that means. legal only inside an `interrupt` block — a reachability property
+// the grammar cannot express, so the reducer blocks it at runtime instead.
+resume_stmt = { "resume" ~ resume_mode? }
+resume_mode = { "next" | "restart" | "fail" }
 
 try_stmt   = { "try" ~ block ~ try_catch? ~ try_finally? }
 try_catch  = { "catch" ~ block }

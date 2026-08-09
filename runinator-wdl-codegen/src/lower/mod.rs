@@ -32,6 +32,8 @@ struct Lowerer {
     nodes: Vec<Value>,
     used_ids: HashSet<String>,
     counter: u64,
+    /// a counter of its own for `resume` node ids — see `fresh_resume`.
+    resume_counter: u64,
     start_id: String,
     end_id: String,
     fail_id: String,
@@ -95,6 +97,11 @@ fn lower_workflow(
     // resolve named `type <Name>` declarations so they can be referenced by parameter/let types.
     lowerer.resolve_type_decls(&workflow.type_decls)?;
     let end_id = lowerer.end_id.clone();
+    // handler regions lower into the same node list as the main flow, just unreachable from `start`.
+    // they go *first* because decompile emits them first, in the header: generated node ids come
+    // from a running counter, so the two orders have to agree or a region's `resume` node comes back
+    // numbered differently and the round trip diverges on nothing but its id.
+    let interrupts = lowerer.lower_interrupts(&workflow.interrupts)?;
     let body_entry = lowerer.lower_block(&workflow.body, &end_id)?;
 
     // the entry is an explicit `start -> <target>` when present, else the first statement.
@@ -255,6 +262,9 @@ fn lower_workflow(
     if !watches.is_empty() {
         metadata.insert("watches".into(), Value::Array(watches));
     }
+    if !interrupts.is_empty() {
+        metadata.insert("interrupts".into(), Value::Array(interrupts));
+    }
     if let Some(correlation) = correlation {
         metadata.insert("correlation".into(), correlation);
     }
@@ -317,6 +327,7 @@ impl Lowerer {
             nodes: Vec::new(),
             used_ids,
             counter: 0,
+            resume_counter: 0,
             start_id: "start".to_string(),
             end_id: "end".to_string(),
             fail_id: "fail".to_string(),
@@ -664,6 +675,18 @@ impl Lowerer {
                 collector: None,
             });
         }
+        // `resume` takes its id from a counter of its own rather than the shared one, because the
+        // shared counter is not reproducible across a round trip: decompile writes most node ids out
+        // explicitly (`node action_1 <- ...`), and claiming an explicit id does not advance the
+        // counter. a `resume` sitting after such a node would therefore come back numbered
+        // differently, diverging the round trip on nothing but its id. counting resumes alone is
+        // stable, because decompile preserves how many there are and what order they appear in.
+        if matches!(stmt.kind, StmtKind::Resume(_)) {
+            return Ok(LowerEntry {
+                entry: self.fresh_resume(),
+                collector: None,
+            });
+        }
         Ok(LowerEntry {
             entry: self.fresh(control_prefix(&stmt.kind)),
             collector: None,
@@ -697,6 +720,7 @@ impl Lowerer {
             StmtKind::EventSource(es) => self.lower_event_source(es, stmt, id, next),
             StmtKind::Config(config) => self.lower_config(config, stmt, id, next),
             StmtKind::Fail(message) => self.lower_fail(message.as_ref(), stmt, id),
+            StmtKind::Resume(resume) => self.lower_resume(resume, stmt, id),
             StmtKind::If(if_stmt) => {
                 let cont = self.block_cont(&stmt.transitions, next);
                 self.lower_if(if_stmt, stmt, id, &cont)
@@ -1497,6 +1521,53 @@ impl Lowerer {
         Ok(())
     }
 
+    /// `resume [mode]` lowers to a terminal `resume` node. like `fail` it takes no outgoing edge:
+    /// it ends its thread of control by handing it back, so there is nothing downstream of it.
+    fn lower_resume(&mut self, resume: &ResumeStmt, stmt: &Stmt, id: &str) -> Result<(), WdlError> {
+        let mut params = Map::new();
+        // the bare form is the default; write it explicitly so the compiled node is self-describing.
+        let mode = match resume.mode.as_deref() {
+            Some("next") => "continue",
+            Some(other) => other,
+            None => "resume",
+        };
+        params.insert("mode".into(), Value::String(mode.to_string()));
+        let mut fields = vec![("parameters", Value::Object(params))];
+        self.apply_annotations(&mut fields, stmt);
+        self.push(node(id, "resume", fields));
+        Ok(())
+    }
+
+    /// lower header `interrupt on <source> { ... }` regions into `metadata.interrupts`:
+    /// `[{ on: <source>, handler: <region entry node id> }]`.
+    ///
+    /// the block's continuation is a synthetic terminal `resume`, which is what makes "every path
+    /// out of a region hands control back" true by construction rather than by the author's care —
+    /// a branch that just runs off the end of the block lands there instead of dangling.
+    fn lower_interrupts(&mut self, interrupts: &[InterruptDecl]) -> Result<Vec<Value>, WdlError> {
+        let mut specs = Vec::with_capacity(interrupts.len());
+        for (index, interrupt) in interrupts.iter().enumerate() {
+            let implicit = self.claim(&format!("__interrupt_{}_resume", index))?;
+            let entry = self.lower_block(&interrupt.body, &implicit)?;
+            // only materialize the synthetic terminal when something can actually reach it; a block
+            // ending in an explicit `resume` would otherwise leave an orphan node behind.
+            if entry == implicit || !ends_in_resume(&interrupt.body) {
+                let mut params = Map::new();
+                params.insert("mode".into(), Value::String("resume".into()));
+                self.push(node(
+                    &implicit,
+                    "resume",
+                    vec![("parameters", Value::Object(params))],
+                ));
+            }
+            let mut spec = Map::new();
+            spec.insert("on".into(), Value::String(interrupt.source.clone()));
+            spec.insert("handler".into(), Value::String(entry));
+            specs.push(Value::Object(spec));
+        }
+        Ok(specs)
+    }
+
     // shared helpers --------------------------------------------------------
 
     fn apply_modifier_fields(
@@ -1612,6 +1683,16 @@ impl Lowerer {
         Ok(id.to_string())
     }
 
+    fn fresh_resume(&mut self) -> String {
+        loop {
+            self.resume_counter += 1;
+            let candidate = format!("resume_{}", self.resume_counter);
+            if self.used_ids.insert(candidate.clone()) {
+                return candidate;
+            }
+        }
+    }
+
     fn fresh(&mut self, prefix: &str) -> String {
         loop {
             self.counter += 1;
@@ -1669,6 +1750,7 @@ fn path_expr(parts: &[&str]) -> Expr {
 fn control_prefix(kind: &StmtKind) -> &'static str {
     match kind {
         StmtKind::Action(_) => "action",
+        StmtKind::Resume(_) => "resume",
         StmtKind::Compute(_) => "compute",
         StmtKind::Subflow(_) => "subflow",
         StmtKind::Wait(_) => "wait",
@@ -1776,4 +1858,26 @@ fn transitions_next(target: &str) -> Value {
     let mut map = Map::new();
     map.insert("next".into(), node_ref(target));
     Value::Object(map)
+}
+
+/// does every path out of this block already end at a `resume`?
+///
+/// only the simple shapes are recognised — a trailing `resume`, or an `if`/`match` whose every arm
+/// ends in one. anything cleverer falls back to emitting the synthetic terminal, which is the safe
+/// direction: an unreachable extra `resume` is harmless, a dangling region path is not.
+fn ends_in_resume(block: &[Stmt]) -> bool {
+    let Some(last) = block.last() else {
+        return false;
+    };
+    match &last.kind {
+        StmtKind::Resume(_) => true,
+        StmtKind::If(if_stmt) => {
+            if_stmt.arms.iter().all(|arm| ends_in_resume(&arm.1))
+                && if_stmt
+                    .else_block
+                    .as_ref()
+                    .is_some_and(|block| ends_in_resume(block))
+        }
+        _ => false,
+    }
 }

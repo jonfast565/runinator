@@ -16,7 +16,7 @@ impl NodeKindSpec for Condition {
 
     fn graph_role(&self) -> GraphRole {
         // routes by predicate; the decision is the edge taken, not an addressable output.
-        GraphRole::STEP.without_output()
+        GraphRole::STEP.without_output().handler_safe()
     }
 
     fn metadata(&self) -> WorkflowNodeKindMetadata {

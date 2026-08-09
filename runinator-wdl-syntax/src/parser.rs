@@ -85,6 +85,7 @@ pub fn parse_document(src: &str) -> Result<Document, WdlError> {
                     notifications: Vec::new(),
                     concurrency: None,
                     watches: Vec::new(),
+                    interrupts: Vec::new(),
                     correlation: None,
                     type_decls: Vec::new(),
                     body: Vec::new(),
@@ -128,6 +129,10 @@ pub fn parse_document(src: &str) -> Result<Document, WdlError> {
             Rule::watch_decl => {
                 let workflow = require_active(&mut active, &inner)?;
                 workflow.watches.push(parse_watch_decl(inner)?);
+            }
+            Rule::interrupt_decl => {
+                let workflow = require_active(&mut active, &inner)?;
+                workflow.interrupts.push(parse_interrupt_decl(inner)?);
             }
             Rule::correlate_decl => {
                 let workflow = require_active(&mut active, &inner)?;
@@ -512,6 +517,7 @@ fn parse_workflow(pair: Pair<Rule>, namespace: Option<String>) -> Result<Workflo
     let mut notifications = Vec::new();
     let mut concurrency = None;
     let mut watches = Vec::new();
+    let mut interrupts = Vec::new();
     let mut correlation = None;
     let mut type_decls = Vec::new();
     let mut body = Vec::new();
@@ -548,6 +554,7 @@ fn parse_workflow(pair: Pair<Rule>, namespace: Option<String>) -> Result<Workflo
                 concurrency = Some(parse_concurrency_decl(inner)?);
             }
             Rule::watch_decl => watches.push(parse_watch_decl(inner)?),
+            Rule::interrupt_decl => interrupts.push(parse_interrupt_decl(inner)?),
             Rule::correlate_decl => correlation = Some(parse_correlate_decl(inner)?),
             Rule::alias_decl => aliases.push(parse_alias_decl(inner)?),
             Rule::type_decl => type_decls.push(parse_type_decl(inner)?),
@@ -569,6 +576,7 @@ fn parse_workflow(pair: Pair<Rule>, namespace: Option<String>) -> Result<Workflo
         notifications,
         concurrency,
         watches,
+        interrupts,
         correlation,
         type_decls,
         body,
@@ -623,6 +631,22 @@ fn parse_watch_decl(pair: Pair<Rule>) -> Result<WatchDecl, WdlError> {
     Ok(WatchDecl {
         cond: cond.ok_or_else(|| WdlError::lower("watch missing condition"))?,
         handler: handler.ok_or_else(|| WdlError::lower("watch missing handler target"))?,
+    })
+}
+
+fn parse_interrupt_decl(pair: Pair<Rule>) -> Result<InterruptDecl, WdlError> {
+    let mut source = None;
+    let mut body = None;
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::interrupt_source => source = Some(inner.as_str().trim().to_string()),
+            Rule::block => body = Some(parse_block(inner)?),
+            _ => {}
+        }
+    }
+    Ok(InterruptDecl {
+        source: source.ok_or_else(|| WdlError::lower("interrupt missing source"))?,
+        body: body.ok_or_else(|| WdlError::lower("interrupt missing handler block"))?,
     })
 }
 
@@ -1276,6 +1300,7 @@ fn parse_stmt_body(pair: Pair<Rule>) -> Result<StmtKind, WdlError> {
         Rule::split_stmt => Ok(StmtKind::Match(parse_split(inner)?)),
         Rule::parallel_stmt => Ok(StmtKind::Parallel(parse_parallel(inner)?)),
         Rule::try_stmt => Ok(StmtKind::Try(parse_try(inner)?)),
+        Rule::resume_stmt => Ok(StmtKind::Resume(parse_resume(inner)?)),
         Rule::race_stmt => Ok(StmtKind::Race(parse_race(inner)?)),
         Rule::map_stmt => Ok(StmtKind::Map(parse_map(inner)?)),
         other => Err(WdlError::lower(format!("unexpected statement {other:?}"))),
@@ -2548,6 +2573,14 @@ fn parse_try(pair: Pair<Rule>) -> Result<TryStmt, WdlError> {
         catch,
         finally,
     })
+}
+
+fn parse_resume(pair: Pair<Rule>) -> Result<ResumeStmt, WdlError> {
+    let mode = pair
+        .into_inner()
+        .find(|inner| inner.as_rule() == Rule::resume_mode)
+        .map(|inner| inner.as_str().trim().to_string());
+    Ok(ResumeStmt { mode })
 }
 
 fn parse_branch_policy(pair: Pair<Rule>) -> Result<BranchPolicy, WdlError> {

@@ -333,6 +333,9 @@ impl Decompiler<'_> {
         if let Some(path) = object.get("workflow") {
             return Ok(self.dotted("run", path));
         }
+        if let Some(path) = object.get("interrupt") {
+            return Ok(self.dotted("interrupt", path));
+        }
         if let Some(path) = object.get("config") {
             return Ok(self.dotted("config", path));
         }

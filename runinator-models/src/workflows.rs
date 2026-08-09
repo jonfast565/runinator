@@ -546,12 +546,15 @@ pub enum WorkflowNodeKind {
     CircuitBreaker,
     /// subscribe to a named event stream; drives a body subgraph on each matching event.
     EventSource,
+    /// terminates an interrupt handler region and hands control back to the thread the interrupt
+    /// suspended, choosing how that thread proceeds. legal only inside a handler region.
+    Resume,
 }
 
 impl WorkflowNodeKind {
     /// every node kind in a stable, ui-facing order. used to build the metadata catalog; the
     /// catalog's per-kind `match` is what guarantees exhaustiveness at compile time.
-    pub const ALL: [WorkflowNodeKind; 35] = [
+    pub const ALL: [WorkflowNodeKind; 36] = [
         WorkflowNodeKind::Start,
         WorkflowNodeKind::Action,
         WorkflowNodeKind::Wait,
@@ -587,6 +590,7 @@ impl WorkflowNodeKind {
         WorkflowNodeKind::EventSource,
         WorkflowNodeKind::End,
         WorkflowNodeKind::Fail,
+        WorkflowNodeKind::Resume,
     ];
 }
 
