@@ -158,9 +158,11 @@ export {
   coerceRunCursors,
   coerceTryFrame,
   coerceWorkflowRunState,
+  cursorColor,
   cursorDebug,
   cursorLabel,
   cursorsByNode,
   isCursorPaused,
   isSpeculative,
 } from "./workflow-state";
+export { CURSOR_PALETTE } from "./workflow-state";

@@ -21,7 +21,7 @@
         }"
         @click="select(marker.id)"
       >
-        <span class="cursor-swatch" :style="{ background: paletteColor(marker.paletteIndex) }" />
+        <span class="cursor-swatch" :style="{ background: cursorColor(marker.paletteIndex) }" />
         <span class="cursor-label" :title="marker.label">{{ marker.label }}</span>
         <span class="cursor-node" :title="marker.nodeId">{{ marker.nodeId }}</span>
         <span class="cursor-state" :class="marker.paused ? 'is-paused' : 'is-running'">
@@ -111,7 +111,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import type { CursorMarker } from "../../../core/domain/models";
+import { cursorColor, type CursorMarker } from "../../../core/domain/models";
 import { useWorkflowsStore } from "../../adapters/pinia/workflows";
 import DebugJsonModal from "./DebugJsonModal.vue";
 import JsonDiff from "./JsonDiff.vue";
@@ -167,23 +167,6 @@ const comparison = computed(() => {
     title: `${name(left.id)} vs ${name(right.id)}`,
   };
 });
-
-// a fixed, colour-blind-safe rotation; index comes from the cursor's position in the persisted
-// list, so a branch keeps its colour for as long as it is alive.
-const PALETTE = [
-  "#3b82f6",
-  "#f59e0b",
-  "#10b981",
-  "#a855f7",
-  "#ef4444",
-  "#14b8a6",
-  "#eab308",
-  "#ec4899",
-];
-
-function paletteColor(index: number): string {
-  return PALETTE[index % PALETTE.length] as string;
-}
 
 function select(cursorId: string) {
   workflows.selectCursor(cursorId);

@@ -48,6 +48,8 @@ export {
   setWorkflowCatalogs,
 } from "./catalog-registry";
 export { cloneTemplate, getAtLocation, setAtLocation } from "./field-location";
+export { advanceHopSequence, buildCursorTokens } from "./cursor-motion";
+export type { CursorToken, NodeBox } from "./cursor-motion";
 
 export function workflowNodeKindsList(): WorkflowNodeKind[] {
   return addableNodeKinds() as WorkflowNodeKind[];

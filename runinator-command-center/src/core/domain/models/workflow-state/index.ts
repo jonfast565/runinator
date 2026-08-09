@@ -8,7 +8,9 @@ export type { ParallelFrame } from "./parallel-frame";
 export type { RaceFrame } from "./race-frame";
 export type { CursorMarker, RunCursor, SpeculativeFrame } from "./run-cursor";
 export {
+  CURSOR_PALETTE,
   buildCursorMarkers,
+  cursorColor,
   cursorDebug,
   cursorLabel,
   cursorsByNode,

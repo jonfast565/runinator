@@ -50,6 +50,28 @@ export interface CursorMarker {
   selected: boolean;
 }
 
+/**
+ * a fixed, colour-blind-safe rotation indexed by `CursorMarker.paletteIndex`.
+ *
+ * one table, because the rail, the node graph, and the travelling tokens all name the same branch
+ * and have to agree on its colour by construction rather than by three copies staying in step.
+ */
+export const CURSOR_PALETTE = [
+  "#3b82f6",
+  "#f59e0b",
+  "#10b981",
+  "#a855f7",
+  "#ef4444",
+  "#14b8a6",
+  "#eab308",
+  "#ec4899",
+] as const;
+
+/** the colour for a cursor's palette slot. */
+export function cursorColor(paletteIndex: number): string {
+  return CURSOR_PALETTE[paletteIndex % CURSOR_PALETTE.length] as string;
+}
+
 /** is this cursor a debugger "what if" branch? */
 export function isSpeculative(cursor: RunCursor): boolean {
   return Boolean(cursor.speculative);

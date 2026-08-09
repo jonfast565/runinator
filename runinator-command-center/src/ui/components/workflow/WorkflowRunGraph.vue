@@ -27,6 +27,7 @@
       <template #edge-workflow="edgeProps">
         <WorkflowEdge v-bind="edgeProps" />
       </template>
+      <CursorTokens />
     </VueFlow>
   </div>
 </template>
@@ -38,6 +39,7 @@ import { useWorkflowsStore } from "../../../ui/adapters/pinia/workflows";
 import StatusBadge from "../shared/StatusBadge.vue";
 import WorkflowNode from "./WorkflowNode.vue";
 import WorkflowEdge from "./WorkflowEdge.vue";
+import CursorTokens from "./CursorTokens.vue";
 
 const workflows = useWorkflowsStore();
 const { fitView, onPaneReady } = useVueFlow();
