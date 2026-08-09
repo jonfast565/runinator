@@ -92,8 +92,7 @@ impl FakeStore {
             .expect("state")
             .node_runs
             .iter()
-            .filter(|run| run.node_id == node_id)
-            .next_back()
+            .rfind(|run| run.node_id == node_id)
             .cloned()
     }
 

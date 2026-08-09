@@ -140,7 +140,7 @@ fn ui_event_round_trips_org_scope_and_accepts_legacy_unscoped_json() {
     ));
 
     // pre-scope publishers omit org_id; they must remain deliverable as unscoped.
-    let legacy = format!(r#"{{"type":"workflows_changed"}}"#);
+    let legacy = r#"{"type":"workflows_changed"}"#.to_string();
     let decoded: UiEvent = serde_json::from_str(&legacy).unwrap();
     assert_eq!(decoded.org_id, None);
     assert!(matches!(decoded.kind, UiEventKind::WorkflowsChanged));

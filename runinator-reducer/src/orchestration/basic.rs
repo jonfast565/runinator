@@ -1,5 +1,3 @@
-use std::future::Future;
-
 use super::context::runtime_context;
 use super::handler::{NodeHandler, NodeHandlerContext};
 use super::transitions::{ensure_completed_node_run, ensure_node_run, transition_from_node};
@@ -363,150 +361,136 @@ pub(super) struct PercentageHandler;
 pub(super) struct ConfigHandler;
 
 impl<T: ReducerStore> NodeHandler<T> for StartHandler {
-    fn process<'a>(
+    async fn process<'a>(
         &'a self,
         ctx: &'a NodeHandlerContext<'a, T>,
-    ) -> impl Future<Output = Result<ReadyNodeDisposition, SendableError>> + Send + 'a
+    ) -> Result<ReadyNodeDisposition, SendableError>
     where
         T: 'a,
     {
-        async move {
-            process_start_node(
-                ctx.db,
-                ctx.workflow_run,
-                ctx.cursor,
-                ctx.node,
-                ctx.latest,
-                ctx.node_runs,
-            )
-            .await?;
-            Ok(ReadyNodeDisposition::Complete)
-        }
+        process_start_node(
+            ctx.db,
+            ctx.workflow_run,
+            ctx.cursor,
+            ctx.node,
+            ctx.latest,
+            ctx.node_runs,
+        )
+        .await?;
+        Ok(ReadyNodeDisposition::Complete)
     }
 }
 
 impl<T: ReducerStore> NodeHandler<T> for EndHandler {
-    fn process<'a>(
+    async fn process<'a>(
         &'a self,
         ctx: &'a NodeHandlerContext<'a, T>,
-    ) -> impl Future<Output = Result<ReadyNodeDisposition, SendableError>> + Send + 'a
+    ) -> Result<ReadyNodeDisposition, SendableError>
     where
         T: 'a,
     {
-        async move {
-            process_end_node(ctx.db, ctx.workflow_run, ctx.cursor, ctx.node, ctx.latest).await?;
-            Ok(ReadyNodeDisposition::Complete)
-        }
+        process_end_node(ctx.db, ctx.workflow_run, ctx.cursor, ctx.node, ctx.latest).await?;
+        Ok(ReadyNodeDisposition::Complete)
     }
 }
 
 impl<T: ReducerStore> NodeHandler<T> for ConditionHandler {
-    fn process<'a>(
+    async fn process<'a>(
         &'a self,
         ctx: &'a NodeHandlerContext<'a, T>,
-    ) -> impl Future<Output = Result<ReadyNodeDisposition, SendableError>> + Send + 'a
+    ) -> Result<ReadyNodeDisposition, SendableError>
     where
         T: 'a,
     {
-        async move {
-            process_condition_node(
-                ctx.db,
-                ctx.workflow_run,
-                ctx.cursor,
-                ctx.node,
-                ctx.node_runs,
-            )
-            .await?;
-            Ok(ReadyNodeDisposition::Complete)
-        }
+        process_condition_node(
+            ctx.db,
+            ctx.workflow_run,
+            ctx.cursor,
+            ctx.node,
+            ctx.node_runs,
+        )
+        .await?;
+        Ok(ReadyNodeDisposition::Complete)
     }
 }
 
 impl<T: ReducerStore> NodeHandler<T> for SwitchHandler {
-    fn process<'a>(
+    async fn process<'a>(
         &'a self,
         ctx: &'a NodeHandlerContext<'a, T>,
-    ) -> impl Future<Output = Result<ReadyNodeDisposition, SendableError>> + Send + 'a
+    ) -> Result<ReadyNodeDisposition, SendableError>
     where
         T: 'a,
     {
-        async move {
-            process_switch_node(
-                ctx.db,
-                ctx.workflow_run,
-                ctx.cursor,
-                ctx.node,
-                ctx.node_runs,
-            )
-            .await?;
-            Ok(ReadyNodeDisposition::Complete)
-        }
+        process_switch_node(
+            ctx.db,
+            ctx.workflow_run,
+            ctx.cursor,
+            ctx.node,
+            ctx.node_runs,
+        )
+        .await?;
+        Ok(ReadyNodeDisposition::Complete)
     }
 }
 
 impl<T: ReducerStore> NodeHandler<T> for ToggleHandler {
-    fn process<'a>(
+    async fn process<'a>(
         &'a self,
         ctx: &'a NodeHandlerContext<'a, T>,
-    ) -> impl Future<Output = Result<ReadyNodeDisposition, SendableError>> + Send + 'a
+    ) -> Result<ReadyNodeDisposition, SendableError>
     where
         T: 'a,
     {
-        async move {
-            process_toggle_node(
-                ctx.db,
-                ctx.workflow_run,
-                ctx.cursor,
-                ctx.node,
-                ctx.node_runs,
-            )
-            .await?;
-            Ok(ReadyNodeDisposition::Complete)
-        }
+        process_toggle_node(
+            ctx.db,
+            ctx.workflow_run,
+            ctx.cursor,
+            ctx.node,
+            ctx.node_runs,
+        )
+        .await?;
+        Ok(ReadyNodeDisposition::Complete)
     }
 }
 
 impl<T: ReducerStore> NodeHandler<T> for PercentageHandler {
-    fn process<'a>(
+    async fn process<'a>(
         &'a self,
         ctx: &'a NodeHandlerContext<'a, T>,
-    ) -> impl Future<Output = Result<ReadyNodeDisposition, SendableError>> + Send + 'a
+    ) -> Result<ReadyNodeDisposition, SendableError>
     where
         T: 'a,
     {
-        async move {
-            process_percentage_node(
-                ctx.db,
-                ctx.workflow_run,
-                ctx.cursor,
-                ctx.node,
-                ctx.node_runs,
-            )
-            .await?;
-            Ok(ReadyNodeDisposition::Complete)
-        }
+        process_percentage_node(
+            ctx.db,
+            ctx.workflow_run,
+            ctx.cursor,
+            ctx.node,
+            ctx.node_runs,
+        )
+        .await?;
+        Ok(ReadyNodeDisposition::Complete)
     }
 }
 
 impl<T: ReducerStore> NodeHandler<T> for ConfigHandler {
-    fn process<'a>(
+    async fn process<'a>(
         &'a self,
         ctx: &'a NodeHandlerContext<'a, T>,
-    ) -> impl Future<Output = Result<ReadyNodeDisposition, SendableError>> + Send + 'a
+    ) -> Result<ReadyNodeDisposition, SendableError>
     where
         T: 'a,
     {
-        async move {
-            process_config_node(
-                ctx.db,
-                ctx.workflow_run,
-                ctx.cursor,
-                ctx.node,
-                ctx.node_runs,
-            )
-            .await?;
-            Ok(ReadyNodeDisposition::Complete)
-        }
+        process_config_node(
+            ctx.db,
+            ctx.workflow_run,
+            ctx.cursor,
+            ctx.node,
+            ctx.node_runs,
+        )
+        .await?;
+        Ok(ReadyNodeDisposition::Complete)
     }
 }
 

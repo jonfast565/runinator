@@ -124,10 +124,10 @@ fn is_exempt(path: &str) -> bool {
 
 /// derive the rate-limit key: the authenticated principal when present, else the connection ip.
 fn rate_limit_key(req: &Request<Body>) -> String {
-    if let Some(context) = req.extensions().get::<AuthContext>() {
-        if let Some(id) = context.principal_id {
-            return format!("principal:{id}");
-        }
+    if let Some(context) = req.extensions().get::<AuthContext>()
+        && let Some(id) = context.principal_id
+    {
+        return format!("principal:{id}");
     }
     if let Some(ConnectInfo(addr)) = req.extensions().get::<ConnectInfo<SocketAddr>>() {
         return format!("ip:{}", addr.ip());

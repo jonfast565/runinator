@@ -215,10 +215,11 @@ fn take_leading(dst: &mut Vec<Comment>, cursor: &mut Cursor, pos: usize) {
 // falls before `bound`. pest rule spans include trailing trivia, so we rely on `own_line` and the
 // next anchor's start rather than a rule's `span.end`, which is unreliable.
 fn take_trailing(dst: &mut Option<Comment>, cursor: &mut Cursor, bound: usize) {
-    if let Some(comment) = cursor.peek() {
-        if comment.span.start < bound && !comment.own_line {
-            *dst = Some(cursor.take());
-        }
+    if let Some(comment) = cursor.peek()
+        && comment.span.start < bound
+        && !comment.own_line
+    {
+        *dst = Some(cursor.take());
     }
 }
 
@@ -289,9 +290,8 @@ fn attach_struct_fields(fields: &mut [TypeField], cursor: &mut Cursor, src: &str
     };
     let struct_end = block_close(src, first_start);
     let starts: Vec<usize> = fields.iter().map(|field| field.span.start).collect();
-    for index in 0..fields.len() {
+    for (index, field) in fields.iter_mut().enumerate() {
         let bound = starts.get(index + 1).copied().unwrap_or(struct_end);
-        let field = &mut fields[index];
         take_leading(&mut field.comments.leading, cursor, field.span.start);
         if let TypeExpr::Struct { fields: nested, .. } = &mut field.ty {
             attach_struct_fields(nested, cursor, src);
@@ -308,9 +308,9 @@ fn attach_struct_fields(fields: &mut [TypeField], cursor: &mut Cursor, src: &str
 fn process_anchors(mut anchors: Vec<Anchor>, cursor: &mut Cursor, container_end: usize, src: &str) {
     anchors.sort_by_key(Anchor::start);
     let starts: Vec<usize> = anchors.iter().map(Anchor::start).collect();
-    for index in 0..anchors.len() {
+    for (index, anchor) in anchors.iter_mut().enumerate() {
         let bound = starts.get(index + 1).copied().unwrap_or(container_end);
-        anchors[index].process(cursor, bound, src);
+        anchor.process(cursor, bound, src);
     }
 }
 
@@ -341,10 +341,10 @@ fn attach_workflow(workflow: &mut Workflow, cursor: &mut Cursor, src: &str) {
     {
         let mut anchors: Vec<Anchor> = Vec::new();
         // params fields anchor at the first field so their comments interleave with the headers.
-        if let Some(TypeExpr::Struct { fields, .. }) = &mut workflow.input {
-            if let Some(start) = fields.first().map(|field| field.span.start) {
-                anchors.push(Anchor::Params { start, fields });
-            }
+        if let Some(TypeExpr::Struct { fields, .. }) = &mut workflow.input
+            && let Some(start) = fields.first().map(|field| field.span.start)
+        {
+            anchors.push(Anchor::Params { start, fields });
         }
         for import in &mut workflow.imports {
             anchors.push(Anchor::Leaf {

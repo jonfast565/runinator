@@ -193,7 +193,7 @@ fn remove_session_file() -> Result<()> {
 }
 
 fn session_path() -> Result<PathBuf> {
-    Ok(app_data_path(SESSION_FILE)?)
+    app_data_path(SESSION_FILE)
 }
 
 #[cfg(unix)]

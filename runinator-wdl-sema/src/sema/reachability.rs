@@ -48,12 +48,11 @@ fn reachable_by_label(stmt: &Stmt, targeted: &HashSet<String>) -> bool {
 fn collect_targets(block: &Block, targeted: &mut HashSet<String>) {
     for stmt in block {
         collect_clause(&stmt.transitions, targeted);
-        if let StmtKind::Action(action) = &stmt.kind {
-            if let Some(reentry) = &action.modifiers.reentry {
-                if let Some(target) = &reentry.on_exhausted {
-                    insert_target(target, targeted);
-                }
-            }
+        if let StmtKind::Action(action) = &stmt.kind
+            && let Some(reentry) = &action.modifiers.reentry
+            && let Some(target) = &reentry.on_exhausted
+        {
+            insert_target(target, targeted);
         }
         for child in child_blocks(&stmt.kind) {
             collect_targets(child, targeted);

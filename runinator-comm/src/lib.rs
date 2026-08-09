@@ -257,7 +257,14 @@ pub enum DebugVerb {
         /// alias keeps every existing client working.
         #[serde(alias = "cursor")]
         node_id: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// which thread of control to run; omit for the one the operator is looking at. renamed on
+        /// the wire (not plain `cursor`) because `node_id`'s back-compat alias already claims that
+        /// key — a plain `cursor` field here would silently never deserialize.
+        #[serde(
+            default,
+            rename = "run_cursor",
+            skip_serializing_if = "Option::is_none"
+        )]
         cursor: CursorTarget,
     },
     /// mark the active node succeeded with a synthetic `output` and advance.

@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use runinator_models::provisioning::{NodeSpec, ProvisionBackend};
 use runinator_models::replicas::ReplicaKind;
@@ -47,7 +47,7 @@ fn worker_snapshot(names: &[(&str, &str)]) -> StateSnapshot {
     }
 }
 
-fn provisioner(dir: &PathBuf) -> SupervisorProvisioner {
+fn provisioner(dir: &Path) -> SupervisorProvisioner {
     let control_dir = dir.join("control");
     let state_file = dir.join("state.json");
     SupervisorProvisioner::new(control_dir, state_file).with_template(
@@ -164,8 +164,10 @@ async fn org_group_scales_an_independent_labeled_pool() {
     .unwrap();
 
     let prov = provisioner(&dir);
-    let mut spec = NodeSpec::default();
-    spec.group = Some("org-acme-worker".into());
+    let mut spec = NodeSpec {
+        group: Some("org-acme-worker".into()),
+        ..Default::default()
+    };
     spec.labels.insert("org".into(), "acme".into());
     let group = prov.scale(ReplicaKind::Worker, 2, &spec).await.unwrap();
     assert_eq!(group.name, "org-acme-worker");

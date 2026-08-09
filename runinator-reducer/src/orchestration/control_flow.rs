@@ -812,116 +812,106 @@ pub(super) struct RaceHandler;
 pub(super) struct TryHandler;
 
 impl<T: ReducerStore> super::handler::NodeHandler<T> for LoopHandler {
-    fn process<'a>(
+    async fn process<'a>(
         &'a self,
         ctx: &'a super::handler::NodeHandlerContext<'a, T>,
-    ) -> impl std::future::Future<Output = Result<ReadyNodeDisposition, SendableError>> + Send + 'a
+    ) -> Result<ReadyNodeDisposition, SendableError>
     where
         T: 'a,
     {
-        async move {
-            process_loop_node(
-                ctx.db,
-                ctx.workflow_run,
-                ctx.cursor,
-                ctx.node,
-                ctx.latest,
-                ctx.node_runs,
-            )
-            .await?;
-            Ok(ReadyNodeDisposition::Complete)
-        }
+        process_loop_node(
+            ctx.db,
+            ctx.workflow_run,
+            ctx.cursor,
+            ctx.node,
+            ctx.latest,
+            ctx.node_runs,
+        )
+        .await?;
+        Ok(ReadyNodeDisposition::Complete)
     }
 }
 
 impl<T: ReducerStore> super::handler::NodeHandler<T> for ParallelHandler {
-    fn process<'a>(
+    async fn process<'a>(
         &'a self,
         ctx: &'a super::handler::NodeHandlerContext<'a, T>,
-    ) -> impl std::future::Future<Output = Result<ReadyNodeDisposition, SendableError>> + Send + 'a
+    ) -> Result<ReadyNodeDisposition, SendableError>
     where
         T: 'a,
     {
-        async move {
-            process_parallel_node(
-                ctx.db,
-                ctx.workflow_run,
-                ctx.cursor,
-                ctx.node,
-                ctx.latest,
-                ctx.node_runs,
-            )
-            .await?;
-            Ok(ReadyNodeDisposition::Complete)
-        }
+        process_parallel_node(
+            ctx.db,
+            ctx.workflow_run,
+            ctx.cursor,
+            ctx.node,
+            ctx.latest,
+            ctx.node_runs,
+        )
+        .await?;
+        Ok(ReadyNodeDisposition::Complete)
     }
 }
 
 impl<T: ReducerStore> super::handler::NodeHandler<T> for JoinHandler {
-    fn process<'a>(
+    async fn process<'a>(
         &'a self,
         ctx: &'a super::handler::NodeHandlerContext<'a, T>,
-    ) -> impl std::future::Future<Output = Result<ReadyNodeDisposition, SendableError>> + Send + 'a
+    ) -> Result<ReadyNodeDisposition, SendableError>
     where
         T: 'a,
     {
-        async move {
-            process_join_node(
-                ctx.db,
-                ctx.workflow_run,
-                ctx.cursor,
-                ctx.node,
-                ctx.latest,
-                ctx.node_runs,
-            )
-            .await?;
-            Ok(ReadyNodeDisposition::Complete)
-        }
+        process_join_node(
+            ctx.db,
+            ctx.workflow_run,
+            ctx.cursor,
+            ctx.node,
+            ctx.latest,
+            ctx.node_runs,
+        )
+        .await?;
+        Ok(ReadyNodeDisposition::Complete)
     }
 }
 
 impl<T: ReducerStore> super::handler::NodeHandler<T> for RaceHandler {
-    fn process<'a>(
+    async fn process<'a>(
         &'a self,
         ctx: &'a super::handler::NodeHandlerContext<'a, T>,
-    ) -> impl std::future::Future<Output = Result<ReadyNodeDisposition, SendableError>> + Send + 'a
+    ) -> Result<ReadyNodeDisposition, SendableError>
     where
         T: 'a,
     {
-        async move {
-            process_race_node(
-                ctx.db,
-                ctx.workflow_run,
-                ctx.cursor,
-                ctx.node,
-                ctx.latest,
-                ctx.node_runs,
-            )
-            .await?;
-            Ok(ReadyNodeDisposition::Complete)
-        }
+        process_race_node(
+            ctx.db,
+            ctx.workflow_run,
+            ctx.cursor,
+            ctx.node,
+            ctx.latest,
+            ctx.node_runs,
+        )
+        .await?;
+        Ok(ReadyNodeDisposition::Complete)
     }
 }
 
 impl<T: ReducerStore> super::handler::NodeHandler<T> for TryHandler {
-    fn process<'a>(
+    async fn process<'a>(
         &'a self,
         ctx: &'a super::handler::NodeHandlerContext<'a, T>,
-    ) -> impl std::future::Future<Output = Result<ReadyNodeDisposition, SendableError>> + Send + 'a
+    ) -> Result<ReadyNodeDisposition, SendableError>
     where
         T: 'a,
     {
-        async move {
-            process_try_node(
-                ctx.db,
-                ctx.workflow_run,
-                ctx.cursor,
-                ctx.node,
-                ctx.latest,
-                ctx.node_runs,
-            )
-            .await?;
-            Ok(ReadyNodeDisposition::Complete)
-        }
+        process_try_node(
+            ctx.db,
+            ctx.workflow_run,
+            ctx.cursor,
+            ctx.node,
+            ctx.latest,
+            ctx.node_runs,
+        )
+        .await?;
+        Ok(ReadyNodeDisposition::Complete)
     }
 }

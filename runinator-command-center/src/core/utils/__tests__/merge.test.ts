@@ -1,19 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { mergeById } from "../merge";
 
-interface Row {
-  id: string;
-  status: string;
-}
-
 describe("mergeById", () => {
   it("preserves object identity for unchanged rows and patches them in place", () => {
     const a = { id: "a", status: "running" };
     const b = { id: "b", status: "queued" };
-    const merged = mergeById([a, b], [
-      { id: "a", status: "succeeded" },
-      { id: "b", status: "queued" },
-    ]);
+    const merged = mergeById(
+      [a, b],
+      [
+        { id: "a", status: "succeeded" },
+        { id: "b", status: "queued" },
+      ],
+    );
 
     expect(merged[0]).toBe(a);
     expect(merged[0].status).toBe("succeeded");

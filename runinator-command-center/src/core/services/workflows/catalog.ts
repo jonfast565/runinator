@@ -1,45 +1,40 @@
 import {
-  cancelWorkflowRun, closeGate, compileWdl, continueWorkflowRun, createWorkflowRun, decompileToWdl,
-  deleteWorkflow, deleteWorkflowTrigger, duplicateWorkflow, fetchGates, fetchWorkflowNodeRunArtifacts,
-  fetchWorkflowNodeRunChunks, fetchWorkflowRun, fetchWorkflowRuns, fetchWorkflowTriggers, fetchWorkflows,
-  openGate, patchWorkflowRunDebug, pauseWorkflowRun, renameWorkflowRun as renameWorkflowRunApi,
-  replayWorkflowRun as replayWorkflowRunApi, resumeWorkflowRun, rerunWorkflowNode, runToCursorWorkflowRun,
-  saveWorkflow, saveWorkflowWdl, saveWorkflowTrigger, skipWorkflowNode, stepWorkflowRun,
-  type WorkflowDebugPatch, type WorkflowWdlSaveRequest,
+  decompileToWdl,
+  deleteWorkflow,
+  deleteWorkflowTrigger,
+  duplicateWorkflow,
+  fetchWorkflowTriggers,
+  fetchWorkflows,
+  saveWorkflow,
+  saveWorkflowWdl,
+  saveWorkflowTrigger,
+  type WorkflowWdlSaveRequest,
 } from "../../api/commandCenterApi";
 import type {
-  GateRecord, JsonRecord, JsonValue, ProviderMetadata, RunArtifact, RunChunk, RunSummary,
-  RuninatorType, WorkflowDefinition, WorkflowEdgeEditorDraft, WorkflowEditorEdgeData,
-  WorkflowLayoutDirection, WorkflowNodeKind, WorkflowNodeRun, WorkflowRunDetail, WorkflowTrigger,
-  WorkflowTriggerKind, WorkflowValidationIssue,
+  JsonRecord,
+  JsonValue,
+  RunSummary,
+  WorkflowDefinition,
+  WorkflowTrigger,
+  WorkflowTriggerKind,
 } from "../../domain/models";
-import { asJsonValue, isJsonObject } from "../../domain/json";
+import { isJsonObject } from "../../domain/json";
 import { describeBulkResult, runBulk, type BulkResult } from "../../utils/bulk";
 import { pretty } from "../../utils/format";
-import { cloneJson, parseObject, parseRequiredJson, parseRequiredObject } from "../../utils/json";
-import { displayValue, isBlankValue } from "../../utils/values";
+import { cloneJson, parseRequiredObject } from "../../utils/json";
+
 import { createZip, type ZipEntry } from "../../utils/zip";
+import { normalizeWorkflowDefinition } from "../../workflow/index";
+
 import {
-  applyWorkflowEdgeEditorDraft, applyWorkflowInlineNodeEdit, asArray, asRecord, isRecord,
-  autoArrangeWorkflowEdgeHandles, autoArrangeWorkflowLayout, createWorkflowNode, directTransitionKeys,
-  isSameConnectionPointLoop, nodeRef, nodeRefId, normalizeWorkflowDefinition, parameterSemanticKey,
-  removeConditionBranch, removeWorkflowEdge, removeWorkflowEdgeHandles, removeWorkflowNodeReferences,
-  setConditionBranch, setWorkflowEdgeHandles, setWorkflowEdgeLabelAnchor, setWorkflowEdgeLabelOffset,
-  moveWorkflowEdgeEditorDraft, optionIdForSourceHandle, workflowEdgeOptionId, workflowEdgeEditorDraft,
-  workflowEdgeSemanticOptions, uniqueWorkflowNodeId, validateWorkflowReferenceSyntax, valueRef,
-  workflowNodeActionConfig, workflowNodeActionInputs,
-} from "../../workflow/index";
-import type { GraphEdgeLike, GraphEdgeModel } from "../../workflow/graph-model";
-import {
-  branchPolicyName, boundedIndex, defaultEdgeEditorDraft, defaultTriggerConfiguration, errorMessage,
-  formatMaybeDate, dateTimeLocalToIso, isLockedWorkflowNode, isProtectedWorkflowNode, newWorkflowDraft,
-  newWorkflowTriggerDraft, nextNodePosition, nodeRefArray, switchCaseEditor, validateJsonValueType,
+  boundedIndex,
+  defaultTriggerConfiguration,
+  errorMessage,
+  dateTimeLocalToIso,
+  newWorkflowDraft,
+  newWorkflowTriggerDraft,
 } from "../../workflow/editor-defaults";
 import type { WorkflowServiceHost } from "./host";
-
-const WORKFLOW_WDL_SYNC_DELAY_MS = 1500;
-const MAX_OPEN_RUN_TABS = 8;
-const WATCH_STORAGE_PREFIX = "runinator.watch.";
 
 export interface WorkflowEditorPeer {
   refreshHeaderDraft: () => void;
@@ -60,7 +55,7 @@ export function createWorkflowCatalogService(
   editor: WorkflowEditorPeer,
   runs: WorkflowRunsPeer,
 ) {
-  const { deps, internal } = host;
+  const { internal } = host;
 
   async function refreshWorkflows() {
     console.info("[command-center] refreshing workflows");
@@ -160,7 +155,7 @@ export function createWorkflowCatalogService(
   async function exportWorkflowWdl(): Promise<void> {
     try {
       const source = await decompileToWdl(cloneJson(host.state.workflowDraft));
-      const name = (host.state.workflowDraft.name.trim() || "workflow");
+      const name = host.state.workflowDraft.name.trim() || "workflow";
       const fileName = `${name.replace(/[^a-z0-9._-]+/gi, "_")}.wdl`;
       host.deps.downloadTextFile(fileName, source, "text/plain");
       host.ctx.setStatus(`Exported ${fileName}`);
@@ -224,7 +219,9 @@ export function createWorkflowCatalogService(
       const note = skipped.length
         ? ` (skipped ${String(skipped.length)} non-WDL: ${skipped.join(", ")})`
         : "";
-      host.ctx.setStatus(`Exported ${String(entries.length - 1)} workflow(s) to runinator-pack.zip${note}`);
+      host.ctx.setStatus(
+        `Exported ${String(entries.length - 1)} workflow(s) to runinator-pack.zip${note}`,
+      );
     });
     host.notify();
   }
@@ -280,7 +277,10 @@ export function createWorkflowCatalogService(
       return;
     }
 
-    Object.assign(host.state.triggerDraft, newWorkflowTriggerDraft(host.state.workflowDraft.id, kind));
+    Object.assign(
+      host.state.triggerDraft,
+      newWorkflowTriggerDraft(host.state.workflowDraft.id, kind),
+    );
     host.state.triggerJson.configuration = pretty(host.state.triggerDraft.configuration);
     host.state.triggerJson.metadata = pretty(host.state.triggerDraft.metadata);
     host.state.triggerEditorCreating = true;
@@ -436,13 +436,18 @@ export function createWorkflowCatalogService(
 
   async function saveSelectedWorkflowBundle() {
     const synced =
-      host.state.workflowEditorMode === "wdl" ? await editor.syncWorkflowWdl() : editor.syncWorkflowJson();
+      host.state.workflowEditorMode === "wdl"
+        ? await editor.syncWorkflowWdl()
+        : editor.syncWorkflowJson();
 
     if (!synced) {
       return;
     }
 
-    Object.assign(host.state.workflowDraft, normalizeWorkflowDefinition(cloneJson(host.state.workflowDraft)));
+    Object.assign(
+      host.state.workflowDraft,
+      normalizeWorkflowDefinition(cloneJson(host.state.workflowDraft)),
+    );
     const saved = await host.ctx.runOperation("Saving workflow", async () =>
       saveWorkflowWdl(await workflowWdlSaveRequest()),
     );
@@ -566,7 +571,9 @@ export function createWorkflowCatalogService(
     const retryable = result.failed.map((failure) => failure.item);
     host.ctx.setError(text, {
       label: `Retry ${String(retryable.length)} failed`,
-      run: () => { retry(retryable); },
+      run: () => {
+        retry(retryable);
+      },
     });
   }
 
@@ -580,10 +587,7 @@ export function createWorkflowCatalogService(
     const verb = enabled ? "Enabling" : "Disabling";
     const result = await host.ctx.runOperation(
       `${verb} ${String(workflows.length)} workflows`,
-      () =>
-        runBulk(workflows, (workflow) =>
-          saveWorkflow({ ...cloneJson(workflow), enabled }),
-        ),
+      () => runBulk(workflows, (workflow) => saveWorkflow({ ...cloneJson(workflow), enabled })),
     );
 
     await refreshWorkflows();
@@ -602,7 +606,10 @@ export function createWorkflowCatalogService(
   }
 
   /// delete many workflows, taking the same confirmation the single-workflow delete does.
-  async function deleteWorkflows(workflows: WorkflowDefinition[], options?: { confirmed?: boolean }) {
+  async function deleteWorkflows(
+    workflows: WorkflowDefinition[],
+    options?: { confirmed?: boolean },
+  ) {
     const deletable = workflows.filter((workflow) => workflow.id);
 
     if (!deletable.length) {
@@ -663,5 +670,33 @@ export function createWorkflowCatalogService(
     host.notify();
   }
 
-  return { refreshWorkflows, clearServiceState, selectWorkflow, addWorkflow, workflowNameForRun, exportWorkflowWdl, exportWorkflowPack, moveWorkflowSelection, openWorkflowSettings, closeWorkflowSettings, refreshWorkflowTriggers, clearWorkflowTriggerState, addWorkflowTrigger, editWorkflowTrigger, closeTriggerEditor, setTriggerKind, submitWorkflowTrigger, deleteSelectedWorkflowTrigger, triggerCronSummary, triggerDateForInput, workflowSaveTriggers, workflowWdlSaveRequest, saveSelectedWorkflowBundle, deleteSelectedWorkflow, duplicateSelectedWorkflow, setWorkflowsEnabled, deleteWorkflows };
+  return {
+    refreshWorkflows,
+    clearServiceState,
+    selectWorkflow,
+    addWorkflow,
+    workflowNameForRun,
+    exportWorkflowWdl,
+    exportWorkflowPack,
+    moveWorkflowSelection,
+    openWorkflowSettings,
+    closeWorkflowSettings,
+    refreshWorkflowTriggers,
+    clearWorkflowTriggerState,
+    addWorkflowTrigger,
+    editWorkflowTrigger,
+    closeTriggerEditor,
+    setTriggerKind,
+    submitWorkflowTrigger,
+    deleteSelectedWorkflowTrigger,
+    triggerCronSummary,
+    triggerDateForInput,
+    workflowSaveTriggers,
+    workflowWdlSaveRequest,
+    saveSelectedWorkflowBundle,
+    deleteSelectedWorkflow,
+    duplicateSelectedWorkflow,
+    setWorkflowsEnabled,
+    deleteWorkflows,
+  };
 }

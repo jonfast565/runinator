@@ -234,9 +234,8 @@ fn assert_node_returns_violations_for_failing_conditions() {
         ]
     }"#,
     )
-    .unwrap()
-    .into();
-    let context = serde_json::from_str::<Value>("{}").unwrap().into();
+    .unwrap();
+    let context = serde_json::from_str::<Value>("{}").unwrap();
     let violations = evaluate_assertions(&params, &context);
     assert_eq!(violations.len(), 1);
     assert_eq!(violations[0].name, "always_false");
@@ -245,10 +244,9 @@ fn assert_node_returns_violations_for_failing_conditions() {
 
 #[test]
 fn transform_node_resolves_literal_bindings() {
-    let params = serde_json::from_str::<Value>(r#"{ "bindings": { "x": 42, "label": "hello" } }"#)
-        .unwrap()
-        .into();
-    let context = serde_json::from_str::<Value>("{}").unwrap().into();
+    let params =
+        serde_json::from_str::<Value>(r#"{ "bindings": { "x": 42, "label": "hello" } }"#).unwrap();
+    let context = serde_json::from_str::<Value>("{}").unwrap();
     let result = resolve_bindings(&params, &context);
     assert_eq!(result.get("x").and_then(|v| v.as_i64()), Some(42));
     assert_eq!(result.get("label").and_then(|v| v.as_str()), Some("hello"));
@@ -261,8 +259,7 @@ fn audit_node_build_record_includes_required_fields() {
     let resolved = serde_json::from_str::<Value>(
         r#"{ "actor": "alice", "action": "approved", "target": "pr-42" }"#,
     )
-    .unwrap()
-    .into();
+    .unwrap();
     let record = build_audit_record(run_id, "my_audit", &resolved);
     assert_eq!(
         record.get("action").and_then(|v| v.as_str()),
@@ -278,11 +275,9 @@ fn audit_node_build_record_includes_required_fields() {
 #[test]
 fn checkpoint_node_parses_name_from_params() {
     use super::checkpoint::parse_checkpoint_name;
-    let with_name = serde_json::from_str::<Value>(r#"{ "name": "after-ingest" }"#)
-        .unwrap()
-        .into();
+    let with_name = serde_json::from_str::<Value>(r#"{ "name": "after-ingest" }"#).unwrap();
     assert_eq!(parse_checkpoint_name(&with_name, "node1"), "after-ingest");
-    let without_name = serde_json::from_str::<Value>("{}").unwrap().into();
+    let without_name = serde_json::from_str::<Value>("{}").unwrap();
     assert_eq!(parse_checkpoint_name(&without_name, "node1"), "node1");
 }
 
@@ -290,9 +285,8 @@ fn checkpoint_node_parses_name_from_params() {
 fn mutex_record_is_held_by_other_respects_released_flag() {
     let run_a = Uuid::now_v7();
     let run_b = Uuid::now_v7();
-    let held = serde_json::from_str::<Value>(&format!(r#"{{ "held_by_run_id": "{run_a}" }}"#))
-        .unwrap()
-        .into();
+    let held =
+        serde_json::from_str::<Value>(&format!(r#"{{ "held_by_run_id": "{run_a}" }}"#)).unwrap();
     // held by run_a, checking from run_b → held by other.
     assert!(record_is_held_by_other(&held, run_b));
     // held by run_a, checking from run_a itself → not held by other.
@@ -300,8 +294,7 @@ fn mutex_record_is_held_by_other_respects_released_flag() {
     let released = serde_json::from_str::<Value>(&format!(
         r#"{{ "held_by_run_id": "{run_a}", "released_at": 1 }}"#
     ))
-    .unwrap()
-    .into();
+    .unwrap();
     // released records are never considered held.
     assert!(!record_is_held_by_other(&released, run_b));
 }
@@ -311,26 +304,21 @@ fn mutex_lease_expiry_reclaims_wedged_holders() {
     let now = chrono::Utc::now().timestamp();
     // an explicit deadline in the past is expired regardless of the holder run's status.
     let expired_deadline =
-        serde_json::from_str::<Value>(&format!(r#"{{ "lease_deadline": {} }}"#, now - 1))
-            .unwrap()
-            .into();
+        serde_json::from_str::<Value>(&format!(r#"{{ "lease_deadline": {} }}"#, now - 1)).unwrap();
     assert!(lease_is_expired(&expired_deadline));
     // a future deadline is still live.
     let live_deadline =
         serde_json::from_str::<Value>(&format!(r#"{{ "lease_deadline": {} }}"#, now + 600))
-            .unwrap()
-            .into();
+            .unwrap();
     assert!(!lease_is_expired(&live_deadline));
     // a hold without an explicit deadline never expires by time: the acquire-wait timeout no longer
     // caps the held lease, so a long critical section runs to completion (reclaimed only when the
     // holder run terminates). even a very old acquisition stays live.
     let old_unbounded =
-        serde_json::from_str::<Value>(&format!(r#"{{ "acquired_at": {} }}"#, now - 7200))
-            .unwrap()
-            .into();
+        serde_json::from_str::<Value>(&format!(r#"{{ "acquired_at": {} }}"#, now - 7200)).unwrap();
     assert!(!lease_is_expired(&old_unbounded));
     // a record with no deadline is never treated as expired (nothing to bound it).
-    let empty = serde_json::from_str::<Value>("{}").unwrap().into();
+    let empty = serde_json::from_str::<Value>("{}").unwrap();
     assert!(!lease_is_expired(&empty));
 }
 
@@ -373,16 +361,13 @@ fn mutex_params_parse_release_and_hold() {
 #[test]
 fn mutex_holder_run_id_parses_only_valid_uuids() {
     let run = Uuid::now_v7();
-    let held = serde_json::from_str::<Value>(&format!(r#"{{ "held_by_run_id": "{run}" }}"#))
-        .unwrap()
-        .into();
+    let held =
+        serde_json::from_str::<Value>(&format!(r#"{{ "held_by_run_id": "{run}" }}"#)).unwrap();
     assert_eq!(holder_run_id(&held), Some(run));
     // a record with no holder, or a malformed id, resolves to no holder.
-    let empty = serde_json::from_str::<Value>("{}").unwrap().into();
+    let empty = serde_json::from_str::<Value>("{}").unwrap();
     assert_eq!(holder_run_id(&empty), None);
-    let malformed = serde_json::from_str::<Value>(r#"{ "held_by_run_id": "not-a-uuid" }"#)
-        .unwrap()
-        .into();
+    let malformed = serde_json::from_str::<Value>(r#"{ "held_by_run_id": "not-a-uuid" }"#).unwrap();
     assert_eq!(holder_run_id(&malformed), None);
 }
 
@@ -394,24 +379,21 @@ fn throttle_bucket_has_tokens_resets_on_expired_window() {
         r#"{{ "window_start": {}, "tokens_used": 5 }}"#,
         now - 120
     ))
-    .unwrap()
-    .into();
+    .unwrap();
     assert!(bucket_has_tokens(&expired, 5, 60));
     // window is fresh and tokens exhausted → no tokens.
     let full = serde_json::from_str::<Value>(&format!(
         r#"{{ "window_start": {}, "tokens_used": 5 }}"#,
         now
     ))
-    .unwrap()
-    .into();
+    .unwrap();
     assert!(!bucket_has_tokens(&full, 5, 60));
     // window is fresh but capacity remains → has tokens.
     let partial = serde_json::from_str::<Value>(&format!(
         r#"{{ "window_start": {}, "tokens_used": 3 }}"#,
         now
     ))
-    .unwrap()
-    .into();
+    .unwrap();
     assert!(bucket_has_tokens(&partial, 5, 60));
 }
 
@@ -428,13 +410,9 @@ fn cooldown_remaining_seconds_reflects_window() {
 
 #[test]
 fn await_run_node_defaults_to_all_mode() {
-    let params_all = serde_json::from_str::<Value>(r#"{ "mode": "all" }"#)
-        .unwrap()
-        .into();
-    let params_any = serde_json::from_str::<Value>(r#"{ "mode": "any" }"#)
-        .unwrap()
-        .into();
-    let params_missing = serde_json::from_str::<Value>("{}").unwrap().into();
+    let params_all = serde_json::from_str::<Value>(r#"{ "mode": "all" }"#).unwrap();
+    let params_any = serde_json::from_str::<Value>(r#"{ "mode": "any" }"#).unwrap();
+    let params_missing = serde_json::from_str::<Value>("{}").unwrap();
     assert_eq!(parse_await_mode(&params_all), "all");
     assert_eq!(parse_await_mode(&params_any), "any");
     assert_eq!(parse_await_mode(&params_missing), "all");
@@ -491,30 +469,25 @@ fn circuit_breaker_open_respects_cooldown() {
         r#"{{ "circuit_state": "open", "last_tripped_at": {} }}"#,
         now - 30
     ))
-    .unwrap()
-    .into();
+    .unwrap();
     assert!(is_circuit_open(&open, 120, now));
     // tripped long ago → cooldown elapsed → not open.
     let recovered = serde_json::from_str::<Value>(&format!(
         r#"{{ "circuit_state": "open", "last_tripped_at": {} }}"#,
         now - 300
     ))
-    .unwrap()
-    .into();
+    .unwrap();
     assert!(!is_circuit_open(&recovered, 120, now));
     // closed state → never open regardless.
     let closed =
         serde_json::from_str::<Value>(r#"{ "circuit_state": "closed", "last_tripped_at": 0 }"#)
-            .unwrap()
-            .into();
+            .unwrap();
     assert!(!is_circuit_open(&closed, 120, now));
 }
 
 #[test]
 fn event_source_type_matching() {
-    let event = serde_json::from_str::<Value>(r#"{ "type": "file.uploaded" }"#)
-        .unwrap()
-        .into();
+    let event = serde_json::from_str::<Value>(r#"{ "type": "file.uploaded" }"#).unwrap();
     assert!(event_type_matches(&event, "file.uploaded"));
     assert!(!event_type_matches(&event, "user.created"));
     // wildcard matches everything.

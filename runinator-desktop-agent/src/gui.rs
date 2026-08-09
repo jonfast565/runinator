@@ -297,12 +297,7 @@ impl DesktopAgentApp {
             return;
         };
         let normalized = format!("{key}={value}");
-        if self
-            .draft
-            .extra_labels
-            .iter()
-            .any(|label| *label == normalized)
-        {
+        if self.draft.extra_labels.contains(&normalized) {
             return;
         }
         self.draft.extra_labels.push(normalized);
@@ -583,10 +578,10 @@ impl eframe::App for DesktopAgentApp {
                                 egui::TextEdit::singleline(&mut self.draft.console_working_dir)
                                     .hint_text("optional — e.g. /Users/me/GitHub/runinator"),
                             );
-                            if ui.button("Browse…").clicked() {
-                                if let Some(dir) = rfd::FileDialog::new().pick_folder() {
-                                    self.draft.console_working_dir = dir.display().to_string();
-                                }
+                            if ui.button("Browse…").clicked()
+                                && let Some(dir) = rfd::FileDialog::new().pick_folder()
+                            {
+                                self.draft.console_working_dir = dir.display().to_string();
                             }
                         });
                         ui.end_row();

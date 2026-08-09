@@ -43,13 +43,13 @@ pub async fn heartbeat_replica<T: DatabaseImpl>(
     let replica = db
         .heartbeat_replica(replica_id, request, observed_ip)
         .await?;
-    if replica.is_some() {
-        if let Some(telemetry) = telemetry {
-            let sample = ReplicaSample::from_telemetry(replica_id, &telemetry);
-            // sampling is best-effort observability; never fail a heartbeat over it.
-            if let Err(err) = db.insert_replica_sample(sample).await {
-                log::warn!("failed to record replica sample for {replica_id}: {err}");
-            }
+    if replica.is_some()
+        && let Some(telemetry) = telemetry
+    {
+        let sample = ReplicaSample::from_telemetry(replica_id, &telemetry);
+        // sampling is best-effort observability; never fail a heartbeat over it.
+        if let Err(err) = db.insert_replica_sample(sample).await {
+            log::warn!("failed to record replica sample for {replica_id}: {err}");
         }
     }
     Ok(replica)

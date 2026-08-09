@@ -3247,7 +3247,7 @@ fn parse_path(pair: Pair<Rule>) -> Result<Expr, WdlError> {
         match inner.as_rule() {
             Rule::ident => segs.push(PathSeg::Key(inner.as_str().to_string())),
             Rule::path_seg => {
-                let seg = first_inner(inner.clone()).map(|p| p).ok();
+                let seg = first_inner(inner.clone()).ok();
                 match seg {
                     Some(p) if p.as_rule() == Rule::ident => {
                         segs.push(PathSeg::Key(p.as_str().to_string()))

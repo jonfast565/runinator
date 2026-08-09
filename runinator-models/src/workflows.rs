@@ -88,33 +88,33 @@ fn expand_refs_in_value(
 ) -> Result<(), String> {
     match value {
         Value::Object(map) => {
-            if let Some(reference) = map.get("$ref").and_then(Value::as_str).map(str::to_string) {
-                if let Some(pointer) = reference.strip_prefix("#/$defs/") {
-                    if stack.iter().any(|item| item == &reference) {
-                        return Err(format!("detected local $ref cycle for '{reference}'"));
-                    }
-                    let path = format!("/{pointer}");
-                    let mut replacement = defs
-                        .pointer(&path)
-                        .cloned()
-                        .ok_or_else(|| format!("missing local $ref '{reference}'"))?;
-                    stack.push(reference.clone());
-                    expand_refs_in_value(&mut replacement, defs, stack)?;
-                    stack.pop();
-                    for (key, overlay) in map.clone() {
-                        if key != "$ref"
-                            && key != "with"
-                            && let Value::Object(replacement_map) = &mut replacement
-                        {
-                            replacement_map.insert(key, overlay);
-                        }
-                    }
-                    if let Some(with) = map.get("with") {
-                        merge_overlay(&mut replacement, with.clone());
-                    }
-                    *value = replacement;
-                    return Ok(());
+            if let Some(reference) = map.get("$ref").and_then(Value::as_str).map(str::to_string)
+                && let Some(pointer) = reference.strip_prefix("#/$defs/")
+            {
+                if stack.iter().any(|item| item == &reference) {
+                    return Err(format!("detected local $ref cycle for '{reference}'"));
                 }
+                let path = format!("/{pointer}");
+                let mut replacement = defs
+                    .pointer(&path)
+                    .cloned()
+                    .ok_or_else(|| format!("missing local $ref '{reference}'"))?;
+                stack.push(reference.clone());
+                expand_refs_in_value(&mut replacement, defs, stack)?;
+                stack.pop();
+                for (key, overlay) in map.clone() {
+                    if key != "$ref"
+                        && key != "with"
+                        && let Value::Object(replacement_map) = &mut replacement
+                    {
+                        replacement_map.insert(key, overlay);
+                    }
+                }
+                if let Some(with) = map.get("with") {
+                    merge_overlay(&mut replacement, with.clone());
+                }
+                *value = replacement;
+                return Ok(());
             }
             for nested in map.values_mut() {
                 expand_refs_in_value(nested, defs, stack)?;

@@ -74,11 +74,11 @@ async fn pipeline_entry_members<T: ReducerStore>(
     let mut name_to_id: HashMap<String, Uuid> = HashMap::new();
     let mut member_ids: Vec<Uuid> = Vec::new();
     for id in &pipeline.workflow_ids {
-        if let Some(workflow) = db.fetch_workflow(*id).await? {
-            if let Some(wid) = workflow.id {
-                name_to_id.insert(workflow.name.clone(), wid);
-                member_ids.push(wid);
-            }
+        if let Some(workflow) = db.fetch_workflow(*id).await?
+            && let Some(wid) = workflow.id
+        {
+            name_to_id.insert(workflow.name.clone(), wid);
+            member_ids.push(wid);
         }
     }
     // any member that is the target of an in-pipeline link is downstream, not an entry point.

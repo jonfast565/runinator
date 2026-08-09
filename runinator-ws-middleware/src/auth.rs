@@ -75,10 +75,9 @@ fn extract_credential(req: &Request<Body>) -> Option<String> {
         .headers()
         .get(AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
+        && let Some(rest) = value.strip_prefix("Bearer ")
     {
-        if let Some(rest) = value.strip_prefix("Bearer ") {
-            return Some(rest.trim().to_string());
-        }
+        return Some(rest.trim().to_string());
     }
     if let Some(value) = req.headers().get("x-api-key").and_then(|v| v.to_str().ok()) {
         return Some(value.trim().to_string());
@@ -119,15 +118,14 @@ pub async fn auth_middleware<T: DatabaseImpl>(
     };
     // jwt principals carry their active org in the token; api-key/service principals select one per
     // request via `X-Org-Id`. resolve the header's org here so downstream handlers see org context.
-    if context.org_id.is_none() {
-        if let Some(org_id) = req
+    if context.org_id.is_none()
+        && let Some(org_id) = req
             .headers()
             .get("x-org-id")
             .and_then(|v| v.to_str().ok())
             .and_then(|raw| Uuid::parse_str(raw.trim()).ok())
-        {
-            resolve_header_org(&state, &mut context, org_id).await;
-        }
+    {
+        resolve_header_org(&state, &mut context, org_id).await;
     }
     req.extensions_mut().insert(context);
     next.run(req).await
@@ -141,12 +139,12 @@ async fn resolve_header_org<T: DatabaseImpl>(
     context: &mut AuthContext,
     org_id: Uuid,
 ) {
-    if let Some(user_id) = context.principal_id {
-        if let Ok(Some(membership)) = state.db.fetch_org_membership(org_id, user_id).await {
-            context.org_id = Some(org_id);
-            context.org_role = Some(membership.role);
-            return;
-        }
+    if let Some(user_id) = context.principal_id
+        && let Ok(Some(membership)) = state.db.fetch_org_membership(org_id, user_id).await
+    {
+        context.org_id = Some(org_id);
+        context.org_role = Some(membership.role);
+        return;
     }
     if context.is_admin {
         context.org_id = Some(org_id);

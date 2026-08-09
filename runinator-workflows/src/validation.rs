@@ -425,7 +425,7 @@ fn mutex_name(node: &WorkflowNode) -> String {
     node.parameters
         .get("name")
         .and_then(Value::as_str)
-        .unwrap_or_else(|| node.id.as_str())
+        .unwrap_or(node.id.as_str())
         .to_string()
 }
 
@@ -451,7 +451,7 @@ fn validate_mutex_sections(
     let release_locks: HashSet<String> = nodes
         .iter()
         .filter(|node| node.kind == WorkflowNodeKind::Mutex && mutex_is_release(node))
-        .map(|node| mutex_name(node))
+        .map(mutex_name)
         .collect();
 
     for lock in release_locks {

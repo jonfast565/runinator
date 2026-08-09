@@ -224,23 +224,21 @@ pub(super) async fn process_barrier_node<T: ReducerStore>(
 pub(super) struct BarrierHandler;
 
 impl<T: ReducerStore> super::handler::NodeHandler<T> for BarrierHandler {
-    fn process<'a>(
+    async fn process<'a>(
         &'a self,
         ctx: &'a super::handler::NodeHandlerContext<'a, T>,
-    ) -> impl std::future::Future<Output = Result<ReadyNodeDisposition, SendableError>> + Send + 'a
+    ) -> Result<ReadyNodeDisposition, SendableError>
     where
         T: 'a,
     {
-        async move {
-            process_barrier_node(
-                ctx.db,
-                ctx.workflow_run,
-                ctx.cursor,
-                ctx.node,
-                ctx.latest,
-                ctx.node_runs,
-            )
-            .await
-        }
+        process_barrier_node(
+            ctx.db,
+            ctx.workflow_run,
+            ctx.cursor,
+            ctx.node,
+            ctx.latest,
+            ctx.node_runs,
+        )
+        .await
     }
 }

@@ -1,4 +1,4 @@
-import type { JsonRecord, JsonValue } from "../domain/json";
+import type { JsonRecord } from "../domain/json";
 import { asJsonRecord, isJsonRecord } from "../domain/json";
 import type { FieldLocation, NodeFieldLocationBase } from "../domain/models";
 import { cloneJson } from "../utils/json";

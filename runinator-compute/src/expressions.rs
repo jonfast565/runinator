@@ -371,14 +371,14 @@ fn evaluate_higher_order(
         "map" => {
             let mapped = items
                 .iter()
-                .map(|item| callable.apply(&[item.clone()], context, env))
+                .map(|item| callable.apply(std::slice::from_ref(item), context, env))
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(Value::Array(mapped))
         }
         "flat_map" => {
             let mut out = Vec::new();
             for item in &items {
-                match callable.apply(&[item.clone()], context, env)? {
+                match callable.apply(std::slice::from_ref(item), context, env)? {
                     Value::Array(inner) => out.extend(inner),
                     other => out.push(other),
                 }
@@ -388,7 +388,10 @@ fn evaluate_higher_order(
         "filter" => {
             let mut out = Vec::new();
             for item in items {
-                if predicate(name, callable.apply(&[item.clone()], context, env)?)? {
+                if predicate(
+                    name,
+                    callable.apply(std::slice::from_ref(&item), context, env)?,
+                )? {
                     out.push(item);
                 }
             }
@@ -396,7 +399,10 @@ fn evaluate_higher_order(
         }
         "find" => {
             for item in items {
-                if predicate(name, callable.apply(&[item.clone()], context, env)?)? {
+                if predicate(
+                    name,
+                    callable.apply(std::slice::from_ref(&item), context, env)?,
+                )? {
                     return Ok(item);
                 }
             }
@@ -404,7 +410,10 @@ fn evaluate_higher_order(
         }
         "any" => {
             for item in &items {
-                if predicate(name, callable.apply(&[item.clone()], context, env)?)? {
+                if predicate(
+                    name,
+                    callable.apply(std::slice::from_ref(item), context, env)?,
+                )? {
                     return Ok(Value::Bool(true));
                 }
             }
@@ -412,7 +421,10 @@ fn evaluate_higher_order(
         }
         "all" => {
             for item in &items {
-                if !predicate(name, callable.apply(&[item.clone()], context, env)?)? {
+                if !predicate(
+                    name,
+                    callable.apply(std::slice::from_ref(item), context, env)?,
+                )? {
                     return Ok(Value::Bool(false));
                 }
             }
@@ -423,7 +435,7 @@ fn evaluate_higher_order(
             let mut keyed = items
                 .into_iter()
                 .map(|item| {
-                    let key = callable.apply(&[item.clone()], context, env)?;
+                    let key = callable.apply(std::slice::from_ref(&item), context, env)?;
                     Ok((key, item))
                 })
                 .collect::<Result<Vec<_>, WorkflowValidationError>>()?;

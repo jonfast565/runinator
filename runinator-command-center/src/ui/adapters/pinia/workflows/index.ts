@@ -16,30 +16,19 @@ import type {
   DebugFrame,
   GateRecord,
   JsonRecord,
-  JsonValue,
   ProviderMetadata,
   RunSummary,
   RuninatorType,
   WorkflowDefinition,
-  WorkflowEdgeEditorDraft,
-  WorkflowLayoutDirection,
-  WorkflowNodeKind,
   WorkflowNodeRun,
-  WorkflowRunDetail,
-  WorkflowTrigger,
-  WorkflowTriggerKind,
   WorkflowValidationIssue,
 } from "../../../../core/domain/models";
-import type { WorkflowDebugPatch } from "../../../../core/api/commandCenterApi";
+
 import { workflowInputType } from "../../../../core/domain/models";
-import { runWorkflowSnapshot } from "../../../../core/domain/models";
+
 import { formatMaybeDate } from "../../../../core/workflow/editor-defaults";
 import { workflowRunSearchText, optionIdForSourceHandle } from "../../../../core/workflow/index";
-import {
-  buildInputSkeleton,
-  newWorkflowDraft,
-  newWorkflowTriggerDraft,
-} from "../../../../core/workflow/editor-defaults";
+
 import { catalogMetadataService, workflowServices } from "../../../../core/services";
 import { traversedEdgeKeys, workflowNodeKindsList } from "../../../../core/workflow";
 import { useAppStore } from "../app";
@@ -167,7 +156,6 @@ export const useWorkflowsStore = defineStore("workflows", () => {
 
   const canContinueWorkflowRun = mirroredComputed(() => svc.canContinueWorkflowRun());
   const controlState = mirroredComputed<ControlFrame | null>(() => svc.getControlState());
-  const pauseRequested = mirroredComputed(() => Boolean(controlState.value?.pause_requested));
   const canPauseWorkflowRun = mirroredComputed(() => svc.canPauseWorkflowRun());
   const canResumeWorkflowRun = mirroredComputed(() => svc.canResumeWorkflowRun());
   const canCancelWorkflowRun = mirroredComputed(() => svc.canCancelWorkflowRun());

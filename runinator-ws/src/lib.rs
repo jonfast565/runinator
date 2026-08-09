@@ -23,10 +23,6 @@ pub mod orchestration {
 }
 mod router;
 mod server;
-#[cfg(test)]
-mod store_access_tests;
-#[cfg(test)]
-mod tests;
 mod websocket;
 
 // the durable orchestration engine (persistence layer, background loops, result consumer) lives in
@@ -94,3 +90,8 @@ pub(crate) fn workspace_root() -> &'static std::path::Path {
         .parent()
         .expect("crate sits in the workspace root")
 }
+
+#[cfg(test)]
+mod store_access_tests;
+#[cfg(test)]
+mod tests;

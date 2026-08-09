@@ -219,7 +219,7 @@ impl TelemetryCollector {
         let mut tx_delta = 0u64;
         let mut rx_total_bytes = 0u64;
         let mut tx_total_bytes = 0u64;
-        for (_, data) in io.networks.iter() {
+        for data in io.networks.values() {
             rx_delta = rx_delta.saturating_add(data.received());
             tx_delta = tx_delta.saturating_add(data.transmitted());
             rx_total_bytes = rx_total_bytes.saturating_add(data.total_received());

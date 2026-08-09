@@ -2,7 +2,6 @@ import type {
   ControlFrame,
   DebugFrame,
   JsonRecord,
-  ProviderMetadata,
   RuninatorType,
   WorkflowDefinition,
   WorkflowValidationIssue,

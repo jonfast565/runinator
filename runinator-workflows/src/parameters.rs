@@ -321,7 +321,7 @@ pub fn parse_signal_parameters(node: &WorkflowNode) -> SignalParameters {
     // this parser is infallible; a malformed correlation key degrades to a literal (it would have
     // errored at resolve time before, and the reducer's resolver already falls back to the raw value).
     let correlation_key = WorkflowExpression::try_from(&correlation_key)
-        .unwrap_or_else(|_| WorkflowExpression::Literal(correlation_key));
+        .unwrap_or(WorkflowExpression::Literal(correlation_key));
     SignalParameters {
         name,
         correlation_key,

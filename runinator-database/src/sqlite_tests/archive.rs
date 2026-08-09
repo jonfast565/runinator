@@ -76,14 +76,13 @@ async fn archive_marks_are_idempotent_and_sweep_deletes_source_rows() {
     let rows = db.fetch_archive_rows(marks).await.unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].table, ArchiveTable::DeadLetters);
-    assert_eq!(
+    assert!(
         rows[0]
             .row
             .get("payload")
             .and_then(Value::as_str)
             .unwrap()
-            .contains("old"),
-        true
+            .contains("old")
     );
     let mark_ids = rows.iter().map(|row| row.mark_id).collect::<Vec<_>>();
     assert_eq!(db.delete_archive_rows(rows).await.unwrap(), 1);

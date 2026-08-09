@@ -264,23 +264,23 @@ pub async fn resolve_gate<T: DatabaseImpl>(
     }
     let updated = db.update_gate(gate_id, gate.clone()).await?;
 
-    if open {
-        if let (Some(workflow_run_id), Some(node_id)) = (
+    if open
+        && let (Some(workflow_run_id), Some(node_id)) = (
             gate.get("workflow_run_id")
                 .and_then(Value::as_str)
                 .and_then(|raw| raw.parse::<Uuid>().ok()),
             gate.get("node_id").and_then(Value::as_str),
-        ) {
-            support::enqueue_node_ready(
-                db,
-                workflow_run_id,
-                node_id.to_string(),
-                "gate_opened",
-                Utc::now(),
-                runinator_models::json!({ "gate_id": gate_id }),
-            )
-            .await?;
-        }
+        )
+    {
+        support::enqueue_node_ready(
+            db,
+            workflow_run_id,
+            node_id.to_string(),
+            "gate_opened",
+            Utc::now(),
+            runinator_models::json!({ "gate_id": gate_id }),
+        )
+        .await?;
     }
 
     Ok(updated)

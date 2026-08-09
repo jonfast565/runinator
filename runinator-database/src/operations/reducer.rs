@@ -1322,8 +1322,7 @@ where
         stale_before: DateTime<Utc>,
     ) -> Result<Vec<ReplicaRecord>, SendableError> {
         let rows = if let Some(replica_type) = replica_type {
-            sqlx::query(&self.render(&format!(
-                "SELECT replica_id, replica_type, instance_id, runtime_id,
+            sqlx::query(&self.render("SELECT replica_id, replica_type, instance_id, runtime_id,
                         CASE
                             WHEN status = 'offline' THEN 'offline'
                             WHEN last_heartbeat_at <= ? THEN 'stale'
@@ -1331,8 +1330,7 @@ where
                         END AS status,
                         display_name, host, port, base_path, observed_ip, version, attributes, first_seen_at, last_heartbeat_at, last_seen_at, offline_at,
                         registered_by_principal_id, registered_by_kind, registered_by_org_id
-                 FROM replicas WHERE replica_type = ? ORDER BY replica_type, instance_id, replica_id"
-            )))
+                 FROM replicas WHERE replica_type = ? ORDER BY replica_type, instance_id, replica_id"))
             .bind(stale_before.timestamp())
             .bind(replica_type.as_str())
             .fetch_all(self.pool())

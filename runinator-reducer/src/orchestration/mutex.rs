@@ -148,10 +148,10 @@ async fn release_run_leases<T: ReducerStore>(
         if holder_run_id(&record) != Some(run_id) || record.get("released_at").is_some() {
             continue;
         }
-        if let Some(name) = name {
-            if record.get("name").and_then(Value::as_str) != Some(name) {
-                continue;
-            }
+        if let Some(name) = name
+            && record.get("name").and_then(Value::as_str) != Some(name)
+        {
+            continue;
         }
         let Some(id) = record
             .get("id")
@@ -420,23 +420,21 @@ pub(super) async fn process_mutex_node<T: ReducerStore>(
 pub(super) struct MutexHandler;
 
 impl<T: ReducerStore> super::handler::NodeHandler<T> for MutexHandler {
-    fn process<'a>(
+    async fn process<'a>(
         &'a self,
         ctx: &'a super::handler::NodeHandlerContext<'a, T>,
-    ) -> impl std::future::Future<Output = Result<ReadyNodeDisposition, SendableError>> + Send + 'a
+    ) -> Result<ReadyNodeDisposition, SendableError>
     where
         T: 'a,
     {
-        async move {
-            process_mutex_node(
-                ctx.db,
-                ctx.workflow_run,
-                ctx.cursor,
-                ctx.node,
-                ctx.latest,
-                ctx.node_runs,
-            )
-            .await
-        }
+        process_mutex_node(
+            ctx.db,
+            ctx.workflow_run,
+            ctx.cursor,
+            ctx.node,
+            ctx.latest,
+            ctx.node_runs,
+        )
+        .await
     }
 }

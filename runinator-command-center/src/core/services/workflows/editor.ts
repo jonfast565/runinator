@@ -1,45 +1,55 @@
-import {
-  cancelWorkflowRun, closeGate, compileWdl, continueWorkflowRun, createWorkflowRun, decompileToWdl,
-  deleteWorkflow, deleteWorkflowTrigger, duplicateWorkflow, fetchGates, fetchWorkflowNodeRunArtifacts,
-  fetchWorkflowNodeRunChunks, fetchWorkflowRun, fetchWorkflowRuns, fetchWorkflowTriggers, fetchWorkflows,
-  openGate, patchWorkflowRunDebug, pauseWorkflowRun, renameWorkflowRun as renameWorkflowRunApi,
-  replayWorkflowRun as replayWorkflowRunApi, resumeWorkflowRun, rerunWorkflowNode, runToCursorWorkflowRun,
-  saveWorkflowWdl, saveWorkflowTrigger, skipWorkflowNode, stepWorkflowRun,
-  type WorkflowDebugPatch, type WorkflowWdlSaveRequest,
-} from "../../api/commandCenterApi";
+import { compileWdl, decompileToWdl } from "../../api/commandCenterApi";
 import type {
-  GateRecord, JsonRecord, RunArtifact, RunChunk, RunSummary,
-  RuninatorType, WorkflowDefinition, WorkflowEdgeEditorDraft, WorkflowEditorEdgeData,
-  WorkflowLayoutDirection, WorkflowNodeKind, WorkflowRunDetail, WorkflowTrigger,
-  WorkflowTriggerKind,
+  JsonRecord,
+  WorkflowDefinition,
+  WorkflowEdgeEditorDraft,
+  WorkflowEditorEdgeData,
+  WorkflowLayoutDirection,
+  WorkflowNodeKind,
 } from "../../domain/models";
 import { pretty } from "../../utils/format";
-import { cloneJson, parseObject, parseRequiredObject } from "../../utils/json";
+import { cloneJson, parseRequiredObject } from "../../utils/json";
 import { displayValue, isBlankValue } from "../../utils/values";
-import { createZip, type ZipEntry } from "../../utils/zip";
+
 import {
-  applyWorkflowEdgeEditorDraft, applyWorkflowInlineNodeEdit, asArray, asRecord, isRecord,
-  autoArrangeWorkflowEdgeHandles, autoArrangeWorkflowLayout, createWorkflowNode, directTransitionKeys,
-  isSameConnectionPointLoop, nodeRef, nodeRefId, normalizeWorkflowDefinition, parameterSemanticKey,
-  removeWorkflowEdge, removeWorkflowEdgeHandles, removeWorkflowNodeReferences,
-  setWorkflowEdgeHandles, setWorkflowEdgeLabelAnchor, setWorkflowEdgeLabelOffset,
-  moveWorkflowEdgeEditorDraft, optionIdForSourceHandle, workflowEdgeOptionId, workflowEdgeEditorDraft,
-  workflowEdgeSemanticOptions, uniqueWorkflowNodeId, validateWorkflowReferenceSyntax,
+  applyWorkflowEdgeEditorDraft,
+  applyWorkflowInlineNodeEdit,
+  asRecord,
+  autoArrangeWorkflowEdgeHandles,
+  autoArrangeWorkflowLayout,
+  createWorkflowNode,
+  directTransitionKeys,
+  isSameConnectionPointLoop,
+  normalizeWorkflowDefinition,
+  parameterSemanticKey,
+  removeWorkflowEdge,
+  removeWorkflowEdgeHandles,
+  removeWorkflowNodeReferences,
+  setWorkflowEdgeHandles,
+  setWorkflowEdgeLabelAnchor,
+  setWorkflowEdgeLabelOffset,
+  moveWorkflowEdgeEditorDraft,
+  workflowEdgeOptionId,
+  workflowEdgeEditorDraft,
+  workflowEdgeSemanticOptions,
+  uniqueWorkflowNodeId,
+  validateWorkflowReferenceSyntax,
 } from "../../workflow/index";
 import { findNodeKindMetadata } from "../../workflow/catalog-registry";
 import { readWorkflowHeader } from "../../workflow/header-metadata";
 import { getAtLocation } from "../../workflow/field-location";
 import type { GraphEdgeLike, GraphEdgeModel } from "../../workflow/graph-model";
 import {
-  defaultEdgeEditorDraft, defaultTriggerConfiguration, errorMessage,
-  formatMaybeDate, dateTimeLocalToIso, isLockedWorkflowNode, isProtectedWorkflowNode, newWorkflowDraft,
-  newWorkflowTriggerDraft, nextNodePosition, validateJsonValueType,
+  defaultEdgeEditorDraft,
+  errorMessage,
+  isLockedWorkflowNode,
+  isProtectedWorkflowNode,
+  nextNodePosition,
+  validateJsonValueType,
 } from "../../workflow/editor-defaults";
 import type { WorkflowServiceHost } from "./host";
 
 const WORKFLOW_WDL_SYNC_DELAY_MS = 1500;
-const MAX_OPEN_RUN_TABS = 8;
-const WATCH_STORAGE_PREFIX = "runinator.watch.";
 
 export interface WorkflowCatalogPeer {
   saveSelectedWorkflowBundle: () => Promise<void>;
@@ -55,7 +65,7 @@ export function createWorkflowEditorService(
   runs: WorkflowRunsPeer,
   catalog: WorkflowCatalogPeer,
 ) {
-  const { deps, internal } = host;
+  const { internal } = host;
 
   function addWorkflowStep() {
     addWorkflowNode("action");
@@ -329,9 +339,14 @@ export function createWorkflowEditorService(
 
   function applyEdgeEditorDraft(draft: WorkflowEdgeEditorDraft): boolean {
     const previousEdge = draft.edgeId
-      ? (host.buildDraftGraphEdges().find((edge: GraphEdgeModel) => edge.id === draft.edgeId) ?? null)
+      ? (host.buildDraftGraphEdges().find((edge: GraphEdgeModel) => edge.id === draft.edgeId) ??
+        null)
       : null;
-    const result = applyWorkflowEdgeEditorDraft(host.state.workflowDraft.definition, previousEdge, draft);
+    const result = applyWorkflowEdgeEditorDraft(
+      host.state.workflowDraft.definition,
+      previousEdge,
+      draft,
+    );
 
     if (!result.ok) {
       host.ctx.setError(result.message);
@@ -347,7 +362,11 @@ export function createWorkflowEditorService(
     draft: WorkflowEdgeEditorDraft,
     direction: -1 | 1,
   ): WorkflowEdgeEditorDraft | null {
-    const result = moveWorkflowEdgeEditorDraft(host.state.workflowDraft.definition, draft, direction);
+    const result = moveWorkflowEdgeEditorDraft(
+      host.state.workflowDraft.definition,
+      draft,
+      direction,
+    );
 
     if (!result.ok) {
       host.ctx.setError(result.message);
@@ -356,17 +375,21 @@ export function createWorkflowEditorService(
 
     syncWorkflowDraftToJson();
     populateStepEditor(draft.source);
-    const movedEdge = host.buildDraftGraphEdges().find(
-      (edge: GraphEdgeModel) =>
-        edge.source === result.draft.source &&
-        edge.target === result.draft.target &&
-        workflowEdgeOptionId(edge) === result.draft.optionId,
-    );
+    const movedEdge = host
+      .buildDraftGraphEdges()
+      .find(
+        (edge: GraphEdgeModel) =>
+          edge.source === result.draft.source &&
+          edge.target === result.draft.target &&
+          workflowEdgeOptionId(edge) === result.draft.optionId,
+      );
     return movedEdge ? { ...result.draft, edgeId: movedEdge.id } : result.draft;
   }
 
   function moveSelectedEdge(direction: -1 | 1): boolean {
-    const draft = host.state.selectedGraphEdgeId ? openEdgeEditorDraft(host.state.selectedGraphEdgeId) : null;
+    const draft = host.state.selectedGraphEdgeId
+      ? openEdgeEditorDraft(host.state.selectedGraphEdgeId)
+      : null;
 
     if (!draft) {
       return false;
@@ -462,7 +485,8 @@ export function createWorkflowEditorService(
     }
 
     const previousEdge = previousEdgeId
-      ? (host.buildDraftGraphEdges().find((edge: GraphEdgeModel) => edge.id === previousEdgeId) ?? null)
+      ? (host.buildDraftGraphEdges().find((edge: GraphEdgeModel) => edge.id === previousEdgeId) ??
+        null)
       : null;
     const previousDraft = previousEdge
       ? workflowEdgeEditorDraft(host.state.workflowDraft, previousEdge)
@@ -495,7 +519,11 @@ export function createWorkflowEditorService(
     const data = edge.data as WorkflowEditorEdgeData | undefined;
 
     if (data?.transitionKey) {
-      removeWorkflowEdgeHandles(host.state.workflowDraft.definition, edge.source, data.transitionKey);
+      removeWorkflowEdgeHandles(
+        host.state.workflowDraft.definition,
+        edge.source,
+        data.transitionKey,
+      );
     }
 
     if (typeof data?.branchIndex === "number") {
@@ -604,7 +632,10 @@ export function createWorkflowEditorService(
 
     host.state.workflowDraft.definition = parsed;
     refreshHeaderDraft();
-    Object.assign(host.state.workflowDraft, normalizeWorkflowDefinition(cloneJson(host.state.workflowDraft)));
+    Object.assign(
+      host.state.workflowDraft,
+      normalizeWorkflowDefinition(cloneJson(host.state.workflowDraft)),
+    );
     setWorkflowJsonSilently(pretty(host.state.workflowDraft.definition));
     host.state.isDirty = true;
     scheduleWorkflowWdlRefresh();
@@ -614,7 +645,10 @@ export function createWorkflowEditorService(
   function syncWorkflowDraftToJson() {
     // a graph edit is now the source of truth, so save should serialize the draft, not recompile wdl.
     host.state.workflowEditorMode = "graph";
-    Object.assign(host.state.workflowDraft, normalizeWorkflowDefinition(cloneJson(host.state.workflowDraft)));
+    Object.assign(
+      host.state.workflowDraft,
+      normalizeWorkflowDefinition(cloneJson(host.state.workflowDraft)),
+    );
     setWorkflowJsonSilently(pretty(host.state.workflowDraft.definition));
     host.state.isDirty = true;
     scheduleWorkflowWdlRefresh();
@@ -648,7 +682,10 @@ export function createWorkflowEditorService(
     }
 
     refreshHeaderDraft();
-    Object.assign(host.state.workflowDraft, normalizeWorkflowDefinition(cloneJson(host.state.workflowDraft)));
+    Object.assign(
+      host.state.workflowDraft,
+      normalizeWorkflowDefinition(cloneJson(host.state.workflowDraft)),
+    );
     setWorkflowJsonSilently(pretty(host.state.workflowDraft.definition));
     host.state.isDirty = true;
     return true;
@@ -778,7 +815,9 @@ export function createWorkflowEditorService(
   }
 
   function openStepEditor(nodeId: string, creating = false) {
-    internal.stepEditorBaselineDefinition = creating ? null : cloneJson(host.state.workflowDraft.definition);
+    internal.stepEditorBaselineDefinition = creating
+      ? null
+      : cloneJson(host.state.workflowDraft.definition);
     populateStepEditor(nodeId);
     host.state.stepEditorCreating = creating;
     host.state.stepEditorCreatedNodeId = creating ? nodeId : "";
@@ -910,5 +949,55 @@ export function createWorkflowEditorService(
     return "";
   }
 
-  return { addWorkflowStep, addWorkflowNode, addConnectedWorkflowNode, removeWorkflowStep, removeWorkflowNode, applyInlineNodeEdit, clearWorkflowGraphSelection, submitInlineNodeEdit, applyStepEditor, populateStepEditor, workflowEdgeOptions, openEdgeEditorDraft, selectGraphEdge, applyEdgeEditorDraft, moveEdgeEditorItem, moveSelectedEdge, reverseSelectedEdgeHandles, setEdgeLabelOffset, setEdgeLabelAnchor, scheduleStepEditorApply, applyGraphEdgeSemantic, removeWorkflowEdgeById, autoArrangeWorkflowNodes, scheduleWorkflowJsonSync, scheduleWorkflowWdlSync, scheduleWorkflowWdlRefresh, setWorkflowJsonSilently, setWorkflowWdlSilently, syncWorkflowJson, syncWorkflowDraftToJson, syncWorkflowWdl, refreshWorkflowWdl, ensureWorkflowNodes, refreshHeaderDraft, stripNewNodeConnections, graphCentroidPosition, setGraphNodePosition, renameLayoutNode, addNodeRefEditor, removeNodeRefEditor, markWorkflowDirty, openStepEditor, submitStepEditor, dismissStepEditorForCanvasEdit, closeStepEditor, duplicateSelectedStep, setStepEditorError, isJsonObject, validateStepParameters };
+  return {
+    addWorkflowStep,
+    addWorkflowNode,
+    addConnectedWorkflowNode,
+    removeWorkflowStep,
+    removeWorkflowNode,
+    applyInlineNodeEdit,
+    clearWorkflowGraphSelection,
+    submitInlineNodeEdit,
+    applyStepEditor,
+    populateStepEditor,
+    workflowEdgeOptions,
+    openEdgeEditorDraft,
+    selectGraphEdge,
+    applyEdgeEditorDraft,
+    moveEdgeEditorItem,
+    moveSelectedEdge,
+    reverseSelectedEdgeHandles,
+    setEdgeLabelOffset,
+    setEdgeLabelAnchor,
+    scheduleStepEditorApply,
+    applyGraphEdgeSemantic,
+    removeWorkflowEdgeById,
+    autoArrangeWorkflowNodes,
+    scheduleWorkflowJsonSync,
+    scheduleWorkflowWdlSync,
+    scheduleWorkflowWdlRefresh,
+    setWorkflowJsonSilently,
+    setWorkflowWdlSilently,
+    syncWorkflowJson,
+    syncWorkflowDraftToJson,
+    syncWorkflowWdl,
+    refreshWorkflowWdl,
+    ensureWorkflowNodes,
+    refreshHeaderDraft,
+    stripNewNodeConnections,
+    graphCentroidPosition,
+    setGraphNodePosition,
+    renameLayoutNode,
+    addNodeRefEditor,
+    removeNodeRefEditor,
+    markWorkflowDirty,
+    openStepEditor,
+    submitStepEditor,
+    dismissStepEditorForCanvasEdit,
+    closeStepEditor,
+    duplicateSelectedStep,
+    setStepEditorError,
+    isJsonObject,
+    validateStepParameters,
+  };
 }

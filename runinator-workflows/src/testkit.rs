@@ -196,14 +196,14 @@ fn check_expectations(expect: &Expectations, run: &SimulationRun) -> Vec<String>
         }
     }
 
-    if let Some(expected) = expect.status {
-        if run.status != expected {
-            failures.push(format!(
-                "expected status {}, got {}",
-                expected.as_str(),
-                run.status.as_str()
-            ));
-        }
+    if let Some(expected) = expect.status
+        && run.status != expected
+    {
+        failures.push(format!(
+            "expected status {}, got {}",
+            expected.as_str(),
+            run.status.as_str()
+        ));
     }
 
     for node in &expect.reached {
@@ -233,16 +233,16 @@ fn check_expectations(expect: &Expectations, run: &SimulationRun) -> Vec<String>
         }
     }
 
-    if let Some(expected) = &expect.output {
-        if &run.output != expected {
-            failures.push(format!("expected output {expected}, got {}", run.output));
-        }
+    if let Some(expected) = &expect.output
+        && &run.output != expected
+    {
+        failures.push(format!("expected output {expected}, got {}", run.output));
     }
 
-    if let Some(subset) = &expect.output_contains {
-        if let Some(message) = output_subset_mismatch(subset, &run.output) {
-            failures.push(message);
-        }
+    if let Some(subset) = &expect.output_contains
+        && let Some(message) = output_subset_mismatch(subset, &run.output)
+    {
+        failures.push(message);
     }
 
     failures

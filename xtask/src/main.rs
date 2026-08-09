@@ -217,10 +217,10 @@ fn run_local_up(workspace_root: &std::path::Path, args: &LocalUpArgs) -> anyhow:
     } else {
         workspace_root.join(database_path)
     };
-    if database_backend == "sqlite" {
-        if let Some(parent) = database_path.parent() {
-            paths::ensure_dir(parent)?;
-        }
+    if database_backend == "sqlite"
+        && let Some(parent) = database_path.parent()
+    {
+        paths::ensure_dir(parent)?;
     }
 
     println!("==> Starting local Runinator stack");

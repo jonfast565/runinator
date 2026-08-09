@@ -479,10 +479,10 @@ async fn duration_context<T: DatabaseImpl>(
 /// prefer the run's own snapshot for the workflow name so an alert names the definition that
 /// actually ran, falling back to the live row and finally the id.
 async fn workflow_name<T: DatabaseImpl>(db: &T, run: &WorkflowRun) -> String {
-    if let Some(snapshot) = run.workflow_snapshot.as_ref() {
-        if !snapshot.name.trim().is_empty() {
-            return snapshot.name.clone();
-        }
+    if let Some(snapshot) = run.workflow_snapshot.as_ref()
+        && !snapshot.name.trim().is_empty()
+    {
+        return snapshot.name.clone();
     }
     if let Ok(Some(workflow)) = db.fetch_workflow(run.workflow_id).await {
         return workflow.name;

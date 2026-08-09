@@ -25,23 +25,23 @@ pub(super) async fn process_gate_node<T: ReducerStore>(
         let gate_id = gate_state.as_ref().and_then(|state| state.gate_id);
 
         // honor an explicit max-wait deadline before re-checking.
-        if let Some(deadline) = gate_state.as_ref().and_then(|state| state.deadline_unix) {
-            if Utc::now().timestamp() >= deadline {
-                if let Some(gate_id) = gate_id {
-                    mark_gate(db, gate_id, "timed_out", None, None).await?;
-                }
-                time_out(
-                    db,
-                    workflow_run,
-                    cursor,
-                    node,
-                    node_run,
-                    "Gate timed out",
-                    node_runs,
-                )
-                .await?;
-                return Ok(ReadyNodeDisposition::Complete);
+        if let Some(deadline) = gate_state.as_ref().and_then(|state| state.deadline_unix)
+            && Utc::now().timestamp() >= deadline
+        {
+            if let Some(gate_id) = gate_id {
+                mark_gate(db, gate_id, "timed_out", None, None).await?;
             }
+            time_out(
+                db,
+                workflow_run,
+                cursor,
+                node,
+                node_run,
+                "Gate timed out",
+                node_runs,
+            )
+            .await?;
+            return Ok(ReadyNodeDisposition::Complete);
         }
 
         if gate_is_open(db, &params, gate_id, workflow_run, cursor, node_runs).await? {
@@ -203,23 +203,21 @@ async fn enqueue_gate_poll<T: ReducerStore>(
 pub(super) struct GateHandler;
 
 impl<T: ReducerStore> super::handler::NodeHandler<T> for GateHandler {
-    fn process<'a>(
+    async fn process<'a>(
         &'a self,
         ctx: &'a super::handler::NodeHandlerContext<'a, T>,
-    ) -> impl std::future::Future<Output = Result<ReadyNodeDisposition, SendableError>> + Send + 'a
+    ) -> Result<ReadyNodeDisposition, SendableError>
     where
         T: 'a,
     {
-        async move {
-            process_gate_node(
-                ctx.db,
-                ctx.workflow_run,
-                ctx.cursor,
-                ctx.node,
-                ctx.latest,
-                ctx.node_runs,
-            )
-            .await
-        }
+        process_gate_node(
+            ctx.db,
+            ctx.workflow_run,
+            ctx.cursor,
+            ctx.node,
+            ctx.latest,
+            ctx.node_runs,
+        )
+        .await
     }
 }

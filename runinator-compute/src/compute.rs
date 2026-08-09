@@ -1052,7 +1052,7 @@ fn array_at(
     index: usize,
 ) -> Result<Vec<Value>, WorkflowValidationError> {
     let value = arg(name, args, index)?;
-    value.as_array().map(Clone::clone).ok_or_else(|| {
+    value.as_array().cloned().ok_or_else(|| {
         err(
             name,
             format!("expected an array at position {index}, got {value}"),

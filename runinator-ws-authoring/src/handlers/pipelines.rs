@@ -127,10 +127,10 @@ pub async fn set_pipeline_owner<T: DatabaseImpl>(
     {
         return reply;
     }
-    if let Some(org_id) = request.org_id {
-        if let Err(reply) = authz::require_org_admin(&ctx, org_id) {
-            return reply;
-        }
+    if let Some(org_id) = request.org_id
+        && let Err(reply) = authz::require_org_admin(&ctx, org_id)
+    {
+        return reply;
     }
     match repository::set_pipeline_org(db.as_ref(), pipeline_id, request.org_id).await {
         Ok(()) => {

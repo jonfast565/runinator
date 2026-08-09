@@ -52,10 +52,8 @@ pub async fn upsert_workflow<T: DatabaseImpl>(
     }
     match repository::upsert_workflow(db.as_ref(), &workflow, &authz::revision_author(&ctx)).await {
         Ok(workflow) => {
-            if !is_update {
-                if let Some(id) = workflow.id {
-                    authz::grant_owner(db.as_ref(), &ctx, id).await;
-                }
+            if !is_update && let Some(id) = workflow.id {
+                authz::grant_owner(db.as_ref(), &ctx, id).await;
             }
             emit_workflows_changed(&events, workflow.org_id);
             (StatusCode::OK, Json(ApiResponse::Workflow(workflow)))
@@ -78,10 +76,10 @@ pub async fn set_workflow_owner<T: DatabaseImpl>(
     {
         return reply;
     }
-    if let Some(org_id) = request.org_id {
-        if let Err(reply) = authz::require_org_admin(&ctx, org_id) {
-            return reply;
-        }
+    if let Some(org_id) = request.org_id
+        && let Err(reply) = authz::require_org_admin(&ctx, org_id)
+    {
+        return reply;
     }
     match repository::set_workflow_org(db.as_ref(), workflow_id, request.org_id).await {
         Ok(()) => {
@@ -114,10 +112,10 @@ pub async fn simulate_workflow<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<WorkflowSimulateRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Some(id) = request.workflow.id {
-        if let Err(reply) = authz::require_workflow(db.as_ref(), &ctx, id, Permission::Run).await {
-            return reply;
-        }
+    if let Some(id) = request.workflow.id
+        && let Err(reply) = authz::require_workflow(db.as_ref(), &ctx, id, Permission::Run).await
+    {
+        return reply;
     }
     if let Some(run_id) = request.replay_run {
         match repository::fetch_workflow_run(db.as_ref(), run_id).await {

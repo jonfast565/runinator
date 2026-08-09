@@ -210,7 +210,6 @@ pub async fn start_worker_loop(runtime: WorkerRuntime) -> Result<(), SendableErr
         let libraries = Arc::clone(&libraries);
         let api_client = api_client.clone();
         let providers = Arc::clone(&providers);
-        let replica_id = replica_id;
         let in_flight = Arc::clone(&in_flight);
         let stale_leases = Arc::clone(&stale_leases);
         let events = Arc::clone(&events);

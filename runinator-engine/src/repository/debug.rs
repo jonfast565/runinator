@@ -708,7 +708,7 @@ pub async fn skip_debug_workflow_node<T: DatabaseImpl>(
     workflow_run_id: Uuid,
     output_json: Value,
     message: Option<String>,
-    cursor: Option<Uuid>,
+    _cursor: Option<Uuid>,
 ) -> Result<TaskResponse, SendableError> {
     let run = require_debug_run(db, workflow_run_id).await?;
     let active_node_id = run
@@ -767,7 +767,7 @@ pub async fn rerun_debug_workflow_node<T: DatabaseImpl>(
     db: &T,
     workflow_run_id: Uuid,
     parameters: Value,
-    cursor: Option<Uuid>,
+    _cursor: Option<Uuid>,
 ) -> Result<TaskResponse, SendableError> {
     let run = require_debug_run(db, workflow_run_id).await?;
     let active_node_id = run

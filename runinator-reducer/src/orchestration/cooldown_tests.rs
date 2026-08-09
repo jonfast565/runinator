@@ -7,7 +7,6 @@
 
 use chrono::Utc;
 use runinator_models::orchestration::ReadyNodeRecord;
-use runinator_models::value::Value;
 use runinator_models::workflow_state::WorkflowRunState;
 use runinator_models::workflows::{WorkflowDefinition, WorkflowRun, WorkflowStatus};
 use uuid::Uuid;

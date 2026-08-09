@@ -473,7 +473,7 @@ pub(super) fn reentry_exhausted(
     node_runs: &[WorkflowNodeRun],
     latest: Option<&WorkflowNodeRun>,
 ) -> bool {
-    let entering_fresh = latest.map_or(true, |run| run.status.is_terminal());
+    let entering_fresh = latest.is_none_or(|run| run.status.is_terminal());
     entering_fresh
         && node.reentry.enabled
         && node.reentry.max_visits > 0

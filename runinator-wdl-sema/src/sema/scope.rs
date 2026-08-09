@@ -388,10 +388,10 @@ fn resolve_reentry(
     span: Span,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
-    if let Some(reentry) = &modifiers.reentry {
-        if let Some(target) = &reentry.on_exhausted {
-            resolve_target(target, symbols, span, diagnostics);
-        }
+    if let Some(reentry) = &modifiers.reentry
+        && let Some(target) = &reentry.on_exhausted
+    {
+        resolve_target(target, symbols, span, diagnostics);
     }
 }
 
@@ -401,13 +401,13 @@ fn resolve_target(
     span: Span,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
-    if let Target::Label(name) = target {
-        if !symbols.labels.contains(name) {
-            diagnostics.push(Diagnostic::error(
-                span,
-                format!("transition targets unknown step '{name}'"),
-            ));
-        }
+    if let Target::Label(name) = target
+        && !symbols.labels.contains(name)
+    {
+        diagnostics.push(Diagnostic::error(
+            span,
+            format!("transition targets unknown step '{name}'"),
+        ));
     }
 }
 

@@ -1,20 +1,13 @@
 import {
   cancelWorkflowRun,
   closeGate,
-  compileWdl,
   continueWorkflowRun,
   createWorkflowRun,
-  decompileToWdl,
-  deleteWorkflow,
-  deleteWorkflowTrigger,
-  duplicateWorkflow,
   fetchGates,
   fetchWorkflowNodeRunArtifacts,
   fetchWorkflowNodeRunChunks,
   fetchWorkflowRun,
   fetchWorkflowRuns,
-  fetchWorkflowTriggers,
-  fetchWorkflows,
   openGate,
   patchWorkflowRunDebug,
   pauseWorkflowRun,
@@ -26,99 +19,31 @@ import {
   runToCursorWorkflowRun,
   forkWorkflowRunCursor,
   sendDebugCommand,
-  saveWorkflowWdl,
-  saveWorkflowTrigger,
   skipWorkflowNode,
   stepWorkflowRun,
   type WorkflowDebugPatch,
-  type WorkflowWdlSaveRequest,
 } from "../../api/commandCenterApi";
 import type {
   GateRecord,
   JsonRecord,
-  JsonValue,
-  ProviderMetadata,
   RunArtifact,
   RunChunk,
   RunSummary,
-  RuninatorType,
-  WorkflowDefinition,
-  WorkflowEdgeEditorDraft,
-  WorkflowEditorEdgeData,
-  WorkflowLayoutDirection,
-  WorkflowNodeKind,
-  WorkflowNodeRun,
   WorkflowRunDetail,
-  WorkflowTrigger,
-  WorkflowTriggerKind,
-  WorkflowValidationIssue,
 } from "../../domain/models";
-import { asJsonValue } from "../../domain/json";
+
 import { coerceRunCursors, isCursorPaused } from "../../domain/models/workflow-state";
 import { coerceDebugFrame } from "../../domain/models/workflow-state";
 import { describeBulkResult, runBulk } from "../../utils/bulk";
-import { pretty } from "../../utils/format";
+
 import { mergeById } from "../../utils/merge";
 import { isActiveRunStatus } from "../../utils/status";
-import { cloneJson, parseObject, parseRequiredJson, parseRequiredObject } from "../../utils/json";
-import { displayValue, isBlankValue } from "../../utils/values";
-import { createZip, type ZipEntry } from "../../utils/zip";
-import {
-  applyWorkflowEdgeEditorDraft,
-  applyWorkflowInlineNodeEdit,
-  asArray,
-  asRecord,
-  isRecord,
-  autoArrangeWorkflowEdgeHandles,
-  autoArrangeWorkflowLayout,
-  createWorkflowNode,
-  directTransitionKeys,
-  isSameConnectionPointLoop,
-  nodeRef,
-  nodeRefId,
-  normalizeWorkflowDefinition,
-  parameterSemanticKey,
-  removeConditionBranch,
-  removeWorkflowEdge,
-  removeWorkflowEdgeHandles,
-  removeWorkflowNodeReferences,
-  setConditionBranch,
-  setWorkflowEdgeHandles,
-  setWorkflowEdgeLabelAnchor,
-  setWorkflowEdgeLabelOffset,
-  moveWorkflowEdgeEditorDraft,
-  optionIdForSourceHandle,
-  workflowEdgeOptionId,
-  workflowEdgeEditorDraft,
-  workflowEdgeSemanticOptions,
-  uniqueWorkflowNodeId,
-  validateWorkflowReferenceSyntax,
-  valueRef,
-  workflowNodeActionConfig,
-  workflowNodeActionInputs,
-} from "../../workflow/index";
-import type { GraphEdgeLike, GraphEdgeModel } from "../../workflow/graph-model";
-import {
-  branchPolicyName,
-  boundedIndex,
-  defaultEdgeEditorDraft,
-  defaultTriggerConfiguration,
-  errorMessage,
-  formatMaybeDate,
-  dateTimeLocalToIso,
-  isLockedWorkflowNode,
-  isProtectedWorkflowNode,
-  newWorkflowDraft,
-  newWorkflowTriggerDraft,
-  nextNodePosition,
-  nodeRefArray,
-  switchCaseEditor,
-  validateJsonValueType,
-  buildInputSkeleton,
-} from "../../workflow/editor-defaults";
+
+import { asArray, asRecord, isRecord, nodeRef, nodeRefId } from "../../workflow/index";
+
+import { buildInputSkeleton } from "../../workflow/editor-defaults";
 import type { WorkflowServiceHost } from "./host";
 
-const WORKFLOW_WDL_SYNC_DELAY_MS = 1500;
 const MAX_OPEN_RUN_TABS = 8;
 const WATCH_STORAGE_PREFIX = "runinator.watch.";
 const RECENT_RUNS_REFRESH_DEBOUNCE_MS = 300;
@@ -127,7 +52,7 @@ const RECENT_RUNS_REFRESH_DEBOUNCE_MS = 300;
 const WORKFLOW_RUN_DETAIL_REFRESH_DEBOUNCE_MS = 75;
 
 export function createWorkflowRunService(host: WorkflowServiceHost) {
-  const { deps, internal } = host;
+  const { internal } = host;
 
   function isBreakpointed(nodeId: string): boolean {
     return host.getCurrentBreakpoints().includes(nodeId);

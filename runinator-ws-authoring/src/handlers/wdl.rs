@@ -116,10 +116,10 @@ pub async fn import_wdl<T: DatabaseImpl>(
 ) -> (StatusCode, Json<ApiResponse>) {
     // saving over an existing workflow requires edit; a brand-new one is owned by its creator.
     let is_create = request.workflow_id.is_none();
-    if let Some(id) = request.workflow_id {
-        if let Err(reply) = authz::require_workflow(db.as_ref(), &ctx, id, Permission::Edit).await {
-            return reply;
-        }
+    if let Some(id) = request.workflow_id
+        && let Err(reply) = authz::require_workflow(db.as_ref(), &ctx, id, Permission::Edit).await
+    {
+        return reply;
     }
     let providers = match fetch_provider_metadata(db.as_ref()).await {
         Ok(providers) => providers,

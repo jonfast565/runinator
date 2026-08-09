@@ -23,10 +23,10 @@ impl Config {
         if let Some(auto_apply) = scope.get("autoApply").and_then(Value::as_bool) {
             config.auto_apply = auto_apply;
         }
-        if let Some(url) = scope.get("serviceUrl").and_then(Value::as_str) {
-            if !url.trim().is_empty() {
-                config.service_url = Some(url.to_string());
-            }
+        if let Some(url) = scope.get("serviceUrl").and_then(Value::as_str)
+            && !url.trim().is_empty()
+        {
+            config.service_url = Some(url.to_string());
         }
         config
     }

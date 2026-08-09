@@ -121,22 +121,22 @@ pub(super) async fn process_event_source_node<T: ReducerStore>(
         let state = node_run.state.decode::<EventSourceState>().ok();
         let events_processed = state.as_ref().map(|s| s.events_processed).unwrap_or(0);
         let deadline = state.as_ref().and_then(|s| s.deadline_unix);
-        if let Some(deadline) = deadline {
-            if Utc::now().timestamp() >= deadline {
-                transition_from_node(
-                    db,
-                    workflow_run,
-                    cursor,
-                    node,
-                    node_run,
-                    WorkflowStatus::Succeeded,
-                    Some(runinator_models::json!({ "events_processed": events_processed })),
-                    Some("event_source_done".into()),
-                    node_runs,
-                )
-                .await?;
-                return Ok(ReadyNodeDisposition::Complete);
-            }
+        if let Some(deadline) = deadline
+            && Utc::now().timestamp() >= deadline
+        {
+            transition_from_node(
+                db,
+                workflow_run,
+                cursor,
+                node,
+                node_run,
+                WorkflowStatus::Succeeded,
+                Some(runinator_models::json!({ "events_processed": events_processed })),
+                Some("event_source_done".into()),
+                node_runs,
+            )
+            .await?;
+            return Ok(ReadyNodeDisposition::Complete);
         }
         // check if an inbound event was delivered (ws stamps it under state.pending_event).
         let pending_event = workflow_run
@@ -226,23 +226,21 @@ pub(super) async fn process_event_source_node<T: ReducerStore>(
 pub(super) struct EventSourceHandler;
 
 impl<T: ReducerStore> super::handler::NodeHandler<T> for EventSourceHandler {
-    fn process<'a>(
+    async fn process<'a>(
         &'a self,
         ctx: &'a super::handler::NodeHandlerContext<'a, T>,
-    ) -> impl std::future::Future<Output = Result<ReadyNodeDisposition, SendableError>> + Send + 'a
+    ) -> Result<ReadyNodeDisposition, SendableError>
     where
         T: 'a,
     {
-        async move {
-            process_event_source_node(
-                ctx.db,
-                ctx.workflow_run,
-                ctx.cursor,
-                ctx.node,
-                ctx.latest,
-                ctx.node_runs,
-            )
-            .await
-        }
+        process_event_source_node(
+            ctx.db,
+            ctx.workflow_run,
+            ctx.cursor,
+            ctx.node,
+            ctx.latest,
+            ctx.node_runs,
+        )
+        .await
     }
 }

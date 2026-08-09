@@ -459,7 +459,7 @@ fn needs_access_parens(value: &Value) -> bool {
         "$coalesce",
     ]
     .iter()
-    .any(|key| map.contains_key(*key))
+    .any(|key| map.contains_key(key))
 }
 
 /// the top-level arithmetic precedence of a lowered expression value.

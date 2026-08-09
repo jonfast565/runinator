@@ -84,10 +84,10 @@ pub async fn delete_artifact<T: DatabaseImpl>(
         return Ok(false);
     };
     // remove the backing file first; a missing file should not block the row delete.
-    if let Err(err) = tokio::fs::remove_file(&artifact.uri).await {
-        if err.kind() != std::io::ErrorKind::NotFound {
-            log::warn!("failed to unlink artifact file {}: {err}", artifact.uri);
-        }
+    if let Err(err) = tokio::fs::remove_file(&artifact.uri).await
+        && err.kind() != std::io::ErrorKind::NotFound
+    {
+        log::warn!("failed to unlink artifact file {}: {err}", artifact.uri);
     }
     db.delete_artifact(artifact_id).await
 }

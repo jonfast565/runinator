@@ -96,11 +96,9 @@ import {
   type NodeBackendInfo,
   type ProvisionedGroup,
 } from "../../../core/services";
-import { useAppStore } from "../../../ui/adapters/pinia/app";
 import { useCan } from "../../../ui/composables/useCan";
 import { errorMessage } from "../../../core/utils/format";
 
-const app = useAppStore();
 const { can } = useCan();
 
 // global worker-node scaling is a platform capability (backend: nodes:scale).
@@ -161,4 +159,3 @@ function scaleBy(group: ProvisionedGroup, delta: number) {
 
 onMounted(refresh);
 </script>
-

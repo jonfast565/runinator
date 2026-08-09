@@ -38,7 +38,7 @@ fn ok_value<T: Serialize>(value: &T) -> Reply {
 fn quota_error(message: impl Into<String>) -> Reply {
     (
         StatusCode::FORBIDDEN,
-        Json(ApiResponse::ApiError(ApiError::new(&message.into()))),
+        Json(ApiResponse::ApiError(ApiError::new(message.into()))),
     )
 }
 
@@ -100,16 +100,15 @@ pub async fn scale_org_nodes<T: DatabaseImpl>(
     };
 
     // per-kind node cap.
-    if let Some(quota) = &quota {
-        if let Some(cap) = quota.max_nodes(request.kind) {
-            if request.desired > cap {
-                return quota_error(format!(
-                    "requested {} {} node(s) exceeds the org cap of {cap}",
-                    request.desired,
-                    request.kind.as_str()
-                ));
-            }
-        }
+    if let Some(quota) = &quota
+        && let Some(cap) = quota.max_nodes(request.kind)
+        && request.desired > cap
+    {
+        return quota_error(format!(
+            "requested {} {} node(s) exceeds the org cap of {cap}",
+            request.desired,
+            request.kind.as_str()
+        ));
     }
 
     // monthly budget cap: project the org's spend after this change across all its allocations.
@@ -124,15 +123,15 @@ pub async fn scale_org_nodes<T: DatabaseImpl>(
         request.kind,
         request.desired,
     );
-    if let Some(quota) = &quota {
-        if quota.max_monthly_cents > 0 {
-            let projected = projected_monthly_cents(&groups, &card);
-            if projected > quota.max_monthly_cents as u64 {
-                return quota_error(format!(
-                    "projected monthly cost {}¢ exceeds the org budget of {}¢",
-                    projected, quota.max_monthly_cents
-                ));
-            }
+    if let Some(quota) = &quota
+        && quota.max_monthly_cents > 0
+    {
+        let projected = projected_monthly_cents(&groups, &card);
+        if projected > quota.max_monthly_cents as u64 {
+            return quota_error(format!(
+                "projected monthly cost {}¢ exceeds the org budget of {}¢",
+                projected, quota.max_monthly_cents
+            ));
         }
     }
 
@@ -273,8 +272,10 @@ async fn scale_org_pool(
     };
     // label spawned nodes `org=<slug>` so the reducer can route this org's work to them, and put them
     // in the org's own group so pools scale independently of other tenants.
-    let mut spec = NodeSpec::default();
-    spec.group = Some(org_pool_group(slug, kind));
+    let mut spec = NodeSpec {
+        group: Some(org_pool_group(slug, kind)),
+        ..Default::default()
+    };
     spec.labels.insert("org".to_string(), slug.to_string());
     if let Err(err) = provisioner.scale(kind, desired, &spec).await {
         log::warn!(

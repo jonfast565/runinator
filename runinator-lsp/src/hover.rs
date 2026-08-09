@@ -42,10 +42,7 @@ pub fn hover(text: &str, path: Option<&Path>, position: Position) -> Option<Hove
             let diagnostic = tightest(&diagnostics, offset)?;
             ("WDL003", diagnostic.message.clone())
         }
-        Err(error) => match error_at(&error, offset) {
-            Some(entry) => entry,
-            None => return None,
-        },
+        Err(error) => error_at(&error, offset)?,
     };
     Some(markdown_diagnostic(code, &message))
 }

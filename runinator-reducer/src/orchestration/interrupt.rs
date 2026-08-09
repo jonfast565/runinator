@@ -774,24 +774,22 @@ pub(super) async fn release_suspended_thread<T: ReducerStore>(
 pub(super) struct ResumeHandler;
 
 impl<T: ReducerStore> NodeHandler<T> for ResumeHandler {
-    fn process<'a>(
+    async fn process<'a>(
         &'a self,
         ctx: &'a NodeHandlerContext<'a, T>,
-    ) -> impl std::future::Future<Output = Result<ReadyNodeDisposition, SendableError>> + Send + 'a
+    ) -> Result<ReadyNodeDisposition, SendableError>
     where
         T: 'a,
     {
-        async move {
-            process_resume_node(
-                ctx.db,
-                ctx.workflow,
-                ctx.workflow_run,
-                ctx.cursor,
-                ctx.node,
-                ctx.nodes,
-                ctx.node_runs,
-            )
-            .await
-        }
+        process_resume_node(
+            ctx.db,
+            ctx.workflow,
+            ctx.workflow_run,
+            ctx.cursor,
+            ctx.node,
+            ctx.nodes,
+            ctx.node_runs,
+        )
+        .await
     }
 }

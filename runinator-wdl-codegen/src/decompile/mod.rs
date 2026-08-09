@@ -1475,14 +1475,14 @@ impl<'a> Decompiler<'a> {
         if let Some(segs) = self.spreads.get(&node.id) {
             let parts = self.render_seg_parts(segs)?;
             params_arg = Some(format!("params: {}", self.parts_object(&parts, base)));
-        } else if let Value::Object(params) = node.parameters.as_value() {
-            if !params.is_empty() {
-                let mut parts = Vec::new();
-                for (name, value) in params {
-                    parts.push(format!("{name}: {}", self.expr_multiline(value, base + 1)?));
-                }
-                params_arg = Some(format!("params: {}", self.parts_object(&parts, base)));
+        } else if let Value::Object(params) = node.parameters.as_value()
+            && !params.is_empty()
+        {
+            let mut parts = Vec::new();
+            for (name, value) in params {
+                parts.push(format!("{name}: {}", self.expr_multiline(value, base + 1)?));
             }
+            params_arg = Some(format!("params: {}", self.parts_object(&parts, base)));
         }
         if let Some(params_arg) = params_arg {
             args.insert(1, params_arg);
@@ -1818,25 +1818,25 @@ impl<'a> Decompiler<'a> {
         node: &WorkflowNode,
         outer_stop: Option<&str>,
     ) -> Result<Option<String>, WdlError> {
-        if !mutex_is_release(node) {
-            if let Some((release_id, cont)) = self.find_mutex_release(node) {
-                let body_entry = node
-                    .transitions
-                    .next
-                    .as_ref()
-                    .map(|target| target.as_str().to_string());
-                self.line(&format!(
-                    "{}{} {{",
-                    self.block_id_prefix(node),
-                    self.mutex_text(node)?
-                ));
-                self.indent += 1;
-                if let Some(body) = &body_entry {
-                    self.emit_region(body, Some(release_id.as_str()))?;
-                }
-                self.indent -= 1;
-                return Ok(self.close_block_line("}", cont, outer_stop));
+        if !mutex_is_release(node)
+            && let Some((release_id, cont)) = self.find_mutex_release(node)
+        {
+            let body_entry = node
+                .transitions
+                .next
+                .as_ref()
+                .map(|target| target.as_str().to_string());
+            self.line(&format!(
+                "{}{} {{",
+                self.block_id_prefix(node),
+                self.mutex_text(node)?
+            ));
+            self.indent += 1;
+            if let Some(body) = &body_entry {
+                self.emit_region(body, Some(release_id.as_str()))?;
             }
+            self.indent -= 1;
+            return Ok(self.close_block_line("}", cont, outer_stop));
         }
         // a plain acquire or a bare release leaf: emit it and advance like any other leaf.
         let success = self.emit_leaf(node, outer_stop)?;
@@ -2167,16 +2167,15 @@ impl<'a> Decompiler<'a> {
             self.indent -= 1;
         }
 
-        if let Some(else_target) = &else_target {
-            if merge_ref != Some(else_target.as_str())
-                && !self.end_ids.contains(else_target)
-                && !self.visited.contains(else_target)
-            {
-                self.line("} else {");
-                self.indent += 1;
-                self.emit_region(else_target, merge_ref)?;
-                self.indent -= 1;
-            }
+        if let Some(else_target) = &else_target
+            && merge_ref != Some(else_target.as_str())
+            && !self.end_ids.contains(else_target)
+            && !self.visited.contains(else_target)
+        {
+            self.line("} else {");
+            self.indent += 1;
+            self.emit_region(else_target, merge_ref)?;
+            self.indent -= 1;
         }
 
         Ok(self.close_block_line("}", merge, stop))
@@ -2252,14 +2251,15 @@ impl<'a> Decompiler<'a> {
             self.indent -= 1;
             self.line("}");
         }
-        if let Some(default) = &default {
-            if merge_ref != Some(default.as_str()) && !self.visited.contains(default) {
-                self.line("else -> {");
-                self.indent += 1;
-                self.emit_region(default, merge_ref)?;
-                self.indent -= 1;
-                self.line("}");
-            }
+        if let Some(default) = &default
+            && merge_ref != Some(default.as_str())
+            && !self.visited.contains(default)
+        {
+            self.line("else -> {");
+            self.indent += 1;
+            self.emit_region(default, merge_ref)?;
+            self.indent -= 1;
+            self.line("}");
         }
         self.indent -= 1;
 
@@ -2562,7 +2562,7 @@ impl<'a> Decompiler<'a> {
             starts.iter().map(|start| self.reachable(start)).collect();
         let mut best: Option<String> = None;
         let mut best_score = usize::MAX;
-        for (node, _) in &distance_maps[0] {
+        for node in distance_maps[0].keys() {
             if distance_maps.iter().all(|map| map.contains_key(node)) {
                 let score: usize = distance_maps.iter().map(|map| map[node]).sum();
                 if score < best_score {
@@ -2625,11 +2625,11 @@ fn transition_targets(transitions: &WorkflowTransitions) -> Vec<String> {
 fn collect_node_refs(value: &Value, out: &mut Vec<String>) {
     match value {
         Value::Object(map) => {
-            if map.len() == 1 {
-                if let Some(id) = map.get("$node").and_then(Value::as_str) {
-                    out.push(id.to_string());
-                    return;
-                }
+            if map.len() == 1
+                && let Some(id) = map.get("$node").and_then(Value::as_str)
+            {
+                out.push(id.to_string());
+                return;
             }
             for nested in map.values() {
                 collect_node_refs(nested, out);

@@ -188,8 +188,10 @@ fn forking_a_retired_cursor_reports_failure() {
 // the whole point of per-cursor runtime: stepping one branch must not step its siblings.
 #[test]
 fn each_cursor_carries_its_own_debugger_runtime() {
-    let mut parsed = WorkflowRunState::default();
-    parsed.debug = Some(DebugFrame::default());
+    let mut parsed = WorkflowRunState {
+        debug: Some(DebugFrame::default()),
+        ..Default::default()
+    };
     let left = parsed.ensure_cursor("branch_a");
     let right = parsed.fork_cursor("branch_b", "fanout");
 
@@ -222,8 +224,10 @@ fn each_cursor_carries_its_own_debugger_runtime() {
 // the flat frame is the wire contract single-position clients read, so it has to follow the primary.
 #[test]
 fn the_flat_frame_mirrors_the_primary_cursor() {
-    let mut parsed = WorkflowRunState::default();
-    parsed.debug = Some(DebugFrame::default());
+    let mut parsed = WorkflowRunState {
+        debug: Some(DebugFrame::default()),
+        ..Default::default()
+    };
     let primary = parsed.ensure_cursor("branch_a");
     let other = parsed.fork_cursor("branch_b", "fanout");
 

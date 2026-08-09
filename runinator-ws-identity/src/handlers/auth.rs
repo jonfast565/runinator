@@ -51,7 +51,7 @@ fn too_many_requests(retry_after_secs: f64) -> Reply {
     let secs = retry_after_secs.ceil().max(1.0) as u64;
     (
         StatusCode::TOO_MANY_REQUESTS,
-        Json(ApiResponse::ApiError(ApiError::new(&format!(
+        Json(ApiResponse::ApiError(ApiError::new(format!(
             "too many login attempts; retry in {secs}s"
         )))),
     )
@@ -102,8 +102,8 @@ async fn issue_session<T: DatabaseImpl>(
 ) -> Result<LoginResponse, Reply> {
     let user_id = user.id.ok_or_else(|| api_error("user is missing an id"))?;
     // login issues an org-less token; the client selects an active org via /auth/switch-org.
-    let (access_token, _exp) = issue_access_token(config, user_id, user.is_admin, None, None)
-        .map_err(|err| api_error(err))?;
+    let (access_token, _exp) =
+        issue_access_token(config, user_id, user.is_admin, None, None).map_err(api_error)?;
     // capabilities for the org-less session: platform caps for admins, none otherwise. org caps
     // arrive when the client switches org and reloads its principal.
     let mut capabilities: Vec<Capability> =
@@ -290,10 +290,10 @@ pub async fn logout<T: DatabaseImpl>(
     Json(request): Json<RefreshRequest>,
 ) -> Reply {
     let hash = hash_secret(&request.refresh_token);
-    if let Ok(Some(session)) = db.fetch_session_by_hash(hash).await {
-        if let Err(err) = db.revoke_session(session.id).await {
-            return api_error(err.to_string());
-        }
+    if let Ok(Some(session)) = db.fetch_session_by_hash(hash).await
+        && let Err(err) = db.revoke_session(session.id).await
+    {
+        return api_error(err.to_string());
     }
     task_response_success("Logged out")
 }
@@ -423,10 +423,10 @@ pub async fn update_user<T: DatabaseImpl>(
         .await
     {
         Ok(user) => {
-            if password_changed || user.disabled {
-                if let Err(err) = db.revoke_user_sessions(user_id).await {
-                    return api_error(err.to_string());
-                }
+            if (password_changed || user.disabled)
+                && let Err(err) = db.revoke_user_sessions(user_id).await
+            {
+                return api_error(err.to_string());
             }
             ok_value(&user)
         }

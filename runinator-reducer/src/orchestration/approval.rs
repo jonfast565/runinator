@@ -103,24 +103,22 @@ pub(super) async fn process_approval_node<T: ReducerStore>(
 pub(super) struct ApprovalHandler;
 
 impl<T: ReducerStore> super::handler::NodeHandler<T> for ApprovalHandler {
-    fn process<'a>(
+    async fn process<'a>(
         &'a self,
         ctx: &'a super::handler::NodeHandlerContext<'a, T>,
-    ) -> impl std::future::Future<Output = Result<ReadyNodeDisposition, SendableError>> + Send + 'a
+    ) -> Result<ReadyNodeDisposition, SendableError>
     where
         T: 'a,
     {
-        async move {
-            process_approval_node(
-                ctx.db,
-                ctx.workflow_run,
-                ctx.cursor,
-                ctx.node,
-                ctx.latest,
-                ctx.node_runs,
-            )
-            .await?;
-            Ok(ReadyNodeDisposition::Complete)
-        }
+        process_approval_node(
+            ctx.db,
+            ctx.workflow_run,
+            ctx.cursor,
+            ctx.node,
+            ctx.latest,
+            ctx.node_runs,
+        )
+        .await?;
+        Ok(ReadyNodeDisposition::Complete)
     }
 }

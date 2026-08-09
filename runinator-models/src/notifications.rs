@@ -53,8 +53,10 @@ fn default_severity() -> String {
 /// the runtime condition a [`NotificationPolicy`] fires on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum NotificationEvent {
     /// a workflow run reached a terminal failed/timed-out state.
+    #[default]
     RunFailed,
     /// a node exhausted its retry policy without succeeding.
     NodeRetryExhausted,
@@ -241,12 +243,6 @@ pub struct NewNotificationPolicy {
     pub managed_by: Option<String>,
     #[serde(default)]
     pub configuration: Value,
-}
-
-impl Default for NotificationEvent {
-    fn default() -> Self {
-        NotificationEvent::RunFailed
-    }
 }
 
 fn default_true() -> bool {

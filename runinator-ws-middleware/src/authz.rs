@@ -220,10 +220,10 @@ pub async fn visible_workflow_ids<T: DatabaseImpl>(
     // every workflow owned by the caller's active org is visible to its members, so org membership
     // grants run visibility without needing an explicit per-workflow grant. this is what isolates
     // runs by org: a caller only ever sees runs whose workflow is org-owned or explicitly granted.
-    if let Some(org_id) = ctx.org_id {
-        if let Ok(org_ids) = db.fetch_workflow_ids_for_org(org_id).await {
-            ids.extend(org_ids);
-        }
+    if let Some(org_id) = ctx.org_id
+        && let Ok(org_ids) = db.fetch_workflow_ids_for_org(org_id).await
+    {
+        ids.extend(org_ids);
     }
     let Some(user_id) = ctx.principal_id else {
         return Some(ids);
@@ -307,10 +307,10 @@ pub async fn visible_pipeline_ids<T: DatabaseImpl>(
     }
     let mut ids = HashSet::new();
     // every pipeline owned by the caller's active org is visible to its members.
-    if let Some(org_id) = ctx.org_id {
-        if let Ok(org_ids) = db.fetch_pipeline_ids_for_org(org_id).await {
-            ids.extend(org_ids);
-        }
+    if let Some(org_id) = ctx.org_id
+        && let Ok(org_ids) = db.fetch_pipeline_ids_for_org(org_id).await
+    {
+        ids.extend(org_ids);
     }
     let Some(user_id) = ctx.principal_id else {
         return Some(ids);

@@ -232,10 +232,10 @@ pub async fn resolve_credential<S: CredentialStore>(
     if record.key.disabled {
         return None;
     }
-    if let Some(expires_at) = record.key.expires_at {
-        if expires_at < Utc::now() {
-            return None;
-        }
+    if let Some(expires_at) = record.key.expires_at
+        && expires_at < Utc::now()
+    {
+        return None;
     }
     if hash_secret(presented) != record.key_hash {
         return None;

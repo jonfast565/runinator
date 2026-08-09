@@ -717,8 +717,10 @@ fn a_legacy_paused_run_still_reads_as_paused() {
 // state, so a sibling without one must not inherit it.
 #[test]
 fn a_sibling_without_a_runtime_does_not_inherit_the_mirror() {
-    let mut state = WorkflowRunState::default();
-    state.debug = Some(Default::default());
+    let mut state = WorkflowRunState {
+        debug: Some(Default::default()),
+        ..Default::default()
+    };
     let first = state.ensure_cursor("a");
     let second = state.fork_cursor("b", "fork");
     state.set_cursor_debug(

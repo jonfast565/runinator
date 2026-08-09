@@ -173,7 +173,7 @@ impl FunctionRegistry {
         }
         // fill defaults, then require that every gap is trailing (positional args have no holes).
         let mut resolved = Vec::with_capacity(slots.len());
-        for (param, slot) in sig.params.iter().zip(slots.into_iter()) {
+        for (param, slot) in sig.params.iter().zip(slots) {
             match slot {
                 Some(value) => resolved.push(value),
                 None => match &param.default {

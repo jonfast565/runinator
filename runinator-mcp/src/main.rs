@@ -60,12 +60,12 @@ impl McpServer {
         api_key: Option<String>,
     ) -> Result<Self, reqwest::Error> {
         let mut builder = Client::builder();
-        if let Some(token) = api_key.filter(|t| !t.is_empty()) {
-            if let Ok(value) = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}")) {
-                let mut headers = reqwest::header::HeaderMap::new();
-                headers.insert(reqwest::header::AUTHORIZATION, value);
-                builder = builder.default_headers(headers);
-            }
+        if let Some(token) = api_key.filter(|t| !t.is_empty())
+            && let Ok(value) = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))
+        {
+            let mut headers = reqwest::header::HeaderMap::new();
+            headers.insert(reqwest::header::AUTHORIZATION, value);
+            builder = builder.default_headers(headers);
         }
         Ok(Self {
             api_base_url,

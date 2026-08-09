@@ -126,10 +126,10 @@ impl SecretCipher {
         };
         let nonce = Nonce::from_slice(nonce);
         // prefer the key named by the tag, then fall back to the rest; the auth tag gates correctness.
-        if let Some(key) = self.find_key(id) {
-            if let Ok(plaintext) = key.aead().decrypt(nonce, body) {
-                return Some(plaintext);
-            }
+        if let Some(key) = self.find_key(id)
+            && let Ok(plaintext) = key.aead().decrypt(nonce, body)
+        {
+            return Some(plaintext);
         }
         self.keys()
             .filter(|key| !key.is_empty())

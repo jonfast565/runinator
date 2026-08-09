@@ -223,8 +223,10 @@ async fn nodes(client: &Client, command: &NodeCommands, json_output: bool) -> Re
                 .find(|group| group.backend == backend && group.kind == kind)
                 .map(|group| group.desired)
                 .unwrap_or(0);
-            let mut spec = NodeSpec::default();
-            spec.labels = parse_labels(labels)?;
+            let spec = NodeSpec {
+                labels: parse_labels(labels)?,
+                ..Default::default()
+            };
             let group = client
                 .scale_nodes(&ScaleNodesRequest {
                     backend,
@@ -612,10 +614,10 @@ pub fn workflows_test(
         let suite: runinator_workflows::WorkflowTestSuite = serde_json::from_str(&data)
             .map_err(|e| err(format!("parse {}: {e}", suite_path.display())))?;
         for case in &suite.tests {
-            if let Some(needle) = filter {
-                if !case.name.contains(needle) {
-                    continue;
-                }
+            if let Some(needle) = filter
+                && !case.name.contains(needle)
+            {
+                continue;
             }
             let target = case.workflow.as_deref().or(suite.workflow.as_deref());
             let definition = select_test_workflow(&bundle.workflows, target)?;
@@ -777,13 +779,12 @@ async fn workflow_dev(
             match apply_workflow_source(client, file, false).await {
                 Ok(summary) => {
                     print_apply_summary(&summary);
-                    if let Some(workflow) = run_workflow {
-                        if let Err(err) =
+                    if let Some(workflow) = run_workflow
+                        && let Err(err) =
                             dev_run_workflow(client, workflow, cli_params, json_file, debug, name)
                                 .await
-                        {
-                            eprintln!("[dev] run failed:\n{err}");
-                        }
+                    {
+                        eprintln!("[dev] run failed:\n{err}");
                     }
                 }
                 Err(err) => {

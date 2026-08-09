@@ -12,10 +12,10 @@ pub async fn org_id_for_workflow_run<T: DatabaseImpl>(
         .await
         .ok()
         .flatten()?;
-    if let Ok(Some(workflow)) = db.fetch_workflow(run.workflow_id).await {
-        if workflow.org_id.is_some() {
-            return workflow.org_id;
-        }
+    if let Ok(Some(workflow)) = db.fetch_workflow(run.workflow_id).await
+        && workflow.org_id.is_some()
+    {
+        return workflow.org_id;
     }
     run.workflow_snapshot.and_then(|snapshot| snapshot.org_id)
 }
@@ -30,10 +30,10 @@ pub async fn org_id_for_pipeline_run<T: DatabaseImpl>(
         .await
         .ok()
         .flatten()?;
-    if let Ok(Some(pipeline)) = db.fetch_pipeline(run.pipeline_id).await {
-        if pipeline.org_id.is_some() {
-            return pipeline.org_id;
-        }
+    if let Ok(Some(pipeline)) = db.fetch_pipeline(run.pipeline_id).await
+        && pipeline.org_id.is_some()
+    {
+        return pipeline.org_id;
     }
     run.pipeline_snapshot.and_then(|snapshot| snapshot.org_id)
 }

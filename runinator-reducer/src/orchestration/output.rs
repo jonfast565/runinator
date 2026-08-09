@@ -144,23 +144,21 @@ fn build_artifact(
 pub(super) struct OutputHandler;
 
 impl<T: ReducerStore> super::handler::NodeHandler<T> for OutputHandler {
-    fn process<'a>(
+    async fn process<'a>(
         &'a self,
         ctx: &'a super::handler::NodeHandlerContext<'a, T>,
-    ) -> impl std::future::Future<Output = Result<ReadyNodeDisposition, SendableError>> + Send + 'a
+    ) -> Result<ReadyNodeDisposition, SendableError>
     where
         T: 'a,
     {
-        async move {
-            process_output_node(
-                ctx.db,
-                ctx.workflow_run,
-                ctx.cursor,
-                ctx.node,
-                ctx.node_runs,
-            )
-            .await?;
-            Ok(ReadyNodeDisposition::Complete)
-        }
+        process_output_node(
+            ctx.db,
+            ctx.workflow_run,
+            ctx.cursor,
+            ctx.node,
+            ctx.node_runs,
+        )
+        .await?;
+        Ok(ReadyNodeDisposition::Complete)
     }
 }

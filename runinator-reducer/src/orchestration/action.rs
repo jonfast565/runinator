@@ -1,5 +1,3 @@
-use std::future::Future;
-
 use super::context::{is_reentry_stale, merge_parameters, runtime_context};
 use super::handler::{NodeHandler, NodeHandlerContext};
 use super::transitions::{
@@ -479,10 +477,10 @@ async fn effective_required_labels<T: ReducerStore>(
     action: &WorkflowAction,
 ) -> Result<std::collections::BTreeMap<String, String>, SendableError> {
     let mut required_labels = action.required_labels.clone();
-    if let Some(org_id) = workflow.org_id {
-        if let Some(slug) = org_dedicated_worker_slug(db, org_id).await? {
-            required_labels.entry("org".to_string()).or_insert(slug);
-        }
+    if let Some(org_id) = workflow.org_id
+        && let Some(slug) = org_dedicated_worker_slug(db, org_id).await?
+    {
+        required_labels.entry("org".to_string()).or_insert(slug);
     }
     Ok(required_labels)
 }
@@ -502,10 +500,10 @@ async fn dispatch_target_still_live<T: ReducerStore>(
             live_worker_matches_labels(db, &required_labels).await?,
         ));
     }
-    if action.provider == LOCAL_PROVIDER {
-        if let Some(replica_id) = workflow_run.trigger_actor_replica_id {
-            return Ok(Some(replica_is_live(db, replica_id).await?));
-        }
+    if action.provider == LOCAL_PROVIDER
+        && let Some(replica_id) = workflow_run.trigger_actor_replica_id
+    {
+        return Ok(Some(replica_is_live(db, replica_id).await?));
     }
     Ok(None)
 }
@@ -643,38 +641,36 @@ async fn enqueue_target_poll<T: ReducerStore>(
 pub(super) struct ActionHandler;
 
 impl<T: ReducerStore> NodeHandler<T> for ActionHandler {
-    fn process<'a>(
+    async fn process<'a>(
         &'a self,
         ctx: &'a NodeHandlerContext<'a, T>,
-    ) -> impl Future<Output = Result<ReadyNodeDisposition, SendableError>> + Send + 'a
+    ) -> Result<ReadyNodeDisposition, SendableError>
     where
         T: 'a,
     {
-        async move {
-            if super::compute::is_inprocess_compute(ctx.node) {
-                super::compute::process_compute_node(
-                    ctx.db,
-                    ctx.workflow,
-                    ctx.workflow_run,
-                    ctx.cursor,
-                    ctx.node,
-                    ctx.node_runs,
-                    ctx.nodes,
-                )
-                .await?;
-            } else {
-                process_action_node(
-                    ctx.db,
-                    ctx.workflow,
-                    ctx.workflow_run,
-                    ctx.cursor,
-                    ctx.node,
-                    ctx.latest,
-                    ctx.node_runs,
-                )
-                .await?;
-            }
-            Ok(ReadyNodeDisposition::Complete)
+        if super::compute::is_inprocess_compute(ctx.node) {
+            super::compute::process_compute_node(
+                ctx.db,
+                ctx.workflow,
+                ctx.workflow_run,
+                ctx.cursor,
+                ctx.node,
+                ctx.node_runs,
+                ctx.nodes,
+            )
+            .await?;
+        } else {
+            process_action_node(
+                ctx.db,
+                ctx.workflow,
+                ctx.workflow_run,
+                ctx.cursor,
+                ctx.node,
+                ctx.latest,
+                ctx.node_runs,
+            )
+            .await?;
         }
+        Ok(ReadyNodeDisposition::Complete)
     }
 }

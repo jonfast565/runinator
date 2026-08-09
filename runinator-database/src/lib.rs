@@ -117,23 +117,22 @@ pub async fn ensure_jwt_secret<T: DatabaseImpl>(
     if let Some(record) = db
         .fetch_setting(SettingKind::Secret, SECRET_SCOPE.into(), SECRET_NAME.into())
         .await?
+        && !record.value.is_empty()
     {
-        if !record.value.is_empty() {
-            let was_sealed = SecretCipher::is_sealed(&record.value);
-            let plaintext = open_auth_secret(&cipher, record.value)?;
-            // migrate a legacy plaintext secret to the encrypted-at-rest scheme on first bootstrap.
-            if !was_sealed {
-                db.upsert_setting(
-                    SettingKind::Secret,
-                    SECRET_SCOPE.into(),
-                    SECRET_NAME.into(),
-                    cipher.encrypt(&plaintext),
-                    Utc::now().timestamp(),
-                )
-                .await?;
-            }
-            return Ok(plaintext);
+        let was_sealed = SecretCipher::is_sealed(&record.value);
+        let plaintext = open_auth_secret(&cipher, record.value)?;
+        // migrate a legacy plaintext secret to the encrypted-at-rest scheme on first bootstrap.
+        if !was_sealed {
+            db.upsert_setting(
+                SettingKind::Secret,
+                SECRET_SCOPE.into(),
+                SECRET_NAME.into(),
+                cipher.encrypt(&plaintext),
+                Utc::now().timestamp(),
+            )
+            .await?;
         }
+        return Ok(plaintext);
     }
     let generated = runinator_auth::random_secret(48);
     db.upsert_setting(

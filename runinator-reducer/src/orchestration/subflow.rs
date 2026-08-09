@@ -336,49 +336,47 @@ pub(super) fn resolve_optional_string(
 pub(super) struct SubflowHandler;
 
 impl<T: ReducerStore> super::handler::NodeHandler<T> for SubflowHandler {
-    fn process<'a>(
+    async fn process<'a>(
         &'a self,
         ctx: &'a super::handler::NodeHandlerContext<'a, T>,
-    ) -> impl std::future::Future<Output = Result<ReadyNodeDisposition, SendableError>> + Send + 'a
+    ) -> Result<ReadyNodeDisposition, SendableError>
     where
         T: 'a,
     {
-        async move {
-            if let Err(err) = process_subflow_node(
+        if let Err(err) = process_subflow_node(
+            ctx.db,
+            ctx.workflow_run,
+            ctx.cursor,
+            ctx.node,
+            ctx.latest,
+            ctx.node_runs,
+        )
+        .await
+        {
+            // a subflow error would otherwise bubble up and retry forever while the run stays
+            // non-terminal. surface it as a failed node so the workflow can follow on_failure.
+            let node_run = super::transitions::ensure_node_run(
                 ctx.db,
                 ctx.workflow_run,
                 ctx.cursor,
                 ctx.node,
                 ctx.latest,
+                super::context::most_recently_finished_node_run(ctx.node_runs),
+            )
+            .await?;
+            super::transitions::transition_from_node(
+                ctx.db,
+                ctx.workflow_run,
+                ctx.cursor,
+                ctx.node,
+                &node_run,
+                WorkflowStatus::Failed,
+                None,
+                Some(format!("Subflow node {} failed: {err}", ctx.node.id)),
                 ctx.node_runs,
             )
-            .await
-            {
-                // a subflow error would otherwise bubble up and retry forever while the run stays
-                // non-terminal. surface it as a failed node so the workflow can follow on_failure.
-                let node_run = super::transitions::ensure_node_run(
-                    ctx.db,
-                    ctx.workflow_run,
-                    ctx.cursor,
-                    ctx.node,
-                    ctx.latest,
-                    super::context::most_recently_finished_node_run(ctx.node_runs),
-                )
-                .await?;
-                super::transitions::transition_from_node(
-                    ctx.db,
-                    ctx.workflow_run,
-                    ctx.cursor,
-                    ctx.node,
-                    &node_run,
-                    WorkflowStatus::Failed,
-                    None,
-                    Some(format!("Subflow node {} failed: {err}", ctx.node.id)),
-                    ctx.node_runs,
-                )
-                .await?;
-            }
-            Ok(ReadyNodeDisposition::Complete)
+            .await?;
         }
+        Ok(ReadyNodeDisposition::Complete)
     }
 }
