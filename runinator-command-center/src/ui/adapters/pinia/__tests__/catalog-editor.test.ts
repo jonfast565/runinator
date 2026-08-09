@@ -130,7 +130,7 @@ describe("catalog-driven step editor round trips", () => {
 
     workflows.populateStepEditor("wait_1");
     expect(workflows.stepEditor.kind).toBe("wait");
-    expect(getAtLocation(workflows.stepEditor.nodeDraft, waitMeta.fields[0]!.location)).toBe(60);
+    expect(getAtLocation(workflows.stepEditor.nodeDraft, waitMeta.fields[0].location)).toBe(60);
 
     workflows.stepEditor.nodeDraft = {
       ...workflows.stepEditor.nodeDraft,

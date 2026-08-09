@@ -94,7 +94,7 @@ export const CURSOR_PALETTE = [
 
 /** the colour for a cursor's palette slot. */
 export function cursorColor(paletteIndex: number): string {
-  return CURSOR_PALETTE[paletteIndex % CURSOR_PALETTE.length] as string;
+  return CURSOR_PALETTE[paletteIndex % CURSOR_PALETTE.length];
 }
 
 /** is this cursor a debugger "what if" branch? */

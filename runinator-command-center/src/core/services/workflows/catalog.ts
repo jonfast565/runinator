@@ -626,7 +626,7 @@ export function createWorkflowCatalogService(
       `Deleting ${String(deletable.length)} workflows`,
       () =>
         runBulk(deletable, async (workflow) => {
-          const response = await deleteWorkflow(workflow.id as string);
+          const response = await deleteWorkflow(workflow.id!);
 
           if (!response.success) {
             throw new Error(response.message || `Failed to delete ${workflow.name}`);

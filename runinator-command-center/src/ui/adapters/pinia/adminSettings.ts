@@ -18,6 +18,6 @@ export const useAdminSettingsStore = defineStore("adminSettings", () => {
       language: string,
       field: "image" | "setup_script",
       value: string,
-    ) => adminSettingsService.updateLanguageField(language, field, value),
+    ) => { adminSettingsService.updateLanguageField(language, field, value); },
   };
 });

@@ -94,13 +94,13 @@ fn validation_error_response_exposes_structured_type_diagnostic() {
 async fn validate_workflow_rejects_invalid_subflow_id() {
     let (db, path) = test_db().await;
 
-    // create a valid target workflow
+    // create a valid target workflow.
     let target = save_workflow(&db, &workflow(None, "target-workflow"))
         .await
         .unwrap();
     let target_id = target.id.unwrap();
 
-    // create a workflow with a subflow that references a non-existent workflow
+    // create a workflow with a subflow that references a non-existent workflow.
     let mut main_workflow = workflow(None, "main-with-invalid-subflow");
     main_workflow.definition = WorkflowGraph::from_value(json!({
         "start": "start",
@@ -117,12 +117,12 @@ async fn validate_workflow_rejects_invalid_subflow_id() {
     }))
     .unwrap();
 
-    // validation should fail because the subflow references a non-existent workflow
+    // validation should fail because the subflow references a non-existent workflow.
     let result =
         crate::repository::validate_workflow_definition_with_catalog(&db, &main_workflow).await;
     assert!(result.is_err());
 
-    // now test with a valid subflow id
+    // now test with a valid subflow id.
     let mut valid_workflow = workflow(None, "main-with-valid-subflow");
     valid_workflow.definition = WorkflowGraph::from_value(json!({
         "start": "start",
@@ -139,7 +139,7 @@ async fn validate_workflow_rejects_invalid_subflow_id() {
     }))
     .unwrap();
 
-    // validation should succeed because the subflow references a valid workflow
+    // validation should succeed because the subflow references a valid workflow.
     let result =
         crate::repository::validate_workflow_definition_with_catalog(&db, &valid_workflow).await;
     assert!(result.is_ok());

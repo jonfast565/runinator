@@ -130,7 +130,7 @@ fn configured_service_url_from_env() -> Result<Option<String>, String> {
             });
     }
 
-    // Default for local development if nothing else is found
+    // default for local development if nothing else is found.
     if std::env::var("TAURI_DEV").is_ok() {
         println!("TAURI_DEV detected, falling back to http://127.0.0.1:8080/");
         return Ok(Some("http://127.0.0.1:8080/".to_string()));

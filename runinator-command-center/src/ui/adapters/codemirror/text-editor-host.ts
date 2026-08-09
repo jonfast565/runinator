@@ -120,10 +120,10 @@ function createWdlHost(options: CodeMirrorHostOptions): TextEditorHost {
     const raw = wdlContext.settings();
 
     if (raw.length && "scope" in raw[0]) {
-      return raw as WdlSettingRef[];
+      return raw;
     }
 
-    return settingRefsFromCredentials(raw as CredentialSummary[]);
+    return settingRefsFromCredentials(raw);
   }
 
   const host: TextEditorHost = {

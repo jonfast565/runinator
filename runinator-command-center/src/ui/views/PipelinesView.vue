@@ -346,7 +346,7 @@ const ownerSaving = ref(false);
 
 const nameModal = reactive({
   open: false,
-  mode: "create" as "create" | "rename",
+  mode: "create",
   title: "New pipeline",
   name: "",
   description: "",

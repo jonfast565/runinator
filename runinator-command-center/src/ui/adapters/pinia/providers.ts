@@ -19,7 +19,7 @@ export const useProvidersStore = defineStore("providers", () => {
     focusedAction: computed(() => state.value.focusedAction),
     fetchProviders: () => providersService.fetchProviders(),
     focusProviderAction: (provider: string, action = "") =>
-      providersService.focusProviderAction(provider, action),
+      { providersService.focusProviderAction(provider, action); },
     clearProviders: () => { providersService.clearProviders(); },
   };
 });

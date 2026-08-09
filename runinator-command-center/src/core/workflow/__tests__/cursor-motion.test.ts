@@ -50,7 +50,7 @@ describe("buildCursorTokens", () => {
     expect(left?.x).toBe(100 - TOKEN_LANE_GAP / 2);
     expect(right?.x).toBe(100 + TOKEN_LANE_GAP / 2);
     // symmetric about the node's centre, so the pair still reads as sitting on this node.
-    expect((left!.x + right!.x) / 2).toBe(100);
+    expect((left.x + right.x) / 2).toBe(100);
   });
 
   // a subflow's child run walks nodes this definition does not contain. a token pinned at the

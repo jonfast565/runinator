@@ -125,7 +125,7 @@ const workflows = useWorkflowsStore();
  */
 const followCursor = computed({
   get: () => workflows.followCursor,
-  set: (value: boolean) => workflows.setFollowCursor(value),
+  set: (value: boolean) => { workflows.setFollowCursor(value); },
 });
 
 const markers = computed(() => workflows.cursorMarkers);

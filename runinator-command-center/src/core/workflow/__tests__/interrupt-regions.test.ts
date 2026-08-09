@@ -54,7 +54,7 @@ function detail(nodes: WorkflowNodeRun[], withSnapshot = true): WorkflowRunDetai
       ...(withSnapshot ? { workflow_snapshot: snapshot() as never } : {}),
     },
     nodes,
-  } as WorkflowRunDetail;
+  };
 }
 
 describe("interruptRegionOrigins", () => {
