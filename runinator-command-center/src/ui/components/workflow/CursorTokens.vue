@@ -122,6 +122,17 @@ function select(cursorId: string) {
   transition: transform 420ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
+/* the dot is half a rem, which is a fine *target* for a mouse and far too small for a thumb. on a
+   touch pointer the button keeps its size and grows an invisible hit area around it. */
+@media (pointer: coarse) {
+  .cursor-token::before {
+    content: "";
+    position: absolute;
+    inset: -1.1rem;
+    border-radius: 9999px;
+  }
+}
+
 .cursor-token-hop {
   position: relative;
   display: block;
