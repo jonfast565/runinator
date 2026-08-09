@@ -75,7 +75,7 @@ function setPath(root: JsonRecord, path: string[], value: unknown): void {
   const leaf = path[path.length - 1];
 
   if (value === undefined) {
-    delete current[leaf];
+    Reflect.deleteProperty(current, leaf);
     return;
   }
 
@@ -113,11 +113,11 @@ export function setAtLocation(
 
   if (location.path.length === 0) {
     if (value === undefined) {
-      delete next[location.base];
+      Reflect.deleteProperty(next, location.base);
     } else if (isJsonRecord(value)) {
       next[location.base] = value;
     } else {
-      next[location.base] = asJsonRecord(value) ?? {};
+      next[location.base] = asJsonRecord(value);
     }
 
     return next;

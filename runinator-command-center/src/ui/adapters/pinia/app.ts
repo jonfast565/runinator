@@ -1,7 +1,7 @@
 import { defineStore } from "pinia";
 import { computed } from "vue";
 import { authService } from "../../../core/services";
-import type { Capability } from "../../../core/domain/models";
+import type { Capability, ReplicaCounts, ReplicaRecord } from "../../../core/domain/models";
 import { isTauriRuntime } from "../../../ui/adapters/tauri/runtime";
 import {
   endpointForTab,
@@ -12,7 +12,7 @@ import {
   visibleNavSections,
 } from "../../../core/navigation/nav-config";
 import { appService } from "../../../core/services";
-import type { ToastAction } from "../../../core/services/app";
+import type { EventStreamState, ToastAction } from "../../../core/services/app";
 import type { AppTab } from "../../../core/navigation/app";
 import { mirrorServiceState } from "./sync";
 
@@ -164,8 +164,12 @@ export const useAppStore = defineStore("app", () => {
     markBackendUnreachable: () => { appService.markBackendUnreachable(); },
     dismissOutageBanner: () => { appService.dismissOutageBanner(); },
     setServiceUrl: (url: string | null | undefined) => { appService.setServiceUrl(url); },
-    setEventStreamState: appService.setEventStreamState,
-    setReplicaState: appService.setReplicaState,
+    setEventStreamState: (next: EventStreamState) => {
+      appService.setEventStreamState(next);
+    },
+    setReplicaState: (replicas: ReplicaRecord[], counts?: ReplicaCounts | null) => {
+      appService.setReplicaState(replicas, counts);
+    },
     clearReplicaState: () => { appService.clearReplicaState(); },
     refreshReplicas: () => appService.refreshReplicas(),
     runOperation: appService.runOperation.bind(appService),

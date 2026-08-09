@@ -44,6 +44,7 @@ fn pipeline_kind() -> String {
     ResourceType::Pipeline.as_str().to_string()
 }
 
+#[allow(clippy::result_large_err)] // callers return the ready-to-send HTTP reply unchanged.
 pub fn require_admin(ctx: &AuthContext) -> Result<(), Reply> {
     if ctx.is_admin {
         Ok(())
@@ -52,6 +53,7 @@ pub fn require_admin(ctx: &AuthContext) -> Result<(), Reply> {
     }
 }
 
+#[allow(clippy::result_large_err)] // callers return the ready-to-send HTTP reply unchanged.
 pub fn require_service_or_admin(ctx: &AuthContext) -> Result<(), Reply> {
     if ctx.is_admin || matches!(ctx.kind, PrincipalKind::Service) {
         Ok(())
@@ -78,6 +80,7 @@ pub fn capabilities_for(ctx: &AuthContext) -> HashSet<Capability> {
 
 /// gate an action on a named capability, else a 403 reply. platform-scoped capabilities pass only for
 /// platform admins; org-scoped capabilities pass for admins of the active org (see `capabilities_for`).
+#[allow(clippy::result_large_err)] // callers return the ready-to-send HTTP reply unchanged.
 pub fn require_capability(ctx: &AuthContext, cap: Capability) -> Result<(), Reply> {
     if capabilities_for(ctx).contains(&cap) {
         Ok(())
@@ -88,6 +91,7 @@ pub fn require_capability(ctx: &AuthContext, cap: Capability) -> Result<(), Repl
 
 /// gate an org-scoped action: platform admins transcend org roles; otherwise the caller's active org
 /// must match `org_id` and their role must be at least `min`.
+#[allow(clippy::result_large_err)] // callers return the ready-to-send HTTP reply unchanged.
 pub fn require_org_role(ctx: &AuthContext, org_id: Uuid, min: OrgRole) -> Result<(), Reply> {
     if ctx.is_admin {
         return Ok(());
@@ -99,11 +103,13 @@ pub fn require_org_role(ctx: &AuthContext, org_id: Uuid, min: OrgRole) -> Result
 }
 
 /// require org-admin (or platform admin) for `org_id`.
+#[allow(clippy::result_large_err)] // callers return the ready-to-send HTTP reply unchanged.
 pub fn require_org_admin(ctx: &AuthContext, org_id: Uuid) -> Result<(), Reply> {
     require_org_role(ctx, org_id, OrgRole::Admin)
 }
 
 /// require any membership (or platform admin) in `org_id`.
+#[allow(clippy::result_large_err)] // callers return the ready-to-send HTTP reply unchanged.
 pub fn require_org_member(ctx: &AuthContext, org_id: Uuid) -> Result<(), Reply> {
     require_org_role(ctx, org_id, OrgRole::Member)
 }

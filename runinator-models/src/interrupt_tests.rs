@@ -22,13 +22,13 @@ fn frame(interrupted: Uuid) -> InterruptFrame {
 #[test]
 fn source_and_mode_names_round_trip() {
     for source in InterruptSource::ALL {
-        assert_eq!(InterruptSource::from_str(source.as_str()), Some(source));
+        assert_eq!(source.as_str().parse(), Ok(source));
     }
     for mode in InterruptMode::ALL {
-        assert_eq!(InterruptMode::from_str(mode.as_str()), Some(mode));
+        assert_eq!(mode.as_str().parse(), Ok(mode));
     }
-    assert_eq!(InterruptSource::from_str("webhook"), None);
-    assert_eq!(InterruptMode::from_str("abort"), None);
+    assert!("webhook".parse::<InterruptSource>().is_err());
+    assert!("abort".parse::<InterruptMode>().is_err());
 }
 
 /// the serde names are a wire contract shared with the wdl front end and the command center, so

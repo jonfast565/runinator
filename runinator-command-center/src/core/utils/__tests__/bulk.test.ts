@@ -71,7 +71,7 @@ describe("runBulk", () => {
   });
 
   it("stringifies non-Error rejections", async () => {
-    const result = await runBulk([1], () => Promise.reject("plain string"));
+    const result = await runBulk([1], () => Promise.reject(new Error("plain string")));
     expect(result.failed[0]?.message).toBe("plain string");
   });
 });

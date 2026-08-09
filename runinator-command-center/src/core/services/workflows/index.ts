@@ -356,7 +356,7 @@ export function createWorkflowServices(inputDeps: WorkflowServiceDeps) {
 
   const runs = createWorkflowRunService(host);
   const catalogPeer: { saveSelectedWorkflowBundle: () => Promise<void> } = {
-    saveSelectedWorkflowBundle: async () => undefined,
+    saveSelectedWorkflowBundle: () => Promise.resolve(),
   };
   const editor = createWorkflowEditorService(host, runs, catalogPeer);
   const catalog = createWorkflowCatalogService(host, editor, runs);

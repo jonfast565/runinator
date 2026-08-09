@@ -45,10 +45,10 @@ const browserDialogs: PlatformDialogs = {
 const browserServiceDiscovery: ServiceDiscovery = {
   isDesktop: () => false,
   webServiceUrl: () => wsBaseUrl(),
-  getInitialStatus: async () => ({ service_url: wsBaseUrl() || null }),
-  startDiscovery: async () => undefined,
-  listenServiceUrlChanged: async () => () => undefined,
-  listenDiscoveryError: async () => () => undefined,
+  getInitialStatus: () => Promise.resolve({ service_url: wsBaseUrl() || null }),
+  startDiscovery: () => Promise.resolve(),
+  listenServiceUrlChanged: () => Promise.resolve(() => undefined),
+  listenDiscoveryError: () => Promise.resolve(() => undefined),
 };
 
 export function createBrowserPlatformAdapter(): PlatformAdapter {

@@ -11,7 +11,7 @@ mod completion;
 mod hover;
 
 #[cfg(test)]
-mod tests;
+mod lib_tests;
 
 pub use completion::{
     WdlCompletionItem, WdlCompletionRequest, WdlCompletionResponse, complete_source,

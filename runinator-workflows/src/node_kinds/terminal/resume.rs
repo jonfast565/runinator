@@ -54,7 +54,7 @@ impl NodeKindSpec for Resume {
                     node: node.id.clone(),
                     message: "resume mode must be a string".into(),
                 })?;
-        InterruptMode::from_str(named).map(|_| ()).ok_or_else(|| {
+        named.parse::<InterruptMode>().map(|_| ()).map_err(|_| {
             WorkflowValidationError::InvalidNodeParameters {
                 node: node.id.clone(),
                 message: format!(

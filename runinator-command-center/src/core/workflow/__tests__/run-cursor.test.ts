@@ -104,10 +104,10 @@ describe("buildCursorMarkers", () => {
       null,
     );
 
-    expect(armed?.armed).toBe(true);
-    expect(elsewhere?.armed).toBe(false);
+    expect(armed.armed).toBe(true);
+    expect(elsewhere.armed).toBe(false);
     // a real cursor never shadows, so "armed" is not a state it can be in.
-    expect(real?.armed).toBe(false);
+    expect(real.armed).toBe(false);
   });
 });
 

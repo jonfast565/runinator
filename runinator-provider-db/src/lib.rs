@@ -313,4 +313,4 @@ impl Provider for DbProvider {
 }
 
 #[cfg(test)]
-mod tests;
+mod lib_tests;

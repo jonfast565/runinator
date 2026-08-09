@@ -69,9 +69,9 @@ afterEach(() => {
 });
 
 describe("workflow header draft", () => {
-  it("reads the declarations off a selected workflow", () => {
+  it("reads the declarations off a selected workflow", async () => {
     const workflows = useWorkflowsStore();
-    workflows.selectWorkflow(workflow());
+    await workflows.selectWorkflow(workflow());
 
     expect(workflows.headerDraft.concurrency).toEqual({
       maxConcurrentRuns: 2,
@@ -81,9 +81,9 @@ describe("workflow header draft", () => {
     expect(workflows.headerDraft.interrupts).toEqual([]);
   });
 
-  it("writes an edit through to the definition and the json pane", () => {
+  it("writes an edit through to the definition and the json pane", async () => {
     const workflows = useWorkflowsStore();
-    workflows.selectWorkflow(workflow());
+    await workflows.selectWorkflow(workflow());
 
     workflows.setHeaderConcurrency({ maxConcurrentRuns: 5, onConflict: "skip" });
 
@@ -92,9 +92,9 @@ describe("workflow header draft", () => {
     expect(workflows.isDirty).toBe(true);
   });
 
-  it("removes the key entirely when a section is cleared", () => {
+  it("removes the key entirely when a section is cleared", async () => {
     const workflows = useWorkflowsStore();
-    workflows.selectWorkflow(workflow());
+    await workflows.selectWorkflow(workflow());
 
     workflows.clearHeaderConcurrency();
 
@@ -105,9 +105,9 @@ describe("workflow header draft", () => {
 });
 
 describe("scaffoldInterruptHandler", () => {
-  it("creates a region that passes validation and declares it", () => {
+  it("creates a region that passes validation and declares it", async () => {
     const workflows = useWorkflowsStore();
-    workflows.selectWorkflow(workflow());
+    await workflows.selectWorkflow(workflow());
 
     expect(workflows.scaffoldInterruptHandler("external")).toBe(true);
 
@@ -118,9 +118,9 @@ describe("scaffoldInterruptHandler", () => {
     expect(workflows.getHeaderIssues()).toEqual([]);
   });
 
-  it("strips the audit template's edge to `end`, which would drag end into the region", () => {
+  it("strips the audit template's edge to `end`, which would drag end into the region", async () => {
     const workflows = useWorkflowsStore();
-    workflows.selectWorkflow(workflow());
+    await workflows.selectWorkflow(workflow());
     workflows.scaffoldInterruptHandler("external");
 
     expect(workflows.getRegionNodeIds("on_external").sort()).toEqual([
@@ -129,18 +129,18 @@ describe("scaffoldInterruptHandler", () => {
     ]);
   });
 
-  it("refuses a second handler for the same source", () => {
+  it("refuses a second handler for the same source", async () => {
     const workflows = useWorkflowsStore();
-    workflows.selectWorkflow(workflow());
+    await workflows.selectWorkflow(workflow());
     workflows.scaffoldInterruptHandler("external");
 
     expect(workflows.scaffoldInterruptHandler("external")).toBe(false);
     expect(workflows.headerDraft.interrupts).toHaveLength(1);
   });
 
-  it("marks the region's nodes on the canvas model", () => {
+  it("marks the region's nodes on the canvas model", async () => {
     const workflows = useWorkflowsStore();
-    workflows.selectWorkflow(workflow());
+    await workflows.selectWorkflow(workflow());
     workflows.scaffoldInterruptHandler("wake");
 
     const nodes = workflows.graphNodes;
@@ -155,9 +155,9 @@ describe("scaffoldInterruptHandler", () => {
     expect(main?.data?.interruptRegion).toBeNull();
   });
 
-  it("keeps the handler candidates free of main-flow nodes", () => {
+  it("keeps the handler candidates free of main-flow nodes", async () => {
     const workflows = useWorkflowsStore();
-    workflows.selectWorkflow(workflow());
+    await workflows.selectWorkflow(workflow());
     workflows.scaffoldInterruptHandler("wake");
 
     const candidates = workflows.getHandlerCandidateNodeIds();

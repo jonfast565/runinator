@@ -76,13 +76,6 @@ impl InterruptSource {
         }
     }
 
-    /// parse an author-facing source name, for the wdl front end and definition metadata.
-    pub fn from_str(value: &str) -> Option<Self> {
-        Self::ALL
-            .into_iter()
-            .find(|source| source.as_str() == value)
-    }
-
     /// true when this source is raised from a [`PendingInterrupt`] recorded on the run rather than
     /// matched against the node state a drive finds.
     pub fn requested(&self) -> bool {
@@ -93,6 +86,17 @@ impl InterruptSource {
 impl std::fmt::Display for InterruptSource {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for InterruptSource {
+    type Err = &'static str;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Self::ALL
+            .into_iter()
+            .find(|source| source.as_str() == value)
+            .ok_or("unknown interrupt source")
     }
 }
 
@@ -127,14 +131,18 @@ impl InterruptMode {
             Self::Fail => "fail",
         }
     }
+}
 
-    pub fn from_str(value: &str) -> Option<Self> {
+impl std::str::FromStr for InterruptMode {
+    type Err = &'static str;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
-            "resume" => Some(Self::Resume),
-            "continue" => Some(Self::Continue),
-            "restart" => Some(Self::Restart),
-            "fail" => Some(Self::Fail),
-            _ => None,
+            "resume" => Ok(Self::Resume),
+            "continue" => Ok(Self::Continue),
+            "restart" => Ok(Self::Restart),
+            "fail" => Ok(Self::Fail),
+            _ => Err("unknown interrupt mode"),
         }
     }
 }
@@ -233,7 +241,7 @@ pub struct InterruptDeclaration {
 impl InterruptDeclaration {
     /// the parsed source, or `None` when this declaration names a source this binary does not know.
     pub fn source(&self) -> Option<InterruptSource> {
-        InterruptSource::from_str(&self.on)
+        self.on.parse().ok()
     }
 }
 

@@ -252,7 +252,7 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     path: (args) => {
       const limit = argOpt(args, "limit");
       const base = `workflows/${escape(arg(args, "workflowId"))}/revisions`;
-      return limit ? `${base}?limit=${escape(String(limit))}` : base;
+      return typeof limit === "number" ? `${base}?limit=${escape(limit)}` : base;
     },
   },
   fetch_workflow_revision: {

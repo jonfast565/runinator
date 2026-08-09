@@ -273,13 +273,11 @@ function onKindChange() {
 
 function fieldValue(field: NodeFieldMetadata): unknown {
   const draft = workflows.stepEditor.nodeDraft;
-  if (!draft || typeof draft !== "object") {return undefined;}
   return getAtLocation(draft, field.location);
 }
 
 function setFieldValue(field: NodeFieldMetadata, value: unknown) {
   const draft = workflows.stepEditor.nodeDraft;
-  if (!draft || typeof draft !== "object") {return;}
   workflows.stepEditor.nodeDraft = setAtLocation(draft, field.location, value);
 }
 
@@ -287,13 +285,11 @@ function setFieldValue(field: NodeFieldMetadata, value: unknown) {
 
 function slotValue(slot: NodeEdgeSlot): unknown {
   const draft = workflows.stepEditor.nodeDraft;
-  if (!draft || typeof draft !== "object") {return undefined;}
   return getAtLocation(draft, slot.target);
 }
 
 function setSlotValue(slot: NodeEdgeSlot, value: unknown) {
   const draft = workflows.stepEditor.nodeDraft;
-  if (!draft || typeof draft !== "object") {return;}
   workflows.stepEditor.nodeDraft = setAtLocation(draft, slot.target, value);
 }
 
@@ -301,7 +297,7 @@ function setSlotValue(slot: NodeEdgeSlot, value: unknown) {
 
 // sibling values for CatalogFieldEditor to resolve the active provider for action_function.
 const actionSiblingValues = computed((): Record<string, unknown> => {
-  const actionDraft = (workflows.stepEditor.nodeDraft)?.action;
+  const actionDraft = workflows.stepEditor.nodeDraft.action;
   if (!actionDraft || typeof actionDraft !== "object" || Array.isArray(actionDraft)) {return {};}
   return { provider: (actionDraft as JsonRecord).provider };
 });
@@ -310,7 +306,7 @@ const currentProvider = computed(
   () =>
     providersStore.providers.find(
       (provider) => {
-        const actionDraft = (workflows.stepEditor.nodeDraft)?.action as JsonRecord | undefined;
+        const actionDraft = workflows.stepEditor.nodeDraft.action as JsonRecord | undefined;
         return provider.name === actionDraft?.provider;
       },
     ) ?? null,
@@ -320,7 +316,7 @@ const currentActions = computed(() => currentProvider.value?.actions ?? []);
 
 const selectedAction = computed(
   () => {
-    const actionDraft = (workflows.stepEditor.nodeDraft)?.action as JsonRecord | undefined;
+    const actionDraft = workflows.stepEditor.nodeDraft.action as JsonRecord | undefined;
     return currentActions.value.find(
       (action) => action.function_name === actionDraft?.function,
     ) ?? null;
@@ -330,7 +326,7 @@ const selectedAction = computed(
 // action.configuration is bound directly into nodeDraft for TypedParameterEditor.
 const actionConfiguration = computed({
   get: (): JsonRecord => {
-    const actionDraft = (workflows.stepEditor.nodeDraft)?.action;
+    const actionDraft = workflows.stepEditor.nodeDraft.action;
     if (!actionDraft || typeof actionDraft !== "object" || Array.isArray(actionDraft)) {return {};}
     return ((actionDraft as JsonRecord).configuration as JsonRecord | undefined) ?? {};
   },

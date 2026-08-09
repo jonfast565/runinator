@@ -35,8 +35,8 @@ describe("buildCursorTokens", () => {
       boxes({ verify: { x: 100, y: 200, width: 180, height: 60 } }),
     );
 
-    expect(token?.x).toBe(190);
-    expect(token?.y).toBe(200 - TOKEN_LIFT);
+    expect(token.x).toBe(190);
+    expect(token.y).toBe(200 - TOKEN_LIFT);
   });
 
   // two branches that converged on one node have to stay tellable apart, which is the whole reason
@@ -47,8 +47,8 @@ describe("buildCursorTokens", () => {
       boxes({ join: { x: 0, y: 0, width: 200, height: 60 } }),
     );
 
-    expect(left?.x).toBe(100 - TOKEN_LANE_GAP / 2);
-    expect(right?.x).toBe(100 + TOKEN_LANE_GAP / 2);
+    expect(left.x).toBe(100 - TOKEN_LANE_GAP / 2);
+    expect(right.x).toBe(100 + TOKEN_LANE_GAP / 2);
     // symmetric about the node's centre, so the pair still reads as sitting on this node.
     expect((left.x + right.x) / 2).toBe(100);
   });
@@ -70,7 +70,7 @@ describe("buildCursorTokens", () => {
       boxes({ fresh: { x: 0, y: 0, width: 0, height: 0 } }),
     );
 
-    expect(token?.x).toBe(FALLBACK_NODE_WIDTH / 2);
+    expect(token.x).toBe(FALLBACK_NODE_WIDTH / 2);
   });
 
   it("carries the marker's identity through so the token draws like its rail row", () => {

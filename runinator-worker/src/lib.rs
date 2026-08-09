@@ -15,7 +15,7 @@ pub mod secrets;
 pub mod worker;
 
 #[cfg(test)]
-mod tests;
+mod lib_tests;
 
 pub use broker::{BrokerConfig, build_broker};
 pub use config::{Config, parse_config, parse_labels};

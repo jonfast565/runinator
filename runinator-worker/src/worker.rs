@@ -1032,6 +1032,7 @@ async fn process_delivery(
 /// landing on another worker is dropped as a duplicate and acked until the lease goes stale,
 /// parking the node run until the reducer's timeout backstop fires. a failed release is remembered
 /// so a redelivery landing back on this worker reclaims the leftover lease instead.
+#[allow(clippy::too_many_arguments)] // nack reporting needs the full delivery and worker context.
 async fn nack_action_delivery(
     broker: &Arc<dyn Broker>,
     consumer_id: &str,

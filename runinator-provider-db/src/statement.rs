@@ -130,6 +130,7 @@ impl DocumentCommand {
 /// an engine-resolved statement. keeping sql and document dialects in separate variants means
 /// a connector never has to guess which half of a union struct is populated.
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)] // direct commands keep connector matching and ownership straightforward.
 pub enum StatementSpec {
     Sql {
         name: Option<String>,

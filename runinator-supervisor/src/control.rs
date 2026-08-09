@@ -16,6 +16,7 @@ static SEQUENCE: AtomicU64 = AtomicU64::new(0);
 /// directory as one json file per command and drained in file-name (roughly chronological) order.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
+#[allow(clippy::enum_variant_names)] // the suffix is part of the serialized control protocol.
 pub enum ControlCommand {
     /// register a new process (started immediately when its `autostart` is set).
     AddProcess { process: ProcessConfig },

@@ -218,80 +218,55 @@
 
 <script setup lang="ts">
 import { Handle, Position } from "@vue-flow/core";
-import type { CursorMarker } from "../../../core/domain/models";
-import type { InterruptOrigin } from "../../../core/workflow/interrupt-regions";
 import { computed, ref, watch } from "vue";
 import { useWorkflowsStore } from "../../../ui/adapters/pinia/workflows";
-import { useResourcesStore } from "../../../ui/adapters/pinia/resources";
-import { useAppStore } from "../../../ui/adapters/pinia/app";
 import { useCatalogMetadataStore } from "../../../ui/adapters/pinia/catalogMetadata";
-import { isApprovalWaitingStatus, type ApprovalAction } from "../../../core/utils/approvals";
-import { isInputWaitingStatus } from "../../../core/utils/inputs";
 import { statusClassForNode } from "../../../core/utils/status";
 import {
   workflowNodeKindIcon,
   workflowNodeKindDescription,
   workflowNodeKindLabel,
 } from "../../../core/workflow";
-import { displayValue } from "../../../core/utils/values";
-import { workflowRunExtrasService } from "../../../core/services";
-import type {
-  GateRecord,
-  WorkflowInlineEditDescriptor,
-  WorkflowSemanticHandle,
-  WorkflowValidationIssue,
-  WorkflowValidationSeverity,
-} from "../../../core/domain/models";
+import { useWorkflowNodeRuntime } from "../../composables/useWorkflowNodeRuntime";
 import JsonEditor from "../shared/JsonEditor.vue";
 import Icon from "../shared/Icon.vue";
+import type { WorkflowNodeData } from "./workflow-node-types";
 
 const props = defineProps<{
   id: string;
   selected?: boolean;
-  data: {
-    title: string;
-    nodeId?: string;
-    kind: string;
-    summary?: string;
-    semanticHandles?: WorkflowSemanticHandle[];
-    inlineEdit?: WorkflowInlineEditDescriptor | null;
-    validationCount?: number;
-    validationSeverity?: WorkflowValidationSeverity;
-    validationIssues?: WorkflowValidationIssue[];
-    statusLabel?: string;
-    executionCount?: number;
-    approvalPrompt?: string;
-    inputPrompt?: string;
-    running?: boolean;
-    status?: string;
-    protected?: boolean;
-    locked?: boolean;
-    skipped?: boolean;
-    readOnly?: boolean;
-    allowGateResolution?: boolean;
-    gate?: GateRecord | null;
-    debugBreakpoint?: boolean;
-    /** threads of control standing on this node; a node may carry several. */
-    cursors?: CursorMarker[];
-    /** the interrupt handler region this node belongs to, or null for the main flow. */
-    interruptRegion?: InterruptOrigin | null;
-    /** true when this node is the region's declared entry. */
-    interruptEntry?: boolean;
-  };
+  data: WorkflowNodeData;
 }>();
 
 const workflows = useWorkflowsStore();
-const resources = useResourcesStore();
-const app = useAppStore();
 const catalogMetadata = useCatalogMetadataStore();
-const submitting = ref(false);
 const inlineId = ref(props.id);
 const inlineValue = ref(props.data.inlineEdit?.value ?? "");
-const inputDraft = ref("{}");
-const inputError = ref("");
-const signalPayloadDraft = ref("{}");
-const signalError = ref("");
-const gateReasonDraft = ref("");
+const {
+  submitting,
+  inputDraft,
+  inputError,
+  signalPayloadDraft,
+  signalError,
+  gateReasonDraft,
+  isApprovalPending,
+  isInputPending,
+  isSignalPending,
+  gateKindLabel,
+  gateStatusLabel,
+  gateReasonText,
+  gateStateText,
+  isConditionGate,
+  canResolveGate,
+  isWaiting,
+  onInputDraftChange,
+  onSignalPayloadChange,
+  onApprove,
+  onReject,
+  onSendSignal,
+  onSubmitInput,
+  onResolveGate,
+} = useWorkflowNodeRuntime(props);
 
 const statusClass = computed(() => statusClassForNode(props.data.status));
 // subscribe to the catalog so icon/label/description refresh once metadata loads after mount.
@@ -308,41 +283,11 @@ const kindLabel = computed(() => {
   return workflowNodeKindLabel(props.data.kind);
 });
 const executionCount = computed(() => Math.max(0, Math.floor(props.data.executionCount ?? 0)));
-const isApprovalPending = computed(() => isApprovalWaitingStatus(props.data.status));
-const isInputPending = computed(() => isInputWaitingStatus(props.data.status));
 const isWaitingState = computed(() =>
   ["waiting", "approval_required", "approval-required", "input_required", "pending"].includes(
     props.data.status ?? "",
   ),
 );
-// a parked signal node shares the generic `waiting` status with wait nodes; disambiguate by kind.
-const isSignalPending = computed(
-  () => props.data.kind === "signal" && props.data.status === "waiting",
-);
-const gate = computed(() => props.data.gate ?? null);
-const gateKind = computed(() => gate.value?.kind ?? "");
-const gateStatus = computed(() => gate.value?.status ?? "");
-const gateKindLabel = computed(() => (gateKind.value ? `${gateKind.value} gate` : "gate"));
-const gateStatusLabel = computed(() => gateStatus.value || "waiting");
-const gateReasonText = computed(() => (gate.value?.reason ?? "").trim());
-const gateStateText = computed(() => props.data.kind === "gate" && Boolean(gate.value));
-const isConditionGate = computed(() => gateKind.value === "condition");
-const canResolveGate = computed(() => {
-  if (props.data.kind !== "gate") {
-    return false;
-  }
-
-  if (!props.data.allowGateResolution || !gate.value?.id) {
-    return false;
-  }
-
-  if (!["manual", "external"].includes(gateKind.value)) {
-    return false;
-  }
-
-  return ["pending", "closed"].includes(gateStatus.value);
-});
-
 const isNodeRunning = computed(() => {
   const run = workflows.workflowRunDetail?.nodes.find((n) => n.node_id === props.id);
 
@@ -351,10 +296,6 @@ const isNodeRunning = computed(() => {
   }
 
   return props.data.running ?? false;
-});
-
-const isWaiting = computed(() => {
-  return isApprovalPending.value || isInputPending.value;
 });
 
 // a node is "active" when any thread of control is parked on it. keying this to the run's single
@@ -391,33 +332,6 @@ watch(
   },
 );
 
-watch(
-  () => gate.value?.id,
-  () => {
-    gateReasonDraft.value = "";
-  },
-);
-
-watch(
-  () => [
-    props.id,
-    workflows.workflowRunDetail?.nodes.filter((node) => node.node_id === props.id).at(-1)?.status,
-  ],
-  () => {
-    const nodeRun = workflows.workflowRunDetail?.nodes
-      .filter((node) => node.node_id === props.id && isInputWaitingStatus(node.status))
-      .at(-1);
-
-    if (!nodeRun) {
-      return;
-    }
-
-    inputDraft.value = formatInputDraft(nodeRun.output_json ?? nodeRun.state?.input ?? {});
-    inputError.value = "";
-  },
-  { immediate: true },
-);
-
 function semanticHandleStyle(index: number, total: number) {
   return { right: "0", top: `${String(semanticHandleTop(index, total))}%` };
 }
@@ -445,649 +359,6 @@ function cancelInlineEdit() {
   workflows.inlineEditNodeId = "";
 }
 
-function onInputDraftChange(value: string) {
-  inputDraft.value = value;
-  inputError.value = "";
-}
-
-async function onApprove() {
-  await resolveApproval("approve");
-}
-
-async function onReject() {
-  await resolveApproval("reject");
-}
-
-async function resolveApproval(action: ApprovalAction) {
-  const detail = workflows.workflowRunDetail;
-
-  if (!detail) {
-    app.setError("No workflow run selected");
-    return;
-  }
-
-  const nodeRun = detail.nodes
-    .filter((node) => node.node_id === props.id && isApprovalWaitingStatus(node.status))
-    .at(-1);
-
-  if (!nodeRun) {
-    app.setError(`No pending approval found for workflow node ${props.id}`);
-    return;
-  }
-
-  submitting.value = true;
-
-  try {
-    await resources.resolveWorkflowApproval(detail.run.id, props.id, nodeRun, action);
-    await workflows.fetchWorkflowRunDetail(detail.run.id);
-  } finally {
-    submitting.value = false;
-  }
-}
-
-function onSignalPayloadChange(value: string) {
-  signalPayloadDraft.value = value;
-  signalError.value = "";
-}
-
-async function onSendSignal() {
-  const detail = workflows.workflowRunDetail;
-
-  if (!detail) {
-    app.setError("No workflow run selected");
-    return;
-  }
-
-  const nodeRun = detail.nodes
-    .filter((node) => node.node_id === props.id && node.status === "waiting")
-    .at(-1);
-
-  if (!nodeRun) {
-    app.setError(`No waiting signal found for node ${props.id}`);
-    return;
-  }
-
-  const name = displayValue(nodeRun.state?.name ?? "");
-
-  if (!name) {
-    app.setError(`Signal node ${props.id} has no signal name`);
-    return;
-  }
-
-  let payload: unknown;
-
-  try {
-    payload = JSON.parse(signalPayloadDraft.value || "{}");
-    signalError.value = "";
-  } catch (err) {
-    signalError.value = String(err);
-    return;
-  }
-
-  submitting.value = true;
-
-  try {
-    await workflowRunExtrasService.deliverSignal(detail.run.id, name, payload);
-    await workflows.fetchWorkflowRunDetail(detail.run.id);
-  } finally {
-    submitting.value = false;
-  }
-}
-
-async function onSubmitInput() {
-  const detail = workflows.workflowRunDetail;
-
-  if (!detail) {
-    app.setError("No workflow run selected");
-    return;
-  }
-
-  const nodeRun = detail.nodes
-    .filter((node) => node.node_id === props.id && isInputWaitingStatus(node.status))
-    .at(-1);
-
-  if (!nodeRun) {
-    app.setError(`No pending input found for workflow node ${props.id}`);
-    return;
-  }
-
-  let parsed: unknown;
-
-  try {
-    parsed = JSON.parse(inputDraft.value || "null");
-    inputError.value = "";
-  } catch (err) {
-    inputError.value = String(err);
-    return;
-  }
-
-  submitting.value = true;
-
-  try {
-    await workflowRunExtrasService.resolveInput(nodeRun.id, parsed, undefined, "Input submitted");
-    await workflows.fetchWorkflowRunDetail(detail.run.id);
-  } finally {
-    submitting.value = false;
-  }
-}
-
-async function onResolveGate(action: "open" | "close") {
-  const gateId = gate.value?.id ?? "";
-
-  if (!gateId) {
-    app.setError(`No gate found for workflow node ${props.id}`);
-    return;
-  }
-
-  submitting.value = true;
-
-  try {
-    await workflows.resolveWorkflowRunGate(gateId, action, gateReasonDraft.value);
-    gateReasonDraft.value = "";
-  } finally {
-    submitting.value = false;
-  }
-}
-
-function formatInputDraft(value: unknown): string {
-  try {
-    return JSON.stringify(value ?? {}, null, 2);
-  } catch {
-    return "{}";
-  }
-}
 </script>
 
-<style scoped>
-.workflow-node-content {
-  padding: 10px;
-  position: relative;
-  min-height: 40px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  border-radius: 4px;
-  border: 1px solid transparent;
-  transition: all 0.2s ease;
-}
-
-.workflow-handle {
-  width: 11px;
-  height: 11px;
-  opacity: 0;
-  border: 2px solid var(--surface);
-  background: var(--accent);
-  transition:
-    opacity 0.15s ease,
-    transform 0.15s ease;
-}
-
-.workflow-handle-semantic {
-  opacity: 0.8;
-}
-
-.workflow-handle-compass {
-  opacity: 0;
-}
-
-.workflow-node-content:hover .workflow-handle,
-.vue-flow__node.selected .workflow-handle {
-  opacity: 1;
-}
-
-.workflow-handle-target {
-  background: var(--text-muted);
-}
-
-.workflow-handle-source {
-  transform: scale(0.68);
-}
-
-.workflow-handle-label {
-  position: absolute;
-  right: -8px;
-  max-width: 72px;
-  overflow: hidden;
-  padding: 1px 4px;
-  border-radius: 4px;
-  background: var(--accent-soft);
-  color: var(--text-subtle);
-  font-size: 9px;
-  opacity: 0;
-  pointer-events: none;
-  text-overflow: ellipsis;
-  transform: translate(100%, -50%);
-  white-space: nowrap;
-  z-index: 3;
-}
-
-.workflow-node-content:hover .workflow-handle-label,
-.vue-flow__node.selected .workflow-handle-label {
-  opacity: 1;
-}
-
-.node-validation-badge {
-  display: inline-grid;
-  width: 16px;
-  height: 16px;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  background: var(--warn-solid);
-  color: #ffffff;
-  font-size: 10px;
-  font-weight: 700;
-}
-
-.node-validation-badge.error {
-  background: var(--danger-solid);
-}
-
-.node-interrupt-badge {
-  padding: 0 6px;
-  border: 1px solid var(--border-strong);
-  border-radius: 999px;
-  background: var(--surface);
-  color: var(--text-subtle);
-  font-size: 10px;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-/* a region node is a side channel, not part of the main flow: tinted, with a marked left edge.
-   applied alongside the status class so a live run still colours the node by status. */
-:global(.vue-flow__node.node-interrupt-region) .workflow-node {
-  border-left: 3px solid var(--accent);
-  background-image: linear-gradient(
-    to right,
-    color-mix(in srgb, var(--accent) 8%, transparent),
-    transparent 60%
-  );
-}
-
-.node-execution-count {
-  display: inline-grid;
-  min-width: 16px;
-  height: 16px;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--border-strong);
-  border-radius: 50%;
-  background: var(--surface);
-  color: var(--text-subtle);
-  font-size: 10px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  line-height: 1;
-}
-
-.node-inline-editor {
-  display: grid;
-  width: 100%;
-  gap: 4px;
-}
-
-.node-inline-editor input {
-  min-width: 0;
-  width: 100%;
-  box-sizing: border-box;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  padding: 3px 5px;
-  font-size: 11px;
-}
-
-.node-inline-actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 4px;
-}
-
-.node-icon-btn {
-  padding: 2px 5px;
-  font-size: 10px;
-  pointer-events: all;
-}
-
-.waiting-node {
-  border-width: 2px;
-}
-
-.node-topline {
-  display: flex;
-  width: 100%;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  color: var(--text-muted);
-  font-size: 10px;
-  text-transform: uppercase;
-}
-
-.node-kind {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.node-waiting-icon {
-  display: inline-grid;
-  place-items: center;
-  color: var(--info-fg);
-}
-
-.node-kind-icon {
-  color: var(--accent-text);
-}
-
-.node-info {
-  position: relative;
-  display: inline-grid;
-  place-items: center;
-  color: var(--text-faint);
-  cursor: help;
-  pointer-events: all;
-}
-
-.node-info:hover {
-  color: var(--accent-text);
-}
-
-.node-info-pop {
-  position: absolute;
-  bottom: calc(100% + 6px);
-  right: -4px;
-  z-index: 20;
-  width: 180px;
-  padding: 7px 9px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  background: var(--surface);
-  box-shadow: var(--workflow-menu-shadow);
-  color: var(--text-subtle);
-  font-size: 11px;
-  line-height: 1.4;
-  text-align: left;
-  text-transform: none;
-  white-space: normal;
-  opacity: 0;
-  visibility: hidden;
-  transition: opacity 0.12s ease;
-  pointer-events: none;
-}
-
-.node-info-pop strong {
-  display: block;
-  margin-bottom: 2px;
-  color: var(--text);
-  text-transform: capitalize;
-}
-
-.node-info:hover .node-info-pop,
-.node-info:focus-within .node-info-pop {
-  opacity: 1;
-  visibility: visible;
-}
-
-.node-id {
-  flex: 1;
-  overflow: hidden;
-  color: var(--text-faint);
-  text-align: center;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.node-title {
-  max-width: 100%;
-  overflow: hidden;
-  color: var(--text);
-  font-weight: 700;
-  text-align: center;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.node-summary,
-.node-prompt {
-  max-width: 100%;
-  overflow: hidden;
-  color: var(--text-subtle);
-  font-size: 11px;
-  text-align: center;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.node-prompt {
-  color: var(--warning-fg);
-}
-
-.node-gate-state {
-  width: 100%;
-  margin-top: 4px;
-  padding: 5px 6px;
-  border: 1px solid var(--info-bg);
-  border-radius: 5px;
-  background: var(--info-bg);
-  color: var(--info-fg);
-  font-size: 10px;
-  text-align: left;
-  box-sizing: border-box;
-}
-
-.node-gate-line {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  text-transform: uppercase;
-}
-
-.node-gate-kind {
-  font-weight: 700;
-}
-
-.node-gate-status {
-  color: var(--success-fg);
-}
-
-.node-gate-reason {
-  margin-top: 3px;
-  color: var(--text);
-  text-transform: none;
-  word-break: break-word;
-}
-
-/* a soft light band that sweeps across a node while it is in play (running/queued). */
-.node-sheen {
-  position: absolute;
-  inset: 0;
-  border-radius: 4px;
-  overflow: hidden;
-  pointer-events: none;
-  z-index: 0;
-}
-.node-sheen::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  width: 45%;
-  background: linear-gradient(
-    100deg,
-    transparent 0%,
-    rgba(255, 255, 255, 0.28) 50%,
-    transparent 100%
-  );
-  transform: translateX(-160%);
-  animation: node-sheen-sweep 1.9s ease-in-out infinite;
-}
-@keyframes node-sheen-sweep {
-  0% {
-    transform: translateX(-160%);
-  }
-  60%,
-  100% {
-    transform: translateX(320%);
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .node-sheen::before {
-    animation: none;
-    opacity: 0;
-  }
-}
-
-.node-loader {
-  position: absolute;
-  top: 5px;
-  right: 5px;
-}
-
-.spinner {
-  width: 12px;
-  height: 12px;
-  border: 2px solid var(--border-subtle);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-}
-
-.node-actions {
-  display: flex;
-  gap: 4px;
-  margin-top: 4px;
-}
-
-.node-input-json {
-  min-height: 120px;
-}
-
-.node-input-json :deep(.json-editor-container) {
-  min-height: 72px;
-}
-
-.node-input-error {
-  color: var(--danger-fg);
-  font-size: 11px;
-}
-
-.node-gate-form {
-  display: grid;
-  width: 100%;
-  gap: 4px;
-  margin-top: 4px;
-}
-
-.node-gate-input {
-  min-width: 0;
-  width: 100%;
-  box-sizing: border-box;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  padding: 3px 5px;
-  font-size: 11px;
-  background: var(--surface);
-}
-
-.node-btn {
-  font-size: 10px;
-  padding: 2px 6px;
-  cursor: pointer;
-  border: none;
-  border-radius: 3px;
-  pointer-events: all;
-}
-
-.approve {
-  background: var(--success-fg);
-  color: #ffffff;
-}
-.reject {
-  background: var(--danger-solid);
-  color: #ffffff;
-}
-
-.breakpoint-dot {
-  position: absolute;
-  top: 4px;
-  left: 4px;
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: var(--danger-solid);
-  border: 1px solid var(--surface);
-  box-shadow: 0 0 0 1px var(--danger-solid);
-  z-index: 2;
-}
-
-.lock-dot {
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  display: inline-grid;
-  width: 16px;
-  height: 16px;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--border-strong);
-  border-radius: 50%;
-  background: var(--surface);
-  color: var(--text-subtle);
-  z-index: 2;
-}
-
-.skip-dot {
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  display: inline-grid;
-  width: 16px;
-  height: 16px;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--info-fg);
-  border-radius: 50%;
-  background: var(--info-bg);
-  color: var(--info-fg);
-  z-index: 2;
-}
-
-.skip-dot.shifted {
-  right: 24px;
-}
-
-.node-breakpointed {
-  border-color: var(--danger-solid) !important;
-}
-
-.node-skipped {
-  border-style: dashed;
-  opacity: 0.78;
-}
-
-.node-debug-active {
-  border-color: var(--warn-solid) !important;
-  animation: debug-pulse 1.4s ease-in-out infinite;
-}
-
-@keyframes debug-pulse {
-  0%,
-  100% {
-    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.7);
-  }
-  50% {
-    box-shadow: 0 0 0 8px rgba(245, 158, 11, 0);
-  }
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-</style>
+<style scoped src="./workflow-node.css"></style>

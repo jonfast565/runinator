@@ -80,6 +80,7 @@ async fn would_remove_last_enabled_admin<T: DatabaseImpl>(
     Ok(enabled_admin_count(db).await? <= 1)
 }
 
+#[allow(clippy::result_large_err)] // serialization failures are already formatted HTTP replies.
 fn json_value<T: Serialize>(value: &T) -> Result<Value, Reply> {
     serde_json::to_value(value)
         .map(Value::from)

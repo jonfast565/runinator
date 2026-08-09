@@ -1,318 +1,7 @@
-<template>
-  <section ref="devPane" class="pane dev-pane" tabindex="-1" @keydown="onKeydown">
-    <div class="dev-layout">
-      <section class="panel dev-panel">
-        <div class="panel-toolbar">
-          <div class="dev-toolbar-copy">
-            <h2>Dev Pack</h2>
-            <p>Inspect, edit, apply, and run a local pack without leaving the desktop client.</p>
-          </div>
-          <div class="actions">
-            <button
-              class="btn"
-              :disabled="busy || !packPath.trim()"
-              :title="`Inspect (${modKeyLabel}I)`"
-              @click="inspectPackNow"
-            >
-              <LoadingSpinner v-if="inspecting" size="sm" label="Inspecting pack" />
-              <Icon v-else name="refresh" />
-              <span>{{ inspecting ? "Inspecting…" : "Inspect" }}</span>
-            </button>
-            <button
-              class="btn btn-primary"
-              :disabled="busy || !packPath.trim()"
-              :title="`Apply (⇧${modKeyLabel}↵)`"
-              @click="applyPack"
-            >
-              <LoadingSpinner v-if="applying" size="sm" label="Applying pack" />
-              <Icon v-else name="upload" />
-              <span>{{ applying ? "Applying…" : "Apply" }}</span>
-            </button>
-          </div>
-        </div>
-
-        <div class="form-grid dev-form-grid">
-          <label>
-            <span>Pack path</span>
-            <input
-              v-model="packPath"
-              list="dev-pack-paths"
-              placeholder="packs/sdlc/sdlc.wdlm"
-              @keydown.enter.prevent="inspectPackNow"
-            />
-            <datalist id="dev-pack-paths">
-              <option v-for="path in recentPacks" :key="path" :value="path" />
-            </datalist>
-          </label>
-          <label>
-            <span>Run after apply</span>
-            <select v-model="runWorkflowRef">
-              <option value="">None</option>
-              <option
-                v-for="workflow in availableWorkflows"
-                :key="workflow.id ?? workflow.name"
-                :value="workflow.id ?? workflow.name"
-              >
-                {{ workflow.name }} v{{ workflow.version }}
-              </option>
-            </select>
-          </label>
-          <label>
-            <span>Run input</span>
-            <RunInputForm
-              ref="runInputFormRef"
-              v-model="runInputValue"
-              :input-type="runWorkflowInputType"
-              :storage-key="runWorkflowKey"
-            />
-          </label>
-          <div class="dev-options">
-            <label class="check-row">
-              <input v-model="skipSettings" type="checkbox" />
-              <span>Skip settings</span>
-            </label>
-            <label class="check-row">
-              <input v-model="debugRun" type="checkbox" />
-              <span>Debug run</span>
-            </label>
-            <label class="check-row">
-              <input v-model="autoInspect" type="checkbox" />
-              <span>Watch files</span>
-            </label>
-            <label class="check-row">
-              <input v-model="autoApply" type="checkbox" />
-              <span>Apply on change</span>
-            </label>
-            <label class="check-row">
-              <input v-model="autoSave" type="checkbox" />
-              <span>Auto-save edits</span>
-            </label>
-          </div>
-        </div>
-
-        <div class="dev-status-row">
-          <LoadingSpinner v-if="busy || saving" size="sm" :label="statusText" />
-          <StatusBadge :status="statusBadge" />
-          <span>{{ statusText }}</span>
-        </div>
-        <div class="dev-shortcuts">
-          {{ modKeyLabel }}S save · {{ modKeyLabel }}I inspect · {{ modKeyLabel }}↵ run · ⇧{{
-            modKeyLabel
-          }}↵ apply
-        </div>
-        <div v-if="errorText" class="dev-error">{{ errorText }}</div>
-
-        <div class="dev-metrics">
-          <div>
-            <span>Workflows</span>
-            <strong>{{ inspectResult?.workflows.length ?? 0 }}</strong>
-          </div>
-          <div>
-            <span>Triggers</span>
-            <strong>{{ inspectResult?.triggers.length ?? 0 }}</strong>
-          </div>
-          <div>
-            <span>Settings</span>
-            <strong>{{ inspectResult?.settings_count ?? 0 }}</strong>
-          </div>
-          <div>
-            <span>Files</span>
-            <strong>{{ watchedFiles.length }}</strong>
-          </div>
-        </div>
-
-        <div class="dev-section-header">
-          <h3>Pending Changes</h3>
-          <span>vs current server state</span>
-        </div>
-        <PackDiff
-          class="dev-pack-diff"
-          :pack="inspectResult"
-          :existing-workflows="workflows.workflows"
-          :existing-settings="secrets.secrets"
-        />
-
-        <div class="dev-section-header">
-          <h3>Watched Files</h3>
-          <span>{{ lastInspectText }}</span>
-        </div>
-        <div class="dev-file-list">
-          <LoadingPanel
-            v-if="inspecting && !watchedFiles.length"
-            compact
-            message="Inspecting pack…"
-          />
-          <button
-            v-for="file in watchedFiles"
-            :key="file.path"
-            :class="{ selected: selectedFilePath === file.path }"
-            @click="selectFile(file.path)"
-          >
-            <span class="dev-file-kind">{{ file.kind }}</span>
-            <span class="dev-file-path">{{ relativePath(file.path) }}</span>
-            <span class="dev-file-meta">{{ fileMeta(file) }}</span>
-          </button>
-        </div>
-      </section>
-
-      <section class="panel dev-editor-panel">
-        <div class="panel-toolbar">
-          <div class="dev-toolbar-copy">
-            <h2>{{ selectedFilePath ? relativePath(selectedFilePath) : "Source" }}</h2>
-            <p>
-              {{
-                selectedFilePath
-                  ? "Live source editing for the selected pack file."
-                  : "Select a watched file to inspect its source."
-              }}
-            </p>
-          </div>
-          <div class="actions">
-            <button class="btn" :disabled="!canSaveSource || saving" @click="saveSelectedSource">
-              <LoadingSpinner v-if="saving || writingFile" size="sm" label="Saving file" />
-              <Icon v-else name="save" />
-              <span>{{ saving || writingFile ? "Saving…" : "Save" }}</span>
-            </button>
-            <button class="btn" :disabled="!selectedFilePath || busy" @click="reloadSelectedSource">
-              <LoadingSpinner v-if="readingFile" size="sm" label="Reloading file" />
-              <Icon v-else name="refresh" />
-              <span>{{ readingFile ? "Reloading…" : "Reload" }}</span>
-            </button>
-          </div>
-        </div>
-
-        <WdlEditor
-          v-if="selectedIsWdl"
-          v-model="sourceText"
-          class="dev-wdl-editor"
-          title="WDL"
-          :providers="providers.providers"
-          :settings="secrets.secrets"
-          :source-path="selectedFilePath"
-        />
-        <JsonEditor
-          v-else-if="selectedIsJson"
-          v-model="sourceText"
-          class="dev-json-editor"
-          title="JSON"
-        />
-        <textarea
-          v-else
-          v-model="sourceText"
-          class="dev-plain-source"
-          spellcheck="false"
-          :readonly="!selectedFilePath"
-        ></textarea>
-      </section>
-
-      <section class="panel dev-run-panel">
-        <div class="panel-toolbar">
-          <div class="dev-toolbar-copy">
-            <h2>Latest Run</h2>
-            <p>
-              {{
-                latestRunId
-                  ? "Track the active or most recent run created from this panel."
-                  : "Run a selected workflow and inspect its latest execution here."
-              }}
-            </p>
-          </div>
-          <div class="actions">
-            <button
-              class="btn btn-primary"
-              :disabled="!canRun"
-              :title="`Run (${modKeyLabel}↵)`"
-              @click="runSelectedWorkflow"
-            >
-              <LoadingSpinner v-if="startingRun" size="sm" label="Starting run" />
-              <Icon v-else name="play" />
-              <span>{{ startingRun ? "Starting…" : latestRunId ? "Re-run" : "Run" }}</span>
-            </button>
-            <button
-              v-if="runInFlight"
-              class="btn btn-danger"
-              title="Cancel this run"
-              :disabled="cancelingRun"
-              @click="cancelRun"
-            >
-              <LoadingSpinner v-if="cancelingRun" size="sm" label="Canceling run" />
-              <Icon v-else name="stop" />
-              <span>{{ cancelingRun ? "Canceling…" : "Cancel" }}</span>
-            </button>
-            <button class="btn" :disabled="!latestRunId || busy" @click="refreshLatestRun">
-              <LoadingSpinner v-if="loadingRun" size="sm" label="Refreshing run" />
-              <Icon v-else name="refresh" />
-              <span>{{ loadingRun ? "Refreshing…" : "Refresh" }}</span>
-            </button>
-          </div>
-        </div>
-        <div v-if="recentRunIds.length > 1" class="dev-recent-runs">
-          <span class="dev-recent-label">Recent:</span>
-          <button
-            v-for="id in recentRunIds"
-            :key="id"
-            class="dev-run-pill"
-            :class="{ active: id === latestRunId }"
-            @click="viewRun(id)"
-          >
-            #{{ id }}
-          </button>
-        </div>
-        <template v-if="latestRunDetail">
-          <div class="dev-run-summary">
-            <div>
-              <span>Run</span>
-              <strong>#{{ latestRunDetail.run.id }}</strong>
-            </div>
-            <div>
-              <span>Status</span>
-              <StatusBadge :status="latestRunDetail.run.status" />
-            </div>
-            <div>
-              <span>Active</span>
-              <strong>{{ latestRunDetail.run.active_node_id ?? "-" }}</strong>
-            </div>
-            <div>
-              <span>Steps</span>
-              <strong class="dev-run-counts">
-                <span class="ok">{{ runNodeCounts.ok }}✓</span>
-                <span v-if="runNodeCounts.failed" class="failed">{{ runNodeCounts.failed }}✕</span>
-                <span v-if="runNodeCounts.running" class="running"
-                  >{{ runNodeCounts.running }}⟳</span
-                >
-              </strong>
-            </div>
-          </div>
-          <RunTimeline
-            class="dev-run-timeline"
-            :detail="latestRunDetail"
-            :selected-node-id="selectedRunNodeId"
-            auto-expand-failed
-            filterable
-            @select="selectRunNode"
-          >
-            <template #node-actions="{ node }">
-              <RunNodeActions
-                :node="node"
-                :run="latestRunDetail.run"
-                :busy="busy || replayingRun"
-                @action="onRunNodeAction"
-              />
-            </template>
-          </RunTimeline>
-        </template>
-        <LoadingPanel
-          v-if="loadingRun && !latestRunDetail"
-          compact
-          message="Loading workflow run…"
-        />
-        <div v-else-if="!latestRunDetail" class="empty-state">No run started from this panel.</div>
-      </section>
-    </div>
-  </section>
-</template>
+<template src="./dev-view.template.html"></template>
 
 <script setup lang="ts">
+/* eslint-disable @typescript-eslint/no-unused-vars -- external Vue templates are not visible to ESLint. */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { devPackService } from "../../core/services";
 import Icon from "../components/shared/Icon.vue";
@@ -330,14 +19,16 @@ import { useSecretsStore } from "../../ui/adapters/pinia/secrets";
 import { useWorkflowsStore } from "../../ui/adapters/pinia/workflows";
 import { useOperationLoading } from "../composables/useOperationLoading";
 import { displayValue } from "../../core/utils/values";
-import type {
-  DevPackFile,
-  DevPackInspectResult,
-  RuninatorType,
-  WorkflowNodeRun,
-  WorkflowRunDetail,
-} from "../../core/domain/models";
+import type { DevPackInspectResult, RuninatorType, WorkflowNodeRun, WorkflowRunDetail } from "../../core/domain/models";
 import { workflowInputType } from "../../core/domain/models";
+import {
+  DEV_OPTIONS_STORAGE_KEY,
+  fileMeta,
+  fingerprint,
+  loadDevOptions,
+  loadRecentPacks,
+  relativePackPath,
+} from "./dev-view-files";
 
 const DEFAULT_PACK_PATH = "packs/sdlc/sdlc.wdlm";
 const TERMINAL_STATUSES = new Set(["succeeded", "failed", "canceled", "timed_out"]);
@@ -354,7 +45,6 @@ const { isLoading: loadingRun } = useOperationLoading("Loading workflow run");
 const { isLoading: cancelingRun } = useOperationLoading("Canceling workflow run");
 const { isLoading: replayingRun } = useOperationLoading("Replaying workflow run");
 
-const OPTIONS_STORAGE_KEY = "runinator.devPack.options";
 const savedOptions = loadDevOptions();
 const modKeyLabel = /mac/i.test(navigator.userAgent) ? "⌘" : "Ctrl+";
 
@@ -463,7 +153,7 @@ watch(packPath, (value) => {
 // remember the run loop's toggles and target across reloads.
 watch([skipSettings, autoInspect, autoApply, autoSave, debugRun, runWorkflowRef], () => {
   window.localStorage.setItem(
-    OPTIONS_STORAGE_KEY,
+    DEV_OPTIONS_STORAGE_KEY,
     JSON.stringify({
       skipSettings: skipSettings.value,
       autoInspect: autoInspect.value,
@@ -493,17 +183,6 @@ watch(sourceText, () => {
     }
   }, 800);
 });
-
-function loadDevOptions(): Record<string, unknown> {
-  try {
-    return JSON.parse(window.localStorage.getItem(OPTIONS_STORAGE_KEY) ?? "{}") as Record<
-      string,
-      unknown
-    >;
-  } catch {
-    return {};
-  }
-}
 
 // edit-loop keyboard shortcuts: save, inspect, run, and apply.
 function onKeydown(event: KeyboardEvent) {
@@ -566,16 +245,6 @@ async function cancelRun() {
     await refreshLatestRun();
   } catch (err) {
     errorText.value = String(err);
-  }
-}
-
-function loadRecentPacks(): string[] {
-  try {
-    return JSON.parse(
-      window.localStorage.getItem("runinator.devPack.recentPaths") ?? "[]",
-    ) as string[];
-  } catch {
-    return [];
   }
 }
 
@@ -824,21 +493,7 @@ async function saveSelectedSource() {
   }
 }
 
-function fingerprint(files: DevPackFile[]) {
-  return files
-    .map((file) => `${file.path}:${file.modified_at ?? ""}:${String(file.size_bytes ?? "")}`)
-    .join("|");
-}
-
 function relativePath(path: string) {
-  const root = packPath.value.replace(/\/[^/]*$/, "");
-  return path.startsWith(root) ? path.slice(root.length + 1) || path : path;
-}
-
-function fileMeta(file: DevPackFile) {
-  const size = file.size_bytes == null ? "-" : `${String(file.size_bytes)}b`;
-  const time = file.modified_at ? new Date(file.modified_at).toLocaleTimeString() : "-";
-  return `${size} · ${time}`;
+  return relativePackPath(path, packPath.value);
 }
 </script>
-

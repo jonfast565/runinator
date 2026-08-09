@@ -233,6 +233,7 @@ pub const CREDENTIAL_QUERY: &[ParamDoc] = &[
     },
 ];
 
+#[allow(clippy::too_many_arguments)] // call sites are static endpoint declarations with named positions.
 pub const fn endpoint(
     method: &'static str,
     path: &'static str,

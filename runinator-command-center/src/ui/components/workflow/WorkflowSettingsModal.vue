@@ -256,9 +256,7 @@ const catalogMetadata = useCatalogMetadataStore();
 const ownerOrgId = ref<string>(workflows.workflowDraft.org_id ?? "");
 const ownerSaving = ref(false);
 
-const triggerKindMeta = computed(() =>
-  workflows.triggerDraft.kind ? catalogMetadata.triggerKind(workflows.triggerDraft.kind) : null,
-);
+const triggerKindMeta = computed(() => catalogMetadata.triggerKind(workflows.triggerDraft.kind));
 
 // local mutable config record kept in sync with the trigger json for field-by-field editing.
 const configDraft = ref<Record<string, unknown>>({});

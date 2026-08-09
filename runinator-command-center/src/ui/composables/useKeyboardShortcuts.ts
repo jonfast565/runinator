@@ -53,7 +53,7 @@ export function useKeyboardShortcuts() {
         const current = markers.findIndex((marker) => marker.selected);
         const step = event.key === "]" ? 1 : -1;
         const next = (current + step + markers.length) % markers.length;
-        const target = markers[next];
+        const target = markers.at(next);
 
         if (target) {
           workflows.selectCursor(target.id);

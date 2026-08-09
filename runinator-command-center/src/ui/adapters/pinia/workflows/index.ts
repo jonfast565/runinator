@@ -1,41 +1,14 @@
 import { defineStore } from "pinia";
-import { computed, reactive, watch, ref } from "vue";
-import type {
-  Connection,
-  Edge,
-  EdgeChange,
-  EdgeMouseEvent,
-  EdgeUpdateEvent,
-  Node,
-  NodeChange,
-  NodeDragEvent,
-  NodeMouseEvent,
-} from "@vue-flow/core";
-import type {
-  ControlFrame,
-  DebugFrame,
-  GateRecord,
-  JsonRecord,
-  ProviderMetadata,
-  RunSummary,
-  RuninatorType,
-  WorkflowDefinition,
-  WorkflowNodeRun,
-  WorkflowValidationIssue,
-} from "../../../../core/domain/models";
-
-import { workflowInputType } from "../../../../core/domain/models";
-
-import { formatMaybeDate } from "../../../../core/workflow/editor-defaults";
-import { workflowRunSearchText, optionIdForSourceHandle } from "../../../../core/workflow/index";
-
+import { reactive, watch } from "vue";
+import type { ProviderMetadata } from "../../../../core/domain/models";
 import { catalogMetadataService, workflowServices } from "../../../../core/services";
-import { traversedEdgeKeys, workflowNodeKindsList } from "../../../../core/workflow";
 import { useAppStore } from "../app";
 import { useProvidersStore } from "../providers";
-import { buildGraphEdges, buildGraphNodes } from "../../vue-flow/builder";
-import { isCompletedNodeStatus } from "../../../../core/utils/status";
 import { mirrorServiceState } from "../sync";
+import { createWorkflowActions } from "./actions";
+import { createWorkflowGraphHandlers } from "./graph-events";
+import { createWorkflowSelectors } from "./selectors";
+import { createWorkflowStateBindings } from "./state-bindings";
 
 export {
   buildInputSkeleton,
@@ -50,74 +23,24 @@ function providerCatalog(): ProviderMetadata[] {
 }
 
 export const useWorkflowsStore = defineStore("workflows", () => {
-  const svc = workflowServices;
-  const state = mirrorServiceState(svc);
+  const services = workflowServices;
+  const state = mirrorServiceState(services);
   const catalogState = mirrorServiceState(catalogMetadataService);
   const app = useAppStore();
+  const workflowDraft = reactive(services.getState().workflowDraft);
+  const triggerDraft = reactive(services.getState().triggerDraft);
+  const triggerJson = reactive(services.getState().triggerJson);
+  const stepEditor = reactive(services.getState().stepEditor);
 
-  function mirroredComputed<T>(selector: () => T) {
-    return computed(() => {
-      void state.value;
-      // graph builders derive node summaries/semantic handles from the catalog registry, which is
-      // populated asynchronously; track it so they refresh once metadata arrives after mount.
-      void catalogState.value.nodeKinds;
-      return selector();
-    });
-  }
-
-  const workflowDraft = reactive(svc.getState().workflowDraft);
-  const triggerDraft = reactive(svc.getState().triggerDraft);
-  const triggerJson = reactive(svc.getState().triggerJson);
-  const stepEditor = reactive(svc.getState().stepEditor);
-
-  svc.subscribe(() => {
-    const next = svc.getState();
+  services.subscribe(() => {
+    const next = services.getState();
     Object.assign(workflowDraft, next.workflowDraft);
     Object.assign(triggerDraft, next.triggerDraft);
     Object.assign(triggerJson, next.triggerJson);
     Object.assign(stepEditor, next.stepEditor);
   });
 
-  watch(
-    () => state.value.workflowJson,
-    () => {
-      if (svc.internal.workflowJsonWriteGuard || state.value.workflowEditorMode !== "json") {
-        return;
-      }
-
-      scheduleWorkflowJsonSync();
-    },
-  );
-
-  watch(
-    () => state.value.workflowWdl,
-    () => {
-      if (svc.internal.workflowWdlWriteGuard || state.value.workflowWdlError) {
-        return;
-      }
-
-      svc.setState((current) => ({ ...current, workflowEditorMode: "wdl" }));
-      scheduleWorkflowWdlSync();
-    },
-  );
-
-  watch(
-    stepEditor,
-    () => {
-      if (!state.value.stepEditorOpen) {
-        return;
-      }
-
-      svc.editor.scheduleStepEditorApply();
-    },
-    { deep: true },
-  );
-
   let workflowWdlSyncTimer: ReturnType<typeof setTimeout> | null = null;
-
-  function scheduleWorkflowJsonSync() {
-    void svc.editor.syncWorkflowJson();
-  }
 
   function scheduleWorkflowWdlSync() {
     if (workflowWdlSyncTimer) {
@@ -126,645 +49,60 @@ export const useWorkflowsStore = defineStore("workflows", () => {
 
     workflowWdlSyncTimer = setTimeout(() => {
       workflowWdlSyncTimer = null;
-      void svc.editor.syncWorkflowWdl();
+      void services.editor.syncWorkflowWdl();
     }, WORKFLOW_WDL_SYNC_DELAY_MS);
   }
 
-  const selectedWorkflow = mirroredComputed((): WorkflowDefinition | null =>
-    svc.getSelectedWorkflow(),
-  );
-  const canRunWorkflow = mirroredComputed(() =>
-    Boolean(selectedWorkflow.value?.enabled && selectedWorkflow.value.id),
-  );
-  const selectedWorkflowInputType = mirroredComputed((): RuninatorType | null =>
-    selectedWorkflow.value ? workflowInputType(selectedWorkflow.value) : null,
-  );
-  const selectedWorkflowHasInputs = mirroredComputed(() => svc.selectedWorkflowHasInputs());
-  const canManageWorkflowTriggers = mirroredComputed(() => Boolean(workflowDraft.id));
-  const canStepWorkflowRun = mirroredComputed(() => svc.canStepWorkflowRun());
-  const debugState = mirroredComputed<DebugFrame | null>(() => svc.getDebugState());
-  const isDebugRun = mirroredComputed(() => svc.isDebugRun());
-  const cursorMarkers = mirroredComputed(() => svc.getCursorMarkers());
-  const cursors = mirroredComputed(() => svc.getCursors());
-  const selectedCursorId = mirroredComputed(() => svc.getSelectedCursorId());
-  // camera-follow is a view preference, not run state, so it lives here rather than in core.
-  const followCursor = ref(true);
-
-  function setFollowCursor(value: boolean) {
-    followCursor.value = value;
-  }
-
-  const canContinueWorkflowRun = mirroredComputed(() => svc.canContinueWorkflowRun());
-  const controlState = mirroredComputed<ControlFrame | null>(() => svc.getControlState());
-  const canPauseWorkflowRun = mirroredComputed(() => svc.canPauseWorkflowRun());
-  const canResumeWorkflowRun = mirroredComputed(() => svc.canResumeWorkflowRun());
-  const canCancelWorkflowRun = mirroredComputed(() => svc.canCancelWorkflowRun());
-  const currentBreakpoints = mirroredComputed<string[]>(() => svc.getCurrentBreakpoints());
-  const isBreakpointed = (nodeId: string) => svc.runs.isBreakpointed(nodeId);
-  const selectedStepKindLocked = mirroredComputed(() => {
-    const node = svc.getSelectedNode();
-    return node ? !svc.canRemoveSelectedStep() && Boolean(node) : false;
-  });
-  const canRemoveSelectedStep = mirroredComputed(() => svc.canRemoveSelectedStep());
-  const filteredWorkflows = mirroredComputed((): WorkflowDefinition[] =>
-    svc.getFilteredWorkflows(),
-  );
-  const recentWorkflowRuns = computed((): RunSummary[] => {
-    const query = app.normalizedSearch;
-    const runs = state.value.workflowRuns;
-
-    if (!query) {
-      return runs.slice(0, 50);
-    }
-
-    const matches: RunSummary[] = [];
-
-    for (const run of runs) {
-      const workflowName = svc.catalog.workflowNameForRun(run);
-
-      if (workflowRunSearchText(run, workflowName).includes(query)) {
-        matches.push(run);
-      }
-    }
-
-    return matches.slice(0, 50);
-  });
-  const workflowRunDetailText = computed(() => {
-    const detail = state.value.workflowRunDetail;
-
-    if (!detail) {
-      return "";
-    }
-
-    const lines = [
-      `Run ${detail.run.id}: ${detail.run.status}`,
-      `Started: ${formatMaybeDate(detail.run.started_at)}`,
-      `Finished: ${formatMaybeDate(detail.run.finished_at)}`,
-    ];
-
-    if (detail.run.message) {
-      lines.push(`Message: ${detail.run.message}`);
-    }
-
-    for (const step of detail.nodes) {
-      lines.push(
-        `${step.node_id}: ${step.status}, attempt ${String(step.attempt)}, node run ${step.id}${step.message ? `, ${step.message}` : ""}`,
-      );
-    }
-
-    return `${lines.join("\n")}${state.value.workflowNodeDetailExtra}`;
-  });
-  const stepNeeds = computed(() => {
-    const nodeDraft = state.value.stepEditor.nodeDraft;
-    const transitions =
-      nodeDraft && typeof nodeDraft === "object" && !Array.isArray(nodeDraft)
-        ? ((nodeDraft.transitions as JsonRecord | undefined) ?? {})
-        : {};
-    return ["next", "on_success", "on_failure", "on_timeout", "on_reject"]
-      .filter((key) => transitions[key])
-      .map((key) => `${key}:${String(transitions[key])}`)
-      .join(",");
-  });
-  const subflowNames = mirroredComputed(() => svc.getSubflowNames());
-  // workflowDraft is a persistent object mutated in place (Object.assign) rather than replaced,
-  // so plain computed()s over it don't reliably track changes to its nested definition/nodes;
-  // mirroredComputed's state.value read forces recomputation on every workflow-store notify().
-  const graphNodes = mirroredComputed((): Node[] =>
-    buildGraphNodes(workflowDraft, null, subflowNames.value, providerCatalog()),
-  );
-  const graphEdges = mirroredComputed((): Edge[] => buildGraphEdges(workflowDraft));
-  const graphValidationIssues = mirroredComputed((): WorkflowValidationIssue[] =>
-    svc.getGraphValidationIssues(),
-  );
-  const workflowRunWorkflow = mirroredComputed((): WorkflowDefinition | null =>
-    svc.getWorkflowRunWorkflow(),
-  );
-  const workflowRunGatesByNodeId = computed((): Map<string, GateRecord> => {
-    const gates = new Map<string, GateRecord>();
-
-    for (const gate of state.value.workflowRunGates) {
-      if (typeof gate.node_id === "string" && gate.node_id.length > 0) {
-        gates.set(gate.node_id, gate);
-      }
-    }
-
-    return gates;
-  });
-  const runGraphNodes = computed((): Node[] => {
-    if (!workflowRunWorkflow.value) {
-      return [];
-    }
-
-    return buildGraphNodes(
-      workflowRunWorkflow.value,
-      state.value.workflowRunDetail,
-      subflowNames.value,
-      providerCatalog(),
-      svc.getSelectedCursorId(),
-    ).map((node) => ({
-      ...node,
-      data: {
-        ...(node.data as JsonRecord),
-        readOnly: true,
-        allowGateResolution: true,
-        gate: workflowRunGatesByNodeId.value.get(node.id) ?? null,
-      },
-    }));
-  });
-  const runGraphEdges = computed((): Edge[] => {
-    if (!workflowRunWorkflow.value) {
-      return [];
-    }
-
-    // derive completed nodes from the same status the node cards render, so an
-    // edge freezes exactly when its target card stops looking active. a node
-    // revisited in a cycle flips back to running and re-animates on the next tick.
-    const completed = new Set<string>();
-    // nodes actively in play (running/queued) get the emphasized in-play edge feeding them.
-    const active = new Set<string>();
-
-    for (const node of runGraphNodes.value) {
-      const data = node.data as JsonRecord | undefined;
-
-      if (isCompletedNodeStatus(data?.status) || data?.skipped === true) {
-        completed.add(node.id);
-      } else if (data?.running === true) {
-        active.add(node.id);
-      }
-    }
-
-    // drive the animation from the actual trail walked (via each node run's
-    // prev_node_run_id) so untaken branches stay static.
-    const walked = traversedEdgeKeys(state.value.workflowRunDetail?.nodes ?? []);
-
-    return buildGraphEdges(workflowRunWorkflow.value, completed, walked, active);
-  });
-  const selectedNode = mirroredComputed((): JsonRecord | null => svc.getSelectedNode());
-  const selectedGraphEdge = computed(
-    () =>
-      graphEdges.value.find((edge: Edge) => edge.id === state.value.selectedGraphEdgeId) ?? null,
-  );
-  const selectedNodeIssues = computed<WorkflowValidationIssue[]>(() =>
-    graphValidationIssues.value.filter((issue) => issue.nodeId === state.value.selectedStepId),
-  );
-  const selectedEdgeIssues = computed<WorkflowValidationIssue[]>(() => {
-    const edge = selectedGraphEdge.value;
-
-    if (!edge) {
-      return [];
-    }
-
-    const data = edge.data as {
-      transitionKey?: string;
-      branchIndex?: number;
-      parameterKey?: string;
-      parameterIndex?: number;
-    };
-    const semanticKey =
-      data?.transitionKey ??
-      (typeof data?.branchIndex === "number"
-        ? `branches.${String(data.branchIndex)}`
-        : `${data?.parameterKey ?? ""}${data?.parameterIndex ?? ""}`);
-    return graphValidationIssues.value.filter(
-      (issue) => issue.edgeKey === `${edge.source}:${semanticKey}`,
-    );
-  });
-  const selectedNodePendingApproval = computed((): WorkflowNodeRun | null => {
-    const detail = state.value.workflowRunDetail;
-
-    if (!detail || !state.value.selectedStepId) {
-      return null;
-    }
-
-    return (
-      detail.nodes
-        .filter(
-          (node) =>
-            node.node_id === state.value.selectedStepId &&
-            ["waiting", "approval_required", "pending"].includes(node.status),
-        )
-        .at(-1) ?? null
-    );
-  });
-  const watchExpressionsForActiveWorkflow = computed<string[]>(() => {
-    const workflowId = workflowRunWorkflow.value?.id;
-
-    if (!workflowId) {
-      return [];
-    }
-
-    return state.value.watchExpressionsByWorkflowId[workflowId] ?? [];
-  });
-
-  function onGraphNodeClick(event: NodeMouseEvent) {
-    const nodeId = event.node.id;
-
-    if (nodeId) {
-      svc.editor.dismissStepEditorForCanvasEdit();
-      svc.setState((current) => ({
-        ...current,
-        selectedGraphEdgeId: "",
-        inlineEditNodeId: "",
-      }));
-      svc.editor.populateStepEditor(nodeId);
-    }
-  }
-
-  function onGraphNodeDoubleClick(event: NodeMouseEvent) {
-    const nodeId = event.node.id;
-
-    if (!nodeId) {
-      return;
-    }
-
-    svc.setState((current) => ({ ...current, selectedGraphEdgeId: "" }));
-    svc.editor.populateStepEditor(nodeId);
-    svc.setState((current) => ({ ...current, inlineEditNodeId: nodeId }));
-  }
-
-  function onGraphNodeDragStop(event: NodeDragEvent) {
-    const node = event.node;
-
-    if (!node.id) {
-      return;
-    }
-
-    svc.editor.dismissStepEditorForCanvasEdit();
-    svc.editor.setGraphNodePosition(node.id, node.position);
-    svc.editor.syncWorkflowDraftToJson();
-  }
-
-  function onGraphNodesChange(changes: NodeChange[]) {
-    let changed = false;
-
-    for (const change of changes) {
-      if (change.type !== "position" || !change.id || change.dragging) {
-        continue;
+  watch(
+    () => state.value.workflowJson,
+    () => {
+      if (services.internal.workflowJsonWriteGuard || state.value.workflowEditorMode !== "json") {
+        return;
       }
 
-      svc.editor.setGraphNodePosition(change.id, change.position);
-      changed = true;
-    }
+      void services.editor.syncWorkflowJson();
+    },
+  );
 
-    if (changed) {
-      svc.editor.syncWorkflowDraftToJson();
-    }
-  }
-
-  function onGraphConnect(connection: Connection) {
-    const source = connection.source;
-    const handleOptionId = optionIdForSourceHandle(connection.sourceHandle) ?? undefined;
-    const options = svc.editor.workflowEdgeOptions(source);
-
-    if (!source || options.length === 0) {
-      return;
-    }
-
-    const optionId =
-      handleOptionId && options.some((option) => option.id === handleOptionId)
-        ? handleOptionId
-        : options.length === 1
-          ? options[0].id
-          : "";
-
-    if (optionId) {
-      svc.editor.applyGraphEdgeSemantic(connection, optionId);
-    }
-  }
-
-  function onGraphEdgeClick(event: EdgeMouseEvent) {
-    const edgeId = event.edge.id;
-
-    if (edgeId) {
-      svc.editor.selectGraphEdge(edgeId);
-    }
-  }
-
-  function onGraphEdgeUpdate(event: EdgeUpdateEvent) {
-    const edge = event.edge;
-    const connection = event.connection;
-
-    if (!connection.source || !connection.target) {
-      return;
-    }
-
-    if (svc.editor.applyGraphEdgeSemantic(connection, edge.id, edge.id)) {
-      if (state.value.selectedStepId === edge.source) {
-        svc.editor.populateStepEditor(edge.source);
+  watch(
+    () => state.value.workflowWdl,
+    () => {
+      if (services.internal.workflowWdlWriteGuard || state.value.workflowWdlError) {
+        return;
       }
-    }
 
-    svc.setState((current) => ({ ...current, selectedGraphEdgeId: "" }));
-  }
+      services.setState((current) => ({ ...current, workflowEditorMode: "wdl" }));
+      scheduleWorkflowWdlSync();
+    },
+  );
 
-  function onGraphEdgesChange(changes: EdgeChange[]) {
-    for (const change of changes) {
-      if (change.type === "remove") {
-        svc.editor.removeWorkflowEdgeById(change.id);
+  watch(
+    stepEditor,
+    () => {
+      if (state.value.stepEditorOpen) {
+        services.editor.scheduleStepEditorApply();
       }
-    }
-  }
+    },
+    { deep: true },
+  );
 
-  const runDetailById = computed(() => svc.internal.runDetailById);
+  const selectors = createWorkflowSelectors({
+    services,
+    state,
+    catalogState,
+    workflowDraft,
+    searchQuery: () => app.normalizedSearch,
+    providerCatalog,
+  });
 
   return {
-    recentWorkflowRuns,
-    getTransition: svc.runs.getTransition,
-    setTransition: svc.runs.setTransition,
-    workflows: computed({
-      get: () => state.value.workflows,
-      set: (workflows) => {
-        svc.setState((current) => ({ ...current, workflows }));
-      },
-    }),
-    selectedWorkflowId: computed({
-      get: () => state.value.selectedWorkflowId,
-      set: (selectedWorkflowId) => {
-        svc.setState((current) => ({ ...current, selectedWorkflowId }));
-      },
-    }),
     workflowDraft,
-    workflowJson: computed({
-      get: () => state.value.workflowJson,
-      set: (workflowJson) => {
-        svc.setState((current) => ({ ...current, workflowJson }));
-      },
-    }),
-    workflowWdl: computed({
-      get: () => state.value.workflowWdl,
-      set: (workflowWdl) => {
-        svc.setState((current) => ({ ...current, workflowWdl }));
-      },
-    }),
-    workflowWdlError: computed(() => state.value.workflowWdlError),
-    headerDraft: computed(() => state.value.headerDraft),
-    workflowSettingsOpen: computed({
-      get: () => state.value.workflowSettingsOpen,
-      set: (workflowSettingsOpen) => {
-        svc.setState((current) => ({ ...current, workflowSettingsOpen }));
-      },
-    }),
-    workflowTriggers: computed({
-      get: () => state.value.workflowTriggers,
-      set: (workflowTriggers) => {
-        svc.setState((current) => ({ ...current, workflowTriggers }));
-      },
-    }),
-    triggerEditorOpen: computed(() => state.value.triggerEditorOpen),
-    triggerEditorCreating: computed(() => state.value.triggerEditorCreating),
-    triggerEditorError: computed(() => state.value.triggerEditorError),
     triggerDraft,
     triggerJson,
-    workflowEditorMode: computed({
-      get: () => state.value.workflowEditorMode,
-      set: (workflowEditorMode) => {
-        svc.setState((current) => ({ ...current, workflowEditorMode }));
-      },
-    }),
-    workflowLayoutDirection: computed({
-      get: () => state.value.workflowLayoutDirection,
-      set: (workflowLayoutDirection) => {
-        svc.setState((current) => ({ ...current, workflowLayoutDirection }));
-      },
-    }),
-    workflowInspectorMode: computed(() => state.value.workflowInspectorMode),
-    stepEditorOpen: computed(() => state.value.stepEditorOpen),
-    stepEditorCreating: computed(() => state.value.stepEditorCreating),
-    stepEditorError: computed(() => state.value.stepEditorError),
-    workflowRuns: computed({
-      get: () => state.value.workflowRuns,
-      set: (workflowRuns) => {
-        svc.setState((current) => ({ ...current, workflowRuns }));
-      },
-    }),
-    workflowLayoutVersion: computed(() => state.value.workflowLayoutVersion),
-    selectedWorkflowRunId: computed({
-      get: () => state.value.selectedWorkflowRunId,
-      set: (selectedWorkflowRunId) => {
-        svc.setState((current) => ({ ...current, selectedWorkflowRunId }));
-      },
-    }),
-    workflowRunDetail: computed(() => state.value.workflowRunDetail),
-    workflowRunGates: computed(() => state.value.workflowRunGates),
-    workflowNodeDetailExtra: computed(() => state.value.workflowNodeDetailExtra),
-    selectedStepId: computed({
-      get: () => state.value.selectedStepId,
-      set: (selectedStepId) => {
-        svc.setState((current) => ({ ...current, selectedStepId }));
-      },
-    }),
-    inlineEditNodeId: computed({
-      get: () => state.value.inlineEditNodeId,
-      set: (inlineEditNodeId) => {
-        svc.setState((current) => ({ ...current, inlineEditNodeId }));
-      },
-    }),
-    selectedWorkflowRunNodeId: computed({
-      get: () => state.value.selectedWorkflowRunNodeId,
-      set: (selectedWorkflowRunNodeId) => {
-        svc.setState((current) => ({ ...current, selectedWorkflowRunNodeId }));
-      },
-    }),
-    selectedWorkflowNodeRunId: computed({
-      get: () => state.value.selectedWorkflowNodeRunId,
-      set: (selectedWorkflowNodeRunId) => {
-        svc.setState((current) => ({ ...current, selectedWorkflowNodeRunId }));
-      },
-    }),
     stepEditor,
-    selectedWorkflow,
-    canRunWorkflow,
-    selectedWorkflowInputType,
-    selectedWorkflowHasInputs,
-    runInputOpen: computed(() => state.value.runInputOpen),
-    runInputDraft: computed({
-      get: () => state.value.runInputDraft,
-      set: (runInputDraft) => {
-        svc.setState((current) => ({ ...current, runInputDraft }));
-      },
-    }),
-    runInputDebug: computed(() => state.value.runInputDebug),
-    closeRunInput: svc.runs.closeRunInput,
-    confirmRunInput: svc.runs.confirmRunInput,
-    canManageWorkflowTriggers,
-    canRemoveSelectedStep,
-    filteredWorkflows,
-    workflowRunDetailText,
-    stepNeeds,
-    graphNodes,
-    graphEdges,
-    graphValidationIssues,
-    workflowRunWorkflow,
-    runGraphNodes,
-    runGraphEdges,
-    selectedNode,
-    selectedStepKindLocked,
-    selectedGraphEdgeId: computed({
-      get: () => state.value.selectedGraphEdgeId,
-      set: (selectedGraphEdgeId) => {
-        svc.setState((current) => ({ ...current, selectedGraphEdgeId }));
-      },
-    }),
-    selectedGraphEdge,
-    selectedNodeIssues,
-    selectedEdgeIssues,
-    selectedNodePendingApproval,
-    canStepWorkflowRun,
-    canContinueWorkflowRun,
-    canPauseWorkflowRun,
-    canResumeWorkflowRun,
-    canCancelWorkflowRun,
-    debugState,
-    cursorMarkers,
-    cursors,
-    selectedCursorId,
-    followCursor,
-    setFollowCursor,
-    controlState,
-    isDebugRun,
-    currentBreakpoints,
-    isBreakpointed,
-    workflowNodeKinds: computed(() => {
-      void catalogState.value.nodeKinds;
-      return workflowNodeKindsList();
-    }),
-    directTransitionKeys: svc.directTransitionKeys,
-    refreshWorkflows: svc.catalog.refreshWorkflows,
-    clearServiceState: svc.catalog.clearServiceState,
-    selectWorkflow: svc.catalog.selectWorkflow,
-    addWorkflow: svc.catalog.addWorkflow,
-    saveSelectedWorkflow: svc.catalog.saveSelectedWorkflowBundle,
-    deleteSelectedWorkflow: svc.catalog.deleteSelectedWorkflow,
-    duplicateSelectedWorkflow: svc.catalog.duplicateSelectedWorkflow,
-    setWorkflowsEnabled: svc.catalog.setWorkflowsEnabled,
-    deleteWorkflows: svc.catalog.deleteWorkflows,
-    runSelectedWorkflow: svc.runs.runSelectedWorkflow,
-    runSelectedWorkflowDebug: svc.runs.runSelectedWorkflowDebug,
-    stepSelectedWorkflowRun: svc.runs.stepSelectedWorkflowRun,
-    selectCursor: svc.runs.selectCursor,
-    forkCursor: svc.runs.forkCursor,
-    retireCursor: svc.runs.retireCursor,
-    armNodeForReal: svc.runs.armNodeForReal,
-    continueSelectedWorkflowRun: svc.runs.continueSelectedWorkflowRun,
-    pauseSelectedWorkflowRun: svc.runs.pauseSelectedWorkflowRun,
-    resumeSelectedWorkflowRun: svc.runs.resumeSelectedWorkflowRun,
-    cancelSelectedWorkflowRun: svc.runs.cancelSelectedWorkflowRun,
-    patchSelectedWorkflowRunDebug: svc.runs.patchSelectedWorkflowRunDebug,
-    toggleBreakpoint: svc.runs.toggleBreakpoint,
-    runToCursor: svc.runs.runToCursor,
-    skipCurrentNode: svc.runs.skipCurrentNode,
-    rerunCurrentNode: svc.runs.rerunCurrentNode,
-    replaySelectedWorkflowRun: svc.runs.replaySelectedWorkflowRun,
-    cancelWorkflowRuns: svc.runs.cancelWorkflowRuns,
-    replayWorkflowRuns: svc.runs.replayWorkflowRuns,
-    renameSelectedWorkflowRun: svc.runs.renameSelectedWorkflowRun,
-    openRunIds: computed(() => state.value.openRunIds),
-    openRunInTab: svc.runs.openRunInTab,
-    closeRunTab: svc.runs.closeRunTab,
-    activateRunTab: svc.runs.activateRunTab,
-    runDetailById,
-    watchExpressionsForActiveWorkflow,
-    addWatchExpression: svc.runs.addWatchExpression,
-    removeWatchExpression: svc.runs.removeWatchExpression,
-    fetchWorkflowRunsForSelected: svc.runs.fetchWorkflowRunsForSelected,
-    fetchRecentWorkflowRuns: svc.runs.fetchRecentWorkflowRuns,
-    scheduleRecentWorkflowRunsRefresh: svc.runs.scheduleRecentWorkflowRunsRefresh,
-    scheduleWorkflowRunDetailRefresh: svc.runs.scheduleWorkflowRunDetailRefresh,
-    selectWorkflowRun: svc.runs.selectWorkflowRun,
-    fetchWorkflowRunDetail: svc.runs.fetchWorkflowRunDetail,
-    refreshWorkflowRunGates: svc.runs.refreshWorkflowRunGates,
-    resolveWorkflowRunGate: svc.runs.resolveWorkflowRunGate,
-    setWorkflowRunDetail: svc.runs.setWorkflowRunDetail,
-    selectWorkflowRunNode: svc.runs.selectWorkflowRunNode,
-    addWorkflowStep: svc.editor.addWorkflowStep,
-    addWorkflowNode: svc.editor.addWorkflowNode,
-    addConnectedWorkflowNode: svc.editor.addConnectedWorkflowNode,
-    applyInlineNodeEdit: svc.editor.applyInlineNodeEdit,
-    clearWorkflowGraphSelection: svc.editor.clearWorkflowGraphSelection,
-    submitInlineNodeEdit: svc.editor.submitInlineNodeEdit,
-    removeWorkflowStep: svc.editor.removeWorkflowStep,
-    removeWorkflowNode: svc.editor.removeWorkflowNode,
-    removeWorkflowEdgeById: svc.editor.removeWorkflowEdgeById,
-    openEdgeEditorDraft: svc.editor.openEdgeEditorDraft,
-    selectGraphEdge: svc.editor.selectGraphEdge,
-    applyEdgeEditorDraft: svc.editor.applyEdgeEditorDraft,
-    moveEdgeEditorItem: svc.editor.moveEdgeEditorItem,
-    moveSelectedEdge: svc.editor.moveSelectedEdge,
-    reverseSelectedEdgeHandles: svc.editor.reverseSelectedEdgeHandles,
-    setEdgeLabelOffset: svc.editor.setEdgeLabelOffset,
-    setEdgeLabelAnchor: svc.editor.setEdgeLabelAnchor,
-    workflowEdgeOptions: svc.editor.workflowEdgeOptions,
-    applyGraphEdgeSemantic: svc.editor.applyGraphEdgeSemantic,
-    applyStepEditor: svc.editor.applyStepEditor,
-    populateStepEditor: svc.editor.populateStepEditor,
-    // the workflow header panel: the four declarations that belong to the workflow, not a node.
-    openWorkflowHeader: svc.header.openWorkflowHeader,
-    closeWorkflowHeader: svc.header.closeWorkflowHeader,
-    declareHeaderInterrupt: svc.header.declareHeaderInterrupt,
-    setHeaderInterruptSource: svc.header.setHeaderInterruptSource,
-    setHeaderInterruptHandler: svc.header.setHeaderInterruptHandler,
-    removeHeaderInterrupt: svc.header.removeHeaderInterrupt,
-    scaffoldInterruptHandler: svc.header.scaffoldInterruptHandler,
-    addHeaderWatch: svc.header.addHeaderWatch,
-    setHeaderWatch: svc.header.setHeaderWatch,
-    removeHeaderWatch: svc.header.removeHeaderWatch,
-    setHeaderConcurrency: svc.header.setHeaderConcurrency,
-    clearHeaderConcurrency: svc.header.clearHeaderConcurrency,
-    setHeaderCorrelation: svc.header.setHeaderCorrelation,
-    getHeaderIssues: svc.header.getHeaderIssues,
-    getHandlerCandidateNodeIds: svc.header.getHandlerCandidateNodeIds,
-    getRegionNodeIds: svc.header.getRegionNodeIds,
-    getUndeclaredInterruptSources: svc.header.getUndeclaredInterruptSources,
-    headerIssueCount: computed(() => {
-      // depend on the draft so the tab's error pill re-computes when the graph or header changes.
-      void state.value.headerDraft;
-      void state.value.workflowLayoutVersion;
-      return svc.header.getHeaderIssueCount();
-    }),
-    updateSelectedWorkflowNodeDetail: svc.runs.updateSelectedWorkflowNodeDetail,
-    onGraphNodeClick,
-    onGraphNodeDoubleClick,
-    onGraphNodeDragStop,
-    onGraphNodesChange,
-    onGraphConnect,
-    onGraphEdgeClick,
-    onGraphEdgeUpdate,
-    onGraphEdgesChange,
-    autoArrangeWorkflowNodes: svc.editor.autoArrangeWorkflowNodes,
-    isDirty: computed(() => state.value.isDirty),
-    requestSelectedRunInterrupt: svc.runs.requestSelectedRunInterrupt,
-    canRequestRunInterrupt: computed(() => {
-      void state.value.workflowRunDetail;
-      return svc.canRequestRunInterrupt();
-    }),
-    requestableInterruptSources: computed(() => {
-      void state.value.workflowRunDetail;
-      return svc.getRequestableInterruptSources();
-    }),
-    syncWorkflowJson: svc.editor.syncWorkflowJson,
-    syncWorkflowDraftToJson: svc.editor.syncWorkflowDraftToJson,
-    syncWorkflowWdl: svc.editor.syncWorkflowWdl,
-    exportWorkflowWdl: svc.catalog.exportWorkflowWdl,
-    exportWorkflowPack: svc.catalog.exportWorkflowPack,
-    ensureWorkflowNodes: svc.editor.ensureWorkflowNodes,
-    addNodeRefEditor: svc.editor.addNodeRefEditor,
-    removeNodeRefEditor: svc.editor.removeNodeRefEditor,
-    openStepEditor: svc.editor.openStepEditor,
-    closeStepEditor: svc.editor.closeStepEditor,
-    submitStepEditor: svc.editor.submitStepEditor,
-    duplicateSelectedStep: svc.editor.duplicateSelectedStep,
-    moveWorkflowSelection: svc.catalog.moveWorkflowSelection,
-    openWorkflowSettings: svc.catalog.openWorkflowSettings,
-    closeWorkflowSettings: svc.catalog.closeWorkflowSettings,
-    refreshWorkflowTriggers: svc.catalog.refreshWorkflowTriggers,
-    addWorkflowTrigger: svc.catalog.addWorkflowTrigger,
-    editWorkflowTrigger: svc.catalog.editWorkflowTrigger,
-    closeTriggerEditor: svc.catalog.closeTriggerEditor,
-    setTriggerKind: svc.catalog.setTriggerKind,
-    submitWorkflowTrigger: svc.catalog.submitWorkflowTrigger,
-    deleteSelectedWorkflowTrigger: svc.catalog.deleteSelectedWorkflowTrigger,
-    triggerCronSummary: svc.catalog.triggerCronSummary,
-    triggerDateForInput: svc.catalog.triggerDateForInput,
-    markWorkflowDirty: svc.editor.markWorkflowDirty,
+    ...selectors,
+    ...createWorkflowStateBindings(services, state),
+    ...createWorkflowGraphHandlers(services),
+    ...createWorkflowActions(services),
   };
 });

@@ -498,7 +498,7 @@ pub(super) async fn process_resume_node<T: ReducerStore>(
         .parameters
         .get("mode")
         .and_then(Value::as_str)
-        .and_then(InterruptMode::from_str)
+        .and_then(|mode| mode.parse().ok())
         .unwrap_or_default();
 
     finish_interrupt(
@@ -520,6 +520,7 @@ pub(super) async fn process_resume_node<T: ReducerStore>(
 /// restoring the whole resume point rather than diffing it makes this idempotent: a duplicated
 /// drive writes the position and frames it would have written the first time. a missing handler
 /// cursor means another drive already finished this interrupt, so it is a no-op.
+#[allow(clippy::too_many_arguments)] // the arguments are the complete interrupt transition context.
 async fn finish_interrupt<T: ReducerStore>(
     db: &T,
     workflow: &runinator_models::workflows::WorkflowDefinition,

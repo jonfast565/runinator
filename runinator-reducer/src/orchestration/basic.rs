@@ -289,6 +289,7 @@ pub(super) async fn process_percentage_node<T: ReducerStore>(
 
 // record the router node run's chosen target and route the run: `Some` drives the run to the target
 // (Running), `None` blocks the node and follows its failure transition. shared by switch/toggle/percentage.
+#[allow(clippy::too_many_arguments)] // the arguments are the complete route transition context.
 async fn finish_route<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,

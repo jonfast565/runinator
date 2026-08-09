@@ -87,6 +87,7 @@ pub struct TaskResponseSchema {
 
 #[derive(Serialize)]
 #[serde(untagged)]
+#[allow(clippy::large_enum_variant)] // variants mirror the stable untagged HTTP response contract.
 pub enum ApiResponse {
     TaskResponse(TaskResponse),
     ApiError(ApiError),

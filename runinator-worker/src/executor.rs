@@ -34,6 +34,7 @@ impl ExecutionTaskResult {
     }
 }
 
+#[allow(clippy::too_many_arguments)] // execution dependencies are explicit lifecycle inputs.
 pub async fn execute_task(
     providers: &ProviderFactory,
     libraries: Arc<HashMap<String, Plugin>>,

@@ -477,4 +477,4 @@ fn nested_blocks_mut(kind: &mut StmtKind) -> Vec<&mut Block> {
 }
 
 #[cfg(test)]
-mod tests;
+mod comments_tests;

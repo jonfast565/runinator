@@ -70,7 +70,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     if (value) {
       transitions[key] = nodeRef(value);
     } else {
-      delete transitions[key];
+      Reflect.deleteProperty(transitions, key);
     }
 
     host.state.stepEditor.nodeDraft = { ...draft, transitions };
@@ -180,7 +180,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
 
     const frame = coerceDebugFrame(detail?.run.state?.debug) ?? null;
     const parked = cursors.find((cursor) => isCursorPaused(cursors, cursor.id, frame));
-    return (parked ?? cursors[0])?.id ?? null;
+    return (parked ?? cursors.at(0))?.id ?? null;
   }
 
   /** point the debugger controls at one thread of control. */

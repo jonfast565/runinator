@@ -33,7 +33,7 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, watch } from "vue";
+import { defineAsyncComponent, onBeforeUnmount, onMounted, watch } from "vue";
 import { getPlatformAdapter } from "./core/platform";
 import { pingBackendHealth } from "./core/api/httpRuntime";
 import AppShell from "./ui/components/shell/AppShell.vue";
@@ -55,27 +55,28 @@ import { usePermissionsStore } from "./ui/adapters/pinia/permissions";
 import { useAdminSettingsStore } from "./ui/adapters/pinia/adminSettings";
 import { useDisplayPreferencesStore } from "./ui/adapters/pinia/displayPreferences";
 import { useGatesStore } from "./ui/adapters/pinia/gates";
-import RunsView from "./ui/views/RunsView.vue";
-import ProvidersView from "./ui/views/ProvidersView.vue";
-import ReplicasView from "./ui/views/ReplicasView.vue";
-import DevView from "./ui/views/DevView.vue";
-import WorkflowsView from "./ui/views/WorkflowsView.vue";
-import PipelinesView from "./ui/views/PipelinesView.vue";
-import PipelineRunsView from "./ui/views/PipelineRunsView.vue";
-import ApprovalsView from "./ui/views/ApprovalsView.vue";
-import ArtifactsView from "./ui/views/ArtifactsView.vue";
-import NotificationsView from "./ui/views/NotificationsView.vue";
-import SchedulesView from "./ui/views/SchedulesView.vue";
-import EventsView from "./ui/views/EventsView.vue";
-import ExternalItemsView from "./ui/views/ExternalItemsView.vue";
-import GatesView from "./ui/views/GatesView.vue";
-import SecretsView from "./ui/views/SecretsView.vue";
-import PermissionsView from "./ui/views/PermissionsView.vue";
-import OrganizationView from "./ui/views/OrganizationView.vue";
-import OrgResourcesView from "./ui/views/OrgResourcesView.vue";
-import AdminSettingsView from "./ui/views/AdminSettingsView.vue";
-import DeadLettersView from "./ui/views/DeadLettersView.vue";
-import AuditLogView from "./ui/views/AuditLogView.vue";
+
+const RunsView = defineAsyncComponent(() => import("./ui/views/RunsView.vue"));
+const ProvidersView = defineAsyncComponent(() => import("./ui/views/ProvidersView.vue"));
+const ReplicasView = defineAsyncComponent(() => import("./ui/views/ReplicasView.vue"));
+const DevView = defineAsyncComponent(() => import("./ui/views/DevView.vue"));
+const WorkflowsView = defineAsyncComponent(() => import("./ui/views/WorkflowsView.vue"));
+const PipelinesView = defineAsyncComponent(() => import("./ui/views/PipelinesView.vue"));
+const PipelineRunsView = defineAsyncComponent(() => import("./ui/views/PipelineRunsView.vue"));
+const ApprovalsView = defineAsyncComponent(() => import("./ui/views/ApprovalsView.vue"));
+const ArtifactsView = defineAsyncComponent(() => import("./ui/views/ArtifactsView.vue"));
+const NotificationsView = defineAsyncComponent(() => import("./ui/views/NotificationsView.vue"));
+const SchedulesView = defineAsyncComponent(() => import("./ui/views/SchedulesView.vue"));
+const EventsView = defineAsyncComponent(() => import("./ui/views/EventsView.vue"));
+const ExternalItemsView = defineAsyncComponent(() => import("./ui/views/ExternalItemsView.vue"));
+const GatesView = defineAsyncComponent(() => import("./ui/views/GatesView.vue"));
+const SecretsView = defineAsyncComponent(() => import("./ui/views/SecretsView.vue"));
+const PermissionsView = defineAsyncComponent(() => import("./ui/views/PermissionsView.vue"));
+const OrganizationView = defineAsyncComponent(() => import("./ui/views/OrganizationView.vue"));
+const OrgResourcesView = defineAsyncComponent(() => import("./ui/views/OrgResourcesView.vue"));
+const AdminSettingsView = defineAsyncComponent(() => import("./ui/views/AdminSettingsView.vue"));
+const DeadLettersView = defineAsyncComponent(() => import("./ui/views/DeadLettersView.vue"));
+const AuditLogView = defineAsyncComponent(() => import("./ui/views/AuditLogView.vue"));
 
 const app = useAppStore();
 const auth = useAuthStore();

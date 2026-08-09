@@ -79,7 +79,7 @@ mod handler_tests;
 #[cfg(test)]
 mod interrupt_tests;
 #[cfg(test)]
-mod tests;
+mod orchestration_tests;
 
 pub use engine::process_ready_node;
 pub use pipeline_orchestration::{create_and_start_pipeline_run, start_pipeline_run};

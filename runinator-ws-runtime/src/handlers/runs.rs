@@ -553,7 +553,7 @@ pub async fn request_interrupt<T: DatabaseImpl>(
         return reply;
     }
     let raw = request.source.as_deref().unwrap_or("external");
-    let Some(source) = runinator_models::interrupt::InterruptSource::from_str(raw) else {
+    let Ok(source) = raw.parse::<runinator_models::interrupt::InterruptSource>() else {
         return bad_request(format!("Unknown interrupt source '{raw}'"));
     };
     // only a requested source can be raised from a `PendingInterrupt`; a drive-matched source (wake,

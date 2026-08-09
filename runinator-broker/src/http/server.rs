@@ -136,6 +136,7 @@ fn forbidden(detail: &str) -> Response {
 /// authorize an action receive: a replica-scoped token (`rid`) may only receive for its own replica,
 /// closing cross-replica impersonation. an unscoped (plain user) token is allowed; auth-disabled
 /// requests carry no constraint.
+#[allow(clippy::result_large_err)] // the response is returned directly by the axum handler.
 pub(crate) fn authorize_receive(
     identity: &AuthIdentity,
     profile: Option<&ConsumerProfile>,
@@ -153,6 +154,7 @@ pub(crate) fn authorize_receive(
 }
 
 // a replica-scoped token must use the targeted /receive path, not the general-pool /poll drain.
+#[allow(clippy::result_large_err)] // the response is returned directly by the axum handler.
 fn authorize_poll(identity: &AuthIdentity) -> Result<(), Response> {
     match &identity.0 {
         Some(claims) if claims.rid.is_some() => Err(forbidden(

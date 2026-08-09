@@ -22,6 +22,7 @@ fn parse_cooldown_params(node: &WorkflowNode) -> CooldownParams {
 }
 
 /// seconds left in a cooldown window that was last stamped at `last_run_at`; 0 once elapsed.
+#[cfg(test)]
 pub(super) fn remaining_seconds(last_run_at: i64, window_seconds: i64, now_unix: i64) -> i64 {
     (last_run_at + window_seconds - now_unix).max(0)
 }

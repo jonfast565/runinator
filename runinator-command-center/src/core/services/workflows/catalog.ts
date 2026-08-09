@@ -82,7 +82,7 @@ export function createWorkflowCatalogService(
       }
     }
 
-    workflow ??= items[0];
+    workflow ??= items.at(0);
 
     if (workflow && !host.state.isDirty) {
       await selectWorkflow(workflow);
@@ -610,7 +610,9 @@ export function createWorkflowCatalogService(
     workflows: WorkflowDefinition[],
     options?: { confirmed?: boolean },
   ) {
-    const deletable = workflows.filter((workflow) => workflow.id);
+    const deletable = workflows.filter(
+      (workflow): workflow is WorkflowDefinition & { id: string } => Boolean(workflow.id),
+    );
 
     if (!deletable.length) {
       return;
@@ -633,7 +635,7 @@ export function createWorkflowCatalogService(
       `Deleting ${String(deletable.length)} workflows`,
       () =>
         runBulk(deletable, async (workflow) => {
-          const response = await deleteWorkflow(workflow.id!);
+          const response = await deleteWorkflow(workflow.id);
 
           if (!response.success) {
             throw new Error(response.message || `Failed to delete ${workflow.name}`);
@@ -653,7 +655,7 @@ export function createWorkflowCatalogService(
       // the selection may have just been deleted out from under the editor.
       if (host.state.selectedWorkflowId && deletedIds.has(host.state.selectedWorkflowId)) {
         closeWorkflowSettings();
-        const next = host.state.workflows[0] ?? null;
+        const next = host.state.workflows.at(0);
         host.state.selectedWorkflowId = next?.id ?? null;
 
         if (next) {

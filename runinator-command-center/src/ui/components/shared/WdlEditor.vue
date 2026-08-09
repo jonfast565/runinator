@@ -187,7 +187,7 @@ watch(
 watch(
   () => props.readonly,
   (readonly) => {
-    host?.setReadonly(Boolean(readonly));
+    host?.setReadonly(readonly);
   },
 );
 

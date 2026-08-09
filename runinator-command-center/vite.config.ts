@@ -8,6 +8,33 @@ const WS_WS_TARGET = WS_DEV_TARGET.replace(/^http/, "ws");
 export default defineConfig({
   plugins: [vue(), tailwindcss()],
   clearScreen: false,
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (
+            id.includes("/node_modules/@codemirror/") ||
+            id.includes("/node_modules/@lezer/") ||
+            id.includes("/node_modules/codemirror/")
+          ) {
+            return "editor";
+          }
+
+          if (id.includes("/node_modules/@vue-flow/")) {
+            return "workflow-graph";
+          }
+
+          if (
+            id.includes("/node_modules/vue/") ||
+            id.includes("/node_modules/@vue/") ||
+            id.includes("/node_modules/pinia/")
+          ) {
+            return "vue";
+          }
+        },
+      },
+    },
+  },
   test: {
     setupFiles: ["./src/test-setup.ts"],
   },

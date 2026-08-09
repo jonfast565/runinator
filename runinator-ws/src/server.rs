@@ -34,6 +34,7 @@ pub struct ReplicaAdvertisement {
     pub attributes: runinator_models::value::Value,
 }
 
+#[allow(clippy::too_many_arguments)] // server assembly keeps each injected runtime dependency explicit.
 pub async fn run_webserver<T: DatabaseImpl>(
     pool: Arc<T>,
     notify: Arc<Notify>,

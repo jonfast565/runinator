@@ -171,7 +171,13 @@ export function cursorLabel(cursor: RunCursor, index: number): string {
   const speculative = cursor.speculative;
 
   if (speculative) {
-    return speculative.label?.trim() || `what-if ${index + 1}`;
+    const label = speculative.label?.trim();
+
+    if (label) {
+      return label;
+    }
+
+    return `what-if ${String(index + 1)}`;
   }
 
   // a handler is named for what raised it rather than where it stands: it is a side-channel, and

@@ -73,7 +73,7 @@ const props = withDefaults(
 
 const emit = defineEmits<{ "update:modelValue": [value: string] }>();
 
-const localId = ref(props.modelValue || props.tabs.at(0)?.id || "");
+const localId = ref(props.modelValue ? props.modelValue : (props.tabs.at(0)?.id ?? ""));
 const collapsed = ref(false);
 
 const activeId = computed(() => {

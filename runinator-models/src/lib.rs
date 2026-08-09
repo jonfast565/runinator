@@ -26,6 +26,11 @@ pub mod types;
 pub mod value;
 pub mod web;
 pub mod workflow_ast;
+pub mod workflow_coordination;
+pub mod workflow_frames;
+pub mod workflow_node_states;
+pub mod workflow_outputs;
+pub mod workflow_runs;
 pub mod workflow_state;
 pub mod workflows;
 
@@ -34,4 +39,4 @@ pub mod workflows;
 pub use serde_json as __serde_json;
 
 #[cfg(test)]
-mod tests;
+mod lib_tests;

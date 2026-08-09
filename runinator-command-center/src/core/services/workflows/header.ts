@@ -69,7 +69,7 @@ export function createWorkflowHeaderService(host: WorkflowServiceHost, editor: W
   }
 
   function setHeaderInterruptSource(index: number, source: string) {
-    const entry = host.state.headerDraft.interrupts[index];
+    const entry = host.state.headerDraft.interrupts.at(index);
 
     if (!entry) {
       return;
@@ -80,7 +80,7 @@ export function createWorkflowHeaderService(host: WorkflowServiceHost, editor: W
   }
 
   function setHeaderInterruptHandler(index: number, handler: string) {
-    const entry = host.state.headerDraft.interrupts[index];
+    const entry = host.state.headerDraft.interrupts.at(index);
 
     if (!entry) {
       return;
@@ -103,7 +103,7 @@ export function createWorkflowHeaderService(host: WorkflowServiceHost, editor: W
   }
 
   function setHeaderWatch(index: number, patch: Partial<WatchDeclaration>) {
-    const entry = host.state.headerDraft.watches[index];
+    const entry = host.state.headerDraft.watches.at(index);
 
     if (!entry) {
       return;

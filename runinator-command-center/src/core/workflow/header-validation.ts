@@ -306,17 +306,17 @@ export function isRenderableCondition(value: JsonValue): boolean {
     return object.any.every((item) => isRenderableCondition(item));
   }
 
-  if (object.not !== undefined) {
+  if (Object.hasOwn(object, "not")) {
     return isRenderableCondition(object.not);
   }
 
-  const hasLeft = object.value !== undefined || object.left !== undefined;
+  const hasLeft = Object.hasOwn(object, "value") || Object.hasOwn(object, "left");
 
   if (!hasLeft) {
     return false;
   }
 
-  if (object.exists !== undefined) {
+  if (Object.hasOwn(object, "exists")) {
     return true;
   }
 
@@ -327,5 +327,5 @@ export function isRenderableCondition(value: JsonValue): boolean {
   }
 
   // the bare truthiness form: exactly `{ value: <expr> }` and nothing else.
-  return Object.keys(object).length === 1 && object.value !== undefined;
+  return Object.keys(object).length === 1 && Object.hasOwn(object, "value");
 }
