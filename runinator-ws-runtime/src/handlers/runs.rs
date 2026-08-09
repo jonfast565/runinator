@@ -556,6 +556,16 @@ pub async fn request_interrupt<T: DatabaseImpl>(
     let Some(source) = runinator_models::interrupt::InterruptSource::from_str(raw) else {
         return bad_request(format!("Unknown interrupt source '{raw}'"));
     };
+    // only a requested source can be raised from a `PendingInterrupt`; a drive-matched source (wake,
+    // timeout, retry, failure, resolved, child) is only ever raised by a drive that finds the matching
+    // node state, so a request for one would sit in `pending_interrupts` forever unconsumed — and,
+    // since a cursor exposes only its single oldest pending request, would permanently shadow any
+    // later, genuine request on the same cursor.
+    if !source.requested() {
+        return bad_request(format!(
+            "Interrupt source '{raw}' cannot be requested; it is only raised by a matching drive"
+        ));
+    }
     match repository::request_run_interrupt(
         db.as_ref(),
         workflow_run_id,

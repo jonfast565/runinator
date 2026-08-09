@@ -439,7 +439,10 @@ pub async fn request_run_interrupt<T: DatabaseImpl>(
     }
     let request = PendingInterrupt::new(source, payload, cursor_id);
 
-    let mut recorded = false;
+    // captured from the attempt that actually won the compare-and-swap, not the outer pre-loop
+    // fetch: a concurrent drive can move the cursor between that fetch and a winning retry, and
+    // deriving the wake target from the stale copy could wake the wrong node or miss it entirely.
+    let mut recorded: Option<runinator_models::workflows::WorkflowRun> = None;
     for _ in 0..MAX_EVENT_DELIVERY_ATTEMPTS {
         let Some(run) = db.fetch_workflow_run(workflow_run_id).await? else {
             return Ok(TaskResponse {
@@ -456,16 +459,16 @@ pub async fn request_run_interrupt<T: DatabaseImpl>(
             .update_workflow_run_state_cas(workflow_run_id, run.state_version, state.to_state())
             .await?
         {
-            recorded = true;
+            recorded = Some(run);
             break;
         }
     }
-    if !recorded {
+    let Some(run) = recorded else {
         return Ok(TaskResponse {
             success: false,
             message: format!("Run {workflow_run_id} state kept changing; interrupt not requested"),
         });
-    }
+    };
 
     // wake the thread so the request is looked at now rather than whenever the run next happens to
     // move. an untargeted request rides the run's mirrored position, which is the primary cursor.

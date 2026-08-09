@@ -239,8 +239,11 @@ impl InterruptDeclaration {
 
 /// the key recorded on a cursor once an interrupt has fired at a position, so a plain `resume`
 /// does not immediately re-raise the same interrupt against the same node run.
-pub fn handled_key(source: InterruptSource, node_run_id: Uuid) -> String {
-    format!("{source}:{node_run_id}")
+///
+/// scoped by `attempt`, not just the node run id: a retry reuses one row across every attempt, so a
+/// node-run-id-only key would dedupe every attempt after the first against the retry it fired for.
+pub fn handled_key(source: InterruptSource, node_run_id: Uuid, attempt: i64) -> String {
+    format!("{source}:{node_run_id}:{attempt}")
 }
 
 #[cfg(test)]

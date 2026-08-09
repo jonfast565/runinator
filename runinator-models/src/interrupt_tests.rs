@@ -193,7 +193,7 @@ fn a_state_blob_without_the_interrupt_keys_still_loads() {
 #[test]
 fn moving_a_cursor_forgets_which_interrupts_fired_there() {
     let mut cursor = RunCursor::at("poll");
-    cursor.mark_handled(handled_key(InterruptSource::Wake, Uuid::now_v7()));
+    cursor.mark_handled(handled_key(InterruptSource::Wake, Uuid::now_v7(), 0));
     assert!(!cursor.handled.is_empty());
 
     // re-entering the *same* node keeps the record: that is what stops a `resume` re-raising.

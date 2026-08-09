@@ -193,6 +193,9 @@ pub(super) fn timed_out_since_created(
     };
     Utc::now() - run.created_at > chrono::Duration::seconds(timeout) + cursor.suspension_credit()
 }
+
+/// like `timed_out_since_created`, but falls back to `default_timeout_seconds` when the node
+/// declares no timeout — for parks that must not wait forever.
 pub(super) fn timed_out_since_created_or(
     node: &WorkflowNode,
     cursor: &RunCursor,
@@ -203,6 +206,9 @@ pub(super) fn timed_out_since_created_or(
     Utc::now() - run.created_at > chrono::Duration::seconds(timeout) + cursor.suspension_credit()
 }
 
+/// enqueue a delayed self ready node at a node's timeout deadline. the event-driven ready queue does
+/// not re-poll parked nodes, so a node that parks (approval/join/subflow) re-arms its own timeout so
+/// the timeout check fires even when no external wake-up arrives.
 pub(super) async fn arm_node_timeout<T: ReducerStore>(
     db: &T,
     workflow_run_id: Uuid,
@@ -239,7 +245,7 @@ pub(super) async fn arm_node_timeout_in<T: ReducerStore>(
     arm_cursor_wake(
         db,
         workflow_run_id,
-        cursor,
+        cursor.id,
         &node.id,
         "node_timeout_rearm",
         runinator_models::json!({ "node_id": node.id }),
@@ -366,7 +372,45 @@ pub(super) async fn transition_from_node<T: ReducerStore>(
     message: Option<String>,
     node_runs: &[WorkflowNodeRun],
 ) -> Result<Option<String>, SendableError> {
-    if node.retry.retry_on.retryable(status) && node_run.attempt < node.retry.max_attempts {
+    settle_node(
+        db,
+        workflow_run,
+        cursor,
+        node,
+        node_run,
+        status,
+        output_json,
+        message,
+        node_runs,
+        true,
+    )
+    .await
+}
+
+/// like [`transition_from_node`], but `retry_eligible` decides whether the node's own retry policy
+/// may intercept `status`.
+///
+/// an organic dispatch result is retry-eligible: the policy the author wrote down gets to decide
+/// whether to try again. a status an interrupt handler chose via `resume continue`/`resume fail` is
+/// not — it is an explicit decision, not a result the policy is entitled to second-guess, so it must
+/// reach the node the way the handler said it should.
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn settle_node<T: ReducerStore>(
+    db: &T,
+    workflow_run: &WorkflowRun,
+    cursor: &RunCursor,
+    node: &WorkflowNode,
+    node_run: &WorkflowNodeRun,
+    status: WorkflowStatus,
+    output_json: Option<Value>,
+    message: Option<String>,
+    node_runs: &[WorkflowNodeRun],
+    retry_eligible: bool,
+) -> Result<Option<String>, SendableError> {
+    if retry_eligible
+        && node.retry.retry_on.retryable(status)
+        && node_run.attempt < node.retry.max_attempts
+    {
         schedule_node_retry(
             db,
             workflow_run,
@@ -501,10 +545,14 @@ async fn schedule_node_retry<T: ReducerStore>(
 /// stamping the cursor is what lets a fan-out's branches each hold a live ready row for the same
 /// node: the supersede-on-arm rule narrows to the cursor, so re-arming one branch no longer silently
 /// cancels its sibling's pending wake.
+/// enqueue a ready row targeting one cursor.
+///
+/// `ready_at` lets a caller both defer (a timeout deadline) and drive immediately (`Utc::now()`, as
+/// an interrupt resume does) through the one path that arms a cursor-targeted wake.
 pub(super) async fn arm_cursor_wake<T: ReducerStore>(
     db: &T,
     workflow_run_id: Uuid,
-    cursor: &RunCursor,
+    cursor_id: Uuid,
     node_id: &str,
     reason: &str,
     payload: Value,
@@ -512,7 +560,7 @@ pub(super) async fn arm_cursor_wake<T: ReducerStore>(
 ) -> Result<(), SendableError> {
     let event =
         NewOrchestrationEvent::new(workflow_run_id, Some(node_id.to_string()), reason, payload)
-            .for_cursor(cursor.id);
+            .for_cursor(cursor_id);
     db.enqueue_ready_node(event, node_id.to_string(), ready_at)
         .await?;
     Ok(())
