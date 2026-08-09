@@ -10,8 +10,10 @@ use runinator_models::catalog_metadata::{
     EnumCatalogMetadata, EnumOptionMetadata, UiField, WorkflowNodeKindMetadata,
     WorkflowTriggerKindMetadata,
 };
+use runinator_models::interrupt::{InterruptMode, InterruptSource};
 use runinator_models::json;
 use runinator_models::providers::{ParameterMetadata, RuninatorType};
+use runinator_models::schedules::ConcurrencyPolicy;
 use runinator_models::workflows::{WorkflowNodeKind, WorkflowTriggerKind};
 
 use crate::node_kinds::spec_for;
@@ -130,5 +132,111 @@ pub fn enum_catalogs() -> Vec<EnumCatalogMetadata> {
                 EnumOptionMetadata::new("secret", "Secret"),
             ],
         ),
+        EnumCatalogMetadata::new("interrupt_source", interrupt_source_options()),
+        EnumCatalogMetadata::new("resume_mode", resume_mode_options()),
+        EnumCatalogMetadata::new("concurrency_policy", concurrency_policy_options()),
     ]
+}
+
+/// what may raise an interrupt, for the header editor's source picker.
+///
+/// derived from [`InterruptSource::ALL`] rather than listed again, so a new source reaches the ui
+/// with the rest of the runtime. the match is exhaustive, which is what makes that automatic.
+fn interrupt_source_options() -> Vec<EnumOptionMetadata> {
+    InterruptSource::ALL
+        .into_iter()
+        .map(|source| {
+            let (label, description) = match source {
+                InterruptSource::External => (
+                    "External",
+                    "Requested through POST /workflow_runs/{id}/interrupts.",
+                ),
+                InterruptSource::OrphanSignal => (
+                    "Orphan signal",
+                    "A signal arrived that no node in the run was parked on.",
+                ),
+                InterruptSource::Wake => (
+                    "Wake",
+                    "A parked cursor's timer elapsed, bound to a wait node's deadline.",
+                ),
+                InterruptSource::Timeout => (
+                    "Timeout",
+                    "The node's deadline is about to blow while its run is still in flight, so the handler runs before it gives up.",
+                ),
+                InterruptSource::Retry => (
+                    "Retry",
+                    "A failed node run is about to be re-dispatched by the retry policy.",
+                ),
+                InterruptSource::Failure => (
+                    "Failure",
+                    "A node run settled failed and the thread is about to take its failure route.",
+                ),
+                InterruptSource::Resolved => (
+                    "Resolved",
+                    "An out-of-band park resolution landed: a signal delivered, an approval decided, an input submitted.",
+                ),
+                InterruptSource::Child => (
+                    "Child",
+                    "A child run a subflow node is parked on reached a terminal.",
+                ),
+            };
+            EnumOptionMetadata::new(source.as_str(), label).with_description(description)
+        })
+        .collect()
+}
+
+/// what a handler's `resume` node does to the thread it interrupted.
+fn resume_mode_options() -> Vec<EnumOptionMetadata> {
+    InterruptMode::ALL
+        .into_iter()
+        .map(|mode| {
+            let (label, description) = match mode {
+                InterruptMode::Resume => (
+                    "Resume",
+                    "Resume at the same node and let its handler re-read the node run.",
+                ),
+                InterruptMode::Continue => (
+                    "Continue",
+                    "Settle the interrupted node succeeded and take its success edge.",
+                ),
+                InterruptMode::Restart => (
+                    "Restart",
+                    "Cancel the in-flight node run and re-enter the node fresh, resetting a park's window.",
+                ),
+                InterruptMode::Fail => (
+                    "Fail",
+                    "Settle the interrupted node failed and take its on_failure edge. This does not itself fail the run.",
+                ),
+            };
+            EnumOptionMetadata::new(mode.as_str(), label).with_description(description)
+        })
+        .collect()
+}
+
+/// what the trigger loop does when a workflow is already at its concurrency limit.
+fn concurrency_policy_options() -> Vec<EnumOptionMetadata> {
+    ConcurrencyPolicy::ALL
+        .into_iter()
+        .map(|policy| {
+            let (label, description) = match policy {
+                ConcurrencyPolicy::Allow => (
+                    "Allow",
+                    "Start the run anyway; overlapping runs are the workflow's problem.",
+                ),
+                ConcurrencyPolicy::Skip => (
+                    "Skip",
+                    "Drop the slot: record the firing so it is never retried, and advance to the next one.",
+                ),
+                ConcurrencyPolicy::Queue => (
+                    "Queue",
+                    "Leave the slot due and re-evaluate on the next tick, so it fires once capacity frees up.",
+                ),
+                ConcurrencyPolicy::CancelPrevious => (
+                    "Cancel previous",
+                    "Cancel the workflow's in-flight runs, then start this one.",
+                ),
+            };
+            EnumOptionMetadata::new(policy.as_str(), label).with_description(description)
+        })
+        .collect()
 }

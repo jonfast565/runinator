@@ -11,15 +11,28 @@
         ></span>
       </strong>
       <span v-if="workflows.isDirty" class="unsaved-label">Unsaved changes</span>
-      <span v-else
-        >v{{ workflows.workflowDraft.version }} · concurrency
-        {{ workflows.workflowConcurrency }}</span
+      <span v-else class="workflow-meta"
+        >v{{ workflows.workflowDraft.version }} ·
+        <button type="button" class="meta-link" title="Edit the workflow header" @click="workflows.openWorkflowHeader">
+          concurrency {{ concurrencyLabel }}
+        </button></span
       >
     </div>
     <div class="workflow-actions">
       <button class="btn" @click="workflows.openWorkflowSettings">
         <Icon name="settings" />
         <span>Settings</span>
+      </button>
+      <button
+        class="btn"
+        title="Interrupts, watch guards, concurrency, and the correlation key"
+        @click="workflows.openWorkflowHeader"
+      >
+        <Icon name="flag" />
+        <span>Header</span>
+        <span v-if="workflows.headerIssueCount" class="count-pill error">{{
+          workflows.headerIssueCount
+        }}</span>
       </button>
       <button v-if="workflows.selectedWorkflowId" class="btn" @click="shareOpen = true">
         <Icon name="approve" />
@@ -221,6 +234,12 @@ const catalogMetadata = useCatalogMetadataStore();
 const { isLoading: savingWorkflow } = useOperationLoading("Saving workflow");
 const { isLoading: startingRun } = useOperationLoading("Running workflow", { prefix: true });
 const { isLoading: cancelingRun } = useOperationLoading("Canceling workflow run", { prefix: true });
+// an absent concurrency header means unlimited, which is what the runtime reads it as.
+const concurrencyLabel = computed(() =>
+  workflows.headerDraft.concurrency
+    ? String(workflows.headerDraft.concurrency.maxConcurrentRuns)
+    : "∞",
+);
 const toolbarRef = ref<HTMLElement | null>(null);
 const openMenu = ref<"nodes" | "arrange" | "export" | null>(null);
 const shareOpen = ref(false);

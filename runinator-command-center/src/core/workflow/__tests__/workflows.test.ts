@@ -1415,6 +1415,8 @@ describe("catalog-driven workflow helpers", () => {
           protected: false,
           terminal: false,
           addable: true,
+          handler_safe: false,
+          runnable_entry: true,
           supports_predicate_edges: true,
           fields: [],
           edge_slots: [],
@@ -1435,6 +1437,8 @@ describe("catalog-driven workflow helpers", () => {
           protected: false,
           terminal: false,
           addable: true,
+          handler_safe: false,
+          runnable_entry: true,
           supports_predicate_edges: false,
           fields: [],
           edge_slots: [

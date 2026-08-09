@@ -12,8 +12,15 @@ use crate::node_kinds::{GraphRole, NodeKindSpec};
 
 pub(in crate::node_kinds) struct Resume;
 
-/// the author-facing mode names, in the order the ui should offer them.
-const MODES: &[&str] = &["resume", "continue", "restart", "fail"];
+/// the author-facing mode names, in the order the ui should offer them. read off
+/// [`InterruptMode::ALL`] so this field, the catalog's `resume_mode` enum, and the runtime cannot
+/// disagree about which modes exist.
+fn modes() -> Vec<&'static str> {
+    InterruptMode::ALL
+        .iter()
+        .map(|mode| mode.as_str())
+        .collect()
+}
 
 impl NodeKindSpec for Resume {
     fn kind(&self) -> WorkflowNodeKind {
@@ -52,7 +59,7 @@ impl NodeKindSpec for Resume {
                 node: node.id.clone(),
                 message: format!(
                     "unknown resume mode '{named}'; expected one of {}",
-                    MODES.join(", ")
+                    modes().join(", ")
                 ),
             }
         })
@@ -64,7 +71,7 @@ impl NodeKindSpec for Resume {
             // since "is this node inside a handler" is a graph property the palette cannot see.
             supports_predicate_edges: false,
             fields: vec![field(
-                opt("mode", enum_ty(MODES)),
+                opt("mode", enum_ty(&modes())),
                 FieldLocation::parameters(&["mode"]),
                 None,
             )],

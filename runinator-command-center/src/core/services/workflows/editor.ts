@@ -27,6 +27,7 @@ import {
   workflowEdgeSemanticOptions, uniqueWorkflowNodeId, validateWorkflowReferenceSyntax,
 } from "../../workflow/index";
 import { findNodeKindMetadata } from "../../workflow/catalog-registry";
+import { readWorkflowHeader } from "../../workflow/header-metadata";
 import { getAtLocation } from "../../workflow/field-location";
 import type { GraphEdgeLike, GraphEdgeModel } from "../../workflow/graph-model";
 import {
@@ -602,7 +603,7 @@ export function createWorkflowEditorService(
     }
 
     host.state.workflowDraft.definition = parsed;
-    host.state.workflowDraft.definition.concurrency = host.state.workflowConcurrency;
+    refreshHeaderDraft();
     Object.assign(host.state.workflowDraft, normalizeWorkflowDefinition(cloneJson(host.state.workflowDraft)));
     setWorkflowJsonSilently(pretty(host.state.workflowDraft.definition));
     host.state.isDirty = true;
@@ -613,7 +614,6 @@ export function createWorkflowEditorService(
   function syncWorkflowDraftToJson() {
     // a graph edit is now the source of truth, so save should serialize the draft, not recompile wdl.
     host.state.workflowEditorMode = "graph";
-    host.state.workflowDraft.definition.concurrency = host.state.workflowConcurrency;
     Object.assign(host.state.workflowDraft, normalizeWorkflowDefinition(cloneJson(host.state.workflowDraft)));
     setWorkflowJsonSilently(pretty(host.state.workflowDraft.definition));
     host.state.isDirty = true;
@@ -647,7 +647,7 @@ export function createWorkflowEditorService(
       host.state.workflowDraft.definition.ui = previousUi;
     }
 
-    host.state.workflowDraft.definition.concurrency = host.state.workflowConcurrency;
+    refreshHeaderDraft();
     Object.assign(host.state.workflowDraft, normalizeWorkflowDefinition(cloneJson(host.state.workflowDraft)));
     setWorkflowJsonSilently(pretty(host.state.workflowDraft.definition));
     host.state.isDirty = true;
@@ -672,6 +672,17 @@ export function createWorkflowEditorService(
     }
 
     return host.state.workflowDraft.definition.nodes as JsonRecord[];
+  }
+
+  /**
+   * re-read the header working copy after the definition was replaced wholesale.
+   *
+   * the json and wdl panes both swap `definition` out from under the header panel, so without this
+   * the panel would keep editing -- and then write back -- the header of a definition that no longer
+   * exists. reads through the pure helper rather than the header service so this stays a leaf call.
+   */
+  function refreshHeaderDraft() {
+    host.state.headerDraft = readWorkflowHeader(host.state.workflowDraft.definition);
   }
 
   function stripNewNodeConnections(node: JsonRecord) {
@@ -899,5 +910,5 @@ export function createWorkflowEditorService(
     return "";
   }
 
-  return { addWorkflowStep, addWorkflowNode, addConnectedWorkflowNode, removeWorkflowStep, removeWorkflowNode, applyInlineNodeEdit, clearWorkflowGraphSelection, submitInlineNodeEdit, applyStepEditor, populateStepEditor, workflowEdgeOptions, openEdgeEditorDraft, selectGraphEdge, applyEdgeEditorDraft, moveEdgeEditorItem, moveSelectedEdge, reverseSelectedEdgeHandles, setEdgeLabelOffset, setEdgeLabelAnchor, scheduleStepEditorApply, applyGraphEdgeSemantic, removeWorkflowEdgeById, autoArrangeWorkflowNodes, scheduleWorkflowJsonSync, scheduleWorkflowWdlSync, scheduleWorkflowWdlRefresh, setWorkflowJsonSilently, setWorkflowWdlSilently, syncWorkflowJson, syncWorkflowDraftToJson, syncWorkflowWdl, refreshWorkflowWdl, ensureWorkflowNodes, stripNewNodeConnections, graphCentroidPosition, setGraphNodePosition, renameLayoutNode, addNodeRefEditor, removeNodeRefEditor, markWorkflowDirty, openStepEditor, submitStepEditor, dismissStepEditorForCanvasEdit, closeStepEditor, duplicateSelectedStep, setStepEditorError, isJsonObject, validateStepParameters };
+  return { addWorkflowStep, addWorkflowNode, addConnectedWorkflowNode, removeWorkflowStep, removeWorkflowNode, applyInlineNodeEdit, clearWorkflowGraphSelection, submitInlineNodeEdit, applyStepEditor, populateStepEditor, workflowEdgeOptions, openEdgeEditorDraft, selectGraphEdge, applyEdgeEditorDraft, moveEdgeEditorItem, moveSelectedEdge, reverseSelectedEdgeHandles, setEdgeLabelOffset, setEdgeLabelAnchor, scheduleStepEditorApply, applyGraphEdgeSemantic, removeWorkflowEdgeById, autoArrangeWorkflowNodes, scheduleWorkflowJsonSync, scheduleWorkflowWdlSync, scheduleWorkflowWdlRefresh, setWorkflowJsonSilently, setWorkflowWdlSilently, syncWorkflowJson, syncWorkflowDraftToJson, syncWorkflowWdl, refreshWorkflowWdl, ensureWorkflowNodes, refreshHeaderDraft, stripNewNodeConnections, graphCentroidPosition, setGraphNodePosition, renameLayoutNode, addNodeRefEditor, removeNodeRefEditor, markWorkflowDirty, openStepEditor, submitStepEditor, dismissStepEditorForCanvasEdit, closeStepEditor, duplicateSelectedStep, setStepEditorError, isJsonObject, validateStepParameters };
 }

@@ -9,6 +9,7 @@ function nodeMeta(
   kind: WorkflowNodeKindMetadata["kind"],
   default_template: WorkflowNodeKindMetadata["default_template"],
   edge_slots: WorkflowNodeKindMetadata["edge_slots"] = [],
+  overrides: Partial<WorkflowNodeKindMetadata> = {},
 ): WorkflowNodeKindMetadata {
   return {
     kind,
@@ -19,10 +20,13 @@ function nodeMeta(
     protected: false,
     terminal: false,
     addable: true,
+    handler_safe: false,
+    runnable_entry: true,
     supports_predicate_edges: edge_slots.length === 0,
     fields: [],
     edge_slots,
     default_template,
+    ...overrides,
   };
 }
 
@@ -308,6 +312,30 @@ export const testNodeKindCatalog: WorkflowNodeKindMetadata[] = [
     retry: { max_attempts: 1 },
     transitions: {},
   }),
+  // the two kinds an interrupt handler region is scaffolded from. audit's template points at `end`
+  // on purpose -- the scaffold has to strip that, and a fixture without it would not catch the bug.
+  nodeMeta(
+    "audit",
+    {
+      kind: "audit",
+      parameters: { action: "" },
+      retry: { max_attempts: 1 },
+      transitions: { next: endRef() },
+    },
+    [],
+    { category: "io", handler_safe: true },
+  ),
+  nodeMeta(
+    "resume",
+    { kind: "resume", parameters: { mode: "resume" } },
+    [],
+    {
+      category: "control-flow",
+      terminal: true,
+      handler_safe: true,
+      supports_predicate_edges: false,
+    },
+  ),
 ];
 
 export const testMatchKindEnumCatalog = [

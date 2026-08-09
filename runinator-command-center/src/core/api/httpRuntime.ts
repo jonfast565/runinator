@@ -373,6 +373,24 @@ const REGISTRY: Record<string, HttpDescriptor> = {
   cancel_workflow_run: workflowRunAction("cancel"),
   pause_workflow_run: workflowRunAction("pause"),
   resume_workflow_run: workflowRunAction("resume"),
+  // every field is optional end to end (`#[serde(default)]`): an omitted source defaults to
+  // `external`, and an omitted cursor targets whichever real thread drives next.
+  request_run_interrupt: {
+    method: "POST",
+    path: (args) => `workflow_runs/${escape(arg(args, "workflowRunId"))}/interrupts`,
+    body: (args) => ({
+      source: argOpt(args, "source") ?? null,
+      payload: argOpt(args, "payload") ?? null,
+      cursor_id: argOpt(args, "cursorId") ?? null,
+    }),
+  },
+  // signals had a tauri command but no http descriptor, so delivering one from the web build threw
+  // "unknown command in web mode".
+  deliver_signal: {
+    method: "POST",
+    path: (args) => `workflow_runs/${escape(arg(args, "workflowRunId"))}/signals`,
+    body: (args) => ({ name: arg(args, "name"), payload: argOpt(args, "payload") ?? {} }),
+  },
   fork_workflow_run_cursor: {
     method: "POST",
     path: (args) => `workflow_runs/${escape(arg(args, "workflowRunId"))}/debug/fork`,

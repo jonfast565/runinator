@@ -92,6 +92,8 @@ pub(crate) fn base(
         protected: false,
         terminal: spec.graph_role().terminal,
         addable: true,
+        handler_safe: spec.graph_role().handler_safe,
+        runnable_entry: spec.graph_role().runnable_entry,
         supports_predicate_edges: true,
         fields: Vec::new(),
         edge_slots: Vec::new(),

@@ -42,6 +42,7 @@ const MAX_OPEN_RUN_TABS = 8;
 const WATCH_STORAGE_PREFIX = "runinator.watch.";
 
 export interface WorkflowEditorPeer {
+  refreshHeaderDraft: () => void;
   setWorkflowJsonSilently: (next: string) => void;
   setWorkflowWdlSilently: (next: string) => void;
   refreshWorkflowWdl: () => Promise<void>;
@@ -128,7 +129,7 @@ export function createWorkflowCatalogService(
     const isSwitch = host.state.selectedWorkflowId !== workflow.id;
     host.state.selectedWorkflowId = workflow.id;
     Object.assign(host.state.workflowDraft, normalizeWorkflowDefinition(cloneJson(workflow)));
-    host.state.workflowConcurrency = Number(host.state.workflowDraft.definition.concurrency ?? 1);
+    editor.refreshHeaderDraft();
     editor.setWorkflowJsonSilently(pretty(host.state.workflowDraft.definition));
 
     if (isSwitch) {
@@ -441,7 +442,6 @@ export function createWorkflowCatalogService(
       return;
     }
 
-    host.state.workflowDraft.definition.concurrency = host.state.workflowConcurrency;
     Object.assign(host.state.workflowDraft, normalizeWorkflowDefinition(cloneJson(host.state.workflowDraft)));
     const saved = await host.ctx.runOperation("Saving workflow", async () =>
       saveWorkflowWdl(await workflowWdlSaveRequest()),

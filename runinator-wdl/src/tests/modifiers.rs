@@ -472,3 +472,77 @@ fn a_region_without_an_explicit_resume_gets_a_synthetic_one() {
         "the block's continuation is the synthetic resume"
     );
 }
+
+/// the graph editor's "add interrupt handler" scaffold writes this json directly -- an `audit` entry
+/// wired to a bare `resume`, declared in `metadata.interrupts`.
+///
+/// it never passes through the wdl front end on the way in, but saving decompiles it and the server
+/// recompiles the text, so the shape has to survive that trip. a region the decompiler cannot render
+/// is either rejected at save or silently rewritten, and neither failure is visible in the editor.
+#[test]
+fn a_scaffolded_interrupt_region_survives_the_save_round_trip() {
+    let scaffolded: runinator_models::workflows::WorkflowDefinition = serde_json::from_value(
+        serde_json::json!({
+            "name": "Scaffolded",
+            "version": "1.0.0",
+            "enabled": true,
+            "definition": {
+                "start": "start",
+                "nodes": [
+                    { "id": "start", "kind": "start", "transitions": { "next": { "$node": "wait_a_bit" } } },
+                    { "id": "wait_a_bit", "kind": "wait", "wait": { "seconds": 30 },
+                      "transitions": { "next": { "$node": "end" } } },
+                    { "id": "end", "kind": "end" },
+                    { "id": "on_external", "kind": "audit",
+                      "parameters": { "action": "interrupt:external" },
+                      "transitions": { "next": { "$node": "resume_external" } } },
+                    { "id": "resume_external", "kind": "resume", "parameters": { "mode": "resume" } }
+                ],
+                "metadata": { "interrupts": [{ "on": "external", "handler": "on_external" }] }
+            }
+        }),
+    )
+    .expect("scaffolded definition");
+
+    let source = decompile(&scaffolded).expect("scaffolded region must decompile");
+    assert!(
+        source.contains("interrupt on external {"),
+        "the declaration must reach the wdl header, got:\n{source}"
+    );
+
+    let recompiled = compile_str(&source, &default_test_options()).expect("recompile");
+    let interrupts = recompiled
+        .definition
+        .metadata
+        .pointer("/interrupts")
+        .and_then(|value| value.as_array())
+        .expect("interrupts survive the round trip");
+    assert_eq!(interrupts.len(), 1);
+    assert_eq!(
+        interrupts[0].get("on").and_then(|on| on.as_str()),
+        Some("external")
+    );
+    // the region's nodes come back, and the entry still points at a resume.
+    let entry = interrupts[0]
+        .get("handler")
+        .and_then(|handler| handler.as_str())
+        .expect("handler");
+    let entry_node = recompiled
+        .definition
+        .nodes
+        .iter()
+        .find(|node| node.id == entry)
+        .expect("region entry survives");
+    assert_eq!(
+        entry_node.kind,
+        runinator_models::workflows::WorkflowNodeKind::Audit
+    );
+    assert!(
+        recompiled
+            .definition
+            .nodes
+            .iter()
+            .any(|node| node.kind == runinator_models::workflows::WorkflowNodeKind::Resume),
+        "the region must still end at a resume"
+    );
+}

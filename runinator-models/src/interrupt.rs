@@ -114,6 +114,11 @@ pub enum InterruptMode {
 }
 
 impl InterruptMode {
+    /// every mode, in the order the ui should offer them: the default first, then the decisions
+    /// that move the interrupted thread. the catalog and the `resume` node's field read this, so a
+    /// new variant reaches both without a second list to keep in step.
+    pub const ALL: [Self; 4] = [Self::Resume, Self::Continue, Self::Restart, Self::Fail];
+
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Resume => "resume",

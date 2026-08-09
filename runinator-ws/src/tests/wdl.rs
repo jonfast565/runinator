@@ -70,7 +70,26 @@ async fn get_enum_catalogs_returns_catalog_json() {
     let crate::models::ApiResponse::JsonValue(value) = response else {
         panic!("enum catalog response must be json");
     };
-    assert_eq!(value.as_array().map(Vec::len), Some(4));
+    // assert the names rather than a bare count: the ui looks each one up by name, so a rename is
+    // the failure that matters and a count alone would not say which entry moved.
+    let names: Vec<&str> = value
+        .as_array()
+        .expect("enum catalog must be an array")
+        .iter()
+        .filter_map(|entry| entry.get("name").and_then(|name| name.as_str()))
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "gate_kind",
+            "match_kind",
+            "branch_policy",
+            "setting_kind",
+            "interrupt_source",
+            "resume_mode",
+            "concurrency_policy",
+        ]
+    );
 }
 
 #[tokio::test]

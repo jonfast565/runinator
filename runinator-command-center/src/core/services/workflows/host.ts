@@ -57,6 +57,8 @@ export interface WorkflowServiceHost {
   canPauseWorkflowRun(): boolean;
   canResumeWorkflowRun(): boolean;
   canCancelWorkflowRun(): boolean;
+  canRequestRunInterrupt(): boolean;
+  getRequestableInterruptSources(): string[];
   getCurrentBreakpoints(): string[];
   canRemoveSelectedStep(): boolean;
   getFilteredWorkflows(): WorkflowDefinition[];

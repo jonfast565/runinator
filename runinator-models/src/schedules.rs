@@ -23,6 +23,10 @@ pub enum ConcurrencyPolicy {
 }
 
 impl ConcurrencyPolicy {
+    /// every policy, default first. the ui catalog reads this so the option list cannot drift from
+    /// the variants the trigger loop actually honors.
+    pub const ALL: [Self; 4] = [Self::Allow, Self::Skip, Self::Queue, Self::CancelPrevious];
+
     pub fn as_str(self) -> &'static str {
         match self {
             ConcurrencyPolicy::Allow => "allow",
@@ -316,3 +320,7 @@ pub struct BackfillResponse {
     pub run_ids: Vec<Uuid>,
     pub slots: Vec<DateTime<Utc>>,
 }
+
+#[cfg(test)]
+#[path = "schedules_tests.rs"]
+mod tests;

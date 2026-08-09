@@ -600,3 +600,171 @@
     padding: 8px 10px;
   }
 }
+
+/* -- panel stack: several views docked on one side, eclipse style ---------------------------- */
+
+.panel-stack {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.panel-stack-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 8px;
+}
+
+.panel-stack-tab {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.panel-stack-tab:hover {
+  color: var(--text);
+}
+
+.panel-stack-tab.active {
+  border-bottom-color: var(--accent);
+  color: var(--text);
+}
+
+.panel-stack-tab .count-pill.error {
+  color: var(--danger-fg, var(--text));
+  background: var(--danger-bg, var(--surface-muted));
+}
+
+.panel-stack-collapse {
+  margin-left: auto;
+  padding: 0 6px;
+  border: none;
+  background: none;
+  color: var(--text-subtle);
+  cursor: pointer;
+}
+
+.panel-stack-collapse:hover {
+  color: var(--text);
+}
+
+/* a minimized stack keeps only its tab strip, so the split pane hands the space to its sibling. */
+.panel-stack-collapsed {
+  flex: 0 0 auto;
+}
+
+.panel-stack-collapsed .panel-stack-tabs {
+  margin-bottom: 0;
+  border-bottom: none;
+}
+
+.panel-stack-body,
+.panel-stack-view {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* -- workflow header panel -------------------------------------------------------------------- */
+
+.header-panel {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 10px;
+  overflow: auto;
+}
+
+.header-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.header-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-muted);
+}
+
+.header-row-controls {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.header-row-controls label {
+  display: grid;
+  min-width: 140px;
+  flex: 1 1 140px;
+  gap: 3px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.region-chips {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0;
+}
+
+.region-label {
+  color: var(--text-subtle);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.region-chip {
+  padding: 1px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.region-chip:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.meta-link {
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline dotted;
+}

@@ -30,6 +30,8 @@ function nodeMeta(kind: string): WorkflowNodeKindMetadata {
     protected: false,
     terminal: false,
     addable: true,
+    handler_safe: false,
+    runnable_entry: true,
     supports_predicate_edges: true,
     fields: [],
     edge_slots: [],

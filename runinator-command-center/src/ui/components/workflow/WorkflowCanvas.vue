@@ -302,6 +302,7 @@ import { useProvidersStore } from "../../../ui/adapters/pinia/providers";
 import { useSecretsStore } from "../../../ui/adapters/pinia/secrets";
 import { useCatalogMetadataStore } from "../../../ui/adapters/pinia/catalogMetadata";
 import { optionIdForSourceHandle, recordArray } from "../../../core/workflow";
+import { HEADER_ISSUE_NODE_ID } from "../../../core/workflow/header-validation";
 import { buildSampleContext } from "../../../core/utils/workflow-references";
 import { displayValue } from "../../../core/utils/values";
 import ExpressionJsonEditor from "../shared/ExpressionJsonEditor.vue";
@@ -468,6 +469,13 @@ const issueSummaryClass = computed(() => {
 
 // select the node and recenter the graph on it so the user can fix it.
 function focusIssueNode(nodeId: string) {
+  // a header issue belongs to the workflow, not to a node; there is nothing on the canvas to focus,
+  // and populating the step editor with this id would select a node that does not exist.
+  if (nodeId === HEADER_ISSUE_NODE_ID) {
+    workflows.openWorkflowHeader();
+    return;
+  }
+
   workflows.populateStepEditor(nodeId);
   void nextTick(() => fitView({ nodes: [nodeId], duration: 400, maxZoom: 1.2 }));
 }

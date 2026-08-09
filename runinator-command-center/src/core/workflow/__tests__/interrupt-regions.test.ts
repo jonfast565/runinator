@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import { buildGanttLayout } from "../run-gantt";
-import { interruptDeclarations, interruptRegionOrigins } from "../interrupt-regions";
+import {
+  interruptDeclarations,
+  interruptRegionNodes,
+  interruptRegionOrigins,
+  nodesById,
+} from "../interrupt-regions";
 import type { WorkflowDefinition, WorkflowNodeRun, WorkflowRunDetail } from "../../domain/models";
 
 /** start -> poll -> end, plus an isolated `refresh -> handled` handler region for `wake`. */
@@ -74,6 +79,25 @@ describe("interruptRegionOrigins", () => {
 
   it("is empty for a workflow that declares no handlers", () => {
     expect(interruptRegionOrigins(null).size).toBe(0);
+  });
+
+  /** a handler pointing at a deleted node must be visible as a broken member, not as an empty
+   * region -- decompile renders that case as an empty block and silently rewrites the workflow. */
+  it("reports a dangling target as a missing region member", () => {
+    const definition = snapshot();
+    const nodes = definition.definition.nodes as { id: string }[];
+    const walk = interruptRegionNodes(nodesById(definition), "refresh");
+
+    expect(walk.nodes).toEqual(new Set(["refresh", "handled"]));
+    expect(walk.missing.size).toBe(0);
+
+    const broken = { ...definition, definition: { ...definition.definition, nodes: nodes.filter((n) => n.id !== "handled") } } as WorkflowDefinition;
+    const brokenWalk = interruptRegionNodes(nodesById(broken), "refresh");
+
+    expect(brokenWalk.nodes).toEqual(new Set(["refresh", "handled"]));
+    expect(brokenWalk.missing).toEqual(new Set(["handled"]));
+    // the origins map skips it: there is no node, so there is no row to attribute.
+    expect(interruptRegionOrigins(broken).has("handled")).toBe(false);
   });
 });
 

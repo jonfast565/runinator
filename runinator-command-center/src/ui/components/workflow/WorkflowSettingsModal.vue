@@ -21,15 +21,6 @@
               pattern="\d+\.\d+\.\d+"
               @input="workflows.markWorkflowDirty"
           /></label>
-          <label
-            >Concurrency
-            <input
-              v-model.number="workflows.workflowConcurrency"
-              type="number"
-              min="1"
-              max="256"
-              @input="workflows.markWorkflowDirty"
-          /></label>
           <label class="checkbox"
             ><input
               v-model="workflows.workflowDraft.enabled"

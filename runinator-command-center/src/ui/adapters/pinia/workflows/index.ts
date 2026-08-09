@@ -509,12 +509,7 @@ export const useWorkflowsStore = defineStore("workflows", () => {
       },
     }),
     workflowWdlError: computed(() => state.value.workflowWdlError),
-    workflowConcurrency: computed({
-      get: () => state.value.workflowConcurrency,
-      set: (workflowConcurrency) => {
-        svc.setState((current) => ({ ...current, workflowConcurrency }));
-      },
-    }),
+    headerDraft: computed(() => state.value.headerDraft),
     workflowSettingsOpen: computed({
       get: () => state.value.workflowSettingsOpen,
       set: (workflowSettingsOpen) => {
@@ -714,6 +709,30 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     applyGraphEdgeSemantic: svc.editor.applyGraphEdgeSemantic,
     applyStepEditor: svc.editor.applyStepEditor,
     populateStepEditor: svc.editor.populateStepEditor,
+    // the workflow header panel: the four declarations that belong to the workflow, not a node.
+    openWorkflowHeader: svc.header.openWorkflowHeader,
+    closeWorkflowHeader: svc.header.closeWorkflowHeader,
+    declareHeaderInterrupt: svc.header.declareHeaderInterrupt,
+    setHeaderInterruptSource: svc.header.setHeaderInterruptSource,
+    setHeaderInterruptHandler: svc.header.setHeaderInterruptHandler,
+    removeHeaderInterrupt: svc.header.removeHeaderInterrupt,
+    scaffoldInterruptHandler: svc.header.scaffoldInterruptHandler,
+    addHeaderWatch: svc.header.addHeaderWatch,
+    setHeaderWatch: svc.header.setHeaderWatch,
+    removeHeaderWatch: svc.header.removeHeaderWatch,
+    setHeaderConcurrency: svc.header.setHeaderConcurrency,
+    clearHeaderConcurrency: svc.header.clearHeaderConcurrency,
+    setHeaderCorrelation: svc.header.setHeaderCorrelation,
+    getHeaderIssues: svc.header.getHeaderIssues,
+    getHandlerCandidateNodeIds: svc.header.getHandlerCandidateNodeIds,
+    getRegionNodeIds: svc.header.getRegionNodeIds,
+    getUndeclaredInterruptSources: svc.header.getUndeclaredInterruptSources,
+    headerIssueCount: computed(() => {
+      // depend on the draft so the tab's error pill re-computes when the graph or header changes.
+      void state.value.headerDraft;
+      void state.value.workflowLayoutVersion;
+      return svc.header.getHeaderIssueCount();
+    }),
     updateSelectedWorkflowNodeDetail: svc.runs.updateSelectedWorkflowNodeDetail,
     onGraphNodeClick,
     onGraphNodeDoubleClick,
@@ -725,6 +744,15 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     onGraphEdgesChange,
     autoArrangeWorkflowNodes: svc.editor.autoArrangeWorkflowNodes,
     isDirty: computed(() => state.value.isDirty),
+    requestSelectedRunInterrupt: svc.runs.requestSelectedRunInterrupt,
+    canRequestRunInterrupt: computed(() => {
+      void state.value.workflowRunDetail;
+      return svc.canRequestRunInterrupt();
+    }),
+    requestableInterruptSources: computed(() => {
+      void state.value.workflowRunDetail;
+      return svc.getRequestableInterruptSources();
+    }),
     syncWorkflowJson: svc.editor.syncWorkflowJson,
     syncWorkflowDraftToJson: svc.editor.syncWorkflowDraftToJson,
     syncWorkflowWdl: svc.editor.syncWorkflowWdl,

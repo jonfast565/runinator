@@ -42,7 +42,8 @@ pub async fn get_trigger_kinds() -> (StatusCode, Json<ApiResponse>) {
     json_response(serde_json::to_value(trigger_kind_catalog()))
 }
 
-/// small closed enums the frontend renders as select controls (gate/match/branch-policy/setting).
+/// small closed enums the frontend renders as select controls (gate/match/branch-policy/setting,
+/// interrupt-source/resume-mode/concurrency-policy).
 #[utoipa::path(
     get,
     path = "/catalog/enums",

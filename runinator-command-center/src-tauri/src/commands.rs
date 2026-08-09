@@ -1733,6 +1733,23 @@ pub async fn deliver_signal(
     .await
 }
 
+/// record an interrupt request on a run. the reducer decides whether it can be serviced.
+#[tauri::command]
+pub async fn request_run_interrupt(
+    state: State<'_, CommandCenterState>,
+    workflow_run_id: Uuid,
+    source: Option<String>,
+    payload: Option<Value>,
+    cursor_id: Option<Uuid>,
+) -> CommandResult<Value> {
+    post_json(
+        &state,
+        &format!("workflow_runs/{workflow_run_id}/interrupts"),
+        &json!({ "source": source, "payload": payload, "cursor_id": cursor_id }),
+    )
+    .await
+}
+
 #[tauri::command]
 pub async fn fetch_all_artifacts(
     state: State<'_, CommandCenterState>,

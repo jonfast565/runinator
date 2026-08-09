@@ -5,12 +5,14 @@ import {
   addTeamMember,
   createApiKey,
   createUser,
+  deliverSignal,
   fetchEnumCatalogs,
   fetchNodeKinds,
   fetchTriggerKinds,
   fetchWorkflowNodeRunArtifacts,
   fetchWorkflowNodeRunChunks,
   listTeamMembers,
+  requestRunInterrupt,
   rotateApiKey,
   updateApiKey,
   updateTeam,
@@ -194,6 +196,61 @@ describe("command center permissions API in web mode", () => {
       3,
       "/api/api_keys/00000000-0000-0000-0000-000000000003/rotate",
       expect.objectContaining({ method: "POST" }),
+    );
+  });
+});
+
+describe("run side-channel endpoints in web mode", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubGlobal("window", {});
+    setCommandRuntime({
+      isTauri: () => false,
+      invoke: invokeViaHttp,
+      wsBaseUrl,
+      apiBaseUrl,
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: vi.fn().mockResolvedValue({}),
+      }),
+    );
+  });
+
+  it("posts an interrupt request with its optional fields", async () => {
+    await requestRunInterrupt(
+      "00000000-0000-0000-0000-000000000080",
+      "external",
+      { why: "manual" },
+      "00000000-0000-0000-0000-000000000081",
+    );
+
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/workflow_runs/00000000-0000-0000-0000-000000000080/interrupts",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          source: "external",
+          payload: { why: "manual" },
+          cursor_id: "00000000-0000-0000-0000-000000000081",
+        }),
+      }),
+    );
+  });
+
+  /** signals had a tauri command but no http descriptor, so the web build threw on delivery. */
+  it("posts a signal delivery", async () => {
+    await deliverSignal("00000000-0000-0000-0000-000000000080", "approved", { by: "ada" });
+
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/workflow_runs/00000000-0000-0000-0000-000000000080/signals",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ name: "approved", payload: { by: "ada" } }),
+      }),
     );
   });
 });

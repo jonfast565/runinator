@@ -1,6 +1,6 @@
 import type { JsonRecord, JsonValue } from "../domain/json";
 import type { WorkflowDefinition } from "../domain/models";
-import { directTransitionKeys, nodeRefId } from "./index";
+import { directTransitionKeys, nodeRefId } from "./node-refs";
 
 /** one declared handler: the source that raises it and the node its region starts at. */
 export interface InterruptDeclaration {
@@ -38,7 +38,7 @@ export function interruptDeclarations(
 }
 
 /** every node id reachable from `node`, following transitions and branch targets. */
-function outgoing(node: JsonRecord): string[] {
+export function nodeTargets(node: JsonRecord): string[] {
   const transitions = asRecord(node.transitions);
   const targets: string[] = [];
 
@@ -81,6 +81,64 @@ function outgoing(node: JsonRecord): string[] {
   return targets;
 }
 
+/** the outcome of walking one region: the nodes it contains, and the ids it reached that do not exist. */
+export interface RegionWalk {
+  /** every node id the walk reached, including ones with no matching node. */
+  nodes: Set<string>;
+  /** the subset of `nodes` no node carries. the backend reports these as broken region members. */
+  missing: Set<string>;
+}
+
+/** index a definition's nodes by id, skipping entries without a string id. */
+export function nodesById(definition: WorkflowDefinition | null | undefined): Map<string, JsonRecord> {
+  const byId = new Map<string, JsonRecord>();
+
+  for (const entry of asArray(definition?.definition.nodes)) {
+    const node = asRecord(entry);
+
+    if (typeof node.id === "string") {
+      byId.set(node.id, node);
+    }
+  }
+
+  return byId;
+}
+
+/**
+ * every node reachable from `entry`, following transitions and branch/arm targets.
+ *
+ * mirrors the backend's `collect_body_region`, including the order it does things in: an id is
+ * recorded as a member *before* the node is looked up, so a dangling target is a broken member of
+ * the region rather than an edge that silently ends it. that distinction is the whole difference
+ * between the validator reporting "region node does not exist" and reporting nothing at all.
+ */
+export function interruptRegionNodes(byId: Map<string, JsonRecord>, entry: string): RegionWalk {
+  const nodes = new Set<string>();
+  const missing = new Set<string>();
+  const stack = [entry];
+
+  while (stack.length > 0) {
+    const id = stack.pop();
+
+    if (id === undefined || nodes.has(id)) {
+      continue;
+    }
+
+    nodes.add(id);
+
+    const node = byId.get(id);
+
+    if (!node) {
+      missing.add(id);
+      continue;
+    }
+
+    stack.push(...nodeTargets(node));
+  }
+
+  return { nodes, missing };
+}
+
 /**
  * map every node belonging to an interrupt handler region to the interrupt it answers.
  *
@@ -99,34 +157,19 @@ export function interruptRegionOrigins(
     return origins;
   }
 
-  const byId = new Map<string, JsonRecord>();
-
-  for (const entry of asArray(definition?.definition.nodes)) {
-    const node = asRecord(entry);
-
-    if (typeof node.id === "string") {
-      byId.set(node.id, node);
-    }
-  }
+  const byId = nodesById(definition);
 
   for (const declaration of declarations) {
-    const stack = [declaration.handler];
+    const { nodes, missing } = interruptRegionNodes(byId, declaration.handler);
 
-    while (stack.length > 0) {
-      const id = stack.pop();
-
-      if (id === undefined || origins.has(id)) {
-        continue;
-      }
-
-      const node = byId.get(id);
-
-      if (!node) {
+    for (const id of nodes) {
+      // a node that does not exist has no timeline row to attribute, and the first declaration to
+      // claim a shared node keeps it -- both matching the walk this replaced.
+      if (missing.has(id) || origins.has(id)) {
         continue;
       }
 
       origins.set(id, { source: declaration.source, handler: declaration.handler });
-      stack.push(...outgoing(node));
     }
   }
 

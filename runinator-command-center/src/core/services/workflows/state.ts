@@ -7,6 +7,8 @@ import type {
   WorkflowRunDetail,
   WorkflowTrigger,
 } from "../../domain/models";
+import { emptyWorkflowHeader } from "../../workflow/header-metadata";
+import type { WorkflowHeader } from "../../workflow/header-metadata";
 import {
   createStepEditorState,
   emptyWorkflowTriggerDraft,
@@ -22,7 +24,6 @@ export interface WorkflowServicesState {
   workflowJson: string;
   workflowWdl: string;
   workflowWdlError: string;
-  workflowConcurrency: number;
   workflowSettingsOpen: boolean;
   runInputOpen: boolean;
   runInputDraft: JsonRecord;
@@ -35,7 +36,9 @@ export interface WorkflowServicesState {
   triggerJson: { configuration: string; metadata: string };
   workflowEditorMode: "graph" | "json" | "wdl";
   workflowLayoutDirection: WorkflowLayoutDirection;
-  workflowInspectorMode: "step";
+  workflowInspectorMode: "step" | "header";
+  /** working copy of the four workflow-level header declarations; applied back on every commit. */
+  headerDraft: WorkflowHeader;
   stepEditorOpen: boolean;
   stepEditorCreating: boolean;
   stepEditorCreatedNodeId: string;
@@ -112,7 +115,6 @@ export function createWorkflowServicesState(): WorkflowServicesState {
     workflowJson: "{}",
     workflowWdl: "",
     workflowWdlError: "",
-    workflowConcurrency: 1,
     workflowSettingsOpen: false,
     runInputOpen: false,
     runInputDraft: {},
@@ -126,6 +128,7 @@ export function createWorkflowServicesState(): WorkflowServicesState {
     workflowEditorMode: "graph",
     workflowLayoutDirection: "horizontal",
     workflowInspectorMode: "step",
+    headerDraft: emptyWorkflowHeader(),
     stepEditorOpen: false,
     stepEditorCreating: false,
     stepEditorCreatedNodeId: "",

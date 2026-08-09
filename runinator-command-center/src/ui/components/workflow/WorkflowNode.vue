@@ -29,6 +29,14 @@
         <span>{{ kindLabel }}</span>
       </span>
       <span v-if="showNodeId" class="node-id" :title="`Step ID: ${id}`">{{ id }}</span>
+      <!-- a handler region is unreachable from start by design, so without this it reads on the
+           canvas as an orphaned island rather than as an interrupt handler. -->
+      <span
+        v-if="data.interruptRegion"
+        class="node-interrupt-badge"
+        :title="`Interrupt handler for '${data.interruptRegion.source}' (region entry ${data.interruptRegion.handler})`"
+        >{{ data.interruptEntry ? `⚡ ${data.interruptRegion.source}` : "⚡" }}</span
+      >
       <span v-if="isWaitingState" class="node-waiting-icon" title="Waiting">
         <Icon name="hourglass" :size="12" />
       </span>
@@ -211,6 +219,7 @@
 <script setup lang="ts">
 import { Handle, Position } from "@vue-flow/core";
 import type { CursorMarker } from "../../../core/domain/models";
+import type { InterruptOrigin } from "../../../core/workflow/interrupt-regions";
 import { computed, ref, watch } from "vue";
 import { useWorkflowsStore } from "../../../ui/adapters/pinia/workflows";
 import { useResourcesStore } from "../../../ui/adapters/pinia/resources";
@@ -264,6 +273,10 @@ const props = defineProps<{
     debugBreakpoint?: boolean;
     /** threads of control standing on this node; a node may carry several. */
     cursors?: CursorMarker[];
+    /** the interrupt handler region this node belongs to, or null for the main flow. */
+    interruptRegion?: InterruptOrigin | null;
+    /** true when this node is the region's declared entry. */
+    interruptEntry?: boolean;
   };
 }>();
 
@@ -669,6 +682,28 @@ function formatInputDraft(value: unknown): string {
 
 .node-validation-badge.error {
   background: var(--danger-solid);
+}
+
+.node-interrupt-badge {
+  padding: 0 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-subtle);
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* a region node is a side channel, not part of the main flow: tinted, with a marked left edge.
+   applied alongside the status class so a live run still colours the node by status. */
+:global(.vue-flow__node.node-interrupt-region) .workflow-node {
+  border-left: 3px solid var(--accent);
+  background-image: linear-gradient(
+    to right,
+    color-mix(in srgb, var(--accent) 8%, transparent),
+    transparent 60%
+  );
 }
 
 .node-execution-count {

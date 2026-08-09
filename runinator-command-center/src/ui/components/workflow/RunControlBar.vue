@@ -27,17 +27,34 @@
       <Icon name="stop" :size="14" />
       <span>Stop</span>
     </button>
+    <button
+      class="btn btn-sm"
+      :disabled="!workflows.canRequestRunInterrupt || runControlBusy"
+      :title="
+        workflows.canRequestRunInterrupt
+          ? 'Ask this run to raise an interrupt on its next drive'
+          : 'This workflow declares no interrupt handlers'
+      "
+      @click="interruptOpen = true"
+    >
+      <Icon name="alert" :size="14" />
+      <span>Interrupt</span>
+    </button>
   </div>
+  <WorkflowInterruptModal v-if="interruptOpen" @close="interruptOpen = false" />
 </template>
 
 <script setup lang="ts">
+import { ref } from "vue";
 import { useWorkflowsStore } from "../../../ui/adapters/pinia/workflows";
 import { useOperationLoading } from "../../composables/useOperationLoading";
 import Icon from "../shared/Icon.vue";
+import WorkflowInterruptModal from "./WorkflowInterruptModal.vue";
 
 const workflows = useWorkflowsStore();
+const interruptOpen = ref(false);
 const { isLoading: runControlBusy } = useOperationLoading(
-  ["Pausing workflow run", "Resuming workflow run", "Canceling workflow run"],
+  ["Pausing workflow run", "Resuming workflow run", "Canceling workflow run", "Requesting"],
   { prefix: true },
 );
 </script>

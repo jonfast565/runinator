@@ -170,6 +170,15 @@ pub struct WorkflowNodeKindMetadata {
     /// whether this kind appears in the "add node" palette (start/end/fail do not).
     #[serde(default)]
     pub addable: bool,
+    /// may appear inside an interrupt handler region. an opt-in allowlist: a kind that could park
+    /// or fan out inside a handler is not on it. the header editor reads this to validate a region
+    /// and to pick what it scaffolds, rather than keeping a second copy of the list.
+    #[serde(default)]
+    pub handler_safe: bool,
+    /// may be entered as a branch, body, or handler-region target — true for everything but
+    /// `start`/`end`/`fail`.
+    #[serde(default)]
+    pub runnable_entry: bool,
     /// whether this kind can host user-defined predicate edges (a `when -> target` route in
     /// `transitions.branches`, evaluated before status routing). control-flow kinds that own their
     /// routing (condition, switch, parallel, ...) and terminals do not.
@@ -201,7 +210,8 @@ pub struct WorkflowTriggerKindMetadata {
     pub default_configuration: Value,
 }
 
-/// one option of a small closed enum (gate kind, edge match kind, branch policy, setting kind).
+/// one option of a small closed enum (gate kind, edge match kind, branch policy, setting kind,
+/// interrupt source, resume mode, concurrency policy).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EnumOptionMetadata {
     pub value: String,
@@ -228,7 +238,8 @@ impl EnumOptionMetadata {
 /// a named closed enum served for the frontend's `<select>` controls.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EnumCatalogMetadata {
-    /// stable name: `gate_kind`, `match_kind`, `branch_policy`, `setting_kind`.
+    /// stable name: `gate_kind`, `match_kind`, `branch_policy`, `setting_kind`,
+    /// `interrupt_source`, `resume_mode`, `concurrency_policy`.
     pub name: String,
     pub options: Vec<EnumOptionMetadata>,
 }

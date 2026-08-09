@@ -20,6 +20,7 @@ import {
   pauseWorkflowRun,
   renameWorkflowRun as renameWorkflowRunApi,
   replayWorkflowRun as replayWorkflowRunApi,
+  requestRunInterrupt,
   resumeWorkflowRun,
   rerunWorkflowNode,
   runToCursorWorkflowRun,
@@ -380,6 +381,40 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     }
 
     host.ctx.setStatus(response.message || `Workflow run ${runId} canceled`);
+    await fetchWorkflowRunDetail(runId, true);
+    host.notify();
+  }
+
+  /**
+   * ask the selected run to raise an interrupt.
+   *
+   * the web service only records the request; the reducer decides on the next drive whether it can
+   * be serviced, and every refusal is silent. so the status message says "recorded", not "raised" --
+   * reporting it as raised would be the ui inventing a guarantee the backend does not make.
+   */
+  async function requestSelectedRunInterrupt(
+    source: string,
+    payload: unknown = null,
+    cursorId: string | null = null,
+  ) {
+    if (!host.state.workflowRunDetail || !host.canRequestRunInterrupt()) {
+      return;
+    }
+
+    const runId = host.state.workflowRunDetail.run.id;
+    const response = await host.ctx.runOperation(
+      `Requesting ${source} interrupt for workflow run ${runId}`,
+      () => requestRunInterrupt(runId, source, payload, cursorId),
+    );
+
+    if (!response.success) {
+      host.ctx.setError(response.message || "Failed to request interrupt");
+      return;
+    }
+
+    host.ctx.setStatus(
+      `Interrupt '${source}' recorded on run ${runId}; it is raised on the next drive if a handler can service it`,
+    );
     await fetchWorkflowRunDetail(runId, true);
     host.notify();
   }
@@ -1318,6 +1353,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     retireCursor,
     armNodeForReal,
     cancelSelectedWorkflowRun,
+    requestSelectedRunInterrupt,
     pauseSelectedWorkflowRun,
     resumeSelectedWorkflowRun,
     patchSelectedWorkflowRunDebug,

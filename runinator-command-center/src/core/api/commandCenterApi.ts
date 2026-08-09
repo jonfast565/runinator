@@ -991,3 +991,23 @@ export async function closeGate(gateId: string, reason?: string) {
 export async function deliverSignal(workflowRunId: string, name: string, payload: unknown = {}) {
   return command<TaskResponse>("deliver_signal", { workflowRunId, name, payload });
 }
+
+/**
+ * ask a run to raise an interrupt.
+ *
+ * this only *records* the request on the run. the reducer decides whether it can be serviced on the
+ * next drive, and every refusal is silent, so a `success` response means "recorded", not "raised".
+ */
+export async function requestRunInterrupt(
+  workflowRunId: string,
+  source: string,
+  payload: unknown = null,
+  cursorId: string | null = null,
+) {
+  return command<TaskResponse>("request_run_interrupt", {
+    workflowRunId,
+    source,
+    payload,
+    cursorId,
+  });
+}

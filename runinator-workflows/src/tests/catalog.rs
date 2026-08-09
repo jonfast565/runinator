@@ -2,6 +2,8 @@
 //! and field/edge locations that actually exist in those templates.
 
 use super::*;
+use runinator_models::interrupt::{InterruptMode, InterruptSource};
+use runinator_models::schedules::ConcurrencyPolicy;
 
 #[test]
 fn node_kind_catalog_covers_every_kind() {
@@ -87,7 +89,15 @@ fn trigger_catalog_covers_every_kind() {
 #[test]
 fn enum_catalog_covers_expected_enums() {
     let catalog = enum_catalogs();
-    let expected = ["gate_kind", "match_kind", "branch_policy", "setting_kind"];
+    let expected = [
+        "gate_kind",
+        "match_kind",
+        "branch_policy",
+        "setting_kind",
+        "interrupt_source",
+        "resume_mode",
+        "concurrency_policy",
+    ];
 
     assert_eq!(catalog.len(), expected.len());
     for name in expected {
@@ -124,6 +134,62 @@ fn enum_catalog_covers_expected_enums() {
     assert_eq!(
         values("match_kind"),
         ["equals", "not_equals", "exists", "when"]
+    );
+
+    // the three runtime-derived catalogs are asserted against their canonical lists rather than
+    // literals: the point of deriving them is that a new variant reaches the ui on its own, and a
+    // literal here would be the copy that goes stale instead.
+    assert_eq!(
+        values("interrupt_source"),
+        InterruptSource::ALL
+            .iter()
+            .map(|source| source.as_str())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        values("resume_mode"),
+        InterruptMode::ALL
+            .iter()
+            .map(|mode| mode.as_str())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        values("concurrency_policy"),
+        ConcurrencyPolicy::ALL
+            .iter()
+            .map(|policy| policy.as_str())
+            .collect::<Vec<_>>()
+    );
+}
+
+/// the header editor validates a handler region against these two flags and picks what it
+/// scaffolds from them, so they must be the same allowlist the validator walks.
+#[test]
+fn node_kind_catalog_mirrors_the_handler_region_graph_role() {
+    for entry in node_kind_catalog() {
+        let role = graph_role(&entry.kind);
+        assert_eq!(
+            entry.handler_safe, role.handler_safe,
+            "{:?} handler_safe must mirror its graph role",
+            entry.kind
+        );
+        assert_eq!(
+            entry.runnable_entry, role.runnable_entry,
+            "{:?} runnable_entry must mirror its graph role",
+            entry.kind
+        );
+    }
+
+    let resume = node_kind_catalog()
+        .into_iter()
+        .find(|item| item.kind == WorkflowNodeKind::Resume)
+        .expect("resume must be in the catalog");
+    // a bare `resume` is a legal one-statement region, so it is both a region entry and terminal —
+    // the pairing the frontend's connectivity check has to allow for.
+    assert!(resume.handler_safe && resume.runnable_entry && resume.terminal);
+    assert!(
+        resume.addable,
+        "a handler region is built from the palette, so resume must be addable"
     );
 }
 

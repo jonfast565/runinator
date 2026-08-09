@@ -1,4 +1,5 @@
 import type { CursorMarker } from "../domain/models/workflow-state";
+import type { InterruptOrigin } from "./interrupt-regions";
 import type {
   WorkflowEditorEdgeData,
   WorkflowInlineEditDescriptor,
@@ -32,6 +33,15 @@ export interface GraphNodeData {
    * converge, or a speculative fork walking beside the branch it came from.
    */
   cursors: CursorMarker[];
+  /**
+   * the interrupt handler region this node belongs to, or null for the main flow.
+   *
+   * a region is unreachable from `start` by design, so on the canvas it is a disconnected island.
+   * without this it reads as an orphaned mistake rather than as a handler.
+   */
+  interruptRegion: InterruptOrigin | null;
+  /** true when this node is the region's declared entry -- where the interrupt hands control in. */
+  interruptEntry: boolean;
 }
 
 export interface GraphNodeModel {

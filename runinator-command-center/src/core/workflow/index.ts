@@ -36,6 +36,10 @@ import type { GraphEdgeLike, GraphEdgeModel, GraphNodeModel } from "./graph-mode
 import { statusClassForNode } from "../utils/status";
 import { displayValue, isBlankValue } from "../utils/values";
 import { addableNodeKinds, findNodeKindMetadata } from "./catalog-registry";
+import { headerIssues } from "./header-validation";
+import { interruptRegionOrigins } from "./interrupt-regions";
+import { directTransitionKeys, nodeRefId } from "./node-refs";
+export { directTransitionKeys, nodeRefId } from "./node-refs";
 import { cloneTemplate, getAtLocation } from "./field-location";
 
 export {
@@ -69,13 +73,6 @@ export function workflowNodeKindDescription(kind: string): string {
   return findNodeKindMetadata(kind)?.description ?? "";
 }
 
-export const directTransitionKeys: WorkflowDirectTransitionKey[] = [
-  "next",
-  "on_success",
-  "on_failure",
-  "on_timeout",
-  "on_reject",
-];
 export const workflowConnectionHandles: WorkflowConnectionHandle[] = [
   "top",
   "right",
@@ -107,6 +104,8 @@ export function buildGraphNodeModels(
   const markersByNode = cursorsByNode(
     buildCursorMarkers(coerceRunCursors(detail?.run.state?.cursors), debug, selectedCursorId),
   );
+  // one region walk per graph rebuild rather than one per node, same as the cursor lookup above.
+  const regions = interruptRegionOrigins(workflow);
   return nodes.map((node: JsonRecord, index: number) => {
     const id = displayValue(node.id) || `step_${String(index + 1)}`;
     const layoutPosition = layout[id] ?? fallbackLayout[id];
@@ -116,6 +115,7 @@ export function buildGraphNodeModels(
     const run = runByNode.get(id);
     const status = run?.status ?? inferredNodeStatus(node, id, detail);
     const kind = workflowNodeKind(node.kind);
+    const interruptRegion = regions.get(id) ?? null;
     return {
       id,
       type: "workflow",
@@ -141,8 +141,13 @@ export function buildGraphNodeModels(
         skipped: node.skipped === true,
         debugBreakpoint: breakpointSet.has(id),
         cursors: markersByNode.get(id) ?? [],
+        interruptRegion,
+        interruptEntry: interruptRegion?.handler === id,
       },
-      class: statusClassForNode(status),
+      // appended, not replaced: a region node on a live run still needs its status styling.
+      class: interruptRegion
+        ? `${statusClassForNode(status)} node-interrupt-region`
+        : statusClassForNode(status),
     };
   });
 }
@@ -535,6 +540,11 @@ export function validateWorkflowIssues(
     pushProviderIssues(issues, node, providers, nodeId);
   }
 
+  // the header's declarations are validated here rather than in the panel, so a broken interrupt
+  // region shows up in the canvas diagnostics table and on the offending node without the panel
+  // being open.
+  issues.push(...headerIssues(definition));
+
   return issues;
 }
 
@@ -545,7 +555,10 @@ function pushConnectivityIssues(
 ) {
   const kind = workflowNodeKind(node.kind);
 
-  if (kind === "end" || kind === "fail") {
+  // read terminality from the catalog rather than naming end/fail: `resume` is terminal too (it
+  // hands control back rather than transitioning), and hardcoding the pair reported every handler
+  // region as broken. the literal fallback keeps this honest when the catalog has not loaded.
+  if (findNodeKindMetadata(kind)?.terminal ?? (kind === "end" || kind === "fail")) {
     return;
   }
 
@@ -2291,11 +2304,6 @@ export function nodeRef(target: string): JsonRecord {
   return { $node: target };
 }
 
-export function nodeRefId(value: unknown): string | null {
-  return isRecord(value) && typeof value.$node === "string" && value.$node.length > 0
-    ? value.$node
-    : null;
-}
 
 function nodeRefArray(value: unknown): string[] {
   return Array.isArray(value)

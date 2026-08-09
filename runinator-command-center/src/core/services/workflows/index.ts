@@ -26,6 +26,7 @@ import {
   validateWorkflowIssues,
   workflowNodeKindsList,
 } from "../../workflow/index";
+import { interruptDeclarations } from "../../workflow/interrupt-regions";
 import type { GraphEdgeModel, GraphNodeModel } from "../../workflow/graph-model";
 import type { AppTab } from "../../navigation/app";
 import type { RunOperationOptions, ToastAction } from "../app";
@@ -33,6 +34,7 @@ import { isLockedWorkflowNode } from "../../workflow/editor-defaults";
 import { createStore } from "../event-bus";
 import { createWorkflowCatalogService } from "./catalog";
 import { createWorkflowEditorService } from "./editor";
+import { createWorkflowHeaderService } from "./header";
 import { createWorkflowRunService } from "./runs";
 import { createWorkflowServicesInternal, createWorkflowServicesState } from "./state";
 import type { WorkflowServiceDeps, WorkflowServiceHost } from "./host";
@@ -217,6 +219,27 @@ export function createWorkflowServices(inputDeps: WorkflowServiceDeps) {
     return !["succeeded", "failed", "canceled", "timed_out"].includes(status);
   }
 
+  /**
+   * may the operator ask this run to raise an interrupt?
+   *
+   * needs a live run *and* a workflow that declares at least one handler. without a handler the
+   * request is recorded and then dropped by the reducer's fail-open path, so offering the button
+   * would promise something that silently never happens.
+   */
+  function canRequestRunInterrupt(): boolean {
+    if (!canCancelWorkflowRun()) {
+      return false;
+    }
+
+    return interruptDeclarations(getWorkflowRunWorkflow()).length > 0;
+  }
+
+  /** the sources this run's workflow declares a handler for, plus the always-requestable ones. */
+  function getRequestableInterruptSources(): string[] {
+    const declared = interruptDeclarations(getWorkflowRunWorkflow()).map((entry) => entry.source);
+    return [...new Set([...declared, "external"])];
+  }
+
   function getCurrentBreakpoints(): string[] {
     return getDebugState()?.breakpoints ?? [];
   }
@@ -317,6 +340,8 @@ export function createWorkflowServices(inputDeps: WorkflowServiceDeps) {
     canPauseWorkflowRun,
     canResumeWorkflowRun,
     canCancelWorkflowRun,
+    canRequestRunInterrupt,
+    getRequestableInterruptSources,
     getCurrentBreakpoints,
     canRemoveSelectedStep,
     getFilteredWorkflows,
@@ -337,11 +362,13 @@ export function createWorkflowServices(inputDeps: WorkflowServiceDeps) {
   const editor = createWorkflowEditorService(host, runs, catalogPeer);
   const catalog = createWorkflowCatalogService(host, editor, runs);
   catalogPeer.saveSelectedWorkflowBundle = catalog.saveSelectedWorkflowBundle;
+  const header = createWorkflowHeaderService(host, editor);
 
   return {
     ...store,
     catalog,
     editor,
+    header,
     runs,
     internal,
     state: store,
@@ -352,6 +379,7 @@ export function createWorkflowServices(inputDeps: WorkflowServiceDeps) {
     notify,
     ...catalog,
     ...editor,
+    ...header,
     ...runs,
     getSelectedWorkflow,
     getSelectedWorkflowInputType,
@@ -376,6 +404,8 @@ export function createWorkflowServices(inputDeps: WorkflowServiceDeps) {
     canPauseWorkflowRun,
     canResumeWorkflowRun,
     canCancelWorkflowRun,
+    canRequestRunInterrupt,
+    getRequestableInterruptSources,
     getCurrentBreakpoints,
     isDebugRun,
     canRemoveSelectedStep,

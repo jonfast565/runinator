@@ -47,6 +47,10 @@ export interface WorkflowNodeKindMetadata {
   protected: boolean;
   terminal: boolean;
   addable: boolean;
+  /** may appear inside an interrupt handler region; an opt-in allowlist, not a default. */
+  handler_safe: boolean;
+  /** may be entered as a branch, body, or handler-region target (everything but start/end/fail). */
+  runnable_entry: boolean;
   supports_predicate_edges: boolean;
   fields: NodeFieldMetadata[];
   edge_slots: NodeEdgeSlot[];

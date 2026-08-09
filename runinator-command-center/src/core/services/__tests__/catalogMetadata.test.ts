@@ -29,6 +29,8 @@ const nodeKinds: WorkflowNodeKindMetadata[] = [
     protected: false,
     terminal: false,
     addable: true,
+    handler_safe: false,
+    runnable_entry: true,
     supports_predicate_edges: true,
     fields: [
       {

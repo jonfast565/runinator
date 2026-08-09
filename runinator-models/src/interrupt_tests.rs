@@ -24,12 +24,7 @@ fn source_and_mode_names_round_trip() {
     for source in InterruptSource::ALL {
         assert_eq!(InterruptSource::from_str(source.as_str()), Some(source));
     }
-    for mode in [
-        InterruptMode::Resume,
-        InterruptMode::Continue,
-        InterruptMode::Restart,
-        InterruptMode::Fail,
-    ] {
+    for mode in InterruptMode::ALL {
         assert_eq!(InterruptMode::from_str(mode.as_str()), Some(mode));
     }
     assert_eq!(InterruptSource::from_str("webhook"), None);
@@ -74,6 +69,20 @@ fn every_source_is_listed_exactly_once_with_its_wire_name() {
             serde_json::to_value(source).unwrap(),
             serde_json::Value::String(source.as_str().into()),
             "the serde name is the author-facing name"
+        );
+    }
+}
+
+/// the mode list is what the catalog offers and what the `resume` node validates against, so a
+/// variant missing from it is a mode the ui cannot pick and the node rejects.
+#[test]
+fn every_resume_mode_is_listed_exactly_once_with_its_wire_name() {
+    let names: Vec<&str> = InterruptMode::ALL.iter().map(|m| m.as_str()).collect();
+    assert_eq!(names, ["resume", "continue", "restart", "fail"]);
+    for mode in InterruptMode::ALL {
+        assert_eq!(
+            serde_json::to_value(mode).unwrap(),
+            serde_json::Value::String(mode.as_str().into())
         );
     }
 }

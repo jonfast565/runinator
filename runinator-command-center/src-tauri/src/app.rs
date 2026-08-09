@@ -105,6 +105,7 @@ pub fn run() {
             crate::commands::open_gate,
             crate::commands::close_gate,
             crate::commands::deliver_signal,
+            crate::commands::request_run_interrupt,
             crate::commands::auth_config,
             crate::commands::auth_me,
             crate::commands::login,
