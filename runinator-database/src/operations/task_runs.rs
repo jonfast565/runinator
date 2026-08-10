@@ -43,7 +43,7 @@ where
     ) -> Result<Vec<RunSummary>, SendableError> {
         let sql = self.render(&format!(
             "SELECT id, status, parameters, output_json, message, {trigger}, started_at, finished_at, created_at, workflow_run_id, workflow_node_id FROM runs WHERE status = ? ORDER BY created_at, id",
-            trigger = queries::ident(self.dialect(), "trigger"),
+            trigger = self.dialect().ident("trigger"),
         ));
         let rows = sqlx::query(&sql)
             .bind(status.as_str())

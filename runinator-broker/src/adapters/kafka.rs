@@ -186,8 +186,8 @@ impl KafkaBrokerInner {
             return Ok(consumer);
         }
 
-        let topic = topic_for(config, channel);
-        let consumer = Arc::new(build_consumer(config, channel, consumer_id, topic)?);
+        let topic = channel.topic_for(config);
+        let consumer = Arc::new(channel.build_consumer(config, consumer_id, topic)?);
         map.lock()
             .insert(consumer_id.to_string(), Arc::clone(&consumer));
         Ok(consumer)
@@ -221,40 +221,59 @@ impl KafkaBrokerInner {
 }
 
 #[cfg(feature = "kafka")]
-fn build_consumer(
-    config: &KafkaBrokerConfig,
-    channel: KafkaChannel,
-    consumer_id: &str,
-    topic: &str,
-) -> Result<rdkafka::consumer::StreamConsumer, BrokerError> {
-    use rdkafka::{consumer::Consumer, ClientConfig};
+impl KafkaChannel {
+    fn topic_for(self, config: &KafkaBrokerConfig) -> &str {
+        match self {
+            KafkaChannel::Action => &config.action_topic,
+            KafkaChannel::Control => &config.control_topic,
+            KafkaChannel::Result => &config.result_topic,
+            KafkaChannel::Wake => &config.wake_topic,
+            KafkaChannel::Ingress => &config.ingress_topic,
+            KafkaChannel::Event => &config.event_topic,
+        }
+    }
 
-    let group_id = format!("runinator.{consumer_id}.{}", channel_name(channel));
-    let client_id = format!(
-        "{}.{}.{}",
-        config.client_id,
-        channel_name(channel),
-        consumer_id
-    );
-    // events are a fan-out, best-effort stream: a fresh per-replica group starts at the tail so a
-    // restarting pod does not replay historical UI events. work channels replay from earliest.
-    let offset_reset = match channel {
-        KafkaChannel::Event => "latest",
-        _ => "earliest",
-    };
-    let consumer: rdkafka::consumer::StreamConsumer = ClientConfig::new()
-        .set("bootstrap.servers", &config.bootstrap_servers)
-        .set("group.id", group_id)
-        .set("client.id", client_id)
-        .set("enable.auto.commit", "false")
-        .set("enable.auto.offset.store", "false")
-        .set("auto.offset.reset", offset_reset)
-        .create()
-        .map_err(kafka_error("consumer"))?;
-    consumer
-        .subscribe(&[topic])
-        .map_err(kafka_error("subscribe"))?;
-    Ok(consumer)
+    fn name(self) -> &'static str {
+        match self {
+            KafkaChannel::Action => "actions",
+            KafkaChannel::Control => "control",
+            KafkaChannel::Result => "results",
+            KafkaChannel::Wake => "wake",
+            KafkaChannel::Ingress => "ingress",
+            KafkaChannel::Event => "events",
+        }
+    }
+
+    fn build_consumer(
+        self,
+        config: &KafkaBrokerConfig,
+        consumer_id: &str,
+        topic: &str,
+    ) -> Result<rdkafka::consumer::StreamConsumer, BrokerError> {
+        use rdkafka::{consumer::Consumer, ClientConfig};
+
+        let group_id = format!("runinator.{consumer_id}.{}", self.name());
+        let client_id = format!("{}.{}.{}", config.client_id, self.name(), consumer_id);
+        // events are a fan-out, best-effort stream: a fresh per-replica group starts at the tail so a
+        // restarting pod does not replay historical UI events. work channels replay from earliest.
+        let offset_reset = match self {
+            KafkaChannel::Event => "latest",
+            _ => "earliest",
+        };
+        let consumer: rdkafka::consumer::StreamConsumer = ClientConfig::new()
+            .set("bootstrap.servers", &config.bootstrap_servers)
+            .set("group.id", group_id)
+            .set("client.id", client_id)
+            .set("enable.auto.commit", "false")
+            .set("enable.auto.offset.store", "false")
+            .set("auto.offset.reset", offset_reset)
+            .create()
+            .map_err(kafka_error("consumer"))?;
+        consumer
+            .subscribe(&[topic])
+            .map_err(kafka_error("subscribe"))?;
+        Ok(consumer)
+    }
 }
 
 #[cfg(feature = "kafka")]
@@ -358,30 +377,6 @@ fn nack_pending(pending: PendingDelivery) -> Result<(), BrokerError> {
             Timeout::After(Duration::from_secs(1)),
         )
         .map_err(kafka_error("nack"))
-}
-
-#[cfg(feature = "kafka")]
-fn topic_for(config: &KafkaBrokerConfig, channel: KafkaChannel) -> &str {
-    match channel {
-        KafkaChannel::Action => &config.action_topic,
-        KafkaChannel::Control => &config.control_topic,
-        KafkaChannel::Result => &config.result_topic,
-        KafkaChannel::Wake => &config.wake_topic,
-        KafkaChannel::Ingress => &config.ingress_topic,
-        KafkaChannel::Event => &config.event_topic,
-    }
-}
-
-#[cfg(feature = "kafka")]
-fn channel_name(channel: KafkaChannel) -> &'static str {
-    match channel {
-        KafkaChannel::Action => "actions",
-        KafkaChannel::Control => "control",
-        KafkaChannel::Result => "results",
-        KafkaChannel::Wake => "wake",
-        KafkaChannel::Ingress => "ingress",
-        KafkaChannel::Event => "events",
-    }
 }
 
 #[cfg(feature = "kafka")]

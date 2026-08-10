@@ -15,7 +15,7 @@ use uuid::Uuid;
 use runinator_ws_core::models::{ApiError, ApiResponse};
 use runinator_ws_core::responses::{api_error, bad_request, not_found};
 use runinator_ws_middleware::auth::{AuthConfig, issue_access_token};
-use runinator_ws_middleware::authz;
+use runinator_ws_middleware::authz::AuthContextExt;
 
 type Reply = (StatusCode, Json<ApiResponse>);
 
@@ -94,7 +94,7 @@ pub async fn list_orgs<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> Reply {
-    if let Err(reply) = authz::require_capability(&ctx, Capability::OrgsManage) {
+    if let Err(reply) = ctx.require_capability(Capability::OrgsManage) {
         return reply;
     }
     match db.list_orgs().await {
@@ -130,7 +130,7 @@ pub async fn get_org<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(org_id): Path<Uuid>,
 ) -> Reply {
-    if let Err(reply) = authz::require_org_member(&ctx, org_id) {
+    if let Err(reply) = ctx.require_org_member(org_id) {
         return reply;
     }
     match db.fetch_org(org_id).await {
@@ -147,7 +147,7 @@ pub async fn update_org<T: DatabaseImpl>(
     Path(org_id): Path<Uuid>,
     Json(request): Json<UpdateOrgRequest>,
 ) -> Reply {
-    if let Err(reply) = authz::require_org_admin(&ctx, org_id) {
+    if let Err(reply) = ctx.require_org_admin(org_id) {
         return reply;
     }
     let name = request.name.map(|n| n.trim().to_string());
@@ -166,7 +166,7 @@ pub async fn delete_org<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(org_id): Path<Uuid>,
 ) -> Reply {
-    if let Err(reply) = authz::require_org_role(&ctx, org_id, OrgRole::Owner) {
+    if let Err(reply) = ctx.require_org_role(org_id, OrgRole::Owner) {
         return reply;
     }
     match db.delete_org(org_id).await {
@@ -181,7 +181,7 @@ pub async fn list_org_members<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(org_id): Path<Uuid>,
 ) -> Reply {
-    if let Err(reply) = authz::require_org_member(&ctx, org_id) {
+    if let Err(reply) = ctx.require_org_member(org_id) {
         return reply;
     }
     match db.list_org_members(org_id).await {
@@ -197,7 +197,7 @@ pub async fn add_org_member<T: DatabaseImpl>(
     Path(org_id): Path<Uuid>,
     Json(request): Json<AddOrgMemberRequest>,
 ) -> Reply {
-    if let Err(reply) = authz::require_org_admin(&ctx, org_id) {
+    if let Err(reply) = ctx.require_org_admin(org_id) {
         return reply;
     }
     if db
@@ -224,7 +224,7 @@ pub async fn update_org_member<T: DatabaseImpl>(
     Path((org_id, user_id)): Path<(Uuid, Uuid)>,
     Json(request): Json<UpdateOrgMemberRequest>,
 ) -> Reply {
-    if let Err(reply) = authz::require_org_admin(&ctx, org_id) {
+    if let Err(reply) = ctx.require_org_admin(org_id) {
         return reply;
     }
     // guard the last owner: an org must always retain at least one owner.
@@ -243,7 +243,7 @@ pub async fn remove_org_member<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path((org_id, user_id)): Path<(Uuid, Uuid)>,
 ) -> Reply {
-    if let Err(reply) = authz::require_org_admin(&ctx, org_id) {
+    if let Err(reply) = ctx.require_org_admin(org_id) {
         return reply;
     }
     // removing an owner demotes them out of the org; block if they are the last one.

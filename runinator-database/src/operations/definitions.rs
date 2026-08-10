@@ -67,8 +67,7 @@ where
         // row back on the same pinned connection by the (now app-generated) id.
         if self.dialect() == SqlDialect::MySql {
             let columns = "id, name, namespace, org_id, version, enabled, input_schema, definition, created_at, updated_at";
-            let conflict = queries::on_conflict_update(
-                SqlDialect::MySql,
+            let conflict = SqlDialect::MySql.on_conflict_update(
                 "id",
                 &[
                     "name",
@@ -381,7 +380,7 @@ where
         // mysql has no usable RETURNING via sqlx: upsert with ON DUPLICATE KEY UPDATE, then read the
         // row back on the same pinned connection by the (now app-generated) id.
         if self.dialect() == SqlDialect::MySql {
-            let conflict = queries::on_conflict_update(SqlDialect::MySql, "id", &update_cols);
+            let conflict = SqlDialect::MySql.on_conflict_update("id", &update_cols);
             let mut conn = self.pool().acquire().await?;
             sqlx::query(&self.render(&format!(
                 "INSERT INTO pipelines ({PIPELINE_COLUMNS})
@@ -407,7 +406,7 @@ where
             return Ok(mappers::row_to_pipeline(&row));
         }
 
-        let conflict = queries::on_conflict_update(self.dialect(), "id", &update_cols);
+        let conflict = self.dialect().on_conflict_update("id", &update_cols);
         let row = sqlx::query(&self.render(&format!(
             "INSERT INTO pipelines ({PIPELINE_COLUMNS})
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) {conflict}
@@ -511,8 +510,7 @@ where
             .to_string();
 
         if self.dialect() == SqlDialect::MySql {
-            let conflict = queries::on_conflict_update(
-                SqlDialect::MySql,
+            let conflict = SqlDialect::MySql.on_conflict_update(
                 "uri",
                 &[
                     "item_type",

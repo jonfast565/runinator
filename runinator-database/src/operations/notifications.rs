@@ -177,8 +177,7 @@ where
         let columns = "id, workflow_run_id, workflow_node_id, channel, severity, title, body, target, metadata, read_at, created_at";
         let id = Uuid::now_v7();
         let created_at = Utc::now().timestamp();
-        let sql = queries::insert_ignore(
-            self.dialect(),
+        let sql = self.dialect().insert_ignore(
             "notifications",
             "id, workflow_run_id, workflow_node_id, channel, severity, title, body, target, metadata, dedupe_key, created_at",
             "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?",
@@ -246,7 +245,7 @@ where
         workflow_id: Uuid,
     ) -> Result<Vec<NotificationPolicy>, SendableError> {
         let columns = NOTIFICATION_POLICY_COLUMNS;
-        let enabled = queries::bool_true(self.dialect());
+        let enabled = self.dialect().bool_true();
         let rows = sqlx::query(&self.render(&format!(
             "SELECT {columns} FROM notification_policies
              WHERE enabled = {enabled} AND event = ? AND (workflow_id = ? OR workflow_id IS NULL)
@@ -267,7 +266,7 @@ where
         event: NotificationEvent,
     ) -> Result<Vec<NotificationPolicy>, SendableError> {
         let columns = NOTIFICATION_POLICY_COLUMNS;
-        let enabled = queries::bool_true(self.dialect());
+        let enabled = self.dialect().bool_true();
         let rows = sqlx::query(&self.render(&format!(
             "SELECT {columns} FROM notification_policies
              WHERE enabled = {enabled} AND event = ? ORDER BY created_at",

@@ -15,6 +15,7 @@ use runinator_ws_core::openapi::docs::{
     CATALOG_FILTERS, EndpointDoc, Example, endpoint, json_body,
 };
 use runinator_ws_core::responses::{api_error, not_found};
+use runinator_ws_middleware::authz::AuthContextExt;
 
 pub async fn get_catalog_items<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
@@ -39,9 +40,7 @@ pub async fn upsert_catalog_item<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Json(item): Json<Value>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) =
-        runinator_ws_middleware::authz::require_capability(&ctx, Capability::CatalogManage)
-    {
+    if let Err(reply) = ctx.require_capability(Capability::CatalogManage) {
         return reply;
     }
     match repository::upsert_catalog_item(db.as_ref(), item).await {

@@ -17,13 +17,14 @@ use runinator_ws_core::events::{AppEvent, AppEventKind, EventSender, emit};
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::openapi::docs::{EndpointDoc, Example, RequestDoc, endpoint, json_body};
 use runinator_ws_core::responses::{api_error, bad_request};
+use runinator_ws_middleware::authz::AuthContextExt;
 
 pub async fn get_run_artifacts<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(run_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_service_or_admin(&ctx) {
+    if let Err(reply) = ctx.require_service_or_admin() {
         return reply;
     }
     match repository::fetch_run_artifacts(db.as_ref(), run_id).await {
@@ -38,7 +39,7 @@ pub async fn add_run_artifact<T: DatabaseImpl>(
     Path(run_id): Path<Uuid>,
     Json(artifact): Json<NewRunArtifact>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_service_or_admin(&ctx) {
+    if let Err(reply) = ctx.require_service_or_admin() {
         return reply;
     }
     match repository::add_run_artifact(db.as_ref(), run_id, &artifact).await {
@@ -54,7 +55,7 @@ pub async fn list_artifacts<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_service_or_admin(&ctx) {
+    if let Err(reply) = ctx.require_service_or_admin() {
         return reply;
     }
     match repository::fetch_all_artifacts(db.as_ref()).await {
@@ -69,7 +70,7 @@ pub async fn upload_artifact<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     mut multipart: Multipart,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_service_or_admin(&ctx) {
+    if let Err(reply) = ctx.require_service_or_admin() {
         return reply;
     }
     let mut run_id: Option<Uuid> = None;
@@ -191,7 +192,7 @@ pub async fn delete_artifact<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(artifact_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_service_or_admin(&ctx) {
+    if let Err(reply) = ctx.require_service_or_admin() {
         return reply;
     }
     match repository::delete_artifact(db.as_ref(), artifact_id).await {
@@ -216,7 +217,7 @@ pub async fn download_artifact<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(artifact_id): Path<Uuid>,
 ) -> Response {
-    if let Err(reply) = runinator_ws_middleware::authz::require_service_or_admin(&ctx) {
+    if let Err(reply) = ctx.require_service_or_admin() {
         return reply.into_response();
     }
     let artifact = match repository::fetch_artifact(db.as_ref(), artifact_id).await {

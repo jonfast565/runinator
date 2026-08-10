@@ -149,16 +149,16 @@ pub(super) async fn advance_cursor<T: ReducerStore>(
             if let Some(frame) = handler_frame
                 && matches!(movement, CursorMove::Retire)
             {
-                super::interrupt::release_suspended_thread(
-                    db,
-                    workflow_run_id,
-                    &frame,
-                    handler_node_id.as_deref().unwrap_or_default(),
-                    message
-                        .as_deref()
-                        .unwrap_or("handler ended without a resume"),
-                )
-                .await?;
+                super::interrupt::InterruptOps::new(db)
+                    .release_suspended_thread(
+                        workflow_run_id,
+                        &frame,
+                        handler_node_id.as_deref().unwrap_or_default(),
+                        message
+                            .as_deref()
+                            .unwrap_or("handler ended without a resume"),
+                    )
+                    .await?;
             }
             return Ok(());
         }

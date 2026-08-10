@@ -8,6 +8,7 @@
 // while ctl, the worker, and the compiler path depend only on the core.
 
 mod completion;
+mod cursor;
 mod hover;
 
 #[cfg(test)]

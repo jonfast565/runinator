@@ -1,9 +1,6 @@
 use std::{env, ffi::OsString, sync::Arc, time::Duration};
 
-use runinator_api::{
-    AsyncApiClient, ReplicaServiceConfig, ReplicaSession, StaticLocator, register_replica_session,
-    spawn_replica_heartbeat_with_telemetry,
-};
+use runinator_api::{AsyncApiClient, ReplicaClient, ReplicaServiceConfig, StaticLocator};
 use runinator_comm::ConsumerProfile;
 use runinator_models::errors::SendableError;
 use runinator_models::replicas::ReplicaKind;
@@ -68,7 +65,7 @@ async fn run(config: Config) -> Result<(), SendableError> {
     // registration is required: a worker that never registers is invisible in the replica registry
     // and cannot heartbeat, so retry with backoff and fail loudly rather than run as a phantom. stay
     // interruptible so ctrl_c during a retry window still shuts the process down cleanly.
-    let replica_session = tokio::select! {
+    let replica_client = tokio::select! {
         result = register_worker_replica_with_retry(&api_client, &config) => result?,
         signal = tokio::signal::ctrl_c() => {
             signal.map_err(|err| errors::SIGNAL_CTRL_C.error(err))?;
@@ -77,23 +74,19 @@ async fn run(config: Config) -> Result<(), SendableError> {
         }
     };
     let telemetry = Arc::new(TelemetryCollector::new());
-    let _heartbeat = spawn_replica_heartbeat_with_telemetry(
-        api_client.clone(),
-        replica_session.clone(),
-        shutdown.clone(),
-        Some(telemetry.clone()),
-    );
+    let _heartbeat =
+        replica_client.spawn_heartbeat_with_telemetry(shutdown.clone(), Some(telemetry.clone()));
     let mut worker_task = {
         let runtime = WorkerRuntime {
             broker: broker.clone(),
             // carry the replica id (without exclusivity) so replica-targeted controls — cancels
             // routed to the worker holding an action's executor lease — reach this worker.
             profile: ConsumerProfile::shared(config.broker_consumer_id.clone())
-                .with_replica_id(replica_session.replica_id())
+                .with_replica_id(replica_client.replica_id())
                 .with_labels(config.labels.clone()),
             libraries: Arc::clone(&libraries),
             api_client: api_client.clone(),
-            replica_id: Some(replica_session.replica_id()),
+            replica_id: Some(replica_client.replica_id()),
             providers: default_provider_factory(),
             max_concurrent_actions: config.max_concurrent_actions,
             shutdown_grace: Duration::from_secs(config.shutdown_grace_seconds),
@@ -208,15 +201,15 @@ fn register_backoff(attempt: u32) -> Duration {
 async fn register_worker_replica_with_retry(
     api_client: &AsyncApiClient<StaticLocator>,
     config: &Config,
-) -> Result<ReplicaSession, SendableError> {
+) -> Result<ReplicaClient<StaticLocator>, SendableError> {
     let mut attempt = 1;
     loop {
         match register_worker_replica(api_client, config).await {
-            Ok(session) => {
+            Ok(replica_client) => {
                 if attempt > 1 {
                     info!(attempt, "worker replica registered");
                 }
-                return Ok(session);
+                return Ok(replica_client);
             }
             Err(err) if attempt >= REGISTER_MAX_ATTEMPTS => {
                 error!(
@@ -244,9 +237,9 @@ async fn register_worker_replica_with_retry(
 async fn register_worker_replica(
     api_client: &AsyncApiClient<StaticLocator>,
     config: &Config,
-) -> Result<ReplicaSession, runinator_api::ApiError> {
-    register_replica_session(
-        api_client,
+) -> Result<ReplicaClient<StaticLocator>, runinator_api::ApiError> {
+    ReplicaClient::register(
+        api_client.clone(),
         ReplicaServiceConfig {
             replica_type: ReplicaKind::Worker,
             instance_id: config.worker_id.to_string(),

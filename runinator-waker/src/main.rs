@@ -2,10 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use reqwest::Url;
-use runinator_api::{
-    AsyncApiClient, ReplicaServiceConfig, ReplicaSession, StaticLocator, register_replica_session,
-    spawn_replica_heartbeat_with_telemetry,
-};
+use runinator_api::{AsyncApiClient, ReplicaClient, ReplicaServiceConfig, StaticLocator};
 use runinator_broker::{
     Broker,
     adapters::{kafka::KafkaBrokerConfig, rabbitmq::RabbitMqBrokerConfig},
@@ -66,7 +63,7 @@ async fn run_process() -> Result<(), SendableError> {
     // registration is required: a waker that never registers is invisible in the replica registry
     // and cannot heartbeat, so retry with backoff and fail loudly rather than run as a phantom. stay
     // interruptible so ctrl_c during a retry window still shuts the process down cleanly.
-    let session = tokio::select! {
+    let replica_client = tokio::select! {
         result = register_waker_replica_with_retry(&api_client, &service_config) => result?,
         signal = tokio::signal::ctrl_c() => {
             signal.map_err(|err| runinator_waker::errors::SIGNAL_CTRL_C.error(err))?;
@@ -74,12 +71,8 @@ async fn run_process() -> Result<(), SendableError> {
             return Ok(());
         }
     };
-    let _heartbeat = spawn_replica_heartbeat_with_telemetry(
-        api_client.clone(),
-        session,
-        notify.clone(),
-        Some(Arc::new(TelemetryCollector::new())),
-    );
+    let _heartbeat = replica_client
+        .spawn_heartbeat_with_telemetry(notify.clone(), Some(Arc::new(TelemetryCollector::new())));
 
     runinator_waker::spawn_liveness(&config, notify.clone());
 
@@ -124,10 +117,10 @@ fn register_backoff(attempt: u32) -> Duration {
 async fn register_waker_replica_with_retry(
     api_client: &AsyncApiClient<StaticLocator>,
     service_config: &ReplicaServiceConfig,
-) -> Result<ReplicaSession, SendableError> {
+) -> Result<ReplicaClient<StaticLocator>, SendableError> {
     let mut attempt = 1;
     loop {
-        match register_replica_session(api_client, service_config.clone()).await {
+        match ReplicaClient::register(api_client.clone(), service_config.clone()).await {
             Ok(session) => {
                 if attempt > 1 {
                     info!(attempt, "waker replica registered");

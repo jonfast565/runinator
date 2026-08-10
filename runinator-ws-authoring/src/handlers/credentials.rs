@@ -19,6 +19,7 @@ use runinator_ws_core::openapi::docs::{
     CREDENTIAL_QUERY, EndpointDoc, Example, endpoint, json_body,
 };
 use runinator_ws_core::responses::{api_error, bad_request, not_found};
+use runinator_ws_middleware::authz::AuthContextExt;
 
 // the cipher that protects setting values at rest, keyed by `RUNINATOR_CREDENTIAL_KEY` (plus any
 // rotation-overlap keys in `RUNINATOR_CREDENTIAL_KEY_PREVIOUS`). the value column holds ciphertext;
@@ -40,9 +41,7 @@ pub async fn get_credential<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Query(query): Query<CredentialQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) =
-        runinator_ws_middleware::authz::require_capability(&ctx, Capability::SecretsRead)
-    {
+    if let Err(reply) = ctx.require_capability(Capability::SecretsRead) {
         return reply;
     }
     let cipher = settings_cipher();
@@ -108,9 +107,7 @@ pub async fn put_credential<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<CredentialPutRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) =
-        runinator_ws_middleware::authz::require_capability(&ctx, Capability::SecretsWrite)
-    {
+    if let Err(reply) = ctx.require_capability(Capability::SecretsWrite) {
         return reply;
     }
     let cipher = settings_cipher();
@@ -169,9 +166,7 @@ pub async fn reencrypt_settings<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) =
-        runinator_ws_middleware::authz::require_capability(&ctx, Capability::SecretsWrite)
-    {
+    if let Err(reply) = ctx.require_capability(Capability::SecretsWrite) {
         return reply;
     }
     let cipher = settings_cipher();
@@ -219,9 +214,7 @@ pub async fn import_secret_bundle<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Json(bundle): Json<SecretBundle>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) =
-        runinator_ws_middleware::authz::require_capability(&ctx, Capability::SecretsWrite)
-    {
+    if let Err(reply) = ctx.require_capability(Capability::SecretsWrite) {
         return reply;
     }
     match import_secret_entries(db.as_ref(), &bundle).await {
@@ -370,9 +363,7 @@ pub async fn delete_credential<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Query(query): Query<CredentialQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) =
-        runinator_ws_middleware::authz::require_capability(&ctx, Capability::SecretsWrite)
-    {
+    if let Err(reply) = ctx.require_capability(Capability::SecretsWrite) {
         return reply;
     }
     let (Some(scope), Some(name)) = (query.scope, query.name) else {

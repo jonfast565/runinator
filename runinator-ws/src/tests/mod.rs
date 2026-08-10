@@ -61,6 +61,7 @@ use runinator_models::{
 };
 use runinator_wdl::WdlFragmentKind;
 use runinator_workflows::{WorkflowTypeDiagnostic, WorkflowValidationError};
+use runinator_ws_middleware::authz::{AuthContextExt, AuthzChecker};
 use tokio::sync::Notify;
 use uuid::Uuid;
 

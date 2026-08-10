@@ -12,10 +12,10 @@ use runinator_wdl::{
 };
 
 use crate::completion::{
-    CompletionContext, action_signature, clamp_to_char_boundary, completion_context, find_provider,
-    navigate_type, path_context, root_type, type_fields, unmatched_open_paren,
-    workflow_context_type,
+    CompletionContext, action_signature, completion_context, find_provider, navigate_type,
+    root_type, type_fields, workflow_context_type,
 };
+use crate::cursor::{Cursor, clamp_to_char_boundary};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WdlHoverRequest {
@@ -42,14 +42,15 @@ pub struct WdlHoverResponse {
 /// resolve editor hover information at a byte cursor using provider metadata and local type context.
 pub fn hover_source(request: WdlHoverRequest) -> Option<WdlHoverResponse> {
     let source = request.source;
-    let cursor = clamp_to_char_boundary(&source, request.cursor_byte);
+    let pos = clamp_to_char_boundary(&source, request.cursor_byte);
+    let cursor = Cursor::new(&source, pos);
     let document = parse_document(&source).ok()?;
-    let context = completion_context(&source, cursor, &request.providers);
-    let word = word_at(&source, cursor)?;
+    let context = completion_context(&source, pos, &request.providers);
+    let word = cursor.word_at()?;
 
-    action_argument_hover(&source, cursor, word, &request.providers)
-        .or_else(|| action_hover(&source, cursor, word, &request.providers))
-        .or_else(|| path_hover(&source, cursor, word, &context, &request.settings))
+    action_argument_hover(cursor, word, &request.providers)
+        .or_else(|| action_hover(cursor, word, &request.providers))
+        .or_else(|| path_hover(cursor, word, &context, &request.settings))
         .or_else(|| type_hover(&document, word))
         .or_else(|| function_hover(&document, word))
         .or_else(|| bare_symbol_hover(word, &context, &request.providers))
@@ -57,20 +58,19 @@ pub fn hover_source(request: WdlHoverRequest) -> Option<WdlHoverResponse> {
 }
 
 fn action_argument_hover(
-    source: &str,
-    cursor: usize,
+    cursor: Cursor<'_>,
     word: WordAt<'_>,
     providers: &[ProviderMetadata],
 ) -> Option<WdlHoverResponse> {
-    let colon = next_non_space(source, word.end)?;
-    if source.as_bytes().get(colon) != Some(&b':') {
+    let colon = cursor.at(word.end).next_non_space()?;
+    if cursor.source.as_bytes().get(colon) != Some(&b':') {
         return None;
     }
-    let open = unmatched_open_paren(source, cursor)?;
+    let open = cursor.unmatched_open_paren()?;
     if open > word.start {
         return None;
     }
-    let (provider_name, action_name) = call_name_before(source, open)?;
+    let (provider_name, action_name) = call_name_before(cursor.source, open)?;
     let action = find_provider(providers, provider_name)?
         .actions
         .iter()
@@ -98,12 +98,11 @@ fn action_argument_hover(
 }
 
 fn action_hover(
-    source: &str,
-    cursor: usize,
+    cursor: Cursor<'_>,
     word: WordAt<'_>,
     providers: &[ProviderMetadata],
 ) -> Option<WdlHoverResponse> {
-    let token = action_token_at(source, cursor)?;
+    let token = cursor.action_token_at()?;
     let dot = token.text.find('.')?;
     let provider_name = &token.text[..dot];
     let action_name = &token.text[dot + 1..];
@@ -136,13 +135,12 @@ fn action_hover(
 }
 
 fn path_hover(
-    source: &str,
-    cursor: usize,
+    cursor: Cursor<'_>,
     word: WordAt<'_>,
     context: &CompletionContext,
     settings: &[SettingSummary],
 ) -> Option<WdlHoverResponse> {
-    let path = path_at(source, cursor)?;
+    let path = cursor.path_at()?;
     if path.parts.len() <= 1 {
         return None;
     }
@@ -675,58 +673,16 @@ fn call_name_before(source: &str, open: usize) -> Option<(&str, &str)> {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct WordAt<'a> {
-    text: &'a str,
-    start: usize,
-    end: usize,
-}
-
-fn word_at(source: &str, cursor: usize) -> Option<WordAt<'_>> {
-    token_at(source, cursor, false)
-}
-
-fn action_token_at(source: &str, cursor: usize) -> Option<WordAt<'_>> {
-    let token = token_at(source, cursor, true)?;
-    token.text.contains('.').then_some(token)
-}
-
-fn token_at(source: &str, cursor: usize, allow_dot_and_hyphen: bool) -> Option<WordAt<'_>> {
-    let mut cursor = clamp_to_char_boundary(source, cursor);
-    let bytes = source.as_bytes();
-    if cursor == source.len() && cursor > 0 {
-        cursor -= 1;
-    }
-    if bytes
-        .get(cursor)
-        .is_none_or(|byte| !token_continue(*byte, allow_dot_and_hyphen))
-    {
-        if cursor == 0 || !token_continue(bytes[cursor - 1], allow_dot_and_hyphen) {
-            return None;
-        }
-        cursor -= 1;
-    }
-    let mut start = cursor;
-    while start > 0 && token_continue(bytes[start - 1], allow_dot_and_hyphen) {
-        start -= 1;
-    }
-    let mut end = cursor + 1;
-    while end < bytes.len() && token_continue(bytes[end], allow_dot_and_hyphen) {
-        end += 1;
-    }
-    let text = &source[start..end];
-    (!text.is_empty()).then_some(WordAt { text, start, end })
-}
-
-fn token_continue(byte: u8, allow_dot_and_hyphen: bool) -> bool {
-    byte.is_ascii_alphanumeric()
-        || byte == b'_'
-        || (allow_dot_and_hyphen && (byte == b'.' || byte == b'-'))
+pub(crate) struct WordAt<'a> {
+    pub(crate) text: &'a str,
+    pub(crate) start: usize,
+    pub(crate) end: usize,
 }
 
 #[derive(Debug)]
-struct HoverPath<'a> {
-    parts: Vec<&'a str>,
-    ranges: Vec<(usize, usize)>,
+pub(crate) struct HoverPath<'a> {
+    pub(crate) parts: Vec<&'a str>,
+    pub(crate) ranges: Vec<(usize, usize)>,
 }
 
 impl HoverPath<'_> {
@@ -735,44 +691,6 @@ impl HoverPath<'_> {
             .iter()
             .position(|(start, end)| *start <= offset && offset <= *end)
     }
-}
-
-fn path_at(source: &str, cursor: usize) -> Option<HoverPath<'_>> {
-    let token = token_at(source, cursor, true)?;
-    if !token.text.contains('.') {
-        return None;
-    }
-    let _ = path_context(source, token.end)?;
-    let mut parts = Vec::new();
-    let mut ranges = Vec::new();
-    let mut part_start = 0usize;
-    for (index, ch) in token.text.char_indices() {
-        if ch != '.' {
-            continue;
-        }
-        if part_start < index {
-            parts.push(&token.text[part_start..index]);
-            ranges.push((token.start + part_start, token.start + index));
-        }
-        part_start = index + 1;
-    }
-    if part_start < token.text.len() {
-        parts.push(&token.text[part_start..]);
-        ranges.push((token.start + part_start, token.end));
-    }
-    (parts.len() > 1).then_some(HoverPath { parts, ranges })
-}
-
-fn next_non_space(source: &str, cursor: usize) -> Option<usize> {
-    let mut index = cursor;
-    let bytes = source.as_bytes();
-    while index < bytes.len() {
-        if !bytes[index].is_ascii_whitespace() {
-            return Some(index);
-        }
-        index += 1;
-    }
-    None
 }
 
 fn identifier_start_before(source: &str, end: usize, allow_hyphen: bool) -> Option<usize> {

@@ -78,7 +78,9 @@ pub async fn process_ready_node<T: ReducerStore>(
             // a run that acquired a named mutex holds it for the rest of the run; release on any
             // terminal state so the next waiter can acquire. no-op for runs holding no lease.
             if next_run.status.is_terminal() {
-                mutex::release_run_mutexes(db, next_run.id).await?;
+                mutex::MutexOps::new(db)
+                    .release_run_mutexes(next_run.id)
+                    .await?;
                 // wake any `await workflow` nodes parked on a run of this workflow (by correlation).
                 transitions::maybe_wake_awaiters(db, &next_run).await?;
                 // start any workflows chained to this one via on_success/on_failure/on_complete. this
@@ -334,17 +336,17 @@ async fn process_workflow_run_step<T: ReducerStore>(
     // diverted — and before dispatch, because the point is to run the handler *instead of* letting
     // this node settle. every refusal inside is silent, so a run with no handler declared reaches
     // dispatch on exactly the path it always did.
-    if interrupt::maybe_raise(
-        db,
-        &workflow,
-        &workflow_run,
-        &cursor,
-        node,
-        &nodes,
-        latest.as_ref(),
-        &node_runs,
-    )
-    .await?
+    if interrupt::InterruptOps::new(db)
+        .maybe_raise(
+            &workflow,
+            &workflow_run,
+            &cursor,
+            node,
+            &nodes,
+            latest.as_ref(),
+            &node_runs,
+        )
+        .await?
     {
         return Ok(ReadyNodeDisposition::Complete);
     }

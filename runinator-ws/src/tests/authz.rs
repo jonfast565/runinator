@@ -39,7 +39,7 @@ async fn visible_workflow_ids_include_direct_and_team_grants() {
     .await
     .unwrap();
 
-    let visible = crate::authz::visible_workflow_ids(
+    let visible = AuthzChecker::new(
         &db,
         &AuthContext {
             principal_id: Some(user_id),
@@ -49,6 +49,7 @@ async fn visible_workflow_ids_include_direct_and_team_grants() {
             org_role: None,
         },
     )
+    .visible_workflow_ids()
     .await
     .expect("scoped set");
 
@@ -200,21 +201,27 @@ async fn workflow_permission_takes_highest_of_user_and_team_grants() {
     .unwrap();
 
     let ctx = user_ctx(user_id);
-    let effective = crate::authz::workflow_permission(&db, &ctx, workflow_id).await;
+    let effective = AuthzChecker::new(&db, &ctx)
+        .workflow_permission(workflow_id)
+        .await;
     assert_eq!(effective, Some(Permission::Edit));
 
     // edit (and everything below it) is allowed; own is not.
     assert!(
-        crate::authz::require_workflow(&db, &ctx, workflow_id, Permission::Run)
+        AuthzChecker::new(&db, &ctx)
+            .require_workflow(workflow_id, Permission::Run)
             .await
             .is_ok()
     );
     assert!(
-        crate::authz::require_workflow(&db, &ctx, workflow_id, Permission::Edit)
+        AuthzChecker::new(&db, &ctx)
+            .require_workflow(workflow_id, Permission::Edit)
             .await
             .is_ok()
     );
-    let denied = crate::authz::require_workflow(&db, &ctx, workflow_id, Permission::Own).await;
+    let denied = AuthzChecker::new(&db, &ctx)
+        .require_workflow(workflow_id, Permission::Own)
+        .await;
     assert_eq!(
         denied.expect_err("own should be denied").0,
         StatusCode::FORBIDDEN
@@ -239,10 +246,14 @@ async fn workflow_permission_is_none_without_a_grant() {
 
     let ctx = user_ctx(user_id);
     assert_eq!(
-        crate::authz::workflow_permission(&db, &ctx, workflow_id).await,
+        AuthzChecker::new(&db, &ctx)
+            .workflow_permission(workflow_id)
+            .await,
         None
     );
-    let denied = crate::authz::require_workflow(&db, &ctx, workflow_id, Permission::View).await;
+    let denied = AuthzChecker::new(&db, &ctx)
+        .require_workflow(workflow_id, Permission::View)
+        .await;
     assert_eq!(
         denied.expect_err("view should be denied").0,
         StatusCode::FORBIDDEN
@@ -265,11 +276,14 @@ async fn workflow_permission_admin_owns_everything_without_grants() {
         org_role: None,
     };
     assert_eq!(
-        crate::authz::workflow_permission(&db, &admin, workflow_id).await,
+        AuthzChecker::new(&db, &admin)
+            .workflow_permission(workflow_id)
+            .await,
         Some(Permission::Own)
     );
     assert!(
-        crate::authz::require_workflow(&db, &admin, workflow_id, Permission::Own)
+        AuthzChecker::new(&db, &admin)
+            .require_workflow(workflow_id, Permission::Own)
             .await
             .is_ok()
     );
@@ -314,22 +328,22 @@ fn org_visible_matches_ui_event_egress_policy() {
     };
 
     // platform admin sees every scoped and unscoped event.
-    assert!(crate::authz::org_visible(&admin, Some(org_a)));
-    assert!(crate::authz::org_visible(&admin, Some(org_b)));
-    assert!(crate::authz::org_visible(&admin, None));
+    assert!(admin.org_visible(Some(org_a)));
+    assert!(admin.org_visible(Some(org_b)));
+    assert!(admin.org_visible(None));
     // unscoped (rollout / global) tips stay visible to every client.
-    assert!(crate::authz::org_visible(&member_a, None));
-    assert!(crate::authz::org_visible(&member_b, None));
+    assert!(member_a.org_visible(None));
+    assert!(member_b.org_visible(None));
     // scoped tips only reach the matching active org.
-    assert!(crate::authz::org_visible(&member_a, Some(org_a)));
-    assert!(!crate::authz::org_visible(&member_a, Some(org_b)));
-    assert!(!crate::authz::org_visible(&member_b, Some(org_a)));
+    assert!(member_a.org_visible(Some(org_a)));
+    assert!(!member_a.org_visible(Some(org_b)));
+    assert!(!member_b.org_visible(Some(org_a)));
 }
 
 #[test]
 fn platform_admin_holds_every_capability() {
     let ctx = auth_ctx(true, None);
-    let caps = crate::authz::capabilities_for(&ctx);
+    let caps = ctx.capabilities();
     for cap in runinator_models::capabilities::Capability::ALL {
         assert!(caps.contains(cap), "admin must hold {cap:?}");
     }
@@ -337,7 +351,7 @@ fn platform_admin_holds_every_capability() {
 
 #[test]
 fn disabled_admin_holds_every_capability() {
-    let caps = crate::authz::capabilities_for(&AuthContext::disabled_admin());
+    let caps = AuthContext::disabled_admin().capabilities();
     assert_eq!(
         caps.len(),
         runinator_models::capabilities::Capability::ALL.len()
@@ -348,7 +362,7 @@ fn disabled_admin_holds_every_capability() {
 fn org_admin_holds_only_org_capabilities() {
     use runinator_models::capabilities::Capability;
     let ctx = auth_ctx(false, Some(OrgRole::Admin));
-    let caps = crate::authz::capabilities_for(&ctx);
+    let caps = ctx.capabilities();
     assert!(caps.contains(&Capability::OrgMembersManage));
     assert!(caps.contains(&Capability::OrgNodesScale));
     assert!(!caps.contains(&Capability::UsersManage));
@@ -359,7 +373,7 @@ fn org_admin_holds_only_org_capabilities() {
 #[test]
 fn org_member_holds_no_capabilities() {
     let ctx = auth_ctx(false, Some(OrgRole::Member));
-    assert!(crate::authz::capabilities_for(&ctx).is_empty());
+    assert!(ctx.capabilities().is_empty());
 }
 
 #[test]
@@ -369,10 +383,18 @@ fn require_capability_gates_by_holder() {
     let member = auth_ctx(false, Some(OrgRole::Member));
     let org_admin = auth_ctx(false, Some(OrgRole::Admin));
 
-    assert!(crate::authz::require_capability(&admin, Capability::UsersManage).is_ok());
-    assert!(crate::authz::require_capability(&member, Capability::UsersManage).is_err());
-    assert!(crate::authz::require_capability(&org_admin, Capability::UsersManage).is_err());
-    assert!(crate::authz::require_capability(&org_admin, Capability::OrgMembersManage).is_ok());
+    assert!(admin.require_capability(Capability::UsersManage).is_ok());
+    assert!(member.require_capability(Capability::UsersManage).is_err());
+    assert!(
+        org_admin
+            .require_capability(Capability::UsersManage)
+            .is_err()
+    );
+    assert!(
+        org_admin
+            .require_capability(Capability::OrgMembersManage)
+            .is_ok()
+    );
 }
 
 #[tokio::test]

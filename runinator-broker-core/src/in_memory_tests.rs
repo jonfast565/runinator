@@ -224,11 +224,11 @@ async fn stale_queued_controls_are_dropped_not_delivered() {
     state.control_queue.push_back(delivery);
 
     // fresh controls survive the sweep; one past the ttl is dropped.
-    drop_stale_control(&mut state, chrono::Utc::now());
+    state.drop_stale_control(chrono::Utc::now());
     assert_eq!(state.control_queue.len(), 1);
     let past_ttl =
         chrono::Utc::now() + chrono::Duration::seconds(crate::STALE_CONTROL_TTL_SECONDS + 1);
-    drop_stale_control(&mut state, past_ttl);
+    state.drop_stale_control(past_ttl);
     assert!(state.control_queue.is_empty());
 }
 

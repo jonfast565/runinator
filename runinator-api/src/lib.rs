@@ -9,10 +9,7 @@ pub use async_client::AsyncApiClient;
 pub use blocking_client::BlockingApiClient;
 pub use error::{ApiError, Result};
 pub use locator::{BlockingServiceLocator, ServiceLocator, StaticLocator};
-pub use replicas::{
-    register_replica_provider, register_replica_session, spawn_replica_heartbeat,
-    spawn_replica_heartbeat_with_telemetry, ReplicaServiceConfig, ReplicaSession,
-};
+pub use replicas::{ReplicaClient, ReplicaServiceConfig, ReplicaSession};
 pub use types::{
     RunArtifactPayload, RunChunkPayload, RunStatusPayload, WorkflowNodeRunStatusPayload,
 };

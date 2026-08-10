@@ -101,8 +101,8 @@ impl InMemoryBroker {
             notified.as_mut().enable();
             if let Some(delivery) = {
                 let mut guard = self.state.lock();
-                reclaim_expired_control(&mut guard, Instant::now());
-                drop_stale_control(&mut guard, chrono::Utc::now());
+                guard.reclaim_expired_control(Instant::now());
+                guard.drop_stale_control(chrono::Utc::now());
                 let index = guard.control_queue.iter().position(&matches);
                 match index.and_then(|index| guard.control_queue.remove(index)) {
                     Some(delivery) => {
@@ -178,7 +178,7 @@ impl Broker for InMemoryBroker {
             notified.as_mut().enable();
             if let Some(delivery) = {
                 let mut guard = self.state.lock();
-                reclaim_expired_actions(&mut guard, Instant::now());
+                guard.reclaim_expired_actions(Instant::now());
                 // scan for the first delivery whose target matches this consumer. a non-matching
                 // head must not block matching deliveries queued behind it.
                 let index = guard
@@ -297,7 +297,7 @@ impl Broker for InMemoryBroker {
         loop {
             if let Some(delivery) = {
                 let mut guard = self.state.lock();
-                reclaim_expired_results(&mut guard, Instant::now());
+                guard.reclaim_expired_results(Instant::now());
                 if let Some(delivery) = guard.result_queue.pop_front() {
                     guard.result_inflight.insert(
                         delivery.delivery_id,
@@ -363,7 +363,7 @@ impl Broker for InMemoryBroker {
         loop {
             if let Some(delivery) = {
                 let mut guard = self.state.lock();
-                reclaim_expired_wakes(&mut guard, Instant::now());
+                guard.reclaim_expired_wakes(Instant::now());
                 if let Some(delivery) = guard.wake_queue.pop_front() {
                     guard.wake_inflight.insert(
                         delivery.delivery_id,
@@ -427,7 +427,7 @@ impl Broker for InMemoryBroker {
         loop {
             if let Some(delivery) = {
                 let mut guard = self.state.lock();
-                reclaim_expired_ingress(&mut guard, Instant::now());
+                guard.reclaim_expired_ingress(Instant::now());
                 if let Some(delivery) = guard.ingress_queue.pop_front() {
                     guard.ingress_inflight.insert(
                         delivery.delivery_id,
@@ -497,62 +497,62 @@ impl Broker for InMemoryBroker {
     }
 }
 
-fn reclaim_expired_actions(state: &mut BrokerState, now: Instant) {
-    let expired = expired_ids(&state.inflight, now);
-    for id in expired {
-        if let Some(leased) = state.inflight.remove(&id) {
-            state.queue.push_front(redeliver_action(leased.delivery));
+impl BrokerState {
+    fn reclaim_expired_actions(&mut self, now: Instant) {
+        let expired = expired_ids(&self.inflight, now);
+        for id in expired {
+            if let Some(leased) = self.inflight.remove(&id) {
+                self.queue.push_front(redeliver_action(leased.delivery));
+            }
         }
     }
-}
 
-fn reclaim_expired_control(state: &mut BrokerState, now: Instant) {
-    let expired = expired_ids(&state.control_inflight, now);
-    for id in expired {
-        if let Some(leased) = state.control_inflight.remove(&id) {
-            state
-                .control_queue
-                .push_front(redeliver_control(leased.delivery));
+    fn reclaim_expired_control(&mut self, now: Instant) {
+        let expired = expired_ids(&self.control_inflight, now);
+        for id in expired {
+            if let Some(leased) = self.control_inflight.remove(&id) {
+                self.control_queue
+                    .push_front(redeliver_control(leased.delivery));
+            }
         }
     }
-}
 
-/// drop queued controls that have gone stale: a control targeted at a replica that never returns
-/// has no consumer that can ever match it, and controls are immediate signals, so retaining one
-/// past the ttl only grows the queue (this broker also backs the long-lived http/tcp servers).
-fn drop_stale_control(state: &mut BrokerState, now: chrono::DateTime<chrono::Utc>) {
-    state.control_queue.retain(|delivery| {
-        (now - delivery.enqueued_at).num_seconds() < crate::STALE_CONTROL_TTL_SECONDS
-    });
-}
+    /// drop queued controls that have gone stale: a control targeted at a replica that never
+    /// returns has no consumer that can ever match it, and controls are immediate signals, so
+    /// retaining one past the ttl only grows the queue (this broker also backs the long-lived
+    /// http/tcp servers).
+    fn drop_stale_control(&mut self, now: chrono::DateTime<chrono::Utc>) {
+        self.control_queue.retain(|delivery| {
+            (now - delivery.enqueued_at).num_seconds() < crate::STALE_CONTROL_TTL_SECONDS
+        });
+    }
 
-fn reclaim_expired_results(state: &mut BrokerState, now: Instant) {
-    let expired = expired_ids(&state.result_inflight, now);
-    for id in expired {
-        if let Some(leased) = state.result_inflight.remove(&id) {
-            state
-                .result_queue
-                .push_front(redeliver_result(leased.delivery));
+    fn reclaim_expired_results(&mut self, now: Instant) {
+        let expired = expired_ids(&self.result_inflight, now);
+        for id in expired {
+            if let Some(leased) = self.result_inflight.remove(&id) {
+                self.result_queue
+                    .push_front(redeliver_result(leased.delivery));
+            }
         }
     }
-}
 
-fn reclaim_expired_wakes(state: &mut BrokerState, now: Instant) {
-    let expired = expired_ids(&state.wake_inflight, now);
-    for id in expired {
-        if let Some(leased) = state.wake_inflight.remove(&id) {
-            state.wake_queue.push_front(redeliver_wake(leased.delivery));
+    fn reclaim_expired_wakes(&mut self, now: Instant) {
+        let expired = expired_ids(&self.wake_inflight, now);
+        for id in expired {
+            if let Some(leased) = self.wake_inflight.remove(&id) {
+                self.wake_queue.push_front(redeliver_wake(leased.delivery));
+            }
         }
     }
-}
 
-fn reclaim_expired_ingress(state: &mut BrokerState, now: Instant) {
-    let expired = expired_ids(&state.ingress_inflight, now);
-    for id in expired {
-        if let Some(leased) = state.ingress_inflight.remove(&id) {
-            state
-                .ingress_queue
-                .push_front(redeliver_ingress(leased.delivery));
+    fn reclaim_expired_ingress(&mut self, now: Instant) {
+        let expired = expired_ids(&self.ingress_inflight, now);
+        for id in expired {
+            if let Some(leased) = self.ingress_inflight.remove(&id) {
+                self.ingress_queue
+                    .push_front(redeliver_ingress(leased.delivery));
+            }
         }
     }
 }

@@ -52,13 +52,12 @@ use crate::{
     archive::{ArchiveMark, ArchiveRow, ArchiveTable},
     backend::{RowsAffected, SqlBackend, SqlStore},
     common::{
-        cron_slots_between, is_pipeline_trigger_in_blackout, is_trigger_in_blackout, json_metadata,
-        json_opt_i64, json_opt_str, json_opt_uuid, json_str, next_execution_for_cron,
-        pipeline_trigger_parameters, pipeline_trigger_state, status_list, trigger_parameters,
-        trigger_state_for_slot, workflow_result_event_type,
+        PipelineTriggerExt, WorkflowTriggerExt, cron_slots_between, json_metadata, json_opt_i64,
+        json_opt_str, json_opt_uuid, json_str, next_execution_for_cron, status_list,
+        workflow_result_event_type,
     },
     mappers,
-    queries::{self, SqlDialect},
+    queries::SqlDialect,
 };
 use runinator_store::prelude::*;
 
@@ -152,7 +151,7 @@ const PIPELINE_FREEZE_SCOPE: &str = "f.workflow_id IS NULL AND (f.org_id IS NULL
 fn active_freeze_window_sql(dialect: SqlDialect, scope: &str) -> String {
     format!(
         "SELECT 1 FROM freeze_windows f WHERE f.enabled = {} AND f.starts_at <= ? AND f.ends_at > ? AND {scope}",
-        queries::bool_true(dialect),
+        dialect.bool_true(),
     )
 }
 
@@ -275,8 +274,7 @@ where
         outcome: FiringOutcome,
         now: DateTime<Utc>,
     ) -> Result<bool, SendableError> {
-        let sql = self.render(&queries::insert_ignore(
-            self.dialect(),
+        let sql = self.render(&self.dialect().insert_ignore(
             "workflow_trigger_firings",
             "id, trigger_id, fire_key, scheduler_id, outcome, created_at",
             "?, ?, ?, ?, ?, ?",
@@ -309,8 +307,8 @@ where
         };
         let new_run_id = Uuid::now_v7();
         let snapshot_json = serde_json::to_string(snapshot)?;
-        let parameters = trigger_parameters(trigger).to_string();
-        let state = trigger_state_for_slot(trigger, slot).to_string();
+        let parameters = trigger.trigger_parameters().to_string();
+        let state = trigger.trigger_state_for_slot(slot).to_string();
         let insert_sql = "INSERT INTO workflow_runs (id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, name, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_request_host, trigger_request_ip, trigger_metadata) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, NULL, ?, ?, NULL, ?, NULL, NULL, ?)";
         let run_row = if self.dialect() == SqlDialect::MySql {
             sqlx::query(&self.render(insert_sql))
@@ -401,7 +399,7 @@ where
         eligible_before: DateTime<Utc>,
         limit: i64,
     ) -> Result<Vec<(Uuid, DateTime<Utc>)>, SendableError> {
-        let sql = archive_candidate_sql(table);
+        let sql = table.archive_candidate_sql();
         let rows = sqlx::query(&self.render(sql))
             .bind(eligible_before.timestamp())
             .bind(limit)
@@ -420,14 +418,14 @@ where
         &self,
         mark: &ArchiveMark,
     ) -> Result<Option<ArchiveRow>, SendableError> {
-        let Some(row) = sqlx::query(&self.render(&archive_source_sql(self.dialect(), mark.table)))
+        let Some(row) = sqlx::query(&self.render(&mark.table.archive_source_sql(self.dialect())))
             .bind(mark.primary_key)
             .fetch_optional(self.pool())
             .await?
         else {
             return Ok(None);
         };
-        let row_json = archive_row_json(mark.table, &row)?;
+        let row_json = mark.table.archive_row_json(&row)?;
         Ok(Some(ArchiveRow {
             mark_id: mark.id,
             table: mark.table,
@@ -438,8 +436,26 @@ where
     }
 }
 
-fn archive_candidate_sql(table: ArchiveTable) -> &'static str {
-    match table {
+/// sql/row-mapping for one archive table. a local trait since `ArchiveTable` lives in
+/// `runinator-store`, which stays free of sql text.
+trait ArchiveTableSql {
+    fn archive_candidate_sql(self) -> &'static str;
+    fn archive_source_sql(self, dialect: SqlDialect) -> String;
+    fn archive_row_json<R>(self, row: &R) -> Result<Value, SendableError>
+    where
+        R: Row,
+        for<'r> Uuid: Decode<'r, R::Database> + Type<R::Database>,
+        for<'r> String: Decode<'r, R::Database> + Type<R::Database>,
+        for<'r> i64: Decode<'r, R::Database> + Type<R::Database>,
+        for<'r> Option<i64>: Decode<'r, R::Database> + Type<R::Database>,
+        for<'r> Option<String>: Decode<'r, R::Database> + Type<R::Database>,
+        for<'r> Option<Uuid>: Decode<'r, R::Database> + Type<R::Database>,
+        for<'c> &'c str: ColumnIndex<R>;
+}
+
+impl ArchiveTableSql for ArchiveTable {
+    fn archive_candidate_sql(self) -> &'static str {
+        match self {
         ArchiveTable::WorkflowRuns => {
             "SELECT id, created_at FROM workflow_runs
              WHERE created_at <= ?
@@ -501,10 +517,10 @@ fn archive_candidate_sql(table: ArchiveTable) -> &'static str {
              LIMIT ?"
         }
     }
-}
+    }
 
-fn archive_source_sql(dialect: SqlDialect, table: ArchiveTable) -> String {
-    match table {
+    fn archive_source_sql(self, dialect: SqlDialect) -> String {
+        match self {
         ArchiveTable::WorkflowRuns => {
             "SELECT id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message, name, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_request_host, trigger_request_ip, trigger_metadata FROM workflow_runs WHERE id = ?".to_string()
         }
@@ -535,9 +551,130 @@ fn archive_source_sql(dialect: SqlDialect, table: ArchiveTable) -> String {
         ArchiveTable::IdempotencyKeys => {
             format!(
                 "SELECT id, scope, {key_col}, result, created_at FROM idempotency_keys WHERE id = ?",
-                key_col = queries::ident(dialect, "key")
+                key_col = dialect.ident("key")
             )
         }
+    }
+    }
+
+    fn archive_row_json<R>(self, row: &R) -> Result<Value, SendableError>
+    where
+        R: Row,
+        for<'r> Uuid: Decode<'r, R::Database> + Type<R::Database>,
+        for<'r> String: Decode<'r, R::Database> + Type<R::Database>,
+        for<'r> i64: Decode<'r, R::Database> + Type<R::Database>,
+        for<'r> Option<i64>: Decode<'r, R::Database> + Type<R::Database>,
+        for<'r> Option<String>: Decode<'r, R::Database> + Type<R::Database>,
+        for<'r> Option<Uuid>: Decode<'r, R::Database> + Type<R::Database>,
+        for<'c> &'c str: ColumnIndex<R>,
+    {
+        Ok(match self {
+            ArchiveTable::WorkflowRuns => runinator_models::json!({
+                "id": row.get::<Uuid, _>("id").to_string(),
+                "workflow_id": row.get::<Uuid, _>("workflow_id").to_string(),
+                "workflow_snapshot": row.get::<Option<String>, _>("workflow_snapshot"),
+                "status": row.get::<String, _>("status"),
+                "active_node_id": row.get::<Option<String>, _>("active_node_id"),
+                "parameters": row.get::<String, _>("parameters"),
+                "state": row.get::<String, _>("state"),
+                "created_at": row.get::<i64, _>("created_at"),
+                "started_at": row.get::<Option<i64>, _>("started_at"),
+                "finished_at": row.get::<Option<i64>, _>("finished_at"),
+                "message": row.get::<Option<String>, _>("message"),
+                "name": row.get::<Option<String>, _>("name"),
+                "trigger_source_kind": row.get::<Option<String>, _>("trigger_source_kind"),
+                "trigger_actor_type": row.get::<Option<String>, _>("trigger_actor_type"),
+                "trigger_actor_replica_id": row.get::<Option<Uuid>, _>("trigger_actor_replica_id").map(|id| id.to_string()),
+                "trigger_actor_display_name": row.get::<Option<String>, _>("trigger_actor_display_name"),
+                "trigger_request_host": row.get::<Option<String>, _>("trigger_request_host"),
+                "trigger_request_ip": row.get::<Option<String>, _>("trigger_request_ip"),
+                "trigger_metadata": row.get::<String, _>("trigger_metadata"),
+            }),
+            ArchiveTable::WorkflowNodeChunks => runinator_models::json!({
+                "id": row.get::<Uuid, _>("id").to_string(),
+                "workflow_node_run_id": row.get::<Uuid, _>("workflow_node_run_id").to_string(),
+                "sequence": row.get::<i64, _>("sequence"),
+                "stream": row.get::<String, _>("stream"),
+                "content": row.get::<String, _>("content"),
+                "created_at": row.get::<i64, _>("created_at"),
+            }),
+            ArchiveTable::WorkflowReadyNodes => runinator_models::json!({
+                "id": row.get::<Uuid, _>("id").to_string(),
+                "source_event_id": row.get::<Uuid, _>("source_event_id").to_string(),
+                "workflow_run_id": row.get::<Uuid, _>("workflow_run_id").to_string(),
+                "node_id": row.get::<String, _>("node_id"),
+                "status": row.get::<String, _>("status"),
+                "ready_at": row.get::<i64, _>("ready_at"),
+                "attempts": row.get::<i64, _>("attempts"),
+                "claimed_by": row.get::<Option<String>, _>("claimed_by"),
+                "claimed_until": row.get::<Option<i64>, _>("claimed_until"),
+                "completed_at": row.get::<Option<i64>, _>("completed_at"),
+                "created_at": row.get::<i64, _>("created_at"),
+                "updated_at": row.get::<i64, _>("updated_at"),
+            }),
+            ArchiveTable::RunChunks => runinator_models::json!({
+                "id": row.get::<Uuid, _>("id").to_string(),
+                "run_id": row.get::<Uuid, _>("run_id").to_string(),
+                "sequence": row.get::<i64, _>("sequence"),
+                "stream": row.get::<String, _>("stream"),
+                "content": row.get::<String, _>("content"),
+                "created_at": row.get::<i64, _>("created_at"),
+            }),
+            ArchiveTable::WorkflowActionDispatches => runinator_models::json!({
+                "id": row.get::<Uuid, _>("id").to_string(),
+                "dedupe_key": row.get::<String, _>("dedupe_key"),
+                "command_json": row.get::<String, _>("command_json"),
+                "attempts": row.get::<i64, _>("attempts"),
+                "created_at": row.get::<i64, _>("created_at"),
+                "updated_at": row.get::<i64, _>("updated_at"),
+                "published_at": row.get::<Option<i64>, _>("published_at"),
+                "last_error": row.get::<Option<String>, _>("last_error"),
+                "claimed_by": row.get::<Option<String>, _>("claimed_by"),
+                "claimed_until": row.get::<Option<i64>, _>("claimed_until"),
+            }),
+            ArchiveTable::Notifications => runinator_models::json!({
+                "id": row.get::<Uuid, _>("id").to_string(),
+                "workflow_run_id": row.get::<Option<Uuid>, _>("workflow_run_id").map(|id| id.to_string()),
+                "workflow_node_id": row.get::<Option<String>, _>("workflow_node_id"),
+                "channel": row.get::<String, _>("channel"),
+                "severity": row.get::<String, _>("severity"),
+                "title": row.get::<String, _>("title"),
+                "body": row.get::<Option<String>, _>("body"),
+                "target": row.get::<Option<String>, _>("target"),
+                "metadata": row.get::<String, _>("metadata"),
+                "read_at": row.get::<Option<i64>, _>("read_at"),
+                "created_at": row.get::<i64, _>("created_at"),
+            }),
+            ArchiveTable::DeadLetters => runinator_models::json!({
+                "id": row.get::<Uuid, _>("id").to_string(),
+                "channel": row.get::<String, _>("channel"),
+                "event_id": row.get::<Option<Uuid>, _>("event_id").map(|id| id.to_string()),
+                "dedupe_key": row.get::<Option<String>, _>("dedupe_key"),
+                "attempts": row.get::<i64, _>("attempts"),
+                "error": row.get::<String, _>("error"),
+                "payload": row.get::<String, _>("payload"),
+                "created_at": row.get::<i64, _>("created_at"),
+            }),
+            ArchiveTable::AuditLog => runinator_models::json!({
+                "id": row.get::<Uuid, _>("id").to_string(),
+                "actor_id": row.get::<Option<Uuid>, _>("actor_id").map(|id| id.to_string()),
+                "actor_kind": row.get::<String, _>("actor_kind"),
+                "action": row.get::<String, _>("action"),
+                "resource_type": row.get::<Option<String>, _>("resource_type"),
+                "resource_id": row.get::<Option<Uuid>, _>("resource_id").map(|id| id.to_string()),
+                "outcome": row.get::<String, _>("outcome"),
+                "detail": row.get::<Option<String>, _>("detail"),
+                "metadata": row.get::<String, _>("metadata"),
+                "created_at": row.get::<i64, _>("created_at"),
+            }),
+            ArchiveTable::IdempotencyKeys => runinator_models::json!({
+                "id": row.get::<Uuid, _>("id").to_string(),
+                "scope": row.get::<String, _>("scope"),
+                "key": row.get::<String, _>("key"),
+                "result": row.get::<String, _>("result"),
+                "created_at": row.get::<i64, _>("created_at"),
+            }),
+        })
     }
 }
 
@@ -595,126 +732,6 @@ where
         primary_key,
         created_at: timestamp_to_utc(row.get("created_at"))?,
         archive_day: row.get("archive_day"),
-    })
-}
-
-fn archive_row_json<R>(table: ArchiveTable, row: &R) -> Result<Value, SendableError>
-where
-    R: Row,
-    for<'r> Uuid: Decode<'r, R::Database> + Type<R::Database>,
-    for<'r> String: Decode<'r, R::Database> + Type<R::Database>,
-    for<'r> i64: Decode<'r, R::Database> + Type<R::Database>,
-    for<'r> Option<i64>: Decode<'r, R::Database> + Type<R::Database>,
-    for<'r> Option<String>: Decode<'r, R::Database> + Type<R::Database>,
-    for<'r> Option<Uuid>: Decode<'r, R::Database> + Type<R::Database>,
-    for<'c> &'c str: ColumnIndex<R>,
-{
-    Ok(match table {
-        ArchiveTable::WorkflowRuns => runinator_models::json!({
-            "id": row.get::<Uuid, _>("id").to_string(),
-            "workflow_id": row.get::<Uuid, _>("workflow_id").to_string(),
-            "workflow_snapshot": row.get::<Option<String>, _>("workflow_snapshot"),
-            "status": row.get::<String, _>("status"),
-            "active_node_id": row.get::<Option<String>, _>("active_node_id"),
-            "parameters": row.get::<String, _>("parameters"),
-            "state": row.get::<String, _>("state"),
-            "created_at": row.get::<i64, _>("created_at"),
-            "started_at": row.get::<Option<i64>, _>("started_at"),
-            "finished_at": row.get::<Option<i64>, _>("finished_at"),
-            "message": row.get::<Option<String>, _>("message"),
-            "name": row.get::<Option<String>, _>("name"),
-            "trigger_source_kind": row.get::<Option<String>, _>("trigger_source_kind"),
-            "trigger_actor_type": row.get::<Option<String>, _>("trigger_actor_type"),
-            "trigger_actor_replica_id": row.get::<Option<Uuid>, _>("trigger_actor_replica_id").map(|id| id.to_string()),
-            "trigger_actor_display_name": row.get::<Option<String>, _>("trigger_actor_display_name"),
-            "trigger_request_host": row.get::<Option<String>, _>("trigger_request_host"),
-            "trigger_request_ip": row.get::<Option<String>, _>("trigger_request_ip"),
-            "trigger_metadata": row.get::<String, _>("trigger_metadata"),
-        }),
-        ArchiveTable::WorkflowNodeChunks => runinator_models::json!({
-            "id": row.get::<Uuid, _>("id").to_string(),
-            "workflow_node_run_id": row.get::<Uuid, _>("workflow_node_run_id").to_string(),
-            "sequence": row.get::<i64, _>("sequence"),
-            "stream": row.get::<String, _>("stream"),
-            "content": row.get::<String, _>("content"),
-            "created_at": row.get::<i64, _>("created_at"),
-        }),
-        ArchiveTable::WorkflowReadyNodes => runinator_models::json!({
-            "id": row.get::<Uuid, _>("id").to_string(),
-            "source_event_id": row.get::<Uuid, _>("source_event_id").to_string(),
-            "workflow_run_id": row.get::<Uuid, _>("workflow_run_id").to_string(),
-            "node_id": row.get::<String, _>("node_id"),
-            "status": row.get::<String, _>("status"),
-            "ready_at": row.get::<i64, _>("ready_at"),
-            "attempts": row.get::<i64, _>("attempts"),
-            "claimed_by": row.get::<Option<String>, _>("claimed_by"),
-            "claimed_until": row.get::<Option<i64>, _>("claimed_until"),
-            "completed_at": row.get::<Option<i64>, _>("completed_at"),
-            "created_at": row.get::<i64, _>("created_at"),
-            "updated_at": row.get::<i64, _>("updated_at"),
-        }),
-        ArchiveTable::RunChunks => runinator_models::json!({
-            "id": row.get::<Uuid, _>("id").to_string(),
-            "run_id": row.get::<Uuid, _>("run_id").to_string(),
-            "sequence": row.get::<i64, _>("sequence"),
-            "stream": row.get::<String, _>("stream"),
-            "content": row.get::<String, _>("content"),
-            "created_at": row.get::<i64, _>("created_at"),
-        }),
-        ArchiveTable::WorkflowActionDispatches => runinator_models::json!({
-            "id": row.get::<Uuid, _>("id").to_string(),
-            "dedupe_key": row.get::<String, _>("dedupe_key"),
-            "command_json": row.get::<String, _>("command_json"),
-            "attempts": row.get::<i64, _>("attempts"),
-            "created_at": row.get::<i64, _>("created_at"),
-            "updated_at": row.get::<i64, _>("updated_at"),
-            "published_at": row.get::<Option<i64>, _>("published_at"),
-            "last_error": row.get::<Option<String>, _>("last_error"),
-            "claimed_by": row.get::<Option<String>, _>("claimed_by"),
-            "claimed_until": row.get::<Option<i64>, _>("claimed_until"),
-        }),
-        ArchiveTable::Notifications => runinator_models::json!({
-            "id": row.get::<Uuid, _>("id").to_string(),
-            "workflow_run_id": row.get::<Option<Uuid>, _>("workflow_run_id").map(|id| id.to_string()),
-            "workflow_node_id": row.get::<Option<String>, _>("workflow_node_id"),
-            "channel": row.get::<String, _>("channel"),
-            "severity": row.get::<String, _>("severity"),
-            "title": row.get::<String, _>("title"),
-            "body": row.get::<Option<String>, _>("body"),
-            "target": row.get::<Option<String>, _>("target"),
-            "metadata": row.get::<String, _>("metadata"),
-            "read_at": row.get::<Option<i64>, _>("read_at"),
-            "created_at": row.get::<i64, _>("created_at"),
-        }),
-        ArchiveTable::DeadLetters => runinator_models::json!({
-            "id": row.get::<Uuid, _>("id").to_string(),
-            "channel": row.get::<String, _>("channel"),
-            "event_id": row.get::<Option<Uuid>, _>("event_id").map(|id| id.to_string()),
-            "dedupe_key": row.get::<Option<String>, _>("dedupe_key"),
-            "attempts": row.get::<i64, _>("attempts"),
-            "error": row.get::<String, _>("error"),
-            "payload": row.get::<String, _>("payload"),
-            "created_at": row.get::<i64, _>("created_at"),
-        }),
-        ArchiveTable::AuditLog => runinator_models::json!({
-            "id": row.get::<Uuid, _>("id").to_string(),
-            "actor_id": row.get::<Option<Uuid>, _>("actor_id").map(|id| id.to_string()),
-            "actor_kind": row.get::<String, _>("actor_kind"),
-            "action": row.get::<String, _>("action"),
-            "resource_type": row.get::<Option<String>, _>("resource_type"),
-            "resource_id": row.get::<Option<Uuid>, _>("resource_id").map(|id| id.to_string()),
-            "outcome": row.get::<String, _>("outcome"),
-            "detail": row.get::<Option<String>, _>("detail"),
-            "metadata": row.get::<String, _>("metadata"),
-            "created_at": row.get::<i64, _>("created_at"),
-        }),
-        ArchiveTable::IdempotencyKeys => runinator_models::json!({
-            "id": row.get::<Uuid, _>("id").to_string(),
-            "scope": row.get::<String, _>("scope"),
-            "key": row.get::<String, _>("key"),
-            "result": row.get::<String, _>("result"),
-            "created_at": row.get::<i64, _>("created_at"),
-        }),
     })
 }
 

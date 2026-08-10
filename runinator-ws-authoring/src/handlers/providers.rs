@@ -13,6 +13,7 @@ use crate::repository;
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::openapi::docs::{EndpointDoc, Example, endpoint, json_body};
 use runinator_ws_core::responses::{api_error, bad_request};
+use runinator_ws_middleware::authz::AuthContextExt;
 
 /// list registered task providers and their action metadata.
 #[utoipa::path(
@@ -43,7 +44,7 @@ pub async fn upsert_provider<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Json(provider): Json<ProviderMetadata>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_service_or_admin(&ctx) {
+    if let Err(reply) = ctx.require_service_or_admin() {
         return reply;
     }
     if let Err(err) = validate_provider_metadata(&provider) {
@@ -66,7 +67,7 @@ pub async fn import_provider_bundle<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Json(bundle): Json<ProviderBundle>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_service_or_admin(&ctx) {
+    if let Err(reply) = ctx.require_service_or_admin() {
         return reply;
     }
     let mut imported = Vec::with_capacity(bundle.providers.len());

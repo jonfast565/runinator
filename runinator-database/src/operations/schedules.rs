@@ -48,8 +48,7 @@ where
         // row back on the same pinned connection by the (now app-generated) id.
         if self.dialect() == SqlDialect::MySql {
             let columns = "id, workflow_id, kind, enabled, configuration, next_execution, blackout_start, blackout_end, metadata, created_at, updated_at";
-            let conflict = queries::on_conflict_update(
-                SqlDialect::MySql,
+            let conflict = SqlDialect::MySql.on_conflict_update(
                 "id",
                 &[
                     "workflow_id",
@@ -153,7 +152,7 @@ where
 
         // mysql has no usable RETURNING via sqlx: upsert, then read the row back on the same conn.
         if self.dialect() == SqlDialect::MySql {
-            let conflict = queries::on_conflict_update(SqlDialect::MySql, "id", &update_cols);
+            let conflict = SqlDialect::MySql.on_conflict_update("id", &update_cols);
             let mut conn = self.pool().acquire().await?;
             sqlx::query(&self.render(&format!(
                 "INSERT INTO pipeline_triggers ({PIPELINE_TRIGGER_COLUMNS})
@@ -181,7 +180,7 @@ where
             return Ok(mappers::row_to_pipeline_trigger(&row));
         }
 
-        let conflict = queries::on_conflict_update(self.dialect(), "id", &update_cols);
+        let conflict = self.dialect().on_conflict_update("id", &update_cols);
         let row = sqlx::query(&self.render(&format!(
             "INSERT INTO pipeline_triggers ({PIPELINE_TRIGGER_COLUMNS})
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) {conflict}
@@ -251,9 +250,9 @@ where
              WHERE enabled = {} AND kind = 'cron' AND (next_execution IS NULL OR next_execution <= ?) \
                AND NOT EXISTS ({}) \
              ORDER BY COALESCE(next_execution, 0), id LIMIT ?{}",
-            queries::bool_true(self.dialect()),
+            self.dialect().bool_true(),
             active_freeze_window_sql(self.dialect(), PIPELINE_FREEZE_SCOPE),
-            queries::skip_locked(self.dialect()),
+            self.dialect().skip_locked(),
         ));
         let rows = sqlx::query(&select_sql)
             .bind(now.timestamp())
@@ -263,8 +262,7 @@ where
             .fetch_all(&mut *tx)
             .await?;
 
-        let firing_sql = self.render(&queries::insert_ignore(
-            self.dialect(),
+        let firing_sql = self.render(&self.dialect().insert_ignore(
             "pipeline_trigger_firings",
             "id, trigger_id, fire_key, scheduler_id, created_at",
             "?, ?, ?, ?, ?",
@@ -297,7 +295,7 @@ where
                 continue;
             }
 
-            if is_pipeline_trigger_in_blackout(&trigger, now) {
+            if trigger.is_pipeline_trigger_in_blackout(now) {
                 if let Some(end) = trigger.blackout_end {
                     sqlx::query(&update_next_sql)
                         .bind(end.timestamp())
@@ -334,8 +332,8 @@ where
             let pipeline_snapshot = mappers::row_to_pipeline(&pipeline_row);
             let new_run_id = Uuid::now_v7();
             let snapshot_json = serde_json::to_string(&pipeline_snapshot)?;
-            let parameters = pipeline_trigger_parameters(&trigger).to_string();
-            let state = pipeline_trigger_state(&trigger).to_string();
+            let parameters = trigger.pipeline_trigger_parameters().to_string();
+            let state = trigger.pipeline_trigger_state().to_string();
             let run_row = if self.dialect() == SqlDialect::MySql {
                 sqlx::query(&self.render(
                     "INSERT INTO pipeline_runs (id, pipeline_id, pipeline_snapshot, status, parameters, state, created_at, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)",
@@ -408,7 +406,7 @@ where
     ) -> Result<Vec<WorkflowTrigger>, SendableError> {
         let sql = self.render(&format!(
             "SELECT id, workflow_id, kind, enabled, configuration, next_execution, blackout_start, blackout_end, metadata, created_at, updated_at FROM workflow_triggers WHERE enabled = {} AND kind = 'cron' AND (next_execution IS NULL OR next_execution <= ?) ORDER BY COALESCE(next_execution, 0), id",
-            queries::bool_true(self.dialect()),
+            self.dialect().bool_true(),
         ));
         let rows = sqlx::query(&sql)
             .bind(now.timestamp())
@@ -451,9 +449,9 @@ where
              WHERE enabled = {} AND kind = 'cron' AND (next_execution IS NULL OR next_execution <= ?) \
                AND NOT EXISTS ({}) \
              ORDER BY COALESCE(next_execution, 0), id LIMIT ?{}",
-            queries::bool_true(self.dialect()),
+            self.dialect().bool_true(),
             active_freeze_window_sql(self.dialect(), WORKFLOW_FREEZE_SCOPE),
-            queries::skip_locked(self.dialect()),
+            self.dialect().skip_locked(),
         ));
         let rows = sqlx::query(&select_sql)
             .bind(now.timestamp())
@@ -492,7 +490,7 @@ where
                 continue;
             }
 
-            if is_trigger_in_blackout(&trigger, now) {
+            if trigger.is_trigger_in_blackout(now) {
                 if let Some(end) = trigger.blackout_end {
                     sqlx::query(&update_next_sql)
                         .bind(end.timestamp())
@@ -769,7 +767,7 @@ where
     ) -> Result<Vec<FreezeWindow>, SendableError> {
         let rows = sqlx::query(&self.render(&format!(
             "SELECT {FREEZE_WINDOW_COLUMNS} FROM freeze_windows WHERE enabled = {} AND starts_at <= ? AND ends_at > ? ORDER BY ends_at",
-            queries::bool_true(self.dialect()),
+            self.dialect().bool_true(),
         )))
         .bind(now.timestamp())
         .bind(now.timestamp())

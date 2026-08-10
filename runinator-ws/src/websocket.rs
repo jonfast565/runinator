@@ -22,11 +22,11 @@ use serde::Serialize;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
-use crate::authz;
 use crate::events::{AppEventKind, EventSender};
 use crate::models;
 use crate::openapi::docs::{EndpointDoc, Example, endpoint};
 use crate::repository;
+use runinator_ws_middleware::authz::AuthContextExt;
 
 pub(crate) async fn send_json<T: Serialize>(
     tx: &mut futures::stream::SplitSink<axum::extract::ws::WebSocket, Message>,
@@ -101,7 +101,7 @@ pub(crate) async fn ws_events(
                     match event {
                         Ok(event) => {
                             // org-scoped egress: drop cross-tenant hints; unscoped events stay visible.
-                            if !authz::org_visible(&ctx, event.org_id) {
+                            if !ctx.org_visible(event.org_id) {
                                 continue;
                             }
                             if send_json(&mut tx, &event).await.is_err() {
@@ -171,7 +171,7 @@ pub(crate) async fn ws_workflow_run<T: DatabaseImpl>(
                 event = event_rx.recv() => {
                     match event {
                         Ok(event) => {
-                            if !authz::org_visible(&ctx, event.org_id) {
+                            if !ctx.org_visible(event.org_id) {
                                 continue;
                             }
                             let relevant = matches!(
@@ -237,7 +237,7 @@ pub(crate) async fn ws_workflow_node_run_stream<T: DatabaseImpl>(
                     match event {
                         Ok(event) => {
                             if matches!(&event.kind, AppEventKind::WorkflowRunChanged { .. })
-                                && authz::org_visible(&ctx, event.org_id)
+                                && ctx.org_visible(event.org_id)
                                 && send_workflow_node_run_chunks(db.as_ref(), &mut tx, node_run_id, &mut cursor, 100).await.is_err() {
                                     break;
                                 }
@@ -292,7 +292,7 @@ pub(crate) async fn ws_run_stream<T: DatabaseImpl>(
                 event = event_rx.recv() => {
                     match event {
                         Ok(event) => {
-                            if !authz::org_visible(&ctx, event.org_id) {
+                            if !ctx.org_visible(event.org_id) {
                                 continue;
                             }
                             let is_chunk = matches!(

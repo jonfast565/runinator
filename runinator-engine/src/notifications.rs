@@ -57,27 +57,23 @@ pub async fn on_run_terminal<T: DatabaseImpl>(db: &T, events: &EventSender, work
     ) {
         return;
     }
-    let context = run_failed_context(db, &run).await;
-    dispatch_event(
-        db,
-        events,
-        NotificationEvent::RunFailed,
-        run.workflow_id,
-        &context,
-    )
-    .await;
+    let context_builder = EmissionContextBuilder { db, run: &run };
+    let dispatcher = NotificationDispatcher { db, events };
+    let context = context_builder.run_failed().await;
+    dispatcher
+        .dispatch_event(NotificationEvent::RunFailed, run.workflow_id, &context)
+        .await;
 
     // a failed run is also where an exhausted node retry surfaces; report the specific node so an
     // on-call reader sees which step burned its attempts rather than only that the run died.
-    if let Some(node_context) = retry_exhausted_context(db, &run).await {
-        dispatch_event(
-            db,
-            events,
-            NotificationEvent::NodeRetryExhausted,
-            run.workflow_id,
-            &node_context,
-        )
-        .await;
+    if let Some(node_context) = context_builder.retry_exhausted().await {
+        dispatcher
+            .dispatch_event(
+                NotificationEvent::NodeRetryExhausted,
+                run.workflow_id,
+                &node_context,
+            )
+            .await;
     }
 }
 
@@ -136,6 +132,8 @@ async fn scan_once<T: DatabaseImpl>(db: &T, events: &EventSender) -> Result<(), 
                 continue;
             }
             let age = (chrono::Utc::now() - run.created_at).num_seconds();
+            let context_builder = EmissionContextBuilder { db, run: &run };
+            let dispatcher = NotificationDispatcher { db, events };
             for policy in &policies {
                 if !policy_covers(policy, run.workflow_id) {
                     continue;
@@ -146,8 +144,8 @@ async fn scan_once<T: DatabaseImpl>(db: &T, events: &EventSender) -> Result<(), 
                 if age < threshold {
                     continue;
                 }
-                let context = duration_context(db, &run, event, threshold, age).await;
-                fire(db, events, policy, &context).await;
+                let context = context_builder.duration(event, threshold, age).await;
+                dispatcher.fire(policy, &context).await;
             }
         }
     }
@@ -170,155 +168,162 @@ fn policy_covers(policy: &NotificationPolicy, workflow_id: Uuid) -> bool {
     policy.workflow_id.is_none() || policy.workflow_id == Some(workflow_id)
 }
 
-/// load the policies for one transition-based event and fire each.
-async fn dispatch_event<T: DatabaseImpl>(
-    db: &T,
-    events: &EventSender,
-    event: NotificationEvent,
-    workflow_id: Uuid,
-    context: &EmissionContext,
-) {
-    let policies = match db
-        .fetch_matching_notification_policies(event, workflow_id)
-        .await
-    {
-        Ok(policies) => policies,
-        Err(err) => {
-            warn!(
-                workflow_id = %workflow_id,
-                error_code = error_code_or_unknown(err.as_ref()),
-                "failed to load notification policies: {}",
-                err
-            );
-            return;
-        }
-    };
-    for policy in &policies {
-        fire(db, events, policy, context).await;
-    }
+/// dispatches fired policies to persistence and delivery. `db` and `events` are invariant across
+/// every method here — one dispatcher serves an entire scan or terminal-transition callback.
+struct NotificationDispatcher<'a, T: DatabaseImpl> {
+    db: &'a T,
+    events: &'a EventSender,
 }
 
-/// persist the notification for a fired policy and, for external channels, enqueue its delivery.
-///
-/// best-effort by design: a failure to alert must never fail the run that triggered it, so errors
-/// are logged and swallowed rather than propagated back into the drive path.
-async fn fire<T: DatabaseImpl>(
-    db: &T,
-    events: &EventSender,
-    policy: &NotificationPolicy,
-    context: &EmissionContext,
-) {
-    let notification = NewNotification {
-        workflow_run_id: context.workflow_run_id,
-        workflow_node_id: context.node_id.clone(),
-        channel: policy.channel.as_str().to_string(),
-        severity: policy.severity.as_str().to_string(),
-        title: context.title.clone(),
-        body: Some(context.body.clone()),
-        target: policy.target.clone(),
-        metadata: context.metadata.clone(),
-        dedupe_key: Some(format!("{}:{}", policy.id, context.occurrence)),
-    };
-    let created = match db.create_notification_if_absent(&notification).await {
-        Ok(Some(created)) => created,
-        // already emitted for this policy/occurrence by this or another replica.
-        Ok(None) => return,
-        Err(err) => {
+impl<T: DatabaseImpl> NotificationDispatcher<'_, T> {
+    /// load the policies for one transition-based event and fire each.
+    async fn dispatch_event(
+        &self,
+        event: NotificationEvent,
+        workflow_id: Uuid,
+        context: &EmissionContext,
+    ) {
+        let policies = match self
+            .db
+            .fetch_matching_notification_policies(event, workflow_id)
+            .await
+        {
+            Ok(policies) => policies,
+            Err(err) => {
+                warn!(
+                    workflow_id = %workflow_id,
+                    error_code = error_code_or_unknown(err.as_ref()),
+                    "failed to load notification policies: {}",
+                    err
+                );
+                return;
+            }
+        };
+        for policy in &policies {
+            self.fire(policy, context).await;
+        }
+    }
+
+    /// persist the notification for a fired policy and, for external channels, enqueue its
+    /// delivery.
+    ///
+    /// best-effort by design: a failure to alert must never fail the run that triggered it, so
+    /// errors are logged and swallowed rather than propagated back into the drive path.
+    async fn fire(&self, policy: &NotificationPolicy, context: &EmissionContext) {
+        let notification = NewNotification {
+            workflow_run_id: context.workflow_run_id,
+            workflow_node_id: context.node_id.clone(),
+            channel: policy.channel.as_str().to_string(),
+            severity: policy.severity.as_str().to_string(),
+            title: context.title.clone(),
+            body: Some(context.body.clone()),
+            target: policy.target.clone(),
+            metadata: context.metadata.clone(),
+            dedupe_key: Some(format!("{}:{}", policy.id, context.occurrence)),
+        };
+        let created = match self.db.create_notification_if_absent(&notification).await {
+            Ok(Some(created)) => created,
+            // already emitted for this policy/occurrence by this or another replica.
+            Ok(None) => return,
+            Err(err) => {
+                warn!(
+                    policy = %policy.id,
+                    error_code = error_code_or_unknown(err.as_ref()),
+                    "failed to persist notification: {}",
+                    err
+                );
+                return;
+            }
+        };
+
+        let org_id = match context.workflow_run_id {
+            Some(run_id) => repository::org_id_for_workflow_run(self.db, run_id).await,
+            None => None,
+        };
+        emit(
+            self.events,
+            AppEvent::new(
+                org_id,
+                AppEventKind::NotificationCreated {
+                    notification_id: created.id,
+                },
+            ),
+        );
+
+        if policy.channel == NotificationChannel::InApp {
+            return;
+        }
+        if let Err(err) = self.enqueue_delivery(policy, &created.id, context).await {
             warn!(
                 policy = %policy.id,
+                notification = %created.id,
                 error_code = error_code_or_unknown(err.as_ref()),
-                "failed to persist notification: {}",
+                "failed to enqueue notification delivery: {}",
                 err
             );
-            return;
+        } else {
+            self.events.nudge_action_dispatch_publisher();
         }
-    };
+    }
 
-    let org_id = match context.workflow_run_id {
-        Some(run_id) => repository::org_id_for_workflow_run(db, run_id).await,
-        None => None,
-    };
-    emit(
-        events,
-        AppEvent::new(
-            org_id,
-            AppEventKind::NotificationCreated {
-                notification_id: created.id,
+    /// hand an external-channel notification to the action outbox so a worker delivers it through
+    /// the normal provider path.
+    async fn enqueue_delivery(
+        &self,
+        policy: &NotificationPolicy,
+        notification_id: &Uuid,
+        context: &EmissionContext,
+    ) -> Result<(), SendableError> {
+        let Some((provider, function)) = policy.channel.provider() else {
+            return Err(crate::errors::NOTIFY_UNROUTABLE_CHANNEL.error(policy.channel.as_str()));
+        };
+        let Some(target) = policy.target.clone().filter(|t| !t.trim().is_empty()) else {
+            return Err(crate::errors::NOTIFY_MISSING_TARGET.error(policy.id));
+        };
+
+        let delivery = self
+            .db
+            .create_notification_delivery(
+                *notification_id,
+                Some(policy.id),
+                policy.channel,
+                Some(target.clone()),
+            )
+            .await?;
+
+        let configuration = delivery_configuration(policy, &target, context);
+        let command = ActionCommand {
+            command_id: Uuid::now_v7(),
+            // deliveries are not node work: the run id correlates the alert with its cause, and the
+            // node run id is a fresh identifier the result path routes by delivery id instead.
+            workflow_run_id: context.workflow_run_id.unwrap_or_else(Uuid::nil),
+            workflow_node_run_id: Uuid::now_v7(),
+            node_id: DELIVERY_NODE_ID.to_string(),
+            action: WorkflowAction {
+                provider: provider.to_string(),
+                function: function.to_string(),
+                timeout_seconds: DELIVERY_TIMEOUT_SECONDS,
+                configuration,
+                mcp_enabled: false,
+                tags: Vec::new(),
+                required_labels: Default::default(),
+                idempotency_key: None,
             },
-        ),
-    );
-
-    if policy.channel == NotificationChannel::InApp {
-        return;
-    }
-    if let Err(err) = enqueue_delivery(db, policy, &created.id, context).await {
-        warn!(
-            policy = %policy.id,
-            notification = %created.id,
-            error_code = error_code_or_unknown(err.as_ref()),
-            "failed to enqueue notification delivery: {}",
-            err
-        );
-    } else {
-        events.nudge_action_dispatch_publisher();
-    }
-}
-
-/// hand an external-channel notification to the action outbox so a worker delivers it through the
-/// normal provider path.
-async fn enqueue_delivery<T: DatabaseImpl>(
-    db: &T,
-    policy: &NotificationPolicy,
-    notification_id: &Uuid,
-    context: &EmissionContext,
-) -> Result<(), SendableError> {
-    let Some((provider, function)) = policy.channel.provider() else {
-        return Err(crate::errors::NOTIFY_UNROUTABLE_CHANNEL.error(policy.channel.as_str()));
-    };
-    let Some(target) = policy.target.clone().filter(|t| !t.trim().is_empty()) else {
-        return Err(crate::errors::NOTIFY_MISSING_TARGET.error(policy.id));
-    };
-
-    let delivery = db
-        .create_notification_delivery(
-            *notification_id,
-            Some(policy.id),
-            policy.channel,
-            Some(target.clone()),
-        )
-        .await?;
-
-    let configuration = delivery_configuration(policy, &target, context);
-    let command = ActionCommand {
-        command_id: Uuid::now_v7(),
-        // deliveries are not node work: the run id correlates the alert with its cause, and the
-        // node run id is a fresh identifier the result path routes by delivery id instead.
-        workflow_run_id: context.workflow_run_id.unwrap_or_else(Uuid::nil),
-        workflow_node_run_id: Uuid::now_v7(),
-        node_id: DELIVERY_NODE_ID.to_string(),
-        action: WorkflowAction {
-            provider: provider.to_string(),
-            function: function.to_string(),
-            timeout_seconds: DELIVERY_TIMEOUT_SECONDS,
-            configuration,
-            mcp_enabled: false,
-            tags: Vec::new(),
-            required_labels: Default::default(),
+            attempt: 0,
+            parameters: Value::Null,
+            target: Default::default(),
+            trace_id: Uuid::now_v7(),
+            trace_context: Default::default(),
+            notification_delivery_id: Some(delivery.id),
+            // the delivery row is already the dedupe record for an alert, and its id keys the
+            // outbox entry, so a delivery needs no second idempotency reservation.
             idempotency_key: None,
-        },
-        attempt: 0,
-        parameters: Value::Null,
-        target: Default::default(),
-        trace_id: Uuid::now_v7(),
-        trace_context: Default::default(),
-        notification_delivery_id: Some(delivery.id),
-        // the delivery row is already the dedupe record for an alert, and its id keys the outbox
-        // entry, so a delivery needs no second idempotency reservation.
-        idempotency_key: None,
-    };
-    db.enqueue_action_dispatch(format!("notification:{}", delivery.id), command)
-        .await?;
-    Ok(())
+        };
+        self.db
+            .enqueue_action_dispatch(format!("notification:{}", delivery.id), command)
+            .await?;
+        Ok(())
+    }
 }
 
 /// build the provider configuration for a delivery. the policy's own configuration is applied last
@@ -353,141 +358,152 @@ fn delivery_configuration(
     runinator_models::workflows::WorkflowObject::from_value(configuration).unwrap_or_default()
 }
 
-/// render the message for a failed run.
-async fn run_failed_context<T: DatabaseImpl>(db: &T, run: &WorkflowRun) -> EmissionContext {
-    let workflow_name = workflow_name(db, run).await;
-    let reason = run
-        .message
-        .clone()
-        .unwrap_or_else(|| "no failure message recorded".to_string());
-    EmissionContext {
-        workflow_run_id: Some(run.id),
-        node_id: run.active_node_id.clone(),
-        title: format!("{} {}", workflow_name, run.status.as_str()),
-        body: format!(
-            "Run {} ended {}{}.\n{}",
-            run.id,
-            run.status.as_str(),
-            run.active_node_id
-                .as_ref()
-                .map(|node| format!(" at node '{node}'"))
-                .unwrap_or_default(),
-            reason
-        ),
-        metadata: runinator_models::json!({
-            "event": NotificationEvent::RunFailed.as_str(),
-            "workflow_id": run.workflow_id,
-            "workflow_run_id": run.id,
-            "status": run.status.as_str(),
-        }),
-        // one occurrence per run terminal: a run settles once, so the run id is the whole identity.
-        occurrence: format!("run_failed:{}", run.id),
-    }
+/// builds emission contexts (the facts a fired policy renders its message from) for one run. `db`
+/// and `run` are invariant across every method here.
+struct EmissionContextBuilder<'a, T: DatabaseImpl> {
+    db: &'a T,
+    run: &'a WorkflowRun,
 }
 
-/// render the message for the node in a failed run that used up its retry budget, if there is one.
-async fn retry_exhausted_context<T: DatabaseImpl>(
-    db: &T,
-    run: &WorkflowRun,
-) -> Option<EmissionContext> {
-    let node_runs = db.fetch_workflow_node_runs(run.id).await.ok()?;
-    // attempt is zero-based, so a retried node is any failed node past its first attempt.
-    let exhausted = node_runs
-        .iter()
-        .filter(|node_run| {
-            matches!(
-                node_run.status,
-                WorkflowStatus::Failed | WorkflowStatus::TimedOut
-            ) && node_run.attempt > 0
+impl<T: DatabaseImpl> EmissionContextBuilder<'_, T> {
+    /// render the message for a failed run.
+    async fn run_failed(&self) -> EmissionContext {
+        let run = self.run;
+        let workflow_name = self.workflow_name().await;
+        let reason = run
+            .message
+            .clone()
+            .unwrap_or_else(|| "no failure message recorded".to_string());
+        EmissionContext {
+            workflow_run_id: Some(run.id),
+            node_id: run.active_node_id.clone(),
+            title: format!("{} {}", workflow_name, run.status.as_str()),
+            body: format!(
+                "Run {} ended {}{}.\n{}",
+                run.id,
+                run.status.as_str(),
+                run.active_node_id
+                    .as_ref()
+                    .map(|node| format!(" at node '{node}'"))
+                    .unwrap_or_default(),
+                reason
+            ),
+            metadata: runinator_models::json!({
+                "event": NotificationEvent::RunFailed.as_str(),
+                "workflow_id": run.workflow_id,
+                "workflow_run_id": run.id,
+                "status": run.status.as_str(),
+            }),
+            // one occurrence per run terminal: a run settles once, so the run id is the whole
+            // identity.
+            occurrence: format!("run_failed:{}", run.id),
+        }
+    }
+
+    /// render the message for the node in a failed run that used up its retry budget, if there is
+    /// one.
+    async fn retry_exhausted(&self) -> Option<EmissionContext> {
+        let run = self.run;
+        let node_runs = self.db.fetch_workflow_node_runs(run.id).await.ok()?;
+        // attempt is zero-based, so a retried node is any failed node past its first attempt.
+        let exhausted = node_runs
+            .iter()
+            .filter(|node_run| {
+                matches!(
+                    node_run.status,
+                    WorkflowStatus::Failed | WorkflowStatus::TimedOut
+                ) && node_run.attempt > 0
+            })
+            .max_by_key(|node_run| node_run.attempt)?;
+        let workflow_name = self.workflow_name().await;
+        Some(EmissionContext {
+            workflow_run_id: Some(run.id),
+            node_id: Some(exhausted.node_id.clone()),
+            title: format!(
+                "{} exhausted retries on '{}'",
+                workflow_name, exhausted.node_id
+            ),
+            body: format!(
+                "Node '{}' in run {} failed after {} attempt(s).\n{}",
+                exhausted.node_id,
+                run.id,
+                exhausted.attempt + 1,
+                exhausted
+                    .message
+                    .clone()
+                    .unwrap_or_else(|| "no failure message recorded".to_string())
+            ),
+            metadata: runinator_models::json!({
+                "event": NotificationEvent::NodeRetryExhausted.as_str(),
+                "workflow_id": run.workflow_id,
+                "workflow_run_id": run.id,
+                "node_id": exhausted.node_id,
+                "attempts": exhausted.attempt + 1,
+            }),
+            occurrence: format!("retry_exhausted:{}:{}", run.id, exhausted.node_id),
         })
-        .max_by_key(|node_run| node_run.attempt)?;
-    let workflow_name = workflow_name(db, run).await;
-    Some(EmissionContext {
-        workflow_run_id: Some(run.id),
-        node_id: Some(exhausted.node_id.clone()),
-        title: format!(
-            "{} exhausted retries on '{}'",
-            workflow_name, exhausted.node_id
-        ),
-        body: format!(
-            "Node '{}' in run {} failed after {} attempt(s).\n{}",
-            exhausted.node_id,
-            run.id,
-            exhausted.attempt + 1,
-            exhausted
-                .message
-                .clone()
-                .unwrap_or_else(|| "no failure message recorded".to_string())
-        ),
-        metadata: runinator_models::json!({
-            "event": NotificationEvent::NodeRetryExhausted.as_str(),
-            "workflow_id": run.workflow_id,
-            "workflow_run_id": run.id,
-            "node_id": exhausted.node_id,
-            "attempts": exhausted.attempt + 1,
-        }),
-        occurrence: format!("retry_exhausted:{}:{}", run.id, exhausted.node_id),
-    })
-}
+    }
 
-/// render the message for a duration breach.
-async fn duration_context<T: DatabaseImpl>(
-    db: &T,
-    run: &WorkflowRun,
-    event: NotificationEvent,
-    threshold_seconds: i64,
-    age_seconds: i64,
-) -> EmissionContext {
-    let workflow_name = workflow_name(db, run).await;
-    let (title, verb) = match event {
-        NotificationEvent::RunParked => (
-            format!("{workflow_name} parked over threshold"),
-            "has been parked",
-        ),
-        _ => (format!("{workflow_name} breached SLA"), "has been open"),
-    };
-    EmissionContext {
-        workflow_run_id: Some(run.id),
-        node_id: run.active_node_id.clone(),
-        title,
-        body: format!(
-            "Run {} {} for {} (threshold {}), currently {}{}.",
-            run.id,
-            verb,
-            humanize_seconds(age_seconds),
-            humanize_seconds(threshold_seconds),
-            run.status.as_str(),
-            run.active_node_id
-                .as_ref()
-                .map(|node| format!(" at node '{node}'"))
-                .unwrap_or_default(),
-        ),
-        metadata: runinator_models::json!({
-            "event": event.as_str(),
-            "workflow_id": run.workflow_id,
-            "workflow_run_id": run.id,
-            "status": run.status.as_str(),
-            "threshold_seconds": threshold_seconds,
-            "age_seconds": age_seconds,
-        }),
-        // bucket by threshold so a policy alerts once per run, but re-alerts if an operator raises
-        // the threshold and the run breaches the new one too.
-        occurrence: format!("{}:{}:{}", event.as_str(), run.id, threshold_seconds),
+    /// render the message for a duration breach.
+    async fn duration(
+        &self,
+        event: NotificationEvent,
+        threshold_seconds: i64,
+        age_seconds: i64,
+    ) -> EmissionContext {
+        let run = self.run;
+        let workflow_name = self.workflow_name().await;
+        let (title, verb) = match event {
+            NotificationEvent::RunParked => (
+                format!("{workflow_name} parked over threshold"),
+                "has been parked",
+            ),
+            _ => (format!("{workflow_name} breached SLA"), "has been open"),
+        };
+        EmissionContext {
+            workflow_run_id: Some(run.id),
+            node_id: run.active_node_id.clone(),
+            title,
+            body: format!(
+                "Run {} {} for {} (threshold {}), currently {}{}.",
+                run.id,
+                verb,
+                humanize_seconds(age_seconds),
+                humanize_seconds(threshold_seconds),
+                run.status.as_str(),
+                run.active_node_id
+                    .as_ref()
+                    .map(|node| format!(" at node '{node}'"))
+                    .unwrap_or_default(),
+            ),
+            metadata: runinator_models::json!({
+                "event": event.as_str(),
+                "workflow_id": run.workflow_id,
+                "workflow_run_id": run.id,
+                "status": run.status.as_str(),
+                "threshold_seconds": threshold_seconds,
+                "age_seconds": age_seconds,
+            }),
+            // bucket by threshold so a policy alerts once per run, but re-alerts if an operator
+            // raises the threshold and the run breaches the new one too.
+            occurrence: format!("{}:{}:{}", event.as_str(), run.id, threshold_seconds),
+        }
     }
-}
 
-/// prefer the run's own snapshot for the workflow name so an alert names the definition that
-/// actually ran, falling back to the live row and finally the id.
-async fn workflow_name<T: DatabaseImpl>(db: &T, run: &WorkflowRun) -> String {
-    if let Some(snapshot) = run.workflow_snapshot.as_ref()
-        && !snapshot.name.trim().is_empty()
-    {
-        return snapshot.name.clone();
+    /// prefer the run's own snapshot for the workflow name so an alert names the definition that
+    /// actually ran, falling back to the live row and finally the id.
+    async fn workflow_name(&self) -> String {
+        let run = self.run;
+        if let Some(snapshot) = run.workflow_snapshot.as_ref()
+            && !snapshot.name.trim().is_empty()
+        {
+            return snapshot.name.clone();
+        }
+        if let Ok(Some(workflow)) = self.db.fetch_workflow(run.workflow_id).await {
+            return workflow.name;
+        }
+        run.workflow_id.to_string()
     }
-    if let Ok(Some(workflow)) = db.fetch_workflow(run.workflow_id).await {
-        return workflow.name;
-    }
-    run.workflow_id.to_string()
 }
 
 /// render a duration the way an on-call reader scans it, not as a raw second count.

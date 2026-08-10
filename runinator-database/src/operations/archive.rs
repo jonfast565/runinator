@@ -50,8 +50,7 @@ where
         let archive_day = eligible_before.format("%F").to_string();
         let mut marked = 0;
         for (primary_key, created_at) in candidates {
-            let insert = sqlx::query(&self.render(&queries::insert_ignore(
-                self.dialect(),
+            let insert = sqlx::query(&self.render(&self.dialect().insert_ignore(
                 "archive_marks",
                 "id, table_name, primary_key, created_at, eligible_before, archive_day, status, attempts, marked_at",
                 "?, ?, ?, ?, ?, ?, 'marked', 0, ?",
@@ -122,7 +121,7 @@ where
                  LIMIT ?{skip}
              )
              RETURNING {columns}",
-            skip = queries::skip_locked(self.dialect()),
+            skip = self.dialect().skip_locked(),
         ));
         let rows = sqlx::query(&sql)
             .bind(archiver_id.as_str())

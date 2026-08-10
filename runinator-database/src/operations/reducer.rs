@@ -74,7 +74,7 @@ where
     ) -> Result<Vec<PipelineTrigger>, SendableError> {
         let sql = self.render(&format!(
             "SELECT {PIPELINE_TRIGGER_COLUMNS} FROM pipeline_triggers WHERE enabled = {} AND kind = 'chained' ORDER BY created_at, id",
-            queries::bool_true(self.dialect()),
+            self.dialect().bool_true(),
         ));
         let rows = sqlx::query(&sql).fetch_all(self.pool()).await?;
         Ok(rows.iter().map(mappers::row_to_pipeline_trigger).collect())
@@ -494,8 +494,7 @@ where
         ready_at: DateTime<Utc>,
     ) -> Result<Option<ReadyNodeRecord>, SendableError> {
         let mut tx = self.pool().begin().await?;
-        let inserted_event = sqlx::query(&self.render(&queries::insert_ignore(
-            self.dialect(),
+        let inserted_event = sqlx::query(&self.render(&self.dialect().insert_ignore(
             "workflow_orchestration_events",
             "event_id, workflow_run_id, workflow_node_run_id, node_id, event_type, payload, created_at",
             "?, ?, ?, ?, ?, ?, ?",
@@ -564,8 +563,7 @@ where
 
         // mysql has no RETURNING on INSERT IGNORE, so insert then read the row back on the same tx.
         let row = if self.dialect() == SqlDialect::MySql {
-            let inserted = sqlx::query(&self.render(&queries::insert_ignore(
-                SqlDialect::MySql,
+            let inserted = sqlx::query(&self.render(&SqlDialect::MySql.insert_ignore(
                 "workflow_ready_nodes",
                 "id, source_event_id, workflow_run_id, node_id, cursor_id, status, ready_at, attempts, created_at, updated_at",
                 "?, ?, ?, ?, ?, 'queued', ?, 0, ?, ?",
@@ -597,8 +595,7 @@ where
                 )
             }
         } else {
-            sqlx::query(&self.render(&queries::insert_ignore(
-                self.dialect(),
+            sqlx::query(&self.render(&self.dialect().insert_ignore(
                 "workflow_ready_nodes",
                 "id, source_event_id, workflow_run_id, node_id, cursor_id, status, ready_at, attempts, created_at, updated_at",
                 "?, ?, ?, ?, ?, 'queued', ?, 0, ?, ?",
@@ -646,8 +643,7 @@ where
 
         // no row yet: first use of this gate. insert-or-ignore settles the race between two callers
         // both finding it absent — exactly one insert lands.
-        let created = sqlx::query(&self.render(&queries::insert_ignore(
-            self.dialect(),
+        let created = sqlx::query(&self.render(&self.dialect().insert_ignore(
             "workflow_cooldowns",
             "name, last_run_at",
             "?, ?",
@@ -1074,8 +1070,7 @@ where
         trigger_id: Uuid,
         fire_key: String,
     ) -> Result<bool, SendableError> {
-        let firing_sql = self.render(&queries::insert_ignore(
-            self.dialect(),
+        let firing_sql = self.render(&self.dialect().insert_ignore(
             "pipeline_trigger_firings",
             "id, trigger_id, fire_key, scheduler_id, created_at",
             "?, ?, ?, ?, ?",
@@ -1175,8 +1170,7 @@ where
     ) -> Result<bool, SendableError> {
         // insert-ignore on the unique (trigger_id, fire_key); a zero-row insert means another
         // caller already recorded this firing, so the caller must not start a duplicate run.
-        let firing_sql = self.render(&queries::insert_ignore(
-            self.dialect(),
+        let firing_sql = self.render(&self.dialect().insert_ignore(
             "workflow_trigger_firings",
             "id, trigger_id, fire_key, scheduler_id, created_at",
             "?, ?, ?, ?, ?",

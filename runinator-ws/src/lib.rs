@@ -49,7 +49,7 @@ pub(crate) mod handlers {
 #[cfg(test)]
 pub(crate) use runinator_ws_core::responses;
 pub(crate) use runinator_ws_core::{events, models};
-pub(crate) use runinator_ws_middleware::{auth, authz, overload, rate_limit};
+pub(crate) use runinator_ws_middleware::{auth, overload, rate_limit};
 
 // the result-consumer loop is re-exported at the engine root; the in-process engine drives it, so
 // only the tests reach for it directly under the module path they already use.

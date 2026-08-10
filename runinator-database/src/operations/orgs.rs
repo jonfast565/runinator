@@ -226,8 +226,7 @@ where
     async fn upsert_org_quota(&self, quota: OrgQuota) -> Result<OrgQuota, SendableError> {
         let now = Utc::now().timestamp();
         let max_nodes_json = serde_json::to_string(&quota.max_nodes_per_kind)?;
-        let conflict = queries::on_conflict_update(
-            self.dialect(),
+        let conflict = self.dialect().on_conflict_update(
             "org_id",
             &["max_nodes_json", "max_monthly_cents", "updated_at"],
         );
@@ -248,11 +247,9 @@ where
         // idempotent per (org, backend, kind, sampled_at): the sampler buckets sampled_at to the
         // interval boundary, so any number of ws replicas / background workers sampling the same
         // window converge to one row instead of over-counting node-hours by the instance count.
-        let conflict = queries::on_conflict_nothing(
-            self.dialect(),
-            "org_id, backend, kind, sampled_at",
-            "node_count",
-        );
+        let conflict = self
+            .dialect()
+            .on_conflict_nothing("org_id, backend, kind, sampled_at", "node_count");
         sqlx::query(&self.render(&format!(
             "INSERT INTO org_usage_ledger (id, org_id, backend, kind, node_count, sampled_at) \
              VALUES (?, ?, ?, ?, ?, ?) {conflict}",
@@ -289,8 +286,7 @@ where
         group: OrgResourceGroup,
     ) -> Result<OrgResourceGroup, SendableError> {
         let now = Utc::now().timestamp();
-        let conflict = queries::on_conflict_update(
-            self.dialect(),
+        let conflict = self.dialect().on_conflict_update(
             "org_id, backend, kind",
             &["desired", "dedicated", "updated_at"],
         );

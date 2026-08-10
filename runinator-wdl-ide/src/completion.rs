@@ -14,6 +14,8 @@ use runinator_wdl::{
     parse_document,
 };
 
+use crate::cursor::{Cursor, clamp_to_char_boundary};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WdlCompletionRequest {
     pub source: String,
@@ -71,54 +73,61 @@ pub(crate) struct NamespaceScope {
 }
 
 #[derive(Debug, Clone)]
-struct ActionCallContext {
-    provider: String,
-    action: String,
-    replace_start: usize,
-    replace_end: usize,
-    used_args: BTreeSet<String>,
+pub(crate) struct ActionCallContext {
+    pub(crate) provider: String,
+    pub(crate) action: String,
+    pub(crate) replace_start: usize,
+    pub(crate) replace_end: usize,
+    pub(crate) used_args: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone)]
-struct CompletionSpanContext {
-    replace_start: usize,
+pub(crate) struct CompletionSpanContext {
+    pub(crate) replace_start: usize,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ActionMemberContext {
+    pub(crate) provider: String,
+    pub(crate) replace_start: usize,
 }
 
 /// complete wdl at a byte cursor using provider metadata and local type context.
 pub fn complete_source(request: WdlCompletionRequest) -> WdlCompletionResponse {
     let source = request.source;
-    let cursor = clamp_to_char_boundary(&source, request.cursor_byte);
-    let word = current_word(&source, cursor);
+    let pos = clamp_to_char_boundary(&source, request.cursor_byte);
+    let cursor = Cursor::new(&source, pos);
+    let word = cursor.current_word();
 
-    if !is_completion_allowed(&source, cursor) {
-        return empty_response(word.start, cursor);
+    if !cursor.is_completion_allowed() {
+        return empty_response(word.start, pos);
     }
 
-    if let Some(path) = path_context(&source, cursor)
+    if let Some(path) = cursor.path_context()
         && path.head == "std"
     {
         return complete_std_path(path);
     }
 
-    if let Some(action) = action_member_context(&source, cursor)
+    if let Some(action) = cursor.action_member_context()
         && find_provider(&request.providers, &action.provider).is_some()
     {
         return complete_actions(
             &request.providers,
             action.provider,
             action.replace_start,
-            cursor,
+            pos,
         );
     }
 
-    let context = completion_context(&source, cursor, &request.providers);
-    if let Some(target) = transition_target_context(&source, cursor) {
-        return complete_transition_targets(&context, target.replace_start, cursor);
+    let context = completion_context(&source, pos, &request.providers);
+    if let Some(target) = cursor.transition_target_context() {
+        return complete_transition_targets(&context, target.replace_start, pos);
     }
-    if let Some(edge) = edge_outcome_context(&source, cursor) {
-        return complete_edge_outcomes(edge.replace_start, cursor);
+    if let Some(edge) = cursor.edge_outcome_context() {
+        return complete_edge_outcomes(edge.replace_start, pos);
     }
-    if let Some(path) = path_context(&source, cursor) {
+    if let Some(path) = cursor.path_context() {
         if path.head == "config" || path.head == "secret" {
             return complete_setting_path(&request.settings, path);
         }
@@ -133,11 +142,11 @@ pub fn complete_source(request: WdlCompletionRequest) -> WdlCompletionResponse {
         }
     }
 
-    if let Some(call) = action_call_context(&source, cursor) {
+    if let Some(call) = cursor.action_call_context() {
         return complete_action_args(&request.providers, call);
     }
 
-    complete_bare(&request.providers, &context, word.start, cursor)
+    complete_bare(&request.providers, &context, word.start, pos)
 }
 
 fn empty_response(replace_start_byte: usize, replace_end_byte: usize) -> WdlCompletionResponse {
@@ -1445,397 +1454,10 @@ pub(crate) fn action_signature(action: &ActionMetadata) -> String {
     format!("({params})")
 }
 
-fn transition_target_context(source: &str, cursor: usize) -> Option<CompletionSpanContext> {
-    let word = current_word(source, cursor);
-    let before_word = &source[..word.start];
-    if before_word.trim_end().ends_with("->") || previous_word(before_word) == Some("goto") {
-        return Some(CompletionSpanContext {
-            replace_start: word.start,
-        });
-    }
-    None
-}
-
-fn edge_outcome_context(source: &str, cursor: usize) -> Option<CompletionSpanContext> {
-    let word = current_word(source, cursor);
-    if transition_target_context(source, cursor).is_some() {
-        return None;
-    }
-    if inside_edges_block(source, word.start) {
-        return Some(CompletionSpanContext {
-            replace_start: word.start,
-        });
-    }
-
-    let line_start = source[..word.start]
-        .rfind('\n')
-        .map(|index| index + 1)
-        .unwrap_or(0);
-    let prefix = source[line_start..word.start].trim_end();
-    if prefix.is_empty() || prefix.ends_with("->") {
-        return None;
-    }
-    let trimmed = prefix.trim_start();
-    if trimmed.starts_with("node ") && completed_statement_prefix(trimmed) {
-        return Some(CompletionSpanContext {
-            replace_start: word.start,
-        });
-    }
-    None
-}
-
-fn completed_statement_prefix(prefix: &str) -> bool {
-    prefix.ends_with(')') || prefix.ends_with('}') || prefix.ends_with('"')
-}
-
-fn inside_edges_block(source: &str, cursor: usize) -> bool {
-    let Some(edges_start) = source[..cursor].rfind("edges") else {
-        return false;
-    };
-    if !is_keyword_at(source, edges_start, "edges") {
-        return false;
-    }
-    let Some(open_rel) = source[edges_start..cursor].find('{') else {
-        return false;
-    };
-    let open = edges_start + open_rel;
-    let mut depth = 0usize;
-    for byte in source[open..cursor].bytes() {
-        match byte {
-            b'{' => depth += 1,
-            b'}' => depth = depth.saturating_sub(1),
-            _ => {}
-        }
-    }
-    depth > 0
-}
-
-fn is_keyword_at(source: &str, start: usize, keyword: &str) -> bool {
-    let end = start + keyword.len();
-    let before_ok = start == 0 || !is_ident_continue(source.as_bytes()[start - 1]);
-    let after_ok = source
-        .as_bytes()
-        .get(end)
-        .is_none_or(|byte| !is_ident_continue(*byte));
-    before_ok && after_ok
-}
-
-fn previous_word(source: &str) -> Option<&str> {
-    let bytes = source.as_bytes();
-    let mut end = source.len();
-    while end > 0 && bytes[end - 1].is_ascii_whitespace() {
-        end -= 1;
-    }
-    let mut start = end;
-    while start > 0 && is_ident_continue(bytes[start - 1]) {
-        start -= 1;
-    }
-    (start < end).then_some(&source[start..end])
-}
-
 #[derive(Debug, Clone)]
 pub(crate) struct PathContext {
     pub(crate) head: String,
     pub(crate) completed: Vec<String>,
     pub(crate) replace_start: usize,
     pub(crate) replace_end: usize,
-}
-
-pub(crate) fn path_context(source: &str, cursor: usize) -> Option<PathContext> {
-    let (start, end) = current_path_bounds(source, cursor);
-    if start == end {
-        return None;
-    }
-    let token = &source[start..end];
-    if !token.contains('.') {
-        return None;
-    }
-    let mut parts = token.split('.').collect::<Vec<_>>();
-    if parts.is_empty() || parts[0].is_empty() {
-        return None;
-    }
-    let partial = parts.pop().unwrap_or_default();
-    let completed = parts
-        .iter()
-        .skip(1)
-        .filter(|part| !part.is_empty())
-        .map(|part| (*part).to_string())
-        .collect::<Vec<_>>();
-    let replace_start = end.saturating_sub(partial.len());
-    Some(PathContext {
-        head: parts[0].to_string(),
-        completed,
-        replace_start,
-        replace_end: cursor,
-    })
-}
-
-#[derive(Debug, Clone)]
-struct ActionMemberContext {
-    provider: String,
-    replace_start: usize,
-}
-
-fn action_member_context(source: &str, cursor: usize) -> Option<ActionMemberContext> {
-    let word_start = current_word(source, cursor).start;
-    let dot = previous_non_space(source, word_start)?;
-    if source.as_bytes().get(dot) != Some(&b'.') {
-        return None;
-    }
-    let provider_end = dot;
-    let provider_start = identifier_start_before(source, provider_end)?;
-    if provider_start > 0 && source.as_bytes().get(provider_start - 1) == Some(&b'.') {
-        return None;
-    }
-    let provider = source[provider_start..provider_end].to_string();
-    Some(ActionMemberContext {
-        provider,
-        replace_start: word_start,
-    })
-}
-
-fn action_call_context(source: &str, cursor: usize) -> Option<ActionCallContext> {
-    let open = unmatched_open_paren(source, cursor)?;
-    let before_open = source[..open].trim_end();
-    let dot = before_open.rfind('.')?;
-    let action_start = identifier_start_before(before_open, before_open.len())?;
-    if action_start <= dot {
-        return None;
-    }
-    let provider_end = dot;
-    let provider_start = identifier_start_before(before_open, provider_end)?;
-    let provider = before_open[provider_start..provider_end].to_string();
-    let action = before_open[action_start..before_open.len()].to_string();
-    if provider.is_empty() || action.is_empty() {
-        return None;
-    }
-    let word = current_word(source, cursor);
-    let used_args = used_argument_names(&source[open + 1..cursor]);
-    Some(ActionCallContext {
-        provider,
-        action,
-        replace_start: word.start,
-        replace_end: cursor,
-        used_args,
-    })
-}
-
-fn used_argument_names(text: &str) -> BTreeSet<String> {
-    let mut names = BTreeSet::new();
-    let bytes = text.as_bytes();
-    let mut index = 0;
-    let mut depth = 0usize;
-    let mut in_string = false;
-    let mut escaped = false;
-    while index < bytes.len() {
-        let byte = bytes[index];
-        if in_string {
-            if escaped {
-                escaped = false;
-            } else if byte == b'\\' {
-                escaped = true;
-            } else if byte == b'"' {
-                in_string = false;
-            }
-            index += 1;
-            continue;
-        }
-        match byte {
-            b'"' => {
-                in_string = true;
-                index += 1;
-                continue;
-            }
-            b'(' | b'{' | b'[' => {
-                depth += 1;
-                index += 1;
-                continue;
-            }
-            b')' | b'}' | b']' => {
-                depth = depth.saturating_sub(1);
-                index += 1;
-                continue;
-            }
-            _ => {}
-        }
-        if depth == 0 && is_ident_start(byte) {
-            let start = index;
-            index += 1;
-            while index < bytes.len() && is_ident_continue(bytes[index]) {
-                index += 1;
-            }
-            let mut lookahead = index;
-            while lookahead < bytes.len() && bytes[lookahead].is_ascii_whitespace() {
-                lookahead += 1;
-            }
-            if bytes.get(lookahead) == Some(&b':') {
-                names.insert(text[start..index].to_string());
-            }
-        } else {
-            index += 1;
-        }
-    }
-    names
-}
-
-pub(crate) fn unmatched_open_paren(source: &str, cursor: usize) -> Option<usize> {
-    let mut depth = 0usize;
-    for (index, ch) in source[..cursor].char_indices().rev() {
-        match ch {
-            ')' => depth += 1,
-            '(' if depth == 0 => return Some(index),
-            '(' => depth = depth.saturating_sub(1),
-            _ => {}
-        }
-    }
-    None
-}
-
-#[derive(Debug, Clone, Copy)]
-struct WordBounds {
-    start: usize,
-}
-
-fn current_word(source: &str, cursor: usize) -> WordBounds {
-    let mut start = cursor;
-    while start > 0 {
-        let byte = source.as_bytes()[start - 1];
-        if !is_ident_continue(byte) {
-            break;
-        }
-        start -= 1;
-    }
-    WordBounds { start }
-}
-
-fn current_path_bounds(source: &str, cursor: usize) -> (usize, usize) {
-    let mut start = cursor;
-    while start > 0 {
-        let byte = source.as_bytes()[start - 1];
-        if !(is_ident_continue(byte) || byte == b'.') {
-            break;
-        }
-        start -= 1;
-    }
-    (start, cursor)
-}
-
-fn previous_non_space(source: &str, cursor: usize) -> Option<usize> {
-    let bytes = source.as_bytes();
-    let mut index = cursor;
-    while index > 0 {
-        index -= 1;
-        if !bytes[index].is_ascii_whitespace() {
-            return Some(index);
-        }
-    }
-    None
-}
-
-fn identifier_start_before(source: &str, end: usize) -> Option<usize> {
-    if end == 0 {
-        return None;
-    }
-    let bytes = source.as_bytes();
-    let mut start = end;
-    while start > 0 && is_action_ident_continue(bytes[start - 1]) {
-        start -= 1;
-    }
-    if start == end { None } else { Some(start) }
-}
-
-pub(crate) fn clamp_to_char_boundary(source: &str, cursor: usize) -> usize {
-    let mut cursor = cursor.min(source.len());
-    while cursor > 0 && !source.is_char_boundary(cursor) {
-        cursor -= 1;
-    }
-    cursor
-}
-
-fn is_completion_allowed(source: &str, cursor: usize) -> bool {
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    enum State {
-        Normal,
-        LineComment,
-        BlockComment,
-        String,
-        Interpolation(usize),
-    }
-
-    let bytes = source.as_bytes();
-    let mut state = State::Normal;
-    let mut index = 0;
-    let mut escaped = false;
-    while index < cursor {
-        let byte = bytes[index];
-        let next = bytes.get(index + 1).copied();
-        match state {
-            State::Normal => {
-                if byte == b'/' && next == Some(b'/') {
-                    state = State::LineComment;
-                    index += 2;
-                    continue;
-                }
-                if byte == b'/' && next == Some(b'*') {
-                    state = State::BlockComment;
-                    index += 2;
-                    continue;
-                }
-                if byte == b'"' {
-                    state = State::String;
-                    escaped = false;
-                }
-            }
-            State::LineComment => {
-                if byte == b'\n' {
-                    state = State::Normal;
-                }
-            }
-            State::BlockComment => {
-                if byte == b'*' && next == Some(b'/') {
-                    state = State::Normal;
-                    index += 2;
-                    continue;
-                }
-            }
-            State::String => {
-                if escaped {
-                    escaped = false;
-                } else if byte == b'\\' {
-                    escaped = true;
-                } else if byte == b'$' && next == Some(b'{') {
-                    state = State::Interpolation(1);
-                    index += 2;
-                    continue;
-                } else if byte == b'"' {
-                    state = State::Normal;
-                }
-            }
-            State::Interpolation(depth) => {
-                if byte == b'{' {
-                    state = State::Interpolation(depth + 1);
-                } else if byte == b'}' {
-                    if depth <= 1 {
-                        state = State::String;
-                    } else {
-                        state = State::Interpolation(depth - 1);
-                    }
-                }
-            }
-        }
-        index += 1;
-    }
-    matches!(state, State::Normal | State::Interpolation(_))
-}
-
-fn is_ident_start(byte: u8) -> bool {
-    byte.is_ascii_alphabetic() || byte == b'_'
-}
-
-fn is_ident_continue(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || byte == b'_'
-}
-
-fn is_action_ident_continue(byte: u8) -> bool {
-    is_ident_continue(byte) || byte == b'-'
 }

@@ -18,7 +18,7 @@ use runinator_ws_core::events::{EventSender, emit_workflows_changed};
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::openapi::docs::{EndpointDoc, Example, endpoint, json_body};
 use runinator_ws_core::responses::{api_error, bad_request};
-use runinator_ws_middleware::authz;
+use runinator_ws_middleware::authz::AuthzChecker;
 
 pub async fn complete_wdl(
     Json(request): Json<runinator_wdl_ide::WdlCompletionRequest>,
@@ -117,7 +117,9 @@ pub async fn import_wdl<T: DatabaseImpl>(
     // saving over an existing workflow requires edit; a brand-new one is owned by its creator.
     let is_create = request.workflow_id.is_none();
     if let Some(id) = request.workflow_id
-        && let Err(reply) = authz::require_workflow(db.as_ref(), &ctx, id, Permission::Edit).await
+        && let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+            .require_workflow(id, Permission::Edit)
+            .await
     {
         return reply;
     }
@@ -155,7 +157,7 @@ pub async fn import_wdl<T: DatabaseImpl>(
             if is_create {
                 for workflow in &saved.workflows {
                     if let Some(id) = workflow.id {
-                        authz::grant_owner(db.as_ref(), &ctx, id).await;
+                        AuthzChecker::new(db.as_ref(), &ctx).grant_owner(id).await;
                     }
                 }
             }

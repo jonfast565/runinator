@@ -8,6 +8,7 @@ use runinator_provisioner::ProvisionerRegistry;
 
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::responses::api_error;
+use runinator_ws_middleware::authz::AuthContextExt;
 
 /// list every configured provisioning backend and the node kinds it can manage.
 #[utoipa::path(
@@ -20,7 +21,7 @@ pub async fn get_node_backends(
     Extension(registry): Extension<Arc<ProvisionerRegistry>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_service_or_admin(&ctx) {
+    if let Err(reply) = ctx.require_service_or_admin() {
         return reply;
     }
     let backends = registry.backends().await;
@@ -41,7 +42,7 @@ pub async fn get_nodes(
     Extension(registry): Extension<Arc<ProvisionerRegistry>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_service_or_admin(&ctx) {
+    if let Err(reply) = ctx.require_service_or_admin() {
         return reply;
     }
     let groups = registry.list_all().await;
@@ -54,9 +55,7 @@ pub async fn scale_nodes(
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<ScaleNodesRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) =
-        runinator_ws_middleware::authz::require_capability(&ctx, Capability::NodesScale)
-    {
+    if let Err(reply) = ctx.require_capability(Capability::NodesScale) {
         return reply;
     }
     let provisioner = match registry.require(request.backend) {
@@ -78,9 +77,7 @@ pub async fn stop_node(
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<StopNodeRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) =
-        runinator_ws_middleware::authz::require_capability(&ctx, Capability::NodesScale)
-    {
+    if let Err(reply) = ctx.require_capability(Capability::NodesScale) {
         return reply;
     }
     let provisioner = match registry.require(request.backend) {

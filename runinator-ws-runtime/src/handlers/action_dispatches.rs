@@ -15,6 +15,7 @@ use serde::Deserialize;
 use crate::repository;
 use runinator_ws_core::openapi::docs::{EndpointDoc, Example, endpoint, json_body};
 use runinator_ws_core::responses::api_error;
+use runinator_ws_middleware::authz::AuthContextExt;
 
 #[derive(Debug, Deserialize)]
 pub struct EnqueueActionDispatchRequest {
@@ -41,7 +42,7 @@ pub async fn enqueue_action_dispatch<T: DatabaseImpl>(
     (StatusCode, Json<ActionDispatchRecord>),
     (StatusCode, Json<runinator_ws_core::models::ApiResponse>),
 > {
-    runinator_ws_middleware::authz::require_service_or_admin(&ctx)?;
+    ctx.require_service_or_admin()?;
     repository::enqueue_action_dispatch(db.as_ref(), request.dedupe_key, request.command)
         .await
         .map(|record| (StatusCode::ACCEPTED, Json(record)))
@@ -56,7 +57,7 @@ pub async fn pending_action_dispatches<T: DatabaseImpl>(
     Json<Vec<ActionDispatchRecord>>,
     (StatusCode, Json<runinator_ws_core::models::ApiResponse>),
 > {
-    runinator_ws_middleware::authz::require_service_or_admin(&ctx)?;
+    ctx.require_service_or_admin()?;
     repository::fetch_pending_action_dispatches(db.as_ref(), query.limit.unwrap_or(100))
         .await
         .map(Json)
@@ -71,7 +72,7 @@ pub async fn claim_action_dispatches<T: DatabaseImpl>(
     Json<Vec<ActionDispatchRecord>>,
     (StatusCode, Json<runinator_ws_core::models::ApiResponse>),
 > {
-    runinator_ws_middleware::authz::require_service_or_admin(&ctx)?;
+    ctx.require_service_or_admin()?;
     repository::claim_pending_action_dispatches(
         db.as_ref(),
         request.scheduler_id,
@@ -88,7 +89,7 @@ pub async fn mark_action_dispatch_published<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(dispatch_id): Path<Uuid>,
 ) -> Result<Json<TaskResponse>, (StatusCode, Json<runinator_ws_core::models::ApiResponse>)> {
-    runinator_ws_middleware::authz::require_service_or_admin(&ctx)?;
+    ctx.require_service_or_admin()?;
     repository::mark_action_dispatch_published(db.as_ref(), dispatch_id)
         .await
         .map(|_| Json(success("Action dispatch marked published")))
@@ -101,7 +102,7 @@ pub async fn mark_action_dispatch_failed<T: DatabaseImpl>(
     Path(dispatch_id): Path<Uuid>,
     Json(request): Json<ActionDispatchFailureRequest>,
 ) -> Result<Json<TaskResponse>, (StatusCode, Json<runinator_ws_core::models::ApiResponse>)> {
-    runinator_ws_middleware::authz::require_service_or_admin(&ctx)?;
+    ctx.require_service_or_admin()?;
     repository::mark_action_dispatch_failed(db.as_ref(), dispatch_id, request.error)
         .await
         .map(|_| Json(success("Action dispatch failure recorded")))

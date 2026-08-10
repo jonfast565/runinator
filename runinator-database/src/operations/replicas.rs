@@ -60,8 +60,7 @@ where
             .await?;
         let replica_id = Uuid::now_v7();
         if self.dialect() == SqlDialect::MySql {
-            let conflict = queries::on_conflict_update(
-                SqlDialect::MySql,
+            let conflict = SqlDialect::MySql.on_conflict_update(
                 "instance_id, runtime_id",
                 &[
                     "replica_type",
@@ -339,8 +338,7 @@ where
         let now = Utc::now().timestamp();
         let provider_json = serde_json::to_string(&request.provider)?;
         if self.dialect() == SqlDialect::MySql {
-            let conflict = queries::on_conflict_update(
-                SqlDialect::MySql,
+            let conflict = SqlDialect::MySql.on_conflict_update(
                 "replica_id, provider_name",
                 &["provider_json", "last_registered_at", "last_heartbeat_at"],
             );

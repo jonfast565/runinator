@@ -18,7 +18,7 @@ use crate::repository;
 use runinator_ws_core::events::{AppEvent, AppEventKind, EventSender, emit, nudge_wake_publisher};
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::responses::{api_error, not_found};
-use runinator_ws_middleware::authz;
+use runinator_ws_middleware::authz::AuthContextExt;
 
 type Reply = (StatusCode, Json<ApiResponse>);
 
@@ -53,7 +53,7 @@ pub async fn create_freeze_window<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Json(window): Json<NewFreezeWindow>,
 ) -> Reply {
-    if let Err(reply) = authz::require_capability(&ctx, Capability::SchedulesManage) {
+    if let Err(reply) = ctx.require_capability(Capability::SchedulesManage) {
         return reply;
     }
     match repository::create_freeze_window(db.as_ref(), &window).await {
@@ -72,7 +72,7 @@ pub async fn update_freeze_window<T: DatabaseImpl>(
     Path(window_id): Path<Uuid>,
     Json(window): Json<NewFreezeWindow>,
 ) -> Reply {
-    if let Err(reply) = authz::require_capability(&ctx, Capability::SchedulesManage) {
+    if let Err(reply) = ctx.require_capability(Capability::SchedulesManage) {
         return reply;
     }
     match repository::update_freeze_window(db.as_ref(), window_id, &window).await {
@@ -91,7 +91,7 @@ pub async fn delete_freeze_window<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(window_id): Path<Uuid>,
 ) -> Reply {
-    if let Err(reply) = authz::require_capability(&ctx, Capability::SchedulesManage) {
+    if let Err(reply) = ctx.require_capability(Capability::SchedulesManage) {
         return reply;
     }
     match repository::delete_freeze_window(db.as_ref(), window_id).await {
@@ -112,7 +112,7 @@ pub async fn backfill_workflow_trigger<T: DatabaseImpl>(
     Path(trigger_id): Path<Uuid>,
     Json(request): Json<BackfillRequest>,
 ) -> Reply {
-    if let Err(reply) = authz::require_capability(&ctx, Capability::SchedulesManage) {
+    if let Err(reply) = ctx.require_capability(Capability::SchedulesManage) {
         return reply;
     }
     if let Err(err) = repository::validate_backfill_request(&request) {

@@ -28,6 +28,8 @@ use runinator_ws_core::openapi::docs::{
     CURSOR, EndpointDoc, Example, RUN_FILTERS, WORKFLOW_RUN_FILTERS, endpoint, json_body,
 };
 use runinator_ws_core::responses::{api_error, bad_request, not_found};
+use runinator_ws_middleware::authz::AuthContextExt;
+use runinator_ws_middleware::authz::AuthzChecker;
 
 #[derive(Debug, Default, Deserialize)]
 pub struct ChunkQuery {
@@ -44,13 +46,9 @@ pub async fn create_workflow_trigger_run<T: DatabaseImpl>(
     Path(trigger_id): Path<Uuid>,
     Json(request): Json<WorkflowTriggerRunRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_trigger_workflow(
-        db.as_ref(),
-        &ctx,
-        trigger_id,
-        runinator_models::auth::Permission::Run,
-    )
-    .await
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_trigger_workflow(trigger_id, runinator_models::auth::Permission::Run)
+        .await
     {
         return reply;
     }
@@ -89,13 +87,9 @@ pub async fn create_workflow_run<T: DatabaseImpl>(
     Path(workflow_id): Path<Uuid>,
     Json(request): Json<WorkflowRunRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_workflow(
-        db.as_ref(),
-        &ctx,
-        workflow_id,
-        runinator_models::auth::Permission::Run,
-    )
-    .await
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_workflow(workflow_id, runinator_models::auth::Permission::Run)
+        .await
     {
         return reply;
     }
@@ -166,7 +160,7 @@ pub async fn claim_workflow_runs_for_scheduler<T: DatabaseImpl>(
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Json(request): Json<SchedulerRunClaimRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_service_or_admin(&ctx) {
+    if let Err(reply) = ctx.require_service_or_admin() {
         return reply;
     }
     let statuses = if request.statuses.is_empty() {
@@ -201,7 +195,7 @@ pub async fn claim_ready_nodes<T: DatabaseImpl>(
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Json(request): Json<ReadyNodeClaimRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_service_or_admin(&ctx) {
+    if let Err(reply) = ctx.require_service_or_admin() {
         return reply;
     }
     match repository::claim_ready_nodes(
@@ -226,7 +220,7 @@ pub async fn process_ready_node<T: DatabaseImpl>(
     Path(ready_node_id): Path<Uuid>,
     Json(request): Json<ReadyNodeProcessRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_service_or_admin(&ctx) {
+    if let Err(reply) = ctx.require_service_or_admin() {
         return reply;
     }
     let next_ready = match (
@@ -258,7 +252,7 @@ pub async fn renew_workflow_run_claim<T: DatabaseImpl>(
     Path(workflow_run_id): Path<Uuid>,
     Json(request): Json<SchedulerRunClaimRenewRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_service_or_admin(&ctx) {
+    if let Err(reply) = ctx.require_service_or_admin() {
         return reply;
     }
     match repository::renew_workflow_run_claim(
@@ -289,7 +283,7 @@ pub async fn release_workflow_run_claim<T: DatabaseImpl>(
     Path(workflow_run_id): Path<Uuid>,
     Json(request): Json<SchedulerRunClaimReleaseRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_service_or_admin(&ctx) {
+    if let Err(reply) = ctx.require_service_or_admin() {
         return reply;
     }
     match repository::release_workflow_run_claim(db.as_ref(), workflow_run_id, request.scheduler_id)
@@ -326,13 +320,9 @@ pub async fn cancel_workflow_run<T: DatabaseImpl>(
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Path(workflow_run_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_run_workflow(
-        db.as_ref(),
-        &ctx,
-        workflow_run_id,
-        runinator_models::auth::Permission::Run,
-    )
-    .await
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_run_workflow(workflow_run_id, runinator_models::auth::Permission::Run)
+        .await
     {
         return reply;
     }
@@ -363,13 +353,9 @@ pub async fn pause_workflow_run<T: DatabaseImpl>(
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Path(workflow_run_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_run_workflow(
-        db.as_ref(),
-        &ctx,
-        workflow_run_id,
-        runinator_models::auth::Permission::Run,
-    )
-    .await
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_run_workflow(workflow_run_id, runinator_models::auth::Permission::Run)
+        .await
     {
         return reply;
     }
@@ -400,13 +386,9 @@ pub async fn resume_workflow_run<T: DatabaseImpl>(
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Path(workflow_run_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_run_workflow(
-        db.as_ref(),
-        &ctx,
-        workflow_run_id,
-        runinator_models::auth::Permission::Run,
-    )
-    .await
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_run_workflow(workflow_run_id, runinator_models::auth::Permission::Run)
+        .await
     {
         return reply;
     }
@@ -439,13 +421,9 @@ pub async fn replay_workflow_run<T: DatabaseImpl>(
     Path(workflow_run_id): Path<Uuid>,
     body: Option<Json<runinator_ws_core::models::WorkflowRunReplayRequest>>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_run_workflow(
-        db.as_ref(),
-        &ctx,
-        workflow_run_id,
-        runinator_models::auth::Permission::Run,
-    )
-    .await
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_run_workflow(workflow_run_id, runinator_models::auth::Permission::Run)
+        .await
     {
         return reply;
     }
@@ -475,13 +453,9 @@ pub async fn deliver_run_event<T: DatabaseImpl>(
     Path((workflow_run_id, node_id)): Path<(Uuid, String)>,
     Json(request): Json<runinator_ws_core::models::EventDeliveryRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_run_workflow(
-        db.as_ref(),
-        &ctx,
-        workflow_run_id,
-        runinator_models::auth::Permission::Run,
-    )
-    .await
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_run_workflow(workflow_run_id, runinator_models::auth::Permission::Run)
+        .await
     {
         return reply;
     }
@@ -508,13 +482,9 @@ pub async fn deliver_signal<T: DatabaseImpl>(
     Path(workflow_run_id): Path<Uuid>,
     Json(request): Json<runinator_ws_core::models::SignalDeliveryRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_run_workflow(
-        db.as_ref(),
-        &ctx,
-        workflow_run_id,
-        runinator_models::auth::Permission::Run,
-    )
-    .await
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_run_workflow(workflow_run_id, runinator_models::auth::Permission::Run)
+        .await
     {
         return reply;
     }
@@ -542,13 +512,9 @@ pub async fn request_interrupt<T: DatabaseImpl>(
     Path(workflow_run_id): Path<Uuid>,
     Json(request): Json<runinator_ws_core::models::InterruptRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_run_workflow(
-        db.as_ref(),
-        &ctx,
-        workflow_run_id,
-        runinator_models::auth::Permission::Run,
-    )
-    .await
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_run_workflow(workflow_run_id, runinator_models::auth::Permission::Run)
+        .await
     {
         return reply;
     }
@@ -603,13 +569,9 @@ pub async fn rename_workflow_run<T: DatabaseImpl>(
     Path(workflow_run_id): Path<Uuid>,
     Json(request): Json<runinator_ws_core::models::WorkflowRunRenameRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_run_workflow(
-        db.as_ref(),
-        &ctx,
-        workflow_run_id,
-        runinator_models::auth::Permission::Edit,
-    )
-    .await
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_run_workflow(workflow_run_id, runinator_models::auth::Permission::Edit)
+        .await
     {
         return reply;
     }
@@ -635,7 +597,9 @@ pub async fn get_workflow_runs<T: DatabaseImpl>(
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Query(query): Query<WorkflowRunStatusQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    let visible = runinator_ws_middleware::authz::visible_workflow_ids(db.as_ref(), &ctx).await;
+    let visible = AuthzChecker::new(db.as_ref(), &ctx)
+        .visible_workflow_ids()
+        .await;
 
     if let Some(name) = query.name {
         return match repository::fetch_workflow_runs_by_name(
@@ -654,13 +618,9 @@ pub async fn get_workflow_runs<T: DatabaseImpl>(
     }
 
     if let Some(workflow_id) = query.workflow_id {
-        if let Err(reply) = runinator_ws_middleware::authz::require_workflow(
-            db.as_ref(),
-            &ctx,
-            workflow_id,
-            runinator_models::auth::Permission::View,
-        )
-        .await
+        if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+            .require_workflow(workflow_id, runinator_models::auth::Permission::View)
+            .await
         {
             return reply;
         }
@@ -705,7 +665,7 @@ pub async fn get_runs<T: DatabaseImpl>(
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Query(query): Query<RunStatusQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_service_or_admin(&ctx) {
+    if let Err(reply) = ctx.require_service_or_admin() {
         return reply;
     }
     let Some(status) = query.status else {
@@ -724,7 +684,7 @@ pub async fn update_run<T: DatabaseImpl>(
     Path(run_id): Path<Uuid>,
     Json(request): Json<RunStatusRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_service_or_admin(&ctx) {
+    if let Err(reply) = ctx.require_service_or_admin() {
         return reply;
     }
     match repository::update_run_status(
@@ -750,7 +710,7 @@ pub async fn get_run_chunks<T: DatabaseImpl>(
     Path(run_id): Path<Uuid>,
     Query(query): Query<ChunkQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_service_or_admin(&ctx) {
+    if let Err(reply) = ctx.require_service_or_admin() {
         return reply;
     }
     match repository::fetch_run_chunks(
@@ -773,7 +733,7 @@ pub async fn append_run_chunk<T: DatabaseImpl>(
     Path(run_id): Path<Uuid>,
     Json(chunk): Json<NewRunChunk>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_service_or_admin(&ctx) {
+    if let Err(reply) = ctx.require_service_or_admin() {
         return reply;
     }
     match repository::append_run_chunk(db.as_ref(), run_id, &chunk).await {
@@ -798,7 +758,7 @@ pub async fn update_workflow_run<T: DatabaseImpl>(
     Path(workflow_run_id): Path<Uuid>,
     Json(request): Json<WorkflowRunStatusRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_service_or_admin(&ctx) {
+    if let Err(reply) = ctx.require_service_or_admin() {
         return reply;
     }
     match repository::update_workflow_run_status(
@@ -825,13 +785,9 @@ pub async fn get_workflow_run<T: DatabaseImpl>(
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Path(workflow_run_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_run_workflow(
-        db.as_ref(),
-        &ctx,
-        workflow_run_id,
-        runinator_models::auth::Permission::View,
-    )
-    .await
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_run_workflow(workflow_run_id, runinator_models::auth::Permission::View)
+        .await
     {
         return reply;
     }

@@ -45,11 +45,9 @@ where
         value: Vec<u8>,
         updated_at: i64,
     ) -> Result<(), SendableError> {
-        let conflict = queries::on_conflict_update(
-            self.dialect(),
-            "kind, scope, name",
-            &["value", "updated_at"],
-        );
+        let conflict = self
+            .dialect()
+            .on_conflict_update("kind, scope, name", &["value", "updated_at"]);
         sqlx::query(&self.render(&format!(
             "INSERT INTO settings (kind, scope, name, value, updated_at) VALUES (?, ?, ?, ?, ?) {conflict}",
         )))

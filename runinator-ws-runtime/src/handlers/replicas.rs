@@ -21,6 +21,7 @@ use runinator_ws_core::openapi::docs::{
     EndpointDoc, Example, REPLICA_FILTERS, endpoint, json_body,
 };
 use runinator_ws_core::responses::{api_error, not_found};
+use runinator_ws_middleware::authz::AuthContextExt;
 
 pub async fn register_replica<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
@@ -29,7 +30,7 @@ pub async fn register_replica<T: DatabaseImpl>(
     ConnectInfo(connect): ConnectInfo<SocketAddr>,
     Json(request): Json<ReplicaRegistrationRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_service_or_admin(&ctx) {
+    if let Err(reply) = ctx.require_service_or_admin() {
         return reply;
     }
     match repository::register_replica(db.as_ref(), request, observed_ip(&headers, connect), &ctx)
@@ -48,7 +49,7 @@ pub async fn heartbeat_replica<T: DatabaseImpl>(
     Path(replica_id): Path<Uuid>,
     Json(request): Json<ReplicaHeartbeatRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_service_or_admin(&ctx) {
+    if let Err(reply) = ctx.require_service_or_admin() {
         return reply;
     }
     match repository::heartbeat_replica(
@@ -73,7 +74,7 @@ pub async fn mark_replica_offline<T: DatabaseImpl>(
     Path(replica_id): Path<Uuid>,
     Json(request): Json<ReplicaOfflineRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_service_or_admin(&ctx) {
+    if let Err(reply) = ctx.require_service_or_admin() {
         return reply;
     }
     match repository::mark_replica_offline(db.as_ref(), replica_id, request.runtime_id).await {
@@ -122,7 +123,7 @@ pub async fn upsert_replica_provider<T: DatabaseImpl>(
     Path(replica_id): Path<Uuid>,
     Json(request): Json<ReplicaProviderRegistrationRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_service_or_admin(&ctx) {
+    if let Err(reply) = ctx.require_service_or_admin() {
         return reply;
     }
     match repository::upsert_replica_provider_registration(db.as_ref(), replica_id, request).await {

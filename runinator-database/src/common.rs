@@ -86,74 +86,90 @@ pub(crate) fn cron_slots_between(
     }
 }
 
-pub(crate) fn trigger_parameters(trigger: &WorkflowTrigger) -> Value {
-    trigger
-        .configuration
-        .get("parameters")
-        .cloned()
-        .unwrap_or_else(|| Value::Object(Default::default()))
+/// helpers over a workflow trigger's json configuration/blackout window. a local trait since
+/// `WorkflowTrigger` lives in `runinator-models`, which stays free of database-layer behavior.
+pub(crate) trait WorkflowTriggerExt {
+    fn trigger_parameters(&self) -> Value;
+    fn trigger_state(&self) -> Value;
+    fn trigger_state_for_slot(&self, slot: DateTime<Utc>) -> Value;
+    fn is_trigger_in_blackout(&self, now: DateTime<Utc>) -> bool;
 }
 
-pub(crate) fn trigger_state(trigger: &WorkflowTrigger) -> Value {
-    runinator_models::json!({
-        "control": { "pause_requested": false },
-        "trigger": {
-            "id": trigger.id,
-            "kind": trigger.kind,
-            "metadata": trigger.metadata
-        }
-    })
-}
-
-/// the run state a cron firing starts with, stamped with the schedule slot it stands for. a
-/// catch-up or backfill run is created well after its slot, so the slot is the only way to tell
-/// which occurrence a run belongs to.
-pub(crate) fn trigger_state_for_slot(trigger: &WorkflowTrigger, slot: DateTime<Utc>) -> Value {
-    let mut state = trigger_state(trigger);
-    let Some(trigger_object) = state
-        .get_mut("trigger")
-        .and_then(|value| value.as_object_mut())
-    else {
-        return state;
-    };
-    trigger_object.insert("scheduled_for".into(), Value::from(slot.timestamp()));
-
-    state
-}
-
-pub(crate) fn is_trigger_in_blackout(trigger: &WorkflowTrigger, now: DateTime<Utc>) -> bool {
-    if let (Some(start), Some(end)) = (trigger.blackout_start, trigger.blackout_end) {
-        return now >= start && now <= end;
+impl WorkflowTriggerExt for WorkflowTrigger {
+    fn trigger_parameters(&self) -> Value {
+        self.configuration
+            .get("parameters")
+            .cloned()
+            .unwrap_or_else(|| Value::Object(Default::default()))
     }
-    false
-}
 
-pub(crate) fn pipeline_trigger_parameters(trigger: &PipelineTrigger) -> Value {
-    trigger
-        .configuration
-        .get("parameters")
-        .cloned()
-        .unwrap_or_else(|| Value::Object(Default::default()))
-}
-
-pub(crate) fn pipeline_trigger_state(trigger: &PipelineTrigger) -> Value {
-    runinator_models::json!({
-        "trigger": {
-            "id": trigger.id,
-            "kind": trigger.kind,
-            "metadata": trigger.metadata
-        }
-    })
-}
-
-pub(crate) fn is_pipeline_trigger_in_blackout(
-    trigger: &PipelineTrigger,
-    now: DateTime<Utc>,
-) -> bool {
-    if let (Some(start), Some(end)) = (trigger.blackout_start, trigger.blackout_end) {
-        return now >= start && now <= end;
+    fn trigger_state(&self) -> Value {
+        runinator_models::json!({
+            "control": { "pause_requested": false },
+            "trigger": {
+                "id": self.id,
+                "kind": self.kind,
+                "metadata": self.metadata
+            }
+        })
     }
-    false
+
+    /// the run state a cron firing starts with, stamped with the schedule slot it stands for. a
+    /// catch-up or backfill run is created well after its slot, so the slot is the only way to tell
+    /// which occurrence a run belongs to.
+    fn trigger_state_for_slot(&self, slot: DateTime<Utc>) -> Value {
+        let mut state = self.trigger_state();
+        let Some(trigger_object) = state
+            .get_mut("trigger")
+            .and_then(|value| value.as_object_mut())
+        else {
+            return state;
+        };
+        trigger_object.insert("scheduled_for".into(), Value::from(slot.timestamp()));
+
+        state
+    }
+
+    fn is_trigger_in_blackout(&self, now: DateTime<Utc>) -> bool {
+        if let (Some(start), Some(end)) = (self.blackout_start, self.blackout_end) {
+            return now >= start && now <= end;
+        }
+        false
+    }
+}
+
+/// mirror of `WorkflowTriggerExt` for pipeline triggers; kept as a separate trait since the two
+/// types share no supertype to hang one impl off of.
+pub(crate) trait PipelineTriggerExt {
+    fn pipeline_trigger_parameters(&self) -> Value;
+    fn pipeline_trigger_state(&self) -> Value;
+    fn is_pipeline_trigger_in_blackout(&self, now: DateTime<Utc>) -> bool;
+}
+
+impl PipelineTriggerExt for PipelineTrigger {
+    fn pipeline_trigger_parameters(&self) -> Value {
+        self.configuration
+            .get("parameters")
+            .cloned()
+            .unwrap_or_else(|| Value::Object(Default::default()))
+    }
+
+    fn pipeline_trigger_state(&self) -> Value {
+        runinator_models::json!({
+            "trigger": {
+                "id": self.id,
+                "kind": self.kind,
+                "metadata": self.metadata
+            }
+        })
+    }
+
+    fn is_pipeline_trigger_in_blackout(&self, now: DateTime<Utc>) -> bool {
+        if let (Some(start), Some(end)) = (self.blackout_start, self.blackout_end) {
+            return now >= start && now <= end;
+        }
+        false
+    }
 }
 
 pub(crate) fn status_list(statuses: &[WorkflowStatus]) -> String {

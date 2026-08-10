@@ -105,7 +105,7 @@ where
                  LIMIT ?{skip}
              )
              RETURNING {WORKFLOW_RUN_COLUMNS}",
-            skip = queries::skip_locked(self.dialect()),
+            skip = self.dialect().skip_locked(),
         ));
         let rows = sqlx::query(&sql)
             .bind(scheduler_id.as_str())
@@ -379,8 +379,7 @@ where
     ) -> Result<bool, SendableError> {
         let mut tx = self.pool().begin().await?;
         let event_type = workflow_result_event_type(event);
-        let insert = sqlx::query(&self.render(&queries::insert_ignore(
-            self.dialect(),
+        let insert = sqlx::query(&self.render(&self.dialect().insert_ignore(
             "workflow_result_events",
             "event_id, workflow_run_id, workflow_node_run_id, node_id, event_type, created_at",
             "?, ?, ?, ?, ?, ?",
@@ -477,8 +476,7 @@ where
         &self,
         event: &NewOrchestrationEvent,
     ) -> Result<bool, SendableError> {
-        let insert = sqlx::query(&self.render(&queries::insert_ignore(
-            self.dialect(),
+        let insert = sqlx::query(&self.render(&self.dialect().insert_ignore(
             "workflow_orchestration_events",
             "event_id, workflow_run_id, workflow_node_run_id, node_id, event_type, payload, created_at",
             "?, ?, ?, ?, ?, ?, ?",
@@ -649,7 +647,7 @@ where
                  LIMIT ?{skip}
              )
              RETURNING {columns}",
-            skip = queries::skip_locked(self.dialect()),
+            skip = self.dialect().skip_locked(),
         ));
         let rows = sqlx::query(&sql)
             .bind(scheduler_id.as_str())
@@ -780,7 +778,7 @@ where
                  LIMIT ?{skip}
              )
              RETURNING {columns}",
-            skip = queries::skip_locked(self.dialect()),
+            skip = self.dialect().skip_locked(),
         ));
         let rows = sqlx::query(&sql)
             .bind(now_ts)

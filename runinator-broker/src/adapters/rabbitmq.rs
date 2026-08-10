@@ -185,14 +185,28 @@ impl RabbitMqBrokerInner {
             .create_channel()
             .await
             .map_err(rabbitmq_error("channel"))?;
-        apply_channel_qos(&channel, config).await?;
-        declare_queue(&channel, &config.action_queue).await?;
-        declare_queue(&channel, &config.targeted_action_queue).await?;
-        declare_queue(&channel, &config.control_queue).await?;
-        declare_queue(&channel, &config.result_queue).await?;
-        declare_queue(&channel, &config.wake_queue).await?;
-        declare_queue(&channel, &config.ingress_queue).await?;
-        declare_fanout_exchange(&channel, &config.event_exchange).await?;
+        RabbitChannel(&channel).apply_qos(config).await?;
+        RabbitChannel(&channel)
+            .declare_queue(&config.action_queue)
+            .await?;
+        RabbitChannel(&channel)
+            .declare_queue(&config.targeted_action_queue)
+            .await?;
+        RabbitChannel(&channel)
+            .declare_queue(&config.control_queue)
+            .await?;
+        RabbitChannel(&channel)
+            .declare_queue(&config.result_queue)
+            .await?;
+        RabbitChannel(&channel)
+            .declare_queue(&config.wake_queue)
+            .await?;
+        RabbitChannel(&channel)
+            .declare_queue(&config.ingress_queue)
+            .await?;
+        RabbitChannel(&channel)
+            .declare_fanout_exchange(&config.event_exchange)
+            .await?;
 
         Ok(Self {
             channel: AsyncMutex::new(channel),
@@ -228,14 +242,28 @@ impl RabbitMqBrokerInner {
             .create_channel()
             .await
             .map_err(rabbitmq_error("reconnect_channel"))?;
-        apply_channel_qos(&new_channel, config).await?;
-        declare_queue(&new_channel, &config.action_queue).await?;
-        declare_queue(&new_channel, &config.targeted_action_queue).await?;
-        declare_queue(&new_channel, &config.control_queue).await?;
-        declare_queue(&new_channel, &config.result_queue).await?;
-        declare_queue(&new_channel, &config.wake_queue).await?;
-        declare_queue(&new_channel, &config.ingress_queue).await?;
-        declare_fanout_exchange(&new_channel, &config.event_exchange).await?;
+        RabbitChannel(&new_channel).apply_qos(config).await?;
+        RabbitChannel(&new_channel)
+            .declare_queue(&config.action_queue)
+            .await?;
+        RabbitChannel(&new_channel)
+            .declare_queue(&config.targeted_action_queue)
+            .await?;
+        RabbitChannel(&new_channel)
+            .declare_queue(&config.control_queue)
+            .await?;
+        RabbitChannel(&new_channel)
+            .declare_queue(&config.result_queue)
+            .await?;
+        RabbitChannel(&new_channel)
+            .declare_queue(&config.wake_queue)
+            .await?;
+        RabbitChannel(&new_channel)
+            .declare_queue(&config.ingress_queue)
+            .await?;
+        RabbitChannel(&new_channel)
+            .declare_fanout_exchange(&config.event_exchange)
+            .await?;
         // consumers are bound to the old channel; clear them so they're recreated on next use.
         self.action_consumers.lock().clear();
         self.targeted_action_consumers.lock().clear();
@@ -358,103 +386,92 @@ impl RabbitMqBrokerInner {
     }
 }
 
-// cap unacked deliveries per consumer on this channel; a zero prefetch leaves rabbitmq unlimited.
+/// a borrowed `lapin::Channel` plus the qos/declare/publish operations run against it. every call
+/// site already holds the channel as a short-lived local, so borrowing here avoids cloning the
+/// (cheap but pointless) handle just to name a receiver.
 #[cfg(feature = "rabbitmq")]
-async fn apply_channel_qos(
-    channel: &lapin::Channel,
-    config: &RabbitMqBrokerConfig,
-) -> Result<(), BrokerError> {
-    if config.prefetch_count == 0 {
-        return Ok(());
+struct RabbitChannel<'a>(&'a lapin::Channel);
+
+#[cfg(feature = "rabbitmq")]
+impl RabbitChannel<'_> {
+    // cap unacked deliveries per consumer on this channel; a zero prefetch leaves rabbitmq unlimited.
+    async fn apply_qos(&self, config: &RabbitMqBrokerConfig) -> Result<(), BrokerError> {
+        if config.prefetch_count == 0 {
+            return Ok(());
+        }
+        self.0
+            .basic_qos(
+                config.prefetch_count,
+                lapin::options::BasicQosOptions::default(),
+            )
+            .await
+            .map_err(rabbitmq_error("basic_qos"))
     }
-    channel
-        .basic_qos(
-            config.prefetch_count,
-            lapin::options::BasicQosOptions::default(),
-        )
-        .await
-        .map_err(rabbitmq_error("basic_qos"))
-}
 
-#[cfg(feature = "rabbitmq")]
-async fn declare_queue(channel: &lapin::Channel, queue: &str) -> Result<(), BrokerError> {
-    channel
-        .queue_declare(
-            queue.into(),
-            lapin::options::QueueDeclareOptions {
-                durable: true,
-                ..Default::default()
-            },
-            lapin::types::FieldTable::default(),
-        )
-        .await
-        .map(|_| ())
-        .map_err(rabbitmq_error("queue_declare"))
-}
+    async fn declare_queue(&self, queue: &str) -> Result<(), BrokerError> {
+        self.0
+            .queue_declare(
+                queue.into(),
+                lapin::options::QueueDeclareOptions {
+                    durable: true,
+                    ..Default::default()
+                },
+                lapin::types::FieldTable::default(),
+            )
+            .await
+            .map(|_| ())
+            .map_err(rabbitmq_error("queue_declare"))
+    }
 
-#[cfg(feature = "rabbitmq")]
-async fn declare_fanout_exchange(
-    channel: &lapin::Channel,
-    exchange: &str,
-) -> Result<(), BrokerError> {
-    channel
-        .exchange_declare(
-            exchange.into(),
-            lapin::ExchangeKind::Fanout,
-            lapin::options::ExchangeDeclareOptions {
-                durable: true,
-                ..Default::default()
-            },
-            lapin::types::FieldTable::default(),
-        )
-        .await
-        .map(|_| ())
-        .map_err(rabbitmq_error("exchange_declare"))
-}
+    async fn declare_fanout_exchange(&self, exchange: &str) -> Result<(), BrokerError> {
+        self.0
+            .exchange_declare(
+                exchange.into(),
+                lapin::ExchangeKind::Fanout,
+                lapin::options::ExchangeDeclareOptions {
+                    durable: true,
+                    ..Default::default()
+                },
+                lapin::types::FieldTable::default(),
+            )
+            .await
+            .map(|_| ())
+            .map_err(rabbitmq_error("exchange_declare"))
+    }
 
-#[cfg(feature = "rabbitmq")]
-async fn publish_fanout(
-    channel: &lapin::Channel,
-    exchange: &str,
-    payload: String,
-) -> Result<(), BrokerError> {
-    channel
-        .basic_publish(
-            exchange.into(),
-            "".into(),
-            lapin::options::BasicPublishOptions::default(),
-            payload.as_bytes(),
-            lapin::BasicProperties::default(),
-        )
-        .await
-        .map_err(rabbitmq_error("publish_event"))?
-        .await
-        .map_err(rabbitmq_error("publish_event_confirm"))?;
-    Ok(())
-}
+    async fn publish_fanout(&self, exchange: &str, payload: String) -> Result<(), BrokerError> {
+        self.0
+            .basic_publish(
+                exchange.into(),
+                "".into(),
+                lapin::options::BasicPublishOptions::default(),
+                payload.as_bytes(),
+                lapin::BasicProperties::default(),
+            )
+            .await
+            .map_err(rabbitmq_error("publish_event"))?
+            .await
+            .map_err(rabbitmq_error("publish_event_confirm"))?;
+        Ok(())
+    }
 
-#[cfg(feature = "rabbitmq")]
-async fn publish_json(
-    channel: &lapin::Channel,
-    queue: &str,
-    key: &str,
-    payload: String,
-) -> Result<(), BrokerError> {
-    channel
-        .basic_publish(
-            "".into(),
-            queue.into(),
-            lapin::options::BasicPublishOptions::default(),
-            payload.as_bytes(),
-            lapin::BasicProperties::default()
-                .with_delivery_mode(2)
-                .with_message_id(key.into()),
-        )
-        .await
-        .map_err(rabbitmq_error("publish"))?
-        .await
-        .map_err(rabbitmq_error("publish_confirm"))?;
-    Ok(())
+    async fn publish(&self, queue: &str, key: &str, payload: String) -> Result<(), BrokerError> {
+        self.0
+            .basic_publish(
+                "".into(),
+                queue.into(),
+                lapin::options::BasicPublishOptions::default(),
+                payload.as_bytes(),
+                lapin::BasicProperties::default()
+                    .with_delivery_mode(2)
+                    .with_message_id(key.into()),
+            )
+            .await
+            .map_err(rabbitmq_error("publish"))?
+            .await
+            .map_err(rabbitmq_error("publish_confirm"))?;
+        Ok(())
+    }
 }
 
 #[cfg(feature = "rabbitmq")]
@@ -571,7 +588,7 @@ impl Broker for RabbitMqBroker {
         let payload = serde_json::to_string(&message)
             .map_err(|err| BrokerError::Internal(err.to_string()))?;
         let ch = self.inner.ensure_connected(&self.config).await?;
-        publish_json(&ch, queue, &key, payload).await
+        RabbitChannel(&ch).publish(queue, &key, payload).await
     }
 
     async fn receive(&self, consumer: &str) -> Result<BrokerDelivery, BrokerError> {
@@ -626,7 +643,9 @@ impl Broker for RabbitMqBroker {
         let payload = serde_json::to_string(&command)
             .map_err(|err| BrokerError::Internal(err.to_string()))?;
         let ch = self.inner.ensure_connected(&self.config).await?;
-        publish_json(&ch, &self.config.control_queue, &key, payload).await
+        RabbitChannel(&ch)
+            .publish(&self.config.control_queue, &key, payload)
+            .await
     }
 
     async fn receive_control(&self, consumer: &str) -> Result<ControlDelivery, BrokerError> {
@@ -654,7 +673,9 @@ impl Broker for RabbitMqBroker {
         let payload = serde_json::to_string(&message)
             .map_err(|err| BrokerError::Internal(err.to_string()))?;
         let ch = self.inner.ensure_connected(&self.config).await?;
-        publish_json(&ch, &self.config.result_queue, &key, payload).await
+        RabbitChannel(&ch)
+            .publish(&self.config.result_queue, &key, payload)
+            .await
     }
 
     async fn receive_result(&self, consumer: &str) -> Result<ResultDelivery, BrokerError> {
@@ -682,7 +703,9 @@ impl Broker for RabbitMqBroker {
         let payload = serde_json::to_string(&message)
             .map_err(|err| BrokerError::Internal(err.to_string()))?;
         let ch = self.inner.ensure_connected(&self.config).await?;
-        publish_json(&ch, &self.config.wake_queue, &key, payload).await
+        RabbitChannel(&ch)
+            .publish(&self.config.wake_queue, &key, payload)
+            .await
     }
 
     async fn receive_wake(&self, consumer: &str) -> Result<WakeDelivery, BrokerError> {
@@ -710,7 +733,9 @@ impl Broker for RabbitMqBroker {
         let payload = serde_json::to_string(&message)
             .map_err(|err| BrokerError::Internal(err.to_string()))?;
         let ch = self.inner.ensure_connected(&self.config).await?;
-        publish_json(&ch, &self.config.ingress_queue, &key, payload).await
+        RabbitChannel(&ch)
+            .publish(&self.config.ingress_queue, &key, payload)
+            .await
     }
 
     async fn receive_ingress(&self, consumer: &str) -> Result<IngressDelivery, BrokerError> {
@@ -737,7 +762,9 @@ impl Broker for RabbitMqBroker {
         let payload = serde_json::to_string(&message)
             .map_err(|err| BrokerError::Internal(err.to_string()))?;
         let ch = self.inner.ensure_connected(&self.config).await?;
-        publish_fanout(&ch, &self.config.event_exchange, payload).await
+        RabbitChannel(&ch)
+            .publish_fanout(&self.config.event_exchange, payload)
+            .await
     }
 
     async fn receive_event(&self, consumer: &str) -> Result<EventDelivery, BrokerError> {

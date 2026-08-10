@@ -15,7 +15,8 @@ use runinator_ws_core::openapi::docs::{
     EndpointDoc, Example, WORKFLOW_TRIGGER_FILTERS, endpoint, json_body,
 };
 use runinator_ws_core::responses::{api_error, not_found};
-use runinator_ws_middleware::authz;
+use runinator_ws_middleware::authz::AuthContextExt;
+use runinator_ws_middleware::authz::AuthzChecker;
 
 pub async fn upsert_workflow_trigger<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
@@ -24,8 +25,9 @@ pub async fn upsert_workflow_trigger<T: DatabaseImpl>(
     Path(workflow_id): Path<Uuid>,
     Json(mut trigger): Json<WorkflowTrigger>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) =
-        authz::require_workflow(db.as_ref(), &ctx, workflow_id, Permission::Edit).await
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_workflow(workflow_id, Permission::Edit)
+        .await
     {
         return reply;
     }
@@ -47,8 +49,9 @@ pub async fn update_workflow_trigger<T: DatabaseImpl>(
     Path(trigger_id): Path<Uuid>,
     Json(mut trigger): Json<WorkflowTrigger>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) =
-        authz::require_trigger_workflow(db.as_ref(), &ctx, trigger_id, Permission::Edit).await
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_trigger_workflow(trigger_id, Permission::Edit)
+        .await
     {
         return reply;
     }
@@ -68,8 +71,9 @@ pub async fn get_workflow_trigger<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(trigger_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) =
-        authz::require_trigger_workflow(db.as_ref(), &ctx, trigger_id, Permission::View).await
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_trigger_workflow(trigger_id, Permission::View)
+        .await
     {
         return reply;
     }
@@ -85,8 +89,9 @@ pub async fn get_workflow_triggers<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(workflow_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) =
-        authz::require_workflow(db.as_ref(), &ctx, workflow_id, Permission::View).await
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_workflow(workflow_id, Permission::View)
+        .await
     {
         return reply;
     }
@@ -103,7 +108,7 @@ pub async fn get_due_workflow_triggers<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = authz::require_service_or_admin(&ctx) {
+    if let Err(reply) = ctx.require_service_or_admin() {
         return reply;
     }
     match repository::fetch_due_workflow_triggers(db.as_ref()).await {
@@ -120,7 +125,7 @@ pub async fn claim_due_workflow_trigger_firings<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<SchedulerTriggerClaimRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = authz::require_service_or_admin(&ctx) {
+    if let Err(reply) = ctx.require_service_or_admin() {
         return reply;
     }
     match repository::claim_due_workflow_trigger_firings(
@@ -146,8 +151,9 @@ pub async fn delete_workflow_trigger<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(trigger_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) =
-        authz::require_trigger_workflow(db.as_ref(), &ctx, trigger_id, Permission::Edit).await
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_trigger_workflow(trigger_id, Permission::Edit)
+        .await
     {
         return reply;
     }

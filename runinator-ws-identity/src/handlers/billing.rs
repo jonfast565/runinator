@@ -18,7 +18,7 @@ use uuid::Uuid;
 
 use runinator_ws_core::models::{ApiError, ApiResponse};
 use runinator_ws_core::responses::{api_error, bad_request};
-use runinator_ws_middleware::authz;
+use runinator_ws_middleware::authz::AuthContextExt;
 
 type Reply = (StatusCode, Json<ApiResponse>);
 
@@ -66,7 +66,7 @@ pub async fn get_org_nodes<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(org_id): Path<Uuid>,
 ) -> Reply {
-    if let Err(reply) = authz::require_org_member(&ctx, org_id) {
+    if let Err(reply) = ctx.require_org_member(org_id) {
         return reply;
     }
     let groups = match db.list_org_resource_groups(org_id).await {
@@ -90,7 +90,7 @@ pub async fn scale_org_nodes<T: DatabaseImpl>(
     Path(org_id): Path<Uuid>,
     Json(request): Json<ScaleOrgNodesRequest>,
 ) -> Reply {
-    if let Err(reply) = authz::require_org_admin(&ctx, org_id) {
+    if let Err(reply) = ctx.require_org_admin(org_id) {
         return reply;
     }
     let card = rate_card();
@@ -168,7 +168,7 @@ pub async fn get_org_quota<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(org_id): Path<Uuid>,
 ) -> Reply {
-    if let Err(reply) = authz::require_org_member(&ctx, org_id) {
+    if let Err(reply) = ctx.require_org_member(org_id) {
         return reply;
     }
     let quota = match db.fetch_org_quota(org_id).await {
@@ -189,7 +189,7 @@ pub async fn put_org_quota<T: DatabaseImpl>(
     Path(org_id): Path<Uuid>,
     Json(request): Json<UpdateOrgQuotaRequest>,
 ) -> Reply {
-    if let Err(reply) = authz::require_capability(&ctx, Capability::BillingManage) {
+    if let Err(reply) = ctx.require_capability(Capability::BillingManage) {
         return reply;
     }
     // reject unknown replica-kind keys so a typo never silently disables a cap.
@@ -217,7 +217,7 @@ pub async fn get_org_usage<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(org_id): Path<Uuid>,
 ) -> Reply {
-    if let Err(reply) = authz::require_org_member(&ctx, org_id) {
+    if let Err(reply) = ctx.require_org_member(org_id) {
         return reply;
     }
     let since = chrono::Utc::now() - chrono::Duration::days(30);

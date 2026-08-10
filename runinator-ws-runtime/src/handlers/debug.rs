@@ -13,6 +13,7 @@ use runinator_ws_core::events::{EventSender, emit_workflow_run};
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::openapi::docs::{EndpointDoc, Example, endpoint, json_body};
 use runinator_ws_core::responses::bad_request;
+use runinator_ws_middleware::authz::AuthzChecker;
 
 /// unified debug entrypoint: a single [`DebugVerb`] dispatched to the repository. the legacy
 /// per-verb endpoints below remain as thin adapters for existing clients.
@@ -23,13 +24,9 @@ pub async fn debug_command<T: DatabaseImpl>(
     Path(workflow_run_id): Path<Uuid>,
     Json(verb): Json<DebugVerb>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_run_workflow(
-        db.as_ref(),
-        &ctx,
-        workflow_run_id,
-        Permission::Run,
-    )
-    .await
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_run_workflow(workflow_run_id, Permission::Run)
+        .await
     {
         return reply;
     }
@@ -98,13 +95,9 @@ pub async fn step_debug_workflow_run<T: DatabaseImpl>(
     Path(workflow_run_id): Path<Uuid>,
     body: Option<Json<CursorRequest>>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_run_workflow(
-        db.as_ref(),
-        &ctx,
-        workflow_run_id,
-        Permission::Run,
-    )
-    .await
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_run_workflow(workflow_run_id, Permission::Run)
+        .await
     {
         return reply;
     }
@@ -125,13 +118,9 @@ pub async fn continue_debug_workflow_run<T: DatabaseImpl>(
     Path(workflow_run_id): Path<Uuid>,
     body: Option<Json<CursorRequest>>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_run_workflow(
-        db.as_ref(),
-        &ctx,
-        workflow_run_id,
-        Permission::Run,
-    )
-    .await
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_run_workflow(workflow_run_id, Permission::Run)
+        .await
     {
         return reply;
     }
@@ -152,13 +141,9 @@ pub async fn update_workflow_run_debug<T: DatabaseImpl>(
     Path(workflow_run_id): Path<Uuid>,
     Json(patch): Json<Value>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_run_workflow(
-        db.as_ref(),
-        &ctx,
-        workflow_run_id,
-        Permission::Run,
-    )
-    .await
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_run_workflow(workflow_run_id, Permission::Run)
+        .await
     {
         return reply;
     }
@@ -179,13 +164,9 @@ pub async fn run_to_cursor_workflow_run<T: DatabaseImpl>(
     Path(workflow_run_id): Path<Uuid>,
     Json(req): Json<RunToCursorRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_run_workflow(
-        db.as_ref(),
-        &ctx,
-        workflow_run_id,
-        Permission::Run,
-    )
-    .await
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_run_workflow(workflow_run_id, Permission::Run)
+        .await
     {
         return reply;
     }
@@ -213,13 +194,9 @@ pub async fn skip_debug_workflow_node<T: DatabaseImpl>(
     Path(workflow_run_id): Path<Uuid>,
     Json(req): Json<SkipDebugRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_run_workflow(
-        db.as_ref(),
-        &ctx,
-        workflow_run_id,
-        Permission::Run,
-    )
-    .await
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_run_workflow(workflow_run_id, Permission::Run)
+        .await
     {
         return reply;
     }
@@ -248,13 +225,9 @@ pub async fn rerun_debug_workflow_node<T: DatabaseImpl>(
     Path(workflow_run_id): Path<Uuid>,
     Json(req): Json<RerunNodeRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_run_workflow(
-        db.as_ref(),
-        &ctx,
-        workflow_run_id,
-        Permission::Run,
-    )
-    .await
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_run_workflow(workflow_run_id, Permission::Run)
+        .await
     {
         return reply;
     }
@@ -287,13 +260,9 @@ pub async fn fork_debug_cursor<T: DatabaseImpl>(
     Path(workflow_run_id): Path<Uuid>,
     Json(req): Json<ForkCursorRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_run_workflow(
-        db.as_ref(),
-        &ctx,
-        workflow_run_id,
-        Permission::Run,
-    )
-    .await
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_run_workflow(workflow_run_id, Permission::Run)
+        .await
     {
         return reply;
     }

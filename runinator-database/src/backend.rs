@@ -11,7 +11,7 @@ use sqlx::{
     Database, Pool, mysql::MySqlQueryResult, postgres::PgQueryResult, sqlite::SqliteQueryResult,
 };
 
-use crate::queries::{self, SqlDialect};
+use crate::queries::SqlDialect;
 
 /// portable access to a statement's affected-row count.
 ///
@@ -52,7 +52,7 @@ pub trait SqlBackend: Send + Sync + 'static {
 
     /// render a `?`-placeholder template for this backend's dialect.
     fn render(&self, sql: &str) -> String {
-        queries::render(self.dialect(), sql)
+        self.dialect().render(sql)
     }
 
     /// run embedded bootstrap work and any extra init scripts.

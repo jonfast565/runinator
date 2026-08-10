@@ -19,10 +19,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use runinator_api::{
-    AsyncApiClient, ReplicaServiceConfig, StaticLocator, register_replica_provider,
-    register_replica_session, spawn_replica_heartbeat_with_telemetry,
-};
+use runinator_api::{AsyncApiClient, ReplicaClient, ReplicaServiceConfig, StaticLocator};
 use runinator_comm::{ConsumerProfile, ControlKind};
 use runinator_models::replicas::ReplicaKind;
 use runinator_plugin::provider::Provider;
@@ -388,8 +385,8 @@ async fn run_agent(shared: &SharedHandle, config: AgentConfig) -> Result<(), Str
     // register this desktop as an exclusive worker replica so the reducer can pin local actions here
     // (and, per `labels`, route label-targeted actions here).
     let instance_id = Uuid::new_v4().to_string();
-    let session = register_replica_session(
-        &api_client,
+    let replica_client = ReplicaClient::register(
+        api_client.clone(),
         ReplicaServiceConfig {
             replica_type: ReplicaKind::Worker,
             instance_id: instance_id.clone(),
@@ -408,7 +405,7 @@ async fn run_agent(shared: &SharedHandle, config: AgentConfig) -> Result<(), Str
     )
     .await
     .map_err(|err| err.to_string())?;
-    let replica_id = session.replica_id();
+    let replica_id = replica_client.replica_id();
     log_line(shared, format!("Registered replica {replica_id}."));
     // surface the advertised labels so the operator can confirm this machine is opted into the packs
     // that pin to it (e.g. `runner=creds-sync`); a label-targeted action only routes here when these
@@ -422,11 +419,13 @@ async fn run_agent(shared: &SharedHandle, config: AgentConfig) -> Result<(), Str
 
     // publish the local-files provider metadata plus the full built-in catalog, so the service knows
     // this replica can run anything a cloud worker can (routing still gated by `exclusive`/labels).
-    register_replica_provider(&api_client, &session, LocalProvider.metadata())
+    replica_client
+        .register_provider(LocalProvider.metadata())
         .await
         .map_err(|err| err.to_string())?;
     for provider in built_in_providers() {
-        register_replica_provider(&api_client, &session, provider.metadata())
+        replica_client
+            .register_provider(provider.metadata())
             .await
             .map_err(|err| err.to_string())?;
     }
@@ -521,12 +520,7 @@ async fn run_agent(shared: &SharedHandle, config: AgentConfig) -> Result<(), Str
     // heartbeat keeps the replica Live, marks it offline on shutdown, and samples cpu/ram/gpu on
     // every tick so this replica shows up the same as a standalone cloud worker in the statistics view.
     let telemetry = Arc::new(TelemetryCollector::new());
-    spawn_replica_heartbeat_with_telemetry(
-        api_client.clone(),
-        session,
-        shutdown.clone(),
-        Some(telemetry.clone()),
-    );
+    replica_client.spawn_heartbeat_with_telemetry(shutdown.clone(), Some(telemetry.clone()));
     spawn_telemetry_sampler(shared.clone(), telemetry, shutdown.clone());
 
     let shared_loop = shared.clone();

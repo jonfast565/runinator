@@ -20,7 +20,7 @@ use runinator_ws_core::events::{AppEvent, AppEventKind, EventSender, emit};
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::openapi::docs::{EndpointDoc, Example, endpoint, json_body};
 use runinator_ws_core::responses::{api_error, not_found};
-use runinator_ws_middleware::authz;
+use runinator_ws_middleware::authz::AuthContextExt;
 
 type Reply = (StatusCode, Json<ApiResponse>);
 
@@ -143,7 +143,7 @@ pub async fn create_notification_policy<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Json(policy): Json<NewNotificationPolicy>,
 ) -> Reply {
-    if let Err(reply) = authz::require_capability(&ctx, Capability::NotificationsManage) {
+    if let Err(reply) = ctx.require_capability(Capability::NotificationsManage) {
         return reply;
     }
     match repository::create_notification_policy(db.as_ref(), &policy).await {
@@ -161,7 +161,7 @@ pub async fn update_notification_policy<T: DatabaseImpl>(
     Path(policy_id): Path<Uuid>,
     Json(policy): Json<NewNotificationPolicy>,
 ) -> Reply {
-    if let Err(reply) = authz::require_capability(&ctx, Capability::NotificationsManage) {
+    if let Err(reply) = ctx.require_capability(Capability::NotificationsManage) {
         return reply;
     }
     match repository::update_notification_policy(db.as_ref(), policy_id, &policy).await {
@@ -179,7 +179,7 @@ pub async fn delete_notification_policy<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(policy_id): Path<Uuid>,
 ) -> Reply {
-    if let Err(reply) = authz::require_capability(&ctx, Capability::NotificationsManage) {
+    if let Err(reply) = ctx.require_capability(Capability::NotificationsManage) {
         return reply;
     }
     match repository::delete_notification_policy(db.as_ref(), policy_id).await {

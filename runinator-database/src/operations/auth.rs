@@ -532,8 +532,7 @@ where
     async fn create_grant(&self, grant: Grant) -> Result<Grant, SendableError> {
         let id = grant.id.unwrap_or_else(Uuid::now_v7);
         let now = Utc::now().timestamp();
-        let conflict = queries::on_conflict_update(
-            self.dialect(),
+        let conflict = self.dialect().on_conflict_update(
             "resource_type, resource_id, principal_type, principal_id",
             &["permission"],
         );

@@ -29,7 +29,8 @@ use runinator_ws_middleware::auth::{
     AuthConfig, hash_password, hash_secret, issue_access_token, new_api_key, new_refresh_token,
     verify_password,
 };
-use runinator_ws_middleware::authz;
+use runinator_ws_middleware::authz::AuthContextExt;
+use runinator_ws_middleware::authz::AuthzChecker;
 
 type Reply = (StatusCode, Json<ApiResponse>);
 
@@ -107,16 +108,16 @@ async fn issue_session<T: DatabaseImpl>(
         issue_access_token(config, user_id, user.is_admin, None, None).map_err(api_error)?;
     // capabilities for the org-less session: platform caps for admins, none otherwise. org caps
     // arrive when the client switches org and reloads its principal.
-    let mut capabilities: Vec<Capability> =
-        runinator_ws_middleware::authz::capabilities_for(&AuthContext {
-            principal_id: Some(user_id),
-            is_admin: user.is_admin,
-            kind: PrincipalKind::User,
-            org_id: None,
-            org_role: None,
-        })
-        .into_iter()
-        .collect();
+    let mut capabilities: Vec<Capability> = AuthContext {
+        principal_id: Some(user_id),
+        is_admin: user.is_admin,
+        kind: PrincipalKind::User,
+        org_id: None,
+        org_role: None,
+    }
+    .capabilities()
+    .into_iter()
+    .collect();
     capabilities.sort();
     let (refresh_token, refresh_hash) = new_refresh_token();
     let session = AuthSession {
@@ -312,9 +313,7 @@ pub async fn me<T: DatabaseImpl>(
 ) -> Reply {
     // the caller's resolved capability set, sorted for a stable wire order; the command center gates
     // the whole ui against exactly this list (see `capabilities_for`).
-    let mut capabilities: Vec<Capability> = runinator_ws_middleware::authz::capabilities_for(&ctx)
-        .into_iter()
-        .collect();
+    let mut capabilities: Vec<Capability> = ctx.capabilities().into_iter().collect();
     capabilities.sort();
     let Some(user_id) = ctx.principal_id else {
         return ok_value(&serde_json::json!({
@@ -345,9 +344,7 @@ pub async fn list_users<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> Reply {
-    if let Err(reply) =
-        runinator_ws_middleware::authz::require_capability(&ctx, Capability::UsersManage)
-    {
+    if let Err(reply) = ctx.require_capability(Capability::UsersManage) {
         return reply;
     }
     match db.list_users().await {
@@ -364,9 +361,7 @@ pub async fn create_user<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<CreateUserRequest>,
 ) -> Reply {
-    if let Err(reply) =
-        runinator_ws_middleware::authz::require_capability(&ctx, Capability::UsersManage)
-    {
+    if let Err(reply) = ctx.require_capability(Capability::UsersManage) {
         return reply;
     }
     let hash = match hash_password(&request.password) {
@@ -393,9 +388,7 @@ pub async fn update_user<T: DatabaseImpl>(
     Path(user_id): Path<Uuid>,
     Json(request): Json<UpdateUserRequest>,
 ) -> Reply {
-    if let Err(reply) =
-        runinator_ws_middleware::authz::require_capability(&ctx, Capability::UsersManage)
-    {
+    if let Err(reply) = ctx.require_capability(Capability::UsersManage) {
         return reply;
     }
     let current = match db.fetch_user(user_id).await {
@@ -440,9 +433,7 @@ pub async fn delete_user<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(user_id): Path<Uuid>,
 ) -> Reply {
-    if let Err(reply) =
-        runinator_ws_middleware::authz::require_capability(&ctx, Capability::UsersManage)
-    {
+    if let Err(reply) = ctx.require_capability(Capability::UsersManage) {
         return reply;
     }
     let current = match db.fetch_user(user_id).await {
@@ -541,9 +532,7 @@ pub async fn update_api_key<T: DatabaseImpl>(
     Path(key_id): Path<Uuid>,
     Json(request): Json<UpdateApiKeyRequest>,
 ) -> Reply {
-    if let Err(reply) =
-        runinator_ws_middleware::authz::require_capability(&ctx, Capability::ApiKeysManage)
-    {
+    if let Err(reply) = ctx.require_capability(Capability::ApiKeysManage) {
         return reply;
     }
     match db
@@ -560,9 +549,7 @@ pub async fn rotate_api_key<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(key_id): Path<Uuid>,
 ) -> Reply {
-    if let Err(reply) =
-        runinator_ws_middleware::authz::require_capability(&ctx, Capability::ApiKeysManage)
-    {
+    if let Err(reply) = ctx.require_capability(Capability::ApiKeysManage) {
         return reply;
     }
     let current = match db.fetch_api_key(key_id).await {
@@ -606,9 +593,7 @@ pub async fn revoke_api_key<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(key_id): Path<Uuid>,
 ) -> Reply {
-    if let Err(reply) =
-        runinator_ws_middleware::authz::require_capability(&ctx, Capability::ApiKeysManage)
-    {
+    if let Err(reply) = ctx.require_capability(Capability::ApiKeysManage) {
         return reply;
     }
     match db.revoke_api_key(key_id).await {
@@ -625,8 +610,9 @@ pub async fn list_workflow_grants<T: DatabaseImpl>(
     Path(workflow_id): Path<Uuid>,
 ) -> Reply {
     // only an owner (or admin) may inspect/manage a workflow's sharing.
-    if let Err(reply) =
-        authz::require_workflow(db.as_ref(), &ctx, workflow_id, Permission::Own).await
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_workflow(workflow_id, Permission::Own)
+        .await
     {
         return reply;
     }
@@ -648,8 +634,9 @@ pub async fn create_workflow_grant<T: DatabaseImpl>(
     Path(workflow_id): Path<Uuid>,
     Json(request): Json<CreateGrantRequest>,
 ) -> Reply {
-    if let Err(reply) =
-        authz::require_workflow(db.as_ref(), &ctx, workflow_id, Permission::Own).await
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_workflow(workflow_id, Permission::Own)
+        .await
     {
         return reply;
     }
@@ -673,8 +660,9 @@ pub async fn revoke_workflow_grant<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path((workflow_id, grant_id)): Path<(Uuid, Uuid)>,
 ) -> Reply {
-    if let Err(reply) =
-        authz::require_workflow(db.as_ref(), &ctx, workflow_id, Permission::Own).await
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_workflow(workflow_id, Permission::Own)
+        .await
     {
         return reply;
     }
@@ -690,9 +678,7 @@ pub async fn list_teams<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> Reply {
-    if let Err(reply) =
-        runinator_ws_middleware::authz::require_capability(&ctx, Capability::TeamsManage)
-    {
+    if let Err(reply) = ctx.require_capability(Capability::TeamsManage) {
         return reply;
     }
     match db.list_teams().await {
@@ -709,9 +695,7 @@ pub async fn list_user_teams<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(user_id): Path<Uuid>,
 ) -> Reply {
-    if let Err(reply) =
-        runinator_ws_middleware::authz::require_capability(&ctx, Capability::TeamsManage)
-    {
+    if let Err(reply) = ctx.require_capability(Capability::TeamsManage) {
         return reply;
     }
     match db.list_user_teams(user_id).await {
@@ -728,9 +712,7 @@ pub async fn create_team<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<CreateTeamRequest>,
 ) -> Reply {
-    if let Err(reply) =
-        runinator_ws_middleware::authz::require_capability(&ctx, Capability::TeamsManage)
-    {
+    if let Err(reply) = ctx.require_capability(Capability::TeamsManage) {
         return reply;
     }
     match db.create_team(request.name).await {
@@ -745,9 +727,7 @@ pub async fn update_team<T: DatabaseImpl>(
     Path(team_id): Path<Uuid>,
     Json(request): Json<UpdateTeamRequest>,
 ) -> Reply {
-    if let Err(reply) =
-        runinator_ws_middleware::authz::require_capability(&ctx, Capability::TeamsManage)
-    {
+    if let Err(reply) = ctx.require_capability(Capability::TeamsManage) {
         return reply;
     }
     match db.update_team(team_id, request.name).await {
@@ -761,9 +741,7 @@ pub async fn delete_team<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(team_id): Path<Uuid>,
 ) -> Reply {
-    if let Err(reply) =
-        runinator_ws_middleware::authz::require_capability(&ctx, Capability::TeamsManage)
-    {
+    if let Err(reply) = ctx.require_capability(Capability::TeamsManage) {
         return reply;
     }
     match db.delete_team(team_id).await {
@@ -777,9 +755,7 @@ pub async fn list_team_members<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(team_id): Path<Uuid>,
 ) -> Reply {
-    if let Err(reply) =
-        runinator_ws_middleware::authz::require_capability(&ctx, Capability::TeamsManage)
-    {
+    if let Err(reply) = ctx.require_capability(Capability::TeamsManage) {
         return reply;
     }
     match db.list_team_members(team_id).await {
@@ -797,9 +773,7 @@ pub async fn add_team_member<T: DatabaseImpl>(
     Path(team_id): Path<Uuid>,
     Json(request): Json<AddTeamMemberRequest>,
 ) -> Reply {
-    if let Err(reply) =
-        runinator_ws_middleware::authz::require_capability(&ctx, Capability::TeamsManage)
-    {
+    if let Err(reply) = ctx.require_capability(Capability::TeamsManage) {
         return reply;
     }
     match db.add_team_member(team_id, request.user_id).await {
@@ -813,9 +787,7 @@ pub async fn remove_team_member<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path((team_id, user_id)): Path<(Uuid, Uuid)>,
 ) -> Reply {
-    if let Err(reply) =
-        runinator_ws_middleware::authz::require_capability(&ctx, Capability::TeamsManage)
-    {
+    if let Err(reply) = ctx.require_capability(Capability::TeamsManage) {
         return reply;
     }
     match db.remove_team_member(team_id, user_id).await {

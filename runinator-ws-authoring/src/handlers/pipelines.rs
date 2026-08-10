@@ -15,7 +15,8 @@ use runinator_ws_core::events::{
 };
 use runinator_ws_core::models::{ApiResponse, PipelineOwnerRequest, PipelineRunRequest};
 use runinator_ws_core::responses::{api_error, not_found};
-use runinator_ws_middleware::authz;
+use runinator_ws_middleware::authz::AuthContextExt;
+use runinator_ws_middleware::authz::AuthzChecker;
 
 pub async fn get_pipelines<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
@@ -27,9 +28,11 @@ pub async fn get_pipelines<T: DatabaseImpl>(
             // grant-based visibility set (None = admin/auth-disabled = all).
             let pipelines: Vec<_> = pipelines
                 .into_iter()
-                .filter(|pipeline| authz::org_visible(&ctx, pipeline.org_id))
+                .filter(|pipeline| ctx.org_visible(pipeline.org_id))
                 .collect();
-            let visible = authz::visible_pipeline_ids(db.as_ref(), &ctx).await;
+            let visible = AuthzChecker::new(db.as_ref(), &ctx)
+                .visible_pipeline_ids()
+                .await;
             let pipelines = match visible {
                 Some(ids) => pipelines
                     .into_iter()
@@ -48,14 +51,15 @@ pub async fn get_pipeline<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(pipeline_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) =
-        authz::require_pipeline(db.as_ref(), &ctx, pipeline_id, Permission::View).await
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_pipeline(pipeline_id, Permission::View)
+        .await
     {
         return reply;
     }
     match repository::fetch_pipeline(db.as_ref(), pipeline_id).await {
         // a cross-tenant pipeline is not-found even if a stray grant would otherwise reveal it.
-        Ok(Some(pipeline)) if !authz::org_visible(&ctx, pipeline.org_id) => {
+        Ok(Some(pipeline)) if !ctx.org_visible(pipeline.org_id) => {
             not_found(format!("Pipeline {pipeline_id} not found"))
         }
         Ok(Some(pipeline)) => (StatusCode::OK, Json(ApiResponse::Pipeline(pipeline))),
@@ -76,7 +80,9 @@ pub async fn create_pipeline<T: DatabaseImpl>(
     match repository::upsert_pipeline(db.as_ref(), &pipeline).await {
         Ok(pipeline) => {
             if let Some(id) = pipeline.id {
-                authz::grant_pipeline_owner(db.as_ref(), &ctx, id).await;
+                AuthzChecker::new(db.as_ref(), &ctx)
+                    .grant_pipeline_owner(id)
+                    .await;
             }
             emit_workflows_changed(&events, pipeline.org_id);
             (StatusCode::OK, Json(ApiResponse::Pipeline(pipeline)))
@@ -92,8 +98,9 @@ pub async fn update_pipeline<T: DatabaseImpl>(
     Path(pipeline_id): Path<Uuid>,
     Json(mut pipeline): Json<Pipeline>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) =
-        authz::require_pipeline(db.as_ref(), &ctx, pipeline_id, Permission::Edit).await
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_pipeline(pipeline_id, Permission::Edit)
+        .await
     {
         return reply;
     }
@@ -122,13 +129,14 @@ pub async fn set_pipeline_owner<T: DatabaseImpl>(
     Path(pipeline_id): Path<Uuid>,
     Json(request): Json<PipelineOwnerRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) =
-        authz::require_pipeline(db.as_ref(), &ctx, pipeline_id, Permission::Own).await
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_pipeline(pipeline_id, Permission::Own)
+        .await
     {
         return reply;
     }
     if let Some(org_id) = request.org_id
-        && let Err(reply) = authz::require_org_admin(&ctx, org_id)
+        && let Err(reply) = ctx.require_org_admin(org_id)
     {
         return reply;
     }
@@ -151,8 +159,9 @@ pub async fn delete_pipeline<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(pipeline_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) =
-        authz::require_pipeline(db.as_ref(), &ctx, pipeline_id, Permission::Edit).await
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_pipeline(pipeline_id, Permission::Edit)
+        .await
     {
         return reply;
     }
@@ -177,8 +186,9 @@ pub async fn get_pipeline_triggers<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(pipeline_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) =
-        authz::require_pipeline(db.as_ref(), &ctx, pipeline_id, Permission::View).await
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_pipeline(pipeline_id, Permission::View)
+        .await
     {
         return reply;
     }
@@ -198,8 +208,9 @@ pub async fn upsert_pipeline_trigger<T: DatabaseImpl>(
     Path(pipeline_id): Path<Uuid>,
     Json(mut trigger): Json<PipelineTrigger>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) =
-        authz::require_pipeline(db.as_ref(), &ctx, pipeline_id, Permission::Edit).await
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_pipeline(pipeline_id, Permission::Edit)
+        .await
     {
         return reply;
     }
@@ -221,8 +232,9 @@ pub async fn update_pipeline_trigger<T: DatabaseImpl>(
     Path(trigger_id): Path<Uuid>,
     Json(mut trigger): Json<PipelineTrigger>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) =
-        authz::require_pipeline_trigger(db.as_ref(), &ctx, trigger_id, Permission::Edit).await
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_pipeline_trigger(trigger_id, Permission::Edit)
+        .await
     {
         return reply;
     }
@@ -243,8 +255,9 @@ pub async fn delete_pipeline_trigger<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(trigger_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) =
-        authz::require_pipeline_trigger(db.as_ref(), &ctx, trigger_id, Permission::Edit).await
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_pipeline_trigger(trigger_id, Permission::Edit)
+        .await
     {
         return reply;
     }
@@ -270,8 +283,9 @@ pub async fn create_pipeline_run<T: DatabaseImpl>(
     Path(pipeline_id): Path<Uuid>,
     Json(request): Json<PipelineRunRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) =
-        authz::require_pipeline(db.as_ref(), &ctx, pipeline_id, Permission::Run).await
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_pipeline(pipeline_id, Permission::Run)
+        .await
     {
         return reply;
     }
@@ -305,8 +319,9 @@ pub async fn create_pipeline_trigger_run<T: DatabaseImpl>(
     Path(trigger_id): Path<Uuid>,
     Json(request): Json<PipelineRunRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) =
-        authz::require_pipeline_trigger(db.as_ref(), &ctx, trigger_id, Permission::Run).await
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_pipeline_trigger(trigger_id, Permission::Run)
+        .await
     {
         return reply;
     }
@@ -339,7 +354,9 @@ pub async fn get_pipeline_runs<T: DatabaseImpl>(
 ) -> (StatusCode, Json<ApiResponse>) {
     match repository::fetch_recent_pipeline_runs(db.as_ref(), 200).await {
         Ok(runs) => {
-            let visible = authz::visible_pipeline_ids(db.as_ref(), &ctx).await;
+            let visible = AuthzChecker::new(db.as_ref(), &ctx)
+                .visible_pipeline_ids()
+                .await;
             let runs = match visible {
                 Some(ids) => runs
                     .into_iter()
@@ -358,8 +375,9 @@ pub async fn get_pipeline_run<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(pipeline_run_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) =
-        authz::require_pipeline_run(db.as_ref(), &ctx, pipeline_run_id, Permission::View).await
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_pipeline_run(pipeline_run_id, Permission::View)
+        .await
     {
         return reply;
     }
@@ -376,8 +394,9 @@ pub async fn cancel_pipeline_run<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(pipeline_run_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) =
-        authz::require_pipeline_run(db.as_ref(), &ctx, pipeline_run_id, Permission::Run).await
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_pipeline_run(pipeline_run_id, Permission::Run)
+        .await
     {
         return reply;
     }

@@ -2,194 +2,16 @@ use super::support;
 use super::*;
 use uuid::Uuid;
 
-/// dispatch a single canonical [`DebugVerb`] against a run. every debug operation funnels through
-/// here so the per-verb behavior lives in exactly one place.
-pub async fn apply_debug_command<T: DatabaseImpl>(
-    db: &T,
-    workflow_run_id: Uuid,
-    verb: DebugVerb,
-) -> Result<TaskResponse, SendableError> {
-    match verb {
-        DebugVerb::Step { cursor } => step_debug_cursor(db, workflow_run_id, cursor).await,
-        DebugVerb::Continue { cursor } => continue_debug_cursor(db, workflow_run_id, cursor).await,
-        DebugVerb::RunToCursor { node_id, cursor } => {
-            run_to_cursor_workflow_run(db, workflow_run_id, node_id, cursor).await
-        }
-        DebugVerb::Skip {
-            output,
-            message,
-            cursor,
-        } => skip_debug_workflow_node(db, workflow_run_id, output, message, cursor).await,
-        DebugVerb::Rerun { parameters, cursor } => {
-            rerun_debug_workflow_node(db, workflow_run_id, parameters, cursor).await
-        }
-        DebugVerb::SetBreakpoints { breakpoints } => {
-            set_debug_breakpoints(db, workflow_run_id, breakpoints).await
-        }
-        DebugVerb::SetMode { mode } => set_debug_mode(db, workflow_run_id, mode).await,
-        DebugVerb::Fork {
-            from_cursor,
-            at_node,
-            label,
-            context_patch,
-        } => {
-            fork_debug_cursor(
-                db,
-                workflow_run_id,
-                from_cursor,
-                at_node,
-                label,
-                context_patch,
-            )
-            .await
-        }
-        DebugVerb::RetireCursor { cursor } => {
-            retire_debug_cursor(db, workflow_run_id, cursor).await
-        }
-        DebugVerb::ArmForReal {
-            cursor,
-            node_id,
-            armed,
-        } => arm_debug_node(db, workflow_run_id, cursor, node_id, armed).await,
-    }
-}
-
 /// how many speculative branches one run may carry at once. they live in the run's state blob, so an
 /// unbounded fork button would grow a single row without limit.
 const MAX_SPECULATIVE_CURSORS: usize = 8;
 
-/// fork a speculative "what if" branch beside the real ones.
-pub async fn fork_debug_cursor<T: DatabaseImpl>(
-    db: &T,
-    workflow_run_id: Uuid,
-    from_cursor: Option<Uuid>,
-    at_node: Option<String>,
-    label: Option<String>,
-    context_patch: Value,
-) -> Result<TaskResponse, SendableError> {
-    let run = require_debug_run(db, workflow_run_id).await?;
-    let mut run_state = WorkflowRunState::from_state(&run.state);
-    run_state
-        .debug
-        .get_or_insert_with(DebugFrame::default)
-        .config
-        .enabled = true;
-    if run_state
-        .cursors
-        .iter()
-        .filter(|c| c.is_speculative())
-        .count()
-        >= MAX_SPECULATIVE_CURSORS
-    {
-        return Err(crate::errors::DEBUG_FORK_INVALID.error(format!(
-            "at most {MAX_SPECULATIVE_CURSORS} speculative branches per run"
-        )));
-    }
-    let parent = resolve_target_cursor(&run_state, from_cursor)?;
-    let entry = match at_node {
-        Some(node_id) => node_id,
-        None => run_state
-            .cursor(parent)
-            .map(|cursor| cursor.node_id().to_string())
-            .ok_or_else(|| crate::errors::DEBUG_FORK_INVALID.error(parent))?,
-    };
-    // the fork must exist in the graph, or it would park on a node no drive can resolve.
-    if let Some(snapshot) = run.workflow_snapshot.as_ref()
-        && !snapshot
-            .definition
-            .nodes
-            .iter()
-            .any(|node| node.id == entry)
-    {
-        return Err(crate::errors::DEBUG_FORK_INVALID.error(format!("no node {entry} in this run")));
-    }
-    let forked = run_state
-        .fork_speculative(parent, &entry, label, context_patch)
-        .ok_or_else(|| crate::errors::DEBUG_FORK_INVALID.error(parent))?;
-
-    db.update_workflow_run_status(
-        run.id,
-        run.status,
-        run.active_node_id.clone(),
-        Some(run_state.to_state()),
-        Some(format!("Forked speculative branch at {entry}")),
-    )
-    .await?;
-    support::enqueue_node_ready_for_cursor(db, run.id, forked, entry, "debug_fork", Utc::now())
-        .await?;
-    Ok(TaskResponse {
-        success: true,
-        message: forked.to_string(),
-    })
-}
-
-/// abandon a speculative branch and everything forked from it.
-pub async fn retire_debug_cursor<T: DatabaseImpl>(
-    db: &T,
-    workflow_run_id: Uuid,
-    cursor: Uuid,
-) -> Result<TaskResponse, SendableError> {
-    let run = require_debug_run(db, workflow_run_id).await?;
-    let mut run_state = WorkflowRunState::from_state(&run.state);
-    if !run_state.is_speculative(cursor) {
-        return Err(crate::errors::DEBUG_SPECULATIVE_ONLY.error(cursor));
-    }
-    for id in run_state.speculative_subtree(cursor) {
-        run_state.retire_cursor(id);
-    }
-    db.update_workflow_run_status(
-        run.id,
-        run.status,
-        run.active_node_id.clone(),
-        Some(run_state.to_state()),
-        Some("Speculative branch retired".into()),
-    )
-    .await?;
-    Ok(TaskResponse {
-        success: true,
-        message: format!("Speculative branch {cursor} retired"),
-    })
-}
-
-/// let a speculative cursor dispatch one node for real instead of shadowing it.
-pub async fn arm_debug_node<T: DatabaseImpl>(
-    db: &T,
-    workflow_run_id: Uuid,
-    cursor: Uuid,
-    node_id: String,
-    armed: bool,
-) -> Result<TaskResponse, SendableError> {
-    let run = require_debug_run(db, workflow_run_id).await?;
-    let mut run_state = WorkflowRunState::from_state(&run.state);
-    if !run_state.is_speculative(cursor) {
-        return Err(crate::errors::DEBUG_SPECULATIVE_ONLY.error(cursor));
-    }
-    let Some(frame) = run_state
-        .cursor_mut(cursor)
-        .and_then(|cursor| cursor.speculative.as_mut())
-    else {
-        return Err(crate::errors::DEBUG_CURSOR_NOT_FOUND.error(cursor));
-    };
-    if armed {
-        frame.armed_nodes.insert(node_id.clone());
-    } else {
-        frame.armed_nodes.remove(&node_id);
-    }
-    db.update_workflow_run_status(
-        run.id,
-        run.status,
-        run.active_node_id.clone(),
-        Some(run_state.to_state()),
-        None,
-    )
-    .await?;
-    Ok(TaskResponse {
-        success: true,
-        message: format!(
-            "{node_id} {} for real execution",
-            if armed { "armed" } else { "disarmed" }
-        ),
-    })
+/// a debug-enabled, non-terminal run loaded once and shared by every verb handler below. `db` and
+/// `run` are genuinely invariant per session — every method here reads or rewrites the same run —
+/// which is what replaced the `require_debug_run` call each of these used to repeat individually.
+struct DebugSession<'a, T: DatabaseImpl> {
+    db: &'a T,
+    run: WorkflowRun,
 }
 
 /// unpark every thread of control, and the run-scoped mirror with them.
@@ -233,219 +55,367 @@ fn resolve_target_cursor(
         .ok_or_else(|| crate::errors::DEBUG_NO_ACTIVE_NODE.bare())
 }
 
-/// apply `mutate` to one cursor's debugger runtime, mirror the primary, persist, and re-arm a ready
-/// node for that cursor so the reducer actually picks the thread of control back up.
-///
-/// the re-arm is the half that never existed: the debug endpoints wrote intent and enqueued nothing,
-/// so even once the reducer learned to read the frame there was nothing to wake it.
-async fn persist_cursor_debug<T: DatabaseImpl>(
-    db: &T,
-    run: &WorkflowRun,
-    requested: Option<Uuid>,
-    message: Option<String>,
-    mutate: impl FnOnce(&mut runinator_models::workflow_state::DebugRuntime),
-) -> Result<Uuid, SendableError> {
-    let mut run_state = WorkflowRunState::from_state(&run.state);
-    run_state
-        .debug
-        .get_or_insert_with(DebugFrame::default)
-        .config
-        .enabled = true;
-    let cursor_id = resolve_target_cursor(&run_state, requested)?;
-    let mut runtime = run_state.cursor_debug(cursor_id);
-    mutate(&mut runtime);
-    run_state.set_cursor_debug(cursor_id, runtime);
-    let node_id = run_state
-        .cursor(cursor_id)
-        .map(|cursor| cursor.node_id().to_string());
+impl<'a, T: DatabaseImpl> DebugSession<'a, T> {
+    async fn load(db: &'a T, workflow_run_id: Uuid) -> Result<Self, SendableError> {
+        let run = require_debug_run(db, workflow_run_id).await?;
+        Ok(Self { db, run })
+    }
 
-    db.update_workflow_run_status(
-        run.id,
-        WorkflowStatus::Running,
-        run.active_node_id.clone(),
-        Some(run_state.to_state()),
-        message,
-    )
-    .await?;
-    if let Some(node_id) = node_id {
+    /// dispatch a single canonical [`DebugVerb`] against this session's run. every debug operation
+    /// funnels through here so the per-verb behavior lives in exactly one place.
+    async fn apply(&self, verb: DebugVerb) -> Result<TaskResponse, SendableError> {
+        match verb {
+            DebugVerb::Step { cursor } => self.step_cursor(cursor).await,
+            DebugVerb::Continue { cursor } => self.continue_cursor(cursor).await,
+            DebugVerb::RunToCursor { node_id, cursor } => self.run_to_cursor(node_id, cursor).await,
+            DebugVerb::Skip {
+                output,
+                message,
+                cursor,
+            } => self.skip_node(output, message, cursor).await,
+            DebugVerb::Rerun { parameters, cursor } => self.rerun_node(parameters, cursor).await,
+            DebugVerb::SetBreakpoints { breakpoints } => self.set_breakpoints(breakpoints).await,
+            DebugVerb::SetMode { mode } => self.set_mode(mode).await,
+            DebugVerb::Fork {
+                from_cursor,
+                at_node,
+                label,
+                context_patch,
+            } => {
+                self.fork_cursor(from_cursor, at_node, label, context_patch)
+                    .await
+            }
+            DebugVerb::RetireCursor { cursor } => self.retire_cursor(cursor).await,
+            DebugVerb::ArmForReal {
+                cursor,
+                node_id,
+                armed,
+            } => self.arm_node(cursor, node_id, armed).await,
+        }
+    }
+
+    /// fork a speculative "what if" branch beside the real ones.
+    async fn fork_cursor(
+        &self,
+        from_cursor: Option<Uuid>,
+        at_node: Option<String>,
+        label: Option<String>,
+        context_patch: Value,
+    ) -> Result<TaskResponse, SendableError> {
+        let run = &self.run;
+        let mut run_state = WorkflowRunState::from_state(&run.state);
+        run_state
+            .debug
+            .get_or_insert_with(DebugFrame::default)
+            .config
+            .enabled = true;
+        if run_state
+            .cursors
+            .iter()
+            .filter(|c| c.is_speculative())
+            .count()
+            >= MAX_SPECULATIVE_CURSORS
+        {
+            return Err(crate::errors::DEBUG_FORK_INVALID.error(format!(
+                "at most {MAX_SPECULATIVE_CURSORS} speculative branches per run"
+            )));
+        }
+        let parent = resolve_target_cursor(&run_state, from_cursor)?;
+        let entry = match at_node {
+            Some(node_id) => node_id,
+            None => run_state
+                .cursor(parent)
+                .map(|cursor| cursor.node_id().to_string())
+                .ok_or_else(|| crate::errors::DEBUG_FORK_INVALID.error(parent))?,
+        };
+        // the fork must exist in the graph, or it would park on a node no drive can resolve.
+        if let Some(snapshot) = run.workflow_snapshot.as_ref()
+            && !snapshot
+                .definition
+                .nodes
+                .iter()
+                .any(|node| node.id == entry)
+        {
+            return Err(
+                crate::errors::DEBUG_FORK_INVALID.error(format!("no node {entry} in this run"))
+            );
+        }
+        let forked = run_state
+            .fork_speculative(parent, &entry, label, context_patch)
+            .ok_or_else(|| crate::errors::DEBUG_FORK_INVALID.error(parent))?;
+
+        self.db
+            .update_workflow_run_status(
+                run.id,
+                run.status,
+                run.active_node_id.clone(),
+                Some(run_state.to_state()),
+                Some(format!("Forked speculative branch at {entry}")),
+            )
+            .await?;
         support::enqueue_node_ready_for_cursor(
-            db,
+            self.db,
             run.id,
-            cursor_id,
-            node_id,
-            "debug_resume",
+            forked,
+            entry,
+            "debug_fork",
             Utc::now(),
         )
         .await?;
+        Ok(TaskResponse {
+            success: true,
+            message: forked.to_string(),
+        })
     }
-    Ok(cursor_id)
-}
 
-/// load the typed run state, apply `mutate` to the debug frame (always marking it enabled), and
-/// persist with the given status/message. the single typed write path for debug bookkeeping.
-async fn persist_debug_frame<T: DatabaseImpl>(
-    db: &T,
-    run: &WorkflowRun,
-    status: WorkflowStatus,
-    message: Option<String>,
-    mutate: impl FnOnce(&mut DebugFrame),
-) -> Result<(), SendableError> {
-    let mut run_state = WorkflowRunState::from_state(&run.state);
-    let frame = run_state.debug.get_or_insert_with(DebugFrame::default);
-    frame.config.enabled = true;
-    mutate(frame);
-    db.update_workflow_run_status(
-        run.id,
-        status,
-        run.active_node_id.clone(),
-        Some(run_state.to_state()),
-        message,
-    )
-    .await
-}
+    /// abandon a speculative branch and everything forked from it.
+    async fn retire_cursor(&self, cursor: Uuid) -> Result<TaskResponse, SendableError> {
+        let run = &self.run;
+        let mut run_state = WorkflowRunState::from_state(&run.state);
+        if !run_state.is_speculative(cursor) {
+            return Err(crate::errors::DEBUG_SPECULATIVE_ONLY.error(cursor));
+        }
+        for id in run_state.speculative_subtree(cursor) {
+            run_state.retire_cursor(id);
+        }
+        self.db
+            .update_workflow_run_status(
+                run.id,
+                run.status,
+                run.active_node_id.clone(),
+                Some(run_state.to_state()),
+                Some("Speculative branch retired".into()),
+            )
+            .await?;
+        Ok(TaskResponse {
+            success: true,
+            message: format!("Speculative branch {cursor} retired"),
+        })
+    }
 
-/// advance one thread of control by exactly one node.
-pub async fn step_debug_cursor<T: DatabaseImpl>(
-    db: &T,
-    workflow_run_id: Uuid,
-    cursor: Option<Uuid>,
-) -> Result<TaskResponse, SendableError> {
-    let run = require_debug_run(db, workflow_run_id).await?;
-    persist_cursor_debug(
-        db,
-        &run,
-        cursor,
-        Some("Debug step requested".into()),
-        |runtime| {
+    /// let a speculative cursor dispatch one node for real instead of shadowing it.
+    async fn arm_node(
+        &self,
+        cursor: Uuid,
+        node_id: String,
+        armed: bool,
+    ) -> Result<TaskResponse, SendableError> {
+        let run = &self.run;
+        let mut run_state = WorkflowRunState::from_state(&run.state);
+        if !run_state.is_speculative(cursor) {
+            return Err(crate::errors::DEBUG_SPECULATIVE_ONLY.error(cursor));
+        }
+        let Some(frame) = run_state
+            .cursor_mut(cursor)
+            .and_then(|cursor| cursor.speculative.as_mut())
+        else {
+            return Err(crate::errors::DEBUG_CURSOR_NOT_FOUND.error(cursor));
+        };
+        if armed {
+            frame.armed_nodes.insert(node_id.clone());
+        } else {
+            frame.armed_nodes.remove(&node_id);
+        }
+        self.db
+            .update_workflow_run_status(
+                run.id,
+                run.status,
+                run.active_node_id.clone(),
+                Some(run_state.to_state()),
+                None,
+            )
+            .await?;
+        Ok(TaskResponse {
+            success: true,
+            message: format!(
+                "{node_id} {} for real execution",
+                if armed { "armed" } else { "disarmed" }
+            ),
+        })
+    }
+
+    /// apply `mutate` to one cursor's debugger runtime, mirror the primary, persist, and re-arm a ready
+    /// node for that cursor so the reducer actually picks the thread of control back up.
+    ///
+    /// the re-arm is the half that never existed: the debug endpoints wrote intent and enqueued nothing,
+    /// so even once the reducer learned to read the frame there was nothing to wake it.
+    async fn persist_cursor_debug(
+        &self,
+        requested: Option<Uuid>,
+        message: Option<String>,
+        mutate: impl FnOnce(&mut runinator_models::workflow_state::DebugRuntime),
+    ) -> Result<Uuid, SendableError> {
+        let run = &self.run;
+        let mut run_state = WorkflowRunState::from_state(&run.state);
+        run_state
+            .debug
+            .get_or_insert_with(DebugFrame::default)
+            .config
+            .enabled = true;
+        let cursor_id = resolve_target_cursor(&run_state, requested)?;
+        let mut runtime = run_state.cursor_debug(cursor_id);
+        mutate(&mut runtime);
+        run_state.set_cursor_debug(cursor_id, runtime);
+        let node_id = run_state
+            .cursor(cursor_id)
+            .map(|cursor| cursor.node_id().to_string());
+
+        self.db
+            .update_workflow_run_status(
+                run.id,
+                WorkflowStatus::Running,
+                run.active_node_id.clone(),
+                Some(run_state.to_state()),
+                message,
+            )
+            .await?;
+        if let Some(node_id) = node_id {
+            support::enqueue_node_ready_for_cursor(
+                self.db,
+                run.id,
+                cursor_id,
+                node_id,
+                "debug_resume",
+                Utc::now(),
+            )
+            .await?;
+        }
+        Ok(cursor_id)
+    }
+
+    /// load the typed run state, apply `mutate` to the debug frame (always marking it enabled), and
+    /// persist with the given status/message. the single typed write path for debug bookkeeping.
+    async fn persist_debug_frame(
+        &self,
+        status: WorkflowStatus,
+        message: Option<String>,
+        mutate: impl FnOnce(&mut DebugFrame),
+    ) -> Result<(), SendableError> {
+        let run = &self.run;
+        let mut run_state = WorkflowRunState::from_state(&run.state);
+        let frame = run_state.debug.get_or_insert_with(DebugFrame::default);
+        frame.config.enabled = true;
+        mutate(frame);
+        self.db
+            .update_workflow_run_status(
+                run.id,
+                status,
+                run.active_node_id.clone(),
+                Some(run_state.to_state()),
+                message,
+            )
+            .await
+    }
+
+    /// advance one thread of control by exactly one node.
+    async fn step_cursor(&self, cursor: Option<Uuid>) -> Result<TaskResponse, SendableError> {
+        self.persist_cursor_debug(cursor, Some("Debug step requested".into()), |runtime| {
             runtime.paused = false;
             runtime.step_requested = true;
-        },
-    )
-    .await?;
-    Ok(TaskResponse {
-        success: true,
-        message: "Debug step requested".into(),
-    })
-}
+        })
+        .await?;
+        Ok(TaskResponse {
+            success: true,
+            message: "Debug step requested".into(),
+        })
+    }
 
-/// resume one thread of control, still honoring breakpoints.
-pub async fn continue_debug_cursor<T: DatabaseImpl>(
-    db: &T,
-    workflow_run_id: Uuid,
-    cursor: Option<Uuid>,
-) -> Result<TaskResponse, SendableError> {
-    let run = require_debug_run(db, workflow_run_id).await?;
-    persist_cursor_debug(
-        db,
-        &run,
-        cursor,
-        Some("Debug continue requested".into()),
-        |runtime| {
+    /// resume one thread of control, still honoring breakpoints.
+    async fn continue_cursor(&self, cursor: Option<Uuid>) -> Result<TaskResponse, SendableError> {
+        self.persist_cursor_debug(cursor, Some("Debug continue requested".into()), |runtime| {
             runtime.paused = false;
             runtime.step_requested = false;
-        },
-    )
-    .await?;
-    Ok(TaskResponse {
-        success: true,
-        message: "Debug continue requested".into(),
-    })
-}
+        })
+        .await?;
+        Ok(TaskResponse {
+            success: true,
+            message: "Debug continue requested".into(),
+        })
+    }
 
-pub async fn set_debug_breakpoints<T: DatabaseImpl>(
-    db: &T,
-    workflow_run_id: Uuid,
-    breakpoints: Vec<String>,
-) -> Result<TaskResponse, SendableError> {
-    let run = require_debug_run(db, workflow_run_id).await?;
-    let status = run.status;
-    persist_debug_frame(db, &run, status, None, |frame| {
-        frame.config.breakpoints = breakpoints;
-    })
-    .await?;
-    Ok(TaskResponse {
-        success: true,
-        message: "Breakpoints updated".into(),
-    })
-}
-
-pub async fn set_debug_mode<T: DatabaseImpl>(
-    db: &T,
-    workflow_run_id: Uuid,
-    mode: DebugMode,
-) -> Result<TaskResponse, SendableError> {
-    let run = require_debug_run(db, workflow_run_id).await?;
-    let status = run.status;
-    persist_debug_frame(db, &run, status, None, |frame| {
-        frame.config.mode = Some(mode);
-    })
-    .await?;
-    Ok(TaskResponse {
-        success: true,
-        message: "Debug mode updated".into(),
-    })
-}
-
-pub async fn update_workflow_run_debug<T: DatabaseImpl>(
-    db: &T,
-    workflow_run_id: Uuid,
-    patch: Value,
-) -> Result<TaskResponse, SendableError> {
-    let run = require_debug_run(db, workflow_run_id).await?;
-    let invalid = |detail: &str| crate::errors::DEBUG_INVALID_PATCH.error(detail);
-    let patch_obj = patch
-        .as_object()
-        .ok_or_else(|| invalid("Debug patch must be a JSON object"))?;
-
-    // validate the whole patch before touching state.
-    let breakpoints = match patch_obj.get("breakpoints") {
-        Some(bps) => Some(
-            bps.as_array()
-                .ok_or_else(|| invalid("breakpoints must be an array of node ids"))?
-                .iter()
-                .map(|v| {
-                    v.as_str()
-                        .map(str::to_string)
-                        .ok_or_else(|| invalid("breakpoints must be an array of node ids"))
-                })
-                .collect::<Result<Vec<_>, _>>()?,
-        ),
-        None => None,
-    };
-    let mode = match patch_obj.get("mode") {
-        Some(m) => Some(
-            serde_json::from_value::<DebugMode>(m.clone().into())
-                .map_err(|_| invalid("mode must be 'step_all' or 'breakpoints'"))?,
-        ),
-        None => None,
-    };
-    let one_shot = match patch_obj.get("one_shot_breakpoint") {
-        Some(Value::Null) => Some(None),
-        Some(osb) => Some(Some(
-            osb.as_str()
-                .ok_or_else(|| invalid("one_shot_breakpoint must be a node id string or null"))?
-                .to_string(),
-        )),
-        None => None,
-    };
-
-    let status = run.status;
-    persist_debug_frame(db, &run, status, None, |frame| {
-        if let Some(breakpoints) = breakpoints {
+    async fn set_breakpoints(
+        &self,
+        breakpoints: Vec<String>,
+    ) -> Result<TaskResponse, SendableError> {
+        let status = self.run.status;
+        self.persist_debug_frame(status, None, |frame| {
             frame.config.breakpoints = breakpoints;
-        }
-        if let Some(mode) = mode {
+        })
+        .await?;
+        Ok(TaskResponse {
+            success: true,
+            message: "Breakpoints updated".into(),
+        })
+    }
+
+    async fn set_mode(&self, mode: DebugMode) -> Result<TaskResponse, SendableError> {
+        let status = self.run.status;
+        self.persist_debug_frame(status, None, |frame| {
             frame.config.mode = Some(mode);
-        }
-        if let Some(one_shot) = one_shot {
-            frame.runtime.one_shot_breakpoint = one_shot;
-        }
-    })
-    .await?;
-    Ok(TaskResponse {
-        success: true,
-        message: "Debug settings updated".into(),
-    })
+        })
+        .await?;
+        Ok(TaskResponse {
+            success: true,
+            message: "Debug mode updated".into(),
+        })
+    }
+
+    async fn update_debug(&self, patch: Value) -> Result<TaskResponse, SendableError> {
+        let invalid = |detail: &str| crate::errors::DEBUG_INVALID_PATCH.error(detail);
+        let patch_obj = patch
+            .as_object()
+            .ok_or_else(|| invalid("Debug patch must be a JSON object"))?;
+
+        // validate the whole patch before touching state.
+        let breakpoints = match patch_obj.get("breakpoints") {
+            Some(bps) => Some(
+                bps.as_array()
+                    .ok_or_else(|| invalid("breakpoints must be an array of node ids"))?
+                    .iter()
+                    .map(|v| {
+                        v.as_str()
+                            .map(str::to_string)
+                            .ok_or_else(|| invalid("breakpoints must be an array of node ids"))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+            ),
+            None => None,
+        };
+        let mode = match patch_obj.get("mode") {
+            Some(m) => Some(
+                serde_json::from_value::<DebugMode>(m.clone().into())
+                    .map_err(|_| invalid("mode must be 'step_all' or 'breakpoints'"))?,
+            ),
+            None => None,
+        };
+        let one_shot = match patch_obj.get("one_shot_breakpoint") {
+            Some(Value::Null) => Some(None),
+            Some(osb) => Some(Some(
+                osb.as_str()
+                    .ok_or_else(|| invalid("one_shot_breakpoint must be a node id string or null"))?
+                    .to_string(),
+            )),
+            None => None,
+        };
+
+        let status = self.run.status;
+        self.persist_debug_frame(status, None, |frame| {
+            if let Some(breakpoints) = breakpoints {
+                frame.config.breakpoints = breakpoints;
+            }
+            if let Some(mode) = mode {
+                frame.config.mode = Some(mode);
+            }
+            if let Some(one_shot) = one_shot {
+                frame.runtime.one_shot_breakpoint = one_shot;
+            }
+        })
+        .await?;
+        Ok(TaskResponse {
+            success: true,
+            message: "Debug settings updated".into(),
+        })
+    }
 }
 
 pub async fn pause_workflow_run<T: DatabaseImpl>(
@@ -675,32 +645,274 @@ async fn publish_worker_control_command(
         .map_err(|err| crate::errors::CONTROL_PUBLISH.error(err))
 }
 
+impl<'a, T: DatabaseImpl> DebugSession<'a, T> {
+    async fn run_to_cursor(
+        &self,
+        node_id: String,
+        cursor: Option<Uuid>,
+    ) -> Result<TaskResponse, SendableError> {
+        let target = node_id.clone();
+        // the one-shot is per-cursor: "run until here" is a question about one thread of control,
+        // even though the breakpoint *set* it rides alongside is shared by all of them.
+        self.persist_cursor_debug(
+            cursor,
+            Some(format!("Run to cursor at {node_id}")),
+            move |runtime| {
+                runtime.paused = false;
+                runtime.step_requested = false;
+                runtime.one_shot_breakpoint = Some(target);
+            },
+        )
+        .await?;
+        Ok(TaskResponse {
+            success: true,
+            message: format!("Running to cursor {}", node_id),
+        })
+    }
+
+    async fn skip_node(
+        &self,
+        output_json: Value,
+        message: Option<String>,
+        _cursor: Option<Uuid>,
+    ) -> Result<TaskResponse, SendableError> {
+        let run = &self.run;
+        let active_node_id = run
+            .active_node_id
+            .clone()
+            .ok_or_else(|| crate::errors::DEBUG_NO_ACTIVE_NODE.error("no node to skip"))?;
+        let nodes = self.db.fetch_workflow_node_runs(run.id).await?;
+        let latest_node_run = nodes
+            .into_iter()
+            .filter(|n| n.node_id == active_node_id)
+            .max_by_key(|n| n.attempt);
+        let node_run = match latest_node_run {
+            Some(n) => n,
+            None => {
+                self.db
+                    .create_workflow_node_run(
+                        run.id,
+                        active_node_id.clone(),
+                        Value::Null,
+                        None,
+                        None,
+                    )
+                    .await?
+            }
+        };
+        let skip_message = message.clone().unwrap_or_else(|| "Skipped in debug".into());
+        self.db
+            .update_workflow_node_run(
+                node_run.id,
+                WorkflowStatus::Succeeded,
+                None,
+                None,
+                Some(output_json),
+                None,
+                Some(DEBUG_SKIPPED.into()),
+                Some(skip_message),
+            )
+            .await?;
+
+        self.persist_debug_frame(
+            WorkflowStatus::Running,
+            Some(format!("Skipped node {}", active_node_id)),
+            |frame| {
+                frame.runtime.paused = false;
+                frame.runtime.step_requested = true;
+            },
+        )
+        .await?;
+        Ok(TaskResponse {
+            success: true,
+            message: format!("Skipped node {}", active_node_id),
+        })
+    }
+
+    async fn rerun_node(
+        &self,
+        parameters: Value,
+        _cursor: Option<Uuid>,
+    ) -> Result<TaskResponse, SendableError> {
+        let run = &self.run;
+        let active_node_id = run
+            .active_node_id
+            .clone()
+            .ok_or_else(|| crate::errors::DEBUG_NO_ACTIVE_NODE.error("no node to re-run"))?;
+        let nodes = self.db.fetch_workflow_node_runs(run.id).await?;
+        let latest_node_run = nodes
+            .into_iter()
+            .filter(|n| n.node_id == active_node_id)
+            .max_by_key(|n| n.attempt);
+        let next_attempt = latest_node_run.as_ref().map(|r| r.attempt + 1).unwrap_or(1);
+        if let Some(prior) = latest_node_run {
+            self.db
+                .update_workflow_node_run(
+                    prior.id,
+                    WorkflowStatus::Failed,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(DEBUG_SUPERSEDED.into()),
+                    Some("Superseded by debug re-run".into()),
+                )
+                .await?;
+        }
+        let new_run = self
+            .db
+            .create_workflow_node_run(run.id, active_node_id.clone(), parameters, None, None)
+            .await?;
+        self.db
+            .update_workflow_node_run(
+                new_run.id,
+                WorkflowStatus::Queued,
+                Some(next_attempt),
+                None,
+                None,
+                None,
+                Some(DEBUG_RERUN.into()),
+                None,
+            )
+            .await?;
+
+        self.persist_debug_frame(
+            WorkflowStatus::Running,
+            Some(format!("Re-running node {}", active_node_id)),
+            |frame| {
+                frame.runtime.paused = false;
+                frame.runtime.step_requested = true;
+            },
+        )
+        .await?;
+        Ok(TaskResponse {
+            success: true,
+            message: format!("Re-running node {}", active_node_id),
+        })
+    }
+}
+
+/// dispatch a single canonical [`DebugVerb`] against a run. every debug operation funnels through
+/// here so the per-verb behavior lives in exactly one place.
+pub async fn apply_debug_command<T: DatabaseImpl>(
+    db: &T,
+    workflow_run_id: Uuid,
+    verb: DebugVerb,
+) -> Result<TaskResponse, SendableError> {
+    DebugSession::load(db, workflow_run_id)
+        .await?
+        .apply(verb)
+        .await
+}
+
+/// fork a speculative "what if" branch beside the real ones.
+pub async fn fork_debug_cursor<T: DatabaseImpl>(
+    db: &T,
+    workflow_run_id: Uuid,
+    from_cursor: Option<Uuid>,
+    at_node: Option<String>,
+    label: Option<String>,
+    context_patch: Value,
+) -> Result<TaskResponse, SendableError> {
+    DebugSession::load(db, workflow_run_id)
+        .await?
+        .fork_cursor(from_cursor, at_node, label, context_patch)
+        .await
+}
+
+/// abandon a speculative branch and everything forked from it.
+pub async fn retire_debug_cursor<T: DatabaseImpl>(
+    db: &T,
+    workflow_run_id: Uuid,
+    cursor: Uuid,
+) -> Result<TaskResponse, SendableError> {
+    DebugSession::load(db, workflow_run_id)
+        .await?
+        .retire_cursor(cursor)
+        .await
+}
+
+/// let a speculative cursor dispatch one node for real instead of shadowing it.
+pub async fn arm_debug_node<T: DatabaseImpl>(
+    db: &T,
+    workflow_run_id: Uuid,
+    cursor: Uuid,
+    node_id: String,
+    armed: bool,
+) -> Result<TaskResponse, SendableError> {
+    DebugSession::load(db, workflow_run_id)
+        .await?
+        .arm_node(cursor, node_id, armed)
+        .await
+}
+
+/// advance one thread of control by exactly one node.
+pub async fn step_debug_cursor<T: DatabaseImpl>(
+    db: &T,
+    workflow_run_id: Uuid,
+    cursor: Option<Uuid>,
+) -> Result<TaskResponse, SendableError> {
+    DebugSession::load(db, workflow_run_id)
+        .await?
+        .step_cursor(cursor)
+        .await
+}
+
+/// resume one thread of control, still honoring breakpoints.
+pub async fn continue_debug_cursor<T: DatabaseImpl>(
+    db: &T,
+    workflow_run_id: Uuid,
+    cursor: Option<Uuid>,
+) -> Result<TaskResponse, SendableError> {
+    DebugSession::load(db, workflow_run_id)
+        .await?
+        .continue_cursor(cursor)
+        .await
+}
+
+pub async fn set_debug_breakpoints<T: DatabaseImpl>(
+    db: &T,
+    workflow_run_id: Uuid,
+    breakpoints: Vec<String>,
+) -> Result<TaskResponse, SendableError> {
+    DebugSession::load(db, workflow_run_id)
+        .await?
+        .set_breakpoints(breakpoints)
+        .await
+}
+
+pub async fn set_debug_mode<T: DatabaseImpl>(
+    db: &T,
+    workflow_run_id: Uuid,
+    mode: DebugMode,
+) -> Result<TaskResponse, SendableError> {
+    DebugSession::load(db, workflow_run_id)
+        .await?
+        .set_mode(mode)
+        .await
+}
+
+pub async fn update_workflow_run_debug<T: DatabaseImpl>(
+    db: &T,
+    workflow_run_id: Uuid,
+    patch: Value,
+) -> Result<TaskResponse, SendableError> {
+    DebugSession::load(db, workflow_run_id)
+        .await?
+        .update_debug(patch)
+        .await
+}
+
 pub async fn run_to_cursor_workflow_run<T: DatabaseImpl>(
     db: &T,
     workflow_run_id: Uuid,
     node_id: String,
     cursor: Option<Uuid>,
 ) -> Result<TaskResponse, SendableError> {
-    let run = require_debug_run(db, workflow_run_id).await?;
-    let target = node_id.clone();
-    // the one-shot is per-cursor: "run until here" is a question about one thread of control, even
-    // though the breakpoint *set* it rides alongside is shared by all of them.
-    persist_cursor_debug(
-        db,
-        &run,
-        cursor,
-        Some(format!("Run to cursor at {node_id}")),
-        move |runtime| {
-            runtime.paused = false;
-            runtime.step_requested = false;
-            runtime.one_shot_breakpoint = Some(target);
-        },
-    )
-    .await?;
-    Ok(TaskResponse {
-        success: true,
-        message: format!("Running to cursor {}", node_id),
-    })
+    DebugSession::load(db, workflow_run_id)
+        .await?
+        .run_to_cursor(node_id, cursor)
+        .await
 }
 
 pub async fn skip_debug_workflow_node<T: DatabaseImpl>(
@@ -708,127 +920,24 @@ pub async fn skip_debug_workflow_node<T: DatabaseImpl>(
     workflow_run_id: Uuid,
     output_json: Value,
     message: Option<String>,
-    _cursor: Option<Uuid>,
+    cursor: Option<Uuid>,
 ) -> Result<TaskResponse, SendableError> {
-    let run = require_debug_run(db, workflow_run_id).await?;
-    let active_node_id = run
-        .active_node_id
-        .clone()
-        .ok_or_else(|| crate::errors::DEBUG_NO_ACTIVE_NODE.error("no node to skip"))?;
-    let nodes = db.fetch_workflow_node_runs(workflow_run_id).await?;
-    let latest_node_run = nodes
-        .into_iter()
-        .filter(|n| n.node_id == active_node_id)
-        .max_by_key(|n| n.attempt);
-    let node_run = match latest_node_run {
-        Some(n) => n,
-        None => {
-            db.create_workflow_node_run(
-                workflow_run_id,
-                active_node_id.clone(),
-                Value::Null,
-                None,
-                None,
-            )
-            .await?
-        }
-    };
-    let skip_message = message.clone().unwrap_or_else(|| "Skipped in debug".into());
-    db.update_workflow_node_run(
-        node_run.id,
-        WorkflowStatus::Succeeded,
-        None,
-        None,
-        Some(output_json),
-        None,
-        Some(DEBUG_SKIPPED.into()),
-        Some(skip_message),
-    )
-    .await?;
-
-    persist_debug_frame(
-        db,
-        &run,
-        WorkflowStatus::Running,
-        Some(format!("Skipped node {}", active_node_id)),
-        |frame| {
-            frame.runtime.paused = false;
-            frame.runtime.step_requested = true;
-        },
-    )
-    .await?;
-    Ok(TaskResponse {
-        success: true,
-        message: format!("Skipped node {}", active_node_id),
-    })
+    DebugSession::load(db, workflow_run_id)
+        .await?
+        .skip_node(output_json, message, cursor)
+        .await
 }
 
 pub async fn rerun_debug_workflow_node<T: DatabaseImpl>(
     db: &T,
     workflow_run_id: Uuid,
     parameters: Value,
-    _cursor: Option<Uuid>,
+    cursor: Option<Uuid>,
 ) -> Result<TaskResponse, SendableError> {
-    let run = require_debug_run(db, workflow_run_id).await?;
-    let active_node_id = run
-        .active_node_id
-        .clone()
-        .ok_or_else(|| crate::errors::DEBUG_NO_ACTIVE_NODE.error("no node to re-run"))?;
-    let nodes = db.fetch_workflow_node_runs(workflow_run_id).await?;
-    let latest_node_run = nodes
-        .into_iter()
-        .filter(|n| n.node_id == active_node_id)
-        .max_by_key(|n| n.attempt);
-    let next_attempt = latest_node_run.as_ref().map(|r| r.attempt + 1).unwrap_or(1);
-    if let Some(prior) = latest_node_run {
-        db.update_workflow_node_run(
-            prior.id,
-            WorkflowStatus::Failed,
-            None,
-            None,
-            None,
-            None,
-            Some(DEBUG_SUPERSEDED.into()),
-            Some("Superseded by debug re-run".into()),
-        )
-        .await?;
-    }
-    let new_run = db
-        .create_workflow_node_run(
-            workflow_run_id,
-            active_node_id.clone(),
-            parameters,
-            None,
-            None,
-        )
-        .await?;
-    db.update_workflow_node_run(
-        new_run.id,
-        WorkflowStatus::Queued,
-        Some(next_attempt),
-        None,
-        None,
-        None,
-        Some(DEBUG_RERUN.into()),
-        None,
-    )
-    .await?;
-
-    persist_debug_frame(
-        db,
-        &run,
-        WorkflowStatus::Running,
-        Some(format!("Re-running node {}", active_node_id)),
-        |frame| {
-            frame.runtime.paused = false;
-            frame.runtime.step_requested = true;
-        },
-    )
-    .await?;
-    Ok(TaskResponse {
-        success: true,
-        message: format!("Re-running node {}", active_node_id),
-    })
+    DebugSession::load(db, workflow_run_id)
+        .await?
+        .rerun_node(parameters, cursor)
+        .await
 }
 
 pub async fn replay_workflow_run<T: DatabaseImpl>(

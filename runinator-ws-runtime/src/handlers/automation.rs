@@ -23,6 +23,8 @@ use runinator_ws_core::openapi::docs::{
     AUTOMATION_FILTERS, EndpointDoc, Example, GATE_FILTERS, IDEMPOTENCY_QUERY, endpoint, json_body,
 };
 use runinator_ws_core::responses::{api_error, not_found};
+use runinator_ws_middleware::authz::AuthContextExt;
+use runinator_ws_middleware::authz::AuthzChecker;
 
 async fn list_records<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
@@ -52,7 +54,7 @@ async fn create_record<T: DatabaseImpl>(
     record_type: &'static str,
     Json(record): Json<Value>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_service_or_admin(ctx) {
+    if let Err(reply) = ctx.require_service_or_admin() {
         return reply;
     }
     match repository::create_automation_record(db.as_ref(), record_type, record).await {
@@ -96,13 +98,9 @@ pub async fn get_gate<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(gate_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_gate_workflow(
-        db.as_ref(),
-        &ctx,
-        gate_id,
-        Permission::View,
-    )
-    .await
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_gate_workflow(gate_id, Permission::View)
+        .await
     {
         return reply;
     }
@@ -118,7 +116,7 @@ pub async fn create_gate<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Json(record): Json<Value>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_service_or_admin(&ctx) {
+    if let Err(reply) = ctx.require_service_or_admin() {
         return reply;
     }
     match repository::create_gate(db.as_ref(), record).await {
@@ -145,13 +143,9 @@ pub async fn open_gate<T: DatabaseImpl>(
     Path(gate_id): Path<Uuid>,
     Json(request): Json<GateResolutionRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_gate_workflow(
-        db.as_ref(),
-        &ctx,
-        gate_id,
-        Permission::Run,
-    )
-    .await
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_gate_workflow(gate_id, Permission::Run)
+        .await
     {
         return reply;
     }
@@ -187,13 +181,9 @@ pub async fn close_gate<T: DatabaseImpl>(
     Path(gate_id): Path<Uuid>,
     Json(request): Json<GateResolutionRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_gate_workflow(
-        db.as_ref(),
-        &ctx,
-        gate_id,
-        Permission::Run,
-    )
-    .await
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_gate_workflow(gate_id, Permission::Run)
+        .await
     {
         return reply;
     }
@@ -216,13 +206,9 @@ pub async fn delete_gate<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(gate_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_gate_workflow(
-        db.as_ref(),
-        &ctx,
-        gate_id,
-        Permission::Edit,
-    )
-    .await
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_gate_workflow(gate_id, Permission::Edit)
+        .await
     {
         return reply;
     }
@@ -254,14 +240,9 @@ pub async fn delete_automation_event<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(event_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_automation_record_workflow(
-        db.as_ref(),
-        &ctx,
-        "automation_events",
-        event_id,
-        Permission::Edit,
-    )
-    .await
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_automation_record_workflow("automation_events", event_id, Permission::Edit)
+        .await
     {
         return reply;
     }
@@ -315,14 +296,9 @@ async fn resolve_approval_audited<T: DatabaseImpl>(
     approved: bool,
     request: ApprovalResolutionRequest,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_automation_record_workflow(
-        db,
-        ctx,
-        "approval_requests",
-        approval_id,
-        Permission::Run,
-    )
-    .await
+    if let Err(reply) = AuthzChecker::new(db, ctx)
+        .require_automation_record_workflow("approval_requests", approval_id, Permission::Run)
+        .await
     {
         return reply;
     }
@@ -376,7 +352,7 @@ pub async fn get_idempotency_key<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Query(query): Query<HashMap<String, String>>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_service_or_admin(&ctx) {
+    if let Err(reply) = ctx.require_service_or_admin() {
         return reply;
     }
     let Some(scope) = query.get("scope").cloned() else {
@@ -397,7 +373,7 @@ pub async fn put_idempotency_key<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<IdempotencyRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_service_or_admin(&ctx) {
+    if let Err(reply) = ctx.require_service_or_admin() {
         return reply;
     }
     match repository::put_idempotency_key(db.as_ref(), request.scope, request.key, request.result)
@@ -413,7 +389,7 @@ pub async fn claim_idempotency_key<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<IdempotencyClaimRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_service_or_admin(&ctx) {
+    if let Err(reply) = ctx.require_service_or_admin() {
         return reply;
     }
     match repository::claim_idempotency_key(
@@ -438,7 +414,7 @@ pub async fn complete_idempotency_key<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<IdempotencyCompleteRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_service_or_admin(&ctx) {
+    if let Err(reply) = ctx.require_service_or_admin() {
         return reply;
     }
     match repository::complete_idempotency_key(
@@ -470,7 +446,7 @@ pub async fn release_idempotency_key<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<IdempotencyReleaseRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_service_or_admin(&ctx) {
+    if let Err(reply) = ctx.require_service_or_admin() {
         return reply;
     }
     match repository::release_idempotency_key(
@@ -504,7 +480,7 @@ async fn filter_records<T: DatabaseImpl>(
     if ctx.is_admin || matches!(ctx.kind, PrincipalKind::Service) {
         return Ok(records);
     }
-    let Some(visible) = runinator_ws_middleware::authz::visible_workflow_ids(db, ctx).await else {
+    let Some(visible) = AuthzChecker::new(db, ctx).visible_workflow_ids().await else {
         return Ok(records);
     };
     let mut filtered = Vec::with_capacity(records.len());

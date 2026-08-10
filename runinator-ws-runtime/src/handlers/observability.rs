@@ -9,7 +9,7 @@ use runinator_models::capabilities::Capability;
 
 use runinator_ws_core::models::{ApiResponse, AuditLogQuery, DeadLetterQuery};
 use runinator_ws_core::responses::api_error;
-use runinator_ws_middleware::authz::require_capability;
+use runinator_ws_middleware::authz::AuthContextExt;
 
 // cap the page size so a single query cannot scan an unbounded log.
 const DEFAULT_LIMIT: i64 = 100;
@@ -31,7 +31,7 @@ pub async fn get_dead_letters<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Query(query): Query<DeadLetterQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = require_capability(&ctx, Capability::DeadLettersRead) {
+    if let Err(reply) = ctx.require_capability(Capability::DeadLettersRead) {
         return reply;
     }
     match db
@@ -55,7 +55,7 @@ pub async fn get_audit_log<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Query(query): Query<AuditLogQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = require_capability(&ctx, Capability::AuditRead) {
+    if let Err(reply) = ctx.require_capability(Capability::AuditRead) {
         return reply;
     }
     match db

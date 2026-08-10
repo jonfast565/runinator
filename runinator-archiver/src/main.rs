@@ -19,10 +19,7 @@ use tokio::sync::Notify;
 use chrono::{Duration as ChronoDuration, Utc};
 use clap::Parser;
 use flate2::{Compression, write::GzEncoder};
-use runinator_api::{
-    AsyncApiClient, ReplicaServiceConfig, ReplicaSession, StaticLocator, register_replica_session,
-    spawn_replica_heartbeat_with_telemetry,
-};
+use runinator_api::{AsyncApiClient, ReplicaClient, ReplicaServiceConfig, StaticLocator};
 use runinator_database::{
     archive::{ArchiveRow, ArchiveTable},
     interfaces::ArchiveStore,
@@ -160,7 +157,7 @@ async fn register_replica(
         })),
         heartbeat_interval: Duration::from_secs(10),
     };
-    let session = tokio::select! {
+    let replica_client = tokio::select! {
         result = register_archiver_replica_with_retry(&api_client, &service_config) => result?,
         signal = tokio::signal::ctrl_c() => {
             if let Err(err) = signal {
@@ -171,12 +168,8 @@ async fn register_replica(
         }
     };
     Ok(Registration::Heartbeat(
-        spawn_replica_heartbeat_with_telemetry(
-            api_client.clone(),
-            session,
-            shutdown,
-            Some(Arc::new(TelemetryCollector::new())),
-        ),
+        replica_client
+            .spawn_heartbeat_with_telemetry(shutdown, Some(Arc::new(TelemetryCollector::new()))),
     ))
 }
 
@@ -201,15 +194,15 @@ fn register_backoff(attempt: u32) -> Duration {
 async fn register_archiver_replica_with_retry(
     api_client: &AsyncApiClient<StaticLocator>,
     service_config: &ReplicaServiceConfig,
-) -> Result<ReplicaSession, SendableError> {
+) -> Result<ReplicaClient<StaticLocator>, SendableError> {
     let mut attempt = 1;
     loop {
-        match register_replica_session(api_client, service_config.clone()).await {
-            Ok(session) => {
+        match ReplicaClient::register(api_client.clone(), service_config.clone()).await {
+            Ok(replica_client) => {
                 if attempt > 1 {
                     info!(attempt, "archiver replica registered");
                 }
-                return Ok(session);
+                return Ok(replica_client);
             }
             Err(err) if attempt >= REGISTER_MAX_ATTEMPTS => {
                 error!(

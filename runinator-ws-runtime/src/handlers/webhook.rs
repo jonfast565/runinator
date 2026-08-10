@@ -12,6 +12,7 @@ use runinator_ws_core::merge_json;
 use runinator_ws_core::models::{ApiResponse, WebhookSignalRequest, WebhookWakeRequest};
 use runinator_ws_core::openapi::docs::{EndpointDoc, Example, endpoint, json_body};
 use runinator_ws_core::responses::{api_error, not_found, task_response_success};
+use runinator_ws_middleware::authz::AuthContextExt;
 
 pub async fn webhook_wake<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
@@ -19,7 +20,7 @@ pub async fn webhook_wake<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<WebhookWakeRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_service_or_admin(&ctx) {
+    if let Err(reply) = ctx.require_service_or_admin() {
         return reply;
     }
     let workflow_run =
@@ -94,7 +95,7 @@ pub async fn webhook_signal<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<WebhookSignalRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = runinator_ws_middleware::authz::require_service_or_admin(&ctx) {
+    if let Err(reply) = ctx.require_service_or_admin() {
         return reply;
     }
     match repository::deliver_signal_by_correlation(

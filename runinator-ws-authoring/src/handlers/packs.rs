@@ -26,6 +26,7 @@ use runinator_ws_core::openapi::docs::{
     EndpointDoc, Example, PACK_IMPORT_PARAMS, RequestDoc, endpoint,
 };
 use runinator_ws_core::responses::{api_error, bad_request};
+use runinator_ws_middleware::authz::AuthContextExt;
 
 // query parameters for the pack import endpoint.
 #[derive(Debug, Default, Deserialize, IntoParams)]
@@ -76,10 +77,10 @@ pub async fn import_pack<T: DatabaseImpl>(
     // workflows are stamped with `import_org` so the pack lands in the right tenant.
     let import_org = ctx.org_id;
     if let Some(org_id) = import_org {
-        if let Err(reply) = runinator_ws_middleware::authz::require_org_admin(&ctx, org_id) {
+        if let Err(reply) = ctx.require_org_admin(org_id) {
             return reply;
         }
-    } else if let Err(reply) = runinator_ws_middleware::authz::require_admin(&ctx) {
+    } else if let Err(reply) = ctx.require_admin() {
         return reply;
     }
     let overwrite = params.overwrite;

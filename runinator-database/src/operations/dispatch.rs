@@ -95,7 +95,7 @@ where
         result: Value,
     ) -> Result<Value, SendableError> {
         // `key` is reserved in mysql; quote it for every dialect via ident.
-        let key_col = queries::ident(self.dialect(), "key");
+        let key_col = self.dialect().ident("key");
         let now = Utc::now().timestamp();
         let id = Uuid::now_v7();
 
@@ -144,7 +144,7 @@ where
         scope: String,
         key: String,
     ) -> Result<Option<Value>, SendableError> {
-        let key_col = queries::ident(self.dialect(), "key");
+        let key_col = self.dialect().ident("key");
         let row = sqlx::query(&self.render(&format!("SELECT id, scope, {key_col}, result, created_at FROM idempotency_keys WHERE scope = ? AND {key_col} = ?")))
             .bind(scope)
             .bind(key)
@@ -161,7 +161,7 @@ where
         now: DateTime<Utc>,
         stale_before: DateTime<Utc>,
     ) -> Result<IdempotencyClaim, SendableError> {
-        let key_col = queries::ident(self.dialect(), "key");
+        let key_col = self.dialect().ident("key");
         let id = Uuid::now_v7();
         let ts = now.timestamp();
         let stale_ts = stale_before.timestamp();
@@ -247,7 +247,7 @@ where
         result: Value,
         now: DateTime<Utc>,
     ) -> Result<bool, SendableError> {
-        let key_col = queries::ident(self.dialect(), "key");
+        let key_col = self.dialect().ident("key");
         // conditional on still owning an unfinished reservation, so a superseded claimant writing
         // late cannot overwrite the winner's recorded result. first completion wins.
         let updated = self
@@ -274,7 +274,7 @@ where
         key: String,
         owner_node_run_id: Uuid,
     ) -> Result<bool, SendableError> {
-        let key_col = queries::ident(self.dialect(), "key");
+        let key_col = self.dialect().ident("key");
         // free our own unfinished reservation so a retry or a later run is not held off for the whole
         // staleness window. conditional on ownership and on still being unfinished, so this can never
         // clear a completed result or another claimant's live reservation.
@@ -365,7 +365,7 @@ where
                  LIMIT ?{skip}
              )
              RETURNING {columns}",
-            skip = queries::skip_locked(self.dialect()),
+            skip = self.dialect().skip_locked(),
         ));
         let rows = sqlx::query(&sql)
             .bind(scheduler_id.as_str())
