@@ -74,7 +74,9 @@ function readInterrupts(metadata: JsonRecord): InterruptDeclaration[] {
       const handler = typeof entry.handler === "string" ? entry.handler : null;
       // a half-written entry is dropped rather than surfaced: the backend decodes the whole array
       // or none of it, so a shape it would reject must not round-trip through the editor either.
-      return source !== null && handler !== null ? [{ source, handler }] : [];
+      return source !== null && handler !== null
+        ? [{ source, handler, enabled: entry.enabled !== false }]
+        : [];
     });
 }
 
@@ -115,7 +117,11 @@ export function applyWorkflowHeader(definition: JsonRecord, header: WorkflowHead
   const owned: JsonRecord = {
     interrupts:
       header.interrupts.length > 0
-        ? header.interrupts.map((entry) => ({ on: entry.source, handler: entry.handler }))
+        ? header.interrupts.map((entry) => ({
+            on: entry.source,
+            handler: entry.handler,
+            ...(entry.enabled ? {} : { enabled: false }),
+          }))
         : undefined,
     watches:
       header.watches.length > 0

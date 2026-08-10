@@ -657,16 +657,19 @@ fn parse_watch_decl(pair: Pair<Rule>) -> Result<WatchDecl, WdlError> {
 
 fn parse_interrupt_decl(pair: Pair<Rule>) -> Result<InterruptDecl, WdlError> {
     let mut source = None;
+    let mut enabled = true;
     let mut body = None;
     for inner in pair.into_inner() {
         match inner.as_rule() {
             Rule::interrupt_source => source = Some(inner.as_str().trim().to_string()),
+            Rule::interrupt_disabled => enabled = false,
             Rule::block => body = Some(parse_block(inner)?),
             _ => {}
         }
     }
     Ok(InterruptDecl {
         source: source.ok_or_else(|| WdlError::lower("interrupt missing source"))?,
+        enabled,
         body: body.ok_or_else(|| WdlError::lower("interrupt missing handler block"))?,
     })
 }

@@ -228,7 +228,7 @@ impl PendingInterrupt {
     }
 }
 
-/// one declared handler: which source it answers, and the node its region starts at.
+/// one declared handler: which source it answers, the region it enters, and whether it may fire.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InterruptDeclaration {
     /// the source this handler answers. stored as a string so an unknown source from a newer
@@ -236,6 +236,9 @@ pub struct InterruptDeclaration {
     pub on: String,
     /// the region's entry node id.
     pub handler: String,
+    /// whether this link may raise its handler. absent on older definitions means enabled.
+    #[serde(default = "interrupt_enabled", skip_serializing_if = "is_true")]
+    pub enabled: bool,
 }
 
 impl InterruptDeclaration {
@@ -243,6 +246,14 @@ impl InterruptDeclaration {
     pub fn source(&self) -> Option<InterruptSource> {
         self.on.parse().ok()
     }
+}
+
+fn interrupt_enabled() -> bool {
+    true
+}
+
+fn is_true(value: &bool) -> bool {
+    *value
 }
 
 /// the key recorded on a cursor once an interrupt has fired at a position, so a plain `resume`

@@ -282,9 +282,12 @@ impl<'a, T: ReducerStore> InterruptOps<'a, T> {
         // whole feature costs one metadata lookup and one key probe. every predicate below,
         // including the ones that read the database, is only reached by a run that asked for that
         // source.
-        let declarations = interrupt_declarations(workflow);
-        let declared: Vec<InterruptSource> =
-            declarations.iter().filter_map(|d| d.source()).collect();
+        let declarations = interrupt_declarations(workflow, nodes);
+        let declared: Vec<InterruptSource> = declarations
+            .iter()
+            .filter(|declaration| declaration.enabled)
+            .filter_map(|declaration| declaration.source())
+            .collect();
         let requested = workflow_run
             .state
             .get("pending_interrupts")
@@ -357,7 +360,7 @@ impl<'a, T: ReducerStore> InterruptOps<'a, T> {
 
         let Some(declaration) = declarations
             .into_iter()
-            .find(|declaration| declaration.source() == Some(source))
+            .find(|declaration| declaration.enabled && declaration.source() == Some(source))
         else {
             return Ok(false);
         };

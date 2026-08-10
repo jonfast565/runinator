@@ -15,7 +15,10 @@ import type {
 import { workflowInputType } from "../../../../core/domain/models";
 import type { WorkflowServices } from "../../../../core/services";
 import { isCompletedNodeStatus } from "../../../../core/utils/status";
-import { formatMaybeDate } from "../../../../core/workflow/editor-defaults";
+import {
+  formatMaybeDate,
+  isKindLockedWorkflowNode,
+} from "../../../../core/workflow/editor-defaults";
 import {
   traversedEdgeKeys,
   workflowNodeKindsList,
@@ -71,7 +74,9 @@ export function createWorkflowSelectors(deps: WorkflowSelectorDependencies) {
   const currentBreakpoints = mirroredComputed<string[]>(() => services.getCurrentBreakpoints());
   const selectedStepKindLocked = mirroredComputed(() => {
     const node = services.getSelectedNode();
-    return node ? !services.canRemoveSelectedStep() : false;
+    // not the same question as "can it be removed": an interrupt entry is deletable but its kind is
+    // fixed, because the node *is* the handler declaration.
+    return node ? isKindLockedWorkflowNode(node) : false;
   });
   const canRemoveSelectedStep = mirroredComputed(() => services.canRemoveSelectedStep());
   const filteredWorkflows = mirroredComputed((): WorkflowDefinition[] =>

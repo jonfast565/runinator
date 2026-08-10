@@ -730,6 +730,22 @@
   background: var(--surface-muted);
 }
 
+.header-row-disabled {
+  opacity: 0.68;
+}
+
+.interrupt-enabled-toggle {
+  align-self: center;
+  flex: 0 0 auto !important;
+  min-width: auto !important;
+}
+
+.handler-link-control {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
 .header-row-controls {
   display: flex;
   align-items: end;
@@ -751,6 +767,13 @@
   align-items: center;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.header-action-field {
+  display: grid;
+  gap: 3px;
+  color: var(--text-muted);
+  font-size: 11px;
 }
 
 .region-chips {

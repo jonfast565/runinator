@@ -159,12 +159,18 @@ pub enum WorkflowNodeKind {
     /// terminates an interrupt handler region and hands control back to the thread the interrupt
     /// suspended, choosing how that thread proceeds. legal only inside a handler region.
     Resume,
+    /// begins an interrupt handler region. workflow metadata links a source to this entry.
+    ///
+    /// the interrupt analogue of [`WorkflowNodeKind::Start`]: a workflow has one primary entry
+    /// point and one of these per declared handler. the runtime places a cursor here when it
+    /// raises the interrupt; nothing may transition into it.
+    Interrupt,
 }
 
 impl WorkflowNodeKind {
     /// every node kind in a stable, ui-facing order. used to build the metadata catalog; the
     /// catalog's per-kind `match` is what guarantees exhaustiveness at compile time.
-    pub const ALL: [WorkflowNodeKind; 36] = [
+    pub const ALL: [WorkflowNodeKind; 37] = [
         WorkflowNodeKind::Start,
         WorkflowNodeKind::Action,
         WorkflowNodeKind::Wait,
@@ -200,6 +206,7 @@ impl WorkflowNodeKind {
         WorkflowNodeKind::EventSource,
         WorkflowNodeKind::End,
         WorkflowNodeKind::Fail,
+        WorkflowNodeKind::Interrupt,
         WorkflowNodeKind::Resume,
     ];
 }

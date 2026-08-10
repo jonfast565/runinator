@@ -94,6 +94,7 @@ pub(crate) fn base(
         addable: true,
         handler_safe: spec.graph_role().handler_safe,
         runnable_entry: spec.graph_role().runnable_entry,
+        entry_point: spec.graph_role().entry_point,
         supports_predicate_edges: true,
         fields: Vec::new(),
         edge_slots: Vec::new(),

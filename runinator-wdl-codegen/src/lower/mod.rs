@@ -1538,8 +1538,11 @@ impl Lowerer {
         Ok(())
     }
 
-    /// lower header `interrupt on <source> { ... }` regions into `metadata.interrupts`:
-    /// `[{ on: <source>, handler: <region entry node id> }]`.
+    /// lower header `interrupt on <source> { ... }` regions.
+    ///
+    /// each region gets an `interrupt` entry node whose `next` is the block's first statement. the
+    /// graph describes the region, while metadata links a source to its entry and carries whether
+    /// that link is enabled.
     ///
     /// the block's continuation is a synthetic terminal `resume`, which is what makes "every path
     /// out of a region hands control back" true by construction rather than by the author's care —
@@ -1548,10 +1551,10 @@ impl Lowerer {
         let mut specs = Vec::with_capacity(interrupts.len());
         for (index, interrupt) in interrupts.iter().enumerate() {
             let implicit = self.claim(&format!("__interrupt_{}_resume", index))?;
-            let entry = self.lower_block(&interrupt.body, &implicit)?;
+            let body = self.lower_block(&interrupt.body, &implicit)?;
             // only materialize the synthetic terminal when something can actually reach it; a block
             // ending in an explicit `resume` would otherwise leave an orphan node behind.
-            if entry == implicit || !ends_in_resume(&interrupt.body) {
+            if body == implicit || !ends_in_resume(&interrupt.body) {
                 let mut params = Map::new();
                 params.insert("mode".into(), Value::String("resume".into()));
                 self.push(node(
@@ -1560,9 +1563,24 @@ impl Lowerer {
                     vec![("parameters", Value::Object(params))],
                 ));
             }
+            // claimed after the body so the region's own ids are unaffected by its presence. the
+            // id is derived from the index rather than a counter, so it is stable across a decompile
+            // and recompile — the same reason the synthetic resume above is named this way.
+            let entry = self.claim(&format!("__interrupt_{}_entry", index))?;
+            let mut transitions = Map::new();
+            transitions.insert("next".into(), node_ref(&body));
+            self.push(node(
+                &entry,
+                "interrupt",
+                vec![("transitions", Value::Object(transitions))],
+            ));
+
             let mut spec = Map::new();
             spec.insert("on".into(), Value::String(interrupt.source.clone()));
             spec.insert("handler".into(), Value::String(entry));
+            if !interrupt.enabled {
+                spec.insert("enabled".into(), Value::Bool(false));
+            }
             specs.push(Value::Object(spec));
         }
         Ok(specs)

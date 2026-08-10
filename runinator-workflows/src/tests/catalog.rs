@@ -199,6 +199,7 @@ fn node_kind_catalog_protected_kinds_are_not_addable() {
         WorkflowNodeKind::Start,
         WorkflowNodeKind::End,
         WorkflowNodeKind::Fail,
+        WorkflowNodeKind::Interrupt,
     ] {
         let entry = node_kind_catalog()
             .into_iter()

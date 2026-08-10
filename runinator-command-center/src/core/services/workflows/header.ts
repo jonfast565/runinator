@@ -28,11 +28,11 @@ import type { WorkflowServiceHost } from "./host";
 /** what the header service needs back from the editor: the one write path into the draft. */
 export interface WorkflowHeaderPeer {
   syncWorkflowDraftToJson(): void;
-  stripNewNodeConnections(node: JsonRecord): void;
   setGraphNodePosition(nodeId: string, position: { x: number; y: number }): void;
   populateStepEditor(nodeId: string): void;
+  openStepEditor(nodeId: string, creating?: boolean): void;
   ensureWorkflowNodes(): JsonRecord[];
-  removeWorkflowNode(nodeId: string): void;
+  removeWorkflowNodes(nodeIds: string[]): void;
 }
 
 /** horizontal/vertical spacing of a scaffolded region, matching `newWorkflowDraft`'s layout. */
@@ -81,11 +81,10 @@ export function createWorkflowHeaderService(host: WorkflowServiceHost, editor: W
 
   // -- interrupts ------------------------------------------------------------------------------
 
-  function declareHeaderInterrupt(source: string, handler: string) {
-    host.state.headerDraft.interrupts.push({ source, handler });
-    applyWorkflowHeader();
-  }
-
+  /**
+   * repoint a declaration at a different source. the link lives in metadata; the graph entry stays
+   * a source-neutral structural boundary around the handler region.
+   */
   function setHeaderInterruptSource(index: number, source: string) {
     const entry = host.state.headerDraft.interrupts.at(index);
 
@@ -97,23 +96,22 @@ export function createWorkflowHeaderService(host: WorkflowServiceHost, editor: W
     applyWorkflowHeader();
   }
 
-  function setHeaderInterruptHandler(index: number, handler: string) {
+  function setHeaderInterruptEnabled(index: number, enabled: boolean) {
     const entry = host.state.headerDraft.interrupts.at(index);
 
     if (!entry) {
       return;
     }
 
-    entry.handler = handler;
+    entry.enabled = enabled;
     applyWorkflowHeader();
   }
 
   /**
-   * remove a declaration, and offer to remove the region's nodes with it.
+   * delete a handler region after confirmation.
    *
-   * the region is unreachable from `start` by design, so leaving its nodes behind after the
-   * declaration is gone does not orphan a working part of the flow -- it leaves dead nodes that
-   * `getHandlerCandidateNodeIds` would then offer right back as "candidates" for the next handler.
+   * metadata owns the link, but an unlinked region cannot be represented in wdl. disabling is the
+   * non-destructive option; deletion removes the link and its bounded graph region together.
    */
   function removeHeaderInterrupt(index: number) {
     const entry = host.state.headerDraft.interrupts.at(index);
@@ -124,27 +122,29 @@ export function createWorkflowHeaderService(host: WorkflowServiceHost, editor: W
       : null;
     const regionNodeIds = walk ? [...walk.nodes].filter((id) => !walk.missing.has(id)) : [];
 
-    host.state.headerDraft.interrupts.splice(index, 1);
-    applyWorkflowHeader();
-
     if (regionNodeIds.length === 0) {
+      host.state.headerDraft.interrupts.splice(index, 1);
+      writeWorkflowHeader(definition(), host.state.headerDraft);
+      editor.syncWorkflowDraftToJson();
+      host.notify();
       return;
     }
 
     const prompt =
       regionNodeIds.length === 1
-        ? `Also delete its region node '${regionNodeIds[0]}'?`
-        : `Also delete its ${String(regionNodeIds.length)} region nodes (${regionNodeIds.join(", ")})?`;
+        ? `Delete interrupt handler '${entry?.source ?? ""}' and its region node '${regionNodeIds[0]}'?`
+        : `Delete interrupt handler '${entry?.source ?? ""}' and its ${String(regionNodeIds.length)} region nodes (${regionNodeIds.join(", ")})?`;
 
     if (!host.deps.confirm(prompt)) {
       return;
     }
 
-    for (const nodeId of regionNodeIds) {
-      editor.removeWorkflowNode(nodeId);
-    }
+    host.state.headerDraft.interrupts.splice(index, 1);
+    writeWorkflowHeader(definition(), host.state.headerDraft);
+    editor.removeWorkflowNodes(regionNodeIds);
+    populateWorkflowHeader();
 
-    host.ctx.setStatus(`Removed interrupt handler and ${String(regionNodeIds.length)} region node(s)`);
+    host.ctx.setStatus(`Deleted interrupt handler and ${String(regionNodeIds.length)} region node(s)`);
   }
 
   // -- watches ---------------------------------------------------------------------------------
@@ -224,29 +224,6 @@ export function createWorkflowHeaderService(host: WorkflowServiceHost, editor: W
     return issues.filter((issue) => issue.severity === "error").length;
   }
 
-  /**
-   * nodes a handler may be pointed at: enterable, and not already part of the main flow.
-   *
-   * the reachability half is the rule that actually bites -- a region must be entered only by its
-   * interrupt -- so filtering here means the picker cannot offer a choice the validator rejects.
-   */
-  function getHandlerCandidateNodeIds(): string[] {
-    const byId = nodesById(host.state.workflowDraft);
-    const start = displayValue(definition().start);
-    const reachable = start ? interruptRegionNodes(byId, start).nodes : new Set<string>();
-
-    return [...byId]
-      .filter(([id, node]) => {
-        if (reachable.has(id)) {
-          return false;
-        }
-
-        const metadata = findNodeKindMetadata(displayValue(node.kind));
-        return metadata ? metadata.runnable_entry : true;
-      })
-      .map(([id]) => id);
-  }
-
   /** every node in the region entered at `handler`, for the panel's region chip list. */
   function getRegionNodeIds(handler: string): string[] {
     return [...interruptRegionNodes(nodesById(host.state.workflowDraft), handler).nodes];
@@ -263,16 +240,22 @@ export function createWorkflowHeaderService(host: WorkflowServiceHost, editor: W
   /**
    * create a minimal, valid handler region for `source` and declare it.
    *
-   * two nodes rather than one: a bare `resume` is a legal region but leaves nowhere to put the
-   * handler's actual work, and adding a node into a disconnected island through the canvas is
-   * fiddly. `audit` is the smallest handler-safe kind that records something useful.
+   * the region is an `interrupt -> audit -> resume` sequence: metadata links the source to the
+   * source-neutral entry, the audit is immediately editable, and resume hands control back.
+   * authors can change or extend that middle step without first breaking a structural edge.
    *
    * the resulting region satisfies every rule in `validate_interrupt_handlers` by construction --
-   * nothing enters it, both kinds are handler-safe, it ends at a resume, and no node is reached
-   * twice -- which the header-validation suite pins.
+   * nothing can enter it (an `interrupt` is an entry point, so no edge may target it), both kinds
+   * are handler-safe, it ends at a resume, and no node is reached twice -- which the
+   * header-validation suite pins.
    */
   function scaffoldInterruptHandler(source: string): boolean {
-    if (!isNodeCatalogLoaded() || !findNodeKindMetadata("resume")) {
+    if (
+      !isNodeCatalogLoaded() ||
+      !findNodeKindMetadata("resume") ||
+      !findNodeKindMetadata("interrupt") ||
+      !findNodeKindMetadata("audit")
+    ) {
       host.ctx.setError("Node types are still loading; try again in a moment");
       return false;
     }
@@ -283,31 +266,45 @@ export function createWorkflowHeaderService(host: WorkflowServiceHost, editor: W
     }
 
     const nodes = editor.ensureWorkflowNodes();
-    const entry = createWorkflowNode("audit", nodes);
+    const entry = createWorkflowNode("interrupt", nodes);
     entry.id = uniqueWorkflowNodeId(nodes, `on_${source}`);
-    // the audit template points at `end`. leaving that would drag `end` into the region, and `end`
-    // is not handler-safe -- the region would be rejected the moment it was declared.
-    editor.stripNewNodeConnections(entry);
-    entry.parameters = { action: `interrupt:${source}` };
     insertBeforeEnd(nodes, entry);
 
-    // claimed after the entry node is in the list so the two ids cannot collide.
+    // give the author a real, editable step between the structural endpoints. asking them to add a
+    // node, delete the direct edge, and reconnect both halves is needless graph surgery for the
+    // most common next action after creating a handler.
+    const body = createWorkflowNode("audit", nodes);
+    body.id = uniqueWorkflowNodeId(nodes, `handle_${source}`);
+    body.parameters = { action: `interrupt:${source}` };
+    insertBeforeEnd(nodes, body);
+
+    // claimed after the other nodes are in the list so all three ids are distinct.
     const resume = createWorkflowNode("resume", nodes);
     resume.id = uniqueWorkflowNodeId(nodes, `resume_${source}`);
     insertBeforeEnd(nodes, resume);
 
-    entry.transitions = { next: { $node: resume.id } };
+    entry.transitions = { next: { $node: body.id } };
+    body.transitions = { next: { $node: resume.id } };
 
     const origin = scaffoldOrigin();
     editor.setGraphNodePosition(displayValue(entry.id), origin);
-    editor.setGraphNodePosition(displayValue(resume.id), {
+    editor.setGraphNodePosition(displayValue(body.id), {
       x: origin.x + SCAFFOLD_STEP_X,
       y: origin.y,
     });
+    editor.setGraphNodePosition(displayValue(resume.id), {
+      x: origin.x + SCAFFOLD_STEP_X * 2,
+      y: origin.y,
+    });
 
-    declareHeaderInterrupt(source, displayValue(entry.id));
-    editor.populateStepEditor(displayValue(entry.id));
+    host.state.headerDraft.interrupts.push({
+      source,
+      handler: displayValue(entry.id),
+      enabled: true,
+    });
+    applyWorkflowHeader();
     host.ctx.setStatus(`Added an interrupt handler for '${source}'`);
+    editor.openStepEditor(displayValue(body.id));
     return true;
   }
 
@@ -349,9 +346,8 @@ export function createWorkflowHeaderService(host: WorkflowServiceHost, editor: W
     openWorkflowWdl,
     closeWorkflowHeader,
     applyWorkflowHeader,
-    declareHeaderInterrupt,
     setHeaderInterruptSource,
-    setHeaderInterruptHandler,
+    setHeaderInterruptEnabled,
     removeHeaderInterrupt,
     scaffoldInterruptHandler,
     addHeaderWatch,
@@ -366,7 +362,6 @@ export function createWorkflowHeaderService(host: WorkflowServiceHost, editor: W
     getInterruptIssueCount,
     getDeclarationIssues,
     getDeclarationIssueCount,
-    getHandlerCandidateNodeIds,
     getRegionNodeIds,
     getUndeclaredInterruptSources,
   };

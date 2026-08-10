@@ -32,8 +32,8 @@ impl NodeKindSpec for Toggle {
     ) -> Result<Vec<TargetSlot>, WorkflowValidationError> {
         let params = parse_toggle_parameters(node)?;
         Ok(vec![
-            TargetSlot::non_start("on", "toggle on/off target", params.on),
-            TargetSlot::non_start("off", "toggle on/off target", params.off),
+            TargetSlot::non_entry("on", "toggle on/off target", params.on),
+            TargetSlot::non_entry("off", "toggle on/off target", params.off),
         ])
     }
 

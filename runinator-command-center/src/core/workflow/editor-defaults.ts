@@ -10,7 +10,7 @@ import type {
 import { asJsonValue } from "../domain/json";
 import { pretty } from "../utils/format";
 import { displayValue, isBlankValue } from "../utils/values";
-import { findTriggerKindMetadata } from "./catalog-registry";
+import { findNodeKindMetadata, findTriggerKindMetadata } from "./catalog-registry";
 import { cloneTemplate } from "./field-location";
 import { asArray, asRecord, nodeRef, nodeRefId, valueRef } from "./index";
 
@@ -427,6 +427,21 @@ export function isProtectedWorkflowNode(node: JsonRecord | null | undefined): bo
 
 export function isLockedWorkflowNode(node: JsonRecord | null | undefined): boolean {
   return isProtectedWorkflowNode(node) || node?.locked === true;
+}
+
+/**
+ * may this node's *kind* be changed?
+ *
+ * separate from [`isLockedWorkflowNode`] because the two answers differ for an interrupt entry: it
+ * is freely deletable -- removing a handler deletes its whole region, entry included -- but changing
+ * its kind would silently destroy the declaration the region depends on, since the node *is* the
+ * declaration. read off the catalog's `entry_point` so a future entry kind is covered by default.
+ */
+export function isKindLockedWorkflowNode(node: JsonRecord | null | undefined): boolean {
+  return (
+    isLockedWorkflowNode(node) ||
+    findNodeKindMetadata(displayValue(node?.kind))?.entry_point === true
+  );
 }
 
 function isWorkflowExpression(value: unknown): boolean {

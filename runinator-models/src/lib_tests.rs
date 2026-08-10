@@ -260,6 +260,7 @@ fn workflow_node_kind_accepts_rich_control_flow_nodes() {
         ("input", WorkflowNodeKind::Input),
         ("config", WorkflowNodeKind::Config),
         ("resume", WorkflowNodeKind::Resume),
+        ("interrupt", WorkflowNodeKind::Interrupt),
     ] {
         let node: WorkflowNode = serde_json::from_value(json!({
             "id": kind,

@@ -28,12 +28,21 @@ describe("readWorkflowHeader", () => {
   it("reads all four declarations, renaming `on` to `source`", () => {
     const header = readWorkflowHeader(definition());
 
-    expect(header.interrupts).toEqual([{ source: "wake", handler: "refresh" }]);
+    expect(header.interrupts).toEqual([{ source: "wake", handler: "refresh", enabled: true }]);
     expect(header.watches).toEqual([
       { condition: { value: { $ref: "input.abort" } }, handler: "cleanup" },
     ]);
     expect(header.concurrency).toEqual({ maxConcurrentRuns: 2, onConflict: "queue" });
     expect(header.correlation).toEqual({ $ref: "input.batch_id" });
+  });
+
+  it("keeps metadata authoritative over source-neutral graph entries", () => {
+    const header = readWorkflowHeader({
+      nodes: [{ id: "on_timeout", kind: "interrupt", parameters: { on: "timeout" } }],
+      metadata: { interrupts: [{ on: "wake", handler: "stale" }] },
+    });
+
+    expect(header.interrupts).toEqual([{ source: "wake", handler: "stale", enabled: true }]);
   });
 
   it("is empty for a definition with no metadata", () => {
@@ -49,7 +58,7 @@ describe("readWorkflowHeader", () => {
       },
     });
 
-    expect(header.interrupts).toEqual([{ source: "child", handler: "notify" }]);
+    expect(header.interrupts).toEqual([{ source: "child", handler: "notify", enabled: true }]);
     expect(header.watches).toEqual([]);
   });
 
@@ -110,7 +119,7 @@ describe("applyWorkflowHeader", () => {
 
     applyWorkflowHeader(target, {
       ...emptyWorkflowHeader(),
-      interrupts: [{ source: "external", handler: "on_external" }],
+      interrupts: [{ source: "external", handler: "on_external", enabled: true }],
       concurrency: { maxConcurrentRuns: 4, onConflict: "skip" },
     });
 
@@ -118,5 +127,22 @@ describe("applyWorkflowHeader", () => {
       interrupts: [{ on: "external", handler: "on_external" }],
       concurrency: { max_concurrent_runs: 4, on_conflict: "skip" },
     });
+  });
+
+  it("writes disabled explicitly and omits the enabled default", () => {
+    const target: JsonRecord = { nodes: [] };
+
+    applyWorkflowHeader(target, {
+      ...emptyWorkflowHeader(),
+      interrupts: [
+        { source: "wake", handler: "on_wake", enabled: false },
+        { source: "timeout", handler: "on_timeout", enabled: true },
+      ],
+    });
+
+    expect((target.metadata as JsonRecord).interrupts).toEqual([
+      { on: "wake", handler: "on_wake", enabled: false },
+      { on: "timeout", handler: "on_timeout" },
+    ]);
   });
 });

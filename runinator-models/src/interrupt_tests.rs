@@ -153,6 +153,23 @@ fn an_unknown_source_parses_but_resolves_to_nothing() {
         serde_json::from_value(serde_json::json!({ "on": "webhook", "handler": "on_hook" }))
             .expect("unknown sources must still deserialize");
     assert_eq!(declaration.source(), None);
+    assert!(
+        declaration.enabled,
+        "legacy declarations default to enabled"
+    );
+}
+
+#[test]
+fn a_disabled_interrupt_link_round_trips_explicitly() {
+    let declaration: InterruptDeclaration = serde_json::from_value(serde_json::json!({
+        "on": "wake", "handler": "on_wake", "enabled": false
+    }))
+    .expect("a disabled declaration parses");
+    assert!(!declaration.enabled);
+    assert_eq!(
+        serde_json::to_value(declaration).unwrap().get("enabled"),
+        Some(&serde_json::json!(false))
+    );
 }
 
 /// the frame is made structurally incapable of failing to parse: `WorkflowRunState::from_state`

@@ -51,6 +51,13 @@ export interface WorkflowNodeKindMetadata {
   handler_safe: boolean;
   /** may be entered as a branch, body, or handler-region target (everything but start/end/fail). */
   runnable_entry: boolean;
+  /**
+   * an entry point the runtime places a cursor on directly: `start` and `interrupt`.
+   *
+   * distinct from `runnable_entry`, which it disagrees with on exactly one kind: an `interrupt` is
+   * a legal region entry *and* unreachable by any edge. no connection may target one.
+   */
+  entry_point: boolean;
   supports_predicate_edges: boolean;
   fields: NodeFieldMetadata[];
   edge_slots: NodeEdgeSlot[];

@@ -25,6 +25,7 @@ import {
   removeWorkflowEdge,
   removeWorkflowEdgeHandles,
   removeWorkflowNodeReferences,
+  renameWorkflowNodeReferences,
   setWorkflowEdgeHandles,
   setWorkflowEdgeLabelAnchor,
   setWorkflowEdgeLabelOffset,
@@ -37,6 +38,7 @@ import {
 } from "../../workflow/index";
 import { findNodeKindMetadata } from "../../workflow/catalog-registry";
 import { readWorkflowHeader } from "../../workflow/header-metadata";
+import { interruptRegionNodes, nodesById } from "../../workflow/interrupt-regions";
 import { getAtLocation } from "../../workflow/field-location";
 import type { GraphEdgeLike, GraphEdgeModel } from "../../workflow/graph-model";
 import {
@@ -109,6 +111,21 @@ export function createWorkflowEditorService(
       return;
     }
 
+    if (displayValue(node.kind) === "interrupt") {
+      const regionNodeIds = [
+        ...interruptRegionNodes(nodesById(host.state.workflowDraft), nodeId).nodes,
+      ];
+      const prompt = `Delete interrupt entry '${nodeId}' and its entire ${String(regionNodeIds.length)}-node handler region?`;
+
+      if (!host.deps.confirm(prompt)) {
+        return;
+      }
+
+      removeWorkflowNodes(regionNodeIds);
+      host.ctx.setStatus(`Deleted interrupt handler region '${nodeId}'`);
+      return;
+    }
+
     host.state.workflowDraft.definition.nodes = ensureWorkflowNodes().filter(
       (item: JsonRecord) => item.id !== nodeId,
     );
@@ -120,6 +137,35 @@ export function createWorkflowEditorService(
     );
 
     if (host.state.selectedStepId === nodeId) {
+      host.state.selectedStepId = "";
+    }
+
+    syncWorkflowDraftToJson();
+  }
+
+  /** remove a known set as one graph edit, used for bounded regions such as interrupt handlers. */
+  function removeWorkflowNodes(nodeIds: string[]) {
+    const removing = new Set(nodeIds);
+
+    if (removing.size === 0) {
+      return;
+    }
+
+    host.state.workflowDraft.definition.nodes = ensureWorkflowNodes().filter(
+      (item: JsonRecord) => !removing.has(displayValue(item.id)),
+    );
+
+    for (const nodeId of removing) {
+      removeWorkflowNodeReferences(host.state.workflowDraft.definition, nodeId);
+    }
+
+    const layout = asRecord(asRecord(host.state.workflowDraft.definition.ui).layout);
+    const layoutNodes = asRecord(layout.nodes);
+    layout.nodes = Object.fromEntries(
+      Object.entries(layoutNodes).filter(([entryId]) => !removing.has(entryId)),
+    );
+
+    if (removing.has(host.state.selectedStepId)) {
       host.state.selectedStepId = "";
     }
 
@@ -277,12 +323,14 @@ export function createWorkflowEditorService(
       }
     }
 
-    nodes[index] = next;
+    const previousId = host.state.selectedStepId;
 
-    if (host.state.selectedStepId !== next.id) {
-      renameLayoutNode(host.state.selectedStepId, next.id);
+    if (previousId !== next.id) {
+      renameWorkflowNodeReferences(host.state.workflowDraft.definition, previousId, next.id);
+      renameLayoutNode(previousId, next.id);
     }
 
+    nodes[index] = next;
     host.state.selectedStepId = next.id;
     syncWorkflowDraftToJson();
     return true;
@@ -481,6 +529,20 @@ export function createWorkflowEditorService(
 
     if (isSameConnectionPointLoop(connection)) {
       host.ctx.setError("Cannot connect a node handle back to itself");
+      return false;
+    }
+
+    // an entry point is where the *runtime* places a cursor -- the run's `start`, or an `interrupt`
+    // when it raises. the backend rejects an edge into one, so catching it at the gesture is the
+    // difference between "that connection is not allowed" and a validation error after saving.
+    const targetKind = displayValue(
+      ensureWorkflowNodes().find((node: JsonRecord) => node.id === target)?.kind,
+    );
+
+    if (findNodeKindMetadata(targetKind)?.entry_point) {
+      host.ctx.setError(
+        `Cannot connect into a ${targetKind} node; it is an entry point the runtime enters directly`,
+      );
       return false;
     }
 
@@ -955,6 +1017,7 @@ export function createWorkflowEditorService(
     addConnectedWorkflowNode,
     removeWorkflowStep,
     removeWorkflowNode,
+    removeWorkflowNodes,
     applyInlineNodeEdit,
     clearWorkflowGraphSelection,
     submitInlineNodeEdit,

@@ -34,8 +34,8 @@
       <span
         v-if="data.interruptRegion"
         class="node-interrupt-badge"
-        :title="`Interrupt handler for '${data.interruptRegion.source}' (region entry ${data.interruptRegion.handler})`"
-        >{{ data.interruptEntry ? `⚡ ${data.interruptRegion.source}` : "⚡" }}</span
+        :title="`Interrupt handler for '${data.interruptRegion.source}'${data.interruptRegion.enabled ? '' : ' (disabled)'} (region entry ${data.interruptRegion.handler})`"
+        >{{ data.interruptEntry ? `⚡ ${data.interruptRegion.source}${data.interruptRegion.enabled ? '' : ' · off'}` : "⚡" }}</span
       >
       <span v-if="isWaitingState" class="node-waiting-icon" title="Waiting">
         <Icon name="hourglass" :size="12" />

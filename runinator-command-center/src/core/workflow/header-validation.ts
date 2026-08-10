@@ -93,6 +93,19 @@ export function interruptIssues(definition: JsonRecord): WorkflowValidationIssue
   const reachable = start ? interruptRegionNodes(byId, start).nodes : new Set<string>();
 
   pushInterruptIssues(issues, header.interrupts, byId, reachable);
+  const linked = new Set(header.interrupts.map((entry) => entry.handler));
+
+  for (const [id, node] of byId) {
+    if (kindOf(node) === "interrupt" && !linked.has(id)) {
+      issues.push(
+        error(
+          `Interrupt entry '${id}' is not linked by workflow metadata; delete the orphaned region or restore its handler declaration`,
+          id,
+        ),
+      );
+    }
+  }
+
   return issues;
 }
 

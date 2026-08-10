@@ -179,6 +179,10 @@ pub struct WorkflowNodeKindMetadata {
     /// `start`/`end`/`fail`.
     #[serde(default)]
     pub runnable_entry: bool,
+    /// an entry point the runtime places a cursor on directly: `start` and `interrupt`. no edge may
+    /// target one, which is the rule the graph editor enforces when it offers a connection.
+    #[serde(default)]
+    pub entry_point: bool,
     /// whether this kind can host user-defined predicate edges (a `when -> target` route in
     /// `transitions.branches`, evaluated before status routing). control-flow kinds that own their
     /// routing (condition, switch, parallel, ...) and terminals do not.

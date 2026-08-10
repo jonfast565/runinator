@@ -59,14 +59,16 @@ function detail(nodes: WorkflowNodeRun[], withSnapshot = true): WorkflowRunDetai
 
 describe("interruptRegionOrigins", () => {
   it("reads the declared handlers", () => {
-    expect(interruptDeclarations(snapshot())).toEqual([{ source: "wake", handler: "refresh" }]);
+    expect(interruptDeclarations(snapshot())).toEqual([
+      { source: "wake", handler: "refresh", enabled: true },
+    ]);
   });
 
   it("walks the whole region from its entry, not just the entry node", () => {
     const origins = interruptRegionOrigins(snapshot());
 
-    expect(origins.get("refresh")).toEqual({ source: "wake", handler: "refresh" });
-    expect(origins.get("handled")).toEqual({ source: "wake", handler: "refresh" });
+    expect(origins.get("refresh")).toEqual({ source: "wake", handler: "refresh", enabled: true });
+    expect(origins.get("handled")).toEqual({ source: "wake", handler: "refresh", enabled: true });
   });
 
   it("leaves the main flow alone", () => {
@@ -126,7 +128,7 @@ describe("buildGanttLayout with an interrupt", () => {
     const layout = buildGanttLayout(detail(nodes), Date.parse("2026-07-16T00:00:10Z"));
     const refresh = layout.rows.find((row) => row.nodeId === "refresh");
 
-    expect(refresh?.interrupt).toEqual({ source: "wake", handler: "refresh" });
+    expect(refresh?.interrupt).toEqual({ source: "wake", handler: "refresh", enabled: true });
     expect(refresh?.cursorId).toBe("cursor-handler");
   });
 

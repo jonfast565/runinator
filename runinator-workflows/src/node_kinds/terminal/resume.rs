@@ -34,6 +34,7 @@ impl NodeKindSpec for Resume {
     fn graph_role(&self) -> GraphRole {
         GraphRole {
             runnable_entry: true,
+            entry_point: false,
             terminal: true,
             produces_output: false,
             reentrant: false,

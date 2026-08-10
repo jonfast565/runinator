@@ -35,13 +35,13 @@ impl NodeKindSpec for Percentage {
             .buckets
             .into_iter()
             .map(|bucket| {
-                TargetSlot::non_start("buckets", "percentage bucket target", bucket.target)
+                TargetSlot::non_entry("buckets", "percentage bucket target", bucket.target)
             })
             .collect();
         slots.extend(
             params
                 .default
-                .map(|target| TargetSlot::non_start("default", "percentage bucket target", target)),
+                .map(|target| TargetSlot::non_entry("default", "percentage bucket target", target)),
         );
         Ok(slots)
     }

@@ -65,9 +65,9 @@ pub use types::{
 };
 pub use typing::{WorkflowType, validate_workflow_types};
 pub use validation::{
-    interrupt_declarations, interrupt_region, interrupt_region_is_supported,
-    interrupt_region_nodes, parse_nodes, validate_workflow, validate_workflow_with_config,
-    validate_workflow_with_providers,
+    interrupt_declarations, interrupt_declarations_for, interrupt_region,
+    interrupt_region_is_supported, interrupt_region_nodes, parse_nodes, validate_workflow,
+    validate_workflow_with_config, validate_workflow_with_providers,
 };
 
 pub fn outputs_context(parameters: &Value, outputs: &HashMap<String, Value>) -> Value {

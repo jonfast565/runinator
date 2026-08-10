@@ -10,8 +10,10 @@ import { addableNodeKinds, findNodeKindMetadata } from "./catalog-registry";
 import { getAtLocation } from "./field-location";
 
 export function workflowNodeKind(value: unknown): WorkflowNodeKind {
+  // the non-addable kinds are listed explicitly: they never reach the palette, but they are real
+  // kinds in a saved graph, and coercing one to `action` would render it as the wrong node.
   return typeof value === "string" &&
-    ["start", ...addableNodeKinds(), "end", "fail"].includes(value)
+    ["start", "interrupt", ...addableNodeKinds(), "end", "fail"].includes(value)
     ? (value as WorkflowNodeKind)
     : "action";
 }
@@ -137,6 +139,10 @@ export function nodeSummary(node: JsonRecord, subflowNames?: Map<string, string>
   if (kind === "start") {return "Start";}
   if (kind === "end") {return "Success";}
   if (kind === "fail") {return "Workflow failure";}
+
+  if (kind === "interrupt") {
+    return "Handler entry";
+  }
 
   const metadata = findNodeKindMetadata(kind);
   const fields = metadata?.fields

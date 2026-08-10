@@ -405,9 +405,9 @@ async fn declares_interrupt<T: DatabaseImpl>(
             None => return Ok(false),
         },
     };
-    Ok(runinator_workflows::interrupt_declarations(&workflow)
+    Ok(runinator_workflows::interrupt_declarations_for(&workflow)
         .into_iter()
-        .any(|declaration| declaration.source() == Some(source)))
+        .any(|declaration| declaration.enabled && declaration.source() == Some(source)))
 }
 
 /// ask a run to raise an interrupt on its next drive.

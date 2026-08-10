@@ -32,6 +32,7 @@ function nodeMeta(kind: string): WorkflowNodeKindMetadata {
     addable: true,
     handler_safe: false,
     runnable_entry: true,
+    entry_point: false,
     supports_predicate_edges: true,
     fields: [],
     edge_slots: [],

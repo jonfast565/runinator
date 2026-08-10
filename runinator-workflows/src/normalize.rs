@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use runinator_models::value::{Map, Value};
-use runinator_models::workflows::{WorkflowDefinition, WorkflowGraph};
+use runinator_models::workflows::{WorkflowDefinition, WorkflowGraph, WorkflowNodeKind};
 
 use crate::parameters::parse_node_ref_value;
 
@@ -34,11 +34,18 @@ pub(crate) fn normalize_definition_value(definition: Value) -> Value {
         .map(str::to_string);
     let end_id = ensure_end_node(&mut nodes, &mut ids);
     ensure_fail_node(&mut nodes, &mut ids);
+    materialize_legacy_interrupt_entries(&mut root, &mut nodes, &mut ids);
     let previous_start = existing_start
         .filter(|id| ids.contains(id) && node_kind_by_id(&nodes, id).as_deref() != Some("start"))
         .or_else(|| {
+            // the main flow may not begin inside a handler region: `interrupt` is the region's own
+            // entry point and `resume` its terminal, so rooting the run at either would splice the
+            // side-channel into the primary thread of control.
             first_node_id(&nodes, |kind| {
-                kind != Some("start") && kind != Some("end") && kind != Some("fail")
+                !matches!(
+                    kind,
+                    Some("start") | Some("end") | Some("fail") | Some("interrupt") | Some("resume")
+                )
             })
         })
         .unwrap_or_else(|| end_id.clone());
@@ -48,6 +55,55 @@ pub(crate) fn normalize_definition_value(definition: Value) -> Value {
     root.insert("start".into(), Value::String(start_id));
     root.insert("nodes".into(), Value::Array(nodes));
     Value::Object(root)
+}
+
+/// turn metadata-only declarations into graph entry nodes.
+///
+/// older definitions point metadata directly at the first body node. materializing a structural
+/// entry on normalization makes those definitions visible in graph editors and lets the graph be
+/// explicit afterward without dropping a handler merely because it predates the node kind. the
+/// metadata link is repointed to the new entry and remains the authority for source and enabled.
+fn materialize_legacy_interrupt_entries(
+    root: &mut Map,
+    nodes: &mut Vec<Value>,
+    ids: &mut HashSet<String>,
+) {
+    let declarations = root
+        .get("metadata")
+        .and_then(Value::as_object)
+        .and_then(|metadata| metadata.get("interrupts"))
+        .and_then(Value::as_array)
+        .map(|entries| {
+            entries
+                .iter()
+                .enumerate()
+                .filter_map(|(index, entry)| {
+                    let handler = entry.get("handler")?.as_str()?.to_string();
+                    (node_kind_by_id(nodes, &handler).as_deref() != Some("interrupt"))
+                        .then_some((index, handler))
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    for (index, handler) in declarations {
+        let id = unique_node_id(&format!("__interrupt_{index}_entry"), ids);
+        nodes.push(runinator_models::json!({
+            "id": id,
+            "kind": "interrupt",
+            "transitions": { "next": { "$node": handler } }
+        }));
+        if let Some(entry) = root
+            .get_mut("metadata")
+            .and_then(Value::as_object_mut)
+            .and_then(|metadata| metadata.get_mut("interrupts"))
+            .and_then(Value::as_array_mut)
+            .and_then(|entries| entries.get_mut(index))
+            .and_then(Value::as_object_mut)
+        {
+            entry.insert("handler".into(), Value::String(id));
+        }
+    }
 }
 
 pub fn normalize_layout(root: &mut Map) {
@@ -152,7 +208,7 @@ pub(crate) fn ensure_start_node(
 
 pub(crate) fn route_success_terminals_to_end(nodes: &mut [Value], end_id: &str) {
     for node in nodes {
-        if matches!(node_kind(node).as_deref(), Some("end") | Some("fail")) {
+        if node_kind(node).as_deref().is_some_and(kind_is_terminal) {
             continue;
         }
         if has_success_transition(node) {
@@ -160,6 +216,18 @@ pub(crate) fn route_success_terminals_to_end(nodes: &mut [Value], end_id: &str) 
         }
         ensure_next_transition(node, end_id);
     }
+}
+
+/// does this kind settle its own thread of control, so wiring it onward to `end` would be wrong?
+///
+/// read off [`GraphRole::terminal`] rather than a literal `end`/`fail` list, which went stale the
+/// moment `resume` arrived: a resume carries no success transition, so the literal form gave it a
+/// `next` into `end` and dragged a node that is not `handler_safe` into every interrupt region.
+fn kind_is_terminal(kind: &str) -> bool {
+    // through serde so the `deliverable` alias resolves the same way node parsing does.
+    Value::String(kind.to_string())
+        .decode::<WorkflowNodeKind>()
+        .is_ok_and(|kind| crate::node_kinds::graph_role(&kind).terminal)
 }
 
 pub(crate) fn ensure_next_transition(node: &mut Value, target: &str) {

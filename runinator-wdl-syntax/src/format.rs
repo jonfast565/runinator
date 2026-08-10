@@ -205,7 +205,8 @@ impl Formatter {
         // preserve header `interrupt on <source> { ... }` handler regions. the block renders with
         // the same body machinery as any other block, so a region formats like the code it is.
         for interrupt in &workflow.interrupts {
-            let header = format!("interrupt on {} {{", interrupt.source);
+            let disabled = if interrupt.enabled { "" } else { " disabled" };
+            let header = format!("interrupt on {}{disabled} {{", interrupt.source);
             let rendered = self.render_block(&header, &interrupt.body, "}");
             self.line(rendered.trim_end_matches('\n'));
         }

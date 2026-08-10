@@ -38,13 +38,19 @@
               :disabled="workflows.selectedStepKindLocked"
               @change="onKindChange"
             >
+              <!-- the non-addable kinds are listed so an existing node of one displays its own
+                   kind; the select is disabled for all of them, so none can be chosen. -->
               <option value="start">start</option>
-              <option v-for="kind in workflows.workflowNodeKinds" :key="kind" :value="kind">
+              <option value="interrupt">interrupt</option>
+              <option v-for="kind in editableNodeKinds" :key="kind" :value="kind">
                 {{ workflowNodeKindLabel(kind) }}
               </option>
               <option value="end">end</option>
               <option value="fail">fail</option>
             </select>
+            <small v-if="isHandlerRegionStep" class="text-fg-muted">
+              Only node types that can safely run inside an interrupt handler are shown.
+            </small>
           </label>
         </div>
       </section>
@@ -214,6 +220,7 @@ import LoadingSpinner from "../shared/LoadingSpinner.vue";
 import CatalogFieldEditor from "./CatalogFieldEditor.vue";
 import CatalogEdgeSlotEditor from "./CatalogEdgeSlotEditor.vue";
 import { findNodeKindMetadata, cloneTemplate } from "../../../core/workflow";
+import { interruptRegionOrigins } from "../../../core/workflow/interrupt-regions";
 import { useOperationLoading } from "../../composables/useOperationLoading";
 
 const workflows = useWorkflowsStore();
@@ -240,8 +247,22 @@ const availableSubflows = computed(() => {
 });
 
 const isProtectedNode = computed(() =>
-  ["start", "end", "fail"].includes(displayValue(workflows.selectedNode?.kind ?? "")),
+  ["start", "interrupt", "end", "fail"].includes(displayValue(workflows.selectedNode?.kind ?? "")),
 );
+
+const isHandlerRegionStep = computed(() =>
+  interruptRegionOrigins(workflows.workflowDraft).has(workflows.selectedStepId),
+);
+
+const editableNodeKinds = computed(() => {
+  if (!isHandlerRegionStep.value) {
+    return workflows.workflowNodeKinds;
+  }
+
+  return workflows.workflowNodeKinds.filter(
+    (kind) => findNodeKindMetadata(kind)?.handler_safe === true,
+  );
+});
 
 // --- kind change ---
 
@@ -255,8 +276,8 @@ function onKindChange() {
 
   const template = cloneTemplate(meta.default_template);
   // preserve id, name, kind and runtime fields; swap the rest from the catalog template.
-  const { id, name, retry, locked, skipped, timeout_seconds } = workflows.stepEditor.nodeDraft as JsonRecord & {
-    id?: string; name?: string; retry?: JsonRecord; locked?: boolean; skipped?: boolean; timeout_seconds?: number;
+  const { id, name, retry, transitions, locked, skipped, timeout_seconds } = workflows.stepEditor.nodeDraft as JsonRecord & {
+    id?: string; name?: string; retry?: JsonRecord; transitions?: JsonRecord; locked?: boolean; skipped?: boolean; timeout_seconds?: number;
   };
   workflows.stepEditor.nodeDraft = {
     ...template,
@@ -264,6 +285,9 @@ function onKindChange() {
     kind,
     ...(name ? { name } : {}),
     ...(retry ? { retry } : {}),
+    // changing the body step's kind must not quietly reconnect the handler to a template target
+    // such as the main flow's `end`; its existing continuation is part of the region structure.
+    ...(isHandlerRegionStep.value && transitions ? { transitions } : {}),
     ...(locked ? { locked } : {}),
     ...(skipped ? { skipped } : {}),
     ...(timeout_seconds ? { timeout_seconds } : {}),

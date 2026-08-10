@@ -13,8 +13,8 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use runinator_models::types::RuninatorType;
 use runinator_models::value::{Map, Value};
 use runinator_models::workflows::{
-    WorkflowDefinition, WorkflowNode, WorkflowNodeKind, WorkflowRetry, WorkflowRetryClass,
-    WorkflowTransitions, WorkflowWaitSeconds,
+    WorkflowDefinition, WorkflowGraph, WorkflowNode, WorkflowNodeKind, WorkflowRetry,
+    WorkflowRetryClass, WorkflowTransitions, WorkflowWaitSeconds,
 };
 
 use runinator_wdl_syntax::errors::WdlError;
@@ -129,7 +129,8 @@ pub fn decompile_definition(
     decompiler.emit_notifications(metadata.notifications())?;
     decompiler.emit_concurrency(metadata.concurrency())?;
     decompiler.emit_watches(metadata.watches())?;
-    decompiler.emit_interrupts(metadata.interrupts())?;
+    let interrupt_regions = decompiler.interrupt_regions(graph, metadata.interrupts())?;
+    decompiler.emit_interrupts(&interrupt_regions)?;
     decompiler.emit_correlation(metadata.correlation())?;
     decompiler.emit_type_decls(&metadata.type_declarations())?;
     decompiler.emit_alias_decls()?;
@@ -177,7 +178,12 @@ pub fn decompile_definition(
                 && Some(&node.id) != graph.start.as_ref()
                 && !matches!(
                     node.kind,
-                    WorkflowNodeKind::Start | WorkflowNodeKind::End | WorkflowNodeKind::Fail
+                    WorkflowNodeKind::Start
+                        | WorkflowNodeKind::End
+                        | WorkflowNodeKind::Fail
+                        // an entry point with no statement syntax: it is rendered by the
+                        // `interrupt on` header line, and force-emitting it here would error.
+                        | WorkflowNodeKind::Interrupt
                 )
         })
         .map(|node| node.id.clone())
@@ -498,27 +504,78 @@ impl<'a> Decompiler<'a> {
         Ok(())
     }
 
-    /// emit header `interrupt on <source> { ... }` regions recovered from `metadata.interrupts`.
+    /// the handler regions to emit, as `(source, first node of the body, enabled)`.
+    ///
+    /// metadata owns the source-to-entry link and enabled state. when its handler is an `interrupt`
+    /// node, that structural entry is marked visited and the emitted body begins at its `next`.
+    /// metadata pointing directly at a body remains supported for definitions from before entries.
+    fn interrupt_regions(
+        &mut self,
+        graph: &WorkflowGraph,
+        metadata: &[Value],
+    ) -> Result<Vec<(String, String, bool)>, WdlError> {
+        let regions = metadata
+            .iter()
+            .map(|interrupt| {
+                let source = interrupt
+                    .get("on")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| WdlError::Decompile("interrupt missing source".into()))?;
+                let handler = interrupt
+                    .get("handler")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| WdlError::Decompile("interrupt missing handler".into()))?;
+                let enabled = interrupt
+                    .get("enabled")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true);
+                let body = match graph.nodes.iter().find(|node| node.id == handler) {
+                    Some(node) if node.kind == WorkflowNodeKind::Interrupt => {
+                        self.visited.insert(node.id.clone());
+                        node.transitions
+                            .next
+                            .as_ref()
+                            .map(|target| target.as_str().to_string())
+                            .ok_or_else(|| {
+                                WdlError::Decompile(format!(
+                                    "interrupt entry '{handler}' has no body"
+                                ))
+                            })?
+                    }
+                    _ => handler.to_string(),
+                };
+                Ok((source.to_string(), body, enabled))
+            })
+            .collect::<Result<Vec<_>, WdlError>>()?;
+        let linked: HashSet<&str> = metadata
+            .iter()
+            .filter_map(|interrupt| interrupt.get("handler").and_then(Value::as_str))
+            .collect();
+        if let Some(node) = graph.nodes.iter().find(|node| {
+            node.kind == WorkflowNodeKind::Interrupt && !linked.contains(node.id.as_str())
+        }) {
+            return Err(WdlError::Decompile(format!(
+                "interrupt entry '{}' is not linked by metadata",
+                node.id
+            )));
+        }
+        Ok(regions)
+    }
+
+    /// emit header `interrupt on <source> { ... }` regions.
     ///
     /// walking each region here — before the main flow — is also what keeps its nodes out of the
     /// orphan pass at the end. a region is unreachable from `start` by design, so without this it
     /// would be re-emitted as a pile of loose top-level statements.
-    fn emit_interrupts(&mut self, interrupts: &[Value]) -> Result<(), WdlError> {
-        if interrupts.is_empty() {
+    fn emit_interrupts(&mut self, regions: &[(String, String, bool)]) -> Result<(), WdlError> {
+        if regions.is_empty() {
             return Ok(());
         }
-        for interrupt in interrupts {
-            let source = interrupt
-                .get("on")
-                .and_then(Value::as_str)
-                .ok_or_else(|| WdlError::Decompile("interrupt missing source".into()))?;
-            let handler = interrupt
-                .get("handler")
-                .and_then(Value::as_str)
-                .ok_or_else(|| WdlError::Decompile("interrupt missing handler".into()))?;
-            self.line(&format!("interrupt on {source} {{"));
+        for (source, body, enabled) in regions {
+            let disabled = if *enabled { "" } else { " disabled" };
+            self.line(&format!("interrupt on {source}{disabled} {{"));
             self.indent += 1;
-            self.emit_region(handler, None)?;
+            self.emit_region(body, None)?;
             self.indent -= 1;
             self.line("}");
         }
@@ -679,7 +736,12 @@ impl<'a> Decompiler<'a> {
                         .map(|target| target.as_str().to_string()),
                     false,
                 ),
-                WorkflowNodeKind::Start | WorkflowNodeKind::End => (None, true),
+                // entry points and `end` have no statement syntax. an `interrupt` is rendered by
+                // its `interrupt on` header line, and the walk into a region starts past it, so
+                // reaching one here means a malformed graph — stop rather than emit.
+                WorkflowNodeKind::Start | WorkflowNodeKind::End | WorkflowNodeKind::Interrupt => {
+                    (None, true)
+                }
             };
 
             self.separate_block_statement(start, &mut prev_multiline);

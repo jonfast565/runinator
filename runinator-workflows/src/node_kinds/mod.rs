@@ -80,6 +80,13 @@ pub trait NodeKindSpec: Send + Sync {
 pub struct GraphRole {
     /// may be entered as a branch or body target — true for everything but `start`/`end`/`fail`.
     pub runnable_entry: bool,
+    /// an entry point: the runtime places a cursor here, and no edge may target it.
+    ///
+    /// distinct from `runnable_entry`, which the two flags used to conflate because `start` was the
+    /// only entry point and it is not a legal region entry. `interrupt` is both — a handler region
+    /// legitimately starts there — so "a cursor may sit here" and "an edge may point here" had to
+    /// come apart. [`TargetRule`] reads this one.
+    pub entry_point: bool,
     /// settles the run when reached.
     pub terminal: bool,
     /// records an output addressable downstream as `steps.<id>.output`.
@@ -106,6 +113,7 @@ impl GraphRole {
     /// the ordinary case: a runnable step that records an output and the simulator models.
     pub const STEP: Self = Self {
         runnable_entry: true,
+        entry_point: false,
         terminal: false,
         produces_output: true,
         reentrant: false,
@@ -117,6 +125,7 @@ impl GraphRole {
     /// `start`: entered only as the run's entry point, and produces nothing addressable.
     pub const START: Self = Self {
         runnable_entry: false,
+        entry_point: true,
         terminal: false,
         produces_output: false,
         reentrant: false,
@@ -128,6 +137,7 @@ impl GraphRole {
     /// `end`/`fail`: settles the run, and produces nothing addressable.
     pub const TERMINAL: Self = Self {
         runnable_entry: false,
+        entry_point: false,
         terminal: true,
         produces_output: false,
         reentrant: false,
@@ -181,8 +191,8 @@ impl GraphRole {
 /// what a node reference is allowed to point at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TargetRule {
-    /// any node but `start` — the rule an ordinary transition obeys.
-    NonStart,
+    /// any node that is not an entry point — the rule an ordinary transition obeys.
+    NonEntry,
     /// a runnable, non-terminal node: the entry of a body or branch region.
     RunnableEntry,
     /// a node that records an output, so `$ref` can read it.
@@ -192,17 +202,20 @@ pub enum TargetRule {
 impl TargetRule {
     /// whether a target of this kind satisfies the rule.
     pub fn accepts(self, kind: &WorkflowNodeKind) -> bool {
+        let role = spec_for(kind).graph_role();
         match self {
-            Self::NonStart => *kind != WorkflowNodeKind::Start,
-            Self::RunnableEntry => spec_for(kind).graph_role().runnable_entry,
-            Self::OutputProducing => spec_for(kind).graph_role().produces_output,
+            Self::NonEntry => !role.entry_point,
+            // an entry point is where the *runtime* places a cursor. `interrupt` is a legal region
+            // entry and so is `runnable_entry`, but a body or branch may still not route into one.
+            Self::RunnableEntry => role.runnable_entry && !role.entry_point,
+            Self::OutputProducing => role.produces_output,
         }
     }
 
     /// the phrase used in the validation error when a target fails the rule.
     pub fn expected(self) -> &'static str {
         match self {
-            Self::NonStart => "a non-start node",
+            Self::NonEntry => "a node that is not an entry point",
             Self::RunnableEntry => "a runnable, non-terminal node",
             Self::OutputProducing => "an output-producing node",
         }
@@ -223,12 +236,12 @@ pub struct TargetSlot {
 }
 
 impl TargetSlot {
-    /// a routing target: anything but `start`.
-    pub fn non_start(key: &'static str, label: &'static str, target: WorkflowNodeRef) -> Self {
+    /// a routing target: anything that is not an entry point.
+    pub fn non_entry(key: &'static str, label: &'static str, target: WorkflowNodeRef) -> Self {
         Self {
             key,
             label,
-            rule: TargetRule::NonStart,
+            rule: TargetRule::NonEntry,
             target,
         }
     }
@@ -279,6 +292,7 @@ pub fn spec_for(kind: &WorkflowNodeKind) -> &'static dyn NodeKindSpec {
         WorkflowNodeKind::End => &terminal::End,
         WorkflowNodeKind::Fail => &terminal::Fail,
         WorkflowNodeKind::Resume => &terminal::Resume,
+        WorkflowNodeKind::Interrupt => &terminal::Interrupt,
         WorkflowNodeKind::Action => &task::Action,
         WorkflowNodeKind::Subflow => &task::Subflow,
         WorkflowNodeKind::Wait => &control_flow::Wait,

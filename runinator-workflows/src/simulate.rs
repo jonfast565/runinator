@@ -424,9 +424,11 @@ fn evaluate_node(
         | WorkflowNodeKind::Map
         | WorkflowNodeKind::Race
         | WorkflowNodeKind::Try
-        // `resume` has no meaning in a dry run: the walk has no interrupted thread to hand control
-        // back to, and a handler region is unreachable from `start` so the walk never enters one.
+        // the interrupt bracket has no meaning in a dry run: the walk has no interrupted thread to
+        // hand control back to, and a handler region is unreachable from `start` so the walk never
+        // enters one.
         | WorkflowNodeKind::Resume
+        | WorkflowNodeKind::Interrupt
         | WorkflowNodeKind::Subflow => Outcome::plain(WorkflowStatus::Running),
     };
     Ok(outcome)

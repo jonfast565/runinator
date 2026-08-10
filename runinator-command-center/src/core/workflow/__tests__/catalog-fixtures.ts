@@ -22,6 +22,7 @@ function nodeMeta(
     addable: true,
     handler_safe: false,
     runnable_entry: true,
+    entry_point: false,
     supports_predicate_edges: edge_slots.length === 0,
     fields: [],
     edge_slots,
@@ -312,8 +313,23 @@ export const testNodeKindCatalog: WorkflowNodeKindMetadata[] = [
     retry: { max_attempts: 1 },
     transitions: {},
   }),
-  // the two kinds an interrupt handler region is scaffolded from. audit's template points at `end`
-  // on purpose -- the scaffold has to strip that, and a fixture without it would not catch the bug.
+  // the two kinds an interrupt handler region is scaffolded from, plus `audit` as the body a
+  // handler usually gets. audit's template points at `end` on purpose -- an ordinary node added to
+  // a region carries that edge, and the region validator has to see it.
+  nodeMeta(
+    "interrupt",
+    { kind: "interrupt" },
+    [],
+    {
+      category: "terminal",
+      protected: true,
+      addable: false,
+      handler_safe: true,
+      runnable_entry: true,
+      entry_point: true,
+      supports_predicate_edges: false,
+    },
+  ),
   nodeMeta(
     "audit",
     {

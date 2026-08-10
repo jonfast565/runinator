@@ -105,6 +105,11 @@
   );
 }
 
+:global(.vue-flow__node.node-interrupt-disabled) .workflow-node {
+  filter: saturate(0.35);
+  opacity: 0.72;
+}
+
 .node-execution-count {
   display: inline-grid;
   min-width: 16px;

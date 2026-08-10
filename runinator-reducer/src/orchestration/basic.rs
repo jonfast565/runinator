@@ -118,6 +118,44 @@ pub(super) async fn process_start_node<T: ReducerStore>(
     Ok(())
 }
 
+/// process an `interrupt` node: the entry of a handler region.
+///
+/// a no-op like `start`, for the same reason — it marks where a thread of control begins rather
+/// than doing work. the node run it records is what puts the region's entry on the run timeline,
+/// and `interrupt.*` already resolves here because the frame is written when the handler cursor is
+/// created, before the cursor is ever driven.
+pub(super) async fn process_interrupt_node<T: ReducerStore>(
+    db: &T,
+    workflow_run: &WorkflowRun,
+    cursor: &RunCursor,
+    node: &WorkflowNode,
+    latest: Option<&WorkflowNodeRun>,
+    node_runs: &[WorkflowNodeRun],
+) -> Result<(), SendableError> {
+    let node_run = ensure_node_run(
+        db,
+        workflow_run,
+        cursor,
+        node,
+        latest,
+        super::context::most_recently_finished_node_run(node_runs),
+    )
+    .await?;
+    transition_from_node(
+        db,
+        workflow_run,
+        cursor,
+        node,
+        &node_run,
+        WorkflowStatus::Succeeded,
+        None,
+        Some("interrupt_entered".into()),
+        node_runs,
+    )
+    .await?;
+    Ok(())
+}
+
 pub(super) async fn process_end_node<T: ReducerStore>(
     db: &T,
     workflow_run: &WorkflowRun,
@@ -354,6 +392,7 @@ async fn finish_route<T: ReducerStore>(
 }
 
 pub(super) struct StartHandler;
+pub(super) struct InterruptHandler;
 pub(super) struct EndHandler;
 pub(super) struct ConditionHandler;
 pub(super) struct SwitchHandler;
@@ -370,6 +409,27 @@ impl<T: ReducerStore> NodeHandler<T> for StartHandler {
         T: 'a,
     {
         process_start_node(
+            ctx.db,
+            ctx.workflow_run,
+            ctx.cursor,
+            ctx.node,
+            ctx.latest,
+            ctx.node_runs,
+        )
+        .await?;
+        Ok(ReadyNodeDisposition::Complete)
+    }
+}
+
+impl<T: ReducerStore> NodeHandler<T> for InterruptHandler {
+    async fn process<'a>(
+        &'a self,
+        ctx: &'a NodeHandlerContext<'a, T>,
+    ) -> Result<ReadyNodeDisposition, SendableError>
+    where
+        T: 'a,
+    {
+        process_interrupt_node(
             ctx.db,
             ctx.workflow_run,
             ctx.cursor,

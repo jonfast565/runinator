@@ -6,12 +6,14 @@ import { directTransitionKeys, nodeRefId } from "./node-refs";
 export interface InterruptDeclaration {
   source: string;
   handler: string;
+  enabled: boolean;
 }
 
 /** what a node run belongs to, when it belongs to a handler region rather than the main flow. */
 export interface InterruptOrigin {
   source: string;
   handler: string;
+  enabled: boolean;
 }
 
 function asRecord(value: unknown): JsonRecord {
@@ -22,7 +24,12 @@ function asArray(value: unknown): JsonValue[] {
   return Array.isArray(value) ? (value as JsonValue[]) : [];
 }
 
-/** the handlers a definition declares, read from `metadata.interrupts`. */
+/**
+ * the handlers a definition declares.
+ *
+ * metadata owns the source-to-entry link and whether it is active. the graph owns the linked
+ * region's shape, beginning at the handler entry id.
+ */
 export function interruptDeclarations(
   definition: WorkflowDefinition | null | undefined,
 ): InterruptDeclaration[] {
@@ -33,7 +40,7 @@ export function interruptDeclarations(
     .flatMap((entry) => {
       const source = typeof entry.on === "string" ? entry.on : null;
       const handler = typeof entry.handler === "string" ? entry.handler : null;
-      return source && handler ? [{ source, handler }] : [];
+      return source && handler ? [{ source, handler, enabled: entry.enabled !== false }] : [];
     });
 }
 
@@ -169,7 +176,11 @@ export function interruptRegionOrigins(
         continue;
       }
 
-      origins.set(id, { source: declaration.source, handler: declaration.handler });
+      origins.set(id, {
+        source: declaration.source,
+        handler: declaration.handler,
+        enabled: declaration.enabled,
+      });
     }
   }
 

@@ -7,8 +7,8 @@
       </div>
       <p class="step-headline">
         An interrupt suspends one thread of control, runs a handler region beside it, and hands
-        control back at a <code>resume</code>. Declare which source enters which region here, then
-        draw the region on the canvas.
+        control back at a <code>resume</code>. Adding a handler creates the complete region and opens
+        its first editable step; extend that mini-flow on the canvas like any other sequence.
       </p>
     </header>
 

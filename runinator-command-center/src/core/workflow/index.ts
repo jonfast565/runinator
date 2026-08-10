@@ -160,7 +160,7 @@ export function buildGraphNodeModels(
       },
       // appended, not replaced: a region node on a live run still needs its status styling.
       class: interruptRegion
-        ? `${statusClassForNode(status)} node-interrupt-region`
+        ? `${statusClassForNode(status)} node-interrupt-region${interruptRegion.enabled ? "" : " node-interrupt-disabled"}`
         : statusClassForNode(status),
     };
   });
@@ -480,6 +480,22 @@ export function renameWorkflowNodeReferences(
     renameNodeRefs(node.parameters, previousId, nextId);
     renameNodeRefs(node.wait, previousId, nextId);
     renameNodeRefs(node.condition, previousId, nextId);
+  }
+
+  const metadata = isRecord(definition.metadata) ? definition.metadata : null;
+
+  if (metadata) {
+    for (const entry of recordArray(metadata.interrupts)) {
+      if (entry.handler === previousId) {
+        entry.handler = nextId;
+      }
+    }
+
+    for (const entry of recordArray(metadata.watches)) {
+      if (entry.handler === previousId) {
+        entry.handler = nextId;
+      }
+    }
   }
 
   renameWorkflowEdgeHandleSource(definition, previousId, nextId);
@@ -1677,6 +1693,21 @@ export function removeWorkflowNodeReferences(definition: JsonRecord, nodeId: str
         (item: unknown) =>
           nodeRefId(item) !== nodeId && nodeRefId((item as JsonRecord).target) !== nodeId,
       );
+    }
+  }
+
+  // metadata owns the source-to-entry link. removing an entry through the ordinary canvas path must
+  // remove that link too, or it would point at a handler that no longer exists in the graph.
+  const metadata = isRecord(definition.metadata) ? definition.metadata : null;
+
+  if (metadata && Array.isArray(metadata.interrupts)) {
+    const interrupts = recordArray(metadata.interrupts).filter(
+      (entry) => displayValue(entry.handler) !== nodeId,
+    );
+    metadata.interrupts = interrupts;
+
+    if (interrupts.length === 0) {
+      delete metadata.interrupts;
     }
   }
 }

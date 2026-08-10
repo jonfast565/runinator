@@ -392,6 +392,34 @@ async fn no_declared_handler_leaves_the_drive_untouched() {
     );
 }
 
+#[tokio::test]
+async fn a_disabled_handler_leaves_the_drive_untouched() {
+    let store = FakeStore::new();
+    store.insert_workflow(workflow_with(
+        main_flow(region("resume")),
+        serde_json::json!([{ "on": "wake", "handler": "refresh", "enabled": false }]),
+    ));
+    store.insert_run(queued_run());
+
+    process_ready_node(&store, &ready_node("poll"))
+        .await
+        .expect("park");
+    process_ready_node(&store, &ready_node("poll"))
+        .await
+        .expect("elapse");
+
+    let run = store.run(RUN_ID.parse().unwrap()).expect("run");
+    assert_eq!(run.active_node_id.as_deref(), Some("end"));
+    assert_eq!(run.status, WorkflowStatus::Succeeded);
+    assert!(
+        state(&store)
+            .cursors
+            .iter()
+            .all(|cursor| !cursor.is_interrupt_handler()),
+        "a disabled metadata link must never fork a handler cursor"
+    );
+}
+
 /// a region built from kinds the handler allowlist excludes never reaches the runtime at all:
 /// validation is the primary gate, and the reducer re-validates the definition on every drive.
 ///

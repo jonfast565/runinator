@@ -70,6 +70,21 @@ fn fixtures() -> Vec<(WorkflowNodeKind, &'static str)> {
                 wait 30s
             }"#,
         ),
+        // the other end of the same bracket: `interrupt` has no statement syntax of its own, it is
+        // what an `interrupt on` header block lowers its entry to. the fixture is the header, and
+        // the round trip is what proves the entry node survives being rendered back as that header.
+        (
+            WorkflowNodeKind::Interrupt,
+            r#"
+            workflow "Conf Interrupt" v1 {
+                interrupt on wake {
+                    console.run(command: "echo refresh")
+                    resume next
+                }
+
+                wait 30s
+            }"#,
+        ),
         (
             WorkflowNodeKind::Condition,
             r#"

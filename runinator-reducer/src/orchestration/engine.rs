@@ -365,6 +365,7 @@ async fn process_workflow_run_step<T: ReducerStore>(
     tracing::debug!(node_id = %node.id, kind = ?node.kind, "dispatching to node handler");
     let disposition = match &node.kind {
         WorkflowNodeKind::Start => basic::StartHandler.process(&ctx).await?,
+        WorkflowNodeKind::Interrupt => basic::InterruptHandler.process(&ctx).await?,
         WorkflowNodeKind::Action => action::ActionHandler.process(&ctx).await?,
         WorkflowNodeKind::Wait => wait::WaitHandler.process(&ctx).await?,
         WorkflowNodeKind::Condition => basic::ConditionHandler.process(&ctx).await?,

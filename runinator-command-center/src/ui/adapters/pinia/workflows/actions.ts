@@ -109,9 +109,8 @@ export function createWorkflowActions(services: WorkflowServices) {
     openWorkflowInterrupts: services.header.openWorkflowInterrupts,
     openWorkflowWdl: services.header.openWorkflowWdl,
     closeWorkflowHeader: services.header.closeWorkflowHeader,
-    declareHeaderInterrupt: services.header.declareHeaderInterrupt,
     setHeaderInterruptSource: services.header.setHeaderInterruptSource,
-    setHeaderInterruptHandler: services.header.setHeaderInterruptHandler,
+    setHeaderInterruptEnabled: services.header.setHeaderInterruptEnabled,
     removeHeaderInterrupt: services.header.removeHeaderInterrupt,
     scaffoldInterruptHandler: services.header.scaffoldInterruptHandler,
     addHeaderWatch: services.header.addHeaderWatch,
@@ -123,7 +122,6 @@ export function createWorkflowActions(services: WorkflowServices) {
     getHeaderIssues: services.header.getHeaderIssues,
     getInterruptIssues: services.header.getInterruptIssues,
     getDeclarationIssues: services.header.getDeclarationIssues,
-    getHandlerCandidateNodeIds: services.header.getHandlerCandidateNodeIds,
     getRegionNodeIds: services.header.getRegionNodeIds,
     getUndeclaredInterruptSources: services.header.getUndeclaredInterruptSources,
   };

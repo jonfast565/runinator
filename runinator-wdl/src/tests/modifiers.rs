@@ -342,8 +342,27 @@ fn interrupt_region_lowers_to_metadata_and_round_trips() {
     );
     assert_eq!(
         interrupts[0].get("handler").and_then(|h| h.as_str()),
+        Some("__interrupt_0_entry"),
+        "the region's entry is its own interrupt node, not its first statement"
+    );
+    let entry = definition
+        .definition
+        .nodes
+        .iter()
+        .find(|node| node.id == "__interrupt_0_entry")
+        .expect("the entry node is emitted");
+    assert_eq!(
+        entry.kind,
+        runinator_models::workflows::WorkflowNodeKind::Interrupt
+    );
+    assert!(
+        entry.parameters.get("on").is_none(),
+        "the source-to-entry link belongs only to metadata"
+    );
+    assert_eq!(
+        entry.transitions.next.as_ref().map(|next| next.as_str()),
         Some("refresh"),
-        "the region's entry is its first statement"
+        "and hands straight to the block's first statement"
     );
 
     assert_round_trips_unordered(
@@ -358,6 +377,32 @@ fn interrupt_region_lowers_to_metadata_and_round_trips() {
         }
     "#,
     );
+}
+
+#[test]
+fn a_disabled_interrupt_link_round_trips_through_wdl() {
+    let source = r#"
+        workflow "Disabled interrupt" v1 {
+            interrupt on wake disabled {
+                audit action "record wake"
+                resume
+            }
+            wait 30s
+        }
+    "#;
+    let definition = compile(source);
+    assert_eq!(
+        definition
+            .definition
+            .metadata
+            .pointer("/interrupts/0/enabled")
+            .and_then(|value| value.as_bool()),
+        Some(false)
+    );
+
+    let rendered = decompile(&definition).expect("disabled handler decompiles");
+    assert!(rendered.contains("interrupt on wake disabled {"));
+    assert_round_trips_unordered(source);
 }
 
 /// every source the runtime knows must be spellable, lower to its own name, and round-trip. the
@@ -473,8 +518,7 @@ fn a_region_without_an_explicit_resume_gets_a_synthetic_one() {
     );
 }
 
-/// the graph editor's "add interrupt handler" scaffold writes this json directly -- an `audit` entry
-/// wired to a bare `resume`, declared in `metadata.interrupts`.
+/// a legacy graph editor scaffold points metadata directly at an `audit` body and a bare `resume`.
 ///
 /// it never passes through the wdl front end on the way in, but saving decompiles it and the server
 /// recompiles the text, so the shape has to survive that trip. a region the decompiler cannot render
@@ -533,9 +577,29 @@ fn a_scaffolded_interrupt_region_survives_the_save_round_trip() {
         .iter()
         .find(|node| node.id == entry)
         .expect("region entry survives");
+    // the recompiled region is entered at a real `interrupt` node even though the input declared
+    // its handler only in metadata: this is the fallback-to-graph migration, and it is the one
+    // end-to-end proof that a definition written before the entry node existed still round-trips.
     assert_eq!(
         entry_node.kind,
-        runinator_models::workflows::WorkflowNodeKind::Audit
+        runinator_models::workflows::WorkflowNodeKind::Interrupt
+    );
+    assert!(entry_node.parameters.get("on").is_none());
+    let body = entry_node
+        .transitions
+        .next
+        .as_ref()
+        .map(|next| next.as_str().to_string())
+        .expect("the entry hands to the region body");
+    assert_eq!(
+        recompiled
+            .definition
+            .nodes
+            .iter()
+            .find(|node| node.id == body)
+            .map(|node| node.kind.clone()),
+        Some(runinator_models::workflows::WorkflowNodeKind::Audit),
+        "the audit node the scaffold created is now the body rather than the entry"
     );
     assert!(
         recompiled

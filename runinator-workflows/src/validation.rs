@@ -94,7 +94,7 @@ pub fn validate_workflow(
         }
         validate_condition(&node.condition.to_value())?;
         for target in transition_targets(&node.transitions) {
-            validate_node_ref(node, &target, "transition", TargetRule::NonStart, &node_map)?;
+            validate_node_ref(node, &target, "transition", TargetRule::NonEntry, &node_map)?;
         }
         for slot in target_slots(node)? {
             validate_node_ref(node, &slot.target, slot.label, slot.rule, &node_map)?;
@@ -115,7 +115,7 @@ pub fn validate_workflow(
                 node,
                 target,
                 "reentry on_exhausted",
-                TargetRule::NonStart,
+                TargetRule::NonEntry,
                 &node_map,
             )?;
         }
@@ -181,7 +181,8 @@ fn validate_map_concurrency_bodies(nodes: &[WorkflowNode]) -> Result<(), Workflo
             let region_node = node_map
                 .get(region_id.as_str())
                 .ok_or_else(|| not_isolatable(format!("body node '{region_id}' does not exist")))?;
-            if !graph_role(&region_node.kind).runnable_entry {
+            let role = graph_role(&region_node.kind);
+            if !role.runnable_entry || role.entry_point {
                 return Err(not_isolatable(format!(
                     "body node '{region_id}' is a {:?} node",
                     region_node.kind
@@ -251,7 +252,7 @@ pub fn interrupt_region_nodes(
     nodes: &[WorkflowNode],
 ) -> HashSet<String> {
     let mut all = HashSet::new();
-    for declaration in interrupt_declarations(workflow) {
+    for declaration in interrupt_declarations(workflow, nodes) {
         if let Ok(region) = interrupt_region(&declaration.handler, nodes) {
             all.extend(region);
         }
@@ -284,12 +285,28 @@ pub fn interrupt_region_is_supported(entry: &str, nodes: &[WorkflowNode]) -> boo
 ///
 /// an unknown source is not an error: a definition written against a newer binary must still load,
 /// and the runtime simply never matches a source it cannot name. that is the fail-open rule.
-pub fn interrupt_declarations(workflow: &WorkflowDefinition) -> Vec<InterruptDeclaration> {
+///
+/// metadata is the source of truth for the source-to-entry link and its enabled state. the graph
+/// describes the linked region, while normalization wraps metadata-only legacy regions in an
+/// explicit entry node.
+pub fn interrupt_declarations(
+    workflow: &WorkflowDefinition,
+    _nodes: &[WorkflowNode],
+) -> Vec<InterruptDeclaration> {
     workflow
         .definition
         .metadata
         .get("interrupts")
         .and_then(|value| value.decode::<Vec<InterruptDeclaration>>().ok())
+        .unwrap_or_default()
+}
+
+/// [`interrupt_declarations`] for a caller that holds only the definition.
+///
+/// parsing still verifies that malformed or expanded graph data does not hide the declarations.
+pub fn interrupt_declarations_for(workflow: &WorkflowDefinition) -> Vec<InterruptDeclaration> {
+    parse_nodes(workflow)
+        .map(|(_, nodes)| interrupt_declarations(workflow, &nodes))
         .unwrap_or_default()
 }
 
@@ -304,7 +321,20 @@ fn validate_interrupt_handlers(
     start: &str,
     nodes: &[WorkflowNode],
 ) -> Result<(), WorkflowValidationError> {
-    let declarations = interrupt_declarations(workflow);
+    let declarations = interrupt_declarations(workflow, nodes);
+    let linked_entries: HashSet<&str> = declarations
+        .iter()
+        .map(|declaration| declaration.handler.as_str())
+        .collect();
+    if let Some(unlinked) = nodes.iter().find(|node| {
+        node.kind == WorkflowNodeKind::Interrupt && !linked_entries.contains(node.id.as_str())
+    }) {
+        return Err(WorkflowValidationError::InterruptHandlerNotIsolatable {
+            handler: unlinked.id.as_str().to_string(),
+            on: String::new(),
+            reason: "interrupt entry is not linked by metadata".into(),
+        });
+    }
     if declarations.is_empty() {
         return Ok(());
     }

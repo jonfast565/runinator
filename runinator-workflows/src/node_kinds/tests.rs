@@ -10,7 +10,7 @@ use runinator_models::catalog_metadata::{EdgeTaxonomy, LocationBase, NodeEdgeSlo
 use runinator_models::value::{Map, Value};
 use runinator_models::workflows::{WorkflowNode, WorkflowNodeKind};
 
-use super::{spec_for, target_slots};
+use super::{TargetRule, spec_for, target_slots};
 
 /// control edge slots whose elements carry more than a bare node reference, with the shape the
 /// seeder should write. the catalog describes *where* a slot's targets live but not what rides
@@ -288,6 +288,31 @@ fn only_the_graph_endpoints_are_unrunnable() {
             spec_for(&kind).graph_role().runnable_entry,
             expected,
             "{kind:?} has the wrong runnable_entry role"
+        );
+    }
+}
+
+/// only `start` and `interrupt` are entry points, and no edge may target either.
+///
+/// pinned separately from `runnable_entry` because the two disagree on exactly one kind:
+/// `interrupt` is a legal region entry *and* unreachable by any edge. that pairing is the whole
+/// reason the flags came apart, so a kind quietly acquiring one without the other is a bug.
+#[test]
+fn only_the_run_and_handler_entries_are_entry_points() {
+    for kind in WorkflowNodeKind::ALL {
+        let expected = matches!(kind, WorkflowNodeKind::Start | WorkflowNodeKind::Interrupt);
+        let role = spec_for(&kind).graph_role();
+        assert_eq!(
+            role.entry_point, expected,
+            "{kind:?} has the wrong entry_point role"
+        );
+        assert!(
+            !role.entry_point || !TargetRule::NonEntry.accepts(&kind),
+            "{kind:?} is an entry point, so a transition must not be able to target it"
+        );
+        assert!(
+            !role.entry_point || !TargetRule::RunnableEntry.accepts(&kind),
+            "{kind:?} is an entry point, so a body or branch must not be able to target it"
         );
     }
 }

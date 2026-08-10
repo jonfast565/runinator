@@ -37,12 +37,12 @@ impl NodeKindSpec for Switch {
         let mut slots: Vec<TargetSlot> = params
             .cases
             .into_iter()
-            .map(|case| TargetSlot::non_start("cases", "switch case target", case.target))
+            .map(|case| TargetSlot::non_entry("cases", "switch case target", case.target))
             .collect();
         slots.extend(
             params
                 .default
-                .map(|target| TargetSlot::non_start("default", "switch default target", target)),
+                .map(|target| TargetSlot::non_entry("default", "switch default target", target)),
         );
         Ok(slots)
     }

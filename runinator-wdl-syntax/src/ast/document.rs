@@ -327,6 +327,7 @@ pub struct InterruptDecl {
     /// the author-facing source name (`wake`). kept as a string so a source this binary does not
     /// know is a lowering-time diagnostic rather than a parse failure.
     pub source: String,
+    pub enabled: bool,
     pub body: Block,
 }
 

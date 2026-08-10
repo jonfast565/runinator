@@ -41,6 +41,24 @@ fn refresh_region() -> Vec<runinator_models::value::Value> {
     ]
 }
 
+/// the same region with an explicit, source-neutral structural entry.
+fn graph_declared_region() -> Vec<runinator_models::value::Value> {
+    let mut nodes = vec![runinator_models::json!({
+        "id": "on_wake", "kind": "interrupt",
+        "transitions": { "next": { "$node": "refresh" } }
+    })];
+    nodes.extend(refresh_region());
+    nodes
+}
+
+fn declarations_of(workflow: &WorkflowDefinition) -> Vec<(String, String)> {
+    let (_, nodes) = parse_nodes(workflow).expect("the fixture parses");
+    interrupt_declarations(workflow, &nodes)
+        .into_iter()
+        .map(|declaration| (declaration.on, declaration.handler))
+        .collect()
+}
+
 fn expect_region_error(workflow: &WorkflowDefinition) -> String {
     match validate_workflow(workflow) {
         Err(WorkflowValidationError::InterruptHandlerNotIsolatable { reason, .. }) => reason,
@@ -55,6 +73,144 @@ fn a_well_formed_handler_region_validates() {
         refresh_region(),
     );
     validate_workflow(&workflow).expect("an isolated handler region is valid");
+}
+
+/// metadata links a source to an explicit graph entry.
+#[test]
+fn a_region_declared_by_its_entry_node_validates() {
+    let workflow = with_handler(
+        runinator_models::json!([{ "on": "wake", "handler": "on_wake" }]),
+        graph_declared_region(),
+    );
+    validate_workflow(&workflow).expect("a metadata-linked graph region is valid");
+    assert_eq!(
+        declarations_of(&workflow),
+        vec![("wake".to_string(), "on_wake".to_string())]
+    );
+}
+
+/// metadata owns the source and enabled state for a graph region.
+#[test]
+fn metadata_controls_the_graph_region_link() {
+    let workflow = with_handler(
+        runinator_models::json!([{ "on": "timeout", "handler": "on_wake", "enabled": false }]),
+        graph_declared_region(),
+    );
+    validate_workflow(&workflow).expect("a disabled metadata link still validates its region");
+    assert_eq!(
+        declarations_of(&workflow),
+        vec![("timeout".to_string(), "on_wake".to_string())]
+    );
+}
+
+/// a definition written before the entry node existed still declares its handler through metadata.
+#[test]
+fn metadata_still_declares_a_handler_when_the_graph_does_not() {
+    let workflow = with_handler(
+        runinator_models::json!([{ "on": "wake", "handler": "refresh" }]),
+        refresh_region(),
+    );
+    assert_eq!(
+        declarations_of(&workflow),
+        vec![("wake".to_string(), "refresh".to_string())]
+    );
+}
+
+/// an interrupt entry is an entry point, so no ordinary transition may route into it.
+#[test]
+fn a_transition_into_an_interrupt_node_is_rejected() {
+    let mut nodes = graph_declared_region();
+    nodes.push(runinator_models::json!({
+        "id": "stray", "kind": "audit", "parameters": { "action": "x" },
+        "transitions": { "next": { "$node": "on_wake" } }
+    }));
+    let workflow = with_handler(runinator_models::json!([]), nodes);
+    match validate_workflow(&workflow) {
+        Err(WorkflowValidationError::InvalidNodeReferenceType { target, .. }) => {
+            assert_eq!(target, "on_wake");
+        }
+        other => panic!("expected a reference-type error, got {other:?}"),
+    }
+}
+
+/// nor may a body or branch target one — the rule `runnable_entry` alone would have let through.
+#[test]
+fn a_map_body_targeting_an_interrupt_node_is_rejected() {
+    let mut nodes = graph_declared_region();
+    nodes.push(runinator_models::json!({
+        "id": "fan", "kind": "map",
+        "parameters": { "items": [], "target": { "$node": "on_wake" }, "concurrency": 2 },
+        "transitions": { "next": { "$node": "end" } }
+    }));
+    let workflow = with_handler(runinator_models::json!([]), nodes);
+    match validate_workflow(&workflow) {
+        Err(WorkflowValidationError::InvalidNodeReferenceType { target, .. }) => {
+            assert_eq!(target, "on_wake");
+        }
+        other => panic!("expected a reference-type error, got {other:?}"),
+    }
+}
+
+/// an unknown source stays fail-open: it loads, and the runtime simply never matches it.
+///
+#[test]
+fn an_unknown_interrupt_source_still_validates() {
+    let workflow = with_handler(
+        runinator_models::json!([{ "on": "from_a_newer_binary", "handler": "on_wake" }]),
+        graph_declared_region(),
+    );
+    validate_workflow(&workflow).expect("an unknown source must not fail the whole definition");
+}
+
+/// an interrupt entry with no metadata link is malformed.
+#[test]
+fn an_unlinked_interrupt_entry_is_rejected() {
+    let workflow = with_handler(runinator_models::json!([]), graph_declared_region());
+    assert!(expect_region_error(&workflow).contains("not linked by metadata"));
+}
+
+/// metadata links are preserved, and legacy body links are migrated to explicit entries.
+#[test]
+fn normalization_preserves_metadata_and_materializes_legacy_entries() {
+    let workflow = with_handler(
+        runinator_models::json!([{ "on": "timeout", "handler": "on_wake", "enabled": false }]),
+        graph_declared_region(),
+    );
+    let normalized = normalize_workflow(&workflow);
+    assert_eq!(
+        normalized.definition.metadata.get("interrupts"),
+        Some(&runinator_models::json!([{
+            "on": "timeout", "handler": "on_wake", "enabled": false
+        }])),
+        "metadata remains the source of the link and enabled state"
+    );
+
+    let legacy = with_handler(
+        runinator_models::json!([{ "on": "wake", "handler": "refresh" }]),
+        refresh_region(),
+    );
+    let normalized = normalize_workflow(&legacy);
+    assert_eq!(
+        declarations_of(&normalized),
+        vec![("wake".into(), "__interrupt_0_entry".into())],
+        "metadata-only declarations gain a graph-visible entry"
+    );
+    validate_workflow(&normalized).expect("the migrated legacy region remains valid");
+}
+
+/// the save path normalizes before it validates, so the region must survive normalization.
+///
+/// this is the shape that used to break: a `resume` carries no success transition, so
+/// `route_success_terminals_to_end` wired it to `end`, which dragged a node that is not
+/// `handler_safe` into the region. validating the raw definition never saw it.
+#[test]
+fn a_handler_region_survives_normalization() {
+    let workflow = with_handler(
+        runinator_models::json!([{ "on": "wake", "handler": "refresh" }]),
+        refresh_region(),
+    );
+    let normalized = normalize_workflow(&workflow);
+    validate_workflow(&normalized).expect("an isolated handler region survives normalization");
 }
 
 #[test]
@@ -247,6 +403,8 @@ fn the_handler_allowlist_is_opt_in_and_excludes_parking_and_forking_kinds() {
         WorkflowNodeKind::Output,
         WorkflowNodeKind::Config,
         WorkflowNodeKind::Resume,
+        // the region's own entry node is a member of the region the walk collects.
+        WorkflowNodeKind::Interrupt,
     ] {
         assert!(
             graph_role(&allowed).handler_safe,
