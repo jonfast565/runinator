@@ -6,6 +6,9 @@ use runinator_db_cli::{DatabaseBackend, dispatch_database};
 use runinator_models::errors::SendableError;
 use tracing::{error, info};
 
+mod service;
+use service::BootstrapService;
+
 #[derive(Parser, Debug)]
 #[command(
     name = "runinator-bootstrap",
@@ -59,6 +62,10 @@ struct Cli {
 
 #[tokio::main]
 async fn main() -> ExitCode {
+    BootstrapService::new().run().await
+}
+
+async fn run_process() -> ExitCode {
     // shares the same RUNINATOR_LOG-driven tracing pipeline as ws/worker/waker/archiver. the guard is
     // dropped immediately after startup since this is a one-shot job with no otel signals to flush.
     if let Err(err) = runinator_utilities::startup::startup("Runinator Bootstrap") {

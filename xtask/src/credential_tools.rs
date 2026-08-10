@@ -42,7 +42,7 @@ fn build_keychain_export(workspace_root: &Path) {
 // stably codesigns the keychain helper so the login-keychain "always allow" grant
 // survives rebuilds. adhoc/linker-signed binaries get a fresh code identity on each
 // build, which re-triggers the macos keychain prompt. opt-in: set
-// RUNINATOR_KEYCHAIN_CODESIGN_IDENTITY to a code-signing identity in your keychain.
+// runinator_keychain_codesign_identity to a code-signing identity in your keychain.
 fn codesign_keychain_export(swift_dir: &Path) {
     let Ok(identity) = std::env::var("RUNINATOR_KEYCHAIN_CODESIGN_IDENTITY") else {
         return;

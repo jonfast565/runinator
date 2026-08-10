@@ -537,7 +537,7 @@ async fn duplicate_delivery_of_in_flight_node_run_is_acked_without_executing() {
 
 #[tokio::test]
 async fn own_stale_leases_match_only_at_or_past_the_recorded_attempt() {
-    let leases = crate::worker::OwnStaleLeases::default();
+    let leases = crate::lease::OwnStaleLeases::default();
     let node_run_id = uuid::Uuid::new_v4();
     leases.record(node_run_id, 2).await;
     // an older attempt must never take the lease back (it was superseded).

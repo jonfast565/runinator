@@ -71,3 +71,7 @@ export function asJsonValue(value: unknown): JsonValue {
 export function asJsonRecord(value: unknown): JsonRecord {
   return isJsonRecord(value) ? value : {};
 }
+
+export function jsonRecordArray(value: unknown): JsonRecord[] {
+  return Array.isArray(value) ? value.filter(isJsonRecord) : [];
+}

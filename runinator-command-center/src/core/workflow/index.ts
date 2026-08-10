@@ -21,7 +21,6 @@ import type {
   WorkflowRunDetail,
   RunSummary,
   ProviderMetadata,
-  ActionResultMetadata,
 } from "../domain/models";
 import { asJsonRecord, asJsonValue } from "../domain/json";
 import { isJsonRecord } from "../domain/json";
@@ -34,13 +33,28 @@ import {
 import type { IconName } from "../domain/icons";
 import type { GraphEdgeLike, GraphEdgeModel, GraphNodeModel } from "./graph-model";
 import { statusClassForNode } from "../utils/status";
-import { displayValue, isBlankValue } from "../utils/values";
+import { displayValue } from "../utils/values";
 import { addableNodeKinds, findNodeKindMetadata } from "./catalog-registry";
 import { headerIssues } from "./header-validation";
 import { interruptRegionOrigins } from "./interrupt-regions";
 import { directTransitionKeys, nodeRefId } from "./node-refs";
 export { directTransitionKeys, nodeRefId } from "./node-refs";
 import { cloneTemplate, getAtLocation } from "./field-location";
+import {
+  approvalPrompt,
+  inputPrompt,
+  isEmptyInputValue,
+  nodeDisplayName,
+  nodeSummary,
+  workflowNodeActionConfig,
+  workflowNodeActionInputs,
+  workflowNodeKind,
+} from "./node-presentation";
+export {
+  workflowNodeActionConfig,
+  workflowNodeActionInputs,
+  workflowNodeResultMetadata,
+} from "./node-presentation";
 
 export {
   addableNodeKinds,
@@ -2710,186 +2724,6 @@ export function optionIdForSourceHandle(handleId?: string | null): string | null
   return typeof handleId === "string" && handleId.startsWith("source:")
     ? handleId.slice("source:".length).replace(/\./g, ":")
     : null;
-}
-
-function workflowNodeKind(value: unknown): WorkflowNodeKind {
-  return typeof value === "string" &&
-    ["start", ...workflowNodeKindsList(), "end", "fail"].includes(value)
-    ? (value as WorkflowNodeKind)
-    : "action";
-}
-
-export function workflowNodeActionConfig(node: JsonRecord): { provider: string; action: string } {
-  const action = isRecord(node.action) ? node.action : {};
-  return {
-    provider: displayValue(action.provider),
-    action: displayValue(action.function),
-  };
-}
-
-// effective action inputs, mirroring the runtime merge of action.configuration (base) with node.parameters (override).
-export function workflowNodeActionInputs(node: JsonRecord): JsonRecord {
-  const action = isRecord(node.action) ? node.action : null;
-  const configuration = action && isRecord(action.configuration) ? action.configuration : {};
-  const parameters = isRecord(node.parameters) ? node.parameters : {};
-  return { ...configuration, ...parameters };
-}
-
-// a value sourced from another node/input counts as provided even before it resolves.
-function isExpressionValue(value: unknown): boolean {
-  if (!isRecord(value)) {
-    return false;
-  }
-
-  return [
-    "$ref",
-    "$concat",
-    "$coalesce",
-    "$literal",
-    "$to_string",
-    "$to_json_string",
-    "$node",
-  ].some((key) => key in value);
-}
-
-function isEmptyInputValue(value: unknown): boolean {
-  if (isExpressionValue(value)) {
-    return false;
-  }
-
-  return isBlankValue(value);
-}
-
-export function workflowNodeResultMetadata(
-  node: JsonRecord,
-  providers: ProviderMetadata[],
-): ActionResultMetadata[] {
-  const config = workflowNodeActionConfig(node);
-
-  if (!config.provider || !config.action) {
-    return [];
-  }
-
-  const provider = providers.find((item) => item.name === config.provider);
-  const action = provider?.actions.find((item) => item.function_name === config.action);
-  return action?.results ?? [];
-}
-
-// the title shown on the node, falling back to the id when no custom name is set.
-function nodeDisplayName(node: JsonRecord, id: string): string {
-  const name = typeof node.name === "string" ? node.name.trim() : "";
-  return name || id;
-}
-
-// renders any value (string, ref, expression, object) into a short human-readable label.
-function describeValue(value: unknown): string {
-  if (value === null || value === undefined) {
-    return "";
-  }
-
-  if (typeof value === "string") {
-    return value;
-  }
-
-  if (typeof value === "number" || typeof value === "boolean") {
-    return String(value);
-  }
-
-  if (isRecord(value)) {
-    if (typeof value.$node === "string") {
-      return `→ ${value.$node}`;
-    }
-
-    if (isRecord(value.$ref)) {
-      const [source, path] = Object.entries(value.$ref)[0] ?? [];
-      const segments = Array.isArray(path) ? path.join(".") : "";
-      return `\${${source}${segments ? `.${segments}` : ""}}`;
-    }
-
-    if ("$value" in value) {
-      return describeValue(value.$value);
-    }
-  }
-
-  if (Array.isArray(value)) {
-    return value.length === 0
-      ? "[]"
-      : `[${String(value.length)} item${value.length === 1 ? "" : "s"}]`;
-  }
-
-  try {
-    const json = JSON.stringify(value);
-    return json.length > 60 ? `${json.slice(0, 57)}…` : json;
-  } catch {
-    return "…";
-  }
-}
-
-// each node kind renders a concise, never-"[object Object]" description of its activity.
-function nodeSummary(node: JsonRecord, subflowNames?: Map<string, string>): string {
-  const kind = workflowNodeKind(node.kind);
-
-  if (kind === "action") {
-    const config = workflowNodeActionConfig(node);
-
-    if (!config.provider) {
-      return "Unconfigured action";
-    }
-
-    return config.action ? `${config.provider}.${config.action}` : config.provider;
-  }
-
-  if (kind === "subflow") {
-    const subflowId = node.subflow_id != null ? displayValue(node.subflow_id) : "";
-    return subflowNames?.get(subflowId) ?? `Workflow ${subflowId || "-"}`;
-  }
-
-  if (kind === "start") {
-    return "Start";
-  }
-
-  if (kind === "end") {
-    return "Success";
-  }
-
-  if (kind === "fail") {
-    return "Workflow failure";
-  }
-
-  const metadata = findNodeKindMetadata(kind);
-  const fields = metadata?.fields
-    .map((field) => describeValue(getAtLocation(node, field.location)))
-    .filter(Boolean)
-    .slice(0, 3);
-
-  if (fields?.length) {
-    return fields.join(" · ");
-  }
-
-  return metadata?.label ?? kind;
-}
-
-function approvalPrompt(node: JsonRecord, state?: JsonRecord): string | undefined {
-  if (workflowNodeKind(node.kind) !== "approval") {
-    return undefined;
-  }
-
-  return (
-    describeValue(
-      state?.prompt ?? asRecord(state?.approval).prompt ?? asRecord(node.parameters).prompt,
-    ) || "Approval required"
-  );
-}
-
-function inputPrompt(node: JsonRecord, state?: JsonRecord): string | undefined {
-  if (workflowNodeKind(node.kind) !== "input") {
-    return undefined;
-  }
-
-  return (
-    describeValue(asRecord(state?.input).prompt ?? asRecord(node.parameters).prompt) ||
-    "Input required"
-  );
 }
 
 function firstAvailableTransition(node: JsonRecord): WorkflowDirectTransitionKey {

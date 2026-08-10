@@ -349,14 +349,14 @@ pub fn value_mysql(row: &MySqlRow, idx: usize, native: &str) -> Value {
         "BLOB" | "BINARY" | "VARBINARY" | "TINYBLOB" | "MEDIUMBLOB" | "LONGBLOB" => {
             decode_mysql_blob(row, idx)
         }
-        // BIT arrives as a big-endian byte string. sqlx will hand it over as `bool`, which the
+        // bit arrives as a big-endian byte string. sqlx will hand it over as `bool`, which the
         // fallback chain below would happily take, flattening `bit(8)` = 170 to `true`. u64 covers
         // every width mysql allows.
         "BIT" => {
             try_decode!(row, idx, u64, |v: u64| Value::Number(v.into()));
             Value::Null
         }
-        // YEAR decodes into none of the types the fallback chain tries, so without an arm it
+        // year decodes into none of the types the fallback chain tries, so without an arm it
         // renders as `<unsupported:YEAR>`.
         "YEAR" => {
             try_decode!(row, idx, u16, |v: u16| Value::Number(v.into()));

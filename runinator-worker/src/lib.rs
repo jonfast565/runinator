@@ -8,6 +8,7 @@ pub mod errors;
 pub mod events;
 pub mod executor;
 pub mod idempotency;
+mod lease;
 pub mod metrics;
 pub mod output_sink;
 pub mod provider_repository;

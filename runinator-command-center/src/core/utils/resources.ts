@@ -1,5 +1,5 @@
 import type { JsonRecord } from "../domain/models";
-import { asRecord } from "../workflow/index";
+import { asJsonRecord } from "../domain/json";
 import { displayValue } from "./values";
 
 export function genericRecordType(record: JsonRecord, endpoint: string): string {
@@ -33,7 +33,7 @@ export function genericRecordSummary(record: JsonRecord): string {
     return `${displayValue(title)} ${displayValue(url)}`.trim();
   }
 
-  const metadata = asRecord(record.metadata);
+  const metadata = asJsonRecord(record.metadata);
   return displayValue(
     record.title ??
       record.prompt ??

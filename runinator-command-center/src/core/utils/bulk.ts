@@ -25,8 +25,8 @@ function messageFor(error: unknown): string {
   return String(error);
 }
 
-/// run `operation` over every item with bounded concurrency, collecting rather than propagating
-/// failures. never rejects: a caller wants the partial outcome, not the first error.
+// run `operation` over every item with bounded concurrency, collecting rather than propagating
+// failures. never rejects: a caller wants the partial outcome, not the first error.
 export async function runBulk<T>(
   items: readonly T[],
   operation: (item: T) => Promise<unknown>,
@@ -62,8 +62,8 @@ export async function runBulk<T>(
   return { succeeded, failed, allFailed: items.length > 0 && succeeded.length === 0 };
 }
 
-/// one-line outcome for a status/toast line, e.g. "Disabled 8 of 10 workflows (2 failed: ...)".
-/// `verb` is past tense. callers pick the tone from `result.allFailed` rather than from this text.
+// one-line outcome for a status/toast line, e.g. "Disabled 8 of 10 workflows (2 failed: ...)".
+// `verb` is past tense. callers pick the tone from `result.allFailed` rather than from this text.
 export function describeBulkResult<T>(result: BulkResult<T>, verb: string, noun: string): string {
   const total = result.succeeded.length + result.failed.length;
   const plural = total === 1 ? noun : `${noun}s`;

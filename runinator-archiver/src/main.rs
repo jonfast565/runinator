@@ -1,5 +1,6 @@
 mod config;
 mod errors;
+mod service;
 #[cfg(test)]
 mod tests;
 
@@ -35,13 +36,18 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::config::{Cli, Config};
+use service::ArchiverService;
 
 const ARCHIVE_FILE_EXTENSION: &str = "jsonl.gz";
 
 #[tokio::main]
 async fn main() -> ExitCode {
+    ArchiverService::new().run().await
+}
+
+async fn run_process() -> ExitCode {
     // held for the process lifetime so otel signals flush on shutdown. shares the same
-    // RUNINATOR_LOG-driven tracing/file/otel pipeline as ws/worker/waker.
+    // runinator_log-driven tracing/file/otel pipeline as ws/worker/waker.
     let _telemetry = match runinator_utilities::startup::startup("Runinator Archiver") {
         Ok(guard) => guard,
         Err(err) => {

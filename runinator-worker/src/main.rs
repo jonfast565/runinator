@@ -17,6 +17,9 @@ use runinator_worker::{
     load_libraries, parse_config, start_worker_loop,
 };
 
+mod service;
+use service::WorkerService;
+
 #[cfg(test)]
 mod main_tests;
 
@@ -30,6 +33,10 @@ fn spawn_liveness(config: &Config, shutdown: Arc<Notify>) -> Option<tokio::task:
 }
 
 fn main() -> Result<(), SendableError> {
+    WorkerService::new().run()
+}
+
+fn run_process() -> Result<(), SendableError> {
     // held for the process lifetime so otel signals flush on shutdown.
     let _telemetry = startup::startup("Runinator Worker")?;
 

@@ -4,9 +4,9 @@ export interface PointerResult {
   error?: string;
 }
 
-/// Resolve a JSON pointer (RFC 6901) or dotted/bracketed path against a value.
-/// Accepts "/foo/bar", "foo.bar", "foo[0].bar". Returns { exists: false } when
-/// any segment is missing; never throws.
+// Resolve a JSON pointer (RFC 6901) or dotted/bracketed path against a value.
+// Accepts "/foo/bar", "foo.bar", "foo[0].bar". Returns { exists: false } when
+// any segment is missing; never throws.
 export function evaluatePointer(input: unknown, pointer: string): PointerResult {
   const trimmed = pointer.trim();
 

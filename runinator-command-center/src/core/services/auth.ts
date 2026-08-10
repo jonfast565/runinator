@@ -218,8 +218,8 @@ export function createAuthService() {
       persist(access, refreshToken);
       await publishAccessToken(access);
     },
-    /// re-hydrate the principal (and its capabilities) under the current token. called after an org
-    /// switch, where the token — and therefore the org-derived capability set — changes.
+    // re-hydrate the principal (and its capabilities) under the current token. called after an org
+    // switch, where the token — and therefore the org-derived capability set — changes.
     async reloadMe() {
       if (!store.getState().required) {
         return;

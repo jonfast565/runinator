@@ -124,7 +124,7 @@ pub struct PipelineTriggerSpec {
     pub configuration: Value,
 }
 
-// PipelineDefaults derives Clone but not PartialEq; PipelineSpec's PartialEq needs it.
+// pipelinedefaults derives clone but not partialeq; pipelinespec's partialeq needs it.
 impl PartialEq for PipelineDefaults {
     fn eq(&self, other: &Self) -> bool {
         self.on_step_failure == other.on_step_failure

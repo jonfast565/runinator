@@ -84,7 +84,7 @@ mod imp {
             let request_id = Uuid::new_v4();
             let (response_tx, response_rx) = oneshot::channel();
             handle.pending.lock().insert(request_id, response_tx);
-            // RAII: if this future is dropped before a reply arrives (e.g. a `tokio::select!` losing
+            // raii: if this future is dropped before a reply arrives (e.g. a `tokio::select!` losing
             // a race), remove our own entry so it doesn't sit in the map forever.
             let _cleanup = PendingCleanup {
                 pending: handle.pending.clone(),

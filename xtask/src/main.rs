@@ -9,11 +9,13 @@ mod k8s;
 mod local;
 mod paths;
 mod platform;
+mod service;
 
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use runinator_db_cli::DatabaseBackend;
+use service::XtaskService;
 
 #[derive(Parser)]
 #[command(name = "xtask", about = "Runinator workspace build and deploy tasks")]
@@ -142,6 +144,10 @@ struct K8sDeleteArgs {
 }
 
 fn main() -> anyhow::Result<()> {
+    XtaskService::new().run()
+}
+
+fn run_process() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let workspace_root = paths::workspace_root();
 

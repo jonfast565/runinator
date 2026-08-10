@@ -25,8 +25,15 @@ use runinator_waker::{
     waker_loop,
 };
 
+mod service;
+use service::WakerService;
+
 #[tokio::main]
 async fn main() -> Result<(), SendableError> {
+    WakerService::new().run().await
+}
+
+async fn run_process() -> Result<(), SendableError> {
     // held for the process lifetime so otel signals flush on shutdown.
     let _telemetry = startup::startup("Runinator Waker")?;
 

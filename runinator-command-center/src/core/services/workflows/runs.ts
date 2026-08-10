@@ -31,6 +31,7 @@ import type {
   RunSummary,
   WorkflowRunDetail,
 } from "../../domain/models";
+import { asJsonRecord, isJsonRecord, jsonRecordArray } from "../../domain/json";
 
 import { coerceRunCursors, isCursorPaused } from "../../domain/models/workflow-state";
 import { coerceDebugFrame } from "../../domain/models/workflow-state";
@@ -39,13 +40,13 @@ import { describeBulkResult, runBulk } from "../../utils/bulk";
 import { mergeById } from "../../utils/merge";
 import { isActiveRunStatus } from "../../utils/status";
 
-import { asArray, asRecord, isRecord, nodeRef, nodeRefId } from "../../workflow/index";
+import { nodeRef, nodeRefId } from "../../workflow/index";
 
 import { buildInputSkeleton } from "../../workflow/editor-defaults";
 import type { WorkflowServiceHost } from "./host";
+import { createWorkflowRunWatchService } from "./run-watches";
 
 const MAX_OPEN_RUN_TABS = 8;
-const WATCH_STORAGE_PREFIX = "runinator.watch.";
 const RECENT_RUNS_REFRESH_DEBOUNCE_MS = 300;
 // worker status/chunk events often arrive in bursts; coalesce detail refetches so the UI tracks the
 // latest node status without stampeding /workflow_runs/:id on every broker result.
@@ -53,6 +54,10 @@ const WORKFLOW_RUN_DETAIL_REFRESH_DEBOUNCE_MS = 75;
 
 export function createWorkflowRunService(host: WorkflowServiceHost) {
   const { internal } = host;
+  const watchService = createWorkflowRunWatchService(host);
+  const asRecord = asJsonRecord;
+  const isRecord = isJsonRecord;
+  const asArray = jsonRecordArray;
 
   function isBreakpointed(nodeId: string): boolean {
     return host.getCurrentBreakpoints().includes(nodeId);
@@ -557,91 +562,6 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
       await fetchWorkflowRunDetail(runId, true);
     }
 
-    host.notify();
-  }
-
-  function loadAllWatchExpressions(): Record<string, string[]> {
-    const storage = typeof window !== "undefined" ? window.localStorage : undefined;
-
-    if (!storage) {
-      return {};
-    }
-
-    const result: Record<string, string[]> = {};
-
-    for (let i = 0; i < storage.length; i++) {
-      const key = storage.key(i);
-
-      if (!key?.startsWith(WATCH_STORAGE_PREFIX)) {
-        continue;
-      }
-
-      const id = key.slice(WATCH_STORAGE_PREFIX.length);
-
-      if (!id) {
-        continue;
-      }
-
-      try {
-        const parsed: unknown = JSON.parse(storage.getItem(key) ?? "[]");
-
-        if (Array.isArray(parsed)) {
-          result[id] = parsed.filter((v): v is string => typeof v === "string");
-        }
-      } catch {
-        // ignore
-      }
-    }
-
-    return result;
-  }
-
-  function persistWatchExpressions(workflowId: string, list: string[]) {
-    const storage = typeof window !== "undefined" ? window.localStorage : undefined;
-
-    if (!storage) {
-      return;
-    }
-
-    storage.setItem(`${WATCH_STORAGE_PREFIX}${workflowId}`, JSON.stringify(list));
-  }
-
-  function addWatchExpression(expression: string) {
-    const workflowId = host.getWorkflowRunWorkflow()?.id;
-
-    if (!workflowId || !expression.trim()) {
-      return;
-    }
-
-    const existing = host.state.watchExpressionsByWorkflowId[workflowId] ?? [];
-
-    if (existing.includes(expression)) {
-      return;
-    }
-
-    const next = [...existing, expression];
-    host.state.watchExpressionsByWorkflowId = {
-      ...host.state.watchExpressionsByWorkflowId,
-      [workflowId]: next,
-    };
-    persistWatchExpressions(workflowId, next);
-    host.notify();
-  }
-
-  function removeWatchExpression(expression: string) {
-    const workflowId = host.getWorkflowRunWorkflow()?.id;
-
-    if (!workflowId) {
-      return;
-    }
-
-    const existing = host.state.watchExpressionsByWorkflowId[workflowId] ?? [];
-    const next = existing.filter((e) => e !== expression);
-    host.state.watchExpressionsByWorkflowId = {
-      ...host.state.watchExpressionsByWorkflowId,
-      [workflowId]: next,
-    };
-    persistWatchExpressions(workflowId, next);
     host.notify();
   }
 
@@ -1176,8 +1096,8 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     host.notify();
   }
 
-  /// cancel many runs. terminal runs are dropped rather than sent — cancelling a finished run is a
-  /// guaranteed failure that would only pollute the outcome.
+  // cancel many runs. terminal runs are dropped rather than sent — cancelling a finished run is a
+  // guaranteed failure that would only pollute the outcome.
   async function cancelWorkflowRuns(runs: RunSummary[]) {
     const cancellable = runs.filter((run) => isActiveRunStatus(run.status));
 
@@ -1222,10 +1142,10 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     host.notify();
   }
 
-  /// replay many runs, each starting a fresh run from the beginning.
-  ///
-  /// deliberately offers no retry affordance: a replay creates a run, and a failure that surfaced
-  /// after the run was created would double-start it on retry. the user re-selects instead.
+  // replay many runs, each starting a fresh run from the beginning.
+  //
+  // deliberately offers no retry affordance: a replay creates a run, and a failure that surfaced
+  // after the run was created would double-start it on retry. the user re-selects instead.
   async function replayWorkflowRuns(runs: RunSummary[]) {
     if (!runs.length) {
       return;
@@ -1263,6 +1183,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
   }
 
   return {
+    ...watchService,
     isBreakpointed,
     getTransition,
     setTransition,
@@ -1290,10 +1211,6 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     renameSelectedWorkflowRun,
     cancelWorkflowRuns,
     replayWorkflowRuns,
-    loadAllWatchExpressions,
-    persistWatchExpressions,
-    addWatchExpression,
-    removeWatchExpression,
     fetchWorkflowRunsForSelected,
     fetchRecentWorkflowRuns,
     scheduleRecentWorkflowRunsRefresh,

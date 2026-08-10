@@ -44,7 +44,7 @@ import { useWorkflowsStore } from "../../adapters/pinia/workflows";
 import { useProvidersStore } from "../../adapters/pinia/providers";
 import { pretty } from "../../../core/utils/format";
 import { parseRequiredObject } from "../../../core/utils/json";
-import { asArray, isRecord } from "../../../core/workflow";
+import { isJsonRecord as isRecord, jsonRecordArray as asArray } from "../../../core/domain/json";
 import { workflowInputType } from "../../../core/domain/models";
 import { buildSampleContext } from "../../../core/utils/workflow-references";
 import { displayValue } from "../../../core/utils/values";

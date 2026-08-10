@@ -577,8 +577,8 @@ export function createWorkflowCatalogService(
     });
   }
 
-  /// enable or disable many workflows. each is a full upsert of the stored definition with only
-  /// `enabled` changed, so a workflow the caller cannot edit fails on its own without blocking the rest.
+  // enable or disable many workflows. each is a full upsert of the stored definition with only
+  // `enabled` changed, so a workflow the caller cannot edit fails on its own without blocking the rest.
   async function setWorkflowsEnabled(workflows: WorkflowDefinition[], enabled: boolean) {
     if (!workflows.length) {
       return;
@@ -605,7 +605,7 @@ export function createWorkflowCatalogService(
     host.notify();
   }
 
-  /// delete many workflows, taking the same confirmation the single-workflow delete does.
+  // delete many workflows, taking the same confirmation the single-workflow delete does.
   async function deleteWorkflows(
     workflows: WorkflowDefinition[],
     options?: { confirmed?: boolean },

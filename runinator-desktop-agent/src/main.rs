@@ -13,12 +13,17 @@ mod gui;
 mod launcher;
 mod logging;
 mod notify;
+mod service;
 mod single_instance;
 mod tray;
 
 use std::sync::{Arc, Mutex};
 
 fn main() -> eframe::Result<()> {
+    service::DesktopAgentService::new().run()
+}
+
+fn run_process() -> eframe::Result<()> {
     // ensure only one desktop agent runs at a time: two copies would both register the exclusive
     // `desktop` replica and contend for the same pinned/labeled work. a second launch surfaces a
     // dialog and exits instead of starting a rival worker loop.

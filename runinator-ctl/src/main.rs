@@ -4,13 +4,19 @@ mod cli;
 mod commands;
 mod output;
 mod params;
+mod service;
 
 use clap::Parser;
 
 use crate::cli::{Cli, Commands, WorkflowCommands};
+use service::CtlService;
 
 #[tokio::main]
 async fn main() -> commands::Result<()> {
+    CtlService::new().run().await
+}
+
+async fn run_process() -> commands::Result<()> {
     let cli = Cli::parse();
     // skip the banner in json mode to keep machine-readable output clean.
     if !cli.json {

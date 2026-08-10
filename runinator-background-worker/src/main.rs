@@ -9,6 +9,7 @@
 //! coordination.
 
 mod config;
+mod service;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -36,11 +37,16 @@ use uuid::Uuid;
 
 use crate::config::CliArgs;
 use runinator_utilities::{app_data, resource_telemetry, startup};
+use service::BackgroundWorkerService;
 
 #[tokio::main]
 async fn main() -> Result<(), SendableError> {
+    BackgroundWorkerService::new().run().await
+}
+
+async fn run_process() -> Result<(), SendableError> {
     // the broker's http/tcp transports and the aws sdk both link rustls; install a process-default
-    // CryptoProvider before any rustls default-path config is built. an Err means one is already
+    // crypto provider before any rustls default-path config is built. an err means one is already
     // installed, which is fine.
     let _ = rustls::crypto::ring::default_provider().install_default();
 

@@ -1,8 +1,16 @@
 use runinator_broker::{http, in_memory::InMemoryBroker, tcp};
 use std::{env, net::SocketAddr};
 
+#[path = "main/service.rs"]
+mod service;
+use service::BrokerService;
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    BrokerService::new().run().await
+}
+
+async fn run_process() -> Result<(), Box<dyn std::error::Error>> {
     let addr: SocketAddr = env::var("RUNINATOR_BROKER_ADDR")
         .unwrap_or_else(|_| "127.0.0.1:7070".into())
         .parse()?;

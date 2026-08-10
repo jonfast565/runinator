@@ -1,4 +1,5 @@
 mod config;
+mod service;
 use std::sync::Arc;
 
 use clap::Parser;
@@ -22,9 +23,14 @@ use runinator_ws::{
 use crate::config::CliArgs;
 use runinator_comm::discovery::{WebServiceAdvertiserConfig, spawn_web_service_advertiser};
 use runinator_utilities::{app_data, startup};
+use service::WebService;
 
 #[tokio::main]
 async fn main() -> Result<(), SendableError> {
+    WebService::new().run().await
+}
+
+async fn run_process() -> Result<(), SendableError> {
     // this binary links rustls with both ring (jsonwebtoken) and aws-lc-rs (aws sdk) crypto backends,
     // leaving no unambiguous process-default CryptoProvider. install one before any rustls default-path
     // config is built (e.g. the kubernetes node provisioner's kube client), otherwise that path panics.

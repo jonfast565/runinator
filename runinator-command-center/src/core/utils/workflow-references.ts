@@ -38,7 +38,7 @@ const STATIC_ROOTS: WorkflowReference[] = [
   { label: "secret", insert: "secret", type: "secret reference" },
 ];
 
-/// references for every field of the workflow parameter struct, flattened by dotted path.
+// references for every field of the workflow parameter struct, flattened by dotted path.
 export function paramsReferences(ty: RuninatorType | null | undefined): WorkflowReference[] {
   if (ty?.type !== "struct") {
     return [];
@@ -62,7 +62,7 @@ function collectParamFields(ty: RuninatorType, path: string[], references: Workf
   }
 }
 
-/// references for the declared outputs of every prior action node (the current node is excluded).
+// references for the declared outputs of every prior action node (the current node is excluded).
 export function nodeOutputReferences(
   context?: WorkflowExpressionEditorContext,
 ): (WorkflowReference & { node: string })[] {
@@ -142,7 +142,7 @@ function formatLabelPath(parts: string[]): string {
   return label;
 }
 
-/// the full reference catalog for the picker, grouped by origin. empty groups are dropped.
+// the full reference catalog for the picker, grouped by origin. empty groups are dropped.
 export function workflowReferenceGroups(
   context?: WorkflowExpressionEditorContext,
 ): ReferenceGroup[] {
@@ -171,10 +171,10 @@ export function workflowReferenceGroups(
   return groups;
 }
 
-/// build the context a lowered expression resolves against from a run's data, mirroring the
-/// reducer's runtime context: `params` is the run parameters, `steps.<node>.output` each node's
-/// output, and `prev` the most recent output. `config`/`secret` are not available client-side, so
-/// references to them resolve to null in a preview.
+// build the context a lowered expression resolves against from a run's data, mirroring the
+// reducer's runtime context: `params` is the run parameters, `steps.<node>.output` each node's
+// output, and `prev` the most recent output. `config`/`secret` are not available client-side, so
+// references to them resolve to null in a preview.
 export function buildSampleContext(
   detail: WorkflowRunDetail | null | undefined,
 ): JsonRecord | null {
@@ -206,7 +206,7 @@ export function buildSampleContext(
   };
 }
 
-/// a compact, human-readable rendering of a runinator type.
+// a compact, human-readable rendering of a runinator type.
 export function describeType(ty: RuninatorType | undefined): string {
   if (!ty) {
     return "any";

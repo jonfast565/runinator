@@ -259,7 +259,7 @@ async fn manual_pipeline_run_starts_entry_member_chains_and_settles() {
         .await
         .unwrap();
 
-    // Build -> Deploy on complete: Build is the sole entry member, Deploy is downstream.
+    // build -> deploy on complete: build is the sole entry member, deploy is downstream.
     let bundle = PipelineBundle {
         pipelines: vec![PipelineSpec {
             name: "Release".into(),

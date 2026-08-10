@@ -546,7 +546,13 @@ fn arguments_are_json_workflow_bundle(arguments: &Value) -> bool {
         .is_some_and(|items| items.iter().any(Value::is_object))
 }
 
+mod service;
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    service::McpService::new().run()
+}
+
+fn run_process() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     let server = McpServer::with_credentials(args.api_base_url, args.api_key)?;
     let stdin = io::stdin();

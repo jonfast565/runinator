@@ -205,7 +205,8 @@ import AdvancedWdlParameters from "../shared/AdvancedWdlParameters.vue";
 import KeyValueObjectEditor from "../shared/KeyValueObjectEditor.vue";
 import ReferenceChips from "../shared/ReferenceChips.vue";
 import { buildSampleContext, workflowReferenceGroups } from "../../../core/utils/workflow-references";
-import { asArray, isRecord, recordArray, workflowNodeKindLabel, setAtLocation, getAtLocation } from "../../../core/workflow";
+import { workflowNodeKindLabel, setAtLocation, getAtLocation } from "../../../core/workflow";
+import { jsonRecordArray as recordArray } from "../../../core/domain/json";
 import { displayValue } from "../../../core/utils/values";
 import TypedParameterEditor from "../shared/TypedParameterEditor.vue";
 import Icon from "../shared/Icon.vue";
@@ -225,7 +226,7 @@ const kindMetadata = computed(() => catalogMetadata.nodeKind(workflows.stepEdito
 
 // node id list for selects, excluding the current step.
 const targetNodes = computed(() => {
-  const nodes = asArray(workflows.workflowDraft.definition.nodes).filter(isRecord);
+  const nodes = recordArray(workflows.workflowDraft.definition.nodes);
   return nodes.filter((node) => node.id !== workflows.selectedStepId);
 });
 

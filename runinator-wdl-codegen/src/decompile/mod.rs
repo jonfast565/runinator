@@ -6,6 +6,7 @@
 // arbitrary graphs round-trip, since wdl labels are global.
 
 mod expr;
+mod metadata;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -17,6 +18,8 @@ use runinator_models::workflows::{
 };
 
 use runinator_wdl_syntax::errors::WdlError;
+
+use metadata::*;
 
 /// options controlling how a definition is rendered back to wdl.
 #[derive(Debug, Clone, Default)]
@@ -241,149 +244,6 @@ fn decompile_retry(retry: &WorkflowRetry, explicit: bool) -> Option<String> {
         args.push(format!("on: {on}"));
     }
     Some(format!(".retry({})", args.join(", ")))
-}
-
-fn read_declared_types(metadata: &Value) -> HashMap<String, String> {
-    let mut types = HashMap::new();
-    let Some(entries) = metadata.pointer("/wdl/types").and_then(Value::as_object) else {
-        return types;
-    };
-    for (id, value) in entries {
-        if let Some(text) = value.as_str() {
-            types.insert(id.clone(), text.to_string());
-            continue;
-        }
-        if let Ok(ty) = value.decode::<RuninatorType>() {
-            types.insert(id.clone(), expr::render_type(&ty));
-        }
-    }
-    types
-}
-
-/// recover named `type <Name>` declarations from the metadata sidecar at `/wdl/type_decls` as
-/// rendered surface strings, preserving declaration order. older graphs stored a native schema,
-/// which is rendered back for compatibility.
-fn read_type_decls(metadata: &Value) -> Vec<(String, String)> {
-    let Some(entries) = metadata
-        .pointer("/wdl/type_decls")
-        .and_then(Value::as_object)
-    else {
-        return Vec::new();
-    };
-    entries
-        .iter()
-        .filter_map(|(name, value)| {
-            if let Some(text) = value.as_str() {
-                return Some((name.clone(), text.to_string()));
-            }
-            value
-                .decode::<RuninatorType>()
-                .ok()
-                .map(|ty| (name.clone(), expr::render_type(&ty)))
-        })
-        .collect()
-}
-
-fn read_output_type(metadata: &Value) -> Option<runinator_models::types::RuninatorType> {
-    metadata.pointer("/wdl/output_type")?.decode().ok()
-}
-
-/// recover surface-form overrides for top-level workflow parameter fields at `/wdl/input_types`.
-fn read_input_types(metadata: &Value) -> HashMap<String, String> {
-    let mut overrides = HashMap::new();
-    let Some(entries) = metadata
-        .pointer("/wdl/input_types")
-        .and_then(Value::as_object)
-    else {
-        return overrides;
-    };
-    for (name, value) in entries {
-        if let Some(text) = value.as_str() {
-            overrides.insert(name.clone(), text.to_string());
-        }
-    }
-    overrides
-}
-
-/// recover header `trigger` specs from runtime metadata at `/triggers`.
-fn read_triggers(metadata: &Value) -> Vec<Value> {
-    metadata
-        .pointer("/triggers")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default()
-}
-
-/// recover header `notify` policies from runtime metadata at `/notifications`.
-fn read_notifications(metadata: &Value) -> Vec<Value> {
-    metadata
-        .pointer("/notifications")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default()
-}
-
-/// recover header `interrupt` handlers from runtime metadata at `/interrupts`.
-fn read_interrupts(metadata: &Value) -> Vec<Value> {
-    metadata
-        .pointer("/interrupts")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default()
-}
-
-/// recover header `watch` guards from runtime metadata at `/watches`.
-fn read_watches(metadata: &Value) -> Vec<Value> {
-    metadata
-        .pointer("/watches")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default()
-}
-
-/// recover header alias declarations from the metadata sidecar at `/wdl/aliases`, preserving
-/// declaration order. each alias is a `(name, recipe-segments)` pair.
-fn read_alias_decls(metadata: &Value) -> Vec<(String, Vec<Value>)> {
-    let Some(entries) = metadata.pointer("/wdl/aliases").and_then(Value::as_array) else {
-        return Vec::new();
-    };
-    entries
-        .iter()
-        .filter_map(|entry| {
-            let name = entry.get("name").and_then(Value::as_str)?.to_string();
-            let segs = entry.get("segs").and_then(Value::as_array)?.clone();
-            Some((name, segs))
-        })
-        .collect()
-}
-
-/// recover per-node `...alias` spread recipes from the metadata sidecar at `/wdl/spreads`.
-fn read_spreads(metadata: &Value) -> HashMap<String, Vec<Value>> {
-    let mut spreads = HashMap::new();
-    let Some(entries) = metadata.pointer("/wdl/spreads").and_then(Value::as_object) else {
-        return spreads;
-    };
-    for (id, segs) in entries {
-        if let Some(segs) = segs.as_array() {
-            spreads.insert(id.clone(), segs.clone());
-        }
-    }
-    spreads
-}
-
-/// recover control-block ids that were explicitly authored with `@id(...)`.
-fn read_control_ids(metadata: &Value) -> HashSet<String> {
-    metadata
-        .pointer("/wdl/control_ids")
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(Value::as_str)
-                .map(str::to_string)
-                .collect()
-        })
-        .unwrap_or_default()
 }
 
 /// a `fn` definition recovered for decompilation: its name, its surface signature (`(params) -> ret`,

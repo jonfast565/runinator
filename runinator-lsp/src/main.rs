@@ -12,6 +12,7 @@ mod hover;
 mod metadata;
 mod position;
 mod server;
+mod service;
 
 use std::sync::Arc;
 
@@ -19,9 +20,14 @@ use tower_lsp::{LspService, Server};
 
 use crate::metadata::MetadataCache;
 use crate::server::Backend;
+use crate::service::LanguageServerService;
 
 #[tokio::main]
 async fn main() {
+    LanguageServerService::new().run().await;
+}
+
+async fn run_process() {
     // metadata completion targets the process-level base url; apply-on-save targets the per-editor
     // configured service url instead.
     let base_url = std::env::var("RUNINATOR_API_BASE_URL")

@@ -3,6 +3,7 @@ mod config;
 mod control;
 mod display;
 mod os;
+mod service;
 mod snapshot;
 mod supervisor;
 mod types;
@@ -19,8 +20,13 @@ use crate::{
     supervisor::{run_supervisor, start_daemon, stop_supervisor},
     types::DynError,
 };
+use service::SupervisorService;
 
 fn main() -> Result<(), DynError> {
+    SupervisorService::new().run()
+}
+
+fn run_process() -> Result<(), DynError> {
     let cli = Cli::parse();
     let (config, paths) = config::load_config(&cli.config)?;
 

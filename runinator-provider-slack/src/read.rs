@@ -1,6 +1,6 @@
 // read-only Slack Web API actions (channels, history, threads, search). all are
-// GET calls that take a bearer token plus query parameters and return the raw
-// Slack JSON body. the action table drives both metadata and execution so the
+// get calls that take a bearer token plus query parameters and return the raw
+// slack json body. the action table drives both metadata and execution so the
 // two cannot drift.
 
 use runinator_models::errors::SendableError;
@@ -16,7 +16,7 @@ use crate::{build_client, parse_slack_ok, token_param};
 const API_BASE: &str = "https://slack.com/api/";
 
 // the scalar shape of a query parameter; controls metadata typing and how the
-// JSON value is rendered into the GET query string.
+// json value is rendered into the get query string.
 #[derive(Clone, Copy)]
 pub(crate) enum ParamKind {
     Str,

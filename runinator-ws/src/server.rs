@@ -161,7 +161,7 @@ pub async fn run_webserver<T: DatabaseImpl>(
         let engine_shutdown = notify.clone();
         background.spawn(async move {
             // run_background_engine drives its own shutdown on internal loop failure, so a returned
-            // Err has already notified `notify`; returning here surfaces the exit to the join below.
+            // err has already notified `notify`; returning here surfaces the exit to the join below.
             if let Err(err) = run_background_engine(
                 engine_pool,
                 engine_broker,

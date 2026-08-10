@@ -39,7 +39,7 @@ fn safe_join(root: &Path, rel: &str) -> Result<PathBuf, SendableError> {
     for component in rel_path.components() {
         match component {
             Component::Normal(_) | Component::CurDir => {}
-            // RootDir/Prefix (absolute) or ParentDir (`..`) would escape the sandbox.
+            // rootdir/prefix (absolute) or parentdir (`..`) would escape the sandbox.
             _ => return Err(PATH_OUTSIDE_ROOT.error(rel)),
         }
     }

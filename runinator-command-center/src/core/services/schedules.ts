@@ -19,7 +19,7 @@ export function createSchedulesService(app: AppService) {
     activeOnly: false,
   });
 
-  /// a window covering right now, which is what makes a quiet schedule explainable.
+  // a window covering right now, which is what makes a quiet schedule explainable.
   function activeCount(): number {
     const now = Date.now();
 

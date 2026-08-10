@@ -7,7 +7,6 @@ use std::{
     time::Duration,
 };
 
-use chrono::Utc;
 use runinator_api::{AsyncApiClient, StaticLocator};
 use runinator_broker::{Broker, BrokerDelivery, ControlDelivery};
 use runinator_comm::{ActionCommand, ConsumerProfile, ControlKind, WireCodec};
@@ -27,14 +26,11 @@ use uuid::Uuid;
 use crate::broker::broker_error;
 use crate::events::{ActionOutcome, WorkerEvent, WorkerEventSink};
 use crate::executor;
+use crate::lease::{OwnStaleLeases, claim_executor, release_executor_lease};
 use crate::metrics;
 use crate::output_sink::RunOutputSink;
 use crate::provider_repository::ProviderFactory;
 use crate::secrets::{is_transient_secret_error, resolve_secret_refs};
-
-// grace added to an action's timeout before its executor lease is considered abandoned, so a worker
-// that is merely slow (clock skew, a long flush) is never preempted by a duplicate delivery.
-const EXECUTOR_LEASE_GRACE_SECONDS: i64 = 60;
 
 // backoff before retrying a failed broker receive. a transient broker error (restart, network blip)
 // must not tear down the loops: exiting the action loop aborts in-flight actions without
@@ -44,34 +40,6 @@ const RECEIVE_RETRY_BACKOFF: Duration = Duration::from_secs(1);
 // backoff before returning a delivery whose secrets could not be fetched from the web service, so
 // a ws outage does not hot-loop claim/execute/nack cycles against the broker.
 const SECRET_RETRY_BACKOFF: Duration = Duration::from_secs(5);
-
-// executor leases this process failed to release, keyed by node run to the lowest attempt allowed
-// to take the lease back. a claim rejected for a node run recorded here is this worker's own
-// leftover from a failed release, not a live executor elsewhere, so a delivery at or past that
-// attempt may reclaim it instead of being dropped as a duplicate until the lease goes stale. a
-// nacked (never completed) execution records its own attempt; a completed execution records the
-// next attempt, so a late same-attempt redelivery can never re-run its side effects.
-#[derive(Default)]
-pub(crate) struct OwnStaleLeases(Mutex<HashMap<Uuid, i64>>);
-
-impl OwnStaleLeases {
-    pub(crate) async fn record(&self, node_run_id: Uuid, min_reclaim_attempt: i64) {
-        self.0.lock().await.insert(node_run_id, min_reclaim_attempt);
-    }
-
-    pub(crate) async fn clear(&self, node_run_id: Uuid) {
-        self.0.lock().await.remove(&node_run_id);
-    }
-
-    /// whether a leftover lease reclaimable at `attempt` is recorded for this node run.
-    pub(crate) async fn matches(&self, node_run_id: Uuid, attempt: i64) -> bool {
-        self.0
-            .lock()
-            .await
-            .get(&node_run_id)
-            .is_some_and(|min_reclaim| *min_reclaim <= attempt)
-    }
-}
 
 // one in-flight action execution, tracked so a control command can cancel it. the owning run id is
 // retained so a run-wide cancel can fan out to every node run of that run.
@@ -487,79 +455,15 @@ async fn process_delivery(
     // lost the action; the server also frees the lease as soon as the holding replica stops
     // heartbeating, which is what bounds failover after a worker crash.
     if let Some(replica_id) = replica_id {
-        let stale_before = Utc::now()
-            - chrono::Duration::seconds(action.timeout_seconds + EXECUTOR_LEASE_GRACE_SECONDS);
-        let mut held_elsewhere = false;
-        match api_client
-            .claim_workflow_node_run_executor(
-                command.workflow_node_run_id,
-                replica_id,
-                Utc::now(),
-                stale_before,
-            )
-            .await
+        if claim_executor(
+            &api_client,
+            &stale_leases,
+            replica_id,
+            &command,
+            action.timeout_seconds,
+        )
+        .await
         {
-            Ok(true) => stale_leases.clear(command.workflow_node_run_id).await,
-            Ok(false) => held_elsewhere = true,
-            // fail-open on a transport error so a transient ws outage cannot wedge execution.
-            Err(err) => warn!(
-                replica_id = %replica_id,
-                node_run_id = %command.workflow_node_run_id,
-                "failed to claim executor: {}",
-                err
-            ),
-        }
-        // the holder may be this process itself: a release that failed leaves our own fresh claim
-        // behind, and without taking it back every redelivery of the legitimate retry would be
-        // dropped as a duplicate until the lease ages past the staleness deadline. the release is
-        // holder-conditional server-side, so a lease meanwhile owned by another live replica is
-        // untouched and the fresh claim below loses as before.
-        if held_elsewhere
-            && stale_leases
-                .matches(command.workflow_node_run_id, command.attempt)
-                .await
-            && api_client
-                .release_workflow_node_run_executor(
-                    command.workflow_node_run_id,
-                    replica_id,
-                    Utc::now(),
-                )
-                .await
-                .is_ok()
-        {
-            match api_client
-                .claim_workflow_node_run_executor(
-                    command.workflow_node_run_id,
-                    replica_id,
-                    Utc::now(),
-                    stale_before,
-                )
-                .await
-            {
-                Ok(acquired) => {
-                    held_elsewhere = !acquired;
-                    if acquired {
-                        stale_leases.clear(command.workflow_node_run_id).await;
-                        info!(
-                            node_run_id = %command.workflow_node_run_id,
-                            "reclaimed own executor lease left behind by a failed release"
-                        );
-                    }
-                }
-                // fail-open: the leftover lease was just freed and this delivery is the retry it
-                // was blocking, so a transport blip must not swallow it.
-                Err(err) => {
-                    held_elsewhere = false;
-                    warn!(
-                        replica_id = %replica_id,
-                        node_run_id = %command.workflow_node_run_id,
-                        "failed to reclaim executor after releasing own stale lease: {}",
-                        err
-                    );
-                }
-            }
-        }
-        if held_elsewhere {
             info!(
                 node_run_id = %command.workflow_node_run_id,
                 "skipping duplicate delivery: executor lease held elsewhere"
@@ -1050,32 +954,6 @@ async fn nack_action_delivery(
         .nack(consumer_id, delivery_id)
         .await
         .map_err(|err| broker_error("nack", err))
-}
-
-/// release this worker's executor lease, best-effort. a failed release is remembered so a later
-/// delivery for this node run at or past `min_reclaim_attempt` can take the leftover lease back
-/// instead of being dropped as a duplicate; a successful release forgets any such record.
-async fn release_executor_lease(
-    api_client: &AsyncApiClient<StaticLocator>,
-    stale_leases: &OwnStaleLeases,
-    replica_id: Uuid,
-    node_run_id: Uuid,
-    min_reclaim_attempt: i64,
-) {
-    match api_client
-        .release_workflow_node_run_executor(node_run_id, replica_id, Utc::now())
-        .await
-    {
-        Ok(_) => stale_leases.clear(node_run_id).await,
-        Err(err) => {
-            warn!(
-                node_run_id = %node_run_id,
-                "failed to release executor lease; remembering it for reclaim: {}",
-                err
-            );
-            stale_leases.record(node_run_id, min_reclaim_attempt).await;
-        }
-    }
 }
 
 /// settle a delivery from a result already recorded under its idempotency key, without invoking the

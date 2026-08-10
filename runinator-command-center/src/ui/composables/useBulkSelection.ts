@@ -17,11 +17,11 @@ export interface BulkSelection<Row> {
   clear: () => void;
 }
 
-/// selection state over a reactive list of rows.
-///
-/// selection is keyed, not indexed, so it survives the list re-sorting or refreshing underneath it.
-/// keys that leave the visible list are dropped: acting on a row the user can no longer see is the
-/// kind of surprise a bulk action must not produce.
+// selection state over a reactive list of rows.
+//
+// selection is keyed, not indexed, so it survives the list re-sorting or refreshing underneath it.
+// keys that leave the visible list are dropped: acting on a row the user can no longer see is the
+// kind of surprise a bulk action must not produce.
 export function useBulkSelection<Row>(
   rows: Ref<Row[]> | ComputedRef<Row[]>,
   keyOf: (row: Row) => SelectionKey,

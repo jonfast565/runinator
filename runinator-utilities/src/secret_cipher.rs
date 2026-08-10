@@ -102,7 +102,7 @@ impl SecretCipher {
             return plaintext.to_vec();
         }
         let nonce = ChaCha20Poly1305::generate_nonce(&mut OsRng);
-        // ChaCha20-Poly1305 only fails on absurdly large inputs; settings values are tiny.
+        // chacha20-poly1305 only fails on absurdly large inputs; settings values are tiny.
         let sealed = self
             .primary
             .aead()

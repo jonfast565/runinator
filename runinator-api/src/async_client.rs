@@ -1,5 +1,8 @@
 use std::time::Duration;
 
+mod auth;
+mod settings;
+
 use chrono::{DateTime, Utc};
 use reqwest::{Client, Response, Url};
 use runinator_comm::{ActionCommand, ActionDispatchRecord};
@@ -20,10 +23,9 @@ use runinator_models::{
         api_workflow_run_nodes, api_workflow_run_rename, api_workflow_run_replay,
         api_workflow_run_transitions, api_workflow_runs, api_workflow_trigger,
         api_workflow_trigger_backfill, api_workflow_trigger_runs, api_workflow_triggers,
-        API_APPROVALS, API_AUTH_CONFIG, API_AUTH_LOGIN, API_AUTH_LOGOUT, API_AUTH_REFRESH,
-        API_CREDENTIALS, API_FREEZE_WINDOWS, API_IDEMPOTENCY_KEYS, API_IDEMPOTENCY_KEYS_CLAIM,
-        API_IDEMPOTENCY_KEYS_COMPLETE, API_IDEMPOTENCY_KEYS_RELEASE, API_PACKS_IMPORT,
-        API_PROVIDERS, API_REPLICAS, API_RUNS, API_SCHEDULER_ACTION_DISPATCHES,
+        API_APPROVALS, API_CREDENTIALS, API_FREEZE_WINDOWS, API_IDEMPOTENCY_KEYS,
+        API_IDEMPOTENCY_KEYS_CLAIM, API_IDEMPOTENCY_KEYS_COMPLETE, API_IDEMPOTENCY_KEYS_RELEASE,
+        API_PACKS_IMPORT, API_PROVIDERS, API_REPLICAS, API_RUNS, API_SCHEDULER_ACTION_DISPATCHES,
         API_SCHEDULER_ACTION_DISPATCHES_CLAIM, API_SCHEDULER_ACTION_DISPATCHES_PENDING,
         API_SCHEDULER_READY_NODES_CLAIM, API_SCHEDULER_WORKFLOW_RUNS_CLAIM,
         API_SCHEDULER_WORKFLOW_TRIGGER_FIRINGS_CLAIM, API_SUPERVISOR_STATUS, API_WORKFLOWS,
@@ -31,7 +33,6 @@ use runinator_models::{
         API_WORKFLOW_RUNS, API_WORKFLOW_TRIGGERS_DUE, WORKFLOW_JSON_IMPORT_RISK_ACK,
         WORKFLOW_JSON_IMPORT_RISK_HEADER,
     },
-    auth::{AuthConfigResponse, LoginRequest, LoginResponse, RefreshRequest},
     billing::ScaleOrgNodesRequest,
     bundles::{Bundle, PackImportResult, ProviderBundle, SecretBundle},
     orchestration::{
@@ -48,7 +49,6 @@ use runinator_models::{
     revisions::WorkflowRevision,
     runs::{RunStatus, RunSummary},
     schedules::{BackfillRequest, BackfillResponse, FreezeWindow, NewFreezeWindow},
-    settings::{SettingKind, SettingSummary},
     web::TaskResponse,
     workflows::{
         WorkflowBundle, WorkflowDefinition, WorkflowNodeRun, WorkflowNodeRunArtifact,
@@ -158,53 +158,6 @@ where
 
     fn http_delete<U: reqwest::IntoUrl>(&self, url: U) -> reqwest::RequestBuilder {
         self.traced(self.client.delete(url))
-    }
-
-    pub async fn fetch_auth_config(&self) -> Result<AuthConfigResponse> {
-        let url = self.build_url(API_AUTH_CONFIG).await?;
-        let response = self.http_get(url.clone()).send().await?;
-        let response = Self::handle_response(url, response).await?;
-        Ok(response.json::<AuthConfigResponse>().await?)
-    }
-
-    pub async fn login(&self, username: &str, password: &str) -> Result<LoginResponse> {
-        let url = self.build_url(API_AUTH_LOGIN).await?;
-        let response = self
-            .http_post(url.clone())
-            .json(&LoginRequest {
-                username: username.to_owned(),
-                password: password.to_owned(),
-            })
-            .send()
-            .await?;
-        let response = Self::handle_response(url, response).await?;
-        Ok(response.json::<LoginResponse>().await?)
-    }
-
-    pub async fn refresh_session(&self, refresh_token: &str) -> Result<LoginResponse> {
-        let url = self.build_url(API_AUTH_REFRESH).await?;
-        let response = self
-            .http_post(url.clone())
-            .json(&RefreshRequest {
-                refresh_token: refresh_token.to_owned(),
-            })
-            .send()
-            .await?;
-        let response = Self::handle_response(url, response).await?;
-        Ok(response.json::<LoginResponse>().await?)
-    }
-
-    pub async fn logout(&self, refresh_token: &str) -> Result<TaskResponse> {
-        let url = self.build_url(API_AUTH_LOGOUT).await?;
-        let response = self
-            .http_post(url.clone())
-            .json(&RefreshRequest {
-                refresh_token: refresh_token.to_owned(),
-            })
-            .send()
-            .await?;
-        let response = Self::handle_response(url, response).await?;
-        Ok(response.json::<TaskResponse>().await?)
     }
 
     /// Fetch provider/action metadata for task authoring.
@@ -1545,71 +1498,6 @@ where
             .and_then(Value::as_str)
             .map(str::to_owned)
             .ok_or_else(|| ApiError::UnexpectedResponse("missing credential secret".into()))
-    }
-
-    /// list every stored setting (secrets and config) without their values.
-    pub async fn list_settings(&self) -> Result<Vec<SettingSummary>> {
-        let url = self.build_url(API_CREDENTIALS).await?;
-        let response = self.http_get(url.clone()).send().await?;
-        let response = Self::handle_response(url, response).await?;
-        Ok(response.json::<Vec<SettingSummary>>().await?)
-    }
-
-    /// fetch a single setting's value. config returns parsed json; secrets return a string.
-    pub async fn get_setting(&self, kind: SettingKind, scope: &str, name: &str) -> Result<Value> {
-        let mut url = self.build_url(API_CREDENTIALS).await?;
-        url.query_pairs_mut()
-            .append_pair("kind", kind.as_str())
-            .append_pair("scope", scope)
-            .append_pair("name", name);
-        let response = self.http_get(url.clone()).send().await?;
-        let response = Self::handle_response(url, response).await?;
-        let body = response.json::<Value>().await?;
-        body.get("value")
-            .cloned()
-            .ok_or_else(|| ApiError::UnexpectedResponse("missing setting value".into()))
-    }
-
-    /// store a setting value of the given kind. config values carry a declared json-schema
-    /// (required once per slot) validated by the web service.
-    pub async fn put_setting(
-        &self,
-        kind: SettingKind,
-        scope: &str,
-        name: &str,
-        value: &Value,
-        schema: Option<&Value>,
-    ) -> Result<Value> {
-        let url = self.build_url(API_CREDENTIALS).await?;
-        let mut body = json!({
-            "scope": scope,
-            "name": name,
-            "value": value,
-            "kind": kind.as_str(),
-        });
-        if let (Some(schema), Some(object)) = (schema, body.as_object_mut()) {
-            object.insert("schema".into(), schema.clone());
-        }
-        let response = self.http_post(url.clone()).json(&body).send().await?;
-        let response = Self::handle_response(url, response).await?;
-        Ok(response.json::<Value>().await?)
-    }
-
-    /// delete a setting of the given kind.
-    pub async fn delete_setting(
-        &self,
-        kind: SettingKind,
-        scope: &str,
-        name: &str,
-    ) -> Result<Value> {
-        let mut url = self.build_url(API_CREDENTIALS).await?;
-        url.query_pairs_mut()
-            .append_pair("kind", kind.as_str())
-            .append_pair("scope", scope)
-            .append_pair("name", name);
-        let response = self.http_delete(url.clone()).send().await?;
-        let response = Self::handle_response(url, response).await?;
-        Ok(response.json::<Value>().await?)
     }
 
     /// Record execution metadata for a scheduled task run.
