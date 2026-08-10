@@ -7,12 +7,12 @@ use tokio::sync::Mutex;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-const EXECUTOR_LEASE_GRACE_SECONDS: i64 = 60;
+const EXECUTOR_LEASE_GRACE: chrono::Duration = chrono::Duration::seconds(60);
 
 #[derive(Default)]
-pub(crate) struct OwnStaleLeases(Mutex<HashMap<Uuid, i64>>);
+pub(crate) struct StaleLeaseRegistry(Mutex<HashMap<Uuid, i64>>);
 
-impl OwnStaleLeases {
+impl StaleLeaseRegistry {
     pub(crate) async fn record(&self, node_run_id: Uuid, min_reclaim_attempt: i64) {
         self.0.lock().await.insert(node_run_id, min_reclaim_attempt);
     }
@@ -30,102 +30,131 @@ impl OwnStaleLeases {
     }
 }
 
-/// claim this delivery's executor lease, returning whether another executor still owns it.
-pub(crate) async fn claim_executor(
-    api_client: &AsyncApiClient<StaticLocator>,
-    stale_leases: &Arc<OwnStaleLeases>,
-    replica_id: Uuid,
-    command: &ActionCommand,
-    timeout_seconds: i64,
-) -> bool {
-    let stale_before =
-        Utc::now() - chrono::Duration::seconds(timeout_seconds + EXECUTOR_LEASE_GRACE_SECONDS);
-    let mut held_elsewhere = false;
-    match api_client
-        .claim_workflow_node_run_executor(
-            command.workflow_node_run_id,
+/// owns executor-lease identity, policy, and recovery state for one worker runtime.
+#[derive(Clone)]
+pub(crate) struct ExecutorLeaseManager {
+    api_client: AsyncApiClient<StaticLocator>,
+    replica_id: Option<Uuid>,
+    stale: Arc<StaleLeaseRegistry>,
+}
+
+impl ExecutorLeaseManager {
+    pub(crate) fn new(api_client: AsyncApiClient<StaticLocator>, replica_id: Option<Uuid>) -> Self {
+        Self {
+            api_client,
             replica_id,
-            Utc::now(),
-            stale_before,
-        )
-        .await
-    {
-        Ok(true) => stale_leases.clear(command.workflow_node_run_id).await,
-        Ok(false) => held_elsewhere = true,
-        Err(err) => warn!(
-            replica_id = %replica_id,
-            node_run_id = %command.workflow_node_run_id,
-            "failed to claim executor: {}",
-            err
-        ),
+            stale: Arc::new(StaleLeaseRegistry::default()),
+        }
     }
 
-    if held_elsewhere
-        && stale_leases
-            .matches(command.workflow_node_run_id, command.attempt)
-            .await
-        && api_client
-            .release_workflow_node_run_executor(
-                command.workflow_node_run_id,
-                replica_id,
-                Utc::now(),
-            )
-            .await
-            .is_ok()
-    {
-        match api_client
+    /// claim this delivery's lease, returning whether another executor still owns it.
+    pub(crate) async fn held_elsewhere(&self, command: &ActionCommand) -> bool {
+        let Some(replica_id) = self.replica_id else {
+            return false;
+        };
+        let now = Utc::now();
+        let stale_before =
+            now - chrono::Duration::seconds(command.action.timeout_seconds) - EXECUTOR_LEASE_GRACE;
+        let mut held_elsewhere = false;
+        match self
+            .api_client
             .claim_workflow_node_run_executor(
                 command.workflow_node_run_id,
                 replica_id,
-                Utc::now(),
+                now,
                 stale_before,
             )
             .await
         {
-            Ok(acquired) => {
-                held_elsewhere = !acquired;
-                if acquired {
-                    stale_leases.clear(command.workflow_node_run_id).await;
-                    info!(
+            Ok(true) => self.stale.clear(command.workflow_node_run_id).await,
+            Ok(false) => held_elsewhere = true,
+            Err(err) => warn!(
+                replica_id = %replica_id,
+                node_run_id = %command.workflow_node_run_id,
+                "failed to claim executor: {}",
+                err
+            ),
+        }
+
+        if held_elsewhere
+            && self
+                .stale
+                .matches(command.workflow_node_run_id, command.attempt)
+                .await
+            && self
+                .api_client
+                .release_workflow_node_run_executor(
+                    command.workflow_node_run_id,
+                    replica_id,
+                    Utc::now(),
+                )
+                .await
+                .is_ok()
+        {
+            match self
+                .api_client
+                .claim_workflow_node_run_executor(
+                    command.workflow_node_run_id,
+                    replica_id,
+                    Utc::now(),
+                    stale_before,
+                )
+                .await
+            {
+                Ok(acquired) => {
+                    held_elsewhere = !acquired;
+                    if acquired {
+                        self.stale.clear(command.workflow_node_run_id).await;
+                        info!(
+                            node_run_id = %command.workflow_node_run_id,
+                            "reclaimed own executor lease left behind by a failed release"
+                        );
+                    }
+                }
+                Err(err) => {
+                    held_elsewhere = false;
+                    warn!(
+                        replica_id = %replica_id,
                         node_run_id = %command.workflow_node_run_id,
-                        "reclaimed own executor lease left behind by a failed release"
+                        "failed to reclaim executor after releasing own stale lease: {}",
+                        err
                     );
                 }
             }
+        }
+        held_elsewhere
+    }
+
+    /// release before redelivery so the same attempt can reclaim after a failed release.
+    pub(crate) async fn release_for_redelivery(&self, command: &ActionCommand) {
+        self.release(command.workflow_node_run_id, command.attempt)
+            .await;
+    }
+
+    /// release after settlement so only a later attempt can reclaim after a failed release.
+    pub(crate) async fn release_after_settlement(&self, command: &ActionCommand) {
+        self.release(command.workflow_node_run_id, command.attempt + 1)
+            .await;
+    }
+
+    async fn release(&self, node_run_id: Uuid, min_reclaim_attempt: i64) {
+        let Some(replica_id) = self.replica_id else {
+            return;
+        };
+        match self
+            .api_client
+            .release_workflow_node_run_executor(node_run_id, replica_id, Utc::now())
+            .await
+        {
+            Ok(_) => self.stale.clear(node_run_id).await,
             Err(err) => {
-                held_elsewhere = false;
                 warn!(
-                    replica_id = %replica_id,
-                    node_run_id = %command.workflow_node_run_id,
-                    "failed to reclaim executor after releasing own stale lease: {}",
+                    node_run_id = %node_run_id,
+                    "failed to release executor lease; remembering it for reclaim: {}",
                     err
                 );
+                self.stale.record(node_run_id, min_reclaim_attempt).await;
             }
-        }
-    }
-    held_elsewhere
-}
-
-/// release this worker's executor lease and remember failures for a safe later reclaim.
-pub(crate) async fn release_executor_lease(
-    api_client: &AsyncApiClient<StaticLocator>,
-    stale_leases: &OwnStaleLeases,
-    replica_id: Uuid,
-    node_run_id: Uuid,
-    min_reclaim_attempt: i64,
-) {
-    match api_client
-        .release_workflow_node_run_executor(node_run_id, replica_id, Utc::now())
-        .await
-    {
-        Ok(_) => stale_leases.clear(node_run_id).await,
-        Err(err) => {
-            warn!(
-                node_run_id = %node_run_id,
-                "failed to release executor lease; remembering it for reclaim: {}",
-                err
-            );
-            stale_leases.record(node_run_id, min_reclaim_attempt).await;
         }
     }
 }

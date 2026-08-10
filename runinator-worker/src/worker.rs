@@ -26,7 +26,7 @@ use uuid::Uuid;
 use crate::broker::broker_error;
 use crate::events::{ActionOutcome, WorkerEvent, WorkerEventSink};
 use crate::executor;
-use crate::lease::{OwnStaleLeases, claim_executor, release_executor_lease};
+use crate::lease::ExecutorLeaseManager;
 use crate::metrics;
 use crate::output_sink::RunOutputSink;
 use crate::provider_repository::ProviderFactory;
@@ -113,7 +113,7 @@ pub async fn start_worker_loop(runtime: WorkerRuntime) -> Result<(), SendableErr
     // keyed by node-run id so concurrent node runs of the same workflow run (parallel/race/map child
     // work) each get their own cancellation token; a targeted cancel reaches exactly one branch.
     let in_flight = Arc::new(Mutex::new(HashMap::<Uuid, InFlightAction>::new()));
-    let stale_leases = Arc::new(OwnStaleLeases::default());
+    let executor_leases = ExecutorLeaseManager::new(api_client.clone(), replica_id);
     let control_task = tokio::spawn(run_control_loop(
         broker.clone(),
         control_profile,
@@ -179,7 +179,7 @@ pub async fn start_worker_loop(runtime: WorkerRuntime) -> Result<(), SendableErr
         let api_client = api_client.clone();
         let providers = Arc::clone(&providers);
         let in_flight = Arc::clone(&in_flight);
-        let stale_leases = Arc::clone(&stale_leases);
+        let executor_leases = executor_leases.clone();
         let events = Arc::clone(&events);
         deliveries.spawn(async move {
             let _permit = permit;
@@ -189,10 +189,9 @@ pub async fn start_worker_loop(runtime: WorkerRuntime) -> Result<(), SendableErr
                 libraries,
                 api_client,
                 providers,
-                replica_id,
                 maybe_delivery,
                 in_flight,
-                stale_leases,
+                executor_leases,
                 events,
             )
             .await
@@ -399,10 +398,9 @@ async fn process_delivery(
     libraries: Arc<HashMap<String, Plugin>>,
     api_client: AsyncApiClient<StaticLocator>,
     providers: ProviderFactory,
-    replica_id: Option<Uuid>,
     delivery: BrokerDelivery,
     in_flight: Arc<Mutex<HashMap<Uuid, InFlightAction>>>,
-    stale_leases: Arc<OwnStaleLeases>,
+    executor_leases: ExecutorLeaseManager,
     events: Arc<dyn WorkerEventSink>,
 ) -> Result<(), SendableError> {
     // link this execution span to the trace that dispatched the action (w3c context from the broker
@@ -454,31 +452,21 @@ async fn process_delivery(
     // twice concurrently. this deadline is only the backstop for a holder that is still live but has
     // lost the action; the server also frees the lease as soon as the holding replica stops
     // heartbeating, which is what bounds failover after a worker crash.
-    if let Some(replica_id) = replica_id {
-        if claim_executor(
-            &api_client,
-            &stale_leases,
-            replica_id,
-            &command,
-            action.timeout_seconds,
-        )
-        .await
-        {
-            info!(
-                node_run_id = %command.workflow_node_run_id,
-                "skipping duplicate delivery: executor lease held elsewhere"
-            );
-            metrics::action_duplicate();
-            events.handle(WorkerEvent::ActionSkippedDuplicate {
-                node_run_id: command.workflow_node_run_id,
-            });
-            in_flight.lock().await.remove(&command.workflow_node_run_id);
-            broker
-                .ack(consumer_id, delivery.delivery_id)
-                .await
-                .map_err(|err| broker_error("ack", err))?;
-            return Ok(());
-        }
+    if executor_leases.held_elsewhere(&command).await {
+        info!(
+            node_run_id = %command.workflow_node_run_id,
+            "skipping duplicate delivery: executor lease held elsewhere"
+        );
+        metrics::action_duplicate();
+        events.handle(WorkerEvent::ActionSkippedDuplicate {
+            node_run_id: command.workflow_node_run_id,
+        });
+        in_flight.lock().await.remove(&command.workflow_node_run_id);
+        broker
+            .ack(consumer_id, delivery.delivery_id)
+            .await
+            .map_err(|err| broker_error("ack", err))?;
+        return Ok(());
     }
     // reserve the declared idempotency key before anything the outside world can observe. a key whose
     // execution already completed settles this delivery from the recorded result; one held by another
@@ -489,9 +477,7 @@ async fn process_delivery(
             return settle_from_idempotent_replay(
                 broker,
                 consumer_id,
-                &api_client,
-                replica_id,
-                &stale_leases,
+                &executor_leases,
                 &in_flight,
                 &events,
                 &sink,
@@ -508,16 +494,7 @@ async fn process_delivery(
                 node_run_id: command.workflow_node_run_id,
             });
             in_flight.lock().await.remove(&command.workflow_node_run_id);
-            if let Some(replica_id) = replica_id {
-                release_executor_lease(
-                    &api_client,
-                    &stale_leases,
-                    replica_id,
-                    command.workflow_node_run_id,
-                    command.attempt,
-                )
-                .await;
-            }
+            executor_leases.release_for_redelivery(&command).await;
             return broker
                 .ack(consumer_id, delivery.delivery_id)
                 .await
@@ -545,11 +522,8 @@ async fn process_delivery(
         nack_action_delivery(
             broker,
             consumer_id,
-            &api_client,
-            replica_id,
-            &stale_leases,
-            command.workflow_node_run_id,
-            command.attempt,
+            &executor_leases,
+            &command,
             delivery.delivery_id,
         )
         .await?;
@@ -574,11 +548,8 @@ async fn process_delivery(
             return nack_action_delivery(
                 broker,
                 consumer_id,
-                &api_client,
-                replica_id,
-                &stale_leases,
-                command.workflow_node_run_id,
-                command.attempt,
+                &executor_leases,
+                &command,
                 delivery.delivery_id,
             )
             .await;
@@ -631,11 +602,8 @@ async fn process_delivery(
                 nack_action_delivery(
                     broker,
                     consumer_id,
-                    &api_client,
-                    replica_id,
-                    &stale_leases,
-                    command.workflow_node_run_id,
-                    command.attempt,
+                    &executor_leases,
+                    &command,
                     delivery.delivery_id,
                 )
                 .await?;
@@ -645,17 +613,7 @@ async fn process_delivery(
                 .ack(consumer_id, delivery.delivery_id)
                 .await
                 .map_err(|err| broker_error("ack", err))?;
-            if let Some(replica_id) = replica_id {
-                // this execution settled terminally, so only the next attempt may reclaim.
-                release_executor_lease(
-                    &api_client,
-                    &stale_leases,
-                    replica_id,
-                    command.workflow_node_run_id,
-                    command.attempt + 1,
-                )
-                .await;
-            }
+            executor_leases.release_after_settlement(&command).await;
             in_flight.lock().await.remove(&command.workflow_node_run_id);
             return Ok(());
         }
@@ -707,11 +665,8 @@ async fn process_delivery(
         return nack_action_delivery(
             broker,
             consumer_id,
-            &api_client,
-            replica_id,
-            &stale_leases,
-            command.workflow_node_run_id,
-            command.attempt,
+            &executor_leases,
+            &command,
             delivery.delivery_id,
         )
         .await;
@@ -729,11 +684,8 @@ async fn process_delivery(
         nack_action_delivery(
             broker,
             consumer_id,
-            &api_client,
-            replica_id,
-            &stale_leases,
-            command.workflow_node_run_id,
-            command.attempt,
+            &executor_leases,
+            &command,
             delivery.delivery_id,
         )
         .await?;
@@ -770,11 +722,8 @@ async fn process_delivery(
             nack_action_delivery(
                 broker,
                 consumer_id,
-                &api_client,
-                replica_id,
-                &stale_leases,
-                command.workflow_node_run_id,
-                command.attempt,
+                &executor_leases,
+                &command,
                 delivery.delivery_id,
             )
             .await?;
@@ -827,11 +776,8 @@ async fn process_delivery(
             nack_action_delivery(
                 broker,
                 consumer_id,
-                &api_client,
-                replica_id,
-                &stale_leases,
-                command.workflow_node_run_id,
-                command.attempt,
+                &executor_leases,
+                &command,
                 delivery.delivery_id,
             )
             .await?;
@@ -857,11 +803,8 @@ async fn process_delivery(
             nack_action_delivery(
                 broker,
                 consumer_id,
-                &api_client,
-                replica_id,
-                &stale_leases,
-                command.workflow_node_run_id,
-                command.attempt,
+                &executor_leases,
+                &command,
                 delivery.delivery_id,
             )
             .await?;
@@ -897,11 +840,8 @@ async fn process_delivery(
             nack_action_delivery(
                 broker,
                 consumer_id,
-                &api_client,
-                replica_id,
-                &stale_leases,
-                command.workflow_node_run_id,
-                command.attempt,
+                &executor_leases,
+                &command,
                 delivery.delivery_id,
             )
             .await?;
@@ -917,17 +857,7 @@ async fn process_delivery(
     // let an ack failure redeliver this already-completed action into a free claim and re-run its
     // side effects. a failed release is remembered so the retry the reducer schedules next can
     // reclaim the leftover lease here immediately, and still self-heals via staleness elsewhere.
-    if let Some(replica_id) = replica_id {
-        // this execution settled terminally, so only the next attempt may reclaim.
-        release_executor_lease(
-            &api_client,
-            &stale_leases,
-            replica_id,
-            command.workflow_node_run_id,
-            command.attempt + 1,
-        )
-        .await;
-    }
+    executor_leases.release_after_settlement(&command).await;
     Ok(())
 }
 
@@ -936,20 +866,14 @@ async fn process_delivery(
 /// landing on another worker is dropped as a duplicate and acked until the lease goes stale,
 /// parking the node run until the reducer's timeout backstop fires. a failed release is remembered
 /// so a redelivery landing back on this worker reclaims the leftover lease instead.
-#[allow(clippy::too_many_arguments)] // nack reporting needs the full delivery and worker context.
 async fn nack_action_delivery(
     broker: &Arc<dyn Broker>,
     consumer_id: &str,
-    api_client: &AsyncApiClient<StaticLocator>,
-    replica_id: Option<Uuid>,
-    stale_leases: &OwnStaleLeases,
-    node_run_id: Uuid,
-    attempt: i64,
+    executor_leases: &ExecutorLeaseManager,
+    command: &ActionCommand,
     delivery_id: uuid::Uuid,
 ) -> Result<(), SendableError> {
-    if let Some(replica_id) = replica_id {
-        release_executor_lease(api_client, stale_leases, replica_id, node_run_id, attempt).await;
-    }
+    executor_leases.release_for_redelivery(command).await;
     broker
         .nack(consumer_id, delivery_id)
         .await
@@ -963,9 +887,7 @@ async fn nack_action_delivery(
 async fn settle_from_idempotent_replay(
     broker: &Arc<dyn Broker>,
     consumer_id: &str,
-    api_client: &AsyncApiClient<StaticLocator>,
-    replica_id: Option<Uuid>,
-    stale_leases: &Arc<OwnStaleLeases>,
+    executor_leases: &ExecutorLeaseManager,
     in_flight: &Arc<Mutex<HashMap<Uuid, InFlightAction>>>,
     events: &Arc<dyn WorkerEventSink>,
     sink: &RunOutputSink,
@@ -994,17 +916,7 @@ async fn settle_from_idempotent_replay(
     ));
     if let Err(err) = sink.flush().await {
         in_flight.lock().await.remove(&command.workflow_node_run_id);
-        nack_action_delivery(
-            broker,
-            consumer_id,
-            api_client,
-            replica_id,
-            stale_leases,
-            command.workflow_node_run_id,
-            command.attempt,
-            delivery_id,
-        )
-        .await?;
+        nack_action_delivery(broker, consumer_id, executor_leases, command, delivery_id).await?;
         return Err(broker_error("publish_result", err));
     }
     if let Err(err) = sink
@@ -1018,17 +930,7 @@ async fn settle_from_idempotent_replay(
             err
         );
         in_flight.lock().await.remove(&command.workflow_node_run_id);
-        nack_action_delivery(
-            broker,
-            consumer_id,
-            api_client,
-            replica_id,
-            stale_leases,
-            command.workflow_node_run_id,
-            command.attempt,
-            delivery_id,
-        )
-        .await?;
+        nack_action_delivery(broker, consumer_id, executor_leases, command, delivery_id).await?;
         return Err(broker_error("publish_result", err));
     }
     events.handle(WorkerEvent::ActionFinished {
@@ -1048,17 +950,7 @@ async fn settle_from_idempotent_replay(
         .ack(consumer_id, delivery_id)
         .await
         .map_err(|err| broker_error("ack", err))?;
-    if let Some(replica_id) = replica_id {
-        // settled terminally, so only the next attempt may reclaim.
-        release_executor_lease(
-            api_client,
-            stale_leases,
-            replica_id,
-            command.workflow_node_run_id,
-            command.attempt + 1,
-        )
-        .await;
-    }
+    executor_leases.release_after_settlement(command).await;
     in_flight.lock().await.remove(&command.workflow_node_run_id);
     Ok(())
 }

@@ -15,14 +15,64 @@ export interface BulkResult<T> {
   allFailed: boolean;
 }
 
-const DEFAULT_CONCURRENCY = 4;
-
 function messageFor(error: unknown): string {
   if (error instanceof Error) {
     return error.message;
   }
 
   return String(error);
+}
+
+class BulkOperation<T> {
+  private static readonly DEFAULT_CONCURRENCY = 4;
+
+  private readonly succeeded: T[] = [];
+  private readonly failed: BulkFailure<T>[] = [];
+  private readonly concurrency: number;
+  private cursor = 0;
+
+  constructor(
+    private readonly items: readonly T[],
+    private readonly operation: (item: T) => Promise<unknown>,
+    options: { concurrency?: number; signal?: AbortSignal },
+  ) {
+    this.concurrency = Math.max(
+      1,
+      options.concurrency ?? BulkOperation.DEFAULT_CONCURRENCY,
+    );
+    this.signal = options.signal;
+  }
+
+  private readonly signal: AbortSignal | undefined;
+
+  async run(): Promise<BulkResult<T>> {
+    const lanes = Math.min(this.concurrency, this.items.length);
+    await Promise.all(Array.from({ length: lanes }, () => this.runLane()));
+
+    return {
+      succeeded: this.succeeded,
+      failed: this.failed,
+      allFailed: this.items.length > 0 && this.succeeded.length === 0,
+    };
+  }
+
+  private async runLane() {
+    while (this.cursor < this.items.length) {
+      if (this.signal?.aborted) {
+        return;
+      }
+
+      const item = this.items[this.cursor];
+      this.cursor += 1;
+
+      try {
+        await this.operation(item);
+        this.succeeded.push(item);
+      } catch (error) {
+        this.failed.push({ item, error, message: messageFor(error) });
+      }
+    }
+  }
 }
 
 // run `operation` over every item with bounded concurrency, collecting rather than propagating
@@ -32,34 +82,7 @@ export async function runBulk<T>(
   operation: (item: T) => Promise<unknown>,
   options: { concurrency?: number; signal?: AbortSignal } = {},
 ): Promise<BulkResult<T>> {
-  const concurrency = Math.max(1, options.concurrency ?? DEFAULT_CONCURRENCY);
-  const succeeded: T[] = [];
-  const failed: BulkFailure<T>[] = [];
-  let cursor = 0;
-
-  async function worker() {
-    while (cursor < items.length) {
-      if (options.signal?.aborted) {
-        return;
-      }
-
-      const index = cursor;
-      cursor += 1;
-      const item = items[index];
-
-      try {
-        await operation(item);
-        succeeded.push(item);
-      } catch (error) {
-        failed.push({ item, error, message: messageFor(error) });
-      }
-    }
-  }
-
-  const lanes = Math.min(concurrency, items.length);
-  await Promise.all(Array.from({ length: lanes }, () => worker()));
-
-  return { succeeded, failed, allFailed: items.length > 0 && succeeded.length === 0 };
+  return new BulkOperation(items, operation, options).run();
 }
 
 // one-line outcome for a status/toast line, e.g. "Disabled 8 of 10 workflows (2 failed: ...)".

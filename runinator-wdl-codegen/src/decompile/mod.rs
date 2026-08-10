@@ -80,11 +80,12 @@ pub fn decompile_definition(
         }
     }
 
-    let declared_types = read_declared_types(&graph.metadata);
-    let input_types = read_input_types(&graph.metadata);
-    let alias_decls = read_alias_decls(&graph.metadata);
-    let spreads = read_spreads(&graph.metadata);
-    let control_ids = read_control_ids(&graph.metadata);
+    let metadata = MetadataReader::new(&graph.metadata);
+    let declared_types = metadata.declared_types();
+    let input_types = metadata.input_types();
+    let alias_decls = metadata.alias_declarations();
+    let spreads = metadata.spreads();
+    let control_ids = metadata.control_ids();
 
     let mut decompiler = Decompiler {
         nodes,
@@ -105,14 +106,15 @@ pub fn decompile_definition(
     };
 
     // top-level `fn` definitions render before the workflow block (document = func_def* ~ workflow).
-    decompiler.emit_functions(&read_functions(&graph.metadata))?;
+    decompiler.emit_functions(&metadata.functions())?;
 
     if let Some(namespace) = &definition.namespace {
         decompiler.line(&format!("namespace {namespace} {{"));
         decompiler.indent += 1;
     }
 
-    let returns = read_output_type(&graph.metadata)
+    let returns = metadata
+        .output_type()
         .map(|ty| format!(" returns {}", expr::render_type(&ty)))
         .unwrap_or_default();
     decompiler.line(&format!(
@@ -123,13 +125,13 @@ pub fn decompile_definition(
     ));
     decompiler.indent += 1;
     decompiler.emit_params(&definition.input_type)?;
-    decompiler.emit_triggers(&read_triggers(&graph.metadata))?;
-    decompiler.emit_notifications(&read_notifications(&graph.metadata))?;
-    decompiler.emit_concurrency(&graph.metadata)?;
-    decompiler.emit_watches(&read_watches(&graph.metadata))?;
-    decompiler.emit_interrupts(&read_interrupts(&graph.metadata))?;
-    decompiler.emit_correlation(&graph.metadata)?;
-    decompiler.emit_type_decls(&read_type_decls(&graph.metadata))?;
+    decompiler.emit_triggers(metadata.triggers())?;
+    decompiler.emit_notifications(metadata.notifications())?;
+    decompiler.emit_concurrency(metadata.concurrency())?;
+    decompiler.emit_watches(metadata.watches())?;
+    decompiler.emit_interrupts(metadata.interrupts())?;
+    decompiler.emit_correlation(metadata.correlation())?;
+    decompiler.emit_type_decls(&metadata.type_declarations())?;
     decompiler.emit_alias_decls()?;
 
     let start = graph
@@ -244,85 +246,6 @@ fn decompile_retry(retry: &WorkflowRetry, explicit: bool) -> Option<String> {
         args.push(format!("on: {on}"));
     }
     Some(format!(".retry({})", args.join(", ")))
-}
-
-/// a `fn` definition recovered for decompilation: its name, its surface signature (`(params) -> ret`,
-/// from the `/wdl/functions` hint), an optional recursion cap, and the lowered body form.
-struct FnEntry {
-    name: String,
-    signature: String,
-    recursive: Option<i64>,
-    body: FnBodyForm,
-}
-
-/// a recovered function body: a single lowered expression, or a `$let`/`$return`/`$if` program.
-enum FnBodyForm {
-    Expr(Value),
-    Program(Vec<Value>),
-}
-
-/// recover user `fn` definitions from the runtime `/functions` array, pairing each with its surface
-/// signature from the `/wdl/functions` hint (falling back to `any`-typed params for older graphs).
-fn read_functions(metadata: &Value) -> Vec<FnEntry> {
-    let Some(entries) = metadata.pointer("/functions").and_then(Value::as_array) else {
-        return Vec::new();
-    };
-    let signatures = metadata
-        .pointer("/wdl/functions")
-        .and_then(Value::as_object);
-    entries
-        .iter()
-        .filter_map(|entry| {
-            let object = entry.as_object()?;
-            let name = object.get("name").and_then(Value::as_str)?.to_string();
-            let recursive = object
-                .get("recursive")
-                .and_then(Value::as_object)
-                .and_then(|recursive| recursive.get("max_depth"))
-                .and_then(Value::as_i64);
-            let body = match object.get("program").and_then(Value::as_array) {
-                Some(program) => FnBodyForm::Program(program.clone()),
-                None => FnBodyForm::Expr(object.get("body").cloned().unwrap_or(Value::Null)),
-            };
-            let signature = signatures
-                .and_then(|map| map.get(&name))
-                .and_then(Value::as_str)
-                .map(str::to_string)
-                .unwrap_or_else(|| fallback_signature(object));
-            Some(FnEntry {
-                name,
-                signature,
-                recursive,
-                body,
-            })
-        })
-        .collect()
-}
-
-/// build an `any`-typed signature `(p1: any, p2: any)` from a function's parameter names, used when
-/// the `/wdl/functions` surface hint is absent (older graphs lowered before the hint existed).
-fn fallback_signature(object: &Map) -> String {
-    let params = object
-        .get("params")
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|param| {
-                    param.as_str().map(str::to_string).or_else(|| {
-                        param
-                            .as_object()
-                            .and_then(|param| param.get("name"))
-                            .and_then(Value::as_str)
-                            .map(str::to_string)
-                    })
-                })
-                .map(|name| format!("{name}: any"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        })
-        .unwrap_or_default();
-    format!("({params})")
 }
 
 impl<'a> Decompiler<'a> {
@@ -528,8 +451,8 @@ impl<'a> Decompiler<'a> {
     }
 
     /// emit the header `concurrency <n> on_conflict <policy>` cap recovered from runtime metadata.
-    fn emit_concurrency(&mut self, metadata: &Value) -> Result<(), WdlError> {
-        let Some(concurrency) = metadata.pointer("/concurrency") else {
+    fn emit_concurrency(&mut self, concurrency: Option<&Value>) -> Result<(), WdlError> {
+        let Some(concurrency) = concurrency else {
             return Ok(());
         };
         let Some(max_concurrent_runs) = concurrency
@@ -604,11 +527,8 @@ impl<'a> Decompiler<'a> {
     }
 
     /// emit the header `correlate key <expr>` declaration recovered from `metadata.correlation`.
-    fn emit_correlation(&mut self, metadata: &Value) -> Result<(), WdlError> {
-        let Some(expression) = metadata
-            .pointer("/correlation")
-            .filter(|value| !value.is_null())
-        else {
+    fn emit_correlation(&mut self, expression: Option<&Value>) -> Result<(), WdlError> {
+        let Some(expression) = expression else {
             return Ok(());
         };
         self.line(&format!("correlate key {}", self.expr(expression)?));

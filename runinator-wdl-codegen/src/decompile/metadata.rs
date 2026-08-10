@@ -1,129 +1,211 @@
 use std::collections::{HashMap, HashSet};
 
-use runinator_models::{types::RuninatorType, value::Value};
+use runinator_models::{
+    types::RuninatorType,
+    value::{Map, Value},
+};
 
 use super::expr;
 
-pub(super) fn read_declared_types(metadata: &Value) -> HashMap<String, String> {
-    let mut types = HashMap::new();
-    let Some(entries) = metadata.pointer("/wdl/types").and_then(Value::as_object) else {
-        return types;
-    };
-    for (id, value) in entries {
-        if let Some(text) = value.as_str() {
-            types.insert(id.clone(), text.to_string());
-        } else if let Ok(ty) = value.decode::<RuninatorType>() {
-            types.insert(id.clone(), expr::render_type(&ty));
-        }
-    }
-    types
+pub(super) struct MetadataReader<'a> {
+    metadata: &'a Value,
 }
 
-pub(super) fn read_type_decls(metadata: &Value) -> Vec<(String, String)> {
-    let Some(entries) = metadata
-        .pointer("/wdl/type_decls")
-        .and_then(Value::as_object)
-    else {
-        return Vec::new();
-    };
-    entries
-        .iter()
-        .filter_map(|(name, value)| {
-            value
-                .as_str()
-                .map(|text| (name.clone(), text.to_string()))
-                .or_else(|| {
-                    value
-                        .decode::<RuninatorType>()
-                        .ok()
-                        .map(|ty| (name.clone(), expr::render_type(&ty)))
+impl<'a> MetadataReader<'a> {
+    pub(super) fn new(metadata: &'a Value) -> Self {
+        Self { metadata }
+    }
+
+    pub(super) fn declared_types(&self) -> HashMap<String, String> {
+        let mut types = HashMap::new();
+        let Some(entries) = self.object("/wdl/types") else {
+            return types;
+        };
+        for (id, value) in entries {
+            if let Some(text) = value.as_str() {
+                types.insert(id.clone(), text.to_string());
+            } else if let Ok(ty) = value.decode::<RuninatorType>() {
+                types.insert(id.clone(), expr::render_type(&ty));
+            }
+        }
+        types
+    }
+
+    pub(super) fn type_declarations(&self) -> Vec<(String, String)> {
+        let Some(entries) = self.object("/wdl/type_decls") else {
+            return Vec::new();
+        };
+        entries
+            .iter()
+            .filter_map(|(name, value)| {
+                value
+                    .as_str()
+                    .map(|text| (name.clone(), text.to_string()))
+                    .or_else(|| {
+                        value
+                            .decode::<RuninatorType>()
+                            .ok()
+                            .map(|ty| (name.clone(), expr::render_type(&ty)))
+                    })
+            })
+            .collect()
+    }
+
+    pub(super) fn output_type(&self) -> Option<RuninatorType> {
+        self.value("/wdl/output_type")?.decode().ok()
+    }
+
+    pub(super) fn input_types(&self) -> HashMap<String, String> {
+        let mut overrides = HashMap::new();
+        let Some(entries) = self.object("/wdl/input_types") else {
+            return overrides;
+        };
+        for (name, value) in entries {
+            if let Some(text) = value.as_str() {
+                overrides.insert(name.clone(), text.to_string());
+            }
+        }
+        overrides
+    }
+
+    pub(super) fn triggers(&self) -> &[Value] {
+        self.array("/triggers")
+    }
+
+    pub(super) fn notifications(&self) -> &[Value] {
+        self.array("/notifications")
+    }
+
+    pub(super) fn interrupts(&self) -> &[Value] {
+        self.array("/interrupts")
+    }
+
+    pub(super) fn watches(&self) -> &[Value] {
+        self.array("/watches")
+    }
+
+    pub(super) fn alias_declarations(&self) -> Vec<(String, Vec<Value>)> {
+        self.array("/wdl/aliases")
+            .iter()
+            .filter_map(|entry| {
+                Some((
+                    entry.get("name").and_then(Value::as_str)?.to_string(),
+                    entry.get("segs").and_then(Value::as_array)?.clone(),
+                ))
+            })
+            .collect()
+    }
+
+    pub(super) fn spreads(&self) -> HashMap<String, Vec<Value>> {
+        let mut spreads = HashMap::new();
+        let Some(entries) = self.object("/wdl/spreads") else {
+            return spreads;
+        };
+        for (id, segments) in entries {
+            if let Some(segments) = segments.as_array() {
+                spreads.insert(id.clone(), segments.clone());
+            }
+        }
+        spreads
+    }
+
+    pub(super) fn control_ids(&self) -> HashSet<String> {
+        self.array("/wdl/control_ids")
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_string)
+            .collect()
+    }
+
+    pub(super) fn functions(&self) -> Vec<FnEntry> {
+        let signatures = self.object("/wdl/functions");
+        self.array("/functions")
+            .iter()
+            .filter_map(|entry| {
+                let object = entry.as_object()?;
+                let name = object.get("name").and_then(Value::as_str)?.to_string();
+                let recursive = object
+                    .get("recursive")
+                    .and_then(Value::as_object)
+                    .and_then(|recursive| recursive.get("max_depth"))
+                    .and_then(Value::as_i64);
+                let body = match object.get("program").and_then(Value::as_array) {
+                    Some(program) => FnBodyForm::Program(program.clone()),
+                    None => FnBodyForm::Expr(object.get("body").cloned().unwrap_or(Value::Null)),
+                };
+                let signature = signatures
+                    .and_then(|map| map.get(&name))
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+                    .unwrap_or_else(|| fallback_signature(object));
+                Some(FnEntry {
+                    name,
+                    signature,
+                    recursive,
+                    body,
                 })
-        })
-        .collect()
-}
-
-pub(super) fn read_output_type(metadata: &Value) -> Option<RuninatorType> {
-    metadata.pointer("/wdl/output_type")?.decode().ok()
-}
-
-pub(super) fn read_input_types(metadata: &Value) -> HashMap<String, String> {
-    let mut overrides = HashMap::new();
-    let Some(entries) = metadata
-        .pointer("/wdl/input_types")
-        .and_then(Value::as_object)
-    else {
-        return overrides;
-    };
-    for (name, value) in entries {
-        if let Some(text) = value.as_str() {
-            overrides.insert(name.clone(), text.to_string());
-        }
+            })
+            .collect()
     }
-    overrides
-}
 
-fn read_array(metadata: &Value, pointer: &str) -> Vec<Value> {
-    metadata
-        .pointer(pointer)
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default()
-}
-
-pub(super) fn read_triggers(metadata: &Value) -> Vec<Value> {
-    read_array(metadata, "/triggers")
-}
-
-pub(super) fn read_notifications(metadata: &Value) -> Vec<Value> {
-    read_array(metadata, "/notifications")
-}
-
-pub(super) fn read_interrupts(metadata: &Value) -> Vec<Value> {
-    read_array(metadata, "/interrupts")
-}
-
-pub(super) fn read_watches(metadata: &Value) -> Vec<Value> {
-    read_array(metadata, "/watches")
-}
-
-pub(super) fn read_alias_decls(metadata: &Value) -> Vec<(String, Vec<Value>)> {
-    let Some(entries) = metadata.pointer("/wdl/aliases").and_then(Value::as_array) else {
-        return Vec::new();
-    };
-    entries
-        .iter()
-        .filter_map(|entry| {
-            Some((
-                entry.get("name").and_then(Value::as_str)?.to_string(),
-                entry.get("segs").and_then(Value::as_array)?.clone(),
-            ))
-        })
-        .collect()
-}
-
-pub(super) fn read_spreads(metadata: &Value) -> HashMap<String, Vec<Value>> {
-    let mut spreads = HashMap::new();
-    let Some(entries) = metadata.pointer("/wdl/spreads").and_then(Value::as_object) else {
-        return spreads;
-    };
-    for (id, segments) in entries {
-        if let Some(segments) = segments.as_array() {
-            spreads.insert(id.clone(), segments.clone());
-        }
+    pub(super) fn concurrency(&self) -> Option<&Value> {
+        self.value("/concurrency")
     }
-    spreads
+
+    pub(super) fn correlation(&self) -> Option<&Value> {
+        self.value("/correlation").filter(|value| !value.is_null())
+    }
+
+    fn value(&self, pointer: &str) -> Option<&'a Value> {
+        self.metadata.pointer(pointer)
+    }
+
+    fn array(&self, pointer: &str) -> &'a [Value] {
+        self.value(pointer)
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+    }
+
+    fn object(&self, pointer: &str) -> Option<&'a Map> {
+        self.value(pointer).and_then(Value::as_object)
+    }
 }
 
-pub(super) fn read_control_ids(metadata: &Value) -> HashSet<String> {
-    metadata
-        .pointer("/wdl/control_ids")
+/// a `fn` definition recovered for decompilation.
+pub(super) struct FnEntry {
+    pub(super) name: String,
+    pub(super) signature: String,
+    pub(super) recursive: Option<i64>,
+    pub(super) body: FnBodyForm,
+}
+
+/// a recovered function body: a single lowered expression or a compute program.
+pub(super) enum FnBodyForm {
+    Expr(Value),
+    Program(Vec<Value>),
+}
+
+fn fallback_signature(object: &Map) -> String {
+    let params = object
+        .get("params")
         .and_then(Value::as_array)
         .map(|items| {
             items
                 .iter()
-                .filter_map(Value::as_str)
-                .map(str::to_string)
-                .collect()
+                .filter_map(|param| {
+                    param.as_str().map(str::to_string).or_else(|| {
+                        param
+                            .as_object()
+                            .and_then(|param| param.get("name"))
+                            .and_then(Value::as_str)
+                            .map(str::to_string)
+                    })
+                })
+                .map(|name| format!("{name}: any"))
+                .collect::<Vec<_>>()
+                .join(", ")
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    format!("({params})")
 }

@@ -2,31 +2,34 @@ import type { WorkflowServiceHost } from "./host";
 
 const WATCH_STORAGE_PREFIX = "runinator.watch.";
 
-export function createWorkflowRunWatchService(host: WorkflowServiceHost) {
-  function loadAllWatchExpressions(): Record<string, string[]> {
-    const storage = typeof window !== "undefined" ? window.localStorage : undefined;
+class WatchExpressionStorage {
+  constructor(
+    private readonly storage: Storage | undefined,
+    private readonly prefix = WATCH_STORAGE_PREFIX,
+  ) {}
 
-    if (!storage) {
+  loadAll(): Record<string, string[]> {
+    if (!this.storage) {
       return {};
     }
 
     const result: Record<string, string[]> = {};
 
-    for (let i = 0; i < storage.length; i++) {
-      const key = storage.key(i);
+    for (let i = 0; i < this.storage.length; i++) {
+      const key = this.storage.key(i);
 
-      if (!key?.startsWith(WATCH_STORAGE_PREFIX)) {
+      if (!key?.startsWith(this.prefix)) {
         continue;
       }
 
-      const id = key.slice(WATCH_STORAGE_PREFIX.length);
+      const id = key.slice(this.prefix.length);
 
       if (!id) {
         continue;
       }
 
       try {
-        const parsed: unknown = JSON.parse(storage.getItem(key) ?? "[]");
+        const parsed: unknown = JSON.parse(this.storage.getItem(key) ?? "[]");
 
         if (Array.isArray(parsed)) {
           result[id] = parsed.filter((value): value is string => typeof value === "string");
@@ -39,9 +42,22 @@ export function createWorkflowRunWatchService(host: WorkflowServiceHost) {
     return result;
   }
 
+  save(workflowId: string, expressions: readonly string[]) {
+    this.storage?.setItem(`${this.prefix}${workflowId}`, JSON.stringify(expressions));
+  }
+}
+
+export function createWorkflowRunWatchService(host: WorkflowServiceHost) {
+  const storage = new WatchExpressionStorage(
+    typeof window !== "undefined" ? window.localStorage : undefined,
+  );
+
+  function loadAllWatchExpressions(): Record<string, string[]> {
+    return storage.loadAll();
+  }
+
   function persistWatchExpressions(workflowId: string, list: string[]) {
-    const storage = typeof window !== "undefined" ? window.localStorage : undefined;
-    storage?.setItem(`${WATCH_STORAGE_PREFIX}${workflowId}`, JSON.stringify(list));
+    storage.save(workflowId, list);
   }
 
   function addWatchExpression(expression: string) {
