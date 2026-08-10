@@ -10,13 +10,13 @@
   --surface-hover: #f1f5fb;
   --surface-overlay: rgba(255, 255, 255, 0.9);
 
-  /* inverse surfaces (sidebar) */
-  --surface-inverse: #15202b;
-  --surface-inverse-hover: #223142;
-  --surface-inverse-accent: #314255;
-  --text-inverse: #f7fafc;
-  --text-inverse-muted: #d8e0e8;
-  --text-inverse-faint: #778392;
+  /* inverse surfaces (sidebar). graphite with a faint violet undertone, tying the rail to --accent. */
+  --surface-inverse: #14121c;
+  --surface-inverse-hover: #201c2d;
+  --surface-inverse-accent: #2c2542;
+  --text-inverse: #f6f4fb;
+  --text-inverse-muted: #d3cfe0;
+  --text-inverse-faint: #837c96;
 
   /* text */
   --text: #17202a;
@@ -31,12 +31,12 @@
   --border-faint: #edf1f5;
   --border-hover: #7b8794;
 
-  /* brand / accent */
-  --accent: #1f6feb;
-  --accent-hover: #1864d6;
-  --accent-soft: #eef5ff;
-  --accent-text: #1d4ed8;
-  --accent-ring: rgba(31, 111, 235, 0.15);
+  /* brand / accent. signal-violet: distinct from success/danger/warning/info/pulse so it reads as "brand", not status. */
+  --accent: #5b45e6;
+  --accent-hover: #4934c9;
+  --accent-soft: #f1eefe;
+  --accent-text: #4934c9;
+  --accent-ring: rgba(91, 69, 230, 0.16);
 
   /* reserved for "this is happening right now": live streams, running runs, connected replicas.
      a pulse always means live, not clickable, so it stays distinct from --accent. */
@@ -111,12 +111,12 @@
   --surface-overlay: rgba(15, 20, 27, 0.88);
 
   /* inverse surfaces (sidebar) */
-  --surface-inverse: #0b1117;
-  --surface-inverse-hover: #172231;
-  --surface-inverse-accent: #213247;
-  --text-inverse: #f4f7fb;
-  --text-inverse-muted: #c6d0dc;
-  --text-inverse-faint: #6f7e8f;
+  --surface-inverse: #0c0a12;
+  --surface-inverse-hover: #17131f;
+  --surface-inverse-accent: #211b33;
+  --text-inverse: #f4f2fa;
+  --text-inverse-muted: #c9c3d8;
+  --text-inverse-faint: #6b6480;
 
   /* text */
   --text: #e6ebf2;
@@ -131,12 +131,12 @@
   --border-faint: #1d2733;
   --border-hover: #6f8198;
 
-  /* brand / accent */
-  --accent: #62a2ff;
-  --accent-hover: #82b6ff;
-  --accent-soft: #142a46;
-  --accent-text: #9cc6ff;
-  --accent-ring: rgba(98, 162, 255, 0.22);
+  /* brand / accent. lighter signal-violet for dark-on-dark contrast. */
+  --accent: #a897ff;
+  --accent-hover: #bcaeff;
+  --accent-soft: #221c4a;
+  --accent-text: #cabfff;
+  --accent-ring: rgba(168, 151, 255, 0.24);
 
   /* reserved for "this is happening right now": live streams, running runs, connected replicas.
      a pulse always means live, not clickable, so it stays distinct from --accent. */

@@ -167,3 +167,69 @@ describe("scaffoldInterruptHandler", () => {
     expect(candidates).not.toContain("start");
   });
 });
+
+describe("the interrupts panel", () => {
+  it("opens as its own inspector mode and refreshes the draft", async () => {
+    const workflows = useWorkflowsStore();
+    await workflows.selectWorkflow(workflow());
+
+    workflows.openWorkflowInterrupts();
+
+    expect(workflows.workflowInspectorMode).toBe("interrupts");
+    // it reads the same draft the header panel does; only the panel differs.
+    expect(workflows.headerDraft.interrupts).toEqual([]);
+  });
+
+  it("badges each panel with only the issues that panel can fix", async () => {
+    const workflows = useWorkflowsStore();
+    await workflows.selectWorkflow(workflow());
+    workflows.declareHeaderInterrupt("wake", "does_not_exist");
+
+    expect(workflows.getInterruptIssues()).not.toEqual([]);
+    expect(workflows.getDeclarationIssues()).toEqual([]);
+  });
+});
+
+describe("removeHeaderInterrupt", () => {
+  it("leaves the region's nodes on the canvas when the user declines cleanup", async () => {
+    vi.stubGlobal("confirm", () => false);
+    const workflows = useWorkflowsStore();
+    await workflows.selectWorkflow(workflow());
+    workflows.scaffoldInterruptHandler("wake");
+
+    workflows.removeHeaderInterrupt(0);
+
+    expect(workflows.headerDraft.interrupts).toEqual([]);
+    const ids = workflows.ensureWorkflowNodes().map((node) => node.id);
+    expect(ids).toContain("on_wake");
+    expect(ids).toContain("resume_wake");
+  });
+
+  it("deletes the region's nodes when the user confirms cleanup", async () => {
+    vi.stubGlobal("confirm", () => true);
+    const workflows = useWorkflowsStore();
+    await workflows.selectWorkflow(workflow());
+    workflows.scaffoldInterruptHandler("wake");
+
+    workflows.removeHeaderInterrupt(0);
+
+    const ids = workflows.ensureWorkflowNodes().map((node) => node.id);
+    expect(ids).not.toContain("on_wake");
+    expect(ids).not.toContain("resume_wake");
+    // the main flow is untouched.
+    expect(ids).toEqual(expect.arrayContaining(["start", "work", "end"]));
+  });
+
+  it("does not prompt when the declaration's handler has no region to clean up", async () => {
+    const confirmSpy = vi.fn(() => true);
+    vi.stubGlobal("confirm", confirmSpy);
+    const workflows = useWorkflowsStore();
+    await workflows.selectWorkflow(workflow());
+    workflows.declareHeaderInterrupt("wake", "does_not_exist");
+
+    workflows.removeHeaderInterrupt(0);
+
+    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(workflows.headerDraft.interrupts).toEqual([]);
+  });
+});

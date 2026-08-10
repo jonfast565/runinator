@@ -70,11 +70,14 @@
       >
         Add handler
       </button>
+      <select v-model="existingHandlerId" :disabled="candidates.length === 0" aria-label="Existing node">
+        <option v-for="id in candidates" :key="id" :value="id">{{ id }}</option>
+      </select>
       <button
         type="button"
         class="btn btn-sm"
-        :disabled="!newSource || candidates.length === 0"
-        title="Point this source at a region you have already drawn"
+        :disabled="!newSource || !existingHandlerId"
+        title="Point this source at the selected region you have already drawn"
         @click="declareExisting"
       >
         Use existing node
@@ -103,12 +106,23 @@ const undeclared = computed(() =>
   workflows.getUndeclaredInterruptSources(sourceOptions.value.map((option) => option.value)),
 );
 const newSource = ref("");
+const existingHandlerId = ref("");
 
 watch(
   undeclared,
   (sources) => {
     if (!sources.includes(newSource.value)) {
       newSource.value = sources.at(0) ?? "";
+    }
+  },
+  { immediate: true },
+);
+
+watch(
+  candidates,
+  (ids) => {
+    if (!ids.includes(existingHandlerId.value)) {
+      existingHandlerId.value = ids.at(0) ?? "";
     }
   },
   { immediate: true },
@@ -135,10 +149,8 @@ function scaffold() {
 }
 
 function declareExisting() {
-  const handler = candidates.value.at(0);
-
-  if (handler) {
-    workflows.declareHeaderInterrupt(newSource.value, handler);
+  if (existingHandlerId.value) {
+    workflows.declareHeaderInterrupt(newSource.value, existingHandlerId.value);
   }
 }
 </script>

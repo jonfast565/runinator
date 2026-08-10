@@ -330,6 +330,15 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     method: "POST",
     path: (args) => `pipeline_runs/${escape(arg(args, "pipelineRunId"))}/cancel`,
   },
+  resolve_pipeline_run: {
+    method: "POST",
+    path: (args) => `pipeline_runs/${escape(arg(args, "pipelineRunId"))}/resolve`,
+    body: (args) => ({
+      decision: arg(args, "decision"),
+      resolved_by: argOpt(args, "resolvedBy") ?? null,
+      message: argOpt(args, "message") ?? null,
+    }),
+  },
   fetch_run_chunks: {
     method: "GET",
     path: (args) => `runs/${escape(arg(args, "runId"))}/chunks?limit=500`,

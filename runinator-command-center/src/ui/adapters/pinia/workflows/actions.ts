@@ -106,6 +106,7 @@ export function createWorkflowActions(services: WorkflowServices) {
     markWorkflowDirty: services.editor.markWorkflowDirty,
 
     openWorkflowHeader: services.header.openWorkflowHeader,
+    openWorkflowInterrupts: services.header.openWorkflowInterrupts,
     closeWorkflowHeader: services.header.closeWorkflowHeader,
     declareHeaderInterrupt: services.header.declareHeaderInterrupt,
     setHeaderInterruptSource: services.header.setHeaderInterruptSource,
@@ -119,6 +120,8 @@ export function createWorkflowActions(services: WorkflowServices) {
     clearHeaderConcurrency: services.header.clearHeaderConcurrency,
     setHeaderCorrelation: services.header.setHeaderCorrelation,
     getHeaderIssues: services.header.getHeaderIssues,
+    getInterruptIssues: services.header.getInterruptIssues,
+    getDeclarationIssues: services.header.getDeclarationIssues,
     getHandlerCandidateNodeIds: services.header.getHandlerCandidateNodeIds,
     getRegionNodeIds: services.header.getRegionNodeIds,
     getUndeclaredInterruptSources: services.header.getUndeclaredInterruptSources,

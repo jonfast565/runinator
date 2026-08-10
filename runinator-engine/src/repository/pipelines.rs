@@ -1,8 +1,9 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use super::*;
 use runinator_models::pipelines::{
-    PipelineBundle, PipelineLinkSpec, PipelineRun, PipelineRunDetail, PipelineSpec, PipelineTrigger,
+    PipelineBundle, PipelineLinkSpec, PipelineMemberFailureMode, PipelineRun, PipelineRunDetail,
+    PipelineSpec, PipelineTrigger,
 };
 use runinator_models::replicas::{TriggerActorType, TriggerSourceKind, WorkflowRunProvenance};
 use runinator_models::workflows::WorkflowTriggerKind;
@@ -41,14 +42,20 @@ async fn import_pipeline_spec<T: DatabaseImpl>(
     // resolve each member workflow name to its id; an unknown member fails the import loudly.
     let mut workflow_ids = Vec::with_capacity(spec.members.len());
     let mut member_ids: HashMap<&str, Uuid> = HashMap::new();
+    let mut member_failure_modes: BTreeMap<Uuid, PipelineMemberFailureMode> = BTreeMap::new();
     for member in &spec.members {
         let id = db
-            .fetch_workflow_by_name(member.clone())
+            .fetch_workflow_by_name(member.name.clone())
             .await?
             .and_then(|workflow| workflow.id)
-            .ok_or_else(|| crate::errors::IMPORT_UNKNOWN_PIPELINE_MEMBER.error(member.as_str()))?;
+            .ok_or_else(|| {
+                crate::errors::IMPORT_UNKNOWN_PIPELINE_MEMBER.error(member.name.as_str())
+            })?;
         workflow_ids.push(id);
-        member_ids.insert(member.as_str(), id);
+        member_ids.insert(member.name.as_str(), id);
+        if let Some(mode) = member.failure_mode {
+            member_failure_modes.insert(id, mode);
+        }
     }
     // reuse the id of an existing pipeline with the same name and org so re-import updates in place.
     let prior_id = existing
@@ -61,6 +68,7 @@ async fn import_pipeline_spec<T: DatabaseImpl>(
         description: spec.description.clone(),
         org_id: import_org,
         workflow_ids,
+        member_failure_modes,
         defaults: spec.defaults.clone(),
         metadata: runinator_models::json!({ "managed_by": "wdl" }),
         created_at: None,
@@ -372,4 +380,29 @@ pub async fn cancel_pipeline_run<T: DatabaseImpl>(
         success: true,
         message: "Pipeline run canceled".into(),
     })
+}
+
+/// resolve a pipeline run's pending inquiry (a member with `Inquire` failure mode paused it).
+/// `continue_pipeline` fires the failed member's onward pipeline links and resumes; `false` aborts
+/// (settles the pipeline run `failed` now).
+pub async fn resolve_pipeline_run_inquiry<T: DatabaseImpl>(
+    db: &T,
+    pipeline_run_id: Uuid,
+    continue_pipeline: bool,
+    resolved_by: Option<String>,
+    message: Option<String>,
+) -> Result<PipelineRun, SendableError> {
+    let decision = if continue_pipeline {
+        runinator_reducer::PipelineInquiryDecision::Continue
+    } else {
+        runinator_reducer::PipelineInquiryDecision::Abort
+    };
+    runinator_reducer::resolve_pipeline_run_inquiry(
+        db,
+        pipeline_run_id,
+        decision,
+        resolved_by,
+        message,
+    )
+    .await
 }

@@ -82,4 +82,7 @@ mod interrupt_tests;
 mod orchestration_tests;
 
 pub use engine::process_ready_node;
-pub use pipeline_orchestration::{create_and_start_pipeline_run, start_pipeline_run};
+pub use pipeline_orchestration::{
+    PipelineInquiryDecision, create_and_start_pipeline_run, resolve_pipeline_run_inquiry,
+    start_pipeline_run,
+};

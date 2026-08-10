@@ -14,6 +14,22 @@
     </label>
 
     <label class="flex flex-col gap-1 text-[13px]">
+      <span>Default member failure mode</span>
+      <select v-model="defaultFailureMode">
+        <option value="stop">Stop &mdash; halt the pipeline, fire no onward links</option>
+        <option value="continue">Continue &mdash; fire onward links, fail the pipeline run</option>
+        <option value="silently_continue">
+          Silently Continue &mdash; fire onward links, don't fail the pipeline run
+        </option>
+        <option value="inquire">Inquire &mdash; pause and wait for a decision</option>
+      </select>
+      <p class="text-xs opacity-70 m-0">
+        What happens to the pipeline run when a member workflow fails, unless a member overrides
+        this on the canvas. Mirrors PowerShell's $ErrorActionPreference.
+      </p>
+    </label>
+
+    <label class="flex flex-col gap-1 text-[13px]">
       <span>Max chain depth</span>
       <input
         v-model="maxChainDepth"
@@ -41,7 +57,11 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import type { JsonRecord } from "../../../core/domain/json";
-import type { PipelineDefaults, PipelineFailurePolicy } from "../../../core/domain/models";
+import type {
+  PipelineDefaults,
+  PipelineFailurePolicy,
+  PipelineMemberFailureMode,
+} from "../../../core/domain/models";
 import JsonEditor from "../shared/JsonEditor.vue";
 
 const props = defineProps<{ defaults: PipelineDefaults }>();
@@ -49,6 +69,7 @@ const emit = defineEmits<{ save: [defaults: PipelineDefaults]; cancel: [] }>();
 
 const onStepFailure = ref<PipelineFailurePolicy>(props.defaults.on_step_failure);
 const linksEnabled = ref<boolean>(props.defaults.links_enabled_by_default);
+const defaultFailureMode = ref<PipelineMemberFailureMode>(props.defaults.default_failure_mode);
 const maxChainDepth = ref<string>(
   props.defaults.max_chain_depth != null ? String(props.defaults.max_chain_depth) : "",
 );
@@ -95,6 +116,7 @@ function save() {
     links_enabled_by_default: linksEnabled.value,
     default_parameters: parameters,
     max_chain_depth: Number.isFinite(parsedDepth) && parsedDepth > 0 ? parsedDepth : null,
+    default_failure_mode: defaultFailureMode.value,
   });
 }
 </script>

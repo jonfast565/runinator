@@ -8,5 +8,6 @@ pub mod orchestration;
 pub mod test_support;
 
 pub use orchestration::{
-    ReadyNodeDisposition, create_and_start_pipeline_run, process_ready_node, start_pipeline_run,
+    PipelineInquiryDecision, ReadyNodeDisposition, create_and_start_pipeline_run,
+    process_ready_node, resolve_pipeline_run_inquiry, start_pipeline_run,
 };

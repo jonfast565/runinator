@@ -15,6 +15,7 @@ import {
   fetchPipelines as fetchPipelinesApi,
   fetchWorkflowTriggers,
   fetchWorkflows,
+  resolvePipelineRun as resolvePipelineRunApi,
   savePipeline as savePipelineApi,
   savePipelineTrigger as savePipelineTriggerApi,
   setPipelineOwner as setPipelineOwnerApi,
@@ -113,6 +114,15 @@ export async function fetchPipelineRun(pipelineRunId: string): Promise<PipelineR
 
 export async function cancelPipelineRun(pipelineRunId: string): Promise<void> {
   await cancelPipelineRunApi(pipelineRunId);
+}
+
+/** resolve a pipeline run's pending inquiry (a member with the `inquire` failure mode paused it). */
+export async function resolvePipelineRun(
+  pipelineRunId: string,
+  decision: "continue" | "abort",
+  message?: string | null,
+): Promise<PipelineRun> {
+  return resolvePipelineRunApi(pipelineRunId, decision, null, message ?? null);
 }
 
 /** create a chained trigger tagged with the pipeline, pre-filled from the pipeline's defaults. */

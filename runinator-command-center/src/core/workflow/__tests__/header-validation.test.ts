@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { headerIssues, isRenderableCondition } from "../header-validation";
+import {
+  declarationIssues,
+  headerIssues,
+  interruptIssues,
+  isRenderableCondition,
+} from "../header-validation";
 import { setWorkflowCatalogs } from "../catalog-registry";
 import { testNodeKindCatalog } from "./catalog-fixtures";
 import type { JsonRecord, JsonValue } from "../../domain/json";
@@ -239,6 +244,41 @@ describe("concurrency", () => {
     });
 
     expect(headerIssues(ok)).toEqual([]);
+  });
+});
+
+describe("the interrupt / declaration split", () => {
+  // the two panels badge themselves from these halves, so a leak either way sends the user to a
+  // tab that cannot fix what it is pointing at.
+  it("keeps an interrupt problem out of the declaration half", () => {
+    const broken = definition({ metadata: { interrupts: [{ on: "wake", handler: "nope" }] } });
+
+    expect(interruptIssues(broken)).not.toEqual([]);
+    expect(declarationIssues(broken)).toEqual([]);
+  });
+
+  it("keeps a declaration problem out of the interrupt half", () => {
+    const broken = definition({
+      metadata: { concurrency: { max_concurrent_runs: 0, on_conflict: "skip" } },
+    });
+
+    expect(declarationIssues(broken)).not.toEqual([]);
+    expect(interruptIssues(broken)).toEqual([]);
+  });
+
+  it("still reports both halves together, which is what the canvas table shows", () => {
+    const broken = definition({
+      metadata: {
+        interrupts: [{ on: "wake", handler: "nope" }],
+        concurrency: { max_concurrent_runs: 0, on_conflict: "skip" },
+      },
+    });
+
+    expect(headerIssues(broken)).toEqual([
+      ...interruptIssues(broken),
+      ...declarationIssues(broken),
+    ]);
+    expect(headerIssues(broken).length).toBeGreaterThan(1);
   });
 });
 

@@ -3,6 +3,7 @@
 
 import type { JsonRecord } from "../domain/json";
 import type { WorkflowDefinition } from "../domain/models";
+import type { PipelineMemberFailureMode } from "../domain/models/pipeline/pipeline";
 import type { WorkflowTrigger } from "../domain/models/workflow/trigger";
 import { autoArrangeWorkflowLayout } from "./index";
 
@@ -14,6 +15,7 @@ export interface PipelineNodeData {
   enabled: boolean;
   outgoing: number;
   incoming: number;
+  failureMode: PipelineMemberFailureMode;
 }
 
 export interface PipelineNodeModel {
@@ -71,6 +73,10 @@ export interface BuildPipelineGraphOptions {
   pipelineId?: string | null;
   /** the member workflow ids that scope the graph (used with `pipelineId`). */
   memberIds?: string[];
+  /** per-member failure-mode override, keyed by workflow id (`Pipeline.member_failure_modes`). */
+  memberFailureModes?: Record<string, PipelineMemberFailureMode>;
+  /** the mode a member with no override takes (`Pipeline.defaults.default_failure_mode`). */
+  defaultFailureMode?: PipelineMemberFailureMode;
 }
 
 /** does a chained trigger belong to the pipeline currently being rendered? */
@@ -167,6 +173,7 @@ export function buildPipelineGraph(
   };
   const positions = autoArrangeWorkflowLayout(layoutDefinition, "horizontal");
 
+  const defaultFailureMode = options.defaultFailureMode ?? "continue";
   const nodes: PipelineNodeModel[] = identified.map((wf) => ({
     id: wf.id,
     type: "pipeline",
@@ -177,6 +184,7 @@ export function buildPipelineGraph(
       enabled: wf.enabled,
       outgoing: outgoing.get(wf.id) ?? 0,
       incoming: incoming.get(wf.id) ?? 0,
+      failureMode: options.memberFailureModes?.[wf.id] ?? defaultFailureMode,
     },
   }));
 

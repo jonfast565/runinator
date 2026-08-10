@@ -12,8 +12,24 @@
     ]"
     :style="splitStyle"
   >
-    <div v-if="showFirst" class="split-section split-section-first">
-      <slot name="first" />
+    <div
+      v-if="showFirst"
+      class="split-section split-section-first"
+      :class="{ 'split-section-folded': collapsedSide === 'first' }"
+    >
+      <!-- eclipse-style minimized view: the pane becomes a labeled rail tab instead of vanishing. -->
+      <button
+        v-if="collapsedSide === 'first'"
+        type="button"
+        class="split-tab"
+        :title="`Show ${firstLabel || 'panel'}`"
+        :aria-label="`Show ${firstLabel || 'panel'}`"
+        @click="toggleCollapsed('first')"
+      >
+        <Icon :name="firstIcon || firstRestoreIcon" :size="13" />
+        <span v-if="firstLabel" class="split-tab-label">{{ firstLabel }}</span>
+      </button>
+      <div class="split-section-content"><slot name="first" /></div>
     </div>
     <div
       v-if="showHandle"
@@ -25,40 +41,58 @@
       @keydown="onHandleKeydown"
     >
       <button
-        v-if="collapsibleFirst"
+        v-if="collapsibleFirst && collapsedSide !== 'first'"
         type="button"
         class="split-collapse-btn"
-        :title="collapsedSide === 'first' ? 'Show panel' : 'Hide panel'"
-        :aria-label="collapsedSide === 'first' ? 'Show panel' : 'Hide panel'"
+        title="Hide panel"
+        aria-label="Hide panel"
         @pointerdown.stop.prevent
         @click="toggleCollapsed('first')"
       >
         <Icon :name="firstToggleIcon" :size="14" />
       </button>
       <button
-        v-if="collapsibleSecond"
+        v-if="collapsibleSecond && collapsedSide !== 'second'"
         type="button"
         class="split-collapse-btn"
-        :title="collapsedSide === 'second' ? 'Show panel' : 'Hide panel'"
-        :aria-label="collapsedSide === 'second' ? 'Show panel' : 'Hide panel'"
+        title="Hide panel"
+        aria-label="Hide panel"
         @pointerdown.stop.prevent
         @click="toggleCollapsed('second')"
       >
         <Icon :name="secondToggleIcon" :size="14" />
       </button>
     </div>
-    <div v-if="showSecond" class="split-section split-section-second">
-      <slot name="second" />
+    <div
+      v-if="showSecond"
+      class="split-section split-section-second"
+      :class="{ 'split-section-folded': collapsedSide === 'second' }"
+    >
+      <button
+        v-if="collapsedSide === 'second'"
+        type="button"
+        class="split-tab"
+        :title="`Show ${secondLabel || 'panel'}`"
+        :aria-label="`Show ${secondLabel || 'panel'}`"
+        @click="toggleCollapsed('second')"
+      >
+        <Icon :name="secondIcon || secondRestoreIcon" :size="13" />
+        <span v-if="secondLabel" class="split-tab-label">{{ secondLabel }}</span>
+      </button>
+      <div class="split-section-content"><slot name="second" /></div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-import Icon from "./Icon.vue";
+import Icon, { type IconName } from "./Icon.vue";
 import { useBreakpoint } from "../../composables/useBreakpoint";
 
 type CollapsedSide = "first" | "second" | "";
+
+// width (horizontal split) or height (vertical split) of a folded pane's rail tab.
+const TAB_SIZE = 30;
 
 const props = withDefaults(
   defineProps<{
@@ -69,6 +103,11 @@ const props = withDefaults(
     storageKey?: string;
     collapsibleFirst?: boolean;
     collapsibleSecond?: boolean;
+    // labels/icons for the rail tab a folded pane collapses to; omit either to fall back to icon-only.
+    firstLabel?: string;
+    secondLabel?: string;
+    firstIcon?: IconName;
+    secondIcon?: IconName;
     // 'stack' keeps both panes stacked on mobile; 'toggle' shows one pane at a time (master-detail).
     mobileMode?: "stack" | "toggle";
     // in 'toggle' mode, true means the detail (second) pane is active; false shows the list (first).
@@ -82,6 +121,10 @@ const props = withDefaults(
     storageKey: "",
     collapsibleFirst: false,
     collapsibleSecond: false,
+    firstLabel: "",
+    secondLabel: "",
+    firstIcon: undefined,
+    secondIcon: undefined,
     mobileMode: "stack",
     mobileDetailActive: false,
   },
@@ -107,21 +150,19 @@ const orientationClass = computed(() => `split-pane-${props.orientation}`);
 const separatorOrientation = computed(() =>
   props.orientation === "vertical" ? "horizontal" : "vertical",
 );
-// chevron points toward the pane it collapses; once hidden it points back to reveal it.
-const firstToggleIcon = computed(() => {
-  if (props.orientation === "vertical") {
-    return collapsedSide.value === "first" ? "arrow-down" : "arrow-up";
-  }
-
-  return collapsedSide.value === "first" ? "chevron-right" : "chevron-left";
-});
-const secondToggleIcon = computed(() => {
-  if (props.orientation === "vertical") {
-    return collapsedSide.value === "second" ? "arrow-up" : "arrow-down";
-  }
-
-  return collapsedSide.value === "second" ? "chevron-left" : "chevron-right";
-});
+// the handle button only renders while its side is expanded (folding it shows the rail tab instead),
+// so the chevron always points toward the pane it is about to collapse; the rail tab's fallback icon
+// (when no explicit firstIcon/secondIcon was given) points the opposite way, toward restoring it.
+const firstToggleIcon = computed(() => (props.orientation === "vertical" ? "arrow-up" : "chevron-left"));
+const secondToggleIcon = computed(() =>
+  props.orientation === "vertical" ? "arrow-down" : "chevron-right",
+);
+const firstRestoreIcon = computed(() =>
+  props.orientation === "vertical" ? "arrow-down" : "chevron-right",
+);
+const secondRestoreIcon = computed(() =>
+  props.orientation === "vertical" ? "arrow-up" : "chevron-left",
+);
 const collapsedKey = computed(() => (props.storageKey ? `${props.storageKey}::collapsed` : ""));
 const splitStyle = computed(() => {
   // stacked/toggle layouts are driven by css (flex/single-pane); ignore persisted pixel sizes.
@@ -133,9 +174,9 @@ const splitStyle = computed(() => {
   let tracks: string;
 
   if (collapsedSide.value === "first") {
-    tracks = `0px 10px minmax(0, 1fr)`;
+    tracks = `${String(TAB_SIZE)}px 10px minmax(0, 1fr)`;
   } else if (collapsedSide.value === "second") {
-    tracks = `minmax(0, 1fr) 10px 0px`;
+    tracks = `minmax(0, 1fr) 10px ${String(TAB_SIZE)}px`;
   } else {
     tracks = `${String(firstSize.value)}px 10px minmax(${String(props.minSecond)}px, 1fr)`;
   }

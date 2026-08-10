@@ -1,5 +1,6 @@
 <template>
-  <!-- two views docked on the same side: the selected step, and the workflow-level header. -->
+  <!-- three views docked on the same side: the selected step, the interrupt handlers, and the
+       remaining workflow-level header declarations. -->
   <PanelStack
     v-model="inspectorMode"
     class="panel inspector-panel"
@@ -7,6 +8,7 @@
     :tabs="tabs"
   >
     <template #step><StepEditor /></template>
+    <template #interrupts><WorkflowInterruptsPanel /></template>
     <template #header><WorkflowHeaderPanel /></template>
   </PanelStack>
 </template>
@@ -18,17 +20,25 @@ import PanelStack from "../shared/PanelStack.vue";
 import type { PanelStackTab } from "../shared/panel-stack";
 import StepEditor from "./StepEditor.vue";
 import WorkflowHeaderPanel from "./WorkflowHeaderPanel.vue";
+import WorkflowInterruptsPanel from "./WorkflowInterruptsPanel.vue";
 
 const workflows = useWorkflowsStore();
 
 const tabs = computed<PanelStackTab[]>(() => [
   { id: "step", label: "Step", icon: "settings", title: "The selected node" },
   {
+    id: "interrupts",
+    label: "Interrupts",
+    icon: "bolt",
+    title: "Interrupt handlers and their regions",
+    badge: workflows.interruptIssueCount || undefined,
+  },
+  {
     id: "header",
     label: "Header",
     icon: "flag",
-    title: "Interrupts, watch guards, concurrency, and the correlation key",
-    badge: workflows.headerIssueCount || undefined,
+    title: "Watch guards, concurrency, and the correlation key",
+    badge: workflows.declarationIssueCount || undefined,
   },
 ]);
 
@@ -39,6 +49,11 @@ const inspectorMode = computed({
   set: (mode) => {
     if (mode === "header") {
       workflows.openWorkflowHeader();
+      return;
+    }
+
+    if (mode === "interrupts") {
+      workflows.openWorkflowInterrupts();
       return;
     }
 

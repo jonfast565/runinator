@@ -25,13 +25,24 @@
       </button>
       <button
         class="btn"
-        title="Interrupts, watch guards, concurrency, and the correlation key"
+        title="Interrupt handlers and their regions"
+        @click="workflows.openWorkflowInterrupts"
+      >
+        <Icon name="bolt" />
+        <span>Interrupts</span>
+        <span v-if="workflows.interruptIssueCount" class="count-pill error">{{
+          workflows.interruptIssueCount
+        }}</span>
+      </button>
+      <button
+        class="btn"
+        title="Watch guards, concurrency, and the correlation key"
         @click="workflows.openWorkflowHeader"
       >
         <Icon name="flag" />
         <span>Header</span>
-        <span v-if="workflows.headerIssueCount" class="count-pill error">{{
-          workflows.headerIssueCount
+        <span v-if="workflows.declarationIssueCount" class="count-pill error">{{
+          workflows.declarationIssueCount
         }}</span>
       </button>
       <button v-if="workflows.selectedWorkflowId" class="btn" @click="shareOpen = true">

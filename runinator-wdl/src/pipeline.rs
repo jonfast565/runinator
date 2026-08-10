@@ -7,11 +7,12 @@ use std::collections::HashSet;
 
 use runinator_models::pipelines::{
     PipelineBundle, PipelineDefaults, PipelineFailurePolicy, PipelineLinkSelector,
-    PipelineLinkSpec, PipelineSpec, PipelineTriggerSpec,
+    PipelineLinkSpec, PipelineMemberFailureMode, PipelineMemberSpec, PipelineSpec,
+    PipelineTriggerSpec,
 };
 use runinator_models::workflows::WorkflowTriggerKind;
 
-use crate::ast::{PipelineDecl, PipelineLinkDecl, PipelineTriggerDecl};
+use crate::ast::{PipelineDecl, PipelineLinkDecl, PipelineMemberDecl, PipelineTriggerDecl};
 use crate::errors::WdlError;
 use runinator_wdl_syntax::parser::parse_pipeline_document;
 
@@ -49,7 +50,7 @@ fn lower_pipeline(decl: &PipelineDecl) -> Result<PipelineSpec, WdlError> {
         max_chain_depth: decl.max_depth,
         ..PipelineDefaults::default()
     };
-    let members: HashSet<&str> = decl.members.iter().map(String::as_str).collect();
+    let members: HashSet<&str> = decl.members.iter().map(|m| m.name.as_str()).collect();
     let mut links = Vec::with_capacity(decl.links.len());
     for link in &decl.links {
         links.push(lower_link(link, &members, on_step_failure)?);
@@ -58,13 +59,40 @@ fn lower_pipeline(decl: &PipelineDecl) -> Result<PipelineSpec, WdlError> {
     for trigger in &decl.triggers {
         triggers.push(lower_trigger(trigger)?);
     }
+    let members = decl
+        .members
+        .iter()
+        .map(lower_member)
+        .collect::<Result<Vec<_>, WdlError>>()?;
     Ok(PipelineSpec {
         name: decl.name.clone(),
         description: decl.description.clone(),
         defaults,
-        members: decl.members.clone(),
+        members,
         links,
         triggers,
+    })
+}
+
+/// lower a `workflow "Name" [on_failure <mode>]` member decl. `on_failure` is `None` when the member
+/// declares no override, meaning it takes the pipeline's `default_failure_mode` at import.
+fn lower_member(decl: &PipelineMemberDecl) -> Result<PipelineMemberSpec, WdlError> {
+    let failure_mode = match decl.on_failure.as_deref() {
+        None => None,
+        Some("stop") => Some(PipelineMemberFailureMode::Stop),
+        Some("continue") => Some(PipelineMemberFailureMode::Continue),
+        Some("silently_continue") => Some(PipelineMemberFailureMode::SilentlyContinue),
+        Some("inquire") => Some(PipelineMemberFailureMode::Inquire),
+        Some(other) => {
+            return Err(WdlError::syntax(
+                decl.span,
+                format!("unknown member failure mode \"{other}\""),
+            ));
+        }
+    };
+    Ok(PipelineMemberSpec {
+        name: decl.name.clone(),
+        failure_mode,
     })
 }
 
@@ -171,7 +199,14 @@ pub fn pipeline_to_wdlp(bundle: &PipelineBundle) -> String {
         if !spec.members.is_empty() {
             out.push('\n');
             for member in &spec.members {
-                out.push_str(&format!("    workflow {}\n", quote(member)));
+                match member.failure_mode {
+                    Some(mode) => out.push_str(&format!(
+                        "    workflow {} on_failure {}\n",
+                        quote(&member.name),
+                        mode.as_str()
+                    )),
+                    None => out.push_str(&format!("    workflow {}\n", quote(&member.name))),
+                }
             }
         }
         if !spec.links.is_empty() {

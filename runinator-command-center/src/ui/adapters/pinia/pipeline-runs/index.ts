@@ -7,6 +7,7 @@ import {
   fetchPipelineRun,
   fetchPipelineRuns,
   fetchPipelines,
+  resolvePipelineRun as resolvePipelineRunService,
 } from "../../../../core/services/pipeline";
 
 // the pipeline-runs monitor store. mirrors the workflow-runs list+detail model: a flat list of recent
@@ -72,6 +73,15 @@ export const usePipelineRunsStore = defineStore("pipelineRuns", () => {
     await refresh();
   }
 
+  // resolve a pending inquiry (a member with the `inquire` failure mode paused the run).
+  async function resolveRun(
+    pipelineRunId: string,
+    decision: "continue" | "abort",
+  ): Promise<void> {
+    await resolvePipelineRunService(pipelineRunId, decision);
+    await refresh();
+  }
+
   // refetch the open detail when one of its member workflow runs changes, so step status/timing in
   // the detail track live rather than waiting on the next pipeline-run event or fallback poll.
   async function refreshDetailIfMember(workflowRunId: string): Promise<void> {
@@ -92,6 +102,7 @@ export const usePipelineRunsStore = defineStore("pipelineRuns", () => {
     selectRun,
     startRun,
     cancelRun,
+    resolveRun,
     refreshDetailIfMember,
   };
 });

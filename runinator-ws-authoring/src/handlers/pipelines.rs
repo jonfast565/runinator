@@ -13,7 +13,10 @@ use runinator_ws_core::events::{
     AppEvent, AppEventKind, EventSender, emit, emit_pipeline_run, emit_workflows_changed,
     nudge_wake_publisher,
 };
-use runinator_ws_core::models::{ApiResponse, PipelineOwnerRequest, PipelineRunRequest};
+use runinator_ws_core::models::{
+    ApiResponse, PipelineOwnerRequest, PipelineRunInquiryDecision, PipelineRunRequest,
+    PipelineRunResolutionRequest,
+};
 use runinator_ws_core::responses::{api_error, not_found};
 use runinator_ws_middleware::authz::AuthContextExt;
 use runinator_ws_middleware::authz::AuthzChecker;
@@ -414,6 +417,46 @@ pub async fn cancel_pipeline_run<T: DatabaseImpl>(
     }
 }
 
+/// resolve a pipeline run's pending inquiry: a member whose failure mode is `Inquire` paused the run
+/// until a human decides whether to continue (fire that member's onward pipeline links and resume)
+/// or abort (settle the run `failed` now).
+pub async fn resolve_pipeline_run<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(events): Extension<EventSender>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(pipeline_run_id): Path<Uuid>,
+    Json(request): Json<PipelineRunResolutionRequest>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_pipeline_run(pipeline_run_id, Permission::Run)
+        .await
+    {
+        return reply;
+    }
+    let continue_pipeline = request.decision == PipelineRunInquiryDecision::Continue;
+    match repository::resolve_pipeline_run_inquiry(
+        db.as_ref(),
+        pipeline_run_id,
+        continue_pipeline,
+        request.resolved_by,
+        request.message,
+    )
+    .await
+    {
+        Ok(run) => {
+            let org_id = repository::org_id_for_pipeline_run(db.as_ref(), pipeline_run_id).await;
+            emit_pipeline_run(&events, pipeline_run_id, org_id);
+            emit(
+                &events,
+                AppEvent::new(org_id, AppEventKind::PipelineRunActivity),
+            );
+            nudge_wake_publisher(&events);
+            (StatusCode::OK, Json(ApiResponse::PipelineRun(run)))
+        }
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
 async fn pipeline_org<T: DatabaseImpl>(
     db: &T,
     pipeline_id: Uuid,
@@ -478,5 +521,9 @@ pub fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
         .route(
             "/pipeline_runs/{id}/cancel",
             post(cancel_pipeline_run::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/pipeline_runs/{id}/resolve",
+            post(resolve_pipeline_run::<T>).layer(Extension(pool.clone())),
         )
 }

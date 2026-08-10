@@ -224,6 +224,7 @@ const PENDING_DOCUMENTATION: &[(&str, &str)] = &[
     ("post", "/orgs/{id}/members"),
     ("post", "/orgs/{id}/nodes/scale"),
     ("post", "/pipeline_runs/{id}/cancel"),
+    ("post", "/pipeline_runs/{id}/resolve"),
     ("post", "/pipeline_triggers/{id}/runs"),
     ("post", "/pipelines"),
     ("post", "/pipelines/{id}/runs"),

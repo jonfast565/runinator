@@ -162,9 +162,10 @@ fn sdlc_manifest_loads_core_pipeline() {
     assert_eq!(core.members.len(), 4);
     assert_eq!(core.links.len(), 3);
     // every link's endpoints must be declared members (lowering enforces this).
+    let member_names: Vec<&str> = core.members.iter().map(|m| m.name.as_str()).collect();
     for link in &core.links {
-        assert!(core.members.contains(&link.from));
-        assert!(core.members.contains(&link.to));
+        assert!(member_names.contains(&link.from.as_str()));
+        assert!(member_names.contains(&link.to.as_str()));
     }
 }
 

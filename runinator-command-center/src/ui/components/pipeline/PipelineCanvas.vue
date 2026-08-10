@@ -10,6 +10,7 @@
       :max-zoom="2"
       @connect="onConnect"
       @edge-click="onEdgeClick"
+      @node-click="onNodeClick"
       @node-double-click="onNodeDoubleClick"
       @pane-click="pipeline.selectEdge(null)"
       @edges-change="onEdgesChange"
@@ -49,6 +50,10 @@ function onConnect(connection: Connection) {
 
 function onEdgeClick(event: EdgeMouseEvent) {
   pipeline.selectEdge(event.edge.id);
+}
+
+function onNodeClick(event: NodeMouseEvent) {
+  pipeline.selectNode(event.node.id);
 }
 
 function onNodeDoubleClick(event: NodeMouseEvent) {

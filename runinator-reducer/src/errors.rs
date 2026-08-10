@@ -157,6 +157,16 @@ pub const PIPELINE_NO_ENTRY_MEMBERS: ErrorDescriptor = ErrorDescriptor::new(
     "pipeline.run.no_entry_members",
     "Pipeline has no entry members to start (empty or fully cyclic member graph)",
 );
+pub const PIPELINE_NO_PENDING_INQUIRY: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI173",
+    "pipeline.run.no_pending_inquiry",
+    "Pipeline run has no pending inquiry to resolve",
+);
+pub const PIPELINE_INQUIRY_MEMBER_MISSING: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI174",
+    "pipeline.run.inquiry_member_missing",
+    "The pipeline member run behind the pending inquiry no longer exists",
+);
 
 pub const DICTIONARY: &[ErrorDescriptor] = &[
     ASSERT_PARAMS_MISSING,
@@ -190,6 +200,8 @@ pub const DICTIONARY: &[ErrorDescriptor] = &[
     PIPELINE_NOT_FOUND,
     PIPELINE_TRIGGER_NOT_FOUND,
     PIPELINE_NO_ENTRY_MEMBERS,
+    PIPELINE_NO_PENDING_INQUIRY,
+    PIPELINE_INQUIRY_MEMBER_MISSING,
     RUN_STATE_CONFLICT,
 ];
 

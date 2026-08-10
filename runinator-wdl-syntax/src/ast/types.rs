@@ -63,6 +63,17 @@ pub struct PipelineTriggerDecl {
     pub span: Span,
 }
 
+/// a `workflow "Name"` member declaration, optionally followed by `on_failure <mode>`. `on_failure`
+/// holds the raw keyword (`stop`/`continue`/`silently_continue`/`inquire`) or `None` when the member
+/// takes the pipeline's default failure mode; lowering maps it to [`PipelineMemberFailureMode`]
+/// (`runinator_models::pipelines`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct PipelineMemberDecl {
+    pub name: String,
+    pub on_failure: Option<String>,
+    pub span: Span,
+}
+
 /// a `pipeline "Name" { ... }` block parsed from a `.wdlp` file. `on_failure` holds the raw policy
 /// keyword (`halt`/`continue`) or `None`; lowering maps the string fields to the model enums.
 #[derive(Debug, Clone, PartialEq)]
@@ -71,7 +82,7 @@ pub struct PipelineDecl {
     pub description: Option<String>,
     pub on_failure: Option<String>,
     pub max_depth: Option<u32>,
-    pub members: Vec<String>,
+    pub members: Vec<PipelineMemberDecl>,
     pub links: Vec<PipelineLinkDecl>,
     pub triggers: Vec<PipelineTriggerDecl>,
     pub span: Span,

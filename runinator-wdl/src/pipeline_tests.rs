@@ -1,4 +1,6 @@
-use runinator_models::pipelines::{PipelineFailurePolicy, PipelineLinkSelector};
+use runinator_models::pipelines::{
+    PipelineFailurePolicy, PipelineLinkSelector, PipelineMemberFailureMode,
+};
 
 use super::{parse_pipeline_str, pipeline_to_wdlp};
 
@@ -141,6 +143,48 @@ fn parses_pipeline_triggers() {
 #[test]
 fn round_trips_pipeline_triggers() {
     let bundle = parse_pipeline_str(TRIGGERED).expect("parse");
+    let rendered = pipeline_to_wdlp(&bundle);
+    let reparsed = parse_pipeline_str(&rendered).expect("reparse");
+    assert_eq!(bundle, reparsed);
+}
+
+const MEMBER_FAILURE_MODES: &str = r#"
+pipeline "Deploy" {
+    workflow "Build" on_failure stop
+    workflow "Test" on_failure silently_continue
+    workflow "Notify" on_failure inquire
+    workflow "Cleanup"
+
+    "Build" -> "Test" on complete
+    "Test" -> "Notify" on complete
+    "Notify" -> "Cleanup" on complete
+}
+"#;
+
+#[test]
+fn parses_member_failure_modes() {
+    let bundle = parse_pipeline_str(MEMBER_FAILURE_MODES).expect("parse");
+    let p = &bundle.pipelines[0];
+    assert_eq!(p.members[0].name, "Build");
+    assert_eq!(
+        p.members[0].failure_mode,
+        Some(PipelineMemberFailureMode::Stop)
+    );
+    assert_eq!(
+        p.members[1].failure_mode,
+        Some(PipelineMemberFailureMode::SilentlyContinue)
+    );
+    assert_eq!(
+        p.members[2].failure_mode,
+        Some(PipelineMemberFailureMode::Inquire)
+    );
+    // a member with no `on_failure` clause takes the pipeline default at import time.
+    assert_eq!(p.members[3].failure_mode, None);
+}
+
+#[test]
+fn round_trips_member_failure_modes() {
+    let bundle = parse_pipeline_str(MEMBER_FAILURE_MODES).expect("parse");
     let rendered = pipeline_to_wdlp(&bundle);
     let reparsed = parse_pipeline_str(&rendered).expect("reparse");
     assert_eq!(bundle, reparsed);

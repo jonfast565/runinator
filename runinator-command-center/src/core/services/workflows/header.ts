@@ -13,7 +13,12 @@ import {
   readWorkflowHeader,
 } from "../../workflow/header-metadata";
 import type { ConcurrencyHeader, WatchDeclaration } from "../../workflow/header-metadata";
-import { HEADER_ISSUE_NODE_ID, headerIssues } from "../../workflow/header-validation";
+import {
+  HEADER_ISSUE_NODE_ID,
+  declarationIssues,
+  headerIssues,
+  interruptIssues,
+} from "../../workflow/header-validation";
 import { interruptRegionNodes, nodesById } from "../../workflow/interrupt-regions";
 import { findNodeKindMetadata, isNodeCatalogLoaded } from "../../workflow/catalog-registry";
 import { createWorkflowNode, uniqueWorkflowNodeId } from "../../workflow/index";
@@ -27,6 +32,7 @@ export interface WorkflowHeaderPeer {
   setGraphNodePosition(nodeId: string, position: { x: number; y: number }): void;
   populateStepEditor(nodeId: string): void;
   ensureWorkflowNodes(): JsonRecord[];
+  removeWorkflowNode(nodeId: string): void;
 }
 
 /** horizontal/vertical spacing of a scaffolded region, matching `newWorkflowDraft`'s layout. */
@@ -46,6 +52,13 @@ export function createWorkflowHeaderService(host: WorkflowServiceHost, editor: W
   function openWorkflowHeader() {
     populateWorkflowHeader();
     host.state.workflowInspectorMode = "header";
+    host.notify();
+  }
+
+  /** interrupts read and write the same draft as the header; only the panel they show in differs. */
+  function openWorkflowInterrupts() {
+    populateWorkflowHeader();
+    host.state.workflowInspectorMode = "interrupts";
     host.notify();
   }
 
@@ -90,9 +103,43 @@ export function createWorkflowHeaderService(host: WorkflowServiceHost, editor: W
     applyWorkflowHeader();
   }
 
+  /**
+   * remove a declaration, and offer to remove the region's nodes with it.
+   *
+   * the region is unreachable from `start` by design, so leaving its nodes behind after the
+   * declaration is gone does not orphan a working part of the flow -- it leaves dead nodes that
+   * `getHandlerCandidateNodeIds` would then offer right back as "candidates" for the next handler.
+   */
   function removeHeaderInterrupt(index: number) {
+    const entry = host.state.headerDraft.interrupts.at(index);
+    // a dangling target (already reported as a validation error) is not a real node to offer
+    // deleting, so it is excluded rather than prompting to "delete" something that does not exist.
+    const walk = entry
+      ? interruptRegionNodes(nodesById(host.state.workflowDraft), entry.handler)
+      : null;
+    const regionNodeIds = walk ? [...walk.nodes].filter((id) => !walk.missing.has(id)) : [];
+
     host.state.headerDraft.interrupts.splice(index, 1);
     applyWorkflowHeader();
+
+    if (regionNodeIds.length === 0) {
+      return;
+    }
+
+    const prompt =
+      regionNodeIds.length === 1
+        ? `Also delete its region node '${regionNodeIds[0]}'?`
+        : `Also delete its ${String(regionNodeIds.length)} region nodes (${regionNodeIds.join(", ")})?`;
+
+    if (!host.deps.confirm(prompt)) {
+      return;
+    }
+
+    for (const nodeId of regionNodeIds) {
+      editor.removeWorkflowNode(nodeId);
+    }
+
+    host.ctx.setStatus(`Removed interrupt handler and ${String(regionNodeIds.length)} region node(s)`);
   }
 
   // -- watches ---------------------------------------------------------------------------------
@@ -147,7 +194,29 @@ export function createWorkflowHeaderService(host: WorkflowServiceHost, editor: W
   }
 
   function getHeaderIssueCount(): number {
-    return getHeaderIssues().filter((issue) => issue.severity === "error").length;
+    return errorCount(getHeaderIssues());
+  }
+
+  /** the interrupts panel's diagnostics. the header panel shows `getDeclarationIssues()` instead. */
+  function getInterruptIssues(): WorkflowValidationIssue[] {
+    return interruptIssues(definition());
+  }
+
+  function getInterruptIssueCount(): number {
+    return errorCount(getInterruptIssues());
+  }
+
+  /** the header panel's diagnostics: everything except the interrupts, which have their own panel. */
+  function getDeclarationIssues(): WorkflowValidationIssue[] {
+    return declarationIssues(definition());
+  }
+
+  function getDeclarationIssueCount(): number {
+    return errorCount(getDeclarationIssues());
+  }
+
+  function errorCount(issues: WorkflowValidationIssue[]): number {
+    return issues.filter((issue) => issue.severity === "error").length;
   }
 
   /**
@@ -271,6 +340,7 @@ export function createWorkflowHeaderService(host: WorkflowServiceHost, editor: W
     HEADER_ISSUE_NODE_ID,
     populateWorkflowHeader,
     openWorkflowHeader,
+    openWorkflowInterrupts,
     closeWorkflowHeader,
     applyWorkflowHeader,
     declareHeaderInterrupt,
@@ -286,6 +356,10 @@ export function createWorkflowHeaderService(host: WorkflowServiceHost, editor: W
     setHeaderCorrelation,
     getHeaderIssues,
     getHeaderIssueCount,
+    getInterruptIssues,
+    getInterruptIssueCount,
+    getDeclarationIssues,
+    getDeclarationIssueCount,
     getHandlerCandidateNodeIds,
     getRegionNodeIds,
     getUndeclaredInterruptSources,

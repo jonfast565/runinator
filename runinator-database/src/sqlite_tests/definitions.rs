@@ -99,7 +99,9 @@ async fn insert_workflow_creates_sibling_row_sharing_name() {
 
 #[tokio::test]
 async fn pipeline_round_trip_create_update_delete() {
-    use runinator_models::pipelines::{Pipeline, PipelineDefaults, PipelineFailurePolicy};
+    use runinator_models::pipelines::{
+        Pipeline, PipelineDefaults, PipelineFailurePolicy, PipelineMemberFailureMode,
+    };
 
     let path = std::env::temp_dir().join(format!(
         "runinator-pipeline-{}.db",
@@ -117,11 +119,15 @@ async fn pipeline_round_trip_create_update_delete() {
             description: Some("ship it".into()),
             org_id: Some(org),
             workflow_ids: vec![member],
+            member_failure_modes: [(member, PipelineMemberFailureMode::SilentlyContinue)]
+                .into_iter()
+                .collect(),
             defaults: PipelineDefaults {
                 on_step_failure: PipelineFailurePolicy::Continue,
                 links_enabled_by_default: false,
                 default_parameters: runinator_models::json!({ "env": "prod" }),
                 max_chain_depth: Some(8),
+                default_failure_mode: PipelineMemberFailureMode::Stop,
             },
             metadata: Value::Null,
             created_at: None,
@@ -133,11 +139,19 @@ async fn pipeline_round_trip_create_update_delete() {
     assert_eq!(created.org_id, Some(org));
     assert_eq!(created.workflow_ids, vec![member]);
     assert_eq!(
+        created.member_failure_modes.get(&member).copied(),
+        Some(PipelineMemberFailureMode::SilentlyContinue)
+    );
+    assert_eq!(
         created.defaults.on_step_failure,
         PipelineFailurePolicy::Continue
     );
     assert!(!created.defaults.links_enabled_by_default);
     assert_eq!(created.defaults.max_chain_depth, Some(8));
+    assert_eq!(
+        created.defaults.default_failure_mode,
+        PipelineMemberFailureMode::Stop
+    );
 
     // update: rename and swap the failure policy; the id and created_at are preserved.
     let mut edit = created.clone();

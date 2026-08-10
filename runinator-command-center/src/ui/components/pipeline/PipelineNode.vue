@@ -14,6 +14,13 @@
       <span v-if="data.outgoing" class="pipeline-node-badge" title="outgoing chains">
         {{ data.outgoing }} →
       </span>
+      <span
+        v-if="data.failureMode !== 'continue'"
+        class="pipeline-node-badge pipeline-node-badge-failure-mode"
+        :title="`On failure: ${data.failureMode}`"
+      >
+        {{ failureModeLabel[data.failureMode] }}
+      </span>
     </div>
     <Handle
       class="pipeline-handle pipeline-handle-source"
@@ -25,9 +32,17 @@
 
 <script setup lang="ts">
 import { Handle, Position } from "@vue-flow/core";
+import type { PipelineMemberFailureMode } from "../../../core/domain/models";
 import type { PipelineNodeData } from "../../../core/workflow/pipeline-graph";
 
 defineProps<{ data: PipelineNodeData }>();
+
+const failureModeLabel: Record<PipelineMemberFailureMode, string> = {
+  stop: "stop on failure",
+  continue: "continue on failure",
+  silently_continue: "silently continue",
+  inquire: "inquire on failure",
+};
 </script>
 
 <style scoped>
@@ -73,6 +88,11 @@ defineProps<{ data: PipelineNodeData }>();
 .pipeline-node-badge-muted {
   background: transparent;
   border: 1px solid var(--border, #d0d5dd);
+}
+
+.pipeline-node-badge-failure-mode {
+  background: var(--warning-bg, #fff2cc);
+  color: var(--warning-fg, #84620d);
 }
 
 .pipeline-handle {

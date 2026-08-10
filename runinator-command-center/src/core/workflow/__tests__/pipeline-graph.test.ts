@@ -98,6 +98,30 @@ describe("buildPipelineGraph", () => {
     expect(graph.edges[0].data.triggerId).toBe("t-in");
   });
 
+  it("resolves each node's failure mode from an override or the pipeline default", () => {
+    const a = workflow("id-a", "Build");
+    const b = workflow("id-b", "Deploy");
+    const graph = buildPipelineGraph(
+      [a, b],
+      { "id-a": [], "id-b": [] },
+      {
+        memberFailureModes: { "id-a": "stop" },
+        defaultFailureMode: "silently_continue",
+      },
+    );
+
+    expect(graph.nodes.find((n) => n.id === "id-a")?.data.failureMode).toBe("stop");
+    // "id-b" has no override, so it takes the pipeline default.
+    expect(graph.nodes.find((n) => n.id === "id-b")?.data.failureMode).toBe("silently_continue");
+  });
+
+  it("defaults a node's failure mode to continue when the pipeline has no default set", () => {
+    const a = workflow("id-a", "Build");
+    const graph = buildPipelineGraph([a], { "id-a": [] });
+
+    expect(graph.nodes[0].data.failureMode).toBe("continue");
+  });
+
   it("flags a chained trigger whose target name does not resolve", () => {
     const a = workflow("id-a", "Deploy");
     const graph = buildPipelineGraph([a], {

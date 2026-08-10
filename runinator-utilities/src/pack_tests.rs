@@ -1,6 +1,8 @@
 use super::*;
 use runinator_models::bundles::{SecretBundle, SecretBundleEntry};
-use runinator_models::pipelines::{PipelineLinkSelector, PipelineLinkSpec, PipelineSpec};
+use runinator_models::pipelines::{
+    PipelineLinkSelector, PipelineLinkSpec, PipelineMemberSpec, PipelineSpec,
+};
 use runinator_models::settings::SettingKind;
 use runinator_models::value::Value;
 use runinator_models::workflows::{WorkflowBundle, WorkflowDefinition};
@@ -38,7 +40,10 @@ fn pack_zip_round_trips() {
             name: "Core SDLC".into(),
             description: Some("demo pipeline".into()),
             defaults: Default::default(),
-            members: vec!["demo".into()],
+            members: vec![PipelineMemberSpec {
+                name: "demo".into(),
+                failure_mode: None,
+            }],
             links: vec![PipelineLinkSpec {
                 from: "demo".into(),
                 to: "demo".into(),

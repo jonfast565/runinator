@@ -1,7 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
 use super::*;
-use runinator_models::pipelines::{Pipeline, PipelineRun, PipelineTrigger};
+use runinator_models::pipelines::{
+    Pipeline, PipelineMemberFailureMode, PipelineRun, PipelineTrigger,
+};
 use runinator_models::replicas::{TriggerActorType, TriggerSourceKind, WorkflowRunProvenance};
 
 // max hops in a chain of pipeline-to-pipeline triggers before we stop, bounding accidental cycles.
@@ -153,8 +155,200 @@ async fn start_member_run<T: ReducerStore>(
     Ok(())
 }
 
+/// the failure mode governing `workflow_id`'s membership in `pipeline`: its own override, or the
+/// pipeline's default when it has none. `None` (pipeline unresolved) falls back to `Continue`, which
+/// reproduces the pre-failure-mode behavior exactly.
+fn member_failure_mode(
+    pipeline: Option<&Pipeline>,
+    workflow_id: Uuid,
+) -> PipelineMemberFailureMode {
+    let Some(pipeline) = pipeline else {
+        return PipelineMemberFailureMode::default();
+    };
+    pipeline
+        .member_failure_modes
+        .get(&workflow_id)
+        .copied()
+        .unwrap_or(pipeline.defaults.default_failure_mode)
+}
+
+/// the pipeline snapshot to classify failure modes against: the run's own snapshot when present
+/// (fixing the ruleset to what was true when the pipeline run started), else a fresh fetch.
+async fn pipeline_for_run<T: ReducerStore>(
+    db: &T,
+    pipeline_run: &PipelineRun,
+) -> Result<Option<Pipeline>, SendableError> {
+    match pipeline_run.pipeline_snapshot.clone() {
+        Some(snapshot) => Ok(Some(snapshot)),
+        None => db.fetch_pipeline(pipeline_run.pipeline_id).await,
+    }
+}
+
+/// what a pipeline-tagged link's firing should do once its source member reaches a terminal status.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum PipelineLinkGate {
+    /// fire normally: a succeeded/canceled source, a non-pipeline run, or a failed member whose
+    /// mode is `Continue`/`SilentlyContinue`.
+    Fire,
+    /// the source member's `Stop` failure mode suppresses its onward pipeline links.
+    Suppress,
+    /// the source member's `Inquire` failure mode paused the pipeline run for a human decision;
+    /// onward pipeline links stay suppressed until it is resolved.
+    Paused,
+}
+
+/// resolve the firing gate for `run`'s outgoing *pipeline-tagged* links. only a failed/timed-out
+/// member tagged to a still-open pipeline run is gated; anything else fires normally, which is what
+/// keeps non-pipeline chained triggers (and a succeeded source) unaffected by failure modes.
+pub(super) async fn pipeline_link_gate<T: ReducerStore>(
+    db: &T,
+    run: &WorkflowRun,
+) -> Result<PipelineLinkGate, SendableError> {
+    if !matches!(
+        run.status,
+        WorkflowStatus::Failed | WorkflowStatus::TimedOut
+    ) {
+        return Ok(PipelineLinkGate::Fire);
+    }
+    let Some(pipeline_run_id) = run.pipeline_run_id else {
+        return Ok(PipelineLinkGate::Fire);
+    };
+    let Some(pipeline_run) = db.fetch_pipeline_run(pipeline_run_id).await? else {
+        return Ok(PipelineLinkGate::Fire);
+    };
+    // already paused (another member's inquiry) or already settled: this member's links stay down.
+    if pipeline_run.status == WorkflowStatus::ApprovalRequired || pipeline_run.status.is_terminal()
+    {
+        return Ok(PipelineLinkGate::Suppress);
+    }
+    let pipeline = pipeline_for_run(db, &pipeline_run).await?;
+    match member_failure_mode(pipeline.as_ref(), run.workflow_id) {
+        PipelineMemberFailureMode::Stop => Ok(PipelineLinkGate::Suppress),
+        PipelineMemberFailureMode::Continue | PipelineMemberFailureMode::SilentlyContinue => {
+            Ok(PipelineLinkGate::Fire)
+        }
+        PipelineMemberFailureMode::Inquire => {
+            pause_pipeline_run_for_inquiry(db, &pipeline_run, run).await?;
+            Ok(PipelineLinkGate::Paused)
+        }
+    }
+}
+
+/// pause a pipeline run (`approval_required`) and record which member's failure raised the inquiry,
+/// so the ws inquiry-resolution endpoint and the command center can find it on `state.pending_inquiry`.
+async fn pause_pipeline_run_for_inquiry<T: ReducerStore>(
+    db: &T,
+    pipeline_run: &PipelineRun,
+    member_run: &WorkflowRun,
+) -> Result<(), SendableError> {
+    let mut state = pipeline_run.state.clone();
+    if let Some(map) = state.as_object_mut() {
+        map.insert(
+            "pending_inquiry".to_string(),
+            runinator_models::json!({
+                "member_run_id": member_run.id,
+                "workflow_id": member_run.workflow_id,
+                "status": member_run.status.as_str(),
+                "raised_at": Utc::now(),
+            }),
+        );
+    }
+    db.update_pipeline_run_status(
+        pipeline_run.id,
+        WorkflowStatus::ApprovalRequired,
+        Some(state),
+        Some("Awaiting a decision on a member failure (Inquire failure mode)".into()),
+    )
+    .await
+}
+
+/// which way a pending inquiry ([`PipelineMemberFailureMode::Inquire`]) was resolved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PipelineInquiryDecision {
+    /// fire the failed member's onward pipeline links (as `Continue` would have) and resume.
+    Continue,
+    /// settle the pipeline run `failed` now, without firing the failed member's onward links.
+    Abort,
+}
+
+/// resolve a pipeline run's pending inquiry. errors if the run has no pending inquiry recorded
+/// (already resolved, or the run was never paused).
+pub async fn resolve_pipeline_run_inquiry<T: ReducerStore>(
+    db: &T,
+    pipeline_run_id: Uuid,
+    decision: PipelineInquiryDecision,
+    resolved_by: Option<String>,
+    message: Option<String>,
+) -> Result<PipelineRun, SendableError> {
+    let pipeline_run = db
+        .fetch_pipeline_run(pipeline_run_id)
+        .await?
+        .ok_or_else(|| crate::errors::PIPELINE_NOT_FOUND.error(pipeline_run_id))?;
+    let Some(pending) = pipeline_run.state.get("pending_inquiry").cloned() else {
+        return Err(crate::errors::PIPELINE_NO_PENDING_INQUIRY.error(pipeline_run_id));
+    };
+    let member_run_id = pending
+        .get("member_run_id")
+        .and_then(Value::as_str)
+        .and_then(|raw| Uuid::parse_str(raw).ok())
+        .ok_or_else(|| crate::errors::PIPELINE_INQUIRY_MEMBER_MISSING.error(pipeline_run_id))?;
+
+    let mut state = pipeline_run.state.clone();
+    if let Some(map) = state.as_object_mut() {
+        map.remove("pending_inquiry");
+        map.insert(
+            "last_inquiry_resolution".to_string(),
+            runinator_models::json!({
+                "decision": if decision == PipelineInquiryDecision::Continue {
+                    "continue"
+                } else {
+                    "abort"
+                },
+                "resolved_by": resolved_by,
+                "message": message,
+                "resolved_at": Utc::now(),
+            }),
+        );
+    }
+
+    match decision {
+        PipelineInquiryDecision::Abort => {
+            db.update_pipeline_run_status(
+                pipeline_run_id,
+                WorkflowStatus::Failed,
+                Some(state),
+                Some("Pipeline aborted after an inquiry".into()),
+            )
+            .await?;
+            let mut settled = pipeline_run.clone();
+            settled.status = WorkflowStatus::Failed;
+            maybe_start_chained_pipelines_from_pipeline(db, &settled).await?;
+        }
+        PipelineInquiryDecision::Continue => {
+            let member_run = db.fetch_workflow_run(member_run_id).await?.ok_or_else(|| {
+                crate::errors::PIPELINE_INQUIRY_MEMBER_MISSING.error(pipeline_run_id)
+            })?;
+            db.update_pipeline_run_status(
+                pipeline_run_id,
+                WorkflowStatus::Running,
+                Some(state),
+                None,
+            )
+            .await?;
+            chaining::fire_pipeline_links_for_member(db, &member_run, pipeline_run.pipeline_id)
+                .await?;
+            maybe_settle_pipeline_run(db, &member_run).await?;
+        }
+    }
+
+    db.fetch_pipeline_run(pipeline_run_id)
+        .await?
+        .ok_or_else(|| crate::errors::PIPELINE_NOT_FOUND.error(pipeline_run_id))
+}
+
 /// when a member workflow run reaches terminal, settle its owning pipeline run if the whole reachable
-/// member graph is now terminal. no-op for runs not tagged with a pipeline run or already-settled runs.
+/// member graph is now terminal. no-op for runs not tagged with a pipeline run, already-settled runs,
+/// or a run currently paused on a pending inquiry.
 pub(super) async fn maybe_settle_pipeline_run<T: ReducerStore>(
     db: &T,
     member_run: &WorkflowRun,
@@ -168,6 +362,10 @@ pub(super) async fn maybe_settle_pipeline_run<T: ReducerStore>(
     if pipeline_run.status.is_terminal() {
         return Ok(());
     }
+    // paused for a human decision (`Inquire`): settlement resumes once it is resolved.
+    if pipeline_run.status == WorkflowStatus::ApprovalRequired {
+        return Ok(());
+    }
     let members = db
         .fetch_workflow_runs_for_pipeline_run(pipeline_run_id)
         .await?;
@@ -175,11 +373,15 @@ pub(super) async fn maybe_settle_pipeline_run<T: ReducerStore>(
     if members.iter().any(|run| run.status.is_active()) {
         return Ok(());
     }
+    let pipeline = pipeline_for_run(db, &pipeline_run).await?;
+    // a `SilentlyContinue` member's failure fires its links like `Continue`, but does not by itself
+    // fail the pipeline run's settlement.
     let any_failed = members.iter().any(|run| {
         matches!(
             run.status,
             WorkflowStatus::Failed | WorkflowStatus::TimedOut
-        )
+        ) && member_failure_mode(pipeline.as_ref(), run.workflow_id)
+            != PipelineMemberFailureMode::SilentlyContinue
     });
     let any_canceled = members
         .iter()

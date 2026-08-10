@@ -7,6 +7,8 @@
       :min-first="240"
       :min-second="720"
       collapsible-first
+      first-label="Workflows"
+      first-icon="workflow"
       mobile-mode="toggle"
       :mobile-detail-active="mobileView === 'editor'"
     >
@@ -130,6 +132,8 @@
             :min-first="360"
             :min-second="320"
             collapsible-second
+            second-label="Inspector"
+            second-icon="info"
             mobile-mode="toggle"
             :mobile-detail-active="inspectorActive"
           >
@@ -181,10 +185,10 @@ const { isLoading: loadingWorkflows, loadingMessage: loadingWorkflowsMessage } =
 const scopeFilter = ref<"all" | "org" | "global">("all");
 const mobileView = ref<"list" | "editor">("list");
 
-// on mobile the split shows one pane at a time, so the inspector counts as "open" for either of its
-// views -- a selected step, or the workflow header, which has no node selection behind it.
+// on mobile the split shows one pane at a time, so the inspector counts as "open" for any of its
+// views -- a selected step, or the workflow-level panels, which have no node selection behind them.
 const inspectorActive = computed(
-  () => !!workflows.selectedStepId || workflows.workflowInspectorMode === "header",
+  () => !!workflows.selectedStepId || workflows.workflowInspectorMode !== "step",
 );
 
 function closeInspector() {

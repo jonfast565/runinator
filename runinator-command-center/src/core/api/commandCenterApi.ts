@@ -447,6 +447,23 @@ export async function cancelPipelineRun(pipelineRunId: string) {
   return command<TaskResponse>("cancel_pipeline_run", { pipelineRunId });
 }
 
+// resolve a pipeline run's pending inquiry (a member with the `inquire` failure mode paused it).
+// `continue` fires the failed member's onward pipeline links and resumes; `abort` settles the run
+// `failed` now.
+export async function resolvePipelineRun(
+  pipelineRunId: string,
+  decision: "continue" | "abort",
+  resolvedBy?: string | null,
+  message?: string | null,
+) {
+  return command<PipelineRun>("resolve_pipeline_run", {
+    pipelineRunId,
+    decision,
+    resolvedBy: resolvedBy ?? null,
+    message: message ?? null,
+  });
+}
+
 export async function createWorkflowRun(
   workflowId: string,
   options: { debug?: boolean; parameters?: unknown } = {},

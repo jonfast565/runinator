@@ -406,11 +406,7 @@ fn parse_pipeline_decl(pair: Pair<Rule>) -> Result<PipelineDecl, WdlError> {
                             })?);
                         }
                     }
-                    Rule::pipeline_member => {
-                        if let Some(s) = item.into_inner().find(|p| p.as_rule() == Rule::string) {
-                            members.push(plain_string(s)?);
-                        }
-                    }
+                    Rule::pipeline_member => members.push(parse_pipeline_member(item)?),
                     Rule::pipeline_link => links.push(parse_pipeline_link(item)?),
                     Rule::pipeline_trigger => triggers.push(parse_pipeline_trigger(item)?),
                     _ => {}
@@ -471,6 +467,25 @@ fn parse_pipeline_trigger(pair: Pair<Rule>) -> Result<PipelineTriggerDecl, WdlEr
         source_kind,
         source,
         disabled,
+        span,
+    })
+}
+
+fn parse_pipeline_member(pair: Pair<Rule>) -> Result<PipelineMemberDecl, WdlError> {
+    let span = span_of(&pair);
+    let mut name = None;
+    let mut on_failure = None;
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::string => name = Some(plain_string(inner)?),
+            Rule::pipeline_member_failure_mode => on_failure = Some(inner.as_str().to_string()),
+            _ => {}
+        }
+    }
+    Ok(PipelineMemberDecl {
+        name: name
+            .ok_or_else(|| WdlError::syntax(span, "a pipeline member needs a workflow name"))?,
+        on_failure,
         span,
     })
 }

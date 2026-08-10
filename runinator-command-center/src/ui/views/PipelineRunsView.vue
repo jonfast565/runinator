@@ -7,6 +7,8 @@
       :min-first="340"
       :min-second="720"
       collapsible-first
+      first-label="Pipeline Runs"
+      first-icon="runs"
       mobile-mode="toggle"
       :mobile-detail-active="!!store.selectedRunId"
     >
@@ -141,6 +143,38 @@
               {{ store.detail.run.message }}
             </p>
 
+            <section
+              v-if="pendingInquiry"
+              class="grid gap-2 rounded-md border border-warning-fg/30 bg-warning-bg px-3 py-2.5"
+            >
+              <h3 class="m-0 text-sm font-semibold text-warning-fg">
+                Awaiting a decision (Inquire)
+              </h3>
+              <p class="m-0 text-[13px] text-warning-fg">
+                <strong>{{ memberName(pendingInquiry.workflow_id) }}</strong> failed. Continue to
+                fire its onward chain links and resume the pipeline, or abort to fail the pipeline
+                run now.
+              </p>
+              <div class="flex gap-2">
+                <button
+                  class="btn btn-primary btn-sm"
+                  :disabled="resolving"
+                  @click="resolveInquiry('continue')"
+                >
+                  <Icon name="runs" />
+                  <span>Continue</span>
+                </button>
+                <button
+                  class="btn btn-danger btn-sm"
+                  :disabled="resolving"
+                  @click="resolveInquiry('abort')"
+                >
+                  <Icon name="reject" />
+                  <span>Abort</span>
+                </button>
+              </div>
+            </section>
+
             <section class="grid gap-2 border-t border-border-subtle pt-3">
               <div class="flex items-baseline justify-between gap-2">
                 <h2 class="m-0 text-base font-semibold text-fg">Member Runs</h2>
@@ -198,6 +232,50 @@ const workflows = useWorkflowsStore();
 const app = useAppStore();
 const selectedPipelineId = ref("");
 const starting = ref(false);
+const resolving = ref(false);
+
+// a member with the `inquire` failure mode paused the run; see PipelineDefaults.default_failure_mode
+// / Pipeline.member_failure_modes. recorded on `state.pending_inquiry` while status is
+// `approval_required` (reducer::pause_pipeline_run_for_inquiry).
+interface PendingInquiry {
+  member_run_id: string;
+  workflow_id: string;
+  status: string;
+  raised_at: string;
+}
+
+const pendingInquiry = computed<PendingInquiry | null>(() => {
+  const run = store.detail?.run;
+
+  if (run?.status !== "approval_required") {
+    return null;
+  }
+
+  const pending = run.state.pending_inquiry as PendingInquiry | undefined;
+  return pending ?? null;
+});
+
+function memberName(workflowId: string): string {
+  return workflows.workflows.find((wf) => wf.id === workflowId)?.name ?? workflowId;
+}
+
+async function resolveInquiry(decision: "continue" | "abort"): Promise<void> {
+  const run = store.detail?.run;
+
+  if (!run || resolving.value) {
+    return;
+  }
+
+  resolving.value = true;
+
+  try {
+    await store.resolveRun(run.id, decision);
+  } catch (err) {
+    app.setError(err instanceof Error ? err.message : String(err));
+  } finally {
+    resolving.value = false;
+  }
+}
 
 // adapt each pipeline run to the shared RunSummary shape so the same RunTable renders both families;
 // the pipeline id fills the entity column (labeled "Pipeline") the way workflow_id fills it for runs.

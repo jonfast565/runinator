@@ -75,8 +75,17 @@ function warning(message: string, nodeId = HEADER_ISSUE_NODE_ID): WorkflowValida
  *
  * appended to `validateWorkflowIssues`, so these land in the canvas diagnostics table and -- for
  * the node-scoped ones -- as a badge on the offending node, with no extra plumbing.
+ *
+ * the two halves are also exported separately because interrupts and the remaining declarations
+ * live in different inspector panels, and a panel badge that counted the other panel's problems
+ * would send the user to the wrong tab.
  */
 export function headerIssues(definition: JsonRecord): WorkflowValidationIssue[] {
+  return [...interruptIssues(definition), ...declarationIssues(definition)];
+}
+
+/** the interrupt half: everything `validate_interrupt_handlers` checks, plus the decompile warning. */
+export function interruptIssues(definition: JsonRecord): WorkflowValidationIssue[] {
   const header = readWorkflowHeader(definition);
   const issues: WorkflowValidationIssue[] = [];
   const byId = definitionNodesById(definition);
@@ -84,6 +93,14 @@ export function headerIssues(definition: JsonRecord): WorkflowValidationIssue[] 
   const reachable = start ? interruptRegionNodes(byId, start).nodes : new Set<string>();
 
   pushInterruptIssues(issues, header.interrupts, byId, reachable);
+  return issues;
+}
+
+/** the rest of the header: watch guards, the concurrency policy, and the correlation key. */
+export function declarationIssues(definition: JsonRecord): WorkflowValidationIssue[] {
+  const header = readWorkflowHeader(definition);
+  const issues: WorkflowValidationIssue[] = [];
+  const byId = definitionNodesById(definition);
 
   for (const watch of header.watches) {
     pushWatchIssues(issues, watch, byId);

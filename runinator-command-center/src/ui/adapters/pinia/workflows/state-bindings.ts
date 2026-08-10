@@ -105,6 +105,17 @@ export function createWorkflowStateBindings(
       void state.value.workflowLayoutVersion;
       return services.header.getHeaderIssueCount();
     }),
+    // the two panel badges, each counting only what its own tab can fix.
+    interruptIssueCount: computed(() => {
+      void state.value.headerDraft;
+      void state.value.workflowLayoutVersion;
+      return services.header.getInterruptIssueCount();
+    }),
+    declarationIssueCount: computed(() => {
+      void state.value.headerDraft;
+      void state.value.workflowLayoutVersion;
+      return services.header.getDeclarationIssueCount();
+    }),
     canRequestRunInterrupt: computed(() => {
       void state.value.workflowRunDetail;
       return services.canRequestRunInterrupt();

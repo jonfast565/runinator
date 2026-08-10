@@ -36,7 +36,7 @@ export interface WorkflowServicesState {
   triggerJson: { configuration: string; metadata: string };
   workflowEditorMode: "graph" | "json" | "wdl";
   workflowLayoutDirection: WorkflowLayoutDirection;
-  workflowInspectorMode: "step" | "header";
+  workflowInspectorMode: "step" | "header" | "interrupts";
   /** working copy of the four workflow-level header declarations; applied back on every commit. */
   headerDraft: WorkflowHeader;
   stepEditorOpen: boolean;

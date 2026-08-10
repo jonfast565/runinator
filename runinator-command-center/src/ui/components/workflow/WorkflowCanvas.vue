@@ -188,10 +188,16 @@ const issueSummaryClass = computed(() => {
 });
 
 // select the node and recenter the graph on it so the user can fix it.
-function focusIssueNode(nodeId: string) {
+function focusIssueNode(nodeId: string, message = "") {
   // a header issue belongs to the workflow, not to a node; there is nothing on the canvas to focus,
-  // and populating the step editor with this id would select a node that does not exist.
+  // and populating the step editor with this id would select a node that does not exist. the two
+  // workflow-level panels are separate now, so route to whichever one actually owns the issue.
   if (nodeId === HEADER_ISSUE_NODE_ID) {
+    if (workflows.getInterruptIssues().some((issue) => issue.message === message)) {
+      workflows.openWorkflowInterrupts();
+      return;
+    }
+
     workflows.openWorkflowHeader();
     return;
   }

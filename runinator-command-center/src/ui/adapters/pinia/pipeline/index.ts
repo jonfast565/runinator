@@ -3,6 +3,7 @@ import { computed, ref } from "vue";
 import type {
   Pipeline,
   PipelineDefaults,
+  PipelineMemberFailureMode,
   WorkflowDefinition,
   WorkflowTrigger,
 } from "../../../../core/domain/models";
@@ -37,6 +38,7 @@ export const usePipelineStore = defineStore("pipeline", () => {
   const edges = ref<PipelineEdgeModel[]>([]);
   const unresolved = ref<UnresolvedChain[]>([]);
   const selectedEdgeId = ref<string | null>(null);
+  const selectedNodeId = ref<string | null>(null);
   const loading = ref(false);
   const error = ref<string | null>(null);
 
@@ -67,12 +69,15 @@ export const usePipelineStore = defineStore("pipeline", () => {
       edges.value = [];
       unresolved.value = [];
       selectedEdgeId.value = null;
+      selectedNodeId.value = null;
       return;
     }
 
     const graph = buildPipelineGraph(allWorkflows.value, triggersByWorkflowId.value, {
       pipelineId: pipeline.id,
       memberIds: pipeline.workflow_ids,
+      memberFailureModes: pipeline.member_failure_modes,
+      defaultFailureMode: pipeline.defaults.default_failure_mode,
     });
     nodes.value = graph.nodes;
     edges.value = graph.edges;
@@ -80,6 +85,10 @@ export const usePipelineStore = defineStore("pipeline", () => {
 
     if (selectedEdgeId.value && !edges.value.some((edge) => edge.id === selectedEdgeId.value)) {
       selectedEdgeId.value = null;
+    }
+
+    if (selectedNodeId.value && !nodes.value.some((node) => node.id === selectedNodeId.value)) {
+      selectedNodeId.value = null;
     }
   }
 
@@ -127,6 +136,7 @@ export const usePipelineStore = defineStore("pipeline", () => {
   async function selectPipeline(id: string | null) {
     selectedPipelineId.value = id;
     selectedEdgeId.value = null;
+    selectedNodeId.value = null;
     loading.value = true;
     error.value = null;
 
@@ -152,6 +162,7 @@ export const usePipelineStore = defineStore("pipeline", () => {
         name: trimmed,
         description: description.trim() || null,
         workflow_ids: [],
+        member_failure_modes: {},
         defaults: defaultPipelineDefaults(),
         metadata: {},
       });
@@ -199,11 +210,31 @@ export const usePipelineStore = defineStore("pipeline", () => {
     });
   }
 
+  function withoutMemberFailureMode(
+    modes: Record<string, PipelineMemberFailureMode>,
+    workflowId: string,
+  ): Record<string, PipelineMemberFailureMode> {
+    return Object.fromEntries(Object.entries(modes).filter(([id]) => id !== workflowId));
+  }
+
   function removeWorkflowFromPipeline(workflowId: string) {
     return persistSelected((draft) => ({
       ...draft,
       workflow_ids: draft.workflow_ids.filter((id) => id !== workflowId),
+      member_failure_modes: withoutMemberFailureMode(draft.member_failure_modes, workflowId),
     }));
+  }
+
+  // set (or clear, when `mode` is null) a member's failure-mode override.
+  function setMemberFailureMode(workflowId: string, mode: PipelineMemberFailureMode | null) {
+    return persistSelected((draft) => {
+      const memberFailureModes =
+        mode === null
+          ? withoutMemberFailureMode(draft.member_failure_modes, workflowId)
+          : { ...draft.member_failure_modes, [workflowId]: mode };
+
+      return { ...draft, member_failure_modes: memberFailureModes };
+    });
   }
 
   // reassign the selected pipeline's owning org (null = platform-global).
@@ -238,6 +269,10 @@ export const usePipelineStore = defineStore("pipeline", () => {
 
   const selectedEdge = computed(
     () => edges.value.find((edge) => edge.id === selectedEdgeId.value) ?? null,
+  );
+
+  const selectedNode = computed(
+    () => nodes.value.find((node) => node.id === selectedNodeId.value) ?? null,
   );
 
   function nameById(id: string): string {
@@ -317,6 +352,8 @@ export const usePipelineStore = defineStore("pipeline", () => {
     unresolved,
     selectedEdgeId,
     selectedEdge,
+    selectedNodeId,
+    selectedNode,
     loading,
     error,
     refresh,
@@ -326,6 +363,7 @@ export const usePipelineStore = defineStore("pipeline", () => {
     savePipelineDefaults,
     addWorkflowToPipeline,
     removeWorkflowFromPipeline,
+    setMemberFailureMode,
     setPipelineOwner,
     deletePipeline,
     createLink,
@@ -334,6 +372,11 @@ export const usePipelineStore = defineStore("pipeline", () => {
     nameById,
     selectEdge: (id: string | null) => {
       selectedEdgeId.value = id;
+      selectedNodeId.value = null;
+    },
+    selectNode: (id: string | null) => {
+      selectedNodeId.value = id;
+      selectedEdgeId.value = null;
     },
   };
 });

@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -27,6 +29,43 @@ impl PipelineFailurePolicy {
     }
 }
 
+/// what happens to the *pipeline run* when one of its member workflows fails, evaluated per member
+/// (an override in [`Pipeline::member_failure_modes`], falling back to
+/// [`PipelineDefaults::default_failure_mode`]). Named after PowerShell's `$ErrorActionPreference`,
+/// whose `Stop`/`Continue`/`SilentlyContinue`/`Inquire` values this mirrors one-for-one. Unlike
+/// [`PipelineFailurePolicy`] (which only seeds a newly-drawn link's `on` selector), this is enforced
+/// at runtime by the chaining/settlement orchestration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PipelineMemberFailureMode {
+    /// the failed member fires none of its outgoing links; the pipeline run still settles once
+    /// every already-started member quiesces, and this failure counts toward that settlement.
+    Stop,
+    /// the failed member's outgoing links still fire per their own `on` selector (today's
+    /// behavior), and this failure counts toward the pipeline run's settlement. the default, so an
+    /// existing pipeline's behavior is unchanged by this setting's introduction.
+    #[default]
+    Continue,
+    /// like `Continue`, but this member's failure alone does not fail the pipeline run's
+    /// settlement (another member's `Stop`/`Continue` failure still can).
+    SilentlyContinue,
+    /// the failed member fires none of its outgoing links until a human resolves the pipeline
+    /// run's pending inquiry (continue or abort); the pipeline run pauses (`approval_required`)
+    /// rather than settling while the inquiry is open.
+    Inquire,
+}
+
+impl PipelineMemberFailureMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            PipelineMemberFailureMode::Stop => "stop",
+            PipelineMemberFailureMode::Continue => "continue",
+            PipelineMemberFailureMode::SilentlyContinue => "silently_continue",
+            PipelineMemberFailureMode::Inquire => "inquire",
+        }
+    }
+}
+
 /// editable pipeline-level defaults applied when authoring links inside a pipeline.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PipelineDefaults {
@@ -38,6 +77,9 @@ pub struct PipelineDefaults {
     pub default_parameters: Value,
     #[serde(default)]
     pub max_chain_depth: Option<u32>,
+    /// the failure mode applied to a member with no entry in [`Pipeline::member_failure_modes`].
+    #[serde(default)]
+    pub default_failure_mode: PipelineMemberFailureMode,
 }
 
 fn default_true() -> bool {
@@ -51,6 +93,7 @@ impl Default for PipelineDefaults {
             links_enabled_by_default: true,
             default_parameters: Value::default(),
             max_chain_depth: None,
+            default_failure_mode: PipelineMemberFailureMode::default(),
         }
     }
 }
@@ -103,13 +146,42 @@ pub struct PipelineSpec {
     #[serde(default)]
     pub defaults: PipelineDefaults,
     #[serde(default)]
-    pub members: Vec<String>,
+    pub members: Vec<PipelineMemberSpec>,
     #[serde(default)]
     pub links: Vec<PipelineLinkSpec>,
     /// pipeline-level triggers (cron / manual / chained) declared in the `.wdlp` header. materialized
     /// on import as managed `pipeline_triggers` reconciled by pipeline id.
     #[serde(default)]
     pub triggers: Vec<PipelineTriggerSpec>,
+}
+
+/// a member workflow declared in a `.wdlp` pipeline, by name. `failure_mode` is `None` when the
+/// member declares no `on_failure` of its own, meaning it takes the pipeline's
+/// [`PipelineDefaults::default_failure_mode`] at import.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PipelineMemberSpec {
+    pub name: String,
+    #[serde(default)]
+    pub failure_mode: Option<PipelineMemberFailureMode>,
+}
+
+/// a bare name is a member with no failure-mode override (takes the pipeline default at import).
+impl From<&str> for PipelineMemberSpec {
+    fn from(name: &str) -> Self {
+        PipelineMemberSpec {
+            name: name.to_string(),
+            failure_mode: None,
+        }
+    }
+}
+
+impl From<String> for PipelineMemberSpec {
+    fn from(name: String) -> Self {
+        PipelineMemberSpec {
+            name,
+            failure_mode: None,
+        }
+    }
 }
 
 /// a portable, id-free pipeline trigger declaration compiled from a `.wdlp` header. `configuration`
@@ -131,6 +203,7 @@ impl PartialEq for PipelineDefaults {
             && self.links_enabled_by_default == other.links_enabled_by_default
             && self.default_parameters == other.default_parameters
             && self.max_chain_depth == other.max_chain_depth
+            && self.default_failure_mode == other.default_failure_mode
     }
 }
 
@@ -156,6 +229,11 @@ pub struct Pipeline {
     pub org_id: Option<Uuid>,
     #[serde(default)]
     pub workflow_ids: Vec<Uuid>,
+    /// per-member override of [`PipelineDefaults::default_failure_mode`], keyed by member workflow
+    /// id. a member absent from this map uses the pipeline's default. persisted in its own column
+    /// (unlike `defaults`, this is keyed by id rather than being purely id-free authoring data).
+    #[serde(default)]
+    pub member_failure_modes: BTreeMap<Uuid, PipelineMemberFailureMode>,
     #[serde(default)]
     pub defaults: PipelineDefaults,
     #[serde(default)]

@@ -46,7 +46,12 @@ export type { RevisionSource, WorkflowRevision } from "./workflow/revision";
 export { revisionAuthorLabel } from "./workflow/revision";
 export type { WorkflowBundle } from "./workflow/bundle";
 export type { WorkflowTrigger, WorkflowTriggerKind } from "./workflow/trigger";
-export type { Pipeline, PipelineDefaults, PipelineFailurePolicy } from "./pipeline/pipeline";
+export type {
+  Pipeline,
+  PipelineDefaults,
+  PipelineFailurePolicy,
+  PipelineMemberFailureMode,
+} from "./pipeline/pipeline";
 export { defaultPipelineDefaults } from "./pipeline/pipeline";
 export type { PipelineTrigger } from "./pipeline/pipeline-trigger";
 export type { PipelineRun } from "./pipeline/pipeline-run";

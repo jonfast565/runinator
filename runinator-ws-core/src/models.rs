@@ -165,6 +165,24 @@ pub struct PipelineRunRequest {
     pub parameters: Value,
 }
 
+/// resolve a pipeline run's pending inquiry (a member with the `Inquire` failure mode paused it).
+/// mirrors [`ApprovalResolutionRequest`]'s shape; `decision` plays the approve/reject role.
+#[derive(Debug, Deserialize)]
+pub struct PipelineRunResolutionRequest {
+    pub decision: PipelineRunInquiryDecision,
+    #[serde(default)]
+    pub resolved_by: Option<String>,
+    #[serde(default)]
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PipelineRunInquiryDecision {
+    Continue,
+    Abort,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct WorkflowRunStatusQuery {
     pub status: Option<WorkflowStatus>,

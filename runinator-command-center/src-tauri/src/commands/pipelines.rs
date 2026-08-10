@@ -177,3 +177,29 @@ pub async fn cancel_pipeline_run(
     serde_json::from_value(value)
         .map_err(|err| CommandError::Unexpected(format!("invalid cancel response: {err}")))
 }
+
+/// resolve a pipeline run's pending inquiry (a member with the `inquire` failure mode paused it).
+#[tauri::command]
+pub async fn resolve_pipeline_run(
+    state: State<'_, CommandCenterState>,
+    pipeline_run_id: Uuid,
+    decision: String,
+    resolved_by: Option<String>,
+    message: Option<String>,
+) -> CommandResult<PipelineRun> {
+    let url = build_state_url(&state, &format!("pipeline_runs/{pipeline_run_id}/resolve")).await?;
+    let response = state
+        .client
+        .read()
+        .await
+        .post(url.clone())
+        .json(&json!({
+            "decision": decision,
+            "resolved_by": resolved_by,
+            "message": message,
+        }))
+        .send()
+        .await?;
+    let response = handle_response(url, response).await?;
+    Ok(response.json::<PipelineRun>().await?)
+}

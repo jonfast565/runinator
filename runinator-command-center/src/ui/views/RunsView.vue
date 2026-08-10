@@ -7,6 +7,8 @@
       :min-first="340"
       :min-second="720"
       collapsible-first
+      first-label="Runs"
+      first-icon="runs"
       mobile-mode="toggle"
       :mobile-detail-active="!!workflows.selectedWorkflowRunId"
     >
@@ -88,6 +90,8 @@
             :min-first="260"
             :min-second="320"
             collapsible-second
+            second-label="Details"
+            second-icon="info"
           >
             <template #first>
               <WorkflowRunGraph />

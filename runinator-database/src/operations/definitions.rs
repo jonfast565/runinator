@@ -364,6 +364,8 @@ where
         let pipeline_id = pipeline.id.unwrap_or_else(Uuid::new_v4);
         let workflow_ids =
             serde_json::to_string(&pipeline.workflow_ids).unwrap_or_else(|_| "[]".to_string());
+        let member_failure_modes = serde_json::to_string(&pipeline.member_failure_modes)
+            .unwrap_or_else(|_| "{}".to_string());
         let defaults =
             serde_json::to_string(&pipeline.defaults).unwrap_or_else(|_| "{}".to_string());
 
@@ -372,6 +374,7 @@ where
             "description",
             "org_id",
             "workflow_ids",
+            "member_failure_modes",
             "defaults",
             "metadata",
             "updated_at",
@@ -384,13 +387,14 @@ where
             let mut conn = self.pool().acquire().await?;
             sqlx::query(&self.render(&format!(
                 "INSERT INTO pipelines ({PIPELINE_COLUMNS})
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) {conflict}",
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) {conflict}",
             )))
             .bind(pipeline_id)
             .bind(&pipeline.name)
             .bind(&pipeline.description)
             .bind(pipeline.org_id)
             .bind(&workflow_ids)
+            .bind(&member_failure_modes)
             .bind(&defaults)
             .bind(pipeline.metadata.to_string())
             .bind(pipeline.created_at.map(|dt| dt.timestamp()).unwrap_or(now))
@@ -409,7 +413,7 @@ where
         let conflict = self.dialect().on_conflict_update("id", &update_cols);
         let row = sqlx::query(&self.render(&format!(
             "INSERT INTO pipelines ({PIPELINE_COLUMNS})
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) {conflict}
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) {conflict}
              RETURNING {PIPELINE_COLUMNS}",
         )))
         .bind(pipeline_id)
@@ -417,6 +421,7 @@ where
         .bind(&pipeline.description)
         .bind(pipeline.org_id)
         .bind(&workflow_ids)
+        .bind(&member_failure_modes)
         .bind(&defaults)
         .bind(pipeline.metadata.to_string())
         .bind(pipeline.created_at.map(|dt| dt.timestamp()).unwrap_or(now))

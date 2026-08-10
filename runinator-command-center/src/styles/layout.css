@@ -17,12 +17,12 @@
 .sidebar {
   display: flex;
   min-width: 0;
+  min-height: 0;
   flex-direction: column;
-  gap: 18px;
   border-right: 1px solid var(--border);
   background: var(--surface-inverse);
   color: var(--text-inverse);
-  padding: 16px 12px;
+  padding: 16px 12px 0;
 }
 
 /* hamburger only appears on mobile, where the sidebar becomes an off-canvas drawer. */
@@ -91,24 +91,46 @@
 
 .brand {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
-  gap: 10px;
-  font-weight: 720;
+  gap: 9px;
+  padding-bottom: 14px;
+  font-weight: 600;
 }
 
-.brand-mark {
-  display: grid;
-  width: 28px;
-  height: 28px;
-  place-items: center;
-  border-radius: 7px;
-  background: #4ea1ff;
-  color: var(--surface);
-  transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
+.brand-text {
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 13.5px;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
 }
 
-.brand:hover .brand-mark {
-  transform: rotate(-6deg) scale(1.04);
+.brand:hover .brand-mark-glyph {
+  transform: rotate(-6deg) scale(1.05);
+}
+
+/* nav scrolls independently so a tall nav list never pushes the clock footer off-screen. */
+.nav-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 2px 0 10px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.nav-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.nav-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.nav-scroll::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: var(--surface-inverse-accent);
 }
 
 .nav-list {
@@ -124,7 +146,7 @@
   border-radius: 8px;
   background: transparent;
   color: var(--text-inverse-muted);
-  padding: 9px 10px;
+  padding: 9px 10px 9px 16px;
   text-align: left;
   transition:
     background-color 140ms ease,
@@ -132,20 +154,23 @@
     transform 140ms ease;
 }
 
+/* active-state reads as a lit indicator lamp, not a generic side bar. */
 .nav-list button::before {
   content: "";
   position: absolute;
-  top: 8px;
-  bottom: 8px;
-  left: 0;
-  width: 2px;
+  top: 50%;
+  left: 6px;
+  width: 4px;
+  height: 4px;
   border-radius: 999px;
-  background: #4ea1ff;
+  background: var(--accent);
   opacity: 0;
-  transform: scaleY(0.4);
+  transform: translateY(-50%) scale(0.4);
+  box-shadow: 0 0 0 0 transparent;
   transition:
     opacity 140ms ease,
-    transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
+    transform 180ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 180ms ease;
 }
 
 .nav-list button.active,
@@ -156,7 +181,8 @@
 
 .nav-list button.active::before {
   opacity: 1;
-  transform: scaleY(1);
+  transform: translateY(-50%) scale(1);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 24%, transparent);
 }
 
 .nav-list button:active:not(:disabled) {
@@ -175,7 +201,9 @@
   border-radius: var(--radius-pill);
   background: var(--surface-inverse-accent);
   color: var(--text-inverse-muted);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
   text-align: center;
   transition:
     background-color 140ms ease,
@@ -197,6 +225,33 @@
 
 .sidebar-toggle:active:not(:disabled) {
   transform: scale(0.92);
+}
+
+/* quiet ticking readout: the product's job is waking nodes on a clock, so the rail shows one. */
+.sidebar-clock {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 6px calc(10px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--surface-inverse-hover);
+  font-family: var(--font-mono);
+}
+
+.sidebar-clock-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-inverse-faint);
+}
+
+.sidebar-clock-time {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  color: var(--text-inverse-muted);
 }
 
 .workspace {
@@ -254,6 +309,7 @@
   border-bottom: 1px solid var(--border);
   background: var(--surface);
   padding: 6px 12px;
+  box-shadow: inset 0 2px 0 0 var(--accent);
 }
 
 .view-title {
@@ -275,7 +331,9 @@
 .service-url,
 .last-refresh {
   color: var(--text-muted);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.01em;
 }
 
 .view-title span {
@@ -416,11 +474,96 @@ main[inert] {
   overflow: hidden;
 }
 
-.split-section > .panel,
-.split-section > .split-pane {
+.split-section-content {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.split-section-content > .panel,
+.split-section-content > .split-pane {
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
+}
+
+/* folded pane: content stays mounted (state survives) but hidden behind its rail tab. */
+.split-section-folded > .split-section-content {
+  display: none;
+}
+
+/* base (horizontal split): a narrow vertical rail, icon over a bottom-to-top rotated label. */
+.split-tab {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  border: 0;
+  border-top: 2px solid transparent;
+  background: var(--surface-subtle);
+  color: var(--text-muted);
+  padding: 10px 0;
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease,
+    border-color 120ms ease;
+}
+
+.split-tab:hover,
+.split-tab:focus-visible {
+  border-top-color: var(--accent);
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.split-section-first > .split-tab {
+  border-right: 1px solid var(--border-subtle);
+}
+
+.split-section-second > .split-tab {
+  border-left: 1px solid var(--border-subtle);
+}
+
+.split-tab-label {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+/* a vertical split (top/bottom) folds to a horizontal tray, eclipse's bottom-view-minimize style. */
+.split-pane-vertical .split-tab {
+  flex-direction: row;
+  justify-content: flex-start;
+  border-top: 0;
+  border-left: 2px solid transparent;
+  padding: 0 10px;
+}
+
+.split-pane-vertical .split-tab:hover,
+.split-pane-vertical .split-tab:focus-visible {
+  border-top-color: transparent;
+  border-left-color: var(--accent);
+}
+
+.split-pane-vertical .split-section-first > .split-tab {
+  border-right: 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.split-pane-vertical .split-section-second > .split-tab {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.split-pane-vertical .split-tab-label {
+  writing-mode: horizontal-tb;
+  transform: none;
 }
 
 .split-handle {
@@ -676,7 +819,7 @@ main[inert] {
     position: fixed;
     inset: 0;
     z-index: 35;
-    background: rgba(23, 32, 42, 0.5);
+    background: rgba(12, 10, 18, 0.55);
     backdrop-filter: blur(2px);
   }
 
@@ -758,12 +901,12 @@ main[inert] {
   .nav-list button::before,
   .nav-count,
   .sidebar-toggle,
-  .brand-mark,
+  .brand-mark-glyph,
   .hamburger-bar {
     transition: none !important;
   }
 
-  .brand:hover .brand-mark,
+  .brand:hover .brand-mark-glyph,
   .nav-list button:active:not(:disabled),
   .sidebar-toggle:active:not(:disabled),
   .nav-list button.active .nav-count {

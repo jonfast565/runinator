@@ -7,6 +7,8 @@
       :min-first="240"
       :min-second="520"
       collapsible-first
+      first-label="Pipelines"
+      first-icon="branch"
       mobile-mode="toggle"
       :mobile-detail-active="mobileView === 'editor'"
     >
@@ -106,6 +108,8 @@
             :min-first="380"
             :min-second="260"
             collapsible-second
+            second-label="Details"
+            second-icon="info"
           >
             <template #first>
               <div class="panel h-full min-h-0">
@@ -183,8 +187,30 @@
                     <span>Delete chain</span>
                   </button>
                 </template>
+                <template v-else-if="selectedNode">
+                  <h3 class="m-0 text-sm font-semibold text-fg">{{ selectedNode.data.name }}</h3>
+                  <label class="flex flex-col gap-1 text-sm">
+                    <span>On failure</span>
+                    <select
+                      :value="memberFailureModeValue"
+                      @change="onMemberFailureModeChange(($event.target as HTMLSelectElement).value)"
+                    >
+                      <option value="">Pipeline default ({{ defaultFailureModeLabel }})</option>
+                      <option value="stop">Stop</option>
+                      <option value="continue">Continue</option>
+                      <option value="silently_continue">Silently Continue</option>
+                      <option value="inquire">Inquire</option>
+                    </select>
+                  </label>
+                  <p class="hint m-0">
+                    What happens to this pipeline run if
+                    <strong>{{ selectedNode.data.name }}</strong> fails. Mirrors PowerShell's
+                    $ErrorActionPreference.
+                  </p>
+                </template>
                 <p v-else class="m-0 text-sm text-fg-muted">
-                  Select a chain edge to edit it, or drag from one workflow to another to create one.
+                  Select a chain edge or a workflow to edit it, or drag from one workflow to another
+                  to create a chain.
                 </p>
 
                 <div>
@@ -290,7 +316,11 @@ import { usePipelineRunsStore } from "../adapters/pinia/pipeline-runs";
 import { useWorkflowsStore } from "../adapters/pinia/workflows";
 import { useAppStore } from "../adapters/pinia/app";
 import { useOrgsStore } from "../adapters/pinia/orgs";
-import type { Pipeline, PipelineDefaults } from "../../core/domain/models";
+import type {
+  Pipeline,
+  PipelineDefaults,
+  PipelineMemberFailureMode,
+} from "../../core/domain/models";
 import type { ChainEvent } from "../../core/workflow/pipeline-graph";
 import SplitPane from "../components/shared/SplitPane.vue";
 import Icon from "../components/shared/Icon.vue";
@@ -311,6 +341,32 @@ const orgs = useOrgsStore();
 
 const selectedPipeline = computed(() => pipeline.selectedPipeline);
 const selectedEdge = computed(() => pipeline.selectedEdge);
+const selectedNode = computed(() => pipeline.selectedNode);
+
+// "" means no per-member override (the pipeline default applies).
+const memberFailureModeValue = computed(() => {
+  const node = selectedNode.value;
+  const modes = selectedPipeline.value?.member_failure_modes;
+  return (node && modes?.[node.data.workflowId]) ?? "";
+});
+
+const defaultFailureModeLabel = computed(
+  () => selectedPipeline.value?.defaults.default_failure_mode ?? "continue",
+);
+
+function onMemberFailureModeChange(value: string) {
+  const node = selectedNode.value;
+
+  if (!node) {
+    return;
+  }
+
+  void pipeline.setMemberFailureMode(
+    node.data.workflowId,
+    (value || null) as PipelineMemberFailureMode | null,
+  );
+}
+
 const scopeFilter = ref<"all" | "org" | "global">("all");
 const mobileView = ref<"list" | "editor">("list");
 

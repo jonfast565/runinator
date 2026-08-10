@@ -1,7 +1,7 @@
 <template>
   <aside class="sidebar" :class="{ collapsed: app.sidebarCollapsed }">
     <div class="brand" :class="railMode ? 'flex-col gap-2.5' : ''">
-      <span class="brand-mark">R</span>
+      <BrandMark />
       <span class="brand-text" :class="railMode ? 'hidden' : ''">Command Center</span>
       <button
         class="sidebar-toggle inline-flex size-[26px] cursor-pointer items-center justify-center rounded-md border-0 bg-transparent text-fg-inverse-muted hover:bg-inverse-hover hover:text-fg-inverse disabled:cursor-default"
@@ -18,53 +18,63 @@
         />
       </button>
     </div>
-    <nav class="nav-list">
-      <template v-for="section in sections" :key="section.label">
-        <div
-          class="mt-2.5 px-2.5 text-[11px] font-semibold uppercase tracking-[0.04em] text-[#7e8c9c] first:mt-0"
-          :class="railMode ? 'hidden' : ''"
-        >
-          {{ section.label }}
-        </div>
-        <button
-          v-for="item in section.items"
-          :key="item.tab"
-          :class="{
-            active: app.activeTab === item.tab,
-            '!justify-center': railMode,
-          }"
-          :disabled="app.interactionsDisabled"
-          :title="app.sidebarCollapsed ? item.label : undefined"
-          @click="app.activeTab = item.tab"
-        >
-          <span class="inline-flex min-w-0 items-center" :class="railMode ? 'gap-0' : 'gap-[9px]'">
-            <Icon :name="item.icon" :size="15" />
-            <span
-              class="overflow-hidden text-ellipsis whitespace-nowrap"
-              :class="railMode ? 'hidden' : ''"
-              >{{ item.label }}</span
-            >
-          </span>
-          <span
-            v-if="countFor(item.tab) !== null"
-            class="nav-count"
+    <nav class="nav-scroll">
+      <div class="nav-list">
+        <template v-for="section in sections" :key="section.label">
+          <div
+            class="mt-2.5 px-2.5 font-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-fg-inverse-faint first:mt-0"
             :class="railMode ? 'hidden' : ''"
-            >{{ countFor(item.tab) }}</span
           >
-        </button>
-      </template>
+            {{ section.label }}
+          </div>
+          <button
+            v-for="item in section.items"
+            :key="item.tab"
+            :class="{
+              active: app.activeTab === item.tab,
+              '!justify-center': railMode,
+            }"
+            :disabled="app.interactionsDisabled"
+            :title="app.sidebarCollapsed ? item.label : undefined"
+            @click="app.activeTab = item.tab"
+          >
+            <span
+              class="inline-flex min-w-0 items-center"
+              :class="railMode ? 'gap-0' : 'gap-[9px]'"
+            >
+              <Icon :name="item.icon" :size="15" />
+              <span
+                class="overflow-hidden text-ellipsis whitespace-nowrap"
+                :class="railMode ? 'hidden' : ''"
+                >{{ item.label }}</span
+              >
+            </span>
+            <span
+              v-if="countFor(item.tab) !== null"
+              class="nav-count"
+              :class="railMode ? 'hidden' : ''"
+              >{{ countFor(item.tab) }}</span
+            >
+          </button>
+        </template>
+      </div>
     </nav>
+    <div v-if="!railMode" class="sidebar-clock" aria-hidden="true">
+      <span class="sidebar-clock-label">Local</span>
+      <span class="sidebar-clock-time">{{ clockTime }}</span>
+    </div>
   </aside>
 </template>
 
 <script setup lang="ts">
 import Icon from "../shared/Icon.vue";
+import BrandMark from "./BrandMark.vue";
 import { navSections, useAppStore } from "../../../ui/adapters/pinia/app";
 import { useResourcesStore } from "../../../ui/adapters/pinia/resources";
 import { useSecretsStore } from "../../../ui/adapters/pinia/secrets";
 import { useWorkflowsStore } from "../../../ui/adapters/pinia/workflows";
 import type { AppTab } from "../../../core/navigation/app";
-import { computed } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useBreakpoint } from "../../composables/useBreakpoint";
 
 const app = useAppStore();
@@ -75,6 +85,21 @@ const sections = computed(() => app.visibleNavSections());
 const workflows = useWorkflowsStore();
 const resources = useResourcesStore();
 const secrets = useSecretsStore();
+
+const clockNow = ref(new Date());
+let clockTimer: ReturnType<typeof setInterval> | undefined;
+
+onMounted(() => {
+  clockTimer = setInterval(() => {
+    clockNow.value = new Date();
+  }, 1000);
+});
+
+onBeforeUnmount(() => {
+  clearInterval(clockTimer);
+});
+
+const clockTime = computed(() => clockNow.value.toLocaleTimeString([], { hour12: false }));
 
 function countFor(tab: AppTab): number | null {
   if (tab === "Runs") {

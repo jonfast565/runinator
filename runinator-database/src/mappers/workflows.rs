@@ -113,6 +113,10 @@ macro_rules! pipeline_from_row {
             org_id: $row.get("org_id"),
             workflow_ids: serde_json::from_str($row.get::<String, _>("workflow_ids").as_str())
                 .unwrap_or_default(),
+            member_failure_modes: $row
+                .get::<Option<String>, _>("member_failure_modes")
+                .and_then(|raw| serde_json::from_str(raw.as_str()).ok())
+                .unwrap_or_default(),
             defaults: serde_json::from_str::<PipelineDefaults>(
                 $row.get::<String, _>("defaults").as_str(),
             )

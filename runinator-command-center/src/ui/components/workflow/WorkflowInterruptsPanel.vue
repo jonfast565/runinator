@@ -2,17 +2,18 @@
   <div class="header-panel step-detail">
     <header class="step-detail-header">
       <div class="step-detail-titles">
-        <span class="node-kind">workflow header</span>
+        <span class="node-kind">interrupts</span>
         <h2>{{ workflows.workflowDraft.name || "Untitled workflow" }}</h2>
       </div>
       <p class="step-headline">
-        Declarations that belong to the workflow rather than to any one node. These compile into the
-        WDL header, so they survive a save. Interrupt handlers have their own panel.
+        An interrupt suspends one thread of control, runs a handler region beside it, and hands
+        control back at a <code>resume</code>. Declare which source enters which region here, then
+        draw the region on the canvas.
       </p>
     </header>
 
     <section v-if="issues.length" class="detail-section validation-section">
-      <h3>Header validation</h3>
+      <h3>Interrupt validation</h3>
       <div class="detail-rows">
         <div
           v-for="issue in issues"
@@ -31,9 +32,7 @@
       Loading node types…
     </p>
 
-    <HeaderWatchesSection />
-    <HeaderConcurrencySection />
-    <HeaderCorrelationSection />
+    <HeaderInterruptsSection />
   </div>
 </template>
 
@@ -41,20 +40,18 @@
 import { computed } from "vue";
 import { useWorkflowsStore } from "../../adapters/pinia/workflows";
 import { useCatalogMetadataStore } from "../../adapters/pinia/catalogMetadata";
-import HeaderConcurrencySection from "./HeaderConcurrencySection.vue";
-import HeaderCorrelationSection from "./HeaderCorrelationSection.vue";
-import HeaderWatchesSection from "./HeaderWatchesSection.vue";
+import HeaderInterruptsSection from "./HeaderInterruptsSection.vue";
 import LoadingSpinner from "../shared/LoadingSpinner.vue";
 
 const workflows = useWorkflowsStore();
 const catalogMetadata = useCatalogMetadataStore();
 
-// re-derive whenever the draft or the graph changes: a watch guard's handler is a node this panel
-// does not own, so a canvas edit can make a declaration valid or broken.
+// re-derive whenever the draft or the graph changes: a region's validity depends on nodes this
+// panel does not own, so a canvas edit can make a declaration valid or broken.
 const issues = computed(() => {
   void workflows.headerDraft;
   void workflows.workflowLayoutVersion;
   void workflows.workflowJson;
-  return workflows.getDeclarationIssues();
+  return workflows.getInterruptIssues();
 });
 </script>
