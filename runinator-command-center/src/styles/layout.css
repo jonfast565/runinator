@@ -537,6 +537,20 @@ main[inert] {
   letter-spacing: 0.02em;
 }
 
+/* a compact count on a folded rail tab; the rail is too narrow for the full count-pill layout. */
+.split-tab-badge {
+  min-width: 15px;
+  padding: 0 4px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 15px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: var(--danger-fg, var(--text));
+  background: var(--danger-bg, var(--surface-muted));
+}
+
 /* a vertical split (top/bottom) folds to a horizontal tray, eclipse's bottom-view-minimize style. */
 .split-pane-vertical .split-tab {
   flex-direction: row;

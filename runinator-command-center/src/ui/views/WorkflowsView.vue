@@ -125,28 +125,9 @@
       <template #second>
         <div class="flex h-full min-h-0 min-w-0 flex-1 flex-col">
           <MobileBackBar label="Back to workflows" @back="mobileView = 'list'" />
-          <SplitPane
-            class="min-h-0 flex-1"
-            storage-key="command-center.workflows.inspector-split"
-            :initial-first-pct="64"
-            :min-first="360"
-            :min-second="320"
-            collapsible-second
-            second-label="Inspector"
-            second-icon="info"
-            mobile-mode="toggle"
-            :mobile-detail-active="inspectorActive"
-          >
-            <template #first>
-              <WorkflowCanvas />
-            </template>
-            <template #second>
-              <div class="flex h-full min-h-0 min-w-0 flex-1 flex-col">
-                <MobileBackBar label="Back to canvas" @back="closeInspector" />
-                <WorkflowInspector class="min-h-0 flex-1" />
-              </div>
-            </template>
-          </SplitPane>
+          <WorkflowInspector class="min-h-0 flex-1">
+            <template #canvas><WorkflowCanvas /></template>
+          </WorkflowInspector>
         </div>
       </template>
     </SplitPane>
@@ -184,17 +165,6 @@ const { isLoading: loadingWorkflows, loadingMessage: loadingWorkflowsMessage } =
   useOperationLoading("Refreshing workflows");
 const scopeFilter = ref<"all" | "org" | "global">("all");
 const mobileView = ref<"list" | "editor">("list");
-
-// on mobile the split shows one pane at a time, so the inspector counts as "open" for any of its
-// views -- a selected step, or the workflow-level panels, which have no node selection behind them.
-const inspectorActive = computed(
-  () => !!workflows.selectedStepId || workflows.workflowInspectorMode !== "step",
-);
-
-function closeInspector() {
-  workflows.selectedStepId = "";
-  workflows.closeWorkflowHeader();
-}
 
 const scopedWorkflows = computed(() => {
   const list = workflows.filteredWorkflows;
