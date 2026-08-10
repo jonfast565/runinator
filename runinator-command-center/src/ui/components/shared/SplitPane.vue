@@ -27,7 +27,6 @@
         @click="toggleCollapsed('first')"
       >
         <Icon :name="firstIcon || firstRestoreIcon" :size="13" />
-        <span v-if="firstBadge" class="split-tab-badge">{{ firstBadge }}</span>
         <span v-if="firstLabel" class="split-tab-label">{{ firstLabel }}</span>
       </button>
       <div class="split-section-content"><slot name="first" /></div>
@@ -78,7 +77,6 @@
         @click="toggleCollapsed('second')"
       >
         <Icon :name="secondIcon || secondRestoreIcon" :size="13" />
-        <span v-if="secondBadge" class="split-tab-badge">{{ secondBadge }}</span>
         <span v-if="secondLabel" class="split-tab-label">{{ secondLabel }}</span>
       </button>
       <div class="split-section-content"><slot name="second" /></div>
@@ -105,17 +103,11 @@ const props = withDefaults(
     storageKey?: string;
     collapsibleFirst?: boolean;
     collapsibleSecond?: boolean;
-    // which side starts folded the very first time this pane mounts (no persisted state yet);
-    // once the user has toggled it once, the persisted choice always wins over this.
-    initialCollapsed?: CollapsedSide;
     // labels/icons for the rail tab a folded pane collapses to; omit either to fall back to icon-only.
     firstLabel?: string;
     secondLabel?: string;
     firstIcon?: IconName;
     secondIcon?: IconName;
-    // a count shown on the folded rail tab, e.g. an issue count the panel behind it can fix.
-    firstBadge?: number | string;
-    secondBadge?: number | string;
     // 'stack' keeps both panes stacked on mobile; 'toggle' shows one pane at a time (master-detail).
     mobileMode?: "stack" | "toggle";
     // in 'toggle' mode, true means the detail (second) pane is active; false shows the list (first).
@@ -129,13 +121,10 @@ const props = withDefaults(
     storageKey: "",
     collapsibleFirst: false,
     collapsibleSecond: false,
-    initialCollapsed: "",
     firstLabel: "",
     secondLabel: "",
     firstIcon: undefined,
     secondIcon: undefined,
-    firstBadge: undefined,
-    secondBadge: undefined,
     mobileMode: "stack",
     mobileDetailActive: false,
   },
@@ -203,16 +192,6 @@ function toggleCollapsed(side: "first" | "second") {
   }
 }
 
-// lets a parent bring this pane forward programmatically (e.g. a canvas node click should surface
-// the step editor even if the user had folded it), the same way `toggleCollapsed` does for a click.
-function expand() {
-  if (collapsedSide.value) {
-    toggleCollapsed(collapsedSide.value);
-  }
-}
-
-defineExpose({ expand });
-
 onMounted(() => {
   const savedSide = collapsedKey.value ? window.localStorage.getItem(collapsedKey.value) : null;
 
@@ -220,8 +199,6 @@ onMounted(() => {
     collapsedSide.value = "first";
   } else if (savedSide === "second" && props.collapsibleSecond) {
     collapsedSide.value = "second";
-  } else if (savedSide === null && props.initialCollapsed) {
-    collapsedSide.value = props.initialCollapsed;
   }
 
   const saved = props.storageKey ? Number(window.localStorage.getItem(props.storageKey)) : 0;

@@ -68,6 +68,33 @@
   font-size: 12px;
 }
 
+.workflow-inspector {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.workflow-inspector-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* the three views not currently open, always grouped together in a fixed order beside the active
+   one -- unlike a folded pane inside a nested split, these never end up on both sides of it. */
+.workflow-inspector-rail {
+  display: flex;
+  flex: 0 0 auto;
+}
+
+.workflow-inspector-rail .split-tab {
+  flex: 0 0 30px;
+  width: 30px;
+  border-left: 1px solid var(--border-subtle);
+}
+
 .workflow-canvas-panel {
   padding: 0;
   overflow: hidden;
