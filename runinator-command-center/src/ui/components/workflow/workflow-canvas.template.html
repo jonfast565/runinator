@@ -1,112 +1,75 @@
   <div class="panel workflow-canvas-panel" @pointermove="trackPointer">
     <WorkflowToolbar />
-    <SplitPane
-      class="workflow-editor-split"
-      orientation="horizontal"
-      storage-key="command-center.workflows.editor-split"
-      :initial-first-pct="58"
-      :min-first="360"
-      :min-second="360"
-      collapsible-second
-      second-label="WDL"
-      second-icon="file"
-    >
-      <template #first>
-        <div class="workflow-graph-pane">
-          <VueFlow
-            class="workflow-graph"
-            :nodes="workflows.graphNodes"
-            :edges="workflows.graphEdges"
-            :edges-updatable="true"
-            delete-key-code="Delete"
-            :select-nodes-on-drag="false"
-            :snap-to-grid="true"
-            :snap-grid="[15, 15]"
-            :zoom-on-pinch="true"
-            :pan-on-drag="true"
-            :min-zoom="0.2"
-            :max-zoom="2"
-            @node-click="workflows.onGraphNodeClick"
-            @node-double-click="workflows.onGraphNodeDoubleClick"
-            @node-context-menu="openNodeMenu"
-            @node-drag-stop="workflows.onGraphNodeDragStop"
-            @nodes-change="workflows.onGraphNodesChange"
-            @connect="openConnectMenu"
-            @edge-update="workflows.onGraphEdgeUpdate"
-            @edge-click="openEdgeEditorFromEvent"
-            @edge-context-menu="openEdgeMenu"
-            @edge-double-click="openEdgeEditorFromEvent"
-            @edges-change="workflows.onGraphEdgesChange"
-            @pane-click="closeOverlaysAndSelection"
-            @pane-context-menu="closeOverlaysAndSelection"
-          >
-            <template #node-workflow="nodeProps">
-              <WorkflowNode v-bind="nodeProps" />
-
-</template>
-            <template #edge-workflow="edgeProps">
-              <WorkflowEdge v-bind="edgeProps" />
-            </template>
-          </VueFlow>
-          <div class="workflow-issues-panel">
-            <header class="workflow-issues-header">
-              <span>Diagnostics</span>
-              <span :class="['workflow-issues-summary', issueSummaryClass]">{{
-                issueSummary
-              }}</span>
-            </header>
-            <table v-if="issueRows.length" class="workflow-issues-table">
-              <thead>
-                <tr>
-                  <th>Type</th>
-                  <th>What</th>
-                  <th>Node</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr
-                  v-for="(row, index) in issueRows"
-                  :key="index"
-                  :class="row.severity"
-                  @click="focusIssueNode(row.nodeId, row.message)"
-                >
-                  <td>
-                    <span :class="['workflow-issue-severity', row.severity]">{{
-                      row.severity
-                    }}</span>
-                  </td>
-                  <td>{{ row.message }}</td>
-                  <td class="workflow-issue-node-cell">{{ row.title }}</td>
-                </tr>
-              </tbody>
-            </table>
-            <div v-else class="workflow-issues-empty">No graph diagnostics.</div>
-          </div>
-        </div>
-      </template>
-      <template #second>
-        <div class="workflow-wdl-pane">
-          <div v-if="workflows.workflowWdlError" class="workflow-wdl-error">
-            <Icon name="alert" :size="14" class="workflow-wdl-error-icon" />
-            <div class="workflow-wdl-error-body">
-              <strong>WDL view paused — the graph isn't well-formed yet.</strong>
-              <span>{{ workflows.workflowWdlError }}</span>
-              <span class="workflow-wdl-error-hint">
-                Fix the issues in the Diagnostics panel on the left; the WDL editor re-enables
-                automatically once the graph compiles.
-              </span>
-            </div>
-          </div>
-          <WdlEditor
-            v-model="workflows.workflowWdl"
-            class="workflow-wdl-editor"
-            :readonly="Boolean(workflows.workflowWdlError)"
-            :providers="providersStore.providers"
-            :settings="secretsStore.secrets"
-          />
-        </div>
-      </template>
-    </SplitPane>
+    <div class="workflow-graph-pane">
+      <VueFlow
+        class="workflow-graph"
+        :nodes="workflows.graphNodes"
+        :edges="workflows.graphEdges"
+        :edges-updatable="true"
+        delete-key-code="Delete"
+        :select-nodes-on-drag="false"
+        :snap-to-grid="true"
+        :snap-grid="[15, 15]"
+        :zoom-on-pinch="true"
+        :pan-on-drag="true"
+        :min-zoom="0.2"
+        :max-zoom="2"
+        @node-click="workflows.onGraphNodeClick"
+        @node-double-click="workflows.onGraphNodeDoubleClick"
+        @node-context-menu="openNodeMenu"
+        @node-drag-stop="workflows.onGraphNodeDragStop"
+        @nodes-change="workflows.onGraphNodesChange"
+        @connect="openConnectMenu"
+        @edge-update="workflows.onGraphEdgeUpdate"
+        @edge-click="openEdgeEditorFromEvent"
+        @edge-context-menu="openEdgeMenu"
+        @edge-double-click="openEdgeEditorFromEvent"
+        @edges-change="workflows.onGraphEdgesChange"
+        @pane-click="closeOverlaysAndSelection"
+        @pane-context-menu="closeOverlaysAndSelection"
+      >
+        <template #node-workflow="nodeProps">
+          <WorkflowNode v-bind="nodeProps" />
+        </template>
+        <template #edge-workflow="edgeProps">
+          <WorkflowEdge v-bind="edgeProps" />
+        </template>
+      </VueFlow>
+      <div class="workflow-issues-panel">
+        <header class="workflow-issues-header">
+          <span>Diagnostics</span>
+          <span :class="['workflow-issues-summary', issueSummaryClass]">{{
+            issueSummary
+          }}</span>
+        </header>
+        <table v-if="issueRows.length" class="workflow-issues-table">
+          <thead>
+            <tr>
+              <th>Type</th>
+              <th>What</th>
+              <th>Node</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="(row, index) in issueRows"
+              :key="index"
+              :class="row.severity"
+              @click="focusIssueNode(row.nodeId, row.message)"
+            >
+              <td>
+                <span :class="['workflow-issue-severity', row.severity]">{{
+                  row.severity
+                }}</span>
+              </td>
+              <td>{{ row.message }}</td>
+              <td class="workflow-issue-node-cell">{{ row.title }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <div v-else class="workflow-issues-empty">No graph diagnostics.</div>
+      </div>
+    </div>
     <div v-if="showCommandBar" class="workflow-command-bar">
       <template v-if="workflows.selectedGraphEdge">
         <button @click="editSelectedEdge">Edit</button>

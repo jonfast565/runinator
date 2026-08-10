@@ -107,6 +107,7 @@ export function createWorkflowActions(services: WorkflowServices) {
 
     openWorkflowHeader: services.header.openWorkflowHeader,
     openWorkflowInterrupts: services.header.openWorkflowInterrupts,
+    openWorkflowWdl: services.header.openWorkflowWdl,
     closeWorkflowHeader: services.header.closeWorkflowHeader,
     declareHeaderInterrupt: services.header.declareHeaderInterrupt,
     setHeaderInterruptSource: services.header.setHeaderInterruptSource,

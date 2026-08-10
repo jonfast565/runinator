@@ -18,7 +18,6 @@ import type {
 import { workflowInputType } from "../../../core/domain/models";
 import { useWorkflowsStore } from "../../../ui/adapters/pinia/workflows";
 import { useProvidersStore } from "../../../ui/adapters/pinia/providers";
-import { useSecretsStore } from "../../../ui/adapters/pinia/secrets";
 import { useCatalogMetadataStore } from "../../../ui/adapters/pinia/catalogMetadata";
 import { optionIdForSourceHandle } from "../../../core/workflow";
 import { jsonRecordArray as recordArray } from "../../../core/domain/json";
@@ -26,9 +25,6 @@ import { HEADER_ISSUE_NODE_ID } from "../../../core/workflow/header-validation";
 import { buildSampleContext } from "../../../core/utils/workflow-references";
 import { displayValue } from "../../../core/utils/values";
 import ExpressionJsonEditor from "../shared/ExpressionJsonEditor.vue";
-import Icon from "../shared/Icon.vue";
-import SplitPane from "../shared/SplitPane.vue";
-import WdlEditor from "../shared/WdlEditor.vue";
 import WorkflowToolbar from "./WorkflowToolbar.vue";
 import WorkflowNode from "./WorkflowNode.vue";
 import WorkflowEdge from "./WorkflowEdge.vue";
@@ -38,7 +34,6 @@ provide("workflowEdgeInteractive", true);
 
 const workflows = useWorkflowsStore();
 const providersStore = useProvidersStore();
-const secretsStore = useSecretsStore();
 const catalogMetadata = useCatalogMetadataStore();
 const { fitView, flowToScreenCoordinate, onPaneReady } = useVueFlow();
 const contextMenu = ref<

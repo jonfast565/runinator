@@ -62,6 +62,11 @@ export function createWorkflowHeaderService(host: WorkflowServiceHost, editor: W
     host.notify();
   }
 
+  function openWorkflowWdl() {
+    host.state.workflowInspectorMode = "wdl";
+    host.notify();
+  }
+
   function closeWorkflowHeader() {
     host.state.workflowInspectorMode = "step";
     host.notify();
@@ -341,6 +346,7 @@ export function createWorkflowHeaderService(host: WorkflowServiceHost, editor: W
     populateWorkflowHeader,
     openWorkflowHeader,
     openWorkflowInterrupts,
+    openWorkflowWdl,
     closeWorkflowHeader,
     applyWorkflowHeader,
     declareHeaderInterrupt,
