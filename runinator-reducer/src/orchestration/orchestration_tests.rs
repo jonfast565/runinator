@@ -1,7 +1,8 @@
 use super::action::{
-    TARGET_PARK_DEFAULT_TIMEOUT_SECONDS, TargetResolution, default_foreign_language_runtime,
-    foreign_language_runtime, has_dedicated_workers, replica_labels_match, resolve_idempotency_key,
-    target_for, target_for_labels,
+    TARGET_PARK_DEFAULT_TIMEOUT_SECONDS, TargetResolution, action_timeout_message,
+    default_foreign_language_runtime, foreign_language_runtime, has_dedicated_workers,
+    replica_labels_match, resolve_idempotency_key, target_for, target_for_labels,
+    unavailable_target_description,
 };
 use super::assert::evaluate_assertions;
 use super::await_run::{await_satisfied, parse_await_mode};
@@ -101,6 +102,31 @@ fn label_targeted_actions_route_to_a_matching_worker_else_park() {
     );
     // no matching worker connected: park (the node timeout later fails the run).
     assert_eq!(target_for_labels(&selector, false), TargetResolution::Park);
+}
+
+#[test]
+fn action_timeout_explains_when_no_worker_ever_claimed_the_action() {
+    let action = action_with_key(None);
+    let run = node_run("charge", "running");
+
+    assert_eq!(
+        action_timeout_message(&action, &run),
+        "No worker claimed action 'billing.charge' before the node timeout elapsed; a compatible worker may not have been available"
+    );
+}
+
+#[test]
+fn unavailable_label_target_names_the_worker_requirements() {
+    let action = action_with_key(None);
+    let labels = std::collections::BTreeMap::from([
+        ("org".to_string(), "acme".to_string()),
+        ("runner".to_string(), "creds-sync".to_string()),
+    ]);
+
+    assert_eq!(
+        unavailable_target_description(&action, None, &labels),
+        "No live worker matches the required labels [org=acme, runner=creds-sync] for action 'billing.charge'"
+    );
 }
 
 #[test]

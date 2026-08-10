@@ -1,8 +1,8 @@
 <template>
-  <!-- teleported into Vue Flow's viewport, so the layer pans and zooms with the graph and each
+  <!-- teleported into Vue Flow's transformation pane, so the layer pans and zooms with the graph and each
        token's own transform only ever changes when its cursor moves. positioning these in screen
        space instead would re-run the travel transition on every pan frame. -->
-  <Teleport v-if="viewport" :to="viewport">
+  <Teleport v-if="transformationPane" :to="transformationPane">
     <div class="cursor-token-layer">
       <button
         v-for="token in tokens"
@@ -40,9 +40,11 @@ import type { CursorToken } from "../../../core/workflow";
 import { useWorkflowsStore } from "../../adapters/pinia/workflows";
 
 const workflows = useWorkflowsStore();
-const { getNodes, viewportRef } = useVueFlow();
+const { getNodes, vueFlowRef } = useVueFlow();
 
-const viewport = computed(() => viewportRef.value);
+const transformationPane = computed(() =>
+  vueFlowRef.value?.querySelector<HTMLElement>(".vue-flow__transformationpane"),
+);
 
 /** node boxes as the renderer has them, so a token lands on the node's measured centre. */
 const boxes = computed(() => {

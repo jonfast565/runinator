@@ -124,13 +124,20 @@ pub(super) async fn process_action_node<T: ReducerStore>(
             // is a backstop for a missing/very long timeout_seconds; the liveness checks below are
             // what actually catch a worker dying mid-run in a timely fashion.
             if timed_out(node, cursor, node_run) {
+                let message = action_timeout_message(action, node_run);
+                tracing::warn!(
+                    node_id = %node.id,
+                    action = %format!("{}.{}", action.provider, action.function),
+                    reason = %message,
+                    "action node timed out"
+                );
                 return time_out(
                     db,
                     workflow_run,
                     cursor,
                     node,
                     node_run,
-                    "Action node timed out",
+                    &message,
                     node_runs,
                 )
                 .await;
@@ -181,8 +188,8 @@ pub(super) async fn process_action_node<T: ReducerStore>(
             arm_dispatch_liveness_poll(db, workflow_run.id, node).await?;
             return Ok(());
         }
-        // a node parked waiting for its bound desktop agent; honor the timeout, otherwise fall
-        // through to re-resolve the target (the worker may have reconnected) reusing this run. a
+        // a node parked waiting for its compatible label target or bound desktop worker; honor the
+        // timeout, otherwise re-resolve the target (a worker may have connected) reusing this run. a
         // parked run never touches `started_at` (only a `Running` transition sets it), so the
         // deadline is measured from `created_at` instead, with a fallback deadline when the node
         // declares no timeout of its own.
@@ -194,13 +201,26 @@ pub(super) async fn process_action_node<T: ReducerStore>(
                 TARGET_PARK_DEFAULT_TIMEOUT_SECONDS,
             )
         {
+            let required_labels = effective_required_labels(db, workflow, action).await?;
+            let message = unavailable_target_timeout_message(
+                action,
+                workflow_run.trigger_actor_replica_id,
+                &required_labels,
+            );
+            tracing::warn!(
+                node_id = %node.id,
+                action = %format!("{}.{}", action.provider, action.function),
+                required_labels = ?required_labels,
+                reason = %message,
+                "action node timed out waiting for a compatible worker"
+            );
             return time_out(
                 db,
                 workflow_run,
                 cursor,
                 node,
                 node_run,
-                "Desktop agent did not become available",
+                &message,
                 node_runs,
             )
             .await;
@@ -251,11 +271,17 @@ pub(super) async fn process_action_node<T: ReducerStore>(
         }
         TargetResolution::Park => {
             let required_labels = effective_required_labels(db, workflow, action).await?;
+            let reason = unavailable_target_description(
+                action,
+                workflow_run.trigger_actor_replica_id,
+                &required_labels,
+            );
             tracing::warn!(
                 node_id = %node.id,
                 action = %format!("{}.{}", action.provider, action.function),
                 required_labels = ?required_labels,
-                "action node parking: no live worker matches its target; will fail on node timeout"
+                reason = %reason,
+                "action node parking until a compatible worker becomes available"
             );
             return park_for_target(db, workflow_run, cursor, node, &node_run).await;
         }
@@ -430,6 +456,66 @@ fn build_action_command(
     }
 }
 
+/// explain a dispatched action timeout using the executor-claim history. no claim is materially
+/// different from a worker that started the action but failed to return a result, and is the useful
+/// signal when a required worker type was never available.
+pub(super) fn action_timeout_message(
+    action: &WorkflowAction,
+    node_run: &WorkflowNodeRun,
+) -> String {
+    let action_name = format!("{}.{}", action.provider, action.function);
+    if node_run.current_executor_replica_id.is_none() && node_run.last_executor_replica_id.is_none()
+    {
+        return format!(
+            "No worker claimed action '{action_name}' before the node timeout elapsed; a compatible worker may not have been available"
+        );
+    }
+    format!(
+        "Action '{action_name}' was claimed by a worker but no result arrived before the node timeout elapsed"
+    )
+}
+
+/// describe the exact target that is preventing an action from dispatching.
+pub(super) fn unavailable_target_description(
+    action: &WorkflowAction,
+    trigger_replica_id: Option<Uuid>,
+    required_labels: &std::collections::BTreeMap<String, String>,
+) -> String {
+    let action_name = format!("{}.{}", action.provider, action.function);
+    if !required_labels.is_empty() {
+        let labels = required_labels
+            .iter()
+            .map(|(key, value)| format!("{key}={value}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        return format!(
+            "No live worker matches the required labels [{labels}] for action '{action_name}'"
+        );
+    }
+    if action.provider == LOCAL_PROVIDER {
+        return match trigger_replica_id {
+            Some(replica_id) => format!(
+                "The desktop worker bound to this run (replica {replica_id}) is not connected for action '{action_name}'"
+            ),
+            None => {
+                format!("This run has no bound desktop worker for local action '{action_name}'")
+            }
+        };
+    }
+    format!("No compatible worker is available for action '{action_name}'")
+}
+
+fn unavailable_target_timeout_message(
+    action: &WorkflowAction,
+    trigger_replica_id: Option<Uuid>,
+    required_labels: &std::collections::BTreeMap<String, String>,
+) -> String {
+    format!(
+        "{}; the node timed out waiting for one to become available",
+        unavailable_target_description(action, trigger_replica_id, required_labels)
+    )
+}
+
 /// decide which worker(s) may run this action. general-pool actions go to `Any`; the session-bound
 /// local-files provider is pinned to the desktop replica that launched the run, and parks when that
 /// replica is not currently connected so the action is never published into a queue no one drains.
@@ -596,7 +682,7 @@ async fn park_for_target<T: ReducerStore>(
             None,
             None,
             None,
-            Some("awaiting_desktop_agent".into()),
+            Some("awaiting_compatible_worker".into()),
             None,
         )
         .await?;

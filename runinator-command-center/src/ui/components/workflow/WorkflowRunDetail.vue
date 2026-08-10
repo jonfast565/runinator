@@ -16,7 +16,7 @@ import DebugControlBar from "./DebugControlBar.vue";
 import RunControlBar from "./RunControlBar.vue";
 import JsonDiff from "./JsonDiff.vue";
 import WatchExpressions from "./WatchExpressions.vue";
-import { formatDate, pretty } from "../../../core/utils/format";
+import { formatDate, formatErrorMessage, pretty } from "../../../core/utils/format";
 import { computed, nextTick, ref } from "vue";
 import type {
   ActionResultMetadata,

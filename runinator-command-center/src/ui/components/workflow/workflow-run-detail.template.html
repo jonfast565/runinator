@@ -44,6 +44,10 @@
         <span class="summary-label">Duration</span>
         <span>{{ runDurationText }}</span>
       </div>
+      <div v-if="workflows.workflowRunDetail.run.message" class="summary-row">
+        <span class="summary-label">Reason</span>
+        <span>{{ formatErrorMessage(workflows.workflowRunDetail.run.message) }}</span>
+      </div>
       <div class="summary-row">
         <span class="summary-label">Nodes</span>
         <span>
