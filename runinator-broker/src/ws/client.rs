@@ -10,12 +10,11 @@
 //! blocks a concurrent `ack` on the same connection; the reader task's dispatch is an O(1) hashmap
 //! lookup independent of arrival order.
 //!
-//! `receive_for`/`receive_control` retry indefinitely across reconnects (per
-//! [`crate::Broker::receive_for`]'s "wait for and retrieve the next delivery" contract, and because
-//! `runinator-worker`'s loop treats any error from them as fatal to the whole worker) — a transient
-//! disconnect is invisible to the caller, just a longer wait. One-shot ops (`publish`, `ack`, `nack`,
-//! ...) retry for a few seconds (long enough to ride out the client's initial connect or a brief
-//! reconnect) before surfacing a `BrokerError`, rather than failing on the very next reconnect blip.
+//! `receive_for`/`receive_control` retry indefinitely across transient reconnects (per
+//! [`crate::Broker::receive_for`]'s "wait for and retrieve the next delivery" contract), while a
+//! rejected credential is returned immediately as [`BrokerError::Unauthorized`]. One-shot ops
+//! (`publish`, `ack`, `nack`, ...) retry for a few seconds (long enough to ride out the client's
+//! initial connect or a brief reconnect) but likewise return a rejected credential immediately.
 
 use async_trait::async_trait;
 use uuid::Uuid;
@@ -84,11 +83,12 @@ mod imp {
         /// returns a retryable `Err` immediately if nothing is connected right now, rather than
         /// waiting — callers that must not give up (`receive_for`/`receive_control`) loop on this.
         async fn request(&self, request: TcpRequest) -> Result<TcpResponse, BrokerError> {
-            let handle = self
-                .connection
-                .borrow()
-                .clone()
-                .ok_or_else(|| BrokerError::Internal("ws broker: not connected".into()))?;
+            let handle = self.connection.borrow().clone().ok_or_else(|| {
+                match self.state.borrow().clone() {
+                    ConnectionState::Unauthorized { reason } => BrokerError::Unauthorized(reason),
+                    _ => BrokerError::Internal("ws broker: not connected".into()),
+                }
+            })?;
 
             let request_id = Uuid::new_v4();
             let (response_tx, response_rx) = oneshot::channel();
@@ -134,6 +134,7 @@ mod imp {
                 // and retries are rare (only on disconnect), so this isn't a hot path.
                 match self.request(clone_request(&request)).await {
                     Ok(response) => return Ok(response),
+                    Err(err @ BrokerError::Unauthorized(_)) => return Err(err),
                     Err(_) => tokio::time::sleep(backoff.next_delay()).await,
                 }
             }
@@ -154,6 +155,7 @@ mod imp {
             loop {
                 match self.request(clone_request(&request)).await {
                     Ok(response) => return Ok(response),
+                    Err(err @ BrokerError::Unauthorized(_)) => return Err(err),
                     Err(err) => {
                         if tokio::time::Instant::now() >= deadline {
                             return Err(err);
@@ -254,9 +256,8 @@ mod imp {
         let mut backoff = Backoff::new();
         loop {
             let _ = state.send_if_modified(|current| {
-                // preserve a fatal state across attempts: we keep retrying (an operator may fix the
-                // credential without restarting the process) but must not flap the reported state
-                // back to a hopeful "connecting" every cycle and hide why nothing works.
+                // a fatal state ends this task below; this guard also prevents any future terminal
+                // state from briefly flapping back to connecting if another one is added.
                 if current.is_fatal() {
                     return false;
                 }
@@ -275,24 +276,16 @@ mod imp {
                     "connection closed".to_string()
                 }
                 Err(BrokerError::Unauthorized(reason)) => {
-                    // not transient: the same credential will be refused identically forever. keep
-                    // retrying at the capped backoff in case it is rotated underneath us, but hold
-                    // the state so the host can tell an operator to re-enroll instead of leaving
-                    // them staring at a silent, permanently-idle agent.
-                    let newly_fatal = state.send_if_modified(|current| {
-                        let changed = !current.is_fatal();
-                        *current = ConnectionState::Unauthorized {
-                            reason: reason.clone(),
-                        };
-                        changed
+                    // the credential is immutable for this broker instance, so retrying this upgrade
+                    // can only hammer the relay with the same rejected key. publish the terminal
+                    // state, then let requests return the typed error to the worker lifecycle.
+                    let _ = state.send(ConnectionState::Unauthorized {
+                        reason: reason.clone(),
                     });
-                    // once only: this repeats every backoff cycle for as long as the credential is
-                    // bad, and an error a minute forever buries whatever else is in the log.
-                    if newly_fatal {
-                        log::error!("ws broker: {url} rejected our credential ({reason}); it will keep retrying, but this needs a new credential");
-                    }
-                    tokio::time::sleep(backoff.next_delay()).await;
-                    continue;
+                    log::error!(
+                        "ws broker: {url} rejected our credential ({reason}); re-enrollment is required"
+                    );
+                    return;
                 }
                 Err(err) => {
                     warn!("ws broker: connect to {url} failed: {err}");

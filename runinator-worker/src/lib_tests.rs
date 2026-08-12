@@ -127,6 +127,47 @@ async fn build_broker_supports_relaying_through_the_ws_backend() {
         .expect("the ws backend should build even before any connection attempt completes");
 }
 
+#[cfg(feature = "ws")]
+#[tokio::test]
+async fn worker_stops_consuming_when_the_relay_rejects_its_credential() {
+    use tokio::io::AsyncWriteExt;
+    use tokio::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        while let Ok((mut stream, _)) = listener.accept().await {
+            let _ = stream
+                .write_all(
+                    b"HTTP/1.1 401 Unauthorized\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+                )
+                .await;
+        }
+    });
+
+    let mut config = test_config();
+    config.broker_backend = "ws".into();
+    config.broker_endpoint = format!("ws://{addr}/ws/desktop-worker");
+    config.api_key = Some("revoked-key".into());
+    let broker = build_broker(&config.broker_config()).await.unwrap();
+    let runtime = blocking_worker_runtime(
+        broker,
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        std::sync::Arc::new(tokio::sync::Notify::new()),
+    );
+
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        crate::worker::start_worker_loop(runtime),
+    )
+    .await
+    .expect("worker kept retrying a rejected relay credential")
+    .expect_err("worker should surface the rejected credential");
+    assert!(result.to_string().contains("BROKER008"), "{result}");
+
+    server.abort();
+}
+
 #[cfg(not(feature = "ws"))]
 #[tokio::test]
 async fn build_broker_rejects_the_ws_backend_when_the_feature_is_compiled_out() {
@@ -366,10 +407,10 @@ impl runinator_plugin::provider::Provider for BlockingProvider {
     }
 }
 
-// a worker loop harness executing a single blocking action against an in-memory broker. the api
-// endpoint is unreachable and replica_id is unset, so no executor-claim traffic occurs.
+// a worker loop harness executing a single blocking action. the api endpoint is unreachable and
+// replica_id is unset, so no executor-claim traffic occurs.
 fn blocking_worker_runtime(
-    broker: std::sync::Arc<InMemoryBroker>,
+    broker: std::sync::Arc<dyn Broker>,
     started: std::sync::Arc<std::sync::atomic::AtomicBool>,
     shutdown: std::sync::Arc<tokio::sync::Notify>,
 ) -> crate::worker::WorkerRuntime {
@@ -377,7 +418,7 @@ fn blocking_worker_runtime(
 }
 
 fn blocking_worker_runtime_with_concurrency(
-    broker: std::sync::Arc<InMemoryBroker>,
+    broker: std::sync::Arc<dyn Broker>,
     started: std::sync::Arc<std::sync::atomic::AtomicBool>,
     shutdown: std::sync::Arc<tokio::sync::Notify>,
     max_concurrent_actions: usize,

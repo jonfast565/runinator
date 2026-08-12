@@ -230,24 +230,37 @@ async fn ws_broker_answers_inbound_ping_instead_of_dropping() {
         .unwrap();
 }
 
-/// a `401` on the upgrade is not a blip. the client used to fold every connect failure into
+/// a `401`/`403` on the upgrade is not a blip. the client used to fold every connect failure into
 /// `Internal` and retry at `warn` forever, so an agent with a revoked or mistyped key looked exactly
 /// like one waiting out a network problem — silent, idle, and indistinguishable from healthy.
 #[tokio::test]
 async fn rejected_credentials_are_reported_as_fatal() {
+    assert_rejected_credentials_are_fatal("401 Unauthorized").await;
+    assert_rejected_credentials_are_fatal("403 Forbidden").await;
+}
+
+async fn assert_rejected_credentials_are_fatal(status: &'static str) {
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
+    let accepted = Arc::new(AtomicUsize::new(0));
+    let server_accepted = Arc::clone(&accepted);
     // never upgrades: answers every request the way the relay's auth middleware would.
     let server = tokio::spawn(async move {
         loop {
             let Ok((mut stream, _)) = listener.accept().await else {
                 return;
             };
+            server_accepted.fetch_add(1, Ordering::SeqCst);
             tokio::spawn(async move {
                 use tokio::io::AsyncWriteExt;
-                let _ = stream
-                    .write_all(b"HTTP/1.1 401 Unauthorized\r\ncontent-length: 0\r\n\r\n")
-                    .await;
+                let response =
+                    format!("HTTP/1.1 {status}\r\ncontent-length: 0\r\nconnection: close\r\n\r\n");
+                let _ = stream.write_all(response.as_bytes()).await;
             });
         }
     });
@@ -266,11 +279,26 @@ async fn rejected_credentials_are_reported_as_fatal() {
     })
     .await;
 
-    assert!(settled.is_ok(), "client never reported the 401 as fatal");
+    assert!(settled.is_ok(), "client never reported {status} as fatal");
     let observed = state.borrow().clone();
     assert!(
         matches!(observed, ConnectionState::Unauthorized { .. }),
         "expected Unauthorized, got {observed:?}"
+    );
+
+    let receive = tokio::time::timeout(Duration::from_secs(2), broker.receive("worker")).await;
+    assert!(
+        matches!(
+            receive,
+            Ok(Err(runinator_broker::BrokerError::Unauthorized(_)))
+        ),
+        "blocking receive did not propagate unauthorized: {receive:?}"
+    );
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert_eq!(
+        accepted.load(Ordering::SeqCst),
+        1,
+        "client retried a terminal {status} upgrade"
     );
 
     server.abort();

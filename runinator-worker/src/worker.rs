@@ -8,7 +8,7 @@ use std::{
 };
 
 use runinator_api::{AsyncApiClient, StaticLocator};
-use runinator_broker::{Broker, BrokerDelivery, ControlDelivery};
+use runinator_broker::{Broker, BrokerDelivery, BrokerError, ControlDelivery};
 use runinator_comm::{ActionCommand, ConsumerProfile, ControlKind, WireCodec};
 use runinator_models::errors::{SendableError, error_code_or_unknown};
 use runinator_models::workflow_state::TaskStatusOutput;
@@ -157,6 +157,7 @@ pub async fn start_worker_loop(runtime: WorkerRuntime) -> Result<(), SendableErr
         shutdown.clone(),
     ));
     let mut deliveries = JoinSet::new();
+    let mut loop_error = None;
     info!(max_concurrent_actions, "worker action loop started");
 
     loop {
@@ -212,6 +213,11 @@ pub async fn start_worker_loop(runtime: WorkerRuntime) -> Result<(), SendableErr
             result = broker.receive_for(&profile) => {
                 match result {
                     Ok(delivery) => delivery,
+                    Err(err @ BrokerError::Unauthorized(_)) => {
+                        drop(permit);
+                        loop_error = Some(broker_error("receive", err));
+                        break;
+                    }
                     Err(err) => {
                         drop(permit);
                         error!(
@@ -305,6 +311,9 @@ pub async fn start_worker_loop(runtime: WorkerRuntime) -> Result<(), SendableErr
         error!("worker result outbox task join error: {}", err);
     }
 
+    if let Some(err) = loop_error {
+        return Err(err);
+    }
     if restart_requested.load(Ordering::SeqCst) {
         return Err(Box::new(std::io::Error::other(
             "agent restart directive requested a reconnect",
@@ -357,6 +366,9 @@ async fn run_control_loop(
             result = broker.receive_control_for(&profile) => {
                 match result {
                     Ok(delivery) => delivery,
+                    Err(err @ BrokerError::Unauthorized(_)) => {
+                        return Err(broker_error("receive_control", err));
+                    }
                     Err(err) => {
                         error!(
                             error_code = error_code_or_unknown(&err),

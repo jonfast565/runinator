@@ -1,9 +1,10 @@
-//! restart-on-failure around [`crate::start_worker_loop`].
+//! restart-on-transient-failure around [`crate::start_worker_loop`].
 //!
 //! a fresh broker connection and [`crate::WorkerRuntime`] are rebuilt on every attempt: a broker
 //! that failed to construct, or that died mid-run, does not get better by reusing the handle. only a
-//! graceful shutdown ends the loop; every other exit is treated as transient, so a machine nobody is
-//! watching keeps trying to rejoin instead of sitting there "running" with a dead loop underneath.
+//! graceful shutdown or a rejected immutable credential ends the retry loop; other exits are treated
+//! as transient, so a machine nobody is watching keeps trying to rejoin instead of sitting there
+//! "running" with a dead loop underneath.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -116,7 +117,7 @@ pub async fn run_supervised(
         };
         let broker_state = broker.connection_state();
         let has_connection_state = broker_state.is_some();
-        let connection_monitor = broker_state.map(|state| {
+        let connection_monitor = broker_state.clone().map(|state| {
             tokio::spawn(monitor_connection(
                 state,
                 Arc::clone(&reporter),
@@ -149,6 +150,17 @@ pub async fn run_supervised(
             Ok(()) => return,
             Err(err) => {
                 reporter.log(format!("Worker loop ended with an error: {err}"));
+                if let Some(reason) = unauthorized_reason(broker_state.as_ref()) {
+                    if let Some(task) = connection_monitor {
+                        task.abort();
+                    }
+                    reporter.update(|status| status.running = false);
+                    reporter.set_connection(AgentConnection::ReenrollmentRequired { reason });
+                    reporter
+                        .log("Broker rejected the agent credential; waiting for re-enrollment.");
+                    while !shutdown.sleep_or_stop(Duration::from_secs(60 * 60)).await {}
+                    return;
+                }
                 if started_at.elapsed() >= HEALTHY_AFTER {
                     retry_delay = RETRY_BASE;
                 }
@@ -165,6 +177,15 @@ pub async fn run_supervised(
         if backoff(&reporter, &shutdown, &mut retry_delay).await {
             return;
         }
+    }
+}
+
+fn unauthorized_reason(
+    state: Option<&tokio::sync::watch::Receiver<BrokerConnectionState>>,
+) -> Option<String> {
+    match state?.borrow().clone() {
+        BrokerConnectionState::Unauthorized { reason } => Some(reason),
+        _ => None,
     }
 }
 
