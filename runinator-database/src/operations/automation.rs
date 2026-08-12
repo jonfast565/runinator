@@ -113,21 +113,27 @@ where
         record_type: String,
         record_id: Uuid,
     ) -> Result<bool, SendableError> {
-        let result = sqlx::query(
-            &self.render("DELETE FROM automation_records WHERE id = ? AND record_type = ?"),
-        )
-        .bind(record_id)
-        .bind(record_type)
-        .execute(self.pool())
-        .await?;
-        Ok(result.affected() > 0)
+        Ok(retry_delete(|| async {
+            sqlx::query(
+                &self.render("DELETE FROM automation_records WHERE id = ? AND record_type = ?"),
+            )
+            .bind(record_id)
+            .bind(record_type.as_str())
+            .execute(self.pool())
+            .await
+            .map(|result| result.affected() > 0)
+        })
+        .await?)
     }
 
     async fn delete_gate(&self, gate_id: Uuid) -> Result<bool, SendableError> {
-        let result = sqlx::query(&self.render("DELETE FROM gates WHERE id = ?"))
-            .bind(gate_id)
-            .execute(self.pool())
-            .await?;
-        Ok(result.affected() > 0)
+        Ok(retry_delete(|| async {
+            sqlx::query(&self.render("DELETE FROM gates WHERE id = ?"))
+                .bind(gate_id)
+                .execute(self.pool())
+                .await
+                .map(|result| result.affected() > 0)
+        })
+        .await?)
     }
 }

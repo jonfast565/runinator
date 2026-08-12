@@ -223,29 +223,32 @@ where
         let node_run_filter = "workflow_node_run_id IN (SELECT id FROM workflow_node_runs \
              WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE workflow_id = ?))";
 
-        let mut tx = self.pool().begin().await?;
-        for sql in [
-            format!("DELETE FROM workflow_ready_nodes WHERE {run_filter}"),
-            format!("DELETE FROM workflow_orchestration_events WHERE {run_filter}"),
-            format!("DELETE FROM workflow_node_chunks WHERE {node_run_filter}"),
-            format!("DELETE FROM workflow_node_artifacts WHERE {node_run_filter}"),
-            format!("DELETE FROM workflow_result_events WHERE {run_filter}"),
-            format!("DELETE FROM workflow_trigger_firings WHERE {run_filter}"),
-            "DELETE FROM workflow_node_runs WHERE workflow_run_id IN \
-                 (SELECT id FROM workflow_runs WHERE workflow_id = ?)"
-                .to_string(),
-            "DELETE FROM workflow_runs WHERE workflow_id = ?".to_string(),
-            // deleted explicitly rather than left to the declared cascade: sqlite only enforces
-            // foreign keys when the pragma is on, so the history would otherwise outlive its workflow.
-            "DELETE FROM workflow_revisions WHERE workflow_id = ?".to_string(),
-            "DELETE FROM workflows WHERE id = ?".to_string(),
-        ] {
-            sqlx::query(&self.render(&sql))
-                .bind(workflow_id)
-                .execute(&mut *tx)
-                .await?;
-        }
-        tx.commit().await?;
+        retry_delete(|| async {
+            let mut tx = self.pool().begin().await?;
+            for sql in [
+                format!("DELETE FROM workflow_ready_nodes WHERE {run_filter}"),
+                format!("DELETE FROM workflow_orchestration_events WHERE {run_filter}"),
+                format!("DELETE FROM workflow_node_chunks WHERE {node_run_filter}"),
+                format!("DELETE FROM workflow_node_artifacts WHERE {node_run_filter}"),
+                format!("DELETE FROM workflow_result_events WHERE {run_filter}"),
+                format!("DELETE FROM workflow_trigger_firings WHERE {run_filter}"),
+                "DELETE FROM workflow_node_runs WHERE workflow_run_id IN \
+                     (SELECT id FROM workflow_runs WHERE workflow_id = ?)"
+                    .to_string(),
+                "DELETE FROM workflow_runs WHERE workflow_id = ?".to_string(),
+                // deleted explicitly rather than left to the declared cascade: sqlite only enforces
+                // foreign keys when the pragma is on, so the history would otherwise outlive its workflow.
+                "DELETE FROM workflow_revisions WHERE workflow_id = ?".to_string(),
+                "DELETE FROM workflows WHERE id = ?".to_string(),
+            ] {
+                sqlx::query(&self.render(&sql))
+                    .bind(workflow_id)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+            tx.commit().await
+        })
+        .await?;
         Ok(())
     }
 
@@ -441,11 +444,16 @@ where
     }
 
     async fn delete_pipeline(&self, pipeline_id: Uuid) -> Result<(), SendableError> {
-        self.pool()
-            .execute(
-                sqlx::query(&self.render("DELETE FROM pipelines WHERE id = ?")).bind(pipeline_id),
-            )
-            .await?;
+        retry_delete(|| async {
+            self.pool()
+                .execute(
+                    sqlx::query(&self.render("DELETE FROM pipelines WHERE id = ?"))
+                        .bind(pipeline_id),
+                )
+                .await
+                .map(|_| ())
+        })
+        .await?;
         Ok(())
     }
 

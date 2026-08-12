@@ -117,14 +117,20 @@ where
     }
 
     async fn delete_org(&self, id: Uuid) -> Result<(), SendableError> {
-        sqlx::query(&self.render("DELETE FROM org_memberships WHERE org_id = ?"))
-            .bind(id)
-            .execute(self.pool())
-            .await?;
-        sqlx::query(&self.render("DELETE FROM organizations WHERE id = ?"))
-            .bind(id)
-            .execute(self.pool())
-            .await?;
+        retry_delete(|| async {
+            let mut tx = self.pool().begin().await?;
+            for sql in [
+                "DELETE FROM org_memberships WHERE org_id = ?",
+                "DELETE FROM organizations WHERE id = ?",
+            ] {
+                sqlx::query(&self.render(sql))
+                    .bind(id)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+            tx.commit().await
+        })
+        .await?;
         Ok(())
     }
 
@@ -136,29 +142,42 @@ where
     ) -> Result<(), SendableError> {
         // delete-then-insert keeps the (org, user) pair idempotent without a dialect-specific upsert.
         let now = Utc::now().timestamp();
-        sqlx::query(&self.render("DELETE FROM org_memberships WHERE org_id = ? AND user_id = ?"))
+        retry_delete(|| async {
+            let mut tx = self.pool().begin().await?;
+            sqlx::query(&self.render(
+                "DELETE FROM org_memberships WHERE org_id = ? AND user_id = ?",
+            ))
             .bind(org_id)
             .bind(user_id)
-            .execute(self.pool())
+            .execute(&mut *tx)
             .await?;
-        sqlx::query(&self.render(
-            "INSERT INTO org_memberships (org_id, user_id, role, created_at) VALUES (?, ?, ?, ?)",
-        ))
-        .bind(org_id)
-        .bind(user_id)
-        .bind(role.as_str())
-        .bind(now)
-        .execute(self.pool())
+            sqlx::query(&self.render(
+                "INSERT INTO org_memberships (org_id, user_id, role, created_at) VALUES (?, ?, ?, ?)",
+            ))
+            .bind(org_id)
+            .bind(user_id)
+            .bind(role.as_str())
+            .bind(now)
+            .execute(&mut *tx)
+            .await?;
+            tx.commit().await
+        })
         .await?;
         Ok(())
     }
 
     async fn remove_org_member(&self, org_id: Uuid, user_id: Uuid) -> Result<(), SendableError> {
-        sqlx::query(&self.render("DELETE FROM org_memberships WHERE org_id = ? AND user_id = ?"))
+        retry_delete(|| async {
+            sqlx::query(
+                &self.render("DELETE FROM org_memberships WHERE org_id = ? AND user_id = ?"),
+            )
             .bind(org_id)
             .bind(user_id)
             .execute(self.pool())
-            .await?;
+            .await
+            .map(|_| ())
+        })
+        .await?;
         Ok(())
     }
 

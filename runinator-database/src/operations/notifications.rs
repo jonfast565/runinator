@@ -160,11 +160,14 @@ where
     }
 
     async fn delete_notification(&self, notification_id: Uuid) -> Result<bool, SendableError> {
-        let result = sqlx::query(&self.render("DELETE FROM notifications WHERE id = ?"))
-            .bind(notification_id)
-            .execute(self.pool())
-            .await?;
-        Ok(result.affected() > 0)
+        Ok(retry_delete(|| async {
+            sqlx::query(&self.render("DELETE FROM notifications WHERE id = ?"))
+                .bind(notification_id)
+                .execute(self.pool())
+                .await
+                .map(|result| result.affected() > 0)
+        })
+        .await?)
     }
 
     async fn create_notification_if_absent(
@@ -336,11 +339,14 @@ where
     }
 
     async fn delete_notification_policy(&self, policy_id: Uuid) -> Result<bool, SendableError> {
-        let result = sqlx::query(&self.render("DELETE FROM notification_policies WHERE id = ?"))
-            .bind(policy_id)
-            .execute(self.pool())
-            .await?;
-        Ok(result.affected() > 0)
+        Ok(retry_delete(|| async {
+            sqlx::query(&self.render("DELETE FROM notification_policies WHERE id = ?"))
+                .bind(policy_id)
+                .execute(self.pool())
+                .await
+                .map(|result| result.affected() > 0)
+        })
+        .await?)
     }
 
     async fn replace_managed_notification_policies(
@@ -351,19 +357,40 @@ where
     ) -> Result<(), SendableError> {
         // drop only this manager's rows so hand-authored policies on the same workflow survive an
         // import, matching how managed triggers reconcile.
-        sqlx::query(
-            &self.render(
+        retry_delete(|| async {
+            let mut tx = self.pool().begin().await?;
+            sqlx::query(&self.render(
                 "DELETE FROM notification_policies WHERE workflow_id = ? AND managed_by = ?",
-            ),
-        )
-        .bind(workflow_id)
-        .bind(managed_by.as_str())
-        .execute(self.pool())
-        .await?;
-        for policy in policies {
-            self.insert_notification_policy(Uuid::now_v7(), &policy)
+            ))
+            .bind(workflow_id)
+            .bind(managed_by.as_str())
+            .execute(&mut *tx)
+            .await?;
+            for policy in &policies {
+                let now = Utc::now().timestamp();
+                sqlx::query(&self.render(&format!(
+                    "INSERT INTO notification_policies ({NOTIFICATION_POLICY_COLUMNS})
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                )))
+                .bind(Uuid::now_v7())
+                .bind(policy.workflow_id)
+                .bind(policy.name.as_str())
+                .bind(policy.event.as_str())
+                .bind(policy.severity.as_str())
+                .bind(policy.channel.as_str())
+                .bind(policy.target.clone())
+                .bind(policy.threshold_seconds)
+                .bind(policy.enabled)
+                .bind(policy.managed_by.clone())
+                .bind(policy.configuration.to_string())
+                .bind(now)
+                .bind(now)
+                .execute(&mut *tx)
                 .await?;
-        }
+            }
+            tx.commit().await
+        })
+        .await?;
         Ok(())
     }
 

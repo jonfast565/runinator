@@ -186,48 +186,48 @@ where
             )));
         };
         // replace any existing local identity so the row stays unique on (provider, subject).
-        sqlx::query(
-            &self.render("DELETE FROM user_identities WHERE user_id = ? AND provider = 'local'"),
-        )
-        .bind(user_id)
-        .execute(self.pool())
-        .await?;
-        sqlx::query(&self.render(
-            "INSERT INTO user_identities (id, user_id, provider, subject, password_hash, created_at) VALUES (?, ?, 'local', ?, ?, ?)",
-        ))
-        .bind(Uuid::now_v7())
-        .bind(user_id)
-        .bind(&user.username)
-        .bind(&password_hash)
-        .bind(Utc::now().timestamp())
-        .execute(self.pool())
+        retry_delete(|| async {
+            let mut tx = self.pool().begin().await?;
+            sqlx::query(
+                &self.render("DELETE FROM user_identities WHERE user_id = ? AND provider = 'local'"),
+            )
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await?;
+            sqlx::query(&self.render(
+                "INSERT INTO user_identities (id, user_id, provider, subject, password_hash, created_at) VALUES (?, ?, 'local', ?, ?, ?)",
+            ))
+            .bind(Uuid::now_v7())
+            .bind(user_id)
+            .bind(user.username.as_str())
+            .bind(password_hash.as_str())
+            .bind(Utc::now().timestamp())
+            .execute(&mut *tx)
+            .await?;
+            tx.commit().await
+        })
         .await?;
         Ok(())
     }
 
     async fn delete_user(&self, id: Uuid) -> Result<(), SendableError> {
-        sqlx::query(&self.render("DELETE FROM auth_sessions WHERE user_id = ?"))
-            .bind(id)
-            .execute(self.pool())
-            .await?;
-        sqlx::query(&self.render("DELETE FROM user_identities WHERE user_id = ?"))
-            .bind(id)
-            .execute(self.pool())
-            .await?;
-        sqlx::query(&self.render("DELETE FROM team_members WHERE user_id = ?"))
-            .bind(id)
-            .execute(self.pool())
-            .await?;
-        sqlx::query(&self.render(
-            "DELETE FROM resource_grants WHERE principal_type = 'user' AND principal_id = ?",
-        ))
-        .bind(id)
-        .execute(self.pool())
+        retry_delete(|| async {
+            let mut tx = self.pool().begin().await?;
+            for sql in [
+                "DELETE FROM auth_sessions WHERE user_id = ?",
+                "DELETE FROM user_identities WHERE user_id = ?",
+                "DELETE FROM team_members WHERE user_id = ?",
+                "DELETE FROM resource_grants WHERE principal_type = 'user' AND principal_id = ?",
+                "DELETE FROM users WHERE id = ?",
+            ] {
+                sqlx::query(&self.render(sql))
+                    .bind(id)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+            tx.commit().await
+        })
         .await?;
-        sqlx::query(&self.render("DELETE FROM users WHERE id = ?"))
-            .bind(id)
-            .execute(self.pool())
-            .await?;
         Ok(())
     }
 
@@ -449,44 +449,54 @@ where
     }
 
     async fn delete_team(&self, id: Uuid) -> Result<(), SendableError> {
-        sqlx::query(&self.render("DELETE FROM team_members WHERE team_id = ?"))
-            .bind(id)
-            .execute(self.pool())
-            .await?;
-        sqlx::query(&self.render(
-            "DELETE FROM resource_grants WHERE principal_type = 'team' AND principal_id = ?",
-        ))
-        .bind(id)
-        .execute(self.pool())
+        retry_delete(|| async {
+            let mut tx = self.pool().begin().await?;
+            for sql in [
+                "DELETE FROM team_members WHERE team_id = ?",
+                "DELETE FROM resource_grants WHERE principal_type = 'team' AND principal_id = ?",
+                "DELETE FROM teams WHERE id = ?",
+            ] {
+                sqlx::query(&self.render(sql))
+                    .bind(id)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+            tx.commit().await
+        })
         .await?;
-        sqlx::query(&self.render("DELETE FROM teams WHERE id = ?"))
-            .bind(id)
-            .execute(self.pool())
-            .await?;
         Ok(())
     }
 
     async fn add_team_member(&self, team_id: Uuid, user_id: Uuid) -> Result<(), SendableError> {
         // delete-then-insert keeps the (team, user) pair idempotent without a dialect-specific upsert.
-        sqlx::query(&self.render("DELETE FROM team_members WHERE team_id = ? AND user_id = ?"))
-            .bind(team_id)
-            .bind(user_id)
-            .execute(self.pool())
-            .await?;
-        sqlx::query(&self.render("INSERT INTO team_members (team_id, user_id) VALUES (?, ?)"))
-            .bind(team_id)
-            .bind(user_id)
-            .execute(self.pool())
-            .await?;
+        retry_delete(|| async {
+            let mut tx = self.pool().begin().await?;
+            sqlx::query(&self.render("DELETE FROM team_members WHERE team_id = ? AND user_id = ?"))
+                .bind(team_id)
+                .bind(user_id)
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query(&self.render("INSERT INTO team_members (team_id, user_id) VALUES (?, ?)"))
+                .bind(team_id)
+                .bind(user_id)
+                .execute(&mut *tx)
+                .await?;
+            tx.commit().await
+        })
+        .await?;
         Ok(())
     }
 
     async fn remove_team_member(&self, team_id: Uuid, user_id: Uuid) -> Result<(), SendableError> {
-        sqlx::query(&self.render("DELETE FROM team_members WHERE team_id = ? AND user_id = ?"))
-            .bind(team_id)
-            .bind(user_id)
-            .execute(self.pool())
-            .await?;
+        retry_delete(|| async {
+            sqlx::query(&self.render("DELETE FROM team_members WHERE team_id = ? AND user_id = ?"))
+                .bind(team_id)
+                .bind(user_id)
+                .execute(self.pool())
+                .await
+                .map(|_| ())
+        })
+        .await?;
         Ok(())
     }
 
@@ -564,10 +574,14 @@ where
     }
 
     async fn revoke_grant(&self, grant_id: Uuid) -> Result<(), SendableError> {
-        sqlx::query(&self.render("DELETE FROM resource_grants WHERE id = ?"))
-            .bind(grant_id)
-            .execute(self.pool())
-            .await?;
+        retry_delete(|| async {
+            sqlx::query(&self.render("DELETE FROM resource_grants WHERE id = ?"))
+                .bind(grant_id)
+                .execute(self.pool())
+                .await
+                .map(|_| ())
+        })
+        .await?;
         Ok(())
     }
 

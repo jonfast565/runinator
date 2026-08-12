@@ -50,7 +50,7 @@ use uuid::Uuid;
 
 use crate::{
     archive::{ArchiveMark, ArchiveRow, ArchiveTable},
-    backend::{RowsAffected, SqlBackend, SqlStore},
+    backend::{RowsAffected, SqlBackend, SqlStore, retry_delete},
     common::{
         PipelineTriggerExt, WorkflowTriggerExt, cron_slots_between, json_metadata, json_opt_i64,
         json_opt_str, json_opt_uuid, json_str, next_execution_for_cron, status_list,

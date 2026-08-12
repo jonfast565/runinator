@@ -67,12 +67,18 @@ where
         scope: String,
         name: String,
     ) -> Result<(), SendableError> {
-        sqlx::query(&self.render("DELETE FROM settings WHERE kind = ? AND scope = ? AND name = ?"))
+        retry_delete(|| async {
+            sqlx::query(
+                &self.render("DELETE FROM settings WHERE kind = ? AND scope = ? AND name = ?"),
+            )
             .bind(kind.as_str())
-            .bind(scope)
-            .bind(name)
+            .bind(scope.as_str())
+            .bind(name.as_str())
             .execute(self.pool())
-            .await?;
+            .await
+            .map(|_| ())
+        })
+        .await?;
         Ok(())
     }
 }

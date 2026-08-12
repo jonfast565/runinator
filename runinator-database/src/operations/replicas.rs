@@ -217,37 +217,41 @@ where
         // the delete does not error; provider registrations cascade. a replica still claimed as a node
         // run's current executor is excluded from the delete and left until that run resolves.
         let cutoff_ts = cutoff.timestamp();
-        let mut tx = self.pool().begin().await?;
+        Ok(retry_delete(|| async {
+            let mut tx = self.pool().begin().await?;
 
-        sqlx::query(&self.render(
-            "UPDATE workflow_runs SET trigger_actor_replica_id = NULL
-             WHERE trigger_actor_replica_id IN
-                 (SELECT replica_id FROM replicas WHERE last_heartbeat_at <= ?)",
-        ))
-        .bind(cutoff_ts)
-        .execute(&mut *tx)
-        .await?;
+            sqlx::query(&self.render(
+                "UPDATE workflow_runs SET trigger_actor_replica_id = NULL
+                 WHERE trigger_actor_replica_id IN
+                     (SELECT replica_id FROM replicas WHERE last_heartbeat_at <= ?)",
+            ))
+            .bind(cutoff_ts)
+            .execute(&mut *tx)
+            .await?;
 
-        sqlx::query(&self.render(
-            "UPDATE workflow_node_runs SET last_executor_replica_id = NULL
-             WHERE last_executor_replica_id IN
-                 (SELECT replica_id FROM replicas WHERE last_heartbeat_at <= ?)",
-        ))
-        .bind(cutoff_ts)
-        .execute(&mut *tx)
-        .await?;
+            sqlx::query(&self.render(
+                "UPDATE workflow_node_runs SET last_executor_replica_id = NULL
+                 WHERE last_executor_replica_id IN
+                     (SELECT replica_id FROM replicas WHERE last_heartbeat_at <= ?)",
+            ))
+            .bind(cutoff_ts)
+            .execute(&mut *tx)
+            .await?;
 
-        let deleted = sqlx::query(&self.render(
-            "DELETE FROM replicas WHERE last_heartbeat_at <= ? AND replica_id NOT IN
-                 (SELECT current_executor_replica_id FROM workflow_node_runs
-                  WHERE current_executor_replica_id IS NOT NULL)",
-        ))
-        .bind(cutoff_ts)
-        .execute(&mut *tx)
-        .await?;
+            let deleted = sqlx::query(&self.render(
+                "DELETE FROM replicas WHERE last_heartbeat_at <= ? AND replica_id NOT IN
+                     (SELECT current_executor_replica_id FROM workflow_node_runs
+                      WHERE current_executor_replica_id IS NOT NULL)",
+            ))
+            .bind(cutoff_ts)
+            .execute(&mut *tx)
+            .await?
+            .affected();
 
-        tx.commit().await?;
-        Ok(deleted.affected())
+            tx.commit().await?;
+            Ok(deleted)
+        })
+        .await?)
     }
 
     async fn fetch_replica(
@@ -323,11 +327,14 @@ where
     }
 
     async fn prune_replica_samples(&self, cutoff: DateTime<Utc>) -> Result<u64, SendableError> {
-        let result = sqlx::query(&self.render("DELETE FROM replica_samples WHERE sampled_at < ?"))
-            .bind(cutoff.timestamp())
-            .execute(self.pool())
-            .await?;
-        Ok(result.affected())
+        Ok(retry_delete(|| async {
+            sqlx::query(&self.render("DELETE FROM replica_samples WHERE sampled_at < ?"))
+                .bind(cutoff.timestamp())
+                .execute(self.pool())
+                .await
+                .map(|result| result.affected())
+        })
+        .await?)
     }
 
     async fn upsert_replica_provider_registration(

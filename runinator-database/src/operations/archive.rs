@@ -148,20 +148,25 @@ where
     }
 
     async fn delete_archive_rows(&self, rows: Vec<ArchiveRow>) -> Result<u64, SendableError> {
-        let mut deleted = 0;
-        for row in rows {
-            let sql = format!(
-                "DELETE FROM {} WHERE {} = ?",
-                row.table.as_str(),
-                row.table.primary_key_column()
-            );
-            let result = sqlx::query(&self.render(&sql))
-                .bind(row.primary_key)
-                .execute(self.pool())
-                .await?;
-            deleted += result.affected();
-        }
-        Ok(deleted)
+        Ok(retry_delete(|| async {
+            let mut tx = self.pool().begin().await?;
+            let mut deleted = 0;
+            for row in &rows {
+                let sql = format!(
+                    "DELETE FROM {} WHERE {} = ?",
+                    row.table.as_str(),
+                    row.table.primary_key_column()
+                );
+                let result = sqlx::query(&self.render(&sql))
+                    .bind(row.primary_key)
+                    .execute(&mut *tx)
+                    .await?;
+                deleted += result.affected();
+            }
+            tx.commit().await?;
+            Ok(deleted)
+        })
+        .await?)
     }
 
     async fn complete_archive_marks(&self, mark_ids: Vec<Uuid>) -> Result<u64, SendableError> {

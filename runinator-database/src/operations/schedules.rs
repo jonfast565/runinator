@@ -123,12 +123,16 @@ where
     }
 
     async fn delete_workflow_trigger(&self, trigger_id: Uuid) -> Result<(), SendableError> {
-        self.pool()
-            .execute(
-                sqlx::query(&self.render("DELETE FROM workflow_triggers WHERE id = ?"))
-                    .bind(trigger_id),
-            )
-            .await?;
+        retry_delete(|| async {
+            self.pool()
+                .execute(
+                    sqlx::query(&self.render("DELETE FROM workflow_triggers WHERE id = ?"))
+                        .bind(trigger_id),
+                )
+                .await
+                .map(|_| ())
+        })
+        .await?;
         Ok(())
     }
 
@@ -229,12 +233,16 @@ where
     }
 
     async fn delete_pipeline_trigger(&self, trigger_id: Uuid) -> Result<(), SendableError> {
-        self.pool()
-            .execute(
-                sqlx::query(&self.render("DELETE FROM pipeline_triggers WHERE id = ?"))
-                    .bind(trigger_id),
-            )
-            .await?;
+        retry_delete(|| async {
+            self.pool()
+                .execute(
+                    sqlx::query(&self.render("DELETE FROM pipeline_triggers WHERE id = ?"))
+                        .bind(trigger_id),
+                )
+                .await
+                .map(|_| ())
+        })
+        .await?;
         Ok(())
     }
 
@@ -839,10 +847,13 @@ where
     }
 
     async fn delete_freeze_window(&self, window_id: Uuid) -> Result<bool, SendableError> {
-        let result = sqlx::query(&self.render("DELETE FROM freeze_windows WHERE id = ?"))
-            .bind(window_id)
-            .execute(self.pool())
-            .await?;
-        Ok(result.affected() > 0)
+        Ok(retry_delete(|| async {
+            sqlx::query(&self.render("DELETE FROM freeze_windows WHERE id = ?"))
+                .bind(window_id)
+                .execute(self.pool())
+                .await
+                .map(|result| result.affected() > 0)
+        })
+        .await?)
     }
 }

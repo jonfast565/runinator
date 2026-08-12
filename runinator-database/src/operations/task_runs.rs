@@ -233,10 +233,13 @@ where
     }
 
     async fn delete_artifact(&self, artifact_id: Uuid) -> Result<bool, SendableError> {
-        let result = sqlx::query(&self.render("DELETE FROM run_artifacts WHERE id = ?"))
-            .bind(artifact_id)
-            .execute(self.pool())
-            .await?;
-        Ok(result.affected() > 0)
+        Ok(retry_delete(|| async {
+            sqlx::query(&self.render("DELETE FROM run_artifacts WHERE id = ?"))
+                .bind(artifact_id)
+                .execute(self.pool())
+                .await
+                .map(|result| result.affected() > 0)
+        })
+        .await?)
     }
 }

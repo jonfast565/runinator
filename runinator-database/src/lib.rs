@@ -10,6 +10,8 @@ use runinator_utilities::secret_cipher::SecretCipher;
 use uuid::Uuid;
 
 pub mod backend;
+#[cfg(test)]
+mod backend_tests;
 mod common;
 #[cfg(test)]
 mod dialect_parity;
