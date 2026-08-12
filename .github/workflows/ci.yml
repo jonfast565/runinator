@@ -92,10 +92,14 @@ jobs:
       - name: Run workspace tests
         run: cargo test --workspace
 
-  # runinator-provider-db's connectors talk to the real engines, and mysql and mariadb disagree in
-  # ways no single image would catch: mariadb reports a `json` column as BLOB, mysql 8 uppercases
-  # its `information_schema` labels and serves them as VARBINARY. running the same suite against
-  # both is what keeps `connector/sql/decode.rs` honest about the difference.
+  # the two-image job: mysql and mariadb disagree in ways no single image would catch, so anything
+  # that only a live engine can check runs here against both.
+  #
+  # runinator-provider-db's connectors are the original reason — mariadb reports a `json` column as
+  # BLOB, mysql 8 uppercases its `information_schema` labels and serves them as VARBINARY — and
+  # running the suite against both is what keeps `connector/sql/decode.rs` honest. The store's
+  # migrations ride along for the same reason: they are dialect-specific sql that the mariadb-only
+  # main job cannot vet. The job name is kept as-is because required status checks reference it.
   db-connectors:
     name: DB connectors (${{ matrix.mysql_image }})
     runs-on: ubuntu-latest
@@ -171,6 +175,26 @@ jobs:
 
       - name: Run live connector tests
         run: cargo test -p runinator-provider-db --test live -- --ignored
+
+      # the store's migrations are dialect-specific sql, and only a live engine runs them:
+      # `migration_parity_tests` compares version *sets*, not content. the main test job covers
+      # mariadb alone, so a statement mysql 8 rejects and mariadb accepts — a literal DEFAULT on a
+      # TEXT column — sat broken from june to august with every job green. this is the only job
+      # holding both images, so it is the only place that difference can show up.
+      - name: Run store migrations against ${{ matrix.mysql_image }}
+        run: |
+          # -e is the runner's default, but stated here so the failing `cargo test` aborts the step
+          # rather than falling through to the guard below, which would exit 0 on its own.
+          set -eo pipefail
+          log="${RUNNER_TEMP:-/tmp}/store-mysql.log"
+          cargo test -p runinator-database mysql -- --nocapture 2>&1 | tee "$log"
+
+          # the suite self-skips into a green run when the url is unset, so a passing exit code
+          # alone does not mean a migration was ever applied.
+          if grep -q "skipping: set RUNINATOR_TEST_MYSQL_URL" "$log"; then
+            echo "::error::store mysql suite skipped itself - the service or env var is wrong, so this job proved nothing"
+            exit 1
+          fi
 
   # the kafka and rabbitmq suites are the only backend tests that need a live broker, so they are
   # `#[ignore]`d and no job ran them. worse than unrun: their helpers return early when the env var
