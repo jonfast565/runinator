@@ -3,6 +3,7 @@
 //! plus cli/env overrides, and neither can express a runtime behavior the other cannot.
 
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use runinator_models::errors::SendableError;
@@ -44,6 +45,16 @@ impl BrokerMode {
     }
 }
 
+/// how the service endpoint is chosen before registration. discovery is intentionally explicit;
+/// a discovered service is selected automatically only when an enrollment token binds its cluster
+/// identity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LocatorMode {
+    #[default]
+    Static,
+    Discover,
+}
+
 /// the inputs that decide which broker a host connects to. resolved into a [`BrokerConfig`] plus a
 /// human description of the path taken, which is what both hosts display.
 #[derive(Debug, Clone)]
@@ -57,6 +68,7 @@ pub struct BrokerSelection {
     pub direct_endpoint: String,
     pub action_topic: String,
     pub control_topic: String,
+    pub agent_topic: String,
     pub result_topic: String,
     pub client_id: String,
     pub api_key: Option<String>,
@@ -89,6 +101,7 @@ impl BrokerSelection {
                 broker_endpoint: endpoint,
                 broker_action_topic: self.action_topic,
                 broker_control_topic: self.control_topic,
+                broker_agent_topic: self.agent_topic,
                 broker_result_topic: self.result_topic,
                 broker_client_id: self.client_id,
                 api_key: self.api_key,
@@ -103,7 +116,16 @@ impl BrokerSelection {
 pub struct AgentRuntimeConfig {
     /// web service base url; the api client and (in relay mode) the broker endpoint come from it.
     pub service_url: String,
+    pub locator_mode: LocatorMode,
+    pub gossip_bind: String,
+    pub gossip_port: u16,
     pub api_key: Option<String>,
+    /// one-time token supplied only for first start; never persisted by the runtime.
+    pub enrollment_token: Option<String>,
+    /// owner-only file holding the issued key and stable identity after redemption.
+    pub credential_file: PathBuf,
+    /// fsynced terminal-result buffer, adjacent to the issued credential under app data.
+    pub outbox_file: PathBuf,
     /// stable identity for this agent; folded into the replica registration so a restart on the
     /// same machine reclaims the same replica row.
     pub instance_id: String,
@@ -139,12 +161,16 @@ pub struct AgentRuntimeConfig {
     /// path touched on an interval to signal liveness; empty disables the probe.
     pub liveness_file: String,
     pub heartbeat_interval: Duration,
+    /// advertised health window; remote agents use a wider window than in-cluster workers.
+    pub stale_after: Duration,
     /// how many times to retry replica registration before giving up. registration is interruptible
     /// by shutdown regardless.
     pub register_max_attempts: u32,
     /// sample host cpu/memory on every heartbeat, so this agent reports the same telemetry an
     /// in-cluster worker does.
     pub sample_telemetry: bool,
+    /// host-specific implementation for bounded log and sandbox reads.
+    pub directive_handler: std::sync::Arc<dyn crate::agent::directives::DirectiveHandler>,
 }
 
 /// default replica heartbeat cadence, matching what both hosts used before they shared this config.

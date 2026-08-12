@@ -322,6 +322,7 @@ async fn resolve_approval_audited<T: DatabaseImpl>(
             let actor_kind = match ctx.kind {
                 PrincipalKind::User => "user",
                 PrincipalKind::Service => "service",
+                PrincipalKind::Agent => "agent",
             };
             let workflow_run_id = runinator_ws_middleware::authz::record_workflow_run_id(&record);
             crate::audit::record_audit(
@@ -389,7 +390,7 @@ pub async fn claim_idempotency_key<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<IdempotencyClaimRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_service_or_admin() {
+    if let Err(reply) = ctx.require_agent_service_or_admin() {
         return reply;
     }
     match repository::claim_idempotency_key(
@@ -414,7 +415,7 @@ pub async fn complete_idempotency_key<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<IdempotencyCompleteRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_service_or_admin() {
+    if let Err(reply) = ctx.require_agent_service_or_admin() {
         return reply;
     }
     match repository::complete_idempotency_key(
@@ -446,7 +447,7 @@ pub async fn release_idempotency_key<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<IdempotencyReleaseRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_service_or_admin() {
+    if let Err(reply) = ctx.require_agent_service_or_admin() {
         return reply;
     }
     match repository::release_idempotency_key(

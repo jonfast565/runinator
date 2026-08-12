@@ -1,10 +1,11 @@
 use crate::{
     http::auth::{AuthIdentity, BrokerAuth},
     http::types::{
-        AckRequest, PollRequest, PollResponse, PublishControlRequest, PublishEventRequest,
-        PublishIngressRequest, PublishRequest, PublishResultRequest, PublishWakeRequest,
-        ReceiveControlResponse, ReceiveEventResponse, ReceiveIngressResponse, ReceiveRequest,
-        ReceiveResponse, ReceiveResultResponse, ReceiveWakeResponse,
+        AckRequest, PollRequest, PollResponse, PublishAgentRequest, PublishControlRequest,
+        PublishEventRequest, PublishIngressRequest, PublishRequest, PublishResultRequest,
+        PublishWakeRequest, ReceiveAgentResponse, ReceiveControlResponse, ReceiveEventResponse,
+        ReceiveIngressResponse, ReceiveRequest, ReceiveResponse, ReceiveResultResponse,
+        ReceiveWakeResponse,
     },
     Broker, BrokerError, ConsumerProfile,
 };
@@ -69,6 +70,10 @@ where
         .route("/control/receive", post(receive_control::<B>))
         .route("/control/ack", post(ack_control::<B>))
         .route("/control/nack", post(nack_control::<B>))
+        .route("/agent/publish", post(publish_agent::<B>))
+        .route("/agent/receive", post(receive_agent::<B>))
+        .route("/agent/ack", post(ack_agent::<B>))
+        .route("/agent/nack", post(nack_agent::<B>))
         .route("/results/publish", post(publish_result::<B>))
         .route("/results/receive", post(receive_result::<B>))
         .route("/results/ack", post(ack_result::<B>))
@@ -222,6 +227,69 @@ where
         state
             .broker
             .nack_control(&request.consumer, request.delivery_id)
+            .await,
+        StatusCode::OK,
+    )
+}
+
+async fn publish_agent<B>(
+    State(state): State<AppState<B>>,
+    Json(request): Json<PublishAgentRequest>,
+) -> Response
+where
+    B: Broker,
+{
+    respond(
+        state.broker.publish_agent(request.command).await,
+        StatusCode::CREATED,
+    )
+}
+
+async fn receive_agent<B>(
+    State(state): State<AppState<B>>,
+    Extension(identity): Extension<AuthIdentity>,
+    Json(request): Json<ReceiveRequest>,
+) -> Response
+where
+    B: Broker,
+{
+    if let Err(response) = authorize_receive(&identity, request.profile.as_ref()) {
+        return response;
+    }
+    let received = match &request.profile {
+        Some(profile) => state.broker.receive_agent_for(profile).await,
+        None => state.broker.receive_agent(&request.consumer).await,
+    };
+    match received {
+        Ok(delivery) => json_response(StatusCode::OK, ReceiveAgentResponse { delivery }),
+        Err(err) => error_response(err),
+    }
+}
+
+async fn ack_agent<B>(State(state): State<AppState<B>>, Json(request): Json<AckRequest>) -> Response
+where
+    B: Broker,
+{
+    respond(
+        state
+            .broker
+            .ack_agent(&request.consumer, request.delivery_id)
+            .await,
+        StatusCode::OK,
+    )
+}
+
+async fn nack_agent<B>(
+    State(state): State<AppState<B>>,
+    Json(request): Json<AckRequest>,
+) -> Response
+where
+    B: Broker,
+{
+    respond(
+        state
+            .broker
+            .nack_agent(&request.consumer, request.delivery_id)
             .await,
         StatusCode::OK,
     )

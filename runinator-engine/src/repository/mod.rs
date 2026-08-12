@@ -33,6 +33,7 @@ pub use crate::repository_runs::{
 use crate::repository_state::latest_node_run_for;
 
 pub use action_dispatches::*;
+pub use agents::*;
 pub use catalog::*;
 pub use debug::*;
 pub use definitions::*;
@@ -47,6 +48,7 @@ pub use runs::*;
 pub use triggers::*;
 
 mod action_dispatches;
+mod agents;
 mod catalog;
 mod debug;
 mod definitions;

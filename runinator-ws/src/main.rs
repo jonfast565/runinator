@@ -64,11 +64,16 @@ async fn run_process() -> Result<(), SendableError> {
         disable_gossip,
         announce_address,
         announce_base_path,
+        announce_scheme,
+        announce_relay_path,
+        cluster_id,
+        announce_spki_pin,
         gossip_interval_seconds,
         broker_backend,
         broker_endpoint,
         broker_action_topic,
         broker_control_topic,
+        broker_agent_topic,
         broker_result_topic,
         broker_client_id,
         advertise_host,
@@ -84,6 +89,11 @@ async fn run_process() -> Result<(), SendableError> {
         request_timeout_seconds,
         run_engine,
     } = args;
+    if !matches!(announce_scheme.as_str(), "http" | "https") {
+        return Err(
+            format!("--announce-scheme must be http or https, got '{announce_scheme}'").into(),
+        );
+    }
     let auth_options = AuthOptions {
         enabled: auth_enabled,
         access_ttl_secs: auth_access_ttl_seconds,
@@ -131,6 +141,7 @@ async fn run_process() -> Result<(), SendableError> {
                 broker_control_topic.clone(),
                 broker_result_topic.clone(),
             )
+            .with_agent_topic(broker_agent_topic.clone())
             .with_client_id(broker_client_id.clone()),
         RabbitMqBrokerConfig::new(broker_endpoint.clone())
             .with_queues(
@@ -138,11 +149,26 @@ async fn run_process() -> Result<(), SendableError> {
                 broker_control_topic,
                 broker_result_topic,
             )
+            .with_agent_queue_prefix(broker_agent_topic)
             .with_client_id(broker_client_id),
     )
     .await?;
 
     let service_id = Uuid::new_v4();
+    let advertised_service_url = format!(
+        "{}://{}:{}{}",
+        announce_scheme,
+        announce_address,
+        port,
+        if announce_base_path.starts_with('/') {
+            announce_base_path.clone()
+        } else {
+            format!("/{announce_base_path}")
+        }
+    );
+    let cluster_id = cluster_id.unwrap_or_else(|| {
+        runinator_comm::discovery::web::cluster_id_for_service_url(&advertised_service_url)
+    });
     if !should_spawn_gossip_advertiser(disable_gossip) {
         info!("Web service gossip advertisements disabled");
     } else {
@@ -153,6 +179,12 @@ async fn run_process() -> Result<(), SendableError> {
             extra_targets: gossip_targets,
             announce_address: announce_address.clone(),
             announce_base_path: announce_base_path.clone(),
+            announce_scheme: announce_scheme.clone(),
+            announce_relay_path: announce_relay_path.clone(),
+            cluster_id,
+            enrollment_enabled: true,
+            spki_pin: announce_spki_pin.clone(),
+            version: Some(env!("CARGO_PKG_VERSION").to_string()),
             interval_seconds: gossip_interval_seconds,
             shutdown: notify.clone(),
             service_port: port,

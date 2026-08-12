@@ -5,6 +5,7 @@
 
 use std::sync::Arc;
 
+use chrono::Utc;
 use tokio::sync::watch;
 use tracing::info;
 
@@ -33,7 +34,18 @@ impl StatusReporter {
     }
 
     pub fn set_connection(&self, connection: AgentConnection) {
+        if let AgentConnection::ReenrollmentRequired { reason } = &connection {
+            self.record_error(reason.clone());
+        }
         self.update(|status| status.connection = connection);
+    }
+
+    pub fn record_error(&self, error: impl Into<String>) {
+        let error = error.into();
+        self.update(|status| {
+            status.last_error = Some(error);
+            status.last_error_at = Some(Utc::now());
+        });
     }
 
     /// mutate the status and republish it. the observer is notified after the lock is released, so a
@@ -53,6 +65,7 @@ impl StatusReporter {
     }
 
     pub fn worker_event(&self, event: &WorkerEvent) {
+        self.update(|status| status.metrics.apply(event));
         self.observer.on_worker_event(event);
     }
 }

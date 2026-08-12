@@ -13,6 +13,13 @@ pub const RELAY_PATH: &str = "ws/desktop-worker";
 /// hosted under a path prefix (`https://host/runinator/`) yields a relay url under the same prefix
 /// instead of one at the origin root.
 pub fn derive_relay_url(service_url: &str) -> Result<String, SendableError> {
+    derive_relay_url_with_path(service_url, RELAY_PATH)
+}
+
+pub fn derive_relay_url_with_path(
+    service_url: &str,
+    relay_path: &str,
+) -> Result<String, SendableError> {
     let mut url = reqwest::Url::parse(service_url)
         .map_err(|err| crate::errors::RELAY_URL.error(format!("{service_url}: {err}")))?;
     let scheme = match url.scheme() {
@@ -27,7 +34,7 @@ pub fn derive_relay_url(service_url: &str) -> Result<String, SendableError> {
     url.set_scheme(scheme).map_err(|_| {
         crate::errors::RELAY_URL.error(format!("cannot set scheme on {service_url}"))
     })?;
-    url.join(RELAY_PATH)
+    url.join(relay_path.trim_start_matches('/'))
         .map(|url| url.to_string())
         .map_err(|err| crate::errors::RELAY_URL.error(format!("{service_url}: {err}")))
 }

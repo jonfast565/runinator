@@ -5,7 +5,10 @@ use runinator_broker::{
     adapters::kafka::{KafkaBroker, KafkaBrokerConfig},
     Broker, BrokerMessage, ControlCommand, ResultMessage,
 };
-use runinator_comm::{ActionCommand, ControlKind, WorkflowResultEvent};
+use runinator_comm::{
+    ActionCommand, ActionTarget, AgentCommand, AgentDirectiveKind, ConsumerProfile, ControlKind,
+    WorkflowResultEvent,
+};
 use runinator_models::json;
 use runinator_models::{runs::NewRunChunk, workflows::WorkflowAction};
 use tokio::time::{timeout, Duration};
@@ -25,15 +28,47 @@ fn kafka_broker() -> Option<KafkaBroker> {
         .unwrap_or_else(|_| "runinator.control".into());
     let result_topic = std::env::var("RUNINATOR_KAFKA_RESULT_TOPIC")
         .unwrap_or_else(|_| "runinator.results".into());
+    let agent_topic =
+        std::env::var("RUNINATOR_KAFKA_AGENT_TOPIC").unwrap_or_else(|_| "runinator.agent".into());
 
     Some(
         KafkaBroker::new(
             KafkaBrokerConfig::new(bootstrap)
                 .with_topics(action_topic, control_topic, result_topic)
+                .with_agent_topic(agent_topic)
                 .with_client_id(format!("runinator-test-{}", Uuid::new_v4())),
         )
         .unwrap(),
     )
+}
+
+#[tokio::test]
+#[ignore = "requires a reachable Kafka broker and pre-created topics"]
+async fn kafka_broker_delivers_targeted_agent_directives() {
+    let Some(broker) = kafka_broker() else {
+        return;
+    };
+    let replica_id = Uuid::new_v4();
+    let directive_id = Uuid::new_v4();
+    broker
+        .publish_agent(agent_command(replica_id, directive_id))
+        .await
+        .unwrap();
+    let profile =
+        ConsumerProfile::shared(format!("agent-{replica_id}")).with_replica_id(replica_id);
+    loop {
+        let delivery = timeout(Duration::from_secs(10), broker.receive_agent_for(&profile))
+            .await
+            .unwrap()
+            .unwrap();
+        broker
+            .ack_agent(&profile.id, delivery.delivery_id)
+            .await
+            .unwrap();
+        if delivery.command.directive_id == directive_id {
+            break;
+        }
+    }
 }
 
 #[tokio::test]
@@ -200,5 +235,16 @@ fn action_command() -> ActionCommand {
         trace_context: Default::default(),
         notification_delivery_id: None,
         idempotency_key: None,
+    }
+}
+
+fn agent_command(replica_id: Uuid, directive_id: Uuid) -> AgentCommand {
+    AgentCommand {
+        directive_id,
+        replica_id,
+        target: ActionTarget::Replica { replica_id },
+        kind: AgentDirectiveKind::Diagnostics,
+        issued_at: Utc::now(),
+        expires_at: Utc::now() + chrono::Duration::minutes(5),
     }
 }

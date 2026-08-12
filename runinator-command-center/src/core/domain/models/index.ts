@@ -18,6 +18,11 @@ export type { User } from "./auth/user";
 export type { Team } from "./auth/team";
 export type { Grant } from "./auth/grant";
 export type { ApiKey, CreateApiKeyResponse } from "./auth/api-key";
+export type {
+  AgentEnrollmentToken,
+  CreateAgentEnrollmentTokenInput,
+  CreateAgentEnrollmentTokenResponse,
+} from "./auth/agent-enrollment";
 
 export type { WorkflowNodeKind } from "./workflow/node-kind";
 export type { WorkflowNodeId, WorkflowNodeRef, WorkflowPathSegment } from "./workflow/node-ref";
@@ -122,6 +127,11 @@ export type { CredentialDetail, CredentialSummary } from "./credential";
 export type { TaskResponse } from "./task-response";
 export type { ServiceStatus } from "./service-status";
 export type {
+  AgentDirectiveKind,
+  AgentDirectiveRecord,
+  AgentDirectiveState,
+  AgentConnectionState,
+  AgentStatusReport,
   ReplicaCounts,
   ReplicaKind,
   ReplicaListResponse,

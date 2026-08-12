@@ -3,7 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::{Extension, Json, extract::Query, http::StatusCode};
 use runinator_database::interfaces::DatabaseImpl;
-use runinator_models::auth::AuthContext;
+use runinator_models::auth::{AuthContext, PrincipalKind};
 use runinator_models::capabilities::Capability;
 use runinator_models::value::Value;
 use runinator_models::{
@@ -41,10 +41,22 @@ pub async fn get_credential<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Query(query): Query<CredentialQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_capability(Capability::SecretsRead) {
+    let cipher = settings_cipher();
+    if matches!(ctx.kind, PrincipalKind::Agent) {
+        let (Some(scope), Some(name)) = (query.scope.as_deref(), query.name.as_deref()) else {
+            return not_found("credential not found");
+        };
+        let principal_scope = ctx.principal_id.map(|id| format!("agent:{id}"));
+        let org_scope = ctx.org_id.map(|id| format!("org:{id}"));
+        if principal_scope.as_deref() != Some(scope) && org_scope.as_deref() != Some(scope) {
+            // an agent may read only its own or its enrolled org's explicit scope. use the same
+            // response as a missing value so scope probing reveals nothing.
+            return not_found("credential not found");
+        }
+        let _ = name;
+    } else if let Err(reply) = ctx.require_capability(Capability::SecretsRead) {
         return reply;
     }
-    let cipher = settings_cipher();
     if query.scope.is_none() && query.name.is_none() {
         return match db.list_settings().await {
             Ok(entries) => (

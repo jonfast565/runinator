@@ -52,7 +52,34 @@ row_mapper!(row_to_api_key_record(row) -> ApiKeyRecord {
     ApiKeyRecord {
         key: api_key_from_row!(row),
         is_admin: row.get::<bool, _>("is_admin"),
+        principal_kind: PrincipalKind::from_str_lossy(
+            &row.get::<String, _>("principal_kind"),
+        )
+        .unwrap_or(PrincipalKind::User),
+        org_id: row.get::<Option<Uuid>, _>("org_id"),
         key_hash: row.get::<String, _>("key_hash"),
+    }
+});
+
+row_mapper!(row_to_agent_enrollment_token_record(row) -> AgentEnrollmentTokenRecord {
+    AgentEnrollmentTokenRecord {
+        token: AgentEnrollmentToken {
+            token_id: row.get::<String, _>("token_id"),
+            org_id: row.get::<Option<Uuid>, _>("org_id"),
+            labels: serde_json::from_str(&row.get::<String, _>("labels_json"))
+                .unwrap_or_default(),
+            service_url: row.get::<String, _>("service_url"),
+            spki_pin: row.get::<Option<String>, _>("spki_pin"),
+            expires_at: DateTime::<Utc>::from_timestamp(row.get::<i64, _>("expires_at"), 0)
+                .unwrap_or_else(Utc::now),
+            consumed_at: row
+                .get::<Option<i64>, _>("consumed_at")
+                .and_then(|value| DateTime::<Utc>::from_timestamp(value, 0)),
+            issued_by: row.get::<Option<Uuid>, _>("issued_by"),
+            created_at: DateTime::<Utc>::from_timestamp(row.get::<i64, _>("created_at"), 0)
+                .unwrap_or_else(Utc::now),
+        },
+        sealed_secret: row.get::<Vec<u8>, _>("sealed_secret"),
     }
 });
 

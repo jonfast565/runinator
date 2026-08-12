@@ -492,12 +492,14 @@ const RELAY_IDLE_TIMEOUT: Duration = Duration::from_secs(90);
 enum StrandedDelivery {
     Action { consumer: String, delivery_id: Uuid },
     Control { consumer: String, delivery_id: Uuid },
+    Agent { consumer: String, delivery_id: Uuid },
 }
 
 /// which consumer a receive-shaped request would be taking a delivery for, if any.
 enum StrandedConsumer {
     Action(String),
     Control(String),
+    Agent(String),
     None,
 }
 
@@ -509,6 +511,8 @@ impl StrandedDelivery {
                 StrandedConsumer::Control(profile.id.clone())
             }
             TcpRequest::ReceiveControl { consumer } => StrandedConsumer::Control(consumer.clone()),
+            TcpRequest::ReceiveAgentFor { profile } => StrandedConsumer::Agent(profile.id.clone()),
+            TcpRequest::ReceiveAgent { consumer } => StrandedConsumer::Agent(consumer.clone()),
             _ => StrandedConsumer::None,
         }
     }
@@ -523,6 +527,10 @@ impl StrandedDelivery {
                 consumer,
                 delivery_id,
             } => ("control", broker.nack_control(&consumer, delivery_id).await),
+            Self::Agent {
+                consumer,
+                delivery_id,
+            } => ("agent", broker.nack_agent(&consumer, delivery_id).await),
         };
         match result {
             Ok(()) => log::warn!(
@@ -551,6 +559,12 @@ impl StrandedConsumer {
                     delivery_id: delivery.delivery_id,
                 })
             }
+            (Self::Agent(consumer), TcpResponse::AgentDelivery { delivery }) => {
+                Some(StrandedDelivery::Agent {
+                    consumer,
+                    delivery_id: delivery.delivery_id,
+                })
+            }
             _ => None,
         }
     }
@@ -558,19 +572,17 @@ impl StrandedConsumer {
 
 /// the policy allow-list and replica-ownership check for the desktop-worker relay, ahead of the
 /// generic dispatch every other transport uses. a desktop worker only ever legitimately needs
-/// `receive_for`/`ack`/`nack` (action channel), `receive_control[_for]`/`ack_control`/`nack_control`
-/// (control channel), and `publish_result` (result channel) — everything else (publishing
-/// actions/control/wake/ingress, the fan-out events channel, and the untargeted general `receive`)
-/// is refused outright.
+/// `receive_for`/`ack`/`nack` (action channel), replica-targeted control, replica-targeted agent
+/// directives, `publish_result`, and payload-gated directive results on ingress.
 async fn handle_desktop_worker_request<T: DatabaseImpl>(
     db: &T,
     broker: &dyn Broker,
     ctx: &AuthContext,
-    request: TcpRequest,
+    mut request: TcpRequest,
 ) -> runinator_broker::tcp::types::TcpResponse {
     use runinator_broker::tcp::types::TcpResponse;
 
-    match &request {
+    match &mut request {
         TcpRequest::ReceiveFor { profile } => {
             if !profile.exclusive {
                 return TcpResponse::Error {
@@ -587,13 +599,27 @@ async fn handle_desktop_worker_request<T: DatabaseImpl>(
             if let Some(response) = refuse_unowned_replica(db, ctx, profile).await {
                 return response;
             }
+            // a relay consumer must never win a run-wide Any control from the shared queue. making
+            // this receive profile exclusive preserves Replica matches while excluding Any.
+            profile.exclusive = true;
+        }
+        TcpRequest::ReceiveAgentFor { profile } => {
+            if let Some(response) = refuse_unowned_replica(db, ctx, profile).await {
+                return response;
+            }
         }
         TcpRequest::Ack { .. }
         | TcpRequest::Nack { .. }
-        | TcpRequest::ReceiveControl { .. }
         | TcpRequest::AckControl { .. }
         | TcpRequest::NackControl { .. }
+        | TcpRequest::AckAgent { .. }
+        | TcpRequest::NackAgent { .. }
         | TcpRequest::PublishResult { .. } => {}
+        TcpRequest::PublishIngress { message }
+            if matches!(
+                message.command,
+                runinator_comm::WsIngressCommand::AgentDirectiveResult { .. }
+            ) => {}
         _ => {
             return TcpResponse::Error {
                 message: crate::errors::RELAY_OPERATION_REFUSED

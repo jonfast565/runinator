@@ -69,6 +69,69 @@ async fn brokered_result_path_smoke() -> E2eResult<()> {
     Ok(())
 }
 
+#[tokio::test]
+#[ignore = "starts a local Runinator stack; run with RUNINATOR_E2E=1 cargo test -p runinator-e2e durable_agent_result_outbox_smoke -- --ignored"]
+async fn durable_agent_result_outbox_smoke() -> E2eResult<()> {
+    if std::env::var("RUNINATOR_E2E").ok().as_deref() != Some("1") {
+        eprintln!("set RUNINATOR_E2E=1 to run local-stack e2e tests");
+        return Ok(());
+    }
+
+    let workspace = workspace_dir();
+    build_service_binaries(&workspace)?;
+    let harness = StackHarness::start(&workspace, Ports::allocate()?).await?;
+    let api = harness.api_client()?;
+    let side_effect = harness.run_dir.join("side-effect.txt");
+    let source = format!(
+        "workflow \"Durable Agent Result Outbox\" v1 {{\n    node write_once <- console.run(command: \"sleep 3; printf x >> {}\").timeout(15s)\n}}\n",
+        side_effect.display()
+    );
+    let workflow_file = harness.run_dir.join("durable-outbox.wdl");
+    fs::write(&workflow_file, source)?;
+    harness.import_workflows(&workflow_file)?;
+    let workflow = api
+        .fetch_workflow_by_name("Durable Agent Result Outbox")
+        .await?;
+    let run = api
+        .create_workflow_run(workflow.id.ok_or("workflow has no id")?, json!({}))
+        .await?;
+
+    wait_for_node_status(&api, run.id, "write_once", WorkflowStatus::Running).await?;
+    harness.supervisor_process("stop", "broker")?;
+    sleep(Duration::from_secs(5)).await;
+    assert_eq!(fs::read_to_string(&side_effect)?, "x");
+
+    harness.supervisor_process("start", "broker")?;
+    let (settled, _) = poll_workflow(&api, run.id).await?;
+    assert_eq!(settled.status, WorkflowStatus::Succeeded);
+    sleep(Duration::from_secs(3)).await;
+    assert_eq!(
+        fs::read_to_string(&side_effect)?,
+        "x",
+        "broker redelivery re-executed a non-idempotent side effect"
+    );
+    Ok(())
+}
+
+async fn wait_for_node_status(
+    api: &ApiClient,
+    run_id: Uuid,
+    node_id: &str,
+    expected: WorkflowStatus,
+) -> E2eResult<()> {
+    for _ in 0..60 {
+        let (_, nodes) = api.fetch_workflow_run(run_id).await?;
+        if nodes
+            .iter()
+            .any(|node| node.node_id == node_id && node.status == expected)
+        {
+            return Ok(());
+        }
+        sleep(Duration::from_millis(250)).await;
+    }
+    Err(format!("node {node_id} did not reach {}", expected.as_str()).into())
+}
+
 async fn run_workflow_by_id(
     api: &ApiClient,
     workflow_id: Uuid,
@@ -159,6 +222,7 @@ async fn assert_broker_result_events(
 
 struct StackHarness {
     workspace: PathBuf,
+    run_dir: PathBuf,
     config_path: PathBuf,
     sqlite_path: PathBuf,
     api_url: String,
@@ -221,7 +285,10 @@ impl StackHarness {
                         "--broker-endpoint", format!("127.0.0.1:{}", ports.broker),
                         "--api-base-url", format!("http://127.0.0.1:{}/", ports.web),
                         "--max-concurrent-actions", "1"
-                    ]
+                    ],
+                    "env": {
+                        "RUNINATOR_HOME": run_dir.join("worker-home")
+                    }
                 }
             ]
         });
@@ -229,10 +296,12 @@ impl StackHarness {
 
         let harness = Self {
             workspace: workspace.to_path_buf(),
+            run_dir,
             config_path,
             sqlite_path,
             api_url: format!("http://127.0.0.1:{}/", ports.web),
         };
+        harness.bootstrap_database()?;
         harness.supervisor("start")?;
         harness.wait_for_web().await?;
         // the web service seeds built-in provider metadata on startup; without it, workflow
@@ -277,6 +346,23 @@ impl StackHarness {
         AsyncApiClient::new(StaticLocator::new(self.api_url.clone()))
     }
 
+    fn bootstrap_database(&self) -> E2eResult<()> {
+        let status = Command::new(
+            self.workspace
+                .join("target/debug")
+                .join(bin_name("runinator-bootstrap")),
+        )
+        .args(["--database", "sqlite", "--database-url"])
+        .arg(&self.sqlite_path)
+        .current_dir(&self.workspace)
+        .status()?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(format!("runinator-bootstrap failed with {status}").into())
+        }
+    }
+
     async fn wait_for_web(&self) -> E2eResult<()> {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(2))
@@ -309,6 +395,24 @@ impl StackHarness {
             Ok(())
         } else {
             Err(format!("runinator-supervisor {command} failed with {status}").into())
+        }
+    }
+
+    fn supervisor_process(&self, command: &str, name: &str) -> E2eResult<()> {
+        let status = Command::new(
+            self.workspace
+                .join("target/debug")
+                .join(bin_name("runinator-supervisor")),
+        )
+        .arg("--config")
+        .arg(&self.config_path)
+        .args(["process", command, name])
+        .current_dir(&self.workspace)
+        .status()?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(format!("runinator-supervisor process {command} failed with {status}").into())
         }
     }
 }
@@ -359,6 +463,8 @@ fn build_service_binaries(workspace: &Path) -> E2eResult<()> {
             "runinator-worker",
             "-p",
             "runinator-ctl",
+            "-p",
+            "runinator-bootstrap",
         ])
         .current_dir(workspace)
         .status()?;

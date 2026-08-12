@@ -237,14 +237,16 @@ where
         let last_used = record.key.last_used_at.map(|t| t.timestamp());
         let expires = record.key.expires_at.map(|t| t.timestamp());
         sqlx::query(&self.render(
-            "INSERT INTO api_keys (id, name, user_id, is_service, is_admin, key_prefix, key_hash, last_used_at, expires_at, disabled, created_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO api_keys (id, name, user_id, is_service, is_admin, principal_kind, org_id, key_prefix, key_hash, last_used_at, expires_at, disabled, created_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         ))
         .bind(id)
         .bind(&record.key.name)
         .bind(record.key.user_id)
         .bind(record.key.is_service)
         .bind(record.is_admin)
+        .bind(record.principal_kind.as_str())
+        .bind(record.org_id)
         .bind(&record.key.key_prefix)
         .bind(&record.key_hash)
         .bind(last_used)
@@ -260,7 +262,7 @@ where
 
     async fn fetch_api_key(&self, id: Uuid) -> Result<Option<ApiKeyRecord>, SendableError> {
         let row = sqlx::query(&self.render(
-            "SELECT id, name, user_id, is_service, is_admin, key_prefix, key_hash, last_used_at, expires_at, disabled, created_at FROM api_keys WHERE id = ?",
+            "SELECT id, name, user_id, is_service, is_admin, principal_kind, org_id, key_prefix, key_hash, last_used_at, expires_at, disabled, created_at FROM api_keys WHERE id = ?",
         ))
         .bind(id)
         .fetch_optional(self.pool())
@@ -273,7 +275,7 @@ where
         prefix: String,
     ) -> Result<Option<ApiKeyRecord>, SendableError> {
         let row = sqlx::query(&self.render(
-            "SELECT id, name, user_id, is_service, is_admin, key_prefix, key_hash, last_used_at, expires_at, disabled, created_at FROM api_keys WHERE key_prefix = ?",
+            "SELECT id, name, user_id, is_service, is_admin, principal_kind, org_id, key_prefix, key_hash, last_used_at, expires_at, disabled, created_at FROM api_keys WHERE key_prefix = ?",
         ))
         .bind(prefix)
         .fetch_optional(self.pool())
@@ -351,6 +353,129 @@ where
             .execute(self.pool())
             .await?;
         Ok(())
+    }
+
+    async fn create_agent_enrollment_token(
+        &self,
+        record: AgentEnrollmentTokenRecord,
+    ) -> Result<AgentEnrollmentToken, SendableError> {
+        let token = record.token;
+        let labels = serde_json::to_string(&token.labels)?;
+        sqlx::query(&self.render(
+            "INSERT INTO agent_enrollment_tokens (token_id, sealed_secret, org_id, labels_json, service_url, spki_pin, expires_at, consumed_at, issued_by, created_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ))
+        .bind(&token.token_id)
+        .bind(record.sealed_secret)
+        .bind(token.org_id)
+        .bind(labels)
+        .bind(&token.service_url)
+        .bind(&token.spki_pin)
+        .bind(token.expires_at.timestamp())
+        .bind(token.consumed_at.map(|value| value.timestamp()))
+        .bind(token.issued_by)
+        .bind(token.created_at.timestamp())
+        .execute(self.pool())
+        .await?;
+        Ok(token)
+    }
+
+    async fn fetch_agent_enrollment_token(
+        &self,
+        token_id: String,
+    ) -> Result<Option<AgentEnrollmentTokenRecord>, SendableError> {
+        let row = sqlx::query(&self.render(
+            "SELECT token_id, sealed_secret, org_id, labels_json, service_url, spki_pin, expires_at, consumed_at, issued_by, created_at \
+             FROM agent_enrollment_tokens WHERE token_id = ?",
+        ))
+        .bind(token_id)
+        .fetch_optional(self.pool())
+        .await?;
+        Ok(row.map(|row| mappers::row_to_agent_enrollment_token_record(&row)))
+    }
+
+    async fn list_agent_enrollment_tokens(
+        &self,
+    ) -> Result<Vec<AgentEnrollmentToken>, SendableError> {
+        let rows = sqlx::query(&self.render(
+            "SELECT token_id, sealed_secret, org_id, labels_json, service_url, spki_pin, expires_at, consumed_at, issued_by, created_at \
+             FROM agent_enrollment_tokens ORDER BY created_at DESC",
+        ))
+        .fetch_all(self.pool())
+        .await?;
+        Ok(rows
+            .iter()
+            .map(mappers::row_to_agent_enrollment_token_record)
+            .map(|record| record.token)
+            .collect())
+    }
+
+    async fn delete_agent_enrollment_token(&self, token_id: String) -> Result<(), SendableError> {
+        sqlx::query(&self.render("DELETE FROM agent_enrollment_tokens WHERE token_id = ?"))
+            .bind(token_id)
+            .execute(self.pool())
+            .await?;
+        Ok(())
+    }
+
+    async fn purge_expired_enrollment_tokens(
+        &self,
+        before: DateTime<Utc>,
+    ) -> Result<u64, SendableError> {
+        let result = sqlx::query(&self.render(
+            "DELETE FROM agent_enrollment_tokens WHERE expires_at < ? OR consumed_at IS NOT NULL",
+        ))
+        .bind(before.timestamp())
+        .execute(self.pool())
+        .await?;
+        Ok(result.affected())
+    }
+
+    async fn consume_enrollment_token_and_create_api_key(
+        &self,
+        token_id: String,
+        record: ApiKeyRecord,
+        consumed_at: DateTime<Utc>,
+    ) -> Result<Option<ApiKey>, SendableError> {
+        let mut tx = self.pool().begin().await?;
+        let consumed = sqlx::query(&self.render(
+            "UPDATE agent_enrollment_tokens SET consumed_at = ? \
+             WHERE token_id = ? AND consumed_at IS NULL AND expires_at >= ?",
+        ))
+        .bind(consumed_at.timestamp())
+        .bind(token_id)
+        .bind(consumed_at.timestamp())
+        .execute(&mut *tx)
+        .await?;
+        if consumed.affected() != 1 {
+            tx.rollback().await?;
+            return Ok(None);
+        }
+
+        let id = record.key.id.unwrap_or_else(Uuid::now_v7);
+        sqlx::query(&self.render(
+            "INSERT INTO api_keys (id, name, user_id, is_service, is_admin, principal_kind, org_id, key_prefix, key_hash, last_used_at, expires_at, disabled, created_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ))
+        .bind(id)
+        .bind(&record.key.name)
+        .bind(record.key.user_id)
+        .bind(record.key.is_service)
+        .bind(record.is_admin)
+        .bind(record.principal_kind.as_str())
+        .bind(record.org_id)
+        .bind(&record.key.key_prefix)
+        .bind(&record.key_hash)
+        .bind(record.key.last_used_at.map(|value| value.timestamp()))
+        .bind(record.key.expires_at.map(|value| value.timestamp()))
+        .bind(record.key.disabled)
+        .bind(record.key.created_at.timestamp())
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        let mut key = record.key;
+        key.id = Some(id);
+        Ok(Some(key))
     }
 
     async fn create_session(&self, session: AuthSession) -> Result<(), SendableError> {

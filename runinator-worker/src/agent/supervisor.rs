@@ -16,6 +16,8 @@ use runinator_plugin::plugin::Plugin;
 use uuid::Uuid;
 
 use crate::agent::config::AgentRuntimeConfig;
+use crate::agent::directives::DirectiveHandler;
+use crate::agent::outbox::ResultOutbox;
 use crate::agent::reporter::StatusReporter;
 use crate::agent::shutdown::Shutdown;
 use crate::agent::status::AgentConnection;
@@ -40,6 +42,8 @@ pub struct SupervisedLoop {
     pub libraries: Arc<HashMap<String, Plugin>>,
     pub max_concurrent_actions: usize,
     pub shutdown_grace: Duration,
+    pub result_outbox: Arc<dyn ResultOutbox>,
+    pub directive_handler: Arc<dyn DirectiveHandler>,
 }
 
 impl SupervisedLoop {
@@ -49,6 +53,7 @@ impl SupervisedLoop {
         api_client: AsyncApiClient<StaticLocator>,
         replica_id: Uuid,
         libraries: Arc<HashMap<String, Plugin>>,
+        result_outbox: Arc<dyn ResultOutbox>,
     ) -> Self {
         // carry the replica id (without exclusivity unless asked) so replica-targeted actions —
         // and cancels routed to the worker holding an action's executor lease — reach this agent.
@@ -72,6 +77,8 @@ impl SupervisedLoop {
             libraries,
             max_concurrent_actions: config.max_concurrent_actions.max(1),
             shutdown_grace: config.shutdown_grace,
+            result_outbox,
+            directive_handler: Arc::clone(&config.directive_handler),
         }
     }
 }
@@ -128,6 +135,8 @@ pub async fn run_supervised(
             shutdown_grace: inputs.shutdown_grace,
             shutdown: shutdown.notify(),
             events: Arc::clone(&events),
+            result_outbox: Arc::clone(&inputs.result_outbox),
+            directive_handler: Arc::clone(&inputs.directive_handler),
         };
 
         if !has_connection_state {

@@ -5,7 +5,9 @@ mod settings;
 
 use chrono::{DateTime, Utc};
 use reqwest::{Client, Response, Url};
-use runinator_comm::{ActionCommand, ActionDispatchRecord};
+use runinator_comm::{
+    ActionCommand, ActionDispatchRecord, AgentDirectiveKind, AgentDirectiveRecord,
+};
 use runinator_models::json;
 use runinator_models::pipelines::PipelineBundle;
 use runinator_models::value::Value;
@@ -32,6 +34,10 @@ use runinator_models::{
         API_WORKFLOWS_EXPORT, API_WORKFLOWS_IMPORT, API_WORKFLOWS_SIMULATE, API_WORKFLOWS_VALIDATE,
         API_WORKFLOW_RUNS, API_WORKFLOW_TRIGGERS_DUE, WORKFLOW_JSON_IMPORT_RISK_ACK,
         WORKFLOW_JSON_IMPORT_RISK_HEADER,
+    },
+    auth::{
+        AgentEnrollmentToken, CreateAgentEnrollmentTokenRequest,
+        CreateAgentEnrollmentTokenResponse, EnrollAgentRequest, EnrollAgentResponse,
     },
     billing::ScaleOrgNodesRequest,
     bundles::{Bundle, PackImportResult, ProviderBundle, SecretBundle},
@@ -106,6 +112,78 @@ impl<L> AsyncApiClient<L>
 where
     L: ServiceLocator,
 {
+    /// redeem a self-authenticating agent enrollment request. the endpoint is public; this client's
+    /// configured API credential, if any, is irrelevant to the proof inside `request`.
+    pub async fn enroll_agent(&self, request: &EnrollAgentRequest) -> Result<EnrollAgentResponse> {
+        let url = self.build_url("/agents/enroll").await?;
+        let response = self.http_post(url.clone()).json(request).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<EnrollAgentResponse>().await?)
+    }
+
+    pub async fn create_agent_enrollment_token(
+        &self,
+        request: &CreateAgentEnrollmentTokenRequest,
+    ) -> Result<CreateAgentEnrollmentTokenResponse> {
+        let url = self.build_url("/agents/enrollment_tokens").await?;
+        let response = self.http_post(url.clone()).json(request).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response
+            .json::<CreateAgentEnrollmentTokenResponse>()
+            .await?)
+    }
+
+    pub async fn list_agent_enrollment_tokens(&self) -> Result<Vec<AgentEnrollmentToken>> {
+        let url = self.build_url("/agents/enrollment_tokens").await?;
+        let response = self.http_get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Vec<AgentEnrollmentToken>>().await?)
+    }
+
+    pub async fn delete_agent_enrollment_token(&self, token_id: &str) -> Result<TaskResponse> {
+        let url = self
+            .build_url(&format!("/agents/enrollment_tokens/{token_id}"))
+            .await?;
+        let response = self.http_delete(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<TaskResponse>().await?)
+    }
+
+    pub async fn create_agent_directive(
+        &self,
+        replica_id: Uuid,
+        kind: &AgentDirectiveKind,
+        expires_in_seconds: Option<u64>,
+    ) -> Result<AgentDirectiveRecord> {
+        let url = self
+            .build_url(&format!("/replicas/{replica_id}/directives"))
+            .await?;
+        let response = self
+            .http_post(url.clone())
+            .json(&json!({ "kind": kind, "expires_in_seconds": expires_in_seconds }))
+            .send()
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<AgentDirectiveRecord>().await?)
+    }
+
+    pub async fn list_agent_directives(
+        &self,
+        replica_id: Uuid,
+        limit: Option<i64>,
+    ) -> Result<Vec<AgentDirectiveRecord>> {
+        let mut url = self
+            .build_url(&format!("/replicas/{replica_id}/directives"))
+            .await?;
+        if let Some(limit) = limit {
+            url.query_pairs_mut()
+                .append_pair("limit", &limit.to_string());
+        }
+        let response = self.http_get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Vec<AgentDirectiveRecord>>().await?)
+    }
+
     /// Construct a client with default request/connect timeouts applied.
     pub fn new(locator: L) -> reqwest::Result<Self> {
         let client = timed_client_builder().build()?;

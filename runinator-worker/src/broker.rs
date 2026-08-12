@@ -26,6 +26,7 @@ pub struct BrokerConfig {
     pub broker_endpoint: String,
     pub broker_action_topic: String,
     pub broker_control_topic: String,
+    pub broker_agent_topic: String,
     pub broker_result_topic: String,
     pub broker_client_id: String,
     /// presented as a bearer token; only used by the `http`/`ws` backends today.
@@ -40,6 +41,7 @@ impl config::Config {
             broker_endpoint: self.broker_endpoint.clone(),
             broker_action_topic: self.broker_action_topic.clone(),
             broker_control_topic: self.broker_control_topic.clone(),
+            broker_agent_topic: self.broker_agent_topic.clone(),
             broker_result_topic: self.broker_result_topic.clone(),
             broker_client_id: self.broker_client_id.clone(),
             api_key: self.api_key.clone(),
@@ -86,6 +88,7 @@ pub async fn build_broker(config: &BrokerConfig) -> Result<Arc<dyn Broker>, Send
                     config.broker_control_topic.clone(),
                     config.broker_result_topic.clone(),
                 )
+                .with_agent_topic(config.broker_agent_topic.clone())
                 .with_client_id(config.broker_client_id.clone()),
         )
         .map_err(|err| crate::errors::BROKER_KAFKA.error(err))?,
@@ -96,6 +99,7 @@ pub async fn build_broker(config: &BrokerConfig) -> Result<Arc<dyn Broker>, Send
                     config.broker_control_topic.clone(),
                     config.broker_result_topic.clone(),
                 )
+                .with_agent_queue_prefix(config.broker_agent_topic.clone())
                 .with_client_id(config.broker_client_id.clone()),
         )
         .await

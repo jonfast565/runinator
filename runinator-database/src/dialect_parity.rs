@@ -11,9 +11,15 @@
 //! engine when their url is set. running it on sqlite is what keeps it from rotting in a workspace
 //! where nobody has docker up.
 
+use std::collections::BTreeMap;
+
 use chrono::{Duration, Utc};
-use runinator_comm::{ActionCommand, WorkflowResultEvent, WorkflowResultEventKind};
+use runinator_comm::{
+    ActionCommand, AgentDirectiveKind, AgentDirectiveResult, AgentDirectiveState,
+    AgentDirectiveStatus, WorkflowResultEvent, WorkflowResultEventKind,
+};
 use runinator_models::{
+    auth::{AgentEnrollmentToken, AgentEnrollmentTokenRecord, ApiKey, ApiKeyRecord, PrincipalKind},
     json,
     orchestration::NewOrchestrationEvent,
     revisions::{RevisionSource, WorkflowRevision},
@@ -110,6 +116,8 @@ pub(crate) async fn assert_dialect_parity<T: DatabaseImpl>(db: &T) {
     assert_run_state_cas(db, run_id).await;
     assert_cursor_scoped_ready_nodes(db, run_id).await;
     assert_cooldown_claim(db).await;
+    assert_agent_enrollment_lifecycle(db).await;
+    assert_agent_directive_lifecycle(db).await;
 
     // the legacy run mapper reads a column named `trigger`, which is reserved in mysql and has to
     // be quoted per dialect; an unquoted build fails here rather than in production.
@@ -118,6 +126,166 @@ pub(crate) async fn assert_dialect_parity<T: DatabaseImpl>(db: &T) {
             .await
             .unwrap()
             .is_empty()
+    );
+}
+
+async fn assert_agent_directive_lifecycle<T: DatabaseImpl>(db: &T) {
+    let replica = db
+        .register_replica(
+            runinator_models::replicas::ReplicaRegistrationRequest {
+                replica_type: runinator_models::replicas::ReplicaKind::Worker,
+                instance_id: "parity-agent".to_string(),
+                runtime_id: "parity-runtime".to_string(),
+                display_name: None,
+                host: None,
+                port: None,
+                base_path: None,
+                version: None,
+                attributes: json!({}),
+            },
+            None,
+            &runinator_models::auth::AuthContext::disabled_admin(),
+        )
+        .await
+        .unwrap();
+    let now = Utc::now();
+    let directive = db
+        .enqueue_agent_directive(
+            replica.replica_id,
+            AgentDirectiveKind::Diagnostics,
+            now + Duration::minutes(5),
+        )
+        .await
+        .unwrap();
+    let claimed = db
+        .claim_due_agent_directives(
+            "publisher-a".to_string(),
+            now,
+            now - Duration::seconds(30),
+            10,
+        )
+        .await
+        .unwrap();
+    assert_eq!(claimed.len(), 1);
+    assert!(
+        db.claim_due_agent_directives(
+            "publisher-b".to_string(),
+            now,
+            now - Duration::seconds(30),
+            10,
+        )
+        .await
+        .unwrap()
+        .is_empty()
+    );
+    db.mark_agent_directive_published(directive.directive_id)
+        .await
+        .unwrap();
+    let completed = db
+        .complete_agent_directive(AgentDirectiveResult {
+            directive_id: directive.directive_id,
+            status: AgentDirectiveStatus::Completed,
+            payload: json!({ "ok": true }),
+            message: None,
+        })
+        .await
+        .unwrap()
+        .expect("directive remains readable");
+    assert_eq!(completed.state, AgentDirectiveState::Completed);
+    assert_eq!(
+        db.list_agent_directives(replica.replica_id, 10)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+
+    db.enqueue_agent_directive(
+        replica.replica_id,
+        AgentDirectiveKind::Restart,
+        now - Duration::seconds(1),
+    )
+    .await
+    .unwrap();
+    assert_eq!(db.expire_agent_directives(now).await.unwrap(), 1);
+}
+
+async fn assert_agent_enrollment_lifecycle<T: DatabaseImpl>(db: &T) {
+    let now = Utc::now();
+    let token_id = "parity-enrollment".to_string();
+    let token = AgentEnrollmentToken {
+        token_id: token_id.clone(),
+        org_id: Some(Uuid::new_v4()),
+        labels: BTreeMap::from([("site".to_string(), "parity".to_string())]),
+        service_url: "https://runinator.example".to_string(),
+        spki_pin: Some("sha256/parity".to_string()),
+        expires_at: now + Duration::minutes(5),
+        consumed_at: None,
+        issued_by: None,
+        created_at: now,
+    };
+    db.create_agent_enrollment_token(AgentEnrollmentTokenRecord {
+        token: token.clone(),
+        sealed_secret: vec![1, 2, 3, 4],
+    })
+    .await
+    .unwrap();
+
+    let stored = db
+        .fetch_agent_enrollment_token(token_id.clone())
+        .await
+        .unwrap()
+        .expect("enrollment token is readable");
+    assert_eq!(stored.token.labels, token.labels);
+    assert_eq!(stored.sealed_secret, vec![1, 2, 3, 4]);
+    assert_eq!(db.list_agent_enrollment_tokens().await.unwrap().len(), 1);
+
+    let key_id = Uuid::new_v4();
+    let principal_id = Uuid::new_v4();
+    let key_record = ApiKeyRecord {
+        key: ApiKey {
+            id: Some(key_id),
+            name: "parity agent".to_string(),
+            user_id: Some(principal_id),
+            is_service: true,
+            key_prefix: "parityagent".to_string(),
+            last_used_at: None,
+            expires_at: None,
+            disabled: false,
+            created_at: now,
+        },
+        is_admin: false,
+        principal_kind: PrincipalKind::Agent,
+        org_id: token.org_id,
+        key_hash: "parity-hash".to_string(),
+    };
+    assert!(
+        db.consume_enrollment_token_and_create_api_key(token_id.clone(), key_record.clone(), now,)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        db.consume_enrollment_token_and_create_api_key(token_id.clone(), key_record, now)
+            .await
+            .unwrap()
+            .is_none(),
+        "an enrollment token can mint only one credential"
+    );
+    let key = db
+        .fetch_api_key(key_id)
+        .await
+        .unwrap()
+        .expect("agent key committed with token consumption");
+    assert_eq!(key.principal_kind, PrincipalKind::Agent);
+    assert_eq!(key.org_id, token.org_id);
+
+    assert_eq!(db.purge_expired_enrollment_tokens(now).await.unwrap(), 1);
+    assert!(
+        db.fetch_agent_enrollment_token(token_id)
+            .await
+            .unwrap()
+            .is_none()
     );
 }
 

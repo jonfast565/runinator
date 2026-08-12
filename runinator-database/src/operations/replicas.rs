@@ -37,6 +37,165 @@ where
     for<'c> &'c mut <B::Db as Database>::Connection: Executor<'c, Database = B::Db>,
     <B::Db as Database>::QueryResult: RowsAffected,
 {
+    async fn enqueue_agent_directive(
+        &self,
+        replica_id: Uuid,
+        kind: AgentDirectiveKind,
+        expires_at: DateTime<Utc>,
+    ) -> Result<AgentDirectiveRecord, SendableError> {
+        let directive_id = Uuid::now_v7();
+        let now = Utc::now().timestamp();
+        sqlx::query(&self.render(
+            "INSERT INTO agent_directives (directive_id, replica_id, kind_json, state, issued_at, expires_at, payload_json, attempts)
+             VALUES (?, ?, ?, 'pending', ?, ?, 'null', 0)",
+        ))
+        .bind(directive_id)
+        .bind(replica_id)
+        .bind(serde_json::to_string(&kind)?)
+        .bind(now)
+        .bind(expires_at.timestamp())
+        .execute(self.pool())
+        .await?;
+        self.fetch_agent_directive(directive_id)
+            .await?
+            .ok_or_else(|| {
+                Box::new(std::io::Error::other(
+                    "inserted agent directive disappeared",
+                )) as SendableError
+            })
+    }
+
+    async fn claim_due_agent_directives(
+        &self,
+        runtime_id: String,
+        now: DateTime<Utc>,
+        stale_before: DateTime<Utc>,
+        limit: i64,
+    ) -> Result<Vec<AgentDirectiveRecord>, SendableError> {
+        let claimable = "state IN ('pending', 'published', 'accepted') AND expires_at > ? AND (claimed_at IS NULL OR claimed_at <= ?)";
+        if self.dialect() == SqlDialect::MySql {
+            sqlx::query(&self.render(&format!(
+                "UPDATE agent_directives SET claimed_at = ?, claimed_by_runtime_id = ?, attempts = attempts + 1
+                 WHERE directive_id IN (SELECT directive_id FROM (SELECT directive_id FROM agent_directives
+                 WHERE {claimable} ORDER BY issued_at ASC LIMIT ?) AS claimable)"
+            )))
+            .bind(now.timestamp())
+            .bind(runtime_id.as_str())
+            .bind(now.timestamp())
+            .bind(stale_before.timestamp())
+            .bind(limit.max(1))
+            .execute(self.pool())
+            .await?;
+            let rows = sqlx::query(&self.render(&format!(
+                "SELECT {AGENT_DIRECTIVE_COLUMNS} FROM agent_directives WHERE claimed_at = ? AND claimed_by_runtime_id = ? ORDER BY issued_at ASC"
+            )))
+            .bind(now.timestamp())
+            .bind(runtime_id)
+            .fetch_all(self.pool())
+            .await?;
+            return rows.iter().map(mappers::row_to_agent_directive).collect();
+        }
+        let rows = sqlx::query(&self.render(&format!(
+            "UPDATE agent_directives SET claimed_at = ?, claimed_by_runtime_id = ?, attempts = attempts + 1
+             WHERE directive_id IN (SELECT directive_id FROM agent_directives WHERE {claimable}
+             ORDER BY issued_at ASC LIMIT ?{skip}) RETURNING {AGENT_DIRECTIVE_COLUMNS}",
+            skip = self.dialect().skip_locked(),
+        )))
+        .bind(now.timestamp())
+        .bind(runtime_id.as_str())
+        .bind(now.timestamp())
+        .bind(stale_before.timestamp())
+        .bind(limit.max(1))
+        .fetch_all(self.pool())
+        .await?;
+        rows.iter().map(mappers::row_to_agent_directive).collect()
+    }
+
+    async fn mark_agent_directive_published(
+        &self,
+        directive_id: Uuid,
+    ) -> Result<(), SendableError> {
+        let now = Utc::now().timestamp();
+        sqlx::query(&self.render(
+            "UPDATE agent_directives SET state = CASE WHEN state = 'accepted' THEN state ELSE 'published' END,
+             published_at = COALESCE(published_at, ?), claimed_at = ?, message = NULL WHERE directive_id = ? AND completed_at IS NULL",
+        ))
+        .bind(now)
+        .bind(now)
+        .bind(directive_id)
+        .execute(self.pool())
+        .await?;
+        Ok(())
+    }
+
+    async fn complete_agent_directive(
+        &self,
+        result: AgentDirectiveResult,
+    ) -> Result<Option<AgentDirectiveRecord>, SendableError> {
+        let now = Utc::now().timestamp();
+        let (state, terminal) = match result.status {
+            AgentDirectiveStatus::Accepted => ("accepted", false),
+            AgentDirectiveStatus::Completed => ("completed", true),
+            AgentDirectiveStatus::Failed => ("failed", true),
+            AgentDirectiveStatus::Unsupported => ("unsupported", true),
+        };
+        sqlx::query(&self.render(
+            "UPDATE agent_directives SET state = ?, payload_json = ?, message = ?, completed_at = ?, claimed_at = ?, claimed_by_runtime_id = NULL
+             WHERE directive_id = ? AND state <> 'expired' AND completed_at IS NULL",
+        ))
+        .bind(state)
+        .bind(result.payload.to_string())
+        .bind(result.message)
+        .bind(terminal.then_some(now))
+        .bind(now)
+        .bind(result.directive_id)
+        .execute(self.pool())
+        .await?;
+        self.fetch_agent_directive(result.directive_id).await
+    }
+
+    async fn fetch_agent_directive(
+        &self,
+        directive_id: Uuid,
+    ) -> Result<Option<AgentDirectiveRecord>, SendableError> {
+        let row = sqlx::query(&self.render(&format!(
+            "SELECT {AGENT_DIRECTIVE_COLUMNS} FROM agent_directives WHERE directive_id = ?"
+        )))
+        .bind(directive_id)
+        .fetch_optional(self.pool())
+        .await?;
+        row.as_ref()
+            .map(mappers::row_to_agent_directive)
+            .transpose()
+    }
+
+    async fn list_agent_directives(
+        &self,
+        replica_id: Uuid,
+        limit: i64,
+    ) -> Result<Vec<AgentDirectiveRecord>, SendableError> {
+        let rows = sqlx::query(&self.render(&format!(
+            "SELECT {AGENT_DIRECTIVE_COLUMNS} FROM agent_directives WHERE replica_id = ? ORDER BY issued_at DESC, directive_id DESC LIMIT ?"
+        )))
+        .bind(replica_id)
+        .bind(limit.clamp(1, 500))
+        .fetch_all(self.pool())
+        .await?;
+        rows.iter().map(mappers::row_to_agent_directive).collect()
+    }
+
+    async fn expire_agent_directives(&self, now: DateTime<Utc>) -> Result<u64, SendableError> {
+        let result = sqlx::query(&self.render(
+            "UPDATE agent_directives SET state = 'expired', completed_at = ?, claimed_at = NULL, claimed_by_runtime_id = NULL
+             WHERE completed_at IS NULL AND expires_at <= ?",
+        ))
+        .bind(now.timestamp())
+        .bind(now.timestamp())
+        .execute(self.pool())
+        .await?;
+        Ok(result.affected())
+    }
+
     async fn register_replica(
         &self,
         request: ReplicaRegistrationRequest,
@@ -262,6 +421,21 @@ where
             "SELECT {REPLICA_COLUMNS} FROM replicas WHERE replica_id = ?",
         )))
         .bind(replica_id)
+        .fetch_optional(self.pool())
+        .await?;
+        row.as_ref().map(mappers::row_to_replica).transpose()
+    }
+
+    async fn fetch_replica_by_runtime(
+        &self,
+        instance_id: String,
+        runtime_id: String,
+    ) -> Result<Option<ReplicaRecord>, SendableError> {
+        let row = sqlx::query(&self.render(&format!(
+            "SELECT {REPLICA_COLUMNS} FROM replicas WHERE instance_id = ? AND runtime_id = ?",
+        )))
+        .bind(instance_id)
+        .bind(runtime_id)
         .fetch_optional(self.pool())
         .await?;
         row.as_ref().map(mappers::row_to_replica).transpose()

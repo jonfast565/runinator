@@ -24,6 +24,9 @@ pub async fn dispatch(broker: &dyn Broker, request: TcpRequest) -> TcpResponse {
             .publish_control(command)
             .await
             .map(|_| TcpResponse::Ok),
+        TcpRequest::PublishAgent { command } => {
+            broker.publish_agent(command).await.map(|_| TcpResponse::Ok)
+        }
         TcpRequest::PublishResult { message } => broker
             .publish_result(message)
             .await
@@ -44,6 +47,14 @@ pub async fn dispatch(broker: &dyn Broker, request: TcpRequest) -> TcpResponse {
             .receive_control_for(&profile)
             .await
             .map(|delivery| TcpResponse::ControlDelivery { delivery }),
+        TcpRequest::ReceiveAgent { consumer } => broker
+            .receive_agent(&consumer)
+            .await
+            .map(|delivery| TcpResponse::AgentDelivery { delivery }),
+        TcpRequest::ReceiveAgentFor { profile } => broker
+            .receive_agent_for(&profile)
+            .await
+            .map(|delivery| TcpResponse::AgentDelivery { delivery }),
         TcpRequest::ReceiveResult { consumer } => broker
             .receive_result(&consumer)
             .await
@@ -60,6 +71,13 @@ pub async fn dispatch(broker: &dyn Broker, request: TcpRequest) -> TcpResponse {
             delivery_id,
         } => broker
             .ack_control(&consumer, delivery_id)
+            .await
+            .map(|_| TcpResponse::Ok),
+        TcpRequest::AckAgent {
+            consumer,
+            delivery_id,
+        } => broker
+            .ack_agent(&consumer, delivery_id)
             .await
             .map(|_| TcpResponse::Ok),
         TcpRequest::AckResult {
@@ -81,6 +99,13 @@ pub async fn dispatch(broker: &dyn Broker, request: TcpRequest) -> TcpResponse {
             delivery_id,
         } => broker
             .nack_control(&consumer, delivery_id)
+            .await
+            .map(|_| TcpResponse::Ok),
+        TcpRequest::NackAgent {
+            consumer,
+            delivery_id,
+        } => broker
+            .nack_agent(&consumer, delivery_id)
             .await
             .map(|_| TcpResponse::Ok),
         TcpRequest::NackResult {

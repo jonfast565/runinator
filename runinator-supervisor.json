@@ -41,6 +41,10 @@
         "127.0.0.1",
         "--announce-base-path",
         "/",
+        "--announce-scheme",
+        "http",
+        "--cluster-id",
+        "cd39ca95-598a-5ffc-a029-15865e551bbe",
         "--advertise-host",
         "127.0.0.1",
         "--broker-backend",
@@ -64,6 +68,10 @@
         "127.0.0.1",
         "--announce-base-path",
         "/",
+        "--announce-scheme",
+        "http",
+        "--cluster-id",
+        "cd39ca95-598a-5ffc-a029-15865e551bbe",
         "--advertise-host",
         "127.0.0.1",
         "--broker-backend",
@@ -132,9 +140,7 @@
         "--sandbox-root",
         ".",
         "--labels",
-        "runner=desktop-local",
-        "--liveness-file",
-        "/tmp/runinator-desktop-agent-liveness"
+        "runner=desktop-local"
       ]
     },
     {

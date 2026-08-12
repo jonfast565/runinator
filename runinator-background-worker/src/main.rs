@@ -74,6 +74,7 @@ async fn run_process() -> Result<(), SendableError> {
         broker_endpoint,
         broker_action_topic,
         broker_control_topic,
+        broker_agent_topic,
         broker_result_topic,
         broker_client_id,
         instance_id,
@@ -99,6 +100,7 @@ async fn run_process() -> Result<(), SendableError> {
                 broker_control_topic.clone(),
                 broker_result_topic.clone(),
             )
+            .with_agent_topic(broker_agent_topic.clone())
             .with_client_id(broker_client_id.clone()),
         RabbitMqBrokerConfig::new(broker_endpoint.clone())
             .with_queues(
@@ -106,6 +108,7 @@ async fn run_process() -> Result<(), SendableError> {
                 broker_control_topic,
                 broker_result_topic,
             )
+            .with_agent_queue_prefix(broker_agent_topic)
             .with_client_id(broker_client_id),
     )
     .await?;

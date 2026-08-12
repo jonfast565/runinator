@@ -133,25 +133,96 @@ async fn ws_desktop_worker_relay_enforces_policy_and_ownership() {
     // was refused rather than only that something was.
     assert!(err.to_string().contains("publish"), "got {err}");
 
-    // allow-list: control-channel receive/ack is permitted (a desktop worker needs it for cancel).
+    // allow-list: targeted control receive/ack is permitted; plain ReceiveControl is deliberately
+    // refused because an exclusive relay must not consume an ActionTarget::Any run-wide control.
     inner_broker
-        .publish_control(ControlCommand::new(
-            Uuid::now_v7(),
-            runinator_comm::ControlKind::Cancel,
-        ))
+        .publish_control(
+            ControlCommand::new(Uuid::now_v7(), runinator_comm::ControlKind::Cancel)
+                .targeting_replica(registration.replica_id),
+        )
         .await
         .unwrap();
     let control_delivery = tokio::time::timeout(
         std::time::Duration::from_secs(5),
-        client.receive_control("desktop-control"),
+        client.receive_control_for(&owned_profile),
     )
     .await
     .unwrap()
     .expect("receive_control must be permitted over the desktop-worker relay");
     client
-        .ack_control("desktop-control", control_delivery.delivery_id)
+        .ack_control(&owned_profile.id, control_delivery.delivery_id)
         .await
         .expect("ack_control must be permitted over the desktop-worker relay");
+
+    let plain_control = client
+        .receive_control("desktop-control")
+        .await
+        .expect_err("plain control receive must be refused over an exclusive relay");
+    assert!(plain_control.to_string().contains("RUNI178"));
+
+    // agent directives are the fourth receive/ack channel and remain replica-owned.
+    let directive_id = Uuid::now_v7();
+    inner_broker
+        .publish_agent(runinator_comm::AgentCommand {
+            directive_id,
+            replica_id: registration.replica_id,
+            target: ActionTarget::Replica {
+                replica_id: registration.replica_id,
+            },
+            kind: runinator_comm::AgentDirectiveKind::Diagnostics,
+            issued_at: chrono::Utc::now(),
+            expires_at: chrono::Utc::now() + chrono::Duration::minutes(5),
+        })
+        .await
+        .unwrap();
+    let agent_delivery = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        client.receive_agent_for(&owned_profile),
+    )
+    .await
+    .unwrap()
+    .expect("owned agent directive receive must be permitted");
+    client
+        .ack_agent(&owned_profile.id, agent_delivery.delivery_id)
+        .await
+        .expect("agent directive ack must be permitted");
+
+    let unowned_agent = client
+        .receive_agent_for(&unknown_replica)
+        .await
+        .expect_err("agent directives for an unowned replica must be refused");
+    assert!(unowned_agent.to_string().contains("RUNI180"));
+
+    // ingress is payload-gated: directive results pass, reducer drives do not.
+    client
+        .publish_ingress(runinator_broker::IngressMessage {
+            command: runinator_comm::WsIngressCommand::AgentDirectiveResult {
+                result: runinator_comm::AgentDirectiveResult {
+                    directive_id,
+                    status: runinator_comm::AgentDirectiveStatus::Completed,
+                    payload: runinator_models::json!({ "ok": true }),
+                    message: None,
+                },
+            },
+            dedupe_key: None,
+            enqueued_at: chrono::Utc::now(),
+        })
+        .await
+        .expect("agent directive results may publish to ingress");
+    let drive_err = client
+        .publish_ingress(runinator_broker::IngressMessage {
+            command: runinator_comm::WsIngressCommand::drive(
+                Uuid::now_v7(),
+                Uuid::now_v7(),
+                "forbidden".to_string(),
+                Uuid::now_v7(),
+            ),
+            dedupe_key: None,
+            enqueued_at: chrono::Utc::now(),
+        })
+        .await
+        .expect_err("general ingress publication must remain refused");
+    assert!(drive_err.to_string().contains("RUNI178"));
 
     server.abort();
     let _ = std::fs::remove_file(path);

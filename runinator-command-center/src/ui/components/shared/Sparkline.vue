@@ -18,6 +18,13 @@
       />
     </svg>
     <div v-else class="py-2.5 text-[11px] text-fg-muted">no samples yet</div>
+    <div
+      v-if="points.length > 1"
+      class="mt-1 flex justify-between font-mono text-[10px] text-fg-muted"
+    >
+      <span>min {{ formatValue(minimum) }}</span>
+      <span>max {{ formatValue(maximum) }}</span>
+    </div>
   </div>
 </template>
 
@@ -41,6 +48,8 @@ const width = 200;
 const height = 40;
 
 const points = computed(() => props.values.filter((value) => Number.isFinite(value)));
+const minimum = computed(() => Math.min(...points.value));
+const maximum = computed(() => Math.max(...points.value));
 
 // upper bound: an explicit max (e.g. 100 for percentages) or the observed peak with headroom.
 const upper = computed(() => {
@@ -87,12 +96,14 @@ const latestLabel = computed(() => {
     return "—";
   }
 
-  const latest = list[list.length - 1];
+  return formatValue(list[list.length - 1]);
+});
 
+function formatValue(value: number): string {
   if (props.format) {
-    return props.format(latest);
+    return props.format(value);
   }
 
-  return `${latest.toFixed(1)}${props.unit}`;
-});
+  return `${value.toFixed(1)}${props.unit}`;
+}
 </script>

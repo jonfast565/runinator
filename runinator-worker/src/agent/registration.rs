@@ -4,17 +4,23 @@
 //! the replica registry, cannot heartbeat, and cannot be targeted, so it would run as a phantom.
 //! retry with backoff, stay interruptible, and give up loudly once the budget is spent.
 
+use std::sync::Arc;
 use std::time::Duration;
 
+use chrono::Utc;
 use runinator_api::{AsyncApiClient, ReplicaClient, ReplicaServiceConfig, StaticLocator};
 use runinator_models::errors::SendableError;
 use runinator_models::replicas::ReplicaKind;
 use runinator_models::value::{Map, Value};
-use runinator_utilities::resource_telemetry::attributes_with_host_metadata;
+use runinator_utilities::resource_telemetry::{
+    TelemetryCollector, attributes_with_host_metadata, attributes_with_telemetry,
+};
+use tokio::task::JoinHandle;
 
 use crate::agent::config::AgentRuntimeConfig;
 use crate::agent::reporter::StatusReporter;
 use crate::agent::shutdown::Shutdown;
+use crate::agent::status::AgentReportContext;
 
 // registration retry envelope: keep trying while the web service is briefly unreachable, then give
 // up so the process exits non-zero and its orchestrator restarts it.
@@ -37,9 +43,14 @@ pub async fn register_agent_replica(
     api_client: &AsyncApiClient<StaticLocator>,
     config: &AgentRuntimeConfig,
     reporter: &StatusReporter,
+    report_context: &AgentReportContext,
     shutdown: &Shutdown,
 ) -> Result<Option<ReplicaClient<StaticLocator>>, SendableError> {
-    let service_config = replica_service_config(config);
+    let mut service_config = replica_service_config(config);
+    insert_status(
+        &mut service_config.attributes,
+        report_context.report(&reporter.status(), 0, 0),
+    );
     let mut attempt = 1;
     loop {
         if shutdown.is_stopping() {
@@ -71,6 +82,73 @@ pub async fn register_agent_replica(
                 attempt += 1;
             }
         }
+    }
+}
+
+/// heartbeat with the agent-specific status envelope, updating the clock-skew estimate from each
+/// accepted response and marking the replica offline on a clean stop.
+pub fn spawn_agent_heartbeat(
+    replica_client: ReplicaClient<StaticLocator>,
+    config: &AgentRuntimeConfig,
+    reporter: Arc<StatusReporter>,
+    report_context: Arc<AgentReportContext>,
+    telemetry: Option<Arc<TelemetryCollector>>,
+    shutdown: Shutdown,
+) -> JoinHandle<()> {
+    let heartbeat_interval = config.heartbeat_interval;
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(heartbeat_interval);
+        let mut heartbeat_seq = 0u64;
+        let mut clock_skew_ms = 0i64;
+        let shutdown_notify = shutdown.notify();
+        loop {
+            if shutdown.is_stopping() {
+                mark_offline(&replica_client, &reporter).await;
+                return;
+            }
+            tokio::select! {
+                _ = shutdown_notify.notified() => {
+                    mark_offline(&replica_client, &reporter).await;
+                    return;
+                }
+                _ = ticker.tick() => {
+                    heartbeat_seq = heartbeat_seq.saturating_add(1);
+                    let mut request = replica_client.session.heartbeat_request();
+                    if let Some(collector) = telemetry.as_ref() {
+                        request.attributes = attributes_with_telemetry(&request.attributes, collector);
+                    }
+                    insert_status(
+                        &mut request.attributes,
+                        report_context.report(&reporter.status(), heartbeat_seq, clock_skew_ms),
+                    );
+                    match replica_client.api
+                        .heartbeat_replica(replica_client.replica_id(), &request)
+                        .await
+                    {
+                        Ok(replica) => {
+                            clock_skew_ms = replica
+                                .last_seen_at
+                                .signed_duration_since(Utc::now())
+                                .num_milliseconds();
+                        }
+                        Err(err) => reporter.record_error(format!("heartbeat failed: {err}")),
+                    }
+                }
+            }
+        }
+    })
+}
+
+async fn mark_offline(replica_client: &ReplicaClient<StaticLocator>, reporter: &StatusReporter) {
+    if let Err(err) = replica_client
+        .api
+        .mark_replica_offline(
+            replica_client.replica_id(),
+            &replica_client.session.offline_request(),
+        )
+        .await
+    {
+        reporter.record_error(format!("failed to mark replica offline: {err}"));
     }
 }
 
@@ -116,7 +194,7 @@ fn replica_service_config(config: &AgentRuntimeConfig) -> ReplicaServiceConfig {
 // merge the routing facts every agent advertises into the host's own attributes, then stamp host
 // metadata. keeping `labels`/`exclusive` here (rather than in each host) is what makes the two
 // hosts' registrations comparable in the replica registry.
-fn registration_attributes(config: &AgentRuntimeConfig) -> Value {
+pub(super) fn registration_attributes(config: &AgentRuntimeConfig) -> Value {
     let mut attributes = match &config.attributes {
         Value::Object(_) => config.attributes.clone(),
         _ => Value::Object(Default::default()),
@@ -138,6 +216,18 @@ fn registration_attributes(config: &AgentRuntimeConfig) -> Value {
         );
     }
     attributes_with_host_metadata(&attributes)
+}
+
+fn insert_status(attributes: &mut Value, status: runinator_models::replicas::AgentStatusReport) {
+    if !attributes.is_object() {
+        *attributes = Value::Object(Default::default());
+    }
+    if let Some(object) = attributes.as_object_mut() {
+        let status = serde_json::to_value(status)
+            .map(Value::from)
+            .unwrap_or(Value::Null);
+        object.insert("status".to_string(), status);
+    }
 }
 
 #[cfg(test)]

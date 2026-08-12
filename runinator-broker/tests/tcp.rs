@@ -3,7 +3,10 @@ use runinator_broker::{
     tcp::{client::TcpBroker, server::serve},
     Broker, BrokerMessage, ControlCommand, ResultMessage,
 };
-use runinator_comm::{ActionCommand, ControlKind, WorkflowResultEvent, WorkflowResultEventKind};
+use runinator_comm::{
+    ActionCommand, ActionTarget, AgentCommand, AgentDirectiveKind, ConsumerProfile, ControlKind,
+    WorkflowResultEvent, WorkflowResultEventKind,
+};
 use runinator_models::json;
 use runinator_models::workflows::WorkflowAction;
 use std::time::Duration;
@@ -85,6 +88,30 @@ async fn tcp_broker_delivers_control_messages() {
         .await
         .unwrap();
 
+    server.abort();
+}
+
+#[tokio::test]
+async fn tcp_broker_delivers_targeted_agent_directives() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(serve(
+        listener,
+        runinator_broker::in_memory::InMemoryBroker::new(),
+    ));
+    let broker = TcpBroker::new(addr.to_string());
+    let replica_id = Uuid::now_v7();
+    broker
+        .publish_agent(agent_command(replica_id))
+        .await
+        .unwrap();
+    let profile = ConsumerProfile::shared("agent-test").with_replica_id(replica_id);
+    let delivery = broker.receive_agent_for(&profile).await.unwrap();
+    assert_eq!(delivery.command.replica_id, replica_id);
+    broker
+        .ack_agent(&profile.id, delivery.delivery_id)
+        .await
+        .unwrap();
     server.abort();
 }
 
@@ -176,5 +203,16 @@ fn action_command() -> ActionCommand {
         trace_context: Default::default(),
         notification_delivery_id: None,
         idempotency_key: None,
+    }
+}
+
+fn agent_command(replica_id: Uuid) -> AgentCommand {
+    AgentCommand {
+        directive_id: Uuid::now_v7(),
+        replica_id,
+        target: ActionTarget::Replica { replica_id },
+        kind: AgentDirectiveKind::Diagnostics,
+        issued_at: Utc::now(),
+        expires_at: Utc::now() + chrono::Duration::minutes(5),
     }
 }

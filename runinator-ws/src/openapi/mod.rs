@@ -38,6 +38,7 @@ const DOC_SETS: &[&[EndpointDoc]] = &[
     handlers::triggers::DOCS,
     handlers::runs::DOCS,
     handlers::replicas::DOCS,
+    handlers::agents::DOCS,
     handlers::artifacts::DOCS,
     handlers::notifications::DOCS,
     handlers::action_dispatches::DOCS,

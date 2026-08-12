@@ -10,6 +10,7 @@ fn selection(mode: BrokerMode) -> BrokerSelection {
         direct_endpoint: "10.0.0.4:7070".to_string(),
         action_topic: "runinator.actions".to_string(),
         control_topic: "runinator.control".to_string(),
+        agent_topic: "runinator.agent".to_string(),
         result_topic: "runinator.results".to_string(),
         client_id: "test-agent".to_string(),
         api_key: Some("secret".to_string()),

@@ -8,7 +8,7 @@ use axum::{
 };
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::{
-    auth::AuthContext,
+    auth::{AuthContext, PrincipalKind},
     replicas::{
         ReplicaHeartbeatRequest, ReplicaOfflineRequest, ReplicaProviderRegistrationRequest,
         ReplicaRegistrationRequest,
@@ -30,8 +30,23 @@ pub async fn register_replica<T: DatabaseImpl>(
     ConnectInfo(connect): ConnectInfo<SocketAddr>,
     Json(request): Json<ReplicaRegistrationRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_service_or_admin() {
+    if let Err(reply) = ctx.require_agent_service_or_admin() {
         return reply;
+    }
+    if matches!(ctx.kind, PrincipalKind::Agent) {
+        match repository::fetch_replica_by_runtime(
+            db.as_ref(),
+            request.instance_id.clone(),
+            request.runtime_id.clone(),
+        )
+        .await
+        {
+            Ok(Some(replica)) if replica.registered_by_principal_id != ctx.principal_id => {
+                return not_found("Replica not found");
+            }
+            Err(err) => return api_error(err.to_string()),
+            _ => {}
+        }
     }
     match repository::register_replica(db.as_ref(), request, observed_ip(&headers, connect), &ctx)
         .await
@@ -49,7 +64,10 @@ pub async fn heartbeat_replica<T: DatabaseImpl>(
     Path(replica_id): Path<Uuid>,
     Json(request): Json<ReplicaHeartbeatRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_service_or_admin() {
+    if let Err(reply) = ctx.require_agent_service_or_admin() {
+        return reply;
+    }
+    if let Some(reply) = reject_unowned_agent_replica(db.as_ref(), &ctx, replica_id).await {
         return reply;
     }
     match repository::heartbeat_replica(
@@ -74,7 +92,10 @@ pub async fn mark_replica_offline<T: DatabaseImpl>(
     Path(replica_id): Path<Uuid>,
     Json(request): Json<ReplicaOfflineRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_service_or_admin() {
+    if let Err(reply) = ctx.require_agent_service_or_admin() {
+        return reply;
+    }
+    if let Some(reply) = reject_unowned_agent_replica(db.as_ref(), &ctx, replica_id).await {
         return reply;
     }
     match repository::mark_replica_offline(db.as_ref(), replica_id, request.runtime_id).await {
@@ -123,7 +144,10 @@ pub async fn upsert_replica_provider<T: DatabaseImpl>(
     Path(replica_id): Path<Uuid>,
     Json(request): Json<ReplicaProviderRegistrationRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_service_or_admin() {
+    if let Err(reply) = ctx.require_agent_service_or_admin() {
+        return reply;
+    }
+    if let Some(reply) = reject_unowned_agent_replica(db.as_ref(), &ctx, replica_id).await {
         return reply;
     }
     match repository::upsert_replica_provider_registration(db.as_ref(), replica_id, request).await {
@@ -158,6 +182,21 @@ fn observed_ip(headers: &HeaderMap, connect: SocketAddr) -> Option<String> {
         .filter(|value| !value.is_empty())
         .map(str::to_string)
         .or_else(|| Some(connect.ip().to_string()))
+}
+
+async fn reject_unowned_agent_replica<T: DatabaseImpl>(
+    db: &T,
+    ctx: &AuthContext,
+    replica_id: Uuid,
+) -> Option<(StatusCode, Json<ApiResponse>)> {
+    if !matches!(ctx.kind, PrincipalKind::Agent) {
+        return None;
+    }
+    match repository::fetch_replica(db, replica_id).await {
+        Ok(Some(replica)) if replica.registered_by_principal_id == ctx.principal_id => None,
+        Ok(_) => Some(not_found("Replica not found")),
+        Err(err) => Some(api_error(err.to_string())),
+    }
 }
 
 /// the `replicas` endpoints.

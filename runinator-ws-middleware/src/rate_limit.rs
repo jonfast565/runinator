@@ -117,6 +117,12 @@ pub fn check_login_attempt(ip: IpAddr) -> Result<(), f64> {
     login_throttle().check(&format!("login:{ip}"))
 }
 
+/// enrollment redemption uses the same strict unauthenticated throttle but a separate bucket, so
+/// a legitimate enrollment cannot be starved by login traffic from the same NAT address.
+pub fn check_enrollment_attempt(ip: IpAddr) -> Result<(), f64> {
+    login_throttle().check(&format!("enroll:{ip}"))
+}
+
 /// paths exempt from rate limiting so health/metrics scrapers are never throttled.
 fn is_exempt(path: &str) -> bool {
     matches!(path, "/health" | "/ready" | "/metrics")

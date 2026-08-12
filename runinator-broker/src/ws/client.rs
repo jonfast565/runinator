@@ -21,13 +21,13 @@ use async_trait::async_trait;
 use uuid::Uuid;
 
 // only the live client reports a connection state; the stub below has none to report.
+#[cfg(feature = "ws")]
+use crate::{AgentCommand, AgentDelivery, ConnectionState, ConsumerProfile};
 use crate::{
     Broker, BrokerDelivery, BrokerError, BrokerMessage, ControlCommand, ControlDelivery,
     EventDelivery, EventMessage, IngressDelivery, IngressMessage, ResultDelivery, ResultMessage,
     WakeDelivery, WakeMessage,
 };
-#[cfg(feature = "ws")]
-use crate::{ConnectionState, ConsumerProfile};
 
 #[cfg(feature = "ws")]
 mod imp {
@@ -456,6 +456,10 @@ mod imp {
             true
         }
 
+        fn supports_agent_channel(&self) -> bool {
+            true
+        }
+
         fn connection_state(&self) -> Option<watch::Receiver<ConnectionState>> {
             Some(self.state())
         }
@@ -598,6 +602,80 @@ mod imp {
             match self
                 .request_bounded(
                     TcpRequest::NackControl {
+                        consumer: consumer.to_string(),
+                        delivery_id,
+                    },
+                    ONE_SHOT_RETRY_WINDOW,
+                )
+                .await?
+            {
+                TcpResponse::Ok => Ok(()),
+                TcpResponse::Error { message } => Err(BrokerError::Internal(message)),
+                _ => Err(unexpected_response()),
+            }
+        }
+
+        async fn publish_agent(&self, command: AgentCommand) -> Result<(), BrokerError> {
+            match self
+                .request_bounded(TcpRequest::PublishAgent { command }, ONE_SHOT_RETRY_WINDOW)
+                .await?
+            {
+                TcpResponse::Ok => Ok(()),
+                TcpResponse::Error { message } => Err(BrokerError::Internal(message)),
+                _ => Err(unexpected_response()),
+            }
+        }
+
+        async fn receive_agent(&self, consumer: &str) -> Result<AgentDelivery, BrokerError> {
+            match self
+                .request_forever(TcpRequest::ReceiveAgent {
+                    consumer: consumer.to_string(),
+                })
+                .await?
+            {
+                TcpResponse::AgentDelivery { delivery } => Ok(delivery),
+                TcpResponse::Error { message } => Err(BrokerError::Internal(message)),
+                _ => Err(unexpected_response()),
+            }
+        }
+
+        async fn receive_agent_for(
+            &self,
+            profile: &ConsumerProfile,
+        ) -> Result<AgentDelivery, BrokerError> {
+            match self
+                .request_forever(TcpRequest::ReceiveAgentFor {
+                    profile: profile.clone(),
+                })
+                .await?
+            {
+                TcpResponse::AgentDelivery { delivery } => Ok(delivery),
+                TcpResponse::Error { message } => Err(BrokerError::Internal(message)),
+                _ => Err(unexpected_response()),
+            }
+        }
+
+        async fn ack_agent(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+            match self
+                .request_bounded(
+                    TcpRequest::AckAgent {
+                        consumer: consumer.to_string(),
+                        delivery_id,
+                    },
+                    ONE_SHOT_RETRY_WINDOW,
+                )
+                .await?
+            {
+                TcpResponse::Ok => Ok(()),
+                TcpResponse::Error { message } => Err(BrokerError::Internal(message)),
+                _ => Err(unexpected_response()),
+            }
+        }
+
+        async fn nack_agent(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+            match self
+                .request_bounded(
+                    TcpRequest::NackAgent {
                         consumer: consumer.to_string(),
                         delivery_id,
                     },

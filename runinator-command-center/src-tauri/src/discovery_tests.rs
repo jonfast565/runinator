@@ -7,11 +7,17 @@ fn service_url_includes_base_path_and_trailing_slash() {
         address: "127.0.0.1".into(),
         port: 8080,
         base_path: "api".into(),
+        scheme: "https".into(),
+        relay_path: "/ws/desktop-worker".into(),
+        cluster_id: None,
+        enrollment_enabled: true,
+        spki_pin: None,
+        version: Some("1.0.0".into()),
         last_heartbeat: Utc::now(),
     };
     assert_eq!(
         build_service_base_url(&service),
-        "http://127.0.0.1:8080/api/"
+        "https://127.0.0.1:8080/api/"
     );
 }
 

@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use runinator_comm::{AgentDirectiveKind, AgentDirectiveRecord};
 use runinator_models::value::Value;
 use runinator_models::{
     bundles::{PackImportResult, ProviderBundle, SecretBundle},
@@ -124,6 +125,8 @@ pub enum ApiResponse {
     ReplicaSamples(ReplicaSampleSeries),
     ReplicaProviderRegistration(ReplicaProviderRegistration),
     ReplicaProviderRegistrationList(Vec<ReplicaProviderRegistration>),
+    AgentDirective(AgentDirectiveRecord),
+    AgentDirectiveList(Vec<AgentDirectiveRecord>),
     NodeBackends(NodeBackendsResponse),
     NodeGroup(ProvisionedGroup),
     NodeGroupList(Vec<ProvisionedGroup>),
@@ -139,6 +142,19 @@ pub enum ApiResponse {
     FreezeWindow(FreezeWindow),
     FreezeWindowList(Vec<FreezeWindow>),
     Backfill(BackfillResponse),
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateAgentDirectiveRequest {
+    pub kind: AgentDirectiveKind,
+    /// relative deadline for delivery and execution; defaults to five minutes.
+    #[serde(default)]
+    pub expires_in_seconds: Option<u64>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct AgentDirectiveQuery {
+    pub limit: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]

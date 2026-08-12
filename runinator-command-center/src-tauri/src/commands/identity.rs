@@ -360,6 +360,32 @@ pub async fn rotate_api_key(
 }
 
 #[tauri::command]
+pub async fn create_agent_enrollment_token(
+    state: State<'_, CommandCenterState>,
+    request: Value,
+) -> CommandResult<Value> {
+    post_json(&state, "agents/enrollment_tokens", &request).await
+}
+
+#[tauri::command]
+pub async fn list_agent_enrollment_tokens(
+    state: State<'_, CommandCenterState>,
+) -> CommandResult<Vec<Value>> {
+    get_json(&state, "agents/enrollment_tokens").await
+}
+
+#[tauri::command]
+pub async fn revoke_agent_enrollment_token(
+    state: State<'_, CommandCenterState>,
+    token_id: String,
+) -> CommandResult<Value> {
+    let url = build_state_url(&state, &format!("agents/enrollment_tokens/{token_id}")).await?;
+    let response = state.client.read().await.delete(url.clone()).send().await?;
+    let response = handle_response(url, response).await?;
+    Ok(response.json::<Value>().await?)
+}
+
+#[tauri::command]
 pub async fn list_dead_letters(
     state: State<'_, CommandCenterState>,
     channel: Option<String>,

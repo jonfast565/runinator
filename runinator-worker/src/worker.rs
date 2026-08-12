@@ -23,6 +23,11 @@ use tokio::{
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
+use crate::agent::outbox::{ResultOutbox, drain_before_work, drain_forever};
+use crate::agent::{
+    DirectiveHandler,
+    directives::{DirectiveLoopState, run_directive_loop},
+};
 use crate::broker::broker_error;
 use crate::events::{ActionOutcome, WorkerEvent, WorkerEventSink};
 use crate::executor;
@@ -66,6 +71,8 @@ pub struct WorkerRuntime {
     pub shutdown: Arc<Notify>,
     /// observer for loop activity; use [`crate::events::NoopEventSink`] when nothing listens.
     pub events: Arc<dyn WorkerEventSink>,
+    pub result_outbox: Arc<dyn ResultOutbox>,
+    pub directive_handler: Arc<dyn DirectiveHandler>,
 }
 
 /// load plugin libraries from the supplied search paths, skipping any that do not exist.
@@ -98,7 +105,21 @@ pub async fn start_worker_loop(runtime: WorkerRuntime) -> Result<(), SendableErr
         shutdown_grace,
         shutdown,
         events,
+        result_outbox,
+        directive_handler,
     } = runtime;
+
+    if !drain_before_work(result_outbox.as_ref(), broker.as_ref(), shutdown.as_ref()).await? {
+        return Ok(());
+    }
+    let outbox_task = {
+        let broker = broker.clone();
+        let result_outbox = result_outbox.clone();
+        let shutdown = shutdown.clone();
+        tokio::spawn(async move {
+            drain_forever(result_outbox.as_ref(), broker.as_ref(), shutdown.as_ref()).await
+        })
+    };
 
     // the ack channels are keyed by the consumer id; the action and control channels route by
     // profile. the control profile is never exclusive: exclusivity keeps a desktop worker from
@@ -113,6 +134,9 @@ pub async fn start_worker_loop(runtime: WorkerRuntime) -> Result<(), SendableErr
     // keyed by node-run id so concurrent node runs of the same workflow run (parallel/race/map child
     // work) each get their own cancellation token; a targeted cancel reaches exactly one branch.
     let in_flight = Arc::new(Mutex::new(HashMap::<Uuid, InFlightAction>::new()));
+    let drained = Arc::new(AtomicBool::new(false));
+    let restart_requested = Arc::new(AtomicBool::new(false));
+    let directive_state_changed = Arc::new(Notify::new());
     let executor_leases = ExecutorLeaseManager::new(api_client.clone(), replica_id);
     let control_task = tokio::spawn(run_control_loop(
         broker.clone(),
@@ -121,10 +145,42 @@ pub async fn start_worker_loop(runtime: WorkerRuntime) -> Result<(), SendableErr
         shutdown.clone(),
         Arc::clone(&events),
     ));
+    let directive_task = tokio::spawn(run_directive_loop(
+        broker.clone(),
+        profile.clone(),
+        directive_handler,
+        DirectiveLoopState {
+            drained: Arc::clone(&drained),
+            restart_requested: Arc::clone(&restart_requested),
+            state_changed: Arc::clone(&directive_state_changed),
+        },
+        shutdown.clone(),
+    ));
     let mut deliveries = JoinSet::new();
     info!(max_concurrent_actions, "worker action loop started");
 
     loop {
+        if restart_requested.load(Ordering::SeqCst) {
+            info!("agent restart directive received");
+            break;
+        }
+        if drained.load(Ordering::SeqCst) {
+            tokio::select! {
+                _ = shutdown.notified() => break,
+                _ = directive_state_changed.notified() => continue,
+                _ = tokio::time::sleep(Duration::from_secs(1)) => continue,
+            }
+        }
+        if result_outbox.is_full() {
+            warn!(
+                outbox_depth = result_outbox.depth(),
+                "result outbox is full; draining before accepting more actions"
+            );
+            tokio::select! {
+                _ = shutdown.notified() => break,
+                _ = tokio::time::sleep(Duration::from_secs(1)) => continue,
+            }
+        }
         let permit = tokio::select! {
             biased;
             _ = shutdown.notified() => {
@@ -140,6 +196,7 @@ pub async fn start_worker_loop(runtime: WorkerRuntime) -> Result<(), SendableErr
             permit = semaphore.clone().acquire_owned() => {
                 permit.map_err(|err| crate::errors::CONCURRENCY_CLOSED.error(err))?
             }
+            _ = directive_state_changed.notified() => continue,
         };
 
         let maybe_delivery = tokio::select! {
@@ -147,6 +204,10 @@ pub async fn start_worker_loop(runtime: WorkerRuntime) -> Result<(), SendableErr
                 drop(permit);
                 info!("worker loop shutting down");
                 break;
+            }
+            _ = directive_state_changed.notified() => {
+                drop(permit);
+                continue;
             }
             result = broker.receive_for(&profile) => {
                 match result {
@@ -181,6 +242,7 @@ pub async fn start_worker_loop(runtime: WorkerRuntime) -> Result<(), SendableErr
         let in_flight = Arc::clone(&in_flight);
         let executor_leases = executor_leases.clone();
         let events = Arc::clone(&events);
+        let result_outbox = Arc::clone(&result_outbox);
         deliveries.spawn(async move {
             let _permit = permit;
             if let Err(err) = process_delivery(
@@ -193,6 +255,7 @@ pub async fn start_worker_loop(runtime: WorkerRuntime) -> Result<(), SendableErr
                 in_flight,
                 executor_leases,
                 events,
+                result_outbox,
             )
             .await
             {
@@ -228,6 +291,25 @@ pub async fn start_worker_loop(runtime: WorkerRuntime) -> Result<(), SendableErr
         Err(err) => error!("worker control task join error: {}", err),
     }
 
+    directive_task.abort();
+    if let Err(err) = directive_task.await
+        && !err.is_cancelled()
+    {
+        error!("agent directive task join error: {err}");
+    }
+
+    outbox_task.abort();
+    if let Err(err) = outbox_task.await
+        && !err.is_cancelled()
+    {
+        error!("worker result outbox task join error: {}", err);
+    }
+
+    if restart_requested.load(Ordering::SeqCst) {
+        return Err(Box::new(std::io::Error::other(
+            "agent restart directive requested a reconnect",
+        )));
+    }
     Ok(())
 }
 
@@ -402,6 +484,7 @@ async fn process_delivery(
     in_flight: Arc<Mutex<HashMap<Uuid, InFlightAction>>>,
     executor_leases: ExecutorLeaseManager,
     events: Arc<dyn WorkerEventSink>,
+    result_outbox: Arc<dyn ResultOutbox>,
 ) -> Result<(), SendableError> {
     // link this execution span to the trace that dispatched the action (w3c context from the broker
     // message). a no-op when the dispatcher had otel off.
@@ -445,6 +528,7 @@ async fn process_delivery(
     let sink = RunOutputSink::new(
         command.clone(),
         broker.clone(),
+        result_outbox,
         tokio::runtime::Handle::current(),
     );
     // acquire the execution lease before anything observable runs. a redelivered or timeout-raced

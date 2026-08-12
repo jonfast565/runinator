@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use crate::agent::{
     AgentRuntimeConfig, BrokerMode, BrokerSelection, DEFAULT_HEARTBEAT_INTERVAL,
-    DEFAULT_REGISTER_MAX_ATTEMPTS,
+    DEFAULT_REGISTER_MAX_ATTEMPTS, LocatorMode,
 };
 use crate::provider_repository::default_provider_factory;
 
@@ -21,13 +21,18 @@ pub struct Config {
     pub broker_endpoint: String,
     pub broker_action_topic: String,
     pub broker_control_topic: String,
+    pub broker_agent_topic: String,
     pub broker_result_topic: String,
     pub broker_client_id: String,
     pub broker_consumer_id: String,
     pub max_concurrent_actions: usize,
     pub shutdown_grace_seconds: u64,
     pub api_base_url: String,
+    pub locator_mode: LocatorMode,
+    pub gossip_bind: String,
+    pub gossip_port: u16,
     pub api_key: Option<String>,
+    pub enrollment_token: Option<String>,
     pub worker_id: Uuid,
     pub advertise_host: Option<String>,
     pub liveness_file: String,
@@ -61,6 +66,9 @@ struct CliArgs {
     #[arg(long, default_value = "runinator.control")]
     broker_control_topic: String,
 
+    #[arg(long, default_value = "runinator.agent")]
+    broker_agent_topic: String,
+
     #[arg(long, default_value = "runinator.results")]
     broker_result_topic: String,
 
@@ -84,9 +92,24 @@ struct CliArgs {
     #[arg(long, env = "RUNINATOR_SERVICE_URL")]
     service_url: Option<String>,
 
+    /// discover a LAN/local-dev service announcement. automatic selection requires an enrollment
+    /// token whose cluster id matches the announcement.
+    #[arg(long, env = "RUNINATOR_DISCOVER")]
+    discover: bool,
+
+    #[arg(long, env = "RUNINATOR_GOSSIP_BIND", default_value = "0.0.0.0")]
+    gossip_bind: String,
+
+    #[arg(long, env = "RUNINATOR_GOSSIP_PORT", default_value_t = 5000)]
+    gossip_port: u16,
+
     /// Service api key presented to the web service when auth is enabled.
     #[arg(long, env = "RUNINATOR_API_KEY")]
     api_key: Option<String>,
+
+    /// single-use first-start enrollment token. ignored once an issued credential is stored.
+    #[arg(long = "enroll", env = "RUNINATOR_ENROLLMENT_TOKEN")]
+    enrollment_token: Option<String>,
 
     #[arg(long)]
     worker_id: Option<String>,
@@ -142,13 +165,24 @@ pub fn parse_config() -> Result<Config, SendableError> {
         broker_endpoint: args.broker_endpoint,
         broker_action_topic: args.broker_action_topic,
         broker_control_topic: args.broker_control_topic,
+        broker_agent_topic: args.broker_agent_topic,
         broker_result_topic: args.broker_result_topic,
         broker_client_id: args.broker_client_id,
         broker_consumer_id: consumer_id,
         max_concurrent_actions: args.max_concurrent_actions.max(1),
         shutdown_grace_seconds: args.shutdown_grace_seconds.max(1),
         api_base_url,
+        locator_mode: if args.discover {
+            LocatorMode::Discover
+        } else {
+            LocatorMode::Static
+        },
+        gossip_bind: args.gossip_bind,
+        gossip_port: args.gossip_port,
         api_key: args.api_key.filter(|value| !value.trim().is_empty()),
+        enrollment_token: args
+            .enrollment_token
+            .filter(|value| !value.trim().is_empty()),
         worker_id,
         advertise_host: args.advertise_host.filter(|value| !value.trim().is_empty()),
         liveness_file: args.liveness_file,
@@ -171,6 +205,7 @@ impl Config {
             direct_endpoint: self.broker_endpoint.clone(),
             action_topic: self.broker_action_topic.clone(),
             control_topic: self.broker_control_topic.clone(),
+            agent_topic: self.broker_agent_topic.clone(),
             result_topic: self.broker_result_topic.clone(),
             client_id: self.broker_client_id.clone(),
             api_key: self.api_key.clone(),
@@ -179,7 +214,15 @@ impl Config {
 
         Ok(AgentRuntimeConfig {
             service_url: self.api_base_url.clone(),
+            locator_mode: self.locator_mode,
+            gossip_bind: self.gossip_bind.clone(),
+            gossip_port: self.gossip_port,
             api_key: self.api_key.clone(),
+            enrollment_token: self.enrollment_token.clone(),
+            credential_file: app_data::app_data_path("agent/worker-credential.json")
+                .unwrap_or_else(|_| std::path::PathBuf::from("worker-credential.json")),
+            outbox_file: app_data::app_data_path("agent/worker-result-outbox.jsonl")
+                .unwrap_or_else(|_| std::path::PathBuf::from("worker-result-outbox.jsonl")),
             instance_id: self.worker_id.to_string(),
             display_name: Some(format!("worker-{}", self.worker_id)),
             advertise_host: self.advertise_host.clone(),
@@ -200,8 +243,10 @@ impl Config {
             shutdown_grace: Duration::from_secs(self.shutdown_grace_seconds),
             liveness_file: self.liveness_file.clone(),
             heartbeat_interval: DEFAULT_HEARTBEAT_INTERVAL,
+            stale_after: Duration::from_secs(30),
             register_max_attempts: DEFAULT_REGISTER_MAX_ATTEMPTS,
             sample_telemetry: true,
+            directive_handler: std::sync::Arc::new(crate::agent::DefaultDirectiveHandler),
         })
     }
 }

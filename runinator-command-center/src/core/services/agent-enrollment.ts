@@ -1,0 +1,25 @@
+import {
+  createAgentEnrollmentToken,
+  listAgentEnrollmentTokens,
+  revokeAgentEnrollmentToken,
+} from "../api/commandCenterApi";
+import type { CreateAgentEnrollmentTokenInput } from "../domain/models";
+import type { AppService } from "./app";
+
+export function createAgentEnrollmentService(app: AppService) {
+  return {
+    create(request: CreateAgentEnrollmentTokenInput) {
+      return app.runOperation("Creating enrollment token", () => createAgentEnrollmentToken(request));
+    },
+    list() {
+      return app.runOperation("Loading enrollment tokens", () => listAgentEnrollmentTokens());
+    },
+    revoke(tokenId: string) {
+      return app.runOperation("Revoking enrollment token", () =>
+        revokeAgentEnrollmentToken(tokenId),
+      );
+    },
+  };
+}
+
+export type AgentEnrollmentService = ReturnType<typeof createAgentEnrollmentService>;

@@ -40,6 +40,8 @@ runinator-wdl = { path = "../runinator-wdl" }
 
 [dev-dependencies]
 async-trait = "0.1"
+base64 = "0.22"
+runinator-auth = { path = "../runinator-auth" }
 # enable the engine's in-crate test hooks (forced-failure injection, test helpers) so the
 # result-consumer/repository integration tests can drive engine behavior. dev-only, so normal
 # builds never compile the hooks in.

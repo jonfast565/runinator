@@ -25,6 +25,7 @@ pub struct EnginePublisher {
     broker: Arc<dyn Broker>,
     wake_nudge: Arc<Notify>,
     action_nudge: Arc<Notify>,
+    agent_nudge: Arc<Notify>,
 }
 
 impl EnginePublisher {
@@ -33,6 +34,7 @@ impl EnginePublisher {
             broker,
             wake_nudge: Arc::new(Notify::new()),
             action_nudge: Arc::new(Notify::new()),
+            agent_nudge: Arc::new(Notify::new()),
         }
     }
 
@@ -47,6 +49,10 @@ impl EnginePublisher {
         self.action_nudge.clone()
     }
 
+    pub(crate) fn agent_nudge(&self) -> Arc<Notify> {
+        self.agent_nudge.clone()
+    }
+
     /// wake the in-process wake publisher so newly enqueued ready nodes are announced promptly.
     pub fn nudge_wake_publisher(&self) {
         // notify_one stores a permit when nobody is waiting, so a nudge during publish is not lost.
@@ -56,6 +62,11 @@ impl EnginePublisher {
     /// wake the in-process action-dispatch publisher so outbox rows reach workers promptly.
     pub fn nudge_action_dispatch_publisher(&self) {
         self.action_nudge.notify_one();
+    }
+
+    /// wake the durable agent-directive publisher.
+    pub fn nudge_agent_directive_publisher(&self) {
+        self.agent_nudge.notify_one();
     }
 }
 

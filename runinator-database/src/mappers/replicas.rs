@@ -1,5 +1,35 @@
 use super::*;
 
+row_mapper!(row_to_agent_directive(row) -> Result<AgentDirectiveRecord, SendableError> {
+    let kind = serde_json::from_str::<AgentDirectiveKind>(&row.get::<String, _>("kind_json"))
+        .map_err(|err| Box::new(err) as SendableError)?;
+    let state = match row.get::<String, _>("state").as_str() {
+        "pending" => AgentDirectiveState::Pending,
+        "published" => AgentDirectiveState::Published,
+        "accepted" => AgentDirectiveState::Accepted,
+        "completed" => AgentDirectiveState::Completed,
+        "failed" => AgentDirectiveState::Failed,
+        "unsupported" => AgentDirectiveState::Unsupported,
+        "expired" => AgentDirectiveState::Expired,
+        _ => AgentDirectiveState::Failed,
+    };
+    Ok(AgentDirectiveRecord {
+        directive_id: row.get("directive_id"),
+        replica_id: row.get("replica_id"),
+        kind,
+        state,
+        issued_at: DateTime::<Utc>::from_timestamp(row.get("issued_at"), 0).unwrap_or_else(Utc::now),
+        expires_at: DateTime::<Utc>::from_timestamp(row.get("expires_at"), 0).unwrap_or_else(Utc::now),
+        published_at: row.get::<Option<i64>, _>("published_at").and_then(|ts| DateTime::<Utc>::from_timestamp(ts, 0)),
+        completed_at: row.get::<Option<i64>, _>("completed_at").and_then(|ts| DateTime::<Utc>::from_timestamp(ts, 0)),
+        payload: parse_json(row.get("payload_json")),
+        message: row.get("message"),
+        attempts: row.get("attempts"),
+        claimed_at: row.get::<Option<i64>, _>("claimed_at").and_then(|ts| DateTime::<Utc>::from_timestamp(ts, 0)),
+        claimed_by_runtime_id: row.get("claimed_by_runtime_id"),
+    })
+});
+
 macro_rules! replica_from_row {
     ($row:expr) => {{
         Ok(ReplicaRecord {

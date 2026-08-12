@@ -8,6 +8,7 @@ pub mod logger;
 pub mod pack;
 pub mod resource_telemetry;
 pub mod secret_cipher;
+pub mod secret_file;
 pub mod shell;
 pub mod startup;
 pub mod telemetry;

@@ -2,8 +2,15 @@
 //! running action counters. both the headless binary and a gui host read the same types, so a
 //! degraded agent looks the same in a log line as it does in a status header.
 
+use std::time::Instant;
+
+use chrono::{DateTime, Utc};
+use runinator_models::replicas::{AgentConnectionState, AgentStatusReport};
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
+use crate::agent::config::AgentRuntimeConfig;
+use crate::agent::outbox::ResultOutbox;
 use crate::events::{ActionOutcome, WorkerEvent};
 
 /// where the agent lifecycle is in the register/connect/retry cycle. surfaced through
@@ -53,6 +60,113 @@ pub struct AgentStatus {
     pub connection: AgentConnection,
     /// how this agent reaches the broker, e.g. `relay via wss://host/ws/desktop-worker`.
     pub broker_connection: Option<String>,
+    pub metrics: AgentMetrics,
+    pub last_error: Option<String>,
+    pub last_error_at: Option<DateTime<Utc>>,
+}
+
+/// immutable facts combined with each live status snapshot to build the wire report.
+pub struct AgentReportContext {
+    started_at: Instant,
+    broker_mode: String,
+    broker_endpoint: String,
+    agent_version: Option<String>,
+    config_hash: String,
+    provider_count: usize,
+    labels: std::collections::BTreeMap<String, String>,
+    stale_after_seconds: u64,
+    outbox: std::sync::Arc<dyn ResultOutbox>,
+}
+
+impl AgentReportContext {
+    pub fn new(
+        config: &AgentRuntimeConfig,
+        provider_count: usize,
+        outbox: std::sync::Arc<dyn ResultOutbox>,
+    ) -> Self {
+        let broker_mode = if config.broker.broker_backend == "ws" {
+            "relay"
+        } else {
+            "direct"
+        };
+        Self {
+            started_at: Instant::now(),
+            broker_mode: broker_mode.to_string(),
+            broker_endpoint: config.broker.broker_endpoint.clone(),
+            agent_version: config.version.clone(),
+            config_hash: config_hash(config),
+            provider_count,
+            labels: config.labels.clone(),
+            stale_after_seconds: config.stale_after.as_secs(),
+            outbox,
+        }
+    }
+
+    pub fn report(
+        &self,
+        status: &AgentStatus,
+        heartbeat_seq: u64,
+        clock_skew_ms: i64,
+    ) -> AgentStatusReport {
+        let (mut connection_state, reconnect_retry_seconds) = match &status.connection {
+            AgentConnection::Stopped => (AgentConnectionState::Stopped, None),
+            AgentConnection::Registering => (AgentConnectionState::Registering, None),
+            AgentConnection::Connecting => (AgentConnectionState::Connecting, None),
+            AgentConnection::Connected => (AgentConnectionState::Connected, None),
+            AgentConnection::Reconnecting { retry_secs } => {
+                (AgentConnectionState::Reconnecting, Some(*retry_secs))
+            }
+            AgentConnection::ReenrollmentRequired { .. } => {
+                (AgentConnectionState::ReenrollmentRequired, None)
+            }
+        };
+        if self.outbox.is_full() {
+            connection_state = AgentConnectionState::Draining;
+        }
+        AgentStatusReport {
+            connection_state,
+            reconnect_retry_seconds,
+            broker_mode: self.broker_mode.clone(),
+            broker_endpoint: self.broker_endpoint.clone(),
+            in_flight: status.metrics.in_flight,
+            succeeded: status.metrics.succeeded,
+            failed: status.metrics.failed,
+            timed_out: status.metrics.timed_out,
+            canceled: status.metrics.canceled,
+            last_error: status.last_error.clone(),
+            last_error_at: status.last_error_at,
+            outbox_depth: self.outbox.depth(),
+            agent_version: self.agent_version.clone(),
+            config_hash: self.config_hash.clone(),
+            provider_count: self.provider_count,
+            labels: self.labels.clone(),
+            uptime_seconds: self.started_at.elapsed().as_secs(),
+            heartbeat_seq,
+            clock_skew_ms,
+            stale_after_seconds: Some(self.stale_after_seconds),
+        }
+    }
+}
+
+fn config_hash(config: &AgentRuntimeConfig) -> String {
+    let canonical = serde_json::json!({
+        "service_url": config.service_url,
+        "locator_mode": format!("{:?}", config.locator_mode),
+        "gossip_bind": config.gossip_bind,
+        "gossip_port": config.gossip_port,
+        "instance_id": config.instance_id,
+        "labels": config.labels,
+        "exclusive": config.exclusive,
+        "broker_backend": config.broker.broker_backend,
+        "broker_endpoint": config.broker.broker_endpoint,
+        "max_concurrent_actions": config.max_concurrent_actions,
+        "shutdown_grace_seconds": config.shutdown_grace.as_secs(),
+        "heartbeat_seconds": config.heartbeat_interval.as_secs(),
+        "stale_after_seconds": config.stale_after.as_secs(),
+        "outbox_file": config.outbox_file,
+    });
+    let digest = Sha256::digest(canonical.to_string().as_bytes());
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 /// a single finished action, kept so a host can show what this machine last did.

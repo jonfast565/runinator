@@ -15,10 +15,13 @@ use uuid::Uuid;
 
 use crate::agent::config::AgentRuntimeConfig;
 use crate::agent::observer::AgentObserver;
-use crate::agent::registration::{publish_provider_metadata, register_agent_replica};
+use crate::agent::outbox::{FileOutbox, ResultOutbox};
+use crate::agent::registration::{
+    publish_provider_metadata, register_agent_replica, spawn_agent_heartbeat,
+};
 use crate::agent::reporter::StatusReporter;
 use crate::agent::shutdown::Shutdown;
-use crate::agent::status::{AgentConnection, AgentStatus};
+use crate::agent::status::{AgentConnection, AgentReportContext, AgentStatus};
 use crate::agent::supervisor::{SupervisedLoop, run_supervised};
 use crate::worker::load_libraries;
 
@@ -43,7 +46,16 @@ impl AgentRuntime {
         )
         .map_err(|err| crate::errors::API_CLIENT.error(err))?;
         let libraries = Arc::new(load_libraries(&config.dll_paths)?);
+        let result_outbox: Arc<dyn ResultOutbox> = Arc::new(
+            FileOutbox::open(&config.outbox_file)
+                .map_err(|err| crate::errors::API_CLIENT.error(err))?,
+        );
 
+        let report_context = Arc::new(AgentReportContext::new(
+            &config,
+            (config.providers)().len(),
+            Arc::clone(&result_outbox),
+        ));
         let reporter = Arc::new(StatusReporter::new(
             observer,
             AgentStatus {
@@ -51,6 +63,9 @@ impl AgentRuntime {
                 replica_id: None,
                 connection: AgentConnection::Registering,
                 broker_connection: Some(config.broker_description.clone()),
+                metrics: Default::default(),
+                last_error: None,
+                last_error_at: None,
             },
         ));
         let telemetry = config
@@ -64,6 +79,8 @@ impl AgentRuntime {
             api_client,
             libraries,
             telemetry.clone(),
+            report_context,
+            result_outbox,
             Arc::clone(&reporter),
             shutdown.clone(),
         ));
@@ -145,6 +162,8 @@ async fn run_lifecycle(
     api_client: AsyncApiClient<StaticLocator>,
     libraries: Arc<std::collections::HashMap<String, runinator_plugin::plugin::Plugin>>,
     telemetry: Option<Arc<TelemetryCollector>>,
+    report_context: Arc<AgentReportContext>,
+    result_outbox: Arc<dyn ResultOutbox>,
     reporter: Arc<StatusReporter>,
     shutdown: Shutdown,
 ) -> Result<(), SendableError> {
@@ -158,7 +177,9 @@ async fn run_lifecycle(
     );
 
     let replica_client =
-        match register_agent_replica(&api_client, &config, &reporter, &shutdown).await {
+        match register_agent_replica(&api_client, &config, &reporter, &report_context, &shutdown)
+            .await
+        {
             Ok(Some(client)) => client,
             // shutdown during a retry window is a clean stop, not a failure.
             Ok(None) => {
@@ -190,10 +211,17 @@ async fn run_lifecycle(
     }
 
     // the heartbeat keeps the replica live and marks it offline on shutdown.
-    replica_client.spawn_heartbeat_with_telemetry(shutdown.notify(), telemetry);
+    spawn_agent_heartbeat(
+        replica_client.clone(),
+        &config,
+        Arc::clone(&reporter),
+        report_context,
+        telemetry,
+        shutdown.clone(),
+    );
     reporter.log(format!("Broker: {}", config.broker_description));
 
-    let inputs = SupervisedLoop::new(&config, api_client, replica_id, libraries);
+    let inputs = SupervisedLoop::new(&config, api_client, replica_id, libraries, result_outbox);
     run_supervised(inputs, Arc::clone(&reporter), shutdown).await;
 
     settle(&reporter, liveness_task);

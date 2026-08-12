@@ -1,13 +1,13 @@
 use crate::{
     http::types::{
-        AckRequest, PublishControlRequest, PublishEventRequest, PublishIngressRequest,
-        PublishRequest, PublishWakeRequest, ReceiveControlResponse, ReceiveEventResponse,
-        ReceiveIngressResponse, ReceiveRequest, ReceiveResponse, ReceiveResultResponse,
-        ReceiveWakeResponse,
+        AckRequest, PublishAgentRequest, PublishControlRequest, PublishEventRequest,
+        PublishIngressRequest, PublishRequest, PublishWakeRequest, ReceiveAgentResponse,
+        ReceiveControlResponse, ReceiveEventResponse, ReceiveIngressResponse, ReceiveRequest,
+        ReceiveResponse, ReceiveResultResponse, ReceiveWakeResponse,
     },
-    Broker, BrokerDelivery, BrokerError, BrokerMessage, ConsumerProfile, ControlCommand,
-    ControlDelivery, EventDelivery, EventMessage, IngressDelivery, IngressMessage, ResultDelivery,
-    ResultMessage, WakeDelivery, WakeMessage,
+    AgentCommand, AgentDelivery, Broker, BrokerDelivery, BrokerError, BrokerMessage,
+    ConsumerProfile, ControlCommand, ControlDelivery, EventDelivery, EventMessage, IngressDelivery,
+    IngressMessage, ResultDelivery, ResultMessage, WakeDelivery, WakeMessage,
 };
 use async_trait::async_trait;
 use reqwest::{Client, StatusCode, Url};
@@ -81,11 +81,38 @@ impl HttpBroker {
             ))),
         }
     }
+
+    async fn receive_agent_request(
+        &self,
+        request: ReceiveRequest,
+    ) -> Result<AgentDelivery, BrokerError> {
+        let response = self
+            .client
+            .post(self.endpoint("agent/receive")?)
+            .json(&request)
+            .send()
+            .await
+            .map_err(|err| BrokerError::Internal(err.to_string()))?;
+        match response.status() {
+            StatusCode::OK => response
+                .json::<ReceiveAgentResponse>()
+                .await
+                .map(|payload| payload.delivery)
+                .map_err(|err| BrokerError::Internal(err.to_string())),
+            status => Err(BrokerError::Internal(format!(
+                "unexpected agent receive status: {status}"
+            ))),
+        }
+    }
 }
 
 #[async_trait]
 impl Broker for HttpBroker {
     fn supports_workflow_result_channels(&self) -> bool {
+        true
+    }
+
+    fn supports_agent_channel(&self) -> bool {
         true
     }
 
@@ -246,6 +273,49 @@ impl Broker for HttpBroker {
 
     async fn nack_control(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
         self.post_ack("control/nack", consumer, delivery_id).await
+    }
+
+    async fn publish_agent(&self, command: AgentCommand) -> Result<(), BrokerError> {
+        let response = self
+            .client
+            .post(self.endpoint("agent/publish")?)
+            .json(&PublishAgentRequest { command })
+            .send()
+            .await
+            .map_err(|err| BrokerError::Internal(err.to_string()))?;
+        match response.status() {
+            StatusCode::OK | StatusCode::CREATED => Ok(()),
+            status => Err(BrokerError::Internal(format!(
+                "unexpected agent publish status: {status}"
+            ))),
+        }
+    }
+
+    async fn receive_agent(&self, consumer: &str) -> Result<AgentDelivery, BrokerError> {
+        self.receive_agent_request(ReceiveRequest {
+            consumer: consumer.to_string(),
+            profile: None,
+        })
+        .await
+    }
+
+    async fn receive_agent_for(
+        &self,
+        profile: &ConsumerProfile,
+    ) -> Result<AgentDelivery, BrokerError> {
+        self.receive_agent_request(ReceiveRequest {
+            consumer: profile.id.clone(),
+            profile: Some(profile.clone()),
+        })
+        .await
+    }
+
+    async fn ack_agent(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        self.post_ack("agent/ack", consumer, delivery_id).await
+    }
+
+    async fn nack_agent(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        self.post_ack("agent/nack", consumer, delivery_id).await
     }
 
     async fn publish_result(&self, message: ResultMessage) -> Result<(), BrokerError> {

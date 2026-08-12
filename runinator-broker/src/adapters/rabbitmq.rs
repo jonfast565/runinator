@@ -1,5 +1,7 @@
 #[cfg(feature = "rabbitmq")]
 use crate::{ActionTarget, ConsumerProfile};
+#[cfg(feature = "rabbitmq")]
+use crate::{AgentCommand, AgentDelivery};
 use crate::{
     Broker, BrokerDelivery, BrokerError, BrokerMessage, ControlCommand, ControlDelivery,
     EventDelivery, EventMessage, IngressDelivery, IngressMessage, ResultDelivery, ResultMessage,
@@ -10,6 +12,7 @@ use uuid::Uuid;
 
 const DEFAULT_ACTION_QUEUE: &str = "runinator.actions";
 const DEFAULT_CONTROL_QUEUE: &str = "runinator.control";
+const DEFAULT_AGENT_QUEUE_PREFIX: &str = "runinator.agent";
 const DEFAULT_RESULT_QUEUE: &str = "runinator.results";
 const DEFAULT_WAKE_QUEUE: &str = "runinator.wake";
 const DEFAULT_INGRESS_QUEUE: &str = "runinator.ingress";
@@ -30,6 +33,7 @@ pub struct RabbitMqBrokerConfig {
     // client-side against the requesting profile before being handed back.
     pub targeted_action_queue: String,
     pub control_queue: String,
+    pub agent_queue_prefix: String,
     pub result_queue: String,
     pub wake_queue: String,
     pub ingress_queue: String,
@@ -48,6 +52,7 @@ impl RabbitMqBrokerConfig {
             action_queue: DEFAULT_ACTION_QUEUE.into(),
             targeted_action_queue: format!("{DEFAULT_ACTION_QUEUE}.targeted"),
             control_queue: DEFAULT_CONTROL_QUEUE.into(),
+            agent_queue_prefix: DEFAULT_AGENT_QUEUE_PREFIX.into(),
             result_queue: DEFAULT_RESULT_QUEUE.into(),
             wake_queue: DEFAULT_WAKE_QUEUE.into(),
             ingress_queue: DEFAULT_INGRESS_QUEUE.into(),
@@ -66,6 +71,11 @@ impl RabbitMqBrokerConfig {
     /// override the fan-out exchange used for UI events.
     pub fn with_event_exchange(mut self, event_exchange: impl Into<String>) -> Self {
         self.event_exchange = event_exchange.into();
+        self
+    }
+
+    pub fn with_agent_queue_prefix(mut self, prefix: impl Into<String>) -> Self {
+        self.agent_queue_prefix = prefix.into();
         self
     }
 
@@ -154,6 +164,7 @@ struct RabbitMqBrokerInner {
     action_consumers: Mutex<HashMap<String, Arc<AsyncMutex<lapin::Consumer>>>>,
     targeted_action_consumers: Mutex<HashMap<String, Arc<AsyncMutex<lapin::Consumer>>>>,
     control_consumers: Mutex<HashMap<String, Arc<AsyncMutex<lapin::Consumer>>>>,
+    agent_consumers: Mutex<HashMap<String, Arc<AsyncMutex<lapin::Consumer>>>>,
     result_consumers: Mutex<HashMap<String, Arc<AsyncMutex<lapin::Consumer>>>>,
     wake_consumers: Mutex<HashMap<String, Arc<AsyncMutex<lapin::Consumer>>>>,
     ingress_consumers: Mutex<HashMap<String, Arc<AsyncMutex<lapin::Consumer>>>>,
@@ -214,6 +225,7 @@ impl RabbitMqBrokerInner {
             action_consumers: Mutex::new(HashMap::new()),
             targeted_action_consumers: Mutex::new(HashMap::new()),
             control_consumers: Mutex::new(HashMap::new()),
+            agent_consumers: Mutex::new(HashMap::new()),
             result_consumers: Mutex::new(HashMap::new()),
             wake_consumers: Mutex::new(HashMap::new()),
             ingress_consumers: Mutex::new(HashMap::new()),
@@ -268,6 +280,7 @@ impl RabbitMqBrokerInner {
         self.action_consumers.lock().clear();
         self.targeted_action_consumers.lock().clear();
         self.control_consumers.lock().clear();
+        self.agent_consumers.lock().clear();
         self.result_consumers.lock().clear();
         self.wake_consumers.lock().clear();
         self.ingress_consumers.lock().clear();
@@ -329,6 +342,36 @@ impl RabbitMqBrokerInner {
         self.event_consumers
             .lock()
             .insert(consumer_id.to_string(), Arc::clone(&consumer));
+        Ok(consumer)
+    }
+
+    async fn agent_consumer(
+        &self,
+        config: &RabbitMqBrokerConfig,
+        replica_id: Uuid,
+        consumer_id: &str,
+    ) -> Result<Arc<AsyncMutex<lapin::Consumer>>, BrokerError> {
+        let key = format!("{replica_id}:{consumer_id}");
+        if let Some(consumer) = self.agent_consumers.lock().get(&key).cloned() {
+            return Ok(consumer);
+        }
+        let ch = self.ensure_connected(config).await?;
+        let queue = agent_queue(config, replica_id);
+        RabbitChannel(&ch).declare_queue(&queue).await?;
+        let tag = format!("{}.agent.{}", config.client_id, consumer_id);
+        let consumer = Arc::new(AsyncMutex::new(
+            ch.basic_consume(
+                queue.as_str().into(),
+                tag.into(),
+                lapin::options::BasicConsumeOptions::default(),
+                lapin::types::FieldTable::default(),
+            )
+            .await
+            .map_err(rabbitmq_error("agent_consume"))?,
+        ));
+        self.agent_consumers
+            .lock()
+            .insert(key, Arc::clone(&consumer));
         Ok(consumer)
     }
 
@@ -532,6 +575,34 @@ fn queue_for(config: &RabbitMqBrokerConfig, channel: RabbitMqChannel) -> &str {
 }
 
 #[cfg(feature = "rabbitmq")]
+fn agent_queue(config: &RabbitMqBrokerConfig, replica_id: Uuid) -> String {
+    format!("{}.{}", config.agent_queue_prefix, replica_id)
+}
+
+#[cfg(feature = "rabbitmq")]
+async fn receive_agent_json(
+    broker: &RabbitMqBroker,
+    profile: &ConsumerProfile,
+) -> Result<(AgentCommand, lapin::message::Delivery), BrokerError> {
+    let replica_id = profile
+        .replica_id
+        .ok_or_else(|| BrokerError::Internal("agent receive requires a replica id".into()))?;
+    let consumer = broker
+        .inner
+        .agent_consumer(&broker.config, replica_id, &profile.id)
+        .await?;
+    let mut guard = consumer.lock().await;
+    let delivery = guard
+        .next()
+        .await
+        .ok_or(BrokerError::ConsumerStreamEnded)?
+        .map_err(rabbitmq_error("agent_receive"))?;
+    let command = serde_json::from_slice(&delivery.data)
+        .map_err(|err| BrokerError::Internal(err.to_string()))?;
+    Ok((command, delivery))
+}
+
+#[cfg(feature = "rabbitmq")]
 fn channel_name(channel: RabbitMqChannel) -> &'static str {
     match channel {
         RabbitMqChannel::Action => "actions",
@@ -572,6 +643,10 @@ impl RabbitMqBroker {
 impl Broker for RabbitMqBroker {
     fn supports_workflow_result_channels(&self) -> bool {
         self.config.has_workflow_result_queue()
+    }
+
+    fn supports_agent_channel(&self) -> bool {
+        !self.config.agent_queue_prefix.trim().is_empty()
     }
 
     async fn publish(&self, message: BrokerMessage) -> Result<(), BrokerError> {
@@ -665,6 +740,55 @@ impl Broker for RabbitMqBroker {
     }
 
     async fn nack_control(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        nack_delivery(self.inner.take_pending(delivery_id)?).await
+    }
+
+    async fn publish_agent(&self, command: AgentCommand) -> Result<(), BrokerError> {
+        let queue = agent_queue(&self.config, command.replica_id);
+        let payload = serde_json::to_string(&command)
+            .map_err(|err| BrokerError::Internal(err.to_string()))?;
+        let ch = self.inner.ensure_connected(&self.config).await?;
+        RabbitChannel(&ch).declare_queue(&queue).await?;
+        RabbitChannel(&ch)
+            .publish(&queue, &command.directive_id.to_string(), payload)
+            .await
+    }
+
+    async fn receive_agent(&self, consumer: &str) -> Result<AgentDelivery, BrokerError> {
+        let replica_id = Uuid::parse_str(consumer)
+            .map_err(|_| BrokerError::Internal("agent consumer must be a replica uuid".into()))?;
+        self.receive_agent_for(&ConsumerProfile {
+            id: consumer.to_string(),
+            replica_id: Some(replica_id),
+            labels: Default::default(),
+            exclusive: true,
+        })
+        .await
+    }
+
+    async fn receive_agent_for(
+        &self,
+        profile: &ConsumerProfile,
+    ) -> Result<AgentDelivery, BrokerError> {
+        let result = receive_agent_json(self, profile).await;
+        if matches!(result, Err(BrokerError::ConsumerStreamEnded)) {
+            self.inner
+                .agent_consumers
+                .lock()
+                .retain(|key, _| !key.ends_with(&format!(":{}", profile.id)));
+        }
+        let (command, delivery) = result?;
+        let broker_delivery = AgentDelivery::from(command);
+        self.inner
+            .track_delivery(broker_delivery.delivery_id, delivery);
+        Ok(broker_delivery)
+    }
+
+    async fn ack_agent(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        ack_delivery(self.inner.take_pending(delivery_id)?).await
+    }
+
+    async fn nack_agent(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
         nack_delivery(self.inner.take_pending(delivery_id)?).await
     }
 

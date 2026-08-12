@@ -1,8 +1,8 @@
 use crate::{
     tcp::types::{TcpRequest, TcpResponse},
-    Broker, BrokerDelivery, BrokerError, BrokerMessage, ConsumerProfile, ControlCommand,
-    ControlDelivery, EventDelivery, EventMessage, IngressDelivery, IngressMessage, ResultDelivery,
-    ResultMessage, WakeDelivery, WakeMessage,
+    AgentCommand, AgentDelivery, Broker, BrokerDelivery, BrokerError, BrokerMessage,
+    ConsumerProfile, ControlCommand, ControlDelivery, EventDelivery, EventMessage, IngressDelivery,
+    IngressMessage, ResultDelivery, ResultMessage, WakeDelivery, WakeMessage,
 };
 use async_trait::async_trait;
 use std::time::Duration;
@@ -90,6 +90,10 @@ impl TcpBroker {
 #[async_trait]
 impl Broker for TcpBroker {
     fn supports_workflow_result_channels(&self) -> bool {
+        true
+    }
+
+    fn supports_agent_channel(&self) -> bool {
         true
     }
 
@@ -199,6 +203,64 @@ impl Broker for TcpBroker {
     async fn nack_control(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
         let response = self
             .request(TcpRequest::NackControl {
+                consumer: consumer.to_string(),
+                delivery_id,
+            })
+            .await?;
+        Self::expect_ok(response)
+    }
+
+    async fn publish_agent(&self, command: AgentCommand) -> Result<(), BrokerError> {
+        let response = self.request(TcpRequest::PublishAgent { command }).await?;
+        Self::expect_ok(response)
+    }
+
+    async fn receive_agent(&self, consumer: &str) -> Result<AgentDelivery, BrokerError> {
+        match self
+            .receive_request(TcpRequest::ReceiveAgent {
+                consumer: consumer.to_string(),
+            })
+            .await?
+        {
+            TcpResponse::AgentDelivery { delivery } => Ok(delivery),
+            TcpResponse::Error { message } => Err(BrokerError::Internal(message)),
+            _ => Err(BrokerError::Internal(
+                "unexpected agent delivery response".into(),
+            )),
+        }
+    }
+
+    async fn receive_agent_for(
+        &self,
+        profile: &ConsumerProfile,
+    ) -> Result<AgentDelivery, BrokerError> {
+        match self
+            .receive_request(TcpRequest::ReceiveAgentFor {
+                profile: profile.clone(),
+            })
+            .await?
+        {
+            TcpResponse::AgentDelivery { delivery } => Ok(delivery),
+            TcpResponse::Error { message } => Err(BrokerError::Internal(message)),
+            _ => Err(BrokerError::Internal(
+                "unexpected agent delivery response".into(),
+            )),
+        }
+    }
+
+    async fn ack_agent(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        let response = self
+            .request(TcpRequest::AckAgent {
+                consumer: consumer.to_string(),
+                delivery_id,
+            })
+            .await?;
+        Self::expect_ok(response)
+    }
+
+    async fn nack_agent(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        let response = self
+            .request(TcpRequest::NackAgent {
                 consumer: consumer.to_string(),
                 delivery_id,
             })

@@ -16,6 +16,8 @@ use runinator_models::orgs::OrgRole;
 use std::future::Future;
 use uuid::Uuid;
 
+pub mod enroll;
+
 /// raw auth options from the CLI/env, resolved into an [`AuthConfig`] at startup.
 #[derive(Debug, Clone, Default)]
 pub struct AuthOptions {
@@ -246,9 +248,9 @@ pub async fn resolve_credential<S: CredentialStore>(
     Some(AuthContext {
         principal_id: record.key.user_id,
         is_admin: record.is_admin,
-        kind: PrincipalKind::Service,
+        kind: record.principal_kind,
         // service keys carry no org claim; the ws middleware resolves an org from `X-Org-Id`.
-        org_id: None,
+        org_id: record.org_id,
         org_role: None,
     })
 }

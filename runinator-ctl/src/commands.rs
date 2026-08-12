@@ -29,9 +29,9 @@ use runinator_pack::source as pack;
 
 use crate::{
     cli::{
-        ApprovalCommands, ArtifactCommands, Cli, CliTyping, Commands, FreezeCommands, NodeCommands,
-        OrgCommands, ProviderCommands, RunCommands, SettingsCommands, TriggerCommands, WdlCommands,
-        WorkflowCommands,
+        AgentCommands, ApprovalCommands, ArtifactCommands, Cli, CliTyping, Commands,
+        FreezeCommands, NodeCommands, OrgCommands, ProviderCommands, RunCommands, SettingsCommands,
+        TriggerCommands, WdlCommands, WorkflowCommands,
     },
     output, params,
 };
@@ -80,9 +80,13 @@ pub async fn run(client: &Client, cli: &Cli) -> Result<()> {
         Commands::Settings { command } => settings::settings(client, command, cli.json).await,
         Commands::Nodes { command } => nodes::nodes(client, command, cli.json).await,
         Commands::Orgs { command } => orgs::orgs(client, command, cli.json).await,
+        Commands::Agents { command } => {
+            agents::agents(client, command, &cli.api_base_url, cli.json).await
+        }
     }
 }
 
+mod agents;
 mod nodes;
 mod orgs;
 mod status;

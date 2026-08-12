@@ -9,7 +9,10 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use runinator_models::{
-    auth::{ApiKey, ApiKeyRecord, AuthSession, Grant, LocalCredential, Team, User},
+    auth::{
+        AgentEnrollmentToken, AgentEnrollmentTokenRecord, ApiKey, ApiKeyRecord, AuthSession, Grant,
+        LocalCredential, Team, User,
+    },
     errors::SendableError,
 };
 
@@ -116,6 +119,38 @@ pub trait AuthStore: Send + Sync + 'static {
         id: Uuid,
         last_used_at: i64,
     ) -> impl Future<Output = Result<(), SendableError>> + Send;
+
+    fn create_agent_enrollment_token(
+        &self,
+        record: AgentEnrollmentTokenRecord,
+    ) -> impl Future<Output = Result<AgentEnrollmentToken, SendableError>> + Send;
+
+    fn fetch_agent_enrollment_token(
+        &self,
+        token_id: String,
+    ) -> impl Future<Output = Result<Option<AgentEnrollmentTokenRecord>, SendableError>> + Send;
+
+    fn list_agent_enrollment_tokens(
+        &self,
+    ) -> impl Future<Output = Result<Vec<AgentEnrollmentToken>, SendableError>> + Send;
+
+    fn delete_agent_enrollment_token(
+        &self,
+        token_id: String,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
+
+    fn purge_expired_enrollment_tokens(
+        &self,
+        before: DateTime<Utc>,
+    ) -> impl Future<Output = Result<u64, SendableError>> + Send;
+
+    /// atomically consume a still-live single-use token and mint its agent credential.
+    fn consume_enrollment_token_and_create_api_key(
+        &self,
+        token_id: String,
+        record: ApiKeyRecord,
+        consumed_at: DateTime<Utc>,
+    ) -> impl Future<Output = Result<Option<ApiKey>, SendableError>> + Send;
 
     /// Create a refresh session.
     fn create_session(

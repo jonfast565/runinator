@@ -39,7 +39,7 @@ pub async fn add_run_artifact<T: DatabaseImpl>(
     Path(run_id): Path<Uuid>,
     Json(artifact): Json<NewRunArtifact>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_service_or_admin() {
+    if let Err(reply) = ctx.require_agent_service_or_admin() {
         return reply;
     }
     match repository::add_run_artifact(db.as_ref(), run_id, &artifact).await {
@@ -70,7 +70,7 @@ pub async fn upload_artifact<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     mut multipart: Multipart,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_service_or_admin() {
+    if let Err(reply) = ctx.require_agent_service_or_admin() {
         return reply;
     }
     let mut run_id: Option<Uuid> = None;

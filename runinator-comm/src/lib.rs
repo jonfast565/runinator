@@ -38,7 +38,27 @@ pub struct WebServiceAnnouncement {
     pub port: u16,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_path: Option<String>,
+    #[serde(default = "default_service_scheme")]
+    pub scheme: String,
+    #[serde(default = "default_relay_path")]
+    pub relay_path: String,
+    #[serde(default)]
+    pub cluster_id: Uuid,
+    #[serde(default)]
+    pub enrollment_enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spki_pin: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
     pub last_heartbeat: DateTime<Utc>,
+}
+
+fn default_service_scheme() -> String {
+    "http".to_string()
+}
+
+fn default_relay_path() -> String {
+    "/ws/desktop-worker".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -127,6 +147,108 @@ pub struct ControlCommand {
     pub target: ActionTarget,
 }
 
+/// replica-scoped fleet-management command. unlike [`ControlCommand`], this is never associated
+/// with a workflow run.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentCommand {
+    pub directive_id: Uuid,
+    pub replica_id: Uuid,
+    pub target: ActionTarget,
+    pub kind: AgentDirectiveKind,
+    pub issued_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AgentDirectiveKind {
+    Diagnostics,
+    TailLogs {
+        lines: usize,
+    },
+    ListSandbox {
+        path: String,
+    },
+    FetchFile {
+        path: String,
+        max_bytes: u64,
+    },
+    SetLabels {
+        labels: std::collections::BTreeMap<String, String>,
+    },
+    SetConcurrency {
+        max_concurrent_actions: usize,
+    },
+    SetLogLevel {
+        level: String,
+    },
+    RepublishProviders,
+    Drain,
+    Undrain,
+    Restart,
+    RotateCredential,
+    /// forward-compatible catch-all: older agents can report unsupported instead of rejecting the
+    /// entire command envelope during deserialization.
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentDirectiveStatus {
+    Accepted,
+    Completed,
+    Failed,
+    Unsupported,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentDirectiveResult {
+    pub directive_id: Uuid,
+    pub status: AgentDirectiveStatus,
+    #[serde(default)]
+    pub payload: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+/// durable server-side lifecycle for one replica directive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentDirectiveState {
+    Pending,
+    Published,
+    Accepted,
+    Completed,
+    Failed,
+    Unsupported,
+    Expired,
+}
+
+/// persisted directive intent and its eventual agent reply.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentDirectiveRecord {
+    pub directive_id: Uuid,
+    pub replica_id: Uuid,
+    pub kind: AgentDirectiveKind,
+    pub state: AgentDirectiveState,
+    pub issued_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub published_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completed_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub payload: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    pub attempts: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claimed_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claimed_by_runtime_id: Option<String>,
+}
+
 /// a timer ticket for a future-dated ready node. the web service publishes these when a ready
 /// node's `ready_at` is still in the future (and the reconcile backstop re-publishes lost ones);
 /// the waker is the sole consumer and relays a [`WsIngressCommand::Drive`] once due. already-due
@@ -190,6 +312,8 @@ pub enum WsIngressCommand {
         workflow_run_id: Uuid,
         kind: ControlKind,
     },
+    /// agent -> ws: completion or refusal of a durable fleet directive.
+    AgentDirectiveResult { result: AgentDirectiveResult },
 }
 
 impl WsIngressCommand {
@@ -222,6 +346,12 @@ impl WsIngressCommand {
                 workflow_run_id,
                 kind,
             } => format!("control:{workflow_run_id}:{kind:?}"),
+            Self::AgentDirectiveResult { result } => {
+                format!(
+                    "agent-directive-result:{}:{:?}",
+                    result.directive_id, result.status
+                )
+            }
         }
     }
 }
@@ -392,6 +522,7 @@ pub enum UiEventKind {
         notification_id: Uuid,
     },
     NotificationsChanged,
+    ReplicasChanged,
     /// a freeze window was created, edited, or removed, so what is currently suspended changed.
     SchedulesChanged,
 }

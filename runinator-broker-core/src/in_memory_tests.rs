@@ -13,6 +13,33 @@ fn in_memory_broker_supports_workflow_result_channels() {
 }
 
 #[tokio::test]
+async fn agent_directives_route_only_to_the_target_replica() {
+    let broker = InMemoryBroker::new();
+    let target = Uuid::now_v7();
+    broker
+        .publish_agent(runinator_comm::AgentCommand {
+            directive_id: Uuid::now_v7(),
+            replica_id: target,
+            target: runinator_comm::ActionTarget::Replica { replica_id: target },
+            kind: runinator_comm::AgentDirectiveKind::Diagnostics,
+            issued_at: Utc::now(),
+            expires_at: Utc::now() + chrono::Duration::minutes(5),
+        })
+        .await
+        .unwrap();
+
+    let profile = runinator_comm::ConsumerProfile::shared(target.to_string())
+        .with_replica_id(target)
+        .exclusive();
+    let delivery = broker.receive_agent_for(&profile).await.unwrap();
+    assert_eq!(delivery.command.replica_id, target);
+    broker
+        .ack_agent(&profile.id, delivery.delivery_id)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
 async fn in_memory_broker_redelivers_expired_action_delivery() {
     let broker = InMemoryBroker::with_lease_duration(Duration::from_millis(10));
     broker

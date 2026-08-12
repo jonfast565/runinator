@@ -27,6 +27,7 @@ zip = { version = "7.2", default-features = false }
 chacha20poly1305 = "0.10"
 sha2 = "0.10"
 chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.18", features = ["v4"] }
 # cpu/memory sampling for replica resource telemetry.
 sysinfo = "0.33"
 # best-effort nvidia gpu telemetry; loads libnvidia-ml dynamically at runtime, so it builds on
@@ -34,3 +35,6 @@ sysinfo = "0.33"
 nvml-wrapper = "0.10"
 
 runinator-models = { path = "../runinator-models" }
+
+[dev-dependencies]
+tempfile = "3"

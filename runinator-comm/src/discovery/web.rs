@@ -13,7 +13,8 @@ use uuid::Uuid;
 use crate::{GossipMessage, WebServiceAnnouncement};
 
 use super::net::{
-    bind_gossip_socket, broadcast_gossip_message, gossip_targets, spawn_gossip_listener,
+    UdpSocketLike, bind_gossip_socket, broadcast_gossip_message, gossip_targets,
+    spawn_gossip_listener,
 };
 
 #[derive(Clone, Default)]
@@ -60,6 +61,25 @@ impl WebServiceDiscovery {
         guard.values().cloned().max_by_key(|svc| svc.last_heartbeat)
     }
 
+    /// newest candidate belonging to the cluster authorized by an enrollment token. discovery
+    /// alone is never identity: callers without a bound cluster id must present candidates to an
+    /// operator instead of automatically choosing one.
+    pub async fn current_service_for_cluster(
+        &self,
+        cluster_id: Uuid,
+    ) -> Option<WebServiceAnnouncement> {
+        let guard = self.services.read().await;
+        guard
+            .values()
+            .filter(|service| service.cluster_id == cluster_id)
+            .cloned()
+            .max_by_key(|service| service.last_heartbeat)
+    }
+
+    pub async fn candidates(&self) -> Vec<WebServiceAnnouncement> {
+        self.services.read().await.values().cloned().collect()
+    }
+
     pub async fn current_service_url(&self) -> Option<String> {
         self.current_service()
             .await
@@ -70,6 +90,15 @@ impl WebServiceDiscovery {
         loop {
             if let Some(url) = self.current_service_url().await {
                 return url;
+            }
+            self.notify.notified().await;
+        }
+    }
+
+    pub async fn wait_for_cluster_url(&self, cluster_id: Uuid) -> String {
+        loop {
+            if let Some(service) = self.current_service_for_cluster(cluster_id).await {
+                return web_service_base_url(&service);
             }
             self.notify.notified().await;
         }
@@ -99,12 +128,19 @@ pub async fn start_web_service_listener(
 
 /// Spawn a listener for web service gossip announcements on an already-bound socket.
 pub fn spawn_web_service_listener(socket: Arc<UdpSocket>) -> WebServiceDiscovery {
+    spawn_web_service_listener_with_socket(socket)
+}
+
+/// socket-abstracted listener used by the virtual network test harness.
+pub fn spawn_web_service_listener_with_socket(
+    socket: Arc<dyn UdpSocketLike>,
+) -> WebServiceDiscovery {
     let discovery = WebServiceDiscovery::new();
     attach_web_service_listener(socket, discovery.clone());
     discovery
 }
 
-fn attach_web_service_listener(socket: Arc<UdpSocket>, discovery: WebServiceDiscovery) {
+fn attach_web_service_listener(socket: Arc<dyn UdpSocketLike>, discovery: WebServiceDiscovery) {
     spawn_gossip_listener(socket, move |message, addr| {
         let discovery = discovery.clone();
 
@@ -126,6 +162,12 @@ pub struct WebServiceAdvertiserConfig {
     pub extra_targets: Vec<String>,
     pub announce_address: String,
     pub announce_base_path: String,
+    pub announce_scheme: String,
+    pub announce_relay_path: String,
+    pub cluster_id: Uuid,
+    pub enrollment_enabled: bool,
+    pub spki_pin: Option<String>,
+    pub version: Option<String>,
     pub interval_seconds: u64,
     pub shutdown: Arc<Notify>,
     pub service_port: u16,
@@ -141,6 +183,12 @@ pub fn spawn_web_service_advertiser(config: WebServiceAdvertiserConfig) -> JoinH
             extra_targets,
             announce_address,
             announce_base_path,
+            announce_scheme,
+            announce_relay_path,
+            cluster_id,
+            enrollment_enabled,
+            spki_pin,
+            version,
             interval_seconds,
             shutdown,
             service_port,
@@ -177,6 +225,12 @@ pub fn spawn_web_service_advertiser(config: WebServiceAdvertiserConfig) -> JoinH
                         address: announce_address.clone(),
                         port: service_port,
                         base_path: Some(announce_base_path.clone()),
+                        scheme: announce_scheme.clone(),
+                        relay_path: announce_relay_path.clone(),
+                        cluster_id,
+                        enrollment_enabled,
+                        spki_pin: spki_pin.clone(),
+                        version: version.clone(),
                         last_heartbeat: chrono::Utc::now(),
                     };
 
@@ -200,7 +254,11 @@ pub fn apply_service_address(announcement: &mut WebServiceAnnouncement, fallback
 
 /// Construct the base URL for the announced web service.
 pub fn web_service_base_url(service: &WebServiceAnnouncement) -> String {
-    let mut base = format!("http://{}:{}", service.address, service.port);
+    let scheme = match service.scheme.as_str() {
+        "https" => "https",
+        _ => "http",
+    };
+    let mut base = format!("{scheme}://{}:{}", service.address, service.port);
     if let Some(path) = service.base_path.as_ref() {
         let trimmed = path.trim();
         if !trimmed.is_empty() {
@@ -213,4 +271,13 @@ pub fn web_service_base_url(service: &WebServiceAnnouncement) -> String {
         }
     }
     base
+}
+
+/// deterministic fallback identity for deployments that have not configured an explicit cluster
+/// id. operators should set a stable id when the public enrollment URL differs from gossip.
+pub fn cluster_id_for_service_url(service_url: &str) -> Uuid {
+    Uuid::new_v5(
+        &Uuid::NAMESPACE_URL,
+        service_url.trim_end_matches('/').as_bytes(),
+    )
 }

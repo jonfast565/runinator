@@ -7,6 +7,7 @@ export type Capability =
   | "users:manage"
   | "teams:manage"
   | "apikeys:manage"
+  | "agents:enroll"
   | "secrets:read"
   | "secrets:write"
   | "catalog:manage"
@@ -28,6 +29,7 @@ export const ALL_CAPABILITIES: readonly Capability[] = [
   "users:manage",
   "teams:manage",
   "apikeys:manage",
+  "agents:enroll",
   "secrets:read",
   "secrets:write",
   "catalog:manage",

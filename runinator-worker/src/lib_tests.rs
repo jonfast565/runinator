@@ -1,5 +1,8 @@
 use runinator_broker::{Broker, in_memory::InMemoryBroker};
-use runinator_comm::{ActionCommand, WorkflowResultEventKind};
+use runinator_comm::{
+    ActionCommand, ActionTarget, AgentCommand, AgentDirectiveKind, AgentDirectiveStatus,
+    WorkflowResultEventKind, WsIngressCommand,
+};
 use runinator_models::json;
 use runinator_models::workflows::{WorkflowAction, WorkflowStatus};
 use runinator_models::{
@@ -8,6 +11,7 @@ use runinator_models::{
 };
 use uuid::Uuid;
 
+use crate::agent::outbox::NoopOutbox;
 use crate::{build_broker, config::Config, default_provider_factory, output_sink::RunOutputSink};
 
 #[tokio::test]
@@ -38,6 +42,73 @@ async fn build_broker_rejects_rabbitmq_without_result_queue() {
 
     assert!(err.to_string().contains("Broker backend 'rabbitmq'"));
     assert!(err.to_string().contains("non-empty workflow result queue"));
+}
+
+#[tokio::test]
+async fn agent_diagnostics_returns_a_result_over_ingress() {
+    let broker = std::sync::Arc::new(InMemoryBroker::new());
+    let replica_id = Uuid::now_v7();
+    let started = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let shutdown = std::sync::Arc::new(tokio::sync::Notify::new());
+    let mut runtime = blocking_worker_runtime(broker.clone(), started, shutdown.clone());
+    runtime.profile = runtime.profile.with_replica_id(replica_id);
+    let task = tokio::spawn(crate::worker::start_worker_loop(runtime));
+
+    broker
+        .publish_agent(agent_command(replica_id, AgentDirectiveKind::Diagnostics))
+        .await
+        .unwrap();
+    let delivery = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        broker.receive_ingress("test-engine"),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(matches!(
+        delivery.command,
+        WsIngressCommand::AgentDirectiveResult { result }
+            if result.status == AgentDirectiveStatus::Completed
+                && result.payload.get("pid").is_some()
+    ));
+    shutdown.notify_waiters();
+    task.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn drain_blocks_new_actions_until_undrain() {
+    let broker = std::sync::Arc::new(InMemoryBroker::new());
+    let replica_id = Uuid::now_v7();
+    let started = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let shutdown = std::sync::Arc::new(tokio::sync::Notify::new());
+    let mut runtime = blocking_worker_runtime(broker.clone(), started.clone(), shutdown.clone());
+    runtime.profile = runtime.profile.with_replica_id(replica_id);
+    let task = tokio::spawn(crate::worker::start_worker_loop(runtime));
+
+    broker
+        .publish_agent(agent_command(replica_id, AgentDirectiveKind::Drain))
+        .await
+        .unwrap();
+    broker.receive_ingress("test-engine").await.unwrap();
+    broker
+        .publish(runinator_broker::BrokerMessage {
+            command: action_command(),
+            dedupe_key: Some("drain-test".to_string()),
+            enqueued_at: chrono::Utc::now(),
+        })
+        .await
+        .unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert!(!started.load(std::sync::atomic::Ordering::SeqCst));
+
+    broker
+        .publish_agent(agent_command(replica_id, AgentDirectiveKind::Undrain))
+        .await
+        .unwrap();
+    broker.receive_ingress("test-engine").await.unwrap();
+    wait_until_started(&started).await;
+    shutdown.notify_waiters();
+    task.await.unwrap().unwrap();
 }
 
 // only meaningful when the relay transport is compiled in; without the feature build_broker
@@ -79,6 +150,7 @@ async fn output_sink_publishes_result_events_to_broker() {
     let sink = RunOutputSink::new(
         command.clone(),
         broker.clone(),
+        std::sync::Arc::new(NoopOutbox),
         tokio::runtime::Handle::current(),
     );
 
@@ -329,6 +401,19 @@ fn blocking_worker_runtime_with_concurrency(
         shutdown_grace: std::time::Duration::from_secs(5),
         shutdown,
         events: std::sync::Arc::new(crate::events::NoopEventSink),
+        result_outbox: std::sync::Arc::new(NoopOutbox),
+        directive_handler: std::sync::Arc::new(crate::agent::DefaultDirectiveHandler),
+    }
+}
+
+fn agent_command(replica_id: Uuid, kind: AgentDirectiveKind) -> AgentCommand {
+    AgentCommand {
+        directive_id: Uuid::now_v7(),
+        replica_id,
+        target: ActionTarget::Replica { replica_id },
+        kind,
+        issued_at: chrono::Utc::now(),
+        expires_at: chrono::Utc::now() + chrono::Duration::minutes(5),
     }
 }
 
@@ -611,13 +696,18 @@ fn test_config() -> Config {
         broker_endpoint: "127.0.0.1:7070".into(),
         broker_action_topic: "runinator.actions".into(),
         broker_control_topic: "runinator.control".into(),
+        broker_agent_topic: "runinator.agent".into(),
         broker_result_topic: "runinator.results".into(),
         broker_client_id: "test-worker".into(),
         broker_consumer_id: "test-consumer".into(),
         max_concurrent_actions: 1,
         shutdown_grace_seconds: 30,
         api_base_url: "http://127.0.0.1:8080/".into(),
+        locator_mode: crate::agent::LocatorMode::Static,
+        gossip_bind: "127.0.0.1".into(),
+        gossip_port: 5000,
         api_key: None,
+        enrollment_token: None,
         worker_id: Uuid::new_v4(),
         advertise_host: None,
         liveness_file: String::new(),

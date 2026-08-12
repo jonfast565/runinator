@@ -21,7 +21,8 @@ mod lib_tests;
 
 pub use agent::{
     AgentConnection, AgentHandle, AgentMetrics, AgentObserver, AgentRuntime, AgentRuntimeConfig,
-    AgentStatus, BrokerMode, BrokerSelection, CompletedAction, NoopObserver, derive_relay_url,
+    AgentStatus, BrokerMode, BrokerSelection, CompletedAction, FileOutbox, NoopObserver,
+    NoopOutbox, ResultOutbox, derive_relay_url, prepare_agent_credentials,
 };
 pub use broker::{BrokerConfig, build_broker};
 pub use config::{Config, parse_config, parse_labels};

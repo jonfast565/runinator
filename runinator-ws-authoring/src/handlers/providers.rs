@@ -44,7 +44,7 @@ pub async fn upsert_provider<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Json(provider): Json<ProviderMetadata>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_service_or_admin() {
+    if let Err(reply) = ctx.require_agent_service_or_admin() {
         return reply;
     }
     if let Err(err) = validate_provider_metadata(&provider) {

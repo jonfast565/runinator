@@ -65,6 +65,7 @@ fn is_public_path(path: &str) -> bool {
             | "/auth/config"
             | "/auth/login"
             | "/auth/refresh"
+            | "/agents/enroll"
     )
 }
 

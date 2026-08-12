@@ -7200,6 +7200,7 @@ dependencies = [
  "argon2",
  "base64 0.22.1",
  "chrono",
+ "hmac 0.12.1",
  "jsonwebtoken",
  "rand 0.8.6",
  "runinator-models",
@@ -7338,6 +7339,7 @@ dependencies = [
  "chrono",
  "clap",
  "runinator-api",
+ "runinator-comm",
  "runinator-models",
  "runinator-pack",
  "runinator-provider-catalog",
@@ -7381,6 +7383,7 @@ dependencies = [
 name = "runinator-desktop-agent"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
  "clap",
  "eframe",
@@ -7786,10 +7789,12 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "sysinfo",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
+ "uuid",
  "zip",
 ]
 
@@ -7867,21 +7872,29 @@ dependencies = [
 name = "runinator-worker"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
  "clap",
  "log",
  "opentelemetry",
  "reqwest",
  "runinator-api",
+ "runinator-auth",
  "runinator-broker",
  "runinator-comm",
  "runinator-models",
  "runinator-plugin",
  "runinator-provider-catalog",
  "runinator-utilities",
+ "rustls 0.23.40",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
  "tokio",
  "tracing",
  "uuid",
+ "x509-parser",
 ]
 
 [[package]]
@@ -7901,12 +7914,14 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "axum",
+ "base64 0.22.1",
  "chrono",
  "clap",
  "futures",
  "log",
  "metrics",
  "reqwest",
+ "runinator-auth",
  "runinator-broker",
  "runinator-comm",
  "runinator-database",
@@ -7979,6 +7994,7 @@ name = "runinator-ws-identity"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "base64 0.22.1",
  "chrono",
  "log",
  "runinator-auth",
@@ -7986,10 +8002,12 @@ dependencies = [
  "runinator-engine",
  "runinator-models",
  "runinator-provisioner",
+ "runinator-utilities",
  "runinator-ws-core",
  "runinator-ws-middleware",
  "serde",
  "serde_json",
+ "url",
  "utoipa",
  "uuid",
 ]

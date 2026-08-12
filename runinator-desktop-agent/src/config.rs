@@ -90,6 +90,12 @@ pub struct AgentConfig {
     /// also used to derive the ws broker relay URL in `BrokerMode::Relay` (scheme swapped,
     /// `/ws/desktop-worker` appended) — see `agent::derive_relay_url`.
     pub service_url: String,
+    #[serde(default)]
+    pub discover: bool,
+    #[serde(default = "default_gossip_bind")]
+    pub gossip_bind: String,
+    #[serde(default = "default_gossip_port")]
+    pub gossip_port: u16,
     pub sandbox_root: String,
     /// base directory `console.run` commands execute from on this machine (the child process's
     /// `current_dir`), exported to the console provider as `RUNINATOR_CONSOLE_WORKING_DIR`. lets a
@@ -101,6 +107,9 @@ pub struct AgentConfig {
     pub allow_write: bool,
     #[serde(default)]
     pub api_key: Option<String>,
+    /// ephemeral first-start input; explicitly excluded from persisted JSON.
+    #[serde(skip)]
+    pub enrollment_token: Option<String>,
     /// extra routing labels this replica advertises, beyond the always-on `pool=desktop` — each
     /// entry a `key=value` tag (same pairs `RUNINATOR_WORKER_LABELS`/`runinator_worker::parse_labels`
     /// accept, joined with commas before parsing), so any future workflow that needs to pin work to a
@@ -153,6 +162,14 @@ fn default_direct_broker_backend() -> String {
     "tcp".to_string()
 }
 
+fn default_gossip_bind() -> String {
+    "0.0.0.0".to_string()
+}
+
+fn default_gossip_port() -> u16 {
+    5000
+}
+
 fn default_max_concurrent_actions() -> usize {
     2
 }
@@ -165,10 +182,14 @@ impl Default for AgentConfig {
     fn default() -> Self {
         Self {
             service_url: "http://127.0.0.1:8080/".to_string(),
+            discover: false,
+            gossip_bind: default_gossip_bind(),
+            gossip_port: default_gossip_port(),
             sandbox_root: String::new(),
             console_working_dir: String::new(),
             allow_write: false,
             api_key: None,
+            enrollment_token: None,
             extra_labels: Vec::new(),
             broker_mode: BrokerMode::default(),
             direct_broker_backend: default_direct_broker_backend(),

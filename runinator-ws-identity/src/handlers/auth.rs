@@ -6,16 +6,22 @@ use axum::{
     extract::{ConnectInfo, Path},
     http::StatusCode,
 };
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::{Duration, Utc};
+use runinator_auth::enroll::EnrollToken;
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::auth::{
-    AddTeamMemberRequest, ApiKey, ApiKeyRecord, AuthContext, AuthSession, CreateApiKeyRequest,
-    CreateApiKeyResponse, CreateGrantRequest, CreateTeamRequest, CreateUserRequest, Grant,
-    LoginRequest, LoginResponse, Permission, PrincipalKind, RefreshRequest, ResourceType,
-    UpdateApiKeyRequest, UpdateTeamRequest, UpdateUserRequest, User,
+    AddTeamMemberRequest, AgentEnrollmentToken, AgentEnrollmentTokenRecord, ApiKey, ApiKeyRecord,
+    AuthContext, AuthSession, CreateAgentEnrollmentTokenRequest,
+    CreateAgentEnrollmentTokenResponse, CreateApiKeyRequest, CreateApiKeyResponse,
+    CreateGrantRequest, CreateTeamRequest, CreateUserRequest, EnrollAgentRequest,
+    EnrollAgentResponse, Grant, LoginRequest, LoginResponse, Permission, PrincipalKind,
+    RefreshRequest, ResourceType, UpdateApiKeyRequest, UpdateTeamRequest, UpdateUserRequest, User,
 };
 use runinator_models::capabilities::Capability;
 use runinator_models::value::Value;
+use runinator_utilities::secret_cipher::SecretCipher;
 use serde::Serialize;
 use uuid::Uuid;
 
@@ -24,7 +30,7 @@ use runinator_ws_core::models::{
     RefreshRequestSchema,
 };
 use runinator_ws_core::openapi::docs::{EndpointDoc, Example, endpoint, json_body};
-use runinator_ws_core::responses::{api_error, not_found, task_response_success};
+use runinator_ws_core::responses::{api_error, bad_request, not_found, task_response_success};
 use runinator_ws_middleware::auth::{
     AuthConfig, hash_password, hash_secret, issue_access_token, new_api_key, new_refresh_token,
     verify_password,
@@ -515,6 +521,12 @@ pub async fn create_api_key<T: DatabaseImpl>(
     let record = ApiKeyRecord {
         key,
         is_admin,
+        principal_kind: if is_service {
+            PrincipalKind::Service
+        } else {
+            PrincipalKind::User
+        },
+        org_id: None,
         key_hash: generated.key_hash,
     };
     match db.create_api_key(record).await {
@@ -572,6 +584,8 @@ pub async fn rotate_api_key<T: DatabaseImpl>(
     let record = ApiKeyRecord {
         key,
         is_admin: current.is_admin,
+        principal_kind: current.principal_kind,
+        org_id: current.org_id,
         key_hash: generated.key_hash,
     };
     match db.create_api_key(record).await {
@@ -600,6 +614,203 @@ pub async fn revoke_api_key<T: DatabaseImpl>(
         Ok(()) => task_response_success("API key revoked"),
         Err(err) => api_error(err.to_string()),
     }
+}
+
+// ---- agent enrollment ----
+
+const MAX_ENROLLMENT_TTL_SECONDS: u64 = 86_400;
+const ENROLLMENT_REJECTED: &str = "enrollment rejected";
+
+pub async fn create_agent_enrollment_token<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+    Json(request): Json<CreateAgentEnrollmentTokenRequest>,
+) -> Reply {
+    if let Err(reply) = ctx.require_capability(Capability::AgentsEnroll) {
+        return reply;
+    }
+    if request.ttl_seconds == 0 || request.ttl_seconds > MAX_ENROLLMENT_TTL_SECONDS {
+        return bad_request(format!(
+            "ttl_seconds must be between 1 and {MAX_ENROLLMENT_TTL_SECONDS}"
+        ));
+    }
+    let Some(service_url) = url::Url::parse(&request.service_url).ok() else {
+        return bad_request("service_url must be an http or https URL");
+    };
+    if !matches!(service_url.scheme(), "http" | "https") {
+        return bad_request("service_url must be an http or https URL");
+    }
+    if let Some(pin) = request.spki_pin.as_deref() {
+        let encoded = pin.strip_prefix("sha256/").unwrap_or(pin);
+        let valid_pin = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .or_else(|_| URL_SAFE_NO_PAD.decode(encoded))
+            .is_ok_and(|bytes| bytes.len() == 32);
+        if service_url.scheme() != "https" || !valid_pin {
+            return bad_request("spki_pin requires an https URL and a base64 SHA-256 digest");
+        }
+    }
+    let mut generated =
+        EnrollToken::generate(request.service_url.clone(), request.spki_pin.clone());
+    if request.cluster_id.is_some() {
+        generated.cluster_id = request.cluster_id;
+    }
+    let now = Utc::now();
+    if let Err(err) = db.purge_expired_enrollment_tokens(now).await {
+        log::warn!("failed to purge expired agent enrollment tokens: {err}");
+    }
+    let token = AgentEnrollmentToken {
+        token_id: generated.token_id.clone(),
+        org_id: request.org_id,
+        labels: request.labels,
+        service_url: request.service_url,
+        spki_pin: request.spki_pin,
+        expires_at: now + Duration::seconds(request.ttl_seconds as i64),
+        consumed_at: None,
+        issued_by: ctx.principal_id,
+        created_at: now,
+    };
+    let record = AgentEnrollmentTokenRecord {
+        token: token.clone(),
+        sealed_secret: SecretCipher::from_env().encrypt(&generated.secret),
+    };
+    match db.create_agent_enrollment_token(record).await {
+        Ok(stored) => ok_value(&CreateAgentEnrollmentTokenResponse {
+            enrollment_token: stored,
+            token: generated.encode(),
+        }),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+pub async fn list_agent_enrollment_tokens<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+) -> Reply {
+    if let Err(reply) = ctx.require_capability(Capability::AgentsEnroll) {
+        return reply;
+    }
+    match db.list_agent_enrollment_tokens().await {
+        Ok(tokens) => match tokens.iter().map(json_value).collect::<Result<Vec<_>, _>>() {
+            Ok(values) => (StatusCode::OK, Json(ApiResponse::JsonList(values))),
+            Err(reply) => reply,
+        },
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+pub async fn delete_agent_enrollment_token<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(token_id): Path<String>,
+) -> Reply {
+    if let Err(reply) = ctx.require_capability(Capability::AgentsEnroll) {
+        return reply;
+    }
+    match db.delete_agent_enrollment_token(token_id).await {
+        Ok(()) => task_response_success("Enrollment token deleted"),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+pub async fn enroll_agent<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    Json(request): Json<EnrollAgentRequest>,
+) -> Reply {
+    if let Err(retry_after) =
+        runinator_ws_middleware::rate_limit::check_enrollment_attempt(addr.ip())
+    {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(ApiResponse::ApiError(ApiError::new(format!(
+                "too many enrollment attempts; retry after {} seconds",
+                retry_after.ceil() as u64
+            )))),
+        );
+    }
+    match authorize_enrollment(db.as_ref(), request).await {
+        Ok(Some(response)) => ok_value(&response),
+        Ok(None) => unauthorized(ENROLLMENT_REJECTED),
+        Err(err) => {
+            log::warn!("agent enrollment failed internally: {err}");
+            unauthorized(ENROLLMENT_REJECTED)
+        }
+    }
+}
+
+async fn authorize_enrollment<T: DatabaseImpl>(
+    db: &T,
+    request: EnrollAgentRequest,
+) -> Result<Option<EnrollAgentResponse>, runinator_models::errors::SendableError> {
+    let Some(stored) = db
+        .fetch_agent_enrollment_token(request.token_id.clone())
+        .await?
+    else {
+        return Ok(None);
+    };
+    let now = Utc::now();
+    if stored.token.consumed_at.is_some() || stored.token.expires_at < now {
+        return Ok(None);
+    }
+    let Some(secret) = SecretCipher::from_env().try_decrypt(&stored.sealed_secret) else {
+        return Ok(None);
+    };
+    let canonical = serde_json::to_vec(&request.request_body)?;
+    let proof = URL_SAFE_NO_PAD.decode(request.proof).unwrap_or_default();
+    let token = EnrollToken {
+        token_id: stored.token.token_id.clone(),
+        secret,
+        service_url: stored.token.service_url.clone(),
+        spki_pin: stored.token.spki_pin.clone(),
+        cluster_id: None,
+    };
+    // keep this verification before every authorization-field check: one opaque response and one
+    // constant-time HMAC path prevent token-id and scope probing from becoming an oracle.
+    if !token.verify_proof(&canonical, &proof)
+        || request.request_body.labels.iter().any(|(key, value)| {
+            stored
+                .token
+                .labels
+                .get(key)
+                .is_none_or(|allowed| allowed != value)
+        })
+    {
+        return Ok(None);
+    }
+
+    let generated = new_api_key();
+    let principal_id = Uuid::new_v4();
+    let key = ApiKey {
+        id: Some(Uuid::new_v4()),
+        name: format!("agent:{}", request.request_body.instance_id),
+        user_id: Some(principal_id),
+        is_service: true,
+        key_prefix: generated.prefix,
+        last_used_at: None,
+        expires_at: None,
+        disabled: false,
+        created_at: now,
+    };
+    let record = ApiKeyRecord {
+        key,
+        is_admin: false,
+        principal_kind: PrincipalKind::Agent,
+        org_id: stored.token.org_id,
+        key_hash: generated.key_hash,
+    };
+    let Some(_) = db
+        .consume_enrollment_token_and_create_api_key(request.token_id, record, now)
+        .await?
+    else {
+        return Ok(None);
+    };
+    Ok(Some(EnrollAgentResponse {
+        api_key: generated.secret,
+        service_url: stored.token.service_url,
+        org_id: stored.token.org_id,
+        labels: request.request_body.labels,
+    }))
 }
 
 // ---- resource grants (sharing) ----
@@ -848,6 +1059,20 @@ pub fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
             post(rotate_api_key::<T>).layer(Extension(pool.clone())),
         )
         .route(
+            "/agents/enrollment_tokens",
+            get(list_agent_enrollment_tokens::<T>)
+                .post(create_agent_enrollment_token::<T>)
+                .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/agents/enrollment_tokens/{token_id}",
+            delete(delete_agent_enrollment_token::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/agents/enroll",
+            post(enroll_agent::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
             "/workflows/{id}/grants",
             get(list_workflow_grants::<T>)
                 .post(create_workflow_grant::<T>)
@@ -1077,6 +1302,64 @@ pub const DOCS: &[EndpointDoc] = &[
         200,
         "rotated api key and secret",
         Example::ApiKey,
+    ),
+    endpoint(
+        "get",
+        "/agents/enrollment_tokens",
+        "Agents",
+        "List agent enrollment tokens",
+        "Lists active, consumed, and expired enrollment-token metadata without revealing secrets.",
+        false,
+        None,
+        &[],
+        200,
+        "agent enrollment tokens",
+        Example::AgentEnrollmentTokenList,
+    ),
+    endpoint(
+        "post",
+        "/agents/enrollment_tokens",
+        "Agents",
+        "Create an agent enrollment token",
+        "Creates a TTL-bounded, single-use token scoped to one organization and an allowed label set. The encoded token is returned only once.",
+        false,
+        json_body(
+            "Enrollment scope, service identity, and lifetime.",
+            Example::AgentEnrollmentCreate,
+        ),
+        &[],
+        200,
+        "created enrollment token and one-time secret",
+        Example::AgentEnrollmentCreate,
+    ),
+    endpoint(
+        "delete",
+        "/agents/enrollment_tokens/{token_id}",
+        "Agents",
+        "Revoke an agent enrollment token",
+        "Revokes an enrollment token before it is redeemed.",
+        false,
+        None,
+        &[],
+        200,
+        "enrollment token revoked",
+        Example::TaskResponse,
+    ),
+    endpoint(
+        "post",
+        "/agents/enroll",
+        "Agents",
+        "Enroll an agent",
+        "Public redemption endpoint authenticated by the token-bound HMAC. Every rejected enrollment returns the same response.",
+        true,
+        json_body(
+            "Agent identity request and token proof.",
+            Example::AgentEnrollmentRequest,
+        ),
+        &[],
+        200,
+        "issued agent credential",
+        Example::AgentEnrollmentResponse,
     ),
     endpoint(
         "get",

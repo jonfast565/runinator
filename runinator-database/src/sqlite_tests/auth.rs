@@ -196,6 +196,8 @@ async fn api_keys_support_admin_lookup_update_and_revoke() {
                 created_at: Utc::now(),
             },
             is_admin: false,
+            principal_kind: runinator_models::auth::PrincipalKind::User,
+            org_id: None,
             key_hash: "hash".into(),
         })
         .await

@@ -21,8 +21,9 @@ pub use factory::{build_kafka_broker, build_rabbitmq_broker};
 // the contract and its backend-independent pieces, re-exported at their historical paths.
 pub use runinator_broker_core::{
     ensure_named_workflow_result_channel, ensure_workflow_result_channels_supported, in_memory,
-    instrument, ActionTarget, Broker, BrokerDelivery, BrokerError, BrokerMessage, ConnectionState,
-    ConsumerProfile, ControlCommand, ControlDelivery, EventDelivery, EventMessage, IngressDelivery,
-    IngressMessage, ResultDelivery, ResultMessage, UiEvent, WakeCommand, WakeDelivery, WakeMessage,
-    WsIngressCommand, STALE_CONTROL_TTL_SECONDS,
+    instrument, ActionTarget, AgentCommand, AgentDelivery, AgentDirectiveKind,
+    AgentDirectiveResult, AgentDirectiveStatus, Broker, BrokerDelivery, BrokerError, BrokerMessage,
+    ConnectionState, ConsumerProfile, ControlCommand, ControlDelivery, EventDelivery, EventMessage,
+    IngressDelivery, IngressMessage, ResultDelivery, ResultMessage, UiEvent, WakeCommand,
+    WakeDelivery, WakeMessage, WsIngressCommand, STALE_CONTROL_TTL_SECONDS,
 };

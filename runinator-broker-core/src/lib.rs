@@ -19,16 +19,19 @@ mod tests;
 mod types;
 
 pub use capabilities::{
-    ensure_named_workflow_result_channel, ensure_workflow_result_channels_supported,
+    ensure_agent_channel_supported, ensure_named_workflow_result_channel,
+    ensure_workflow_result_channels_supported,
 };
 pub use errors::BrokerError;
 pub use instrumented::instrument;
 pub use runinator_comm::{
-    ActionTarget, ConsumerProfile, ControlCommand, UiEvent, WakeCommand, WsIngressCommand,
+    ActionTarget, AgentCommand, AgentDirectiveKind, AgentDirectiveResult, AgentDirectiveStatus,
+    ConsumerProfile, ControlCommand, UiEvent, WakeCommand, WsIngressCommand,
 };
 pub use types::{
-    BrokerDelivery, BrokerMessage, ConnectionState, ControlDelivery, EventDelivery, EventMessage,
-    IngressDelivery, IngressMessage, ResultDelivery, ResultMessage, WakeDelivery, WakeMessage,
+    AgentDelivery, BrokerDelivery, BrokerMessage, ConnectionState, ControlDelivery, EventDelivery,
+    EventMessage, IngressDelivery, IngressMessage, ResultDelivery, ResultMessage, WakeDelivery,
+    WakeMessage,
 };
 
 use async_trait::async_trait;
@@ -43,6 +46,10 @@ pub const STALE_CONTROL_TTL_SECONDS: i64 = 300;
 pub trait Broker: Send + Sync + 'static {
     /// Report whether this backend supports workflow result channels.
     fn supports_workflow_result_channels(&self) -> bool {
+        false
+    }
+
+    fn supports_agent_channel(&self) -> bool {
         false
     }
 
@@ -138,6 +145,45 @@ pub trait Broker: Send + Sync + 'static {
         consumer: &str,
         delivery_id: uuid::Uuid,
     ) -> Result<(), BrokerError>;
+
+    /// Publish a replica-scoped fleet directive on the agent channel.
+    async fn publish_agent(&self, _command: AgentCommand) -> Result<(), BrokerError> {
+        Err(BrokerError::NotImplemented("publish_agent"))
+    }
+
+    async fn receive_agent(&self, _consumer: &str) -> Result<AgentDelivery, BrokerError> {
+        Err(BrokerError::NotImplemented("receive_agent"))
+    }
+
+    async fn receive_agent_for(
+        &self,
+        profile: &ConsumerProfile,
+    ) -> Result<AgentDelivery, BrokerError> {
+        loop {
+            let delivery = self.receive_agent(&profile.id).await?;
+            if delivery.command.target.matches(profile) {
+                return Ok(delivery);
+            }
+            self.nack_agent(&profile.id, delivery.delivery_id).await?;
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    }
+
+    async fn ack_agent(
+        &self,
+        _consumer: &str,
+        _delivery_id: uuid::Uuid,
+    ) -> Result<(), BrokerError> {
+        Err(BrokerError::NotImplemented("ack_agent"))
+    }
+
+    async fn nack_agent(
+        &self,
+        _consumer: &str,
+        _delivery_id: uuid::Uuid,
+    ) -> Result<(), BrokerError> {
+        Err(BrokerError::NotImplemented("nack_agent"))
+    }
 
     /// Publish a workflow result event on the result channel.
     async fn publish_result(&self, message: ResultMessage) -> Result<(), BrokerError>;

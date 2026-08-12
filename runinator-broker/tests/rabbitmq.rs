@@ -5,7 +5,9 @@ use runinator_broker::{
     adapters::rabbitmq::{RabbitMqBroker, RabbitMqBrokerConfig},
     ActionTarget, Broker, BrokerMessage, ConsumerProfile, ControlCommand, ResultMessage,
 };
-use runinator_comm::{ActionCommand, ControlKind, WorkflowResultEvent};
+use runinator_comm::{
+    ActionCommand, AgentCommand, AgentDirectiveKind, ControlKind, WorkflowResultEvent,
+};
 use runinator_models::json;
 use runinator_models::{runs::NewRunChunk, workflows::WorkflowAction};
 use tokio::time::{timeout, Duration};
@@ -26,17 +28,51 @@ async fn rabbitmq_broker() -> Option<RabbitMqBroker> {
         .unwrap_or_else(|_| format!("runinator.test.control.{}", Uuid::new_v4()));
     let result_queue = std::env::var("RUNINATOR_RABBITMQ_RESULT_QUEUE")
         .unwrap_or_else(|_| format!("runinator.test.results.{}", Uuid::new_v4()));
+    let agent_prefix = std::env::var("RUNINATOR_RABBITMQ_AGENT_QUEUE_PREFIX")
+        .unwrap_or_else(|_| format!("runinator.test.agent.{}", Uuid::new_v4()));
 
     Some(
         RabbitMqBroker::connect(
             RabbitMqBrokerConfig::new(uri)
                 .with_queues(action_queue, control_queue, result_queue)
                 .with_targeted_action_queue(targeted_action_queue)
+                .with_agent_queue_prefix(agent_prefix)
                 .with_client_id(format!("runinator-test-{}", Uuid::new_v4())),
         )
         .await
         .unwrap(),
     )
+}
+
+#[tokio::test]
+#[ignore = "requires a reachable RabbitMQ broker"]
+async fn rabbitmq_broker_routes_agent_directives_by_replica_queue() {
+    let Some(broker) = rabbitmq_broker().await else {
+        return;
+    };
+    let replica_id = Uuid::new_v4();
+    let other_id = Uuid::new_v4();
+    broker
+        .publish_agent(agent_command(replica_id))
+        .await
+        .unwrap();
+    let other = ConsumerProfile::shared(format!("agent-{other_id}")).with_replica_id(other_id);
+    assert!(
+        timeout(Duration::from_millis(300), broker.receive_agent_for(&other))
+            .await
+            .is_err()
+    );
+    let profile =
+        ConsumerProfile::shared(format!("agent-{replica_id}")).with_replica_id(replica_id);
+    let delivery = timeout(Duration::from_secs(10), broker.receive_agent_for(&profile))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(delivery.command.replica_id, replica_id);
+    broker
+        .ack_agent(&profile.id, delivery.delivery_id)
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -297,5 +333,16 @@ fn action_command() -> ActionCommand {
         trace_context: Default::default(),
         notification_delivery_id: None,
         idempotency_key: None,
+    }
+}
+
+fn agent_command(replica_id: Uuid) -> AgentCommand {
+    AgentCommand {
+        directive_id: Uuid::new_v4(),
+        replica_id,
+        target: ActionTarget::Replica { replica_id },
+        kind: AgentDirectiveKind::Diagnostics,
+        issued_at: Utc::now(),
+        expires_at: Utc::now() + chrono::Duration::minutes(5),
     }
 }

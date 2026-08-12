@@ -1,7 +1,7 @@
 use crate::{
-    Broker, BrokerDelivery, BrokerError, BrokerMessage, ConsumerProfile, ControlCommand,
-    ControlDelivery, EventDelivery, EventMessage, IngressDelivery, IngressMessage, ResultDelivery,
-    ResultMessage, WakeDelivery, WakeMessage,
+    AgentCommand, AgentDelivery, Broker, BrokerDelivery, BrokerError, BrokerMessage,
+    ConsumerProfile, ControlCommand, ControlDelivery, EventDelivery, EventMessage, IngressDelivery,
+    IngressMessage, ResultDelivery, ResultMessage, WakeDelivery, WakeMessage,
 };
 use async_trait::async_trait;
 use parking_lot::Mutex;
@@ -20,6 +20,8 @@ struct BrokerState {
     dedupe: HashSet<String>,
     control_queue: VecDeque<ControlDelivery>,
     control_inflight: HashMap<Uuid, Leased<ControlDelivery>>,
+    agent_queue: VecDeque<AgentDelivery>,
+    agent_inflight: HashMap<Uuid, Leased<AgentDelivery>>,
     result_queue: VecDeque<ResultDelivery>,
     result_inflight: HashMap<Uuid, Leased<ResultDelivery>>,
     result_dedupe: HashSet<String>,
@@ -43,6 +45,7 @@ pub struct InMemoryBroker {
     state: Arc<Mutex<BrokerState>>,
     notify: Arc<Notify>,
     control_notify: Arc<Notify>,
+    agent_notify: Arc<Notify>,
     result_notify: Arc<Notify>,
     wake_notify: Arc<Notify>,
     ingress_notify: Arc<Notify>,
@@ -74,6 +77,7 @@ impl Default for InMemoryBroker {
             state: Arc::new(Mutex::new(BrokerState::default())),
             notify: Arc::new(Notify::new()),
             control_notify: Arc::new(Notify::new()),
+            agent_notify: Arc::new(Notify::new()),
             result_notify: Arc::new(Notify::new()),
             wake_notify: Arc::new(Notify::new()),
             ingress_notify: Arc::new(Notify::new()),
@@ -128,6 +132,44 @@ impl InMemoryBroker {
         }
     }
 
+    async fn receive_agent_matching(
+        &self,
+        matches: impl Fn(&AgentDelivery) -> bool,
+    ) -> Result<AgentDelivery, BrokerError> {
+        loop {
+            let notified = self.agent_notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if let Some(delivery) = {
+                let mut guard = self.state.lock();
+                guard.reclaim_expired_agent(Instant::now());
+                guard
+                    .agent_queue
+                    .retain(|delivery| delivery.command.expires_at > chrono::Utc::now());
+                let index = guard.agent_queue.iter().position(&matches);
+                match index.and_then(|index| guard.agent_queue.remove(index)) {
+                    Some(delivery) => {
+                        guard.agent_inflight.insert(
+                            delivery.delivery_id,
+                            Leased {
+                                delivery: delivery.clone(),
+                                leased_until: Instant::now() + self.lease_duration,
+                            },
+                        );
+                        Some(delivery)
+                    }
+                    None => None,
+                }
+            } {
+                return Ok(delivery);
+            }
+            tokio::select! {
+                _ = &mut notified => {}
+                _ = tokio::time::sleep(self.lease_duration) => {}
+            }
+        }
+    }
+
     /// get-or-create the dedicated fan-out receiver for one subscriber id.
     fn event_receiver(&self, consumer: &str) -> EventReceiver {
         let mut guard = self.event_subscribers.lock();
@@ -143,6 +185,10 @@ impl InMemoryBroker {
 #[async_trait]
 impl Broker for InMemoryBroker {
     fn supports_workflow_result_channels(&self) -> bool {
+        true
+    }
+
+    fn supports_agent_channel(&self) -> bool {
         true
     }
 
@@ -273,6 +319,49 @@ impl Broker for InMemoryBroker {
                 .push_front(redeliver_control(leased.delivery));
             drop(guard);
             self.control_notify.notify_waiters();
+            Ok(())
+        } else {
+            Err(BrokerError::UnknownDelivery(delivery_id))
+        }
+    }
+
+    async fn publish_agent(&self, command: AgentCommand) -> Result<(), BrokerError> {
+        let mut guard = self.state.lock();
+        guard.agent_queue.push_back(command.into());
+        drop(guard);
+        self.agent_notify.notify_waiters();
+        Ok(())
+    }
+
+    async fn receive_agent(&self, _consumer: &str) -> Result<AgentDelivery, BrokerError> {
+        self.receive_agent_matching(|_| true).await
+    }
+
+    async fn receive_agent_for(
+        &self,
+        profile: &ConsumerProfile,
+    ) -> Result<AgentDelivery, BrokerError> {
+        self.receive_agent_matching(|delivery| delivery.command.target.matches(profile))
+            .await
+    }
+
+    async fn ack_agent(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        let mut guard = self.state.lock();
+        if guard.agent_inflight.remove(&delivery_id).is_some() {
+            Ok(())
+        } else {
+            Err(BrokerError::UnknownDelivery(delivery_id))
+        }
+    }
+
+    async fn nack_agent(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        let mut guard = self.state.lock();
+        if let Some(leased) = guard.agent_inflight.remove(&delivery_id) {
+            guard
+                .agent_queue
+                .push_front(redeliver_agent(leased.delivery));
+            drop(guard);
+            self.agent_notify.notify_waiters();
             Ok(())
         } else {
             Err(BrokerError::UnknownDelivery(delivery_id))
@@ -517,6 +606,16 @@ impl BrokerState {
         }
     }
 
+    fn reclaim_expired_agent(&mut self, now: Instant) {
+        let expired = expired_ids(&self.agent_inflight, now);
+        for id in expired {
+            if let Some(leased) = self.agent_inflight.remove(&id) {
+                self.agent_queue
+                    .push_front(redeliver_agent(leased.delivery));
+            }
+        }
+    }
+
     /// drop queued controls that have gone stale: a control targeted at a replica that never
     /// returns has no consumer that can ever match it, and controls are immediate signals, so
     /// retaining one past the ttl only grows the queue (this broker also backs the long-lived
@@ -573,6 +672,13 @@ fn redeliver_action(delivery: BrokerDelivery) -> BrokerDelivery {
 
 fn redeliver_control(delivery: ControlDelivery) -> ControlDelivery {
     ControlDelivery {
+        delivery_id: Uuid::new_v4(),
+        ..delivery
+    }
+}
+
+fn redeliver_agent(delivery: AgentDelivery) -> AgentDelivery {
+    AgentDelivery {
         delivery_id: Uuid::new_v4(),
         ..delivery
     }

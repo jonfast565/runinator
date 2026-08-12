@@ -8,6 +8,7 @@ use std::future::Future;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
+use runinator_comm::{AgentDirectiveKind, AgentDirectiveRecord, AgentDirectiveResult};
 use runinator_models::{
     auth::AuthContext,
     errors::SendableError,
@@ -25,6 +26,54 @@ pub use crate::reducer_store::ReducerStore;
 /// Core persistence operations for Runinator.
 /// The fleet: replica registration, heartbeats, reaping, telemetry samples, and provider registrations.
 pub trait ReplicaStore: Send + Sync + 'static {
+    /// Persist a replica-scoped directive before it is offered to the broker.
+    fn enqueue_agent_directive(
+        &self,
+        replica_id: Uuid,
+        kind: AgentDirectiveKind,
+        expires_at: DateTime<Utc>,
+    ) -> impl Future<Output = Result<AgentDirectiveRecord, SendableError>> + Send;
+
+    /// Atomically claim directives due for initial publication or redelivery.
+    fn claim_due_agent_directives(
+        &self,
+        runtime_id: String,
+        now: DateTime<Utc>,
+        stale_before: DateTime<Utc>,
+        limit: i64,
+    ) -> impl Future<Output = Result<Vec<AgentDirectiveRecord>, SendableError>> + Send;
+
+    /// Record that a claimed directive was published successfully.
+    fn mark_agent_directive_published(
+        &self,
+        directive_id: Uuid,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
+
+    /// Settle a directive from the result returned by its target agent.
+    fn complete_agent_directive(
+        &self,
+        result: AgentDirectiveResult,
+    ) -> impl Future<Output = Result<Option<AgentDirectiveRecord>, SendableError>> + Send;
+
+    /// Fetch one directive by id.
+    fn fetch_agent_directive(
+        &self,
+        directive_id: Uuid,
+    ) -> impl Future<Output = Result<Option<AgentDirectiveRecord>, SendableError>> + Send;
+
+    /// List recent directives for one replica, newest first.
+    fn list_agent_directives(
+        &self,
+        replica_id: Uuid,
+        limit: i64,
+    ) -> impl Future<Output = Result<Vec<AgentDirectiveRecord>, SendableError>> + Send;
+
+    /// Mark unfinished directives past their deadline as expired.
+    fn expire_agent_directives(
+        &self,
+        now: DateTime<Utc>,
+    ) -> impl Future<Output = Result<u64, SendableError>> + Send;
+
     /// Register or refresh a runtime replica. `registered_by` is only recorded on the initial
     /// insert (a later re-registration of the same instance_id/runtime_id upserts the rest of the
     /// row but never reassigns ownership).
@@ -69,6 +118,14 @@ pub trait ReplicaStore: Send + Sync + 'static {
     fn fetch_replica(
         &self,
         replica_id: Uuid,
+    ) -> impl Future<Output = Result<Option<ReplicaRecord>, SendableError>> + Send;
+
+    /// Fetch the row a registration upsert would touch, so a lower-trust principal can be checked
+    /// against its immutable owner before any fields are changed.
+    fn fetch_replica_by_runtime(
+        &self,
+        instance_id: String,
+        runtime_id: String,
     ) -> impl Future<Output = Result<Option<ReplicaRecord>, SendableError>> + Send;
 
     /// Count node runs currently held by each executor replica, keyed by replica id. reflects live

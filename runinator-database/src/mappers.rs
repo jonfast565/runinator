@@ -1,10 +1,13 @@
 use chrono::{DateTime, Utc};
-use runinator_comm::{ActionCommand, ActionDispatchRecord};
+use runinator_comm::{
+    ActionCommand, ActionDispatchRecord, AgentDirectiveKind, AgentDirectiveRecord,
+    AgentDirectiveState,
+};
 use runinator_models::value::Value;
 use runinator_models::{
     auth::{
-        ApiKey, ApiKeyRecord, AuthSession, Grant, LocalCredential, Permission, PrincipalType,
-        ResourceType, Team, User,
+        AgentEnrollmentToken, AgentEnrollmentTokenRecord, ApiKey, ApiKeyRecord, AuthSession, Grant,
+        LocalCredential, Permission, PrincipalKind, PrincipalType, ResourceType, Team, User,
     },
     billing::{OrgQuota, OrgResourceGroup, UsageSample},
     errors::SendableError,

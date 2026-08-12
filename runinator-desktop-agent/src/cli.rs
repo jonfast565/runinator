@@ -21,9 +21,23 @@ pub struct CliArgs {
     #[arg(long, env = "RUNINATOR_SERVICE_URL")]
     pub service_url: Option<String>,
 
+    /// discover the enrollment token's cluster on the local network.
+    #[arg(long, env = "RUNINATOR_DISCOVER")]
+    pub discover: bool,
+
+    #[arg(long, env = "RUNINATOR_GOSSIP_BIND")]
+    pub gossip_bind: Option<String>,
+
+    #[arg(long, env = "RUNINATOR_GOSSIP_PORT")]
+    pub gossip_port: Option<u16>,
+
     /// service api key presented to the web service.
     #[arg(long, env = "RUNINATOR_API_KEY")]
     pub api_key: Option<String>,
+
+    /// single-use first-start enrollment token.
+    #[arg(long = "enroll", env = "RUNINATOR_ENROLLMENT_TOKEN")]
+    pub enrollment_token: Option<String>,
 
     /// comma-separated extra routing labels, e.g. `runner=creds-sync,zone=onprem`. `pool=desktop`
     /// is always advertised in addition to these.
@@ -77,6 +91,13 @@ impl CliArgs {
     /// coming up with its last known-good settings.
     pub fn apply(&self, mut config: AgentConfig) -> AgentConfig {
         overlay(&mut config.service_url, self.service_url.as_deref());
+        overlay(&mut config.gossip_bind, self.gossip_bind.as_deref());
+        if self.discover {
+            config.discover = true;
+        }
+        if let Some(port) = self.gossip_port {
+            config.gossip_port = port;
+        }
         overlay(&mut config.sandbox_root, self.sandbox_root.as_deref());
         overlay(
             &mut config.console_working_dir,
@@ -95,6 +116,7 @@ impl CliArgs {
         if let Some(api_key) = non_blank(self.api_key.as_deref()) {
             config.api_key = Some(api_key.to_string());
         }
+        config.enrollment_token = non_blank(self.enrollment_token.as_deref()).map(str::to_string);
         if let Some(labels) = self.labels.as_deref() {
             config.extra_labels = labels
                 .split(',')

@@ -72,6 +72,12 @@ pub enum Example {
     UserList,
     ApiKey,
     ApiKeyList,
+    AgentEnrollmentCreate,
+    AgentEnrollmentTokenList,
+    AgentEnrollmentRequest,
+    AgentEnrollmentResponse,
+    AgentDirective,
+    AgentDirectiveList,
     Grant,
     Team,
     WebhookWake,
@@ -226,6 +232,38 @@ pub fn example_value(example: Example) -> Option<Value> {
         Example::ApiKeyList => {
             json!([{ "id": UUID_EXAMPLE, "name": "local automation", "user_id": UUID_EXAMPLE, "is_service": false, "key_prefix": "runi_live_1234", "expires_at": null, "disabled": false }])
         }
+        Example::AgentEnrollmentCreate => json!({
+            "ttl_seconds": 900,
+            "org_id": UUID_EXAMPLE,
+            "labels": { "site": "home" },
+            "service_url": "https://runinator.example"
+        }),
+        Example::AgentEnrollmentTokenList => json!([{
+            "token_id": "AbCdEfGhIjk",
+            "org_id": UUID_EXAMPLE,
+            "labels": { "site": "home" },
+            "service_url": "https://runinator.example",
+            "expires_at": "2026-08-12T16:15:00Z",
+            "consumed_at": null,
+            "created_at": "2026-08-12T16:00:00Z"
+        }]),
+        Example::AgentEnrollmentRequest => json!({
+            "token_id": "AbCdEfGhIjk",
+            "request_body": {
+                "instance_id": "home-agent-01",
+                "display_name": "Home server",
+                "labels": { "site": "home" }
+            },
+            "proof": "base64url-hmac-sha256"
+        }),
+        Example::AgentEnrollmentResponse => json!({
+            "api_key": "runi_agent_secret_shown_once",
+            "service_url": "https://runinator.example",
+            "org_id": UUID_EXAMPLE,
+            "labels": { "site": "home" }
+        }),
+        Example::AgentDirective => agent_directive_example(),
+        Example::AgentDirectiveList => json!([agent_directive_example()]),
         Example::Grant => {
             json!({ "principal_type": "user", "principal_id": UUID_EXAMPLE, "permission": "view" })
         }
@@ -245,6 +283,19 @@ pub fn example_value(example: Example) -> Option<Value> {
         Example::Supervisor => {
             json!({ "running": true, "services": [{ "name": "runinator-ws", "status": "running" }] })
         }
+    })
+}
+
+fn agent_directive_example() -> Value {
+    json!({
+        "directive_id": UUID_EXAMPLE,
+        "replica_id": UUID_EXAMPLE,
+        "kind": { "type": "diagnostics" },
+        "state": "pending",
+        "issued_at": "2026-08-12T12:00:00Z",
+        "expires_at": "2026-08-12T12:05:00Z",
+        "payload": null,
+        "attempts": 0
     })
 }
 

@@ -18,6 +18,7 @@ const INGRESS_CONSUMER_ID: &str = "runinator-ws-ingress";
 const WAKE_PUBLISH_INTERVAL: Duration = Duration::from_millis(1000);
 const TRIGGER_INTERVAL: Duration = Duration::from_millis(1000);
 const ACTION_DISPATCH_INTERVAL: Duration = Duration::from_millis(500);
+const AGENT_DIRECTIVE_INTERVAL: Duration = Duration::from_secs(1);
 const CLAIM_LIMIT: i64 = 100;
 const ACTION_DISPATCH_LEASE_SECONDS: i64 = 60;
 const MAX_INGRESS_ATTEMPTS: u32 = 3;
@@ -330,6 +331,37 @@ pub async fn run_action_dispatch_publisher<T: DatabaseImpl>(
     }
 }
 
+/// drain the durable replica-directive outbox, with periodic redelivery as a reconnect backstop.
+pub async fn run_agent_directive_publisher<T: DatabaseImpl>(
+    db: Arc<T>,
+    broker: Arc<dyn Broker>,
+    instance_id: String,
+    agent_nudge: Arc<Notify>,
+    shutdown: Arc<Notify>,
+) {
+    info!("agent directive publisher started");
+    loop {
+        if let Err(err) = repository::publish_due_agent_directives(
+            db.as_ref(),
+            broker.as_ref(),
+            &instance_id,
+            CLAIM_LIMIT,
+        )
+        .await
+        {
+            error!(
+                error_code = error_code_or_unknown(err.as_ref()),
+                "agent directive publisher iteration failed: {err}"
+            );
+        }
+        tokio::select! {
+            _ = shutdown.notified() => return,
+            _ = agent_nudge.notified() => {}
+            _ = tokio::time::sleep(AGENT_DIRECTIVE_INTERVAL) => {}
+        }
+    }
+}
+
 /// consume the ingress channel: drive requests (from wakers) run the reducer, control requests
 /// (from workers) pause/resume/cancel a run. the web service is the sole consumer.
 pub async fn run_ingress_consumer<T: DatabaseImpl>(
@@ -386,6 +418,9 @@ pub async fn run_ingress_consumer<T: DatabaseImpl>(
             WsIngressCommand::Control {
                 workflow_run_id, ..
             } => tracing::info_span!("ingress_control", run_id = %workflow_run_id),
+            WsIngressCommand::AgentDirectiveResult { result } => {
+                tracing::info_span!("ingress_agent_directive_result", directive_id = %result.directive_id)
+            }
         };
 
         async {
@@ -525,6 +560,14 @@ async fn apply_ingress<T: DatabaseImpl>(
             emit_workflow_run(events, *workflow_run_id, org_id);
             events.nudge_wake_publisher();
             events.nudge_action_dispatch_publisher();
+            Ok(())
+        }
+        WsIngressCommand::AgentDirectiveResult { result } => {
+            repository::complete_agent_directive(db, result.clone()).await?;
+            emit(
+                events,
+                crate::events::AppEvent::global(AppEventKind::ReplicasChanged),
+            );
             Ok(())
         }
     }

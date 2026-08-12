@@ -32,6 +32,20 @@ pub fn ensure_workflow_result_channels_supported(
     )))
 }
 
+pub fn ensure_agent_channel_supported(
+    backend: &str,
+    broker: &dyn Broker,
+) -> Result<(), BrokerError> {
+    if broker.supports_agent_channel() {
+        return Ok(());
+    }
+    Err(BrokerError::NotImplemented(match backend {
+        "kafka" => "agent topic",
+        "rabbitmq" => "agent queue",
+        _ => "agent channel",
+    }))
+}
+
 #[cfg(test)]
 #[path = "capabilities_tests.rs"]
 mod tests;

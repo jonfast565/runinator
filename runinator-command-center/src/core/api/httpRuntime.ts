@@ -532,6 +532,26 @@ const REGISTRY: Record<string, HttpDescriptor> = {
   fetch_trigger_kinds: { method: "GET", path: () => "trigger-kinds" },
   fetch_enum_catalogs: { method: "GET", path: () => "catalog/enums" },
   fetch_replicas: { method: "GET", path: () => "replicas" },
+  create_agent_directive: {
+    method: "POST",
+    path: (args) => `replicas/${escape(arg(args, "replicaId"))}/directives`,
+    body: (args) => ({ kind: arg(args, "kind"), expires_in_seconds: 300 }),
+  },
+  list_agent_directives: {
+    method: "GET",
+    path: (args) =>
+      `replicas/${escape(arg(args, "replicaId"))}/directives?limit=${escape(arg(args, "limit"))}`,
+  },
+  create_agent_enrollment_token: {
+    method: "POST",
+    path: () => "agents/enrollment_tokens",
+    body: (args) => arg(args, "request"),
+  },
+  list_agent_enrollment_tokens: { method: "GET", path: () => "agents/enrollment_tokens" },
+  revoke_agent_enrollment_token: {
+    method: "DELETE",
+    path: (args) => `agents/enrollment_tokens/${escape(arg(args, "tokenId"))}`,
+  },
   fetch_node_backends: { method: "GET", path: () => "nodes/backends" },
   fetch_nodes: { method: "GET", path: () => "nodes" },
   scale_nodes: { method: "POST", path: () => "nodes/scale", body: (args) => arg(args, "request") },

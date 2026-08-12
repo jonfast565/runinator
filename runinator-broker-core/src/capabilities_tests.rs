@@ -46,6 +46,17 @@ fn supported_broker_passes_result_channel_guard() {
     ensure_workflow_result_channels_supported("in-memory", &InMemoryBroker::new()).unwrap();
 }
 
+#[test]
+fn supported_broker_passes_agent_channel_guard() {
+    ensure_agent_channel_supported("in-memory", &InMemoryBroker::new()).unwrap();
+}
+
+#[test]
+fn unsupported_broker_returns_clear_agent_channel_error() {
+    let err = ensure_agent_channel_supported("custom", &UnsupportedBroker).unwrap_err();
+    assert!(err.to_string().contains("agent channel"));
+}
+
 struct UnsupportedBroker;
 
 #[async_trait]

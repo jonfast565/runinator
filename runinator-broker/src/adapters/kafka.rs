@@ -1,3 +1,5 @@
+#[cfg(feature = "kafka")]
+use crate::{AgentCommand, AgentDelivery};
 use crate::{
     Broker, BrokerDelivery, BrokerError, BrokerMessage, ControlCommand, ControlDelivery,
     EventDelivery, EventMessage, IngressDelivery, IngressMessage, ResultDelivery, ResultMessage,
@@ -8,6 +10,7 @@ use uuid::Uuid;
 
 const DEFAULT_ACTION_TOPIC: &str = "runinator.actions";
 const DEFAULT_CONTROL_TOPIC: &str = "runinator.control";
+const DEFAULT_AGENT_TOPIC: &str = "runinator.agent";
 const DEFAULT_RESULT_TOPIC: &str = "runinator.results";
 const DEFAULT_WAKE_TOPIC: &str = "runinator.wake";
 const DEFAULT_INGRESS_TOPIC: &str = "runinator.ingress";
@@ -19,6 +22,7 @@ pub struct KafkaBrokerConfig {
     pub bootstrap_servers: String,
     pub action_topic: String,
     pub control_topic: String,
+    pub agent_topic: String,
     pub result_topic: String,
     pub wake_topic: String,
     pub ingress_topic: String,
@@ -33,6 +37,7 @@ impl KafkaBrokerConfig {
             bootstrap_servers: bootstrap_servers.into(),
             action_topic: DEFAULT_ACTION_TOPIC.into(),
             control_topic: DEFAULT_CONTROL_TOPIC.into(),
+            agent_topic: DEFAULT_AGENT_TOPIC.into(),
             result_topic: DEFAULT_RESULT_TOPIC.into(),
             wake_topic: DEFAULT_WAKE_TOPIC.into(),
             ingress_topic: DEFAULT_INGRESS_TOPIC.into(),
@@ -44,6 +49,11 @@ impl KafkaBrokerConfig {
     /// override the fan-out topic used for UI events.
     pub fn with_event_topic(mut self, event_topic: impl Into<String>) -> Self {
         self.event_topic = event_topic.into();
+        self
+    }
+
+    pub fn with_agent_topic(mut self, agent_topic: impl Into<String>) -> Self {
+        self.agent_topic = agent_topic.into();
         self
     }
 
@@ -112,6 +122,7 @@ struct KafkaBrokerInner {
     producer: rdkafka::producer::FutureProducer,
     action_consumers: Mutex<HashMap<String, Arc<rdkafka::consumer::StreamConsumer>>>,
     control_consumers: Mutex<HashMap<String, Arc<rdkafka::consumer::StreamConsumer>>>,
+    agent_consumers: Mutex<HashMap<String, Arc<rdkafka::consumer::StreamConsumer>>>,
     result_consumers: Mutex<HashMap<String, Arc<rdkafka::consumer::StreamConsumer>>>,
     wake_consumers: Mutex<HashMap<String, Arc<rdkafka::consumer::StreamConsumer>>>,
     ingress_consumers: Mutex<HashMap<String, Arc<rdkafka::consumer::StreamConsumer>>>,
@@ -138,6 +149,7 @@ struct PendingDelivery {
 enum KafkaChannel {
     Action,
     Control,
+    Agent,
     Result,
     Wake,
     Ingress,
@@ -159,6 +171,7 @@ impl KafkaBrokerInner {
             producer,
             action_consumers: Mutex::new(HashMap::new()),
             control_consumers: Mutex::new(HashMap::new()),
+            agent_consumers: Mutex::new(HashMap::new()),
             result_consumers: Mutex::new(HashMap::new()),
             wake_consumers: Mutex::new(HashMap::new()),
             ingress_consumers: Mutex::new(HashMap::new()),
@@ -176,6 +189,7 @@ impl KafkaBrokerInner {
         let map = match channel {
             KafkaChannel::Action => &self.action_consumers,
             KafkaChannel::Control => &self.control_consumers,
+            KafkaChannel::Agent => &self.agent_consumers,
             KafkaChannel::Result => &self.result_consumers,
             KafkaChannel::Wake => &self.wake_consumers,
             KafkaChannel::Ingress => &self.ingress_consumers,
@@ -226,6 +240,7 @@ impl KafkaChannel {
         match self {
             KafkaChannel::Action => &config.action_topic,
             KafkaChannel::Control => &config.control_topic,
+            KafkaChannel::Agent => &config.agent_topic,
             KafkaChannel::Result => &config.result_topic,
             KafkaChannel::Wake => &config.wake_topic,
             KafkaChannel::Ingress => &config.ingress_topic,
@@ -237,6 +252,7 @@ impl KafkaChannel {
         match self {
             KafkaChannel::Action => "actions",
             KafkaChannel::Control => "control",
+            KafkaChannel::Agent => "agent",
             KafkaChannel::Result => "results",
             KafkaChannel::Wake => "wake",
             KafkaChannel::Ingress => "ingress",
@@ -252,7 +268,12 @@ impl KafkaChannel {
     ) -> Result<rdkafka::consumer::StreamConsumer, BrokerError> {
         use rdkafka::{consumer::Consumer, ClientConfig};
 
-        let group_id = format!("runinator.{consumer_id}.{}", self.name());
+        let group_id = match self {
+            // directives are competing-consumer and target checked; every agent joins one group so
+            // a command is never fanned out to every replica as events are.
+            KafkaChannel::Agent => "runinator.agents".to_string(),
+            _ => format!("runinator.{consumer_id}.{}", self.name()),
+        };
         let client_id = format!("{}.{}.{}", config.client_id, self.name(), consumer_id);
         // events are a fan-out, best-effort stream: a fresh per-replica group starts at the tail so a
         // restarting pod does not replay historical UI events. work channels replay from earliest.
@@ -391,6 +412,10 @@ impl Broker for KafkaBroker {
         self.config.has_workflow_result_topic()
     }
 
+    fn supports_agent_channel(&self) -> bool {
+        !self.config.agent_topic.trim().is_empty()
+    }
+
     async fn publish(&self, message: BrokerMessage) -> Result<(), BrokerError> {
         let key = message.dedupe_key_or_hash();
         let payload = serde_json::to_string(&message)
@@ -458,6 +483,41 @@ impl Broker for KafkaBroker {
     }
 
     async fn nack_control(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        nack_pending(self.inner.take_pending(delivery_id)?)
+    }
+
+    async fn publish_agent(&self, command: AgentCommand) -> Result<(), BrokerError> {
+        let key = command.replica_id.to_string();
+        let payload = serde_json::to_string(&command)
+            .map_err(|err| BrokerError::Internal(err.to_string()))?;
+        publish_json(
+            &self.inner.producer,
+            &self.config.agent_topic,
+            &key,
+            payload,
+        )
+        .await
+    }
+
+    async fn receive_agent(&self, consumer: &str) -> Result<AgentDelivery, BrokerError> {
+        let (command, pending) =
+            receive_json::<AgentCommand>(self, KafkaChannel::Agent, consumer).await?;
+        let delivery = AgentDelivery::from(command);
+        self.inner.track_delivery(
+            delivery.delivery_id,
+            pending.consumer,
+            pending.topic,
+            pending.partition,
+            pending.offset,
+        );
+        Ok(delivery)
+    }
+
+    async fn ack_agent(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        ack_pending(self.inner.take_pending(delivery_id)?)
+    }
+
+    async fn nack_agent(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
         nack_pending(self.inner.take_pending(delivery_id)?)
     }
 

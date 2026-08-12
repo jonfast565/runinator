@@ -46,6 +46,10 @@ pub(crate) struct CliArgs {
     #[arg(long, default_value = "runinator.control")]
     pub broker_control_topic: String,
 
+    /// Kafka agent topic or RabbitMQ per-replica queue prefix
+    #[arg(long, default_value = "runinator.agent")]
+    pub broker_agent_topic: String,
+
     /// Kafka result topic or RabbitMQ result queue used by direct broker backends
     #[arg(long, default_value = "runinator.results")]
     pub broker_result_topic: String,

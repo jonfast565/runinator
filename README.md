@@ -951,6 +951,22 @@ saved GUI configuration. The corresponding environment variables are `RUNINATOR_
 `RUNINATOR_MAX_CONCURRENT_ACTIONS`, `RUNINATOR_SHUTDOWN_GRACE_SECONDS`, and
 `RUNINATOR_LIVENESS_FILE`.
 
+For LAN/local development, `--discover --enroll <token>` (or `RUNINATOR_DISCOVER=true`) listens
+for web-service gossip and selects only an announcement whose `cluster_id` matches the identity
+bound into that enrollment token. Discovery merely finds an address; the token authorizes the
+cluster. Without a bound token, candidates must be chosen explicitly with `--service-url` and are
+never auto-enrolled. Gossip is IPv4 UDP broadcast and normally stays within one subnet; it is not
+a Kubernetes discovery mechanism. Kubernetes keeps `--disable-gossip` and uses stable service DNS.
+
+Web-service announcements include their `http`/`https` scheme, relay path, version, enrollment
+availability, and optional SPKI pin. Set `RUNINATOR_CLUSTER_ID` to the same stable UUID on every web
+replica when its public enrollment URL differs from the address advertised on the LAN.
+
+The service reaps silent replicas after 10 minutes and deletes offline rows after 60 minutes by
+default. Set `RUNINATOR_REPLICA_REAP_SECONDS` and `RUNINATOR_REPLICA_DELETE_SECONDS` to tune those
+retention windows. Remote agents advertise a separate live/stale window in their heartbeat status,
+so normal home-network jitter does not make a connected agent flicker stale.
+
 The control window lets you set the service URL, sandbox folder, optional direct
 broker connection, routing labels, and startup behavior. Closing the window
 hides it in the tray; use "Exit" from the tray menu to actually quit.

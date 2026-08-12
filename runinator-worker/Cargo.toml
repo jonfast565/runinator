@@ -11,6 +11,13 @@ tokio = { version = "1", features = ["full"] }
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.18", features = ["v4", "v5", "serde"] }
 reqwest = { version = "0.13.3", default-features = false, features = ["json", "rustls", "blocking"] }
+sha2 = "0.10"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+x509-parser = "0.18"
+serde_json = "1.0"
+serde = { version = "1", features = ["derive"] }
+base64 = "0.22"
+runinator-auth = { path = "../runinator-auth" }
 
 runinator-comm = { path = "../runinator-comm" }
 runinator-plugin = { path = "../runinator-plugin" }
@@ -28,3 +35,6 @@ rabbitmq = ["runinator-broker/rabbitmq"]
 # of connecting to the broker directly — for a worker that only has network access to the web
 # service (e.g. running outside the cluster's trusted network).
 ws = ["runinator-broker/ws"]
+
+[dev-dependencies]
+tempfile = "3"

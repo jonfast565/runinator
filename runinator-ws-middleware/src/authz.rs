@@ -50,6 +50,7 @@ fn pipeline_kind() -> String {
 pub trait AuthContextExt {
     fn require_admin(&self) -> Result<(), Reply>;
     fn require_service_or_admin(&self) -> Result<(), Reply>;
+    fn require_agent_service_or_admin(&self) -> Result<(), Reply>;
     fn capabilities(&self) -> HashSet<Capability>;
     fn require_capability(&self, cap: Capability) -> Result<(), Reply>;
     fn require_org_role(&self, org_id: Uuid, min: OrgRole) -> Result<(), Reply>;
@@ -71,6 +72,16 @@ impl AuthContextExt for AuthContext {
 
     fn require_service_or_admin(&self) -> Result<(), Reply> {
         if self.is_admin || matches!(self.kind, PrincipalKind::Service) {
+            Ok(())
+        } else {
+            Err(forbidden())
+        }
+    }
+
+    /// gate the narrow worker data plane. callers must opt individual endpoints into this; an agent
+    /// principal never inherits the much wider service-key surface by its kind alone.
+    fn require_agent_service_or_admin(&self) -> Result<(), Reply> {
+        if self.is_admin || matches!(self.kind, PrincipalKind::Service | PrincipalKind::Agent) {
             Ok(())
         } else {
             Err(forbidden())
@@ -146,6 +157,7 @@ impl AuthContextExt for AuthContext {
         match self.kind {
             PrincipalKind::User => "user",
             PrincipalKind::Service => "service",
+            PrincipalKind::Agent => "agent",
         }
     }
 
@@ -162,6 +174,7 @@ impl AuthContextExt for AuthContext {
             source: match self.kind {
                 PrincipalKind::User => RevisionSource::Ui,
                 PrincipalKind::Service => RevisionSource::Api,
+                PrincipalKind::Agent => RevisionSource::Api,
             },
             note: None,
         }

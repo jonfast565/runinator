@@ -1,6 +1,8 @@
 // authentication & identity domain/wire types. authorization (grants/teams) lands in a later phase;
 // phase 1 carries only a global `is_admin` flag plus service api keys.
 
+use std::collections::BTreeMap;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -176,6 +178,8 @@ pub struct ApiKeyRecord {
     pub key: ApiKey,
     /// resolved admin flag for the principal this key acts as (service keys are admin in phase 1).
     pub is_admin: bool,
+    pub principal_kind: PrincipalKind,
+    pub org_id: Option<Uuid>,
     pub key_hash: String,
 }
 
@@ -217,10 +221,13 @@ pub struct Claims {
 }
 
 /// how a request was authenticated.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
 pub enum PrincipalKind {
+    #[default]
     User,
     Service,
+    Agent,
 }
 
 impl PrincipalKind {
@@ -228,6 +235,16 @@ impl PrincipalKind {
         match self {
             Self::User => "user",
             Self::Service => "service",
+            Self::Agent => "agent",
+        }
+    }
+
+    pub fn from_str_lossy(raw: &str) -> Option<Self> {
+        match raw {
+            "user" => Some(Self::User),
+            "service" => Some(Self::Service),
+            "agent" => Some(Self::Agent),
+            _ => None,
         }
     }
 }
@@ -337,4 +354,83 @@ pub struct UpdateApiKeyRequest {
 pub struct CreateApiKeyResponse {
     pub api_key: ApiKey,
     pub secret: String,
+}
+
+/// administrative view of a scoped, single-use agent enrollment token. the secret is never
+/// returned after creation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentEnrollmentToken {
+    pub token_id: String,
+    #[serde(default)]
+    pub org_id: Option<Uuid>,
+    #[serde(default)]
+    pub labels: BTreeMap<String, String>,
+    pub service_url: String,
+    #[serde(default)]
+    pub spki_pin: Option<String>,
+    pub expires_at: DateTime<Utc>,
+    #[serde(default)]
+    pub consumed_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub issued_by: Option<Uuid>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// persistence form; the HMAC secret is sealed with the credential cipher before storage.
+#[derive(Debug, Clone)]
+pub struct AgentEnrollmentTokenRecord {
+    pub token: AgentEnrollmentToken,
+    pub sealed_secret: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateAgentEnrollmentTokenRequest {
+    /// bounded lifetime in seconds.
+    pub ttl_seconds: u64,
+    #[serde(default)]
+    pub org_id: Option<Uuid>,
+    #[serde(default)]
+    pub labels: BTreeMap<String, String>,
+    pub service_url: String,
+    /// override for deployments whose LAN announcement URL differs from the public enrollment URL.
+    #[serde(default)]
+    pub cluster_id: Option<Uuid>,
+    #[serde(default)]
+    pub spki_pin: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateAgentEnrollmentTokenResponse {
+    pub enrollment_token: AgentEnrollmentToken,
+    /// shown exactly once.
+    pub token: String,
+}
+
+/// body authenticated by the enrollment HMAC. labels are a request only; the server rejects any
+/// value outside the token's authorized label set.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentEnrollmentRequestBody {
+    pub instance_id: String,
+    #[serde(default)]
+    pub display_name: Option<String>,
+    #[serde(default)]
+    pub labels: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnrollAgentRequest {
+    pub token_id: String,
+    pub request_body: AgentEnrollmentRequestBody,
+    /// base64url-no-pad HMAC-SHA256 over the canonical JSON request body.
+    pub proof: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnrollAgentResponse {
+    pub api_key: String,
+    pub service_url: String,
+    #[serde(default)]
+    pub org_id: Option<Uuid>,
+    #[serde(default)]
+    pub labels: BTreeMap<String, String>,
 }

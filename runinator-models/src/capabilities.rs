@@ -22,6 +22,9 @@ pub enum Capability {
     /// administer api keys beyond one's own (service keys, other users' keys, rotate/revoke).
     #[serde(rename = "apikeys:manage")]
     ApiKeysManage,
+    /// mint scoped, single-use agent enrollment tokens.
+    #[serde(rename = "agents:enroll")]
+    AgentsEnroll,
     /// read decrypted settings/secrets.
     #[serde(rename = "secrets:read")]
     SecretsRead,
@@ -74,6 +77,7 @@ impl Capability {
         Capability::UsersManage,
         Capability::TeamsManage,
         Capability::ApiKeysManage,
+        Capability::AgentsEnroll,
         Capability::SecretsRead,
         Capability::SecretsWrite,
         Capability::CatalogManage,
@@ -100,6 +104,7 @@ impl Capability {
             Capability::UsersManage => "users:manage",
             Capability::TeamsManage => "teams:manage",
             Capability::ApiKeysManage => "apikeys:manage",
+            Capability::AgentsEnroll => "agents:enroll",
             Capability::SecretsRead => "secrets:read",
             Capability::SecretsWrite => "secrets:write",
             Capability::CatalogManage => "catalog:manage",

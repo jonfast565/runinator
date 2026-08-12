@@ -5,7 +5,10 @@ use runinator_broker::{
     ws::{client::WsBroker, server::serve},
     Broker, BrokerMessage, ConnectionState, ControlCommand, ResultMessage,
 };
-use runinator_comm::{ActionCommand, ControlKind, WorkflowResultEvent, WorkflowResultEventKind};
+use runinator_comm::{
+    ActionCommand, ActionTarget, AgentCommand, AgentDirectiveKind, ConsumerProfile, ControlKind,
+    WorkflowResultEvent, WorkflowResultEventKind,
+};
 use runinator_models::json;
 use runinator_models::workflows::WorkflowAction;
 use std::time::Duration;
@@ -73,6 +76,28 @@ async fn ws_broker_delivers_control_messages() {
         .await
         .unwrap();
 
+    server.abort();
+}
+
+#[tokio::test]
+async fn ws_broker_delivers_targeted_agent_directives() {
+    let (server, url) = spawn_server().await;
+    let broker = WsBroker::connect(url, None);
+    let replica_id = Uuid::now_v7();
+    broker
+        .publish_agent(agent_command(replica_id))
+        .await
+        .unwrap();
+    let profile = ConsumerProfile::shared("agent-test").with_replica_id(replica_id);
+    let delivery = tokio::time::timeout(Duration::from_secs(5), broker.receive_agent_for(&profile))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(delivery.command.replica_id, replica_id);
+    broker
+        .ack_agent(&profile.id, delivery.delivery_id)
+        .await
+        .unwrap();
     server.abort();
 }
 
@@ -274,5 +299,16 @@ fn action_command() -> ActionCommand {
         trace_context: Default::default(),
         notification_delivery_id: None,
         idempotency_key: None,
+    }
+}
+
+fn agent_command(replica_id: Uuid) -> AgentCommand {
+    AgentCommand {
+        directive_id: Uuid::now_v7(),
+        replica_id,
+        target: ActionTarget::Replica { replica_id },
+        kind: AgentDirectiveKind::Diagnostics,
+        issued_at: Utc::now(),
+        expires_at: Utc::now() + chrono::Duration::minutes(5),
     }
 }

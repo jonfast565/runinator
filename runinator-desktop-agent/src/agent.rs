@@ -18,11 +18,15 @@
 //! directly), but an operator on the trusted network can switch to a direct backend instead.
 
 use std::collections::{BTreeMap, VecDeque};
+use std::future::Future;
+use std::path::{Component, Path, PathBuf};
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use base64::Engine;
 use runinator_api::{AsyncApiClient, StaticLocator};
-use runinator_comm::ControlKind;
+use runinator_comm::{AgentDirectiveKind, ControlKind};
 use runinator_models::errors::SendableError;
 use runinator_models::replicas::ReplicaKind;
 use runinator_provider_catalog::{StaticProvider, built_in_providers};
@@ -30,8 +34,9 @@ use runinator_provider_local_files::LocalProvider;
 use runinator_utilities::resource_telemetry::TelemetryCollector;
 use runinator_worker::agent::{
     AgentHandle, AgentObserver, AgentRuntime, AgentRuntimeConfig, BrokerSelection,
-    DEFAULT_HEARTBEAT_INTERVAL, DEFAULT_REGISTER_MAX_ATTEMPTS,
+    DEFAULT_HEARTBEAT_INTERVAL, DEFAULT_REGISTER_MAX_ATTEMPTS, LocatorMode,
 };
+use runinator_worker::agent::{DirectiveHandler, DirectiveResponse};
 use runinator_worker::{ActionOutcome, ProviderFactory, WorkerEvent, parse_labels};
 use uuid::Uuid;
 
@@ -50,6 +55,7 @@ const MAX_LOG_LINES: usize = 10_000;
 // needs to match a non-default cluster naming scheme can still edit the persisted config JSON.
 const DEFAULT_ACTION_TOPIC: &str = "runinator.actions";
 const DEFAULT_CONTROL_TOPIC: &str = "runinator.control";
+const DEFAULT_AGENT_TOPIC: &str = "runinator.agent";
 const DEFAULT_RESULT_TOPIC: &str = "runinator.results";
 const DEFAULT_BROKER_CLIENT_ID: &str = "runinator-desktop-agent";
 // how long to wait for in-flight work to drain when the operator stops the agent.
@@ -114,6 +120,104 @@ struct DesktopObserver {
     root: String,
 }
 
+/// desktop-only bounded access to the UI log ring and configured local-files sandbox.
+struct DesktopDirectiveHandler {
+    shared: SharedHandle,
+    root: PathBuf,
+}
+
+impl DirectiveHandler for DesktopDirectiveHandler {
+    fn handle<'a>(
+        &'a self,
+        kind: &'a AgentDirectiveKind,
+    ) -> Pin<Box<dyn Future<Output = DirectiveResponse> + Send + 'a>> {
+        Box::pin(async move {
+            match kind {
+                AgentDirectiveKind::TailLogs { lines } => {
+                    let count = (*lines).min(MAX_LOG_LINES);
+                    let Ok(guard) = self.shared.lock() else {
+                        return DirectiveResponse::failed("desktop log buffer is unavailable");
+                    };
+                    let logs = guard
+                        .logs
+                        .iter()
+                        .rev()
+                        .take(count)
+                        .rev()
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    DirectiveResponse::completed(runinator_models::json!({ "lines": logs }))
+                }
+                AgentDirectiveKind::ListSandbox { path } => match resolve_sandbox(&self.root, path)
+                {
+                    Ok(target) => match std::fs::read_dir(target) {
+                        Ok(entries) => {
+                            let mut names = entries
+                                .filter_map(Result::ok)
+                                .take(1_000)
+                                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                                .collect::<Vec<_>>();
+                            names.sort();
+                            DirectiveResponse::completed(
+                                runinator_models::json!({ "entries": names }),
+                            )
+                        }
+                        Err(err) => DirectiveResponse::failed(err.to_string()),
+                    },
+                    Err(err) => DirectiveResponse::failed(err),
+                },
+                AgentDirectiveKind::FetchFile { path, max_bytes } => {
+                    let cap = (*max_bytes).min(8 * 1024 * 1024) as usize;
+                    match resolve_sandbox(&self.root, path) {
+                        Ok(target) => match std::fs::read(target) {
+                            Ok(bytes) if bytes.len() <= cap => {
+                                DirectiveResponse::completed(runinator_models::json!({
+                                    "size": bytes.len(),
+                                    "encoding": "base64",
+                                    "content": base64::engine::general_purpose::STANDARD.encode(bytes),
+                                }))
+                            }
+                            Ok(bytes) => DirectiveResponse::failed(format!(
+                                "file is {} bytes, above the {} byte limit",
+                                bytes.len(),
+                                cap
+                            )),
+                            Err(err) => DirectiveResponse::failed(err.to_string()),
+                        },
+                        Err(err) => DirectiveResponse::failed(err),
+                    }
+                }
+                _ => DirectiveResponse::unsupported("directive is not desktop-specific"),
+            }
+        })
+    }
+}
+
+fn resolve_sandbox(root: &Path, relative: &str) -> Result<PathBuf, String> {
+    let root = root
+        .canonicalize()
+        .map_err(|err| format!("sandbox root is unavailable: {err}"))?;
+    let relative = Path::new(relative);
+    if relative.is_absolute()
+        || relative.components().any(|part| {
+            matches!(
+                part,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+    {
+        return Err("path escapes the configured sandbox".to_string());
+    }
+    let target = root
+        .join(relative)
+        .canonicalize()
+        .map_err(|err| format!("sandbox path is unavailable: {err}"))?;
+    if !target.starts_with(&root) {
+        return Err("path escapes the configured sandbox".to_string());
+    }
+    Ok(target)
+}
+
 impl AgentObserver for DesktopObserver {
     fn on_log(&self, line: &str) {
         log_line(&self.shared, line);
@@ -128,6 +232,7 @@ impl AgentObserver for DesktopObserver {
                 return;
             };
             guard.connection = status.connection.clone();
+            guard.metrics = status.metrics.clone();
             guard.status = AgentStatus {
                 running: status.running,
                 replica_id: status.replica_id,
@@ -161,9 +266,6 @@ impl AgentObserver for DesktopObserver {
     }
 
     fn on_worker_event(&self, event: &WorkerEvent) {
-        if let Ok(mut guard) = self.shared.lock() {
-            guard.metrics.apply(event);
-        }
         log_line(&self.shared, describe_worker_event(event));
     }
 }
@@ -296,6 +398,7 @@ pub fn runtime_config(config: &AgentConfig) -> Result<AgentRuntimeConfig, Sendab
         direct_endpoint: config.direct_broker_endpoint.clone(),
         action_topic: DEFAULT_ACTION_TOPIC.to_string(),
         control_topic: DEFAULT_CONTROL_TOPIC.to_string(),
+        agent_topic: DEFAULT_AGENT_TOPIC.to_string(),
         result_topic: DEFAULT_RESULT_TOPIC.to_string(),
         client_id: DEFAULT_BROKER_CLIENT_ID.to_string(),
         api_key: config.api_key.clone(),
@@ -313,7 +416,23 @@ pub fn runtime_config(config: &AgentConfig) -> Result<AgentRuntimeConfig, Sendab
     let instance_id = Uuid::new_v4().to_string();
     Ok(AgentRuntimeConfig {
         service_url: config.service_url.clone(),
+        locator_mode: if config.discover {
+            LocatorMode::Discover
+        } else {
+            LocatorMode::Static
+        },
+        gossip_bind: config.gossip_bind.clone(),
+        gossip_port: config.gossip_port,
         api_key: config.api_key.clone(),
+        enrollment_token: config.enrollment_token.clone(),
+        credential_file: runinator_utilities::app_data::app_data_path(
+            "agent/desktop-credential.json",
+        )
+        .unwrap_or_else(|_| std::path::PathBuf::from("desktop-credential.json")),
+        outbox_file: runinator_utilities::app_data::app_data_path(
+            "agent/desktop-result-outbox.jsonl",
+        )
+        .unwrap_or_else(|_| std::path::PathBuf::from("desktop-result-outbox.jsonl")),
         display_name: Some(format!("desktop-{instance_id}")),
         instance_id,
         advertise_host: None,
@@ -335,8 +454,10 @@ pub fn runtime_config(config: &AgentConfig) -> Result<AgentRuntimeConfig, Sendab
         shutdown_grace: Duration::from_secs(config.shutdown_grace_seconds.max(1)),
         liveness_file: config.liveness_file.clone(),
         heartbeat_interval: DEFAULT_HEARTBEAT_INTERVAL,
+        stale_after: Duration::from_secs(90),
         register_max_attempts: DEFAULT_REGISTER_MAX_ATTEMPTS,
         sample_telemetry: true,
+        directive_handler: Arc::new(runinator_worker::agent::DefaultDirectiveHandler),
     })
 }
 
@@ -360,7 +481,14 @@ pub fn start(rt: &tokio::runtime::Handle, shared: SharedHandle, config: AgentCon
         root: config.sandbox_root.clone(),
     });
 
-    let started = runtime_config(&config).and_then(|runtime_config| {
+    let started = runtime_config(&config).and_then(|mut runtime_config| {
+        runtime_config.directive_handler = Arc::new(DesktopDirectiveHandler {
+            shared: shared.clone(),
+            root: PathBuf::from(&config.sandbox_root),
+        });
+        rt.block_on(runinator_worker::prepare_agent_credentials(
+            &mut runtime_config,
+        ))?;
         // `AgentRuntime::start` spawns the lifecycle, so it needs a runtime context; it does not
         // block, so calling it from the GUI thread is fine.
         let _guard = rt.enter();

@@ -38,10 +38,9 @@ async fn serve(config: AgentConfig) -> Result<(), SendableError> {
     crate::agent::configure_provider_environment(&config);
 
     let grace = Duration::from_secs(config.shutdown_grace_seconds.max(1) + 5);
-    let mut agent = AgentRuntime::start(
-        crate::agent::runtime_config(&config)?,
-        Arc::new(NoopObserver),
-    )?;
+    let mut runtime_config = crate::agent::runtime_config(&config)?;
+    runinator_worker::prepare_agent_credentials(&mut runtime_config).await?;
+    let mut agent = AgentRuntime::start(runtime_config, Arc::new(NoopObserver))?;
 
     tokio::select! {
         signal = tokio::signal::ctrl_c() => {

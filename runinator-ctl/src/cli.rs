@@ -192,6 +192,58 @@ pub enum Commands {
         #[command(subcommand)]
         command: OrgCommands,
     },
+    /// Enroll and manage externally hosted worker agents.
+    Agents {
+        #[command(subcommand)]
+        command: AgentCommands,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AgentCommands {
+    /// Collect runtime diagnostics from one agent.
+    Diagnostics { replica_id: Uuid },
+    /// Stop one agent from accepting new actions while keeping management reachable.
+    Drain { replica_id: Uuid },
+    /// Restart one agent's broker worker loop.
+    Restart { replica_id: Uuid },
+    /// Fetch recent desktop-agent log lines.
+    Logs {
+        replica_id: Uuid,
+        #[arg(long, default_value_t = 200)]
+        lines: usize,
+    },
+    /// List recent directive state for one agent.
+    Directives {
+        replica_id: Uuid,
+        #[arg(long, default_value_t = 50)]
+        limit: i64,
+    },
+    /// Create a single-use enrollment token, shown only once.
+    EnrollToken {
+        /// Token lifetime, such as 30s, 15m, 2h, or 1d.
+        #[arg(long, default_value = "15m")]
+        ttl: String,
+        /// Routing label as KEY=VALUE; repeat for multiple labels.
+        #[arg(long = "label", visible_alias = "labels")]
+        labels: Vec<String>,
+        /// Organization assigned to the agent credential.
+        #[arg(long)]
+        org: Option<Uuid>,
+        /// Service URL embedded in the token; defaults to --api-base-url.
+        #[arg(long)]
+        service_url: Option<String>,
+        /// Cluster UUID bound to discovery; use when the LAN announcement URL differs.
+        #[arg(long)]
+        cluster_id: Option<Uuid>,
+        /// Optional base64 SHA-256 SPKI pin for private/self-signed TLS.
+        #[arg(long)]
+        spki_pin: Option<String>,
+    },
+    /// List enrollment-token metadata. Secrets are never returned.
+    EnrollmentTokens,
+    /// Revoke an unused enrollment token.
+    RevokeToken { token_id: String },
 }
 
 #[derive(Debug, Subcommand)]

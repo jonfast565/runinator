@@ -9,8 +9,9 @@ use tracing::{error, info};
 
 use crate::events::EnginePublisher;
 use crate::loops::{
-    run_action_dispatch_publisher, run_ingress_consumer, run_ready_node_reaper, run_replica_reaper,
-    run_trigger_loop, run_usage_sampler, run_wake_publisher,
+    run_action_dispatch_publisher, run_agent_directive_publisher, run_ingress_consumer,
+    run_ready_node_reaper, run_replica_reaper, run_trigger_loop, run_usage_sampler,
+    run_wake_publisher,
 };
 use crate::result_consumer::run_result_consumer;
 
@@ -63,6 +64,13 @@ pub async fn run_background_engine<T: DatabaseImpl>(
         broker.clone(),
         instance.clone(),
         publisher.action_nudge(),
+        shutdown.clone(),
+    ));
+    loops.spawn(run_agent_directive_publisher(
+        pool.clone(),
+        broker.clone(),
+        instance.clone(),
+        publisher.agent_nudge(),
         shutdown.clone(),
     ));
     loops.spawn(run_replica_reaper(pool.clone(), shutdown.clone()));

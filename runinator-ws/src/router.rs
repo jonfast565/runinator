@@ -18,7 +18,7 @@ use tower_http::cors::{Any, CorsLayer};
 use crate::auth::{AuthConfig, AuthState, auth_middleware};
 use crate::events::EventSender;
 use crate::handlers::{
-    action_dispatches, artifacts, auth, automation, billing, catalog, catalog_metadata,
+    action_dispatches, agents, artifacts, auth, automation, billing, catalog, catalog_metadata,
     credentials, debug, health, node_runs, notifications, observability, orgs, packs, pipelines,
     providers, provisioning, replicas, runs, schedules, supervisor, triggers, wdl, webhook,
     workflows,
@@ -56,6 +56,7 @@ pub fn build_router<T: DatabaseImpl>(
         .merge(runs::routes(pool.clone()))
         .merge(pipelines::routes(pool.clone()))
         .merge(replicas::routes(pool.clone()))
+        .merge(agents::routes(pool.clone()))
         .merge(provisioning::routes())
         .merge(artifacts::routes(pool.clone()))
         .merge(notifications::routes(pool.clone()))

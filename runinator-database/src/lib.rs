@@ -3,7 +3,7 @@ use std::sync::Arc;
 use chrono::Utc;
 use interfaces::DatabaseImpl;
 use log::{info, warn};
-use runinator_models::auth::{ApiKey, ApiKeyRecord};
+use runinator_models::auth::{ApiKey, ApiKeyRecord, PrincipalKind};
 use runinator_models::errors::SendableError;
 use runinator_models::settings::SettingKind;
 use runinator_utilities::secret_cipher::SecretCipher;
@@ -296,6 +296,8 @@ pub async fn seed_bootstrap_service_api_key<T: DatabaseImpl>(
             created_at: Utc::now(),
         },
         is_admin: true,
+        principal_kind: PrincipalKind::Service,
+        org_id: None,
         key_hash: runinator_auth::hash_secret(raw_key),
     };
     db.create_api_key(record).await?;

@@ -112,6 +112,8 @@ const props = withDefaults(
     mobileMode?: "stack" | "toggle";
     // in 'toggle' mode, true means the detail (second) pane is active; false shows the list (first).
     mobileDetailActive?: boolean;
+    // lets permission-gated layouts keep one split definition without reserving an empty track.
+    secondEnabled?: boolean;
   }>(),
   {
     orientation: "horizontal",
@@ -127,6 +129,7 @@ const props = withDefaults(
     secondIcon: undefined,
     mobileMode: "stack",
     mobileDetailActive: false,
+    secondEnabled: true,
   },
 );
 
@@ -137,9 +140,11 @@ const isStacked = computed(() => isTablet.value && !isToggle.value);
 // master-detail: on mobile, show only the list or only the detail pane, never both.
 const isToggle = computed(() => isMobile.value && props.mobileMode === "toggle");
 const showFirst = computed(() => !isToggle.value || !props.mobileDetailActive);
-const showSecond = computed(() => !isToggle.value || props.mobileDetailActive);
+const showSecond = computed(
+  () => props.secondEnabled && (!isToggle.value || props.mobileDetailActive),
+);
 // the drag handle only exists in the desktop grid layout.
-const showHandle = computed(() => !isStacked.value && !isToggle.value);
+const showHandle = computed(() => props.secondEnabled && !isStacked.value && !isToggle.value);
 
 const container = ref<HTMLElement | null>(null);
 const firstSize = ref(0);
@@ -153,7 +158,9 @@ const separatorOrientation = computed(() =>
 // the handle button only renders while its side is expanded (folding it shows the rail tab instead),
 // so the chevron always points toward the pane it is about to collapse; the rail tab's fallback icon
 // (when no explicit firstIcon/secondIcon was given) points the opposite way, toward restoring it.
-const firstToggleIcon = computed(() => (props.orientation === "vertical" ? "arrow-up" : "chevron-left"));
+const firstToggleIcon = computed(() =>
+  props.orientation === "vertical" ? "arrow-up" : "chevron-left",
+);
 const secondToggleIcon = computed(() =>
   props.orientation === "vertical" ? "arrow-down" : "chevron-right",
 );
@@ -165,6 +172,11 @@ const secondRestoreIcon = computed(() =>
 );
 const collapsedKey = computed(() => (props.storageKey ? `${props.storageKey}::collapsed` : ""));
 const splitStyle = computed(() => {
+  if (!props.secondEnabled) {
+    const dimension = props.orientation === "vertical" ? "gridTemplateRows" : "gridTemplateColumns";
+    return { [dimension]: "minmax(0, 1fr)" };
+  }
+
   // stacked/toggle layouts are driven by css (flex/single-pane); ignore persisted pixel sizes.
   if (isStacked.value || isToggle.value) {
     return {};

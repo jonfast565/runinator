@@ -1,4 +1,5 @@
 pub mod action_dispatches;
+pub mod agents;
 pub mod artifacts;
 pub mod automation;
 pub mod catalog_metadata;

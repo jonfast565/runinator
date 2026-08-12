@@ -67,6 +67,9 @@ export function createEventStreamRouter(deps: () => EventStreamRouterDeps): Even
         case "resources_changed":
           context.refreshResourcesIfActive();
           break;
+        case "replicas_changed":
+          context.refreshActiveState();
+          break;
         case "artifact_created":
         case "artifacts_changed":
           context.refreshArtifactsIfActive();

@@ -58,6 +58,10 @@ pub fn nudge_wake_publisher(events: &EventSender) {
     events.publisher.nudge_wake_publisher();
 }
 
+pub fn nudge_agent_directive_publisher(events: &EventSender) {
+    events.publisher.nudge_agent_directive_publisher();
+}
+
 pub fn emit_task_run(events: &EventSender, run_id: Uuid, status: RunStatus, org_id: Option<Uuid>) {
     runinator_engine::events::emit_task_run(&events.publisher, run_id, status, org_id);
 }

@@ -804,8 +804,7 @@
   }
 
   .node-pools-panel {
-    @apply flex h-[min(360px,42vh)] min-h-[140px] resize-y flex-col gap-3 overflow-auto p-4;
-    flex: 0 0 auto;
+    @apply flex h-full min-h-0 flex-col gap-3 overflow-hidden p-4;
   }
 
   .node-pools-hint {

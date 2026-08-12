@@ -277,6 +277,12 @@ fn parse_announcement(bytes: &[u8], sender: IpAddr) -> Option<WebServiceAnnounce
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string();
+    let scheme = service
+        .get("scheme")
+        .and_then(Value::as_str)
+        .filter(|value| matches!(*value, "http" | "https"))
+        .unwrap_or("http")
+        .to_string();
     let last_heartbeat = service
         .get("last_heartbeat")
         .and_then(Value::as_str)
@@ -287,12 +293,34 @@ fn parse_announcement(bytes: &[u8], sender: IpAddr) -> Option<WebServiceAnnounce
         address,
         port,
         base_path,
+        scheme,
+        relay_path: service
+            .get("relay_path")
+            .and_then(Value::as_str)
+            .unwrap_or("/ws/desktop-worker")
+            .to_string(),
+        cluster_id: service
+            .get("cluster_id")
+            .and_then(Value::as_str)
+            .and_then(|value| value.parse().ok()),
+        enrollment_enabled: service
+            .get("enrollment_enabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        spki_pin: service
+            .get("spki_pin")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        version: service
+            .get("version")
+            .and_then(Value::as_str)
+            .map(str::to_string),
         last_heartbeat,
     })
 }
 
 fn build_service_base_url(service: &WebServiceAnnouncement) -> String {
-    let mut base = format!("http://{}:{}", service.address, service.port);
+    let mut base = format!("{}://{}:{}", service.scheme, service.address, service.port);
     let trimmed = service.base_path.trim();
     if !trimmed.is_empty() {
         if trimmed.starts_with('/') {

@@ -51,6 +51,27 @@ pub(crate) struct CliArgs {
     #[arg(long, default_value = "/")]
     pub announce_base_path: String,
 
+    /// externally reachable scheme advertised to LAN discovery clients.
+    #[arg(long, env = "RUNINATOR_ANNOUNCE_SCHEME", default_value = "http")]
+    pub announce_scheme: String,
+
+    /// websocket relay path advertised to agents.
+    #[arg(
+        long,
+        env = "RUNINATOR_ANNOUNCE_RELAY_PATH",
+        default_value = "/ws/desktop-worker"
+    )]
+    pub announce_relay_path: String,
+
+    /// stable cluster identity used to bind discovery to enrollment. when omitted it is derived
+    /// from the advertised URL; configure it explicitly when public and LAN URLs differ.
+    #[arg(long, env = "RUNINATOR_CLUSTER_ID")]
+    pub cluster_id: Option<uuid::Uuid>,
+
+    /// optional SHA-256 SPKI pin advertised for self-signed LAN TLS.
+    #[arg(long, env = "RUNINATOR_ANNOUNCE_SPKI_PIN")]
+    pub announce_spki_pin: Option<String>,
+
     /// Seconds between gossip announcements
     #[arg(long, default_value_t = 5)]
     pub gossip_interval_seconds: u64,
@@ -70,6 +91,10 @@ pub(crate) struct CliArgs {
     /// Kafka control topic or RabbitMQ control queue used by direct broker backends
     #[arg(long, default_value = "runinator.control")]
     pub broker_control_topic: String,
+
+    /// Kafka agent topic or RabbitMQ per-replica queue prefix used by direct broker backends
+    #[arg(long, default_value = "runinator.agent")]
+    pub broker_agent_topic: String,
 
     /// Kafka result topic or RabbitMQ result queue used by direct broker backends
     #[arg(long, default_value = "runinator.results")]

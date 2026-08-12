@@ -3,6 +3,11 @@ import { setHttpAuthToken } from "./httpRuntime";
 import type {
   JsonRecord,
   ApiKey,
+  AgentEnrollmentToken,
+  AgentDirectiveKind,
+  AgentDirectiveRecord,
+  CreateAgentEnrollmentTokenInput,
+  CreateAgentEnrollmentTokenResponse,
   CreateApiKeyResponse,
   CredentialSummary,
   CredentialDetail,
@@ -751,6 +756,26 @@ export async function fetchEnumCatalogs() {
 
 export async function fetchReplicas() {
   return command<ReplicaListResponse>("fetch_replicas");
+}
+
+export async function createAgentDirective(replicaId: string, kind: AgentDirectiveKind) {
+  return command<AgentDirectiveRecord>("create_agent_directive", { replicaId, kind });
+}
+
+export async function listAgentDirectives(replicaId: string, limit = 50) {
+  return command<AgentDirectiveRecord[]>("list_agent_directives", { replicaId, limit });
+}
+
+export async function createAgentEnrollmentToken(request: CreateAgentEnrollmentTokenInput) {
+  return command<CreateAgentEnrollmentTokenResponse>("create_agent_enrollment_token", { request });
+}
+
+export async function listAgentEnrollmentTokens() {
+  return command<AgentEnrollmentToken[]>("list_agent_enrollment_tokens");
+}
+
+export async function revokeAgentEnrollmentToken(tokenId: string) {
+  return command<TaskResponse>("revoke_agent_enrollment_token", { tokenId });
 }
 
 // --- on-demand node provisioning (supervisor / kubernetes backends) ---

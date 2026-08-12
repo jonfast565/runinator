@@ -26,6 +26,8 @@ import { createWorkflowRevisionsService } from "./workflow-revisions";
 import { createWorkflowRunExtrasService } from "./workflow-run-extras";
 import { createNodePoolsService } from "./node-pools";
 import { createSupervisorService } from "./supervisor";
+import { createAgentEnrollmentService } from "./agent-enrollment";
+import { createAgentDirectivesService } from "./agent-directives";
 
 export const appService = createAppService();
 export const authService = createAuthService();
@@ -67,6 +69,8 @@ export const workflowRevisionsService = createWorkflowRevisionsService(appServic
 export const workflowRunExtrasService = createWorkflowRunExtrasService(appService);
 export const nodePoolsService = createNodePoolsService(appService);
 export const supervisorService = createSupervisorService();
+export const agentEnrollmentService = createAgentEnrollmentService(appService);
+export const agentDirectivesService = createAgentDirectivesService(appService);
 
 export type { AppService } from "./app";
 export type { AuthService } from "./auth";
@@ -86,6 +90,8 @@ export type { WorkflowServiceDeps } from "./workflows/host";
 export type { WorkflowRunExtrasService } from "./workflow-run-extras";
 export type { NodePoolsService, NodeBackendInfo, ProvisionedGroup, ScaleNodesRequest } from "./node-pools";
 export type { SupervisorService, SupervisorStatus } from "./supervisor";
+export type { AgentEnrollmentService } from "./agent-enrollment";
+export type { AgentDirectivesService } from "./agent-directives";
 export type { WdlLanguageService } from "./wdl-language";
 export type { ExpressionService } from "./expression";
 export type { AuditLogService } from "./audit-log";

@@ -42,7 +42,9 @@ async fn run(config: Config) -> Result<(), SendableError> {
     // the shared agent lifecycle owns registration retry, heartbeat, and restarting the action loop
     // after a failure; tracing already reports loop activity here, so no observer is needed.
     let shutdown_grace = Duration::from_secs(config.shutdown_grace_seconds + 5);
-    let mut agent = AgentRuntime::start(config.agent_runtime_config()?, Arc::new(NoopObserver))?;
+    let mut runtime_config = config.agent_runtime_config()?;
+    runinator_worker::prepare_agent_credentials(&mut runtime_config).await?;
+    let mut agent = AgentRuntime::start(runtime_config, Arc::new(NoopObserver))?;
 
     tokio::select! {
         signal = tokio::signal::ctrl_c() => {
