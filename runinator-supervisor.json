@@ -118,6 +118,26 @@
       ]
     },
     {
+      "name": "desktop-agent-headless",
+      "command": "./target/debug/runinator-desktop-agent",
+      "env": {
+        "RUNINATOR_API_KEY": "localdev.runinator-local-dev-service-key",
+        "RUNINATOR_API_TIMEOUT_SECONDS": "60",
+        "RUNINATOR_API_CONNECT_TIMEOUT_SECONDS": "10"
+      },
+      "args": [
+        "--headless",
+        "--service-url",
+        "http://127.0.0.1:8080/",
+        "--sandbox-root",
+        ".",
+        "--labels",
+        "runner=desktop-local",
+        "--liveness-file",
+        "/tmp/runinator-desktop-agent-liveness"
+      ]
+    },
+    {
       "name": "pack-import",
       "command": "./target/debug/runinatorctl",
       "env": {

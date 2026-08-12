@@ -27,8 +27,8 @@ pub use runinator_comm::{
     ActionTarget, ConsumerProfile, ControlCommand, UiEvent, WakeCommand, WsIngressCommand,
 };
 pub use types::{
-    BrokerDelivery, BrokerMessage, ControlDelivery, EventDelivery, EventMessage, IngressDelivery,
-    IngressMessage, ResultDelivery, ResultMessage, WakeDelivery, WakeMessage,
+    BrokerDelivery, BrokerMessage, ConnectionState, ControlDelivery, EventDelivery, EventMessage,
+    IngressDelivery, IngressMessage, ResultDelivery, ResultMessage, WakeDelivery, WakeMessage,
 };
 
 use async_trait::async_trait;
@@ -44,6 +44,16 @@ pub trait Broker: Send + Sync + 'static {
     /// Report whether this backend supports workflow result channels.
     fn supports_workflow_result_channels(&self) -> bool {
         false
+    }
+
+    /// Observe this backend's connection to its broker, if it owns one it re-establishes itself.
+    ///
+    /// `None` for every backend whose connectivity is either not a thing (in-memory) or handled per
+    /// request (tcp/http dial each call), so there is no steady state to watch. The `ws` relay
+    /// overrides it: it holds one long-lived connection across reconnects, which makes "connected"
+    /// a real, observable property a host wants to display rather than infer from log lines.
+    fn connection_state(&self) -> Option<tokio::sync::watch::Receiver<ConnectionState>> {
+        None
     }
 
     /// Publish a message to the broker, optionally using a deduplication key.

@@ -67,6 +67,14 @@ pub fn init(shared: SharedHandle, initial: LogLevel) {
     }));
 }
 
+/// install stderr tracing for the headless host. unlike the gui path there is no in-memory console
+/// or reload handle; process supervisors consume stderr, and `RUNINATOR_LOG` retains precedence.
+pub fn init_headless(initial: LogLevel) {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(initial_filter(initial))
+        .try_init();
+}
+
 /// change the live log level from the GUI; a no-op until [`init`] has run.
 pub fn set_level(level: LogLevel) {
     if let Some(apply) = SET_LEVEL.get() {

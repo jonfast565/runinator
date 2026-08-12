@@ -21,6 +21,28 @@ pub enum BrokerMode {
     Direct,
 }
 
+// the persisted form is this crate's, because the shared runtime carries no serde; the runtime form
+// is the shared one, so there is exactly one place that decides what "relay" means.
+impl From<BrokerMode> for runinator_worker::BrokerMode {
+    fn from(mode: BrokerMode) -> Self {
+        match mode {
+            BrokerMode::Relay => runinator_worker::BrokerMode::Relay,
+            BrokerMode::Direct => runinator_worker::BrokerMode::Direct,
+        }
+    }
+}
+
+impl BrokerMode {
+    /// parse a cli/env spelling; `None` when unrecognized so a caller can keep the persisted value.
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "relay" => Some(BrokerMode::Relay),
+            "direct" => Some(BrokerMode::Direct),
+            _ => None,
+        }
+    }
+}
+
 /// verbosity for the agent's tracing output, surfaced live in the in-app log console. maps to a
 /// tracing `EnvFilter` base level (see `crate::logging`); the GUI dropdown drives it at runtime.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -43,6 +65,13 @@ impl LogLevel {
         LogLevel::Debug,
         LogLevel::Trace,
     ];
+
+    /// parse a cli/env spelling; `None` when unrecognized so a caller can keep the persisted value.
+    pub fn parse(raw: &str) -> Option<Self> {
+        LogLevel::ALL
+            .into_iter()
+            .find(|level| level.as_str() == raw.trim().to_ascii_lowercase())
+    }
 
     /// the lowercase name, both the serde form and the tracing filter directive.
     pub fn as_str(self) -> &'static str {
@@ -111,6 +140,9 @@ pub struct AgentConfig {
     /// them; same knob as `runinator-worker`'s `--shutdown-grace-seconds`.
     #[serde(default = "default_shutdown_grace_seconds")]
     pub shutdown_grace_seconds: u64,
+    /// path touched periodically while the shared runtime is alive; empty disables the probe.
+    #[serde(default)]
+    pub liveness_file: String,
     /// verbosity of the tracing output shown in the in-app log console; the GUI dropdown changes it
     /// live (`RUST_LOG`, if set, still wins at process startup).
     #[serde(default)]
@@ -146,6 +178,7 @@ impl Default for AgentConfig {
             auto_start: false,
             max_concurrent_actions: default_max_concurrent_actions(),
             shutdown_grace_seconds: default_shutdown_grace_seconds(),
+            liveness_file: String::new(),
             log_level: LogLevel::default(),
         }
     }

@@ -554,6 +554,13 @@ fn error_response(err: BrokerError) -> Response {
             StatusCode::SERVICE_UNAVAILABLE,
             ErrorResponse::new("consumer_stream_ended", "consumer stream ended"),
         ),
+        // an http broker server does not authenticate against anything upstream, so this can only
+        // arrive having been surfaced by a backend it wraps. mirror the status the client would
+        // have seen, so a caller can tell "your credential is bad" from "try again later".
+        BrokerError::Unauthorized(message) => json_response(
+            StatusCode::UNAUTHORIZED,
+            ErrorResponse::new("unauthorized", message),
+        ),
     }
 }
 

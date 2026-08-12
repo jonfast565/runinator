@@ -3,7 +3,7 @@
 use chrono::Utc;
 use runinator_broker::{
     ws::{client::WsBroker, server::serve},
-    Broker, BrokerMessage, ControlCommand, ResultMessage,
+    Broker, BrokerMessage, ConnectionState, ControlCommand, ResultMessage,
 };
 use runinator_comm::{ActionCommand, ControlKind, WorkflowResultEvent, WorkflowResultEventKind};
 use runinator_models::json;
@@ -203,6 +203,52 @@ async fn ws_broker_answers_inbound_ping_instead_of_dropping() {
         .await
         .expect("client must answer the ping on the same connection, not reconnect")
         .unwrap();
+}
+
+/// a `401` on the upgrade is not a blip. the client used to fold every connect failure into
+/// `Internal` and retry at `warn` forever, so an agent with a revoked or mistyped key looked exactly
+/// like one waiting out a network problem — silent, idle, and indistinguishable from healthy.
+#[tokio::test]
+async fn rejected_credentials_are_reported_as_fatal() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    // never upgrades: answers every request the way the relay's auth middleware would.
+    let server = tokio::spawn(async move {
+        loop {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                return;
+            };
+            tokio::spawn(async move {
+                use tokio::io::AsyncWriteExt;
+                let _ = stream
+                    .write_all(b"HTTP/1.1 401 Unauthorized\r\ncontent-length: 0\r\n\r\n")
+                    .await;
+            });
+        }
+    });
+
+    let broker = WsBroker::connect(format!("ws://{addr}/"), Some("stale-key".into()));
+    let mut state = broker.state();
+    let settled = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if state.borrow_and_update().is_fatal() {
+                return;
+            }
+            if state.changed().await.is_err() {
+                return;
+            }
+        }
+    })
+    .await;
+
+    assert!(settled.is_ok(), "client never reported the 401 as fatal");
+    let observed = state.borrow().clone();
+    assert!(
+        matches!(observed, ConnectionState::Unauthorized { .. }),
+        "expected Unauthorized, got {observed:?}"
+    );
+
+    server.abort();
 }
 
 fn action_command() -> ActionCommand {

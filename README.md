@@ -933,9 +933,34 @@ does not start, stop, embed, or communicate directly with this worker runtime.
 cargo run -p runinator-desktop-agent
 ```
 
+For an unattended machine, run the same binary without a desktop session:
+
+```bash
+cargo run -p runinator-desktop-agent -- \
+  --headless \
+  --service-url https://runinator.example/ \
+  --api-key "$RUNINATOR_API_KEY" \
+  --sandbox-root /srv/runinator-agent \
+  --labels zone=home \
+  --liveness-file /tmp/runinator-desktop-agent-liveness
+```
+
+Command-line values take precedence over environment variables, which take precedence over the
+saved GUI configuration. The corresponding environment variables are `RUNINATOR_SERVICE_URL`,
+`RUNINATOR_API_KEY`, `RUNINATOR_WORKER_LABELS`, `RUNINATOR_BROKER_MODE`,
+`RUNINATOR_MAX_CONCURRENT_ACTIONS`, `RUNINATOR_SHUTDOWN_GRACE_SECONDS`, and
+`RUNINATOR_LIVENESS_FILE`.
+
 The control window lets you set the service URL, sandbox folder, optional direct
 broker connection, routing labels, and startup behavior. Closing the window
 hides it in the tray; use "Exit" from the tray menu to actually quit.
+
+By default the agent relays broker traffic through the web service's
+`/ws/desktop-worker` endpoint rather than dialing the broker directly, so a
+machine behind NAT needs only outbound access to the web service — no inbound
+ports and no route to RabbitMQ. The relay URL is derived from the service URL
+(`https://` becomes `wss://`), so pointing the agent at a TLS ingress works as-is.
+Use direct broker mode only for a machine actually on the broker's network.
 
 ## Package macOS Runtime Apps
 

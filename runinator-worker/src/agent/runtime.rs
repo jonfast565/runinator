@@ -1,0 +1,214 @@
+//! the shared agent lifecycle: register, publish providers, heartbeat, then supervise the worker
+//! loop until shutdown. the standalone binary and the desktop agent both run exactly this, so the
+//! only difference between a headless agent and a tray one is which [`AgentObserver`] is attached.
+
+use std::sync::Arc;
+use std::time::Duration;
+
+use runinator_api::{AsyncApiClient, StaticLocator};
+use runinator_models::errors::SendableError;
+use runinator_utilities::liveness;
+use runinator_utilities::resource_telemetry::TelemetryCollector;
+use tokio::sync::watch;
+use tokio::task::JoinHandle;
+use uuid::Uuid;
+
+use crate::agent::config::AgentRuntimeConfig;
+use crate::agent::observer::AgentObserver;
+use crate::agent::registration::{publish_provider_metadata, register_agent_replica};
+use crate::agent::reporter::StatusReporter;
+use crate::agent::shutdown::Shutdown;
+use crate::agent::status::{AgentConnection, AgentStatus};
+use crate::agent::supervisor::{SupervisedLoop, run_supervised};
+use crate::worker::load_libraries;
+
+/// entry point for hosting an agent.
+pub struct AgentRuntime;
+
+impl AgentRuntime {
+    /// start the lifecycle and return immediately. must be called from within a tokio runtime
+    /// context.
+    ///
+    /// only configuration that cannot be retried fails here (an unusable service url, an unreadable
+    /// plugin path). anything the agent could recover from — the service being down, the broker
+    /// being unreachable — is retried inside the lifecycle and reported through `observer`, so a
+    /// host never has to implement its own retry policy to be robust.
+    pub fn start(
+        config: AgentRuntimeConfig,
+        observer: Arc<dyn AgentObserver>,
+    ) -> Result<AgentHandle, SendableError> {
+        let api_client = AsyncApiClient::with_credentials(
+            StaticLocator::new(config.service_url.clone()),
+            config.api_key.clone(),
+        )
+        .map_err(|err| crate::errors::API_CLIENT.error(err))?;
+        let libraries = Arc::new(load_libraries(&config.dll_paths)?);
+
+        let reporter = Arc::new(StatusReporter::new(
+            observer,
+            AgentStatus {
+                running: false,
+                replica_id: None,
+                connection: AgentConnection::Registering,
+                broker_connection: Some(config.broker_description.clone()),
+            },
+        ));
+        let telemetry = config
+            .sample_telemetry
+            .then(|| Arc::new(TelemetryCollector::new()));
+        let shutdown = Shutdown::new();
+        let state = reporter.subscribe();
+
+        let task = tokio::spawn(run_lifecycle(
+            config,
+            api_client,
+            libraries,
+            telemetry.clone(),
+            Arc::clone(&reporter),
+            shutdown.clone(),
+        ));
+
+        Ok(AgentHandle {
+            shutdown,
+            task,
+            state,
+            telemetry,
+        })
+    }
+}
+
+/// a running agent. dropping it detaches the lifecycle rather than stopping it; call
+/// [`AgentHandle::shutdown`] or [`AgentHandle::stop`] to actually stop.
+pub struct AgentHandle {
+    shutdown: Shutdown,
+    task: JoinHandle<Result<(), SendableError>>,
+    state: watch::Receiver<AgentStatus>,
+    telemetry: Option<Arc<TelemetryCollector>>,
+}
+
+impl AgentHandle {
+    /// request shutdown without waiting. safe to call more than once, and before the lifecycle has
+    /// reached any particular stage.
+    pub fn shutdown(&self) {
+        self.shutdown.trigger();
+    }
+
+    /// await the lifecycle's own exit. returns what it returned: an error only when the agent could
+    /// not be brought up at all.
+    pub async fn wait(&mut self) -> Result<(), SendableError> {
+        match (&mut self.task).await {
+            Ok(result) => result,
+            Err(err) if err.is_cancelled() => Ok(()),
+            Err(err) => Err(crate::errors::LOOP_JOIN.error(err)),
+        }
+    }
+
+    /// request shutdown and drain within `grace`, abandoning the task if it overruns. the worker
+    /// loop bounds its own in-flight work, so an overrun means something below it is wedged.
+    pub async fn stop(&mut self, grace: Duration) -> Result<(), SendableError> {
+        self.shutdown.trigger();
+        match tokio::time::timeout(grace, self.wait()).await {
+            Ok(result) => result,
+            Err(_) => {
+                self.task.abort();
+                Err(crate::errors::SHUTDOWN_TIMEOUT.error(format!("{}s", grace.as_secs())))
+            }
+        }
+    }
+
+    pub fn status(&self) -> AgentStatus {
+        self.state.borrow().clone()
+    }
+
+    pub fn replica_id(&self) -> Option<Uuid> {
+        self.state.borrow().replica_id
+    }
+
+    /// watch lifecycle transitions without implementing an observer.
+    pub fn watch(&self) -> watch::Receiver<AgentStatus> {
+        self.state.clone()
+    }
+
+    /// the host telemetry collector, when this agent samples it. exposed so a host can mirror
+    /// cpu/memory at its own cadence rather than the heartbeat's.
+    pub fn telemetry(&self) -> Option<Arc<TelemetryCollector>> {
+        self.telemetry.clone()
+    }
+
+    pub fn is_finished(&self) -> bool {
+        self.task.is_finished()
+    }
+}
+
+async fn run_lifecycle(
+    config: AgentRuntimeConfig,
+    api_client: AsyncApiClient<StaticLocator>,
+    libraries: Arc<std::collections::HashMap<String, runinator_plugin::plugin::Plugin>>,
+    telemetry: Option<Arc<TelemetryCollector>>,
+    reporter: Arc<StatusReporter>,
+    shutdown: Shutdown,
+) -> Result<(), SendableError> {
+    reporter.log(format!("Connecting to {} ...", config.service_url));
+    reporter.set_connection(AgentConnection::Registering);
+
+    let liveness_task = liveness::spawn_liveness(
+        &config.liveness_file,
+        liveness::DEFAULT_LIVENESS_INTERVAL,
+        shutdown.notify(),
+    );
+
+    let replica_client =
+        match register_agent_replica(&api_client, &config, &reporter, &shutdown).await {
+            Ok(Some(client)) => client,
+            // shutdown during a retry window is a clean stop, not a failure.
+            Ok(None) => {
+                settle(&reporter, liveness_task);
+                return Ok(());
+            }
+            Err(err) => {
+                settle(&reporter, liveness_task);
+                return Err(err);
+            }
+        };
+    let replica_id = replica_client.replica_id();
+    reporter.update(|status| status.replica_id = Some(replica_id));
+    reporter.log(format!("Registered replica {replica_id}."));
+    if !config.labels.is_empty() {
+        // surfacing the advertised labels makes "which agent did this go to" answerable from the
+        // agent's own output: a label-targeted action only routes here when these satisfy it.
+        let rendered = config
+            .labels
+            .iter()
+            .map(|(key, value)| format!("{key}={value}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        reporter.log(format!("Advertising labels: {rendered}"));
+    }
+
+    if config.publish_providers {
+        publish_provider_metadata(&replica_client, &config, &reporter).await;
+    }
+
+    // the heartbeat keeps the replica live and marks it offline on shutdown.
+    replica_client.spawn_heartbeat_with_telemetry(shutdown.notify(), telemetry);
+    reporter.log(format!("Broker: {}", config.broker_description));
+
+    let inputs = SupervisedLoop::new(&config, api_client, replica_id, libraries);
+    run_supervised(inputs, Arc::clone(&reporter), shutdown).await;
+
+    settle(&reporter, liveness_task);
+    reporter.log("Agent stopped.");
+    Ok(())
+}
+
+// return the status to its terminal shape and stop touching the liveness file, so a stopped agent
+// never looks alive to an exec probe.
+fn settle(reporter: &StatusReporter, liveness_task: Option<JoinHandle<()>>) {
+    if let Some(task) = liveness_task {
+        task.abort();
+    }
+    reporter.update(|status| {
+        status.running = false;
+        status.connection = AgentConnection::Stopped;
+    });
+}

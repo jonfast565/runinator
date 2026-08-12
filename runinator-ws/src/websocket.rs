@@ -13,7 +13,7 @@ use futures::{SinkExt, StreamExt};
 use runinator_broker::{
     Broker,
     dispatch::dispatch,
-    tcp::types::TcpRequest,
+    tcp::types::{TcpRequest, TcpResponse},
     ws::types::{WsRequestFrame, WsResponseFrame},
 };
 use runinator_database::interfaces::DatabaseImpl;
@@ -357,7 +357,45 @@ pub(crate) async fn ws_desktop_worker<T: DatabaseImpl>(
         log::info!("WebSocket connection established for /ws/desktop-worker");
         let (tx, mut rx_ws) = socket.split();
         let tx = Arc::new(tokio::sync::Mutex::new(tx));
-        while let Some(msg) = rx_ws.next().await {
+        let in_flight = Arc::new(tokio::sync::Semaphore::new(RELAY_MAX_IN_FLIGHT));
+
+        // server-side keepalive. the client pings too, but only this side can prove *its* writes
+        // still reach the agent — and an agent that vanished without a close frame otherwise leaves
+        // this connection, and every broker consumer parked behind it, alive indefinitely.
+        let ping_tx = tx.clone();
+        let ping = tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(RELAY_PING_INTERVAL);
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            ticker.tick().await; // the first tick fires immediately; skip it.
+            loop {
+                ticker.tick().await;
+                if ping_tx
+                    .lock()
+                    .await
+                    .send(Message::Ping(Default::default()))
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+
+        loop {
+            // bounded read, mirroring the client: a half-open connection (an agent whose route
+            // disappeared) never produces a close frame or an error, so waiting on `next()` alone
+            // holds this task and its broker consumers open forever.
+            let msg = match tokio::time::timeout(RELAY_IDLE_TIMEOUT, rx_ws.next()).await {
+                Ok(Some(msg)) => msg,
+                Ok(None) => break,
+                Err(_) => {
+                    log::warn!(
+                        "/ws/desktop-worker idle for {}s with no frame; closing",
+                        RELAY_IDLE_TIMEOUT.as_secs()
+                    );
+                    break;
+                }
+            };
             let text = match msg {
                 Ok(Message::Text(text)) => text,
                 Ok(Message::Close(_)) | Err(_) => break,
@@ -366,24 +404,156 @@ pub(crate) async fn ws_desktop_worker<T: DatabaseImpl>(
             let Ok(frame) = serde_json::from_str::<WsRequestFrame>(&text) else {
                 continue;
             };
+
+            // `try_acquire`, never an awaited acquire: parked `receive_for` calls hold their permit
+            // for as long as they wait, so blocking the read loop on a permit would stop us reading
+            // the very `ack` frames that would free one. refusing is safe — every client op retries.
+            let Ok(permit) = Arc::clone(&in_flight).try_acquire_owned() else {
+                let response = TcpResponse::Error {
+                    message: crate::errors::RELAY_BUSY
+                        .error(format!(
+                            "more than {RELAY_MAX_IN_FLIGHT} requests in flight"
+                        ))
+                        .to_string(),
+                };
+                let Ok(payload) =
+                    serde_json::to_string(&WsResponseFrame::new(frame.request_id, response))
+                else {
+                    continue;
+                };
+                if tx
+                    .lock()
+                    .await
+                    .send(Message::Text(payload.into()))
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+                continue;
+            };
+
             let db = db.clone();
             let broker = broker.clone();
             let ctx = ctx.clone();
             let tx = tx.clone();
             tokio::spawn(async move {
+                let _permit = permit;
+                // held so a delivery can be handed back if the reply never lands.
+                let stranded = StrandedDelivery::consumer_for(&frame.body);
                 let response =
                     handle_desktop_worker_request(db.as_ref(), broker.as_ref(), &ctx, frame.body)
                         .await;
+                let stranded = stranded.zip_response(&response);
                 let Ok(payload) =
                     serde_json::to_string(&WsResponseFrame::new(frame.request_id, response))
                 else {
                     return;
                 };
-                let _ = tx.lock().await.send(Message::Text(payload.into())).await;
+                if tx
+                    .lock()
+                    .await
+                    .send(Message::Text(payload.into()))
+                    .await
+                    .is_err()
+                {
+                    // the socket died between the broker handing us a delivery and us forwarding it.
+                    // the agent never saw it, so nobody will ever ack it — hand it straight back
+                    // rather than leaving it leased to a consumer that no longer exists.
+                    if let Some(stranded) = stranded {
+                        stranded.nack(broker.as_ref()).await;
+                    }
+                }
             });
         }
+        ping.abort();
         log::info!("WebSocket connection closed for /ws/desktop-worker");
     })
+}
+
+/// how many relay requests one connection may have in flight at once. a legitimate agent holds at
+/// most a couple (one parked `receive_for`, one parked `receive_control_for`) plus short-lived
+/// acks/publishes, so this is far above normal use and only bites a misbehaving or looping client.
+const RELAY_MAX_IN_FLIGHT: usize = 64;
+
+/// how often this side pings an otherwise-idle relay connection.
+const RELAY_PING_INTERVAL: Duration = Duration::from_secs(20);
+
+/// how long this side tolerates a relay connection with no inbound frame before closing it. the
+/// client pings every 20s and we answer every ping, so a live agent refreshes this comfortably.
+const RELAY_IDLE_TIMEOUT: Duration = Duration::from_secs(90);
+
+/// a delivery this connection took off the broker but may not manage to forward.
+///
+/// the relay is the only consumer boundary where "received" and "delivered to the worker" are
+/// different events: `dispatch` takes a delivery from the broker, and the socket can die before the
+/// reply carrying it reaches the agent. without this, that delivery stays leased to a consumer that
+/// will never ack it and the work stalls until the lease expires.
+enum StrandedDelivery {
+    Action { consumer: String, delivery_id: Uuid },
+    Control { consumer: String, delivery_id: Uuid },
+}
+
+/// which consumer a receive-shaped request would be taking a delivery for, if any.
+enum StrandedConsumer {
+    Action(String),
+    Control(String),
+    None,
+}
+
+impl StrandedDelivery {
+    fn consumer_for(request: &TcpRequest) -> StrandedConsumer {
+        match request {
+            TcpRequest::ReceiveFor { profile } => StrandedConsumer::Action(profile.id.clone()),
+            TcpRequest::ReceiveControlFor { profile } => {
+                StrandedConsumer::Control(profile.id.clone())
+            }
+            TcpRequest::ReceiveControl { consumer } => StrandedConsumer::Control(consumer.clone()),
+            _ => StrandedConsumer::None,
+        }
+    }
+
+    async fn nack(self, broker: &dyn Broker) {
+        let (channel, result) = match self {
+            Self::Action {
+                consumer,
+                delivery_id,
+            } => ("action", broker.nack(&consumer, delivery_id).await),
+            Self::Control {
+                consumer,
+                delivery_id,
+            } => ("control", broker.nack_control(&consumer, delivery_id).await),
+        };
+        match result {
+            Ok(()) => log::warn!(
+                "/ws/desktop-worker: returned an undelivered {channel} delivery after the connection dropped"
+            ),
+            Err(err) => log::warn!(
+                "/ws/desktop-worker: failed to return an undelivered {channel} delivery: {err}"
+            ),
+        }
+    }
+}
+
+impl StrandedConsumer {
+    /// pair the consumer with the delivery the broker actually produced, if it produced one.
+    fn zip_response(self, response: &TcpResponse) -> Option<StrandedDelivery> {
+        match (self, response) {
+            (Self::Action(consumer), TcpResponse::Delivery { delivery }) => {
+                Some(StrandedDelivery::Action {
+                    consumer,
+                    delivery_id: delivery.delivery_id,
+                })
+            }
+            (Self::Control(consumer), TcpResponse::ControlDelivery { delivery }) => {
+                Some(StrandedDelivery::Control {
+                    consumer,
+                    delivery_id: delivery.delivery_id,
+                })
+            }
+            _ => None,
+        }
+    }
 }
 
 /// the policy allow-list and replica-ownership check for the desktop-worker relay, ahead of the
@@ -404,7 +574,7 @@ async fn handle_desktop_worker_request<T: DatabaseImpl>(
         TcpRequest::ReceiveFor { profile } => {
             if !profile.exclusive {
                 return TcpResponse::Error {
-                    message: "desktop-worker relay requires an exclusive consumer profile".into(),
+                    message: crate::errors::RELAY_NOT_EXCLUSIVE.bare().to_string(),
                 };
             }
             if let Some(response) = refuse_unowned_replica(db, ctx, profile).await {
@@ -426,7 +596,9 @@ async fn handle_desktop_worker_request<T: DatabaseImpl>(
         | TcpRequest::PublishResult { .. } => {}
         _ => {
             return TcpResponse::Error {
-                message: "operation not permitted over the desktop-worker relay".into(),
+                message: crate::errors::RELAY_OPERATION_REFUSED
+                    .error(request.operation_name())
+                    .to_string(),
             };
         }
     }
@@ -446,13 +618,17 @@ async fn refuse_unowned_replica<T: DatabaseImpl>(
     match repository::fetch_replica(db, replica_id).await {
         Ok(Some(replica)) if replica.registered_by_principal_id == ctx.principal_id => None,
         Ok(Some(_)) => Some(TcpResponse::Error {
-            message: "replica_id is not owned by the connecting identity".into(),
+            message: crate::errors::RELAY_REPLICA_NOT_OWNED
+                .error(replica_id)
+                .to_string(),
         }),
         Ok(None) => Some(TcpResponse::Error {
-            message: "unknown replica_id".into(),
+            message: crate::errors::RELAY_UNKNOWN_REPLICA
+                .error(replica_id)
+                .to_string(),
         }),
         Err(err) => Some(TcpResponse::Error {
-            message: err.to_string(),
+            message: crate::errors::RELAY_REPLICA_LOOKUP.error(err).to_string(),
         }),
     }
 }

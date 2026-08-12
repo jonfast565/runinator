@@ -248,11 +248,17 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
 
-      # rdkafka is pinned to `cmake-build`, so it compiles librdkafka from vendored source.
+      # rdkafka is pinned to `cmake-build`, so it compiles librdkafka from vendored source. the
+      # vendored source includes curl/curl.h even with curl integration disabled.
       - name: Install Linux build prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake libssl-dev pkg-config
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            libcurl4-openssl-dev \
+            libssl-dev \
+            pkg-config
 
       - name: Run broker backend tests
         run: |
@@ -295,11 +301,16 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       # rdkafka is pinned to `cmake-build`, so it compiles librdkafka from vendored source rather
-      # than looking for a system copy.
+      # than looking for a system copy. the source still includes curl/curl.h with curl disabled.
       - name: Install Linux build prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake libssl-dev pkg-config
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            libcurl4-openssl-dev \
+            libssl-dev \
+            pkg-config
 
       # mirrors deploy/Dockerfile's build line exactly. if this step fails, the container image
       # cannot be built, which no other job would tell us until a release.
@@ -333,6 +344,13 @@ jobs:
             -p runinator-ws \
             -p runinator-worker \
             --features runinator-broker/ws,runinator-ws/ws,runinator-worker/ws
+
+      # the step above only compiles. the ws client's tls support is a cargo feature of a dependency,
+      # so nothing about it fails to build when it is missing — `wss://` is simply refused at runtime,
+      # which is every agent behind an ingress. `cargo test --workspace` builds default features and
+      # never reaches these, so they have to be run here or they are not run at all.
+      - name: Test ws relay backend
+        run: cargo test --locked -p runinator-broker --features ws
 
       # the reducer's in-memory FakeStore is the documented way to test node handlers without a
       # database, and nothing in the workspace turns its feature on.

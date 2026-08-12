@@ -17,6 +17,11 @@ pub enum BrokerError {
     FeatureDisabled(&'static str),
     #[error("BROKER007 - consumer stream ended; connection may have dropped")]
     ConsumerStreamEnded,
+    /// the broker refused our credential. distinct from [`BrokerError::Internal`] because it is not
+    /// transient: retrying with the same credential will fail identically forever, so a transport
+    /// that reconnects on its own must stop treating it as a blip and say so.
+    #[error("BROKER008 - broker rejected our credential: {0}")]
+    Unauthorized(String),
 }
 
 // numbered error dictionary for the broker engine.
@@ -47,6 +52,12 @@ pub const CONSUMER_STREAM_ENDED: ErrorDescriptor = ErrorDescriptor::new(
     "Consumer stream ended; connection may have dropped",
 );
 
+pub const UNAUTHORIZED: ErrorDescriptor = ErrorDescriptor::new(
+    "BROKER008",
+    "broker.unauthorized",
+    "Broker rejected our credential",
+);
+
 pub const DICTIONARY: &[ErrorDescriptor] = &[
     DUPLICATE,
     UNKNOWN_DELIVERY,
@@ -55,6 +66,7 @@ pub const DICTIONARY: &[ErrorDescriptor] = &[
     INTERNAL,
     FEATURE_DISABLED,
     CONSUMER_STREAM_ENDED,
+    UNAUTHORIZED,
 ];
 
 impl EngineErrors for BrokerError {

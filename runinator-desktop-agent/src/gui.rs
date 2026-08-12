@@ -50,6 +50,12 @@ fn present_status(connection: &ConnectionState, busy: bool) -> StatusPresentatio
             tray_color: TrayColor::Idle,
             tooltip: "Runinator Desktop Agent — stopped".to_string(),
         },
+        ConnectionState::Registering => StatusPresentation {
+            label: "● registering…",
+            color: egui::Color32::from_rgb(45, 140, 200),
+            tray_color: TrayColor::Connecting,
+            tooltip: "Runinator Desktop Agent — registering…".to_string(),
+        },
         ConnectionState::Connecting => StatusPresentation {
             label: "● connecting…",
             color: egui::Color32::from_rgb(45, 140, 200),
@@ -67,6 +73,12 @@ fn present_status(connection: &ConnectionState, busy: bool) -> StatusPresentatio
             color: egui::Color32::from_rgb(210, 90, 70),
             tray_color: TrayColor::Degraded,
             tooltip: format!("Runinator Desktop Agent — reconnecting (retry in {retry_secs}s)"),
+        },
+        ConnectionState::ReenrollmentRequired { reason } => StatusPresentation {
+            label: "● re-enrollment required",
+            color: egui::Color32::from_rgb(210, 70, 70),
+            tray_color: TrayColor::Degraded,
+            tooltip: format!("Runinator Desktop Agent — credential rejected ({reason})"),
         },
     }
 }

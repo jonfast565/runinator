@@ -1,15 +1,20 @@
-//! standalone desktop worker with a small egui control panel. it derives its runtime behavior from
-//! `runinator-worker` (same `WorkerRuntime`/`start_worker_loop` the server-side worker binary uses)
-//! but only ever runs the local-files provider against a user-chosen sandbox folder, registered as an
-//! exclusive `desktop` replica. it supersedes the former Tauri-hosted execution path: the command
-//! center now only talks to a Runinator service and does not execute actions itself.
+//! standalone worker for this machine, in either of two shapes: a tray/window app, or (with
+//! `--headless`) a background service.
+//!
+//! both host the same lifecycle — `runinator_worker::agent::AgentRuntime`, the very code the
+//! server-side `runinator-worker` binary runs — registered as an exclusive `pool=desktop` replica
+//! carrying the built-in provider catalog plus the sandboxed local-files provider. the only thing
+//! the gui adds is an observer: a console, a status header, and native toasts.
 //!
 //! closing the control window hides it in the tray (see [`tray`]); the tray's Exit action is the
 //! explicit process shutdown path.
 
 mod agent;
+mod cli;
 mod config;
+mod errors;
 mod gui;
+mod headless;
 mod launcher;
 mod logging;
 mod notify;
@@ -17,21 +22,26 @@ mod service;
 mod single_instance;
 mod tray;
 
+use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
 
-fn main() -> eframe::Result<()> {
-    service::DesktopAgentService::new().run()
-}
+use clap::Parser;
 
-fn run_process() -> eframe::Result<()> {
-    // ensure only one desktop agent runs at a time: two copies would both register the exclusive
-    // `desktop` replica and contend for the same pinned/labeled work. a second launch surfaces a
-    // dialog and exits instead of starting a rival worker loop.
+use crate::cli::CliArgs;
+use crate::config::AgentConfig;
+
+fn main() -> ExitCode {
+    let args = CliArgs::parse();
+    // precedence is cli > env > persisted json > defaults; see `cli::CliArgs::apply`.
+    let config = args.apply(config::load());
+
+    // ensure only one agent runs at a time: two copies would both register the exclusive `desktop`
+    // replica and contend for the same pinned/labeled work.
     let _instance = match single_instance::acquire() {
         Ok(Some(guard)) => Some(guard),
         Ok(None) => {
-            single_instance::warn_already_running();
-            return Ok(());
+            single_instance::warn_already_running(args.headless);
+            return ExitCode::SUCCESS;
         }
         // an unexpected bind failure must not lock the operator out of their own agent; note it and
         // start anyway rather than refusing to run.
@@ -41,9 +51,28 @@ fn run_process() -> eframe::Result<()> {
         }
     };
 
-    // load config up front so the log console starts at the persisted level, and share one state
-    // handle between the tracing bridge (which writes log lines into it) and the GUI (which reads them).
-    let draft = config::load();
+    if args.headless {
+        return match headless::run(&args, config) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(err) => {
+                eprintln!("desktop agent failed: {err}");
+                ExitCode::FAILURE
+            }
+        };
+    }
+
+    match service::DesktopAgentService::new().run(config) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(err) => {
+            eprintln!("desktop agent failed: {err}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run_gui(draft: AgentConfig) -> eframe::Result<()> {
+    // share one state handle between the tracing bridge (which writes log lines into it) and the
+    // gui (which reads them), starting at the persisted level.
     let shared = Arc::new(Mutex::new(agent::Shared::default()));
     logging::init(shared.clone(), draft.log_level);
 

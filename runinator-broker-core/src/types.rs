@@ -226,6 +226,41 @@ impl From<ResultMessage> for ResultDelivery {
     }
 }
 
+/// where a self-reconnecting transport currently stands with its backend.
+///
+/// only transports that own a long-lived connection and re-establish it themselves report this (the
+/// `ws` relay today); see [`crate::Broker::connection_state`]. it exists so a host can *show* the
+/// difference between "idle and healthy" and "silently retrying for the last ten minutes" — which
+/// otherwise only appears in logs, and which is the normal condition for an agent behind NAT.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum ConnectionState {
+    /// no connection attempted yet, or the transport has been shut down.
+    Idle,
+    /// an attempt is in flight; nothing has been established yet.
+    Connecting,
+    /// a connection is live and requests are being served on it.
+    Connected,
+    /// the last connection failed or dropped and another attempt is scheduled.
+    Reconnecting { retry_secs: u64, reason: String },
+    /// the backend rejected our credential. retrying cannot fix this, so a host should surface it
+    /// rather than let the transport reconnect-loop against a credential that will never be accepted.
+    Unauthorized { reason: String },
+}
+
+impl ConnectionState {
+    /// whether requests can currently be served. `false` for every non-[`Self::Connected`] state.
+    pub fn is_connected(&self) -> bool {
+        matches!(self, Self::Connected)
+    }
+
+    /// whether this state can only be cleared by operator action (re-enrollment, a new key) rather
+    /// than by waiting.
+    pub fn is_fatal(&self) -> bool {
+        matches!(self, Self::Unauthorized { .. })
+    }
+}
+
 fn utc_now() -> DateTime<Utc> {
     Utc::now()
 }

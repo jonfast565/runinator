@@ -11,8 +11,8 @@ use opentelemetry::metrics::{Counter, Histogram};
 use opentelemetry::KeyValue;
 
 use crate::types::{
-    BrokerDelivery, BrokerMessage, ControlDelivery, EventDelivery, EventMessage, IngressDelivery,
-    IngressMessage, ResultDelivery, ResultMessage, WakeDelivery, WakeMessage,
+    BrokerDelivery, BrokerMessage, ConnectionState, ControlDelivery, EventDelivery, EventMessage,
+    IngressDelivery, IngressMessage, ResultDelivery, ResultMessage, WakeDelivery, WakeMessage,
 };
 use crate::{Broker, BrokerError, ConsumerProfile, ControlCommand};
 
@@ -101,6 +101,10 @@ struct InstrumentedBroker {
 impl Broker for InstrumentedBroker {
     fn supports_workflow_result_channels(&self) -> bool {
         self.inner.supports_workflow_result_channels()
+    }
+
+    fn connection_state(&self) -> Option<tokio::sync::watch::Receiver<ConnectionState>> {
+        self.inner.connection_state()
     }
 
     async fn publish(&self, message: BrokerMessage) -> Result<(), BrokerError> {

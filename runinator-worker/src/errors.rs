@@ -39,6 +39,16 @@ pub const REPLICA_REGISTER: ErrorDescriptor = ErrorDescriptor::new(
     "worker.replica.register",
     "Failed to register worker replica",
 );
+pub const RELAY_URL: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI208",
+    "worker.agent.relay_url",
+    "Cannot derive broker relay URL from the service URL",
+);
+pub const SHUTDOWN_TIMEOUT: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI209",
+    "worker.agent.shutdown_timeout",
+    "Agent did not stop within its grace period",
+);
 
 // broker wiring.
 pub const BROKER_INVALID_ENDPOINT: ErrorDescriptor = ErrorDescriptor::new(
@@ -79,6 +89,8 @@ pub const DICTIONARY: &[ErrorDescriptor] = &[
     CONCURRENCY_CLOSED,
     PROVIDER_NOT_FOUND,
     REPLICA_REGISTER,
+    RELAY_URL,
+    SHUTDOWN_TIMEOUT,
     BROKER_INVALID_ENDPOINT,
     BROKER_CLIENT,
     BROKER_UNKNOWN_BACKEND,

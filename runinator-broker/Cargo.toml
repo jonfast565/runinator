@@ -18,7 +18,21 @@ rdkafka = { version = "0.39", features = ["cmake-build"], optional = true }
 lapin = { version = "4.9.1", optional = true }
 futures-util = { version = "0.3", optional = true }
 log = { version = "0.4", optional = true }
-tokio-tungstenite = { version = "0.29", optional = true }
+# tls is not in tokio-tungstenite's default features, and without it `connect_async` refuses a
+# `wss://` url outright (`Error::Url(TlsFeatureNotEnabled)`) — which is every deployment behind an
+# ingress, since `derive_relay_url` maps `https` to `wss`. native roots rather than webpki roots:
+# an agent on a home or corporate lan is exactly where a private ca lives, and webpki-roots ignores
+# the os trust store.
+tokio-tungstenite = { version = "0.29", optional = true, default-features = false, features = [
+    "connect",
+    "handshake",
+    "rustls-tls-native-roots",
+] }
+# only to install a process-default `CryptoProvider` before the first `wss://` upgrade — every binary
+# that builds a ws broker also links both `ring` (jsonwebtoken) and `aws-lc-rs` (the aws sdk), which
+# leaves rustls with no unambiguous default and makes its default-config path panic. see
+# `ws::client::install_crypto_provider`.
+rustls = { version = "0.23", optional = true, default-features = false, features = ["ring"] }
 runinator-auth = { path = "../runinator-auth" }
 runinator-broker-core = { path = "../runinator-broker-core" }
 runinator-comm = { path = "../runinator-comm" }
@@ -31,4 +45,4 @@ uuid = { version = "1", features = ["serde", "v4"] }
 [features]
 kafka = ["dep:rdkafka"]
 rabbitmq = ["dep:lapin", "dep:futures-util", "dep:log"]
-ws = ["dep:tokio-tungstenite", "dep:futures-util", "dep:log"]
+ws = ["dep:tokio-tungstenite", "dep:futures-util", "dep:log", "dep:rustls"]

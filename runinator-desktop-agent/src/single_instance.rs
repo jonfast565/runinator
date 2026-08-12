@@ -32,10 +32,14 @@ pub fn acquire() -> io::Result<Option<InstanceGuard>> {
     }
 }
 
-/// tell the operator a copy is already running, then let the caller exit. blocking on purpose: the
-/// user actively launched a second instance, so surface a modal they can't miss (the tray app has no
-/// visible stderr) before the process goes away.
-pub fn warn_already_running() {
+/// tell the operator a copy is already running, then let the caller exit. a headless launch reports
+/// on stderr, where its supervisor will capture it; a windowed launch blocks on a modal on purpose,
+/// since the user actively launched a second instance and the tray app has no visible stderr.
+pub fn warn_already_running(headless: bool) {
+    if headless {
+        eprintln!("A Runinator Desktop Agent is already running on this machine; exiting.");
+        return;
+    }
     rfd::MessageDialog::new()
         .set_level(rfd::MessageLevel::Info)
         .set_title("Runinator Desktop Agent")

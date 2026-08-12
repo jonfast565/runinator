@@ -606,6 +606,7 @@ fn action_command() -> ActionCommand {
 fn test_config() -> Config {
     Config {
         dll_paths: Vec::new(),
+        broker_mode: crate::agent::BrokerMode::Direct,
         broker_backend: "in-memory".into(),
         broker_endpoint: "127.0.0.1:7070".into(),
         broker_action_topic: "runinator.actions".into(),
