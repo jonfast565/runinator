@@ -78,7 +78,7 @@ where
         lease_until: DateTime<Utc>,
         limit: i64,
     ) -> Result<Vec<ArchiveMark>, SendableError> {
-        let columns = "id, table_name, primary_key, created_at, archive_day";
+        let columns = "id, table_name, primary_key, created_at, eligible_before, archive_day";
         if self.dialect() == SqlDialect::MySql {
             sqlx::query(&self.render(
                 "UPDATE archive_marks
@@ -206,5 +206,91 @@ where
             updated += result.affected();
         }
         Ok(updated)
+    }
+
+    async fn prune_completed_archive_marks(
+        &self,
+        archived_before: DateTime<Utc>,
+        limit: i64,
+    ) -> Result<u64, SendableError> {
+        let rows = sqlx::query(&self.render(
+            "SELECT id FROM archive_marks WHERE status = 'archived' AND archived_at <= ? ORDER BY archived_at, id LIMIT ?",
+        ))
+        .bind(archived_before.timestamp())
+        .bind(limit.max(1))
+        .fetch_all(self.pool())
+        .await?;
+        let mut deleted = 0;
+        for row in rows {
+            deleted += sqlx::query(&self.render("DELETE FROM archive_marks WHERE id = ?"))
+                .bind(row.get::<Uuid, _>("id"))
+                .execute(self.pool())
+                .await?
+                .affected();
+        }
+        Ok(deleted)
+    }
+
+    async fn prune_expired_security_records(
+        &self,
+        expired_before: DateTime<Utc>,
+        limit: i64,
+    ) -> Result<u64, SendableError> {
+        let limit = limit.max(1);
+        let sessions = sqlx::query(&self.render(
+            "SELECT id FROM auth_sessions WHERE expires_at <= ? OR revoked = ? ORDER BY expires_at, id LIMIT ?",
+        ))
+        .bind(expired_before.timestamp())
+        .bind(true)
+        .bind(limit)
+        .fetch_all(self.pool())
+        .await?;
+        let mut deleted = 0;
+        for row in sessions {
+            deleted += sqlx::query(&self.render("DELETE FROM auth_sessions WHERE id = ?"))
+                .bind(row.get::<Uuid, _>("id"))
+                .execute(self.pool())
+                .await?
+                .affected();
+        }
+        let tokens = sqlx::query(&self.render(
+            "SELECT token_id FROM agent_enrollment_tokens WHERE expires_at <= ? OR consumed_at IS NOT NULL ORDER BY expires_at, token_id LIMIT ?",
+        ))
+        .bind(expired_before.timestamp())
+        .bind(limit)
+        .fetch_all(self.pool())
+        .await?;
+        for row in tokens {
+            deleted +=
+                sqlx::query(&self.render("DELETE FROM agent_enrollment_tokens WHERE token_id = ?"))
+                    .bind(row.get::<String, _>("token_id"))
+                    .execute(self.pool())
+                    .await?
+                    .affected();
+        }
+        Ok(deleted)
+    }
+
+    async fn prune_workflow_cooldowns(
+        &self,
+        used_before: DateTime<Utc>,
+        limit: i64,
+    ) -> Result<u64, SendableError> {
+        let rows = sqlx::query(&self.render(
+            "SELECT name FROM workflow_cooldowns WHERE last_run_at <= ? ORDER BY last_run_at, name LIMIT ?",
+        ))
+        .bind(used_before.timestamp())
+        .bind(limit.max(1))
+        .fetch_all(self.pool())
+        .await?;
+        let mut deleted = 0;
+        for row in rows {
+            deleted += sqlx::query(&self.render("DELETE FROM workflow_cooldowns WHERE name = ?"))
+                .bind(row.get::<String, _>("name"))
+                .execute(self.pool())
+                .await?
+                .affected();
+        }
+        Ok(deleted)
     }
 }

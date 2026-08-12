@@ -451,6 +451,7 @@ trait ArchiveTableSql {
         for<'r> Uuid: Decode<'r, R::Database> + Type<R::Database>,
         for<'r> String: Decode<'r, R::Database> + Type<R::Database>,
         for<'r> i64: Decode<'r, R::Database> + Type<R::Database>,
+        for<'r> bool: Decode<'r, R::Database> + Type<R::Database>,
         for<'r> Option<i64>: Decode<'r, R::Database> + Type<R::Database>,
         for<'r> Option<String>: Decode<'r, R::Database> + Type<R::Database>,
         for<'r> Option<Uuid>: Decode<'r, R::Database> + Type<R::Database>,
@@ -460,6 +461,20 @@ trait ArchiveTableSql {
 impl ArchiveTableSql for ArchiveTable {
     fn archive_candidate_sql(self) -> &'static str {
         match self {
+        ArchiveTable::Runs => {
+            "SELECT id, created_at FROM runs
+             WHERE created_at <= ? AND status IN ('succeeded', 'failed', 'timed_out', 'canceled')
+               AND NOT EXISTS (SELECT 1 FROM run_chunks WHERE run_chunks.run_id = runs.id)
+               AND NOT EXISTS (SELECT 1 FROM run_artifacts WHERE run_artifacts.run_id = runs.id)
+             ORDER BY created_at, id LIMIT ?"
+        }
+        ArchiveTable::RunArtifacts => {
+            "SELECT run_artifacts.id, run_artifacts.created_at FROM run_artifacts
+             WHERE run_artifacts.created_at <= ? AND EXISTS (
+               SELECT 1 FROM runs WHERE runs.id = run_artifacts.run_id
+                 AND runs.status IN ('succeeded', 'failed', 'timed_out', 'canceled'))
+             ORDER BY run_artifacts.created_at, run_artifacts.id LIMIT ?"
+        }
         ArchiveTable::WorkflowRuns => {
             "SELECT id, created_at FROM workflow_runs
              WHERE created_at <= ?
@@ -469,8 +484,21 @@ impl ArchiveTableSql for ArchiveTable {
                AND NOT EXISTS (SELECT 1 FROM workflow_orchestration_events WHERE workflow_orchestration_events.workflow_run_id = workflow_runs.id)
                AND NOT EXISTS (SELECT 1 FROM workflow_result_events WHERE workflow_result_events.workflow_run_id = workflow_runs.id)
                AND NOT EXISTS (SELECT 1 FROM workflow_trigger_firings WHERE workflow_trigger_firings.workflow_run_id = workflow_runs.id)
+               AND NOT EXISTS (SELECT 1 FROM workflow_run_artifacts WHERE workflow_run_artifacts.workflow_run_id = workflow_runs.id)
+               AND NOT EXISTS (SELECT 1 FROM automation_records WHERE automation_records.workflow_run_id = workflow_runs.id)
+               AND NOT EXISTS (SELECT 1 FROM gates WHERE gates.workflow_run_id = workflow_runs.id)
              ORDER BY created_at, id
              LIMIT ?"
+        }
+        ArchiveTable::WorkflowNodeRuns => {
+            "SELECT workflow_node_runs.id, workflow_node_runs.created_at FROM workflow_node_runs
+             WHERE workflow_node_runs.created_at <= ?
+               AND EXISTS (SELECT 1 FROM workflow_runs WHERE workflow_runs.id = workflow_node_runs.workflow_run_id
+                 AND workflow_runs.status IN ('succeeded', 'failed', 'timed_out', 'canceled'))
+               AND NOT EXISTS (SELECT 1 FROM workflow_node_chunks WHERE workflow_node_chunks.workflow_node_run_id = workflow_node_runs.id)
+               AND NOT EXISTS (SELECT 1 FROM workflow_node_artifacts WHERE workflow_node_artifacts.workflow_node_run_id = workflow_node_runs.id)
+               AND NOT EXISTS (SELECT 1 FROM workflow_orchestration_events WHERE workflow_orchestration_events.workflow_node_run_id = workflow_node_runs.id)
+             ORDER BY workflow_node_runs.created_at, workflow_node_runs.id LIMIT ?"
         }
         ArchiveTable::WorkflowNodeChunks => {
             "SELECT id, created_at FROM workflow_node_chunks
@@ -478,11 +506,52 @@ impl ArchiveTableSql for ArchiveTable {
              ORDER BY created_at, id
              LIMIT ?"
         }
+        ArchiveTable::WorkflowNodeArtifacts => {
+            "SELECT workflow_node_artifacts.id, workflow_node_artifacts.created_at FROM workflow_node_artifacts
+             WHERE workflow_node_artifacts.created_at <= ? AND EXISTS (
+               SELECT 1 FROM workflow_node_runs JOIN workflow_runs ON workflow_runs.id = workflow_node_runs.workflow_run_id
+               WHERE workflow_node_runs.id = workflow_node_artifacts.workflow_node_run_id
+                 AND workflow_runs.status IN ('succeeded', 'failed', 'timed_out', 'canceled'))
+               AND NOT EXISTS (SELECT 1 FROM workflow_run_artifacts
+                 WHERE workflow_run_artifacts.artifact_id = workflow_node_artifacts.id)
+             ORDER BY workflow_node_artifacts.created_at, workflow_node_artifacts.id LIMIT ?"
+        }
+        ArchiveTable::WorkflowRunArtifacts => {
+            "SELECT workflow_run_artifacts.id, workflow_run_artifacts.created_at FROM workflow_run_artifacts
+             WHERE workflow_run_artifacts.created_at <= ? AND EXISTS (
+               SELECT 1 FROM workflow_runs WHERE workflow_runs.id = workflow_run_artifacts.workflow_run_id
+                 AND workflow_runs.status IN ('succeeded', 'failed', 'timed_out', 'canceled'))
+             ORDER BY workflow_run_artifacts.created_at, workflow_run_artifacts.id LIMIT ?"
+        }
         ArchiveTable::WorkflowReadyNodes => {
             "SELECT id, created_at FROM workflow_ready_nodes
-             WHERE completed_at IS NOT NULL AND created_at <= ?
+             WHERE created_at <= ? AND (completed_at IS NOT NULL OR EXISTS (
+               SELECT 1 FROM workflow_runs WHERE workflow_runs.id = workflow_ready_nodes.workflow_run_id
+                 AND workflow_runs.status IN ('succeeded', 'failed', 'timed_out', 'canceled')))
              ORDER BY created_at, id
              LIMIT ?"
+        }
+        ArchiveTable::WorkflowOrchestrationEvents => {
+            "SELECT workflow_orchestration_events.event_id AS id, workflow_orchestration_events.created_at FROM workflow_orchestration_events
+             WHERE workflow_orchestration_events.created_at <= ?
+               AND EXISTS (SELECT 1 FROM workflow_runs WHERE workflow_runs.id = workflow_orchestration_events.workflow_run_id
+                 AND workflow_runs.status IN ('succeeded', 'failed', 'timed_out', 'canceled'))
+               AND NOT EXISTS (SELECT 1 FROM workflow_ready_nodes WHERE workflow_ready_nodes.source_event_id = workflow_orchestration_events.event_id)
+             ORDER BY workflow_orchestration_events.created_at, workflow_orchestration_events.event_id LIMIT ?"
+        }
+        ArchiveTable::WorkflowResultEvents => {
+            "SELECT workflow_result_events.event_id AS id, workflow_result_events.created_at FROM workflow_result_events
+             WHERE workflow_result_events.created_at <= ?
+               AND EXISTS (SELECT 1 FROM workflow_runs WHERE workflow_runs.id = workflow_result_events.workflow_run_id
+                 AND workflow_runs.status IN ('succeeded', 'failed', 'timed_out', 'canceled'))
+             ORDER BY workflow_result_events.created_at, workflow_result_events.event_id LIMIT ?"
+        }
+        ArchiveTable::WorkflowTriggerFirings => {
+            "SELECT workflow_trigger_firings.id, workflow_trigger_firings.created_at FROM workflow_trigger_firings
+             WHERE workflow_trigger_firings.created_at <= ? AND (workflow_run_id IS NULL OR EXISTS (
+               SELECT 1 FROM workflow_runs WHERE workflow_runs.id = workflow_trigger_firings.workflow_run_id
+                 AND workflow_runs.status IN ('succeeded', 'failed', 'timed_out', 'canceled')))
+             ORDER BY workflow_trigger_firings.created_at, workflow_trigger_firings.id LIMIT ?"
         }
         ArchiveTable::RunChunks => {
             "SELECT id, created_at FROM run_chunks
@@ -492,15 +561,63 @@ impl ArchiveTableSql for ArchiveTable {
         }
         ArchiveTable::WorkflowActionDispatches => {
             "SELECT id, created_at FROM workflow_action_dispatches
-             WHERE published_at IS NOT NULL AND updated_at <= ?
+             WHERE updated_at <= ? AND (published_at IS NOT NULL OR (attempts > 0 AND last_error IS NOT NULL))
              ORDER BY updated_at, id
              LIMIT ?"
         }
+        ArchiveTable::PipelineRuns => {
+            "SELECT id, created_at FROM pipeline_runs
+             WHERE created_at <= ? AND status IN ('succeeded', 'failed', 'timed_out', 'canceled')
+               AND NOT EXISTS (SELECT 1 FROM workflow_runs WHERE workflow_runs.pipeline_run_id = pipeline_runs.id)
+               AND NOT EXISTS (SELECT 1 FROM pipeline_trigger_firings WHERE pipeline_trigger_firings.pipeline_run_id = pipeline_runs.id)
+             ORDER BY created_at, id LIMIT ?"
+        }
+        ArchiveTable::PipelineTriggerFirings => {
+            "SELECT pipeline_trigger_firings.id, pipeline_trigger_firings.created_at FROM pipeline_trigger_firings
+             WHERE pipeline_trigger_firings.created_at <= ? AND (pipeline_run_id IS NULL OR EXISTS (
+               SELECT 1 FROM pipeline_runs WHERE pipeline_runs.id = pipeline_trigger_firings.pipeline_run_id
+                 AND pipeline_runs.status IN ('succeeded', 'failed', 'timed_out', 'canceled')))
+             ORDER BY pipeline_trigger_firings.created_at, pipeline_trigger_firings.id LIMIT ?"
+        }
         ArchiveTable::Notifications => {
             "SELECT id, created_at FROM notifications
-             WHERE read_at IS NOT NULL AND created_at <= ?
+             WHERE created_at <= ?
+               AND NOT EXISTS (SELECT 1 FROM notification_deliveries WHERE notification_deliveries.notification_id = notifications.id)
              ORDER BY created_at, id
              LIMIT ?"
+        }
+        ArchiveTable::NotificationDeliveries => {
+            "SELECT notification_deliveries.id, notification_deliveries.created_at FROM notification_deliveries
+             WHERE notification_deliveries.created_at <= ? AND notification_deliveries.status NOT IN ('pending', 'retrying')
+             ORDER BY notification_deliveries.created_at, notification_deliveries.id LIMIT ?"
+        }
+        ArchiveTable::AutomationRecords => {
+            "SELECT automation_records.id, automation_records.created_at FROM automation_records
+             WHERE automation_records.created_at <= ? AND (automation_records.resolved_at IS NOT NULL OR EXISTS (
+               SELECT 1 FROM workflow_runs WHERE workflow_runs.id = automation_records.workflow_run_id
+                 AND workflow_runs.status IN ('succeeded', 'failed', 'timed_out', 'canceled')))
+             ORDER BY automation_records.created_at, automation_records.id LIMIT ?"
+        }
+        ArchiveTable::Gates => {
+            "SELECT gates.id, gates.created_at FROM gates
+             WHERE gates.created_at <= ? AND (gates.resolved_at IS NOT NULL OR EXISTS (
+               SELECT 1 FROM workflow_runs WHERE workflow_runs.id = gates.workflow_run_id
+                 AND workflow_runs.status IN ('succeeded', 'failed', 'timed_out', 'canceled')))
+             ORDER BY gates.created_at, gates.id LIMIT ?"
+        }
+        ArchiveTable::OrgUsageLedger => {
+            "SELECT id, sampled_at AS created_at FROM org_usage_ledger WHERE sampled_at <= ? ORDER BY sampled_at, id LIMIT ?"
+        }
+        ArchiveTable::WorkflowRevisions => {
+            "SELECT workflow_revisions.id, workflow_revisions.created_at FROM workflow_revisions
+             WHERE workflow_revisions.created_at <= ? AND workflow_revisions.revision < (
+               SELECT MAX(newer.revision) FROM workflow_revisions newer WHERE newer.workflow_id = workflow_revisions.workflow_id)
+             ORDER BY workflow_revisions.created_at, workflow_revisions.id LIMIT ?"
+        }
+        ArchiveTable::AgentDirectives => {
+            "SELECT directive_id AS id, issued_at AS created_at FROM agent_directives
+             WHERE issued_at <= ? AND completed_at IS NOT NULL AND state IN ('completed', 'failed', 'expired')
+             ORDER BY issued_at, directive_id LIMIT ?"
         }
         ArchiveTable::DeadLetters => {
             "SELECT id, created_at FROM dead_letters
@@ -525,26 +642,74 @@ impl ArchiveTableSql for ArchiveTable {
 
     fn archive_source_sql(self, dialect: SqlDialect) -> String {
         match self {
+        ArchiveTable::Runs => {
+            "SELECT id, status, parameters, output_json, message, trigger, started_at, finished_at, created_at, workflow_run_id, workflow_node_id FROM runs WHERE id = ? AND status IN ('succeeded', 'failed', 'timed_out', 'canceled')".to_string()
+        }
+        ArchiveTable::RunArtifacts => {
+            "SELECT id, run_id, name, mime_type, size_bytes, uri, metadata, created_at FROM run_artifacts WHERE id = ?".to_string()
+        }
         ArchiveTable::WorkflowRuns => {
             "SELECT id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, started_at, finished_at, message, name, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_request_host, trigger_request_ip, trigger_metadata FROM workflow_runs WHERE id = ?".to_string()
+        }
+        ArchiveTable::WorkflowNodeRuns => {
+            "SELECT id, workflow_run_id, node_id, status, attempt, parameters, output_json, state, transition_reason, created_at, started_at, finished_at, message, prev_node_run_id, current_executor_replica_id, last_executor_replica_id, executor_claimed_at, executor_released_at, cursor_id, speculative FROM workflow_node_runs WHERE id = ?".to_string()
         }
         ArchiveTable::WorkflowNodeChunks => {
             "SELECT id, workflow_node_run_id, sequence, stream, content, created_at FROM workflow_node_chunks WHERE id = ?".to_string()
         }
+        ArchiveTable::WorkflowNodeArtifacts => {
+            "SELECT id, workflow_node_run_id, name, mime_type, size_bytes, uri, metadata, created_at FROM workflow_node_artifacts WHERE id = ?".to_string()
+        }
+        ArchiveTable::WorkflowRunArtifacts => {
+            "SELECT id, workflow_run_id, node_id, artifact_id, name, mime_type, size_bytes, uri, metadata, created_at FROM workflow_run_artifacts WHERE id = ?".to_string()
+        }
         ArchiveTable::WorkflowReadyNodes => {
             format!(
-                "SELECT {READY_NODE_COLUMNS} FROM workflow_ready_nodes WHERE id = ? AND completed_at IS NOT NULL"
+                "SELECT {READY_NODE_COLUMNS} FROM workflow_ready_nodes WHERE id = ?"
             )
+        }
+        ArchiveTable::WorkflowOrchestrationEvents => {
+            "SELECT event_id, workflow_run_id, workflow_node_run_id, node_id, event_type, payload, created_at FROM workflow_orchestration_events WHERE event_id = ?".to_string()
+        }
+        ArchiveTable::WorkflowResultEvents => {
+            "SELECT event_id, workflow_run_id, workflow_node_run_id, node_id, event_type, created_at FROM workflow_result_events WHERE event_id = ?".to_string()
+        }
+        ArchiveTable::WorkflowTriggerFirings => {
+            "SELECT id, trigger_id, fire_key, workflow_run_id, scheduler_id, created_at, outcome FROM workflow_trigger_firings WHERE id = ?".to_string()
         }
         ArchiveTable::RunChunks => {
             "SELECT id, run_id, sequence, stream, content, created_at FROM run_chunks WHERE id = ?"
                 .to_string()
         }
         ArchiveTable::WorkflowActionDispatches => {
-            "SELECT id, dedupe_key, command_json, attempts, created_at, updated_at, published_at, last_error, claimed_by, claimed_until FROM workflow_action_dispatches WHERE id = ? AND published_at IS NOT NULL".to_string()
+            "SELECT id, dedupe_key, command_json, attempts, created_at, updated_at, published_at, last_error, claimed_by, claimed_until FROM workflow_action_dispatches WHERE id = ? AND (published_at IS NOT NULL OR (attempts > 0 AND last_error IS NOT NULL))".to_string()
+        }
+        ArchiveTable::PipelineRuns => {
+            "SELECT id, pipeline_id, pipeline_snapshot, status, parameters, state, created_at, started_at, finished_at, message, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_metadata FROM pipeline_runs WHERE id = ?".to_string()
+        }
+        ArchiveTable::PipelineTriggerFirings => {
+            "SELECT id, trigger_id, fire_key, pipeline_run_id, scheduler_id, created_at FROM pipeline_trigger_firings WHERE id = ?".to_string()
         }
         ArchiveTable::Notifications => {
-            "SELECT id, workflow_run_id, workflow_node_id, channel, severity, title, body, target, metadata, read_at, created_at FROM notifications WHERE id = ? AND read_at IS NOT NULL".to_string()
+            "SELECT id, workflow_run_id, workflow_node_id, channel, severity, title, body, target, metadata, read_at, created_at FROM notifications WHERE id = ?".to_string()
+        }
+        ArchiveTable::NotificationDeliveries => {
+            "SELECT id, notification_id, policy_id, channel, target, status, attempts, last_error, created_at, updated_at FROM notification_deliveries WHERE id = ? AND status NOT IN ('pending', 'retrying')".to_string()
+        }
+        ArchiveTable::AutomationRecords => {
+            "SELECT id, record_type, workflow_run_id, external_item_id, node_id, provider, resource_type, external_id, status, title, url, body, path, prompt, approval_type, resolved_by, resolved_at, metadata, data, created_at, updated_at FROM automation_records WHERE id = ?".to_string()
+        }
+        ArchiveTable::Gates => {
+            "SELECT id, workflow_run_id, node_id, kind, status, label, reason, resolved_by, resolved_at, metadata, data, created_at, updated_at FROM gates WHERE id = ?".to_string()
+        }
+        ArchiveTable::OrgUsageLedger => {
+            "SELECT id, org_id, backend, kind, node_count, sampled_at FROM org_usage_ledger WHERE id = ?".to_string()
+        }
+        ArchiveTable::WorkflowRevisions => {
+            "SELECT id, workflow_id, revision, version, name, definition, input_schema, source, actor_id, actor_kind, note, created_at FROM workflow_revisions WHERE id = ?".to_string()
+        }
+        ArchiveTable::AgentDirectives => {
+            "SELECT directive_id, replica_id, kind_json, state, issued_at, expires_at, published_at, completed_at, payload_json, message, attempts, claimed_at, claimed_by_runtime_id FROM agent_directives WHERE directive_id = ? AND completed_at IS NOT NULL".to_string()
         }
         ArchiveTable::DeadLetters => {
             "SELECT id, channel, event_id, dedupe_key, attempts, error, payload, created_at FROM dead_letters WHERE id = ?".to_string()
@@ -567,12 +732,28 @@ impl ArchiveTableSql for ArchiveTable {
         for<'r> Uuid: Decode<'r, R::Database> + Type<R::Database>,
         for<'r> String: Decode<'r, R::Database> + Type<R::Database>,
         for<'r> i64: Decode<'r, R::Database> + Type<R::Database>,
+        for<'r> bool: Decode<'r, R::Database> + Type<R::Database>,
         for<'r> Option<i64>: Decode<'r, R::Database> + Type<R::Database>,
         for<'r> Option<String>: Decode<'r, R::Database> + Type<R::Database>,
         for<'r> Option<Uuid>: Decode<'r, R::Database> + Type<R::Database>,
         for<'c> &'c str: ColumnIndex<R>,
     {
         Ok(match self {
+            ArchiveTable::Runs => runinator_models::json!({
+                "id": row.get::<Uuid, _>("id").to_string(), "status": row.get::<String, _>("status"),
+                "parameters": row.get::<String, _>("parameters"), "output_json": row.get::<Option<String>, _>("output_json"),
+                "message": row.get::<Option<String>, _>("message"), "trigger": row.get::<String, _>("trigger"),
+                "started_at": row.get::<Option<i64>, _>("started_at"), "finished_at": row.get::<Option<i64>, _>("finished_at"),
+                "created_at": row.get::<i64, _>("created_at"),
+                "workflow_run_id": row.get::<Option<Uuid>, _>("workflow_run_id").map(|id| id.to_string()),
+                "workflow_node_id": row.get::<Option<String>, _>("workflow_node_id"),
+            }),
+            ArchiveTable::RunArtifacts => runinator_models::json!({
+                "id": row.get::<Uuid, _>("id").to_string(), "run_id": row.get::<Uuid, _>("run_id").to_string(),
+                "name": row.get::<String, _>("name"), "mime_type": row.get::<String, _>("mime_type"),
+                "size_bytes": row.get::<i64, _>("size_bytes"), "uri": row.get::<String, _>("uri"),
+                "metadata": row.get::<String, _>("metadata"), "created_at": row.get::<i64, _>("created_at"),
+            }),
             ArchiveTable::WorkflowRuns => runinator_models::json!({
                 "id": row.get::<Uuid, _>("id").to_string(),
                 "workflow_id": row.get::<Uuid, _>("workflow_id").to_string(),
@@ -594,6 +775,22 @@ impl ArchiveTableSql for ArchiveTable {
                 "trigger_request_ip": row.get::<Option<String>, _>("trigger_request_ip"),
                 "trigger_metadata": row.get::<String, _>("trigger_metadata"),
             }),
+            ArchiveTable::WorkflowNodeRuns => runinator_models::json!({
+                "id": row.get::<Uuid, _>("id").to_string(), "workflow_run_id": row.get::<Uuid, _>("workflow_run_id").to_string(),
+                "node_id": row.get::<String, _>("node_id"), "status": row.get::<String, _>("status"),
+                "attempt": row.get::<i64, _>("attempt"), "parameters": row.get::<String, _>("parameters"),
+                "output_json": row.get::<Option<String>, _>("output_json"), "state": row.get::<String, _>("state"),
+                "transition_reason": row.get::<Option<String>, _>("transition_reason"), "created_at": row.get::<i64, _>("created_at"),
+                "started_at": row.get::<Option<i64>, _>("started_at"), "finished_at": row.get::<Option<i64>, _>("finished_at"),
+                "message": row.get::<Option<String>, _>("message"),
+                "prev_node_run_id": row.get::<Option<Uuid>, _>("prev_node_run_id").map(|id| id.to_string()),
+                "current_executor_replica_id": row.get::<Option<Uuid>, _>("current_executor_replica_id").map(|id| id.to_string()),
+                "last_executor_replica_id": row.get::<Option<Uuid>, _>("last_executor_replica_id").map(|id| id.to_string()),
+                "executor_claimed_at": row.get::<Option<i64>, _>("executor_claimed_at"),
+                "executor_released_at": row.get::<Option<i64>, _>("executor_released_at"),
+                "cursor_id": row.get::<Option<Uuid>, _>("cursor_id").map(|id| id.to_string()),
+                "speculative": row.get::<bool, _>("speculative"),
+            }),
             ArchiveTable::WorkflowNodeChunks => runinator_models::json!({
                 "id": row.get::<Uuid, _>("id").to_string(),
                 "workflow_node_run_id": row.get::<Uuid, _>("workflow_node_run_id").to_string(),
@@ -601,6 +798,19 @@ impl ArchiveTableSql for ArchiveTable {
                 "stream": row.get::<String, _>("stream"),
                 "content": row.get::<String, _>("content"),
                 "created_at": row.get::<i64, _>("created_at"),
+            }),
+            ArchiveTable::WorkflowNodeArtifacts => runinator_models::json!({
+                "id": row.get::<Uuid, _>("id").to_string(), "workflow_node_run_id": row.get::<Uuid, _>("workflow_node_run_id").to_string(),
+                "name": row.get::<String, _>("name"), "mime_type": row.get::<String, _>("mime_type"),
+                "size_bytes": row.get::<i64, _>("size_bytes"), "uri": row.get::<String, _>("uri"),
+                "metadata": row.get::<String, _>("metadata"), "created_at": row.get::<i64, _>("created_at"),
+            }),
+            ArchiveTable::WorkflowRunArtifacts => runinator_models::json!({
+                "id": row.get::<Uuid, _>("id").to_string(), "workflow_run_id": row.get::<Uuid, _>("workflow_run_id").to_string(),
+                "node_id": row.get::<String, _>("node_id"), "artifact_id": row.get::<Uuid, _>("artifact_id").to_string(),
+                "name": row.get::<String, _>("name"), "mime_type": row.get::<String, _>("mime_type"),
+                "size_bytes": row.get::<i64, _>("size_bytes"), "uri": row.get::<String, _>("uri"),
+                "metadata": row.get::<String, _>("metadata"), "created_at": row.get::<i64, _>("created_at"),
             }),
             ArchiveTable::WorkflowReadyNodes => runinator_models::json!({
                 "id": row.get::<Uuid, _>("id").to_string(),
@@ -615,6 +825,25 @@ impl ArchiveTableSql for ArchiveTable {
                 "completed_at": row.get::<Option<i64>, _>("completed_at"),
                 "created_at": row.get::<i64, _>("created_at"),
                 "updated_at": row.get::<i64, _>("updated_at"),
+            }),
+            ArchiveTable::WorkflowOrchestrationEvents => runinator_models::json!({
+                "event_id": row.get::<Uuid, _>("event_id").to_string(), "workflow_run_id": row.get::<Uuid, _>("workflow_run_id").to_string(),
+                "workflow_node_run_id": row.get::<Option<Uuid>, _>("workflow_node_run_id").map(|id| id.to_string()),
+                "node_id": row.get::<Option<String>, _>("node_id"), "event_type": row.get::<String, _>("event_type"),
+                "payload": row.get::<String, _>("payload"), "created_at": row.get::<i64, _>("created_at"),
+            }),
+            ArchiveTable::WorkflowResultEvents => runinator_models::json!({
+                "event_id": row.get::<Uuid, _>("event_id").to_string(), "workflow_run_id": row.get::<Uuid, _>("workflow_run_id").to_string(),
+                "workflow_node_run_id": row.get::<Uuid, _>("workflow_node_run_id").to_string(),
+                "node_id": row.get::<String, _>("node_id"), "event_type": row.get::<String, _>("event_type"),
+                "created_at": row.get::<i64, _>("created_at"),
+            }),
+            ArchiveTable::WorkflowTriggerFirings => runinator_models::json!({
+                "id": row.get::<Uuid, _>("id").to_string(), "trigger_id": row.get::<Uuid, _>("trigger_id").to_string(),
+                "fire_key": row.get::<String, _>("fire_key"),
+                "workflow_run_id": row.get::<Option<Uuid>, _>("workflow_run_id").map(|id| id.to_string()),
+                "scheduler_id": row.get::<String, _>("scheduler_id"), "created_at": row.get::<i64, _>("created_at"),
+                "outcome": row.get::<String, _>("outcome"),
             }),
             ArchiveTable::RunChunks => runinator_models::json!({
                 "id": row.get::<Uuid, _>("id").to_string(),
@@ -636,6 +865,24 @@ impl ArchiveTableSql for ArchiveTable {
                 "claimed_by": row.get::<Option<String>, _>("claimed_by"),
                 "claimed_until": row.get::<Option<i64>, _>("claimed_until"),
             }),
+            ArchiveTable::PipelineRuns => runinator_models::json!({
+                "id": row.get::<Uuid, _>("id").to_string(), "pipeline_id": row.get::<Uuid, _>("pipeline_id").to_string(),
+                "pipeline_snapshot": row.get::<Option<String>, _>("pipeline_snapshot"), "status": row.get::<String, _>("status"),
+                "parameters": row.get::<String, _>("parameters"), "state": row.get::<String, _>("state"),
+                "created_at": row.get::<i64, _>("created_at"), "started_at": row.get::<Option<i64>, _>("started_at"),
+                "finished_at": row.get::<Option<i64>, _>("finished_at"), "message": row.get::<Option<String>, _>("message"),
+                "trigger_source_kind": row.get::<Option<String>, _>("trigger_source_kind"),
+                "trigger_actor_type": row.get::<Option<String>, _>("trigger_actor_type"),
+                "trigger_actor_replica_id": row.get::<Option<Uuid>, _>("trigger_actor_replica_id").map(|id| id.to_string()),
+                "trigger_actor_display_name": row.get::<Option<String>, _>("trigger_actor_display_name"),
+                "trigger_metadata": row.get::<String, _>("trigger_metadata"),
+            }),
+            ArchiveTable::PipelineTriggerFirings => runinator_models::json!({
+                "id": row.get::<Uuid, _>("id").to_string(), "trigger_id": row.get::<Uuid, _>("trigger_id").to_string(),
+                "fire_key": row.get::<String, _>("fire_key"),
+                "pipeline_run_id": row.get::<Option<Uuid>, _>("pipeline_run_id").map(|id| id.to_string()),
+                "scheduler_id": row.get::<String, _>("scheduler_id"), "created_at": row.get::<i64, _>("created_at"),
+            }),
             ArchiveTable::Notifications => runinator_models::json!({
                 "id": row.get::<Uuid, _>("id").to_string(),
                 "workflow_run_id": row.get::<Option<Uuid>, _>("workflow_run_id").map(|id| id.to_string()),
@@ -648,6 +895,57 @@ impl ArchiveTableSql for ArchiveTable {
                 "metadata": row.get::<String, _>("metadata"),
                 "read_at": row.get::<Option<i64>, _>("read_at"),
                 "created_at": row.get::<i64, _>("created_at"),
+            }),
+            ArchiveTable::NotificationDeliveries => runinator_models::json!({
+                "id": row.get::<Uuid, _>("id").to_string(), "notification_id": row.get::<Uuid, _>("notification_id").to_string(),
+                "policy_id": row.get::<Option<Uuid>, _>("policy_id").map(|id| id.to_string()),
+                "channel": row.get::<String, _>("channel"), "target": row.get::<Option<String>, _>("target"),
+                "status": row.get::<String, _>("status"), "attempts": row.get::<i64, _>("attempts"),
+                "last_error": row.get::<Option<String>, _>("last_error"), "created_at": row.get::<i64, _>("created_at"),
+                "updated_at": row.get::<i64, _>("updated_at"),
+            }),
+            ArchiveTable::AutomationRecords => runinator_models::json!({
+                "id": row.get::<Uuid, _>("id").to_string(), "record_type": row.get::<String, _>("record_type"),
+                "workflow_run_id": row.get::<Option<Uuid>, _>("workflow_run_id").map(|id| id.to_string()),
+                "external_item_id": row.get::<Option<Uuid>, _>("external_item_id").map(|id| id.to_string()),
+                "node_id": row.get::<Option<String>, _>("node_id"), "provider": row.get::<String, _>("provider"),
+                "resource_type": row.get::<String, _>("resource_type"), "external_id": row.get::<String, _>("external_id"),
+                "status": row.get::<String, _>("status"), "title": row.get::<Option<String>, _>("title"),
+                "url": row.get::<Option<String>, _>("url"), "body": row.get::<Option<String>, _>("body"),
+                "path": row.get::<Option<String>, _>("path"), "prompt": row.get::<Option<String>, _>("prompt"),
+                "approval_type": row.get::<Option<String>, _>("approval_type"), "resolved_by": row.get::<Option<String>, _>("resolved_by"),
+                "resolved_at": row.get::<Option<i64>, _>("resolved_at"), "metadata": row.get::<String, _>("metadata"),
+                "data": row.get::<String, _>("data"), "created_at": row.get::<i64, _>("created_at"), "updated_at": row.get::<i64, _>("updated_at"),
+            }),
+            ArchiveTable::Gates => runinator_models::json!({
+                "id": row.get::<Uuid, _>("id").to_string(), "workflow_run_id": row.get::<Uuid, _>("workflow_run_id").to_string(),
+                "node_id": row.get::<String, _>("node_id"), "kind": row.get::<String, _>("kind"), "status": row.get::<String, _>("status"),
+                "label": row.get::<Option<String>, _>("label"), "reason": row.get::<Option<String>, _>("reason"),
+                "resolved_by": row.get::<Option<String>, _>("resolved_by"), "resolved_at": row.get::<Option<i64>, _>("resolved_at"),
+                "metadata": row.get::<String, _>("metadata"), "data": row.get::<String, _>("data"),
+                "created_at": row.get::<i64, _>("created_at"), "updated_at": row.get::<i64, _>("updated_at"),
+            }),
+            ArchiveTable::OrgUsageLedger => runinator_models::json!({
+                "id": row.get::<Uuid, _>("id").to_string(), "org_id": row.get::<Uuid, _>("org_id").to_string(),
+                "backend": row.get::<String, _>("backend"), "kind": row.get::<String, _>("kind"),
+                "node_count": row.get::<i64, _>("node_count"), "sampled_at": row.get::<i64, _>("sampled_at"),
+            }),
+            ArchiveTable::WorkflowRevisions => runinator_models::json!({
+                "id": row.get::<Uuid, _>("id").to_string(), "workflow_id": row.get::<Uuid, _>("workflow_id").to_string(),
+                "revision": row.get::<i64, _>("revision"), "version": row.get::<String, _>("version"),
+                "name": row.get::<String, _>("name"), "definition": row.get::<String, _>("definition"),
+                "input_schema": row.get::<String, _>("input_schema"), "source": row.get::<String, _>("source"),
+                "actor_id": row.get::<Option<Uuid>, _>("actor_id").map(|id| id.to_string()), "actor_kind": row.get::<String, _>("actor_kind"),
+                "note": row.get::<Option<String>, _>("note"), "created_at": row.get::<i64, _>("created_at"),
+            }),
+            ArchiveTable::AgentDirectives => runinator_models::json!({
+                "directive_id": row.get::<Uuid, _>("directive_id").to_string(), "replica_id": row.get::<Uuid, _>("replica_id").to_string(),
+                "kind_json": row.get::<String, _>("kind_json"), "state": row.get::<String, _>("state"),
+                "issued_at": row.get::<i64, _>("issued_at"), "expires_at": row.get::<i64, _>("expires_at"),
+                "published_at": row.get::<Option<i64>, _>("published_at"), "completed_at": row.get::<Option<i64>, _>("completed_at"),
+                "payload_json": row.get::<String, _>("payload_json"), "message": row.get::<Option<String>, _>("message"),
+                "attempts": row.get::<i64, _>("attempts"), "claimed_at": row.get::<Option<i64>, _>("claimed_at"),
+                "claimed_by_runtime_id": row.get::<Option<String>, _>("claimed_by_runtime_id"),
             }),
             ArchiveTable::DeadLetters => runinator_models::json!({
                 "id": row.get::<Uuid, _>("id").to_string(),
@@ -735,6 +1033,7 @@ where
         table,
         primary_key,
         created_at: timestamp_to_utc(row.get("created_at"))?,
+        eligible_before: timestamp_to_utc(row.get("eligible_before"))?,
         archive_day: row.get("archive_day"),
     })
 }

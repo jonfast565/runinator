@@ -59,4 +59,25 @@ pub trait ArchiveStore: Send + Sync + 'static {
         mark_ids: Vec<Uuid>,
         error: String,
     ) -> impl Future<Output = Result<u64, SendableError>> + Send;
+
+    /// Delete completed archive-ledger rows after their diagnostic retention window.
+    fn prune_completed_archive_marks(
+        &self,
+        archived_before: DateTime<Utc>,
+        limit: i64,
+    ) -> impl Future<Output = Result<u64, SendableError>> + Send;
+
+    /// Delete expired/revoked authentication sessions and consumed/expired enrollment tokens.
+    fn prune_expired_security_records(
+        &self,
+        expired_before: DateTime<Utc>,
+        limit: i64,
+    ) -> impl Future<Output = Result<u64, SendableError>> + Send;
+
+    /// Delete old cooldown keys after their deduplication window is no longer useful.
+    fn prune_workflow_cooldowns(
+        &self,
+        used_before: DateTime<Utc>,
+        limit: i64,
+    ) -> impl Future<Output = Result<u64, SendableError>> + Send;
 }

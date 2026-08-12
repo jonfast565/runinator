@@ -1,5 +1,4 @@
-//! archive marks and the sweep that deletes the source rows, including the unread-notification rows
-//! it must leave alone.
+//! archive marks and the sweep that deletes source rows, including stale unread notifications.
 
 use super::*;
 
@@ -99,7 +98,7 @@ async fn archive_marks_are_idempotent_and_sweep_deletes_source_rows() {
 }
 
 #[tokio::test]
-async fn archive_marking_skips_unread_notifications() {
+async fn archive_marking_includes_stale_unread_notifications() {
     let path = std::env::temp_dir().join(format!(
         "runinator-archive-notifications-{}.db",
         Utc::now().timestamp_nanos_opt().unwrap()
@@ -141,7 +140,7 @@ async fn archive_marking_skips_unread_notifications() {
         db.mark_archive_candidates(ArchiveTable::Notifications, cutoff, 100)
             .await
             .unwrap(),
-        1
+        2
     );
     let marks = db
         .claim_archive_marks(
@@ -152,8 +151,80 @@ async fn archive_marking_skips_unread_notifications() {
         )
         .await
         .unwrap();
-    assert_eq!(marks.len(), 1);
-    assert_eq!(marks[0].primary_key, read.id);
+    assert_eq!(marks.len(), 2);
+    assert_eq!(
+        marks
+            .iter()
+            .map(|mark| mark.primary_key)
+            .collect::<std::collections::HashSet<_>>(),
+        [unread.id, read.id].into_iter().collect()
+    );
+
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn every_runtime_growth_table_has_a_valid_archive_candidate_query() {
+    let path = std::env::temp_dir().join(format!(
+        "runinator-archive-coverage-{}.db",
+        Utc::now().timestamp_nanos_opt().unwrap()
+    ));
+    let db = SqliteDb::new(path.to_str().unwrap()).await.unwrap();
+    db.run_init_scripts(&Vec::new()).await.unwrap();
+
+    for table in ArchiveTable::ALL {
+        assert_eq!(
+            db.mark_archive_candidates(table, Utc::now(), 10)
+                .await
+                .unwrap_or_else(|error| panic!("{table} has an invalid retention query: {error}")),
+            0,
+            "empty {table} should have no archive candidates"
+        );
+    }
+
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn housekeeping_prunes_its_own_ledger_and_ephemeral_security_state() {
+    let path = std::env::temp_dir().join(format!(
+        "runinator-archive-housekeeping-{}.db",
+        Utc::now().timestamp_nanos_opt().unwrap()
+    ));
+    let db = SqliteDb::new(path.to_str().unwrap()).await.unwrap();
+    db.run_init_scripts(&Vec::new()).await.unwrap();
+    let old = (Utc::now() - Duration::days(40)).timestamp();
+    let mark_id = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO archive_marks (id, table_name, primary_key, created_at, eligible_before, archive_day, status, attempts, marked_at, archived_at) VALUES (?, 'dead_letters', ?, ?, ?, '2026-01-01', 'archived', 1, ?, ?)",
+    )
+    .bind(mark_id)
+    .bind(Uuid::now_v7().to_string())
+    .bind(old)
+    .bind(old)
+    .bind(old)
+    .bind(old)
+    .execute(db.pool())
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO workflow_cooldowns (name, last_run_at) VALUES ('old-key', ?)")
+        .bind(old)
+        .execute(db.pool())
+        .await
+        .unwrap();
+
+    assert_eq!(
+        db.prune_completed_archive_marks(Utc::now() - Duration::days(30), 10)
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        db.prune_workflow_cooldowns(Utc::now() - Duration::days(30), 10)
+            .await
+            .unwrap(),
+        1
+    );
 
     let _ = std::fs::remove_file(path);
 }

@@ -6,25 +6,57 @@ use uuid::Uuid;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum ArchiveTable {
+    Runs,
+    RunArtifacts,
     WorkflowRuns,
+    WorkflowNodeRuns,
     WorkflowNodeChunks,
+    WorkflowNodeArtifacts,
+    WorkflowRunArtifacts,
     WorkflowReadyNodes,
+    WorkflowOrchestrationEvents,
+    WorkflowResultEvents,
+    WorkflowTriggerFirings,
     RunChunks,
     WorkflowActionDispatches,
+    PipelineRuns,
+    PipelineTriggerFirings,
     Notifications,
+    NotificationDeliveries,
+    AutomationRecords,
+    Gates,
+    OrgUsageLedger,
+    WorkflowRevisions,
+    AgentDirectives,
     DeadLetters,
     AuditLog,
     IdempotencyKeys,
 }
 
 impl ArchiveTable {
-    pub const ALL: [ArchiveTable; 9] = [
-        ArchiveTable::WorkflowRuns,
-        ArchiveTable::WorkflowNodeChunks,
-        ArchiveTable::WorkflowReadyNodes,
+    pub const ALL: [ArchiveTable; 25] = [
+        ArchiveTable::RunArtifacts,
         ArchiveTable::RunChunks,
+        ArchiveTable::Runs,
+        ArchiveTable::WorkflowNodeArtifacts,
+        ArchiveTable::WorkflowNodeChunks,
+        ArchiveTable::WorkflowRunArtifacts,
+        ArchiveTable::WorkflowReadyNodes,
+        ArchiveTable::WorkflowOrchestrationEvents,
+        ArchiveTable::WorkflowResultEvents,
+        ArchiveTable::WorkflowTriggerFirings,
+        ArchiveTable::WorkflowNodeRuns,
+        ArchiveTable::WorkflowRuns,
         ArchiveTable::WorkflowActionDispatches,
+        ArchiveTable::PipelineTriggerFirings,
+        ArchiveTable::PipelineRuns,
+        ArchiveTable::NotificationDeliveries,
         ArchiveTable::Notifications,
+        ArchiveTable::AutomationRecords,
+        ArchiveTable::Gates,
+        ArchiveTable::OrgUsageLedger,
+        ArchiveTable::WorkflowRevisions,
+        ArchiveTable::AgentDirectives,
         ArchiveTable::DeadLetters,
         ArchiveTable::AuditLog,
         ArchiveTable::IdempotencyKeys,
@@ -32,12 +64,28 @@ impl ArchiveTable {
 
     pub fn as_str(self) -> &'static str {
         match self {
+            ArchiveTable::Runs => "runs",
+            ArchiveTable::RunArtifacts => "run_artifacts",
             ArchiveTable::WorkflowRuns => "workflow_runs",
+            ArchiveTable::WorkflowNodeRuns => "workflow_node_runs",
             ArchiveTable::WorkflowNodeChunks => "workflow_node_chunks",
+            ArchiveTable::WorkflowNodeArtifacts => "workflow_node_artifacts",
+            ArchiveTable::WorkflowRunArtifacts => "workflow_run_artifacts",
             ArchiveTable::WorkflowReadyNodes => "workflow_ready_nodes",
+            ArchiveTable::WorkflowOrchestrationEvents => "workflow_orchestration_events",
+            ArchiveTable::WorkflowResultEvents => "workflow_result_events",
+            ArchiveTable::WorkflowTriggerFirings => "workflow_trigger_firings",
             ArchiveTable::RunChunks => "run_chunks",
             ArchiveTable::WorkflowActionDispatches => "workflow_action_dispatches",
+            ArchiveTable::PipelineRuns => "pipeline_runs",
+            ArchiveTable::PipelineTriggerFirings => "pipeline_trigger_firings",
             ArchiveTable::Notifications => "notifications",
+            ArchiveTable::NotificationDeliveries => "notification_deliveries",
+            ArchiveTable::AutomationRecords => "automation_records",
+            ArchiveTable::Gates => "gates",
+            ArchiveTable::OrgUsageLedger => "org_usage_ledger",
+            ArchiveTable::WorkflowRevisions => "workflow_revisions",
+            ArchiveTable::AgentDirectives => "agent_directives",
             ArchiveTable::DeadLetters => "dead_letters",
             ArchiveTable::AuditLog => "audit_log",
             ArchiveTable::IdempotencyKeys => "idempotency_keys",
@@ -45,7 +93,13 @@ impl ArchiveTable {
     }
 
     pub fn primary_key_column(self) -> &'static str {
-        "id"
+        match self {
+            ArchiveTable::WorkflowOrchestrationEvents | ArchiveTable::WorkflowResultEvents => {
+                "event_id"
+            }
+            ArchiveTable::AgentDirectives => "directive_id",
+            _ => "id",
+        }
     }
 }
 
@@ -60,12 +114,28 @@ impl FromStr for ArchiveTable {
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
+            "runs" => Ok(ArchiveTable::Runs),
+            "run_artifacts" => Ok(ArchiveTable::RunArtifacts),
             "workflow_runs" => Ok(ArchiveTable::WorkflowRuns),
+            "workflow_node_runs" => Ok(ArchiveTable::WorkflowNodeRuns),
             "workflow_node_chunks" => Ok(ArchiveTable::WorkflowNodeChunks),
+            "workflow_node_artifacts" => Ok(ArchiveTable::WorkflowNodeArtifacts),
+            "workflow_run_artifacts" => Ok(ArchiveTable::WorkflowRunArtifacts),
             "workflow_ready_nodes" => Ok(ArchiveTable::WorkflowReadyNodes),
+            "workflow_orchestration_events" => Ok(ArchiveTable::WorkflowOrchestrationEvents),
+            "workflow_result_events" => Ok(ArchiveTable::WorkflowResultEvents),
+            "workflow_trigger_firings" => Ok(ArchiveTable::WorkflowTriggerFirings),
             "run_chunks" => Ok(ArchiveTable::RunChunks),
             "workflow_action_dispatches" => Ok(ArchiveTable::WorkflowActionDispatches),
+            "pipeline_runs" => Ok(ArchiveTable::PipelineRuns),
+            "pipeline_trigger_firings" => Ok(ArchiveTable::PipelineTriggerFirings),
             "notifications" => Ok(ArchiveTable::Notifications),
+            "notification_deliveries" => Ok(ArchiveTable::NotificationDeliveries),
+            "automation_records" => Ok(ArchiveTable::AutomationRecords),
+            "gates" => Ok(ArchiveTable::Gates),
+            "org_usage_ledger" => Ok(ArchiveTable::OrgUsageLedger),
+            "workflow_revisions" => Ok(ArchiveTable::WorkflowRevisions),
+            "agent_directives" => Ok(ArchiveTable::AgentDirectives),
             "dead_letters" => Ok(ArchiveTable::DeadLetters),
             "audit_log" => Ok(ArchiveTable::AuditLog),
             "idempotency_keys" => Ok(ArchiveTable::IdempotencyKeys),
@@ -80,6 +150,7 @@ pub struct ArchiveMark {
     pub table: ArchiveTable,
     pub primary_key: Uuid,
     pub created_at: DateTime<Utc>,
+    pub eligible_before: DateTime<Utc>,
     pub archive_day: String,
 }
 

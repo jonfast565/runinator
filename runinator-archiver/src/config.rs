@@ -45,6 +45,20 @@ pub struct Cli {
 
     #[arg(
         long,
+        env = "RUNINATOR_ARCHIVER_TASK_RUN_RETENTION",
+        default_value = "90d"
+    )]
+    pub task_run_retention: String,
+
+    #[arg(
+        long,
+        env = "RUNINATOR_ARCHIVER_PIPELINE_RUN_RETENTION",
+        default_value = "90d"
+    )]
+    pub pipeline_run_retention: String,
+
+    #[arg(
+        long,
         env = "RUNINATOR_ARCHIVER_NODE_LOG_RETENTION",
         default_value = "30d"
     )]
@@ -92,6 +106,55 @@ pub struct Cli {
     )]
     pub idempotency_retention: String,
 
+    #[arg(
+        long,
+        env = "RUNINATOR_ARCHIVER_AUTOMATION_RETENTION",
+        default_value = "90d"
+    )]
+    pub automation_retention: String,
+
+    #[arg(
+        long,
+        env = "RUNINATOR_ARCHIVER_USAGE_RETENTION",
+        default_value = "365d"
+    )]
+    pub usage_retention: String,
+
+    #[arg(
+        long,
+        env = "RUNINATOR_ARCHIVER_REVISION_RETENTION",
+        default_value = "365d"
+    )]
+    pub revision_retention: String,
+
+    #[arg(
+        long,
+        env = "RUNINATOR_ARCHIVER_AGENT_DIRECTIVE_RETENTION",
+        default_value = "30d"
+    )]
+    pub agent_directive_retention: String,
+
+    #[arg(
+        long,
+        env = "RUNINATOR_ARCHIVER_LEDGER_RETENTION",
+        default_value = "30d"
+    )]
+    pub archive_ledger_retention: String,
+
+    #[arg(
+        long,
+        env = "RUNINATOR_ARCHIVER_SECURITY_RETENTION",
+        default_value = "7d"
+    )]
+    pub security_retention: String,
+
+    #[arg(
+        long,
+        env = "RUNINATOR_ARCHIVER_COOLDOWN_RETENTION",
+        default_value = "30d"
+    )]
+    pub cooldown_retention: String,
+
     /// path to a file that is touched every 30 seconds to signal liveness; used with k8s exec.
     #[arg(
         long,
@@ -124,6 +187,8 @@ pub struct Config {
     pub batch_size: i64,
     pub dry_run: bool,
     pub workflow_run_retention: Option<Duration>,
+    pub task_run_retention: Option<Duration>,
+    pub pipeline_run_retention: Option<Duration>,
     pub node_log_retention: Option<Duration>,
     pub ready_node_retention: Option<Duration>,
     pub published_dispatch_retention: Option<Duration>,
@@ -131,6 +196,13 @@ pub struct Config {
     pub dead_letter_retention: Option<Duration>,
     pub audit_log_retention: Option<Duration>,
     pub idempotency_retention: Option<Duration>,
+    pub automation_retention: Option<Duration>,
+    pub usage_retention: Option<Duration>,
+    pub revision_retention: Option<Duration>,
+    pub agent_directive_retention: Option<Duration>,
+    pub archive_ledger_retention: Option<Duration>,
+    pub security_retention: Option<Duration>,
+    pub cooldown_retention: Option<Duration>,
     pub liveness_file: String,
     pub api_base_url: Option<String>,
     pub api_key: Option<String>,
@@ -155,6 +227,8 @@ impl Config {
             batch_size: cli.batch_size.max(1),
             dry_run: cli.dry_run,
             workflow_run_retention: parse_optional_duration(&cli.workflow_run_retention)?,
+            task_run_retention: parse_optional_duration(&cli.task_run_retention)?,
+            pipeline_run_retention: parse_optional_duration(&cli.pipeline_run_retention)?,
             node_log_retention: parse_optional_duration(&cli.node_log_retention)?,
             ready_node_retention: parse_optional_duration(&cli.ready_node_retention)?,
             published_dispatch_retention: parse_optional_duration(
@@ -164,6 +238,13 @@ impl Config {
             dead_letter_retention: parse_optional_duration(&cli.dead_letter_retention)?,
             audit_log_retention: parse_optional_duration(&cli.audit_log_retention)?,
             idempotency_retention: parse_optional_duration(&cli.idempotency_retention)?,
+            automation_retention: parse_optional_duration(&cli.automation_retention)?,
+            usage_retention: parse_optional_duration(&cli.usage_retention)?,
+            revision_retention: parse_optional_duration(&cli.revision_retention)?,
+            agent_directive_retention: parse_optional_duration(&cli.agent_directive_retention)?,
+            archive_ledger_retention: parse_optional_duration(&cli.archive_ledger_retention)?,
+            security_retention: parse_optional_duration(&cli.security_retention)?,
+            cooldown_retention: parse_optional_duration(&cli.cooldown_retention)?,
             liveness_file: cli.liveness_file,
             api_base_url: cli.api_base_url.filter(|value| !value.trim().is_empty()),
             api_key: cli.api_key.filter(|value| !value.trim().is_empty()),

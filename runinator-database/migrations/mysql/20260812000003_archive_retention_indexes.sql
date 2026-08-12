@@ -1,0 +1,20 @@
+-- keep retention candidate scans bounded as runtime history grows.
+CREATE INDEX idx_runs_archive ON runs(status, created_at);
+CREATE INDEX idx_run_artifacts_archive ON run_artifacts(created_at, id);
+CREATE INDEX idx_workflow_node_runs_archive ON workflow_node_runs(created_at, workflow_run_id);
+CREATE INDEX idx_workflow_node_artifacts_archive ON workflow_node_artifacts(created_at, id);
+CREATE INDEX idx_workflow_run_artifacts_archive ON workflow_run_artifacts(created_at, id);
+CREATE INDEX idx_workflow_orchestration_events_archive ON workflow_orchestration_events(created_at, event_id);
+CREATE INDEX idx_workflow_result_events_archive ON workflow_result_events(created_at, event_id);
+CREATE INDEX idx_workflow_trigger_firings_archive ON workflow_trigger_firings(created_at, id);
+CREATE INDEX idx_pipeline_runs_archive ON pipeline_runs(status, created_at);
+CREATE INDEX idx_pipeline_trigger_firings_archive ON pipeline_trigger_firings(created_at, id);
+CREATE INDEX idx_notification_deliveries_archive ON notification_deliveries(status, created_at);
+CREATE INDEX idx_automation_records_archive ON automation_records(created_at, resolved_at);
+CREATE INDEX idx_gates_archive ON gates(created_at, resolved_at);
+CREATE INDEX idx_org_usage_archive ON org_usage_ledger(sampled_at, id);
+CREATE INDEX idx_workflow_revisions_archive ON workflow_revisions(created_at, workflow_id);
+CREATE INDEX idx_agent_directives_archive ON agent_directives(state, completed_at, issued_at);
+CREATE INDEX idx_archive_marks_completed ON archive_marks(status, archived_at);
+CREATE INDEX idx_auth_sessions_expiry ON auth_sessions(expires_at, revoked);
+CREATE INDEX idx_workflow_cooldowns_retention ON workflow_cooldowns(last_run_at);

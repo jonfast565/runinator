@@ -235,14 +235,28 @@ async fn run_once<T: ArchiveStore>(
     config: &Config,
     archiver_id: &str,
 ) -> Result<(), SendableError> {
-    mark_all(db, config).await?;
+    prune_housekeeping(db, config).await?;
+    loop {
+        let marked = mark_all(db, config).await?;
+        let processed = archive_one_batch(db, config, archiver_id).await?;
+        if config.dry_run || (!processed && marked == 0) {
+            return Ok(());
+        }
+    }
+}
+
+async fn archive_one_batch<T: ArchiveStore>(
+    db: &T,
+    config: &Config,
+    archiver_id: &str,
+) -> Result<bool, SendableError> {
     let now = Utc::now();
     let lease = chrono_from_std(config.claim_lease)?;
     let marks = db
         .claim_archive_marks(archiver_id.to_string(), now, now + lease, config.batch_size)
         .await?;
     if marks.is_empty() {
-        return Ok(());
+        return Ok(false);
     }
     let mark_ids = marks.iter().map(|mark| mark.id).collect::<Vec<_>>();
     let rows = match db.fetch_archive_rows(marks).await {
@@ -259,13 +273,13 @@ async fn run_once<T: ArchiveStore>(
     };
     if rows.is_empty() {
         db.complete_archive_marks(mark_ids).await?;
-        return Ok(());
+        return Ok(true);
     }
     if config.dry_run {
         info!(rows = rows.len(), "dry run: would archive row(s)");
         db.fail_archive_marks(mark_ids, "dry run; no rows deleted".into())
             .await?;
-        return Ok(());
+        return Ok(true);
     }
     if let Err(err) = write_archive_jsonl_files(&config.archive_dir, &rows) {
         error!(
@@ -281,30 +295,74 @@ async fn run_once<T: ArchiveStore>(
     db.delete_archive_rows(rows).await?;
     db.complete_archive_marks(archived_mark_ids).await?;
     info!(rows = archived_count, "archived row(s)");
-    Ok(())
+    Ok(true)
 }
 
-async fn mark_all<T: ArchiveStore>(db: &T, config: &Config) -> Result<(), SendableError> {
+async fn mark_all<T: ArchiveStore>(db: &T, config: &Config) -> Result<u64, SendableError> {
     let policies = [
+        (ArchiveTable::RunArtifacts, config.task_run_retention),
+        (ArchiveTable::RunChunks, config.node_log_retention),
+        (ArchiveTable::Runs, config.task_run_retention),
+        (
+            ArchiveTable::WorkflowNodeArtifacts,
+            config.workflow_run_retention,
+        ),
         (ArchiveTable::WorkflowRuns, config.workflow_run_retention),
+        (
+            ArchiveTable::WorkflowNodeRuns,
+            config.workflow_run_retention,
+        ),
         (ArchiveTable::WorkflowNodeChunks, config.node_log_retention),
+        (
+            ArchiveTable::WorkflowRunArtifacts,
+            config.workflow_run_retention,
+        ),
         (
             ArchiveTable::WorkflowReadyNodes,
             config.ready_node_retention,
         ),
-        (ArchiveTable::RunChunks, config.node_log_retention),
+        (
+            ArchiveTable::WorkflowOrchestrationEvents,
+            config.workflow_run_retention,
+        ),
+        (
+            ArchiveTable::WorkflowResultEvents,
+            config.workflow_run_retention,
+        ),
+        (
+            ArchiveTable::WorkflowTriggerFirings,
+            config.workflow_run_retention,
+        ),
         (
             ArchiveTable::WorkflowActionDispatches,
             config.published_dispatch_retention,
         ),
         (
+            ArchiveTable::PipelineTriggerFirings,
+            config.pipeline_run_retention,
+        ),
+        (ArchiveTable::PipelineRuns, config.pipeline_run_retention),
+        (
+            ArchiveTable::NotificationDeliveries,
+            config.read_notification_retention,
+        ),
+        (
             ArchiveTable::Notifications,
             config.read_notification_retention,
+        ),
+        (ArchiveTable::AutomationRecords, config.automation_retention),
+        (ArchiveTable::Gates, config.automation_retention),
+        (ArchiveTable::OrgUsageLedger, config.usage_retention),
+        (ArchiveTable::WorkflowRevisions, config.revision_retention),
+        (
+            ArchiveTable::AgentDirectives,
+            config.agent_directive_retention,
         ),
         (ArchiveTable::DeadLetters, config.dead_letter_retention),
         (ArchiveTable::AuditLog, config.audit_log_retention),
         (ArchiveTable::IdempotencyKeys, config.idempotency_retention),
     ];
+    let mut marked = 0;
     for (table, retention) in policies {
         let Some(retention) = retention else {
             continue;
@@ -315,6 +373,54 @@ async fn mark_all<T: ArchiveStore>(db: &T, config: &Config) -> Result<(), Sendab
             .await?;
         if count > 0 {
             info!(table = %table, count, "marked row(s) for archival");
+        }
+        marked += count;
+    }
+    Ok(marked)
+}
+
+async fn prune_housekeeping<T: ArchiveStore>(db: &T, config: &Config) -> Result<(), SendableError> {
+    let now = Utc::now();
+    if let Some(retention) = config.archive_ledger_retention {
+        loop {
+            let count = db
+                .prune_completed_archive_marks(now - chrono_from_std(retention)?, config.batch_size)
+                .await?;
+            if count > 0 {
+                info!(count, "pruned completed archive mark(s)");
+            }
+            if count < config.batch_size as u64 {
+                break;
+            }
+        }
+    }
+    if let Some(retention) = config.security_retention {
+        loop {
+            let count = db
+                .prune_expired_security_records(
+                    now - chrono_from_std(retention)?,
+                    config.batch_size,
+                )
+                .await?;
+            if count > 0 {
+                info!(count, "pruned expired security record(s)");
+            }
+            if count < config.batch_size as u64 {
+                break;
+            }
+        }
+    }
+    if let Some(retention) = config.cooldown_retention {
+        loop {
+            let count = db
+                .prune_workflow_cooldowns(now - chrono_from_std(retention)?, config.batch_size)
+                .await?;
+            if count > 0 {
+                info!(count, "pruned workflow cooldown(s)");
+            }
+            if count < config.batch_size as u64 {
+                break;
+            }
         }
     }
     Ok(())
