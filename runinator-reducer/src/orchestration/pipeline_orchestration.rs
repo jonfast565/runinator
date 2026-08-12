@@ -201,9 +201,9 @@ pub(super) enum PipelineLinkGate {
 /// member tagged to a still-open pipeline run is gated; anything else fires normally, which is what
 /// keeps non-pipeline chained triggers (and a succeeded source) unaffected by failure modes.
 pub(super) async fn pipeline_link_gate<T: ReducerStore>(
-    db: &T,
-    run: &WorkflowRun,
+    ctx: &super::handler::WorkflowRunContext<'_, T>,
 ) -> Result<PipelineLinkGate, SendableError> {
+    let run = ctx.workflow_run;
     if !matches!(
         run.status,
         WorkflowStatus::Failed | WorkflowStatus::TimedOut
@@ -213,7 +213,7 @@ pub(super) async fn pipeline_link_gate<T: ReducerStore>(
     let Some(pipeline_run_id) = run.pipeline_run_id else {
         return Ok(PipelineLinkGate::Fire);
     };
-    let Some(pipeline_run) = db.fetch_pipeline_run(pipeline_run_id).await? else {
+    let Some(pipeline_run) = ctx.db.fetch_pipeline_run(pipeline_run_id).await? else {
         return Ok(PipelineLinkGate::Fire);
     };
     // already paused (another member's inquiry) or already settled: this member's links stay down.
@@ -221,14 +221,14 @@ pub(super) async fn pipeline_link_gate<T: ReducerStore>(
     {
         return Ok(PipelineLinkGate::Suppress);
     }
-    let pipeline = pipeline_for_run(db, &pipeline_run).await?;
+    let pipeline = pipeline_for_run(ctx.db, &pipeline_run).await?;
     match member_failure_mode(pipeline.as_ref(), run.workflow_id) {
         PipelineMemberFailureMode::Stop => Ok(PipelineLinkGate::Suppress),
         PipelineMemberFailureMode::Continue | PipelineMemberFailureMode::SilentlyContinue => {
             Ok(PipelineLinkGate::Fire)
         }
         PipelineMemberFailureMode::Inquire => {
-            pause_pipeline_run_for_inquiry(db, &pipeline_run, run).await?;
+            pause_pipeline_run_for_inquiry(ctx.db, &pipeline_run, run).await?;
             Ok(PipelineLinkGate::Paused)
         }
     }
@@ -335,9 +335,9 @@ pub async fn resolve_pipeline_run_inquiry<T: ReducerStore>(
                 None,
             )
             .await?;
-            chaining::fire_pipeline_links_for_member(db, &member_run, pipeline_run.pipeline_id)
-                .await?;
-            maybe_settle_pipeline_run(db, &member_run).await?;
+            let run_ctx = super::handler::WorkflowRunContext::new(db, &member_run);
+            chaining::fire_pipeline_links_for_member(&run_ctx, pipeline_run.pipeline_id).await?;
+            maybe_settle_pipeline_run(&run_ctx).await?;
         }
     }
 
@@ -350,13 +350,13 @@ pub async fn resolve_pipeline_run_inquiry<T: ReducerStore>(
 /// member graph is now terminal. no-op for runs not tagged with a pipeline run, already-settled runs,
 /// or a run currently paused on a pending inquiry.
 pub(super) async fn maybe_settle_pipeline_run<T: ReducerStore>(
-    db: &T,
-    member_run: &WorkflowRun,
+    ctx: &super::handler::WorkflowRunContext<'_, T>,
 ) -> Result<(), SendableError> {
+    let member_run = ctx.workflow_run;
     let Some(pipeline_run_id) = member_run.pipeline_run_id else {
         return Ok(());
     };
-    let Some(pipeline_run) = db.fetch_pipeline_run(pipeline_run_id).await? else {
+    let Some(pipeline_run) = ctx.db.fetch_pipeline_run(pipeline_run_id).await? else {
         return Ok(());
     };
     if pipeline_run.status.is_terminal() {
@@ -366,14 +366,15 @@ pub(super) async fn maybe_settle_pipeline_run<T: ReducerStore>(
     if pipeline_run.status == WorkflowStatus::ApprovalRequired {
         return Ok(());
     }
-    let members = db
+    let members = ctx
+        .db
         .fetch_workflow_runs_for_pipeline_run(pipeline_run_id)
         .await?;
     // still running while any member is active (a newly-chained downstream member counts as active).
     if members.iter().any(|run| run.status.is_active()) {
         return Ok(());
     }
-    let pipeline = pipeline_for_run(db, &pipeline_run).await?;
+    let pipeline = pipeline_for_run(ctx.db, &pipeline_run).await?;
     // a `SilentlyContinue` member's failure fires its links like `Continue`, but does not by itself
     // fail the pipeline run's settlement.
     let any_failed = members.iter().any(|run| {
@@ -399,21 +400,22 @@ pub(super) async fn maybe_settle_pipeline_run<T: ReducerStore>(
     } else {
         (WorkflowStatus::Succeeded, None)
     };
-    db.update_pipeline_run_status(pipeline_run_id, status, None, message)
+    ctx.db
+        .update_pipeline_run_status(pipeline_run_id, status, None, message)
         .await?;
     // a settled pipeline can itself be the source of a chained-to-pipeline trigger.
     let mut settled = pipeline_run;
     settled.status = status;
-    maybe_start_chained_pipelines_from_pipeline(db, &settled).await?;
+    maybe_start_chained_pipelines_from_pipeline(ctx.db, &settled).await?;
     Ok(())
 }
 
 /// start any pipelines chained to a terminal workflow run via an enabled `chained` pipeline trigger
 /// whose `configuration.source_workflow` matches. deduped per (trigger, source run).
 pub(super) async fn maybe_start_chained_pipelines<T: ReducerStore>(
-    db: &T,
-    source_run: &WorkflowRun,
+    ctx: &super::handler::WorkflowRunContext<'_, T>,
 ) -> Result<(), SendableError> {
+    let source_run = ctx.workflow_run;
     if !source_run.status.is_terminal() {
         return Ok(());
     }
@@ -423,8 +425,8 @@ pub(super) async fn maybe_start_chained_pipelines<T: ReducerStore>(
     {
         return Ok(());
     }
-    let source_name = workflow_run_name(db, source_run).await?;
-    let triggers = db.fetch_enabled_chained_pipeline_triggers().await?;
+    let source_name = workflow_run_name(ctx.db, source_run).await?;
+    let triggers = ctx.db.fetch_enabled_chained_pipeline_triggers().await?;
     for trigger in triggers {
         let matches_source = trigger
             .configuration
@@ -434,7 +436,7 @@ pub(super) async fn maybe_start_chained_pipelines<T: ReducerStore>(
         if !matches_source {
             continue;
         }
-        start_chained_pipeline(db, &trigger, source_run.status, source_run.id, 0).await?;
+        start_chained_pipeline(ctx.db, &trigger, source_run.status, source_run.id, 0).await?;
     }
     Ok(())
 }

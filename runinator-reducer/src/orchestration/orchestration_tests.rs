@@ -13,6 +13,7 @@ use super::cooldown::remaining_seconds;
 use super::debounce::deadline_elapsed;
 use super::engine::reentry_exhausted;
 use super::event_source::event_type_matches;
+use super::handler::NodeTimingContext;
 use super::mutex::{holder_run_id, lease_is_expired, parse_mutex_params, record_is_held_by_other};
 use super::throttle::bucket_has_tokens;
 use super::transform::resolve_bindings;
@@ -533,8 +534,9 @@ fn timed_out_since_created_catches_a_run_that_never_reached_running() {
     // be blind to a stale park, while the deadline-from-creation check must still catch it.
     let run = node_run("wait", "waiting");
     let cursor = runinator_models::cursor::RunCursor::at("wait");
-    assert!(!timed_out(&node, &cursor, &run));
-    assert!(timed_out_since_created(&node, &cursor, &run));
+    let timing = NodeTimingContext::new(&node, &cursor);
+    assert!(!timed_out(timing, &run));
+    assert!(timed_out_since_created(timing, &run));
 }
 
 #[test]
@@ -550,10 +552,10 @@ fn target_park_times_out_even_without_a_configured_node_timeout() {
     // the target park must trip its fallback deadline instead of holding the run forever.
     let run = node_run("sync", "waiting");
     let cursor = runinator_models::cursor::RunCursor::at("sync");
-    assert!(!timed_out_since_created(&node, &cursor, &run));
+    let timing = NodeTimingContext::new(&node, &cursor);
+    assert!(!timed_out_since_created(timing, &run));
     assert!(timed_out_since_created_or(
-        &node,
-        &cursor,
+        timing,
         &run,
         TARGET_PARK_DEFAULT_TIMEOUT_SECONDS
     ));
@@ -564,9 +566,9 @@ fn target_park_times_out_even_without_a_configured_node_timeout() {
         "timeout_seconds": 1_000_000_000,
     }))
     .expect("node");
+    let timing = NodeTimingContext::new(&node, &cursor);
     assert!(!timed_out_since_created_or(
-        &node,
-        &cursor,
+        timing,
         &run,
         TARGET_PARK_DEFAULT_TIMEOUT_SECONDS
     ));

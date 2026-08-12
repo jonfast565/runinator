@@ -5,6 +5,7 @@
 // the reducer ever read it, so a "paused" run kept running. this module is the reader.
 
 use super::context::runtime_context;
+use super::handler::NodeStepContext;
 use super::transitions::transition_from_node;
 use super::*;
 use runinator_models::debug::{
@@ -50,20 +51,16 @@ pub(super) fn has_external_effect(kind: &WorkflowNodeKind) -> bool {
 /// one node — the next node re-evaluates and breaks again. the expensive context snapshot is only
 /// built once the break decision is already true, so a non-breaking node costs one state parse.
 pub(super) async fn debug_gate<T: ReducerStore>(
-    db: &T,
-    workflow_run: &WorkflowRun,
-    cursor: &RunCursor,
-    node: &WorkflowNode,
-    node_runs: &[WorkflowNodeRun],
+    ctx: &NodeStepContext<'_, T>,
 ) -> Result<DebugGate, SendableError> {
-    let state = WorkflowRunState::from_state(&workflow_run.state);
+    let state = WorkflowRunState::from_state(&ctx.workflow_run.state);
     let Some(frame) = state.debug.as_ref() else {
-        return Ok(speculative_gate(cursor, node));
+        return Ok(speculative_gate(ctx.cursor, ctx.node));
     };
     if !frame.config.enabled {
-        return Ok(speculative_gate(cursor, node));
+        return Ok(speculative_gate(ctx.cursor, ctx.node));
     }
-    let runtime = state.cursor_debug(cursor.id);
+    let runtime = state.cursor_debug(ctx.cursor.id);
 
     // a step was requested for this thread of control: spend it and run exactly this node.
     if runtime.step_requested {
@@ -73,41 +70,39 @@ pub(super) async fn debug_gate<T: ReducerStore>(
             one_shot_breakpoint: runtime
                 .one_shot_breakpoint
                 .clone()
-                .filter(|target| target != node.id.as_str()),
+                .filter(|target| target != ctx.node.id.as_str()),
             ..runtime.clone()
         };
-        persist_runtime(db, workflow_run, cursor, cleared, None).await?;
-        return Ok(speculative_gate(cursor, node));
+        persist_runtime(ctx, cleared, None).await?;
+        return Ok(speculative_gate(ctx.cursor, ctx.node));
     }
     // already parked here. re-parking is idempotent, so a duplicated drive can never slip the node
     // past a breakpoint.
     if runtime.paused {
         return Ok(DebugGate::Park);
     }
-    if !workflow_run.should_break_at(cursor) {
-        return Ok(speculative_gate(cursor, node));
+    if !ctx.workflow_run.should_break_at(ctx.cursor) {
+        return Ok(speculative_gate(ctx.cursor, ctx.node));
     }
 
-    let context = runtime_context(db, workflow_run, cursor, node_runs).await;
+    let context = runtime_context(ctx).await;
     let snapshot = DebugRuntime {
         paused: true,
         step_requested: false,
         one_shot_breakpoint: runtime
             .one_shot_breakpoint
             .clone()
-            .filter(|target| target != node.id.as_str()),
-        current_node_id: Some(node.id.clone()),
-        current_node_kind: Some(node.kind.clone()),
-        input_json: Some(input_snapshot(node, &context)),
+            .filter(|target| target != ctx.node.id.as_str()),
+        current_node_id: Some(ctx.node.id.clone()),
+        current_node_kind: Some(ctx.node.kind.clone()),
+        input_json: Some(input_snapshot(ctx.node, &context)),
         context_json: Some(context),
-        last_output_json: cursor.last_output.clone(),
+        last_output_json: ctx.cursor.last_output.clone(),
     };
     persist_runtime(
-        db,
-        workflow_run,
-        cursor,
+        ctx,
         snapshot,
-        Some(format!("Paused before {}", node.id)),
+        Some(format!("Paused before {}", ctx.node.id)),
     )
     .await?;
     Ok(DebugGate::Park)
@@ -134,13 +129,12 @@ fn input_snapshot(node: &WorkflowNode, context: &Value) -> Value {
 
 /// write one cursor's debugger runtime, taking `DebugPaused` only when no cursor can still advance.
 async fn persist_runtime<T: ReducerStore>(
-    db: &T,
-    workflow_run: &WorkflowRun,
-    cursor: &RunCursor,
+    ctx: &NodeStepContext<'_, T>,
     runtime: DebugRuntime,
     message: Option<String>,
 ) -> Result<(), SendableError> {
-    run_state::park_cursor_for_debug(db, workflow_run.id, cursor.id, runtime, message).await
+    run_state::park_cursor_for_debug(ctx.db, ctx.workflow_run.id, ctx.cursor.id, runtime, message)
+        .await
 }
 
 /// settle an externally-visible node for a speculative cursor without letting it act.
@@ -149,49 +143,42 @@ async fn persist_runtime<T: ReducerStore>(
 /// one was replayed from recorded, then a stub. replaying is what makes a "what if" fork meaningful
 /// — the branch walks with the real values everywhere except where the operator patched them.
 pub(super) async fn shadow_node<T: ReducerStore>(
-    db: &T,
-    workflow_run: &WorkflowRun,
-    cursor: &RunCursor,
-    node: &WorkflowNode,
-    node_runs: &[WorkflowNodeRun],
+    ctx: &NodeStepContext<'_, T>,
 ) -> Result<(), SendableError> {
-    let (status, output, reason) = match replay_source(db, workflow_run, node, node_runs).await? {
+    let (status, output, reason) = match replay_source(ctx).await? {
         Some((status, output)) => (status, output, DEBUG_SHADOW_REPLAY),
         None => (
             WorkflowStatus::Succeeded,
             runinator_models::json!({
                 "shadow": true,
-                "node_id": node.id,
-                "kind": node.kind,
+                "node_id": ctx.node.id,
+                "kind": ctx.node.kind,
             }),
             DEBUG_SHADOW_STUB,
         ),
     };
-    let node_run = db
+    let node_run = ctx
+        .db
         .create_workflow_node_run(
-            workflow_run.id,
-            node.id.clone(),
-            node.parameters.clone().into(),
-            super::context::most_recently_finished_node_run(node_runs),
-            Some(cursor),
+            ctx.workflow_run.id,
+            ctx.node.id.clone(),
+            ctx.node.parameters.clone().into(),
+            super::context::most_recently_finished_node_run(ctx.node_runs),
+            Some(ctx.cursor),
         )
         .await?;
     tracing::debug!(
-        node_id = %node.id,
-        cursor_id = %cursor.id,
+        node_id = %ctx.node.id,
+        cursor_id = %ctx.cursor.id,
         reason,
         "shadowing an external-effect node for a speculative cursor"
     );
     transition_from_node(
-        db,
-        workflow_run,
-        cursor,
-        node,
+        ctx,
         &node_run,
         status,
         Some(output),
         Some(format!("{DEBUG_SPECULATIVE}:{reason}")),
-        node_runs,
     )
     .await?;
     Ok(())
@@ -199,15 +186,13 @@ pub(super) async fn shadow_node<T: ReducerStore>(
 
 /// the recorded outcome this node had on a real thread of control, if there is one to replay.
 async fn replay_source<T: ReducerStore>(
-    db: &T,
-    workflow_run: &WorkflowRun,
-    node: &WorkflowNode,
-    node_runs: &[WorkflowNodeRun],
+    ctx: &NodeStepContext<'_, T>,
 ) -> Result<Option<(WorkflowStatus, Value)>, SendableError> {
     // the real run's own record wins: it is this run, this graph, these inputs.
-    if let Some(recorded) = node_runs
+    if let Some(recorded) = ctx
+        .node_runs
         .iter()
-        .filter(|run| run.node_id == node.id && !run.speculative && run.status.is_terminal())
+        .filter(|run| run.node_id == ctx.node.id && !run.speculative && run.status.is_terminal())
         .max_by_key(|run| run.id)
     {
         return Ok(Some((
@@ -217,7 +202,7 @@ async fn replay_source<T: ReducerStore>(
     }
     // otherwise fall back to the run this one was replayed from, which `replay_workflow_run`
     // stamps into state when it clones a run for debugging.
-    let source_run_id = WorkflowRunState::from_state(&workflow_run.state)
+    let source_run_id = WorkflowRunState::from_state(&ctx.workflow_run.state)
         .extra
         .get("replay")
         .and_then(|replay| replay.get("source_run_id"))
@@ -226,10 +211,10 @@ async fn replay_source<T: ReducerStore>(
     let Some(source_run_id) = source_run_id else {
         return Ok(None);
     };
-    let source_runs = db.fetch_workflow_node_runs(source_run_id).await?;
+    let source_runs = ctx.db.fetch_workflow_node_runs(source_run_id).await?;
     Ok(source_runs
         .iter()
-        .filter(|run| run.node_id == node.id && run.status.is_terminal())
+        .filter(|run| run.node_id == ctx.node.id && run.status.is_terminal())
         .max_by_key(|run| run.id)
         .map(|run| (run.status, run.output_json.clone().unwrap_or(Value::Null))))
 }

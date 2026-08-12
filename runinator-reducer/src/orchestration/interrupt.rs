@@ -15,7 +15,7 @@ use runinator_models::interrupt::{
 use runinator_workflows::interrupt_declarations;
 
 use super::context::is_reentry_stale;
-use super::handler::{NodeHandler, NodeHandlerContext};
+use super::handler::{NodeHandler, NodeHandlerContext, NodeStepContext};
 use super::transitions::{block_node, timed_out, timed_out_since_created};
 use super::*;
 
@@ -54,12 +54,12 @@ impl<'a, T: ReducerStore> InterruptOps<'a, T> {
     /// whose previous iteration failed does not read that iteration as a fresh failure.
     async fn detect(
         &self,
+        ctx: &NodeStepContext<'_, T>,
         source: InterruptSource,
-        node: &WorkflowNode,
-        cursor: &RunCursor,
         latest: Option<&WorkflowNodeRun>,
     ) -> Result<Option<Value>, SendableError> {
         let db = self.db;
+        let node = ctx.node;
         let payload = match source {
             // a parked node's timer elapsed. bound to a `wait` deadline, the one park whose resumption
             // is purely a function of the clock.
@@ -87,8 +87,8 @@ impl<'a, T: ReducerStore> InterruptOps<'a, T> {
                 // from `started_at`. reading the wrong one would fire before the node itself agrees it
                 // has overrun.
                 let blown = match run.status {
-                    WorkflowStatus::Running => timed_out(node, cursor, run),
-                    _ => timed_out_since_created(node, cursor, run),
+                    WorkflowStatus::Running => timed_out(ctx.timing(), run),
+                    _ => timed_out_since_created(ctx.timing(), run),
                 };
                 if !blown {
                     return Ok(None);
@@ -196,13 +196,12 @@ impl<'a, T: ReducerStore> InterruptOps<'a, T> {
     /// source.
     async fn resolve_raise(
         &self,
+        ctx: &NodeStepContext<'_, T>,
         declared: &[InterruptSource],
         state: &WorkflowRunState,
-        node: &WorkflowNode,
-        cursor: &RunCursor,
         latest: Option<&WorkflowNodeRun>,
     ) -> Result<Option<Raised>, SendableError> {
-        let pending = state.pending_interrupt_for(cursor.id);
+        let pending = state.pending_interrupt_for(ctx.cursor.id);
         for source in InterruptSource::ALL {
             if !declared.contains(&source) {
                 continue;
@@ -217,7 +216,7 @@ impl<'a, T: ReducerStore> InterruptOps<'a, T> {
                 }
                 continue;
             }
-            if let Some(payload) = self.detect(source, node, cursor, latest).await? {
+            if let Some(payload) = self.detect(ctx, source, latest).await? {
                 return Ok(Some(Raised {
                     source,
                     payload,
@@ -259,36 +258,32 @@ impl<'a, T: ReducerStore> InterruptOps<'a, T> {
     ///
     /// every refusal below is silent and leaves no run-visible trace: an interrupt that cannot run
     /// is simply not raised.
-    #[allow(clippy::too_many_arguments)]
     pub(super) async fn maybe_raise(
         &self,
-        workflow: &runinator_models::workflows::WorkflowDefinition,
-        workflow_run: &WorkflowRun,
-        cursor: &RunCursor,
-        node: &WorkflowNode,
-        nodes: &[WorkflowNode],
-        latest: Option<&WorkflowNodeRun>,
-        node_runs: &[WorkflowNodeRun],
+        ctx: &NodeHandlerContext<'_, T>,
     ) -> Result<bool, SendableError> {
-        let db = self.db;
         // a speculative branch must not be able to run a handler: its "what if" is not a real
         // thread, and the handler would write node runs the real cursor can see. a pending request
         // is left alone here rather than refused — these cursors are not the thread it is waiting
         // for.
-        if cursor.is_speculative() || cursor.is_suspended() || cursor.is_interrupt_handler() {
+        if ctx.cursor.is_speculative()
+            || ctx.cursor.is_suspended()
+            || ctx.cursor.is_interrupt_handler()
+        {
             return Ok(false);
         }
         // no handler declared for any source this binary knows, and nothing asked from outside: the
         // whole feature costs one metadata lookup and one key probe. every predicate below,
         // including the ones that read the database, is only reached by a run that asked for that
         // source.
-        let declarations = interrupt_declarations(workflow, nodes);
+        let declarations = interrupt_declarations(ctx.workflow, ctx.nodes);
         let declared: Vec<InterruptSource> = declarations
             .iter()
             .filter(|declaration| declaration.enabled)
             .filter_map(|declaration| declaration.source())
             .collect();
-        let requested = workflow_run
+        let requested = ctx
+            .workflow_run
             .state
             .get("pending_interrupts")
             .is_some_and(|value| !value.is_null());
@@ -296,7 +291,7 @@ impl<'a, T: ReducerStore> InterruptOps<'a, T> {
             return Ok(false);
         }
 
-        let state = WorkflowRunState::from_state(&workflow_run.state);
+        let state = ctx.run_state_snapshot();
         // only one interrupt handler may be live in a run at a time: `context::visible_node_runs`
         // hides a handler's region behind a single "am i a handler" boolean rather than naming
         // which region, so two concurrently-live handlers (e.g. two `parallel` branches each
@@ -310,11 +305,11 @@ impl<'a, T: ReducerStore> InterruptOps<'a, T> {
         // a request nobody answers is dropped by the drive that looks at it rather than left
         // parked: a handler that appears later in the run's life would fire it long after the
         // caller gave up.
-        if let Some(request) = state.pending_interrupt_for(cursor.id)
+        if let Some(request) = state.pending_interrupt_for(ctx.cursor.id)
             && !declared.contains(&request.source)
         {
             self.refuse_request(
-                workflow_run.id,
+                ctx.workflow_run.id,
                 Some(request.id),
                 "no handler is declared for the requested source",
             )
@@ -323,18 +318,17 @@ impl<'a, T: ReducerStore> InterruptOps<'a, T> {
         }
         // a node run left behind by a previous loop iteration is not evidence about this one — the
         // node handlers all filter it out before reading a status, and so must the sources.
-        let latest = latest.filter(|run| !is_reentry_stale(run, node_runs, cursor));
-        let Some(raised) = self
-            .resolve_raise(&declared, &state, node, cursor, latest)
-            .await?
-        else {
+        let latest = ctx
+            .latest
+            .filter(|run| !is_reentry_stale(run, ctx.node_runs, ctx.cursor));
+        let Some(raised) = self.resolve_raise(ctx, &declared, state, latest).await? else {
             return Ok(false);
         };
         let source = raised.source;
 
-        if !runinator_workflows::graph_role(&node.kind).interruptible {
+        if !runinator_workflows::graph_role(&ctx.node.kind).interruptible {
             self.refuse_request(
-                workflow_run.id,
+                ctx.workflow_run.id,
                 raised.request_id,
                 "the thread is on a node that cannot be interrupted",
             )
@@ -343,7 +337,7 @@ impl<'a, T: ReducerStore> InterruptOps<'a, T> {
         }
         // the fired-interrupt record is keyed to the node run and its attempt, so a plain `resume`
         // — after which the raising condition is usually still true — does not immediately raise
-        // the same interrupt again. the attempt is part of the key because a retry reuses one node
+        // the same interrupt again. the attempt is part of the key because a retry reuses one ctx.node
         // run row across every attempt; keying on the row alone would dedupe attempt 2 against the
         // interrupt attempt 1 already fired, silently limiting `retry` to firing once per node
         // visit instead of once per re-dispatch. a requested source is exempt: it is consumed by
@@ -353,7 +347,7 @@ impl<'a, T: ReducerStore> InterruptOps<'a, T> {
             .then(|| latest.map(|run| handled_key(source, run.id, run.attempt)))
             .flatten();
         if let Some(key) = key.as_deref()
-            && cursor.has_handled(key)
+            && ctx.cursor.has_handled(key)
         {
             return Ok(false);
         }
@@ -368,14 +362,14 @@ impl<'a, T: ReducerStore> InterruptOps<'a, T> {
 
         // re-check the region at runtime rather than trusting import-time validation: a definition
         // can have been written by a different binary, whose allowlist is not this one.
-        if !runinator_workflows::interrupt_region_is_supported(&entry, nodes) {
+        if !runinator_workflows::interrupt_region_is_supported(&entry, ctx.nodes) {
             tracing::warn!(
-                run_id = %workflow_run.id,
+                run_id = %ctx.workflow_run.id,
                 handler = %entry,
                 "interrupt handler region is not supported by this binary; not raising"
             );
             self.refuse_request(
-                workflow_run.id,
+                ctx.workflow_run.id,
                 raised.request_id,
                 "the declared handler region is not supported by this binary",
             )
@@ -387,7 +381,7 @@ impl<'a, T: ReducerStore> InterruptOps<'a, T> {
         // would compete for it.
         if state.compensation.is_some() {
             self.refuse_request(
-                workflow_run.id,
+                ctx.workflow_run.id,
                 raised.request_id,
                 "the run is unwinding compensation",
             )
@@ -399,21 +393,21 @@ impl<'a, T: ReducerStore> InterruptOps<'a, T> {
         // the ready row below is armed for.
         let handler_cursor_id = Uuid::now_v7();
         let frame = InterruptFrame {
-            interrupted_cursor: cursor.id,
+            interrupted_cursor: ctx.cursor.id,
             source,
             payload: raised.payload,
             resume: ResumePoint {
-                node_id: cursor.node_id().to_string(),
-                loop_frame: cursor.loop_frame.clone(),
-                try_frame: cursor.try_frame.clone(),
+                node_id: ctx.cursor.node_id().to_string(),
+                loop_frame: ctx.cursor.loop_frame.clone(),
+                try_frame: ctx.cursor.try_frame.clone(),
             },
             raised_at: Utc::now(),
         };
-        let interrupted = cursor.id;
+        let interrupted = ctx.cursor.id;
         let entry_node = entry.clone();
         let handled = key.clone();
         let request_id = raised.request_id;
-        let persisted = run_state::mutate_run_state(db, workflow_run.id, move |state| {
+        let persisted = run_state::mutate_run_state(self.db, ctx.workflow_run.id, move |state| {
             // replayable: re-derived from scratch on each attempt, so a losing writer rebuilds the
             // same suspension on top of whatever won.
             let Some(target) = state.cursor_mut(interrupted) else {
@@ -447,39 +441,41 @@ impl<'a, T: ReducerStore> InterruptOps<'a, T> {
         // a run executing a handler is running. leave `active_node_id` alone — the mirror belongs
         // to the primary thread of control, not to a side-channel.
         if matches!(
-            workflow_run.status,
+            ctx.workflow_run.status,
             WorkflowStatus::Waiting
                 | WorkflowStatus::ApprovalRequired
                 | WorkflowStatus::DebugPaused
         ) {
-            db.update_workflow_run_status(
-                workflow_run.id,
-                WorkflowStatus::Running,
-                None,
-                None,
-                Some(format!("interrupt '{source}' raised")),
-            )
-            .await?;
+            self.db
+                .update_workflow_run_status(
+                    ctx.workflow_run.id,
+                    WorkflowStatus::Running,
+                    None,
+                    None,
+                    Some(format!("interrupt '{source}' raised")),
+                )
+                .await?;
         }
 
         let event = NewOrchestrationEvent::new(
-            workflow_run.id,
+            ctx.workflow_run.id,
             Some(entry.clone()),
             "interrupt_raised",
             runinator_models::json!({
                 "source": source.as_str(),
                 "handler": entry,
-                "interrupted_node_id": cursor.node_id(),
+                "interrupted_node_id": ctx.cursor.node_id(),
             }),
         )
         .for_cursor(handler_cursor_id);
-        db.enqueue_ready_node(event, entry.clone(), Utc::now())
+        self.db
+            .enqueue_ready_node(event, entry.clone(), Utc::now())
             .await?;
         tracing::info!(
-            run_id = %workflow_run.id,
+            run_id = %ctx.workflow_run.id,
             source = %source,
             handler = %entry,
-            interrupted_node_id = %cursor,
+            interrupted_node_id = %ctx.cursor,
             "interrupt raised; suspending the thread of control"
         );
         Ok(true)
@@ -487,23 +483,17 @@ impl<'a, T: ReducerStore> InterruptOps<'a, T> {
 
     /// process a `resume` node: end the handler region and hand control back to the suspended
     /// thread.
-    pub(super) async fn process_resume_node(
+    pub(super) async fn reduce_resume_node(
         &self,
-        workflow: &runinator_models::workflows::WorkflowDefinition,
-        workflow_run: &WorkflowRun,
-        cursor: &RunCursor,
-        node: &WorkflowNode,
-        nodes: &[WorkflowNode],
-        node_runs: &[WorkflowNodeRun],
+        ctx: &NodeHandlerContext<'_, T>,
     ) -> Result<ReadyNodeDisposition, SendableError> {
-        let db = self.db;
         // a speculative cursor that wandered into a region has no interrupt to finish; retire it
         // the way a speculative join does rather than letting it complete a real one.
-        if cursor.is_speculative() {
+        if ctx.cursor.is_speculative() {
             run_state::advance_cursor(
-                db,
-                workflow_run.id,
-                cursor.id,
+                self.db,
+                ctx.workflow_run.id,
+                ctx.cursor.id,
                 WorkflowStatus::Succeeded,
                 run_state::CursorMove::Retire,
                 Some("speculative cursor reached a resume node".into()),
@@ -511,34 +501,19 @@ impl<'a, T: ReducerStore> InterruptOps<'a, T> {
             .await?;
             return Ok(ReadyNodeDisposition::Complete);
         }
-        let Some(frame) = cursor.interrupt.clone() else {
-            block_node(
-                db,
-                workflow_run,
-                cursor,
-                node,
-                "Resume node reached outside an interrupt handler",
-            )
-            .await?;
+        let Some(frame) = ctx.cursor.interrupt.clone() else {
+            block_node(ctx, "Resume node reached outside an interrupt handler").await?;
             return Ok(ReadyNodeDisposition::Complete);
         };
-        let mode = node
+        let mode = ctx
+            .node
             .parameters
             .get("mode")
             .and_then(Value::as_str)
             .and_then(|mode| mode.parse().ok())
             .unwrap_or_default();
 
-        self.finish_interrupt(
-            workflow,
-            workflow_run,
-            cursor,
-            &frame,
-            mode,
-            nodes,
-            node_runs,
-        )
-        .await?;
+        self.finish_interrupt(ctx, &frame, mode).await?;
         Ok(ReadyNodeDisposition::Complete)
     }
 
@@ -547,23 +522,25 @@ impl<'a, T: ReducerStore> InterruptOps<'a, T> {
     /// restoring the whole resume point rather than diffing it makes this idempotent: a duplicated
     /// drive writes the position and frames it would have written the first time. a missing
     /// handler cursor means another drive already finished this interrupt, so it is a no-op.
-    #[allow(clippy::too_many_arguments)] // the arguments are the complete interrupt transition context.
     async fn finish_interrupt(
         &self,
-        workflow: &runinator_models::workflows::WorkflowDefinition,
-        workflow_run: &WorkflowRun,
-        handler: &RunCursor,
+        ctx: &NodeHandlerContext<'_, T>,
         frame: &InterruptFrame,
         mode: InterruptMode,
-        nodes: &[WorkflowNode],
-        node_runs: &[WorkflowNodeRun],
     ) -> Result<(), SendableError> {
         let db = self.db;
+        let workflow = ctx.workflow;
+        let workflow_run = ctx.workflow_run;
+        let handler = ctx.cursor;
+        let nodes = ctx.nodes;
+        let node_runs = ctx.node_runs;
         let interrupted = frame.interrupted_cursor;
         let resume_node_id = frame.resume.node_id.clone();
 
         // the node the thread was on, and whatever run of it was left in flight.
-        let resumed_node = nodes.iter().find(|node| node.id.as_str() == resume_node_id);
+        let resumed_node = nodes
+            .iter()
+            .find(|candidate| candidate.id.as_str() == resume_node_id);
         let in_flight = context::latest_node_run(node_runs, &resume_node_id)
             .filter(|run| !run.status.is_terminal())
             .cloned();
@@ -614,7 +591,7 @@ impl<'a, T: ReducerStore> InterruptOps<'a, T> {
                     _ => target.suspended_seconds += frozen_seconds,
                 }
             }
-            state.cursors.retain(|cursor| cursor.id != handler_id);
+            state.cursors.retain(|candidate| candidate.id != handler_id);
         })
         .await?;
 
@@ -639,7 +616,7 @@ impl<'a, T: ReducerStore> InterruptOps<'a, T> {
                 } else {
                     WorkflowStatus::Succeeded
                 };
-                let Some(node) = resumed_node else {
+                let Some(resumed_definition) = resumed_node else {
                     // the graph no longer has the node the thread was on; retire rather than strand.
                     run_state::advance_cursor(
                         db,
@@ -670,7 +647,7 @@ impl<'a, T: ReducerStore> InterruptOps<'a, T> {
                 // which is the whole point of a handler being a side-channel rather than a real branch.
                 let region_nodes = runinator_workflows::interrupt_region_nodes(workflow, nodes);
                 let run_state = WorkflowRunState::from_state(&run.state);
-                let node_runs = context::visible_node_runs(
+                let visible_runs = context::visible_node_runs(
                     &resumed_cursor,
                     &run_state,
                     &all_node_runs,
@@ -681,27 +658,28 @@ impl<'a, T: ReducerStore> InterruptOps<'a, T> {
                 // already-terminal run (e.g. the `Failed` run a `failure` interrupt raised on) must still
                 // be reused rather than replaced: settling a fabricated empty run here would discard the
                 // real output/message and leave a duplicate, data-less node run behind.
-                let existing = context::latest_node_run(&node_runs, &resume_node_id).cloned();
-                let node_run = match existing {
-                    Some(run) => run,
-                    None => {
-                        transitions::ensure_node_run(db, &run, &resumed_cursor, node, None, None)
-                            .await?
-                    }
-                };
+                let existing = context::latest_node_run(&visible_runs, &resume_node_id).cloned();
+                let resumed_ctx = NodeStepContext::new(
+                    super::handler::RunStepContext::new(
+                        super::handler::WorkflowRunContext::new(db, &run),
+                        &resumed_cursor,
+                        &visible_runs,
+                    ),
+                    workflow,
+                    resumed_definition,
+                    existing.as_ref(),
+                    nodes,
+                );
+                let node_run = transitions::ensure_node_run(&resumed_ctx, None).await?;
                 // an interrupt handler's decision is explicit, not an organic dispatch result, so the
                 // node's own retry policy must not be allowed to intercept it: `resume fail` means fail
                 // this node now, not "try again if attempts remain".
                 transitions::settle_node(
-                    db,
-                    &run,
-                    &resumed_cursor,
-                    node,
+                    &resumed_ctx,
                     &node_run,
                     status,
                     None,
                     Some(format!("interrupt_{}", mode.as_str())),
-                    &node_runs,
                     false,
                 )
                 .await?;
@@ -810,15 +788,6 @@ impl<T: ReducerStore> NodeHandler<T> for ResumeHandler {
     where
         T: 'a,
     {
-        InterruptOps::new(ctx.db)
-            .process_resume_node(
-                ctx.workflow,
-                ctx.workflow_run,
-                ctx.cursor,
-                ctx.node,
-                ctx.nodes,
-                ctx.node_runs,
-            )
-            .await
+        InterruptOps::new(ctx.db).reduce_resume_node(ctx).await
     }
 }

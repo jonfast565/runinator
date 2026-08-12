@@ -1,3 +1,4 @@
+use super::handler::WorkflowRunContext;
 use super::*;
 use runinator_models::workflows::{WorkflowTrigger, WorkflowTriggerKind};
 
@@ -9,9 +10,9 @@ const MAX_CHAIN_DEPTH: i64 = 32;
 /// fresh top-level run and no data flows back. deduped per (trigger, source-run) so a re-drive of
 /// the same terminal run never double-starts a target.
 pub(super) async fn maybe_start_chained_workflows<T: ReducerStore>(
-    db: &T,
-    run: &WorkflowRun,
+    ctx: &WorkflowRunContext<'_, T>,
 ) -> Result<(), SendableError> {
+    let run = ctx.workflow_run;
     if !run.status.is_terminal() {
         return Ok(());
     }
@@ -39,7 +40,7 @@ pub(super) async fn maybe_start_chained_workflows<T: ReducerStore>(
     // because it has an `Inquire` mode nothing would ever consult.
     let mut pipeline_gate: Option<pipeline_orchestration::PipelineLinkGate> = None;
 
-    for trigger in db.fetch_workflow_triggers(run.workflow_id).await? {
+    for trigger in ctx.db.fetch_workflow_triggers(run.workflow_id).await? {
         if trigger.kind != WorkflowTriggerKind::Chained || !trigger.enabled {
             continue;
         }
@@ -53,7 +54,7 @@ pub(super) async fn maybe_start_chained_workflows<T: ReducerStore>(
             let gate = match pipeline_gate {
                 Some(gate) => gate,
                 None => {
-                    let gate = pipeline_orchestration::pipeline_link_gate(db, run).await?;
+                    let gate = pipeline_orchestration::pipeline_link_gate(ctx).await?;
                     pipeline_gate = Some(gate);
                     gate
                 }
@@ -77,13 +78,14 @@ pub(super) async fn maybe_start_chained_workflows<T: ReducerStore>(
             continue;
         };
         // exactly-once per (trigger, source run): only the caller that records the firing starts.
-        if !db
+        if !ctx
+            .db
             .try_record_trigger_firing(trigger_id, run.id.to_string())
             .await?
         {
             continue;
         }
-        start_chained_run(db, &trigger, &target_name, run, depth + 1).await?;
+        start_chained_run(ctx, &trigger, &target_name, depth + 1).await?;
     }
     Ok(())
 }
@@ -93,17 +95,17 @@ pub(super) async fn maybe_start_chained_workflows<T: ReducerStore>(
 /// scoped to `pipeline_id`'s links only: any non-pipeline chained trigger on this workflow already
 /// fired at the original terminal-processing pass, since only pipeline-tagged links are ever gated.
 pub(super) async fn fire_pipeline_links_for_member<T: ReducerStore>(
-    db: &T,
-    run: &WorkflowRun,
+    ctx: &WorkflowRunContext<'_, T>,
     pipeline_id: Uuid,
 ) -> Result<(), SendableError> {
+    let run = ctx.workflow_run;
     let pipeline_key = pipeline_id.to_string();
     let depth = run
         .trigger_metadata
         .get("chain_depth")
         .and_then(Value::as_i64)
         .unwrap_or(0);
-    for trigger in db.fetch_workflow_triggers(run.workflow_id).await? {
+    for trigger in ctx.db.fetch_workflow_triggers(run.workflow_id).await? {
         if trigger.kind != WorkflowTriggerKind::Chained || !trigger.enabled {
             continue;
         }
@@ -131,13 +133,14 @@ pub(super) async fn fire_pipeline_links_for_member<T: ReducerStore>(
         else {
             continue;
         };
-        if !db
+        if !ctx
+            .db
             .try_record_trigger_firing(trigger_id, run.id.to_string())
             .await?
         {
             continue;
         }
-        start_chained_run(db, &trigger, &target_name, run, depth + 1).await?;
+        start_chained_run(ctx, &trigger, &target_name, depth + 1).await?;
     }
     Ok(())
 }
@@ -159,13 +162,14 @@ fn chain_status_matches(trigger: &WorkflowTrigger, status: WorkflowStatus) -> bo
 
 /// create the target run, stamp chaining provenance, and enqueue its start node.
 async fn start_chained_run<T: ReducerStore>(
-    db: &T,
+    ctx: &WorkflowRunContext<'_, T>,
     trigger: &WorkflowTrigger,
     target_name: &str,
-    source_run: &WorkflowRun,
     depth: i64,
 ) -> Result<(), SendableError> {
-    let target = db
+    let source_run = ctx.workflow_run;
+    let target = ctx
+        .db
         .fetch_workflow_by_name(target_name.to_string())
         .await?
         .ok_or_else(|| crate::errors::CHAIN_TARGET_UNRESOLVED.error(target_name))?;
@@ -178,7 +182,8 @@ async fn start_chained_run<T: ReducerStore>(
         .cloned()
         .unwrap_or_else(|| Value::Object(Map::new()));
     let state = runinator_models::json!({ "control": { "pause_requested": false } });
-    let run = db
+    let run = ctx
+        .db
         .create_workflow_run(
             target_id,
             target,
@@ -207,7 +212,8 @@ async fn start_chained_run<T: ReducerStore>(
     if let Some(pipeline_run_id) = source_run.pipeline_run_id
         && trigger.configuration.pointer("/pipeline_id").is_some()
     {
-        db.set_workflow_run_pipeline_run(run.id, pipeline_run_id)
+        ctx.db
+            .set_workflow_run_pipeline_run(run.id, pipeline_run_id)
             .await?;
     }
     // enqueue the target's start node so the reducer drives it (mirrors create_subflow_run).
@@ -220,7 +226,7 @@ async fn start_chained_run<T: ReducerStore>(
             "workflow_run_created",
             runinator_models::json!({ "workflow_id": run.workflow_id, "node_id": start }),
         );
-        db.enqueue_ready_node(event, start, Utc::now()).await?;
+        ctx.db.enqueue_ready_node(event, start, Utc::now()).await?;
     }
     tracing::info!(
         source_run_id = %source_run.id,

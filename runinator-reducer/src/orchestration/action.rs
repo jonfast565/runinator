@@ -1,5 +1,4 @@
 use super::context::{is_reentry_stale, merge_parameters, runtime_context};
-use super::handler::{NodeHandler, NodeHandlerContext};
 use super::transitions::{
     arm_node_timeout, arm_node_timeout_or, retry_or_transition, time_out, timed_out,
     timed_out_since_created_or,
@@ -101,269 +100,240 @@ pub(super) fn default_foreign_language_runtime(image: &str) -> Value {
     })
 }
 
-pub(super) async fn process_action_node<T: ReducerStore>(
-    db: &T,
-    workflow: &runinator_models::workflows::WorkflowDefinition,
-    workflow_run: &WorkflowRun,
-    cursor: &RunCursor,
-    node: &WorkflowNode,
-    latest: Option<&WorkflowNodeRun>,
-    node_runs: &[WorkflowNodeRun],
-) -> Result<(), SendableError> {
-    let action = node
-        .action
-        .as_ref()
-        .ok_or_else(|| crate::errors::ACTION_CONFIG_MISSING.error(&node.id))?;
-    // a loop body re-entering this node sees the prior iteration's terminal run; treat it as a
-    // fresh visit so the action dispatches again instead of transitioning from the stale run.
-    let latest = latest.filter(|run| !is_reentry_stale(run, node_runs, cursor));
-    if let Some(node_run) = latest {
-        if node_run.status == WorkflowStatus::Running {
-            // a dispatched action otherwise waits on its worker result indefinitely; honor the
-            // node's timeout so a lost worker or dropped result cannot park the run forever. this
-            // is a backstop for a missing/very long timeout_seconds; the liveness checks below are
-            // what actually catch a worker dying mid-run in a timely fashion.
-            if timed_out(node, cursor, node_run) {
-                let message = action_timeout_message(action, node_run);
-                tracing::warn!(
-                    node_id = %node.id,
-                    action = %format!("{}.{}", action.provider, action.function),
-                    reason = %message,
-                    "action node timed out"
+pub(super) struct ActionHandler;
+
+impl<T: ReducerStore> super::handler::NodeHandler<T> for ActionHandler {
+    async fn process<'a>(
+        &'a self,
+        ctx: &'a super::handler::NodeHandlerContext<'a, T>,
+    ) -> Result<ReadyNodeDisposition, SendableError>
+    where
+        T: 'a,
+    {
+        if super::compute::is_inprocess_compute(ctx.node) {
+            super::compute::evaluate_compute_node(ctx).await?;
+            return Ok(ReadyNodeDisposition::Complete);
+        }
+        let action = ctx
+            .node
+            .action
+            .as_ref()
+            .ok_or_else(|| crate::errors::ACTION_CONFIG_MISSING.error(&ctx.node.id))?;
+        // a loop body re-entering this node sees the prior iteration's terminal run; treat it as a
+        // fresh visit so the action dispatches again instead of transitioning from the stale run.
+        let latest = ctx
+            .latest
+            .filter(|run| !is_reentry_stale(run, ctx.node_runs, ctx.cursor));
+        if let Some(node_run) = latest {
+            if node_run.status == WorkflowStatus::Running {
+                // a dispatched action otherwise waits on its worker result indefinitely; honor the
+                // node's timeout so a lost worker or dropped result cannot park the run forever. this
+                // is a backstop for a missing/very long timeout_seconds; the liveness checks below are
+                // what actually catch a worker dying mid-run in a timely fashion.
+                if timed_out(ctx.timing(), node_run) {
+                    let message = action_timeout_message(action, node_run);
+                    tracing::warn!(
+                        node_id = %ctx.node.id,
+                        action = %format!("{}.{}", action.provider, action.function),
+                        reason = %message,
+                        "action node timed out"
+                    );
+                    return super::handler::complete(time_out(ctx, node_run, &message).await);
+                }
+                // the executor claim names the worker actually running this action (any target,
+                // including the general pool). a dead holder can never publish a result, and its fresh
+                // claim makes every redelivery/retry get dropped as a duplicate — so release the claim
+                // before failing, or the retry this schedules would be swallowed until the claim ages
+                // past the timeout+grace staleness deadline.
+                if let Some(holder) = node_run.current_executor_replica_id
+                    && !replica_is_live(ctx, holder).await?
+                {
+                    ctx.db
+                        .release_workflow_node_run_executor(node_run.id, holder, Utc::now())
+                        .await?;
+                    return super::handler::complete(
+                        time_out(ctx, node_run, "Worker executing this action disconnected").await,
+                    );
+                }
+                // a pinned target (an explicit label selector, or the session-bound local provider)
+                // has exactly one worker (or worker set) that can ever service it; if that worker just
+                // went stale, no redelivery will ever land, so fail promptly instead of waiting out the
+                // full timeout. this also covers a crash before the executor claim was recorded. the
+                // claim (if any) is left alone here: its holder is live per the check above, so freeing
+                // it could let a duplicate delivery run concurrently with the real execution.
+                if dispatch_target_still_live(ctx, action).await? == Some(false) {
+                    return super::handler::complete(
+                        time_out(ctx, node_run, "Worker executing this action disconnected").await,
+                    );
+                }
+                // keep watching every dispatched action (not just pinned targets): the executor-claim
+                // check above is the only prompt dead-worker detection a general-pool dispatch has,
+                // and it only runs when something drives this node.
+                arm_dispatch_liveness_poll(ctx).await?;
+                return Ok(ReadyNodeDisposition::Complete);
+            }
+            // a node parked waiting for its compatible label target or bound desktop worker; honor the
+            // timeout, otherwise re-resolve the target (a worker may have connected) reusing this run. a
+            // parked run never touches `started_at` (only a `Running` transition sets it), so the
+            // deadline is measured from `created_at` instead, with a fallback deadline when the node
+            // declares no timeout of its own.
+            if node_run.status == WorkflowStatus::Waiting
+                && timed_out_since_created_or(
+                    ctx.timing(),
+                    node_run,
+                    TARGET_PARK_DEFAULT_TIMEOUT_SECONDS,
+                )
+            {
+                let required_labels = effective_required_labels(ctx, action).await?;
+                let message = unavailable_target_timeout_message(
+                    action,
+                    ctx.workflow_run.trigger_actor_replica_id,
+                    &required_labels,
                 );
-                return time_out(
-                    db,
-                    workflow_run,
-                    cursor,
-                    node,
-                    node_run,
-                    &message,
-                    node_runs,
-                )
-                .await;
+                tracing::warn!(
+                    node_id = %ctx.node.id,
+                    action = %format!("{}.{}", action.provider, action.function),
+                    required_labels = ?required_labels,
+                    reason = %message,
+                    "action node timed out waiting for a compatible worker"
+                );
+                return super::handler::complete(time_out(ctx, node_run, &message).await);
             }
-            // the executor claim names the worker actually running this action (any target,
-            // including the general pool). a dead holder can never publish a result, and its fresh
-            // claim makes every redelivery/retry get dropped as a duplicate — so release the claim
-            // before failing, or the retry this schedules would be swallowed until the claim ages
-            // past the timeout+grace staleness deadline.
-            if let Some(holder) = node_run.current_executor_replica_id
-                && !replica_is_live(db, holder).await?
-            {
-                db.release_workflow_node_run_executor(node_run.id, holder, Utc::now())
-                    .await?;
-                return time_out(
-                    db,
-                    workflow_run,
-                    cursor,
-                    node,
+            if node_run.status.is_terminal() {
+                retry_or_transition(
+                    ctx,
                     node_run,
-                    "Worker executing this action disconnected",
-                    node_runs,
+                    node_run.status,
+                    node_run.output_json.clone(),
+                    node_run.message.clone(),
                 )
-                .await;
+                .await?;
+                return Ok(ReadyNodeDisposition::Complete);
             }
-            // a pinned target (an explicit label selector, or the session-bound local provider)
-            // has exactly one worker (or worker set) that can ever service it; if that worker just
-            // went stale, no redelivery will ever land, so fail promptly instead of waiting out the
-            // full timeout. this also covers a crash before the executor claim was recorded. the
-            // claim (if any) is left alone here: its holder is live per the check above, so freeing
-            // it could let a duplicate delivery run concurrently with the real execution.
-            if dispatch_target_still_live(db, workflow_run, workflow, action).await? == Some(false)
-            {
-                return time_out(
-                    db,
-                    workflow_run,
-                    cursor,
-                    node,
-                    node_run,
-                    "Worker executing this action disconnected",
-                    node_runs,
-                )
-                .await;
-            }
-            // keep watching every dispatched action (not just pinned targets): the executor-claim
-            // check above is the only prompt dead-worker detection a general-pool dispatch has,
-            // and it only runs when something drives this node.
-            arm_dispatch_liveness_poll(db, workflow_run.id, node).await?;
-            return Ok(());
         }
-        // a node parked waiting for its compatible label target or bound desktop worker; honor the
-        // timeout, otherwise re-resolve the target (a worker may have connected) reusing this run. a
-        // parked run never touches `started_at` (only a `Running` transition sets it), so the
-        // deadline is measured from `created_at` instead, with a fallback deadline when the node
-        // declares no timeout of its own.
-        if node_run.status == WorkflowStatus::Waiting
-            && timed_out_since_created_or(
-                node,
-                cursor,
-                node_run,
-                TARGET_PARK_DEFAULT_TIMEOUT_SECONDS,
-            )
+
+        let node_run = match latest
+            .filter(|run| matches!(run.status, WorkflowStatus::Queued | WorkflowStatus::Waiting))
         {
-            let required_labels = effective_required_labels(db, workflow, action).await?;
-            let message = unavailable_target_timeout_message(
-                action,
-                workflow_run.trigger_actor_replica_id,
-                &required_labels,
-            );
-            tracing::warn!(
-                node_id = %node.id,
-                action = %format!("{}.{}", action.provider, action.function),
-                required_labels = ?required_labels,
-                reason = %message,
-                "action node timed out waiting for a compatible worker"
-            );
-            return time_out(
-                db,
-                workflow_run,
-                cursor,
-                node,
-                node_run,
-                &message,
-                node_runs,
-            )
-            .await;
-        }
-        if node_run.status.is_terminal() {
-            retry_or_transition(
-                db,
-                workflow_run,
-                cursor,
-                node,
-                node_run,
-                node_run.status,
-                node_run.output_json.clone(),
-                node_run.message.clone(),
-                node_runs,
+            Some(node_run) => node_run.clone(),
+            None => {
+                ctx.db
+                    .create_workflow_node_run(
+                        ctx.workflow_run.id,
+                        ctx.node.id.clone(),
+                        ctx.node.parameters.clone().into(),
+                        super::context::most_recently_finished_node_run(ctx.node_runs),
+                        Some(ctx.cursor),
+                    )
+                    .await?
+            }
+        };
+        // resolve routing before any observable dispatch: a session-bound action whose desktop worker is
+        // not connected parks (and re-checks) instead of being published to a queue no one drains.
+        let target = match resolve_action_target(ctx, action).await? {
+            TargetResolution::Ready(target) => {
+                tracing::info!(
+                    node_id = %ctx.node.id,
+                    action = %format!("{}.{}", action.provider, action.function),
+                    target = ?target,
+                    "action node dispatching to worker target"
+                );
+                target
+            }
+            TargetResolution::Park => {
+                let required_labels = effective_required_labels(ctx, action).await?;
+                let reason = unavailable_target_description(
+                    action,
+                    ctx.workflow_run.trigger_actor_replica_id,
+                    &required_labels,
+                );
+                tracing::warn!(
+                    node_id = %ctx.node.id,
+                    action = %format!("{}.{}", action.provider, action.function),
+                    required_labels = ?required_labels,
+                    reason = %reason,
+                    "action node parking until a compatible worker becomes available"
+                );
+                return super::handler::complete(park_for_target(ctx, &node_run).await);
+            }
+        };
+        let attempt = node_run.attempt + 1;
+        let parameters = build_node_parameters(ctx, action).await?;
+        // resolve the idempotency key from the same context the parameters saw, so the key describes the
+        // effect this attempt is about to have. it is deliberately not attempt-scoped: a retry of the same
+        // node must reach the same key, or retrying would defeat the whole point.
+        let idempotency_key = match action.idempotency_key {
+            Some(_) => {
+                let context = runtime_context(ctx).await;
+                resolve_idempotency_key(action, ctx.workflow_run.workflow_id, &context)
+            }
+            None => None,
+        };
+        let command = build_action_command(
+            ctx.workflow_run.id,
+            &node_run,
+            action,
+            parameters.clone(),
+            target,
+            idempotency_key,
+        );
+        // scope the dedupe key to the attempt: outbox rows persist after publish, so a retry reusing
+        // the node run's key would collide with the already-published row and never dispatch again.
+        ctx.db
+            .enqueue_action_dispatch(
+                format!("workflow-node-run:{}:{attempt}", node_run.id),
+                command,
             )
             .await?;
-            return Ok(());
-        }
-    }
-
-    let node_run = match latest
-        .filter(|run| matches!(run.status, WorkflowStatus::Queued | WorkflowStatus::Waiting))
-    {
-        Some(node_run) => node_run.clone(),
-        None => {
-            db.create_workflow_node_run(
-                workflow_run.id,
-                node.id.clone(),
-                node.parameters.clone().into(),
-                super::context::most_recently_finished_node_run(node_runs),
-                Some(cursor),
+        ctx.db
+            .update_workflow_node_run(
+                node_run.id,
+                WorkflowStatus::Running,
+                Some(attempt),
+                Some(parameters),
+                None,
+                None,
+                Some("action_started".into()),
+                None,
             )
-            .await?
-        }
-    };
-    // resolve routing before any observable dispatch: a session-bound action whose desktop worker is
-    // not connected parks (and re-checks) instead of being published to a queue no one drains.
-    let target = match resolve_action_target(db, workflow_run, workflow, action).await? {
-        TargetResolution::Ready(target) => {
-            tracing::info!(
-                node_id = %node.id,
-                action = %format!("{}.{}", action.provider, action.function),
-                target = ?target,
-                "action node dispatching to worker target"
-            );
-            target
-        }
-        TargetResolution::Park => {
-            let required_labels = effective_required_labels(db, workflow, action).await?;
-            let reason = unavailable_target_description(
-                action,
-                workflow_run.trigger_actor_replica_id,
-                &required_labels,
-            );
-            tracing::warn!(
-                node_id = %node.id,
-                action = %format!("{}.{}", action.provider, action.function),
-                required_labels = ?required_labels,
-                reason = %reason,
-                "action node parking until a compatible worker becomes available"
-            );
-            return park_for_target(db, workflow_run, cursor, node, &node_run).await;
-        }
-    };
-    let attempt = node_run.attempt + 1;
-    let parameters =
-        build_node_parameters(db, workflow, action, node, workflow_run, cursor, node_runs).await?;
-    // resolve the idempotency key from the same context the parameters saw, so the key describes the
-    // effect this attempt is about to have. it is deliberately not attempt-scoped: a retry of the same
-    // node must reach the same key, or retrying would defeat the whole point.
-    let idempotency_key = match action.idempotency_key {
-        Some(_) => {
-            let context = runtime_context(db, workflow_run, cursor, node_runs).await;
-            resolve_idempotency_key(action, workflow_run.workflow_id, &context)
-        }
-        None => None,
-    };
-    let command = build_action_command(
-        workflow_run.id,
-        &node_run,
-        action,
-        parameters.clone(),
-        target,
-        idempotency_key,
-    );
-    // scope the dedupe key to the attempt: outbox rows persist after publish, so a retry reusing
-    // the node run's key would collide with the already-published row and never dispatch again.
-    db.enqueue_action_dispatch(
-        format!("workflow-node-run:{}:{attempt}", node_run.id),
-        command,
-    )
-    .await?;
-    db.update_workflow_node_run(
-        node_run.id,
-        WorkflowStatus::Running,
-        Some(attempt),
-        Some(parameters),
-        None,
-        None,
-        Some("action_started".into()),
-        None,
-    )
-    .await?;
-    db.update_workflow_run_status(
-        workflow_run.id,
-        WorkflowStatus::Running,
-        Some(node.id.clone()),
-        None,
-        None,
-    )
-    .await?;
-    // no ready node is pending while the run awaits the worker, so a configured timeout must arm
-    // its own wake-up to be checked at the deadline.
-    arm_node_timeout(db, workflow_run.id, cursor, node).await?;
-    // the executing worker can die mid-run with no result ever arriving; re-check its liveness
-    // (executor claim holder, or the pinned target's worker set) well before the possibly long,
-    // or unset, node timeout would otherwise catch it.
-    arm_dispatch_liveness_poll(db, workflow_run.id, node).await?;
-    Ok(())
+            .await?;
+        ctx.db
+            .update_workflow_run_status(
+                ctx.workflow_run.id,
+                WorkflowStatus::Running,
+                Some(ctx.node.id.clone()),
+                None,
+                None,
+            )
+            .await?;
+        // no ready node is pending while the run awaits the worker, so a configured timeout must arm
+        // its own wake-up to be checked at the deadline.
+        arm_node_timeout(ctx).await?;
+        // the executing worker can die mid-run with no result ever arriving; re-check its liveness
+        // (executor claim holder, or the pinned target's worker set) well before the possibly long,
+        // or unset, node timeout would otherwise catch it.
+        arm_dispatch_liveness_poll(ctx).await?;
+        Ok(ReadyNodeDisposition::Complete)
+    }
 }
 
 async fn build_node_parameters<T: ReducerStore>(
-    db: &T,
-    workflow: &runinator_models::workflows::WorkflowDefinition,
+    ctx: &super::handler::NodeHandlerContext<'_, T>,
     action: &WorkflowAction,
-    node: &WorkflowNode,
-    workflow_run: &WorkflowRun,
-    cursor: &RunCursor,
-    node_runs: &[WorkflowNodeRun],
 ) -> Result<Value, SendableError> {
     // an effectful `std.exec` program is interpreted by the worker, not resolved here: ship the
     // program verbatim alongside the full runtime context and the workflow's user-function table so
     // the worker's interpreter can resolve refs/calls (with the effectful library) against it.
     if action.provider == "std" && action.function == "exec" {
-        let context = runtime_context(db, workflow_run, cursor, node_runs).await;
+        let context = runtime_context(ctx).await;
         let program = action
             .configuration
             .as_value()
             .get("program")
             .cloned()
             .unwrap_or(Value::Null);
-        let functions = workflow
+        let functions = ctx
+            .workflow
             .definition
             .metadata
             .get("functions")
@@ -376,7 +346,7 @@ async fn build_node_parameters<T: ReducerStore>(
     // foreign compute source is passed verbatim to `std.code`; only the live context is appended.
     if action.provider == "std" && action.function == "code" {
         let mut parameters = action.configuration.as_value().clone();
-        let context = runtime_context(db, workflow_run, cursor, node_runs).await;
+        let context = runtime_context(ctx).await;
         if let Value::Object(object) = &mut parameters {
             let language = object
                 .get("language")
@@ -390,7 +360,7 @@ async fn build_node_parameters<T: ReducerStore>(
                     ))
                 })?;
             let runtime =
-                crate::config::config_value(db, FOREIGN_LANGUAGE_SCOPE, canonical_language)
+                crate::config::config_value(ctx.db, FOREIGN_LANGUAGE_SCOPE, canonical_language)
                     .await?
                     .unwrap_or_else(|| default_foreign_language_runtime(default_image));
             object.insert("language".into(), Value::String(canonical_language.into()));
@@ -400,8 +370,8 @@ async fn build_node_parameters<T: ReducerStore>(
         }
         return Ok(runinator_models::json!({ "context": context }));
     }
-    let base = merge_parameters(&action.configuration, &node.parameters);
-    let context = runtime_context(db, workflow_run, cursor, node_runs).await;
+    let base = merge_parameters(&action.configuration, &ctx.node.parameters);
+    let context = runtime_context(ctx).await;
     runinator_workflows::resolve_value_refs(&base, &context)
         .map_err(|err| -> SendableError { Box::new(err) })
 }
@@ -520,16 +490,14 @@ fn unavailable_target_timeout_message(
 /// local-files provider is pinned to the desktop replica that launched the run, and parks when that
 /// replica is not currently connected so the action is never published into a queue no one drains.
 async fn resolve_action_target<T: ReducerStore>(
-    db: &T,
-    workflow_run: &WorkflowRun,
-    workflow: &runinator_models::workflows::WorkflowDefinition,
+    ctx: &super::handler::NodeHandlerContext<'_, T>,
     action: &WorkflowAction,
 ) -> Result<TargetResolution, SendableError> {
-    let required_labels = effective_required_labels(db, workflow, action).await?;
+    let required_labels = effective_required_labels(ctx, action).await?;
     // an explicit label requirement takes precedence over provider-based routing: dispatch to a live
     // worker that carries the labels, otherwise park until one connects (the node timeout fails it).
     if !required_labels.is_empty() {
-        let worker_available = live_worker_matches_labels(db, &required_labels).await?;
+        let worker_available = live_worker_matches_labels(ctx, &required_labels).await?;
         tracing::debug!(
             required_labels = ?required_labels,
             worker_available,
@@ -540,14 +508,14 @@ async fn resolve_action_target<T: ReducerStore>(
     // only consult the registry when a local action actually has a launching replica to check.
     let replica_live = match (
         action.provider == LOCAL_PROVIDER,
-        workflow_run.trigger_actor_replica_id,
+        ctx.workflow_run.trigger_actor_replica_id,
     ) {
-        (true, Some(replica_id)) => replica_is_live(db, replica_id).await?,
+        (true, Some(replica_id)) => replica_is_live(ctx, replica_id).await?,
         _ => false,
     };
     Ok(target_for(
         &action.provider,
-        workflow_run.trigger_actor_replica_id,
+        ctx.workflow_run.trigger_actor_replica_id,
         replica_live,
     ))
 }
@@ -558,13 +526,12 @@ async fn resolve_action_target<T: ReducerStore>(
 /// shared by dispatch-time routing and the post-dispatch liveness recheck so both apply identical
 /// policy.
 async fn effective_required_labels<T: ReducerStore>(
-    db: &T,
-    workflow: &runinator_models::workflows::WorkflowDefinition,
+    ctx: &super::handler::NodeHandlerContext<'_, T>,
     action: &WorkflowAction,
 ) -> Result<std::collections::BTreeMap<String, String>, SendableError> {
     let mut required_labels = action.required_labels.clone();
-    if let Some(org_id) = workflow.org_id
-        && let Some(slug) = org_dedicated_worker_slug(db, org_id).await?
+    if let Some(org_id) = ctx.workflow.org_id
+        && let Some(slug) = org_dedicated_worker_slug(ctx, org_id).await?
     {
         required_labels.entry("org".to_string()).or_insert(slug);
     }
@@ -575,39 +542,36 @@ async fn effective_required_labels<T: ReducerStore>(
 /// for a pinned target (label selector or the session-bound local provider), `None` for a
 /// general-pool dispatch, which has no single worker to go stale (the broker redelivers it instead).
 async fn dispatch_target_still_live<T: ReducerStore>(
-    db: &T,
-    workflow_run: &WorkflowRun,
-    workflow: &runinator_models::workflows::WorkflowDefinition,
+    ctx: &super::handler::NodeHandlerContext<'_, T>,
     action: &WorkflowAction,
 ) -> Result<Option<bool>, SendableError> {
-    let required_labels = effective_required_labels(db, workflow, action).await?;
+    let required_labels = effective_required_labels(ctx, action).await?;
     if !required_labels.is_empty() {
         return Ok(Some(
-            live_worker_matches_labels(db, &required_labels).await?,
+            live_worker_matches_labels(ctx, &required_labels).await?,
         ));
     }
     if action.provider == LOCAL_PROVIDER
-        && let Some(replica_id) = workflow_run.trigger_actor_replica_id
+        && let Some(replica_id) = ctx.workflow_run.trigger_actor_replica_id
     {
-        return Ok(Some(replica_is_live(db, replica_id).await?));
+        return Ok(Some(replica_is_live(ctx, replica_id).await?));
     }
     Ok(None)
 }
 
 /// schedule the next liveness recheck of a dispatched action's executing worker.
 async fn arm_dispatch_liveness_poll<T: ReducerStore>(
-    db: &T,
-    workflow_run_id: Uuid,
-    node: &WorkflowNode,
+    ctx: &super::handler::NodeHandlerContext<'_, T>,
 ) -> Result<(), SendableError> {
     let poll_at = Utc::now() + chrono::Duration::seconds(DISPATCH_LIVENESS_POLL_SECONDS);
     let event = NewOrchestrationEvent::new(
-        workflow_run_id,
-        Some(node.id.clone()),
+        ctx.workflow_run.id,
+        Some(ctx.node.id.clone()),
         "dispatch_liveness_poll",
-        runinator_models::json!({ "node_id": node.id }),
+        runinator_models::json!({ "node_id": ctx.node.id }),
     );
-    db.enqueue_ready_node(event, node.id.clone(), poll_at)
+    ctx.db
+        .enqueue_ready_node(event, ctx.node.id.clone(), poll_at)
         .await?;
     Ok(())
 }
@@ -615,14 +579,14 @@ async fn arm_dispatch_liveness_poll<T: ReducerStore>(
 /// the org's slug when it has a dedicated worker allocation (`desired > 0`), else `None`. used to
 /// add an `org=<slug>` routing label so a dedicated tenant's work lands on its own labeled workers.
 async fn org_dedicated_worker_slug<T: ReducerStore>(
-    db: &T,
+    ctx: &super::handler::NodeHandlerContext<'_, T>,
     org_id: Uuid,
 ) -> Result<Option<String>, SendableError> {
-    let groups = db.list_org_resource_groups(org_id).await?;
+    let groups = ctx.db.list_org_resource_groups(org_id).await?;
     if !has_dedicated_workers(&groups) {
         return Ok(None);
     }
-    Ok(db.fetch_org(org_id).await?.map(|org| org.slug))
+    Ok(ctx.db.fetch_org(org_id).await?.map(|org| org.slug))
 }
 
 /// whether an org has a live dedicated worker allocation (`worker` kind with `desired > 0`).
@@ -636,11 +600,12 @@ pub(crate) fn has_dedicated_workers(
 
 /// whether any live worker replica advertises labels that satisfy the action's required selector.
 async fn live_worker_matches_labels<T: ReducerStore>(
-    db: &T,
+    ctx: &super::handler::NodeHandlerContext<'_, T>,
     required_labels: &std::collections::BTreeMap<String, String>,
 ) -> Result<bool, SendableError> {
     let stale_before = Utc::now() - chrono::Duration::seconds(REPLICA_STALE_SECONDS);
-    let live = db
+    let live = ctx
+        .db
         .fetch_replicas(
             Some(ReplicaKind::Worker),
             Some(ReplicaStatus::Live),
@@ -653,9 +618,13 @@ async fn live_worker_matches_labels<T: ReducerStore>(
 }
 
 /// whether a worker replica has heartbeated recently enough to receive work.
-async fn replica_is_live<T: ReducerStore>(db: &T, replica_id: Uuid) -> Result<bool, SendableError> {
+async fn replica_is_live<T: ReducerStore>(
+    ctx: &super::handler::NodeHandlerContext<'_, T>,
+    replica_id: Uuid,
+) -> Result<bool, SendableError> {
     let stale_before = Utc::now() - chrono::Duration::seconds(REPLICA_STALE_SECONDS);
-    let live = db
+    let live = ctx
+        .db
         .fetch_replicas(
             Some(ReplicaKind::Worker),
             Some(ReplicaStatus::Live),
@@ -668,95 +637,49 @@ async fn replica_is_live<T: ReducerStore>(db: &T, replica_id: Uuid) -> Result<bo
 /// park an action node whose bound worker is unavailable: mark it waiting (once) with the node's
 /// timeout armed, then re-arm a poll so it re-checks when the worker reconnects.
 async fn park_for_target<T: ReducerStore>(
-    db: &T,
-    workflow_run: &WorkflowRun,
-    cursor: &RunCursor,
-    node: &WorkflowNode,
+    ctx: &super::handler::NodeHandlerContext<'_, T>,
     node_run: &WorkflowNodeRun,
 ) -> Result<(), SendableError> {
     if node_run.status != WorkflowStatus::Waiting {
-        db.update_workflow_node_run(
-            node_run.id,
-            WorkflowStatus::Waiting,
-            None,
-            None,
-            None,
-            None,
-            Some("awaiting_compatible_worker".into()),
-            None,
-        )
-        .await?;
-        db.update_workflow_run_status(
-            workflow_run.id,
-            WorkflowStatus::Waiting,
-            Some(node.id.clone()),
-            None,
-            None,
-        )
-        .await?;
-        arm_node_timeout_or(
-            db,
-            workflow_run.id,
-            cursor,
-            node,
-            TARGET_PARK_DEFAULT_TIMEOUT_SECONDS,
-        )
-        .await?;
+        ctx.db
+            .update_workflow_node_run(
+                node_run.id,
+                WorkflowStatus::Waiting,
+                None,
+                None,
+                None,
+                None,
+                Some("awaiting_compatible_worker".into()),
+                None,
+            )
+            .await?;
+        ctx.db
+            .update_workflow_run_status(
+                ctx.workflow_run.id,
+                WorkflowStatus::Waiting,
+                Some(ctx.node.id.clone()),
+                None,
+                None,
+            )
+            .await?;
+        arm_node_timeout_or(ctx, TARGET_PARK_DEFAULT_TIMEOUT_SECONDS).await?;
     }
-    enqueue_target_poll(db, workflow_run.id, node).await
+    enqueue_target_poll(ctx).await
 }
 
 /// schedule the next re-check of a parked action node's bound worker.
 async fn enqueue_target_poll<T: ReducerStore>(
-    db: &T,
-    workflow_run_id: Uuid,
-    node: &WorkflowNode,
+    ctx: &super::handler::NodeHandlerContext<'_, T>,
 ) -> Result<(), SendableError> {
     let poll_at = Utc::now() + chrono::Duration::seconds(LOCAL_TARGET_POLL_SECONDS);
     let event = NewOrchestrationEvent::new(
-        workflow_run_id,
-        Some(node.id.clone()),
+        ctx.workflow_run.id,
+        Some(ctx.node.id.clone()),
         "local_target_poll",
-        runinator_models::json!({ "node_id": node.id }),
+        runinator_models::json!({ "node_id": ctx.node.id }),
     );
-    db.enqueue_ready_node(event, node.id.clone(), poll_at)
+    ctx.db
+        .enqueue_ready_node(event, ctx.node.id.clone(), poll_at)
         .await?;
     Ok(())
-}
-
-pub(super) struct ActionHandler;
-
-impl<T: ReducerStore> NodeHandler<T> for ActionHandler {
-    async fn process<'a>(
-        &'a self,
-        ctx: &'a NodeHandlerContext<'a, T>,
-    ) -> Result<ReadyNodeDisposition, SendableError>
-    where
-        T: 'a,
-    {
-        if super::compute::is_inprocess_compute(ctx.node) {
-            super::compute::process_compute_node(
-                ctx.db,
-                ctx.workflow,
-                ctx.workflow_run,
-                ctx.cursor,
-                ctx.node,
-                ctx.node_runs,
-                ctx.nodes,
-            )
-            .await?;
-        } else {
-            process_action_node(
-                ctx.db,
-                ctx.workflow,
-                ctx.workflow_run,
-                ctx.cursor,
-                ctx.node,
-                ctx.latest,
-                ctx.node_runs,
-            )
-            .await?;
-        }
-        Ok(ReadyNodeDisposition::Complete)
-    }
 }

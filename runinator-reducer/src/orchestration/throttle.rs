@@ -55,8 +55,12 @@ pub(super) fn bucket_has_tokens(record: &Value, max_per_window: i64, window_seco
     tokens_used < max_per_window
 }
 
-async fn fetch_bucket<T: ReducerStore>(db: &T, name: &str) -> Result<Option<Value>, SendableError> {
-    let records = db
+async fn fetch_bucket<T: ReducerStore>(
+    ctx: &super::handler::NodeHandlerContext<'_, T>,
+    name: &str,
+) -> Result<Option<Value>, SendableError> {
+    let records = ctx
+        .db
         .fetch_automation_records(RECORD_TYPE.into(), None, None)
         .await?;
     Ok(records
@@ -65,12 +69,12 @@ async fn fetch_bucket<T: ReducerStore>(db: &T, name: &str) -> Result<Option<Valu
 }
 
 async fn consume_token<T: ReducerStore>(
-    db: &T,
+    ctx: &super::handler::NodeHandlerContext<'_, T>,
     name: &str,
     max_per_window: i64,
     window_seconds: i64,
 ) -> Result<bool, SendableError> {
-    let existing = fetch_bucket(db, name).await?;
+    let existing = fetch_bucket(ctx, name).await?;
     let now = Utc::now().timestamp();
     match existing {
         None => {
@@ -81,7 +85,8 @@ async fn consume_token<T: ReducerStore>(
                 "window_seconds": window_seconds,
                 "window_start": now,
             });
-            db.create_automation_record(RECORD_TYPE.into(), record)
+            ctx.db
+                .create_automation_record(RECORD_TYPE.into(), record)
                 .await?;
             Ok(true)
         }
@@ -113,7 +118,8 @@ async fn consume_token<T: ReducerStore>(
                         obj.insert("window_start".into(), now.into());
                     }
                 }
-                db.update_automation_record(RECORD_TYPE.into(), id, updated)
+                ctx.db
+                    .update_automation_record(RECORD_TYPE.into(), id, updated)
                     .await?;
             }
             Ok(true)
@@ -122,156 +128,24 @@ async fn consume_token<T: ReducerStore>(
 }
 
 async fn enqueue_throttle_poll<T: ReducerStore>(
-    db: &T,
-    workflow_run_id: Uuid,
-    node: &WorkflowNode,
+    ctx: &super::handler::NodeHandlerContext<'_, T>,
     interval: i64,
 ) -> Result<(), SendableError> {
     let poll_at = Utc::now() + chrono::Duration::seconds(interval);
     let event = NewOrchestrationEvent::new(
-        workflow_run_id,
-        Some(node.id.clone()),
+        ctx.workflow_run.id,
+        Some(ctx.node.id.clone()),
         "throttle_poll",
-        runinator_models::json!({ "node_id": node.id }),
+        runinator_models::json!({ "node_id": ctx.node.id }),
     );
-    db.enqueue_ready_node(event, node.id.clone(), poll_at)
+    ctx.db
+        .enqueue_ready_node(event, ctx.node.id.clone(), poll_at)
         .await?;
     Ok(())
 }
 
 /// process a throttle node: consume one token from a named sliding-window bucket. parks and polls
 /// until a token is available or the optional timeout elapses.
-pub(super) async fn process_throttle_node<T: ReducerStore>(
-    db: &T,
-    workflow_run: &WorkflowRun,
-    cursor: &RunCursor,
-    node: &WorkflowNode,
-    latest: Option<&WorkflowNodeRun>,
-    node_runs: &[WorkflowNodeRun],
-) -> Result<ReadyNodeDisposition, SendableError> {
-    let params = parse_throttle_params(node);
-    let latest = latest.filter(|run| !is_reentry_stale(run, node_runs, cursor));
-
-    if let Some(node_run) = latest.filter(|run| run.status == WorkflowStatus::Waiting) {
-        if timed_out_since_created(node, cursor, node_run) {
-            time_out(
-                db,
-                workflow_run,
-                cursor,
-                node,
-                node_run,
-                "Throttle timed out",
-                node_runs,
-            )
-            .await?;
-            return Ok(ReadyNodeDisposition::Complete);
-        }
-        if consume_token(
-            db,
-            &params.name,
-            params.max_per_window,
-            params.window_seconds,
-        )
-        .await?
-        {
-            let output = ThrottleOutput {
-                name: params.name,
-                admitted: true,
-            };
-            transition_from_node(
-                db,
-                workflow_run,
-                cursor,
-                node,
-                node_run,
-                WorkflowStatus::Succeeded,
-                Some(output.to_wire_value()?),
-                Some("throttle_admitted".into()),
-                node_runs,
-            )
-            .await?;
-            return Ok(ReadyNodeDisposition::Complete);
-        }
-        enqueue_throttle_poll(db, workflow_run.id, node, params.poll_interval).await?;
-        return Ok(ReadyNodeDisposition::KeepClaim);
-    }
-
-    // first visit.
-    if consume_token(
-        db,
-        &params.name,
-        params.max_per_window,
-        params.window_seconds,
-    )
-    .await?
-    {
-        let node_run = db
-            .create_workflow_node_run(
-                workflow_run.id,
-                node.id.clone(),
-                node.parameters.clone().into(),
-                super::context::most_recently_finished_node_run(node_runs),
-                Some(cursor),
-            )
-            .await?;
-        let output = ThrottleOutput {
-            name: params.name,
-            admitted: true,
-        };
-        transition_from_node(
-            db,
-            workflow_run,
-            cursor,
-            node,
-            &node_run,
-            WorkflowStatus::Succeeded,
-            Some(output.to_wire_value()?),
-            Some("throttle_admitted".into()),
-            node_runs,
-        )
-        .await?;
-        return Ok(ReadyNodeDisposition::Complete);
-    }
-
-    // bucket exhausted; park.
-    let node_run = db
-        .create_workflow_node_run(
-            workflow_run.id,
-            node.id.clone(),
-            node.parameters.clone().into(),
-            super::context::most_recently_finished_node_run(node_runs),
-            Some(cursor),
-        )
-        .await?;
-    let state = ThrottleState {
-        name: params.name.clone(),
-        poll_interval: params.poll_interval,
-        deadline_unix: node.timeout_seconds.map(|t| Utc::now().timestamp() + t),
-    };
-    db.update_workflow_node_run(
-        node_run.id,
-        WorkflowStatus::Waiting,
-        Some(node_run.attempt + 1),
-        None,
-        None,
-        Some(state.to_wire_value()?),
-        Some("throttle_waiting".into()),
-        None,
-    )
-    .await?;
-    db.update_workflow_run_status(
-        workflow_run.id,
-        WorkflowStatus::Waiting,
-        Some(node.id.clone()),
-        None,
-        None,
-    )
-    .await?;
-    enqueue_throttle_poll(db, workflow_run.id, node, params.poll_interval).await?;
-    arm_node_timeout(db, workflow_run.id, cursor, node).await?;
-    Ok(ReadyNodeDisposition::Complete)
-}
-
 pub(super) struct ThrottleHandler;
 
 impl<T: ReducerStore> super::handler::NodeHandler<T> for ThrottleHandler {
@@ -282,14 +156,115 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for ThrottleHandler {
     where
         T: 'a,
     {
-        process_throttle_node(
-            ctx.db,
-            ctx.workflow_run,
-            ctx.cursor,
-            ctx.node,
-            ctx.latest,
-            ctx.node_runs,
+        let params = parse_throttle_params(ctx.node);
+        let latest = ctx
+            .latest
+            .filter(|run| !is_reentry_stale(run, ctx.node_runs, ctx.cursor));
+
+        if let Some(node_run) = latest.filter(|run| run.status == WorkflowStatus::Waiting) {
+            if timed_out_since_created(ctx.timing(), node_run) {
+                time_out(ctx, node_run, "Throttle timed out").await?;
+                return Ok(ReadyNodeDisposition::Complete);
+            }
+            if consume_token(
+                ctx,
+                &params.name,
+                params.max_per_window,
+                params.window_seconds,
+            )
+            .await?
+            {
+                let output = ThrottleOutput {
+                    name: params.name,
+                    admitted: true,
+                };
+                transition_from_node(
+                    ctx,
+                    node_run,
+                    WorkflowStatus::Succeeded,
+                    Some(output.to_wire_value()?),
+                    Some("throttle_admitted".into()),
+                )
+                .await?;
+                return Ok(ReadyNodeDisposition::Complete);
+            }
+            enqueue_throttle_poll(ctx, params.poll_interval).await?;
+            return Ok(ReadyNodeDisposition::KeepClaim);
+        }
+
+        // first visit.
+        if consume_token(
+            ctx,
+            &params.name,
+            params.max_per_window,
+            params.window_seconds,
         )
-        .await
+        .await?
+        {
+            let node_run = ctx
+                .db
+                .create_workflow_node_run(
+                    ctx.workflow_run.id,
+                    ctx.node.id.clone(),
+                    ctx.node.parameters.clone().into(),
+                    super::context::most_recently_finished_node_run(ctx.node_runs),
+                    Some(ctx.cursor),
+                )
+                .await?;
+            let output = ThrottleOutput {
+                name: params.name,
+                admitted: true,
+            };
+            transition_from_node(
+                ctx,
+                &node_run,
+                WorkflowStatus::Succeeded,
+                Some(output.to_wire_value()?),
+                Some("throttle_admitted".into()),
+            )
+            .await?;
+            return Ok(ReadyNodeDisposition::Complete);
+        }
+
+        // bucket exhausted; park.
+        let node_run = ctx
+            .db
+            .create_workflow_node_run(
+                ctx.workflow_run.id,
+                ctx.node.id.clone(),
+                ctx.node.parameters.clone().into(),
+                super::context::most_recently_finished_node_run(ctx.node_runs),
+                Some(ctx.cursor),
+            )
+            .await?;
+        let state = ThrottleState {
+            name: params.name.clone(),
+            poll_interval: params.poll_interval,
+            deadline_unix: ctx.node.timeout_seconds.map(|t| Utc::now().timestamp() + t),
+        };
+        ctx.db
+            .update_workflow_node_run(
+                node_run.id,
+                WorkflowStatus::Waiting,
+                Some(node_run.attempt + 1),
+                None,
+                None,
+                Some(state.to_wire_value()?),
+                Some("throttle_waiting".into()),
+                None,
+            )
+            .await?;
+        ctx.db
+            .update_workflow_run_status(
+                ctx.workflow_run.id,
+                WorkflowStatus::Waiting,
+                Some(ctx.node.id.clone()),
+                None,
+                None,
+            )
+            .await?;
+        enqueue_throttle_poll(ctx, params.poll_interval).await?;
+        arm_node_timeout(ctx).await?;
+        Ok(ReadyNodeDisposition::Complete)
     }
 }

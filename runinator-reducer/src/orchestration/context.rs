@@ -73,16 +73,15 @@ pub(super) fn deep_merge(target: &mut Value, patch: &Value) {
 }
 
 pub(super) async fn runtime_context<T: ReducerStore>(
-    db: &T,
-    workflow_run: &WorkflowRun,
-    cursor: &RunCursor,
-    node_runs: &[WorkflowNodeRun],
+    ctx: &super::handler::RunStepContext<'_, T>,
 ) -> Value {
-    let prev_output = node_runs
+    let prev_output = ctx
+        .node_runs
         .iter()
         .filter_map(|run| run.output_json.clone())
         .next_back();
-    let outputs = node_runs
+    let outputs = ctx
+        .node_runs
         .iter()
         .filter_map(|run| {
             run.output_json
@@ -90,12 +89,12 @@ pub(super) async fn runtime_context<T: ReducerStore>(
                 .map(|output| (run.node_id.clone(), output))
         })
         .collect::<HashMap<_, _>>();
-    let mut context = runinator_workflows::outputs_context(&workflow_run.parameters, &outputs);
+    let mut context = runinator_workflows::outputs_context(&ctx.workflow_run.parameters, &outputs);
     if let Some(object) = context.as_object_mut() {
         let header = WorkflowContextHeader {
-            run_id: workflow_run.id,
-            workflow_id: workflow_run.workflow_id,
-            state: workflow_run.state.clone(),
+            run_id: ctx.workflow_run.id,
+            workflow_id: ctx.workflow_run.workflow_id,
+            state: ctx.workflow_run.state.clone(),
         };
         object.insert(
             "workflow".into(),
@@ -106,28 +105,28 @@ pub(super) async fn runtime_context<T: ReducerStore>(
         }
         // config refs (`{"$ref":{"config":[...]}}`) resolve here, before any action command
         // is published; secrets stay unresolved until the worker.
-        object.insert("config".into(), crate::config::config_tree(db).await);
+        object.insert("config".into(), crate::config::config_tree(ctx.db).await);
     }
     // fill omitted input fields from their declared defaults, evaluated against this context (so a
     // default may read config/run/secret or a sibling input). resolved here, after config is in
     // place, so every downstream `input.*` ref sees the defaulted value.
-    if let Some(snapshot) = &workflow_run.workflow_snapshot {
+    if let Some(snapshot) = &ctx.workflow_run.workflow_snapshot {
         runinator_workflows::apply_input_defaults(&mut context, &snapshot.input_type);
     }
     // expose each node's emitted artifacts under `steps.<node_id>.artifacts` so downstream nodes
     // (and output nodes declaring artifacts) can ref them like any other output value.
-    inject_node_artifacts(db, workflow_run.id, node_runs, &mut context).await;
+    inject_node_artifacts(ctx, &mut context).await;
     // a speculative fork's "what if": overlaid last so it wins over everything resolved above. a
     // patch rather than a synthetic node run, because this way it reaches `input.*`, `config.*`, and
     // `workflow.state` too, not just step outputs.
-    if let Some(frame) = &cursor.speculative
+    if let Some(frame) = &ctx.cursor.speculative
         && !frame.context_patch.is_null()
     {
         deep_merge(&mut context, &frame.context_patch);
     }
     // an interrupt handler region reads what raised it under `interrupt.*`. only a handler cursor
     // carries the frame, so the root simply does not exist for ordinary threads of control.
-    if let Some(frame) = &cursor.interrupt
+    if let Some(frame) = &ctx.cursor.interrupt
         && let Some(root) = context.as_object_mut()
     {
         root.insert(
@@ -145,13 +144,12 @@ pub(super) async fn runtime_context<T: ReducerStore>(
 
 // attach `steps.<node_id>.artifacts` for every node run that produced artifacts.
 async fn inject_node_artifacts<T: ReducerStore>(
-    db: &T,
-    workflow_run_id: Uuid,
-    node_runs: &[WorkflowNodeRun],
+    ctx: &super::handler::RunStepContext<'_, T>,
     context: &mut Value,
 ) {
-    let artifacts = match db
-        .fetch_workflow_node_run_artifacts_for_run(workflow_run_id)
+    let artifacts = match ctx
+        .db
+        .fetch_workflow_node_run_artifacts_for_run(ctx.workflow_run.id)
         .await
     {
         Ok(artifacts) => artifacts,
@@ -161,7 +159,8 @@ async fn inject_node_artifacts<T: ReducerStore>(
         return;
     }
     // map node-run id -> node id so artifacts land on the authored step, not the run uuid.
-    let node_for_run: HashMap<Uuid, String> = node_runs
+    let node_for_run: HashMap<Uuid, String> = ctx
+        .node_runs
         .iter()
         .map(|run| (run.id, run.node_id.clone()))
         .collect();

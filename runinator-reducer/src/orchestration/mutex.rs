@@ -248,19 +248,18 @@ impl<'a, T: ReducerStore> MutexOps<'a, T> {
 
     async fn enqueue_mutex_poll(
         &self,
-        workflow_run_id: Uuid,
-        node: &WorkflowNode,
+        ctx: &super::handler::NodeHandlerContext<'_, T>,
         interval: i64,
     ) -> Result<(), SendableError> {
         let poll_at = Utc::now() + chrono::Duration::seconds(interval);
         let event = NewOrchestrationEvent::new(
-            workflow_run_id,
-            Some(node.id.clone()),
+            ctx.workflow_run.id,
+            Some(ctx.node.id.clone()),
             "mutex_poll",
-            runinator_models::json!({ "node_id": node.id }),
+            runinator_models::json!({ "node_id": ctx.node.id }),
         );
         self.db
-            .enqueue_ready_node(event, node.id.clone(), poll_at)
+            .enqueue_ready_node(event, ctx.node.id.clone(), poll_at)
             .await?;
         Ok(())
     }
@@ -268,31 +267,27 @@ impl<'a, T: ReducerStore> MutexOps<'a, T> {
     /// process a mutex node. an acquire node tries to take a named distributed lease, parking and
     /// polling until it is free or the wait timeout elapses; a release node (`release: true`) ends
     /// the section by releasing the run's hold on the named lease and completing inline.
-    pub(super) async fn process_mutex_node(
+    pub(super) async fn reduce_node(
         &self,
-        workflow_run: &WorkflowRun,
-        cursor: &RunCursor,
-        node: &WorkflowNode,
-        latest: Option<&WorkflowNodeRun>,
-        node_runs: &[WorkflowNodeRun],
+        ctx: &super::handler::NodeHandlerContext<'_, T>,
     ) -> Result<ReadyNodeDisposition, SendableError> {
-        let db = self.db;
-        let params = parse_mutex_params(node);
+        let params = parse_mutex_params(ctx.node);
 
         // an end-of-section release node: drop this run's hold on the named lock and complete. no
         // acquire, no park. a no-op when the run holds no such lock (idempotent when re-reached in
         // a loop).
         if params.release {
-            let node_run = db
+            let node_run = self
+                .db
                 .create_workflow_node_run(
-                    workflow_run.id,
-                    node.id.clone(),
-                    node.parameters.clone().into(),
-                    super::context::most_recently_finished_node_run(node_runs),
-                    Some(cursor),
+                    ctx.workflow_run.id,
+                    ctx.node.id.clone(),
+                    ctx.node.parameters.clone().into(),
+                    super::context::most_recently_finished_node_run(ctx.node_runs),
+                    Some(ctx.cursor),
                 )
                 .await?;
-            self.release_run_mutex_named(workflow_run.id, &params.name)
+            self.release_run_mutex_named(ctx.workflow_run.id, &params.name)
                 .await?;
             let output = MutexOutput {
                 name: params.name,
@@ -300,43 +295,34 @@ impl<'a, T: ReducerStore> MutexOps<'a, T> {
                 released: true,
             };
             transition_from_node(
-                db,
-                workflow_run,
-                cursor,
-                node,
+                ctx,
                 &node_run,
                 WorkflowStatus::Succeeded,
                 Some(output.to_wire_value()?),
                 Some("mutex_released".into()),
-                node_runs,
             )
             .await?;
             return Ok(ReadyNodeDisposition::Complete);
         }
 
-        let latest = latest.filter(|run| !is_reentry_stale(run, node_runs, cursor));
+        let latest = ctx
+            .latest
+            .filter(|run| !is_reentry_stale(run, ctx.node_runs, ctx.cursor));
 
         if let Some(node_run) = latest.filter(|run| run.status == WorkflowStatus::Waiting) {
-            if timed_out_since_created(node, cursor, node_run) {
-                time_out(
-                    db,
-                    workflow_run,
-                    cursor,
-                    node,
-                    node_run,
-                    "Mutex timed out",
-                    node_runs,
-                )
-                .await?;
+            if timed_out_since_created(ctx.timing(), node_run) {
+                time_out(ctx, node_run, "Mutex timed out").await?;
                 return Ok(ReadyNodeDisposition::Complete);
             }
-            if self.mutex_is_locked(&params.name, workflow_run.id).await? {
-                self.enqueue_mutex_poll(workflow_run.id, node, params.poll_interval)
-                    .await?;
+            if self
+                .mutex_is_locked(&params.name, ctx.workflow_run.id)
+                .await?
+            {
+                self.enqueue_mutex_poll(ctx, params.poll_interval).await?;
                 return Ok(ReadyNodeDisposition::KeepClaim);
             }
             // lock is free; record the acquisition and succeed.
-            self.acquire_or_reinforce(&params.name, workflow_run.id, params.hold_timeout)
+            self.acquire_or_reinforce(&params.name, ctx.workflow_run.id, params.hold_timeout)
                 .await?;
             let output = MutexOutput {
                 name: params.name,
@@ -344,32 +330,32 @@ impl<'a, T: ReducerStore> MutexOps<'a, T> {
                 released: false,
             };
             transition_from_node(
-                db,
-                workflow_run,
-                cursor,
-                node,
+                ctx,
                 node_run,
                 WorkflowStatus::Succeeded,
                 Some(output.to_wire_value()?),
                 Some("mutex_acquired".into()),
-                node_runs,
             )
             .await?;
             return Ok(ReadyNodeDisposition::Complete);
         }
 
         // first visit.
-        if !self.mutex_is_locked(&params.name, workflow_run.id).await? {
-            let node_run = db
+        if !self
+            .mutex_is_locked(&params.name, ctx.workflow_run.id)
+            .await?
+        {
+            let node_run = self
+                .db
                 .create_workflow_node_run(
-                    workflow_run.id,
-                    node.id.clone(),
-                    node.parameters.clone().into(),
-                    super::context::most_recently_finished_node_run(node_runs),
-                    Some(cursor),
+                    ctx.workflow_run.id,
+                    ctx.node.id.clone(),
+                    ctx.node.parameters.clone().into(),
+                    super::context::most_recently_finished_node_run(ctx.node_runs),
+                    Some(ctx.cursor),
                 )
                 .await?;
-            self.acquire_or_reinforce(&params.name, workflow_run.id, params.hold_timeout)
+            self.acquire_or_reinforce(&params.name, ctx.workflow_run.id, params.hold_timeout)
                 .await?;
             let output = MutexOutput {
                 name: params.name,
@@ -377,57 +363,55 @@ impl<'a, T: ReducerStore> MutexOps<'a, T> {
                 released: false,
             };
             transition_from_node(
-                db,
-                workflow_run,
-                cursor,
-                node,
+                ctx,
                 &node_run,
                 WorkflowStatus::Succeeded,
                 Some(output.to_wire_value()?),
                 Some("mutex_acquired".into()),
-                node_runs,
             )
             .await?;
             return Ok(ReadyNodeDisposition::Complete);
         }
 
         // park and poll.
-        let node_run = db
+        let node_run = self
+            .db
             .create_workflow_node_run(
-                workflow_run.id,
-                node.id.clone(),
-                node.parameters.clone().into(),
-                super::context::most_recently_finished_node_run(node_runs),
-                Some(cursor),
+                ctx.workflow_run.id,
+                ctx.node.id.clone(),
+                ctx.node.parameters.clone().into(),
+                super::context::most_recently_finished_node_run(ctx.node_runs),
+                Some(ctx.cursor),
             )
             .await?;
         let state = MutexState {
             name: params.name.clone(),
             poll_interval: params.poll_interval,
-            deadline_unix: node.timeout_seconds.map(|t| Utc::now().timestamp() + t),
+            deadline_unix: ctx.node.timeout_seconds.map(|t| Utc::now().timestamp() + t),
         };
-        db.update_workflow_node_run(
-            node_run.id,
-            WorkflowStatus::Waiting,
-            Some(node_run.attempt + 1),
-            None,
-            None,
-            Some(state.to_wire_value()?),
-            Some("mutex_waiting".into()),
-            None,
-        )
-        .await?;
-        db.update_workflow_run_status(
-            workflow_run.id,
-            WorkflowStatus::Waiting,
-            Some(node.id.clone()),
-            None,
-            None,
-        )
-        .await?;
-        self.enqueue_mutex_poll(workflow_run.id, node, params.poll_interval)
+        self.db
+            .update_workflow_node_run(
+                node_run.id,
+                WorkflowStatus::Waiting,
+                Some(node_run.attempt + 1),
+                None,
+                None,
+                Some(state.to_wire_value()?),
+                Some("mutex_waiting".into()),
+                None,
+            )
             .await?;
-        arm_node_timeout(db, workflow_run.id, cursor, node).await?;
+        self.db
+            .update_workflow_run_status(
+                ctx.workflow_run.id,
+                WorkflowStatus::Waiting,
+                Some(ctx.node.id.clone()),
+                None,
+                None,
+            )
+            .await?;
+        self.enqueue_mutex_poll(ctx, params.poll_interval).await?;
+        arm_node_timeout(ctx).await?;
         Ok(ReadyNodeDisposition::Complete)
     }
 }
@@ -442,14 +426,6 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for MutexHandler {
     where
         T: 'a,
     {
-        MutexOps::new(ctx.db)
-            .process_mutex_node(
-                ctx.workflow_run,
-                ctx.cursor,
-                ctx.node,
-                ctx.latest,
-                ctx.node_runs,
-            )
-            .await
+        MutexOps::new(ctx.db).reduce_node(ctx).await
     }
 }

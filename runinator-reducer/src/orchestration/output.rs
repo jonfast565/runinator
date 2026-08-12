@@ -5,90 +5,96 @@ use crate::errors::ARTIFACT_SOURCE_UNRESOLVED;
 use runinator_models::json;
 use runinator_models::workflows::NewWorkflowRunArtifact;
 
-pub(super) async fn process_output_node<T: ReducerStore>(
-    db: &T,
-    workflow_run: &WorkflowRun,
-    cursor: &RunCursor,
-    node: &WorkflowNode,
-    node_runs: &[WorkflowNodeRun],
-) -> Result<(), SendableError> {
-    let node_run = db
-        .create_workflow_node_run(
-            workflow_run.id,
-            node.id.clone(),
-            node.parameters.clone().into(),
-            super::context::most_recently_finished_node_run(node_runs),
-            Some(cursor),
-        )
-        .await?;
-    let params = runinator_workflows::parse_output_parameters(node)
-        .map_err(|err| -> SendableError { Box::new(err) })?;
-    let context = runtime_context(db, workflow_run, cursor, node_runs).await;
-    let data = runinator_workflows::evaluate_expression(&params.data, &context)
-        .map_err(|err| -> SendableError { Box::new(err) })?;
+pub(super) struct OutputHandler;
 
-    // emit an automation event only when an event_type is declared.
-    if let Some(ref event_type) = params.event_type {
-        let message = format!("Output {}", event_type);
-        db.create_automation_record(
-            "automation_events".into(),
-            json!({
-                "workflow_run_id": workflow_run.id,
-                "node_id": node.id,
-                "provider": "runinator",
-                "resource_type": "automation_event",
-                "external_id": node_run.id,
-                "status": "output_recorded",
-                "event_type": event_type.clone(),
-                "message": message,
-                "metadata": {
-                    "workflow_node_run_id": node_run.id,
-                    "workflow_id": workflow_run.workflow_id,
-                    "data": data.clone()
-                }
-            }),
-        )
-        .await?;
-    }
-
-    // promote artifact items to run-level artifacts.
-    let mut artifacts = Vec::new();
-    for item in &params.items {
-        let resolved = runinator_workflows::evaluate_expression(&item.source, &context)
+impl<T: ReducerStore> super::handler::NodeHandler<T> for OutputHandler {
+    async fn process<'a>(
+        &'a self,
+        ctx: &'a super::handler::NodeHandlerContext<'a, T>,
+    ) -> Result<ReadyNodeDisposition, SendableError>
+    where
+        T: 'a,
+    {
+        let node_run = ctx
+            .db
+            .create_workflow_node_run(
+                ctx.workflow_run.id,
+                ctx.node.id.clone(),
+                ctx.node.parameters.clone().into(),
+                super::context::most_recently_finished_node_run(ctx.node_runs),
+                Some(ctx.cursor),
+            )
+            .await?;
+        let params = runinator_workflows::parse_output_parameters(ctx.node)
             .map_err(|err| -> SendableError { Box::new(err) })?;
-        for artifact_value in artifact_values(&resolved) {
-            let new_artifact =
-                build_artifact(workflow_run.id, &node.id, &item.name, artifact_value)?;
-            let stored = db.add_workflow_run_artifact(&new_artifact).await?;
-            artifacts.push(json!({
-                "id": stored.id,
-                "name": stored.name,
-                "artifact_id": stored.artifact_id,
-                "mime_type": stored.mime_type,
-                "size_bytes": stored.size_bytes,
-                "uri": stored.uri,
-            }));
-        }
-    }
+        let context = runtime_context(ctx).await;
+        let data = runinator_workflows::evaluate_expression(&params.data, &context)
+            .map_err(|err| -> SendableError { Box::new(err) })?;
 
-    let output = OutputPayload {
-        event_type: params.event_type,
-        data,
-        artifacts,
-    };
-    transition_from_node(
-        db,
-        workflow_run,
-        cursor,
-        node,
-        &node_run,
-        WorkflowStatus::Succeeded,
-        Some(output.to_wire_value()?),
-        Some("output_recorded".into()),
-        node_runs,
-    )
-    .await?;
-    Ok(())
+        // emit an automation event only when an event_type is declared.
+        if let Some(ref event_type) = params.event_type {
+            let message = format!("Output {}", event_type);
+            ctx.db
+                .create_automation_record(
+                    "automation_events".into(),
+                    json!({
+                        "workflow_run_id": ctx.workflow_run.id,
+                        "node_id": ctx.node.id,
+                        "provider": "runinator",
+                        "resource_type": "automation_event",
+                        "external_id": node_run.id,
+                        "status": "output_recorded",
+                        "event_type": event_type.clone(),
+                        "message": message,
+                        "metadata": {
+                            "workflow_node_run_id": node_run.id,
+                            "workflow_id": ctx.workflow_run.workflow_id,
+                            "data": data.clone()
+                        }
+                    }),
+                )
+                .await?;
+        }
+
+        // promote artifact items to run-level artifacts.
+        let mut artifacts = Vec::new();
+        for item in &params.items {
+            let resolved = runinator_workflows::evaluate_expression(&item.source, &context)
+                .map_err(|err| -> SendableError { Box::new(err) })?;
+            for artifact_value in artifact_values(&resolved) {
+                let new_artifact = build_artifact(
+                    ctx.workflow_run.id,
+                    &ctx.node.id,
+                    &item.name,
+                    artifact_value,
+                )?;
+                let stored = ctx.db.add_workflow_run_artifact(&new_artifact).await?;
+                artifacts.push(json!({
+                    "id": stored.id,
+                    "name": stored.name,
+                    "artifact_id": stored.artifact_id,
+                    "mime_type": stored.mime_type,
+                    "size_bytes": stored.size_bytes,
+                    "uri": stored.uri,
+                }));
+            }
+        }
+
+        let output = OutputPayload {
+            event_type: params.event_type,
+            data,
+            artifacts,
+        };
+        transition_from_node(
+            ctx,
+            &node_run,
+            WorkflowStatus::Succeeded,
+            Some(output.to_wire_value()?),
+            Some("output_recorded".into()),
+        )
+        .await?;
+        Ok(ReadyNodeDisposition::Complete)
+    }
 }
 
 // flatten a resolved source into the artifact descriptors it carries (single object or array).
@@ -139,26 +145,4 @@ fn build_artifact(
         uri,
         metadata,
     })
-}
-
-pub(super) struct OutputHandler;
-
-impl<T: ReducerStore> super::handler::NodeHandler<T> for OutputHandler {
-    async fn process<'a>(
-        &'a self,
-        ctx: &'a super::handler::NodeHandlerContext<'a, T>,
-    ) -> Result<ReadyNodeDisposition, SendableError>
-    where
-        T: 'a,
-    {
-        process_output_node(
-            ctx.db,
-            ctx.workflow_run,
-            ctx.cursor,
-            ctx.node,
-            ctx.node_runs,
-        )
-        .await?;
-        Ok(ReadyNodeDisposition::Complete)
-    }
 }

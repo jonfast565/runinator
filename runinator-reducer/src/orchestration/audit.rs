@@ -18,63 +18,6 @@ pub(super) fn build_audit_record(workflow_run_id: Uuid, node_id: &str, resolved:
 /// process an audit node: resolves parameters, inserts an immutable audit-log row, and emits a
 /// structured output. the existing `record_audit_log` database method is used so no new schema is
 /// required.
-pub(super) async fn process_audit_node<T: ReducerStore>(
-    db: &T,
-    workflow_run: &WorkflowRun,
-    cursor: &RunCursor,
-    node: &WorkflowNode,
-    node_runs: &[WorkflowNodeRun],
-) -> Result<(), SendableError> {
-    let node_run = db
-        .create_workflow_node_run(
-            workflow_run.id,
-            node.id.clone(),
-            node.parameters.clone().into(),
-            super::context::most_recently_finished_node_run(node_runs),
-            Some(cursor),
-        )
-        .await?;
-    let context = runtime_context(db, workflow_run, cursor, node_runs).await;
-    let params: Value = node.parameters.clone().into();
-    let resolved = runinator_workflows::resolve_value_refs(&params, &context)
-        .map_err(|err| -> SendableError { Box::new(err) })?;
-    let record = build_audit_record(workflow_run.id, &node.id, &resolved);
-    let inserted = db.record_audit_log(record).await?;
-    let audit_id = inserted
-        .get("id")
-        .and_then(Value::as_str)
-        .and_then(|s| s.parse::<Uuid>().ok());
-    let output = AuditOutput {
-        id: audit_id,
-        actor: resolved
-            .get("actor")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-        action: resolved
-            .get("action")
-            .and_then(Value::as_str)
-            .unwrap_or("unknown")
-            .to_string(),
-        target: resolved
-            .get("target")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-    };
-    transition_from_node(
-        db,
-        workflow_run,
-        cursor,
-        node,
-        &node_run,
-        WorkflowStatus::Succeeded,
-        Some(output.to_wire_value()?),
-        Some("audit_recorded".into()),
-        node_runs,
-    )
-    .await?;
-    Ok(())
-}
-
 pub(super) struct AuditHandler;
 
 impl<T: ReducerStore> super::handler::NodeHandler<T> for AuditHandler {
@@ -85,12 +28,48 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for AuditHandler {
     where
         T: 'a,
     {
-        process_audit_node(
-            ctx.db,
-            ctx.workflow_run,
-            ctx.cursor,
-            ctx.node,
-            ctx.node_runs,
+        let node_run = ctx
+            .db
+            .create_workflow_node_run(
+                ctx.workflow_run.id,
+                ctx.node.id.clone(),
+                ctx.node.parameters.clone().into(),
+                super::context::most_recently_finished_node_run(ctx.node_runs),
+                Some(ctx.cursor),
+            )
+            .await?;
+        let context = runtime_context(ctx).await;
+        let params: Value = ctx.node.parameters.clone().into();
+        let resolved = runinator_workflows::resolve_value_refs(&params, &context)
+            .map_err(|err| -> SendableError { Box::new(err) })?;
+        let record = build_audit_record(ctx.workflow_run.id, &ctx.node.id, &resolved);
+        let inserted = ctx.db.record_audit_log(record).await?;
+        let audit_id = inserted
+            .get("id")
+            .and_then(Value::as_str)
+            .and_then(|s| s.parse::<Uuid>().ok());
+        let output = AuditOutput {
+            id: audit_id,
+            actor: resolved
+                .get("actor")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            action: resolved
+                .get("action")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+                .to_string(),
+            target: resolved
+                .get("target")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+        };
+        transition_from_node(
+            ctx,
+            &node_run,
+            WorkflowStatus::Succeeded,
+            Some(output.to_wire_value()?),
+            Some("audit_recorded".into()),
         )
         .await?;
         Ok(ReadyNodeDisposition::Complete)

@@ -11,69 +11,62 @@ const COMPENSATION_NODE_PREFIX: &str = "__compensate__";
 /// every succeeded node (most-recently-completed first) and unwinds them one at a time through the
 /// action outbox; once the stack is empty the run finalizes `Failed`. compensation is best-effort:
 /// a failed compensation action does not stop the unwind.
-pub(super) async fn process_fail_node<T: ReducerStore>(
-    db: &T,
-    workflow: &WorkflowDefinition,
-    workflow_run: &WorkflowRun,
-    cursor: &RunCursor,
-    node: &WorkflowNode,
-    latest: Option<&WorkflowNodeRun>,
-    node_runs: &[WorkflowNodeRun],
-) -> Result<ReadyNodeDisposition, SendableError> {
-    let mut run_state = WorkflowRunState::from_state(&workflow_run.state);
+pub(super) struct FailHandler;
 
-    // first arrival: decide whether there is anything to unwind.
-    let mut frame = match run_state.compensation.take() {
-        Some(frame) => frame,
-        None => {
-            let remaining = collect_compensations(workflow, node_runs);
-            if remaining.is_empty() {
-                return finalize_fail(db, workflow_run, cursor, node, latest, node_runs).await;
+impl<T: ReducerStore> super::handler::NodeHandler<T> for FailHandler {
+    async fn process<'a>(
+        &'a self,
+        ctx: &'a super::handler::NodeHandlerContext<'a, T>,
+    ) -> Result<ReadyNodeDisposition, SendableError>
+    where
+        T: 'a,
+    {
+        let mut run_state = ctx.run_state_snapshot().clone();
+
+        // first arrival: decide whether there is anything to unwind.
+        let mut frame = match run_state.compensation.take() {
+            Some(frame) => frame,
+            None => {
+                let remaining = collect_compensations(ctx.workflow, ctx.node_runs);
+                if remaining.is_empty() {
+                    return finalize_fail(ctx).await;
+                }
+                CompensationFrame {
+                    remaining,
+                    active_run_id: None,
+                }
             }
-            CompensationFrame {
-                remaining,
-                active_run_id: None,
+        };
+
+        // a compensation action is in flight: wait for it, then drop it from the stack (best-effort).
+        if let Some(active_run_id) = frame.active_run_id {
+            match ctx.node_runs.iter().find(|run| run.id == active_run_id) {
+                Some(run) if run.status.is_terminal() => frame.active_run_id = None,
+                Some(_) => {
+                    // still running; re-persist and keep the claim until the worker result wakes us.
+                    run_state.compensation = Some(frame);
+                    persist_frame(ctx, &run_state).await?;
+                    return Ok(ReadyNodeDisposition::KeepClaim);
+                }
+                // the run vanished (should not happen); treat as finished so we make progress.
+                None => frame.active_run_id = None,
             }
         }
-    };
 
-    // a compensation action is in flight: wait for it, then drop it from the stack (best-effort).
-    if let Some(active_run_id) = frame.active_run_id {
-        match node_runs.iter().find(|run| run.id == active_run_id) {
-            Some(run) if run.status.is_terminal() => frame.active_run_id = None,
-            Some(_) => {
-                // still running; re-persist and keep the claim until the worker result wakes us.
-                run_state.compensation = Some(frame);
-                persist_frame(db, workflow_run, node, &run_state).await?;
-                return Ok(ReadyNodeDisposition::KeepClaim);
-            }
-            // the run vanished (should not happen); treat as finished so we make progress.
-            None => frame.active_run_id = None,
+        // dispatch the next compensation if any remain.
+        if !frame.remaining.is_empty() {
+            let origin = frame.remaining.remove(0);
+            dispatch_compensation(ctx, &origin, &mut frame).await?;
+            run_state.compensation = Some(frame);
+            persist_frame(ctx, &run_state).await?;
+            return Ok(ReadyNodeDisposition::KeepClaim);
         }
-    }
 
-    // dispatch the next compensation if any remain.
-    if !frame.remaining.is_empty() {
-        let origin = frame.remaining.remove(0);
-        dispatch_compensation(
-            db,
-            workflow,
-            workflow_run,
-            cursor,
-            node_runs,
-            &origin,
-            &mut frame,
-        )
-        .await?;
-        run_state.compensation = Some(frame);
-        persist_frame(db, workflow_run, node, &run_state).await?;
-        return Ok(ReadyNodeDisposition::KeepClaim);
+        // stack drained: clear the frame and finalize the failure.
+        run_state.compensation = None;
+        persist_frame(ctx, &run_state).await?;
+        finalize_fail(ctx).await
     }
-
-    // stack drained: clear the frame and finalize the failure.
-    run_state.compensation = None;
-    persist_frame(db, workflow_run, node, &run_state).await?;
-    finalize_fail(db, workflow_run, cursor, node, latest, node_runs).await
 }
 
 /// gather the origin node ids of succeeded nodes that declare a compensation, ordered most-recently
@@ -113,15 +106,12 @@ fn collect_compensations(
 /// frame. parameters are resolved against the live context so a rollback can read the origin node's
 /// output (e.g. a created resource id).
 async fn dispatch_compensation<T: ReducerStore>(
-    db: &T,
-    workflow: &WorkflowDefinition,
-    workflow_run: &WorkflowRun,
-    cursor: &RunCursor,
-    node_runs: &[WorkflowNodeRun],
+    ctx: &super::handler::NodeHandlerContext<'_, T>,
     origin: &str,
     frame: &mut CompensationFrame,
 ) -> Result<(), SendableError> {
-    let Some(action) = workflow
+    let Some(action) = ctx
+        .workflow
         .definition
         .nodes
         .iter()
@@ -131,24 +121,25 @@ async fn dispatch_compensation<T: ReducerStore>(
         // no compensation after all; skip without parking.
         return Ok(());
     };
-    let context = runtime_context(db, workflow_run, cursor, node_runs).await;
+    let context = runtime_context(ctx).await;
     let parameters =
         runinator_workflows::resolve_value_refs(action.configuration.as_value(), &context)
             .unwrap_or_else(|_| action.configuration.as_value().clone());
 
     let synthetic_id = format!("{COMPENSATION_NODE_PREFIX}:{origin}");
-    let node_run = db
+    let node_run = ctx
+        .db
         .create_workflow_node_run(
-            workflow_run.id,
+            ctx.workflow_run.id,
             synthetic_id.clone(),
             parameters.clone(),
-            super::context::most_recently_finished_node_run(node_runs),
-            Some(cursor),
+            super::context::most_recently_finished_node_run(ctx.node_runs),
+            Some(ctx.cursor),
         )
         .await?;
     let command = ActionCommand {
         command_id: Uuid::new_v4(),
-        workflow_run_id: workflow_run.id,
+        workflow_run_id: ctx.workflow_run.id,
         workflow_node_run_id: node_run.id,
         node_id: synthetic_id,
         action,
@@ -163,94 +154,59 @@ async fn dispatch_compensation<T: ReducerStore>(
         // is the way to make an undo idempotent.
         idempotency_key: None,
     };
-    db.enqueue_action_dispatch(
-        format!("compensation:{}:{}", workflow_run.id, node_run.id),
-        command,
-    )
-    .await?;
-    db.update_workflow_node_run(
-        node_run.id,
-        WorkflowStatus::Running,
-        Some(node_run.attempt + 1),
-        None,
-        None,
-        None,
-        Some("compensation_started".into()),
-        Some(format!("Compensating {origin}")),
-    )
-    .await?;
+    ctx.db
+        .enqueue_action_dispatch(
+            format!("compensation:{}:{}", ctx.workflow_run.id, node_run.id),
+            command,
+        )
+        .await?;
+    ctx.db
+        .update_workflow_node_run(
+            node_run.id,
+            WorkflowStatus::Running,
+            Some(node_run.attempt + 1),
+            None,
+            None,
+            None,
+            Some("compensation_started".into()),
+            Some(format!("Compensating {origin}")),
+        )
+        .await?;
     frame.active_run_id = Some(node_run.id);
     Ok(())
 }
 
 /// persist the run state while keeping the run parked on the fail node, `Running`.
 async fn persist_frame<T: ReducerStore>(
-    db: &T,
-    workflow_run: &WorkflowRun,
-    node: &WorkflowNode,
+    ctx: &super::handler::NodeHandlerContext<'_, T>,
     run_state: &WorkflowRunState,
 ) -> Result<(), SendableError> {
-    db.update_workflow_run_status(
-        workflow_run.id,
-        WorkflowStatus::Running,
-        Some(node.id.clone()),
-        Some(run_state.to_state()),
-        Some("Compensating before failure".into()),
-    )
-    .await
+    ctx.db
+        .update_workflow_run_status(
+            ctx.workflow_run.id,
+            WorkflowStatus::Running,
+            Some(ctx.node.id.clone()),
+            Some(run_state.to_state()),
+            Some("Compensating before failure".into()),
+        )
+        .await
 }
 
 /// the original `fail` terminal behavior: mark the fail node-run complete and the run `Failed`.
 async fn finalize_fail<T: ReducerStore>(
-    db: &T,
-    workflow_run: &WorkflowRun,
-    cursor: &RunCursor,
-    node: &WorkflowNode,
-    latest: Option<&WorkflowNodeRun>,
-    _node_runs: &[WorkflowNodeRun],
+    ctx: &super::handler::NodeHandlerContext<'_, T>,
 ) -> Result<ReadyNodeDisposition, SendableError> {
-    super::transitions::ensure_completed_node_run(
-        db,
-        workflow_run,
-        cursor,
-        node,
-        latest,
-        "fail_reached",
-    )
-    .await?;
+    super::transitions::ensure_completed_node_run(ctx, "fail_reached").await?;
     // a failing terminal ends the whole run: `advance_cursor` drains every thread of control, so no
     // sibling branch keeps walking after the run has failed.
     run_state::advance_cursor(
-        db,
-        workflow_run.id,
-        cursor.id,
+        ctx.db,
+        ctx.workflow_run.id,
+        ctx.cursor.id,
         WorkflowStatus::Failed,
         run_state::CursorMove::Retire,
         Some("Workflow reached fail node".into()),
     )
     .await?;
     Ok(ReadyNodeDisposition::Complete)
-}
-
-pub(super) struct FailHandler;
-
-impl<T: ReducerStore> super::handler::NodeHandler<T> for FailHandler {
-    async fn process<'a>(
-        &'a self,
-        ctx: &'a super::handler::NodeHandlerContext<'a, T>,
-    ) -> Result<ReadyNodeDisposition, SendableError>
-    where
-        T: 'a,
-    {
-        process_fail_node(
-            ctx.db,
-            ctx.workflow,
-            ctx.workflow_run,
-            ctx.cursor,
-            ctx.node,
-            ctx.latest,
-            ctx.node_runs,
-        )
-        .await
-    }
 }

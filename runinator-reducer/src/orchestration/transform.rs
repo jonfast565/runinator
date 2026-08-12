@@ -12,41 +12,6 @@ pub(super) fn resolve_bindings(params: &Value, context: &Value) -> Value {
 
 /// process a transform node: resolve all named expression bindings against the runtime context
 /// and emit the result as the node output. pure inline, no parking, no side effects.
-pub(super) async fn process_transform_node<T: ReducerStore>(
-    db: &T,
-    workflow_run: &WorkflowRun,
-    cursor: &RunCursor,
-    node: &WorkflowNode,
-    node_runs: &[WorkflowNodeRun],
-) -> Result<(), SendableError> {
-    let node_run = db
-        .create_workflow_node_run(
-            workflow_run.id,
-            node.id.clone(),
-            node.parameters.clone().into(),
-            super::context::most_recently_finished_node_run(node_runs),
-            Some(cursor),
-        )
-        .await?;
-    let context = runtime_context(db, workflow_run, cursor, node_runs).await;
-    let params: Value = node.parameters.clone().into();
-    let bindings = resolve_bindings(&params, &context);
-    let output = TransformOutput { bindings };
-    transition_from_node(
-        db,
-        workflow_run,
-        cursor,
-        node,
-        &node_run,
-        WorkflowStatus::Succeeded,
-        Some(output.to_wire_value()?),
-        Some("transform_applied".into()),
-        node_runs,
-    )
-    .await?;
-    Ok(())
-}
-
 pub(super) struct TransformHandler;
 
 impl<T: ReducerStore> super::handler::NodeHandler<T> for TransformHandler {
@@ -57,12 +22,26 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for TransformHandler {
     where
         T: 'a,
     {
-        process_transform_node(
-            ctx.db,
-            ctx.workflow_run,
-            ctx.cursor,
-            ctx.node,
-            ctx.node_runs,
+        let node_run = ctx
+            .db
+            .create_workflow_node_run(
+                ctx.workflow_run.id,
+                ctx.node.id.clone(),
+                ctx.node.parameters.clone().into(),
+                super::context::most_recently_finished_node_run(ctx.node_runs),
+                Some(ctx.cursor),
+            )
+            .await?;
+        let context = runtime_context(ctx).await;
+        let params: Value = ctx.node.parameters.clone().into();
+        let bindings = resolve_bindings(&params, &context);
+        let output = TransformOutput { bindings };
+        transition_from_node(
+            ctx,
+            &node_run,
+            WorkflowStatus::Succeeded,
+            Some(output.to_wire_value()?),
+            Some("transform_applied".into()),
         )
         .await?;
         Ok(ReadyNodeDisposition::Complete)

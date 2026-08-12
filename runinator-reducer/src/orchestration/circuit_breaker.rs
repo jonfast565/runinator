@@ -61,10 +61,11 @@ fn failure_count_in_window(record: &Value, window_seconds: i64, now_unix: i64) -
 }
 
 async fn fetch_cb_record<T: ReducerStore>(
-    db: &T,
+    ctx: &super::handler::NodeHandlerContext<'_, T>,
     name: &str,
 ) -> Result<Option<Value>, SendableError> {
-    let records = db
+    let records = ctx
+        .db
         .fetch_automation_records(RECORD_TYPE.into(), None, None)
         .await?;
     Ok(records
@@ -73,13 +74,13 @@ async fn fetch_cb_record<T: ReducerStore>(
 }
 
 async fn record_failure<T: ReducerStore>(
-    db: &T,
+    ctx: &super::handler::NodeHandlerContext<'_, T>,
     name: &str,
     threshold: i64,
     window_seconds: i64,
 ) -> Result<(), SendableError> {
     let now = Utc::now().timestamp();
-    match fetch_cb_record(db, name).await? {
+    match fetch_cb_record(ctx, name).await? {
         None => {
             let record = runinator_models::json!({
                 "name": name,
@@ -88,7 +89,8 @@ async fn record_failure<T: ReducerStore>(
                 "window_start": now,
                 "last_tripped_at": null,
             });
-            db.create_automation_record(RECORD_TYPE.into(), record)
+            ctx.db
+                .create_automation_record(RECORD_TYPE.into(), record)
                 .await?;
         }
         Some(record) => {
@@ -115,7 +117,8 @@ async fn record_failure<T: ReducerStore>(
                 }
             }
             if let Some(id) = record_id {
-                db.update_automation_record(RECORD_TYPE.into(), id, updated)
+                ctx.db
+                    .update_automation_record(RECORD_TYPE.into(), id, updated)
                     .await?;
             }
         }
@@ -127,61 +130,6 @@ async fn record_failure<T: ReducerStore>(
 /// is open (too many recent failures across all runs), routes via `on_failure`. if closed,
 /// succeeds and allows the downstream body to proceed. a downstream body's failure should call
 /// the record-failure api endpoint to increment the counter.
-pub(super) async fn process_circuit_breaker_node<T: ReducerStore>(
-    db: &T,
-    workflow_run: &WorkflowRun,
-    cursor: &RunCursor,
-    node: &WorkflowNode,
-    node_runs: &[WorkflowNodeRun],
-) -> Result<(), SendableError> {
-    let params = parse_cb_params(node);
-    let node_run = db
-        .create_workflow_node_run(
-            workflow_run.id,
-            node.id.clone(),
-            node.parameters.clone().into(),
-            super::context::most_recently_finished_node_run(node_runs),
-            Some(cursor),
-        )
-        .await?;
-    let now = Utc::now().timestamp();
-    let cb_record = fetch_cb_record(db, &params.name).await?;
-    let (tripped, circuit_state) = match &cb_record {
-        None => (false, "closed".to_string()),
-        Some(r) => {
-            let open = is_circuit_open(r, params.cooldown_seconds, now);
-            let state = if open { "open" } else { "closed" };
-            (open, state.to_string())
-        }
-    };
-
-    let output = CircuitBreakerOutput {
-        name: params.name.clone(),
-        circuit_state: circuit_state.clone(),
-        tripped,
-    };
-    let (status, reason) = if tripped {
-        // record this as a failure in the window so metrics stay accurate.
-        record_failure(db, &params.name, params.threshold, params.window_seconds).await?;
-        (WorkflowStatus::Failed, "circuit_open")
-    } else {
-        (WorkflowStatus::Succeeded, "circuit_closed")
-    };
-    transition_from_node(
-        db,
-        workflow_run,
-        cursor,
-        node,
-        &node_run,
-        status,
-        Some(output.to_wire_value()?),
-        Some(reason.into()),
-        node_runs,
-    )
-    .await?;
-    Ok(())
-}
-
 pub(super) struct CircuitBreakerHandler;
 
 impl<T: ReducerStore> super::handler::NodeHandler<T> for CircuitBreakerHandler {
@@ -192,12 +140,46 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for CircuitBreakerHandler {
     where
         T: 'a,
     {
-        process_circuit_breaker_node(
-            ctx.db,
-            ctx.workflow_run,
-            ctx.cursor,
-            ctx.node,
-            ctx.node_runs,
+        let params = parse_cb_params(ctx.node);
+        let node_run = ctx
+            .db
+            .create_workflow_node_run(
+                ctx.workflow_run.id,
+                ctx.node.id.clone(),
+                ctx.node.parameters.clone().into(),
+                super::context::most_recently_finished_node_run(ctx.node_runs),
+                Some(ctx.cursor),
+            )
+            .await?;
+        let now = Utc::now().timestamp();
+        let cb_record = fetch_cb_record(ctx, &params.name).await?;
+        let (tripped, circuit_state) = match &cb_record {
+            None => (false, "closed".to_string()),
+            Some(r) => {
+                let open = is_circuit_open(r, params.cooldown_seconds, now);
+                let state = if open { "open" } else { "closed" };
+                (open, state.to_string())
+            }
+        };
+
+        let output = CircuitBreakerOutput {
+            name: params.name.clone(),
+            circuit_state: circuit_state.clone(),
+            tripped,
+        };
+        let (status, reason) = if tripped {
+            // record this as a failure in the window so metrics stay accurate.
+            record_failure(ctx, &params.name, params.threshold, params.window_seconds).await?;
+            (WorkflowStatus::Failed, "circuit_open")
+        } else {
+            (WorkflowStatus::Succeeded, "circuit_closed")
+        };
+        transition_from_node(
+            ctx,
+            &node_run,
+            status,
+            Some(output.to_wire_value()?),
+            Some(reason.into()),
         )
         .await?;
         Ok(ReadyNodeDisposition::Complete)

@@ -28,10 +28,11 @@ fn parse_barrier_params(node: &WorkflowNode) -> (String, i64, i64) {
 }
 
 async fn fetch_barrier_record<T: ReducerStore>(
-    db: &T,
+    ctx: &super::handler::NodeHandlerContext<'_, T>,
     name: &str,
 ) -> Result<Option<Value>, SendableError> {
-    let records = db
+    let records = ctx
+        .db
         .fetch_automation_records(RECORD_TYPE.into(), None, None)
         .await?;
     Ok(records
@@ -41,21 +42,21 @@ async fn fetch_barrier_record<T: ReducerStore>(
 
 /// register this run's arrival at the barrier and return the updated arrivals list.
 async fn register_arrival<T: ReducerStore>(
-    db: &T,
+    ctx: &super::handler::NodeHandlerContext<'_, T>,
     name: &str,
-    run_id: Uuid,
     expected: i64,
 ) -> Result<Vec<Uuid>, SendableError> {
-    match fetch_barrier_record(db, name).await? {
+    match fetch_barrier_record(ctx, name).await? {
         None => {
             let record = runinator_models::json!({
                 "name": name,
                 "expected_count": expected,
-                "arrivals": [run_id],
+                "arrivals": [ctx.workflow_run.id],
             });
-            db.create_automation_record(RECORD_TYPE.into(), record)
+            ctx.db
+                .create_automation_record(RECORD_TYPE.into(), record)
                 .await?;
-            Ok(vec![run_id])
+            Ok(vec![ctx.workflow_run.id])
         }
         Some(record) => {
             let mut arrivals: Vec<Uuid> = record
@@ -66,8 +67,8 @@ async fn register_arrival<T: ReducerStore>(
                 .iter()
                 .filter_map(|v| v.as_str().and_then(|s| s.parse::<Uuid>().ok()))
                 .collect();
-            if !arrivals.contains(&run_id) {
-                arrivals.push(run_id);
+            if !arrivals.contains(&ctx.workflow_run.id) {
+                arrivals.push(ctx.workflow_run.id);
                 let record_id = record
                     .get("id")
                     .and_then(Value::as_str)
@@ -81,7 +82,8 @@ async fn register_arrival<T: ReducerStore>(
                             .collect();
                         obj.insert("arrivals".into(), Value::Array(arr));
                     }
-                    db.update_automation_record(RECORD_TYPE.into(), id, updated)
+                    ctx.db
+                        .update_automation_record(RECORD_TYPE.into(), id, updated)
                         .await?;
                 }
             }
@@ -91,19 +93,18 @@ async fn register_arrival<T: ReducerStore>(
 }
 
 async fn enqueue_barrier_poll<T: ReducerStore>(
-    db: &T,
-    workflow_run_id: Uuid,
-    node: &WorkflowNode,
+    ctx: &super::handler::NodeHandlerContext<'_, T>,
     interval: i64,
 ) -> Result<(), SendableError> {
     let poll_at = Utc::now() + chrono::Duration::seconds(interval);
     let event = NewOrchestrationEvent::new(
-        workflow_run_id,
-        Some(node.id.clone()),
+        ctx.workflow_run.id,
+        Some(ctx.node.id.clone()),
         "barrier_poll",
-        runinator_models::json!({ "node_id": node.id }),
+        runinator_models::json!({ "node_id": ctx.node.id }),
     );
-    db.enqueue_ready_node(event, node.id.clone(), poll_at)
+    ctx.db
+        .enqueue_ready_node(event, ctx.node.id.clone(), poll_at)
         .await?;
     Ok(())
 }
@@ -111,116 +112,6 @@ async fn enqueue_barrier_poll<T: ReducerStore>(
 /// process a barrier node: register this run's arrival and park until N runs have all arrived.
 /// the last arrival wakes all others via their poll loop (or the others wake naturally on their
 /// next poll interval).
-pub(super) async fn process_barrier_node<T: ReducerStore>(
-    db: &T,
-    workflow_run: &WorkflowRun,
-    cursor: &RunCursor,
-    node: &WorkflowNode,
-    latest: Option<&WorkflowNodeRun>,
-    node_runs: &[WorkflowNodeRun],
-) -> Result<ReadyNodeDisposition, SendableError> {
-    let (name, expected, poll_interval) = parse_barrier_params(node);
-    let latest = latest.filter(|run| !is_reentry_stale(run, node_runs, cursor));
-
-    if let Some(node_run) = latest.filter(|run| run.status == WorkflowStatus::Waiting) {
-        if timed_out_since_created(node, cursor, node_run) {
-            time_out(
-                db,
-                workflow_run,
-                cursor,
-                node,
-                node_run,
-                "Barrier timed out",
-                node_runs,
-            )
-            .await?;
-            return Ok(ReadyNodeDisposition::Complete);
-        }
-        // re-check the barrier record for new arrivals.
-        let arrivals = register_arrival(db, &name, workflow_run.id, expected).await?;
-        if arrivals_complete(arrivals.len(), expected) {
-            let output = BarrierOutput {
-                name: name.clone(),
-                arrivals: arrivals.clone(),
-            };
-            transition_from_node(
-                db,
-                workflow_run,
-                cursor,
-                node,
-                node_run,
-                WorkflowStatus::Succeeded,
-                Some(output.to_wire_value()?),
-                Some("barrier_released".into()),
-                node_runs,
-            )
-            .await?;
-            return Ok(ReadyNodeDisposition::Complete);
-        }
-        enqueue_barrier_poll(db, workflow_run.id, node, poll_interval).await?;
-        return Ok(ReadyNodeDisposition::KeepClaim);
-    }
-
-    // first visit: register and check immediately.
-    let arrivals = register_arrival(db, &name, workflow_run.id, expected).await?;
-    let node_run = db
-        .create_workflow_node_run(
-            workflow_run.id,
-            node.id.clone(),
-            node.parameters.clone().into(),
-            super::context::most_recently_finished_node_run(node_runs),
-            Some(cursor),
-        )
-        .await?;
-    if arrivals_complete(arrivals.len(), expected) {
-        let output = BarrierOutput {
-            name: name.clone(),
-            arrivals: arrivals.clone(),
-        };
-        transition_from_node(
-            db,
-            workflow_run,
-            cursor,
-            node,
-            &node_run,
-            WorkflowStatus::Succeeded,
-            Some(output.to_wire_value()?),
-            Some("barrier_released".into()),
-            node_runs,
-        )
-        .await?;
-        return Ok(ReadyNodeDisposition::Complete);
-    }
-    let state = BarrierState {
-        name: name.clone(),
-        expected_count: expected,
-        arrivals: arrivals.clone(),
-        deadline_unix: node.timeout_seconds.map(|t| Utc::now().timestamp() + t),
-    };
-    db.update_workflow_node_run(
-        node_run.id,
-        WorkflowStatus::Waiting,
-        Some(node_run.attempt + 1),
-        None,
-        None,
-        Some(state.to_wire_value()?),
-        Some("barrier_waiting".into()),
-        None,
-    )
-    .await?;
-    db.update_workflow_run_status(
-        workflow_run.id,
-        WorkflowStatus::Waiting,
-        Some(node.id.clone()),
-        None,
-        None,
-    )
-    .await?;
-    enqueue_barrier_poll(db, workflow_run.id, node, poll_interval).await?;
-    arm_node_timeout(db, workflow_run.id, cursor, node).await?;
-    Ok(ReadyNodeDisposition::Complete)
-}
-
 pub(super) struct BarrierHandler;
 
 impl<T: ReducerStore> super::handler::NodeHandler<T> for BarrierHandler {
@@ -231,14 +122,93 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for BarrierHandler {
     where
         T: 'a,
     {
-        process_barrier_node(
-            ctx.db,
-            ctx.workflow_run,
-            ctx.cursor,
-            ctx.node,
-            ctx.latest,
-            ctx.node_runs,
-        )
-        .await
+        let (name, expected, poll_interval) = parse_barrier_params(ctx.node);
+        let latest = ctx
+            .latest
+            .filter(|run| !is_reentry_stale(run, ctx.node_runs, ctx.cursor));
+
+        if let Some(node_run) = latest.filter(|run| run.status == WorkflowStatus::Waiting) {
+            if timed_out_since_created(ctx.timing(), node_run) {
+                time_out(ctx, node_run, "Barrier timed out").await?;
+                return Ok(ReadyNodeDisposition::Complete);
+            }
+            // re-check the barrier record for new arrivals.
+            let arrivals = register_arrival(ctx, &name, expected).await?;
+            if arrivals_complete(arrivals.len(), expected) {
+                let output = BarrierOutput {
+                    name: name.clone(),
+                    arrivals: arrivals.clone(),
+                };
+                transition_from_node(
+                    ctx,
+                    node_run,
+                    WorkflowStatus::Succeeded,
+                    Some(output.to_wire_value()?),
+                    Some("barrier_released".into()),
+                )
+                .await?;
+                return Ok(ReadyNodeDisposition::Complete);
+            }
+            enqueue_barrier_poll(ctx, poll_interval).await?;
+            return Ok(ReadyNodeDisposition::KeepClaim);
+        }
+
+        // first visit: register and check immediately.
+        let arrivals = register_arrival(ctx, &name, expected).await?;
+        let node_run = ctx
+            .db
+            .create_workflow_node_run(
+                ctx.workflow_run.id,
+                ctx.node.id.clone(),
+                ctx.node.parameters.clone().into(),
+                super::context::most_recently_finished_node_run(ctx.node_runs),
+                Some(ctx.cursor),
+            )
+            .await?;
+        if arrivals_complete(arrivals.len(), expected) {
+            let output = BarrierOutput {
+                name: name.clone(),
+                arrivals: arrivals.clone(),
+            };
+            transition_from_node(
+                ctx,
+                &node_run,
+                WorkflowStatus::Succeeded,
+                Some(output.to_wire_value()?),
+                Some("barrier_released".into()),
+            )
+            .await?;
+            return Ok(ReadyNodeDisposition::Complete);
+        }
+        let state = BarrierState {
+            name: name.clone(),
+            expected_count: expected,
+            arrivals: arrivals.clone(),
+            deadline_unix: ctx.node.timeout_seconds.map(|t| Utc::now().timestamp() + t),
+        };
+        ctx.db
+            .update_workflow_node_run(
+                node_run.id,
+                WorkflowStatus::Waiting,
+                Some(node_run.attempt + 1),
+                None,
+                None,
+                Some(state.to_wire_value()?),
+                Some("barrier_waiting".into()),
+                None,
+            )
+            .await?;
+        ctx.db
+            .update_workflow_run_status(
+                ctx.workflow_run.id,
+                WorkflowStatus::Waiting,
+                Some(ctx.node.id.clone()),
+                None,
+                None,
+            )
+            .await?;
+        enqueue_barrier_poll(ctx, poll_interval).await?;
+        arm_node_timeout(ctx).await?;
+        Ok(ReadyNodeDisposition::Complete)
     }
 }
