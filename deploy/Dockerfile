@@ -104,8 +104,7 @@ ENTRYPOINT ["/usr/local/bin/runinator-worker"]
 
 # ---- archiver ----
 FROM runtime-base AS archiver
-RUN mkdir -p /var/lib/runinator/archive \
-    && chown -R runinator:runinator /var/lib/runinator
+RUN mkdir -p /var/lib/runinator/archive && chown -R runinator:runinator /var/lib/runinator
 COPY --from=builder --chown=root:root --chmod=755 /out/runinator-archiver /usr/local/bin/runinator-archiver
 VOLUME ["/var/lib/runinator/archive"]
 USER runinator
