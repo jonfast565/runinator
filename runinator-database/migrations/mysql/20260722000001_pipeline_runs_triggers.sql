@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS pipeline_runs (
     trigger_actor_type TEXT NULL,
     trigger_actor_replica_id BINARY(16) NULL,
     trigger_actor_display_name TEXT NULL,
-    trigger_metadata TEXT NOT NULL DEFAULT '{}'
+    trigger_metadata TEXT NOT NULL DEFAULT ('{}')
 );
 
 -- exactly-once ledger for pipeline trigger firings (cron next_execution / chained source-run id).

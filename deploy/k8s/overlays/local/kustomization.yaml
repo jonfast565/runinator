@@ -47,6 +47,23 @@ patches:
           hostPath:
             path: /var/runinator/archive
             type: DirectoryOrCreate
+  # DirectoryOrCreate creates the host directory root-owned, and the base's fsGroup does not reach
+  # a hostPath -- the kubelet only manages ownership for volume types it provisions. So chown the
+  # mount to the archiver's uid/gid once at startup, as root, before the unprivileged archiver runs.
+  # Without this the archiver logs "Permission denied" every pass and prunes nothing.
+  - target: { kind: Deployment, name: runinator-archiver }
+    patch: |
+      - op: add
+        path: /spec/template/spec/initContainers
+        value:
+          - name: chown-archive
+            image: busybox:1.36
+            command: ["sh", "-c", "chown -R 100:101 /var/lib/runinator/archive"]
+            securityContext:
+              runAsUser: 0
+            volumeMounts:
+              - name: archive-data
+                mountPath: /var/lib/runinator/archive
   # the base PVC is no longer referenced; drop it so the local cluster does not
   # provision an unused ReadWriteOnce claim.
   - patch: |

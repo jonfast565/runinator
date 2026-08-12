@@ -44,7 +44,13 @@ exposed inside the container at `/var/lib/runinator/archive`, so the compressed
 `jsonl.gz` archives it writes land on the real filesystem instead of an ephemeral
 PVC (the base `runinator-archive-data` claim is dropped by this overlay). Point
 that node path at your real `~/.runinator` using your local cluster driver's mount
-or symlink support before applying the overlay.
+or symlink support before applying the overlay. The directory is created root-owned
+and the archiver runs unprivileged, so this overlay adds a `chown-archive` init
+container to hand it to the archiver's uid/gid; the base's `fsGroup` cannot do that
+job here, because the kubelet only manages ownership for volumes it provisions. If
+that mount is read-only from the host side the chown fails and the archiver prunes
+nothing — check `kubectl logs -n runinator deploy/runinator-archiver` for
+`failed to write archive file(s)`.
 
 The preferred end-to-end command is:
 

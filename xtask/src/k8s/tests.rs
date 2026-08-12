@@ -39,8 +39,9 @@ fn split_image_reference_requires_a_tag() {
 
 #[test]
 fn versioned_image_tag_generates_a_fresh_tag_for_local_or_empty() {
-    assert!(versioned_image_tag("local").starts_with("kube-"));
-    assert!(versioned_image_tag("").starts_with("kube-"));
+    let prefix = format!("{}-kube-", env!("CARGO_PKG_VERSION"));
+    assert!(versioned_image_tag("local").starts_with(&prefix));
+    assert!(versioned_image_tag("").starts_with(&prefix));
     assert_eq!(versioned_image_tag("1.0.0"), "1.0.0");
 }
 

@@ -24,6 +24,14 @@ spec:
       labels:
         app: runinator-archiver
     spec:
+      # the archive volume is created root-owned and the image runs as the unprivileged `runinator`
+      # user (gid 101), so without this every pass dies on "failed to write archive file(s):
+      # Permission denied" and nothing is ever pruned -- the tables the archiver exists to bound
+      # just grow. fsGroup makes the kubelet hand the volume to the group the container already
+      # runs as. it covers volume types the kubelet manages ownership for, which is the PVC below;
+      # the local overlay swaps in a hostPath, which fsGroup does not reach, and chowns it instead.
+      securityContext:
+        fsGroup: 101
       containers:
         - name: archiver
           image: runinator-archiver:dev

@@ -1,9 +1,14 @@
+-- the parenthesized defaults below are not a style choice. mysql 8 rejects a literal default on a
+-- TEXT column outright ("BLOB, TEXT, GEOMETRY or JSON column can't have a default value"), which
+-- stopped this migration and every one after it there; mariadb accepts the literal form, so the
+-- break was invisible against the engine this workspace runs. both engines accept the expression
+-- form, so it is what keeps the two in step.
 CREATE TABLE IF NOT EXISTS replicas (
     replica_id BINARY(16) PRIMARY KEY,
     replica_type TEXT NOT NULL,
     instance_id TEXT NOT NULL,
     runtime_id TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'live',
+    status TEXT NOT NULL DEFAULT ('live'),
     display_name TEXT NULL,
     host TEXT NULL,
     port BIGINT NULL,
@@ -34,7 +39,7 @@ ALTER TABLE workflow_runs ADD COLUMN trigger_actor_replica_id BINARY(16) NULL;
 ALTER TABLE workflow_runs ADD COLUMN trigger_actor_display_name TEXT NULL;
 ALTER TABLE workflow_runs ADD COLUMN trigger_request_host TEXT NULL;
 ALTER TABLE workflow_runs ADD COLUMN trigger_request_ip TEXT NULL;
-ALTER TABLE workflow_runs ADD COLUMN trigger_metadata TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE workflow_runs ADD COLUMN trigger_metadata TEXT NOT NULL DEFAULT ('{}');
 
 ALTER TABLE workflow_node_runs ADD COLUMN current_executor_replica_id BINARY(16) NULL;
 ALTER TABLE workflow_node_runs ADD COLUMN last_executor_replica_id BINARY(16) NULL;

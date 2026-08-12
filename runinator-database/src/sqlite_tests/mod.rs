@@ -16,6 +16,7 @@ mod results;
 mod revisions;
 mod runs;
 mod schedules;
+mod schema;
 mod settings;
 mod transitions;
 

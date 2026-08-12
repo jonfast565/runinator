@@ -1,5 +1,5 @@
 <template>
-  <aside class="sidebar" :class="{ collapsed: app.sidebarCollapsed }">
+  <aside ref="sidebarRef" class="sidebar" :class="{ collapsed: app.sidebarCollapsed }">
     <div class="brand" :class="railMode ? 'flex-col gap-2.5' : ''">
       <BrandMark />
       <span class="brand-text" :class="railMode ? 'hidden' : ''">Command Center</span>
@@ -59,10 +59,29 @@
         </template>
       </div>
     </nav>
-    <div v-if="!railMode" class="sidebar-clock" aria-hidden="true">
-      <span class="sidebar-clock-label">Local</span>
-      <span class="sidebar-clock-time">{{ clockTime }}</span>
+    <div v-if="!railMode" class="sidebar-foot">
+      <div class="sidebar-clock" aria-hidden="true">
+        <span class="sidebar-clock-label">Local</span>
+        <span class="sidebar-clock-time">{{ localTime }}</span>
+      </div>
+      <div class="sidebar-clock" aria-hidden="true">
+        <span class="sidebar-clock-label">UTC</span>
+        <span class="sidebar-clock-time">{{ utcTime }}</span>
+      </div>
+      <div class="sidebar-build" :title="buildTitle">{{ buildLabel }}</div>
     </div>
+    <div
+      v-if="resizable"
+      class="sidebar-resize"
+      :class="{ 'is-dragging': sidebar.dragging.value }"
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize sidebar"
+      tabindex="0"
+      @pointerdown="sidebar.startDrag"
+      @keydown="sidebar.onKeydown"
+      @dblclick="sidebar.reset"
+    ></div>
   </aside>
 </template>
 
@@ -76,11 +95,20 @@ import { useWorkflowsStore } from "../../../ui/adapters/pinia/workflows";
 import type { AppTab } from "../../../core/navigation/app";
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useBreakpoint } from "../../composables/useBreakpoint";
+import { useSidebarWidth } from "../../composables/useSidebarWidth";
+import { buildTooltip, versionLabel } from "../../../core/utils/build-info";
 
 const app = useAppStore();
-const { isMobile } = useBreakpoint();
+const { isTablet, isMobile } = useBreakpoint();
 // desktop icon-rail only; the mobile drawer always shows labels regardless of the collapsed flag.
 const railMode = computed(() => app.sidebarCollapsed && !isMobile.value);
+const sidebarRef = ref<HTMLElement | null>(null);
+const sidebar = useSidebarWidth(sidebarRef);
+// tablet and below pin the rail to a fixed width (or float it as a drawer), so there is nothing
+// to drag there — the same rule SplitPane's handle follows.
+const resizable = computed(() => !app.sidebarCollapsed && !isTablet.value);
+const buildLabel = versionLabel();
+const buildTitle = buildTooltip();
 const sections = computed(() => app.visibleNavSections());
 const workflows = useWorkflowsStore();
 const resources = useResourcesStore();
@@ -99,7 +127,11 @@ onBeforeUnmount(() => {
   clearInterval(clockTimer);
 });
 
-const clockTime = computed(() => clockNow.value.toLocaleTimeString([], { hour12: false }));
+const localTime = computed(() => clockNow.value.toLocaleTimeString([], { hour12: false }));
+// schedules, cron headers, and every persisted timestamp are utc, so the rail shows both.
+const utcTime = computed(() =>
+  clockNow.value.toLocaleTimeString([], { hour12: false, timeZone: "UTC" }),
+);
 
 function countFor(tab: AppTab): number | null {
   if (tab === "Runs") {

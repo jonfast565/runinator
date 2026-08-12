@@ -2,7 +2,7 @@
   "name": "runinator-wdl",
   "displayName": "Runinator WDL",
   "description": "Diagnostics, completion, hover, formatting, and apply-on-save for Runinator WDL workflows.",
-  "version": "0.1.0",
+  "version": "0.2.367",
   "publisher": "runinator",
   "engines": {
     "vscode": "^1.75.0"

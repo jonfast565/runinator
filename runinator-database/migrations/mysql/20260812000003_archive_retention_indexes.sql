@@ -1,4 +1,13 @@
 -- keep retention candidate scans bounded as runtime history grows.
+--
+-- archive_marks.status is TEXT here (the sibling dialects have no such distinction), and a TEXT
+-- column in a key needs a prefix length or mysql indexes its declared maximum and rejects the key
+-- as too long -- which failed this migration and, since nothing after it can run, every migration
+-- since. every other column indexed below is a bigint, a binary(16), or a bounded varchar.
+--
+-- note for anyone whose database crashed on the original: the statements before the broken one had
+-- already been auto-committed, but the migration was never recorded, so re-running reports a
+-- duplicate key name. drop the idx_*_archive indexes it did create, then migrate again.
 CREATE INDEX idx_runs_archive ON runs(status, created_at);
 CREATE INDEX idx_run_artifacts_archive ON run_artifacts(created_at, id);
 CREATE INDEX idx_workflow_node_runs_archive ON workflow_node_runs(created_at, workflow_run_id);
@@ -15,6 +24,6 @@ CREATE INDEX idx_gates_archive ON gates(created_at, resolved_at);
 CREATE INDEX idx_org_usage_archive ON org_usage_ledger(sampled_at, id);
 CREATE INDEX idx_workflow_revisions_archive ON workflow_revisions(created_at, workflow_id);
 CREATE INDEX idx_agent_directives_archive ON agent_directives(state, completed_at, issued_at);
-CREATE INDEX idx_archive_marks_completed ON archive_marks(status, archived_at);
+CREATE INDEX idx_archive_marks_completed ON archive_marks(status(32), archived_at);
 CREATE INDEX idx_auth_sessions_expiry ON auth_sessions(expires_at, revoked);
 CREATE INDEX idx_workflow_cooldowns_retention ON workflow_cooldowns(last_run_at);

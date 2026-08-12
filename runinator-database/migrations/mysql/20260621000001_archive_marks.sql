@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS archive_marks (
     created_at BIGINT NOT NULL,
     eligible_before BIGINT NOT NULL,
     archive_day TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'marked',
+    status TEXT NOT NULL DEFAULT ('marked'),
     claimed_by VARCHAR(255) NULL,
     claimed_until BIGINT NULL,
     attempts BIGINT NOT NULL DEFAULT 0,

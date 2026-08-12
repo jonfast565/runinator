@@ -76,13 +76,23 @@ pub fn image_tag(name: &str, repository: Option<&str>, tag: &str) -> String {
 }
 
 /// resolves the requested `--image-tag` to a concrete value: an explicit non-`local` tag is used
-/// as-is, otherwise a fresh `kube-<timestamp>` tag is generated so every k8s deploy gets a distinct,
-/// traceable image without the caller needing to think about tagging.
+/// as-is, otherwise the workspace version and a timestamp identify the deployment build.
 pub fn versioned_image_tag(requested_tag: &str) -> String {
     if !requested_tag.trim().is_empty() && requested_tag != "local" {
         return requested_tag.to_string();
     }
-    format!("kube-{}", chrono::Utc::now().format("%Y%m%d%H%M%S"))
+    format!(
+        "{}-kube-{}",
+        env!("CARGO_PKG_VERSION"),
+        chrono::Utc::now().format("%Y%m%d%H%M%S")
+    )
+}
+
+/// the short commit the build came from, or empty outside a git checkout.
+fn current_commit(workspace_root: &Path) -> String {
+    exec::capture_allow_failure("git", &["rev-parse", "--short", "HEAD"], workspace_root)
+        .trim()
+        .to_string()
 }
 
 /// builds (and optionally pushes) the selected images, returning a map of image name -> tagged
@@ -108,6 +118,9 @@ pub fn build_container_images(
         bail!("no container images were selected for build");
     }
 
+    // the command center stamps this into its ui version readout; its build context carries no .git.
+    let build_id = current_commit(workspace_root);
+
     let mut built = HashMap::new();
     for image in images {
         let tagged_name = image_tag(image.name, repository, tag);
@@ -117,7 +130,13 @@ pub fn build_container_images(
             "build".to_string(),
             "--file".to_string(),
             image.dockerfile.to_string(),
+            "--build-arg".to_string(),
+            format!("RUNINATOR_VERSION={}", env!("CARGO_PKG_VERSION")),
         ];
+        if image.name == "runinator-command-center" && !build_id.is_empty() {
+            args.push("--build-arg".to_string());
+            args.push(format!("RUNINATOR_BUILD_ID={build_id}"));
+        }
         if let Some(target) = image.target {
             args.push("--target".to_string());
             args.push(target.to_string());

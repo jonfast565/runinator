@@ -99,8 +99,8 @@ struct K8sDeployArgs {
     /// are pushed automatically when this is set.
     #[arg(long)]
     image_repository: Option<String>,
-    /// tag applied to built images. `local` (the default) is replaced with a fresh `kube-<timestamp>`
-    /// tag so every deploy is distinguishable.
+    /// tag applied to built images. `local` becomes `<workspace-version>-kube-<timestamp>` so every
+    /// deploy is versioned and distinguishable.
     #[arg(long, default_value = "local")]
     image_tag: String,
     /// shorthand for --image-repository pointing at a registry mirrored to the local cluster.

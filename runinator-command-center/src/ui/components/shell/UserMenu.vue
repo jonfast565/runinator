@@ -51,6 +51,12 @@
           <Icon name="lock" :size="14" />
           <span>Sign out</span>
         </button>
+        <div
+          class="mt-1 border-t border-border-subtle px-2 pt-2 pb-1 font-mono text-[10px] tracking-[0.04em] text-fg-faint"
+          :title="buildTitle"
+        >
+          {{ buildLabel }}
+        </div>
       </div>
     </Transition>
   </div>
@@ -60,8 +66,11 @@
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import Icon from "../shared/Icon.vue";
 import { useAuthStore } from "../../../ui/adapters/pinia/auth";
+import { buildTooltip, versionLabel } from "../../../core/utils/build-info";
 
 const auth = useAuthStore();
+const buildLabel = versionLabel();
+const buildTitle = buildTooltip();
 const menuRef = ref<HTMLElement | null>(null);
 const open = ref(false);
 

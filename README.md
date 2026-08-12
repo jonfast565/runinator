@@ -897,6 +897,22 @@ That exposes:
 - `http://127.0.0.1:8081/docs`
 - `http://127.0.0.1:8081/openapi.json`
 
+## Versioning
+
+Runinator uses one `major.minor.build` version across the Cargo workspace, command center, VS Code
+extension, packaged backend apps, release archives, and container images. Major and minor are
+release decisions and are set in the root `Cargo.toml`; the build is the full-history Git commit
+count. Release CI runs `node scripts/set-workspace-version.mjs` after a full checkout to resolve the
+build number and synchronize the non-Cargo manifests. Container builds receive the same version as
+an OCI label, and the default Kubernetes tag is `<version>-kube-<timestamp>`.
+
+To prepare a manual major or minor bump, edit the root workspace version and run:
+
+```bash
+node scripts/set-workspace-version.mjs
+cargo metadata --no-deps --format-version 1 >/dev/null
+```
+
 ## Build Command Center
 
 `runinator-command-center` is a Tauri client. Run it against the local stack with:

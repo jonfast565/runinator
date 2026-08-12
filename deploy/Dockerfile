@@ -27,6 +27,7 @@
 
 ARG ALPINE_VERSION=3.24
 ARG RUST_VERSION=1.97.1
+ARG RUNINATOR_VERSION=0.2.367
 
 # ---- shared builder: compile every binary once ----
 FROM rust:${RUST_VERSION}-alpine${ALPINE_VERSION} AS builder
@@ -68,6 +69,10 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
 
 # ---- shared runtime base ----
 FROM alpine:${ALPINE_VERSION} AS runtime-base
+ARG RUNINATOR_VERSION
+LABEL org.opencontainers.image.title="Runinator" \
+      org.opencontainers.image.version="${RUNINATOR_VERSION}" \
+      org.opencontainers.image.vendor="Runinator"
 RUN apk add --no-cache ca-certificates \
     && addgroup -S runinator \
     && adduser -S -D -G runinator -h /home/runinator runinator

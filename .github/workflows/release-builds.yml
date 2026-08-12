@@ -26,6 +26,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -45,6 +47,10 @@ jobs:
           node-version: 22
           cache: pnpm
           cache-dependency-path: runinator-command-center/pnpm-lock.yaml
+
+      - name: Resolve workspace version
+        id: workspace-version
+        run: node scripts/set-workspace-version.mjs
 
       - name: Install Command Center dependencies
         working-directory: runinator-command-center
@@ -93,7 +99,7 @@ jobs:
         shell: pwsh
         run: |
           $distRoot = Join-Path $PWD "dist"
-          $bundleName = "Runinator-${{ matrix.asset_suffix }}"
+          $bundleName = "Runinator-$env:RUNINATOR_VERSION-${{ matrix.asset_suffix }}"
           $bundleDir = Join-Path $distRoot $bundleName
           $releaseDir = Join-Path $PWD "target/release"
 
@@ -203,8 +209,8 @@ jobs:
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Runinator-${{ matrix.asset_suffix }}
-          path: dist/Runinator-${{ matrix.asset_suffix }}.zip
+          name: Runinator-${{ steps.workspace-version.outputs.version }}-${{ matrix.asset_suffix }}
+          path: dist/Runinator-${{ steps.workspace-version.outputs.version }}-${{ matrix.asset_suffix }}.zip
 
   release:
     name: Publish Release Assets
