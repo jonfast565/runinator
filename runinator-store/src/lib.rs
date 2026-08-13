@@ -19,6 +19,7 @@ pub mod archive;
 pub mod interfaces;
 pub mod reducer_store;
 pub mod roles;
+pub mod workflow_mutex;
 
 pub use interfaces::DatabaseImpl;
 pub use reducer_store::ReducerStore;

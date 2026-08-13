@@ -18,6 +18,7 @@ pub mod stability;
 
 mod engine;
 mod loops;
+mod mutex_migration;
 mod result_consumer;
 
 // re-export the reducer under the `orchestration` path the repository layer references.

@@ -24,6 +24,7 @@ mod migration_parity;
 // the persistence contract now lives in `runinator-store`, which has no sqlx dependency. these
 // re-exports keep `runinator_database::interfaces::*` and `runinator_database::archive::*` working
 // for the callers that already use those paths.
+pub use runinator_store::workflow_mutex;
 pub use runinator_store::{archive, interfaces};
 pub mod mysql;
 mod operations;

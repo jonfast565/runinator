@@ -629,6 +629,7 @@ async fn cancel_workflow_run_command<T: DatabaseImpl>(
         Some("Workflow run canceled".into()),
     )
     .await?;
+    super::release_run_mutexes(db, workflow_run_id).await?;
     Ok(TaskResponse {
         success: true,
         message: format!("Workflow run {workflow_run_id} canceled"),

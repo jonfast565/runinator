@@ -462,17 +462,49 @@ pub fn runtime_config(config: &AgentConfig) -> Result<AgentRuntimeConfig, Sendab
 }
 
 /// kick off the agent on `rt`; returns immediately, updating `shared` as startup progresses. a no-op
-/// if the agent is already running or mid-transition.
+/// if the agent is already running or mid-transition. a previous lifecycle that failed to come up
+/// (or is parked waiting for re-enrollment) is stopped first, so Start can recover without a
+/// process restart.
 pub fn start(rt: &tokio::runtime::Handle, shared: SharedHandle, config: AgentConfig) {
     {
         let mut guard = shared.lock().expect("desktop agent state lock poisoned");
-        if guard.status.running || guard.handle.is_some() || guard.busy {
+        if should_skip_start(&guard) {
             return;
         }
         guard.busy = true;
         guard.metrics = AgentMetrics::default();
         guard.connection = ConnectionState::Registering;
         guard.degraded_notified = false;
+        guard.status.running = false;
+    }
+
+    let rt = rt.clone();
+    rt.clone().spawn(async move {
+        start_inner(rt, shared, config).await;
+    });
+}
+
+/// true when a Start click should be ignored: a transition is already in flight, or a live
+/// lifecycle is actually running. a leftover handle from a failed start (or a parked re-enrollment
+/// wait) must not count — that is what made Start a no-op after the first failure.
+fn should_skip_start(shared: &Shared) -> bool {
+    if shared.busy {
+        return true;
+    }
+    let live = shared.handle.as_ref().is_some_and(|h| !h.is_finished());
+    live && shared.status.running
+}
+
+async fn start_inner(rt: tokio::runtime::Handle, shared: SharedHandle, config: AgentConfig) {
+    let leftover = {
+        let mut guard = shared.lock().expect("desktop agent state lock poisoned");
+        guard.handle.take()
+    };
+    if let Some(mut leftover) = leftover {
+        leftover.shutdown();
+        if let Err(err) = leftover.stop(STOP_GRACE).await {
+            log_line(&shared, format!("Previous desktop agent exited: {err}"));
+        }
     }
 
     configure_provider_environment(&config);
@@ -481,26 +513,23 @@ pub fn start(rt: &tokio::runtime::Handle, shared: SharedHandle, config: AgentCon
         root: config.sandbox_root.clone(),
     });
 
-    let started = runtime_config(&config).and_then(|mut runtime_config| {
+    let started = async {
+        let mut runtime_config = runtime_config(&config)?;
         runtime_config.directive_handler = Arc::new(DesktopDirectiveHandler {
             shared: shared.clone(),
             root: PathBuf::from(&config.sandbox_root),
         });
-        rt.block_on(runinator_worker::prepare_agent_credentials(
-            &mut runtime_config,
-        ))?;
-        // `AgentRuntime::start` spawns the lifecycle, so it needs a runtime context; it does not
-        // block, so calling it from the GUI thread is fine.
-        let _guard = rt.enter();
+        runinator_worker::prepare_agent_credentials(&mut runtime_config).await?;
         AgentRuntime::start(runtime_config, observer)
-    });
+    }
+    .await;
 
     let mut guard = shared.lock().expect("desktop agent state lock poisoned");
     guard.busy = false;
     match started {
         Ok(handle) => {
             if let Some(telemetry) = handle.telemetry() {
-                spawn_telemetry_sampler(rt, shared.clone(), telemetry, handle.watch());
+                spawn_telemetry_sampler(&rt, shared.clone(), telemetry, handle.watch());
             }
             guard.handle = Some(handle);
         }
@@ -615,3 +644,7 @@ pub fn test_connection(
         }
     });
 }
+
+#[cfg(test)]
+#[path = "agent_tests.rs"]
+mod tests;

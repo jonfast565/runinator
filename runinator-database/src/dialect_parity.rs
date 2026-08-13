@@ -32,6 +32,7 @@ use runinator_models::{
         WorkflowTrigger, WorkflowTriggerKind,
     },
 };
+use runinator_store::workflow_mutex::WorkflowMutexClaim;
 use uuid::Uuid;
 
 // `DatabaseImpl` composes every role trait, so bounding on it brings all of their methods into
@@ -116,6 +117,7 @@ pub(crate) async fn assert_dialect_parity<T: DatabaseImpl>(db: &T) {
     assert_run_state_cas(db, run_id).await;
     assert_cursor_scoped_ready_nodes(db, run_id).await;
     assert_cooldown_claim(db).await;
+    assert_workflow_mutex_claim(db, &after).await;
     assert_agent_enrollment_lifecycle(db).await;
     assert_agent_directive_lifecycle(db).await;
 
@@ -126,6 +128,189 @@ pub(crate) async fn assert_dialect_parity<T: DatabaseImpl>(db: &T) {
             .await
             .unwrap()
             .is_empty()
+    );
+}
+
+async fn assert_workflow_mutex_claim<T: DatabaseImpl>(db: &T, workflow: &WorkflowDefinition) {
+    let snapshot = db
+        .fetch_workflow(workflow.id.expect("workflow id"))
+        .await
+        .unwrap()
+        .unwrap();
+    let make_contender = |node: &'static str| {
+        let snapshot = snapshot.clone();
+        async move {
+            let run = db
+                .create_workflow_run(
+                    snapshot.id.expect("workflow id"),
+                    snapshot,
+                    json!({}),
+                    json!({}),
+                    None,
+                    Default::default(),
+                )
+                .await
+                .unwrap();
+            let node_run = db
+                .create_workflow_node_run(
+                    run.id,
+                    node.into(),
+                    json!({ "name": "fifo" }),
+                    None,
+                    None,
+                )
+                .await
+                .unwrap();
+            (run, node_run)
+        }
+    };
+    let (left, right) = tokio::join!(make_contender("left"), make_contender("right"));
+    let now = Utc::now().timestamp();
+    let left_cursor = Uuid::now_v7();
+    let right_cursor = Uuid::now_v7();
+    let claim = |run_id, node_run_id, cursor_id, node_id: &str| WorkflowMutexClaim {
+        name: "parity-fifo".into(),
+        workflow_run_id: run_id,
+        workflow_node_run_id: node_run_id,
+        cursor_id,
+        node_id: node_id.into(),
+        hold_deadline_unix: Some(now - 1),
+        enqueued_at_unix: now,
+    };
+    let left_claim = claim(left.0.id, left.1.id, left_cursor, "left");
+    let right_claim = claim(right.0.id, right.1.id, right_cursor, "right");
+    let (left_result, right_result) = tokio::join!(
+        db.claim_workflow_mutex(left_claim.clone(), now),
+        db.claim_workflow_mutex(right_claim.clone(), now),
+    );
+    let left_result = left_result.unwrap();
+    let right_result = right_result.unwrap();
+    assert_ne!(
+        left_result.acquired, right_result.acquired,
+        "exactly one concurrent mutex claimant wins"
+    );
+    assert!(
+        if left_result.acquired {
+            left_result.holder_overdue
+        } else {
+            right_result.holder_overdue
+        },
+        "an already-expired legacy-style holder is preserved and marked overdue"
+    );
+    let (winner, loser) = if left_result.acquired {
+        (left_claim, right_claim)
+    } else {
+        (right_claim, left_claim)
+    };
+    let wake = db
+        .release_workflow_mutex(
+            winner.name.clone(),
+            winner.workflow_run_id,
+            winner.cursor_id,
+            now + 1,
+        )
+        .await
+        .unwrap()
+        .expect("release wakes the fifo successor");
+    assert_eq!(wake.workflow_node_run_id, loser.workflow_node_run_id);
+    assert!(
+        db.claim_workflow_mutex(loser.clone(), now + 1)
+            .await
+            .unwrap()
+            .acquired
+    );
+
+    let reentrant_node = db
+        .create_workflow_node_run(
+            loser.workflow_run_id,
+            "reentrant".into(),
+            json!({ "name": "fifo" }),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    let mut reentrant = loser.clone();
+    reentrant.workflow_node_run_id = reentrant_node.id;
+    reentrant.node_id = "reentrant".into();
+    assert!(
+        db.claim_workflow_mutex(reentrant, now + 2)
+            .await
+            .unwrap()
+            .acquired,
+        "the owning cursor is reentrant"
+    );
+
+    let sibling_node = db
+        .create_workflow_node_run(
+            loser.workflow_run_id,
+            "sibling".into(),
+            json!({ "name": "fifo" }),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    let sibling = WorkflowMutexClaim {
+        workflow_node_run_id: sibling_node.id,
+        cursor_id: Uuid::now_v7(),
+        node_id: "sibling".into(),
+        enqueued_at_unix: now + 2,
+        ..loser.clone()
+    };
+    let blocked = db
+        .claim_workflow_mutex(sibling.clone(), now + 2)
+        .await
+        .unwrap();
+    assert!(!blocked.acquired, "a sibling cursor cannot share the mutex");
+    assert!(
+        blocked.holder_overdue,
+        "expiry is reported but does not displace an active holder"
+    );
+    db.remove_workflow_mutex_waiter(sibling.workflow_node_run_id)
+        .await
+        .unwrap();
+
+    let successor_node = db
+        .create_workflow_node_run(
+            winner.workflow_run_id,
+            "successor".into(),
+            json!({ "name": "fifo" }),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    let successor = WorkflowMutexClaim {
+        workflow_run_id: winner.workflow_run_id,
+        workflow_node_run_id: successor_node.id,
+        cursor_id: Uuid::now_v7(),
+        node_id: "successor".into(),
+        enqueued_at_unix: now + 3,
+        ..loser.clone()
+    };
+    assert!(
+        !db.claim_workflow_mutex(successor.clone(), now + 2)
+            .await
+            .unwrap()
+            .acquired
+    );
+
+    db.update_workflow_run_status(
+        loser.workflow_run_id,
+        WorkflowStatus::Canceled,
+        None,
+        None,
+        Some("mutex parity cancellation".into()),
+    )
+    .await
+    .unwrap();
+    assert!(
+        db.claim_workflow_mutex(successor, now + 3)
+            .await
+            .unwrap()
+            .acquired,
+        "a terminal holder is reclaimed by the oldest waiter"
     );
 }
 

@@ -111,6 +111,11 @@ pub const BACKGROUND_LOOP_EXITED: ErrorDescriptor = ErrorDescriptor::new(
     "ws.background.loop_exited",
     "A background orchestration loop exited unexpectedly",
 );
+pub const MUTEX_MIGRATION_CONFLICT: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI178",
+    "workflow.mutex.migration_conflict",
+    "Workflow mutex migration found conflicting live ownership",
+);
 
 // notification policy emission and delivery.
 pub const NOTIFY_UNROUTABLE_CHANNEL: ErrorDescriptor = ErrorDescriptor::new(
@@ -166,6 +171,7 @@ pub const DICTIONARY: &[ErrorDescriptor] = &[
     FREEZE_WINDOW_NOT_FOUND,
     BACKFILL_INVALID_RANGE,
     BACKGROUND_LOOP_EXITED,
+    MUTEX_MIGRATION_CONFLICT,
 ];
 
 /// orchestration engine error dictionary.

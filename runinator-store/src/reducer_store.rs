@@ -27,6 +27,8 @@ use runinator_models::{
 use std::future::Future;
 use uuid::Uuid;
 
+use crate::workflow_mutex::{WorkflowMutexClaim, WorkflowMutexClaimResult, WorkflowMutexWake};
+
 /// the store operations the reducer's node handlers call.
 pub trait ReducerStore: Send + Sync + 'static {
     /// Fetch a workflow definition by its identifier.
@@ -148,6 +150,35 @@ pub trait ReducerStore: Send + Sync + 'static {
         window_seconds: i64,
         now_unix: i64,
     ) -> impl Future<Output = Result<Option<i64>, SendableError>> + Send;
+
+    /// Join a named mutex's FIFO queue and atomically acquire it when this node run is first.
+    fn claim_workflow_mutex(
+        &self,
+        claim: WorkflowMutexClaim,
+        now_unix: i64,
+    ) -> impl Future<Output = Result<WorkflowMutexClaimResult, SendableError>> + Send;
+
+    /// Release a named mutex only when the supplied cursor owns it, returning the oldest waiter.
+    fn release_workflow_mutex(
+        &self,
+        name: String,
+        workflow_run_id: Uuid,
+        cursor_id: Uuid,
+        now_unix: i64,
+    ) -> impl Future<Output = Result<Option<WorkflowMutexWake>, SendableError>> + Send;
+
+    /// Release every mutex held by a terminal/canceled run and return each oldest waiter.
+    fn release_workflow_mutexes(
+        &self,
+        workflow_run_id: Uuid,
+        now_unix: i64,
+    ) -> impl Future<Output = Result<Vec<WorkflowMutexWake>, SendableError>> + Send;
+
+    /// Remove a node run that timed out or otherwise left a mutex queue without acquiring.
+    fn remove_workflow_mutex_waiter(
+        &self,
+        workflow_node_run_id: Uuid,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
 
     /// Create a new node execution record within a workflow run. `prev_node_run_id` is the
     /// origin node run this one transitioned from (the reducer supplies it; `None` for the

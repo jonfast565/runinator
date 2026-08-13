@@ -14,7 +14,7 @@ use super::debounce::deadline_elapsed;
 use super::engine::reentry_exhausted;
 use super::event_source::event_type_matches;
 use super::handler::NodeTimingContext;
-use super::mutex::{holder_run_id, lease_is_expired, parse_mutex_params, record_is_held_by_other};
+use super::mutex::parse_mutex_params;
 use super::throttle::bucket_has_tokens;
 use super::transform::resolve_bindings;
 use super::transitions::{timed_out, timed_out_since_created, timed_out_since_created_or};
@@ -326,47 +326,6 @@ fn checkpoint_node_parses_name_from_params() {
 }
 
 #[test]
-fn mutex_record_is_held_by_other_respects_released_flag() {
-    let run_a = Uuid::now_v7();
-    let run_b = Uuid::now_v7();
-    let held =
-        serde_json::from_str::<Value>(&format!(r#"{{ "held_by_run_id": "{run_a}" }}"#)).unwrap();
-    // held by run_a, checking from run_b → held by other.
-    assert!(record_is_held_by_other(&held, run_b));
-    // held by run_a, checking from run_a itself → not held by other.
-    assert!(!record_is_held_by_other(&held, run_a));
-    let released = serde_json::from_str::<Value>(&format!(
-        r#"{{ "held_by_run_id": "{run_a}", "released_at": 1 }}"#
-    ))
-    .unwrap();
-    // released records are never considered held.
-    assert!(!record_is_held_by_other(&released, run_b));
-}
-
-#[test]
-fn mutex_lease_expiry_reclaims_wedged_holders() {
-    let now = chrono::Utc::now().timestamp();
-    // an explicit deadline in the past is expired regardless of the holder run's status.
-    let expired_deadline =
-        serde_json::from_str::<Value>(&format!(r#"{{ "lease_deadline": {} }}"#, now - 1)).unwrap();
-    assert!(lease_is_expired(&expired_deadline));
-    // a future deadline is still live.
-    let live_deadline =
-        serde_json::from_str::<Value>(&format!(r#"{{ "lease_deadline": {} }}"#, now + 600))
-            .unwrap();
-    assert!(!lease_is_expired(&live_deadline));
-    // a hold without an explicit deadline never expires by time: the acquire-wait timeout no longer
-    // caps the held lease, so a long critical section runs to completion (reclaimed only when the
-    // holder run terminates). even a very old acquisition stays live.
-    let old_unbounded =
-        serde_json::from_str::<Value>(&format!(r#"{{ "acquired_at": {} }}"#, now - 7200)).unwrap();
-    assert!(!lease_is_expired(&old_unbounded));
-    // a record with no deadline is never treated as expired (nothing to bound it).
-    let empty = serde_json::from_str::<Value>("{}").unwrap();
-    assert!(!lease_is_expired(&empty));
-}
-
-#[test]
 fn mutex_params_parse_release_and_hold() {
     let node: WorkflowNode = serde_json::from_value(serde_json::json!({
         "id": "sec",
@@ -400,19 +359,6 @@ fn mutex_params_parse_release_and_hold() {
     assert_eq!(bare.name, "lock1");
     assert!(!bare.release);
     assert_eq!(bare.hold_timeout, None);
-}
-
-#[test]
-fn mutex_holder_run_id_parses_only_valid_uuids() {
-    let run = Uuid::now_v7();
-    let held =
-        serde_json::from_str::<Value>(&format!(r#"{{ "held_by_run_id": "{run}" }}"#)).unwrap();
-    assert_eq!(holder_run_id(&held), Some(run));
-    // a record with no holder, or a malformed id, resolves to no holder.
-    let empty = serde_json::from_str::<Value>("{}").unwrap();
-    assert_eq!(holder_run_id(&empty), None);
-    let malformed = serde_json::from_str::<Value>(r#"{ "held_by_run_id": "not-a-uuid" }"#).unwrap();
-    assert_eq!(holder_run_id(&malformed), None);
 }
 
 #[test]

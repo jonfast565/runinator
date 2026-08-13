@@ -367,6 +367,7 @@ pub async fn cancel_pipeline_run<T: DatabaseImpl>(
                 Some("Pipeline run canceled".into()),
             )
             .await?;
+            super::release_run_mutexes(db, member.id).await?;
         }
     }
     db.update_pipeline_run_status(

@@ -399,8 +399,9 @@ checkpoint_stmt = { "checkpoint" ~ string }
 
 // a named cross-run exclusive lock. `mutex "deploy" timeout 300s` acquires and holds until the run
 // ends. `mutex "deploy" { ... }` brackets a critical section, releasing at the block's end. `hold`
-// caps the held lease independently of the acquire-wait `timeout`. `mutex release "deploy"` is the
-// bare release leaf a block desugars to. parks until the lease is free.
+// marks the maximum expected hold independently of the acquire-wait `timeout`; an overdue active
+// holder remains exclusive and is never displaced. `mutex release "deploy"` is the bare release
+// leaf a block desugars to. parks until the lease is free.
 mutex_hold    = { "hold" ~ duration }
 mutex_release = { "release" }
 mutex_stmt    = { "mutex" ~ (mutex_release ~ string | string ~ poll_every? ~ node_timeout? ~ mutex_hold? ~ block?) }

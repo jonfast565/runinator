@@ -33,7 +33,18 @@ use runinator_models::workflows::{
     WorkflowRun, WorkflowRunArtifact, WorkflowStatus, WorkflowTrigger,
 };
 use runinator_store::ReducerStore;
+use runinator_store::workflow_mutex::{
+    WorkflowMutexClaim, WorkflowMutexClaimResult, WorkflowMutexWake,
+};
 use uuid::Uuid;
+
+#[derive(Clone)]
+struct FakeMutexHolder {
+    workflow_run_id: Uuid,
+    cursor_id: Uuid,
+    hold_deadline_unix: Option<i64>,
+    overdue: bool,
+}
 
 /// everything the fake remembers between calls.
 #[derive(Default)]
@@ -46,6 +57,8 @@ struct State {
     audit: Vec<Value>,
     /// named cooldown windows: `name -> last_run_at`.
     cooldowns: HashMap<String, i64>,
+    mutex_holders: HashMap<String, FakeMutexHolder>,
+    mutex_waiters: HashMap<Uuid, WorkflowMutexClaim>,
     /// keyed by record type, matching `automation_records` rows.
     automation: HashMap<String, Vec<Value>>,
 }
@@ -612,6 +625,156 @@ impl ReducerStore for FakeStore {
         }
     }
 
+    async fn claim_workflow_mutex(
+        &self,
+        claim: WorkflowMutexClaim,
+        now_unix: i64,
+    ) -> Result<WorkflowMutexClaimResult, SendableError> {
+        let mut guard = self.state.lock().expect("state");
+        guard
+            .mutex_waiters
+            .insert(claim.workflow_node_run_id, claim.clone());
+        let terminal = guard
+            .mutex_holders
+            .get(&claim.name)
+            .and_then(|holder| guard.runs.get(&holder.workflow_run_id))
+            .is_none_or(|run| run.status.is_terminal());
+        if terminal {
+            guard.mutex_holders.remove(&claim.name);
+        }
+        if guard.mutex_holders.contains_key(&claim.name) {
+            let (same_owner, holder_overdue) = {
+                let holder = guard.mutex_holders.get_mut(&claim.name).expect("holder");
+                let same_owner = holder.workflow_run_id == claim.workflow_run_id
+                    && holder.cursor_id == claim.cursor_id;
+                if holder
+                    .hold_deadline_unix
+                    .is_some_and(|deadline| deadline < now_unix)
+                {
+                    holder.overdue = true;
+                }
+                (same_owner, holder.overdue)
+            };
+            if same_owner {
+                guard.mutex_waiters.remove(&claim.workflow_node_run_id);
+                return Ok(WorkflowMutexClaimResult {
+                    acquired: true,
+                    holder_overdue,
+                    wake: None,
+                });
+            }
+            return Ok(WorkflowMutexClaimResult {
+                acquired: false,
+                holder_overdue,
+                wake: None,
+            });
+        }
+
+        let active_runs = guard
+            .runs
+            .iter()
+            .filter(|(_, run)| !run.status.is_terminal())
+            .map(|(id, _)| *id)
+            .collect::<std::collections::HashSet<_>>();
+        guard
+            .mutex_waiters
+            .retain(|_, waiter| active_runs.contains(&waiter.workflow_run_id));
+        let oldest = guard
+            .mutex_waiters
+            .values()
+            .filter(|waiter| waiter.name == claim.name)
+            .min_by_key(|waiter| (waiter.enqueued_at_unix, waiter.workflow_node_run_id))
+            .cloned();
+        let Some(oldest) = oldest else {
+            return Ok(WorkflowMutexClaimResult {
+                acquired: false,
+                holder_overdue: false,
+                wake: None,
+            });
+        };
+        if oldest.workflow_node_run_id != claim.workflow_node_run_id {
+            return Ok(WorkflowMutexClaimResult {
+                acquired: false,
+                holder_overdue: false,
+                wake: Some(mutex_wake(&oldest)),
+            });
+        }
+        guard.mutex_holders.insert(
+            claim.name.clone(),
+            FakeMutexHolder {
+                workflow_run_id: claim.workflow_run_id,
+                cursor_id: claim.cursor_id,
+                hold_deadline_unix: claim.hold_deadline_unix,
+                overdue: claim
+                    .hold_deadline_unix
+                    .is_some_and(|deadline| deadline < now_unix),
+            },
+        );
+        guard.mutex_waiters.remove(&claim.workflow_node_run_id);
+        Ok(WorkflowMutexClaimResult {
+            acquired: true,
+            holder_overdue: claim
+                .hold_deadline_unix
+                .is_some_and(|deadline| deadline < now_unix),
+            wake: None,
+        })
+    }
+
+    async fn release_workflow_mutex(
+        &self,
+        name: String,
+        workflow_run_id: Uuid,
+        cursor_id: Uuid,
+        _now_unix: i64,
+    ) -> Result<Option<WorkflowMutexWake>, SendableError> {
+        let mut guard = self.state.lock().expect("state");
+        let owns = guard.mutex_holders.get(&name).is_some_and(|holder| {
+            holder.workflow_run_id == workflow_run_id && holder.cursor_id == cursor_id
+        });
+        if !owns {
+            return Ok(None);
+        }
+        guard.mutex_holders.remove(&name);
+        Ok(oldest_fake_mutex_waiter(&mut guard, &name).map(|waiter| mutex_wake(&waiter)))
+    }
+
+    async fn release_workflow_mutexes(
+        &self,
+        workflow_run_id: Uuid,
+        _now_unix: i64,
+    ) -> Result<Vec<WorkflowMutexWake>, SendableError> {
+        let mut guard = self.state.lock().expect("state");
+        guard
+            .mutex_waiters
+            .retain(|_, waiter| waiter.workflow_run_id != workflow_run_id);
+        let names = guard
+            .mutex_holders
+            .iter()
+            .filter(|(_, holder)| holder.workflow_run_id == workflow_run_id)
+            .map(|(name, _)| name.clone())
+            .collect::<Vec<_>>();
+        let mut wakes = Vec::new();
+        for name in names {
+            guard.mutex_holders.remove(&name);
+            if let Some(waiter) = oldest_fake_mutex_waiter(&mut guard, &name) {
+                wakes.push(mutex_wake(&waiter));
+            }
+        }
+        Ok(wakes)
+    }
+
+    async fn remove_workflow_mutex_waiter(
+        &self,
+        workflow_node_run_id: Uuid,
+    ) -> Result<(), SendableError> {
+        self.state
+            .lock()
+            .expect("state")
+            .mutex_waiters
+            .remove(&workflow_node_run_id);
+        Ok(())
+    }
+
     /// the window a gate currently holds, for assertions.
     async fn create_automation_record(
         &self,
@@ -822,4 +985,31 @@ impl ReducerStore for FakeStore {
     ) -> Result<Option<SettingRecord>, SendableError> {
         Ok(None)
     }
+}
+
+fn mutex_wake(waiter: &WorkflowMutexClaim) -> WorkflowMutexWake {
+    WorkflowMutexWake {
+        workflow_run_id: waiter.workflow_run_id,
+        workflow_node_run_id: waiter.workflow_node_run_id,
+        cursor_id: waiter.cursor_id,
+        node_id: waiter.node_id.clone(),
+    }
+}
+
+fn oldest_fake_mutex_waiter(state: &mut State, name: &str) -> Option<WorkflowMutexClaim> {
+    let active_runs = state
+        .runs
+        .iter()
+        .filter(|(_, run)| !run.status.is_terminal())
+        .map(|(id, _)| *id)
+        .collect::<std::collections::HashSet<_>>();
+    state
+        .mutex_waiters
+        .retain(|_, waiter| active_runs.contains(&waiter.workflow_run_id));
+    state
+        .mutex_waiters
+        .values()
+        .filter(|waiter| waiter.name == name)
+        .min_by_key(|waiter| (waiter.enqueued_at_unix, waiter.workflow_node_run_id))
+        .cloned()
 }

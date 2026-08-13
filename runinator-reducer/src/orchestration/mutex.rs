@@ -3,18 +3,16 @@ use super::transitions::{
     arm_node_timeout, time_out, timed_out_since_created, transition_from_node,
 };
 use super::*;
+use runinator_store::workflow_mutex::{WorkflowMutexClaim, WorkflowMutexWake};
 
-const RECORD_TYPE: &str = "workflow_mutex";
 const DEFAULT_POLL_INTERVAL: i64 = 5;
 
 pub(super) struct MutexParams {
     pub(super) name: String,
     pub(super) poll_interval: i64,
-    // true when this node releases a held lock (an end-of-section release node) instead of acquiring.
+    // true when this node releases a held lock instead of acquiring one.
     pub(super) release: bool,
-    // optional hold lease lifetime; when set, an acquired lock auto-expires this long after
-    // acquisition regardless of the holder run's state. decoupled from the node timeout, which bounds
-    // only the wait-to-acquire.
+    // maximum expected section duration. expiry is diagnostic while the holder remains active.
     pub(super) hold_timeout: Option<i64>,
 }
 
@@ -38,39 +36,6 @@ pub(super) fn parse_mutex_params(node: &WorkflowNode) -> MutexParams {
     }
 }
 
-/// the run currently holding a mutex record, if the record names one.
-pub(super) fn holder_run_id(record: &Value) -> Option<Uuid> {
-    record
-        .get("held_by_run_id")
-        .and_then(Value::as_str)
-        .and_then(|s| s.parse::<Uuid>().ok())
-}
-
-/// true when a mutex automation record is currently held by a run other than `skip_run_id`.
-/// a record is considered released when it carries a `released_at` field.
-pub(super) fn record_is_held_by_other(record: &Value, skip_run_id: Uuid) -> bool {
-    if record.get("released_at").is_some() {
-        return false;
-    }
-    holder_run_id(record).is_some_and(|id| id != skip_run_id)
-}
-
-/// true when a lease carries an explicit `hold` deadline that has passed, making it reclaimable
-/// regardless of the holder run's status. only a node that declares an explicit `hold` timeout
-/// stamps a `lease_deadline`; a lock held with no `hold` never expires this way and is instead
-/// released when its holder run reaches a terminal state (see `holder_run_is_active`) or when an
-/// end-of-section release node runs. this lets a legitimate critical section run to completion
-/// however long it takes, while a bounded `hold` still self-heals a wedged holder.
-pub(super) fn lease_is_expired(record: &Value) -> bool {
-    let Some(deadline) = record.get("lease_deadline").and_then(Value::as_i64) else {
-        return false;
-    };
-    Utc::now().timestamp() > deadline
-}
-
-/// mutex-lease operations bound to one store handle. `db` is the only field genuinely invariant
-/// across every method below; the node/run a call concerns still varies per call and stays a
-/// method argument rather than living on `self`.
 pub(super) struct MutexOps<'a, T: ReducerStore> {
     db: &'a T,
 }
@@ -80,169 +45,31 @@ impl<'a, T: ReducerStore> MutexOps<'a, T> {
         Self { db }
     }
 
-    /// true when the run holding a lease is still active. a lease whose holder run has reached a
-    /// terminal state (or no longer exists) is stale: the run ended without releasing — e.g. via
-    /// cancellation, a crash, or a code path that bypassed the terminal-release hook — so its lock
-    /// is reclaimable. this keeps a named mutex from deadlocking waiters behind a finished run.
-    async fn holder_run_is_active(&self, record: &Value) -> Result<bool, SendableError> {
-        let Some(run_id) = holder_run_id(record) else {
-            return Ok(false);
-        };
-        match self.db.fetch_workflow_run(run_id).await? {
-            Some(run) => Ok(!run.status.is_terminal()),
-            None => Ok(false),
-        }
-    }
-
-    async fn mutex_is_locked(&self, name: &str, skip_run_id: Uuid) -> Result<bool, SendableError> {
-        let records = self
-            .db
-            .fetch_automation_records(RECORD_TYPE.into(), None, None)
-            .await?;
-        for record in &records {
-            if record.get("name").and_then(Value::as_str) != Some(name) {
-                continue;
-            }
-            if !record_is_held_by_other(record, skip_run_id) {
-                continue;
-            }
-            // an expired lease is reclaimable even if the holder run is still non-terminal: this is
-            // what keeps a wedged holder from deadlocking the lock and timing out every waiter
-            // behind it.
-            if lease_is_expired(record) {
-                continue;
-            }
-            if !self.holder_run_is_active(record).await? {
-                continue;
-            }
-            return Ok(true);
-        }
-        Ok(false)
-    }
-
-    /// release every mutex lease held by `run_id` by stamping `released_at`. called when a run
-    /// reaches a terminal state so a shared named lock passes to the next waiter. idempotent:
-    /// records already released or held by a different run are left untouched.
+    /// release every cursor-owned mutex for a terminal run and durably wake each fifo successor.
     pub(super) async fn release_run_mutexes(&self, run_id: Uuid) -> Result<(), SendableError> {
-        self.release_run_leases(run_id, None).await
-    }
-
-    /// release only the lease(s) named `name` held by `run_id`. drives an end-of-section release
-    /// node so the critical section ends before the run terminates. idempotent and a no-op when
-    /// the run holds no such lock.
-    pub(super) async fn release_run_mutex_named(
-        &self,
-        run_id: Uuid,
-        name: &str,
-    ) -> Result<(), SendableError> {
-        self.release_run_leases(run_id, Some(name)).await
-    }
-
-    /// stamp `released_at` on every unreleased lease held by `run_id`, optionally restricted to a
-    /// single `name`. shared by the terminal-release hook and the end-of-section release node.
-    async fn release_run_leases(
-        &self,
-        run_id: Uuid,
-        name: Option<&str>,
-    ) -> Result<(), SendableError> {
-        let records = self
+        let wakes = self
             .db
-            .fetch_automation_records(RECORD_TYPE.into(), None, None)
+            .release_workflow_mutexes(run_id, Utc::now().timestamp())
             .await?;
-        for record in records {
-            if holder_run_id(&record) != Some(run_id) || record.get("released_at").is_some() {
-                continue;
-            }
-            if let Some(name) = name
-                && record.get("name").and_then(Value::as_str) != Some(name)
-            {
-                continue;
-            }
-            let Some(id) = record
-                .get("id")
-                .and_then(Value::as_str)
-                .and_then(|s| s.parse::<Uuid>().ok())
-            else {
-                continue;
-            };
-            let mut released = record.clone();
-            if let Some(object) = released.as_object_mut() {
-                object.insert(
-                    "released_at".into(),
-                    runinator_models::json!(Utc::now().timestamp()),
-                );
-            }
-            self.db
-                .update_automation_record(RECORD_TYPE.into(), id, released)
-                .await?;
+        for wake in wakes {
+            enqueue_mutex_wake(self.db, wake).await?;
         }
         Ok(())
     }
 
-    /// true when `run_id` already holds a live, unexpired lease for `name`. re-reaching an acquire
-    /// node in a loop reinforces this lock rather than recording a second lease. an expired hold
-    /// does not count, so a run whose bounded hold lapsed re-contends normally instead of assuming
-    /// it still holds.
-    async fn run_holds_mutex(&self, name: &str, run_id: Uuid) -> Result<bool, SendableError> {
-        let records = self
-            .db
-            .fetch_automation_records(RECORD_TYPE.into(), None, None)
-            .await?;
-        Ok(records.iter().any(|record| {
-            record.get("name").and_then(Value::as_str) == Some(name)
-                && record.get("released_at").is_none()
-                && holder_run_id(record) == Some(run_id)
-                && !lease_is_expired(record)
-        }))
-    }
-
-    // record a lease for `name` held by `run_id`. mutual exclusion relies on the ws ingress
-    // consumer driving the reducer one node at a time per replica, so the check-then-acquire above
-    // is atomic within a replica; a multi-replica ws deployment would need a db-level
-    // compare-and-swap to make it airtight across replicas.
-    async fn acquire_mutex(
+    async fn release_named(
         &self,
-        name: &str,
         run_id: Uuid,
-        ttl_seconds: Option<i64>,
-    ) -> Result<Option<Uuid>, SendableError> {
-        let acquired_at = Utc::now().timestamp();
-        let mut record = runinator_models::json!({
-            "name": name,
-            "held_by_run_id": run_id,
-            "acquired_at": acquired_at,
-        });
-        // stamp an absolute expiry so a holder that later wedges in a non-terminal state cannot
-        // hold the lock past this deadline; waiters reclaim it once it lapses.
-        if let (Some(ttl), Some(object)) = (ttl_seconds, record.as_object_mut()) {
-            object.insert(
-                "lease_deadline".into(),
-                runinator_models::json!(acquired_at + ttl),
-            );
-        }
-        let inserted = self
-            .db
-            .create_automation_record(RECORD_TYPE.into(), record)
-            .await?;
-        Ok(inserted
-            .get("id")
-            .and_then(Value::as_str)
-            .and_then(|s| s.parse::<Uuid>().ok()))
-    }
-
-    /// acquire `name` for `run_id`, or reinforce an existing hold. re-reaching an acquire node in a
-    /// loop must not record a second lease for a lock the run already holds; it simply keeps the
-    /// current one.
-    async fn acquire_or_reinforce(
-        &self,
+        cursor_id: Uuid,
         name: &str,
-        run_id: Uuid,
-        hold_timeout: Option<i64>,
     ) -> Result<(), SendableError> {
-        if self.run_holds_mutex(name, run_id).await? {
-            return Ok(());
+        if let Some(wake) = self
+            .db
+            .release_workflow_mutex(name.to_string(), run_id, cursor_id, Utc::now().timestamp())
+            .await?
+        {
+            enqueue_mutex_wake(self.db, wake).await?;
         }
-        self.acquire_mutex(name, run_id, hold_timeout).await?;
         Ok(())
     }
 
@@ -251,31 +78,63 @@ impl<'a, T: ReducerStore> MutexOps<'a, T> {
         ctx: &super::handler::NodeHandlerContext<'_, T>,
         interval: i64,
     ) -> Result<(), SendableError> {
-        let poll_at = Utc::now() + chrono::Duration::seconds(interval);
+        let poll_at = Utc::now() + chrono::Duration::seconds(interval.max(1));
         let event = NewOrchestrationEvent::new(
             ctx.workflow_run.id,
             Some(ctx.node.id.clone()),
             "mutex_poll",
             runinator_models::json!({ "node_id": ctx.node.id }),
-        );
+        )
+        .for_cursor(ctx.cursor.id);
         self.db
             .enqueue_ready_node(event, ctx.node.id.clone(), poll_at)
             .await?;
         Ok(())
     }
 
-    /// process a mutex node. an acquire node tries to take a named distributed lease, parking and
-    /// polling until it is free or the wait timeout elapses; a release node (`release: true`) ends
-    /// the section by releasing the run's hold on the named lease and completing inline.
+    async fn claim(
+        &self,
+        ctx: &super::handler::NodeHandlerContext<'_, T>,
+        node_run: &WorkflowNodeRun,
+        params: &MutexParams,
+    ) -> Result<bool, SendableError> {
+        let now = Utc::now().timestamp();
+        let result = self
+            .db
+            .claim_workflow_mutex(
+                WorkflowMutexClaim {
+                    name: params.name.clone(),
+                    workflow_run_id: ctx.workflow_run.id,
+                    workflow_node_run_id: node_run.id,
+                    cursor_id: ctx.cursor.id,
+                    node_id: ctx.node.id.clone(),
+                    hold_deadline_unix: params
+                        .hold_timeout
+                        .map(|timeout| now.saturating_add(timeout.max(0))),
+                    enqueued_at_unix: node_run.created_at.timestamp(),
+                },
+                now,
+            )
+            .await?;
+        if let Some(wake) = result.wake {
+            enqueue_mutex_wake(self.db, wake).await?;
+        }
+        if result.holder_overdue && !result.acquired {
+            tracing::warn!(
+                mutex = %params.name,
+                waiting_run_id = %ctx.workflow_run.id,
+                "workflow mutex holder exceeded hold timeout but remains active"
+            );
+        }
+        Ok(result.acquired)
+    }
+
     pub(super) async fn reduce_node(
         &self,
         ctx: &super::handler::NodeHandlerContext<'_, T>,
     ) -> Result<ReadyNodeDisposition, SendableError> {
         let params = parse_mutex_params(ctx.node);
 
-        // an end-of-section release node: drop this run's hold on the named lock and complete. no
-        // acquire, no park. a no-op when the run holds no such lock (idempotent when re-reached in
-        // a loop).
         if params.release {
             let node_run = self
                 .db
@@ -287,18 +146,20 @@ impl<'a, T: ReducerStore> MutexOps<'a, T> {
                     Some(ctx.cursor),
                 )
                 .await?;
-            self.release_run_mutex_named(ctx.workflow_run.id, &params.name)
+            self.release_named(ctx.workflow_run.id, ctx.cursor.id, &params.name)
                 .await?;
-            let output = MutexOutput {
-                name: params.name,
-                acquired: false,
-                released: true,
-            };
             transition_from_node(
                 ctx,
                 &node_run,
                 WorkflowStatus::Succeeded,
-                Some(output.to_wire_value()?),
+                Some(
+                    MutexOutput {
+                        name: params.name,
+                        acquired: false,
+                        released: true,
+                    }
+                    .to_wire_value()?,
+                ),
                 Some("mutex_released".into()),
             )
             .await?;
@@ -308,112 +169,105 @@ impl<'a, T: ReducerStore> MutexOps<'a, T> {
         let latest = ctx
             .latest
             .filter(|run| !is_reentry_stale(run, ctx.node_runs, ctx.cursor));
-
-        if let Some(node_run) = latest.filter(|run| run.status == WorkflowStatus::Waiting) {
-            if timed_out_since_created(ctx.timing(), node_run) {
-                time_out(ctx, node_run, "Mutex timed out").await?;
-                return Ok(ReadyNodeDisposition::Complete);
-            }
-            if self
-                .mutex_is_locked(&params.name, ctx.workflow_run.id)
-                .await?
-            {
-                self.enqueue_mutex_poll(ctx, params.poll_interval).await?;
-                return Ok(ReadyNodeDisposition::KeepClaim);
-            }
-            // lock is free; record the acquisition and succeed.
-            self.acquire_or_reinforce(&params.name, ctx.workflow_run.id, params.hold_timeout)
-                .await?;
-            let output = MutexOutput {
-                name: params.name,
-                acquired: true,
-                released: false,
-            };
-            transition_from_node(
-                ctx,
-                node_run,
-                WorkflowStatus::Succeeded,
-                Some(output.to_wire_value()?),
-                Some("mutex_acquired".into()),
-            )
-            .await?;
+        if let Some(node_run) = latest.filter(|run| run.status == WorkflowStatus::Waiting)
+            && timed_out_since_created(ctx.timing(), node_run)
+        {
+            self.db.remove_workflow_mutex_waiter(node_run.id).await?;
+            time_out(ctx, node_run, "Mutex timed out").await?;
             return Ok(ReadyNodeDisposition::Complete);
         }
 
-        // first visit.
-        if !self
-            .mutex_is_locked(&params.name, ctx.workflow_run.id)
-            .await?
-        {
-            let node_run = self
-                .db
-                .create_workflow_node_run(
-                    ctx.workflow_run.id,
-                    ctx.node.id.clone(),
-                    ctx.node.parameters.clone().into(),
-                    super::context::most_recently_finished_node_run(ctx.node_runs),
-                    Some(ctx.cursor),
-                )
-                .await?;
-            self.acquire_or_reinforce(&params.name, ctx.workflow_run.id, params.hold_timeout)
-                .await?;
-            let output = MutexOutput {
-                name: params.name,
-                acquired: true,
-                released: false,
-            };
+        let node_run = match latest {
+            Some(node_run) => node_run.clone(),
+            None => {
+                self.db
+                    .create_workflow_node_run(
+                        ctx.workflow_run.id,
+                        ctx.node.id.clone(),
+                        ctx.node.parameters.clone().into(),
+                        super::context::most_recently_finished_node_run(ctx.node_runs),
+                        Some(ctx.cursor),
+                    )
+                    .await?
+            }
+        };
+
+        if self.claim(ctx, &node_run, &params).await? {
             transition_from_node(
                 ctx,
                 &node_run,
                 WorkflowStatus::Succeeded,
-                Some(output.to_wire_value()?),
+                Some(
+                    MutexOutput {
+                        name: params.name,
+                        acquired: true,
+                        released: false,
+                    }
+                    .to_wire_value()?,
+                ),
                 Some("mutex_acquired".into()),
             )
             .await?;
             return Ok(ReadyNodeDisposition::Complete);
         }
 
-        // park and poll.
-        let node_run = self
-            .db
-            .create_workflow_node_run(
-                ctx.workflow_run.id,
-                ctx.node.id.clone(),
-                ctx.node.parameters.clone().into(),
-                super::context::most_recently_finished_node_run(ctx.node_runs),
-                Some(ctx.cursor),
-            )
-            .await?;
-        let state = MutexState {
-            name: params.name.clone(),
-            poll_interval: params.poll_interval,
-            deadline_unix: ctx.node.timeout_seconds.map(|t| Utc::now().timestamp() + t),
-        };
-        self.db
-            .update_workflow_node_run(
-                node_run.id,
-                WorkflowStatus::Waiting,
-                Some(node_run.attempt + 1),
-                None,
-                None,
-                Some(state.to_wire_value()?),
-                Some("mutex_waiting".into()),
-                None,
-            )
-            .await?;
-        self.db
-            .update_workflow_run_status(
-                ctx.workflow_run.id,
-                WorkflowStatus::Waiting,
-                Some(ctx.node.id.clone()),
-                None,
-                None,
-            )
-            .await?;
+        if node_run.status != WorkflowStatus::Waiting {
+            self.db
+                .update_workflow_node_run(
+                    node_run.id,
+                    WorkflowStatus::Waiting,
+                    Some(node_run.attempt + 1),
+                    None,
+                    None,
+                    Some(
+                        MutexState {
+                            name: params.name,
+                            poll_interval: params.poll_interval,
+                            deadline_unix: ctx
+                                .node
+                                .timeout_seconds
+                                .map(|timeout| Utc::now().timestamp() + timeout),
+                        }
+                        .to_wire_value()?,
+                    ),
+                    Some("mutex_waiting".into()),
+                    None,
+                )
+                .await?;
+            self.db
+                .update_workflow_run_status(
+                    ctx.workflow_run.id,
+                    WorkflowStatus::Waiting,
+                    Some(ctx.node.id.clone()),
+                    None,
+                    None,
+                )
+                .await?;
+            arm_node_timeout(ctx).await?;
+        }
         self.enqueue_mutex_poll(ctx, params.poll_interval).await?;
-        arm_node_timeout(ctx).await?;
         Ok(ReadyNodeDisposition::Complete)
     }
+}
+
+pub(super) async fn enqueue_mutex_wake<T: ReducerStore>(
+    db: &T,
+    wake: WorkflowMutexWake,
+) -> Result<(), SendableError> {
+    let mut event = NewOrchestrationEvent::new(
+        wake.workflow_run_id,
+        Some(wake.node_id.clone()),
+        "mutex_released",
+        runinator_models::json!({
+            "node_id": wake.node_id,
+            "workflow_node_run_id": wake.workflow_node_run_id,
+        }),
+    )
+    .for_cursor(wake.cursor_id);
+    event.workflow_node_run_id = Some(wake.workflow_node_run_id);
+    db.enqueue_ready_node(event, wake.node_id, Utc::now())
+        .await?;
+    Ok(())
 }
 
 pub(super) struct MutexHandler;

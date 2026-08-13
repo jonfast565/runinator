@@ -1,6 +1,6 @@
 use super::context::{is_reentry_stale, merge_parameters, runtime_context};
 use super::transitions::{
-    arm_node_timeout, arm_node_timeout_or, retry_or_transition, time_out, timed_out,
+    arm_node_timeout, arm_node_timeout_or, retry_or_transition, settle_node, time_out, timed_out,
     timed_out_since_created_or,
 };
 use super::*;
@@ -197,7 +197,21 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for ActionHandler {
                     reason = %message,
                     "action node timed out waiting for a compatible worker"
                 );
-                return super::handler::complete(time_out(ctx, node_run, &message).await);
+                // no action attempt was dispatched, so the execution retry policy has nothing to
+                // retry. treating this park deadline as retryable leaves `attempt == 0` forever and
+                // can re-arm "attempt 1 of 1" indefinitely while holding a workflow mutex.
+                return super::handler::complete(
+                    settle_node(
+                        ctx,
+                        node_run,
+                        WorkflowStatus::TimedOut,
+                        None,
+                        Some(message),
+                        false,
+                    )
+                    .await
+                    .map(|_| ()),
+                );
             }
             if node_run.status.is_terminal() {
                 retry_or_transition(

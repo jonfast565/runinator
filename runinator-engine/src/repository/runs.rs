@@ -5,6 +5,8 @@ use runinator_comm::WsIngressCommand;
 use runinator_models::interrupt::{InterruptSource, PendingInterrupt};
 use uuid::Uuid;
 
+use runinator_database::workflow_mutex::WorkflowMutexWake;
+
 pub async fn create_workflow_run<T: DatabaseImpl>(
     db: &T,
     workflow_id: Uuid,
@@ -129,6 +131,40 @@ pub async fn drive_ready_node<T: DatabaseImpl>(
     Ok(Some(workflow_run_id))
 }
 
+/// release every mutex owned by a run settled outside the reducer and wake each fifo successor.
+pub async fn release_run_mutexes<T: DatabaseImpl>(
+    db: &T,
+    workflow_run_id: Uuid,
+) -> Result<(), SendableError> {
+    let wakes = db
+        .release_workflow_mutexes(workflow_run_id, Utc::now().timestamp())
+        .await?;
+    for wake in wakes {
+        enqueue_mutex_wake(db, wake).await?;
+    }
+    Ok(())
+}
+
+async fn enqueue_mutex_wake<T: DatabaseImpl>(
+    db: &T,
+    wake: WorkflowMutexWake,
+) -> Result<(), SendableError> {
+    let mut event = NewOrchestrationEvent::new(
+        wake.workflow_run_id,
+        Some(wake.node_id.clone()),
+        "mutex_released",
+        runinator_models::json!({
+            "node_id": wake.node_id,
+            "workflow_node_run_id": wake.workflow_node_run_id,
+        }),
+    )
+    .for_cursor(wake.cursor_id);
+    event.workflow_node_run_id = Some(wake.workflow_node_run_id);
+    db.enqueue_ready_node(event, wake.node_id, Utc::now())
+        .await?;
+    Ok(())
+}
+
 /// settle a ready node whose reducer hard-errored: mark the run failed and complete the row so the
 /// drive loop does not re-claim and re-run it every lease period.
 async fn fail_driven_ready_node<T: DatabaseImpl>(
@@ -156,6 +192,7 @@ async fn fail_driven_ready_node<T: DatabaseImpl>(
         )),
     )
     .await?;
+    release_run_mutexes(db, ready_node.workflow_run_id).await?;
     db.complete_ready_node(ready_node.id, driver_id).await?;
     Ok(())
 }
@@ -309,6 +346,9 @@ pub async fn update_workflow_run_status<T: DatabaseImpl>(
 ) -> Result<TaskResponse, SendableError> {
     db.update_workflow_run_status(workflow_run_id, status, active_node_id, state, message)
         .await?;
+    if status.is_terminal() {
+        release_run_mutexes(db, workflow_run_id).await?;
+    }
     Ok(TaskResponse {
         success: true,
         message: "Workflow run updated".into(),

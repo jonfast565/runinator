@@ -230,6 +230,9 @@ pub async fn run_trigger_loop<T: DatabaseImpl>(
                 // a `cancel_previous` policy already settled the superseded runs durably; the
                 // workers holding their in-flight actions still have to be told.
                 for run_id in &batch.canceled_run_ids {
+                    if let Err(err) = repository::release_run_mutexes(db.as_ref(), *run_id).await {
+                        error!(run_id = %run_id, "failed to release canceled run mutexes: {err}");
+                    }
                     repository::publish_run_cancel_commands(db.as_ref(), broker.as_ref(), *run_id)
                         .await;
                     let org_id = repository::org_id_for_workflow_run(db.as_ref(), *run_id).await;

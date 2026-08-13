@@ -671,6 +671,341 @@ where
         Ok(Some((last_run_at + window_seconds - now_unix).max(0)))
     }
 
+    async fn claim_workflow_mutex(
+        &self,
+        claim: WorkflowMutexClaim,
+        now_unix: i64,
+    ) -> Result<WorkflowMutexClaimResult, SendableError> {
+        let mut tx = self.pool().begin().await?;
+        sqlx::query(&self.render(&self.dialect().insert_ignore(
+            "workflow_mutexes",
+            "name, updated_at",
+            "?, ?",
+            "name",
+            None,
+        )))
+        .bind(claim.name.as_str())
+        .bind(now_unix)
+        .execute(&mut *tx)
+        .await?;
+
+        // even an unchanged update takes the per-name database row lock. every decision below is
+        // made while holding it, so two engine replicas cannot both observe and claim a free mutex.
+        sqlx::query(
+            &self.render("UPDATE workflow_mutexes SET updated_at = updated_at WHERE name = ?"),
+        )
+        .bind(claim.name.as_str())
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(&self.render(&self.dialect().insert_ignore(
+            "workflow_mutex_waiters",
+            "workflow_node_run_id, name, workflow_run_id, cursor_id, node_id, enqueued_at, created_at, updated_at",
+            "?, ?, ?, ?, ?, ?, ?, ?",
+            "workflow_node_run_id",
+            None,
+        )))
+        .bind(claim.workflow_node_run_id)
+        .bind(claim.name.as_str())
+        .bind(claim.workflow_run_id)
+        .bind(claim.cursor_id)
+        .bind(claim.node_id.as_str())
+        .bind(claim.enqueued_at_unix)
+        .bind(now_unix)
+        .bind(now_unix)
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(&self.render(
+            "DELETE FROM workflow_mutex_waiters
+             WHERE name = ? AND NOT EXISTS (
+                 SELECT 1 FROM workflow_runs
+                 WHERE workflow_runs.id = workflow_mutex_waiters.workflow_run_id
+                   AND workflow_runs.status NOT IN ('succeeded', 'failed', 'timed_out', 'canceled')
+             )",
+        ))
+        .bind(claim.name.as_str())
+        .execute(&mut *tx)
+        .await?;
+
+        let holder = sqlx::query(&self.render(
+            "SELECT holder_run_id, holder_cursor_id, hold_deadline, overdue_at
+             FROM workflow_mutexes WHERE name = ?",
+        ))
+        .bind(claim.name.as_str())
+        .fetch_one(&mut *tx)
+        .await?;
+        let mut holder_run_id = holder.get::<Option<Uuid>, _>("holder_run_id");
+        let holder_cursor_id = holder.get::<Option<Uuid>, _>("holder_cursor_id");
+        let hold_deadline = holder.get::<Option<i64>, _>("hold_deadline");
+        let mut holder_overdue = holder.get::<Option<i64>, _>("overdue_at").is_some();
+
+        if holder_run_id == Some(claim.workflow_run_id) && holder_cursor_id == Some(claim.cursor_id)
+        {
+            if hold_deadline.is_some_and(|deadline| deadline < now_unix) {
+                holder_overdue = true;
+                sqlx::query(&self.render(
+                    "UPDATE workflow_mutexes
+                     SET overdue_at = COALESCE(overdue_at, ?), updated_at = ? WHERE name = ?",
+                ))
+                .bind(now_unix)
+                .bind(now_unix)
+                .bind(claim.name.as_str())
+                .execute(&mut *tx)
+                .await?;
+            }
+            sqlx::query(
+                &self.render("DELETE FROM workflow_mutex_waiters WHERE workflow_node_run_id = ?"),
+            )
+            .bind(claim.workflow_node_run_id)
+            .execute(&mut *tx)
+            .await?;
+            tx.commit().await?;
+            return Ok(WorkflowMutexClaimResult {
+                acquired: true,
+                holder_overdue,
+                wake: None,
+            });
+        }
+
+        if let Some(run_id) = holder_run_id {
+            let status = sqlx::query(&self.render("SELECT status FROM workflow_runs WHERE id = ?"))
+                .bind(run_id)
+                .fetch_optional(&mut *tx)
+                .await?
+                .map(|row| row.get::<String, _>("status"));
+            let active = status.is_some_and(|status| {
+                !matches!(
+                    status.as_str(),
+                    "succeeded" | "failed" | "timed_out" | "canceled"
+                )
+            });
+            if active {
+                if hold_deadline.is_some_and(|deadline| deadline < now_unix) {
+                    holder_overdue = true;
+                    sqlx::query(&self.render(
+                        "UPDATE workflow_mutexes
+                         SET overdue_at = COALESCE(overdue_at, ?), updated_at = ? WHERE name = ?",
+                    ))
+                    .bind(now_unix)
+                    .bind(now_unix)
+                    .bind(claim.name.as_str())
+                    .execute(&mut *tx)
+                    .await?;
+                }
+            } else {
+                sqlx::query(&self.render(
+                    "UPDATE workflow_mutexes
+                     SET holder_run_id = NULL, holder_cursor_id = NULL, acquired_at = NULL,
+                         hold_deadline = NULL, overdue_at = NULL, updated_at = ? WHERE name = ?",
+                ))
+                .bind(now_unix)
+                .bind(claim.name.as_str())
+                .execute(&mut *tx)
+                .await?;
+                holder_run_id = None;
+                holder_overdue = false;
+            }
+        }
+
+        let oldest = sqlx::query(&self.render(
+            "SELECT workflow_node_run_id, workflow_run_id, cursor_id, node_id
+             FROM workflow_mutex_waiters WHERE name = ?
+             ORDER BY enqueued_at, workflow_node_run_id LIMIT 1",
+        ))
+        .bind(claim.name.as_str())
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        let mut acquired = false;
+        let mut wake = None;
+        if holder_run_id.is_none()
+            && let Some(oldest) = oldest
+        {
+            let oldest_node_run_id = oldest.get::<Uuid, _>("workflow_node_run_id");
+            if oldest_node_run_id == claim.workflow_node_run_id {
+                let acquiring_overdue = claim
+                    .hold_deadline_unix
+                    .is_some_and(|deadline| deadline < now_unix);
+                sqlx::query(&self.render(
+                    "UPDATE workflow_mutexes
+                     SET holder_run_id = ?, holder_cursor_id = ?, acquired_at = ?,
+                         hold_deadline = ?, overdue_at = ?, updated_at = ? WHERE name = ?",
+                ))
+                .bind(claim.workflow_run_id)
+                .bind(claim.cursor_id)
+                .bind(now_unix)
+                .bind(claim.hold_deadline_unix)
+                .bind(acquiring_overdue.then_some(now_unix))
+                .bind(now_unix)
+                .bind(claim.name.as_str())
+                .execute(&mut *tx)
+                .await?;
+                sqlx::query(
+                    &self.render(
+                        "DELETE FROM workflow_mutex_waiters WHERE workflow_node_run_id = ?",
+                    ),
+                )
+                .bind(claim.workflow_node_run_id)
+                .execute(&mut *tx)
+                .await?;
+                acquired = true;
+                holder_overdue = acquiring_overdue;
+            } else {
+                wake = Some(WorkflowMutexWake {
+                    workflow_run_id: oldest.get("workflow_run_id"),
+                    workflow_node_run_id: oldest_node_run_id,
+                    cursor_id: oldest.get("cursor_id"),
+                    node_id: oldest.get("node_id"),
+                });
+            }
+        }
+
+        tx.commit().await?;
+        Ok(WorkflowMutexClaimResult {
+            acquired,
+            holder_overdue,
+            wake,
+        })
+    }
+
+    async fn release_workflow_mutex(
+        &self,
+        name: String,
+        workflow_run_id: Uuid,
+        cursor_id: Uuid,
+        now_unix: i64,
+    ) -> Result<Option<WorkflowMutexWake>, SendableError> {
+        let mut tx = self.pool().begin().await?;
+        let released = sqlx::query(&self.render(
+            "UPDATE workflow_mutexes
+             SET holder_run_id = NULL, holder_cursor_id = NULL, acquired_at = NULL,
+                 hold_deadline = NULL, overdue_at = NULL, updated_at = ?
+             WHERE name = ? AND holder_run_id = ? AND holder_cursor_id = ?",
+        ))
+        .bind(now_unix)
+        .bind(name.as_str())
+        .bind(workflow_run_id)
+        .bind(cursor_id)
+        .execute(&mut *tx)
+        .await?;
+        if released.affected() == 0 {
+            tx.commit().await?;
+            return Ok(None);
+        }
+        sqlx::query(&self.render(
+            "DELETE FROM workflow_mutex_waiters
+             WHERE name = ? AND NOT EXISTS (
+                 SELECT 1 FROM workflow_runs
+                 WHERE workflow_runs.id = workflow_mutex_waiters.workflow_run_id
+                   AND workflow_runs.status NOT IN ('succeeded', 'failed', 'timed_out', 'canceled')
+             )",
+        ))
+        .bind(name.as_str())
+        .execute(&mut *tx)
+        .await?;
+        let wake = sqlx::query(&self.render(
+            "SELECT workflow_node_run_id, workflow_run_id, cursor_id, node_id
+             FROM workflow_mutex_waiters WHERE name = ?
+             ORDER BY enqueued_at, workflow_node_run_id LIMIT 1",
+        ))
+        .bind(name.as_str())
+        .fetch_optional(&mut *tx)
+        .await?
+        .map(|row| WorkflowMutexWake {
+            workflow_run_id: row.get("workflow_run_id"),
+            workflow_node_run_id: row.get("workflow_node_run_id"),
+            cursor_id: row.get("cursor_id"),
+            node_id: row.get("node_id"),
+        });
+        tx.commit().await?;
+        Ok(wake)
+    }
+
+    async fn release_workflow_mutexes(
+        &self,
+        workflow_run_id: Uuid,
+        now_unix: i64,
+    ) -> Result<Vec<WorkflowMutexWake>, SendableError> {
+        let mut tx = self.pool().begin().await?;
+        // terminal/canceled runs cannot remain in any fifo, even when they own no mutex. pruning
+        // them here makes every out-of-reducer settlement path use the same cleanup operation.
+        sqlx::query(&self.render("DELETE FROM workflow_mutex_waiters WHERE workflow_run_id = ?"))
+            .bind(workflow_run_id)
+            .execute(&mut *tx)
+            .await?;
+        let rows = sqlx::query(
+            &self.render("SELECT name FROM workflow_mutexes WHERE holder_run_id = ? ORDER BY name"),
+        )
+        .bind(workflow_run_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        let names = rows
+            .iter()
+            .map(|row| row.get::<String, _>("name"))
+            .collect::<Vec<_>>();
+        if names.is_empty() {
+            tx.commit().await?;
+            return Ok(Vec::new());
+        }
+        sqlx::query(&self.render(
+            "UPDATE workflow_mutexes
+             SET holder_run_id = NULL, holder_cursor_id = NULL, acquired_at = NULL,
+                 hold_deadline = NULL, overdue_at = NULL, updated_at = ?
+             WHERE holder_run_id = ?",
+        ))
+        .bind(now_unix)
+        .bind(workflow_run_id)
+        .execute(&mut *tx)
+        .await?;
+
+        let mut wakes = Vec::new();
+        for name in names {
+            sqlx::query(&self.render(
+                "DELETE FROM workflow_mutex_waiters
+                 WHERE name = ? AND NOT EXISTS (
+                     SELECT 1 FROM workflow_runs
+                     WHERE workflow_runs.id = workflow_mutex_waiters.workflow_run_id
+                       AND workflow_runs.status NOT IN ('succeeded', 'failed', 'timed_out', 'canceled')
+                 )",
+            ))
+            .bind(name.as_str())
+            .execute(&mut *tx)
+            .await?;
+            if let Some(row) = sqlx::query(&self.render(
+                "SELECT workflow_node_run_id, workflow_run_id, cursor_id, node_id
+                 FROM workflow_mutex_waiters WHERE name = ?
+                 ORDER BY enqueued_at, workflow_node_run_id LIMIT 1",
+            ))
+            .bind(name.as_str())
+            .fetch_optional(&mut *tx)
+            .await?
+            {
+                wakes.push(WorkflowMutexWake {
+                    workflow_run_id: row.get("workflow_run_id"),
+                    workflow_node_run_id: row.get("workflow_node_run_id"),
+                    cursor_id: row.get("cursor_id"),
+                    node_id: row.get("node_id"),
+                });
+            }
+        }
+        tx.commit().await?;
+        Ok(wakes)
+    }
+
+    async fn remove_workflow_mutex_waiter(
+        &self,
+        workflow_node_run_id: Uuid,
+    ) -> Result<(), SendableError> {
+        sqlx::query(
+            &self.render("DELETE FROM workflow_mutex_waiters WHERE workflow_node_run_id = ?"),
+        )
+        .bind(workflow_node_run_id)
+        .execute(self.pool())
+        .await?;
+        Ok(())
+    }
+
     async fn create_automation_record(
         &self,
         record_type: String,

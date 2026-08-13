@@ -1,4 +1,4 @@
-//! `mutex`: acquires a named distributed mutex, held until the run ends or a matching release node.
+//! `mutex`: acquires a named fifo mutex, held by one cursor until run end or a matching release.
 
 use runinator_models::catalog_metadata::{FieldLocation, WorkflowNodeKindMetadata};
 use runinator_models::json;
@@ -53,7 +53,7 @@ impl NodeKindSpec for Mutex {
                 "Mutex",
                 "lock",
                 "sync",
-                "Acquires a named distributed mutex, held until the run ends or a matching release node.",
+                "Acquires a cursor-scoped FIFO mutex; an overdue active holder remains exclusive.",
             )
         }
     }

@@ -278,8 +278,8 @@ pub struct CheckpointStmt {
 
 /// `mutex "name" (every <dur>)? (timeout <dur>)? (hold <dur>)? ({ body })?` or the bare release leaf
 /// `mutex release "name"`: a named cross-run exclusive lock. `timeout` bounds the wait-to-acquire,
-/// `hold` caps the held lease, and a `body` block brackets a critical section that releases at its
-/// end.
+/// `hold` marks the expected maximum section duration without displacing an active holder, and a
+/// `body` block brackets a critical section that releases at its end.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MutexStmt {
     pub name: String,
