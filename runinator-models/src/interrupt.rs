@@ -161,8 +161,8 @@ impl std::fmt::Display for InterruptMode {
 pub struct ResumePoint {
     #[serde(default)]
     pub node_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub loop_frame: Option<LoopFrame>,
+    #[serde(rename = "loops", default, skip_serializing_if = "Vec::is_empty")]
+    pub loops: Vec<LoopFrame>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub try_frame: Option<TryFrame>,
 }

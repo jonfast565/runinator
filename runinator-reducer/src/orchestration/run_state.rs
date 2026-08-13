@@ -187,7 +187,10 @@ pub(super) async fn fork_cursors<T: ReducerStore>(
         let mut state = WorkflowRunState::from_state(&run.state);
         let mut forked = Vec::with_capacity(branches.len());
         for branch in branches {
-            forked.push((state.fork_cursor(branch, forked_by), branch.clone()));
+            forked.push((
+                state.fork_cursor(cursor_id, branch, forked_by),
+                branch.clone(),
+            ));
         }
         // the forking cursor's thread of control becomes the branches; it does not continue itself.
         state.retire_cursor(cursor_id);

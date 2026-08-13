@@ -27,9 +27,9 @@ fn a_run_with_no_cursors_is_seeded_once() {
 #[test]
 fn forked_cursors_are_addressable_by_id_and_by_origin() {
     let mut parsed = WorkflowRunState::default();
-    parsed.ensure_cursor("fanout");
-    let left = parsed.fork_cursor("branch_a", "fanout");
-    let right = parsed.fork_cursor("branch_b", "fanout");
+    let root = parsed.ensure_cursor("fanout");
+    let left = parsed.fork_cursor(root, "branch_a", "fanout");
+    let right = parsed.fork_cursor(root, "branch_b", "fanout");
 
     assert_eq!(parsed.cursors.len(), 3);
     assert!(parsed.cursor(left).expect("left").is_at("branch_a"));
@@ -42,8 +42,8 @@ fn forked_cursors_are_addressable_by_id_and_by_origin() {
 #[test]
 fn retiring_a_cursor_reports_whether_it_was_still_live() {
     let mut parsed = WorkflowRunState::default();
-    parsed.ensure_cursor("fanout");
-    let branch = parsed.fork_cursor("branch_a", "fanout");
+    let root = parsed.ensure_cursor("fanout");
+    let branch = parsed.fork_cursor(root, "branch_a", "fanout");
 
     assert!(
         parsed.retire_cursor(branch),
@@ -65,11 +65,18 @@ fn resetting_a_cursors_frames_preserves_run_scoped_state() {
         "watch_fired": true,
     }));
     let id = parsed.ensure_cursor("body");
-    parsed.cursor_mut(id).expect("cursor").loop_frame = Some(LoopFrame::default());
+    parsed
+        .cursor_mut(id)
+        .expect("cursor")
+        .set_loop_frame(LoopFrame {
+            node_id: "each".into(),
+            index: 0,
+            last_node_run_id: None,
+        });
 
-    parsed.cursor_mut(id).expect("cursor").clear_frames();
+    parsed.cursor_mut(id).expect("cursor").exit_loop("each");
 
-    assert!(parsed.cursor(id).expect("cursor").loop_frame.is_none());
+    assert!(parsed.cursor(id).expect("cursor").loops.is_empty());
     assert!(
         parsed.subflow_parent.is_some(),
         "run-scoped linkage must survive"
@@ -80,8 +87,8 @@ fn resetting_a_cursors_frames_preserves_run_scoped_state() {
 #[test]
 fn cursors_round_trip_through_the_state_blob() {
     let mut parsed = WorkflowRunState::default();
-    parsed.ensure_cursor("fanout");
-    parsed.fork_cursor("branch_a", "fanout");
+    let root = parsed.ensure_cursor("fanout");
+    parsed.fork_cursor(root, "branch_a", "fanout");
 
     let reparsed = WorkflowRunState::from_state(&parsed.to_state());
 
@@ -94,7 +101,7 @@ fn cursors_round_trip_through_the_state_blob() {
 fn speculative_cursors_are_excluded_from_fan_out_accounting() {
     let mut parsed = WorkflowRunState::default();
     let root = parsed.ensure_cursor("fanout");
-    parsed.fork_cursor("branch_a", "fanout");
+    parsed.fork_cursor(root, "branch_a", "fanout");
     let spec = parsed
         .fork_speculative(root, "branch_a", Some("what-if".into()), Value::Null)
         .expect("fork");
@@ -193,7 +200,7 @@ fn each_cursor_carries_its_own_debugger_runtime() {
         ..Default::default()
     };
     let left = parsed.ensure_cursor("branch_a");
-    let right = parsed.fork_cursor("branch_b", "fanout");
+    let right = parsed.fork_cursor(left, "branch_b", "fanout");
 
     parsed.set_cursor_debug(
         left,
@@ -229,7 +236,7 @@ fn the_flat_frame_mirrors_the_primary_cursor() {
         ..Default::default()
     };
     let primary = parsed.ensure_cursor("branch_a");
-    let other = parsed.fork_cursor("branch_b", "fanout");
+    let other = parsed.fork_cursor(primary, "branch_b", "fanout");
 
     parsed.set_cursor_debug(
         other,

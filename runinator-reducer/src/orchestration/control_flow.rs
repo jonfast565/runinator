@@ -1,7 +1,7 @@
 use super::context::runtime_context;
 use super::transitions::{
-    arm_node_timeout, block_node, ensure_node_run, start_try_phase, time_out, timed_out,
-    transition_from_node,
+    arm_node_timeout, block_node, ensure_node_run, ensure_node_run_for_visit, start_try_phase,
+    time_out, timed_out, transition_from_node,
 };
 use super::*;
 
@@ -18,18 +18,17 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for LoopHandler {
         let context = runtime_context(ctx).await;
         let parameters = runinator_workflows::resolve_value_refs(&ctx.node.parameters, &context)
             .map_err(|err| -> SendableError { Box::new(err) })?;
-        let items = runinator_workflows::parse_loop_items(&parameters).items;
-        // iterations belong to this thread of control. two branches looping over the same node would
-        // otherwise each count the other's laps and exit early.
-        let prior_iterations = ctx
-            .node_runs
-            .iter()
-            .filter(|run| {
-                run.node_id == ctx.node.id
-                    && run.status == WorkflowStatus::Succeeded
-                    && run.cursor_id.is_none_or(|id| id == ctx.cursor.id)
-            })
-            .count() as i64;
+        let items = match runinator_workflows::parse_loop_parameters(&ctx.node.id, &parameters) {
+            Ok(params) => params.items,
+            Err(err) => {
+                return super::handler::complete(block_node(ctx, &err.to_string()).await);
+            }
+        };
+        // the frame is this thread of control's own lap counter, keyed by loop node. counting the
+        // node's succeeded runs instead made an inner loop count every outer lap as its own, so a
+        // nested loop exhausted without running its body on the second outer pass.
+        let frame = ctx.cursor.loop_frame(&ctx.node.id);
+        let index = frame.map_or(0, |frame| frame.index + 1);
         // an expression cap is resolved into the parameters; fall back to the typed field.
         let max_iterations = parameters
             .get("max_iterations")
@@ -37,15 +36,20 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for LoopHandler {
             .or(ctx.node.max_iterations)
             .unwrap_or(i64::MAX)
             .max(0);
-        let index = prior_iterations;
         let exhausted = index >= items.len() as i64 || index >= max_iterations;
-        let last = if exhausted && prior_iterations > 0 {
-            latest_succeeded_output_excluding(ctx.node_runs, &ctx.node.id)
-        } else {
-            None
-        };
-        // each iteration gets its own run so prior_iterations advances. reuse the latest only if it was
-        // left running from a prior interrupted visit.
+        // what the previous lap's body produced, bounded below by this loop's own node run for that
+        // lap and filtered to this cursor. the run-wide reverse scan this replaces returned whatever
+        // any branch of the run happened to finish last.
+        let last = frame.and_then(|frame| {
+            previous_lap_output(
+                ctx.node_runs,
+                ctx.cursor.id,
+                &ctx.node.id,
+                frame.last_node_run_id?,
+            )
+        });
+        // each iteration gets its own run. reuse the latest only if it was left running from a prior
+        // interrupted visit, which resumes the same lap because the frame did not advance.
         let node_run = match ctx
             .latest
             .filter(|run| run.status == WorkflowStatus::Running)
@@ -70,22 +74,15 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for LoopHandler {
                     .await?
             }
         };
-        let output = if exhausted {
-            LoopOutput {
-                index,
-                item: None,
-                has_next: false,
-                count: items.len(),
-                last,
-            }
-        } else {
-            LoopOutput {
-                index,
-                item: Some(items[index as usize].clone()),
-                has_next: true,
-                count: items.len(),
-                last: None,
-            }
+        // `last` is carried on every visit after the first, not only the exhausting one: it means
+        // "what the previous iteration produced", which a mid-loop body wants as much as the exit
+        // path does. `item` is absent on the exhausting visit, which is what `has_next` announces.
+        let output = LoopOutput {
+            index,
+            item: (!exhausted).then(|| items[index as usize].clone()),
+            has_next: !exhausted,
+            count: items.len(),
+            last,
         };
         let output_value = output.to_wire_value()?;
         let reason = if exhausted {
@@ -93,7 +90,6 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for LoopHandler {
         } else {
             "loop_iteration"
         };
-        // mark the iteration succeeded so prior_iterations advances on re-entry from the loop body.
         ctx.db
             .update_workflow_node_run(
                 node_run.id,
@@ -108,12 +104,32 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for LoopHandler {
             .await?;
 
         if exhausted {
-            // clear this cursor's loop bookkeeping before exiting, so the frame does not survive into
-            // the exit path and route a downstream node back into the loop.
-            run_state::mutate_cursor(ctx.db, ctx.workflow_run.id, ctx.cursor.id, |cursor| {
-                cursor.loop_frame = None;
+            // drop this loop's frame, and the frames of any inner loops its body left behind, before
+            // exiting — so nothing downstream is still standing inside a loop that has ended.
+            let node_id = ctx.node.id.clone();
+            run_state::mutate_cursor(ctx.db, ctx.workflow_run.id, ctx.cursor.id, move |cursor| {
+                cursor.exit_loop(&node_id);
             })
             .await?;
+            // a loop leaves by `on_success`. it must not reach `next_transition`'s success fallback
+            // to `transitions.next`, because for a loop that is the *body* — a loop authored without
+            // an exit edge would re-enter its body forever until the step limit blocked the run.
+            // branches are still honored: nothing enforces the kind's `supports_predicate_edges`.
+            let has_exit = ctx.node.transitions.on_success.is_some()
+                || !ctx.node.transitions.branches.is_empty();
+            if !has_exit {
+                return super::handler::complete(
+                    run_state::advance_cursor(
+                        ctx.db,
+                        ctx.workflow_run.id,
+                        ctx.cursor.id,
+                        WorkflowStatus::Succeeded,
+                        run_state::CursorMove::Retire,
+                        Some("loop_exhausted".into()),
+                    )
+                    .await,
+                );
+            }
             transition_from_node(
                 ctx,
                 &node_run,
@@ -125,24 +141,29 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for LoopHandler {
             return Ok(ReadyNodeDisposition::Complete);
         }
 
-        let return_to = ctx
+        let Some(return_to) = ctx
             .node
             .transitions
             .next
             .as_ref()
             .map(|target| target.as_str().to_string())
-            .unwrap_or_else(|| ctx.node.id.clone());
-        // reset only this thread of control's frames so the body re-enters cleanly. run-scoped state
-        // and any sibling branch's frames are deliberately untouched — resetting the whole run state
-        // here is what used to discard every other frame the run was tracking.
+        else {
+            // self-targeting here span the node against the engine's step limit and reported a
+            // blocked run with no explanation. a loop with no body is an authoring error, so say so.
+            return super::handler::complete(
+                block_node(ctx, "Loop node has no body target (transitions.next)").await,
+            );
+        };
+        // record the lap on this cursor's own frame. only this loop's entry is touched: an inner
+        // loop's frame is dropped by `set_loop_frame` because a new outer lap restarts it, while
+        // `try_frame` survives — the old blanket reset here is what broke a loop inside a `try`.
         let frame = LoopFrame {
+            node_id: ctx.node.id.clone(),
             index,
-            item: items[index as usize].clone(),
-            return_to: ctx.node.id.clone(),
+            last_node_run_id: Some(node_run.id),
         };
         run_state::mutate_cursor(ctx.db, ctx.workflow_run.id, ctx.cursor.id, move |cursor| {
-            cursor.clear_frames();
-            cursor.loop_frame = Some(frame.clone());
+            cursor.set_loop_frame(frame.clone());
         })
         .await?;
         super::handler::complete(
@@ -175,7 +196,15 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for ParallelHandler {
     where
         T: 'a,
     {
-        if let Some(node_run) = ctx.latest {
+        // a stale run means control left this node and came back — a loop body's second lap — so the
+        // fan-out has to happen again. reading `latest` unconditionally made *any* prior run mean
+        // "already fanned out", which is why a `parallel` inside a loop ran only on the first lap and
+        // then spun on this node until the inline step limit blocked the run. this is the same
+        // freshness test every parking kind applies.
+        let latest = ctx
+            .latest
+            .filter(|run| !super::context::is_reentry_stale(run, ctx.node_runs, ctx.cursor));
+        if let Some(node_run) = latest {
             if node_run.status == WorkflowStatus::Running && timed_out(ctx.timing(), node_run) {
                 return super::handler::complete(
                     time_out(ctx, node_run, "Parallel node timed out").await,
@@ -286,8 +315,13 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for JoinHandler {
             .iter()
             .map(|target| target.as_str().to_string())
             .collect::<Vec<_>>();
-        if join_satisfied(&wait_for, params.mode, ctx.node_runs) {
-            let node_run = ensure_node_run(
+        // this join's own last settle bounds which branch runs belong to the lap being joined. a join
+        // in a loop body is reached again on every lap, and its branches keep their previous lap's
+        // `Succeeded` runs, so an unbounded read fires the join the moment one branch of the new lap
+        // arrives and lets every branch through unjoined.
+        let since = latest_settled_run_id(ctx.node_runs, &ctx.node.id);
+        if join_satisfied(&wait_for, params.mode, ctx.node_runs, since) {
+            let node_run = ensure_node_run_for_visit(
                 ctx,
                 super::context::most_recently_finished_node_run(ctx.node_runs),
             )
@@ -351,7 +385,7 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for JoinHandler {
                 .await,
             );
         }
-        let node_run = ensure_node_run(
+        let node_run = ensure_node_run_for_visit(
             ctx,
             super::context::most_recently_finished_node_run(ctx.node_runs),
         )
@@ -723,6 +757,46 @@ fn latest_succeeded_output_for(node_runs: &[WorkflowNodeRun], node_id: &str) -> 
         .and_then(|run| run.output_json.clone())
 }
 
+/// the id of `node_id`'s most recent settled run, or `None` if it has never settled.
+///
+/// deliberately not cursor-scoped: a join settles on whichever branch cursor arrived last, and the
+/// cursors asking on the next lap are different ones. scoping this to the caller's cursor would find
+/// nothing and silently restore the unbounded read it exists to replace.
+fn latest_settled_run_id(node_runs: &[WorkflowNodeRun], node_id: &str) -> Option<Uuid> {
+    node_runs
+        .iter()
+        .filter(|run| run.node_id == node_id && run.status.is_terminal())
+        .map(|run| run.id)
+        .max()
+}
+
+/// the output of the last node this cursor recorded during `loop_node`'s previous lap.
+///
+/// bounded below by the loop's own node run for that lap and filtered to this cursor, so it is both
+/// body-scoped and thread-scoped. the run-wide reverse scan it replaces for the loop path returned
+/// whatever any branch of the run happened to finish last, which under fan-out is another thread's
+/// work entirely.
+fn previous_lap_output(
+    node_runs: &[WorkflowNodeRun],
+    cursor_id: Uuid,
+    loop_node_id: &str,
+    after: Uuid,
+) -> Option<Value> {
+    node_runs
+        .iter()
+        .rev()
+        .find(|run| {
+            run.id > after
+                && run.node_id != loop_node_id
+                && run.status == WorkflowStatus::Succeeded
+                && run.cursor_id.is_none_or(|id| id == cursor_id)
+        })
+        .and_then(|run| run.output_json.clone())
+}
+
+// note: `try` still reads its body output through this run-wide scan, and has the same fan-out
+// defect the loop path above was moved off. changing it here would alter `try` semantics silently;
+// tracked in ENHANCEMENTS.md under the 7.x loop band.
 fn latest_succeeded_output_excluding(
     node_runs: &[WorkflowNodeRun],
     node_id: &str,

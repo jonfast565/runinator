@@ -368,13 +368,42 @@ pub fn parse_gate_parameters(node: &WorkflowNode) -> GateParameters {
 }
 
 /// extract a loop node's iteration items from its runtime-resolved parameters.
-pub fn parse_loop_items(resolved_parameters: &Value) -> LoopParameters {
-    let items = resolved_parameters
-        .get("items")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    LoopParameters { items }
+///
+/// fallible on purpose. silently reading a missing or non-array `items` as an empty list turned a
+/// loop over an upstream value that came back null into a workflow that succeeded having done
+/// nothing — the worst kind of failure, because there is nothing to see.
+pub fn parse_loop_parameters(
+    node_id: &str,
+    resolved_parameters: &Value,
+) -> Result<LoopParameters, WorkflowValidationError> {
+    let invalid = |message: String| WorkflowValidationError::InvalidNodeParameters {
+        node: node_id.to_string(),
+        message,
+    };
+    let Some(items) = resolved_parameters.get("items") else {
+        return Err(invalid("loop.items is required".into()));
+    };
+    let Some(items) = items.as_array() else {
+        return Err(invalid(format!(
+            "loop.items must resolve to an array, got {}",
+            value_kind(items)
+        )));
+    };
+    Ok(LoopParameters {
+        items: items.clone(),
+    })
+}
+
+/// the json kind of a value, for an error that says what arrived instead of what was wanted.
+fn value_kind(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "a boolean",
+        Value::Number(_) => "a number",
+        Value::String(_) => "a string",
+        Value::Array(_) => "an array",
+        Value::Object(_) => "an object",
+    }
 }
 
 pub fn evaluate_switch(

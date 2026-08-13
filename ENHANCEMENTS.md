@@ -8,7 +8,7 @@ Item IDs are **stable** — an item keeps the number it was first filed under (5
 
 The guiding constraint from `AGENTS.md`: keep dependency direction services→shared-contracts, keep changes scoped to the crate that owns the behavior, and thread any shared-contract change through every broker backend, mapper, and config file.
 
-**Last reprioritized:** 2026-08-05, after shipping 6.3 and re-verifying every open item against the codebase.
+**Last reprioritized:** 2026-08-13, after shipping 7.9 (fan-out inside a loop body) and filing 7.10.
 
 ---
 
@@ -23,6 +23,15 @@ The guiding constraint from `AGENTS.md`: keep dependency direction services→sh
 | 5.6 | AI cost & token accounting | **P3** | provider-ai, comm/models, database |
 | 5.2 | AI-assisted WDL authoring | **P3** | command-center, provider-ai |
 | 5.7 | Pack environments + promotion | **P3** | ctl, ws, settings store |
+| 7.1 | Loop result accumulation | **P2** | models, reducer, workflows, wdl-codegen |
+| 7.2 | Round-trippable loop variable names | **P2** | wdl-codegen |
+| 7.3 | WDL surface for loop position | **P2** | wdl-syntax, wdl-sema, wdl-codegen |
+| 7.4 | Loop-aware reference picker | **P2** | command-center |
+| 7.5 | Loop edge slots + stale `target` cleanup | **P2** | workflows, command-center |
+| 7.6 | Editor/compiler parity for loop typing | **P2** | wdl-ide, wdl-syntax, wdl-sema |
+| 7.7 | Unify the two iteration bounds | **P2** | reducer, models |
+| 7.8 | Loops excluded from dry-run simulation | **P2** | workflows |
+| 7.10 | `race` inside a loop settles on the last lap's winner | **P2** | reducer, workflows |
 | 6.6 | Action priority / fairness | **P4** | comm, broker (all backends), engine, worker |
 | 6.7 | Retention & redaction policy | **P4** | archiver, database, models |
 | 1.2 / 2.2 / 2.3 / 2.1 | Continuous quality track | parallel | varies |
@@ -100,6 +109,142 @@ The guiding constraint from `AGENTS.md`: keep dependency direction services→sh
 
 ---
 
+## P2 — loop / iteration semantics
+
+Filed 2026-08-12 from a survey of the `loop` node across the runtime, type, language, and editor
+layers. The **runtime frame redesign** (nested loops, the `try`-frame clobber, cursor-scoped `last`)
+and the **output type contract** were fixed in that pass; everything below is what was deliberately
+left out of it. 7.1 rides directly on the frame that pass introduced, so it is the cheapest of these
+to pick up next.
+
+### 7.1 Loop result accumulation
+- **Owning crates:** `runinator-models`, `runinator-reducer`, `runinator-workflows`, `runinator-wdl-codegen`.
+- **Problem:** a `for` loop cannot collect per-iteration results. `MapOutput` carries
+  `outputs: Vec<Value>` (`runinator-models/src/workflow_outputs.rs`); `LoopOutput` carries only
+  `last`. A bound loop (`node r <- for …`) does not collect either — `control_value_expr`
+  (`runinator-wdl-codegen/src/lower/mod.rs`) returns `path_expr(["prev"])` for everything but
+  `parallel`, so the synthetic collector node just re-emits the last body node's output.
+- **Approach:** a `results: Vec<Value>` accumulator on `LoopFrame`, exposed as
+  `steps.<loop>.output.results` typed `T[]`, with `node r <- for …` binding it.
+- **Boundary note:** this is also the change that justifies moving the resolved item list into the
+  frame the way `MapFrame` does. The frame deliberately does *not* hold `items` today, because it is
+  rewritten every lap and parking a large array in `workflow_runs.state` per write buys nothing
+  while items are re-resolved per drive anyway. An accumulator makes the frame item-resident, at
+  which point resolving once on entry becomes the cheaper option too.
+
+### 7.2 Round-trippable loop variable names
+- **Owning crates:** `runinator-wdl-codegen`.
+- **Problem:** `emit_loop` calls `self.fresh_var()` (`decompile/mod.rs`), which always yields
+  `item`/`item2`/`item3`. The author's identifier only ever existed as a lowering scope key
+  (`lower/blocks.rs`), so any graph-editor save — which regenerates the WDL pane via decompile —
+  rewrites `for ticket in …` to `for item in …`. This is the single largest legibility loss in the
+  loop surface: after one canvas round trip, `packs/sdlc/wdl/sdlc-deploy.wdl` reads
+  `for item in tickets.issues { … item.key … }`.
+- **Approach:** record the name in the existing `metadata.wdl` sidecar, exactly as `control_ids` and
+  `type_hints` already are (written in `lower/mod.rs`, read back via `MetadataReader`,
+  `decompile/metadata.rs`), and prefer it over `fresh_var()`. Same fix applies to `emit_map`.
+
+### 7.3 WDL surface for loop position
+- **Owning crates:** `runinator-wdl-syntax`, `runinator-wdl-sema`, `runinator-wdl-codegen`.
+- **Problem:** the loop variable binds only to `["item"]`. `index`, `count`, `has_next`, and `last`
+  are emitted by the runtime and — since the type-contract fix — now type-check, but they have no
+  surface syntax: a ref to them decompiles to a raw node id (`decompile/expr.rs` falls through to
+  `self.dotted(node_id, output)`), and the id is generated (`"for_loop"`), so it is not nameable.
+- **Approach:** an index binding (`for ticket, i in …`, grammar `for_stmt` in `wdl.pest`) and/or a
+  position accessor.
+
+### 7.4 Loop-aware reference picker in the command center
+- **Owning crates:** `runinator-command-center`.
+- **Problem:** `src/core/utils/workflow-references.ts` iterates the node *array* and skips anything
+  that is not `kind === "action"`, so `loop`, `map`, `transform`, `parallel`, `join`, `subflow`,
+  `input`, and `collect` outputs are never offered and the loop item is unreachable in the graph
+  editor. It also does no graph walk — the only positional rule is `node.id !== currentNodeId`, so
+  *downstream* nodes are offered as if their output were available. No reverse adjacency exists
+  anywhere in `src/`; the Tarjan SCC pass in `src/core/workflow/index.ts` is the only cycle-aware
+  code and it feeds layout only.
+- **Approach:** derive loop-body scope with the `interrupt-regions.ts` walk pattern (`nodeTargets`
+  plus the `nodes.has(id)` cycle guard, already back-edge safe), build reverse adjacency for
+  upstream-only filtering, and source non-action output types from the backend catalog.
+- **Boundary note:** `runinator-wdl-ide/src/completion.rs` already does correct loop-scope
+  element-type inference for the *text* editor, including the shadowing rule. The canvas should
+  reach parity with it, not reimplement it.
+- **Also here:** `interrupt` is missing from `STATIC_ROOTS` despite being a real lowered root;
+  `buildSampleContext` overwrites `steps[node_id]` per node run, so a loop body's "resolved against
+  last run" preview only ever shows the final pass.
+
+### 7.5 Loop edge slots and stale `parameters.target` cleanup
+- **Owning crates:** `runinator-workflows`, `runinator-command-center`.
+- **Problem:** `loop` declares no `edge_slots` (`node_kinds/control_flow/loop.rs`), unlike `map`. The
+  body edge therefore renders as "Next" and the exit as "Success" (`transitionLabel`,
+  `src/core/workflow/index.ts`), and nothing marks the body region on the canvas. Three frontend
+  sites still read a `parameters.target` that `loop` never emits — layout and validation in
+  `src/core/workflow/index.ts`, plus `__tests__/catalog-fixtures.ts`, which means the frontend tests
+  validate loop behavior against a shape production never produces.
+
+### 7.6 Editor/compiler parity for loop-variable typing
+- **Owning crates:** `runinator-wdl-ide`, `runinator-wdl-syntax`, `runinator-wdl-sema`.
+- **Problem:** three parity gaps. (a) completion offers the loop var with `detail: "local"` and no
+  type at all (`completion.rs`), so `tic<tab>` inside a loop offers `ticket` labelled only "local".
+  (b) completion's loop inference uses `element_type()` without the `union_element_type()` fallback
+  that sema's `check_iterable` and `higher_order_item_type` both use, so the editor is strictly
+  weaker than the compiler on unions. (c) `ForStmt.var` is a bare `String` (`ast/statements.rs`) —
+  there is no `for x: T in …` annotation, so when inference degrades to `Any` the only remedy is
+  retyping the *source* node.
+- **Related:** action `results_type()` builds an **open** struct (`runinator-models/src/providers.rs`),
+  so a typo'd field types as `Any`, the loop over it never errors, and the whole body loses
+  checking. `TypePolicy::Strict` (`runinator-wdl-sema/src/options.rs`) gates action config, subflow,
+  and array-literal homogeneity checks, but is **not** consulted in `check_iterable`.
+
+### 7.7 Unify the two iteration bounds
+- **Owning crates:** `runinator-reducer`, `runinator-models`.
+- **Problem:** `max_iterations` (loop-only, cursor-scoped) and `reentry.max_visits`
+  (`runinator-models/src/workflows/nodes.rs`; generic, counted **run-wide** and including
+  failed/canceled runs, exits via `on_exhausted`) are unrelated mechanisms for the same concern.
+  `while`/`until` lower to the second, `for` to the first, so the two loop forms cannot be reasoned
+  about uniformly.
+
+### 7.8 Loops are excluded from dry-run simulation
+- **Owning crates:** `runinator-workflows`.
+- **Problem:** `GraphRole::STEP.reentrant().not_simulatable()` (`node_kinds/control_flow/loop.rs`);
+  `simulate.rs` reports loop/parallel/join/map/race/try/subflow as unsupported. A workflow whose
+  interesting behavior is inside a loop cannot be dry-run at all, which blunts **5.1**.
+
+### 7.10 A `race` inside a loop body settles on the previous lap's winner
+- **Owning crates:** `runinator-reducer`, `runinator-workflows`.
+- **Problem:** `race_winner` (`runinator-workflows/src/run_state.rs`) reads run-wide latest status,
+  so on a loop's second lap it finds the previous lap's winning branch still `Succeeded` and
+  declares the race over before any contender of this lap has run. `race`'s *fan-out* gate is fine —
+  it tests live cursors (`cursors_forked_by`), not node runs — so the fault is purely the winner
+  read. Reproduced: a `race` in a two-item loop body runs its contenders once, not twice.
+- **Why it was not fixed alongside 7.9's join bound:** the same fix does not transfer. `join` was
+  scoped by bounding it with the join's own last settled run, which required a fresh node run per
+  lap (`ensure_node_run_for_visit`). Doing that for `race` breaks its straggler path: a late-losing
+  branch is recognized by the race's node run being *terminal and reused*
+  (`node_run.status.is_terminal() && cursor.forked_by == node.id`), so a fresh row per lap makes a
+  straggler park instead of retiring. Recognizing a straggler some other way — by live sibling
+  contender cursors, say — is a redesign of the race's arrival accounting, not a bound change.
+- **Approach:** decide how a straggler is identified without depending on the recycled row, then
+  give `race` a per-lap node run and bound `race_winner` the way `join_satisfied` now is.
+
+### Smaller loop-adjacent defects (fold into 7.x as convenient)
+- `while c limit none` is grammatically legal (`for_limit` in `wdl.pest` accepts `"none"`) but
+  `parse_while` does `first_inner(inner)?` and the inline `"none"` literal produces no child pair,
+  so it fails with the opaque `WdlError::lower("expected child node")`. The `for` path is fine
+  because `limit_none` is a named atomic rule.
+- `while`/`until` bind no iteration variable and expose no state.
+- `prev` resets to `Any` at every block boundary (`runinator-wdl-sema/src/sema/types.rs`), so
+  `for x in prev.items` inside a nested block is untyped. `runinator-wdl-ide/src/lib_tests.rs` has a
+  test (`prev_has_no_fields_after_control_flow`) that *asserts* this gap.
+- There is no `map` snippet in the completion `CONSTRUCTS` list, though `for`/`while`/`if`/`match`/
+  `toggle`/`split`/`parallel`/`try` all have one.
+- `TryHandler` reads its body output through `latest_succeeded_output_excluding`
+  (`runinator-reducer/src/orchestration/control_flow.rs`), a run-wide reverse scan with the same
+  fan-out defect the loop path was fixed for: a `try` region inside a `parallel` can pick up a
+  sibling branch's output. Left alone in the loop pass to avoid altering `try` semantics
+  unannounced; the loop path now uses a cursor-scoped lookup and `try` is the last caller.
+
+---
+
 ## Continuous quality track (run in parallel, low risk)
 
 These are unbounded-effort quality work rather than discrete features. None blocks anything; each can absorb spare capacity.
@@ -149,6 +294,32 @@ These are footguns when creating new providers and workflow jobs, grounded in `r
 ## Appendix B — Retired (implemented)
 
 Kept as a record of what the roadmap no longer covers. Item IDs stay stable, so a retired number is never reused.
+
+### 7.9 Fan-out inside a loop body — shipped 2026-08-13
+- **Shipped:** a `parallel` inside a loop body now runs correctly on every lap. This took three
+  fixes, each independently necessary — reverting any one of them fails
+  `a_parallel_inside_a_loop_body_keeps_the_loop_position`
+  (`runinator-reducer/src/orchestration/control_flow_tests.rs`) with a different symptom.
+  1. **Branch cursors inherit their parent's frames.** `RunCursor::forked_from` replaces
+     `RunCursor::forked` on the fan-out path, and `WorkflowRunState::fork_cursor` now takes the
+     parent cursor id. The fan-out happens *inside* whatever loop or try region the parent stood in,
+     and the forking cursor retires immediately, so that is the only moment its position can be
+     carried. `speculative_from` had always done this; the real fan-out path had not. Reverting it:
+     the loop restarts at index 0 on every lap and never terminates.
+  2. **`parallel` re-fans-out on a fresh visit.** It read `ctx.latest` unconditionally, so *any*
+     prior run meant "already fanned out". Now filtered through `is_reentry_stale`, the same
+     freshness test twelve parking kinds already apply. Reverting it: only the first lap fans out.
+  3. **`join` counts only the lap it is joining.** `join_satisfied` gained a `since` bound — the
+     join's own last settled run — because branches keep their previous lap's `Succeeded` runs, so
+     an unbounded read fired the join the moment one branch of the new lap arrived and let every
+     branch through unjoined. This needed `ensure_node_run_for_visit` as well: recycling one node
+     run across laps pins the bound to a fixed id, so the previous lap leaks back in from the third
+     lap onward. Reverting it: branches over-run (4 runs across 3 laps).
+- **Was:** the combination wedged. Before the loop-frame redesign a `parallel` in a loop spun
+  against the inline step limit and reported a `Blocked` run; `packs/sdlc/wdl/sdlc-deploy.wdl` nests
+  its inner `for` inside a `parallel` branch, so it is on exactly this path.
+- **Residual:** `race` has the same lap-scoping defect in `race_winner` and is **not** fixed — see
+  **7.10**, which explains why the `join` fix does not transfer to it.
 
 ### 6.3 Workflow revision history + diff + rollback — shipped 2026-08-05
 - **Shipped:** a `workflow_revisions` table (all three dialects) holding an immutable capture of every accepted definition — definition + input schema + name + version, plus `source` (`ui`/`pack`/`api`/`duplicate`/`rollback`), actor, and an optional note. Three `DefinitionStore` operations back it (`insert_workflow_revision`, `fetch_workflow_revisions`, `fetch_workflow_revision`); the store assigns the per-workflow sequence number rather than the caller, under a unique `(workflow_id, revision)` index. Surfaced as `GET /workflows/{id}/revisions`, `GET /workflows/{id}/revisions/{n}`, and `POST /workflows/{id}/revisions/{n}/restore`; as `runinatorctl workflows revisions|revision|rollback`; and as a Revision history panel in the command center's Workflow Settings dialog that diffs any two revisions through the existing `JsonDiff.vue`.

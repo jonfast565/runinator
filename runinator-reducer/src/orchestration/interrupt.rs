@@ -398,7 +398,7 @@ impl<'a, T: ReducerStore> InterruptOps<'a, T> {
             payload: raised.payload,
             resume: ResumePoint {
                 node_id: ctx.cursor.node_id().to_string(),
-                loop_frame: ctx.cursor.loop_frame.clone(),
+                loops: ctx.cursor.loops.clone(),
                 try_frame: ctx.cursor.try_frame.clone(),
             },
             raised_at: Utc::now(),
@@ -581,7 +581,7 @@ impl<'a, T: ReducerStore> InterruptOps<'a, T> {
             if let Some(target) = state.cursor_mut(interrupted) {
                 target.suspended_by = None;
                 target.move_to(point.node_id.clone());
-                target.loop_frame = point.loop_frame.clone();
+                target.loops = point.loops.clone();
                 target.try_frame = point.try_frame.clone();
                 // credit the time spent frozen back to whatever deadline is measured at this position,
                 // so a slow handler does not silently consume a park's window. `restart` re-enters the
@@ -754,7 +754,7 @@ impl<'a, T: ReducerStore> InterruptOps<'a, T> {
             if let Some(target) = state.cursor_mut(interrupted) {
                 target.suspended_by = None;
                 target.move_to(point.node_id.clone());
-                target.loop_frame = point.loop_frame.clone();
+                target.loops = point.loops.clone();
                 target.try_frame = point.try_frame.clone();
                 target.suspended_seconds += frozen_seconds;
             }

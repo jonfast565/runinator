@@ -65,41 +65,90 @@ fn a_forked_cursor_records_the_node_that_forked_it() {
     assert_eq!(RunCursor::at("branch_a").forked_by, None);
 }
 
+fn loop_frame(node_id: &str, index: i64) -> LoopFrame {
+    LoopFrame {
+        node_id: node_id.into(),
+        index,
+        last_node_run_id: None,
+    }
+}
+
 #[test]
 fn moving_a_cursor_leaves_its_frames_alone() {
     let mut cursor = RunCursor::at("body");
-    cursor.loop_frame = Some(LoopFrame {
-        index: 3,
-        item: Value::from("x"),
-        return_to: "each".into(),
-    });
+    cursor.set_loop_frame(loop_frame("each", 3));
 
     cursor.move_to("next");
 
     assert!(cursor.is_at("next"));
-    assert_eq!(cursor.loop_frame.as_ref().map(|frame| frame.index), Some(3));
+    assert_eq!(cursor.loop_frame("each").map(|frame| frame.index), Some(3));
 }
 
-// a loop body re-entering must reset its own thread of control, and nothing else. before frames
-// were per-cursor this reset rebuilt the entire run state, discarding run-scoped keys with it.
+// nested loops share a cursor, so one frame slot meant the inner loop overwrote the outer one's
+// position. a keyed stack is what lets each find its own lap.
 #[test]
-fn clearing_frames_resets_only_this_cursor() {
+fn nested_loops_keep_one_frame_each() {
     let mut cursor = RunCursor::at("body");
-    cursor.loop_frame = Some(LoopFrame::default());
+    cursor.set_loop_frame(loop_frame("outer", 1));
+    cursor.set_loop_frame(loop_frame("inner", 2));
+
+    assert_eq!(cursor.loop_frame("outer").map(|frame| frame.index), Some(1));
+    assert_eq!(cursor.loop_frame("inner").map(|frame| frame.index), Some(2));
+}
+
+// a new outer lap has to restart the inner loop rather than resume it mid-count, so re-entering a
+// loop drops whatever its body stacked on top.
+#[test]
+fn re_entering_a_loop_discards_the_frames_stacked_above_it() {
+    let mut cursor = RunCursor::at("body");
+    cursor.set_loop_frame(loop_frame("outer", 0));
+    cursor.set_loop_frame(loop_frame("inner", 2));
+
+    cursor.set_loop_frame(loop_frame("outer", 1));
+
+    assert_eq!(cursor.loop_frame("outer").map(|frame| frame.index), Some(1));
+    assert!(
+        cursor.loop_frame("inner").is_none(),
+        "the inner loop must restart on the next outer lap, not resume at index 2"
+    );
+}
+
+#[test]
+fn exiting_a_loop_drops_it_and_anything_nested() {
+    let mut cursor = RunCursor::at("body");
+    cursor.set_loop_frame(loop_frame("outer", 1));
+    cursor.set_loop_frame(loop_frame("inner", 0));
+
+    cursor.exit_loop("outer");
+
+    assert!(cursor.loops.is_empty());
+}
+
+// the production bug this guards: the loop handler used to clear *every* frame on the cursor each
+// lap, so a loop inside a try body silently reset the try phase to "body" on every iteration and
+// the catch/finally arms became unreachable.
+#[test]
+fn loop_bookkeeping_leaves_the_try_frame_alone() {
+    let mut cursor = RunCursor::at("body");
     cursor.try_frame = Some(TryFrame {
         node_id: "guard".into(),
-        phase: "body".into(),
+        phase: "finally".into(),
         pending_status: None,
         pending_output: None,
     });
 
-    cursor.clear_frames();
+    cursor.set_loop_frame(loop_frame("each", 0));
+    cursor.set_loop_frame(loop_frame("each", 1));
+    cursor.exit_loop("each");
 
-    assert!(cursor.loop_frame.is_none());
-    assert!(cursor.try_frame.is_none());
+    assert_eq!(
+        cursor.try_frame.as_ref().map(|frame| frame.phase.as_str()),
+        Some("finally"),
+        "a loop inside a try must not reset the try phase"
+    );
     assert!(
         cursor.is_at("body"),
-        "clearing frames must not move the cursor"
+        "loop bookkeeping must not move the cursor"
     );
 }
 
@@ -108,17 +157,19 @@ fn clearing_frames_resets_only_this_cursor() {
 #[test]
 fn a_speculative_fork_inherits_its_parents_frames() {
     let mut parent = RunCursor::at("body");
-    parent.loop_frame = Some(LoopFrame {
-        index: 2,
-        item: Value::from("sku-2"),
-        return_to: "each".into(),
-    });
+    parent.set_loop_frame(loop_frame("outer", 1));
+    parent.set_loop_frame(loop_frame("each", 2));
 
     let fork = RunCursor::speculative_from(&parent, "body", Some("what-if".into()), Value::Null);
 
     assert!(fork.is_speculative());
     assert_ne!(fork.id, parent.id);
-    assert_eq!(fork.loop_frame.as_ref().map(|frame| frame.index), Some(2));
+    assert_eq!(fork.loop_frame("each").map(|frame| frame.index), Some(2));
+    assert_eq!(
+        fork.loop_frame("outer").map(|frame| frame.index),
+        Some(1),
+        "the whole nesting stack is inherited, not just the innermost loop"
+    );
     let frame = fork.speculative.as_ref().expect("speculative frame");
     assert_eq!(frame.forked_from_cursor, parent.id);
     assert_eq!(frame.label.as_deref(), Some("what-if"));
@@ -194,14 +245,28 @@ fn a_cursor_persisted_before_these_fields_still_parses() {
 #[test]
 fn a_cursor_round_trips_with_its_identity_and_frames() {
     let mut cursor = RunCursor::forked("branch_a", "fanout");
-    cursor.loop_frame = Some(LoopFrame {
-        index: 1,
-        item: Value::Null,
-        return_to: "each".into(),
-    });
+    cursor.set_loop_frame(loop_frame("outer", 0));
+    cursor.set_loop_frame(loop_frame("each", 1));
 
     let encoded = serde_json::to_value(&cursor).expect("encode");
     let decoded: RunCursor = serde_json::from_value(encoded).expect("decode");
 
     assert_eq!(decoded, cursor);
+}
+
+// the pre-stack single `"loop"` object is not read back: the field was renamed rather than
+// reshaped, so the old key is an unknown field serde drops. a run caught mid-loop across the
+// upgrade restarts that loop, which is the accepted cost of not carrying a compat shim — and
+// crucially the *rest* of the cursor still parses, so the run does not lose its position.
+#[test]
+fn a_pre_stack_loop_key_is_ignored_without_failing_the_cursor() {
+    let decoded: RunCursor = serde_json::from_value(serde_json::json!({
+        "id": "00000000-0000-0000-0000-00000000000d",
+        "node_id": "body",
+        "loop": { "index": 3, "item": "x", "return_to": "each" },
+    }))
+    .expect("an unknown key must not fail the cursor");
+
+    assert!(decoded.is_at("body"));
+    assert!(decoded.loops.is_empty());
 }

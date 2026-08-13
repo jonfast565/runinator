@@ -70,6 +70,8 @@ mod transitions;
 mod wait;
 
 #[cfg(test)]
+mod control_flow_tests;
+#[cfg(test)]
 mod cooldown_tests;
 #[cfg(test)]
 mod debug_tests;

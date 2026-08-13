@@ -12,7 +12,7 @@ fn frame(interrupted: Uuid) -> InterruptFrame {
         payload: json!({ "deadline_unix": 42 }),
         resume: ResumePoint {
             node_id: "poll".into(),
-            loop_frame: None,
+            loops: Vec::new(),
             try_frame: None,
         },
         raised_at: Utc::now(),

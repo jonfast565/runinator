@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use runinator_models::value::Value;
 use runinator_models::{
     providers::{ParameterMetadata, ProviderMetadata, validate_provider_metadata},
-    types::{RuninatorType, TypeViolation},
+    types::{RuninatorField, RuninatorType, TypeViolation},
     workflows::{WorkflowDefinition, WorkflowNode, WorkflowNodeKind, WorkflowWaitSeconds},
 };
 
@@ -67,9 +67,12 @@ pub fn validate_workflow_types(
         context.node_outputs.insert(node_id, output_type);
     }
     for node in nodes {
-        if matches!(node.kind, WorkflowNodeKind::Loop | WorkflowNodeKind::Map)
-            && let Some(output_type) = context.collection_node_output_type(node)?
-        {
+        let output_type = match node.kind {
+            WorkflowNodeKind::Loop => context.loop_node_output_type(node)?,
+            WorkflowNodeKind::Map => context.map_node_output_type(node)?,
+            _ => None,
+        };
+        if let Some(output_type) = output_type {
             context
                 .node_outputs
                 .insert(node.id.as_str().to_string(), output_type);
@@ -122,31 +125,53 @@ fn validate_provider_metadata_set(
 }
 
 impl TypeContext {
-    fn collection_node_output_type(
+    /// `steps.<loop>.output`: the whole `LoopOutput` the reducer emits, not just the item binding.
+    ///
+    /// declaring `{item, index}` while the runtime emitted five fields meant `count`, `has_next`,
+    /// and `last` were written on every visit and rejected as `MissingRef` by every reader — the
+    /// three fields that answer "where am I" were the three that could not be read.
+    fn loop_node_output_type(
         &self,
         node: &WorkflowNode,
     ) -> Result<Option<WorkflowType>, WorkflowValidationError> {
-        // loop items are resolved data (a raw `Value`); map items are a typed expression.
-        let items_type = match node.kind {
-            WorkflowNodeKind::Loop => match node.parameters.get("items") {
-                Some(items) => self.infer_value_type(items)?,
-                None => return Ok(None),
-            },
-            WorkflowNodeKind::Map => {
-                self.infer_expression_type(&parse_map_parameters(node)?.items)?
-            }
-            _ => return Ok(None),
+        // loop items are resolved data (a raw `Value`), unlike map's typed expression.
+        let Some(items) = node.parameters.get("items") else {
+            return Ok(None);
         };
-        let WorkflowType::Array(item_type) = items_type else {
-            return Err(WorkflowValidationError::TypeError(format!(
-                "node '{}' items must be an array, got {}",
-                node.id,
-                items_type.describe()
-            )));
-        };
-        Ok(Some(WorkflowType::structure([
-            ("item", *item_type),
-            ("index", WorkflowType::Integer),
+        let item_type = collection_item_type("loop.items", &self.infer_value_type(items)?)?;
+        Ok(Some(WorkflowType::typed_structure([
+            // absent on the exhausting visit — the visit that takes the exit edge. this is an
+            // optional *field* rather than a `union<T, null>` because `resolve_path_type` requires
+            // every union variant to resolve the rest of a path, so a null variant would turn
+            // every `steps.<loop>.output.item.field` in a loop body into a `MissingRef`.
+            ("item", RuninatorField::optional(item_type)),
+            ("index", RuninatorField::required(WorkflowType::Integer)),
+            ("has_next", RuninatorField::required(WorkflowType::Boolean)),
+            ("count", RuninatorField::required(WorkflowType::Integer)),
+            // the previous lap's body output; no statically-known shape.
+            ("last", RuninatorField::optional(WorkflowType::Any)),
+        ])))
+    }
+
+    /// `steps.<map>.output`, which names two different runtime values under one node id: the child
+    /// run sees the `{item, index}` binding the body's loop variable reads, and everything
+    /// downstream sees `MapOutput { count, outputs }` once the fan-out settles. one entry has to
+    /// serve both, so every field is optional and the struct admits the union.
+    fn map_node_output_type(
+        &self,
+        node: &WorkflowNode,
+    ) -> Result<Option<WorkflowType>, WorkflowValidationError> {
+        let items_type = self.infer_expression_type(&parse_map_parameters(node)?.items)?;
+        let item_type = collection_item_type("map.items", &items_type)?;
+        Ok(Some(WorkflowType::typed_structure([
+            ("item", RuninatorField::optional(item_type)),
+            ("index", RuninatorField::optional(WorkflowType::Integer)),
+            ("count", RuninatorField::optional(WorkflowType::Integer)),
+            // per-item body results, whose shape is not statically known.
+            (
+                "outputs",
+                RuninatorField::optional(WorkflowType::array(WorkflowType::Any)),
+            ),
         ])))
     }
 
@@ -196,6 +221,10 @@ impl TypeContext {
                 self.infer_expression_type(&params.key)?;
                 Ok(())
             }
+            // both iterables go through `collection_item_type`, which tolerates `any` and a union
+            // of arrays and rejects everything else. a bare `matches!(Array(_))` rejected `any`
+            // too, so a loop over an untyped upstream output — the common case — passed
+            // `runinator-wdl-sema`'s `check_iterable` and then failed here at import.
             WorkflowNodeKind::Loop => {
                 let Some(items) = node.parameters.get("items") else {
                     return Err(WorkflowValidationError::InvalidNodeParameters {
@@ -203,26 +232,12 @@ impl TypeContext {
                         message: "loop.items is required".into(),
                     });
                 };
-                let ty = self.infer_value_type(items)?;
-                if !matches!(ty, WorkflowType::Array(_)) {
-                    return Err(WorkflowValidationError::TypeError(format!(
-                        "node '{}' loop.items must be an array, got {}",
-                        node.id,
-                        ty.describe()
-                    )));
-                }
+                collection_item_type("loop.items", &self.infer_value_type(items)?)?;
                 Ok(())
             }
             WorkflowNodeKind::Map => {
                 let params = parse_map_parameters(node)?;
-                let ty = self.infer_expression_type(&params.items)?;
-                if !matches!(ty, WorkflowType::Array(_)) {
-                    return Err(WorkflowValidationError::TypeError(format!(
-                        "node '{}' map.items must be an array, got {}",
-                        node.id,
-                        ty.describe()
-                    )));
-                }
+                collection_item_type("map.items", &self.infer_expression_type(&params.items)?)?;
                 Ok(())
             }
             WorkflowNodeKind::Parallel => {

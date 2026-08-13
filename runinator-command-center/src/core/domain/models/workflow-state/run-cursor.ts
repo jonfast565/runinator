@@ -42,7 +42,8 @@ export interface InterruptFrame {
 export interface RunCursor {
   id: string;
   node_id: string;
-  loop?: LoopFrame;
+  /** the loops this cursor is inside, outermost first; one frame per nesting level. */
+  loops?: LoopFrame[];
   try?: TryFrame;
   /** the fan-out node that forked this cursor, for branch cursors. */
   forked_by?: string | null;

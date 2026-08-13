@@ -722,7 +722,7 @@ fn a_sibling_without_a_runtime_does_not_inherit_the_mirror() {
         ..Default::default()
     };
     let first = state.ensure_cursor("a");
-    let second = state.fork_cursor("b", "fork");
+    let second = state.fork_cursor(first, "b", "fork");
     state.set_cursor_debug(
         first,
         DebugRuntime {
@@ -743,17 +743,17 @@ fn a_sibling_without_a_runtime_does_not_inherit_the_mirror() {
 fn a_fork_inherits_its_parents_position_and_frames() {
     let parent = {
         let mut cursor = RunCursor::at("body");
-        cursor.loop_frame = Some(runinator_models::workflow_state::LoopFrame {
+        cursor.set_loop_frame(runinator_models::workflow_state::LoopFrame {
+            node_id: "each".into(),
             index: 4,
-            item: Value::from("item-4"),
-            return_to: "each".into(),
+            last_node_run_id: None,
         });
         cursor
     };
     let fork = RunCursor::speculative_from(&parent, parent.node_id(), None, Value::Null);
 
     assert!(fork.is_at("body"));
-    assert_eq!(fork.loop_frame.as_ref().map(|frame| frame.index), Some(4));
+    assert_eq!(fork.loop_frame("each").map(|frame| frame.index), Some(4));
     assert_eq!(
         fork.speculative
             .as_ref()

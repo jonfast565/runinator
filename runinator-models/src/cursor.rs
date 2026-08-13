@@ -48,9 +48,12 @@ pub struct RunCursor {
     #[serde(default = "Uuid::now_v7")]
     pub id: Uuid,
     node_id: String,
-    /// loop-iteration bookkeeping for a loop body this cursor is inside.
-    #[serde(rename = "loop", default, skip_serializing_if = "Option::is_none")]
-    pub loop_frame: Option<LoopFrame>,
+    /// the loops this cursor is currently inside, outermost first.
+    ///
+    /// a keyed stack rather than one slot: an outer loop's frame has to survive its body's inner
+    /// loop, and each loop has to find its own. one slot is why nested loops did not work.
+    #[serde(rename = "loops", default, skip_serializing_if = "Vec::is_empty")]
+    pub loops: Vec<LoopFrame>,
     /// try/catch/finally phase bookkeeping for a try region this cursor is inside.
     #[serde(rename = "try", default, skip_serializing_if = "Option::is_none")]
     pub try_frame: Option<TryFrame>,
@@ -105,7 +108,7 @@ impl RunCursor {
         Self {
             id: Uuid::now_v7(),
             node_id: node_id.into(),
-            loop_frame: None,
+            loops: Vec::new(),
             try_frame: None,
             forked_by: None,
             speculative: None,
@@ -118,10 +121,36 @@ impl RunCursor {
         }
     }
 
-    /// a branch cursor forked from `forked_by`, entering the branch at `node_id`.
+    /// a branch cursor forked from `forked_by`, entering the branch at `node_id`, with no frames.
+    ///
+    /// only correct where there is genuinely no parent position to carry — prefer
+    /// [`RunCursor::forked_from`], which is what a real fan-out wants.
     pub fn forked(node_id: impl Into<String>, forked_by: impl Into<String>) -> Self {
         Self {
             forked_by: Some(forked_by.into()),
+            ..Self::at(node_id)
+        }
+    }
+
+    /// a branch cursor forked from `parent` by the node `forked_by`, entering at `node_id`.
+    ///
+    /// the branch inherits `parent`'s control-flow frames, for the same reason
+    /// [`RunCursor::speculative_from`] does: the fan-out happened *inside* whatever loop or try
+    /// region the parent stood in, and the forking cursor retires, so a branch that started clean
+    /// would throw that position away. A `parallel` in a loop body then re-entered the loop at
+    /// index 0 on whichever branch survived the join, and the loop never terminated.
+    pub fn forked_from(
+        parent: &RunCursor,
+        node_id: impl Into<String>,
+        forked_by: impl Into<String>,
+    ) -> Self {
+        Self {
+            forked_by: Some(forked_by.into()),
+            loops: parent.loops.clone(),
+            try_frame: parent.try_frame.clone(),
+            // the interrupt fields are deliberately not inherited, as for a speculative fork: a
+            // branch of a suspended cursor would be born frozen, and a branch of a handler would
+            // claim to be one.
             ..Self::at(node_id)
         }
     }
@@ -144,7 +173,7 @@ impl RunCursor {
                 armed_nodes: BTreeSet::new(),
                 context_patch,
             }),
-            loop_frame: parent.loop_frame.clone(),
+            loops: parent.loops.clone(),
             try_frame: parent.try_frame.clone(),
             // the interrupt fields are deliberately *not* inherited: a fork of a suspended cursor
             // would otherwise be born frozen, and a fork of a handler would claim to be one too.
@@ -245,11 +274,40 @@ impl RunCursor {
         self.node_id = node_id;
     }
 
-    /// clear the frames belonging to this thread of control, for a loop body re-entering cleanly.
-    /// run-scoped state is untouched, which is the point: only this cursor resets.
-    pub fn clear_frames(&mut self) {
-        self.loop_frame = None;
-        self.try_frame = None;
+    /// this loop's frame, if this cursor is inside it.
+    pub fn loop_frame(&self, node_id: &str) -> Option<&LoopFrame> {
+        self.loops
+            .iter()
+            .rev()
+            .find(|frame| frame.node_id == node_id)
+    }
+
+    /// install `frame` for its loop node, dropping anything stacked above it.
+    ///
+    /// what is stacked above an outer loop is the inner loops its body entered. a new outer lap has
+    /// to start those over, so they are dropped here rather than resumed mid-count — but `try_frame`
+    /// is deliberately left alone, which the old blanket frame reset is exactly what got wrong.
+    ///
+    /// idempotent, so it is safe inside a `mutate_cursor` retry.
+    pub fn set_loop_frame(&mut self, frame: LoopFrame) {
+        match self
+            .loops
+            .iter()
+            .position(|existing| existing.node_id == frame.node_id)
+        {
+            Some(position) => {
+                self.loops.truncate(position);
+                self.loops.push(frame);
+            }
+            None => self.loops.push(frame),
+        }
+    }
+
+    /// drop this loop's frame and anything nested inside it, on exit.
+    pub fn exit_loop(&mut self, node_id: &str) {
+        if let Some(position) = self.loops.iter().position(|frame| frame.node_id == node_id) {
+            self.loops.truncate(position);
+        }
     }
 
     /// consume the cursor for its node id, for the store calls that persist a position.

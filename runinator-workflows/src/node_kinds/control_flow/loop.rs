@@ -1,12 +1,13 @@
-//! `loop`: repeats its body while a condition holds.
+//! `loop`: repeats its body once for each item in a collection.
 
 use runinator_models::catalog_metadata::{FieldLocation, WorkflowNodeKindMetadata};
 use runinator_models::json;
 use runinator_models::providers::RuninatorType;
-use runinator_models::workflows::WorkflowNodeKind;
+use runinator_models::workflows::{WorkflowNode, WorkflowNodeKind};
 
 use crate::node_kinds::builders::{base, field, opt};
 use crate::node_kinds::{GraphRole, NodeKindSpec};
+use runinator_compute::WorkflowValidationError;
 
 pub(in crate::node_kinds) struct Loop;
 
@@ -22,6 +23,19 @@ impl NodeKindSpec for Loop {
 
     // no target slots: a loop's body is `transitions.next` and its exit is `transitions.on_success`.
     // the reducer never reads a `parameters.target`, and the wdl lowering never emits one.
+
+    fn check_parameters(&self, node: &WorkflowNode) -> Result<(), WorkflowValidationError> {
+        // presence only. an authored `items` is normally a `$ref` expression, so its arrayness is
+        // not knowable here — `typing.rs` checks that against the inferred type, and the reducer
+        // checks the resolved value. this is the graph-independent half the trait asks for.
+        if node.parameters.get("items").is_none() {
+            return Err(WorkflowValidationError::InvalidNodeParameters {
+                node: node.id.as_str().to_string(),
+                message: "loop.items is required".into(),
+            });
+        }
+        Ok(())
+    }
 
     fn metadata(&self) -> WorkflowNodeKindMetadata {
         WorkflowNodeKindMetadata {
@@ -49,7 +63,7 @@ impl NodeKindSpec for Loop {
                 "Loop",
                 "loop",
                 "control-flow",
-                "Repeats its body while a condition holds.",
+                "Repeats its body once for each item in a collection.",
             )
         }
     }

@@ -127,9 +127,17 @@ impl WorkflowRunState {
         id
     }
 
-    /// fork a branch cursor entering `node_id`, attributed to the fan-out node `forked_by`.
-    pub fn fork_cursor(&mut self, node_id: &str, forked_by: &str) -> Uuid {
-        let cursor = RunCursor::forked(node_id, forked_by);
+    /// fork a branch cursor off `parent`, entering `node_id`, attributed to the fan-out node
+    /// `forked_by`.
+    ///
+    /// the branch inherits the parent's control-flow frames; `parent` is named rather than inferred
+    /// because the forking cursor retires immediately afterwards, so this is the only moment its
+    /// position can be carried across.
+    pub fn fork_cursor(&mut self, parent: Uuid, node_id: &str, forked_by: &str) -> Uuid {
+        let cursor = match self.cursor(parent) {
+            Some(parent) => RunCursor::forked_from(parent, node_id, forked_by),
+            None => RunCursor::forked(node_id, forked_by),
+        };
         let id = cursor.id;
         self.cursors.push(cursor);
         id

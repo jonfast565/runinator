@@ -167,6 +167,7 @@ export {
   coerceControlFrame,
   coerceDebugFrame,
   coerceLoopFrame,
+  coerceLoopFrames,
   coerceMapFrame,
   coerceParallelFrame,
   coerceRaceFrame,

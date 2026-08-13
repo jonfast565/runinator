@@ -93,6 +93,7 @@ export function coerceRunCursors(value: unknown): RunCursor[] {
     cursors.push({
       id,
       node_id: nodeId,
+      loops: coerceLoopFrames(entry.loops),
       forked_by: typeof entry.forked_by === "string" ? entry.forked_by : null,
       speculative: isJsonRecord(entry.speculative)
         ? {
@@ -173,10 +174,22 @@ export function coerceLoopFrame(value: unknown): LoopFrame | undefined {
   }
 
   return {
+    node_id: typeof record.node_id === "string" ? record.node_id : undefined,
     index: typeof record.index === "number" ? record.index : undefined,
-    item: optionalJsonValue(record.item),
-    return_to: typeof record.return_to === "string" ? record.return_to : undefined,
+    last_node_run_id:
+      typeof record.last_node_run_id === "string" ? record.last_node_run_id : undefined,
   };
+}
+
+/** the loop stack on a cursor, outermost first; one frame per loop the cursor is inside. */
+export function coerceLoopFrames(value: unknown): LoopFrame[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((entry) => coerceLoopFrame(entry))
+    .filter((frame): frame is LoopFrame => frame !== undefined);
 }
 
 export function coerceParallelFrame(value: unknown): ParallelFrame | undefined {
@@ -263,7 +276,6 @@ export function coerceWorkflowRunState(value: unknown): WorkflowRunState | null 
   return {
     control: coerceControlFrame(record.control),
     debug: coerceDebugFrame(record.debug),
-    loop: coerceLoopFrame(record.loop),
     parallel: coerceParallelFrame(record.parallel),
     map: coerceMapFrame(record.map),
     race: coerceRaceFrame(record.race),

@@ -519,6 +519,34 @@ pub(super) async fn ensure_node_run<T: ReducerStore>(
         .await
 }
 
+/// like [`ensure_node_run`], but a *stale* latest — one this cursor already left and came back past
+/// — yields a fresh run instead of being reused.
+///
+/// a node re-entered once per loop lap otherwise keeps overwriting a single row. That loses the
+/// per-lap history, and for anything that bounds a search by "my own last settled run" it collapses
+/// the bound, so the previous lap's work leaks into the current one. `join` is the case that forced
+/// this: its lap bound is its own last settle, which never advances while the row is recycled.
+pub(super) async fn ensure_node_run_for_visit<T: ReducerStore>(
+    ctx: &NodeStepContext<'_, T>,
+    prev_node_run_id: Option<Uuid>,
+) -> Result<WorkflowNodeRun, SendableError> {
+    let current = ctx
+        .latest
+        .filter(|run| !super::context::is_reentry_stale(run, ctx.node_runs, ctx.cursor));
+    if let Some(latest) = current {
+        return Ok(latest.clone());
+    }
+    ctx.db
+        .create_workflow_node_run(
+            ctx.workflow_run.id,
+            ctx.node.id.clone(),
+            ctx.node.parameters.clone().into(),
+            prev_node_run_id,
+            Some(ctx.cursor),
+        )
+        .await
+}
+
 pub(super) async fn ensure_completed_node_run<T: ReducerStore>(
     ctx: &NodeStepContext<'_, T>,
     reason: &str,

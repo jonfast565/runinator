@@ -79,15 +79,23 @@ pub struct DebugRuntime {
     pub last_output_json: Option<Value>,
 }
 
-/// `state.loop` iteration bookkeeping for a loop body.
+/// one live loop on a cursor: which loop node, and where that loop is.
+///
+/// the frame is authoritative. deriving the index by counting the loop node's succeeded runs made
+/// an inner loop count every outer lap's runs as its own, so on the second outer pass it was
+/// already past its item count and exhausted without running its body once.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct LoopFrame {
+    /// the loop node this frame belongs to; nested loops keep one frame each, keyed by this.
+    #[serde(default)]
+    pub node_id: String,
+    /// the iteration whose body is running now, zero-based.
     #[serde(default)]
     pub index: i64,
-    #[serde(default)]
-    pub item: Value,
-    #[serde(default)]
-    pub return_to: String,
+    /// this loop's own node run for the current lap. anything this cursor records after it belongs
+    /// to that lap's body, which is what makes `LoopOutput.last` body-scoped rather than run-wide.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_node_run_id: Option<Uuid>,
 }
 
 /// `state.map` parent fan-out bookkeeping or child item binding.
