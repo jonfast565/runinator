@@ -34,6 +34,7 @@ pub use parameters::{
 pub use refs::expand_workflow_refs;
 pub use run_state::{
     branch_policy_name, join_satisfied, latest_node_run, latest_status, race_winner,
+    race_winner_since,
 };
 pub use runinator_compute::{
     ComputeOutcome, EFFECTFUL_INTRINSIC_NAMES, FunctionTable, HIGHER_ORDER_NAMES, IntrinsicLibrary,

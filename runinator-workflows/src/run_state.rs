@@ -67,21 +67,35 @@ pub fn race_winner(
     winner: BranchPolicy,
     node_runs: &[WorkflowNodeRun],
 ) -> Option<String> {
+    race_winner_since(branches, winner, node_runs, None)
+}
+
+/// resolve the winning branch for one race visit, counting only runs after `since`.
+///
+/// a race on a back-edge retains prior contender runs in the run history. callers pass the current
+/// race node run, which is created before its contenders, to prevent an old winner from deciding
+/// the new visit.
+pub fn race_winner_since(
+    branches: &[String],
+    winner: BranchPolicy,
+    node_runs: &[WorkflowNodeRun],
+    since: Option<Uuid>,
+) -> Option<String> {
+    let succeeded = |node_id: &String| {
+        latest_node_run_after(node_runs, node_id, since)
+            .is_some_and(|run| run.status == WorkflowStatus::Succeeded)
+    };
     match winner {
         BranchPolicy::All => {
-            if branches
-                .iter()
-                .all(|node_id| latest_status(node_id, node_runs) == Some(WorkflowStatus::Succeeded))
-            {
+            if branches.iter().all(succeeded) {
                 branches.last().cloned()
             } else {
                 None
             }
         }
-        BranchPolicy::Any | BranchPolicy::FirstSuccess => branches
-            .iter()
-            .find(|node_id| latest_status(node_id, node_runs) == Some(WorkflowStatus::Succeeded))
-            .cloned(),
+        BranchPolicy::Any | BranchPolicy::FirstSuccess => {
+            branches.iter().find(|node_id| succeeded(node_id)).cloned()
+        }
     }
 }
 

@@ -432,7 +432,7 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for RaceHandler {
     {
         let params = runinator_workflows::parse_race_parameters(ctx.node)
             .map_err(|err| -> SendableError { Box::new(err) })?;
-        let node_run = ensure_node_run(
+        let node_run = ensure_node_run_for_visit(
             ctx,
             super::context::most_recently_finished_node_run(ctx.node_runs),
         )
@@ -467,7 +467,12 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for RaceHandler {
             );
         }
 
-        if let Some(winner) = race_winner(&branches, params.winner, ctx.node_runs) {
+        // the current race run is created before its contenders, so its id is the visit boundary.
+        // using the previous race run as the floor is too early: that row was also created before
+        // the previous contenders, which would leave the old winner visible on the next lap.
+        if let Some(winner) =
+            race_winner_since(&branches, params.winner, ctx.node_runs, Some(node_run.id))
+        {
             // the race is decided: mark any still-running losing branch as canceled so its node run is
             // terminal and the ws drive path can signal the worker to stop wasted work. branches that
             // never started or already settled are left untouched.
@@ -506,14 +511,15 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for RaceHandler {
             return Ok(ReadyNodeDisposition::Complete);
         }
 
-        // first visit: start every contender. `cursors_forked_by` is the "have I already fanned out"
-        // test, so a re-entry while contenders are still running falls through and simply waits.
-        let already_started = {
-            ctx.run_state_snapshot()
-                .cursors_forked_by(&ctx.node.id)
-                .next()
-                .is_some()
-        };
+        // first visit: start every contender. a re-entry while contenders are still running falls
+        // through and simply waits.
+        // a running node run that was already present in this step's snapshot is the durable
+        // dispatch marker. a newly-created run also defaults to `Running`, so status alone cannot
+        // distinguish it. cursor ancestry cannot either: the previous winner legitimately re-enters
+        // this race still carrying `forked_by`.
+        let already_started = ctx.latest.is_some_and(|latest| {
+            latest.id == node_run.id && latest.status == WorkflowStatus::Running
+        });
         if !already_started {
             ctx.db
                 .update_workflow_node_run(
@@ -545,6 +551,27 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for RaceHandler {
         // does, and the branch cursors carry the work.
         if ctx.cursor.forked_by.as_deref() != Some(ctx.node.id.as_str()) {
             return Ok(ReadyNodeDisposition::Complete);
+        }
+        // one contender returned without deciding the race. this is expected for `all`, and for a
+        // failed contender under the success-based policies. retire it while siblings remain; the
+        // last arrival either observes a winner above or fails the race below.
+        if ctx
+            .run_state_snapshot()
+            .cursors_forked_by(&ctx.node.id)
+            .count()
+            > 1
+        {
+            return super::handler::complete(
+                run_state::advance_cursor(
+                    ctx.db,
+                    ctx.workflow_run.id,
+                    ctx.cursor.id,
+                    WorkflowStatus::Succeeded,
+                    run_state::CursorMove::Retire,
+                    Some("race_contender_arrived".into()),
+                )
+                .await,
+            );
         }
         transition_from_node(
             ctx,

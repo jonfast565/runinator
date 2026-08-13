@@ -24,7 +24,7 @@ use runinator_models::{
     },
 };
 use runinator_store::ReducerStore;
-use runinator_workflows::{branch_policy_name, join_satisfied, latest_status, race_winner};
+use runinator_workflows::{branch_policy_name, join_satisfied, latest_status, race_winner_since};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -82,6 +82,8 @@ mod handler_tests;
 mod interrupt_tests;
 #[cfg(test)]
 mod orchestration_tests;
+#[cfg(test)]
+mod stacked_control_flow_tests;
 
 pub use engine::process_ready_node;
 pub use pipeline_orchestration::{
