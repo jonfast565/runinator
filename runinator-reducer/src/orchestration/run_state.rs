@@ -39,7 +39,7 @@ pub(super) async fn advance_cursor<T: ReducerStore>(
         let Some(run) = db.fetch_workflow_run(workflow_run_id).await? else {
             return Ok(());
         };
-        let mut state = WorkflowRunState::from_state(&run.state);
+        let mut state = run.execution_state.clone();
         // where the cursor sits now, so a drained run keeps reporting the node it finished on.
         let settled_at = state
             .cursor(cursor_id)
@@ -138,7 +138,7 @@ pub(super) async fn advance_cursor<T: ReducerStore>(
                 run.state_version,
                 run_status,
                 position,
-                state.to_state(),
+                state,
                 message.clone(),
             )
             .await?
@@ -184,7 +184,7 @@ pub(super) async fn fork_cursors<T: ReducerStore>(
         let Some(run) = db.fetch_workflow_run(workflow_run_id).await? else {
             return Ok(Vec::new());
         };
-        let mut state = WorkflowRunState::from_state(&run.state);
+        let mut state = run.execution_state.clone();
         let mut forked = Vec::with_capacity(branches.len());
         for branch in branches {
             forked.push((
@@ -204,7 +204,7 @@ pub(super) async fn fork_cursors<T: ReducerStore>(
                 run.state_version,
                 WorkflowStatus::Running,
                 position,
-                state.to_state(),
+                state,
                 None,
             )
             .await?
@@ -237,7 +237,7 @@ pub(super) async fn park_cursor_for_debug<T: ReducerStore>(
         let Some(run) = db.fetch_workflow_run(workflow_run_id).await? else {
             return Ok(());
         };
-        let mut state = WorkflowRunState::from_state(&run.state);
+        let mut state = run.execution_state.clone();
         if state.cursor(cursor_id).is_none() {
             // retired under us; nothing to park.
             return Ok(());
@@ -258,7 +258,7 @@ pub(super) async fn park_cursor_for_debug<T: ReducerStore>(
                 run.state_version,
                 status,
                 position,
-                state.to_state(),
+                state,
                 message.clone(),
             )
             .await?
@@ -315,11 +315,14 @@ where
         let Some(run) = db.fetch_workflow_run(workflow_run_id).await? else {
             return Ok(WorkflowRunState::default());
         };
-        let mut state = WorkflowRunState::from_state(&run.state);
+        let mut state = run.execution_state.clone();
         mutate(&mut state);
-        let encoded = state.to_state();
         if db
-            .update_workflow_run_state_cas(workflow_run_id, run.state_version, encoded)
+            .update_workflow_run_execution_state_cas(
+                workflow_run_id,
+                run.state_version,
+                state.clone(),
+            )
             .await?
         {
             return Ok(state);

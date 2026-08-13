@@ -171,7 +171,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
    */
   function selectedCursorId(): string | null {
     const detail = host.state.workflowRunDetail;
-    const cursors = coerceRunCursors(detail?.run.state?.cursors);
+    const cursors = coerceRunCursors(detail?.execution_state?.cursors);
 
     if (cursors.length === 0) {
       return null;
@@ -183,7 +183,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
       return chosen;
     }
 
-    const frame = coerceDebugFrame(detail?.run.state?.debug) ?? null;
+    const frame = coerceDebugFrame(detail?.execution_state?.debug) ?? null;
     const parked = cursors.find((cursor) => isCursorPaused(cursors, cursor.id, frame));
     return (parked ?? cursors.at(0))?.id ?? null;
   }
@@ -927,7 +927,6 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
       output_json: run.output_json,
       message: run.message,
       active_node_id: run.active_node_id,
-      state: run.state,
     };
     host.state.workflowRuns = next;
   }
@@ -1038,19 +1037,20 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
   }
 
   function applyBreakpointPatch(
-    detail: { run: { state?: JsonRecord } } | null,
+    detail: WorkflowRunDetail | null,
     breakpoints: string[],
   ) {
-    if (!detail?.run.state) {
+    if (!detail) {
       return;
     }
 
-    const debug = coerceDebugFrame(detail.run.state.debug) ?? {};
-    detail.run.state.debug = { ...debug, breakpoints: [...breakpoints] };
+    detail.execution_state ??= {};
+    const debug = coerceDebugFrame(detail.execution_state.debug) ?? {};
+    detail.execution_state.debug = { ...debug, breakpoints: [...breakpoints] };
   }
 
-  function readBreakpoints(detail: { run: { state?: JsonRecord } }): string[] {
-    return coerceDebugFrame(detail.run.state?.debug)?.breakpoints ?? [];
+  function readBreakpoints(detail: WorkflowRunDetail): string[] {
+    return coerceDebugFrame(detail.execution_state?.debug)?.breakpoints ?? [];
   }
 
   function sameBreakpoints(left: string[], right: string[]) {

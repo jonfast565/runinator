@@ -497,7 +497,7 @@ async fn parallel_branches_are_live_at_the_same_time() {
         .await
         .unwrap()
         .unwrap();
-    let state = runinator_models::workflow_state::WorkflowRunState::from_state(&run.state);
+    let state = run.execution_state;
     let branches: Vec<_> = state
         .cursors
         .iter()
@@ -528,7 +528,7 @@ async fn parallel_branches_are_live_at_the_same_time() {
 
     let run = run_to_completion(&db, run_id).await;
     assert_eq!(run.status, WorkflowStatus::Succeeded);
-    let drained = runinator_models::workflow_state::WorkflowRunState::from_state(&run.state);
+    let drained = run.execution_state;
     assert!(
         drained.cursors.is_empty(),
         "a finished run should have retired every cursor"
@@ -659,7 +659,7 @@ async fn race_contenders_all_start_and_losers_retire() {
 
     let run = run_to_completion(&db, run_id).await;
     assert_eq!(run.status, WorkflowStatus::Succeeded);
-    let drained = runinator_models::workflow_state::WorkflowRunState::from_state(&run.state);
+    let drained = run.execution_state;
     assert!(
         drained.cursors.is_empty(),
         "losing cursors should have retired, got {:?}",

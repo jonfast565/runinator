@@ -10,6 +10,7 @@
 use chrono::{DateTime, Utc};
 use runinator_comm::{ActionCommand, ActionDispatchRecord};
 use runinator_models::value::Value;
+use runinator_models::workflow_state::WorkflowExecutionState;
 use runinator_models::{
     billing::OrgResourceGroup,
     cursor::RunCursor,
@@ -88,18 +89,18 @@ pub trait ReducerStore: Send + Sync + 'static {
         workflow_run_id: Uuid,
         status: WorkflowStatus,
         active_node_id: Option<String>,
-        state: Option<Value>,
+        state: Option<WorkflowExecutionState>,
         message: Option<String>,
     ) -> impl Future<Output = Result<(), SendableError>> + Send;
 
     /// Replace a run's state blob only if its version still matches `expected_version`, bumping the
     /// version on success. Returns false when another writer moved the row first, meaning the caller
     /// must re-read and reapply its change.
-    fn update_workflow_run_state_cas(
+    fn update_workflow_run_execution_state_cas(
         &self,
         workflow_run_id: Uuid,
         expected_version: i64,
-        state: Value,
+        state: WorkflowExecutionState,
     ) -> impl Future<Output = Result<bool, SendableError>> + Send;
 
     /// Apply a run's status, position and state in one guarded write, only if the state version
@@ -114,9 +115,14 @@ pub trait ReducerStore: Send + Sync + 'static {
         expected_version: i64,
         status: WorkflowStatus,
         active_node_id: Option<String>,
-        state: Value,
+        state: WorkflowExecutionState,
         message: Option<String>,
     ) -> impl Future<Output = Result<bool, SendableError>> + Send;
+
+    /// Normalize every legacy `workflow_runs.state` value and clear it after a successful write.
+    fn migrate_workflow_execution_states(
+        &self,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
 
     /// Set or clear the user-facing display name of a workflow run.
     fn set_workflow_run_name(

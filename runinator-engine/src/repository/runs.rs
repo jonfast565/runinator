@@ -3,6 +3,7 @@ use super::*;
 use runinator_broker_core::IngressMessage;
 use runinator_comm::WsIngressCommand;
 use runinator_models::interrupt::{InterruptSource, PendingInterrupt};
+use runinator_models::workflow_state::WorkflowExecutionState;
 use uuid::Uuid;
 
 use runinator_database::workflow_mutex::WorkflowMutexWake;
@@ -341,7 +342,7 @@ pub async fn update_workflow_run_status<T: DatabaseImpl>(
     workflow_run_id: Uuid,
     status: WorkflowStatus,
     active_node_id: Option<String>,
-    state: Option<Value>,
+    state: Option<WorkflowExecutionState>,
     message: Option<String>,
 ) -> Result<TaskResponse, SendableError> {
     db.update_workflow_run_status(workflow_run_id, status, active_node_id, state, message)
@@ -394,10 +395,10 @@ pub async fn deliver_run_event<T: DatabaseImpl>(
                 message: format!("Workflow run {workflow_run_id} not found"),
             });
         };
-        let mut state = WorkflowRunState::from_state(&run.state);
+        let mut state = run.execution_state.clone();
         state.deliver_event(&node_id, event.clone());
         if db
-            .update_workflow_run_state_cas(workflow_run_id, run.state_version, state.to_state())
+            .update_workflow_run_execution_state_cas(workflow_run_id, run.state_version, state)
             .await?
         {
             delivered = true;
@@ -490,13 +491,13 @@ pub async fn request_run_interrupt<T: DatabaseImpl>(
                 message: format!("Workflow run {workflow_run_id} not found"),
             });
         };
-        let mut state = WorkflowRunState::from_state(&run.state);
+        let mut state = run.execution_state.clone();
         // replayable: the request carries its own id, so a losing writer re-adds the same one on top
         // of whatever won rather than accumulating duplicates.
         state.take_pending_interrupt(request.id);
         state.pending_interrupts.push(request.clone());
         if db
-            .update_workflow_run_state_cas(workflow_run_id, run.state_version, state.to_state())
+            .update_workflow_run_execution_state_cas(workflow_run_id, run.state_version, state)
             .await?
         {
             recorded = Some(run);
@@ -512,9 +513,7 @@ pub async fn request_run_interrupt<T: DatabaseImpl>(
 
     // wake the thread so the request is looked at now rather than whenever the run next happens to
     // move. an untargeted request rides the run's mirrored position, which is the primary cursor.
-    let node_id = match cursor_id
-        .and_then(|id| WorkflowRunState::from_state(&run.state).cursor(id).cloned())
-    {
+    let node_id = match cursor_id.and_then(|id| run.execution_state.cursor(id).cloned()) {
         Some(cursor) => Some(cursor.node_id().to_string()),
         None => run.active_node_id.clone(),
     };

@@ -81,7 +81,7 @@ pub(crate) async fn send_workflow_run<T: DatabaseImpl>(
     else {
         return Err(());
     };
-    send_json(tx, &models::WorkflowRunResponse { run, nodes }).await?;
+    send_json(tx, &models::WorkflowRunResponse::new(run, nodes)).await?;
     Ok(())
 }
 

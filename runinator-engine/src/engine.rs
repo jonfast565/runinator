@@ -30,6 +30,7 @@ pub async fn run_background_engine<T: DatabaseImpl>(
     instance: String,
     shutdown: Arc<Notify>,
 ) -> Result<(), SendableError> {
+    pool.migrate_workflow_execution_states().await?;
     crate::mutex_migration::reconcile_legacy_mutexes(pool.as_ref()).await?;
     crate::stability::init_metrics();
 

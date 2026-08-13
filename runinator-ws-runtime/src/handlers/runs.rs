@@ -68,10 +68,10 @@ pub async fn create_workflow_trigger_run<T: DatabaseImpl>(
             nudge_wake_publisher(&events);
             (
                 StatusCode::ACCEPTED,
-                Json(ApiResponse::WorkflowRun(models::WorkflowRunResponse {
+                Json(ApiResponse::WorkflowRun(models::WorkflowRunResponse::new(
                     run,
-                    nodes: Vec::new(),
-                })),
+                    Vec::new(),
+                ))),
             )
         }
         Err(err) => api_error(err.to_string()),
@@ -114,10 +114,10 @@ pub async fn create_workflow_run<T: DatabaseImpl>(
             nudge_wake_publisher(&events);
             (
                 StatusCode::ACCEPTED,
-                Json(ApiResponse::WorkflowRun(models::WorkflowRunResponse {
+                Json(ApiResponse::WorkflowRun(models::WorkflowRunResponse::new(
                     run,
-                    nodes: Vec::new(),
-                })),
+                    Vec::new(),
+                ))),
             )
         }
         Err(err) => api_error(err.to_string()),
@@ -434,10 +434,10 @@ pub async fn replay_workflow_run<T: DatabaseImpl>(
             emit_workflow_run(&events, run.id, org_id);
             (
                 StatusCode::ACCEPTED,
-                Json(ApiResponse::WorkflowRun(models::WorkflowRunResponse {
+                Json(ApiResponse::WorkflowRun(models::WorkflowRunResponse::new(
                     run,
-                    nodes: Vec::new(),
-                })),
+                    Vec::new(),
+                ))),
             )
         }
         Err(err) => bad_request(err.to_string()),
@@ -766,7 +766,7 @@ pub async fn update_workflow_run<T: DatabaseImpl>(
         workflow_run_id,
         request.status,
         request.active_node_id,
-        request.state,
+        None,
         request.message,
     )
     .await
@@ -794,10 +794,9 @@ pub async fn get_workflow_run<T: DatabaseImpl>(
     match repository::fetch_workflow_run(db.as_ref(), workflow_run_id).await {
         Ok(Some((run, nodes))) => (
             StatusCode::OK,
-            Json(ApiResponse::WorkflowRun(models::WorkflowRunResponse {
-                run,
-                nodes,
-            })),
+            Json(ApiResponse::WorkflowRun(models::WorkflowRunResponse::new(
+                run, nodes,
+            ))),
         ),
         Ok(None) => not_found(format!("Workflow run {workflow_run_id} not found")),
         Err(err) => api_error(err.to_string()),

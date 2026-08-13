@@ -9,8 +9,7 @@ import type { RunCursor } from "./run-cursor";
 import type { TryFrame } from "./try-frame";
 
 /**
- * typed view of `workflow_run.state`. mirrors runinator-models::WorkflowRunState;
- * unmodeled keys may still exist on the wire object beside these frames.
+ * typed execution state assembled from normalized persistence tables.
  */
 export interface WorkflowRunState {
   /**

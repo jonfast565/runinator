@@ -646,7 +646,7 @@ impl<'a, T: ReducerStore> InterruptOps<'a, T> {
                 // runs must not leak into the resumed thread's `steps.*` or its edge-condition context,
                 // which is the whole point of a handler being a side-channel rather than a real branch.
                 let region_nodes = runinator_workflows::interrupt_region_nodes(workflow, nodes);
-                let run_state = WorkflowRunState::from_state(&run.state);
+                let run_state = run.execution_state.clone();
                 let visible_runs = context::visible_node_runs(
                     &resumed_cursor,
                     &run_state,

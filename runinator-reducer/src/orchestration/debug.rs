@@ -53,7 +53,7 @@ pub(super) fn has_external_effect(kind: &WorkflowNodeKind) -> bool {
 pub(super) async fn debug_gate<T: ReducerStore>(
     ctx: &NodeStepContext<'_, T>,
 ) -> Result<DebugGate, SendableError> {
-    let state = WorkflowRunState::from_state(&ctx.workflow_run.state);
+    let state = ctx.workflow_run.execution_state.clone();
     let Some(frame) = state.debug.as_ref() else {
         return Ok(speculative_gate(ctx.cursor, ctx.node));
     };
@@ -202,7 +202,9 @@ async fn replay_source<T: ReducerStore>(
     }
     // otherwise fall back to the run this one was replayed from, which `replay_workflow_run`
     // stamps into state when it clones a run for debugging.
-    let source_run_id = WorkflowRunState::from_state(&ctx.workflow_run.state)
+    let source_run_id = ctx
+        .workflow_run
+        .execution_state
         .extra
         .get("replay")
         .and_then(|replay| replay.get("source_run_id"))

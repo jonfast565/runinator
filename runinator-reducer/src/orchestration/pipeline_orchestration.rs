@@ -420,8 +420,8 @@ pub(super) async fn maybe_start_chained_pipelines<T: ReducerStore>(
         return Ok(());
     }
     // subflow/map children never fan out further chains.
-    if source_run.state.get("subflow_parent").is_some()
-        || source_run.state.get("map_child").is_some()
+    if source_run.execution_state.subflow_parent.is_some()
+        || source_run.execution_state.map_child.is_some()
     {
         return Ok(());
     }

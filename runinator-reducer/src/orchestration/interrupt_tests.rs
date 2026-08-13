@@ -102,7 +102,7 @@ fn wake_handler() -> serde_json::Value {
 
 fn state(store: &FakeStore) -> WorkflowRunState {
     let run = store.run(RUN_ID.parse().expect("run id")).expect("run");
-    WorkflowRunState::from_state(&run.state)
+    run.execution_state
 }
 
 /// park the wait, then drive it again so its elapsed deadline raises the interrupt.

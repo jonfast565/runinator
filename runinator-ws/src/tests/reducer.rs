@@ -72,7 +72,7 @@ async fn a_requested_interrupt_runs_its_handler_region() {
         .await
         .unwrap()
         .unwrap();
-    let state = runinator_models::workflow_state::WorkflowRunState::from_state(&settled.state);
+    let state = settled.execution_state;
     assert!(
         state.pending_interrupts.is_empty(),
         "the request is consumed by the drive that raised it"

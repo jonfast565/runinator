@@ -7365,6 +7365,7 @@ dependencies = [
  "runinator-models",
  "runinator-store",
  "runinator-utilities",
+ "serde",
  "serde_json",
  "sqlx",
  "tokio",

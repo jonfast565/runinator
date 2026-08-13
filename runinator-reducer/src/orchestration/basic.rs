@@ -372,5 +372,5 @@ async fn finish_route<T: ReducerStore>(
 // --- rich control-flow nodes -------------------------------------------------
 //
 // the reducer lives here and calls `ReducerStore` directly. control-flow bookkeeping lives in
-// named frames inside `workflow_run.state` (the typed `WorkflowRunState` from runinator-models).
+// named frames inside the typed `workflow_run.execution_state` aggregate.
 // predicates that read sibling node-run history come from runinator-workflows.

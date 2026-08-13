@@ -94,7 +94,7 @@ pub(super) async fn runtime_context<T: ReducerStore>(
         let header = WorkflowContextHeader {
             run_id: ctx.workflow_run.id,
             workflow_id: ctx.workflow_run.workflow_id,
-            state: ctx.workflow_run.state.clone(),
+            state: ctx.workflow_run.execution_state.to_state(),
         };
         object.insert(
             "workflow".into(),

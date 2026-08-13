@@ -143,7 +143,7 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for MapHandler {
                 ctx.workflow_run.id,
                 WorkflowStatus::Waiting,
                 Some(ctx.node.id.clone()),
-                Some(state.to_state()),
+                Some(state),
                 None,
             )
             .await?;
@@ -166,7 +166,7 @@ pub(super) async fn finalize_map_child<T: ReducerStore>(
         .max_by_key(|run| run.id)
         .and_then(|run| run.output_json.clone())
         .unwrap_or(Value::Null);
-    let mut typed = WorkflowRunState::from_state(&ctx.workflow_run.state);
+    let mut typed = ctx.workflow_run.execution_state.clone();
     if let Some(child_state) = typed.map_child.as_mut() {
         child_state.result = Some(output);
     }
@@ -178,7 +178,7 @@ pub(super) async fn finalize_map_child<T: ReducerStore>(
             ctx.workflow_run.id,
             WorkflowStatus::Succeeded,
             ctx.workflow_run.active_node_id.clone(),
-            Some(typed.to_state()),
+            Some(typed),
             Some("map_child_finished".into()),
         )
         .await
@@ -187,9 +187,10 @@ pub(super) async fn finalize_map_child<T: ReducerStore>(
 /// read the body output a finished map child stashed under `state.map_child.result`.
 fn map_child_result(child_run: &WorkflowRun) -> Value {
     child_run
-        .state
-        .get("map_child")
-        .and_then(|map_child| map_child.get("result"))
+        .execution_state
+        .map_child
+        .as_ref()
+        .and_then(|map_child| map_child.result.as_ref())
         .cloned()
         .unwrap_or(Value::Null)
 }

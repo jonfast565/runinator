@@ -13,6 +13,7 @@ use runinator_comm::{
 };
 use runinator_models::cursor::RunCursor;
 use runinator_models::value::Value;
+use runinator_models::workflow_state::WorkflowExecutionState;
 use runinator_models::{
     auth::{
         AgentEnrollmentToken, AgentEnrollmentTokenRecord, ApiKey, ApiKeyRecord, AuthContext,
@@ -108,8 +109,8 @@ where
     for<'q> &'q str: Encode<'q, B::Db> + Type<B::Db>,
     for<'q> String: Encode<'q, B::Db> + Type<B::Db>,
     for<'q> Option<i64>: Encode<'q, B::Db> + Type<B::Db>,
-    for<'q> Option<String>: Encode<'q, B::Db> + Type<B::Db>,
     for<'q> Option<Uuid>: Encode<'q, B::Db> + Type<B::Db>,
+    for<'q> Option<String>: Encode<'q, B::Db> + Type<B::Db>,
     for<'q> <B::Db as Database>::Arguments<'q>: IntoArguments<'q, B::Db>,
     for<'c> &'c mut <B::Db as Database>::Connection: Executor<'c, Database = B::Db>,
 {
@@ -208,10 +209,12 @@ impl<B> ScheduleSqlExt for B
 where
     B: SqlBackend,
     for<'q> i64: Encode<'q, B::Db> + Type<B::Db>,
+    for<'q> bool: Encode<'q, B::Db> + Type<B::Db>,
     for<'q> Uuid: Encode<'q, B::Db> + Type<B::Db>,
     for<'q> &'q str: Encode<'q, B::Db> + Type<B::Db>,
     for<'q> String: Encode<'q, B::Db> + Type<B::Db>,
     for<'q> Option<Uuid>: Encode<'q, B::Db> + Type<B::Db>,
+    for<'q> Option<String>: Encode<'q, B::Db> + Type<B::Db>,
     for<'q> <B::Db as Database>::Arguments<'q>: IntoArguments<'q, B::Db>,
     for<'r> i64: Decode<'r, B::Db> + Type<B::Db>,
     for<'r> String: Decode<'r, B::Db> + Type<B::Db>,
@@ -315,46 +318,31 @@ where
         let new_run_id = Uuid::now_v7();
         let snapshot_json = serde_json::to_string(snapshot)?;
         let parameters = trigger.trigger_parameters().to_string();
-        let state = trigger.trigger_state_for_slot(slot).to_string();
+        let state = WorkflowExecutionState::from_state(&trigger.trigger_state_for_slot(slot));
         let insert_sql = "INSERT INTO workflow_runs (id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, name, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_request_host, trigger_request_ip, trigger_metadata) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, NULL, ?, ?, NULL, ?, NULL, NULL, ?)";
-        let run_row = if self.dialect() == SqlDialect::MySql {
-            sqlx::query(&self.render(insert_sql))
-                .bind(new_run_id)
-                .bind(trigger.workflow_id)
-                .bind(&snapshot_json)
-                .bind(WorkflowStatus::Queued.as_str())
-                .bind(&parameters)
-                .bind(&state)
-                .bind(now.timestamp())
-                .bind("cron")
-                .bind("replica")
-                .bind(scheduler_id)
-                .bind(trigger.metadata.to_string())
-                .execute(&mut *conn)
-                .await?;
-            sqlx::query(&self.render(&format!(
-                "SELECT {WORKFLOW_RUN_COLUMNS} FROM workflow_runs WHERE id = ?"
-            )))
+        sqlx::query(&self.render(insert_sql))
             .bind(new_run_id)
-            .fetch_one(&mut *conn)
-            .await?
-        } else {
-            sqlx::query(&self.render(&format!("{insert_sql} RETURNING {WORKFLOW_RUN_COLUMNS}")))
-                .bind(new_run_id)
-                .bind(trigger.workflow_id)
-                .bind(&snapshot_json)
-                .bind(WorkflowStatus::Queued.as_str())
-                .bind(&parameters)
-                .bind(&state)
-                .bind(now.timestamp())
-                .bind("cron")
-                .bind("replica")
-                .bind(scheduler_id)
-                .bind(trigger.metadata.to_string())
-                .fetch_one(&mut *conn)
-                .await?
-        };
-        let run = mappers::row_to_workflow_run(&run_row);
+            .bind(trigger.workflow_id)
+            .bind(&snapshot_json)
+            .bind(WorkflowStatus::Queued.as_str())
+            .bind(&parameters)
+            .bind("{}")
+            .bind(now.timestamp())
+            .bind("cron")
+            .bind("replica")
+            .bind(scheduler_id)
+            .bind(trigger.metadata.to_string())
+            .execute(&mut *conn)
+            .await?;
+        execution_state_sql::replace(self, conn, new_run_id, &state).await?;
+        let run_row = sqlx::query(&self.render(&format!(
+            "SELECT {WORKFLOW_RUN_COLUMNS} FROM workflow_runs WHERE id = ?"
+        )))
+        .bind(new_run_id)
+        .fetch_one(&mut *conn)
+        .await?;
+        let mut run = mappers::row_to_workflow_run(&run_row);
+        run.execution_state = state;
 
         sqlx::query(&self.render(
             "UPDATE workflow_trigger_firings SET workflow_run_id = ? WHERE trigger_id = ? AND fire_key = ?",
@@ -397,6 +385,7 @@ where
     for<'r> Option<i64>: Decode<'r, B::Db> + Type<B::Db>,
     for<'r> Option<String>: Decode<'r, B::Db> + Type<B::Db>,
     for<'r> Option<Uuid>: Decode<'r, B::Db> + Type<B::Db>,
+    usize: ColumnIndex<<B::Db as Database>::Row>,
     for<'c> &'c str: ColumnIndex<<B::Db as Database>::Row>,
     for<'c> &'c mut <B::Db as Database>::Connection: Executor<'c, Database = B::Db>,
 {
@@ -432,7 +421,18 @@ where
         else {
             return Ok(None);
         };
-        let row_json = mark.table.archive_row_json(&row)?;
+        let mut row_json = mark.table.archive_row_json(&row)?;
+        if mark.table == ArchiveTable::WorkflowRuns
+            && let Some(state) = execution_state_sql::load(self, mark.primary_key).await?
+            && let Some(object) = row_json.as_object_mut()
+        {
+            object.insert(
+                "execution_state".into(),
+                serde_json::to_value(state)
+                    .map(Value::from)
+                    .unwrap_or(Value::Null),
+            );
+        }
         Ok(Some(ArchiveRow {
             mark_id: mark.id,
             table: mark.table,
@@ -1056,6 +1056,7 @@ mod automation;
 mod database_impl;
 mod definitions;
 mod dispatch;
+mod execution_state_sql;
 mod notifications;
 mod orgs;
 mod reducer;

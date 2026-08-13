@@ -7,7 +7,6 @@
 
 use chrono::Utc;
 use runinator_models::orchestration::ReadyNodeRecord;
-use runinator_models::workflow_state::WorkflowRunState;
 use runinator_models::workflows::{WorkflowDefinition, WorkflowRun, WorkflowStatus};
 use uuid::Uuid;
 
@@ -211,7 +210,7 @@ async fn a_skipped_gate_ends_only_its_own_branch() {
         WorkflowStatus::Succeeded,
         "one branch skipping its cooldown must not finish the run under a live sibling"
     );
-    let state = WorkflowRunState::from_state(&settled.state);
+    let state = settled.execution_state;
     assert!(
         state.cursors.iter().any(|cursor| cursor.is_at("other")),
         "the sibling branch keeps its thread of control, got {:?}",

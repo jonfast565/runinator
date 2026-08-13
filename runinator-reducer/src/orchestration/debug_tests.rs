@@ -90,14 +90,17 @@ fn linear() -> serde_json::Value {
 }
 
 fn state_of(store: &FakeStore) -> WorkflowRunState {
-    WorkflowRunState::from_state(&store.run(RUN_ID.parse().unwrap()).expect("run").state)
+    store
+        .run(RUN_ID.parse().unwrap())
+        .expect("run")
+        .execution_state
 }
 
 /// grant a step to whichever cursor is parked, the way `step_debug_cursor` does.
 fn request_step(store: &FakeStore) {
     let run_id: Uuid = RUN_ID.parse().unwrap();
     let mut run = store.run(run_id).expect("run");
-    let mut state = WorkflowRunState::from_state(&run.state);
+    let mut state = run.execution_state.clone();
     let target = state
         .cursors
         .iter()
@@ -108,7 +111,8 @@ fn request_step(store: &FakeStore) {
     runtime.paused = false;
     runtime.step_requested = true;
     state.set_cursor_debug(target, runtime);
-    run.state = state.to_state();
+    run.execution_state = state;
+    run.state = run.execution_state.to_state();
     run.status = WorkflowStatus::Running;
     store.insert_run(run);
 }
@@ -254,7 +258,7 @@ async fn a_run_without_a_debug_frame_is_untouched() {
         WorkflowStatus::Succeeded,
         "an undebugged run should walk straight to its end"
     );
-    assert!(!WorkflowRunState::from_state(&run.state).all_cursors_paused());
+    assert!(!run.execution_state.all_cursors_paused());
 }
 
 // `enabled: false` is the same as no frame at all.
@@ -390,12 +394,13 @@ async fn a_speculative_cursor_shadows_an_action_instead_of_dispatching_it() {
     let mut run =
         run_with_state(serde_json::json!({ "debug": { "enabled": true, "mode": "breakpoints" } }));
     // place a real cursor, then fork a speculative branch from it onto the action.
-    let mut state = WorkflowRunState::from_state(&run.state);
+    let mut state = run.execution_state.clone();
     let real = state.ensure_cursor("done");
     let spec = state
         .fork_speculative(real, "call", Some("what-if".into()), Value::Null)
         .expect("fork");
-    run.state = state.to_state();
+    run.execution_state = state;
+    run.state = run.execution_state.to_state();
     run.status = WorkflowStatus::Running;
     store.insert_run(run);
 
@@ -431,7 +436,7 @@ async fn an_armed_node_dispatches_for_real() {
     ])));
     let mut run =
         run_with_state(serde_json::json!({ "debug": { "enabled": true, "mode": "breakpoints" } }));
-    let mut state = WorkflowRunState::from_state(&run.state);
+    let mut state = run.execution_state.clone();
     let real = state.ensure_cursor("done");
     let spec = state
         .fork_speculative(real, "call", None, Value::Null)
@@ -444,7 +449,8 @@ async fn an_armed_node_dispatches_for_real() {
         .expect("frame")
         .armed_nodes
         .insert("call".into());
-    run.state = state.to_state();
+    run.execution_state = state;
+    run.state = run.execution_state.to_state();
     run.status = WorkflowStatus::Running;
     store.insert_run(run);
 
@@ -472,12 +478,13 @@ async fn a_failing_speculative_branch_leaves_the_real_run_alone() {
     ])));
     let mut run =
         run_with_state(serde_json::json!({ "debug": { "enabled": true, "mode": "breakpoints" } }));
-    let mut state = WorkflowRunState::from_state(&run.state);
+    let mut state = run.execution_state.clone();
     let real = state.ensure_cursor("done");
     let spec = state
         .fork_speculative(real, "boom", None, Value::Null)
         .expect("fork");
-    run.state = state.to_state();
+    run.execution_state = state;
+    run.state = run.execution_state.to_state();
     run.status = WorkflowStatus::Running;
     store.insert_run(run);
 
@@ -498,7 +505,7 @@ async fn a_failing_speculative_branch_leaves_the_real_run_alone() {
         WorkflowStatus::Succeeded,
         "the real thread of control carried on to its end regardless"
     );
-    let state = WorkflowRunState::from_state(&run.state);
+    let state = run.execution_state;
     assert!(
         state.cursor(spec).is_none(),
         "the speculative branch drains itself"
@@ -550,7 +557,7 @@ async fn a_blocked_node_keeps_its_cursor_in_place() {
 
     let run = store.run(RUN_ID.parse().unwrap()).expect("run");
     assert_eq!(run.status, WorkflowStatus::Blocked);
-    let state = WorkflowRunState::from_state(&run.state);
+    let state = run.execution_state;
     let cursor = state
         .primary_cursor()
         .expect("a blocked run keeps the cursor so it can be inspected and retried");
@@ -575,7 +582,7 @@ async fn a_terminal_settles_through_the_cursor_and_drains_it() {
     let run = store.run(RUN_ID.parse().unwrap()).expect("run");
     assert_eq!(run.status, WorkflowStatus::Succeeded);
     assert!(
-        WorkflowRunState::from_state(&run.state).cursors.is_empty(),
+        run.execution_state.cursors.is_empty(),
         "a finished run holds no threads of control"
     );
 }

@@ -42,7 +42,7 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for CheckpointHandler {
             "name": name,
             "workflow_run_id": ctx.workflow_run.id,
             "active_node_id": ctx.workflow_run.active_node_id,
-            "run_state": ctx.workflow_run.state,
+            "execution_state": ctx.workflow_run.execution_state,
             "captured_at": Utc::now().timestamp(),
         });
         let inserted = ctx

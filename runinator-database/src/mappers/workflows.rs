@@ -142,6 +142,9 @@ macro_rules! workflow_run_from_row {
                 .unwrap_or(WorkflowStatus::Failed),
             active_node_id: $row.get("active_node_id"),
             parameters: parse_json($row.get::<String, _>("parameters")),
+            execution_state: WorkflowExecutionState::from_state(&parse_json(
+                $row.get::<String, _>("state"),
+            )),
             state: parse_json($row.get::<String, _>("state")),
             state_version: $row.try_get("state_version").unwrap_or(0),
             created_at: DateTime::<Utc>::from_timestamp($row.get("created_at"), 0)

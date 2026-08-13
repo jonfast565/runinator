@@ -70,7 +70,6 @@ export function workflowDetail(
       workflow_id: WORKFLOW_ID,
       status,
       parameters: {},
-      state: { debug: { enabled: true, breakpoints } },
       active_node_id: null,
       created_at: "2026-01-01T00:00:00Z",
       started_at: null,
@@ -78,6 +77,7 @@ export function workflowDetail(
       message,
     },
     nodes: [],
+    execution_state: { debug: { enabled: true, breakpoints } },
   };
 }
 
@@ -88,7 +88,6 @@ export function waitingGateWorkflowDetail(): WorkflowRunDetail {
       workflow_id: WORKFLOW_ID,
       status: "waiting",
       parameters: {},
-      state: {},
       active_node_id: "gate-1",
       created_at: "2026-01-01T00:00:00Z",
       started_at: null,
@@ -128,6 +127,7 @@ export function waitingGateWorkflowDetail(): WorkflowRunDetail {
         message: "waiting",
       },
     ],
+    execution_state: {},
   };
 }
 

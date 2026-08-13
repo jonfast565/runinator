@@ -89,7 +89,7 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for WaitHandler {
                 ctx.workflow_run.id,
                 WorkflowStatus::Waiting,
                 Some(ctx.node.id.clone()),
-                Some(state),
+                None,
                 None,
             )
             .await?;

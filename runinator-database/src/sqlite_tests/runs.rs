@@ -70,6 +70,110 @@ async fn fetch_recent_workflow_runs_returns_all_workflows_newest_first() {
 }
 
 #[tokio::test]
+async fn workflow_execution_state_round_trips_through_relational_projection() {
+    let path = std::env::temp_dir().join(format!(
+        "runinator-execution-state-{}.db",
+        Utc::now().timestamp_nanos_opt().unwrap()
+    ));
+    let db = SqliteDb::new(path.to_str().unwrap()).await.unwrap();
+    db.run_init_scripts(&Vec::new()).await.unwrap();
+    let workflow = db
+        .upsert_workflow(&workflow("execution-state"))
+        .await
+        .unwrap();
+    let raw = runinator_models::json!({
+        "control": { "pause_requested": true },
+        "debug": { "enabled": true, "mode": "breakpoints", "breakpoints": ["review"] },
+        "watch_fired": true,
+        "event_sources": { "hook": { "pending_event": { "id": 7 } } },
+        "pending_interrupts": [{
+            "id": Uuid::now_v7(), "source": "external", "payload": { "why": "test" },
+            "requested_at": "2026-08-13T19:00:00Z"
+        }],
+        "cursors": [{
+            "id": Uuid::now_v7(), "node_id": "review", "forked_by": "parallel",
+            "loops": [{ "node_id": "each", "index": 2, "items": [1, 2, 3], "results": ["a"] }],
+            "try": { "node_id": "attempt", "phase": "catch" },
+            "debug": { "paused": true, "current_node_id": "review", "context_json": { "x": 1 } },
+            "handled": ["wake:00000000-0000-0000-0000-000000000000:1"]
+        }]
+    });
+    let expected = runinator_models::workflow_state::WorkflowExecutionState::from_state(&raw);
+    let run = db
+        .create_workflow_run(
+            workflow.id.unwrap(),
+            workflow,
+            runinator_models::json!({}),
+            raw,
+            None,
+            Default::default(),
+        )
+        .await
+        .unwrap();
+
+    let fetched = db.fetch_workflow_run(run.id).await.unwrap().unwrap();
+    assert_eq!(fetched.execution_state.to_state(), expected.to_state());
+    assert_eq!(fetched.state, runinator_models::json!({}));
+    let cursor_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM workflow_run_cursors WHERE workflow_run_id = ?")
+            .bind(run.id)
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+    let frame_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM workflow_cursor_frames WHERE workflow_run_id = ?")
+            .bind(run.id)
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+    assert_eq!(cursor_count, 1);
+    assert!(frame_count >= 4);
+
+    let _ = fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn legacy_workflow_state_is_backfilled_and_cleared() {
+    let path = std::env::temp_dir().join(format!(
+        "runinator-execution-state-migration-{}.db",
+        Utc::now().timestamp_nanos_opt().unwrap()
+    ));
+    let db = SqliteDb::new(path.to_str().unwrap()).await.unwrap();
+    db.run_init_scripts(&Vec::new()).await.unwrap();
+    let workflow = db.upsert_workflow(&workflow("legacy-state")).await.unwrap();
+    let run = db
+        .create_workflow_run(
+            workflow.id.unwrap(),
+            workflow,
+            runinator_models::json!({}),
+            runinator_models::json!({}),
+            None,
+            Default::default(),
+        )
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM workflow_run_execution_states WHERE workflow_run_id = ?")
+        .bind(run.id)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    sqlx::query("UPDATE workflow_runs SET state = ? WHERE id = ?")
+        .bind(r#"{"watch_fired":true,"event_source_hook":{"pending_event":{"ok":true}}}"#)
+        .bind(run.id)
+        .execute(db.pool())
+        .await
+        .unwrap();
+
+    db.migrate_workflow_execution_states().await.unwrap();
+    let migrated = db.fetch_workflow_run(run.id).await.unwrap().unwrap();
+    assert!(migrated.execution_state.watch_fired);
+    assert!(migrated.execution_state.event_source("hook").is_some());
+    assert_eq!(migrated.state, runinator_models::json!({}));
+
+    let _ = fs::remove_file(path);
+}
+
+#[tokio::test]
 async fn workflow_runs_can_be_created_and_queried_by_open_name() {
     let path = std::env::temp_dir().join(format!(
         "runinator-workflow-runs-by-name-{}.db",

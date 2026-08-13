@@ -102,7 +102,6 @@ function workflowDetail(id: string, status: string): WorkflowRunDetail {
       workflow_id: WORKFLOW_ID,
       status,
       parameters: {},
-      state: {},
       active_node_id: null,
       created_at: "2026-01-01T00:00:00Z",
       started_at: null,
@@ -110,5 +109,6 @@ function workflowDetail(id: string, status: string): WorkflowRunDetail {
       message: null,
     },
     nodes: [],
+    execution_state: {},
   };
 }

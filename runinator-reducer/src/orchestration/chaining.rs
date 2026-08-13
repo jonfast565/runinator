@@ -17,7 +17,7 @@ pub(super) async fn maybe_start_chained_workflows<T: ReducerStore>(
         return Ok(());
     }
     // only top-level runs chain; subflow/map children must not fan out further chains.
-    if run.state.get("subflow_parent").is_some() || run.state.get("map_child").is_some() {
+    if run.execution_state.subflow_parent.is_some() || run.execution_state.map_child.is_some() {
         return Ok(());
     }
     let depth = run

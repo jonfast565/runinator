@@ -422,6 +422,26 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for JoinHandler {
                 None,
             )
             .await?;
+        // another branch can satisfy the join between the snapshot above and this park. re-read
+        // after the durable waiting write and schedule one immediate drive when that happened, so
+        // the last arrival cannot lose its wake to a concurrently parking sibling.
+        let fresh_runs = ctx.db.fetch_workflow_node_runs(ctx.workflow_run.id).await?;
+        let fresh_since = latest_settled_run_id(&fresh_runs, &ctx.node.id);
+        if join_satisfied(&wait_for, params.mode, &fresh_runs, fresh_since) {
+            ctx.db
+                .enqueue_ready_node(
+                    NewOrchestrationEvent::new(
+                        ctx.workflow_run.id,
+                        Some(ctx.node.id.clone()),
+                        "join_recheck",
+                        Value::Null,
+                    )
+                    .for_cursor(ctx.cursor.id),
+                    ctx.node.id.clone(),
+                    Utc::now(),
+                )
+                .await?;
+        }
         super::handler::complete(arm_node_timeout(ctx).await)
     }
 }

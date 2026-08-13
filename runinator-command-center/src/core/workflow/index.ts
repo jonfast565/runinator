@@ -111,12 +111,12 @@ export function buildGraphNodeModels(
   const detailNodes = detail?.nodes ?? [];
   const runByNode = new Map(detailNodes.map((run) => [run.node_id, run]));
   const executionCounts = workflowRunExecutionCounts(detailNodes);
-  const debug = coerceDebugFrame(detail?.run.state?.debug);
+  const debug = coerceDebugFrame(detail?.execution_state?.debug);
   const breakpointSet = new Set<string>(debug?.breakpoints ?? []);
   // one lookup built once, so a node carrying two cursors draws two markers rather than the
   // single "current node" highlight the debugger used to have.
   const markersByNode = cursorsByNode(
-    buildCursorMarkers(coerceRunCursors(detail?.run.state?.cursors), debug, selectedCursorId),
+    buildCursorMarkers(coerceRunCursors(detail?.execution_state?.cursors), debug, selectedCursorId),
   );
   // one region walk per graph rebuild rather than one per node, same as the cursor lookup above.
   const regions = interruptRegionOrigins(workflow);

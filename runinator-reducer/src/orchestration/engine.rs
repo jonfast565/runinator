@@ -118,7 +118,7 @@ pub async fn process_ready_node<T: ReducerStore>(
 /// where the cursor this drive follows currently sits, falling back to the run's mirrored primary
 /// for a drive that has not resolved a cursor yet.
 pub(super) fn driving_position(run: &WorkflowRun, driving: Option<Uuid>) -> Option<String> {
-    let state = WorkflowRunState::from_state(&run.state);
+    let state = run.execution_state.clone();
     driving
         .and_then(|id| state.cursor(id))
         .map(|cursor| cursor.node_id().to_string())
@@ -137,7 +137,7 @@ async fn resolve_cursor<T: ReducerStore>(
     driving: Option<Uuid>,
 ) -> Result<Option<RunCursor>, SendableError> {
     let workflow_run = ctx.workflow_run;
-    let state = WorkflowRunState::from_state(&workflow_run.state);
+    let state = workflow_run.execution_state.clone();
     // already following a cursor in this drive: stay on it wherever it has moved to. debugger and
     // interrupt cursors deliberately retire into one surviving thread, so an unambiguous survivor
     // is a valid inline handoff. multiple survivors are a fan-out: choosing among them would let a
@@ -236,7 +236,7 @@ async fn process_workflow_run_step<T: ReducerStore>(
         );
         return Ok(ReadyNodeDisposition::Complete);
     }
-    let run_state_snapshot = WorkflowRunState::from_state(&workflow_run.state);
+    let run_state_snapshot = workflow_run.execution_state.clone();
     // what this thread of control may see. a real cursor never reads a speculative branch's output;
     // a speculative one reads its own subtree shadowing the real run. filtering once here isolates
     // every handler — and the join's satisfaction check with them — without any of them knowing.
@@ -430,7 +430,7 @@ impl WorkflowProgressKey {
         node_runs: &[WorkflowNodeRun],
         driving: Option<Uuid>,
     ) -> Self {
-        let state = WorkflowRunState::from_state(&workflow_run.state);
+        let state = workflow_run.execution_state.clone();
         let position = driving
             .and_then(|id| state.cursor(id))
             .map(|cursor| cursor.node_id().to_string())
@@ -543,7 +543,7 @@ async fn evaluate_watches<T: ReducerStore>(
     else {
         return Ok(None);
     };
-    if watches.is_empty() || WorkflowRunState::from_state(&ctx.workflow_run.state).watch_fired {
+    if watches.is_empty() || ctx.workflow_run.execution_state.watch_fired {
         return Ok(None);
     }
     let context = runtime_context(ctx).await;

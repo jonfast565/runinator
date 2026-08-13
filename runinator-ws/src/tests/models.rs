@@ -5,14 +5,15 @@ use super::*;
 
 #[test]
 fn workflow_run_stream_terminal_status_stays_snapshot_message() {
-    let response = crate::models::WorkflowRunResponse {
-        run: runinator_models::workflows::WorkflowRun {
+    let response = crate::models::WorkflowRunResponse::new(
+        runinator_models::workflows::WorkflowRun {
             id: Uuid::now_v7(),
             workflow_id: Uuid::now_v7(),
             workflow_snapshot: None,
             status: runinator_models::workflows::WorkflowStatus::Succeeded,
             active_node_id: None,
             parameters: json!({}),
+            execution_state: Default::default(),
             state: json!({}),
             state_version: 0,
             created_at: chrono::Utc::now(),
@@ -30,13 +31,15 @@ fn workflow_run_stream_terminal_status_stays_snapshot_message() {
             trigger_request_ip: None,
             trigger_metadata: Value::Null,
         },
-        nodes: vec![],
-    };
+        vec![],
+    );
 
     let value: Value = serde_json::to_value(response).unwrap().into();
 
     assert_eq!(value["run"]["status"], "succeeded");
+    assert!(value["run"].get("state").is_none());
     assert_eq!(value["nodes"], json!([]));
+    assert_eq!(value["execution_state"], json!({}));
     assert!(value.get("type").is_none());
 }
 

@@ -41,7 +41,7 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for SubflowHandler {
                     let output = SubflowOutcome {
                         subflow_run_id,
                         status: subflow_run.status.as_str().to_string(),
-                        state: Some(subflow_run.state),
+                        state: Some(subflow_run.execution_state.to_state()),
                         parameters: Some(subflow_run.parameters),
                     };
                     transition_from_node(
@@ -198,7 +198,7 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for SubflowHandler {
                 ctx.workflow_run.id,
                 WorkflowStatus::Waiting,
                 Some(ctx.node.id.clone()),
-                Some(state),
+                None,
                 None,
             )
             .await?;

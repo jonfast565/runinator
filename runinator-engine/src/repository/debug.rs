@@ -103,7 +103,7 @@ impl<'a, T: DatabaseImpl> DebugSession<'a, T> {
         context_patch: Value,
     ) -> Result<TaskResponse, SendableError> {
         let run = &self.run;
-        let mut run_state = WorkflowRunState::from_state(&run.state);
+        let mut run_state = run.execution_state.clone();
         run_state
             .debug
             .get_or_insert_with(DebugFrame::default)
@@ -149,7 +149,7 @@ impl<'a, T: DatabaseImpl> DebugSession<'a, T> {
                 run.id,
                 run.status,
                 run.active_node_id.clone(),
-                Some(run_state.to_state()),
+                Some(run_state),
                 Some(format!("Forked speculative branch at {entry}")),
             )
             .await?;
@@ -171,7 +171,7 @@ impl<'a, T: DatabaseImpl> DebugSession<'a, T> {
     /// abandon a speculative branch and everything forked from it.
     async fn retire_cursor(&self, cursor: Uuid) -> Result<TaskResponse, SendableError> {
         let run = &self.run;
-        let mut run_state = WorkflowRunState::from_state(&run.state);
+        let mut run_state = run.execution_state.clone();
         if !run_state.is_speculative(cursor) {
             return Err(crate::errors::DEBUG_SPECULATIVE_ONLY.error(cursor));
         }
@@ -183,7 +183,7 @@ impl<'a, T: DatabaseImpl> DebugSession<'a, T> {
                 run.id,
                 run.status,
                 run.active_node_id.clone(),
-                Some(run_state.to_state()),
+                Some(run_state),
                 Some("Speculative branch retired".into()),
             )
             .await?;
@@ -201,7 +201,7 @@ impl<'a, T: DatabaseImpl> DebugSession<'a, T> {
         armed: bool,
     ) -> Result<TaskResponse, SendableError> {
         let run = &self.run;
-        let mut run_state = WorkflowRunState::from_state(&run.state);
+        let mut run_state = run.execution_state.clone();
         if !run_state.is_speculative(cursor) {
             return Err(crate::errors::DEBUG_SPECULATIVE_ONLY.error(cursor));
         }
@@ -221,7 +221,7 @@ impl<'a, T: DatabaseImpl> DebugSession<'a, T> {
                 run.id,
                 run.status,
                 run.active_node_id.clone(),
-                Some(run_state.to_state()),
+                Some(run_state),
                 None,
             )
             .await?;
@@ -246,7 +246,7 @@ impl<'a, T: DatabaseImpl> DebugSession<'a, T> {
         mutate: impl FnOnce(&mut runinator_models::workflow_state::DebugRuntime),
     ) -> Result<Uuid, SendableError> {
         let run = &self.run;
-        let mut run_state = WorkflowRunState::from_state(&run.state);
+        let mut run_state = run.execution_state.clone();
         run_state
             .debug
             .get_or_insert_with(DebugFrame::default)
@@ -265,7 +265,7 @@ impl<'a, T: DatabaseImpl> DebugSession<'a, T> {
                 run.id,
                 WorkflowStatus::Running,
                 run.active_node_id.clone(),
-                Some(run_state.to_state()),
+                Some(run_state),
                 message,
             )
             .await?;
@@ -292,7 +292,7 @@ impl<'a, T: DatabaseImpl> DebugSession<'a, T> {
         mutate: impl FnOnce(&mut DebugFrame),
     ) -> Result<(), SendableError> {
         let run = &self.run;
-        let mut run_state = WorkflowRunState::from_state(&run.state);
+        let mut run_state = run.execution_state.clone();
         let frame = run_state.debug.get_or_insert_with(DebugFrame::default);
         frame.config.enabled = true;
         mutate(frame);
@@ -301,7 +301,7 @@ impl<'a, T: DatabaseImpl> DebugSession<'a, T> {
                 run.id,
                 status,
                 run.active_node_id.clone(),
-                Some(run_state.to_state()),
+                Some(run_state),
                 message,
             )
             .await
@@ -440,7 +440,7 @@ async fn pause_workflow_run_command<T: DatabaseImpl>(
             message: format!("Workflow run {workflow_run_id} is already terminal"),
         });
     }
-    let mut run_state = WorkflowRunState::from_state(&run.state);
+    let mut run_state = run.execution_state.clone();
     run_state
         .control
         .get_or_insert_with(ControlFrame::default)
@@ -467,7 +467,7 @@ async fn pause_workflow_run_command<T: DatabaseImpl>(
         workflow_run_id,
         status,
         run.active_node_id,
-        Some(run_state.to_state()),
+        Some(run_state),
         Some("Workflow pause requested".into()),
     )
     .await?;
@@ -499,7 +499,7 @@ async fn resume_workflow_run_command<T: DatabaseImpl>(
             message: format!("Workflow run {workflow_run_id} is already terminal"),
         });
     }
-    let mut run_state = WorkflowRunState::from_state(&run.state);
+    let mut run_state = run.execution_state.clone();
     run_state
         .control
         .get_or_insert_with(ControlFrame::default)
@@ -520,7 +520,7 @@ async fn resume_workflow_run_command<T: DatabaseImpl>(
         workflow_run_id,
         status,
         run.active_node_id,
-        Some(run_state.to_state()),
+        Some(run_state),
         Some("Workflow resume requested".into()),
     )
     .await?;
@@ -611,7 +611,7 @@ async fn cancel_workflow_run_command<T: DatabaseImpl>(
             message: format!("Workflow run {workflow_run_id} is already terminal"),
         });
     }
-    let mut run_state = WorkflowRunState::from_state(&run.state);
+    let mut run_state = run.execution_state.clone();
     // clear paused / step_requested so any in-flight scheduler tick sees the cancel.
     if let Some(debug) = run_state.debug.as_mut() {
         debug.runtime.paused = false;
@@ -625,7 +625,7 @@ async fn cancel_workflow_run_command<T: DatabaseImpl>(
         workflow_run_id,
         WorkflowStatus::Canceled,
         run.active_node_id,
-        Some(run_state.to_state()),
+        Some(run_state),
         Some("Workflow run canceled".into()),
     )
     .await?;

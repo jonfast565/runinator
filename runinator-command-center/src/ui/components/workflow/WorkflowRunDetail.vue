@@ -169,7 +169,7 @@ const selectedNodeOutput = computed<Record<string, unknown> | null>(() => {
 });
 
 const debugState = computed<DebugFrame | null>(() => {
-  return coerceDebugFrame(workflows.workflowRunDetail?.run.state?.debug) ?? null;
+  return coerceDebugFrame(workflows.workflowRunDetail?.execution_state?.debug) ?? null;
 });
 
 const inputJsonText = computed(() => pretty(debugState.value?.input_json ?? {}));

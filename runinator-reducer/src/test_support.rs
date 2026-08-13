@@ -28,6 +28,7 @@ use runinator_models::replicas::{
 };
 use runinator_models::settings::{SettingKind, SettingRecord};
 use runinator_models::value::Value;
+use runinator_models::workflow_state::WorkflowExecutionState;
 use runinator_models::workflows::{
     NewWorkflowRunArtifact, WorkflowDefinition, WorkflowNodeRun, WorkflowNodeRunArtifact,
     WorkflowRun, WorkflowRunArtifact, WorkflowStatus, WorkflowTrigger,
@@ -80,8 +81,9 @@ impl FakeStore {
     }
 
     /// register a run. returns the run id for convenience.
-    pub fn insert_run(&self, run: WorkflowRun) -> Uuid {
+    pub fn insert_run(&self, mut run: WorkflowRun) -> Uuid {
         let id = run.id;
+        run.execution_state = WorkflowExecutionState::from_state(&run.state);
         self.state.lock().expect("state").runs.insert(id, run);
         id
     }
@@ -250,7 +252,7 @@ impl ReducerStore for FakeStore {
         workflow_run_id: Uuid,
         status: WorkflowStatus,
         active_node_id: Option<String>,
-        state: Option<Value>,
+        state: Option<WorkflowExecutionState>,
         message: Option<String>,
     ) -> Result<(), SendableError> {
         let mut guard = self.state.lock().expect("state");
@@ -261,7 +263,8 @@ impl ReducerStore for FakeStore {
                 run.active_node_id = active_node_id;
             }
             if let Some(state) = state {
-                run.state = state;
+                run.execution_state = state;
+                run.state = Value::Object(Default::default());
             }
             if message.is_some() {
                 run.message = message;
@@ -275,11 +278,11 @@ impl ReducerStore for FakeStore {
 
     /// compare-and-swap the whole state blob. the version is bumped on every accepted write, so a
     /// caller that read an older one loses and rebuilds — the same contract the sql backend has.
-    async fn update_workflow_run_state_cas(
+    async fn update_workflow_run_execution_state_cas(
         &self,
         workflow_run_id: Uuid,
         expected_version: i64,
-        state: Value,
+        state: WorkflowExecutionState,
     ) -> Result<bool, SendableError> {
         let mut guard = self.state.lock().expect("state");
         let Some(run) = guard.runs.get_mut(&workflow_run_id) else {
@@ -288,7 +291,8 @@ impl ReducerStore for FakeStore {
         if run.state_version != expected_version {
             return Ok(false);
         }
-        run.state = state;
+        run.execution_state = state;
+        run.state = Value::Object(Default::default());
         run.state_version += 1;
         Ok(true)
     }
@@ -299,7 +303,7 @@ impl ReducerStore for FakeStore {
         expected_version: i64,
         status: WorkflowStatus,
         active_node_id: Option<String>,
-        state: Value,
+        state: WorkflowExecutionState,
         message: Option<String>,
     ) -> Result<bool, SendableError> {
         let mut guard = self.state.lock().expect("state");
@@ -313,7 +317,8 @@ impl ReducerStore for FakeStore {
         if active_node_id.is_some() {
             run.active_node_id = active_node_id;
         }
-        run.state = state;
+        run.execution_state = state;
+        run.state = Value::Object(Default::default());
         run.state_version += 1;
         if message.is_some() {
             run.message = message;
@@ -322,6 +327,17 @@ impl ReducerStore for FakeStore {
             run.finished_at = Some(Utc::now());
         }
         Ok(true)
+    }
+
+    async fn migrate_workflow_execution_states(&self) -> Result<(), SendableError> {
+        let mut guard = self.state.lock().expect("state");
+        for run in guard.runs.values_mut() {
+            if run.execution_state.cursors.is_empty() && !run.state.is_null() {
+                run.execution_state = WorkflowExecutionState::from_state(&run.state);
+            }
+            run.state = Value::Object(Default::default());
+        }
+        Ok(())
     }
 
     async fn create_workflow_node_run(
@@ -904,20 +920,20 @@ impl ReducerStore for FakeStore {
     ) -> Result<WorkflowRun, SendableError> {
         // enough of a run for a subflow parent to find its child and read its status. provenance is
         // dropped: nothing the reducer does reads it back.
-        let run: WorkflowRun = serde_json::from_value(serde_json::json!({
+        let mut run: WorkflowRun = serde_json::from_value(serde_json::json!({
             "id": Uuid::now_v7(),
             "workflow_id": workflow_id,
             "workflow_snapshot": workflow_snapshot,
             "status": "queued",
             "active_node_id": null,
             "parameters": parameters,
-            "state": state,
             "name": name,
             "created_at": Utc::now(),
             "started_at": null,
             "finished_at": null,
             "message": null,
         }))?;
+        run.execution_state = WorkflowExecutionState::from_state(&state);
         self.state
             .lock()
             .expect("state")

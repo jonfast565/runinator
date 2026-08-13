@@ -27,6 +27,7 @@ use runinator_models::{
     settings::SettingKind,
     types::RuninatorType,
     value::Value,
+    workflow_state::WorkflowExecutionState,
     workflows::{
         WorkflowAction, WorkflowDefinition, WorkflowGraph, WorkflowObject, WorkflowStatus,
         WorkflowTrigger, WorkflowTriggerKind,
@@ -575,9 +576,13 @@ async fn assert_run_state_cas<T: DatabaseImpl>(db: &T, run_id: Uuid) {
     let version = before.state_version;
 
     assert!(
-        db.update_workflow_run_state_cas(run_id, version, json!({ "watch_fired": true }))
-            .await
-            .unwrap(),
+        db.update_workflow_run_execution_state_cas(
+            run_id,
+            version,
+            WorkflowExecutionState::from_state(&json!({ "watch_fired": true })),
+        )
+        .await
+        .unwrap(),
         "a write against the current version must land"
     );
 
@@ -587,18 +592,21 @@ async fn assert_run_state_cas<T: DatabaseImpl>(db: &T, run_id: Uuid) {
         version + 1,
         "a landed write bumps the version"
     );
-    assert_eq!(after.state.get("watch_fired"), Some(&Value::Bool(true)));
+    assert!(after.execution_state.watch_fired);
 
     assert!(
-        !db.update_workflow_run_state_cas(run_id, version, json!({ "watch_fired": false }))
-            .await
-            .unwrap(),
+        !db.update_workflow_run_execution_state_cas(
+            run_id,
+            version,
+            WorkflowExecutionState::from_state(&json!({ "watch_fired": false })),
+        )
+        .await
+        .unwrap(),
         "a write against a stale version must be rejected"
     );
     let unchanged = db.fetch_workflow_run(run_id).await.unwrap().expect("run");
-    assert_eq!(
-        unchanged.state.get("watch_fired"),
-        Some(&Value::Bool(true)),
+    assert!(
+        unchanged.execution_state.watch_fired,
         "the rejected write must not have applied"
     );
 
@@ -608,7 +616,10 @@ async fn assert_run_state_cas<T: DatabaseImpl>(db: &T, run_id: Uuid) {
         run_id,
         WorkflowStatus::Running,
         None,
-        Some(json!({ "watch_fired": true, "run_metadata": { "n": 1 } })),
+        Some(WorkflowExecutionState::from_state(&json!({
+            "watch_fired": true,
+            "run_metadata": { "n": 1 }
+        }))),
         None,
     )
     .await
@@ -616,9 +627,13 @@ async fn assert_run_state_cas<T: DatabaseImpl>(db: &T, run_id: Uuid) {
     let bumped = db.fetch_workflow_run(run_id).await.unwrap().expect("run");
     assert_eq!(bumped.state_version, after.state_version + 1);
     assert!(
-        !db.update_workflow_run_state_cas(run_id, after.state_version, json!({}))
-            .await
-            .unwrap(),
+        !db.update_workflow_run_execution_state_cas(
+            run_id,
+            after.state_version,
+            WorkflowExecutionState::default(),
+        )
+        .await
+        .unwrap(),
         "a status write that touched state must invalidate an earlier read"
     );
 }

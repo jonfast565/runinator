@@ -186,7 +186,7 @@ async fn persist_frame<T: ReducerStore>(
             ctx.workflow_run.id,
             WorkflowStatus::Running,
             Some(ctx.node.id.clone()),
-            Some(run_state.to_state()),
+            Some(run_state.clone()),
             Some("Compensating before failure".into()),
         )
         .await

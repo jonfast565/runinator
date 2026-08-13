@@ -4,6 +4,7 @@ use runinator_comm::{
     AgentDirectiveState,
 };
 use runinator_models::value::Value;
+use runinator_models::workflow_state::WorkflowExecutionState;
 use runinator_models::{
     auth::{
         AgentEnrollmentToken, AgentEnrollmentTokenRecord, ApiKey, ApiKeyRecord, AuthSession, Grant,

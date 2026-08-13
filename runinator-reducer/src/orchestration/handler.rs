@@ -135,7 +135,7 @@ pub(super) struct NodeHandlerContext<'a, T: ReducerStore> {
 
 impl<'a, T: ReducerStore> NodeHandlerContext<'a, T> {
     pub(super) fn new(step: NodeStepContext<'a, T>) -> Self {
-        let run_state_snapshot = WorkflowRunState::from_state(&step.workflow_run.state);
+        let run_state_snapshot = step.workflow_run.execution_state.clone();
         Self {
             step,
             run_state_snapshot,

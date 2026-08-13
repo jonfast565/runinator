@@ -36,7 +36,7 @@ export interface InterruptFrame {
  * one position on a run's track. mirrors runinator-models::RunCursor.
  *
  * a linear run holds one; `parallel`/`race` fan out more, and the debugger can add speculative
- * ones. `debug` is the authoritative per-branch debugger state -- `run.state.debug` is only the
+ * ones. `debug` is the authoritative per-branch debugger state -- `execution_state.debug` is the
  * primary cursor's mirror.
  */
 export interface RunCursor {

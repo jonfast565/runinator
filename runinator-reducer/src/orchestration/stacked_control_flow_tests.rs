@@ -7,7 +7,6 @@ use std::collections::HashSet;
 
 use chrono::Utc;
 use runinator_models::orchestration::ReadyNodeRecord;
-use runinator_models::workflow_state::WorkflowRunState;
 use runinator_models::workflows::{WorkflowDefinition, WorkflowRun, WorkflowStatus};
 use uuid::Uuid;
 
@@ -366,9 +365,7 @@ async fn a_late_race_loser_does_not_drive_the_next_laps_contender() {
     let late_cursor = late_slow.cursor_id.expect("addressed loser");
     let run = store.run(RUN_ID.parse().expect("run id")).expect("run");
     assert!(
-        WorkflowRunState::from_state(&run.state)
-            .cursor(late_cursor)
-            .is_none(),
+        run.execution_state.cursor(late_cursor).is_none(),
         "the losing cursor must retire when the first lap settles"
     );
 

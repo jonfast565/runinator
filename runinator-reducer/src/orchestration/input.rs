@@ -57,8 +57,8 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for InputHandler {
                 WorkflowStatus::InputRequired,
                 Some(node_run.attempt + 1),
                 None,
-                None,
                 Some(state.to_wire_value()?),
+                None,
                 Some(WorkflowStatus::InputRequired.as_str().into()),
                 Some("input_requested".into()),
             )
@@ -68,7 +68,7 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for InputHandler {
                 ctx.workflow_run.id,
                 WorkflowStatus::InputRequired,
                 Some(ctx.node.id.clone()),
-                Some(state.to_wire_value()?),
+                None,
                 Some("input_requested".into()),
             )
             .await?;

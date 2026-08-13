@@ -117,7 +117,7 @@ export function createWorkflowServices(inputDeps: WorkflowServiceDeps) {
   }
 
   function getDebugState(): DebugFrame | null {
-    return coerceDebugFrame(state.workflowRunDetail?.run.state?.debug) ?? null;
+    return coerceDebugFrame(state.workflowRunDetail?.execution_state?.debug) ?? null;
   }
 
   function isDebugRun(): boolean {
@@ -125,12 +125,12 @@ export function createWorkflowServices(inputDeps: WorkflowServiceDeps) {
   }
 
   function getControlState(): ControlFrame | null {
-    return coerceControlFrame(state.workflowRunDetail?.run.state?.control) ?? null;
+    return coerceControlFrame(state.workflowRunDetail?.execution_state?.control) ?? null;
   }
 
   /** every thread of control the run currently holds, in persisted order. */
   function getCursors(): RunCursor[] {
-    return coerceRunCursors(state.workflowRunDetail?.run.state?.cursors);
+    return coerceRunCursors(state.workflowRunDetail?.execution_state?.cursors);
   }
 
   /** draw-ready markers for the graph and the cursor rail. */

@@ -75,7 +75,7 @@ pub async fn webhook_wake<T: DatabaseImpl>(
         request.workflow_run_id,
         runinator_models::workflows::WorkflowStatus::Waiting,
         Some(node_id),
-        Some(state),
+        None,
         request.message,
     )
     .await

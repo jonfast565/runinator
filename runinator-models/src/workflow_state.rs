@@ -1,7 +1,7 @@
-// typed representations of the workflow run `state` blob and node-run state/output payloads.
+// typed representations of workflow execution state and node-run state/output payloads.
 //
 // the scheduler manipulates these as structs and converts to/from the dynamic `Value` carriers
-// (workflow_run.state, workflow_node_run.state, output_json) only at the persistence boundary via
+// (normalized execution tables, workflow_node_run.state, output_json) at persistence boundaries via
 // `runinator_comm::WireCodec`. the web service still owns the same wire shapes, so these structs
 // mirror the keys it reads and writes. unmodeled keys round-trip through `#[serde(flatten)]` bags.
 
@@ -36,9 +36,9 @@ where
     Ok(serde_json::from_value(raw).ok())
 }
 
-/// typed view of `workflow_run.state`: a container of named control-flow frames plus user bags.
+/// typed workflow execution aggregate: named control-flow frames plus user-authored values.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct WorkflowRunState {
+pub struct WorkflowExecutionState {
     /// where the run is on its track. one entry for a linear run; `parallel`/`race` fan out more.
     /// empty for a run that has not been placed yet, which the reducer seeds on its first drive.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -85,7 +85,7 @@ pub struct WorkflowRunState {
     pub extra: Map,
 }
 
-impl WorkflowRunState {
+impl WorkflowExecutionState {
     /// parse a run's `state` blob into the typed container. malformed state collapses to empty.
     pub fn from_state(value: &Value) -> Self {
         let mut parsed: Self = serde_json::from_value(value.clone().into()).unwrap_or_default();
@@ -396,13 +396,16 @@ impl WorkflowRunState {
         }
     }
 
-    /// serialize back into a `state` blob for persistence.
+    /// serialize the typed aggregate for compatibility and JSON transport snapshots.
     pub fn to_state(&self) -> Value {
         serde_json::to_value(self)
             .map(Value::from)
             .unwrap_or(Value::Null)
     }
 }
+
+/// compatibility name for code that predates normalized execution-state persistence.
+pub type WorkflowRunState = WorkflowExecutionState;
 
 #[cfg(test)]
 #[path = "workflow_state_tests.rs"]

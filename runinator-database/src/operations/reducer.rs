@@ -141,13 +141,31 @@ where
         &self,
         workflow_run_id: Uuid,
     ) -> Result<Option<WorkflowRun>, SendableError> {
-        let row = sqlx::query(&self.render(&format!(
-            "SELECT {WORKFLOW_RUN_COLUMNS} FROM workflow_runs WHERE id = ?"
+        for _ in 0..3 {
+            let row = sqlx::query(&self.render(&format!(
+                "SELECT {WORKFLOW_RUN_COLUMNS} FROM workflow_runs WHERE id = ?"
+            )))
+            .bind(workflow_run_id)
+            .fetch_optional(self.pool())
+            .await?;
+            let Some(row) = row else { return Ok(None) };
+            let mut run = mappers::row_to_workflow_run(&row);
+            if let Some(state) = execution_state_sql::load(self, workflow_run_id).await? {
+                run.execution_state = state;
+            }
+            let current =
+                sqlx::query(&self.render("SELECT state_version FROM workflow_runs WHERE id = ?"))
+                    .bind(workflow_run_id)
+                    .fetch_one(self.pool())
+                    .await?
+                    .get::<i64, _>("state_version");
+            if current == run.state_version {
+                return Ok(Some(run));
+            }
+        }
+        Err(Box::new(std::io::Error::other(
+            "workflow execution state changed repeatedly while reading",
         )))
-        .bind(workflow_run_id)
-        .fetch_optional(self.pool())
-        .await?;
-        Ok(row.map(|row| mappers::row_to_workflow_run(&row)))
     }
 
     async fn fetch_workflow_runs_for_workflow(
@@ -158,7 +176,13 @@ where
             .bind(workflow_id)
             .fetch_all(self.pool())
             .await?;
-        Ok(rows.iter().map(mappers::row_to_workflow_run).collect())
+        let mut runs: Vec<_> = rows.iter().map(mappers::row_to_workflow_run).collect();
+        for run in &mut runs {
+            if let Some(state) = execution_state_sql::load(self, run.id).await? {
+                run.execution_state = state;
+            }
+        }
+        Ok(runs)
     }
 
     async fn set_workflow_run_name(
@@ -200,47 +224,48 @@ where
         workflow_run_id: Uuid,
         status: WorkflowStatus,
         active_node_id: Option<String>,
-        state: Option<Value>,
+        state: Option<WorkflowExecutionState>,
         message: Option<String>,
     ) -> Result<(), SendableError> {
         let now = Utc::now().timestamp();
         let terminal = status.is_terminal();
-        let state_json = state.map(|value| value.to_string());
-        self.pool()
-            .execute(
-                // `state_version` moves whenever `state` does, so a compare-and-swap writer that
-                // read an older blob cannot land on top of this write.
-                sqlx::query(&self.render(
-                    "UPDATE workflow_runs SET status = ?, active_node_id = COALESCE(?, active_node_id), state = COALESCE(?, state), state_version = CASE WHEN ? IS NULL THEN state_version ELSE state_version + 1 END, message = COALESCE(?, message), started_at = CASE WHEN ? = 'running' AND started_at IS NULL THEN ? ELSE started_at END, finished_at = CASE WHEN ? THEN ? ELSE finished_at END WHERE id = ?",
+        let has_state = state.is_some();
+        let mut tx = self.pool().begin().await?;
+        let updated = sqlx::query(&self.render(
+                    "UPDATE workflow_runs SET status = ?, active_node_id = COALESCE(?, active_node_id), state = CASE WHEN ? THEN '{}' ELSE state END, state_version = CASE WHEN ? THEN state_version + 1 ELSE state_version END, message = COALESCE(?, message), started_at = CASE WHEN ? = 'running' AND started_at IS NULL THEN ? ELSE started_at END, finished_at = CASE WHEN ? THEN ? ELSE finished_at END WHERE id = ? AND status NOT IN ('succeeded', 'failed', 'timed_out', 'canceled')",
                 ))
                 .bind(status.as_str())
                 .bind(active_node_id)
-                .bind(state_json.clone())
-                .bind(state_json)
+                .bind(has_state)
+                .bind(has_state)
                 .bind(message)
                 .bind(status.as_str())
                 .bind(now)
                 .bind(terminal)
                 .bind(now)
-                .bind(workflow_run_id),
-            )
-            .await?;
+                .bind(workflow_run_id)
+                .execute(&mut *tx)
+                .await?;
+        if updated.affected() > 0
+            && let Some(state) = state
+        {
+            execution_state_sql::replace(self, &mut *tx, workflow_run_id, &state).await?;
+        }
         // a run that just reached a terminal state can still own pending ready nodes (poll re-arms,
         // timeout wakes, unclaimed siblings). left behind they are rescanned forever by the wake
         // publisher — re-driving a dead run, spamming ui events, and starving new work behind their
         // stale `ready_at`. settle them here so the backstop stops seeing them.
         if terminal {
-            self.pool()
-                .execute(
-                    sqlx::query(&self.render(
+            sqlx::query(&self.render(
                         "UPDATE workflow_ready_nodes SET completed_at = ?, status = 'succeeded', updated_at = ? WHERE workflow_run_id = ? AND completed_at IS NULL",
                     ))
                     .bind(now)
                     .bind(now)
-                    .bind(workflow_run_id),
-                )
+                    .bind(workflow_run_id)
+                    .execute(&mut *tx)
                 .await?;
         }
+        tx.commit().await?;
         Ok(())
     }
 
@@ -250,52 +275,96 @@ where
         expected_version: i64,
         status: WorkflowStatus,
         active_node_id: Option<String>,
-        state: Value,
+        state: WorkflowExecutionState,
         message: Option<String>,
     ) -> Result<bool, SendableError> {
         let now = Utc::now().timestamp();
         let terminal = status.is_terminal();
-        let result = self
-            .pool()
-            .execute(
-                sqlx::query(&self.render(
-                    "UPDATE workflow_runs SET status = ?, active_node_id = COALESCE(?, active_node_id), state = ?, state_version = state_version + 1, message = COALESCE(?, message), started_at = CASE WHEN ? = 'running' AND started_at IS NULL THEN ? ELSE started_at END, finished_at = CASE WHEN ? THEN ? ELSE finished_at END WHERE id = ? AND state_version = ?",
+        let mut tx = self.pool().begin().await?;
+        let result = sqlx::query(&self.render(
+                    "UPDATE workflow_runs SET status = ?, active_node_id = COALESCE(?, active_node_id), state = '{}', state_version = state_version + 1, message = COALESCE(?, message), started_at = CASE WHEN ? = 'running' AND started_at IS NULL THEN ? ELSE started_at END, finished_at = CASE WHEN ? THEN ? ELSE finished_at END WHERE id = ? AND state_version = ?",
                 ))
                 .bind(status.as_str())
                 .bind(active_node_id)
-                .bind(state.to_string())
                 .bind(message)
                 .bind(status.as_str())
                 .bind(now)
                 .bind(terminal)
                 .bind(now)
                 .bind(workflow_run_id)
-                .bind(expected_version),
-            )
-            .await?;
-        Ok(result.affected() > 0)
+                .bind(expected_version)
+                .execute(&mut *tx)
+                .await?;
+        if result.affected() == 0 {
+            tx.rollback().await?;
+            return Ok(false);
+        }
+        execution_state_sql::replace(self, &mut *tx, workflow_run_id, &state).await?;
+        tx.commit().await?;
+        Ok(true)
     }
 
-    async fn update_workflow_run_state_cas(
+    async fn update_workflow_run_execution_state_cas(
         &self,
         workflow_run_id: Uuid,
         expected_version: i64,
-        state: Value,
+        state: WorkflowExecutionState,
     ) -> Result<bool, SendableError> {
-        let result = self
-            .pool()
-            .execute(
-                sqlx::query(&self.render(
-                    "UPDATE workflow_runs SET state = ?, state_version = state_version + 1 WHERE id = ? AND state_version = ?",
+        let mut tx = self.pool().begin().await?;
+        let result = sqlx::query(&self.render(
+                    "UPDATE workflow_runs SET state = '{}', state_version = state_version + 1 WHERE id = ? AND state_version = ?",
                 ))
-                .bind(state.to_string())
                 .bind(workflow_run_id)
-                .bind(expected_version),
-            )
-            .await?;
+                .bind(expected_version)
+                .execute(&mut *tx)
+                .await?;
         // no row matched: another writer bumped the version between the caller's read and this
         // write, so the caller's blob is stale and must be rebuilt.
-        Ok(result.affected() > 0)
+        if result.affected() == 0 {
+            tx.rollback().await?;
+            return Ok(false);
+        }
+        execution_state_sql::replace(self, &mut *tx, workflow_run_id, &state).await?;
+        tx.commit().await?;
+        Ok(true)
+    }
+
+    async fn migrate_workflow_execution_states(&self) -> Result<(), SendableError> {
+        let rows = sqlx::query(&self.render(
+            "SELECT r.id, r.state FROM workflow_runs r LEFT JOIN workflow_run_execution_states s ON s.workflow_run_id = r.id WHERE s.workflow_run_id IS NULL OR r.state <> '{}' ORDER BY r.created_at, r.id",
+        ))
+        .fetch_all(self.pool())
+        .await?;
+        for row in rows {
+            let workflow_run_id = row.get::<Uuid, _>("id");
+            if execution_state_sql::load(self, workflow_run_id)
+                .await?
+                .is_some()
+            {
+                self.pool()
+                    .execute(
+                        sqlx::query(
+                            &self.render("UPDATE workflow_runs SET state = '{}' WHERE id = ?"),
+                        )
+                        .bind(workflow_run_id),
+                    )
+                    .await?;
+                continue;
+            }
+            let legacy = Value::from(
+                serde_json::from_str::<serde_json::Value>(&row.get::<String, _>("state"))
+                    .unwrap_or_default(),
+            );
+            let state = WorkflowExecutionState::from_state(&legacy);
+            let mut tx = self.pool().begin().await?;
+            execution_state_sql::replace(self, &mut *tx, workflow_run_id, &state).await?;
+            sqlx::query(&self.render("UPDATE workflow_runs SET state = '{}' WHERE id = ?"))
+                .bind(workflow_run_id)
+                .execute(&mut *tx)
+                .await?;
+            tx.commit().await?;
+        }
+        Ok(())
     }
 
     async fn create_workflow_node_run(
@@ -1495,7 +1564,13 @@ where
         .bind(pipeline_run_id)
         .fetch_all(self.pool())
         .await?;
-        Ok(rows.iter().map(mappers::row_to_workflow_run).collect())
+        let mut runs: Vec<_> = rows.iter().map(mappers::row_to_workflow_run).collect();
+        for run in &mut runs {
+            if let Some(state) = execution_state_sql::load(self, run.id).await? {
+                run.execution_state = state;
+            }
+        }
+        Ok(runs)
     }
 
     async fn try_record_trigger_firing(
@@ -1533,49 +1608,18 @@ where
         provenance: WorkflowRunProvenance,
     ) -> Result<WorkflowRun, SendableError> {
         let snapshot = serde_json::to_string(&workflow_snapshot)?;
+        let state = WorkflowExecutionState::from_state(&state);
         let id = Uuid::now_v7();
         let created_at = Utc::now().timestamp();
-        if self.dialect() == SqlDialect::MySql {
-            let mut conn = self.pool().acquire().await?;
-            sqlx::query(&self.render(
-                "INSERT INTO workflow_runs (id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, name, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_request_host, trigger_request_ip, trigger_metadata) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            ))
-            .bind(id)
-            .bind(workflow_id)
-            .bind(snapshot)
-            .bind(WorkflowStatus::Queued.as_str())
-            .bind(parameters.to_string())
-            .bind(state.to_string())
-            .bind(created_at)
-            .bind(name)
-            .bind(provenance.source_kind.map(|value| value.as_str().to_string()))
-            .bind(provenance.actor_type.map(|value| value.as_str().to_string()))
-            .bind(provenance.actor_replica_id)
-            .bind(provenance.actor_display_name)
-            .bind(provenance.request_host)
-            .bind(provenance.request_ip)
-            .bind(provenance.metadata.to_string())
-            .execute(&mut *conn)
-            .await?;
-            let row = sqlx::query(&self.render(&format!(
-                "SELECT {WORKFLOW_RUN_COLUMNS} FROM workflow_runs WHERE id = ?"
-            )))
-            .bind(id)
-            .fetch_one(&mut *conn)
-            .await?;
-            return Ok(mappers::row_to_workflow_run(&row));
-        }
-        let row = sqlx::query(&self.render(&format!(
-            "INSERT INTO workflow_runs (id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, name, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_request_host, trigger_request_ip, trigger_metadata)
-             VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-             RETURNING {WORKFLOW_RUN_COLUMNS}",
-        )))
+        let mut tx = self.pool().begin().await?;
+        sqlx::query(&self.render(
+            "INSERT INTO workflow_runs (id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, name, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_request_host, trigger_request_ip, trigger_metadata) VALUES (?, ?, ?, ?, NULL, ?, '{}', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ))
         .bind(id)
         .bind(workflow_id)
         .bind(snapshot)
         .bind(WorkflowStatus::Queued.as_str())
         .bind(parameters.to_string())
-        .bind(state.to_string())
         .bind(created_at)
         .bind(name)
         .bind(provenance.source_kind.map(|value| value.as_str().to_string()))
@@ -1585,9 +1629,19 @@ where
         .bind(provenance.request_host)
         .bind(provenance.request_ip)
         .bind(provenance.metadata.to_string())
-        .fetch_one(self.pool())
+        .execute(&mut *tx)
         .await?;
-        Ok(mappers::row_to_workflow_run(&row))
+        execution_state_sql::replace(self, &mut *tx, id, &state).await?;
+        let row = sqlx::query(&self.render(&format!(
+            "SELECT {WORKFLOW_RUN_COLUMNS} FROM workflow_runs WHERE id = ?"
+        )))
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await?;
+        let mut run = mappers::row_to_workflow_run(&row);
+        run.execution_state = state;
+        tx.commit().await?;
+        Ok(run)
     }
 
     async fn fetch_workflow_runs_by_name(
@@ -1608,7 +1662,13 @@ where
             .fetch_all(self.pool())
             .await?
         };
-        Ok(rows.iter().map(mappers::row_to_workflow_run).collect())
+        let mut runs: Vec<_> = rows.iter().map(mappers::row_to_workflow_run).collect();
+        for run in &mut runs {
+            if let Some(state) = execution_state_sql::load(self, run.id).await? {
+                run.execution_state = state;
+            }
+        }
+        Ok(runs)
     }
 
     async fn fetch_workflow_node_runs_by_status(

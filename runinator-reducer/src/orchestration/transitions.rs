@@ -225,18 +225,11 @@ pub(super) async fn maybe_wake_subflow_parent<T: ReducerStore>(
     if !run.status.is_terminal() {
         return Ok(());
     }
-    let Some(parent) = run.state.get("subflow_parent") else {
+    let Some(parent) = run.execution_state.subflow_parent.as_ref() else {
         return Ok(());
     };
-    let (Some(parent_run_id), Some(parent_node_id)) = (
-        parent
-            .get("run_id")
-            .and_then(Value::as_str)
-            .and_then(|raw| raw.parse::<Uuid>().ok()),
-        parent.get("node_id").and_then(Value::as_str),
-    ) else {
-        return Ok(());
-    };
+    let parent_run_id = parent.run_id;
+    let parent_node_id = parent.node_id.as_str();
     let event = NewOrchestrationEvent::new(
         parent_run_id,
         Some(parent_node_id.to_string()),
@@ -377,10 +370,7 @@ pub(super) async fn settle_node<T: ReducerStore>(
     }
     // the debugger's "last output" pane is per-branch; run-wide "most recently finished" is simply
     // the wrong answer under fan-out. only paid for by runs that are actually being debugged.
-    if WorkflowRunState::from_state(&ctx.workflow_run.state)
-        .debug
-        .is_some()
-    {
+    if ctx.workflow_run.execution_state.debug.is_some() {
         let last = output_json.clone().unwrap_or(Value::Null);
         run_state::mutate_cursor(ctx.db, ctx.workflow_run.id, ctx.cursor.id, |cursor| {
             cursor.last_output = Some(last.clone());

@@ -80,7 +80,7 @@ impl Debuggable for WorkflowRun {
     type Cursor = RunCursor;
 
     fn debug_frame(&self) -> Option<DebugFrame> {
-        parse_frame(&self.state)
+        self.execution_state.debug.clone()
     }
 
     fn cursor_key(&self, cursor: &Self::Cursor) -> String {

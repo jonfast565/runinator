@@ -4,6 +4,7 @@ use uuid::Uuid;
 
 use crate::replicas::{TriggerActorType, TriggerSourceKind};
 use crate::value::Value;
+use crate::workflow_state::WorkflowExecutionState;
 use crate::workflows::{WorkflowDefinition, WorkflowStatus};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -15,6 +16,11 @@ pub struct WorkflowRun {
     pub status: WorkflowStatus,
     pub active_node_id: Option<String>,
     pub parameters: Value,
+    /// normalized execution state assembled from the workflow state tables.
+    #[serde(skip)]
+    pub execution_state: WorkflowExecutionState,
+    /// legacy migration carrier. new writes clear this column and never treat it as authoritative.
+    #[serde(skip_serializing, default)]
     pub state: Value,
     /// optimistic-concurrency guard for `state`. bumped by every write that touches the blob;
     /// a compare-and-swap writer passes the value it read and retries when the row has moved on.
