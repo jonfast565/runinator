@@ -450,14 +450,14 @@ if_stmt    = { "if" ~ cond ~ block ~ else_if* ~ else_block? }
 else_if    = { "else" ~ "if" ~ cond ~ block }
 else_block = { "else" ~ block }
 
-for_stmt   = { "for" ~ ident ~ "in" ~ expr ~ for_limit_expr? ~ block }
+for_stmt   = { "for" ~ ident ~ (":" ~ type_expr)? ~ ("," ~ ident)? ~ "in" ~ expr ~ for_limit_expr? ~ block }
 // `limit none` is the explicit form of an uncapped loop; `limit N` caps iterations.
 // the for loop's cap may be any expression yielding an integer (evaluated at runtime),
 // so `limit budget` works; `none` stays the explicit uncapped form.
 for_limit_expr = { "limit" ~ (limit_none | expr) }
 limit_none     = @{ "none" ~ !(ASCII_ALPHANUMERIC | "_") }
 // while/until caps stay literal safety bounds.
-for_limit  = { "limit" ~ (integer | "none") }
+for_limit  = { "limit" ~ (integer | limit_none) }
 
 // condition-driven loops. `while c {}` repeats the body while c holds; `until c {}` is
 // sugar for `while !c {}`. an optional `limit` caps iterations (a safety bound).

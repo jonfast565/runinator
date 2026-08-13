@@ -24,6 +24,76 @@ fn for_loop_limit_literal_uses_typed_field() {
     assert_eq!(loop_node["max_iterations"], 5);
     assert_round_trips(src);
 }
+
+#[test]
+fn for_bindings_keep_authored_names_types_and_index() {
+    let src = r#"
+        workflow "LoopBindings" v1 {
+            params { items: any[] }
+            for ticket: { key: string }, i in params.items {
+                emit "ticket" { key: ticket.key, index: i }
+            }
+        }
+    "#;
+    let definition = compile(src);
+    let decompiled = decompile(&definition).expect("decompile");
+    assert!(decompiled.contains("for ticket: { key: string }, i in params.items"));
+    assert_round_trips(src);
+}
+
+#[test]
+fn bound_for_collects_the_loop_results_array() {
+    let src = r#"
+        workflow "CollectedLoop" v1 {
+            params { items: string[] }
+            node results <- for item in params.items {
+                node echoed <- console.run(command: item)
+            }
+            console.run(command: string(results))
+        }
+    "#;
+    let definition = compile(src);
+    let graph = graph_value(&definition);
+    let collector = graph["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|node| node["id"] == "results")
+        .expect("bound loop collector");
+    assert!(
+        collector.to_string().contains("results"),
+        "collector should read the loop accumulator: {collector}"
+    );
+    assert_round_trips(src);
+}
+
+#[test]
+fn while_limit_none_is_an_uncapped_loop() {
+    let src = r#"
+        workflow "UncappedWhile" v1 {
+            params { ready: bool }
+            while params.ready == false limit none {
+                wait 1s
+            }
+        }
+    "#;
+    assert_round_trips(src);
+}
+
+#[test]
+fn map_keeps_its_authored_variable_name() {
+    let src = r#"
+        workflow "MapBinding" v1 {
+            params { tickets: string[] }
+            map ticket in params.tickets concurrency 2 {
+                console.run(command: ticket)
+            }
+        }
+    "#;
+    let decompiled = decompile(&compile(src)).expect("decompile");
+    assert!(decompiled.contains("map ticket in params.tickets"));
+    assert_round_trips(src);
+}
 #[test]
 fn for_loop_limit_accepts_expression() {
     // an expression cap is carried in the loop parameters (resolved at runtime) and

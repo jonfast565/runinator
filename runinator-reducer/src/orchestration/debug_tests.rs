@@ -747,6 +747,7 @@ fn a_fork_inherits_its_parents_position_and_frames() {
             node_id: "each".into(),
             index: 4,
             last_node_run_id: None,
+            ..Default::default()
         });
         cursor
     };

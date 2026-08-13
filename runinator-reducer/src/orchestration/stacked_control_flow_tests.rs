@@ -7,6 +7,7 @@ use std::collections::HashSet;
 
 use chrono::Utc;
 use runinator_models::orchestration::ReadyNodeRecord;
+use runinator_models::workflow_state::WorkflowRunState;
 use runinator_models::workflows::{WorkflowDefinition, WorkflowRun, WorkflowStatus};
 use uuid::Uuid;
 
@@ -315,5 +316,86 @@ async fn an_all_policy_race_waits_for_every_contender_on_every_visit() {
     assert_eq!(succeeded_runs(&store, "left"), 2);
     assert_eq!(succeeded_runs(&store, "right"), 2);
     assert_eq!(succeeded_runs(&store, "race"), 2);
+    assert_run_succeeded(&store);
+}
+
+/// a losing ready row may land after its cursor was retired and the next loop lap has fanned out.
+///
+/// the stale row is still addressed to the old cursor. it must be discarded rather than falling
+/// back to the new lap's contender at the same node and manufacturing a winner for that lap.
+#[tokio::test]
+async fn a_late_race_loser_does_not_drive_the_next_laps_contender() {
+    let store = FakeStore::new();
+    store.insert_workflow(workflow(serde_json::json!([
+        { "id": "start", "kind": "start", "transitions": { "next": { "$node": "each" } } },
+        {
+            "id": "each", "kind": "loop", "parameters": { "items": [1, 2] },
+            "transitions": { "next": { "$node": "race" }, "on_success": { "$node": "end" } }
+        },
+        {
+            "id": "race", "kind": "race",
+            "parameters": { "branches": [{ "$node": "fast" }, { "$node": "slow" }], "winner": "first_success" },
+            "transitions": { "on_success": { "$node": "each" } }
+        },
+        { "id": "fast", "kind": "output", "transitions": { "on_success": { "$node": "race" } } },
+        { "id": "slow", "kind": "output", "transitions": { "on_success": { "$node": "race" } } },
+        { "id": "end", "kind": "end" }
+    ])));
+    store.insert_run(queued_run());
+
+    process_ready_node(&store, &ready_node("start"))
+        .await
+        .expect("initial drive");
+    let first_lap = store.ready_nodes();
+    let first_fast = first_lap
+        .iter()
+        .find(|row| row.node_id == "fast")
+        .expect("first fast contender")
+        .clone();
+    let late_slow = first_lap
+        .iter()
+        .find(|row| row.node_id == "slow")
+        .expect("first slow contender")
+        .clone();
+
+    process_ready_node(&store, &first_fast)
+        .await
+        .expect("first lap winner");
+    assert_eq!(succeeded_runs(&store, "race"), 1);
+    assert_eq!(succeeded_runs(&store, "fast"), 1);
+    let late_cursor = late_slow.cursor_id.expect("addressed loser");
+    let run = store.run(RUN_ID.parse().expect("run id")).expect("run");
+    assert!(
+        WorkflowRunState::from_state(&run.state)
+            .cursor(late_cursor)
+            .is_none(),
+        "the losing cursor must retire when the first lap settles"
+    );
+
+    process_ready_node(&store, &late_slow)
+        .await
+        .expect("late first-lap loser");
+    assert_eq!(
+        succeeded_runs(&store, "race"),
+        1,
+        "the stale loser must not settle the second lap"
+    );
+    assert_eq!(
+        succeeded_runs(&store, "slow"),
+        0,
+        "the stale row must not be rebound to the second lap's slow cursor"
+    );
+
+    let second_fast = store
+        .ready_nodes()
+        .into_iter()
+        .find(|row| row.node_id == "fast" && row.id != first_fast.id)
+        .expect("second fast contender");
+    process_ready_node(&store, &second_fast)
+        .await
+        .expect("second lap winner");
+
+    assert_eq!(succeeded_runs(&store, "race"), 2);
+    assert_eq!(succeeded_runs(&store, "fast"), 2);
     assert_run_succeeded(&store);
 }

@@ -283,7 +283,13 @@ impl Resolver<'_> {
                     self.resolve_expr(limit, scope, ctx, diagnostics);
                 }
                 scope.push(for_stmt.var.clone());
+                if let Some(index_var) = &for_stmt.index_var {
+                    scope.push(index_var.clone());
+                }
                 self.resolve_block(&for_stmt.body, scope, diagnostics);
+                if for_stmt.index_var.is_some() {
+                    scope.pop();
+                }
                 scope.pop();
             }
             StmtKind::While(while_stmt) => {

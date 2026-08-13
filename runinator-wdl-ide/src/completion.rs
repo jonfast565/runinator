@@ -207,11 +207,11 @@ fn complete_bare(
             is_snippet: false,
         });
     }
-    for name in context.scoped.keys() {
+    for (name, ty) in &context.scoped {
         items.push(WdlCompletionItem {
             label: name.clone(),
             kind: "local".into(),
-            detail: Some("local".into()),
+            detail: Some(format!("local: {}", ty.describe())),
             documentation: None,
             insert_text: name.clone(),
             is_snippet: false,
@@ -333,6 +333,13 @@ fn construct_completion_items() -> Vec<WdlCompletionItem> {
             "keyword",
             "for loop",
             "for ${item} in ${collection} {\n    ${}\n}",
+            true,
+        ),
+        (
+            "map",
+            "keyword",
+            "concurrent map",
+            "map ${item} in ${collection} concurrency ${limit} {\n    ${}\n}",
             true,
         ),
         (
@@ -1086,9 +1093,9 @@ fn collect_block_context(
     providers: &[ProviderMetadata],
     context: &mut CompletionContext,
 ) {
-    // a block starts with no known predecessor; track the last straight-line producing node so a
-    // sibling that references `prev` sees its output type.
-    let mut prev = RuninatorType::Any;
+    // a nested block inherits the predecessor visible where it was entered, then advances `prev`
+    // across its own straight-line siblings.
+    let mut prev = context.prev.clone();
     for stmt in block {
         if stmt.span.start <= cursor {
             record_statement_binding(stmt, providers, context);
@@ -1117,10 +1124,21 @@ fn collect_child_context(
                 collect_block_context(&for_stmt.body, cursor, providers, context);
                 return;
             }
-            let item_type = infer_expr_type(&for_stmt.items, context)
-                .and_then(|ty| ty.element_type())
+            let item_type = for_stmt
+                .var_type
+                .as_ref()
+                .and_then(|ty| lower_type(ty).ok())
+                .or_else(|| {
+                    infer_expr_type(&for_stmt.items, context)
+                        .and_then(|ty| higher_order_item_type(&ty))
+                })
                 .unwrap_or(RuninatorType::Any);
             context.scoped.insert(for_stmt.var.clone(), item_type);
+            if let Some(index_var) = &for_stmt.index_var {
+                context
+                    .scoped
+                    .insert(index_var.clone(), RuninatorType::Integer);
+            }
             collect_block_context(&for_stmt.body, cursor, providers, context);
         }
         StmtKind::Map(map_stmt) => {
@@ -1129,7 +1147,7 @@ fn collect_child_context(
                 return;
             }
             let item_type = infer_expr_type(&map_stmt.items, context)
-                .and_then(|ty| ty.element_type())
+                .and_then(|ty| higher_order_item_type(&ty))
                 .unwrap_or(RuninatorType::Any);
             context.scoped.insert(map_stmt.var.clone(), item_type);
             collect_block_context(&map_stmt.body, cursor, providers, context);
@@ -1199,6 +1217,11 @@ fn statement_output_type(stmt: &Stmt, providers: &[ProviderMetadata]) -> Runinat
                 .unwrap_or(RuninatorType::Any)
         }
         StmtKind::Subflow(subflow) => subflow_output_type(subflow.detached),
+        StmtKind::For(for_stmt) => for_stmt
+            .body
+            .last()
+            .map(|last| RuninatorType::array(statement_output_type(last, providers)))
+            .unwrap_or_else(|| RuninatorType::array(RuninatorType::Any)),
         _ => RuninatorType::Any,
     }
 }

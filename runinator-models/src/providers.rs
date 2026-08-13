@@ -76,15 +76,12 @@ impl ActionMetadata {
 
     /// the typed result environment for this action.
     pub fn results_type(&self) -> RuninatorType {
-        RuninatorType::open_typed_structure(
-            self.results.iter().map(|result| {
-                (
-                    result.name.clone(),
-                    RuninatorField::optional(result.ty.clone()),
-                )
-            }),
-            RuninatorType::Any,
-        )
+        RuninatorType::typed_structure(self.results.iter().map(|result| {
+            (
+                result.name.clone(),
+                RuninatorField::optional(result.ty.clone()),
+            )
+        }))
     }
 
     /// mark this function as pure (reducer-evaluable in-process).

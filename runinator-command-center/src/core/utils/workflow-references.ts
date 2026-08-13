@@ -5,7 +5,9 @@ import type {
   RuninatorType,
   WorkflowRunDetail,
 } from "../domain/models";
-import { workflowNodeActionConfig } from "../workflow/index";
+import { nodeRefId, workflowNodeActionConfig } from "../workflow/index";
+import { findNodeKindMetadata } from "../workflow/catalog-registry";
+import { nodeTargets } from "../workflow/interrupt-regions";
 
 // the data an expression editor needs to enumerate the references in scope at a given node, plus an
 // optional sample context (a prior run's data) the editor can resolve expressions against.
@@ -36,6 +38,7 @@ const STATIC_ROOTS: WorkflowReference[] = [
   { label: "run", insert: "run", type: "workflow run state" },
   { label: "config", insert: "config", type: "configuration value" },
   { label: "secret", insert: "secret", type: "secret reference" },
+  { label: "interrupt", insert: "interrupt", type: "interrupt context" },
 ];
 
 // references for every field of the workflow parameter struct, flattened by dotted path.
@@ -69,28 +72,114 @@ export function nodeOutputReferences(
   const nodes = context?.nodes ?? [];
   const providers = context?.providers ?? [];
   const references: (WorkflowReference & { node: string })[] = [];
+  const available = upstreamNodeIds(nodes, context?.currentNodeId ?? null);
+  const scopedLoops = new Set(
+    loopRegions(nodes)
+      .filter((region) => context?.currentNodeId && region.nodes.has(context.currentNodeId))
+      .map((region) => region.loopId),
+  );
 
   for (const node of nodes) {
-    if (node.kind !== "action" || node.id === context?.currentNodeId) {
+    const nodeId = String(node.id);
+
+    if (node.id === context?.currentNodeId || (available && !available.has(nodeId))) {
       continue;
     }
 
-    const config = workflowNodeActionConfig(node);
-    const provider = providers.find((item) => item.name === config.provider);
-    const action = provider?.actions.find((item) => item.function_name === config.action);
+    if (node.kind === "action") {
+      const config = workflowNodeActionConfig(node);
+      const provider = providers.find((item) => item.name === config.provider);
+      const action = provider?.actions.find((item) => item.function_name === config.action);
 
-    for (const result of action?.results ?? []) {
-      collectTypedReferences(
-        String(node.id),
-        [String(node.id), result.name],
-        [String(node.id), result.name],
-        result.ty,
-        references,
-      );
+      for (const result of action?.results ?? []) {
+        collectTypedReferences(
+          nodeId,
+          [nodeId, result.name],
+          [nodeId, result.name],
+          result.ty,
+          references,
+        );
+      }
+
+      continue;
     }
+
+    const outputType = findNodeKindMetadata(String(node.kind))?.output_type;
+
+    if (node.kind === "loop" && outputType?.type === "struct") {
+      for (const [name, field] of Object.entries(outputType.fields)) {
+        if (!scopedLoops.has(nodeId) && !["count", "results"].includes(name)) {continue;}
+        collectTypedReferences(nodeId, [nodeId, name], [nodeId, name], field.ty, references);
+      }
+
+      continue;
+    }
+
+    collectTypedReferences(nodeId, [nodeId], [nodeId], outputType ?? undefined, references);
   }
 
   return references;
+}
+
+function upstreamNodeIds(nodes: JsonRecord[], currentNodeId: string | null): Set<string> | null {
+  if (!currentNodeId) {
+    return null;
+  }
+
+  const reverse = new Map<string, Set<string>>();
+  const backEdges = new Set<string>();
+
+  for (const region of loopRegions(nodes)) {
+    for (const member of region.nodes) {backEdges.add(`${member}->${region.loopId}`);}
+  }
+
+  for (const node of nodes) {
+    const source = String(node.id);
+
+    for (const target of nodeTargets(node)) {
+      if (backEdges.has(`${source}->${target}`)) {continue;}
+      const predecessors = reverse.get(target) ?? new Set<string>();
+      predecessors.add(source);
+      reverse.set(target, predecessors);
+    }
+  }
+
+  const upstream = new Set<string>();
+  const stack = [...(reverse.get(currentNodeId) ?? [])];
+
+  while (stack.length > 0) {
+    const id = stack.pop();
+    if (!id || upstream.has(id)) {continue;}
+    upstream.add(id);
+    stack.push(...(reverse.get(id) ?? []));
+  }
+
+  return upstream;
+}
+
+function loopRegions(nodes: JsonRecord[]): { loopId: string; nodes: Set<string> }[] {
+  const byId = new Map(nodes.map((node) => [String(node.id), node]));
+  return nodes
+    .filter((node) => node.kind === "loop")
+    .flatMap((loop) => {
+      const loopId = String(loop.id);
+      const transitions = (loop.transitions ?? {}) as JsonRecord;
+      const exit = nodeRefId(transitions.on_success);
+      const body = nodeRefId(transitions.next);
+      if (!body) {return [];}
+      const region = new Set<string>();
+      const stack = [body];
+
+      while (stack.length > 0) {
+        const id = stack.pop();
+        if (!id || id === loopId || id === exit || region.has(id)) {continue;}
+        region.add(id);
+        const node = byId.get(id);
+        if (node) {stack.push(...nodeTargets(node));}
+      }
+
+      return [{ loopId, nodes: region }];
+    });
 }
 
 function collectTypedReferences(
@@ -190,7 +279,11 @@ export function buildSampleContext(
       continue;
     }
 
-    steps[node.node_id] = { output: node.output_json };
+    const previous = (steps[node.node_id] ?? {}) as JsonRecord;
+    const outputs: JsonValue[] = Array.isArray(previous.outputs)
+      ? (previous.outputs as JsonValue[])
+      : [];
+    steps[node.node_id] = { output: node.output_json, outputs: [...outputs, node.output_json] };
     prev = node.output_json;
   }
 

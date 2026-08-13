@@ -139,8 +139,8 @@ enum Flow {
 }
 
 /// walk a workflow's state machine from its start node, routing exactly as the reducer does for the
-/// supported node kinds and deferring task/park outcomes to `env`. Loops/fan-out kinds
-/// (loop/parallel/join/map/race/try/subflow) are not modelled and stop the walk with an `error`.
+/// supported node kinds and deferring task/park outcomes to `env`. Sequential loops are modelled;
+/// fan-out kinds (parallel/join/map/race/try/subflow) stop the walk with an `error`.
 pub fn simulate_workflow(
     workflow: &WorkflowDefinition,
     inputs: Value,
@@ -155,6 +155,7 @@ pub fn simulate_workflow(
     let mut last_output: Option<Value> = None;
     let mut steps: Vec<SimStep> = Vec::new();
     let mut run_output = Value::Null;
+    let mut loop_frames: HashMap<String, SimLoopFrame> = HashMap::new();
     let mut current = start;
 
     for _ in 0..MAX_SIM_STEPS {
@@ -180,7 +181,8 @@ pub fn simulate_workflow(
             output,
             note,
             route_override,
-        } = evaluate_node(node, &context, env)?;
+            force_terminal,
+        } = evaluate_node(node, &context, last_output.as_ref(), &mut loop_frames, env)?;
 
         // publish this node's output before routing so its own branches can read `steps.<id>.output`.
         if let Some(output) = output.clone() {
@@ -232,9 +234,10 @@ pub fn simulate_workflow(
 
         // router nodes (switch/toggle/percentage) route to their evaluated target directly, exactly
         // as the reducer's `finish_route` does; everything else follows its transition edges.
-        let flow = match route_override {
-            Some(target) => Flow::Goto(target),
-            None => {
+        let flow = match (force_terminal, route_override) {
+            (true, _) => Flow::Terminal,
+            (false, Some(target)) => Flow::Goto(target),
+            (false, None) => {
                 let routed = build_context(
                     workflow,
                     &inputs,
@@ -297,6 +300,13 @@ struct Outcome {
     output: Option<Value>,
     note: Option<String>,
     route_override: Option<String>,
+    force_terminal: bool,
+}
+
+struct SimLoopFrame {
+    items: Vec<Value>,
+    index: usize,
+    results: Vec<Value>,
 }
 
 impl Outcome {
@@ -306,6 +316,7 @@ impl Outcome {
             output,
             note: Some(note.to_string()),
             route_override: None,
+            force_terminal: false,
         }
     }
 
@@ -315,6 +326,7 @@ impl Outcome {
             output: None,
             note: None,
             route_override: None,
+            force_terminal: false,
         }
     }
 }
@@ -323,6 +335,8 @@ impl Outcome {
 fn evaluate_node(
     node: &WorkflowNode,
     context: &Value,
+    previous_output: Option<&Value>,
+    loop_frames: &mut HashMap<String, SimLoopFrame>,
     env: &mut dyn SimulationEnv,
 ) -> Result<Outcome, WorkflowValidationError> {
     let outcome = match node.kind {
@@ -417,9 +431,64 @@ fn evaluate_node(
             let output = (!outcome.output.is_null()).then_some(outcome.output);
             Outcome::new(outcome.status, output, "park_resolved")
         }
+        WorkflowNodeKind::Loop => {
+            let frame = match loop_frames.remove(&node.id) {
+                Some(mut frame) => {
+                    if let Some(output) = previous_output {
+                        frame.results.push(output.clone());
+                    }
+                    frame.index += 1;
+                    frame
+                }
+                None => {
+                    let resolved = resolve_value_refs(&node.parameters.clone().into(), context)?;
+                    let params = crate::parse_loop_parameters(&node.id, &resolved)?;
+                    SimLoopFrame {
+                        items: params.items,
+                        index: 0,
+                        results: Vec::new(),
+                    }
+                }
+            };
+            let max_iterations = node
+                .parameters
+                .get("max_iterations")
+                .and_then(|value| resolve_value_refs(value, context).ok())
+                .and_then(|value| value.as_i64())
+                .or(node.max_iterations)
+                .unwrap_or(i64::MAX)
+                .max(0) as usize;
+            let has_next = frame.index < frame.items.len() && frame.index < max_iterations;
+            let item = has_next.then(|| frame.items[frame.index].clone());
+            let last = frame.results.last().cloned();
+            let output = runinator_models::json!({
+                "index": frame.index,
+                "item": item,
+                "has_next": has_next,
+                "count": frame.items.len(),
+                "last": last,
+                "results": frame.results,
+            });
+            let target = if has_next {
+                loop_frames.insert(node.id.clone(), frame);
+                node.transitions.next.as_ref()
+            } else {
+                node.transitions.on_success.as_ref()
+            };
+            Outcome {
+                status: WorkflowStatus::Succeeded,
+                output: Some(output),
+                note: Some(if has_next {
+                    "loop_iteration".into()
+                } else {
+                    "loop_exhausted".into()
+                }),
+                route_override: target.map(|target| target.as_str().to_string()),
+                force_terminal: !has_next && target.is_none(),
+            }
+        }
         // unsupported kinds are flagged by the caller; give them a neutral outcome.
-        WorkflowNodeKind::Loop
-        | WorkflowNodeKind::Parallel
+        WorkflowNodeKind::Parallel
         | WorkflowNodeKind::Join
         | WorkflowNodeKind::Map
         | WorkflowNodeKind::Race
@@ -448,6 +517,7 @@ fn router_outcome(target: Option<String>) -> Outcome {
         output: Some(output),
         note: Some("route_evaluated".into()),
         route_override: target,
+        force_terminal: false,
     }
 }
 

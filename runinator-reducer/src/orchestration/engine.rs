@@ -135,34 +135,45 @@ async fn resolve_cursor<T: ReducerStore>(
     start: &str,
     woken: &ReadyNodeRecord,
     driving: Option<Uuid>,
-) -> Result<RunCursor, SendableError> {
+) -> Result<Option<RunCursor>, SendableError> {
     let workflow_run = ctx.workflow_run;
     let state = WorkflowRunState::from_state(&workflow_run.state);
-    // already following a cursor in this drive: stay on it wherever it has moved to.
-    if let Some(id) = driving
-        && let Some(cursor) = state.cursor(id)
-    {
-        return Ok(cursor.clone());
+    // already following a cursor in this drive: stay on it wherever it has moved to. debugger and
+    // interrupt cursors deliberately retire into one surviving thread, so an unambiguous survivor
+    // is a valid inline handoff. multiple survivors are a fan-out: choosing among them would let a
+    // concurrently retired race loser execute a contender from the next loop lap.
+    if let Some(id) = driving {
+        if let Some(cursor) = state.cursor(id) {
+            return Ok(Some(cursor.clone()));
+        }
+        if let Some(cursor) = woken.cursor_id.and_then(|id| state.cursor(id)) {
+            return Ok(Some(cursor.clone()));
+        }
+        return Ok(if state.cursors.len() == 1 {
+            state.primary_cursor().cloned()
+        } else {
+            None
+        });
     }
     // the ready row names the thread of control it was armed for. this is what lets one branch be
-    // woken without disturbing its siblings, and what lets two cursors share a node.
-    if let Some(id) = woken.cursor_id
-        && let Some(cursor) = state.cursor(id)
-    {
-        return Ok(cursor.clone());
+    // woken without disturbing its siblings, and what lets two cursors share a node. once an
+    // addressed cursor retires, the row is stale and must not fall back by node id: a later fan-out
+    // may have a different cursor at the same node.
+    if let Some(id) = woken.cursor_id {
+        return Ok(state.cursor(id).cloned());
     }
     // a forked run has several live positions, and a row armed before wakes carried a cursor names
     // which one only by the node it was armed for.
     if state.cursors.len() > 1
         && let Some(cursor) = state.cursor_at(&woken.node_id)
     {
-        return Ok(cursor.clone());
+        return Ok(Some(cursor.clone()));
     }
     let node_id = RunCursor::resolve(workflow_run, start).into_node_id();
     if let Some(cursor) = state.primary_cursor()
         && cursor.is_at(&node_id)
     {
-        return Ok(cursor.clone());
+        return Ok(Some(cursor.clone()));
     }
     let placed = run_state::mutate_run_state(ctx.db, workflow_run.id, |state| {
         state.ensure_cursor(&node_id);
@@ -171,10 +182,12 @@ async fn resolve_cursor<T: ReducerStore>(
         }
     })
     .await?;
-    Ok(placed
-        .primary_cursor()
-        .cloned()
-        .unwrap_or_else(|| RunCursor::at(node_id)))
+    Ok(Some(
+        placed
+            .primary_cursor()
+            .cloned()
+            .unwrap_or_else(|| RunCursor::at(node_id)),
+    ))
 }
 
 async fn process_workflow_run_step<T: ReducerStore>(
@@ -201,7 +214,14 @@ async fn process_workflow_run_step<T: ReducerStore>(
     // not been placed yet. a linear run keeps `active_node_id` as the truth and the cursor list as
     // a mirror, so the position is reconciled onto the primary cursor here rather than written back
     // on every transition; a forked run's list becomes authoritative in its own right.
-    let cursor = resolve_cursor(&workflow_run_ctx, &start, woken, *driving).await?;
+    let Some(cursor) = resolve_cursor(&workflow_run_ctx, &start, woken, *driving).await? else {
+        tracing::debug!(
+            run_id = %workflow_run.id,
+            cursor_id = ?(*driving).or(woken.cursor_id),
+            "drive addressed to a retired cursor; ignoring"
+        );
+        return Ok(ReadyNodeDisposition::Complete);
+    };
     *driving = Some(cursor.id);
     // a thread frozen behind an interrupt is not driven. this sits before every other branch on
     // purpose: a suspended map child would otherwise finalize itself below, and a suspended cursor
@@ -278,7 +298,7 @@ async fn process_workflow_run_step<T: ReducerStore>(
     // exits via `on_exhausted` instead of looping again. without this a loop whose condition never
     // goes false would spin forever, parking on each iteration. only checked when entering the node
     // fresh, never while a prior visit is still in flight.
-    if reentry_exhausted(node, &node_runs, latest.as_ref()) {
+    if reentry_exhausted(node, cursor.id, &node_runs) {
         match node.reentry.on_exhausted.as_ref() {
             Some(target) => {
                 tracing::info!(
@@ -434,10 +454,15 @@ impl WorkflowProgressKey {
 // completed visits to a reentry-enabled node. each visit records exactly one node run for the node,
 // and the bound is only consulted when entering fresh (no in-flight run), so every counted run is a
 // finished iteration.
-fn reentry_visits(node: &WorkflowNode, node_runs: &[WorkflowNodeRun]) -> i64 {
+fn reentry_visits(node: &WorkflowNode, cursor_id: Uuid, node_runs: &[WorkflowNodeRun]) -> i64 {
     node_runs
         .iter()
-        .filter(|run| run.node_id == node.id)
+        .filter(|run| {
+            run.node_id == node.id
+                && run
+                    .cursor_id
+                    .is_none_or(|run_cursor| run_cursor == cursor_id)
+        })
         .count() as i64
 }
 
@@ -446,14 +471,25 @@ fn reentry_visits(node: &WorkflowNode, node_runs: &[WorkflowNodeRun]) -> i64 {
 // never abandoned mid-flight.
 pub(super) fn reentry_exhausted(
     node: &WorkflowNode,
+    cursor_id: Uuid,
     node_runs: &[WorkflowNodeRun],
-    latest: Option<&WorkflowNodeRun>,
 ) -> bool {
-    let entering_fresh = latest.is_none_or(|run| run.status.is_terminal());
+    let entering_fresh = node_runs
+        .iter()
+        .filter(|run| {
+            run.node_id == node.id
+                && run
+                    .cursor_id
+                    .is_none_or(|run_cursor| run_cursor == cursor_id)
+        })
+        .max_by_key(|run| run.id)
+        .is_none_or(|run| run.status.is_terminal());
     entering_fresh
         && node.reentry.enabled
-        && node.reentry.max_visits > 0
-        && reentry_visits(node, node_runs) >= node.reentry.max_visits
+        && node.kind != WorkflowNodeKind::Loop
+        && node
+            .iteration_limit()
+            .is_some_and(|limit| limit > 0 && reentry_visits(node, cursor_id, node_runs) >= limit)
 }
 
 fn should_stop_inline_progress(

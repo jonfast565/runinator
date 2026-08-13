@@ -52,8 +52,28 @@ impl Lowerer {
 
         // the loop body iterates and returns to the loop node; on exhaustion it exits.
         self.push_scope(&for_stmt.var, id, vec![PathSeg::Key("item".into())]);
+        if let Some(index_var) = &for_stmt.index_var {
+            self.push_scope(index_var, id, vec![PathSeg::Key("index".into())]);
+        }
         let body_entry = self.lower_block(&for_stmt.body, id)?;
+        if for_stmt.index_var.is_some() {
+            self.pop_scope();
+        }
         self.pop_scope();
+
+        let mut vars = Map::new();
+        vars.insert("item".into(), Value::String(for_stmt.var.clone()));
+        if let Some(var_type) = &for_stmt.var_type {
+            vars.insert(
+                "item_type".into(),
+                Value::String(runinator_wdl_syntax::format::format_type(var_type)),
+            );
+        }
+        if let Some(index_var) = &for_stmt.index_var {
+            vars.insert("index".into(), Value::String(index_var.clone()));
+        }
+        self.control_vars
+            .insert(id.to_string(), Value::Object(vars));
 
         let mut params = Map::new();
         params.insert("items".into(), items);
@@ -142,6 +162,10 @@ impl Lowerer {
         self.push_scope(&map_stmt.var, id, vec![PathSeg::Key("item".into())]);
         let body_entry = self.lower_block(&map_stmt.body, id)?;
         self.pop_scope();
+        let mut vars = Map::new();
+        vars.insert("item".into(), Value::String(map_stmt.var.clone()));
+        self.control_vars
+            .insert(id.to_string(), Value::Object(vars));
 
         let mut params = Map::new();
         params.insert("items".into(), items);

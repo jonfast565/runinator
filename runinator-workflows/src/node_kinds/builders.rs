@@ -57,6 +57,21 @@ pub(crate) fn control(key: &str, label: &str, path: &[&str], multiple: bool) -> 
     }
 }
 
+/// a named direct transition stored under `node.transitions`.
+pub(crate) fn direct(key: &str, label: &str) -> NodeEdgeSlot {
+    NodeEdgeSlot {
+        key: key.to_string(),
+        label: label.to_string(),
+        description: None,
+        taxonomy: EdgeTaxonomy::Direct,
+        target: FieldLocation::transitions(&[key]),
+        multiple: false,
+        editable_label: false,
+        editable_condition: false,
+        orderable: false,
+    }
+}
+
 /// the condition-branch slot: a list of `when -> target` routes in `transitions.branches`.
 pub(crate) fn condition_branches() -> NodeEdgeSlot {
     NodeEdgeSlot {
@@ -98,6 +113,7 @@ pub(crate) fn base(
         supports_predicate_edges: true,
         fields: Vec::new(),
         edge_slots: Vec::new(),
+        output_type: None,
         default_template: Value::Null,
     }
 }

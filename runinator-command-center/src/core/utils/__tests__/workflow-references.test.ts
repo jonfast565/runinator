@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type {
   JsonRecord,
   ProviderMetadata,
@@ -6,6 +6,16 @@ import type {
   WorkflowRunDetail,
 } from "../../domain/models";
 import { buildSampleContext, workflowReferenceGroups } from "../workflow-references";
+import { setWorkflowCatalogs } from "../../workflow/catalog-registry";
+import { testNodeKindCatalog } from "../../workflow/__tests__/catalog-fixtures";
+
+beforeAll(() => {
+  setWorkflowCatalogs({ nodeKinds: testNodeKindCatalog, triggerKinds: [], enums: [] });
+});
+
+afterAll(() => {
+  setWorkflowCatalogs({ nodeKinds: [], triggerKinds: [], enums: [] });
+});
 
 const inputType: RuninatorType = {
   type: "struct",
@@ -56,7 +66,12 @@ const providers: ProviderMetadata[] = [
 ];
 
 const nodes: JsonRecord[] = [
-  { id: "make_ticket", kind: "action", action: { provider: "jira", function: "search" } },
+  {
+    id: "make_ticket",
+    kind: "action",
+    action: { provider: "jira", function: "search" },
+    transitions: { next: { $node: "current" } },
+  },
   { id: "current", kind: "action", action: { provider: "jira", function: "search" } },
 ];
 
@@ -99,6 +114,7 @@ describe("workflowReferenceGroups", () => {
       "run",
       "config",
       "secret",
+      "interrupt",
     ]);
   });
 });
@@ -149,5 +165,34 @@ describe("buildSampleContext", () => {
 
   it("returns null without a run", () => {
     expect(buildSampleContext(null)).toBeNull();
+  });
+});
+
+describe("loop-aware references", () => {
+  const loopNodes: JsonRecord[] = [
+    { id: "seed", kind: "action", action: { provider: "jira", function: "search" }, transitions: { next: { $node: "each" } } },
+    { id: "each", kind: "loop", parameters: { items: [] }, transitions: { next: { $node: "body" }, on_success: { $node: "after" } } },
+    { id: "body", kind: "transform", transitions: { next: { $node: "each" } } },
+    { id: "after", kind: "action", action: { provider: "jira", function: "search" }, transitions: { next: { $node: "future" } } },
+    { id: "future", kind: "action", action: { provider: "jira", function: "search" } },
+  ];
+
+  it("offers loop state inside the body but not after the exit", () => {
+    const inside = workflowReferenceGroups({
+      nodes: loopNodes,
+      currentNodeId: "body",
+      providers,
+    });
+    const loopRefs = inside.find((group) => group.title === "Output of each")?.references ?? [];
+    expect(loopRefs.map((reference) => reference.insert)).toContain("each.item");
+    expect(loopRefs.map((reference) => reference.insert)).toContain("each.index");
+
+    const after = workflowReferenceGroups({ nodes: loopNodes, currentNodeId: "after", providers });
+    expect(after.some((group) => group.title === "Output of each")).toBe(true);
+    expect(
+      workflowReferenceGroups({ nodes: loopNodes, currentNodeId: "future", providers }).some(
+        (group) => group.title === "Output of future",
+      ),
+    ).toBe(false);
   });
 });

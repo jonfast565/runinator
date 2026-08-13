@@ -51,6 +51,8 @@ struct Lowerer {
     // control-block ids that were explicitly authored with `@id`, kept so terse decompile can
     // preserve them without surfacing every generated control id.
     control_ids: Vec<String>,
+    // authored item/index names for loop-like controls, keyed by lowered node id.
+    control_vars: Map,
     // in-scope local names (compute-block `let`s and lambda params), so a bare local path lowers to
     // a `let` ref. interior-mutable because `lower_expr` (`&self`) scopes a lambda's params while
     // lowering its body, whether the lambda sits in a compute block or inline in any expression.
@@ -208,6 +210,12 @@ fn lower_workflow(
             ),
         );
     }
+    if !lowerer.control_vars.is_empty() {
+        wdl.insert(
+            "control_vars".into(),
+            Value::Object(lowerer.control_vars.clone()),
+        );
+    }
     // per-function surface signatures (`(params) -> ret`), recorded so decompile can reconstruct the
     // typed `fn` headers the runtime `functions` form does not carry. the runtime ignores this hint.
     if !document.functions.is_empty() {
@@ -337,6 +345,7 @@ impl Lowerer {
             aliases: AliasTable::new(),
             spreads: Map::new(),
             control_ids: Vec::new(),
+            control_vars: Map::new(),
             compute_locals: std::cell::RefCell::new(HashSet::new()),
             named_types: std::collections::BTreeMap::new(),
             source_dir: None,
@@ -1741,6 +1750,9 @@ fn is_bound_control_stmt(stmt: &Stmt) -> bool {
 }
 
 fn control_value_expr(kind: &StmtKind) -> Expr {
+    if matches!(kind, StmtKind::For(_)) {
+        return path_expr(&["prev", "results"]);
+    }
     if matches!(kind, StmtKind::Parallel(_)) {
         return Expr::new(
             ExprKind::Object(vec![

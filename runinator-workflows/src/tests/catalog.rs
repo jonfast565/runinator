@@ -75,6 +75,21 @@ fn loop_and_map_items_field_is_typed_array() {
 }
 
 #[test]
+fn loop_catalog_exposes_position_and_result_fields() {
+    let entry = node_kind_catalog()
+        .into_iter()
+        .find(|entry| entry.kind == WorkflowNodeKind::Loop)
+        .expect("loop catalog entry");
+    let output = entry.output_type.expect("loop output type");
+    for field in ["item", "index", "has_next", "count", "last", "results"] {
+        assert!(
+            output.field(field).is_some(),
+            "loop catalog output must expose {field}"
+        );
+    }
+}
+
+#[test]
 fn trigger_catalog_covers_every_kind() {
     let catalog = trigger_kind_catalog();
     assert_eq!(catalog.len(), WorkflowTriggerKind::ALL.len());

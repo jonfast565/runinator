@@ -137,21 +137,7 @@ fn collect_node_output_types(
 ) {
     for stmt in block {
         if let Some(id) = super::effective_id(stmt) {
-            let ty = stmt
-                .label_type
-                .as_ref()
-                .and_then(|ty| lower_type_with(ty, named).ok())
-                .or_else(|| match &stmt.kind {
-                    StmtKind::Action(action) => provider_actions
-                        .get(&(action.provider.clone(), action.function.clone()))
-                        .filter(|metadata| !metadata.results.is_empty())
-                        .map(|metadata| metadata.results_type()),
-                    StmtKind::Subflow(subflow) => Some(subflow_output_type(
-                        subflow,
-                        workflow_signatures.get(&subflow.workflow_name),
-                    )),
-                    _ => None,
-                });
+            let ty = static_stmt_output_type(stmt, provider_actions, named, workflow_signatures);
             if let Some(ty) = ty {
                 out.insert(id.to_string(), ty);
             }
@@ -160,6 +146,35 @@ fn collect_node_output_types(
             collect_node_output_types(child, provider_actions, named, workflow_signatures, out);
         }
     }
+}
+
+fn static_stmt_output_type(
+    stmt: &Stmt,
+    provider_actions: &HashMap<(String, String), &ActionMetadata>,
+    named: &NamedTypes,
+    workflow_signatures: &HashMap<String, WorkflowSignature>,
+) -> Option<RuninatorType> {
+    stmt.label_type
+        .as_ref()
+        .and_then(|ty| lower_type_with(ty, named).ok())
+        .or_else(|| match &stmt.kind {
+            StmtKind::Action(action) => provider_actions
+                .get(&(action.provider.clone(), action.function.clone()))
+                .filter(|metadata| !metadata.results.is_empty())
+                .map(|metadata| metadata.results_type()),
+            StmtKind::Subflow(subflow) => Some(subflow_output_type(
+                subflow,
+                workflow_signatures.get(&subflow.workflow_name),
+            )),
+            StmtKind::For(for_stmt) => for_stmt
+                .body
+                .last()
+                .and_then(|last| {
+                    static_stmt_output_type(last, provider_actions, named, workflow_signatures)
+                })
+                .map(RuninatorType::array),
+            _ => None,
+        })
 }
 
 fn subflow_output_type(
@@ -193,9 +208,9 @@ fn subflow_output_type(
 
 impl Env {
     fn check_block(&mut self, block: &Block, diagnostics: &mut Vec<Diagnostic>) {
-        // a block starts with no known predecessor; `prev` becomes concrete only after a
-        // straight-line producing node (action/subflow/typed label) runs earlier in the same block.
-        self.prev = RuninatorType::Any;
+        // nested blocks inherit the predecessor visible at their entry. resetting it here made a
+        // `for x in prev.items` lose the type merely because it appeared inside an `if`/`try` body.
+        // the root environment already starts at `Any`.
         for stmt in block {
             self.check_stmt(stmt, diagnostics);
             self.prev = self.predecessor_output(stmt);
@@ -291,9 +306,30 @@ impl Env {
                 }
             }
             StmtKind::For(for_stmt) => {
-                let element = self.check_iterable(&for_stmt.items, "for loop", diagnostics);
+                let inferred = self.check_iterable(&for_stmt.items, "for loop", diagnostics);
+                let element = match &for_stmt.var_type {
+                    Some(annotation) => {
+                        let declared =
+                            lower_type_with(annotation, &self.named).unwrap_or(RuninatorType::Any);
+                        check_assignable(
+                            &inferred,
+                            &declared,
+                            "for loop item annotation",
+                            for_stmt.items.span,
+                            diagnostics,
+                        );
+                        declared
+                    }
+                    None => inferred,
+                };
                 self.scope.push((for_stmt.var.clone(), element));
+                if let Some(index_var) = &for_stmt.index_var {
+                    self.scope.push((index_var.clone(), RuninatorType::Integer));
+                }
                 self.check_block(&for_stmt.body, diagnostics);
+                if for_stmt.index_var.is_some() {
+                    self.scope.pop();
+                }
                 self.scope.pop();
             }
             StmtKind::While(while_stmt) => {
@@ -507,10 +543,12 @@ impl Env {
         match &ty {
             RuninatorType::Union(_) => ty.union_element_type().unwrap_or(RuninatorType::Any),
             other => other.element_type().unwrap_or_else(|| {
-                diagnostics.push(Diagnostic::error(
-                    items.span,
-                    format!("{label} expects an array, got {}", other.describe()),
-                ));
+                if self.type_policy == TypePolicy::Strict {
+                    diagnostics.push(Diagnostic::error(
+                        items.span,
+                        format!("{label} expects an array, got {}", other.describe()),
+                    ));
+                }
                 RuninatorType::Any
             }),
         }

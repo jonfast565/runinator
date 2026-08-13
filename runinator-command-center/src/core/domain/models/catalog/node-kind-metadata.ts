@@ -61,5 +61,6 @@ export interface WorkflowNodeKindMetadata {
   supports_predicate_edges: boolean;
   fields: NodeFieldMetadata[];
   edge_slots: NodeEdgeSlot[];
+  output_type?: import("../provider/runinator-type").RuninatorType | null;
   default_template: JsonValue;
 }

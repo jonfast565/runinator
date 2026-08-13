@@ -150,6 +150,10 @@ impl TypeContext {
             ("count", RuninatorField::required(WorkflowType::Integer)),
             // the previous lap's body output; no statically-known shape.
             ("last", RuninatorField::optional(WorkflowType::Any)),
+            (
+                "results",
+                RuninatorField::required(WorkflowType::array(WorkflowType::Any)),
+            ),
         ])))
     }
 

@@ -48,6 +48,8 @@ pub(super) struct Decompiler<'a> {
     spreads: HashMap<String, Vec<Value>>,
     // control-block ids explicitly authored in WDL, recovered from metadata.
     control_ids: HashSet<String>,
+    // authored loop/map binding names recovered from metadata.
+    control_vars: HashMap<String, ControlVars>,
     // node ids already emitted; each node is emitted exactly once and every other edge into
     // it becomes an explicit `-> label` arrow (labels are global, so this round-trips).
     visited: HashSet<String>,
@@ -86,6 +88,7 @@ pub fn decompile_definition(
     let alias_decls = metadata.alias_declarations();
     let spreads = metadata.spreads();
     let control_ids = metadata.control_ids();
+    let control_vars = metadata.control_vars();
 
     let mut decompiler = Decompiler {
         nodes,
@@ -98,6 +101,7 @@ pub fn decompile_definition(
         alias_decls,
         spreads,
         control_ids,
+        control_vars,
         visited: HashSet::new(),
         worklist: VecDeque::new(),
         queued: HashSet::new(),
@@ -1902,9 +1906,21 @@ impl<'a> Decompiler<'a> {
 
         let items = node.parameters.get("items").cloned().unwrap_or(Value::Null);
         let items_text = self.expr(&items)?;
-        let var = self.fresh_var();
+        let saved = self.control_vars.get(&node.id);
+        let var = saved.map_or_else(|| self.fresh_var(), |vars| vars.item.clone());
+        let index_var = saved.and_then(|vars| vars.index.clone());
 
-        let mut header = format!("{}for {var} in {items_text}", self.block_id_prefix(node));
+        let mut binding = var.clone();
+        if let Some(item_type) = saved.and_then(|vars| vars.item_type.as_deref()) {
+            binding.push_str(&format!(": {item_type}"));
+        }
+        if let Some(index) = &index_var {
+            binding.push_str(&format!(", {index}"));
+        }
+        let mut header = format!(
+            "{}for {binding} in {items_text}",
+            self.block_id_prefix(node)
+        );
         match node.max_iterations {
             Some(limit) => header.push_str(&format!(" limit {limit}")),
             None => match node.parameters.get("max_iterations") {
@@ -2230,7 +2246,10 @@ impl<'a> Decompiler<'a> {
 
         let items = node.parameters.get("items").cloned().unwrap_or(Value::Null);
         let items_text = self.expr(&items)?;
-        let var = self.fresh_var();
+        let var = self
+            .control_vars
+            .get(&node.id)
+            .map_or_else(|| self.fresh_var(), |vars| vars.item.clone());
 
         let mut header = format!("{}map {var} in {items_text}", self.block_id_prefix(node));
         match node.parameters.get("concurrency").and_then(Value::as_i64) {

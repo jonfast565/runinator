@@ -3,9 +3,10 @@
 use runinator_models::catalog_metadata::{FieldLocation, WorkflowNodeKindMetadata};
 use runinator_models::json;
 use runinator_models::providers::RuninatorType;
+use runinator_models::types::RuninatorField;
 use runinator_models::workflows::{WorkflowNode, WorkflowNodeKind};
 
-use crate::node_kinds::builders::{base, field, opt};
+use crate::node_kinds::builders::{base, direct, field, opt};
 use crate::node_kinds::{GraphRole, NodeKindSpec};
 use runinator_compute::WorkflowValidationError;
 
@@ -17,8 +18,8 @@ impl NodeKindSpec for Loop {
     }
 
     fn graph_role(&self) -> GraphRole {
-        // the body edge returns here every iteration, and the simulator does not model iteration.
-        GraphRole::STEP.reentrant().not_simulatable()
+        // the body edge returns here every iteration.
+        GraphRole::STEP.reentrant()
     }
 
     // no target slots: a loop's body is `transitions.next` and its exit is `transitions.on_success`.
@@ -37,6 +38,24 @@ impl NodeKindSpec for Loop {
         Ok(())
     }
 
+    fn output_type(
+        &self,
+        _node: &WorkflowNode,
+        _actions: &crate::node_kinds::ActionCatalog<'_>,
+    ) -> Result<Option<RuninatorType>, WorkflowValidationError> {
+        Ok(Some(RuninatorType::typed_structure([
+            ("item", RuninatorField::optional(RuninatorType::Any)),
+            ("index", RuninatorField::required(RuninatorType::Integer)),
+            ("has_next", RuninatorField::required(RuninatorType::Boolean)),
+            ("count", RuninatorField::required(RuninatorType::Integer)),
+            ("last", RuninatorField::optional(RuninatorType::Any)),
+            (
+                "results",
+                RuninatorField::required(RuninatorType::array(RuninatorType::Any)),
+            ),
+        ])))
+    }
+
     fn metadata(&self) -> WorkflowNodeKindMetadata {
         WorkflowNodeKindMetadata {
             supports_predicate_edges: false,
@@ -52,11 +71,16 @@ impl NodeKindSpec for Loop {
                     None,
                 ),
             ],
+            edge_slots: vec![
+                direct("next", "Loop body"),
+                direct("on_success", "Loop exit"),
+            ],
             default_template: json!({
                 "kind": "loop",
                 "parameters": { "items": [] },
                 "max_iterations": 10,
-                "retry": { "max_attempts": 1 }, "transitions": {},
+                "retry": { "max_attempts": 1 },
+                "transitions": { "next": null, "on_success": null },
             }),
             ..base(
                 self,

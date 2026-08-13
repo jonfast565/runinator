@@ -72,6 +72,7 @@ fn resetting_a_cursors_frames_preserves_run_scoped_state() {
             node_id: "each".into(),
             index: 0,
             last_node_run_id: None,
+            ..Default::default()
         });
 
     parsed.cursor_mut(id).expect("cursor").exit_loop("each");

@@ -185,20 +185,22 @@ fn replica_labels_match_requires_superset() {
 #[test]
 fn reentry_exhausted_fires_only_at_the_visit_cap() {
     let node = reentry_node(2, true);
+    let cursor_id = Uuid::now_v7();
     // one completed visit is under the cap; the latest is terminal so the next entry is fresh.
     let runs = vec![node_run("loop", "succeeded")];
-    assert!(!reentry_exhausted(&node, &runs, runs.last()));
+    assert!(!reentry_exhausted(&node, cursor_id, &runs));
     // a second completed visit reaches the cap, so a fresh re-entry exits via on_exhausted.
     let runs = vec![node_run("loop", "succeeded"), node_run("loop", "succeeded")];
-    assert!(reentry_exhausted(&node, &runs, runs.last()));
+    assert!(reentry_exhausted(&node, cursor_id, &runs));
 }
 
 #[test]
 fn reentry_exhausted_ignores_in_flight_and_unbounded_nodes() {
     let node = reentry_node(2, true);
+    let cursor_id = Uuid::now_v7();
     // the cap is reached but the latest visit is still running, so we never abandon it mid-flight.
     let runs = vec![node_run("loop", "succeeded"), node_run("loop", "running")];
-    assert!(!reentry_exhausted(&node, &runs, runs.last()));
+    assert!(!reentry_exhausted(&node, cursor_id, &runs));
     // a node without reentry enabled is never bounded by this guard.
     let plain: WorkflowNode = serde_json::from_value(serde_json::json!({
         "id": "loop",
@@ -206,7 +208,22 @@ fn reentry_exhausted_ignores_in_flight_and_unbounded_nodes() {
     }))
     .expect("plain node");
     let runs = vec![node_run("loop", "succeeded"), node_run("loop", "succeeded")];
-    assert!(!reentry_exhausted(&plain, &runs, runs.last()));
+    assert!(!reentry_exhausted(&plain, cursor_id, &runs));
+}
+
+#[test]
+fn reentry_bound_counts_only_the_current_cursor() {
+    let node = reentry_node(2, true);
+    let current = Uuid::now_v7();
+    let sibling = Uuid::now_v7();
+    let mut own = node_run("loop", "succeeded");
+    own.cursor_id = Some(current);
+    let mut other = node_run("loop", "succeeded");
+    other.cursor_id = Some(sibling);
+    assert!(!reentry_exhausted(&node, current, &[own.clone(), other]));
+    let mut second = node_run("loop", "succeeded");
+    second.cursor_id = Some(current);
+    assert!(reentry_exhausted(&node, current, &[own, second]));
 }
 
 #[test]

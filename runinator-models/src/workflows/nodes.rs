@@ -251,3 +251,12 @@ pub struct WorkflowNode {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compensation: Option<WorkflowAction>,
 }
+
+impl WorkflowNode {
+    /// the visit bound used by iterative control flow, regardless of its legacy wire location.
+    pub fn iteration_limit(&self) -> Option<i64> {
+        self.max_iterations.or_else(|| {
+            (self.reentry.enabled && self.reentry.max_visits > 0).then_some(self.reentry.max_visits)
+        })
+    }
+}

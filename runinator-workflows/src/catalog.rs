@@ -14,9 +14,10 @@ use runinator_models::interrupt::{InterruptMode, InterruptSource};
 use runinator_models::json;
 use runinator_models::providers::{ParameterMetadata, RuninatorType};
 use runinator_models::schedules::ConcurrencyPolicy;
-use runinator_models::workflows::{WorkflowNodeKind, WorkflowTriggerKind};
+use runinator_models::value::Value;
+use runinator_models::workflows::{WorkflowNode, WorkflowNodeKind, WorkflowTriggerKind};
 
-use crate::node_kinds::spec_for;
+use crate::node_kinds::{ActionCatalog, spec_for};
 
 // -- the node catalog --------------------------------------------------------------------------
 
@@ -27,7 +28,19 @@ pub fn node_kind_catalog() -> Vec<WorkflowNodeKindMetadata> {
 
 /// the palette entry for one node kind.
 pub fn node_metadata(kind: &WorkflowNodeKind) -> WorkflowNodeKindMetadata {
-    spec_for(kind).metadata()
+    let spec = spec_for(kind);
+    let mut metadata = spec.metadata();
+    let mut template = metadata.default_template.clone();
+    if let Value::Object(object) = &mut template {
+        object.insert("id".into(), Value::String("catalog_node".into()));
+    }
+    let providers = Vec::new();
+    let actions = ActionCatalog::new(&providers);
+    metadata.output_type = serde_json::to_value(&template)
+        .ok()
+        .and_then(|value| serde_json::from_value::<WorkflowNode>(value).ok())
+        .and_then(|node| spec.output_type(&node, &actions).ok().flatten());
+    metadata
 }
 
 // -- trigger catalog ---------------------------------------------------------------------------

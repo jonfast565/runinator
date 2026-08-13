@@ -179,3 +179,39 @@ fn unsupported_kind_stops_with_error() {
     assert!(run.error.is_some());
     assert!(run.error.unwrap().contains("parallel"));
 }
+
+#[test]
+fn loop_visits_each_item_and_exposes_accumulated_results() {
+    let def = workflow(
+        serde_json::json!([
+            { "id": "start", "kind": "start", "transitions": { "next": { "$node": "each" } } },
+            {
+                "id": "each", "kind": "loop", "parameters": { "items": ["a", "b"] },
+                "transitions": { "next": { "$node": "body" }, "on_success": { "$node": "done" } }
+            },
+            {
+                "id": "body", "kind": "output",
+                "parameters": { "data": { "$ref": { "node": "each", "output": ["item"] } } },
+                "transitions": { "next": { "$node": "each" } }
+            },
+            { "id": "done", "kind": "end" }
+        ]),
+        "start",
+    );
+
+    let mut env = FixedEnv::new();
+    let run = simulate_workflow(&def, Value::Null, &mut env).expect("simulate loop");
+    assert_eq!(run.status, WorkflowStatus::Succeeded);
+    assert_eq!(
+        run.steps
+            .iter()
+            .filter(|step| step.node_id == "body")
+            .count(),
+        2
+    );
+    assert_eq!(
+        run.node_output("each")
+            .and_then(|output| output.get("results")),
+        Some(&runinator_models::json!(["a", "b"]))
+    );
+}

@@ -255,11 +255,15 @@ export function buildGraphEdgeModels(
 
       if (target && nodeIds.has(target)) {
         const handles = edgeHandles(definition, source, key);
+        const metadata = findNodeKindMetadata(workflowNodeKind(node.kind));
+        const label =
+          metadata?.edge_slots.find((slot) => slot.taxonomy === "direct" && slot.key === key)
+            ?.label ?? key;
         edges.push(
           graphEdge(
             source,
             target,
-            key,
+            label,
             edgeData(source, key, {
               kind: "direct",
               transitionKey: key,
@@ -326,14 +330,16 @@ function supportsPredicateEdges(kind: string): boolean {
 }
 
 export function workflowEdgeSemanticOptions(node: JsonRecord): WorkflowEdgeSemanticOption[] {
-  const options: WorkflowEdgeSemanticOption[] = directTransitionKeys.map((key) => ({
-    id: `direct:${key}`,
-    label: transitionLabel(key),
-    description: `Set ${key} transition`,
-  }));
   const kind = workflowNodeKind(node.kind);
   const transitions = isRecord(node.transitions) ? node.transitions : {};
   const metadata = findNodeKindMetadata(kind);
+  const options: WorkflowEdgeSemanticOption[] = directTransitionKeys.map((key) => ({
+    id: `direct:${key}`,
+    label:
+      metadata?.edge_slots.find((slot) => slot.taxonomy === "direct" && slot.key === key)?.label ??
+      transitionLabel(key),
+    description: `Set ${key} transition`,
+  }));
 
   if (metadata?.edge_slots.some((slot) => slot.taxonomy === "branch" && slot.multiple)) {
     const branches = asArray(transitions.branches);
@@ -2055,9 +2061,10 @@ function parameterLayoutEdges(
       }
 
       return edges;
-    case "loop":
     case "map":
       pushLayoutEdge(edges, source, nodeRefId(parameters.target), nodeIds);
+      return edges;
+    case "loop":
       return edges;
     default:
       return edges;
@@ -2490,7 +2497,7 @@ function pushControlFlowIssues(
     return;
   }
 
-  if (kind === "loop" || kind === "map") {
+  if (kind === "map") {
     pushNodeRefIssue(issues, nodeIds, nodeId, "target", parameters.target, false);
   }
 }

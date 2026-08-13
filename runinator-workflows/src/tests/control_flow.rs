@@ -2,6 +2,88 @@
 //! switch cases, toggle state, and percentage buckets.
 
 use super::*;
+use runinator_models::workflows::WorkflowNodeRun;
+
+fn completed_node_run(id: u128, node_id: &str) -> WorkflowNodeRun {
+    serde_json::from_value(serde_json::json!({
+        "id": Uuid::from_u128(id),
+        "workflow_run_id": Uuid::from_u128(1),
+        "node_id": node_id,
+        "status": "succeeded",
+        "attempt": 1,
+        "parameters": null,
+        "output_json": null,
+        "state": null,
+        "transition_reason": null,
+        "created_at": "2026-01-01T00:00:00Z",
+        "started_at": "2026-01-01T00:00:00Z",
+        "finished_at": "2026-01-01T00:00:01Z",
+        "message": null,
+    }))
+    .expect("node run")
+}
+
+#[test]
+fn a_race_visit_ignores_winners_from_previous_loop_laps() {
+    let branches = vec!["fast".to_string(), "slow".to_string()];
+    let current_race_run = Uuid::from_u128(100);
+    let mut history = vec![completed_node_run(90, "fast")];
+
+    assert_eq!(
+        race_winner_since(
+            &branches,
+            BranchPolicy::FirstSuccess,
+            &history,
+            Some(current_race_run),
+        ),
+        None,
+        "the prior lap's winner must not settle the current lap"
+    );
+
+    history.push(completed_node_run(110, "slow"));
+    assert_eq!(
+        race_winner_since(
+            &branches,
+            BranchPolicy::FirstSuccess,
+            &history,
+            Some(current_race_run),
+        ),
+        Some("slow".to_string())
+    );
+}
+
+#[test]
+fn an_all_race_counts_only_contenders_from_its_current_visit() {
+    let branches = vec!["left".to_string(), "right".to_string()];
+    let current_race_run = Uuid::from_u128(100);
+    let mut history = vec![
+        completed_node_run(80, "left"),
+        completed_node_run(90, "right"),
+        completed_node_run(110, "left"),
+    ];
+
+    assert_eq!(
+        race_winner_since(
+            &branches,
+            BranchPolicy::All,
+            &history,
+            Some(current_race_run),
+        ),
+        None,
+        "the current left contender cannot pair with the prior lap's right contender"
+    );
+
+    history.push(completed_node_run(120, "right"));
+    assert_eq!(
+        race_winner_since(
+            &branches,
+            BranchPolicy::All,
+            &history,
+            Some(current_race_run),
+        ),
+        Some("right".to_string())
+    );
+}
 
 #[test]
 fn validates_node_transitions() {

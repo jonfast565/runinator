@@ -1086,7 +1086,14 @@ impl Formatter {
     }
 
     fn for_stmt(&mut self, for_stmt: &ForStmt) -> String {
-        let mut header = format!("for {} in {}", for_stmt.var, format_expr(&for_stmt.items));
+        let mut binding = for_stmt.var.clone();
+        if let Some(ty) = &for_stmt.var_type {
+            binding.push_str(&format!(": {}", format_type(ty)));
+        }
+        if let Some(index) = &for_stmt.index_var {
+            binding.push_str(&format!(", {index}"));
+        }
+        let mut header = format!("for {binding} in {}", format_expr(&for_stmt.items));
         if let Some(limit) = &for_stmt.limit {
             header.push_str(&format!(" limit {}", format_expr(limit)));
         }

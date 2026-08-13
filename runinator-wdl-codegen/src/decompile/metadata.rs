@@ -117,6 +117,36 @@ impl<'a> MetadataReader<'a> {
             .collect()
     }
 
+    pub(super) fn control_vars(&self) -> HashMap<String, ControlVars> {
+        self.object("/wdl/control_vars")
+            .map(|entries| {
+                entries
+                    .iter()
+                    .filter_map(|(id, value)| {
+                        let vars = value.as_object()?;
+                        let item = vars.get("item")?.as_str()?.to_string();
+                        let index = vars
+                            .get("index")
+                            .and_then(Value::as_str)
+                            .map(str::to_string);
+                        let item_type = vars
+                            .get("item_type")
+                            .and_then(Value::as_str)
+                            .map(str::to_string);
+                        Some((
+                            id.clone(),
+                            ControlVars {
+                                item,
+                                item_type,
+                                index,
+                            },
+                        ))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     pub(super) fn functions(&self) -> Vec<FnEntry> {
         let signatures = self.object("/wdl/functions");
         self.array("/functions")
@@ -170,6 +200,12 @@ impl<'a> MetadataReader<'a> {
     fn object(&self, pointer: &str) -> Option<&'a Map> {
         self.value(pointer).and_then(Value::as_object)
     }
+}
+
+pub(super) struct ControlVars {
+    pub(super) item: String,
+    pub(super) item_type: Option<String>,
+    pub(super) index: Option<String>,
 }
 
 /// a `fn` definition recovered for decompilation.

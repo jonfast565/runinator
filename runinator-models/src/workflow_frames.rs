@@ -92,6 +92,12 @@ pub struct LoopFrame {
     /// the iteration whose body is running now, zero-based.
     #[serde(default)]
     pub index: i64,
+    /// the collection snapshot resolved when this loop was entered.
+    #[serde(default)]
+    pub items: Vec<Value>,
+    /// body outputs completed before the current lap, in item order.
+    #[serde(default)]
+    pub results: Vec<Value>,
     /// this loop's own node run for the current lap. anything this cursor records after it belongs
     /// to that lap's body, which is what makes `LoopOutput.last` body-scoped rather than run-wide.
     #[serde(default, skip_serializing_if = "Option::is_none")]

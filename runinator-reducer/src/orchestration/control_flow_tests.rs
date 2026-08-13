@@ -225,6 +225,13 @@ async fn loop_last_reports_this_loops_previous_iteration() {
             "every visit after the first carries the previous iteration's body output"
         );
     }
+    let results = laps[2]
+        .get("results")
+        .and_then(Value::as_array)
+        .expect("accumulated results");
+    assert_eq!(results.len(), 2);
+    assert_eq!(results.first(), laps[1].get("last"));
+    assert_eq!(results.get(1), laps[2].get("last"));
 }
 
 /// a loop whose body edge is missing used to target itself, spinning against the engine's inline

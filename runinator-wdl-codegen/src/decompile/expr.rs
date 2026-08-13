@@ -359,6 +359,14 @@ impl Decompiler<'_> {
                 if segs.first().and_then(Value::as_str) == Some("item") {
                     return Ok(self.append_path(&var, &segs[1..]));
                 }
+                if segs.first().and_then(Value::as_str) == Some("index")
+                    && let Some(index) = self
+                        .control_vars
+                        .get(node_id)
+                        .and_then(|vars| vars.index.as_deref())
+                {
+                    return Ok(self.append_path(index, &segs[1..]));
+                }
             }
             return Ok(self.dotted(node_id, output));
         }

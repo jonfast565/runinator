@@ -15,25 +15,29 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for LoopHandler {
     where
         T: 'a,
     {
+        let existing_frame = ctx.cursor.loop_frame(&ctx.node.id);
         let context = runtime_context(ctx).await;
         let parameters = runinator_workflows::resolve_value_refs(&ctx.node.parameters, &context)
             .map_err(|err| -> SendableError { Box::new(err) })?;
-        let items = match runinator_workflows::parse_loop_parameters(&ctx.node.id, &parameters) {
-            Ok(params) => params.items,
-            Err(err) => {
-                return super::handler::complete(block_node(ctx, &err.to_string()).await);
-            }
+        let items = match existing_frame {
+            Some(frame) => frame.items.clone(),
+            None => match runinator_workflows::parse_loop_parameters(&ctx.node.id, &parameters) {
+                Ok(params) => params.items,
+                Err(err) => {
+                    return super::handler::complete(block_node(ctx, &err.to_string()).await);
+                }
+            },
         };
         // the frame is this thread of control's own lap counter, keyed by loop node. counting the
         // node's succeeded runs instead made an inner loop count every outer lap as its own, so a
         // nested loop exhausted without running its body on the second outer pass.
-        let frame = ctx.cursor.loop_frame(&ctx.node.id);
+        let frame = existing_frame;
         let index = frame.map_or(0, |frame| frame.index + 1);
         // an expression cap is resolved into the parameters; fall back to the typed field.
         let max_iterations = parameters
             .get("max_iterations")
             .and_then(|value| value.as_i64().or_else(|| value.as_f64().map(|f| f as i64)))
-            .or(ctx.node.max_iterations)
+            .or_else(|| ctx.node.iteration_limit())
             .unwrap_or(i64::MAX)
             .max(0);
         let exhausted = index >= items.len() as i64 || index >= max_iterations;
@@ -48,6 +52,10 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for LoopHandler {
                 frame.last_node_run_id?,
             )
         });
+        let mut results = frame.map_or_else(Vec::new, |frame| frame.results.clone());
+        if let Some(value) = &last {
+            results.push(value.clone());
+        }
         // each iteration gets its own run. reuse the latest only if it was left running from a prior
         // interrupted visit, which resumes the same lap because the frame did not advance.
         let node_run = match ctx
@@ -83,6 +91,7 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for LoopHandler {
             has_next: !exhausted,
             count: items.len(),
             last,
+            results: results.clone(),
         };
         let output_value = output.to_wire_value()?;
         let reason = if exhausted {
@@ -160,6 +169,8 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for LoopHandler {
         let frame = LoopFrame {
             node_id: ctx.node.id.clone(),
             index,
+            items,
+            results,
             last_node_run_id: Some(node_run.id),
         };
         run_state::mutate_cursor(ctx.db, ctx.workflow_run.id, ctx.cursor.id, move |cursor| {
@@ -624,7 +635,8 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for TryHandler {
                 let Some(status) = latest_status(params.body.as_str(), ctx.node_runs) else {
                     return Ok(ReadyNodeDisposition::Complete);
                 };
-                let body_output = latest_succeeded_output_excluding(ctx.node_runs, &ctx.node.id);
+                let body_output =
+                    previous_lap_output(ctx.node_runs, ctx.cursor.id, &ctx.node.id, node_run.id);
                 if status == WorkflowStatus::Succeeded {
                     if let Some(finally) = params.finally {
                         return super::handler::complete(
@@ -693,7 +705,8 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for TryHandler {
                 else {
                     return Ok(ReadyNodeDisposition::Complete);
                 };
-                let catch_output = latest_succeeded_output_excluding(ctx.node_runs, &ctx.node.id);
+                let catch_output =
+                    previous_lap_output(ctx.node_runs, ctx.cursor.id, &ctx.node.id, node_run.id);
                 if let Some(finally) = params.finally {
                     return super::handler::complete(
                         start_try_phase(
@@ -781,7 +794,7 @@ fn latest_succeeded_output_for(node_runs: &[WorkflowNodeRun], node_id: &str) -> 
         .iter()
         .rev()
         .find(|run| run.node_id == node_id && run.status == WorkflowStatus::Succeeded)
-        .and_then(|run| run.output_json.clone())
+        .map(|run| run.output_json.clone().unwrap_or(Value::Null))
 }
 
 /// the id of `node_id`'s most recent settled run, or `None` if it has never settled.
@@ -818,19 +831,5 @@ fn previous_lap_output(
                 && run.status == WorkflowStatus::Succeeded
                 && run.cursor_id.is_none_or(|id| id == cursor_id)
         })
-        .and_then(|run| run.output_json.clone())
-}
-
-// note: `try` still reads its body output through this run-wide scan, and has the same fan-out
-// defect the loop path above was moved off. changing it here would alter `try` semantics silently;
-// tracked in ENHANCEMENTS.md under the 7.x loop band.
-fn latest_succeeded_output_excluding(
-    node_runs: &[WorkflowNodeRun],
-    node_id: &str,
-) -> Option<Value> {
-    node_runs
-        .iter()
-        .rev()
-        .find(|run| run.node_id != node_id && run.status == WorkflowStatus::Succeeded)
         .and_then(|run| run.output_json.clone())
 }

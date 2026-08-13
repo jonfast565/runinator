@@ -348,16 +348,13 @@ fn action_metadata_exposes_typed_parameter_and_result_environments() {
     );
     assert_eq!(
         action.results_type(),
-        RuninatorType::open_typed_structure(
-            [(
-                "output",
-                RuninatorField::optional(RuninatorType::typed_structure([
-                    ("status", RuninatorField::required(RuninatorType::String)),
-                    ("size", RuninatorField::optional(RuninatorType::Integer)),
-                ])),
-            )],
-            RuninatorType::Any,
-        )
+        RuninatorType::typed_structure([(
+            "output",
+            RuninatorField::optional(RuninatorType::typed_structure([
+                ("status", RuninatorField::required(RuninatorType::String)),
+                ("size", RuninatorField::optional(RuninatorType::Integer)),
+            ])),
+        )])
     );
 }
 

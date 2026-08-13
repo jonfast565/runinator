@@ -70,6 +70,7 @@ fn loop_frame(node_id: &str, index: i64) -> LoopFrame {
         node_id: node_id.into(),
         index,
         last_node_run_id: None,
+        ..Default::default()
     }
 }
 

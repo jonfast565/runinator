@@ -13,6 +13,8 @@ pub struct LoopOutput {
     pub count: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last: Option<Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub results: Vec<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

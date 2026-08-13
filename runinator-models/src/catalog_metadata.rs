@@ -190,11 +190,13 @@ pub struct WorkflowNodeKindMetadata {
     pub supports_predicate_edges: bool,
     #[serde(default)]
     pub fields: Vec<NodeFieldMetadata>,
-    /// per-kind control-flow edges (toggle on/off, try body/catch/finally, join wait_for, ...) and
-    /// the condition-branch slot. the universal direct transitions (next/on_success/on_failure/
-    /// on_timeout/on_reject) are a frontend constant and are not repeated here.
+    /// per-kind control-flow edges and semantic overrides for direct transitions. universal direct
+    /// transitions remain available in the frontend even when a kind does not rename them here.
     #[serde(default)]
     pub edge_slots: Vec<NodeEdgeSlot>,
+    /// output shape known from the kind's default node, for generic authoring surfaces.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_type: Option<crate::types::RuninatorType>,
     /// the default node json produced when this kind is created from the palette (minus the id).
     #[serde(default)]
     pub default_template: Value,

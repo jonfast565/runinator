@@ -3,6 +3,7 @@
 use runinator_models::catalog_metadata::{FieldLocation, WorkflowNodeKindMetadata};
 use runinator_models::json;
 use runinator_models::providers::RuninatorType;
+use runinator_models::types::RuninatorField;
 use runinator_models::workflows::{WorkflowNode, WorkflowNodeKind};
 
 use crate::node_kinds::builders::{base, control, end_ref, field, opt};
@@ -25,6 +26,22 @@ impl NodeKindSpec for Map {
     fn check_parameters(&self, node: &WorkflowNode) -> Result<(), WorkflowValidationError> {
         parse_map_parameters(node)?;
         Ok(())
+    }
+
+    fn output_type(
+        &self,
+        _node: &WorkflowNode,
+        _actions: &crate::node_kinds::ActionCatalog<'_>,
+    ) -> Result<Option<RuninatorType>, WorkflowValidationError> {
+        Ok(Some(RuninatorType::typed_structure([
+            ("item", RuninatorField::optional(RuninatorType::Any)),
+            ("index", RuninatorField::optional(RuninatorType::Integer)),
+            ("count", RuninatorField::optional(RuninatorType::Integer)),
+            (
+                "outputs",
+                RuninatorField::optional(RuninatorType::array(RuninatorType::Any)),
+            ),
+        ])))
     }
 
     fn target_slots(

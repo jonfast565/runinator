@@ -2309,12 +2309,16 @@ fn parse_if(pair: Pair<Rule>) -> Result<IfStmt, WdlError> {
 
 fn parse_for(pair: Pair<Rule>) -> Result<ForStmt, WdlError> {
     let mut var = String::new();
+    let mut var_type = None;
+    let mut index_var = None;
     let mut items = Expr::new(ExprKind::Null, Span::default());
     let mut limit = None;
     let mut body = Vec::new();
     for inner in pair.into_inner() {
         match inner.as_rule() {
-            Rule::ident => var = inner.as_str().to_string(),
+            Rule::ident if var.is_empty() => var = inner.as_str().to_string(),
+            Rule::ident => index_var = Some(inner.as_str().to_string()),
+            Rule::type_expr => var_type = Some(parse_type_expr(inner)?),
             Rule::expr => items = parse_expr(inner)?,
             // `limit none` yields no expr child and means uncapped (limit stays None);
             // `limit <expr>` carries an integer-valued expression.
@@ -2331,6 +2335,8 @@ fn parse_for(pair: Pair<Rule>) -> Result<ForStmt, WdlError> {
     }
     Ok(ForStmt {
         var,
+        var_type,
+        index_var,
         items,
         limit,
         body,
@@ -2345,8 +2351,10 @@ fn parse_while(pair: Pair<Rule>, negate: bool) -> Result<WhileStmt, WdlError> {
         match inner.as_rule() {
             Rule::cond => cond = Some(parse_cond(inner)?),
             Rule::for_limit => {
-                let int = first_inner(inner)?;
-                limit = Some(parse_i64(int.as_str(), span_of(&int))?);
+                let value = first_inner(inner)?;
+                if value.as_rule() == Rule::integer {
+                    limit = Some(parse_i64(value.as_str(), span_of(&value))?);
+                }
             }
             Rule::block => body = parse_block(inner)?,
             _ => {}
