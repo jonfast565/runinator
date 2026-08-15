@@ -1,8 +1,7 @@
-// integration tests against a live MariaDB/MySQL, gated on RUNINATOR_TEST_MYSQL_URL
-// (e.g. mysql://root:runinator@127.0.0.1:53307/runinator). the assertions are the shared parity
-// body in `crate::dialect_parity` — ON DUPLICATE KEY upserts, UPDATE+SELECT claims, INSERT IGNORE,
-// and reserved-word quoting are exactly what it covers. what this file owns is provisioning: each
-// run creates a throwaway database and drops it afterwards, so the suite is independent.
+// integration tests against live MySQL and MariaDB. the assertions are the shared parity body in
+// `crate::dialect_parity` — ON DUPLICATE KEY upserts, UPDATE+SELECT claims, INSERT IGNORE, and
+// reserved-word quoting are exactly what it covers. what this file owns is provisioning: each run
+// creates a throwaway database and drops it afterwards, so the suite is independent.
 //
 // bring the engine up with runinator-database/tests/docker-compose.yml.
 
@@ -12,8 +11,8 @@ use crate::interfaces::DatabaseImpl;
 use sqlx::{Connection, MySqlConnection};
 use uuid::Uuid;
 
-fn base_url() -> Option<String> {
-    std::env::var("RUNINATOR_TEST_MYSQL_URL")
+fn base_url(variable: &str) -> Option<String> {
+    std::env::var(variable)
         .ok()
         .filter(|url| !url.trim().is_empty())
 }
@@ -26,8 +25,8 @@ fn split_url(url: &str) -> (String, String) {
     (server.to_string(), db.to_string())
 }
 
-async fn fresh_db() -> Option<(MySqlDb, String, String)> {
-    let url = base_url()?;
+async fn fresh_db(variable: &str) -> Option<(MySqlDb, String, String)> {
+    let url = base_url(variable)?;
     let (server, _) = split_url(&url);
     let db = format!("runinator_test_{}", Uuid::new_v4().simple());
     let mut conn = MySqlConnection::connect(&server).await.unwrap();
@@ -41,7 +40,8 @@ async fn fresh_db() -> Option<(MySqlDb, String, String)> {
     Some((pool, server, db))
 }
 
-async fn drop_db(server: &str, db: &str) {
+async fn drop_db(pool: MySqlDb, server: &str, db: &str) {
+    pool.pool().close().await;
     let mut conn = MySqlConnection::connect(server).await.unwrap();
     sqlx::query(&format!("DROP DATABASE IF EXISTS {db}"))
         .execute(&mut conn)
@@ -51,12 +51,24 @@ async fn drop_db(server: &str, db: &str) {
 
 #[tokio::test]
 async fn mariadb_full_lifecycle() {
-    let Some((db, server, dbname)) = fresh_db().await else {
-        eprintln!("skipping: set RUNINATOR_TEST_MYSQL_URL to run MariaDB tests");
+    let Some((db, server, dbname)) = fresh_db("RUNINATOR_TEST_MARIADB_URL").await else {
+        eprintln!("skipping: set RUNINATOR_TEST_MARIADB_URL to run MariaDB tests");
         return;
     };
 
     assert_dialect_parity(&db).await;
 
-    drop_db(&server, &dbname).await;
+    drop_db(db, &server, &dbname).await;
+}
+
+#[tokio::test]
+async fn mysql_full_lifecycle() {
+    let Some((db, server, dbname)) = fresh_db("RUNINATOR_TEST_MYSQL_URL").await else {
+        eprintln!("skipping: set RUNINATOR_TEST_MYSQL_URL to run MySQL tests");
+        return;
+    };
+
+    assert_dialect_parity(&db).await;
+
+    drop_db(db, &server, &dbname).await;
 }

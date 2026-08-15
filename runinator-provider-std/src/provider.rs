@@ -13,7 +13,7 @@ use runinator_models::{
 };
 use runinator_plugin::provider::{Provider, ProviderEventSink};
 
-use crate::code::execute_code;
+use crate::code::{EXPECTED_OUTPUT_TYPE_KEY, execute_code};
 use crate::errors::{GOTO_NOT_ALLOWED, HTTP_ERROR, INTRINSIC_FAILED, INVALID_PROGRAM};
 use crate::intrinsics::FullIntrinsics;
 
@@ -66,6 +66,7 @@ impl Provider for StdProvider {
                     ParameterMetadata::required(SOURCE_KEY, RuninatorType::String),
                     ParameterMetadata::optional(RUNTIME_KEY, RuninatorType::Any),
                     ParameterMetadata::optional(CONTEXT_KEY, RuninatorType::Any),
+                    ParameterMetadata::optional(EXPECTED_OUTPUT_TYPE_KEY, RuninatorType::Any),
                 ]),
         ];
         actions.extend(PureIntrinsics::signatures());

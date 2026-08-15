@@ -45,7 +45,7 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for LoopHandler {
         // lap and filtered to this cursor. the run-wide reverse scan this replaces returned whatever
         // any branch of the run happened to finish last.
         let last = frame.and_then(|frame| {
-            previous_lap_output(
+            latest_succeeded_output_for_cursor_excluding_after(
                 ctx.node_runs,
                 ctx.cursor.id,
                 &ctx.node.id,
@@ -655,8 +655,12 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for TryHandler {
                 let Some(status) = latest_status(params.body.as_str(), ctx.node_runs) else {
                     return Ok(ReadyNodeDisposition::Complete);
                 };
-                let body_output =
-                    previous_lap_output(ctx.node_runs, ctx.cursor.id, &ctx.node.id, node_run.id);
+                let body_output = latest_succeeded_output_for_cursor_excluding_after(
+                    ctx.node_runs,
+                    ctx.cursor.id,
+                    &ctx.node.id,
+                    node_run.id,
+                );
                 if status == WorkflowStatus::Succeeded {
                     if let Some(finally) = params.finally {
                         return super::handler::complete(
@@ -725,8 +729,12 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for TryHandler {
                 else {
                     return Ok(ReadyNodeDisposition::Complete);
                 };
-                let catch_output =
-                    previous_lap_output(ctx.node_runs, ctx.cursor.id, &ctx.node.id, node_run.id);
+                let catch_output = latest_succeeded_output_for_cursor_excluding_after(
+                    ctx.node_runs,
+                    ctx.cursor.id,
+                    &ctx.node.id,
+                    node_run.id,
+                );
                 if let Some(finally) = params.finally {
                     return super::handler::complete(
                         start_try_phase(
@@ -830,16 +838,15 @@ fn latest_settled_run_id(node_runs: &[WorkflowNodeRun], node_id: &str) -> Option
         .max()
 }
 
-/// the output of the last node this cursor recorded during `loop_node`'s previous lap.
+/// the latest successful output this cursor recorded after `after`, excluding `node_id`.
 ///
-/// bounded below by the loop's own node run for that lap and filtered to this cursor, so it is both
-/// body-scoped and thread-scoped. the run-wide reverse scan it replaces for the loop path returned
-/// whatever any branch of the run happened to finish last, which under fan-out is another thread's
-/// work entirely.
-fn previous_lap_output(
+/// the lower bound keeps a re-entered loop or try region from reusing an earlier visit, while the
+/// cursor filter keeps concurrent branches from supplying each other's output. legacy node runs
+/// without a cursor id retain their pre-migration visibility.
+fn latest_succeeded_output_for_cursor_excluding_after(
     node_runs: &[WorkflowNodeRun],
     cursor_id: Uuid,
-    loop_node_id: &str,
+    node_id: &str,
     after: Uuid,
 ) -> Option<Value> {
     node_runs
@@ -847,7 +854,7 @@ fn previous_lap_output(
         .rev()
         .find(|run| {
             run.id > after
-                && run.node_id != loop_node_id
+                && run.node_id != node_id
                 && run.status == WorkflowStatus::Succeeded
                 && run.cursor_id.is_none_or(|id| id == cursor_id)
         })

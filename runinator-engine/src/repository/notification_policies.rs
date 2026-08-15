@@ -60,12 +60,24 @@ fn validate_policy(policy: &NewNotificationPolicy) -> Result<(), SendableError> 
             policy.channel.as_str()
         )));
     }
-    // a duration event is evaluated by a periodic scan against a threshold; without one it is inert.
+    // a run-duration event is evaluated against a required threshold; secret expiry separately has
+    // a default window when its scanner-driven policy omits one.
     if policy.event.is_duration_based() && policy.threshold_seconds.unwrap_or(0) <= 0 {
         return Err(crate::errors::NOTIFY_UNROUTABLE_CHANNEL.error(format!(
             "event '{}' requires a positive threshold_seconds",
             policy.event.as_str()
         )));
+    }
+    if policy.event == NotificationEvent::SecretExpiring {
+        if policy.workflow_id.is_some() {
+            return Err(crate::errors::NOTIFY_UNROUTABLE_CHANNEL
+                .error("event 'secret_expiring' requires a global policy"));
+        }
+        if policy.threshold_seconds.is_some_and(|seconds| seconds <= 0) {
+            return Err(crate::errors::NOTIFY_UNROUTABLE_CHANNEL.error(
+                "event 'secret_expiring' threshold_seconds must be positive when provided",
+            ));
+        }
     }
     Ok(())
 }

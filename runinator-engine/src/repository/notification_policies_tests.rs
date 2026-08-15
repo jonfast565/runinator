@@ -59,6 +59,20 @@ fn a_transition_event_needs_no_threshold() {
 }
 
 #[test]
+fn secret_expiry_policy_defaults_its_window_and_must_be_global() {
+    let mut policy = base();
+    policy.event = NotificationEvent::SecretExpiring;
+    policy.threshold_seconds = None;
+    assert!(validate_policy(&policy).is_ok());
+
+    policy.workflow_id = Some(Uuid::now_v7());
+    assert!(validate_policy(&policy).is_err());
+    policy.workflow_id = None;
+    policy.threshold_seconds = Some(0);
+    assert!(validate_policy(&policy).is_err());
+}
+
+#[test]
 fn a_policy_requires_a_name() {
     let mut policy = base();
     policy.name = "  ".into();

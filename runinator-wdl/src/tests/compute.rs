@@ -31,12 +31,9 @@ fn compute_pure_lowers_to_std_run() {
 fn foreign_compute_lowers_to_std_code_and_round_trips() {
     let src = r#"
         workflow "Foreign Compute" v1 {
-            node result <- compute "python" ```
-import json
-import sys
-
-ctx = json.load(sys.stdin)
-print(json.dumps({"total": ctx["input"]["a"] + 1}))
+            node result: { total: integer } <- compute "python" ```
+def main(context):
+    return {"total": context["input"]["a"] + 1}
 ```.timeout(45s)
         }
     "#;
@@ -52,18 +49,22 @@ print(json.dumps({"total": ctx["input"]["a"] + 1}))
     assert_eq!(node["action"]["function"], "code");
     assert_eq!(node["action"]["timeout_seconds"], 45);
     assert_eq!(node["action"]["configuration"]["language"], "python");
+    assert_eq!(
+        value["metadata"]["wdl"]["type_hints"]["result"]["fields"]["total"]["ty"]["type"],
+        "integer"
+    );
     assert!(node["action"]["configuration"]["image"].is_null());
     assert!(
         node["action"]["configuration"]["source"]
             .as_str()
             .unwrap()
-            .contains("json.load(sys.stdin)")
+            .contains("def main(context)")
     );
 
     let wdl = decompile(&definition).expect("decompile");
     assert!(wdl.contains("compute \"python\""), "{wdl}");
     assert!(!wdl.contains("using"), "{wdl}");
-    assert!(wdl.contains("json.load(sys.stdin)"), "{wdl}");
+    assert!(wdl.contains("def main(context)"), "{wdl}");
     let second = compile_str(&wdl, &default_test_options()).expect("recompile");
     assert_eq!(graph_value(&definition), graph_value(&second));
 }

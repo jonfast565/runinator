@@ -493,6 +493,9 @@ pub struct CredentialPutRequest {
     pub schema: Option<Value>,
     #[serde(default)]
     pub kind: SettingKind,
+    /// optional RFC 3339 expiry for secrets; rejected for config values.
+    #[serde(default)]
+    pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[derive(Debug, Deserialize)]

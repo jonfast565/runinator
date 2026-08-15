@@ -8,9 +8,13 @@
 use std::collections::HashSet;
 
 use chrono::Utc;
+use runinator_models::cursor::RunCursor;
 use runinator_models::orchestration::ReadyNodeRecord;
 use runinator_models::value::Value;
-use runinator_models::workflows::{WorkflowDefinition, WorkflowRun, WorkflowStatus};
+use runinator_models::workflow_state::TryFrame;
+use runinator_models::workflows::{
+    WorkflowDefinition, WorkflowNodeRun, WorkflowRun, WorkflowStatus,
+};
 use uuid::Uuid;
 
 use crate::process_ready_node;
@@ -61,6 +65,143 @@ fn ready_node(node_id: &str) -> ReadyNodeRecord {
     .expect("ready node")
 }
 
+fn ready_node_for_cursor(node_id: &str, cursor_id: Uuid) -> ReadyNodeRecord {
+    let mut ready = ready_node(node_id);
+    ready.cursor_id = Some(cursor_id);
+    ready
+}
+
+fn node_run(
+    node_id: &str,
+    cursor_id: Uuid,
+    status: WorkflowStatus,
+    output: Option<Value>,
+) -> WorkflowNodeRun {
+    serde_json::from_value(serde_json::json!({
+        "id": Uuid::now_v7(),
+        "workflow_run_id": RUN_ID,
+        "node_id": node_id,
+        "cursor_id": cursor_id,
+        "status": status,
+        "attempt": 1,
+        "parameters": {},
+        "output_json": output,
+        "state": null,
+        "transition_reason": null,
+        "created_at": Utc::now(),
+        "started_at": Utc::now(),
+        "finished_at": status.is_terminal().then(Utc::now),
+        "message": null,
+    }))
+    .expect("workflow node run")
+}
+
+fn parallel_try_workflow() -> WorkflowDefinition {
+    workflow(serde_json::json!([
+        { "id": "start", "kind": "start", "transitions": { "next": { "$node": "fan" } } },
+        {
+            "id": "fan", "kind": "parallel",
+            "parameters": { "branches": [{ "$node": "guard" }, { "$node": "sibling" }] }
+        },
+        {
+            "id": "guard", "kind": "try",
+            "parameters": {
+                "body": { "$node": "body" },
+                "catch": { "$node": "catch" }
+            },
+            "transitions": { "on_success": { "$node": "join" } }
+        },
+        { "id": "body", "kind": "output", "transitions": { "on_success": { "$node": "guard" } } },
+        { "id": "catch", "kind": "output", "transitions": { "on_success": { "$node": "guard" } } },
+        { "id": "sibling", "kind": "output", "transitions": { "on_success": { "$node": "join" } } },
+        {
+            "id": "join", "kind": "join",
+            "parameters": {
+                "wait_for": [{ "$node": "guard" }, { "$node": "sibling" }],
+                "mode": "all"
+            },
+            "transitions": { "on_success": { "$node": "end" } }
+        },
+        { "id": "end", "kind": "end" }
+    ]))
+}
+
+async fn assert_parallel_try_output(
+    phase: &str,
+    phase_node: &str,
+    own_output: Value,
+    sibling_output: Value,
+    seed_prior_visit: bool,
+) {
+    let store = FakeStore::new();
+    store.insert_workflow(parallel_try_workflow());
+
+    let mut branch = RunCursor::forked("guard", "fan");
+    branch.try_frame = Some(TryFrame {
+        node_id: "guard".into(),
+        phase: phase.into(),
+        pending_status: None,
+        pending_output: None,
+    });
+    let sibling = RunCursor::forked("sibling", "fan");
+    let branch_id = branch.id;
+    let sibling_id = sibling.id;
+
+    let mut run = queued_run();
+    run.status = WorkflowStatus::Running;
+    run.active_node_id = Some("guard".into());
+    run.state = serde_json::to_value(serde_json::json!({
+        "cursors": [branch, sibling]
+    }))
+    .expect("run state")
+    .into();
+    store.insert_run(run);
+
+    if seed_prior_visit {
+        store.insert_node_run(node_run(
+            "guard",
+            branch_id,
+            WorkflowStatus::Succeeded,
+            Some(serde_json::json!({ "value": "prior try" }).into()),
+        ));
+        store.insert_node_run(node_run(
+            phase_node,
+            branch_id,
+            WorkflowStatus::Succeeded,
+            Some(serde_json::json!({ "value": "prior visit" }).into()),
+        ));
+    }
+
+    store.insert_node_run(node_run("guard", branch_id, WorkflowStatus::Running, None));
+    store.insert_node_run(node_run(
+        phase_node,
+        branch_id,
+        WorkflowStatus::Succeeded,
+        Some(own_output.clone()),
+    ));
+    // this is deliberately newer than the active branch's phase result. a run-wide reverse scan
+    // selects it even though it belongs to the other parallel cursor.
+    store.insert_node_run(node_run(
+        "sibling",
+        sibling_id,
+        WorkflowStatus::Succeeded,
+        Some(sibling_output),
+    ));
+
+    process_ready_node(&store, &ready_node_for_cursor("guard", branch_id))
+        .await
+        .expect("try branch drive");
+
+    let settled = store
+        .node_runs()
+        .into_iter()
+        .filter(|run| run.node_id == "guard" && run.cursor_id == Some(branch_id))
+        .max_by_key(|run| run.id)
+        .expect("settled try run");
+    assert_eq!(settled.status, WorkflowStatus::Succeeded);
+    assert_eq!(settled.output_json, Some(own_output));
+}
+
 /// drive the run from `start`, then drain every ready row the run arms, until none is left.
 ///
 /// one `process_ready_node` call follows a cursor for up to 64 inline steps, but a fan-out ends the
@@ -93,6 +234,34 @@ fn succeeded_runs(store: &FakeStore, node_id: &str) -> usize {
         .iter()
         .filter(|run| run.node_id == node_id && run.status == WorkflowStatus::Succeeded)
         .count()
+}
+
+/// a try controller resumes after its body, so another parallel branch can record a newer output
+/// before the controller is driven. the try result still belongs to the controller's own cursor.
+#[tokio::test]
+async fn try_body_output_does_not_leak_across_parallel_branches() {
+    assert_parallel_try_output(
+        "body",
+        "body",
+        serde_json::json!({ "value": "body branch" }).into(),
+        serde_json::json!({ "value": "sibling branch" }).into(),
+        false,
+    )
+    .await;
+}
+
+/// catch output has the same cursor boundary as body output. seeding a completed earlier visit also
+/// pins the lower bound: re-entry must use this visit's catch, not an older result from this cursor.
+#[tokio::test]
+async fn reentered_try_catch_output_stays_in_its_parallel_branch_and_visit() {
+    assert_parallel_try_output(
+        "catch",
+        "catch",
+        serde_json::json!({ "value": "current catch" }).into(),
+        serde_json::json!({ "value": "sibling branch" }).into(),
+        true,
+    )
+    .await;
 }
 
 /// the headline bug. `ctx.node_runs` is the whole run history, so counting the inner loop's

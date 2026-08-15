@@ -334,7 +334,7 @@ where
             .bind(trigger.metadata.to_string())
             .execute(&mut *conn)
             .await?;
-        execution_state_sql::replace(self, conn, new_run_id, &state).await?;
+        execution_state_sql::write(self, conn, new_run_id, &state, false).await?;
         let run_row = sqlx::query(&self.render(&format!(
             "SELECT {WORKFLOW_RUN_COLUMNS} FROM workflow_runs WHERE id = ?"
         )))

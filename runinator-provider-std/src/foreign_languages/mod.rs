@@ -1,0 +1,49 @@
+mod bash;
+mod csharp;
+mod fsharp;
+mod go;
+mod javascript;
+mod perl;
+mod php;
+mod powershell;
+mod python;
+mod ruby;
+mod swift;
+mod vbnet;
+
+use runinator_models::errors::SendableError;
+
+use crate::errors::INVALID_CODE;
+
+pub(crate) trait ForeignLanguageAdapter: Sync {
+    fn canonical(&self) -> &'static str;
+    fn source_filename(&self) -> &'static str;
+    fn runner_filename(&self) -> &'static str;
+    fn runner_source(&self) -> &'static str;
+    fn additional_files(&self) -> &'static [(&'static str, &'static str)] {
+        &[]
+    }
+    fn execute(&self) -> &'static str;
+}
+
+pub(crate) fn adapter_for(
+    language: &str,
+) -> Result<&'static dyn ForeignLanguageAdapter, SendableError> {
+    match language {
+        "python" | "py" => Ok(&python::PYTHON),
+        "javascript" | "js" | "node" => Ok(&javascript::JAVASCRIPT),
+        "bash" | "sh" => Ok(&bash::BASH),
+        "ruby" | "rb" => Ok(&ruby::RUBY),
+        "perl" | "pl" => Ok(&perl::PERL),
+        "php" => Ok(&php::PHP),
+        "go" | "golang" => Ok(&go::GO),
+        "swift" => Ok(&swift::SWIFT),
+        "powershell" | "pwsh" | "ps1" => Ok(&powershell::POWERSHELL),
+        "csharp" | "c#" | "cs" => Ok(&csharp::CSHARP),
+        "fsharp" | "f#" | "fs" => Ok(&fsharp::FSHARP),
+        "vbnet" | "vb.net" | "visualbasic" | "vb" => Ok(&vbnet::VBNET),
+        other => Err(INVALID_CODE.error(format!(
+            "unsupported foreign language '{other}'; supported languages: python, javascript, bash, ruby, perl, php, go, swift, powershell, csharp, fsharp, vbnet"
+        ))),
+    }
+}

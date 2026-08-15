@@ -50,6 +50,10 @@ pub struct SecretBundleEntry {
     // overwritten when an incoming entry is strictly newer.
     #[serde(default)]
     pub updated_at: Option<DateTime<Utc>>,
+    // optional secret expiry used by the engine's ahead-of-expiry notification scan. config entries
+    // reject this metadata.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<DateTime<Utc>>,
 }
 
 impl Bundle for SecretBundle {

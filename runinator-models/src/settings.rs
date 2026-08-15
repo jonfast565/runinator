@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 /// classifies a stored setting: a redacted, late-resolved `Secret` or a
@@ -36,6 +37,9 @@ pub struct SettingSummary {
     pub name: String,
     #[serde(default)]
     pub kind: SettingKind,
+    /// expiry declared for a secret, if any. config entries never carry expiry metadata.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<DateTime<Utc>>,
 }
 
 /// a stored setting's full persisted form: identity, the value bytes as held at rest (ciphertext

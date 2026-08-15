@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use runinator_models::{
     api_routes::API_CREDENTIALS,
     json,
@@ -42,6 +43,19 @@ where
         value: &Value,
         schema: Option<&Value>,
     ) -> Result<Value> {
+        self.put_setting_with_expiry(kind, scope, name, value, schema, None)
+            .await
+    }
+
+    pub async fn put_setting_with_expiry(
+        &self,
+        kind: SettingKind,
+        scope: &str,
+        name: &str,
+        value: &Value,
+        schema: Option<&Value>,
+        expires_at: Option<DateTime<Utc>>,
+    ) -> Result<Value> {
         let url = self.build_url(API_CREDENTIALS).await?;
         let mut body = json!({
             "scope": scope,
@@ -51,6 +65,9 @@ where
         });
         if let (Some(schema), Some(object)) = (schema, body.as_object_mut()) {
             object.insert("schema".into(), schema.clone());
+        }
+        if let (Some(expires_at), Some(object)) = (expires_at, body.as_object_mut()) {
+            object.insert("expires_at".into(), Value::String(expires_at.to_rfc3339()));
         }
         let response = self.http_post(url.clone()).json(&body).send().await?;
         let response = Self::handle_response(url, response).await?;

@@ -7,11 +7,13 @@
 
 use std::collections::BTreeMap;
 
+use chrono::{DateTime, Utc};
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::settings::SettingKind;
 use runinator_models::types::RuninatorType;
 use runinator_models::value::Value;
 use runinator_utilities::secret_cipher::SecretCipher;
+use runinator_utilities::stored_secret::StoredSecret;
 
 use serde::{Deserialize, Serialize};
 
@@ -60,6 +62,24 @@ pub fn validate_and_encode(
     schema: Option<&Value>,
     stored_schema: Option<&Value>,
 ) -> Result<Vec<u8>, String> {
+    validate_and_encode_with_expiry(kind, scope, name, value, schema, stored_schema, None)
+}
+
+/// validate and encode a setting, attaching optional expiry metadata to secrets.
+pub fn validate_and_encode_with_expiry(
+    kind: SettingKind,
+    scope: &str,
+    name: &str,
+    value: &Value,
+    schema: Option<&Value>,
+    stored_schema: Option<&Value>,
+    expires_at: Option<DateTime<Utc>>,
+) -> Result<Vec<u8>, String> {
+    if kind == SettingKind::Config && expires_at.is_some() {
+        return Err(format!(
+            "config '{scope}/{name}' cannot carry secret expiry metadata"
+        ));
+    }
     match kind {
         SettingKind::Secret => {
             let Value::String(text) = value else {
@@ -71,7 +91,9 @@ pub fn validate_and_encode(
             if text.trim().is_empty() {
                 return Err(format!("secret '{scope}/{name}' value must not be empty"));
             }
-            Ok(text.clone().into_bytes())
+            StoredSecret::new(text.clone(), expires_at)
+                .encode()
+                .map_err(|err| format!("failed to encode secret '{scope}/{name}': {err}"))
         }
         SettingKind::Config => {
             // a caller-supplied schema is checked as untrusted input; a stored schema (pinned on
@@ -94,6 +116,11 @@ pub fn validate_and_encode(
             .map_err(|err| format!("failed to encode config '{scope}/{name}': {err}"))
         }
     }
+}
+
+/// decode a stored secret payload, including optional expiry metadata and legacy raw strings.
+pub fn decode_secret(bytes: &[u8]) -> StoredSecret {
+    StoredSecret::decode(bytes)
 }
 
 fn value_type(value: &Value) -> &'static str {

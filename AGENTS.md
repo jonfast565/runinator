@@ -443,20 +443,22 @@ this whenever a workspace crate and the tauri crate share a transitive dependenc
 ### Verifying a schema or persistence change
 
 A migration or `operations/` change is only half-tested by `cargo test -p runinator-database`: the
-default run has no postgres or mysql, so both dialect suites skip themselves. Bring the engines up
-and run it again:
+default run has no postgres, mysql, or mariadb, so the live suites skip themselves. Bring the
+engines up and run it again:
 
 ```bash
 docker compose -f runinator-database/tests/docker-compose.yml up -d --wait
 RUNINATOR_TEST_POSTGRES_URL=postgres://runi:runi@127.0.0.1:55433/runi \
-RUNINATOR_TEST_MYSQL_URL=mysql://root:runi@127.0.0.1:53307/runi \
+RUNINATOR_TEST_MARIADB_URL=mysql://root:runi@127.0.0.1:53307/runi \
+RUNINATOR_TEST_MYSQL_URL=mysql://root:runi@127.0.0.1:53308/runi \
   cargo test -p runinator-database
 docker compose -f runinator-database/tests/docker-compose.yml down -v
 ```
 
-The assertions are shared: `src/dialect_parity.rs` holds one lifecycle body that all three backends
-run, so cover a new operation by adding to it rather than to one dialect's file. `sqlite_lifecycle`
-runs it unconditionally, which is what keeps the body honest when nobody has docker up.
+The assertions are shared: `src/dialect_parity.rs` holds one lifecycle body that SQLite,
+PostgreSQL, MySQL, and MariaDB all run, so cover a new operation by adding to it rather than to one
+engine's file. `sqlite_lifecycle` runs it unconditionally, which is what keeps the body honest when
+nobody has docker up.
 
 Adding a migration means adding it to all three directories under `runinator-database/migrations/`.
 `migration_parity_tests.rs` enforces that the version sets match and needs no database, so it fails

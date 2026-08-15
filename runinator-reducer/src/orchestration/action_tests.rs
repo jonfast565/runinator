@@ -129,3 +129,64 @@ async fn unavailable_worker_timeout_settles_once_without_execution_retry() {
         "a stale poll cannot rearm attempt 1 after the run is terminal"
     );
 }
+
+#[tokio::test]
+async fn foreign_compute_dispatch_carries_its_declared_output_type() {
+    let store = FakeStore::new();
+    let workflow: WorkflowDefinition = serde_json::from_value(serde_json::json!({
+        "id": WORKFLOW_ID,
+        "name": "typed foreign compute",
+        "version": "1.0.0",
+        "enabled": true,
+        "definition": {
+            "start": "start",
+            "nodes": [
+                { "id": "start", "kind": "start", "transitions": { "next": { "$node": "code" } } },
+                {
+                    "id": "code",
+                    "kind": "action",
+                    "action": {
+                        "provider": "std",
+                        "function": "code",
+                        "configuration": {
+                            "language": "python",
+                            "source": "def main(context):\n    return 42\n"
+                        }
+                    },
+                    "transitions": { "on_success": { "$node": "done" } }
+                },
+                { "id": "done", "kind": "end" }
+            ],
+            "metadata": {
+                "wdl": { "type_hints": { "code": { "type": "integer" } } }
+            }
+        }
+    }))
+    .expect("workflow");
+    let run_id = Uuid::now_v7();
+    let run: WorkflowRun = serde_json::from_value(serde_json::json!({
+        "id": run_id,
+        "workflow_id": WORKFLOW_ID,
+        "status": "queued",
+        "active_node_id": null,
+        "parameters": {},
+        "state": {},
+        "created_at": Utc::now(),
+        "started_at": null,
+        "finished_at": null,
+        "message": null
+    }))
+    .expect("run");
+    store.insert_workflow(workflow);
+    store.insert_run(run);
+
+    process_ready_node(&store, &ready(run_id, "start"))
+        .await
+        .expect("foreign compute drive");
+
+    let dispatch = store.dispatches().into_iter().next().expect("dispatch");
+    assert_eq!(
+        dispatch.command.parameters.get("expected_output_type"),
+        Some(&runinator_models::json!({ "type": "integer" }))
+    );
+}

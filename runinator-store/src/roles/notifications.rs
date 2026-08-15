@@ -72,7 +72,7 @@ pub trait NotificationStore: Send + Sync + 'static {
         workflow_id: Uuid,
     ) -> impl Future<Output = Result<Vec<NotificationPolicy>, SendableError>> + Send;
 
-    /// Fetch every enabled policy for a duration-based event, across all workflows.
+    /// Fetch every enabled policy for a scanner-driven event, across all workflows.
     fn fetch_notification_policies_by_event(
         &self,
         event: NotificationEvent,

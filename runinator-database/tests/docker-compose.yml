@@ -6,7 +6,8 @@
 #
 #   docker compose -f runinator-database/tests/docker-compose.yml up -d --wait
 #   RUNINATOR_TEST_POSTGRES_URL=postgres://runi:runi@127.0.0.1:55433/runi \
-#   RUNINATOR_TEST_MYSQL_URL=mysql://root:runi@127.0.0.1:53307/runi \
+#   RUNINATOR_TEST_MARIADB_URL=mysql://root:runi@127.0.0.1:53307/runi \
+#   RUNINATOR_TEST_MYSQL_URL=mysql://root:runi@127.0.0.1:53308/runi \
 #     cargo test -p runinator-database
 #   docker compose -f runinator-database/tests/docker-compose.yml down -v
 #
@@ -41,6 +42,20 @@ services:
       - "53307:3306"
     healthcheck:
       test: ["CMD-SHELL", "healthcheck.sh --connect --innodb_initialized"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  mysql:
+    image: mysql:8.4
+    container_name: runi-store-mysql8
+    environment:
+      MYSQL_ROOT_PASSWORD: runi
+      MYSQL_DATABASE: runi
+    ports:
+      - "53308:3306"
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -pruni"]
       interval: 2s
       timeout: 3s
       retries: 30

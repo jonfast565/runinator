@@ -217,3 +217,45 @@ async fn a_delivered_signal_follows_the_success_edge() {
         "a delivered signal follows on_success"
     );
 }
+
+/// an input node with a timeout must schedule the drive that will observe that timeout.
+///
+/// input used the correct created-at timeout check but did not arm a wake after parking. with no
+/// unrelated event to drive the run, the check was therefore unreachable and the request waited
+/// forever.
+#[tokio::test]
+async fn a_parked_input_node_arms_its_timeout() {
+    let store = FakeStore::new();
+    store.insert_workflow(workflow(serde_json::json!([
+        { "id": "start", "kind": "start", "transitions": { "next": { "$node": "details" } } },
+        {
+            "id": "details",
+            "kind": "input",
+            "parameters": { "fields": [{ "name": "ticket", "type": "string" }] },
+            "timeout_seconds": 60,
+            "transitions": {
+                "on_success": { "$node": "end" },
+                "on_timeout": { "$node": "gave_up" }
+            }
+        },
+        { "id": "gave_up", "kind": "end" },
+        { "id": "end", "kind": "end" }
+    ])));
+    store.insert_run(queued_run());
+
+    process_ready_node(&store, &ready_node("details"))
+        .await
+        .expect("input drive");
+
+    let parked = store.latest_node_run("details").expect("input node run");
+    assert_eq!(parked.status, WorkflowStatus::InputRequired);
+    let timeout_wake = store
+        .ready_nodes()
+        .into_iter()
+        .find(|row| row.node_id == "details")
+        .expect("parked input must arm a timeout wake");
+    assert!(
+        timeout_wake.ready_at > Utc::now(),
+        "the timeout wake should be delayed until the input deadline"
+    );
+}

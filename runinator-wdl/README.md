@@ -157,27 +157,37 @@ Foreign-language compute code uses a fenced form:
 
 ````
 node score <- compute "python" ```
-import json
-import os
-
-with open(os.environ["RUNINATOR_CONTEXT"]) as f:
-    ctx = json.load(f)
-
-with open(os.environ["RUNINATOR_OUTPUT"], "w") as f:
-    json.dump({"score": ctx["input"]["score"] + 1}, f)
+def main(context):
+    return {"score": context["input"]["score"] + 1}
 ```.timeout(30s)
 ````
 
 The fenced source is carried verbatim in the compiled workflow and lowers to `std.code`, which runs
-on a worker through Docker. The runtime context is provided on stdin as JSON and at the
-`RUNINATOR_CONTEXT` file path. Scripts should write the JSON value they return to
-`RUNINATOR_OUTPUT`; that value becomes the compute node output and is available to later WDL nodes
-as `score.field`. For compatibility, if `RUNINATOR_OUTPUT` is not written, stdout is parsed as the
-JSON output value. The Docker image and optional bash setup script are configured by an
+on a worker through Docker. Foreign source must define `main(context)` and return one
+JSON-serializable value; Runinator owns context loading and output serialization. Python awaitables
+and JavaScript promises are awaited. The returned value becomes the compute node output and is
+available to later WDL nodes as `score.field`. A typed binding such as
+`node score: { score: integer } <- compute ...` also validates the returned JSON at runtime. Bash's
+`main` receives the context as a JSON string and must print its JSON result to stdout; Bash logging
+must use stderr. The Docker image and optional bash setup script are configured by an
 administrator under Admin -> Settings -> Foreign Languages, with built-in defaults for
-`python`/`py`, `javascript`/`js`/`node`, `bash`/`sh`, `ruby`/`rb`, `perl`/`pl`, and `php`. Setup
+`python`/`py`, `javascript`/`js`/`node`, `bash`/`sh`, `ruby`/`rb`, `perl`/`pl`, `php`,
+`go`/`golang`, `swift`, `powershell`/`pwsh`/`ps1`, `csharp`/`c#`/`cs`,
+`fsharp`/`f#`/`fs`, and `vbnet`/`vb.net`/`visualbasic`/`vb`. Setup
 scripts are bash, so configured images must include `bash`. Local and Kubernetes workers need a
 Docker-compatible CLI/runtime available to the worker process.
+
+Entry points use each language's native function syntax. JavaScript must export
+`main(context)` from its module (`export function main(context) { ... }`); Python may use
+`def main(context)` or `async def main(context)`. Ruby, Perl, and PHP define their ordinary
+`main` function. Foreign source that does not define this entry point fails before producing a
+result; writing `RUNINATOR_OUTPUT` or printing JSON from a top-level script is not supported.
+Go is the one naming exception because the language reserves `main` for the process entry point:
+Go source uses `package main` and exports `func Main(context any) any`. Swift uses
+`func main(_ context: Any) throws -> Any`, and PowerShell defines `function main($context)`.
+C# defines `Foreign.Main(JsonElement context)`, F# defines `Foreign.main` over a `JsonElement`,
+and VB.NET defines `Foreign.Main(JsonElement context)`. The three .NET languages share the
+administrator-configurable .NET SDK image.
 
 ### Functions (`fn`)
 

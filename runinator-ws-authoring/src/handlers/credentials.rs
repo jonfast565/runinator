@@ -13,7 +13,9 @@ use runinator_models::{
 };
 use runinator_utilities::secret_cipher::SecretCipher;
 
-use crate::settings::{decode_config_schema, decode_config_value, validate_and_encode};
+use crate::settings::{
+    decode_config_schema, decode_config_value, decode_secret, validate_and_encode_with_expiry,
+};
 use runinator_ws_core::models::{ApiResponse, CredentialPutRequest, CredentialQuery};
 use runinator_ws_core::openapi::docs::{
     CREDENTIAL_QUERY, EndpointDoc, Example, endpoint, json_body,
@@ -65,10 +67,15 @@ pub async fn get_credential<T: DatabaseImpl>(
                     entries
                         .into_iter()
                         .map(|entry| {
+                            let expires_at = (entry.kind == SettingKind::Secret)
+                                .then(|| cipher.try_decrypt(&entry.value))
+                                .flatten()
+                                .and_then(|bytes| decode_secret(&bytes).expires_at);
                             runinator_models::json!({
                                 "scope": entry.scope,
                                 "name": entry.name,
                                 "kind": entry.kind.as_str(),
+                                "expires_at": expires_at,
                             })
                         })
                         .collect(),
@@ -93,9 +100,12 @@ pub async fn get_credential<T: DatabaseImpl>(
                     "stored credential could not be decrypted; the encryption key may be unavailable",
                 );
             };
-            let value = match query.kind {
-                SettingKind::Config => decode_config_value(&bytes),
-                SettingKind::Secret => Value::String(String::from_utf8_lossy(&bytes).into_owned()),
+            let (value, expires_at) = match query.kind {
+                SettingKind::Config => (decode_config_value(&bytes), None),
+                SettingKind::Secret => {
+                    let secret = decode_secret(&bytes);
+                    (Value::String(secret.value), secret.expires_at)
+                }
             };
             (
                 StatusCode::OK,
@@ -104,6 +114,7 @@ pub async fn get_credential<T: DatabaseImpl>(
                     "name": name,
                     "kind": query.kind.as_str(),
                     "value": value.clone(),
+                    "expires_at": expires_at,
                     // back-compat alias for existing secret consumers (e.g. the worker).
                     "secret": value,
                 }))),
@@ -136,13 +147,14 @@ pub async fn put_credential<T: DatabaseImpl>(
         Ok(schema) => schema,
         Err(err) => return api_error(err),
     };
-    let bytes = match validate_and_encode(
+    let bytes = match validate_and_encode_with_expiry(
         request.kind,
         &request.scope,
         &request.name,
         &request.value,
         request.schema.as_ref(),
         stored_schema.as_ref(),
+        request.expires_at,
     ) {
         Ok(bytes) => bytes,
         Err(message) => return bad_request(message),
@@ -164,6 +176,7 @@ pub async fn put_credential<T: DatabaseImpl>(
                 "scope": request.scope,
                 "name": request.name,
                 "kind": request.kind.as_str(),
+                "expires_at": request.expires_at,
                 "stored": true
             }))),
         ),
@@ -306,13 +319,14 @@ pub async fn import_secret_entries_with<T: DatabaseImpl>(
         let stored_schema = stored
             .as_ref()
             .and_then(|record| decode_config_schema(&cipher.decrypt(&record.value)));
-        let bytes = validate_and_encode(
+        let bytes = validate_and_encode_with_expiry(
             secret.kind,
             &secret.scope,
             &secret.name,
             &secret.value,
             secret.schema.as_ref(),
             stored_schema.as_ref(),
+            secret.expires_at,
         )
         .map_err(|message| SecretImportError {
             bad_request: true,
@@ -367,6 +381,7 @@ fn redacted_entry(secret: &SecretBundleEntry) -> SecretBundleEntry {
         schema: None,
         kind: secret.kind,
         updated_at: secret.updated_at,
+        expires_at: secret.expires_at,
     }
 }
 

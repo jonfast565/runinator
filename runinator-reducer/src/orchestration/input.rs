@@ -1,5 +1,5 @@
-use super::transitions::timed_out_since_created;
-use super::transitions::transition_from_node;
+use super::context::is_reentry_stale;
+use super::transitions::{arm_node_timeout, timed_out_since_created, transition_from_node};
 use super::*;
 
 pub(super) struct InputHandler;
@@ -12,7 +12,11 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for InputHandler {
     where
         T: 'a,
     {
-        let latest = ctx.latest.filter(|run| run.node_id == ctx.node.id);
+        // a loop body re-entering this node sees the prior resolved input run; treat it as a fresh
+        // visit so a new input is requested instead of replaying the previous value.
+        let latest = ctx
+            .latest
+            .filter(|run| !is_reentry_stale(run, ctx.node_runs, ctx.cursor));
         if let Some(node_run) = latest {
             if node_run.status == WorkflowStatus::InputRequired
                 && timed_out_since_created(ctx.timing(), node_run)
@@ -72,6 +76,6 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for InputHandler {
                 Some("input_requested".into()),
             )
             .await?;
-        Ok(ReadyNodeDisposition::Complete)
+        super::handler::complete(arm_node_timeout(ctx).await)
     }
 }

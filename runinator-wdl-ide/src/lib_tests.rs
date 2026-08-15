@@ -685,16 +685,19 @@ fn setting_completion(src: &str, marker: &str) -> WdlCompletionResponse {
             scope: "github".into(),
             name: "token".into(),
             kind: SettingKind::Secret,
+            expires_at: None,
         },
         SettingSummary {
             scope: "github".into(),
             name: "base_url".into(),
             kind: SettingKind::Config,
+            expires_at: None,
         },
         SettingSummary {
             scope: "slack".into(),
             name: "webhook".into(),
             kind: SettingKind::Secret,
+            expires_at: None,
         },
     ];
     complete_source(WdlCompletionRequest {

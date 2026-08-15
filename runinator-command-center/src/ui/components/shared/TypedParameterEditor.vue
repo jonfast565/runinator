@@ -32,6 +32,13 @@
             {{ secret.scope }}/{{ secret.name }}
           </option>
         </select>
+        <CodeEditor
+          v-else-if="isForeignSource(parameter)"
+          :model-value="stringValue(parameter.name)"
+          :language="foreignLanguage"
+          :title="parameter.label || parameter.name"
+          @update:model-value="setValue(parameter.name, $event)"
+        />
         <TypedValueEditor
           v-else
           :model-value="parameterValue(parameter.name)"
@@ -76,6 +83,7 @@ import { isBlankValue, displayValue } from "../../../core/utils/values";
 import { asJsonValue } from "../../../core/domain/json";
 import { useSecretsStore } from "../../../ui/adapters/pinia/secrets";
 import TypedValueEditor from "./TypedValueEditor.vue";
+import CodeEditor from "./CodeEditor.vue";
 
 const props = defineProps<{
   modelValue: JsonRecord;
@@ -90,6 +98,7 @@ const emit = defineEmits<{
 
 const secrets = useSecretsStore();
 const secretOptions = computed(() => secrets.secretsForScopes(props.credentialScopes ?? []));
+const foreignLanguage = computed(() => stringValue("language"));
 
 onMounted(() => {
   if (secrets.secrets.length === 0) {
@@ -136,6 +145,10 @@ function isString(parameter: ActionParameterMetadata): boolean {
 
 function isSecretString(parameter: ActionParameterMetadata): boolean {
   return parameter.secret && isString(parameter);
+}
+
+function isForeignSource(parameter: ActionParameterMetadata): boolean {
+  return parameter.name === "source" && Boolean(foreignLanguage.value);
 }
 
 function typeKind(parameter: ActionParameterMetadata): string {
@@ -423,4 +436,3 @@ function isExpressionValue(value: unknown): boolean {
   return isWorkflowExpressionValue(value);
 }
 </script>
-

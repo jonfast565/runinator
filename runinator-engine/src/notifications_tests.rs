@@ -1,7 +1,12 @@
 use super::*;
+use runinator_database::interfaces::{NotificationStore, SettingStore};
 use runinator_models::notifications::{
-    NotificationChannel, NotificationEvent, NotificationSeverity,
+    NewNotificationPolicy, NotificationChannel, NotificationEvent, NotificationSeverity,
 };
+use runinator_models::settings::{SettingKind, SettingRecord};
+use runinator_utilities::{secret_cipher::SecretCipher, stored_secret::StoredSecret};
+
+use crate::EnginePublisher;
 
 fn policy(channel: NotificationChannel, target: Option<&str>) -> NotificationPolicy {
     NotificationPolicy {
@@ -136,4 +141,104 @@ fn an_unroutable_channel_has_no_provider() {
         NotificationChannel::Email.provider(),
         Some(("email", "send"))
     );
+}
+
+#[test]
+fn secret_expiry_context_contains_metadata_but_not_the_secret() {
+    let expires_at = chrono::Utc::now() + chrono::Duration::hours(2);
+    let record = SettingRecord {
+        kind: SettingKind::Secret,
+        scope: "github".into(),
+        name: "token".into(),
+        value: b"ciphertext".to_vec(),
+        updated_at: 1,
+    };
+    let context = secret_expiry_context(&record, expires_at, 86_400, 7_200);
+
+    assert!(context.title.contains("github/token"));
+    assert_eq!(
+        context.metadata.get("scope").and_then(Value::as_str),
+        Some("github")
+    );
+    assert!(!context.body.contains("ciphertext"));
+    assert!(context.occurrence.starts_with("secret_expiring:"));
+    assert_eq!(context.occurrence.len(), "secret_expiring:".len() + 64);
+}
+
+#[test]
+fn expiry_is_read_only_from_secret_envelopes() {
+    let cipher = SecretCipher::new("test-key");
+    let expires_at = chrono::Utc::now() + chrono::Duration::days(1);
+    let encoded = StoredSecret::new("token".into(), Some(expires_at))
+        .encode()
+        .unwrap();
+    let secret = SettingRecord {
+        kind: SettingKind::Secret,
+        scope: "github".into(),
+        name: "token".into(),
+        value: cipher.encrypt(&encoded),
+        updated_at: 1,
+    };
+    let mut config = secret.clone();
+    config.kind = SettingKind::Config;
+
+    assert_eq!(secret_expiry(&cipher, &secret), Some(expires_at));
+    assert_eq!(secret_expiry(&cipher, &config), None);
+}
+
+#[tokio::test]
+async fn repeated_secret_expiry_scans_emit_one_notification() {
+    use runinator_broker_core::in_memory::InMemoryBroker;
+    use runinator_database::sqlite::SqliteDb;
+
+    let path = std::env::temp_dir().join(format!("runinator-secret-expiry-{}.db", Uuid::now_v7()));
+    let db = SqliteDb::new(path.to_str().unwrap()).await.unwrap();
+    db.run_init_scripts(&Vec::new()).await.unwrap();
+    let policy = NewNotificationPolicy {
+        workflow_id: None,
+        name: "expiring secrets".into(),
+        event: NotificationEvent::SecretExpiring,
+        severity: NotificationSeverity::Warning,
+        channel: NotificationChannel::InApp,
+        target: None,
+        threshold_seconds: Some(3_600),
+        enabled: true,
+        managed_by: None,
+        configuration: Value::Null,
+    };
+    db.create_notification_policy(&policy).await.unwrap();
+
+    let now = chrono::Utc::now();
+    let cipher = SecretCipher::from_env();
+    let encoded = StoredSecret::new(
+        "do-not-notify-this".into(),
+        Some(now + chrono::Duration::minutes(30)),
+    )
+    .encode()
+    .unwrap();
+    db.upsert_setting(
+        SettingKind::Secret,
+        "github".into(),
+        "token".into(),
+        cipher.encrypt(&encoded),
+        now.timestamp(),
+    )
+    .await
+    .unwrap();
+    let events = EnginePublisher::new(Arc::new(InMemoryBroker::new()));
+
+    scan_secret_expiry(&db, &events, now).await.unwrap();
+    scan_secret_expiry(&db, &events, now).await.unwrap();
+
+    let notifications = db.fetch_notifications(false, 10).await.unwrap();
+    assert_eq!(notifications.len(), 1);
+    assert!(
+        !notifications[0]
+            .body
+            .as_deref()
+            .unwrap_or_default()
+            .contains("do-not-notify-this")
+    );
+
+    let _ = std::fs::remove_file(path);
 }

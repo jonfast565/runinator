@@ -11,17 +11,20 @@ use std::{
 use runinator_models::{
     errors::SendableError,
     runs::{ProviderExecutionEvent, ProviderExecutionRequest, TaskExecutionResult},
+    types::RuninatorType,
     value::Value,
 };
 use runinator_plugin::{cancel::CancellationToken, provider::ProviderEventSink};
 use uuid::Uuid;
 
 use crate::errors::{CODE_FAILED, INVALID_CODE};
+use crate::foreign_languages::{ForeignLanguageAdapter, adapter_for};
 
 const LANGUAGE_KEY: &str = "language";
 const SOURCE_KEY: &str = "source";
 const CONTEXT_KEY: &str = "context";
 const RUNTIME_KEY: &str = "runtime";
+pub(crate) const EXPECTED_OUTPUT_TYPE_KEY: &str = "expected_output_type";
 const SETUP_FILE: &str = "setup.sh";
 const CONTEXT_FILE: &str = "context.json";
 const OUTPUT_FILE: &str = "output.json";
@@ -33,6 +36,7 @@ struct CodeRequest {
     source: String,
     runtime: CodeRuntime,
     context: Value,
+    expected_output_type: Option<RuninatorType>,
 }
 
 struct CodeRuntime {
@@ -46,12 +50,12 @@ pub(crate) fn execute_code(
     token: CancellationToken,
 ) -> Result<TaskExecutionResult, SendableError> {
     let code = parse_request(request)?;
-    let language = language_spec(&code.language)?;
-    let work_dir = prepare_work_dir(request, language.filename, &code.source, &code.runtime)?;
+    let language = adapter_for(&code.language)?;
+    let work_dir = prepare_work_dir(request, language, &code.source, &code.runtime)?;
     let output = run_docker(
         &code.runtime.image,
-        language.canonical,
-        &language.command,
+        language.canonical(),
+        &run_command(language.execute()),
         &work_dir,
         &code.context,
         request.timeout_secs,
@@ -69,12 +73,14 @@ pub(crate) fn execute_code(
         )));
     }
 
-    let output_json = parse_code_output(&output.output_path, output.process.stdout)?;
+    let output_json = parse_code_output(&output.output_path)?;
+    validate_code_output(&output_json, code.expected_output_type.as_ref())?;
 
     Ok(TaskExecutionResult {
         message: Some(format!(
             "{} code completed in docker image {}",
-            language.canonical, code.runtime.image
+            language.canonical(),
+            code.runtime.image
         )),
         output_json: Some(output_json),
         chunks: Vec::new(),
@@ -82,30 +88,24 @@ pub(crate) fn execute_code(
     })
 }
 
-pub(crate) fn parse_code_output(
-    output_path: &Path,
-    stdout: Vec<u8>,
-) -> Result<Value, SendableError> {
-    if output_path.exists() {
-        let output = fs::read_to_string(output_path)
-            .map_err(|err| INVALID_CODE.error(format!("failed to read code output: {err}")))?;
-        if !output.trim().is_empty() {
-            return serde_json::from_str::<serde_json::Value>(&output)
-                .map(Value::from)
-                .map_err(|err| {
-                    INVALID_CODE.error(format!("code output file must contain JSON: {err}"))
-                });
-        }
-    }
-
-    let stdout = String::from_utf8(stdout)
-        .map_err(|err| INVALID_CODE.error(format!("code stdout must be utf-8: {err}")))?;
-    if stdout.trim().is_empty() {
-        return Ok(Value::Null);
-    }
-    serde_json::from_str::<serde_json::Value>(&stdout)
+pub(crate) fn parse_code_output(output_path: &Path) -> Result<Value, SendableError> {
+    let output = fs::read_to_string(output_path)
+        .map_err(|err| INVALID_CODE.error(format!("foreign code did not return JSON: {err}")))?;
+    serde_json::from_str::<serde_json::Value>(&output)
         .map(Value::from)
-        .map_err(|err| INVALID_CODE.error(format!("code stdout must be JSON: {err}")))
+        .map_err(|err| INVALID_CODE.error(format!("foreign code returned invalid JSON: {err}")))
+}
+
+pub(crate) fn validate_code_output(
+    output: &Value,
+    expected: Option<&RuninatorType>,
+) -> Result<(), SendableError> {
+    let Some(expected) = expected else {
+        return Ok(());
+    };
+    expected.validate_value(output).map_err(|violation| {
+        INVALID_CODE.error(violation.message_with_label("foreign compute result"))
+    })
 }
 
 fn parse_request(request: &ProviderExecutionRequest) -> Result<CodeRequest, SendableError> {
@@ -117,11 +117,18 @@ fn parse_request(request: &ProviderExecutionRequest) -> Result<CodeRequest, Send
         .get(CONTEXT_KEY)
         .cloned()
         .unwrap_or(Value::Null);
+    let expected_output_type = request
+        .parameters
+        .get(EXPECTED_OUTPUT_TYPE_KEY)
+        .map(|value| value.decode::<RuninatorType>())
+        .transpose()
+        .map_err(|err| INVALID_CODE.error(format!("invalid expected output type: {err}")))?;
     Ok(CodeRequest {
         language,
         source,
         runtime,
         context,
+        expected_output_type,
     })
 }
 
@@ -158,53 +165,6 @@ fn runtime_param(request: &ProviderExecutionRequest) -> Result<CodeRuntime, Send
     })
 }
 
-pub(crate) struct LanguageSpec {
-    pub(crate) canonical: &'static str,
-    pub(crate) filename: &'static str,
-    pub(crate) command: Vec<String>,
-}
-
-pub(crate) fn language_spec(language: &str) -> Result<LanguageSpec, SendableError> {
-    let spec = match language {
-        "python" | "py" => LanguageSpec {
-            canonical: "python",
-            filename: "main.py",
-            command: run_command("python /work/main.py"),
-        },
-        "javascript" | "js" | "node" => LanguageSpec {
-            canonical: "javascript",
-            filename: "main.js",
-            command: run_command("node /work/main.js"),
-        },
-        "bash" | "sh" => LanguageSpec {
-            canonical: "bash",
-            filename: "main.sh",
-            command: run_command("bash /work/main.sh"),
-        },
-        "ruby" | "rb" => LanguageSpec {
-            canonical: "ruby",
-            filename: "main.rb",
-            command: run_command("ruby /work/main.rb"),
-        },
-        "perl" | "pl" => LanguageSpec {
-            canonical: "perl",
-            filename: "main.pl",
-            command: run_command("perl /work/main.pl"),
-        },
-        "php" => LanguageSpec {
-            canonical: "php",
-            filename: "main.php",
-            command: run_command("php /work/main.php"),
-        },
-        other => {
-            return Err(INVALID_CODE.error(format!(
-                "unsupported foreign language '{other}'; supported languages: python, javascript, bash, ruby, perl, php"
-            )));
-        }
-    };
-    Ok(spec)
-}
-
 fn run_command(execute: &str) -> Vec<String> {
     vec![
         "bash".into(),
@@ -217,7 +177,7 @@ fn run_command(execute: &str) -> Vec<String> {
 
 fn prepare_work_dir(
     request: &ProviderExecutionRequest,
-    filename: &str,
+    language: &dyn ForeignLanguageAdapter,
     source: &str,
     runtime: &CodeRuntime,
 ) -> Result<PathBuf, SendableError> {
@@ -229,8 +189,20 @@ fn prepare_work_dir(
     let work_dir = base.join("code").join(Uuid::new_v4().to_string());
     fs::create_dir_all(&work_dir)
         .map_err(|err| INVALID_CODE.error(format!("failed to create code work dir: {err}")))?;
-    fs::write(work_dir.join(filename), source)
+    fs::write(work_dir.join(language.source_filename()), source)
         .map_err(|err| INVALID_CODE.error(format!("failed to write code source: {err}")))?;
+    fs::write(
+        work_dir.join(language.runner_filename()),
+        language.runner_source(),
+    )
+    .map_err(|err| INVALID_CODE.error(format!("failed to write code runner: {err}")))?;
+    for (filename, contents) in language.additional_files() {
+        fs::write(work_dir.join(filename), contents).map_err(|err| {
+            INVALID_CODE.error(format!(
+                "failed to write code support file '{filename}': {err}"
+            ))
+        })?;
+    }
     fs::write(work_dir.join(SETUP_FILE), &runtime.setup_script)
         .map_err(|err| INVALID_CODE.error(format!("failed to write code setup script: {err}")))?;
     Ok(work_dir)

@@ -64,14 +64,17 @@ pub enum NotificationEvent {
     RunSlaBreached,
     /// a run sat parked (waiting) past a threshold without progressing.
     RunParked,
+    /// a settings-store secret entered its configured ahead-of-expiry warning window.
+    SecretExpiring,
 }
 
 impl NotificationEvent {
-    pub const ALL: [NotificationEvent; 4] = [
+    pub const ALL: [NotificationEvent; 5] = [
         NotificationEvent::RunFailed,
         NotificationEvent::NodeRetryExhausted,
         NotificationEvent::RunSlaBreached,
         NotificationEvent::RunParked,
+        NotificationEvent::SecretExpiring,
     ];
 
     pub fn as_str(&self) -> &'static str {
@@ -80,6 +83,7 @@ impl NotificationEvent {
             NotificationEvent::NodeRetryExhausted => "node_retry_exhausted",
             NotificationEvent::RunSlaBreached => "run_sla_breached",
             NotificationEvent::RunParked => "run_parked",
+            NotificationEvent::SecretExpiring => "secret_expiring",
         }
     }
 
@@ -102,6 +106,7 @@ impl TryFrom<&str> for NotificationEvent {
             "node_retry_exhausted" => Ok(NotificationEvent::NodeRetryExhausted),
             "run_sla_breached" => Ok(NotificationEvent::RunSlaBreached),
             "run_parked" => Ok(NotificationEvent::RunParked),
+            "secret_expiring" => Ok(NotificationEvent::SecretExpiring),
             other => Err(format!("unknown notification event '{other}'")),
         }
     }
@@ -210,7 +215,8 @@ pub struct NotificationPolicy {
     pub channel: NotificationChannel,
     #[serde(default)]
     pub target: Option<String>,
-    /// threshold for the duration-based events; ignored by transition-based ones.
+    /// threshold for duration events, or the warning window for `secret_expiring`.
+    /// `secret_expiring` defaults to the engine's 30-day window when omitted.
     #[serde(default)]
     pub threshold_seconds: Option<i64>,
     #[serde(default = "default_true")]

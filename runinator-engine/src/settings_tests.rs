@@ -1,7 +1,10 @@
 use runinator_models::settings::SettingKind;
 use runinator_models::value::Value;
 
-use super::{decode_config_schema, decode_config_value, validate_and_encode};
+use super::{
+    decode_config_schema, decode_config_value, decode_secret, validate_and_encode,
+    validate_and_encode_with_expiry,
+};
 
 // the schema pinned in a config slot's stored bytes, mirroring how the handler reuses it on a
 // value-only update.
@@ -47,6 +50,40 @@ fn secret_must_be_a_non_empty_string() {
     )
     .unwrap();
     assert_eq!(bytes, b"tok");
+}
+
+#[test]
+fn secret_expiry_is_stored_with_the_value() {
+    let expires_at = "2026-09-01T12:00:00Z".parse().unwrap();
+    let bytes = validate_and_encode_with_expiry(
+        SettingKind::Secret,
+        "s",
+        "n",
+        &Value::String("tok".into()),
+        None,
+        None,
+        Some(expires_at),
+    )
+    .unwrap();
+    let stored = decode_secret(&bytes);
+    assert_eq!(stored.value, "tok");
+    assert_eq!(stored.expires_at, Some(expires_at));
+}
+
+#[test]
+fn config_rejects_secret_expiry_metadata() {
+    let expires_at = "2026-09-01T12:00:00Z".parse().unwrap();
+    let error = validate_and_encode_with_expiry(
+        SettingKind::Config,
+        "api",
+        "url",
+        &Value::String("https://example.com".into()),
+        None,
+        None,
+        Some(expires_at),
+    )
+    .unwrap_err();
+    assert!(error.contains("cannot carry secret expiry metadata"));
 }
 
 #[test]

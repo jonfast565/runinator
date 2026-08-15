@@ -12,6 +12,7 @@
 //! where nobody has docker up.
 
 use std::collections::BTreeMap;
+use std::future::Future;
 
 use chrono::{Duration, Utc};
 use runinator_comm::{
@@ -38,7 +39,56 @@ use uuid::Uuid;
 
 // `DatabaseImpl` composes every role trait, so bounding on it brings all of their methods into
 // scope without importing the roles one by one.
+use crate::backend::{SqlBackend, SqlStore};
 use crate::interfaces::DatabaseImpl;
+use runinator_models::errors::SendableError;
+use sqlx::{Database, Encode, Executor, IntoArguments, Type};
+
+pub(crate) trait ExecutionStateParityDb: DatabaseImpl {
+    fn stage_legacy_execution_state(
+        &self,
+        workflow_run_id: Uuid,
+        state: WorkflowExecutionState,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
+}
+
+impl<B> ExecutionStateParityDb for SqlStore<B>
+where
+    B: SqlBackend,
+    SqlStore<B>: DatabaseImpl,
+    for<'q> &'q str: Encode<'q, B::Db> + Type<B::Db>,
+    for<'q> String: Encode<'q, B::Db> + Type<B::Db>,
+    for<'q> Uuid: Encode<'q, B::Db> + Type<B::Db>,
+    for<'q> <B::Db as Database>::Arguments<'q>: IntoArguments<'q, B::Db>,
+    for<'c> &'c mut <B::Db as Database>::Connection: Executor<'c, Database = B::Db>,
+{
+    async fn stage_legacy_execution_state(
+        &self,
+        workflow_run_id: Uuid,
+        state: WorkflowExecutionState,
+    ) -> Result<(), SendableError> {
+        let mut tx = self.pool().begin().await?;
+        for table in [
+            "workflow_run_pending_interrupts",
+            "workflow_run_event_sources",
+            "workflow_run_cursors",
+            "workflow_run_frames",
+            "workflow_run_execution_states",
+        ] {
+            sqlx::query(&self.render(&format!("DELETE FROM {table} WHERE workflow_run_id = ?")))
+                .bind(workflow_run_id)
+                .execute(&mut *tx)
+                .await?;
+        }
+        sqlx::query(&self.render("UPDATE workflow_runs SET state = ? WHERE id = ?"))
+            .bind(state.to_state().to_string())
+            .bind(workflow_run_id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+}
 
 fn sample_workflow(name: &str) -> WorkflowDefinition {
     WorkflowDefinition {
@@ -101,7 +151,7 @@ fn sample_action(workflow_run_id: Uuid, workflow_node_run_id: Uuid) -> ActionCom
 ///
 /// the store must be exclusive to this call: several assertions count rows or depend on a claim
 /// finding nothing else outstanding.
-pub(crate) async fn assert_dialect_parity<T: DatabaseImpl>(db: &T) {
+pub(crate) async fn assert_dialect_parity<T: ExecutionStateParityDb>(db: &T) {
     assert_workflow_upsert(db).await;
     let after = db.fetch_workflows().await.unwrap().remove(0);
     let id = after.id.expect("the upserted workflow has an id");
@@ -116,6 +166,7 @@ pub(crate) async fn assert_dialect_parity<T: DatabaseImpl>(db: &T) {
     assert_catalog_upsert(db).await;
     assert_automation_records(db, run_id).await;
     assert_run_state_cas(db, run_id).await;
+    assert_normalized_execution_state_lifecycle(db, &after).await;
     assert_cursor_scoped_ready_nodes(db, run_id).await;
     assert_cooldown_claim(db).await;
     assert_workflow_mutex_claim(db, &after).await;
@@ -571,6 +622,206 @@ async fn assert_trigger_upsert<T: DatabaseImpl>(db: &T, workflow_id: Uuid) {
 // the compare-and-swap that keeps two cursors of one run from discarding each other's state. the
 // interesting case is the losing writer: it must be told it lost rather than silently overwriting,
 // and every dialect has to report the affected-row count for that to work.
+fn complex_execution_state(revision: i64) -> WorkflowExecutionState {
+    let primary = Uuid::from_u128(0x100);
+    let branch = Uuid::from_u128(0x200);
+    let handler = Uuid::from_u128(0x300);
+    let loop_run = Uuid::from_u128(0x400);
+    let requested = Uuid::from_u128(0x500 + revision as u128);
+    WorkflowExecutionState::from_state(&json!({
+        "cursors": [
+            {
+                "id": primary,
+                "node_id": format!("approval-{revision}"),
+                "loops": [{
+                    "node_id": "outer-loop",
+                    "index": revision,
+                    "items": [1, { "nested": true }],
+                    "results": [{ "lap": 0 }],
+                    "last_node_run_id": loop_run
+                }],
+                "try": {
+                    "node_id": "try-region",
+                    "phase": "catch",
+                    "pending_status": "failed",
+                    "pending_output": { "error": "retryable" }
+                },
+                "debug": {
+                    "paused": true,
+                    "step_requested": revision > 1,
+                    "one_shot_breakpoint": "resume-here",
+                    "current_node_id": format!("approval-{revision}"),
+                    "current_node_kind": "approval",
+                    "input_json": { "revision": revision },
+                    "context_json": { "tenant": "parity" },
+                    "last_output_json": { "prior": revision - 1 }
+                },
+                "last_output": { "cursor": "primary", "revision": revision },
+                "suspended_by": handler,
+                "handled": [format!("timeout:{loop_run}:1")],
+                "suspended_seconds": 17 + revision
+            },
+            {
+                "id": branch,
+                "node_id": "parallel-branch",
+                "forked_by": "parallel-root",
+                "loops": [{
+                    "node_id": "branch-loop",
+                    "index": 2,
+                    "items": ["a", "b", "c"],
+                    "results": ["A", "B"]
+                }],
+                "try": { "node_id": "branch-try", "phase": "finally" },
+                "debug": {
+                    "current_node_id": "parallel-branch",
+                    "current_node_kind": "task",
+                    "context_json": { "branch": true }
+                },
+                "last_output": ["branch", revision]
+            },
+            {
+                "id": handler,
+                "node_id": "interrupt-handler",
+                "interrupt": {
+                    "interrupted_cursor": primary,
+                    "source": "timeout",
+                    "payload": { "deadline": "expired", "revision": revision },
+                    "resume": {
+                        "node_id": format!("approval-{revision}"),
+                        "loops": [{
+                            "node_id": "outer-loop",
+                            "index": revision,
+                            "items": [1, { "nested": true }],
+                            "results": [{ "lap": 0 }],
+                            "last_node_run_id": loop_run
+                        }],
+                        "try_frame": {
+                            "node_id": "try-region",
+                            "phase": "catch",
+                            "pending_status": "failed"
+                        }
+                    },
+                    "raised_at": "2026-08-14T12:34:56Z"
+                },
+                "last_output": { "handler": "running" }
+            }
+        ],
+        "control": { "pause_requested": true, "reason": "parity" },
+        "debug": {
+            "enabled": true,
+            "mode": "breakpoints",
+            "breakpoints": ["approval-1", "parallel-branch"],
+            "paused": true,
+            "current_node_id": format!("approval-{revision}"),
+            "current_node_kind": "approval",
+            "context_json": { "scope": "run" }
+        },
+        "event_sources": {
+            "webhook": { "pending_event": { "kind": "push", "revision": revision } },
+            "empty-slot": {}
+        },
+        "run_metadata": { "request_id": format!("parity-{revision}"), "attempt": revision },
+        "watch_fired": revision > 1,
+        "pending_interrupts": [
+            {
+                "id": requested,
+                "source": "external",
+                "payload": { "command": "refresh", "revision": revision },
+                "cursor_id": branch,
+                "requested_at": "2026-08-14T12:35:00Z"
+            },
+            {
+                "id": Uuid::from_u128(0x600 + revision as u128),
+                "source": "orphan_signal",
+                "payload": { "signal": "unmatched" },
+                "requested_at": "2026-08-14T12:35:01Z"
+            }
+        ],
+        "custom_state": { "kept": true, "revision": revision }
+    }))
+}
+
+async fn assert_normalized_execution_state_lifecycle<T: ExecutionStateParityDb>(
+    db: &T,
+    workflow: &WorkflowDefinition,
+) {
+    let initial = complex_execution_state(1);
+    let created = db
+        .create_workflow_run(
+            workflow.id.expect("workflow id"),
+            workflow.clone(),
+            json!({ "source": "normalized-parity" }),
+            initial.to_state(),
+            Some("normalized execution state parity".into()),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(created.execution_state.to_state(), initial.to_state());
+    assert_eq!(
+        db.fetch_workflow_run(created.id)
+            .await
+            .unwrap()
+            .expect("created run")
+            .execution_state
+            .to_state(),
+        initial.to_state(),
+        "create and fetch must preserve every normalized projection"
+    );
+
+    let updated = complex_execution_state(2);
+    assert!(
+        db.update_workflow_run_execution_state_cas(
+            created.id,
+            created.state_version,
+            updated.clone(),
+        )
+        .await
+        .unwrap()
+    );
+    let fetched = db
+        .fetch_workflow_run(created.id)
+        .await
+        .unwrap()
+        .expect("updated run");
+    assert_eq!(fetched.state_version, created.state_version + 1);
+    assert_eq!(fetched.execution_state.to_state(), updated.to_state());
+    assert_eq!(fetched.state, json!({}), "the legacy blob stays cleared");
+
+    let legacy = complex_execution_state(3);
+    let legacy_run = db
+        .create_workflow_run(
+            workflow.id.expect("workflow id"),
+            workflow.clone(),
+            json!({ "source": "legacy-parity" }),
+            json!({}),
+            Some("legacy execution state parity".into()),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+    db.stage_legacy_execution_state(legacy_run.id, legacy.clone())
+        .await
+        .unwrap();
+    let (left, right) = tokio::join!(
+        db.migrate_workflow_execution_states(),
+        db.migrate_workflow_execution_states(),
+    );
+    left.unwrap();
+    right.unwrap();
+    let backfilled = db
+        .fetch_workflow_run(legacy_run.id)
+        .await
+        .unwrap()
+        .expect("backfilled run");
+    assert_eq!(backfilled.execution_state.to_state(), legacy.to_state());
+    assert_eq!(
+        backfilled.state,
+        json!({}),
+        "backfill clears the legacy blob"
+    );
+}
+
 async fn assert_run_state_cas<T: DatabaseImpl>(db: &T, run_id: Uuid) {
     let before = db.fetch_workflow_run(run_id).await.unwrap().expect("run");
     let version = before.state_version;

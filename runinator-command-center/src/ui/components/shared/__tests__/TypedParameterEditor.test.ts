@@ -8,6 +8,29 @@ import type { ActionParameterMetadata } from "../../../../core/domain/models";
 import { isWorkflowExpressionValue } from "../../../../ui/adapters/codemirror/workflow-expression-completion";
 
 describe("TypedParameterEditor", () => {
+  it("renders foreign compute source in a language-aware code editor", async () => {
+    const app = createSSRApp({
+      render: () =>
+        h(TypedParameterEditor, {
+          modelValue: {
+            language: "csharp",
+            source: "public static class Foreign {}",
+          },
+          parameters: [
+            stringParameter("language", "Language"),
+            stringParameter("source", "Source"),
+          ],
+        }),
+    });
+    app.use(createPinia());
+
+    const html = await renderToString(app);
+
+    expect(html).toContain("editor-shell--tall");
+    expect(html).toContain("csharp");
+    expect(html).not.toContain('value="public static class Foreign {}"');
+  });
+
   it("renders a direct WDL-lowered expression value as an expression editor", async () => {
     const app = createSSRApp({
       render: () =>
@@ -124,6 +147,17 @@ describe("TypedParameterEditor", () => {
     expect(html).not.toContain("json-editor-shell");
   });
 });
+
+function stringParameter(name: string, label: string): ActionParameterMetadata {
+  return {
+    name,
+    label,
+    description: null,
+    required: true,
+    secret: false,
+    ty: { type: "string" },
+  };
+}
 
 function nestedWorkflowInputParameter(): ActionParameterMetadata {
   return {

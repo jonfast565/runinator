@@ -31,6 +31,7 @@ fn pack_zip_round_trips() {
             value: Value::from("abc"),
             schema: None,
             kind: SettingKind::Secret,
+            expires_at: None,
             updated_at: None,
         }],
     };

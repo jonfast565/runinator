@@ -167,11 +167,12 @@ where
     Ok(Some(state))
 }
 
-pub(super) async fn replace<B>(
+pub(super) async fn write<B>(
     store: &B,
     conn: &mut <B::Db as Database>::Connection,
     workflow_run_id: Uuid,
     state: &WorkflowExecutionState,
+    clear_existing: bool,
 ) -> Result<(), SendableError>
 where
     B: SqlBackend,
@@ -185,17 +186,22 @@ where
     for<'q> <B::Db as Database>::Arguments<'q>: IntoArguments<'q, B::Db>,
     for<'c> &'c mut <B::Db as Database>::Connection: Executor<'c, Database = B::Db>,
 {
-    for table in [
-        "workflow_run_pending_interrupts",
-        "workflow_run_event_sources",
-        "workflow_run_cursors",
-        "workflow_run_frames",
-        "workflow_run_execution_states",
-    ] {
-        sqlx::query(&store.render(&format!("DELETE FROM {table} WHERE workflow_run_id = ?")))
-            .bind(workflow_run_id)
-            .execute(&mut *conn)
-            .await?;
+    // first writes must not range-delete rows that cannot exist. under mysql's default repeatable
+    // read isolation, concurrent deletes of absent child keys take gap locks and two otherwise
+    // independent run creations can deadlock when each proceeds to insert its projection.
+    if clear_existing {
+        for table in [
+            "workflow_run_pending_interrupts",
+            "workflow_run_event_sources",
+            "workflow_run_cursors",
+            "workflow_run_frames",
+            "workflow_run_execution_states",
+        ] {
+            sqlx::query(&store.render(&format!("DELETE FROM {table} WHERE workflow_run_id = ?")))
+                .bind(workflow_run_id)
+                .execute(&mut *conn)
+                .await?;
+        }
     }
 
     let extra = serde_json::to_string(&state.extra).unwrap_or_else(|_| "{}".into());

@@ -18,6 +18,9 @@ use runinator_models::notifications::{
 };
 use runinator_models::value::Value;
 use runinator_models::workflows::{WorkflowAction, WorkflowRun, WorkflowStatus};
+use runinator_models::{settings::SettingKind, settings::SettingRecord};
+use runinator_utilities::secret_cipher::SecretCipher;
+use runinator_utilities::stored_secret::secret_expiry_occurrence;
 use tokio::sync::Notify;
 use tracing::{error, info, warn};
 use uuid::Uuid;
@@ -25,10 +28,12 @@ use uuid::Uuid;
 use crate::events::{AppEvent, AppEventKind, EventSender, emit};
 use crate::repository;
 
-/// how often the duration-based scanner sweeps open runs.
+/// how often the notification scanner sweeps scan-driven conditions.
 const SCAN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
 /// upper bound on runs inspected per sweep so a large backlog drains over several ticks.
 const SCAN_LIMIT: i64 = 500;
+/// warning window used by `secret_expiring` policies that omit `threshold_seconds`.
+const DEFAULT_SECRET_EXPIRY_WARNING_SECONDS: i64 = 30 * 24 * 60 * 60;
 /// timeout for a delivery action; a notify send that hangs must not pin a worker permit.
 const DELIVERY_TIMEOUT_SECONDS: i64 = 30;
 /// synthetic node id delivery actions carry, so worker logs identify them at a glance.
@@ -77,8 +82,8 @@ pub async fn on_run_terminal<T: DatabaseImpl>(db: &T, events: &EventSender, work
     }
 }
 
-/// periodically emit the duration-based events (`run_sla_breached`, `run_parked`), which have no
-/// transition to hang off. each policy's threshold is applied to the open runs it covers.
+/// periodically emit scan-based events, which have no transition to hang off. each policy's
+/// threshold is applied to the matching run or secret.
 pub async fn run_notification_scanner<T: DatabaseImpl>(
     db: Arc<T>,
     events: EventSender,
@@ -102,8 +107,9 @@ pub async fn run_notification_scanner<T: DatabaseImpl>(
     }
 }
 
-/// one sweep: for each duration-based event, load its policies and match them against open runs.
+/// one sweep across secret expiry and duration-based run events.
 async fn scan_once<T: DatabaseImpl>(db: &T, events: &EventSender) -> Result<(), SendableError> {
+    scan_secret_expiry(db, events, chrono::Utc::now()).await?;
     for event in [
         NotificationEvent::RunSlaBreached,
         NotificationEvent::RunParked,
@@ -150,6 +156,103 @@ async fn scan_once<T: DatabaseImpl>(db: &T, events: &EventSender) -> Result<(), 
         }
     }
     Ok(())
+}
+
+/// emit each global `secret_expiring` policy for secrets inside its warning window. ciphertext is
+/// opened only long enough to read the envelope metadata; notification content never includes the
+/// value. a policy/secret/expiry/window tuple is the logical occurrence, so repeated scans dedupe
+/// while a rotated secret with a new expiry can warn again.
+async fn scan_secret_expiry<T: DatabaseImpl>(
+    db: &T,
+    events: &EventSender,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Result<(), SendableError> {
+    let policies = db
+        .fetch_notification_policies_by_event(NotificationEvent::SecretExpiring)
+        .await?;
+    let policies: Vec<_> = policies
+        .into_iter()
+        .filter(|policy| policy.workflow_id.is_none())
+        .collect();
+    if policies.is_empty() {
+        return Ok(());
+    }
+
+    let cipher = SecretCipher::from_env();
+    let secrets = db.list_settings().await?;
+    let dispatcher = NotificationDispatcher { db, events };
+    for record in secrets {
+        let Some(expires_at) = secret_expiry(&cipher, &record) else {
+            continue;
+        };
+        let seconds_until_expiry = (expires_at - now).num_seconds();
+        for policy in &policies {
+            let warning_seconds = policy
+                .threshold_seconds
+                .unwrap_or(DEFAULT_SECRET_EXPIRY_WARNING_SECONDS);
+            if warning_seconds <= 0 || seconds_until_expiry > warning_seconds {
+                continue;
+            }
+            let context =
+                secret_expiry_context(&record, expires_at, warning_seconds, seconds_until_expiry);
+            dispatcher.fire(policy, &context).await;
+        }
+    }
+    Ok(())
+}
+
+fn secret_expiry(
+    cipher: &SecretCipher,
+    record: &SettingRecord,
+) -> Option<chrono::DateTime<chrono::Utc>> {
+    if record.kind != SettingKind::Secret {
+        return None;
+    }
+    let plaintext = cipher.try_decrypt(&record.value)?;
+    crate::settings::decode_secret(&plaintext).expires_at
+}
+
+fn secret_expiry_context(
+    record: &SettingRecord,
+    expires_at: chrono::DateTime<chrono::Utc>,
+    warning_seconds: i64,
+    seconds_until_expiry: i64,
+) -> EmissionContext {
+    let identity = format!("{}/{}", record.scope, record.name);
+    let expired = seconds_until_expiry <= 0;
+    let title = if expired {
+        format!("Secret {identity} has expired")
+    } else {
+        format!("Secret {identity} expires soon")
+    };
+    let timing = if expired {
+        format!("expired {} ago", humanize_seconds(-seconds_until_expiry))
+    } else {
+        format!("expires in {}", humanize_seconds(seconds_until_expiry))
+    };
+    EmissionContext {
+        workflow_run_id: None,
+        node_id: None,
+        title,
+        body: format!(
+            "Secret '{identity}' {timing} at {} (warning window {}).",
+            expires_at.to_rfc3339(),
+            humanize_seconds(warning_seconds),
+        ),
+        metadata: runinator_models::json!({
+            "event": NotificationEvent::SecretExpiring.as_str(),
+            "setting_kind": SettingKind::Secret.as_str(),
+            "scope": record.scope,
+            "name": record.name,
+            "expires_at": expires_at,
+            "seconds_until_expiry": seconds_until_expiry,
+            "warning_seconds": warning_seconds,
+        }),
+        occurrence: format!(
+            "secret_expiring:{}",
+            secret_expiry_occurrence(&record.scope, &record.name, expires_at, warning_seconds,)
+        ),
+    }
 }
 
 /// a run is parked when it is open but blocked on something external rather than progressing.

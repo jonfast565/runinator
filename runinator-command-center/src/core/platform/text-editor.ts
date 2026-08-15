@@ -1,4 +1,19 @@
-export type TextEditorLanguage = "wdl" | "json" | "expression";
+export type TextEditorLanguage =
+  | "wdl"
+  | "json"
+  | "expression"
+  | "python"
+  | "javascript"
+  | "bash"
+  | "ruby"
+  | "perl"
+  | "php"
+  | "go"
+  | "swift"
+  | "powershell"
+  | "csharp"
+  | "fsharp"
+  | "vbnet";
 
 export type TextEditorDiagnosticSeverity = "error" | "warning" | "info";
 
@@ -25,6 +40,7 @@ export interface TextEditorHost {
   getValue(): string;
   setValue(value: string, silent?: boolean): void;
   setReadonly(readonly: boolean): void;
+  setLanguage?(language: TextEditorLanguage): void;
   focus(): void;
   goToPosition(line: number, column?: number): void;
   getDiagnostics(): TextEditorDiagnostic[];

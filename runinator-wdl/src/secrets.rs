@@ -65,6 +65,7 @@ fn lower_decl(decl: &SecretDecl) -> Result<SecretBundleEntry, WdlError> {
         schema: None,
         kind,
         updated_at: None,
+        expires_at: None,
     })
 }
 

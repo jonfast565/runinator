@@ -24,6 +24,32 @@ const LANGUAGE_DEFINITIONS = [
   { language: "ruby", label: "Ruby", aliases: ["rb"], defaultImage: "ruby:3.3" },
   { language: "perl", label: "Perl", aliases: ["pl"], defaultImage: "perl:5.40" },
   { language: "php", label: "PHP", aliases: [], defaultImage: "php:8.3-cli" },
+  { language: "go", label: "Go", aliases: ["golang"], defaultImage: "golang:1.26" },
+  { language: "swift", label: "Swift", aliases: [], defaultImage: "swift:6.3" },
+  {
+    language: "powershell",
+    label: "PowerShell",
+    aliases: ["pwsh", "ps1"],
+    defaultImage: "mcr.microsoft.com/dotnet/sdk:8.0",
+  },
+  {
+    language: "csharp",
+    label: "C#",
+    aliases: ["c#", "cs"],
+    defaultImage: "mcr.microsoft.com/dotnet/sdk:10.0",
+  },
+  {
+    language: "fsharp",
+    label: "F#",
+    aliases: ["f#", "fs"],
+    defaultImage: "mcr.microsoft.com/dotnet/sdk:10.0",
+  },
+  {
+    language: "vbnet",
+    label: "VB.NET",
+    aliases: ["vb.net", "visualbasic", "vb"],
+    defaultImage: "mcr.microsoft.com/dotnet/sdk:10.0",
+  },
 ] as const;
 
 export function createLanguageSettings(): ForeignLanguageSetting[] {
@@ -61,7 +87,8 @@ export function createAdminSettingsService(app: AppService) {
       const existing = new Set(
         settings
           .filter(
-            (setting) => (setting.kind ?? "secret") === "config" && setting.scope === LANGUAGE_SCOPE,
+            (setting) =>
+              (setting.kind ?? "secret") === "config" && setting.scope === LANGUAGE_SCOPE,
           )
           .map((setting) => setting.name),
       );

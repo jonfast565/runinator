@@ -60,6 +60,12 @@ describe("admin settings store", () => {
       ["ruby", "ruby:3.3"],
       ["perl", "perl:5.40"],
       ["php", "php:8.3-cli"],
+      ["go", "golang:1.26"],
+      ["swift", "swift:6.3"],
+      ["powershell", "mcr.microsoft.com/dotnet/sdk:8.0"],
+      ["csharp", "mcr.microsoft.com/dotnet/sdk:10.0"],
+      ["fsharp", "mcr.microsoft.com/dotnet/sdk:10.0"],
+      ["vbnet", "mcr.microsoft.com/dotnet/sdk:10.0"],
     ]);
     expect(fetchForeignLanguageRuntime).not.toHaveBeenCalled();
   });

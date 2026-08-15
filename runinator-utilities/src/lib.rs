@@ -11,4 +11,5 @@ pub mod secret_cipher;
 pub mod secret_file;
 pub mod shell;
 pub mod startup;
+pub mod stored_secret;
 pub mod telemetry;

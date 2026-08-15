@@ -77,6 +77,7 @@ pub fn inspect_dev_pack(
                     scope: entry.scope.clone(),
                     name: entry.name.clone(),
                     kind: entry.kind,
+                    expires_at: entry.expires_at,
                 })
                 .collect::<Vec<_>>()
         })

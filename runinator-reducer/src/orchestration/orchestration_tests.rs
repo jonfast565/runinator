@@ -241,6 +241,26 @@ fn foreign_language_runtime_canonicalizes_supported_aliases() {
         ("perl", "perl", "perl:5.40"),
         ("pl", "perl", "perl:5.40"),
         ("php", "php", "php:8.3-cli"),
+        ("go", "go", "golang:1.26"),
+        ("golang", "go", "golang:1.26"),
+        ("swift", "swift", "swift:6.3"),
+        (
+            "powershell",
+            "powershell",
+            "mcr.microsoft.com/dotnet/sdk:8.0",
+        ),
+        ("pwsh", "powershell", "mcr.microsoft.com/dotnet/sdk:8.0"),
+        ("ps1", "powershell", "mcr.microsoft.com/dotnet/sdk:8.0"),
+        ("csharp", "csharp", "mcr.microsoft.com/dotnet/sdk:10.0"),
+        ("c#", "csharp", "mcr.microsoft.com/dotnet/sdk:10.0"),
+        ("cs", "csharp", "mcr.microsoft.com/dotnet/sdk:10.0"),
+        ("fsharp", "fsharp", "mcr.microsoft.com/dotnet/sdk:10.0"),
+        ("f#", "fsharp", "mcr.microsoft.com/dotnet/sdk:10.0"),
+        ("fs", "fsharp", "mcr.microsoft.com/dotnet/sdk:10.0"),
+        ("vbnet", "vbnet", "mcr.microsoft.com/dotnet/sdk:10.0"),
+        ("vb.net", "vbnet", "mcr.microsoft.com/dotnet/sdk:10.0"),
+        ("visualbasic", "vbnet", "mcr.microsoft.com/dotnet/sdk:10.0"),
+        ("vb", "vbnet", "mcr.microsoft.com/dotnet/sdk:10.0"),
     ];
 
     for (input, canonical, image) in cases {

@@ -11,12 +11,18 @@ import type {
   TextEditorHostFactory,
 } from "../../../core/platform/text-editor";
 import { wdlLanguageService } from "../../../core/services";
-import type { CredentialSummary, ProviderMetadata, WdlDiagnostic, WdlSettingRef } from "../../../core/domain/models";
+import type {
+  CredentialSummary,
+  ProviderMetadata,
+  WdlDiagnostic,
+  WdlSettingRef,
+} from "../../../core/domain/models";
 import { osCodeMirrorTheme } from "./codemirror-theme";
 import { wdl } from "./codemirror-lang-wdl";
 import { jsonCompletionSource, shouldStartJsonCompletion } from "./json-completion";
 import { wdlProviderCompletionSource } from "./wdl-completion";
 import { wdlHoverTooltip } from "./wdl-hover";
+import { createCodeEditorHost } from "./code-editor-host";
 
 const WDL_LINT_DELAY_MS = 1500;
 
@@ -397,6 +403,10 @@ export function createCodeMirrorTextEditorHostFactory(): TextEditorHostFactory {
 
       if (options.language === "wdl" || options.language === "expression") {
         return createWdlHost(hostOptions);
+      }
+
+      if (options.language !== "json") {
+        return createCodeEditorHost(options);
       }
 
       return createJsonHost(hostOptions);

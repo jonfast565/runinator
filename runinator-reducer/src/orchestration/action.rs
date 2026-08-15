@@ -89,6 +89,14 @@ pub(super) fn foreign_language_runtime(language: &str) -> Option<(&'static str, 
         "ruby" | "rb" => Some(("ruby", "ruby:3.3")),
         "perl" | "pl" => Some(("perl", "perl:5.40")),
         "php" => Some(("php", "php:8.3-cli")),
+        "go" | "golang" => Some(("go", "golang:1.26")),
+        "swift" => Some(("swift", "swift:6.3")),
+        "powershell" | "pwsh" | "ps1" => Some(("powershell", "mcr.microsoft.com/dotnet/sdk:8.0")),
+        "csharp" | "c#" | "cs" => Some(("csharp", "mcr.microsoft.com/dotnet/sdk:10.0")),
+        "fsharp" | "f#" | "fs" => Some(("fsharp", "mcr.microsoft.com/dotnet/sdk:10.0")),
+        "vbnet" | "vb.net" | "visualbasic" | "vb" => {
+            Some(("vbnet", "mcr.microsoft.com/dotnet/sdk:10.0"))
+        }
         _ => None,
     }
 }
@@ -370,7 +378,7 @@ async fn build_node_parameters<T: ReducerStore>(
             let (canonical_language, default_image) =
                 foreign_language_runtime(&language).ok_or_else(|| {
                     crate::errors::COMPUTE_NODE_FAILED.error(format!(
-                        "unsupported foreign language '{language}'; supported languages: python, javascript, bash, ruby, perl, php"
+                        "unsupported foreign language '{language}'; supported languages: python, javascript, bash, ruby, perl, php, go, swift, powershell, csharp, fsharp, vbnet"
                     ))
                 })?;
             let runtime =
@@ -380,6 +388,17 @@ async fn build_node_parameters<T: ReducerStore>(
             object.insert("language".into(), Value::String(canonical_language.into()));
             object.insert("context".into(), context);
             object.insert("runtime".into(), runtime);
+            if let Some(expected_output_type) = ctx
+                .workflow
+                .definition
+                .metadata
+                .get("wdl")
+                .and_then(|wdl| wdl.get("type_hints"))
+                .and_then(|types| types.get(&ctx.node.id))
+                .cloned()
+            {
+                object.insert("expected_output_type".into(), expected_output_type);
+            }
             return Ok(parameters);
         }
         return Ok(runinator_models::json!({ "context": context }));
