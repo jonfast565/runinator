@@ -1,0 +1,139 @@
+//! where artifact bytes live.
+//!
+//! artifacts predate the object store, so a `run_artifacts.uri` is one of two things: a `blob://`
+//! uri (everything written since) or an absolute path on whichever replica happened to serve the
+//! upload (everything written before). the older form is why a download could 404 from a second ws
+//! replica — the file was real, just not on that pod. both forms are readable here; only the first
+//! is ever written.
+
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use runinator_blob_core::{
+    BlobError, BlobStore, ByteRange, ObjectKey, PutOptions, RUN_ARTIFACT_BUCKET, blob_uri,
+    parse_blob_uri,
+};
+use runinator_models::errors::SendableError;
+use tokio::io::AsyncRead;
+use uuid::Uuid;
+
+use crate::errors::{ARTIFACT_STORE_FAILED, ARTIFACT_UNREADABLE};
+
+/// an artifact's bytes, however they are stored.
+pub struct ArtifactContent {
+    pub size_bytes: u64,
+    pub body: Box<dyn AsyncRead + Send + Unpin>,
+}
+
+/// store artifact bytes and return the uri to record on the row.
+///
+/// the key keeps the run and node grouping so an operator can list one run's artifacts directly, and
+/// carries a uuid so two uploads of the same filename never collide.
+pub async fn put_artifact(
+    store: &Arc<dyn BlobStore>,
+    run_id: Uuid,
+    workflow_node_run_id: Option<Uuid>,
+    name: &str,
+    mime_type: &str,
+    bytes: &[u8],
+) -> Result<String, SendableError> {
+    let scope = match workflow_node_run_id {
+        Some(node_run_id) => format!("runs/{run_id}/{node_run_id}"),
+        None => format!("runs/{run_id}"),
+    };
+    let key = ObjectKey::parse(&format!(
+        "{scope}/{}-{}",
+        Uuid::new_v4().simple(),
+        safe_name(name)
+    ))
+    .map_err(|err| ARTIFACT_STORE_FAILED.error(err))?;
+    store
+        .put(
+            RUN_ARTIFACT_BUCKET,
+            &key,
+            bytes.to_vec(),
+            PutOptions {
+                content_type: Some(mime_type.to_string()),
+                ..PutOptions::default()
+            },
+        )
+        .await
+        .map_err(|err| ARTIFACT_STORE_FAILED.error(err))?;
+    Ok(blob_uri(RUN_ARTIFACT_BUCKET, &key))
+}
+
+/// open an artifact's bytes for streaming, from the object store or from the legacy local path.
+pub async fn open_artifact(
+    store: &Arc<dyn BlobStore>,
+    uri: &str,
+    range: Option<ByteRange>,
+) -> Result<ArtifactContent, SendableError> {
+    if let Some((bucket, key)) = parse_blob_uri(uri) {
+        let reader = store
+            .open(&bucket, &key, range)
+            .await
+            .map_err(|err| ARTIFACT_UNREADABLE.error(err))?;
+        return Ok(ArtifactContent {
+            size_bytes: reader.len(),
+            body: reader.body,
+        });
+    }
+    // pre-blob row: a path on the replica that served the upload. readable only from that replica,
+    // which is the bug the object store exists to remove — but existing rows still have to work.
+    let path = PathBuf::from(uri);
+    let file = tokio::fs::File::open(&path)
+        .await
+        .map_err(|err| ARTIFACT_UNREADABLE.error(format!("{}: {err}", path.display())))?;
+    let size_bytes = file
+        .metadata()
+        .await
+        .map(|meta| meta.len())
+        .map_err(|err| ARTIFACT_UNREADABLE.error(format!("{}: {err}", path.display())))?;
+    Ok(ArtifactContent {
+        size_bytes,
+        body: Box::new(file),
+    })
+}
+
+/// remove an artifact's bytes. best effort in both storage shapes: a missing object must not block
+/// deleting the row that points at it, or the row becomes undeletable.
+pub async fn delete_artifact_bytes(store: &Arc<dyn BlobStore>, uri: &str) {
+    if let Some((bucket, key)) = parse_blob_uri(uri) {
+        if let Err(err) = store.delete(&bucket, &key).await {
+            match err {
+                BlobError::NotFound(_) | BlobError::NoSuchBucket(_) => {}
+                other => log::warn!("failed to delete artifact object {uri}: {other}"),
+            }
+        }
+        return;
+    }
+    if let Err(err) = tokio::fs::remove_file(uri).await
+        && err.kind() != std::io::ErrorKind::NotFound
+    {
+        log::warn!("failed to unlink artifact file {uri}: {err}");
+    }
+}
+
+/// reduce a user-supplied filename to something safe to put in a key. keys are validated by the
+/// store as well, so this is about keeping the key readable rather than about safety.
+fn safe_name(name: &str) -> String {
+    let cleaned: String = name
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '.' | '-' | '_') {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if cleaned.is_empty() {
+        "artifact".to_string()
+    } else {
+        cleaned
+    }
+}
+
+#[cfg(test)]
+#[path = "artifact_storage_tests.rs"]
+mod tests;

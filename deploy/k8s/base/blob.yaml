@@ -1,0 +1,88 @@
+# The object store. Function-package artifacts and workflow run artifacts live here, and both the
+# web service and the background engine read them through it — which is why it is a service rather
+# than a directory on one replica: a pod-local path is invisible to every other replica, so an
+# artifact written by one and requested from another would 404.
+#
+# One replica, backed by a ReadWriteOnce PVC. Scaling this out means either a ReadWriteMany volume
+# or pointing RUNINATOR_BLOB_ENDPOINT at real S3/MinIO instead; the wire protocol is the same, so
+# that swap is configuration rather than code.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: runinator-blob-data
+  namespace: runinator
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 50Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: runinator-blob
+  namespace: runinator
+spec:
+  # deliberately 1: the PVC is ReadWriteOnce and two replicas would each see only their own writes.
+  replicas: 1
+  strategy:
+    # the volume cannot be attached to an old and a new pod at once, so a rolling update would
+    # deadlock on the PVC. recreate takes a short outage instead of a stuck rollout.
+    type: Recreate
+  selector:
+    matchLabels:
+      app: runinator-blob
+  template:
+    metadata:
+      labels:
+        app: runinator-blob
+    spec:
+      # the volume is created root-owned and the image runs as the unprivileged `runinator` user
+      # (gid 101); same reasoning as archiver.yaml.
+      securityContext:
+        fsGroup: 101
+      containers:
+        - name: blob
+          image: runinator-blob:dev
+          imagePullPolicy: IfNotPresent
+          command: ["runinator-blob"]
+          ports:
+            - name: http
+              containerPort: 9000
+          envFrom:
+            - configMapRef:
+                name: runinator-common
+            - secretRef:
+                name: runinator-blob-secret
+          env:
+            - name: RUNINATOR_BLOB_ADDR
+              value: "0.0.0.0:9000"
+            - name: RUNINATOR_BLOB_DATA_DIR
+              value: "/var/lib/runinator/blobs"
+          volumeMounts:
+            - name: blob-data
+              mountPath: /var/lib/runinator/blobs
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+      volumes:
+        - name: blob-data
+          persistentVolumeClaim:
+            claimName: runinator-blob-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: runinator-blob
+  namespace: runinator
+spec:
+  selector:
+    app: runinator-blob
+  ports:
+    - name: http
+      port: 9000
+      targetPort: http

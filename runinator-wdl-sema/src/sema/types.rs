@@ -73,7 +73,16 @@ pub(super) fn analyze(
             .iter()
             .map(|(key, value)| (key.clone(), (*value).clone()))
             .collect(),
-        provider_catalog_present: !providers.is_empty(),
+        // synthetic `functions.<pkg>` providers do not constitute a provider catalog. they are
+        // derived from whatever function entries the caller passed, so counting them would flip an
+        // offline compile from permissive to strict the moment a pack gained one packaged function
+        // — and then reject every ordinary `github.issue(...)` in it for want of metadata nobody
+        // supplied.
+        provider_catalog_present: providers.iter().any(|provider| {
+            !provider
+                .name
+                .starts_with(runinator_models::functions::FUNCTIONS_NAMESPACE_PREFIX)
+        }),
         type_policy,
         workflow_signatures,
         scope: Vec::new(),

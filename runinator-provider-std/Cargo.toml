@@ -12,3 +12,4 @@ chrono = { version = "0.4", features = ["clock"] }
 runinator-plugin = { path = "../runinator-plugin" }
 runinator-models = { path = "../runinator-models" }
 runinator-compute = { path = "../runinator-compute" }
+runinator-sandbox = { path = "../runinator-sandbox" }

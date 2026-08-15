@@ -98,6 +98,7 @@ fi
 if [[ "$skip_build" -eq 0 ]]; then
   cargo build \
     --profile "$profile" \
+    -p runinator-blob \
     -p runinator-broker \
     -p runinator-ws \
     -p runinator-waker \
@@ -112,6 +113,7 @@ config_dir="$(mktemp -d "${TMPDIR:-/tmp}/runinator-packager.XXXXXX")"
 trap 'rm -rf "$config_dir"' EXIT
 
 apps=(
+  "runinator-blob|Runinator Blob|dev.runinator.blob|Runinator object storage service."
   "runinator-broker|Runinator Broker|dev.runinator.broker|Runinator broker service."
   "runinator-ws|Runinator Web Service|dev.runinator.web-service|Runinator HTTP API service."
   "runinator-waker|Runinator Waker|dev.runinator.waker|Runinator waker service."

@@ -192,6 +192,8 @@ async fn output_sink_publishes_result_events_to_broker() {
         command.clone(),
         broker.clone(),
         std::sync::Arc::new(NoopOutbox),
+        // no uploader: this covers event publication, and relocation has its own suite.
+        None,
         tokio::runtime::Handle::current(),
     );
 
@@ -274,6 +276,7 @@ async fn worker_accepts_std_exec_program_with_context() {
         tags: Vec::new(),
         required_labels: Default::default(),
         idempotency_key: None,
+        function_binding: None,
     };
     let parameters = json!({
         "program": [ { "$return": { "ok": true } } ],
@@ -312,6 +315,7 @@ async fn worker_rejects_undeclared_std_exec_parameter() {
         tags: Vec::new(),
         required_labels: Default::default(),
         idempotency_key: None,
+        function_binding: None,
     };
     let parameters = json!({
         "program": [ { "$return": true } ],
@@ -358,6 +362,7 @@ fn worker_validates_provider_output_fields_when_present() {
         tags: Vec::new(),
         required_labels: Default::default(),
         idempotency_key: None,
+        function_binding: None,
     };
     let result = TaskExecutionResult {
         message: None,
@@ -718,6 +723,7 @@ fn action_command() -> ActionCommand {
             tags: Vec::new(),
             required_labels: Default::default(),
             idempotency_key: None,
+            function_binding: None,
         },
         attempt: 1,
         parameters: json!({}),

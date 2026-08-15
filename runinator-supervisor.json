@@ -11,6 +11,15 @@
       }
     },
     {
+      "name": "blob",
+      "command": "./target/debug/runinator-blob",
+      "env": {
+        "RUNINATOR_BLOB_ADDR": "127.0.0.1:9100",
+        "RUNINATOR_BLOB_DATA_DIR": ".runinator-supervisor/blobs",
+        "RUNINATOR_BLOB_ALLOW_ANONYMOUS": "true"
+      }
+    },
+    {
       "name": "web-service",
       "command": "bash",
       "command_windows": "pwsh",
@@ -25,7 +34,8 @@
         "RUNINATOR_DB_ACQUIRE_TIMEOUT_SECONDS": "30",
         "RUNINATOR_PROVISIONER_SUPERVISOR_ENABLED": "true",
         "RUNINATOR_PROVISIONER_SUPERVISOR_WORKER": "{\"command\":\"./target/debug/runinator-worker\",\"args\":[\"--advertise-host\",\"127.0.0.1\",\"--broker-backend\",\"tcp\",\"--broker-endpoint\",\"127.0.0.1:7070\",\"--max-concurrent-actions\",\"4\",\"--api-base-url\",\"http://127.0.0.1:8080/\"],\"env\":{\"RUNINATOR_API_KEY\":\"localdev.runinator-local-dev-service-key\"}}",
-        "RUNINATOR_PROVISIONER_SUPERVISOR_WAKER": "{\"command\":\"./target/debug/runinator-waker\",\"args\":[\"--broker-backend\",\"tcp\",\"--broker-endpoint\",\"127.0.0.1:7070\",\"--api-base-url\",\"http://127.0.0.1:8080/\",\"--advertise-host\",\"127.0.0.1\"],\"env\":{\"RUNINATOR_API_KEY\":\"localdev.runinator-local-dev-service-key\"}}"
+        "RUNINATOR_PROVISIONER_SUPERVISOR_WAKER": "{\"command\":\"./target/debug/runinator-waker\",\"args\":[\"--broker-backend\",\"tcp\",\"--broker-endpoint\",\"127.0.0.1:7070\",\"--api-base-url\",\"http://127.0.0.1:8080/\",\"--advertise-host\",\"127.0.0.1\"],\"env\":{\"RUNINATOR_API_KEY\":\"localdev.runinator-local-dev-service-key\"}}",
+        "RUNINATOR_BLOB_ENDPOINT": "http://127.0.0.1:9100/"
       },
       "args": [
         "scripts/start-local-web-service.sh",

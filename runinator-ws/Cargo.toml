@@ -21,6 +21,7 @@ utoipa = { version = "5", features = ["axum_extras", "uuid", "chrono"] }
 tracing = "0.1"
 metrics = "0.24"
 
+runinator-blob = { path = "../runinator-blob" }
 runinator-broker = { path = "../runinator-broker" }
 runinator-ws-core = { path = "../runinator-ws-core" }
 runinator-ws-middleware = { path = "../runinator-ws-middleware" }
@@ -46,6 +47,9 @@ runinator-auth = { path = "../runinator-auth" }
 # result-consumer/repository integration tests can drive engine behavior. dev-only, so normal
 # builds never compile the hooks in.
 runinator-engine = { path = "../runinator-engine", features = ["test-support"] }
+# the publish path's client half: the tests archive a real package directory rather than hand-rolling
+# a zip, so what they upload is exactly what `runinatorctl functions publish` would.
+runinator-pack = { path = "../runinator-pack" }
 
 [features]
 kafka = ["runinator-broker/kafka"]

@@ -42,7 +42,10 @@ pub use notification_policies::*;
 pub use notifications::*;
 pub use org_scope::{org_id_for_pipeline_run, org_id_for_workflow_run};
 pub use pipelines::*;
-pub use provider_meta::{provider_metadata_from_item, provider_metadata_from_items};
+pub use provider_meta::{
+    provider_catalog_item, provider_catalog_uri, provider_metadata_from_item,
+    provider_metadata_from_items,
+};
 pub use replicas::*;
 pub use runs::*;
 pub use triggers::*;
@@ -56,6 +59,10 @@ mod node_runs;
 mod notification_policies;
 mod notifications;
 mod org_scope;
+// named rather than glob-exported: its artifact operations are `fetch_artifact`/`delete_artifact`
+// about a *function* artifact, and run artifacts already own those names at this level.
+pub mod function_adapters;
+pub mod functions;
 mod pipelines;
 mod provider_meta;
 mod replicas;

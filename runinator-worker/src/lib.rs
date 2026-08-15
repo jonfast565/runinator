@@ -3,11 +3,13 @@
 //! embedded host (the desktop command center) can both drive the same loop.
 
 pub mod agent;
+pub mod artifact_upload;
 pub mod broker;
 pub mod config;
 pub mod errors;
 pub mod events;
 pub mod executor;
+pub mod function_cache;
 pub mod idempotency;
 mod lease;
 pub mod metrics;

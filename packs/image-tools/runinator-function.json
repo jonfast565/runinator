@@ -1,0 +1,42 @@
+{
+  "name": "image-tools",
+  "description": "Image inspection and resizing, as a packaged function.",
+  "runtime": {
+    "runtime": "python3.13"
+  },
+  "exports": [
+    {
+      "name": "resize",
+      "handler": "src.images.resize",
+      "description": "Resize an image to a target width, preserving aspect ratio.",
+      "input": [
+        { "name": "source", "type": "string", "required": true, "description": "Source image uri." },
+        { "name": "width", "type": "integer", "required": true, "description": "Target width in pixels." }
+      ],
+      "output": [
+        { "name": "uri", "type": "string", "description": "Uri of the resized image." },
+        { "name": "width", "type": "integer" },
+        { "name": "height", "type": "integer" }
+      ],
+      "limits": {
+        "timeout_seconds": 60,
+        "memory_mb": 512
+      }
+    },
+    {
+      "name": "inspect",
+      "handler": "src.images.inspect",
+      "description": "Report an image's dimensions and format without modifying it.",
+      "input": [
+        { "name": "source", "type": "string", "required": true, "description": "Source image uri." }
+      ],
+      "output": [
+        { "name": "width", "type": "integer" },
+        { "name": "height", "type": "integer" },
+        { "name": "format", "type": "string" }
+      ]
+    }
+  ],
+  "alias": "latest",
+  "exclude": ["tests/"]
+}

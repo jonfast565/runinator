@@ -7,6 +7,9 @@ use serde_json::{Value, json};
 
 /// the single uuid used across every example so generated samples look internally consistent.
 pub const UUID_EXAMPLE: &str = "018f5f7c-4b74-7f44-8fd1-cde6b5c4d111";
+const FUNCTION_DIGEST_EXAMPLE: &str =
+    "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
+const TIMESTAMP_EXAMPLE: &str = "2026-01-01T00:00:00Z";
 
 #[derive(Clone, Copy)]
 pub enum Example {
@@ -85,6 +88,15 @@ pub enum Example {
     EventDelivery,
     InterruptRequest,
     Supervisor,
+    FunctionPackage,
+    FunctionPackageList,
+    FunctionVersion,
+    FunctionCatalog,
+    FunctionArtifact,
+    FunctionAlias,
+    FunctionAliasRequest,
+    FunctionPublish,
+    FunctionInvocationTarget,
 }
 
 pub fn example_value(example: Example) -> Option<Value> {
@@ -208,6 +220,50 @@ pub fn example_value(example: Example) -> Option<Value> {
         }
         Example::Provider => provider_example(),
         Example::ProviderList => json!([provider_example()]),
+        Example::FunctionPackage => function_package_example(),
+        Example::FunctionPackageList => json!([function_package_example()]),
+        Example::FunctionVersion => function_version_example(),
+        Example::FunctionCatalog => json!([function_catalog_example()]),
+        Example::FunctionArtifact => json!({
+            "digest": FUNCTION_DIGEST_EXAMPLE,
+            "size_bytes": 20480,
+            "uri": "blob://runinator-function-artifacts/sha256/9f/86/9f86...zip",
+            "media_type": "application/zip",
+            "created_at": TIMESTAMP_EXAMPLE,
+        }),
+        Example::FunctionAlias => json!({
+            "id": UUID_EXAMPLE,
+            "package_id": UUID_EXAMPLE,
+            "name": "production",
+            "version_id": UUID_EXAMPLE,
+            "version": 3,
+        }),
+        Example::FunctionInvocationTarget => json!({
+            "package_name": "image-tools",
+            "version": 3,
+            "artifact_digest": FUNCTION_DIGEST_EXAMPLE,
+            "runtime": { "runtime": "python3.13" },
+            "export": {
+                "id": UUID_EXAMPLE,
+                "version_id": UUID_EXAMPLE,
+                "name": "resize",
+                "handler": "src.images.resize",
+                "limits": { "timeout_seconds": 60, "memory_mb": 512 },
+            },
+        }),
+        Example::FunctionAliasRequest => json!({ "alias": "production", "version": 3 }),
+        Example::FunctionPublish => json!({
+            "package": { "name": "image-tools", "description": "image utilities" },
+            "artifact_digest": FUNCTION_DIGEST_EXAMPLE,
+            "runtime": { "runtime": "python3.13" },
+            "exports": [{
+                "name": "resize",
+                "handler": "src.images.resize",
+                "input": [{ "name": "source", "type": "string", "required": true }],
+                "output": [{ "name": "uri", "type": "string" }],
+            }],
+            "alias": "latest",
+        }),
         Example::ProviderBundle => json!({ "providers": [provider_example()] }),
         Example::Replica => {
             json!({ "id": UUID_EXAMPLE, "replica_type": "worker", "status": "online", "address": "worker-1" })
@@ -338,6 +394,43 @@ fn trigger_example() -> Value {
         "enabled": true,
         "kind": "cron",
         "schedule": "0 9 * * *",
+    })
+}
+
+fn function_package_example() -> Value {
+    json!({
+        "id": UUID_EXAMPLE,
+        "name": "image-tools",
+        "description": "image utilities",
+        "latest_version": 3,
+        "created_at": TIMESTAMP_EXAMPLE,
+        "updated_at": TIMESTAMP_EXAMPLE,
+    })
+}
+
+fn function_version_example() -> Value {
+    json!({
+        "id": UUID_EXAMPLE,
+        "package_id": UUID_EXAMPLE,
+        "version": 3,
+        "artifact_digest": FUNCTION_DIGEST_EXAMPLE,
+        "runtime": { "runtime": "python3.13" },
+        "created_at": TIMESTAMP_EXAMPLE,
+    })
+}
+
+fn function_catalog_example() -> Value {
+    json!({
+        "package_id": UUID_EXAMPLE,
+        "package_name": "image-tools",
+        "version_id": UUID_EXAMPLE,
+        "version": 3,
+        "export_id": UUID_EXAMPLE,
+        "export_name": "resize",
+        "artifact_digest": FUNCTION_DIGEST_EXAMPLE,
+        "input": [{ "name": "source", "ty": "string", "required": true }],
+        "output": [{ "name": "uri", "ty": "string" }],
+        "aliases": ["latest", "production"],
     })
 }
 

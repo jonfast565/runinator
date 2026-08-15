@@ -145,9 +145,12 @@ pub fn compile_all_str_with_diagnostics(
     // sugared form to record `...alias` spreads for the decompile sidecar.
     let mut desugared = document.clone();
     desugar::desugar(&mut desugared)?;
+    // the synthetic `functions.<pkg>` providers are derived from the same catalog lowering binds
+    // against, so the type checker cannot accept a call lowering will then fail to resolve.
+    let providers = options.all_providers();
     let diagnostics = sema::analyze_with_options(
         &desugared,
-        &options.providers,
+        &providers,
         options.type_policy,
         &options.workflow_signatures,
     );

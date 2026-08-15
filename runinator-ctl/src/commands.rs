@@ -75,6 +75,7 @@ pub async fn run(client: &Client, cli: &Cli) -> Result<()> {
         Commands::Triggers { command } => triggers::triggers(client, command, cli.json).await,
         Commands::Freeze { command } => freeze::freeze(client, command, cli.json).await,
         Commands::Providers { command } => providers::providers(client, command, cli.json).await,
+        Commands::Functions { command } => functions::functions(client, command, cli.json).await,
         Commands::Artifacts { command } => artifacts::artifacts(client, command, cli.json).await,
         Commands::Wdl { command } => workflows::wdl(command, cli.json),
         Commands::Settings { command } => settings::settings(client, command, cli.json).await,
@@ -95,6 +96,8 @@ pub use workflows::workflows_test;
 mod approvals;
 mod artifacts;
 mod freeze;
+mod functions;
+pub use functions::functions_validate;
 mod providers;
 mod runs;
 mod settings;

@@ -141,4 +141,14 @@ pub trait DefinitionStore: Send + Sync + 'static {
         &self,
         uri: String,
     ) -> impl Future<Output = Result<Option<Value>, SendableError>> + Send;
+
+    /// Delete a catalog item by its URI. Returns false when there was nothing to delete.
+    ///
+    /// Needed because some catalog entries are *mirrors* of a row that can be deleted — a packaged
+    /// function's `functions.<pkg>` provider metadata outlives its package otherwise, advertising
+    /// exports nothing can run.
+    fn delete_catalog_item(
+        &self,
+        uri: String,
+    ) -> impl Future<Output = Result<bool, SendableError>> + Send;
 }

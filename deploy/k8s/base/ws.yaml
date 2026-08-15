@@ -124,6 +124,8 @@ spec:
                 name: runinator-rabbitmq-secret
             - secretRef:
                 name: runinator-app-secret
+            - secretRef:
+                name: runinator-blob-secret
           ports:
             - containerPort: 8080
               name: http

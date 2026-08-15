@@ -11,6 +11,7 @@ tokio = { version = "1", features = ["full"] }
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.18", features = ["v4", "v5", "serde"] }
 reqwest = { version = "0.13.3", default-features = false, features = ["json", "rustls", "blocking"] }
+zip = { version = "7.2", default-features = false }
 sha2 = "0.10"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 x509-parser = "0.18"

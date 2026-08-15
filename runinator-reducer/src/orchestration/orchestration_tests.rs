@@ -568,6 +568,7 @@ fn action_with_key(key: Option<Value>) -> runinator_models::workflows::WorkflowA
         tags: Vec::new(),
         required_labels: Default::default(),
         idempotency_key: key,
+        function_binding: None,
     }
 }
 

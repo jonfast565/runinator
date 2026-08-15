@@ -14,6 +14,7 @@ mod control_flow;
 mod correlation;
 #[cfg(feature = "ws")]
 mod desktop_relay;
+mod functions;
 mod models;
 mod orgs;
 mod packs;
@@ -140,6 +141,7 @@ fn action_command(
             tags: Vec::new(),
             required_labels: Default::default(),
             idempotency_key: None,
+            function_binding: None,
         },
         attempt: 1,
         parameters: json!({}),

@@ -272,10 +272,11 @@ impl<'a> Cursor<'a> {
             return None;
         }
         let provider_end = dot;
-        let provider_start = identifier_start_before(self.source, provider_end)?;
-        if provider_start > 0 && self.source.as_bytes().get(provider_start - 1) == Some(&b'.') {
-            return None;
-        }
+        // the whole dotted prefix, not one segment. there is no guard here against a dotted *value*
+        // path (`config.database.<cursor>`): the caller only uses this when the name resolves to a
+        // real provider, and that lookup is a better discriminator than a syntactic rule that also
+        // rejected every legitimate multi-segment provider.
+        let provider_start = dotted_identifier_start_before(self.source, provider_end)?;
         let provider = self.source[provider_start..provider_end].to_string();
         Some(ActionMemberContext {
             provider,
@@ -292,7 +293,7 @@ impl<'a> Cursor<'a> {
             return None;
         }
         let provider_end = dot;
-        let provider_start = identifier_start_before(before_open, provider_end)?;
+        let provider_start = dotted_identifier_start_before(before_open, provider_end)?;
         let provider = before_open[provider_start..provider_end].to_string();
         let action = before_open[action_start..before_open.len()].to_string();
         if provider.is_empty() || action.is_empty() {
@@ -402,6 +403,27 @@ fn previous_word(source: &str) -> Option<&str> {
         start -= 1;
     }
     (start < end).then_some(&source[start..end])
+}
+
+/// walk back over a dotted provider path, `ident(.ident)*`, and return where it starts.
+///
+/// a provider name is every segment but the last of a call, so `functions.image_tools.resize` has
+/// the two-segment provider `functions.image_tools`. reading only one identifier back would report
+/// the provider as `image_tools`, which matches nothing.
+///
+/// this deliberately does not decide *whether* the prefix is a provider — `config.database.host` is
+/// walked back the same way. the caller settles that by looking the name up, which is the only test
+/// that can tell a dotted provider from a dotted value path.
+fn dotted_identifier_start_before(source: &str, end: usize) -> Option<usize> {
+    let bytes = source.as_bytes();
+    let mut start = identifier_start_before(source, end)?;
+    while start > 0 && bytes[start - 1] == b'.' {
+        let Some(previous) = identifier_start_before(source, start - 1) else {
+            break;
+        };
+        start = previous;
+    }
+    Some(start)
 }
 
 fn identifier_start_before(source: &str, end: usize) -> Option<usize> {

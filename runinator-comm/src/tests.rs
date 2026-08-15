@@ -92,6 +92,7 @@ fn workflow_result_events_round_trip_with_json() {
             tags: Vec::new(),
             required_labels: Default::default(),
             idempotency_key: None,
+            function_binding: None,
         },
         attempt: 1,
         parameters: json!({}),

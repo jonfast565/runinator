@@ -103,7 +103,11 @@ fn action_hover(
     providers: &[ProviderMetadata],
 ) -> Option<WdlHoverResponse> {
     let token = cursor.action_token_at()?;
-    let dot = token.text.find('.')?;
+    // the *last* dot, not the first: the grammar reads every segment but the last as the provider,
+    // so `functions.image_tools.resize` is provider `functions.image_tools` and action `resize`.
+    // splitting on the first dot would report the provider as `functions` and the action as
+    // `image_tools.resize`, and find neither.
+    let dot = token.text.rfind('.')?;
     let provider_name = &token.text[..dot];
     let action_name = &token.text[dot + 1..];
     if word.start < token.start + dot {

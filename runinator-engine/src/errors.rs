@@ -145,6 +145,52 @@ pub const BACKFILL_INVALID_RANGE: ErrorDescriptor = ErrorDescriptor::new(
     "Backfill range is not replayable",
 );
 
+// artifact storage.
+/// artifact bytes could not be written to the object store.
+pub const ARTIFACT_STORE_FAILED: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI150",
+    "artifact.store_failed",
+    "Could not store artifact bytes",
+);
+/// artifact bytes could not be read back. for a pre-blob row this usually means the upload landed on
+/// a different replica's filesystem, which is exactly what the object store removes.
+pub const ARTIFACT_UNREADABLE: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI151",
+    "artifact.unreadable",
+    "Could not read artifact bytes",
+);
+
+// packaged functions.
+/// an artifact digest was not a well-formed `sha256:<hex>`. checked before the digest is used to
+/// build an object key, which is what keeps it from being a path.
+pub const FUNCTION_INVALID_DIGEST: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI160",
+    "function.invalid_digest",
+    "Artifact digest is malformed",
+);
+/// uploaded bytes hashed to something other than the digest they were uploaded under. the whole
+/// pinning story rests on the digest naming these exact bytes, so this is refused, not corrected.
+pub const FUNCTION_DIGEST_MISMATCH: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI161",
+    "function.digest_mismatch",
+    "Artifact bytes do not match their digest",
+);
+/// a publish named an artifact that has not been uploaded.
+pub const FUNCTION_ARTIFACT_MISSING: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI162",
+    "function.artifact_missing",
+    "Artifact has not been uploaded",
+);
+/// artifact bytes could not be written to or read from the object store.
+pub const FUNCTION_ARTIFACT_STORAGE: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI163",
+    "function.artifact_storage",
+    "Could not store or read artifact bytes",
+);
+/// a package, version, export, or alias was not found.
+pub const FUNCTION_NOT_FOUND: ErrorDescriptor =
+    ErrorDescriptor::new("RUNI164", "function.not_found", "Function not found");
+
 pub const DICTIONARY: &[ErrorDescriptor] = &[
     IMPORT_UNKNOWN_SUBFLOW,
     IMPORT_INVALID_TRIGGER_BLACKOUT,
@@ -172,6 +218,13 @@ pub const DICTIONARY: &[ErrorDescriptor] = &[
     BACKFILL_INVALID_RANGE,
     BACKGROUND_LOOP_EXITED,
     MUTEX_MIGRATION_CONFLICT,
+    ARTIFACT_STORE_FAILED,
+    ARTIFACT_UNREADABLE,
+    FUNCTION_INVALID_DIGEST,
+    FUNCTION_DIGEST_MISMATCH,
+    FUNCTION_ARTIFACT_MISSING,
+    FUNCTION_ARTIFACT_STORAGE,
+    FUNCTION_NOT_FOUND,
 ];
 
 /// orchestration engine error dictionary.

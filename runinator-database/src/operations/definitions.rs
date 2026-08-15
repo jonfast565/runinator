@@ -602,4 +602,12 @@ where
             .await?;
         Ok(row.map(|row| mappers::row_to_catalog_item(&row)))
     }
+
+    async fn delete_catalog_item(&self, uri: String) -> Result<bool, SendableError> {
+        let result = sqlx::query(&self.render("DELETE FROM catalog_items WHERE uri = ?"))
+            .bind(uri)
+            .execute(self.pool())
+            .await?;
+        Ok(result.affected() > 0)
+    }
 }

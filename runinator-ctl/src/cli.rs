@@ -162,6 +162,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: FreezeCommands,
     },
+    /// Publish and promote packaged functions.
+    Functions {
+        #[command(subcommand)]
+        command: FunctionCommands,
+    },
     /// Inspect provider/action metadata.
     Providers {
         #[command(subcommand)]
@@ -636,6 +641,46 @@ pub enum FreezeCommands {
     },
     /// Remove a freeze window.
     Delete { window_id: Uuid },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum FunctionCommands {
+    /// Check a package directory and print the digest a publish would upload. Runs offline.
+    Validate {
+        /// Directory holding a `runinator-function.json` manifest.
+        path: PathBuf,
+    },
+    /// Publish one version of a package.
+    Publish {
+        /// Directory holding a `runinator-function.json` manifest.
+        path: PathBuf,
+        /// Alias to move onto the new version, overriding the manifest's.
+        #[arg(long)]
+        alias: Option<String>,
+    },
+    /// List published packages.
+    List,
+    /// Show one package with its versions, aliases, and exports.
+    Show { package: String },
+    /// List every published export as a catalog entry.
+    Catalog,
+    /// List a package's versions.
+    Versions { package: String },
+    /// Point an alias at a version.
+    Alias {
+        package: String,
+        alias: String,
+        /// Target version number. Omitted with no `--from`, the newest version is used.
+        #[arg(long)]
+        version: Option<i64>,
+        /// Target the version another alias currently names.
+        #[arg(long)]
+        from: Option<String>,
+    },
+    /// Delete an alias. The version it named is untouched.
+    Unalias { package: String, alias: String },
+    /// Delete a package and everything under it.
+    Delete { package: String },
 }
 
 #[derive(Debug, Subcommand)]

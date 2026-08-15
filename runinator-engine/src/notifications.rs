@@ -411,6 +411,7 @@ impl<T: DatabaseImpl> NotificationDispatcher<'_, T> {
                 tags: Vec::new(),
                 required_labels: Default::default(),
                 idempotency_key: None,
+                function_binding: None,
             },
             attempt: 0,
             parameters: Value::Null,

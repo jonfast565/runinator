@@ -16,12 +16,14 @@ metrics-exporter-prometheus = { version = "0.16", default-features = false }
 opentelemetry = "0.32"
 utoipa = { version = "5", features = ["axum_extras", "uuid", "chrono"] }
 
+runinator-blob-core = { path = "../runinator-blob-core" }
 runinator-broker-core = { path = "../runinator-broker-core" }
 runinator-reducer = { path = "../runinator-reducer" }
 runinator-database = { path = "../runinator-database" }
 runinator-models = { path = "../runinator-models" }
 runinator-comm = { path = "../runinator-comm" }
 runinator-utilities = { path = "../runinator-utilities" }
+runinator-wdl = { path = "../runinator-wdl" }
 runinator-workflows = { path = "../runinator-workflows" }
 
 [features]

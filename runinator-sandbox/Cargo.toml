@@ -1,0 +1,9 @@
+[package]
+name = "runinator-sandbox"
+version.workspace = true
+edition = "2024"
+
+[dependencies]
+uuid = { version = "1", features = ["v4"] }
+
+runinator-models = { path = "../runinator-models" }

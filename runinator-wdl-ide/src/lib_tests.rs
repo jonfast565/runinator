@@ -830,3 +830,130 @@ fn parameter_defaults_use_typed_placeholders() {
         Some("name: ${\"ada\"}")
     );
 }
+
+// a packaged-function provider is an ordinary dotted-name provider as far as the editor is
+// concerned, which is the point: the catalog carries `functions.<pkg>` and nothing here needs to
+// know it came from a published package rather than a running worker.
+fn function_providers() -> Vec<ProviderMetadata> {
+    vec![ProviderMetadata {
+        name: "functions.image_tools".into(),
+        actions: vec![
+            ActionMetadata::new("resize", "Resize an image")
+                .with_parameters(vec![
+                    ParameterMetadata::required("source", RuninatorType::String),
+                    ParameterMetadata::optional("width", RuninatorType::Integer),
+                ])
+                .with_results(vec![ResultMetadata::new("uri", RuninatorType::String)]),
+        ],
+        metadata: ProviderRuntimeMetadata::default(),
+    }]
+}
+
+fn hover_with(
+    src: &str,
+    marker: &str,
+    providers: Vec<ProviderMetadata>,
+) -> Option<WdlHoverResponse> {
+    let cursor = src.find(marker).expect("marker");
+    let source = src.replacen(marker, "", 1);
+    hover_source(WdlHoverRequest {
+        source,
+        cursor_byte: cursor,
+        providers,
+        settings: Vec::new(),
+    })
+}
+
+#[test]
+fn hovers_a_three_segment_packaged_function_call() {
+    let hover = hover_with(
+        r#"
+        workflow "Hover" v1 {
+            functions.image_tools.re<>size(source: "a.png")
+        }
+    "#,
+        "<>",
+        function_providers(),
+    )
+    .expect("hover");
+
+    // the split is on the *last* dot, matching the grammar: everything before it is the provider.
+    // splitting on the first would look for an action named `image_tools.resize` on a provider
+    // named `functions`, and find neither.
+    assert_eq!(hover.title, "functions.image_tools.resize");
+    assert_eq!(hover.kind, "action");
+    assert_eq!(hover.documentation.as_deref(), Some("Resize an image"));
+}
+
+#[test]
+fn hovering_the_package_half_reports_the_provider() {
+    let hover = hover_with(
+        r#"
+        workflow "Hover" v1 {
+            functions.image<>_tools.resize(source: "a.png")
+        }
+    "#,
+        "<>",
+        function_providers(),
+    )
+    .expect("hover");
+
+    assert_eq!(hover.title, "functions.image_tools");
+    assert_eq!(hover.kind, "provider");
+}
+
+#[test]
+fn completes_packaged_function_exports() {
+    let labels = completion_labels_with_providers(
+        r#"
+        workflow "Complete" v1 {
+            functions.image_tools.<>
+        }
+    "#,
+        "<>",
+        function_providers(),
+    );
+    assert!(
+        labels.iter().any(|label| label == "resize"),
+        "expected the export among {labels:?}"
+    );
+}
+
+#[test]
+fn completes_arguments_inside_a_three_segment_call() {
+    let labels = completion_labels_with_providers(
+        r#"
+        workflow "Complete" v1 {
+            functions.image_tools.resize(<>)
+        }
+    "#,
+        "<>",
+        function_providers(),
+    );
+    // the call context walks the provider back over every dotted segment too; reading only one
+    // would look up a provider named `image_tools` and offer nothing.
+    assert!(
+        labels.iter().any(|label| label == "source"),
+        "expected the declared arguments among {labels:?}"
+    );
+    assert!(labels.iter().any(|label| label == "width"), "{labels:?}");
+}
+
+#[test]
+fn a_dotted_value_path_is_still_not_mistaken_for_a_provider() {
+    // removing the "no dotted providers" guard could have made `config.x.<cursor>` complete as an
+    // action member. what keeps it honest is that the prefix has to resolve to a real provider.
+    let labels = completion_labels_with_providers(
+        r#"
+        workflow "Complete" v1 {
+            node a <- functions.image_tools.resize(source: config.database.<>)
+        }
+    "#,
+        "<>",
+        function_providers(),
+    );
+    assert!(
+        !labels.iter().any(|label| label == "resize"),
+        "a config path must not offer function exports: {labels:?}"
+    );
+}

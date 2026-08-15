@@ -61,6 +61,9 @@ pub enum Capability {
     /// manage freeze windows and replay missed cron slots (trigger backfill).
     #[serde(rename = "schedules:manage")]
     SchedulesManage,
+    /// publish, promote, and delete packaged function versions.
+    #[serde(rename = "functions:manage")]
+    FunctionsManage,
 
     // ---- organization capabilities (admin of the caller's active org, or platform admin) ----
     /// manage membership and roles within the active organization.
@@ -90,6 +93,7 @@ impl Capability {
         Capability::SettingsManage,
         Capability::NotificationsManage,
         Capability::SchedulesManage,
+        Capability::FunctionsManage,
         Capability::OrgMembersManage,
         Capability::OrgNodesScale,
     ];
@@ -117,6 +121,7 @@ impl Capability {
             Capability::SettingsManage => "settings:manage",
             Capability::NotificationsManage => "notifications:manage",
             Capability::SchedulesManage => "schedules:manage",
+            Capability::FunctionsManage => "functions:manage",
             Capability::OrgMembersManage => "org:members:manage",
             Capability::OrgNodesScale => "org:nodes:scale",
         }

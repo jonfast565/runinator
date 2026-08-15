@@ -6,6 +6,7 @@ use runinator_provider_aws::AwsProvider;
 use runinator_provider_console::ConsoleProvider;
 use runinator_provider_db::DbProvider;
 use runinator_provider_email::EmailProvider;
+use runinator_provider_functions::FunctionsProvider;
 use runinator_provider_git::GitProvider;
 use runinator_provider_github::GitHubProvider;
 use runinator_provider_jira::JiraProvider;
@@ -28,6 +29,10 @@ pub fn built_in_providers() -> Vec<StaticProvider> {
         Box::new(ApprovalProvider {}) as StaticProvider,
         Box::new(EmailProvider {}) as StaticProvider,
         Box::new(StdProvider {}) as StaticProvider,
+        // packaged functions. present on every worker so the action is always routable; a worker
+        // with no container runtime fails the invocation with a clear reason rather than the
+        // dispatch failing to resolve a provider at all.
+        Box::new(FunctionsProvider::new()) as StaticProvider,
     ]
 }
 

@@ -5,6 +5,7 @@
 //! service embeds this in-process (behind a flag) and `runinator-background-worker` runs it as a
 //! separate, horizontally-scalable process; both call [`run_background_engine`].
 
+pub mod artifact_storage;
 pub mod audit;
 pub mod errors;
 pub mod events;

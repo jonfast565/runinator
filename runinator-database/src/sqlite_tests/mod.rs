@@ -106,6 +106,7 @@ fn action_command(
             tags: Vec::new(),
             required_labels: Default::default(),
             idempotency_key: None,
+            function_binding: None,
         },
         attempt: 1,
         parameters: runinator_models::json!({}),

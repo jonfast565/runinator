@@ -54,6 +54,19 @@ services:
       - "--database-url"
       - "postgresql://runinator:runinator@postgres:5432/runinator"
 
+  # s3-compatible object store for function-package artifacts and run artifacts. ws and background
+  # both read and write it, so it cannot be a directory on either of them.
+  blob:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: blob
+    environment:
+      RUNINATOR_BLOB_ACCESS_KEY_ID: "localdev"
+      RUNINATOR_BLOB_SECRET_ACCESS_KEY: "localdev-blob-secret"
+    volumes:
+      - blob-data:/var/lib/runinator/blobs
+
   ws:
     build:
       context: ..
@@ -63,6 +76,8 @@ services:
       postgres:
         condition: service_healthy
       broker:
+        condition: service_started
+      blob:
         condition: service_started
       bootstrap:
         condition: service_completed_successfully
@@ -74,6 +89,9 @@ services:
       # serves HTTP/WebSocket only. set to "true" (the default) to fold the engine back in-process
       # and drop the background service.
       RUNINATOR_WS_RUN_ENGINE: "false"
+      RUNINATOR_BLOB_ENDPOINT: "http://blob:9000/"
+      RUNINATOR_BLOB_ACCESS_KEY_ID: "localdev"
+      RUNINATOR_BLOB_SECRET_ACCESS_KEY: "localdev-blob-secret"
     command:
       - "--database"
       - "postgres"
@@ -102,8 +120,14 @@ services:
         condition: service_healthy
       broker:
         condition: service_started
+      blob:
+        condition: service_started
       bootstrap:
         condition: service_completed_successfully
+    environment:
+      RUNINATOR_BLOB_ENDPOINT: "http://blob:9000/"
+      RUNINATOR_BLOB_ACCESS_KEY_ID: "localdev"
+      RUNINATOR_BLOB_SECRET_ACCESS_KEY: "localdev-blob-secret"
     command:
       - "--database"
       - "postgres"
@@ -160,3 +184,4 @@ services:
 
 volumes:
   postgres-data:
+  blob-data:

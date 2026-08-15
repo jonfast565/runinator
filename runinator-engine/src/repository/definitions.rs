@@ -128,7 +128,81 @@ pub async fn validate_workflow_definition_with_catalog<T: DatabaseImpl>(
     runinator_workflows::validate_workflow_with_config(&workflow, &providers, &config_type)
         .map_err(|err| -> SendableError { Box::new(err) })?;
     validate_workflow_subflows(db, &workflow).await?;
+    validate_workflow_function_bindings(db, &workflow).await?;
     Ok(workflow)
+}
+
+/// every packaged-function binding in a definition must name a version that still exists, in an
+/// org the workflow may reach.
+///
+/// placed here rather than in a handler so the ui save, `import_wdl`, a pack import, and a revision
+/// rollback are all covered by the same check — a rollback in particular can restore a definition
+/// whose package was deleted since, and a run that discovers that at dispatch time is far worse
+/// than a save that refuses it.
+async fn validate_workflow_function_bindings<T: DatabaseImpl>(
+    db: &T,
+    workflow: &WorkflowDefinition,
+) -> Result<(), SendableError> {
+    let bindings: Vec<_> = workflow
+        .definition
+        .nodes
+        .iter()
+        .flat_map(|node| {
+            node.action
+                .iter()
+                .chain(node.compensation.iter())
+                .filter_map(|action| {
+                    action
+                        .function_binding
+                        .as_ref()
+                        .map(|binding| (node.id.clone(), binding))
+                })
+        })
+        .collect();
+    if bindings.is_empty() {
+        return Ok(());
+    }
+    for (node_id, binding) in bindings {
+        let Some(export) = db.fetch_function_export(binding.export_id).await? else {
+            return Err(crate::errors::FUNCTION_NOT_FOUND.error(format!(
+                "node '{node_id}' calls '{}', which is no longer published",
+                binding.call_path()
+            )));
+        };
+        let Some(version) = db.fetch_function_version(export.version_id).await? else {
+            return Err(crate::errors::FUNCTION_NOT_FOUND.error(format!(
+                "node '{node_id}' calls '{}', whose version is missing",
+                binding.call_path()
+            )));
+        };
+        // the binding pins a digest, so a version that somehow points at different bytes is a
+        // different thing than the workflow was compiled against.
+        if version.artifact_digest != binding.artifact_digest {
+            return Err(crate::errors::FUNCTION_NOT_FOUND.error(format!(
+                "node '{node_id}' pins artifact {} for '{}', but that version now holds {}",
+                binding.artifact_digest,
+                binding.call_path(),
+                version.artifact_digest
+            )));
+        }
+        let Some(package) = db.fetch_function_package_by_id(version.package_id).await? else {
+            return Err(crate::errors::FUNCTION_NOT_FOUND.error(format!(
+                "node '{node_id}' calls '{}', whose package is missing",
+                binding.call_path()
+            )));
+        };
+        // a global package (`None`) is reachable from any org; an org-owned one only from its own.
+        // note the direction: a `None` *workflow* org must not match every package, or a
+        // platform-scoped workflow would be able to call another tenant's private code.
+        let reachable = package.org_id.is_none() || package.org_id == workflow.org_id;
+        if !reachable {
+            return Err(crate::errors::FUNCTION_NOT_FOUND.error(format!(
+                "node '{node_id}' calls '{}', which belongs to another organization",
+                binding.call_path()
+            )));
+        }
+    }
+    Ok(())
 }
 
 async fn validate_workflow_subflows<T: DatabaseImpl>(
@@ -163,13 +237,33 @@ pub fn validate_workflow_definition(
     Ok(workflow)
 }
 
+/// every authored workflow.
+///
+/// generated workflows (a packaged function's adapter) are filtered out: they exist so an http
+/// invocation has a run to start, and listing them would put one entry per published export into a
+/// workflow list nobody authored.
 pub async fn fetch_workflows<T: DatabaseImpl>(
     db: &T,
+) -> Result<Vec<WorkflowDefinition>, SendableError> {
+    Ok(fetch_workflows_with_managed(db, false).await?)
+}
+
+/// every workflow, optionally including the generated ones.
+///
+/// filtered in rust after the fetch, the way the org and grant filters already are, rather than as
+/// a json predicate in sql — the marker lives inside a json column and the three dialects do not
+/// agree on how to reach into one.
+pub async fn fetch_workflows_with_managed<T: DatabaseImpl>(
+    db: &T,
+    include_managed: bool,
 ) -> Result<Vec<WorkflowDefinition>, SendableError> {
     let workflows = db.fetch_workflows().await?;
     let mut normalized = Vec::with_capacity(workflows.len());
     for workflow in workflows {
-        normalized.push(normalize_persisted_workflow(db, workflow).await?);
+        let workflow = normalize_persisted_workflow(db, workflow).await?;
+        if include_managed || !super::function_adapters::is_adapter_workflow(&workflow) {
+            normalized.push(workflow);
+        }
     }
     Ok(normalized)
 }

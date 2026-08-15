@@ -64,6 +64,8 @@ spec:
                 name: runinator-rabbitmq-secret
             - secretRef:
                 name: runinator-app-secret
+            - secretRef:
+                name: runinator-blob-secret
           resources:
             requests:
               cpu: "100m"

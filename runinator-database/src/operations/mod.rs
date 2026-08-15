@@ -21,6 +21,10 @@ use runinator_models::{
     },
     billing::{OrgQuota, OrgResourceGroup, UsageSample},
     errors::SendableError,
+    functions::{
+        FunctionAdapterWorkflow, FunctionAlias, FunctionArtifact, FunctionCatalogEntry,
+        FunctionExport, FunctionPackage, FunctionVersion, NewFunctionVersion,
+    },
     notifications::{
         NewNotification, NewNotificationPolicy, Notification, NotificationChannel,
         NotificationDelivery, NotificationDeliveryStatus, NotificationEvent, NotificationPolicy,
@@ -1057,6 +1061,7 @@ mod database_impl;
 mod definitions;
 mod dispatch;
 mod execution_state_sql;
+mod functions;
 mod notifications;
 mod orgs;
 mod reducer;

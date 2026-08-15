@@ -25,6 +25,7 @@ mod inputs;
 mod modifiers;
 mod namespaces;
 mod nodes;
+mod packaged_functions;
 mod parsing;
 mod schedules;
 mod settings;

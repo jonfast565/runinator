@@ -11,5 +11,6 @@ pub use error::{ApiError, Result};
 pub use locator::{BlockingServiceLocator, ServiceLocator, StaticLocator};
 pub use replicas::{ReplicaClient, ReplicaServiceConfig, ReplicaSession};
 pub use types::{
-    RunArtifactPayload, RunChunkPayload, RunStatusPayload, WorkflowNodeRunStatusPayload,
+    ArtifactContentResponse, RunArtifactPayload, RunChunkPayload, RunStatusPayload,
+    WorkflowNodeRunStatusPayload,
 };

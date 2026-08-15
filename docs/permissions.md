@@ -46,6 +46,7 @@ synthetic platform admin, so nothing is gated.
 | `settings:manage` | manage platform/admin settings | command center admin settings |
 | `notifications:manage` | create, update, and delete notification (failure-alerting) policies | `handlers/notifications.rs` |
 | `schedules:manage` | manage freeze windows and replay missed cron slots (trigger backfill) | `handlers/schedules.rs` |
+| `functions:manage` | publish, promote, and delete packaged function versions | `handlers/functions.rs` |
 
 ### Organization capabilities (active-org admin, or platform admin)
 

@@ -30,11 +30,22 @@ pub const API_SCHEDULER_WORKFLOW_TRIGGER_FIRINGS_CLAIM: &str =
     "/scheduler/workflow_trigger_firings/claim";
 pub const API_FREEZE_WINDOWS: &str = "/freeze_windows";
 pub const API_PIPELINES: &str = "/pipelines";
+/// packaged function packages: list and publish.
+pub const API_FUNCTIONS: &str = "/functions";
+/// the flattened catalog of every published export, which is what a compile types calls against.
+pub const API_FUNCTIONS_CATALOG: &str = "/functions/catalog";
+/// resolve one export to what a worker needs to run it.
+pub const API_FUNCTION_EXPORTS: &str = "/function_exports";
+/// content-addressed package archives, keyed by `sha256:<hex>`.
+pub const API_FUNCTION_ARTIFACTS: &str = "/function_artifacts";
 pub const API_WORKFLOW_RUNS: &str = "/workflow_runs";
 pub const API_SCHEDULER_WORKFLOW_RUNS_CLAIM: &str = "/scheduler/workflow_runs/claim";
 pub const API_SCHEDULER_READY_NODES_CLAIM: &str = "/scheduler/ready_nodes/claim";
 pub const API_RUNS: &str = "/runs";
 pub const API_ARTIFACTS: &str = "/artifacts";
+/// store artifact bytes and get back the uri to record against them. records no row: the caller's
+/// artifact is already accounted for by whatever recorded it.
+pub const API_ARTIFACTS_CONTENT: &str = "/artifacts/content";
 pub const API_SCHEDULER_ACTION_DISPATCHES: &str = "/scheduler/action_dispatches";
 pub const API_SCHEDULER_ACTION_DISPATCHES_PENDING: &str = "/scheduler/action_dispatches/pending";
 pub const API_SCHEDULER_ACTION_DISPATCHES_CLAIM: &str = "/scheduler/action_dispatches/claim";

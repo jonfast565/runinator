@@ -116,7 +116,14 @@ impl ActionMetadata {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ParameterMetadata {
     pub name: String,
-    #[serde(alias = "value_type", deserialize_with = "deserialize_type")]
+    // `type` is accepted as well as `ty`/`value_type`: these schemas are hand-written in function
+    // manifests, and `ty` is a rust field name rather than something an author would reach for.
+    // serialization still emits `ty`, so nothing downstream sees a second spelling.
+    #[serde(
+        alias = "value_type",
+        alias = "type",
+        deserialize_with = "deserialize_type"
+    )]
     pub ty: RuninatorType,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
@@ -218,7 +225,14 @@ fn validate_action_metadata(
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ResultMetadata {
     pub name: String,
-    #[serde(alias = "value_type", deserialize_with = "deserialize_type")]
+    // `type` is accepted as well as `ty`/`value_type`: these schemas are hand-written in function
+    // manifests, and `ty` is a rust field name rather than something an author would reach for.
+    // serialization still emits `ty`, so nothing downstream sees a second spelling.
+    #[serde(
+        alias = "value_type",
+        alias = "type",
+        deserialize_with = "deserialize_type"
+    )]
     pub ty: RuninatorType,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,

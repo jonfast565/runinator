@@ -8,7 +8,7 @@ mod service;
 
 use clap::Parser;
 
-use crate::cli::{Cli, Commands, WorkflowCommands};
+use crate::cli::{Cli, Commands, FunctionCommands, WorkflowCommands};
 use service::CtlService;
 
 #[tokio::main]
@@ -36,6 +36,10 @@ async fn run_process() -> commands::Result<()> {
                     filter,
                 },
         } => commands::workflows_test(file, tests, filter.as_deref(), cli.json),
+        // `functions validate` archives and checks a package directory locally; no server needed.
+        Commands::Functions {
+            command: FunctionCommands::Validate { path },
+        } => commands::functions_validate(path, cli.json),
         _ => {
             let client = auth::build_authenticated_client(&cli).await?;
             commands::run(&client, &cli).await

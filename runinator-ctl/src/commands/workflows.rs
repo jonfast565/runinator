@@ -205,8 +205,14 @@ async fn apply_workflow_source(
     // a .wdl/.wdlm/directory is compiled client-side, zipped, and uploaded as one compiled pack;
     // json is handled below.
     if pack::is_pack_source(file) {
-        let providers = client.fetch_providers().await.unwrap_or_default();
-        let bundle = pack::load_workflow_bundle_with_providers(file, &providers)?;
+        // both halves of the catalog: provider metadata types ordinary actions, and the published
+        // function entries are what a `functions.<pkg>.<export>(...)` call binds against. fetched
+        // together because a compile given only one silently loses the ability to resolve the other.
+        let catalog = pack::PackCatalog {
+            providers: client.fetch_providers().await.unwrap_or_default(),
+            functions: client.fetch_function_catalog().await.unwrap_or_default(),
+        };
+        let bundle = pack::load_workflow_bundle_with_catalog(file, &catalog)?;
         // any settings (`settings.wdls`/`.json`) always ride in the same compiled pack zip.
         let settings = pack::load_pack_settings(file)?;
         // any pipelines (`.wdlp` files) ride along too; the backend upserts them and materializes

@@ -31,6 +31,7 @@ use crate::agent::{
 use crate::broker::broker_error;
 use crate::events::{ActionOutcome, WorkerEvent, WorkerEventSink};
 use crate::executor;
+use crate::function_cache::FunctionCache;
 use crate::lease::ExecutorLeaseManager;
 use crate::metrics;
 use crate::output_sink::RunOutputSink;
@@ -138,6 +139,9 @@ pub async fn start_worker_loop(runtime: WorkerRuntime) -> Result<(), SendableErr
     let restart_requested = Arc::new(AtomicBool::new(false));
     let directive_state_changed = Arc::new(Notify::new());
     let executor_leases = ExecutorLeaseManager::new(api_client.clone(), replica_id);
+    // one cache per worker, shared by every delivery: it is keyed by digest, so two concurrent
+    // invocations of the same version stage one copy rather than racing to unpack two.
+    let function_cache = Arc::new(FunctionCache::new(api_client.clone()));
     let control_task = tokio::spawn(run_control_loop(
         broker.clone(),
         control_profile,
@@ -249,6 +253,7 @@ pub async fn start_worker_loop(runtime: WorkerRuntime) -> Result<(), SendableErr
         let executor_leases = executor_leases.clone();
         let events = Arc::clone(&events);
         let result_outbox = Arc::clone(&result_outbox);
+        let function_cache = Arc::clone(&function_cache);
         deliveries.spawn(async move {
             let _permit = permit;
             if let Err(err) = process_delivery(
@@ -262,6 +267,7 @@ pub async fn start_worker_loop(runtime: WorkerRuntime) -> Result<(), SendableErr
                 executor_leases,
                 events,
                 result_outbox,
+                function_cache,
             )
             .await
             {
@@ -497,6 +503,7 @@ async fn process_delivery(
     executor_leases: ExecutorLeaseManager,
     events: Arc<dyn WorkerEventSink>,
     result_outbox: Arc<dyn ResultOutbox>,
+    function_cache: Arc<FunctionCache>,
 ) -> Result<(), SendableError> {
     // link this execution span to the trace that dispatched the action (w3c context from the broker
     // message). a no-op when the dispatcher had otel off.
@@ -541,6 +548,9 @@ async fn process_delivery(
         command.clone(),
         broker.clone(),
         result_outbox,
+        Some(crate::artifact_upload::ArtifactUploader::new(
+            api_client.clone(),
+        )),
         tokio::runtime::Handle::current(),
     );
     // acquire the execution lease before anything observable runs. a redelivered or timeout-raced
@@ -714,6 +724,77 @@ async fn process_delivery(
             return Ok(());
         }
     };
+    // an action carrying a function binding needs its published code on this machine before the
+    // provider can mount it. staging happens after secret resolution and before execution, in the
+    // same place and for the same reason: it is a prerequisite the provider must not have to fetch
+    // for itself.
+    let parameters =
+        match stage_packaged_function(&function_cache, &api_client, &action, &command, parameters)
+            .await
+        {
+            Ok(parameters) => parameters,
+            Err(err) => {
+                let message = format!("Failed to stage packaged function: {err}");
+                error!(
+                    node_run_id = %command.workflow_node_run_id,
+                    error_code = error_code_or_unknown(err.as_ref()),
+                    "{}",
+                    message
+                );
+                events.handle(WorkerEvent::ActionFinished {
+                    workflow_run_id: command.workflow_run_id,
+                    node_id: command.node_id.clone(),
+                    node_run_id: command.workflow_node_run_id,
+                    provider: action.provider.clone(),
+                    function: action.function.clone(),
+                    outcome: ActionOutcome::Failed,
+                    duration_ms: 0,
+                    message: Some(message.clone()),
+                });
+                let output_json = TaskStatusOutput {
+                    success: false,
+                    duration_ms: None,
+                    message: Some(message.clone()),
+                }
+                .to_wire_value()?;
+                // the provider never ran, so free the reservation rather than leaving the key blocked.
+                if let Some(key) = idempotency_key.as_deref() {
+                    crate::idempotency::release(&api_client, key, command.workflow_node_run_id)
+                        .await;
+                }
+                if let Err(err) = sink
+                    .publish_status(
+                        WorkflowStatus::Failed,
+                        Some(output_json),
+                        Some(message.clone()),
+                    )
+                    .await
+                {
+                    error!(
+                        node_run_id = %command.workflow_node_run_id,
+                        "failed to publish failed status: {}",
+                        err
+                    );
+                    in_flight.lock().await.remove(&command.workflow_node_run_id);
+                    nack_action_delivery(
+                        broker,
+                        consumer_id,
+                        &executor_leases,
+                        &command,
+                        delivery.delivery_id,
+                    )
+                    .await?;
+                    return Err(broker_error("publish_result", err));
+                }
+                broker
+                    .ack(consumer_id, delivery.delivery_id)
+                    .await
+                    .map_err(|err| broker_error("ack", err))?;
+                executor_leases.release_after_settlement(&command).await;
+                in_flight.lock().await.remove(&command.workflow_node_run_id);
+                return Ok(());
+            }
+        };
     let result = {
         // raise the in-flight gauge only around actual execution, so it reflects running providers
         // rather than deliveries parked on lease/secret checks.
@@ -1049,4 +1130,34 @@ async fn settle_from_idempotent_replay(
     executor_leases.release_after_settlement(command).await;
     in_flight.lock().await.remove(&command.workflow_node_run_id);
     Ok(())
+}
+
+/// stage a packaged function's code and rewrite the parameters into what the provider reads.
+///
+/// a plain action passes straight through: the binding is what marks a dispatch as packaged code,
+/// and an action without one must be untouched by any of this.
+async fn stage_packaged_function(
+    cache: &Arc<FunctionCache>,
+    api_client: &AsyncApiClient<StaticLocator>,
+    action: &runinator_models::workflows::WorkflowAction,
+    command: &runinator_comm::ActionCommand,
+    parameters: runinator_models::value::Value,
+) -> Result<runinator_models::value::Value, SendableError> {
+    let Some(binding) = action.function_binding.as_ref() else {
+        return Ok(parameters);
+    };
+    // the authored arguments arrive under `input`; everything else on the action is ours.
+    let authored = parameters
+        .get(crate::function_cache::INPUT_KEY)
+        .cloned()
+        .unwrap_or(parameters.clone());
+    let context = runinator_models::json!({
+        "package": binding.package_name.clone(),
+        "export": binding.export_name.clone(),
+        "version": binding.version,
+        "workflow_run_id": command.workflow_run_id,
+        "workflow_node_run_id": command.workflow_node_run_id,
+        "attempt": command.attempt,
+    });
+    crate::function_cache::prepare_invocation(cache, api_client, binding, authored, context).await
 }

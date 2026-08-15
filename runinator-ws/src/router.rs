@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use axum::response::IntoResponse;
 use axum::{Extension, Router, extract::DefaultBodyLimit, middleware::from_fn_with_state};
+use runinator_blob::BlobStore;
 use runinator_broker::Broker;
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_provisioner::ProvisionerRegistry;
@@ -19,19 +20,21 @@ use crate::auth::{AuthConfig, AuthState, auth_middleware};
 use crate::events::EventSender;
 use crate::handlers::{
     action_dispatches, agents, artifacts, auth, automation, billing, catalog, catalog_metadata,
-    credentials, debug, health, node_runs, notifications, observability, orgs, packs, pipelines,
-    providers, provisioning, replicas, runs, schedules, supervisor, triggers, wdl, webhook,
-    workflows,
+    credentials, debug, function_invocations, functions, health, node_runs, notifications,
+    observability, orgs, packs, pipelines, providers, provisioning, replicas, runs, schedules,
+    supervisor, triggers, wdl, webhook, workflows,
 };
 use crate::models::{ApiError, ApiResponse};
 use crate::overload::{OverloadConfig, apply_overload_protection};
 use crate::rate_limit::{RateLimitConfig, RateLimiter, rate_limit_middleware};
 use crate::{openapi, websocket};
 
+#[allow(clippy::too_many_arguments)] // router assembly keeps each injected runtime dependency explicit.
 pub fn build_router<T: DatabaseImpl>(
     pool: Arc<T>,
     events: EventSender,
     broker: Arc<dyn Broker>,
+    blobs: Arc<dyn BlobStore>,
     provisioner: Arc<ProvisionerRegistry>,
     auth: AuthConfig,
     rate_limit: RateLimitConfig,
@@ -70,6 +73,8 @@ pub fn build_router<T: DatabaseImpl>(
         .merge(observability::routes(pool.clone()))
         .merge(credentials::routes(pool.clone()))
         .merge(providers::routes(pool.clone()))
+        .merge(functions::routes(pool.clone()))
+        .merge(function_invocations::routes(pool.clone()))
         .merge(catalog_metadata::routes())
         .merge(webhook::routes(pool.clone()))
         .merge(auth::routes(pool.clone()))
@@ -77,6 +82,7 @@ pub fn build_router<T: DatabaseImpl>(
         .merge(billing::routes(pool.clone()))
         .layer(Extension(events))
         .layer(Extension(broker))
+        .layer(Extension(blobs))
         .layer(Extension(provisioner))
         .layer(Extension(auth_config_arc.clone()))
         // the rate limiter is layered inside the auth middleware so it can key by the resolved

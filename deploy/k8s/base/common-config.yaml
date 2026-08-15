@@ -21,3 +21,8 @@ data:
   # runinator-api (worker, waker, background, ctl). bound a hung/slow ws so callers fail fast.
   RUNINATOR_API_TIMEOUT_SECONDS: "60"
   RUNINATOR_API_CONNECT_TIMEOUT_SECONDS: "10"
+  # the object store. every pod that reads or writes artifacts (ws, background) talks to it; leaving
+  # this unset would make each pod fall back to its own local directory, which is exactly the
+  # per-replica split the blob service exists to remove.
+  RUNINATOR_BLOB_ENDPOINT: "http://runinator-blob.runinator.svc.cluster.local:9000/"
+  RUNINATOR_BLOB_REGION: "us-east-1"

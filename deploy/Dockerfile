@@ -12,6 +12,7 @@
 #   docker build -f deploy/Dockerfile --target ctl        -t runinator-ctl:dev        .
 #   docker build -f deploy/Dockerfile --target bootstrap  -t runinator-bootstrap:dev  .
 #   docker build -f deploy/Dockerfile --target broker     -t runinator-broker:dev     .
+#   docker build -f deploy/Dockerfile --target blob       -t runinator-blob:dev       .
 #
 # with BuildKit (the default) the builder stage layer is shared across these target builds, so the
 # expensive compile runs once for the whole set.
@@ -55,6 +56,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
         -p runinator-ctl \
         -p runinator-bootstrap \
         -p runinator-broker \
+        -p runinator-blob \
         --features runinator-ws/rabbitmq,runinator-ws/kubernetes,runinator-background-worker/rabbitmq,runinator-worker/rabbitmq,runinator-waker/rabbitmq \
     && mkdir -p /out \
     && cp target/release/runinator-ws \
@@ -65,6 +67,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
           target/release/runinatorctl \
           target/release/runinator-bootstrap \
           target/release/runinator-broker \
+          target/release/runinator-blob \
           /out/
 
 # ---- shared runtime base ----
@@ -123,6 +126,17 @@ ENV RUNINATOR_BROKER_TRANSPORT=tcp \
 EXPOSE 7070
 USER runinator
 ENTRYPOINT ["/usr/local/bin/runinator-broker"]
+
+# ---- blob: s3-compatible object store over the container filesystem ----
+FROM runtime-base AS blob
+RUN mkdir -p /var/lib/runinator/blobs && chown -R runinator:runinator /var/lib/runinator
+COPY --from=builder --chown=root:root --chmod=755 /out/runinator-blob /usr/local/bin/runinator-blob
+ENV RUNINATOR_BLOB_ADDR=0.0.0.0:9000 \
+    RUNINATOR_BLOB_DATA_DIR=/var/lib/runinator/blobs
+EXPOSE 9000
+VOLUME ["/var/lib/runinator/blobs"]
+USER runinator
+ENTRYPOINT ["/usr/local/bin/runinator-blob"]
 
 # ---- ctl: short-lived pack importer ----
 FROM runtime-base AS ctl

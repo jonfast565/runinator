@@ -3,6 +3,10 @@ use runinator_comm::{AgentDirectiveKind, AgentDirectiveRecord};
 use runinator_models::value::Value;
 use runinator_models::{
     bundles::{PackImportResult, ProviderBundle, SecretBundle},
+    functions::{
+        FunctionAlias, FunctionArtifact, FunctionCatalogEntry, FunctionInvocationTarget,
+        FunctionPackage, FunctionPackageDetail, FunctionVersion,
+    },
     notifications::{Notification, NotificationDelivery, NotificationPolicy},
     pipelines::{Pipeline, PipelineRun, PipelineRunDetail, PipelineTrigger},
     providers::ProviderMetadata,
@@ -142,6 +146,14 @@ pub enum ApiResponse {
     FreezeWindow(FreezeWindow),
     FreezeWindowList(Vec<FreezeWindow>),
     Backfill(BackfillResponse),
+    FunctionPackageList(Vec<FunctionPackage>),
+    FunctionPackage(FunctionPackageDetail),
+    FunctionVersion(FunctionVersion),
+    FunctionAlias(FunctionAlias),
+    FunctionArtifact(FunctionArtifact),
+    FunctionCatalog(Vec<FunctionCatalogEntry>),
+    // boxed: it nests a whole export, and an unboxed variant would widen every ApiResponse.
+    FunctionInvocationTarget(Box<FunctionInvocationTarget>),
 }
 
 #[derive(Debug, Deserialize)]

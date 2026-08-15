@@ -136,6 +136,7 @@ fn sample_action(workflow_run_id: Uuid, workflow_node_run_id: Uuid) -> ActionCom
             tags: Vec::new(),
             required_labels: Default::default(),
             idempotency_key: None,
+            function_binding: None,
         },
         attempt: 1,
         parameters: runinator_models::json!({}),
@@ -172,6 +173,7 @@ pub(crate) async fn assert_dialect_parity<T: ExecutionStateParityDb>(db: &T) {
     assert_workflow_mutex_claim(db, &after).await;
     assert_agent_enrollment_lifecycle(db).await;
     assert_agent_directive_lifecycle(db).await;
+    assert_function_lifecycle(db, id).await;
 
     // the legacy run mapper reads a column named `trigger`, which is reserved in mysql and has to
     // be quoted per dialect; an unquoted build fails here rather than in production.
@@ -1204,6 +1206,25 @@ async fn assert_catalog_upsert<T: DatabaseImpl>(db: &T) {
         Some("t2"),
         "the uri unique key must update in place"
     );
+
+    // a mirror row (a packaged function's `functions.<pkg>` provider metadata) has to be removable
+    // when the thing it mirrors is deleted, or it outlives its package advertising exports nothing
+    // can run. `affected()` is what reports whether anything was deleted, and mysql and postgres
+    // disagree enough about row counts that this is worth asserting on every engine.
+    assert!(
+        db.delete_catalog_item("cat://x".into()).await.unwrap(),
+        "deleting an existing catalog item must report that it happened"
+    );
+    assert!(
+        db.fetch_catalog_item("cat://x".into())
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        !db.delete_catalog_item("cat://x".into()).await.unwrap(),
+        "deleting a missing catalog item must report that nothing happened"
+    );
 }
 
 // an insert has to read its row back, and an update has to do so even when the write changed
@@ -1266,4 +1287,137 @@ async fn assert_automation_records<T: DatabaseImpl>(db: &T, run_id: Uuid) {
         changed.get("title").and_then(Value::as_str),
         Some("Updated title")
     );
+}
+
+/// publish, alias, catalog, and the two refusals that keep a pinned version runnable.
+///
+/// exercised on every engine because the identity key, the version-number assignment, and the
+/// alias upsert all lean on conflict handling that each dialect spells differently.
+async fn assert_function_lifecycle<T: DatabaseImpl>(db: &T, workflow_id: Uuid) {
+    use runinator_models::functions::{
+        FunctionArtifact, NewFunctionExport, NewFunctionPackage, NewFunctionVersion,
+    };
+    use runinator_models::providers::{ParameterMetadata, ResultMetadata};
+    use runinator_models::types::RuninatorType;
+
+    let digest = format!("sha256:{}", "1".repeat(64));
+    let artifact = FunctionArtifact {
+        digest: digest.clone(),
+        size_bytes: 1234,
+        uri: format!("blob://runinator-function-artifacts/sha256/{digest}.zip"),
+        media_type: "application/zip".into(),
+        created_at: Utc::now(),
+    };
+    let stored = db.upsert_function_artifact(&artifact).await.unwrap();
+    assert_eq!(stored.digest, digest);
+    // content-addressed: storing the same bytes twice is a no-op rather than a duplicate or an error.
+    db.upsert_function_artifact(&artifact).await.unwrap();
+
+    let request = NewFunctionVersion {
+        package: NewFunctionPackage {
+            name: "image-tools".into(),
+            namespace: None,
+            description: Some("image helpers".into()),
+            org_id: None,
+        },
+        artifact_digest: digest.clone(),
+        manifest: runinator_models::json!({ "package": { "name": "image-tools" } }),
+        runtime: runinator_models::functions::FunctionRuntimeSpec::new("python3.13"),
+        exports: vec![NewFunctionExport {
+            name: "resize".into(),
+            handler: "src.images.resize".into(),
+            description: Some("resize an image".into()),
+            input: vec![ParameterMetadata::required("source", RuninatorType::String)],
+            output: vec![ResultMetadata::new("uri", RuninatorType::String)],
+            limits: Default::default(),
+        }],
+        alias: Some("production".into()),
+    };
+
+    let first = db.publish_function_version(&request).await.unwrap();
+    assert_eq!(first.version, 1);
+    assert_eq!(first.artifact_digest, digest);
+    assert_eq!(first.runtime.runtime, "python3.13");
+
+    // republishing the same package must advance the version rather than collide on identity.
+    let second = db.publish_function_version(&request).await.unwrap();
+    assert_eq!(second.version, 2);
+    assert_eq!(second.package_id, first.package_id);
+
+    let package = db
+        .fetch_function_package(None, None, "image-tools")
+        .await
+        .unwrap()
+        .expect("package by identity");
+    assert_eq!(package.id, first.package_id);
+    assert_eq!(package.latest_version, Some(2));
+
+    let versions = db.fetch_function_versions(package.id).await.unwrap();
+    assert_eq!(versions.len(), 2);
+    // newest first, so a listing shows the current release at the top.
+    assert_eq!(versions[0].version, 2);
+
+    let exports = db.fetch_function_exports(first.id).await.unwrap();
+    assert_eq!(exports.len(), 1);
+    assert_eq!(exports[0].name, "resize");
+    assert_eq!(exports[0].input.len(), 1);
+    assert!(
+        !exports[0].limits.network,
+        "network stays opt-in through a round trip"
+    );
+
+    // publishing moved the alias to the newest version.
+    let alias = db
+        .fetch_function_alias(package.id, "production")
+        .await
+        .unwrap()
+        .expect("alias");
+    assert_eq!(alias.version, 2);
+
+    // and it can be pointed back, which is what a rollback is.
+    let rolled_back = db
+        .set_function_alias(package.id, "production", first.id)
+        .await
+        .unwrap();
+    assert_eq!(rolled_back.version, 1);
+    assert_eq!(
+        db.fetch_function_aliases(package.id).await.unwrap().len(),
+        1
+    );
+
+    let catalog = db.fetch_function_catalog().await.unwrap();
+    assert_eq!(catalog.len(), 2, "one entry per export per version");
+    let pinned = catalog
+        .iter()
+        .find(|entry| entry.version == 1)
+        .expect("version 1 stays in the catalog so a pinned workflow still type-checks");
+    assert_eq!(pinned.provider_name(), "functions.image-tools");
+    assert_eq!(pinned.aliases, vec!["production".to_string()]);
+    assert_eq!(pinned.binding().artifact_digest, digest);
+
+    // an artifact a published version pins cannot be deleted out from under it.
+    assert!(db.delete_function_artifact(&digest).await.is_err());
+
+    let adapter = db
+        .upsert_function_adapter_workflow(pinned.export_id, workflow_id)
+        .await
+        .unwrap();
+    assert_eq!(adapter.workflow_id, workflow_id);
+    assert_eq!(
+        db.fetch_function_adapter_workflow(pinned.export_id)
+            .await
+            .unwrap()
+            .map(|record| record.workflow_id),
+        Some(workflow_id)
+    );
+
+    assert!(
+        db.delete_function_alias(package.id, "production")
+            .await
+            .unwrap()
+    );
+    assert!(db.delete_function_package(package.id).await.unwrap());
+    // the package is gone, so nothing pins the artifact and it becomes collectable.
+    assert!(db.fetch_function_catalog().await.unwrap().is_empty());
+    assert!(db.delete_function_artifact(&digest).await.unwrap());
 }

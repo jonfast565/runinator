@@ -307,6 +307,10 @@ pub enum TriggerSourceKind {
     Chained,
     /// a member workflow run started as part of a pipeline run.
     Pipeline,
+    /// a run of a packaged function's adapter workflow, started by a direct http invocation.
+    Function,
+    /// a run started from a console cell.
+    Console,
 }
 
 impl TriggerSourceKind {
@@ -323,6 +327,8 @@ impl TriggerSourceKind {
             Self::Map => "map",
             Self::Chained => "chained",
             Self::Pipeline => "pipeline",
+            Self::Function => "function",
+            Self::Console => "console",
         }
     }
 }
@@ -343,6 +349,8 @@ impl TryFrom<&str> for TriggerSourceKind {
             "map" => Ok(Self::Map),
             "chained" => Ok(Self::Chained),
             "pipeline" => Ok(Self::Pipeline),
+            "function" => Ok(Self::Function),
+            "console" => Ok(Self::Console),
             other => Err(format!("Unknown trigger source kind '{other}'")),
         }
     }

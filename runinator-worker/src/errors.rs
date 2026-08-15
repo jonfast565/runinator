@@ -81,6 +81,26 @@ pub const BROKER_FEATURE_DISABLED: ErrorDescriptor = ErrorDescriptor::new(
     "Broker backend compiled out",
 );
 
+/// a packaged function's code could not be downloaded or unpacked onto this worker.
+pub const FUNCTION_STAGING_FAILED: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI220",
+    "worker.function.staging_failed",
+    "Could not stage packaged function",
+);
+/// an artifact archive did not match its digest, or tried to write outside its own directory.
+/// treated as hostile rather than corrupt: both are reasons not to run it.
+pub const FUNCTION_UNTRUSTED_ARCHIVE: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI221",
+    "worker.function.untrusted_archive",
+    "Package archive failed verification",
+);
+/// the action carried a function binding, but this worker could not resolve its published version.
+pub const FUNCTION_BINDING_UNRESOLVED: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI222",
+    "worker.function.binding_unresolved",
+    "Function binding could not be resolved",
+);
+
 pub const DICTIONARY: &[ErrorDescriptor] = &[
     RUNTIME_BUILD,
     SIGNAL_CTRL_C,
@@ -98,6 +118,9 @@ pub const DICTIONARY: &[ErrorDescriptor] = &[
     BROKER_RABBITMQ,
     BROKER_OPERATION,
     BROKER_FEATURE_DISABLED,
+    FUNCTION_STAGING_FAILED,
+    FUNCTION_UNTRUSTED_ARCHIVE,
+    FUNCTION_BINDING_UNRESOLVED,
 ];
 
 /// worker engine error dictionary.

@@ -17,6 +17,7 @@ resources:
   - ws.yaml
   - background.yaml
   - archiver.yaml
+  - blob.yaml
   - waker.yaml
   - worker.yaml
   - pack-import.yaml
@@ -34,6 +35,8 @@ images:
   - name: runinator-worker
     newTag: dev
   - name: runinator-archiver
+    newTag: dev
+  - name: runinator-blob
     newTag: dev
   - name: runinator-ctl
     newTag: dev

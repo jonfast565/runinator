@@ -25,3 +25,14 @@ pub struct WorkflowNodeRunStatusPayload {
 
 pub type RunChunkPayload = NewRunChunk;
 pub type RunArtifactPayload = NewRunArtifact;
+
+/// what `POST /artifacts/content` returns: where the bytes landed and what they hashed to.
+///
+/// the caller records `uri` on the artifact it is already reporting; `sha256` lets it verify the
+/// round trip without re-reading the object.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArtifactContentResponse {
+    pub uri: String,
+    pub size_bytes: i64,
+    pub sha256: String,
+}

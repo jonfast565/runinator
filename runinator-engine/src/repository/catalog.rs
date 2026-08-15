@@ -23,6 +23,13 @@ pub async fn fetch_catalog_item<T: DatabaseImpl>(
     db.fetch_catalog_item(uri).await
 }
 
+pub async fn delete_catalog_item<T: DatabaseImpl>(
+    db: &T,
+    uri: &str,
+) -> Result<bool, SendableError> {
+    db.delete_catalog_item(uri.to_string()).await
+}
+
 pub async fn create_automation_record<T: DatabaseImpl>(
     db: &T,
     record_type: &str,

@@ -3,6 +3,7 @@
 //! control cli and the language server so the compile-to-bundle path lives in one place.
 
 pub mod errors;
+pub mod functions;
 pub mod source;
 
 pub use errors::{PackError, Result};

@@ -109,16 +109,11 @@ pub fn provider_metadata_from_item(item: Value) -> Result<ProviderMetadata, serd
     serde_json::from_value(document.into())
 }
 
-pub fn provider_catalog_item(provider: &ProviderMetadata) -> Value {
-    runinator_models::json!({
-        "uri": format!("runinator://providers/{}", provider.name),
-        "item_type": "provider_metadata",
-        "name": provider.name,
-        "version": "1",
-        "document": provider,
-        "metadata": {}
-    })
-}
+/// the catalog row a provider's metadata is stored as.
+///
+/// re-exported from the engine rather than rebuilt here: publishing a packaged function writes the
+/// same shape from the engine side, and two writers building it separately would drift.
+pub use crate::repository::provider_catalog_item;
 
 /// the `providers` endpoints.
 pub fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {

@@ -30,6 +30,7 @@ pub trait DatabaseImpl:
     + ScheduleStore
     + RunStore
     + DispatchStore
+    + FunctionStore
     + AutomationStore
     + NotificationStore
     + ReplicaStore

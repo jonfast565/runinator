@@ -1,11 +1,8 @@
 use std::{
     fs,
-    io::Write,
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
     sync::Arc,
-    thread,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use runinator_models::{
@@ -15,6 +12,9 @@ use runinator_models::{
     value::Value,
 };
 use runinator_plugin::{cancel::CancellationToken, provider::ProviderEventSink};
+use runinator_sandbox::{
+    ContainerRunner, ContainerSpec, DockerRunner, Mount, SandboxError, SandboxLimits,
+};
 use uuid::Uuid;
 
 use crate::errors::{CODE_FAILED, INVALID_CODE};
@@ -62,14 +62,13 @@ pub(crate) fn execute_code(
         token,
     )?;
 
-    emit_output(&sink, "stdout", &output.process.stdout);
-    emit_output(&sink, "stderr", &output.process.stderr);
+    emit_output(&sink, "stdout", &output.result.stdout);
+    emit_output(&sink, "stderr", &output.result.stderr);
 
-    if !output.process.status.success() {
+    if !output.result.succeeded() {
         return Err(CODE_FAILED.error(format!(
             "docker exited with code {}: {}",
-            output.process.status.code().unwrap_or(-1),
-            String::from_utf8_lossy(&output.process.stderr)
+            output.result.exit_code, output.result.stderr
         )));
     }
 
@@ -209,10 +208,19 @@ fn prepare_work_dir(
 }
 
 struct DockerOutput {
-    process: std::process::Output,
+    result: runinator_sandbox::ContainerOutput,
     output_path: PathBuf,
 }
 
+// container execution itself lives in `runinator-sandbox`, shared with packaged functions. what
+// stays here is the `std.code` contract: the context/output file pair and the mount layout the
+// language runners expect.
+//
+// the limits are deliberately `compatible` rather than the hardened default. an author's
+// `setup_script` exists to install dependencies, so it needs both the network and a writable root;
+// taking those away as a side effect of sharing a runner would break working snippets. what the
+// port does change is that output is now bounded and drained concurrently — previously a snippet
+// writing more than a pipe buffer deadlocked and died on its timeout.
 fn run_docker(
     image: &str,
     language: &str,
@@ -232,100 +240,41 @@ fn run_docker(
     fs::write(&context_path, &input)
         .map_err(|err| INVALID_CODE.error(format!("failed to write code context: {err}")))?;
 
-    let work_mount = format!("{}:{WORK_DIR}:ro", work_dir.display());
-    let runtime_mount = format!("{}:{RUNTIME_DIR}", runtime_dir.display());
-    let container_name = format!("runinator-code-{}", Uuid::new_v4());
-    let mut child = Command::new("docker")
-        .args([
-            "run",
-            "--rm",
-            "-i",
-            "--name",
-            &container_name,
-            "-v",
-            &work_mount,
-            "-v",
-            &runtime_mount,
-            "-w",
-            WORK_DIR,
-            "-e",
-            &format!("RUNINATOR_CONTEXT={RUNTIME_DIR}/{CONTEXT_FILE}"),
-            "-e",
-            &format!("RUNINATOR_OUTPUT={RUNTIME_DIR}/{OUTPUT_FILE}"),
-            "-e",
-            &format!("RUNINATOR_LANGUAGE={language}"),
-            image,
-        ])
-        .args(command)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|err| CODE_FAILED.error(format!("failed to start docker: {err}")))?;
+    let spec = ContainerSpec::new(image, "runinator-code")
+        .with_command(command.to_vec())
+        .with_working_dir(WORK_DIR)
+        .with_mount(Mount::read_only(work_dir, WORK_DIR))
+        .with_mount(Mount::writable(&runtime_dir, RUNTIME_DIR))
+        .with_env("RUNINATOR_CONTEXT", format!("{RUNTIME_DIR}/{CONTEXT_FILE}"))
+        .with_env("RUNINATOR_OUTPUT", format!("{RUNTIME_DIR}/{OUTPUT_FILE}"))
+        .with_env("RUNINATOR_LANGUAGE", language)
+        .with_stdin(input.into_bytes())
+        .with_limits(SandboxLimits::compatible(Duration::from_secs(
+            timeout_secs.max(1) as u64,
+        )));
 
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin
-            .write_all(input.as_bytes())
-            .map_err(|err| CODE_FAILED.error(format!("failed to write code stdin: {err}")))?;
-    }
+    let cancel = move || token.is_cancelled();
+    let result = DockerRunner::new()
+        .run(&spec, None, &cancel)
+        .map_err(|err| match err {
+            SandboxError::Cancelled => CODE_FAILED.error("code execution canceled"),
+            SandboxError::TimedOut(seconds) => {
+                CODE_FAILED.error(format!("code execution timed out after {seconds} seconds"))
+            }
+            other => CODE_FAILED.error(other.to_string()),
+        })?;
 
-    let process = wait_with_timeout(child, timeout_secs, token, &container_name)?;
     Ok(DockerOutput {
-        process,
+        result,
         output_path,
     })
 }
 
-fn wait_with_timeout(
-    mut child: Child,
-    timeout_secs: i64,
-    token: CancellationToken,
-    container_name: &str,
-) -> Result<std::process::Output, SendableError> {
-    let timeout = Duration::from_secs(timeout_secs.max(1) as u64);
-    let started = Instant::now();
-    loop {
-        if token.is_cancelled() {
-            let _ = child.kill();
-            let _ = child.wait();
-            force_remove_container(container_name);
-            return Err(CODE_FAILED.error("code execution canceled"));
-        }
-        if started.elapsed() >= timeout {
-            let _ = child.kill();
-            let _ = child.wait();
-            force_remove_container(container_name);
-            return Err(CODE_FAILED.error(format!(
-                "code execution timed out after {} seconds",
-                timeout.as_secs()
-            )));
-        }
-        if child
-            .try_wait()
-            .map_err(|err| CODE_FAILED.error(format!("failed to wait for docker: {err}")))?
-            .is_some()
-        {
-            return child.wait_with_output().map_err(|err| {
-                CODE_FAILED.error(format!("failed to collect docker output: {err}"))
-            });
-        }
-        thread::sleep(Duration::from_millis(100));
-    }
-}
-
-fn force_remove_container(name: &str) {
-    let _ = Command::new("docker")
-        .args(["rm", "-f", name])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-}
-
-fn emit_output(sink: &Option<Arc<dyn ProviderEventSink>>, stream: &str, bytes: &[u8]) {
+fn emit_output(sink: &Option<Arc<dyn ProviderEventSink>>, stream: &str, text: &str) {
     let Some(sink) = sink else {
         return;
     };
-    for line in String::from_utf8_lossy(bytes).lines() {
+    for line in text.lines() {
         sink.emit(ProviderExecutionEvent::Chunk {
             stream: stream.to_string(),
             content: line.to_string(),

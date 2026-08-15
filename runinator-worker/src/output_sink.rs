@@ -13,12 +13,16 @@ use tokio::{runtime::Handle, task::JoinHandle};
 use tracing::{Instrument, error};
 
 use crate::agent::outbox::{OutboxError, ResultOutbox};
+use crate::artifact_upload::ArtifactUploader;
 
 #[derive(Clone)]
 pub struct RunOutputSink {
     command: ActionCommand,
     broker: Arc<dyn Broker>,
     outbox: Arc<dyn ResultOutbox>,
+    /// moves artifact bytes off this worker before their event is published. `None` leaves the
+    /// provider's local path in place, which is what an offline or api-less host wants.
+    uploader: Option<Arc<ArtifactUploader>>,
     handle: Handle,
     state: Arc<Mutex<RunOutputState>>,
 }
@@ -35,12 +39,14 @@ impl RunOutputSink {
         command: ActionCommand,
         broker: Arc<dyn Broker>,
         outbox: Arc<dyn ResultOutbox>,
+        uploader: Option<Arc<ArtifactUploader>>,
         handle: Handle,
     ) -> Self {
         Self {
             command,
             broker,
             outbox,
+            uploader,
             handle,
             state: Arc::new(Mutex::new(RunOutputState::default())),
         }
@@ -56,13 +62,19 @@ impl RunOutputSink {
     pub async fn persist_result(&self, result: &TaskExecutionResult) -> Result<(), BrokerError> {
         // only persist artifacts; chunks are streamed via events.jsonl and would otherwise duplicate.
         for artifact in &result.artifacts {
-            self.publish_event(WorkflowResultEvent::artifact(
-                &self.command,
-                artifact.clone(),
-            ))
-            .await?;
+            let mut artifact = artifact.clone();
+            self.relocate(&mut artifact).await;
+            self.publish_event(WorkflowResultEvent::artifact(&self.command, artifact))
+                .await?;
         }
         Ok(())
+    }
+
+    /// move an artifact's bytes somewhere every replica can read before its event goes out.
+    async fn relocate(&self, artifact: &mut NewRunArtifact) {
+        if let Some(uploader) = &self.uploader {
+            uploader.relocate(&self.command, artifact).await;
+        }
     }
 
     pub fn emit_log(&self, content: String) {
@@ -139,23 +151,29 @@ impl RunOutputSink {
         uri: String,
         metadata: Value,
     ) {
-        let event = WorkflowResultEvent::artifact(
-            &self.command,
-            NewRunArtifact {
-                name,
-                mime_type,
-                size_bytes,
-                uri,
-                metadata,
-            },
-        );
+        let artifact = NewRunArtifact {
+            name,
+            mime_type,
+            size_bytes,
+            uri,
+            metadata,
+        };
         let broker = self.broker.clone();
         let outbox = self.outbox.clone();
+        let uploader = self.uploader.clone();
+        let command = self.command.clone();
         let state = self.state.clone();
         let node_id = self.command.workflow_node_run_id;
         let span = tracing::Span::current();
         let handle = self.handle.spawn(
             async move {
+                // relocation happens inside the spawned task so a slow upload does not block the
+                // provider that emitted the artifact.
+                let mut artifact = artifact;
+                if let Some(uploader) = &uploader {
+                    uploader.relocate(&command, &mut artifact).await;
+                }
+                let event = WorkflowResultEvent::artifact(&command, artifact);
                 if let Err(err) = publish_event(broker.as_ref(), outbox.as_ref(), event).await {
                     error!(node_id = %node_id, "failed to publish workflow result artifact: {}", err);
                     if let Ok(mut state) = state.lock() {

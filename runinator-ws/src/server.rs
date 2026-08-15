@@ -47,6 +47,12 @@ pub async fn run_webserver<T: DatabaseImpl>(
     run_engine: bool,
 ) -> Result<(), SendableError> {
     crate::stability::init_metrics();
+    // artifact bytes live in the object store, which every replica must reach. without a configured
+    // endpoint this falls back to a local directory — fine for one node, and the reason a
+    // multi-replica deployment must set `RUNINATOR_BLOB_ENDPOINT`.
+    let blobs = runinator_blob::from_env().await?;
+    runinator_blob::ensure_buckets(&blobs).await?;
+    info!("artifact storage backend: {}", blobs.backend());
     seed_builtin_catalog(pool.as_ref()).await?;
     let jwt_secret = load_jwt_secret(pool.as_ref()).await?;
     let jwt_secret_previous = load_jwt_secret_previous(pool.as_ref()).await?;
@@ -204,6 +210,7 @@ pub async fn run_webserver<T: DatabaseImpl>(
         pool,
         bus,
         broker,
+        blobs,
         provisioner,
         auth_config,
         rate_limit,

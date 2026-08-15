@@ -35,13 +35,13 @@ pub(crate) use runinator_engine::{repository, stability};
 // and record which crate owns each domain.
 pub(crate) mod handlers {
     pub(crate) use runinator_ws_authoring::handlers::{
-        catalog, credentials, packs, pipelines, providers, wdl, workflows,
+        catalog, credentials, functions, packs, pipelines, providers, wdl, workflows,
     };
     pub(crate) use runinator_ws_identity::handlers::{auth, billing, orgs};
     pub(crate) use runinator_ws_runtime::handlers::{
-        action_dispatches, agents, artifacts, automation, catalog_metadata, debug, health,
-        node_runs, notifications, observability, provisioning, replicas, runs, schedules,
-        supervisor, triggers, webhook,
+        action_dispatches, agents, artifacts, automation, catalog_metadata, debug,
+        function_invocations, health, node_runs, notifications, observability, provisioning,
+        replicas, runs, schedules, supervisor, triggers, webhook,
     };
 }
 

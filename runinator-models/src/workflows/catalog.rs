@@ -1,4 +1,5 @@
 use super::*;
+use crate::functions::FunctionBinding;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(untagged)]
@@ -234,6 +235,14 @@ pub struct WorkflowAction {
     /// action non-idempotent, which is the default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub idempotency_key: Option<Value>,
+    /// the packaged function this action invokes, pinned at compile time. `None` for an ordinary
+    /// provider action, which is every action that is not a packaged-function call.
+    ///
+    /// this must stay a declared field: unknown top-level action keys are folded into
+    /// `configuration` by the deserializer below, so a binding that were not declared would silently
+    /// become a config parameter and then fail validation as an unknown one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub function_binding: Option<FunctionBinding>,
 }
 
 fn default_timeout_seconds() -> i64 {
@@ -261,6 +270,8 @@ impl<'de> Deserialize<'de> for WorkflowAction {
             pub required_labels: BTreeMap<String, String>,
             #[serde(default)]
             pub idempotency_key: Option<Value>,
+            #[serde(default)]
+            pub function_binding: Option<FunctionBinding>,
             #[serde(flatten)]
             pub extra: Map,
         }
@@ -282,6 +293,7 @@ impl<'de> Deserialize<'de> for WorkflowAction {
             tags: raw.tags,
             required_labels: raw.required_labels,
             idempotency_key: raw.idempotency_key,
+            function_binding: raw.function_binding,
         })
     }
 }

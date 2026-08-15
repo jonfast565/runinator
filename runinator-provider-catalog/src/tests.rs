@@ -21,6 +21,7 @@ fn built_in_provider_names_stay_in_runtime_registration_order() {
             "approval",
             "email",
             "std",
+            "functions",
         ]
     );
 }

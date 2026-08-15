@@ -34,6 +34,34 @@ pub const TRIGGER_NOT_CRON: ErrorDescriptor = ErrorDescriptor::new(
     "Workflow trigger has no cron schedule to replay",
 );
 
+// packaged functions.
+pub const FUNCTION_ARTIFACT_MISSING: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI507",
+    "database.function.artifact_missing",
+    "Function artifact not found",
+);
+/// deleting an artifact a published version still pins would make that version unrunnable.
+pub const FUNCTION_ARTIFACT_IN_USE: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI508",
+    "database.function.artifact_in_use",
+    "Function artifact is still referenced by a version",
+);
+pub const FUNCTION_VERSION_MISSING: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI509",
+    "database.function.version_missing",
+    "Function version not found",
+);
+pub const FUNCTION_ALIAS_MISSING: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI510",
+    "database.function.alias_missing",
+    "Function alias not found",
+);
+pub const FUNCTION_ADAPTER_MISSING: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI511",
+    "database.function.adapter_missing",
+    "Function adapter workflow not found",
+);
+
 pub const DICTIONARY: &[ErrorDescriptor] = &[
     ACTION_DISPATCH_INVALID_JSON,
     ORCHESTRATION_EVENT_INVALID_ID,
@@ -41,6 +69,11 @@ pub const DICTIONARY: &[ErrorDescriptor] = &[
     TRIGGER_MISSING_ID,
     TRIGGER_NOT_FOUND,
     TRIGGER_NOT_CRON,
+    FUNCTION_ARTIFACT_MISSING,
+    FUNCTION_ARTIFACT_IN_USE,
+    FUNCTION_VERSION_MISSING,
+    FUNCTION_ALIAS_MISSING,
+    FUNCTION_ADAPTER_MISSING,
 ];
 
 /// database engine error dictionary.

@@ -7227,6 +7227,44 @@ dependencies = [
 ]
 
 [[package]]
+name = "runinator-blob"
+version = "0.2.367"
+dependencies = [
+ "async-trait",
+ "axum",
+ "chrono",
+ "futures-util",
+ "reqwest",
+ "runinator-blob-core",
+ "runinator-models",
+ "runinator-utilities",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "runinator-blob-core"
+version = "0.2.367"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "chrono",
+ "hex",
+ "hmac 0.12.1",
+ "runinator-models",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.18",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "runinator-bootstrap"
 version = "0.2.367"
 dependencies = [
@@ -7432,12 +7470,14 @@ dependencies = [
  "metrics",
  "metrics-exporter-prometheus",
  "opentelemetry",
+ "runinator-blob-core",
  "runinator-broker-core",
  "runinator-comm",
  "runinator-database",
  "runinator-models",
  "runinator-reducer",
  "runinator-utilities",
+ "runinator-wdl",
  "runinator-workflows",
  "serde",
  "serde_json",
@@ -7496,8 +7536,11 @@ dependencies = [
  "runinator-provider-catalog",
  "runinator-wdl",
  "runinator-workflows",
+ "serde",
  "serde_json",
+ "sha2 0.10.9",
  "thiserror 2.0.18",
+ "zip",
 ]
 
 [[package]]
@@ -7577,6 +7620,7 @@ dependencies = [
  "runinator-provider-console",
  "runinator-provider-db",
  "runinator-provider-email",
+ "runinator-provider-functions",
  "runinator-provider-git",
  "runinator-provider-github",
  "runinator-provider-jira",
@@ -7626,6 +7670,18 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "runinator-provider-functions"
+version = "0.2.367"
+dependencies = [
+ "runinator-models",
+ "runinator-plugin",
+ "runinator-sandbox",
+ "serde",
+ "serde_json",
  "uuid",
 ]
 
@@ -7700,6 +7756,7 @@ dependencies = [
  "runinator-compute",
  "runinator-models",
  "runinator-plugin",
+ "runinator-sandbox",
  "serde_json",
  "uuid",
 ]
@@ -7743,6 +7800,14 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "runinator-sandbox"
+version = "0.2.367"
+dependencies = [
+ "runinator-models",
  "uuid",
 ]
 
@@ -7828,6 +7893,7 @@ dependencies = [
  "runinator-workflows",
  "serde",
  "serde_json",
+ "uuid",
 ]
 
 [[package]]
@@ -7838,6 +7904,7 @@ dependencies = [
  "runinator-models",
  "runinator-wdl-sema",
  "runinator-wdl-syntax",
+ "serde_json",
 ]
 
 [[package]]
@@ -7897,6 +7964,7 @@ dependencies = [
  "tracing",
  "uuid",
  "x509-parser",
+ "zip",
 ]
 
 [[package]]
@@ -7924,12 +7992,14 @@ dependencies = [
  "metrics",
  "reqwest",
  "runinator-auth",
+ "runinator-blob",
  "runinator-broker",
  "runinator-comm",
  "runinator-database",
  "runinator-db-cli",
  "runinator-engine",
  "runinator-models",
+ "runinator-pack",
  "runinator-provisioner",
  "runinator-reducer",
  "runinator-utilities",
@@ -7956,6 +8026,7 @@ version = "0.2.367"
 dependencies = [
  "axum",
  "log",
+ "runinator-blob-core",
  "runinator-database",
  "runinator-engine",
  "runinator-models",
@@ -7968,6 +8039,7 @@ dependencies = [
  "runinator-ws-middleware",
  "serde",
  "serde_json",
+ "tokio-util",
  "utoipa",
  "uuid",
 ]
@@ -8040,6 +8112,7 @@ dependencies = [
  "log",
  "metrics",
  "mime_guess",
+ "runinator-blob-core",
  "runinator-broker-core",
  "runinator-comm",
  "runinator-database",

@@ -57,6 +57,8 @@ struct Lowerer {
     // a `let` ref. interior-mutable because `lower_expr` (`&self`) scopes a lambda's params while
     // lowering its body, whether the lambda sits in a compute block or inline in any expression.
     compute_locals: std::cell::RefCell<HashSet<String>>,
+    // published packaged-function exports a `functions.<pkg>.<export>(...)` call may bind to.
+    functions: Vec<runinator_models::functions::FunctionCatalogEntry>,
     // resolved `type <Name>` declarations, consulted when lowering named type references.
     named_types: std::collections::BTreeMap<String, runinator_models::types::RuninatorType>,
     // base directory used for compile-time `file("...")` text includes.
@@ -92,7 +94,8 @@ fn lower_workflow(
     lowerer.source_dir = options.source_dir.clone();
     // the callable registry resolves keyword args in both the workflow body and function bodies.
     lowerer.registry = runinator_wdl_sema::registry::FunctionRegistry::build(&document.functions);
-    lowerer.provider_actions = provider_actions(&options.providers);
+    lowerer.provider_actions = provider_actions(&options.all_providers());
+    lowerer.functions = options.functions.clone();
     // collect the header aliases so spreads can be expanded (graph) and recorded (sidecar) while
     // lowering, where node ids are available to key the recipes.
     lowerer.aliases = runinator_wdl_sema::desugar::collect_aliases(&workflow.aliases)?;
@@ -351,7 +354,77 @@ impl Lowerer {
             source_dir: None,
             registry: runinator_wdl_sema::registry::FunctionRegistry::build(&[]),
             provider_actions: std::collections::HashMap::new(),
+            functions: Vec::new(),
         }
+    }
+
+    /// rewrite a `functions.<pkg>.<export>(...)` call into the action the runtime dispatches.
+    ///
+    /// the authored surface names a package and an export; the runtime has one provider,
+    /// `functions`, with one action, `invoke`. the export is named by the binding this attaches,
+    /// which pins the **exact version and artifact digest** resolved right now — that is what makes
+    /// a later alias movement unable to reach into a workflow that already compiled.
+    ///
+    /// returns false for an ordinary action, which must be left completely untouched.
+    fn apply_function_binding(
+        &self,
+        action: &ActionStmt,
+        action_obj: &mut Map,
+    ) -> Result<bool, WdlError> {
+        use runinator_models::functions::{
+            FUNCTIONS_INVOKE, FUNCTIONS_NAMESPACE_PREFIX, FUNCTIONS_PROVIDER,
+            FUNCTIONS_RUNNER_LABEL,
+        };
+        if !action.provider.starts_with(FUNCTIONS_NAMESPACE_PREFIX) {
+            return Ok(false);
+        }
+        let entry = self
+            .functions
+            .iter()
+            .filter(|entry| {
+                entry.provider_name() == action.provider && entry.export_name == action.function
+            })
+            // an unversioned call takes the newest published version, and records it. resolving
+            // once at compile time is the whole mechanism: nothing later re-resolves it.
+            .max_by_key(|entry| entry.version)
+            .ok_or_else(|| {
+                WdlError::Lower(format!(
+                    "unknown packaged function '{}.{}'; publish it, or pass its catalog entry to the compiler",
+                    action.provider, action.function
+                ))
+            })?;
+
+        // the authored arguments become the handler's input rather than the action's parameters:
+        // everything else in `configuration` is staging the worker owns, and an author's argument
+        // named `handler` must not collide with it.
+        let authored = action_obj
+            .remove("configuration")
+            .unwrap_or(Value::Object(Map::new()));
+        let mut configuration = Map::new();
+        configuration.insert("input".into(), authored);
+
+        action_obj.insert("provider".into(), Value::String(FUNCTIONS_PROVIDER.into()));
+        action_obj.insert("function".into(), Value::String(FUNCTIONS_INVOKE.into()));
+        action_obj.insert("configuration".into(), Value::Object(configuration));
+        action_obj.insert(
+            "function_binding".into(),
+            serde_json::to_value(entry.binding())
+                .map(Value::from)
+                .map_err(|err| {
+                    WdlError::Lower(format!("failed to encode function binding: {err}"))
+                })?,
+        );
+        // running packaged code needs a container runtime, which not every worker has. an explicit
+        // `.runner(...)` wins: an operator who pinned a pool meant it.
+        if action.modifiers.runner.is_none() {
+            let mut labels = Map::new();
+            labels.insert(
+                "runner".into(),
+                Value::String(FUNCTIONS_RUNNER_LABEL.to_string()),
+            );
+            action_obj.insert("required_labels".into(), Value::Object(labels));
+        }
+        Ok(true)
     }
 
     /// lower the top-level workflow `params { }` type, attaching each field's default expression.
@@ -860,6 +933,7 @@ impl Lowerer {
             let lowered = self.lower_expr(key)?;
             action_obj.insert("idempotency_key".into(), lowered);
         }
+        self.apply_function_binding(action, &mut action_obj)?;
 
         let mut fields = vec![
             ("action", Value::Object(action_obj)),
@@ -918,6 +992,9 @@ impl Lowerer {
             let lowered = self.lower_expr(key)?;
             obj.insert("idempotency_key".into(), lowered);
         }
+        // the compensate path goes through the same helper: a compensating packaged-function call
+        // is as much a packaged-function call as the forward one, and this is easy to miss.
+        self.apply_function_binding(action, &mut obj)?;
         Ok(Value::Object(obj))
     }
 

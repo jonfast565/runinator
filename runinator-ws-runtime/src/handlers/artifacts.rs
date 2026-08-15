@@ -4,10 +4,11 @@ use uuid::Uuid;
 use axum::{
     Extension, Json,
     body::Body,
-    extract::{Multipart, Path},
+    extract::{Multipart, Path, Query},
     http::{StatusCode, header},
     response::{IntoResponse, Response},
 };
+use runinator_blob_core::BlobStore;
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::auth::AuthContext;
 use runinator_models::runs::NewRunArtifact;
@@ -66,6 +67,7 @@ pub async fn list_artifacts<T: DatabaseImpl>(
 
 pub async fn upload_artifact<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
+    Extension(blobs): Extension<Arc<dyn BlobStore>>,
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<AuthContext>,
     mut multipart: Multipart,
@@ -147,6 +149,7 @@ pub async fn upload_artifact<T: DatabaseImpl>(
 
     match repository::persist_artifact_file(
         db.as_ref(),
+        &blobs,
         run_id,
         node_run_id,
         &resolved_name,
@@ -189,13 +192,14 @@ pub async fn upload_artifact<T: DatabaseImpl>(
 
 pub async fn delete_artifact<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
+    Extension(blobs): Extension<Arc<dyn BlobStore>>,
     Extension(ctx): Extension<AuthContext>,
     Path(artifact_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_service_or_admin() {
         return reply;
     }
-    match repository::delete_artifact(db.as_ref(), artifact_id).await {
+    match repository::delete_artifact(db.as_ref(), &blobs, artifact_id).await {
         Ok(true) => (
             StatusCode::OK,
             Json(ApiResponse::TaskResponse(
@@ -214,6 +218,7 @@ pub async fn delete_artifact<T: DatabaseImpl>(
 
 pub async fn download_artifact<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
+    Extension(blobs): Extension<Arc<dyn BlobStore>>,
     Extension(ctx): Extension<AuthContext>,
     Path(artifact_id): Path<Uuid>,
 ) -> Response {
@@ -228,18 +233,26 @@ pub async fn download_artifact<T: DatabaseImpl>(
         Err(err) => return (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
     };
 
-    let path = std::path::PathBuf::from(&artifact.uri);
-    let file = match tokio::fs::File::open(&path).await {
-        Ok(file) => file,
+    let content = match runinator_engine::artifact_storage::open_artifact(
+        &blobs,
+        &artifact.uri,
+        None,
+    )
+    .await
+    {
+        Ok(content) => content,
         Err(err) => {
             return (
                 StatusCode::NOT_FOUND,
-                format!("artifact file missing at {}: {}", path.display(), err),
+                format!("artifact bytes unavailable: {err}"),
             )
                 .into_response();
         }
     };
-    let stream = tokio_util::io::ReaderStream::new(file);
+    // the stored length wins over the row's, which a pre-blob upload could disagree with after a
+    // manual edit; a wrong content-length truncates the download rather than erroring.
+    let length = content.size_bytes;
+    let stream = tokio_util::io::ReaderStream::new(content.body);
     let body = Body::from_stream(stream);
     let disposition = format!(
         "attachment; filename=\"{}\"",
@@ -249,11 +262,71 @@ pub async fn download_artifact<T: DatabaseImpl>(
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, &artifact.mime_type)
         .header(header::CONTENT_DISPOSITION, disposition)
-        .header(header::CONTENT_LENGTH, artifact.size_bytes)
+        .header(header::CONTENT_LENGTH, length)
         .body(body)
         .unwrap_or_else(|_| {
             (StatusCode::INTERNAL_SERVER_ERROR, "response build failed").into_response()
         })
+}
+
+/// the query a caller uses to describe the bytes it is sending to `/artifacts/content`.
+#[derive(serde::Deserialize)]
+pub struct ArtifactContentQuery {
+    pub run_id: Uuid,
+    #[serde(default)]
+    pub workflow_node_run_id: Option<Uuid>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub mime_type: Option<String>,
+}
+
+/// `POST /artifacts/content` — store artifact bytes and return the uri to record against them.
+///
+/// deliberately writes no database row. a worker-produced artifact already gets its row from the
+/// result-event path, so an endpoint that also inserted one would produce two rows for one artifact;
+/// this splits the byte transfer from the bookkeeping instead.
+///
+/// the body is the raw bytes rather than a multipart form: the caller is a worker, not a browser,
+/// and multipart would buy nothing but a parser.
+pub async fn upload_artifact_content(
+    Extension(blobs): Extension<Arc<dyn BlobStore>>,
+    Extension(ctx): Extension<AuthContext>,
+    Query(query): Query<ArtifactContentQuery>,
+    body: axum::body::Bytes,
+) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = ctx.require_agent_service_or_admin() {
+        return reply;
+    }
+    let bytes = body.to_vec();
+    let resolved_name = query.name.unwrap_or_else(|| "artifact".to_string());
+    let resolved_mime = query.mime_type.unwrap_or_else(|| {
+        mime_guess::from_path(&resolved_name)
+            .first_or_octet_stream()
+            .essence_str()
+            .to_string()
+    });
+
+    match runinator_engine::artifact_storage::put_artifact(
+        &blobs,
+        query.run_id,
+        query.workflow_node_run_id,
+        &resolved_name,
+        &resolved_mime,
+        &bytes,
+    )
+    .await
+    {
+        Ok(uri) => (
+            StatusCode::CREATED,
+            Json(ApiResponse::JsonValue(runinator_models::json!({
+                "uri": uri,
+                "size_bytes": bytes.len() as i64,
+                "sha256": runinator_blob_core::sha256_hex(&bytes),
+            }))),
+        ),
+        Err(err) => api_error(err.to_string()),
+    }
 }
 
 /// the `artifacts` endpoints.
@@ -275,6 +348,7 @@ pub fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
             "/artifacts/upload",
             post(upload_artifact::<T>).layer(Extension(pool.clone())),
         )
+        .route("/artifacts/content", post(upload_artifact_content))
         .route(
             "/artifacts/{id}/download",
             get(download_artifact::<T>).layer(Extension(pool.clone())),
@@ -341,6 +415,23 @@ pub const DOCS: &[EndpointDoc] = &[
         &[],
         200,
         "artifact uploaded",
+        Example::Artifact,
+    ),
+    endpoint(
+        "post",
+        "/artifacts/content",
+        "Artifacts",
+        "Store artifact bytes",
+        "Stores artifact content in the object store and returns its uri, size, and sha-256. Records no artifact row: callers whose artifact is already recorded by the worker result path use this to move the bytes without creating a second row.",
+        false,
+        Some(RequestDoc {
+            description: "Raw artifact bytes.",
+            example: Example::Artifact,
+            content_type: "application/octet-stream",
+        }),
+        &[],
+        201,
+        "artifact bytes stored",
         Example::Artifact,
     ),
     endpoint(

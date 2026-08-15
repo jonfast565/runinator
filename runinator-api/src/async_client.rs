@@ -25,7 +25,8 @@ use runinator_models::{
         api_workflow_run_nodes, api_workflow_run_rename, api_workflow_run_replay,
         api_workflow_run_transitions, api_workflow_runs, api_workflow_trigger,
         api_workflow_trigger_backfill, api_workflow_trigger_runs, api_workflow_triggers,
-        API_APPROVALS, API_CREDENTIALS, API_FREEZE_WINDOWS, API_IDEMPOTENCY_KEYS,
+        API_APPROVALS, API_ARTIFACTS_CONTENT, API_CREDENTIALS, API_FREEZE_WINDOWS, API_FUNCTIONS,
+        API_FUNCTIONS_CATALOG, API_FUNCTION_ARTIFACTS, API_FUNCTION_EXPORTS, API_IDEMPOTENCY_KEYS,
         API_IDEMPOTENCY_KEYS_CLAIM, API_IDEMPOTENCY_KEYS_COMPLETE, API_IDEMPOTENCY_KEYS_RELEASE,
         API_PACKS_IMPORT, API_PROVIDERS, API_REPLICAS, API_RUNS, API_SCHEDULER_ACTION_DISPATCHES,
         API_SCHEDULER_ACTION_DISPATCHES_CLAIM, API_SCHEDULER_ACTION_DISPATCHES_PENDING,
@@ -41,6 +42,11 @@ use runinator_models::{
     },
     billing::ScaleOrgNodesRequest,
     bundles::{Bundle, PackImportResult, ProviderBundle, SecretBundle},
+    functions::{
+        FunctionAlias, FunctionArtifact, FunctionCatalogEntry, FunctionInvocationTarget,
+        FunctionPackage, FunctionPackageDetail, FunctionVersion, NewFunctionVersion,
+        ARTIFACT_MEDIA_TYPE,
+    },
     orchestration::{
         IdempotencyClaim, IdempotencyClaimRequest, IdempotencyCompleteRequest,
         IdempotencyReleaseRequest, ReadyNodeRecord, ACTION_IDEMPOTENCY_SCOPE,
@@ -67,7 +73,10 @@ use uuid::Uuid;
 use crate::{
     error::{ApiError, Result},
     locator::ServiceLocator,
-    types::{RunArtifactPayload, RunChunkPayload, RunStatusPayload, WorkflowNodeRunStatusPayload},
+    types::{
+        ArtifactContentResponse, RunArtifactPayload, RunChunkPayload, RunStatusPayload,
+        WorkflowNodeRunStatusPayload,
+    },
 };
 
 /// Default cap on a single request's total wall-clock time. Bounds a hung or slow web service so a
@@ -635,6 +644,172 @@ where
             .await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<PackImportResult>().await?)
+    }
+
+    /// upload artifact bytes and get back the uri to record against them.
+    ///
+    /// stores bytes only. the artifact row is created by whoever already accounts for the artifact —
+    /// for a worker-produced one, the result-event path — so this must not create a second.
+    pub async fn upload_artifact_content(
+        &self,
+        run_id: Uuid,
+        workflow_node_run_id: Option<Uuid>,
+        name: &str,
+        mime_type: &str,
+        bytes: Vec<u8>,
+    ) -> Result<ArtifactContentResponse> {
+        let mut url = self.build_url(API_ARTIFACTS_CONTENT).await?;
+        {
+            let mut query = url.query_pairs_mut();
+            query.append_pair("run_id", &run_id.to_string());
+            if let Some(node_run_id) = workflow_node_run_id {
+                query.append_pair("workflow_node_run_id", &node_run_id.to_string());
+            }
+            query.append_pair("name", name);
+            query.append_pair("mime_type", mime_type);
+        }
+        let response = self
+            .http_post(url.clone())
+            .header(reqwest::header::CONTENT_TYPE, mime_type)
+            .body(bytes)
+            .send()
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<ArtifactContentResponse>().await?)
+    }
+
+    // ---- packaged functions ----
+
+    /// List published function packages.
+    pub async fn fetch_function_packages(&self) -> Result<Vec<FunctionPackage>> {
+        let url = self.build_url(API_FUNCTIONS).await?;
+        let response = self.http_get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Vec<FunctionPackage>>().await?)
+    }
+
+    /// Fetch one package with its versions, aliases, and current exports.
+    pub async fn fetch_function_package(&self, package: &str) -> Result<FunctionPackageDetail> {
+        let url = self
+            .build_url(&format!("{API_FUNCTIONS}/{package}"))
+            .await?;
+        let response = self.http_get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<FunctionPackageDetail>().await?)
+    }
+
+    /// The flattened catalog of every published export.
+    pub async fn fetch_function_catalog(&self) -> Result<Vec<FunctionCatalogEntry>> {
+        let url = self.build_url(API_FUNCTIONS_CATALOG).await?;
+        let response = self.http_get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Vec<FunctionCatalogEntry>>().await?)
+    }
+
+    /// Publish one version. The artifact must already be uploaded.
+    pub async fn publish_function_version(
+        &self,
+        request: &NewFunctionVersion,
+    ) -> Result<FunctionVersion> {
+        let url = self.build_url(API_FUNCTIONS).await?;
+        let response = self.http_post(url.clone()).json(request).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<FunctionVersion>().await?)
+    }
+
+    /// Delete a package and everything under it.
+    pub async fn delete_function_package(&self, package: &str) -> Result<Value> {
+        let url = self
+            .build_url(&format!("{API_FUNCTIONS}/{package}"))
+            .await?;
+        let response = self.http_delete(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Value>().await?)
+    }
+
+    /// Point an alias at a version.
+    pub async fn set_function_alias(
+        &self,
+        package: &str,
+        alias: &str,
+        version: Option<i64>,
+        from_alias: Option<&str>,
+    ) -> Result<FunctionAlias> {
+        let url = self
+            .build_url(&format!("{API_FUNCTIONS}/{package}/aliases"))
+            .await?;
+        let body = json!({ "alias": alias, "version": version, "from_alias": from_alias });
+        let response = self.http_post(url.clone()).json(&body).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<FunctionAlias>().await?)
+    }
+
+    /// Delete an alias, leaving the version it named untouched.
+    pub async fn delete_function_alias(&self, package: &str, alias: &str) -> Result<Value> {
+        let url = self
+            .build_url(&format!("{API_FUNCTIONS}/{package}/aliases/{alias}"))
+            .await?;
+        let response = self.http_delete(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Value>().await?)
+    }
+
+    /// Resolve one export to the handler, runtime, limits, and digest needed to run it.
+    pub async fn resolve_function_export(
+        &self,
+        export_id: Uuid,
+    ) -> Result<FunctionInvocationTarget> {
+        let url = self
+            .build_url(&format!("{API_FUNCTION_EXPORTS}/{export_id}"))
+            .await?;
+        let response = self.http_get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<FunctionInvocationTarget>().await?)
+    }
+
+    /// Whether the server already holds these bytes.
+    ///
+    /// This is what makes republishing unchanged code cheap: the digest is computed client-side, so
+    /// the upload can be skipped entirely when the answer is yes.
+    pub async fn fetch_function_artifact(&self, digest: &str) -> Result<Option<FunctionArtifact>> {
+        let url = self
+            .build_url(&format!("{API_FUNCTION_ARTIFACTS}/{digest}"))
+            .await?;
+        let response = self.http_get(url.clone()).send().await?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        let response = Self::handle_response(url, response).await?;
+        Ok(Some(response.json::<FunctionArtifact>().await?))
+    }
+
+    /// Upload package archive bytes under their digest.
+    pub async fn upload_function_artifact(
+        &self,
+        digest: &str,
+        bytes: Vec<u8>,
+    ) -> Result<FunctionArtifact> {
+        let url = self
+            .build_url(&format!("{API_FUNCTION_ARTIFACTS}/{digest}"))
+            .await?;
+        let response = self
+            .http_post(url.clone())
+            .header(reqwest::header::CONTENT_TYPE, ARTIFACT_MEDIA_TYPE)
+            .body(bytes)
+            .send()
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<FunctionArtifact>().await?)
+    }
+
+    /// Download a package archive's bytes. This is the worker's fetch path.
+    pub async fn download_function_artifact(&self, digest: &str) -> Result<Vec<u8>> {
+        let url = self
+            .build_url(&format!("{API_FUNCTION_ARTIFACTS}/{digest}/content"))
+            .await?;
+        let response = self.http_get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.bytes().await?.to_vec())
     }
 
     pub async fn import_provider_bundle(&self, bundle: &ProviderBundle) -> Result<ProviderBundle> {

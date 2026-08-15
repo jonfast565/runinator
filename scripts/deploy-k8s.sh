@@ -179,7 +179,7 @@ else
 fi
 
 if [[ "$verb" == "apply" ]]; then
-    rollout_targets=(deployment/runinator-ws deployment/runinator-archiver deployment/runinator-waker deployment/runinator-worker)
+    rollout_targets=(deployment/runinator-ws deployment/runinator-archiver deployment/runinator-blob deployment/runinator-waker deployment/runinator-worker)
     if [[ "$skip_pg" -eq 0 ]]; then
         rollout_targets=(statefulset/runinator-postgres "${rollout_targets[@]}")
     fi

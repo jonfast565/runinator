@@ -1,3 +1,6 @@
+use std::sync::Arc;
+
+use runinator_blob_core::BlobStore;
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::value::Value;
 use runinator_models::{
@@ -74,58 +77,40 @@ pub async fn fetch_artifact<T: DatabaseImpl>(
     db.fetch_artifact(artifact_id).await
 }
 
-/// delete an artifact: unlink its on-disk file (best-effort) then remove the db row. returns false
-/// when no such artifact exists.
+/// delete an artifact: remove its bytes (best-effort) then remove the db row. returns false when no
+/// such artifact exists.
 pub async fn delete_artifact<T: DatabaseImpl>(
     db: &T,
+    blobs: &Arc<dyn BlobStore>,
     artifact_id: Uuid,
 ) -> Result<bool, SendableError> {
     let Some(artifact) = db.fetch_artifact(artifact_id).await? else {
         return Ok(false);
     };
-    // remove the backing file first; a missing file should not block the row delete.
-    if let Err(err) = tokio::fs::remove_file(&artifact.uri).await
-        && err.kind() != std::io::ErrorKind::NotFound
-    {
-        log::warn!("failed to unlink artifact file {}: {err}", artifact.uri);
-    }
+    // bytes first; a missing object should not block the row delete.
+    crate::artifact_storage::delete_artifact_bytes(blobs, &artifact.uri).await;
     db.delete_artifact(artifact_id).await
 }
 
+/// store uploaded artifact bytes and record the row(s) that point at them.
 pub async fn persist_artifact_file<T: DatabaseImpl>(
     db: &T,
+    blobs: &Arc<dyn BlobStore>,
     run_id: Uuid,
     workflow_node_run_id: Option<Uuid>,
     name: &str,
     mime_type: &str,
     bytes: &[u8],
 ) -> Result<RunArtifact, SendableError> {
-    use runinator_utilities::app_data;
-
-    let safe_name: String = name
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    let safe_name = if safe_name.is_empty() {
-        "artifact".to_string()
-    } else {
-        safe_name
-    };
-
-    let dir = app_data::app_data_path(format!("artifacts/{run_id}"))?;
-    tokio::fs::create_dir_all(&dir).await?;
-    let id_suffix = uuid::Uuid::new_v4().simple().to_string();
-    let final_name = format!("{}-{}", id_suffix, safe_name);
-    let target = dir.join(&final_name);
-    tokio::fs::write(&target, bytes).await?;
-
-    let uri = target.to_string_lossy().to_string();
+    let uri = crate::artifact_storage::put_artifact(
+        blobs,
+        run_id,
+        workflow_node_run_id,
+        name,
+        mime_type,
+        bytes,
+    )
+    .await?;
     let new_artifact = NewRunArtifact {
         name: name.to_string(),
         mime_type: mime_type.to_string(),

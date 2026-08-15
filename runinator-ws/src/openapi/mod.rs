@@ -49,6 +49,8 @@ const DOC_SETS: &[&[EndpointDoc]] = &[
     handlers::automation::DOCS,
     handlers::credentials::DOCS,
     handlers::providers::DOCS,
+    handlers::functions::DOCS,
+    handlers::function_invocations::DOCS,
     handlers::webhook::DOCS,
     handlers::auth::DOCS,
 ];
@@ -85,6 +87,7 @@ fn endpoint_docs() -> impl Iterator<Item = &'static EndpointDoc> {
         (name = "Debug", description = "Workflow-run debugger commands."),
         (name = "Notifications", description = "User notification records."),
         (name = "Providers", description = "Registered task providers."),
+        (name = "Functions", description = "Packaged functions: publishing, promotion, and artifacts."),
         (name = "Replicas", description = "Service replica registry."),
         (name = "Runs", description = "Low-level task run records."),
         (name = "Supervisor", description = "Local supervisor status."),

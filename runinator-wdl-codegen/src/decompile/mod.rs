@@ -1208,6 +1208,14 @@ impl<'a> Decompiler<'a> {
             .action
             .as_ref()
             .ok_or_else(|| WdlError::Decompile("action node missing action".into()))?;
+        // a packaged-function call is rendered from its binding, which carries the authored names
+        // as well as the ids. reaching into a catalog here would make the same definition decompile
+        // differently depending on what the catalog currently holds — including not at all, once
+        // the package is deleted. the binding is part of the definition, so it always answers.
+        let (call_provider, call_function) = match &action.function_binding {
+            Some(binding) => (binding.provider_name(), binding.export_name.clone()),
+            None => (action.provider.clone(), action.function.clone()),
+        };
         // action nodes carry args in `configuration`, but the reducer merges node-level
         // `parameters` over it (parameters win). fold both into the call args so a node that
         // only populated `parameters` is not dropped; recompiling routes them to configuration,
@@ -1219,7 +1227,16 @@ impl<'a> Decompiler<'a> {
             self.render_seg_parts(segs)?
         } else {
             let mut merged = Map::new();
-            if let Value::Object(config) = action.configuration.as_value() {
+            // a bound call nests its authored arguments under `input`; everything else in the
+            // configuration is worker staging the author never wrote and must not see back.
+            let configuration = match (&action.function_binding, action.configuration.as_value()) {
+                (Some(_), Value::Object(config)) => config
+                    .get("input")
+                    .cloned()
+                    .unwrap_or(Value::Object(Map::new())),
+                (_, other) => other.clone(),
+            };
+            if let Value::Object(config) = &configuration {
                 for (name, value) in config {
                     merged.insert(name.clone(), value.clone());
                 }
@@ -1237,9 +1254,7 @@ impl<'a> Decompiler<'a> {
         };
         let multiline = !arg_parts.is_empty();
         let mut text = format!(
-            "{}.{}{}",
-            action.provider,
-            action.function,
+            "{call_provider}.{call_function}{}",
             self.call_args(&arg_parts, base)
         );
         let mut modifiers = Vec::new();
@@ -1262,7 +1277,13 @@ impl<'a> Decompiler<'a> {
             modifiers.push(".mcp()".to_string());
         }
         if let Some(runner) = action.required_labels.get("runner") {
-            modifiers.push(format!(".runner({})", quote(runner)));
+            // lowering adds the functions runner label itself when the author wrote no `.runner`,
+            // so re-emitting it here would grow a modifier on every round trip.
+            let implicit = action.function_binding.is_some()
+                && runner == runinator_models::functions::FUNCTIONS_RUNNER_LABEL;
+            if !implicit {
+                modifiers.push(format!(".runner({})", quote(runner)));
+            }
         }
         if let Some(key) = &action.idempotency_key {
             modifiers.push(format!(".idempotent(key: {})", self.expr(key)?));

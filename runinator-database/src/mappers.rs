@@ -12,6 +12,10 @@ use runinator_models::{
     },
     billing::{OrgQuota, OrgResourceGroup, UsageSample},
     errors::SendableError,
+    functions::{
+        FunctionAdapterWorkflow, FunctionAlias, FunctionArtifact, FunctionCatalogEntry,
+        FunctionExport, FunctionPackage, FunctionRuntimeSpec, FunctionVersion,
+    },
     notifications::{
         Notification, NotificationChannel, NotificationDelivery, NotificationDeliveryStatus,
         NotificationEvent, NotificationPolicy, NotificationSeverity,
@@ -79,6 +83,8 @@ macro_rules! row_mapper {
 
 mod core;
 pub use core::*;
+mod functions;
+pub use functions::*;
 mod identity;
 pub use identity::*;
 mod workflows;
