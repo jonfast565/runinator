@@ -4,10 +4,10 @@ use runinator_models::workflows::{
 };
 
 use crate::types::{
-    ApprovalParameters, ArtifactItem, BranchPolicy, GateParameters, InputParameters,
-    JoinParameters, LoopParameters, MapParameters, OutputParameters, ParallelParameters,
-    PercentageBucket, PercentageParameters, RaceParameters, SignalParameters, SwitchCase,
-    SwitchParameters, ToggleParameters, TryParameters, WaitParameters,
+    ApprovalParameters, ArtifactItem, BranchPolicy, GateParameters, GateTimeoutPolicy,
+    InputParameters, JoinParameters, LoopParameters, MapParameters, OutputParameters,
+    ParallelParameters, PercentageBucket, PercentageParameters, RaceParameters, SignalParameters,
+    SwitchCase, SwitchParameters, ToggleParameters, TryParameters, WaitParameters,
 };
 use runinator_compute::WorkflowValidationError;
 use runinator_compute::call_pure;
@@ -352,6 +352,14 @@ pub fn parse_gate_parameters(node: &WorkflowNode) -> GateParameters {
         .get("timeout")
         .and_then(Value::as_i64)
         .filter(|seconds| *seconds > 0);
+    let timeout_policy = match node
+        .parameters
+        .get("timeout_policy")
+        .and_then(Value::as_str)
+    {
+        Some("continue") => GateTimeoutPolicy::Continue,
+        _ => GateTimeoutPolicy::Fail,
+    };
     let label = node
         .parameters
         .get("label")
@@ -362,6 +370,7 @@ pub fn parse_gate_parameters(node: &WorkflowNode) -> GateParameters {
         condition,
         poll_interval_seconds,
         deadline_seconds,
+        timeout_policy,
         label,
         metadata: node.parameters.clone().into(),
     }

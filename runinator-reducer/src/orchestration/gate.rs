@@ -1,6 +1,7 @@
 use super::context::{is_reentry_stale, runtime_context};
 use super::transitions::{time_out, transition_from_node};
 use super::*;
+use runinator_workflows::GateTimeoutPolicy;
 
 /// process a gate node: an automated/policy block. on first visit it records a gate row and parks
 /// the run as `Waiting`; on each poll wake it re-checks whether the gate is open (auto-evaluated for
@@ -36,7 +37,24 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for GateHandler {
                 if let Some(gate_id) = gate_id {
                     mark_gate(ctx, gate_id, "timed_out", None, None).await?;
                 }
-                time_out(ctx, node_run, "Gate timed out").await?;
+                match params.timeout_policy {
+                    GateTimeoutPolicy::Fail => {
+                        time_out(ctx, node_run, "Gate timed out").await?;
+                    }
+                    GateTimeoutPolicy::Continue => {
+                        transition_from_node(
+                            ctx,
+                            node_run,
+                            WorkflowStatus::Succeeded,
+                            Some(runinator_models::json!({
+                                "gate_passed": false,
+                                "gate_timed_out": true,
+                            })),
+                            Some("gate_timeout_continued".into()),
+                        )
+                        .await?;
+                    }
+                }
                 return Ok(ReadyNodeDisposition::Complete);
             }
 

@@ -1114,6 +1114,12 @@ impl Lowerer {
         if let Some(timeout) = gate.timeout {
             params.insert("timeout".into(), Value::from(timeout));
         }
+        if let Some(timeout_policy) = &gate.timeout_policy {
+            params.insert(
+                "timeout_policy".into(),
+                Value::String(timeout_policy.clone()),
+            );
+        }
         let flat = runinator_wdl_sema::desugar::flatten_entries(&gate.metadata, &self.aliases)?;
         for (name, value) in &flat {
             params.insert(name.clone(), self.lower_expr(value)?);

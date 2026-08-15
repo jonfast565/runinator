@@ -6,7 +6,7 @@ use runinator_models::{
 use serde::{Deserialize, Serialize};
 
 use runinator_wdl::{
-    analysis::{lower_type_with, resolve_named_types},
+    analysis::{GRAMMAR_KEYWORDS, lower_type_with, resolve_named_types},
     ast::{Document, FnBody, FunctionDef},
     parse_document,
 };
@@ -414,6 +414,7 @@ fn keyword_hover(word: WordAt<'_>) -> Option<WdlHoverResponse> {
         "wait" => "Parks the workflow until a duration or state is ready.",
         "approve" => "Parks the workflow for human approval.",
         "gate" => "Parks the workflow behind an external or condition gate.",
+        "on_timeout" => "Selects whether an expired gate fails or continues.",
         "signal" => "Waits for an external signal.",
         "interrupt" => {
             "Declares a handler region that runs when the named source fires, suspending the run's \
@@ -440,6 +441,7 @@ fn keyword_hover(word: WordAt<'_>) -> Option<WdlHoverResponse> {
         "fn" => "Declares a reusable compute function.",
         "import" => "Imports a namespace or standard-library module.",
         "alias" => "Declares a reusable argument object.",
+        _ if GRAMMAR_KEYWORDS.binary_search(&word.text).is_ok() => "WDL keyword.",
         _ => return None,
     };
     Some(WdlHoverResponse {

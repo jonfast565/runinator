@@ -9,7 +9,7 @@ use runinator_models::{
 use serde::{Deserialize, Serialize};
 
 use runinator_wdl::{
-    analysis::lower_type,
+    analysis::{STATEMENT_KEYWORDS, lower_type},
     ast::{Block, Expr, ExprKind, PathSeg, Stmt, StmtKind},
     parse_document,
 };
@@ -465,7 +465,7 @@ fn construct_completion_items() -> Vec<WdlCompletionItem> {
             "gate condition",
             "keyword",
             "condition gate",
-            "gate condition when ${condition} every ${interval} timeout ${deadline}",
+            "gate condition when ${condition} every ${interval} timeout ${deadline} on_timeout ${policy}",
             true,
         ),
         (
@@ -595,7 +595,7 @@ fn construct_completion_items() -> Vec<WdlCompletionItem> {
             true,
         ),
     ];
-    CONSTRUCTS
+    let mut items = CONSTRUCTS
         .iter()
         .map(
             |(label, kind, detail, insert_text, is_snippet)| WdlCompletionItem {
@@ -607,7 +607,16 @@ fn construct_completion_items() -> Vec<WdlCompletionItem> {
                 is_snippet: *is_snippet,
             },
         )
-        .collect()
+        .collect::<Vec<_>>();
+    items.extend(STATEMENT_KEYWORDS.iter().map(|keyword| WdlCompletionItem {
+        label: (*keyword).into(),
+        kind: "keyword".into(),
+        detail: Some("WDL statement".into()),
+        documentation: None,
+        insert_text: (*keyword).into(),
+        is_snippet: false,
+    }));
+    items
 }
 
 fn complete_actions(

@@ -176,6 +176,14 @@ impl FakeStore {
         }
     }
 
+    /// replace a node run's durable handler state for deadline and recovery tests.
+    pub fn set_node_run_state(&self, node_run_id: Uuid, state: Value) {
+        let mut guard = self.state.lock().expect("state");
+        if let Some(run) = guard.node_runs.iter_mut().find(|run| run.id == node_run_id) {
+            run.state = state.into();
+        }
+    }
+
     /// the `last_run_at` a named cooldown window currently holds.
     pub fn cooldown_window(&self, name: &str) -> Option<i64> {
         self.state

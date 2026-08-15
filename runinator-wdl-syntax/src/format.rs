@@ -867,6 +867,9 @@ impl Formatter {
         if let Some(timeout) = gate.timeout {
             text.push_str(&format!(" timeout {timeout}s"));
         }
+        if let Some(policy) = &gate.timeout_policy {
+            text.push_str(&format!(" on_timeout {policy}"));
+        }
         if !gate.metadata.is_empty() {
             text.push_str(&format!(
                 " {}",

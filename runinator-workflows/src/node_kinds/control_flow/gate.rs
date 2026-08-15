@@ -43,6 +43,11 @@ impl NodeKindSpec for Gate {
                     None,
                 ),
                 field(
+                    opt("timeout_policy", enum_ty(&["fail", "continue"])),
+                    FieldLocation::parameters(&["timeout_policy"]),
+                    None,
+                ),
+                field(
                     opt("label", RuninatorType::String),
                     FieldLocation::parameters(&["label"]),
                     None,

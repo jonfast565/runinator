@@ -78,6 +78,8 @@ mod cooldown_tests;
 #[cfg(test)]
 mod debug_tests;
 #[cfg(test)]
+mod gate_tests;
+#[cfg(test)]
 mod handler_tests;
 #[cfg(test)]
 mod mutex_tests;

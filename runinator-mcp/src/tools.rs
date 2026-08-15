@@ -34,7 +34,7 @@ pub(crate) fn fixed_tools() -> Vec<Value> {
             "name": "runinator_get_workflow",
             "description": "Fetch a saved Runinator workflow definition.",
             "inputSchema": object_schema(
-                vec![("workflow_id", json!({ "type": "integer" }))],
+                vec![("workflow_id", json!({ "type": "string", "format": "uuid" }))],
                 vec!["workflow_id"],
             ),
         }),
@@ -81,7 +81,7 @@ pub(crate) fn fixed_tools() -> Vec<Value> {
             "name": "runinator_export_workflow_bundle",
             "description": "Export all workflows, or one workflow, as importer-compatible JSON.",
             "inputSchema": object_schema(
-                vec![("workflow_id", json!({ "type": "integer" }))],
+                vec![("workflow_id", json!({ "type": "string", "format": "uuid" }))],
                 vec![],
             ),
         }),

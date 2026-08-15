@@ -59,10 +59,10 @@ pub use testkit::{
     run_test_case,
 };
 pub use types::{
-    ApprovalParameters, ArtifactItem, BranchPolicy, GateParameters, InputParameters,
-    JoinParameters, LoopParameters, MapParameters, OutputParameters, ParallelParameters,
-    PercentageBucket, PercentageParameters, RaceParameters, SignalParameters, SwitchCase,
-    SwitchParameters, ToggleParameters, TryParameters, WaitParameters,
+    ApprovalParameters, ArtifactItem, BranchPolicy, GateParameters, GateTimeoutPolicy,
+    InputParameters, JoinParameters, LoopParameters, MapParameters, OutputParameters,
+    ParallelParameters, PercentageBucket, PercentageParameters, RaceParameters, SignalParameters,
+    SwitchCase, SwitchParameters, ToggleParameters, TryParameters, WaitParameters,
 };
 pub use typing::{WorkflowType, validate_workflow_types};
 pub use validation::{

@@ -1506,6 +1506,13 @@ impl<'a> Decompiler<'a> {
         if let Some(timeout) = node.parameters.get("timeout").and_then(Value::as_i64) {
             text.push_str(&format!(" timeout {timeout}s"));
         }
+        if let Some(policy) = node
+            .parameters
+            .get("timeout_policy")
+            .and_then(Value::as_str)
+        {
+            text.push_str(&format!(" on_timeout {policy}"));
+        }
         // remaining params (label + extras) render as the trailing metadata object.
         let base = self.indent;
         if let Some(segs) = self.spreads.get(&node.id) {
@@ -1515,7 +1522,10 @@ impl<'a> Decompiler<'a> {
             let entries: Vec<(&str, &Value)> = params
                 .iter()
                 .filter(|(name, _)| {
-                    !matches!(name.as_str(), "kind" | "when" | "poll_interval" | "timeout")
+                    !matches!(
+                        name.as_str(),
+                        "kind" | "when" | "poll_interval" | "timeout" | "timeout_policy"
+                    )
                 })
                 .map(|(name, value)| (name.as_str(), value))
                 .collect();

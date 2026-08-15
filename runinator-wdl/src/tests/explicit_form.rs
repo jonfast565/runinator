@@ -208,7 +208,7 @@ fn gate_node_round_trips_each_kind() {
     let src = r#"
         workflow "Gated" v1 {
             node build <- console.run(command: "build")
-            gate condition when build.status == "ready" every 15s timeout 300s
+            gate condition when build.status == "ready" every 15s timeout 300s on_timeout continue
             gate manual { label: "release" }
             gate external every 60s
             node report <- console.run(command: "report")
@@ -243,6 +243,13 @@ fn gate_node_round_trips_each_kind() {
             .get("timeout")
             .and_then(Value::as_i64),
         Some(300)
+    );
+    assert_eq!(
+        condition_gate
+            .parameters
+            .get("timeout_policy")
+            .and_then(Value::as_str),
+        Some("continue")
     );
     assert_round_trips(src);
 }

@@ -82,6 +82,17 @@ fn fixed_tools_include_workflow_authoring_surface() {
     assert!(names.contains(&"runinator_list_providers"));
     assert!(names.contains(&"runinator_validate_workflow"));
     assert!(names.contains(&"runinator_export_workflow_bundle"));
+
+    for name in ["runinator_get_workflow", "runinator_export_workflow_bundle"] {
+        let tool = tools
+            .iter()
+            .find(|tool| tool.get("name").and_then(Value::as_str) == Some(name))
+            .unwrap();
+        assert_eq!(
+            tool["inputSchema"]["properties"]["workflow_id"]["format"],
+            "uuid"
+        );
+    }
 }
 
 #[test]

@@ -231,6 +231,7 @@ pub struct GateStmt {
     pub when: Option<Cond>,
     pub poll_interval: Option<i64>,
     pub timeout: Option<i64>,
+    pub timeout_policy: Option<String>,
     pub metadata: Vec<(String, Expr)>,
 }
 

@@ -4,6 +4,7 @@ use std::{
     time::Duration,
 };
 
+mod api_tools;
 mod contracts;
 mod protocol;
 mod resources;
@@ -24,6 +25,7 @@ use runinator_models::{
     workflows::{WorkflowBundle, WorkflowDefinition, WorkflowStatus},
 };
 
+use api_tools::{ApiTool, api_tools_from_openapi};
 use contracts::{RESOURCE_ARTIFACT_URI_PREFIX, RESOURCE_WORKFLOW_RUN_URI_PREFIX};
 use protocol::{json_export_response, json_tool_response, required_uuid, required_value};
 use resources::{
@@ -107,6 +109,11 @@ impl McpServer {
     fn tools_list(&self) -> Result<Value, String> {
         let workflows = self.fetch_workflows()?;
         let mut tools = fixed_tools();
+        tools.extend(
+            self.fetch_api_tools()?
+                .into_iter()
+                .map(|tool| tool.definition()),
+        );
         tools.extend(tools_from_workflows(workflows));
         Ok(json!({ "tools": tools }))
     }
@@ -123,6 +130,15 @@ impl McpServer {
 
         if let Some(result) = self.fixed_tool_call(name, arguments.clone())? {
             return Ok(result);
+        }
+
+        if name.starts_with("runinator_api_") {
+            let tool = self
+                .fetch_api_tools()?
+                .into_iter()
+                .find(|tool| tool.name == name)
+                .ok_or_else(|| format!("Unknown Runinator API tool '{name}'"))?;
+            return self.call_api_tool(&tool, &arguments);
         }
 
         let workflow_id = parse_tool_workflow_id(name)
@@ -345,6 +361,110 @@ impl McpServer {
             .map_err(|err| err.to_string())
     }
 
+    fn fetch_api_tools(&self) -> Result<Vec<ApiTool>, String> {
+        let document = self.fetch_api_json("/openapi.json")?;
+        Ok(api_tools_from_openapi(&document))
+    }
+
+    fn call_api_tool(&self, tool: &ApiTool, arguments: &Value) -> Result<Value, String> {
+        let mut path = tool.path.clone();
+        let mut query = Vec::new();
+        let mut headers = Vec::new();
+
+        for parameter in &tool.parameters {
+            let value = arguments.get(&parameter.name);
+            if value.is_none() && parameter.required {
+                return Err(format!("missing argument '{}'", parameter.name));
+            }
+            let Some(value) = value else {
+                continue;
+            };
+            let value = scalar_argument(value, &parameter.name)?;
+            match parameter.location.as_str() {
+                "path" => {
+                    path = path.replace(
+                        &format!("{{{}}}", parameter.name),
+                        &percent_encode_path_segment(&value),
+                    );
+                }
+                "query" => query.push((parameter.name.clone(), value)),
+                "header" => headers.push((parameter.name.clone(), value)),
+                location => {
+                    return Err(format!(
+                        "unsupported openapi parameter location '{location}'"
+                    ));
+                }
+            }
+        }
+
+        let method =
+            reqwest::Method::from_bytes(tool.method.as_bytes()).map_err(|err| err.to_string())?;
+        let mut request = self.client.request(method, self.url(&path));
+        if !query.is_empty() {
+            request = request.query(&query);
+        }
+        for (name, value) in headers {
+            let name = reqwest::header::HeaderName::from_bytes(name.as_bytes())
+                .map_err(|err| format!("invalid header parameter '{name}': {err}"))?;
+            let value = reqwest::header::HeaderValue::from_str(&value)
+                .map_err(|err| format!("invalid value for header '{name}': {err}"))?;
+            request = request.header(name, value);
+        }
+
+        if let Some(content_type) = &tool.request_content_type {
+            let body = arguments.get("body");
+            if body.is_none() && tool.request_required {
+                return Err("missing argument 'body'".to_string());
+            }
+            if let Some(body) = body {
+                if content_type == "application/json" {
+                    request = request.json(body);
+                } else {
+                    let body = body
+                        .as_str()
+                        .ok_or_else(|| format!("body for {content_type} must be a string"))?;
+                    request = request
+                        .header(reqwest::header::CONTENT_TYPE, content_type)
+                        .body(body.to_string());
+                }
+            }
+        }
+
+        let response = request
+            .send()
+            .map_err(|err| err.to_string())?
+            .error_for_status()
+            .map_err(|err| err.to_string())?;
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("application/octet-stream")
+            .to_string();
+        let bytes = response.bytes().map_err(|err| err.to_string())?;
+        let value = if bytes.is_empty() {
+            Value::Null
+        } else if content_type.contains("json") {
+            serde_json::from_slice(bytes.as_ref()).map_err(|err| err.to_string())?
+        } else if content_type.starts_with("text/") || content_type.contains("html") {
+            Value::String(String::from_utf8_lossy(bytes.as_ref()).into_owned())
+        } else {
+            json!({
+                "content_type": content_type,
+                "bytes": bytes.as_ref(),
+            })
+        };
+        json_tool_response(
+            &format!(
+                "Runinator API {} {} completed",
+                tool.method.to_uppercase(),
+                tool.path
+            ),
+            value,
+            false,
+        )
+    }
+
     fn post_api_json(&self, path: &str, body: Value) -> Result<Value, String> {
         self.client
             .post(self.url(path))
@@ -546,6 +666,30 @@ fn arguments_are_json_workflow_bundle(arguments: &Value) -> bool {
         .is_some_and(|items| items.iter().any(Value::is_object))
 }
 
+fn scalar_argument(value: &Value, name: &str) -> Result<String, String> {
+    match value {
+        Value::String(value) => Ok(value.clone()),
+        Value::Number(value) => Ok(value.to_string()),
+        Value::Bool(value) => Ok(value.to_string()),
+        _ => Err(format!(
+            "argument '{name}' must be a string, number, or boolean"
+        )),
+    }
+}
+
+fn percent_encode_path_segment(value: &str) -> String {
+    let mut encoded = String::new();
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            encoded.push(byte as char);
+        } else {
+            use std::fmt::Write as _;
+            write!(encoded, "%{byte:02X}").expect("writing to a string cannot fail");
+        }
+    }
+    encoded
+}
+
 mod service;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -589,3 +733,7 @@ fn run_process() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 #[path = "main_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "api_tools_tests.rs"]
+mod api_tools_tests;

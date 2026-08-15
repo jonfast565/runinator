@@ -135,10 +135,39 @@ fn completes_language_constructs_at_bare_position() {
     assert!(labels.contains(&"for"), "labels: {labels:?}");
     assert!(labels.contains(&"trigger cron"), "labels: {labels:?}");
     assert!(labels.contains(&"gate condition"), "labels: {labels:?}");
+    for generated in ["approve", "fail", "input", "race", "set", "until"] {
+        assert!(
+            labels.contains(&generated),
+            "missing {generated}: {labels:?}"
+        );
+    }
     assert!(response.items.iter().any(|item| item.label == "node"
         && item.kind == "keyword"
         && item.is_snippet
         && item.insert_text.contains("provider")));
+}
+
+#[test]
+fn gate_completion_and_hover_follow_timeout_policy_syntax() {
+    let response = complete_source(WdlCompletionRequest {
+        source: "workflow \"Gate\" { }".into(),
+        cursor_byte: 18,
+        providers: completion_providers(),
+        settings: Vec::new(),
+    });
+    let gate = response
+        .items
+        .iter()
+        .find(|item| item.label == "gate condition")
+        .expect("gate completion");
+    assert!(gate.insert_text.contains("on_timeout ${policy}"));
+
+    let hover = hover_at(
+        "workflow \"Gate\" { gate manual timeout 30s <>on_timeout continue }",
+        "<>",
+    );
+    assert_eq!(hover.title, "on_timeout");
+    assert_eq!(hover.kind, "keyword");
 }
 
 #[test]

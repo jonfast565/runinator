@@ -8,3 +8,6 @@ runinator-models = { path = "../runinator-models" }
 pest = "2"
 pest_derive = "2"
 thiserror = "2.0.18"
+
+[build-dependencies]
+pest_meta = "2"

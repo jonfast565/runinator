@@ -1869,6 +1869,7 @@ fn parse_gate(pair: Pair<Rule>) -> Result<GateStmt, WdlError> {
     let mut when = None;
     let mut poll_interval = None;
     let mut timeout = None;
+    let mut timeout_policy = None;
     let mut metadata = Vec::new();
     for inner in pair.into_inner() {
         match inner.as_rule() {
@@ -1882,6 +1883,9 @@ fn parse_gate(pair: Pair<Rule>) -> Result<GateStmt, WdlError> {
                 let value = first_inner(inner)?;
                 timeout = Some(parse_duration(value.as_str(), span_of(&value))?);
             }
+            Rule::gate_timeout_policy => {
+                timeout_policy = Some(first_inner(inner)?.as_str().trim().to_string());
+            }
             Rule::object => metadata = parse_object_entries(inner)?,
             _ => {}
         }
@@ -1891,6 +1895,7 @@ fn parse_gate(pair: Pair<Rule>) -> Result<GateStmt, WdlError> {
         when,
         poll_interval,
         timeout,
+        timeout_policy,
         metadata,
     })
 }

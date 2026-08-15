@@ -8,3 +8,4 @@
 
 pub use runinator_wdl_sema::namespace::resolve as resolve_namespaces;
 pub use runinator_wdl_sema::types::{NamedTypes, lower_type, lower_type_with, resolve_named_types};
+pub use runinator_wdl_syntax::vocabulary::{GRAMMAR_KEYWORDS, STATEMENT_KEYWORDS};

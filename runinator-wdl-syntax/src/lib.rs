@@ -12,6 +12,7 @@ pub mod errors;
 pub mod format;
 pub mod includes;
 pub mod parser;
+pub mod vocabulary;
 
 pub use errors::{Span, WdlError};
 pub use format::format_document;
