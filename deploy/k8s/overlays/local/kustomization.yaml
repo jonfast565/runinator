@@ -92,6 +92,9 @@ images:
   - name: runinator-archiver
     newName: runinator-archiver
     newTag: dev
+  - name: runinator-blob
+    newName: runinator-blob
+    newTag: dev
   - name: runinator-ctl
     newName: runinator-ctl
     newTag: dev
