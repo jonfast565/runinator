@@ -594,7 +594,7 @@ async fn dispatch_target_still_live<T: ReducerStore>(
 }
 
 /// schedule the next liveness recheck of a dispatched action's executing worker.
-async fn arm_dispatch_liveness_poll<T: ReducerStore>(
+pub(super) async fn arm_dispatch_liveness_poll<T: ReducerStore>(
     ctx: &super::handler::NodeHandlerContext<'_, T>,
 ) -> Result<(), SendableError> {
     let poll_at = Utc::now() + chrono::Duration::seconds(DISPATCH_LIVENESS_POLL_SECONDS);

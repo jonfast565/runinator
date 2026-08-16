@@ -294,13 +294,19 @@ fn execute(
             Ok(Flow::Next)
         }
         InvocationInstruction::LoadLocal { name } => {
+            // an unbound local reads as null, not as an error. this matches the tree evaluator,
+            // which resolves `let.x` through the same missing-path rule every other reference uses.
+            // it is reachable: `collect_locals` gathers bindings from nested branches too, so
+            // `if c { let x = 1 }` followed by a read of `x` compiles to a load that may never have
+            // been stored. erroring here would be defensible in a new language, but this one already
+            // has an answer, and a migration that changed it would fail workflows that run today.
             let value = frame(continuation)?
                 .locals
                 .iter()
                 .rev()
                 .find(|(key, _)| key == name)
                 .map(|(_, value)| value.clone())
-                .ok_or_else(|| format!("unknown local '{name}'"))?;
+                .unwrap_or(Value::Null);
             push(continuation, value)?;
             Ok(Flow::Next)
         }
@@ -599,10 +605,15 @@ fn failed(message: impl Into<String>) -> InvocationStep {
     }
 }
 
-// the one truthiness rule. the evaluator this replaces had three subtly different ones, in
-// `conditions.rs`, `expressions.rs` and `compute.rs`; only null and false are falsy.
+// `JumpIfFalse` is the only instruction that tests a raw value, and it must use the same rule the
+// tree evaluator uses for a conditional — javascript-like, so `0`, `""` and `[]` are falsy.
+//
+// an earlier version used "only null and false are falsy" on the theory that unifying the language's
+// three rules was an improvement. it is not: two of those three are the same rule, and it is this
+// one. adopting the odd one out silently inverted branches on zero and on empty collections, which
+// nothing raises and no migration dry run can detect.
 fn truthy(value: &Value) -> bool {
-    !matches!(value, Value::Null | Value::Bool(false))
+    crate::conditions::is_truthy(value)
 }
 
 #[cfg(test)]

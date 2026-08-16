@@ -140,7 +140,7 @@ where
         }
 
         let now = Utc::now().timestamp();
-        let id = Uuid::now_v7();
+        let id = call.id;
         let mut tx = self.pool().begin().await?;
 
         sqlx::query(&self.render(

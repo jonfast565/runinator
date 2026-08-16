@@ -335,17 +335,13 @@ pub(crate) fn evaluate_expression_with(
     }
 }
 
-/// truthiness for a conditional expression: everything is truthy except null, `false`, zero, the
-/// empty string, and empty collections.
+/// truthiness for a conditional expression.
+///
+/// this was a byte-identical second copy of the condition evaluator's rule. two copies of a rule
+/// that decides which branch runs is exactly the drift that made unifying truthiness worth doing at
+/// all, so it delegates.
 fn is_truthy(value: &Value) -> bool {
-    match value {
-        Value::Null => false,
-        Value::Bool(value) => *value,
-        Value::Number(number) => number.as_f64().is_some_and(|n| n != 0.0 && !n.is_nan()),
-        Value::String(text) => !text.is_empty(),
-        Value::Array(items) => !items.is_empty(),
-        Value::Object(map) => !map.is_empty(),
-    }
+    crate::conditions::is_truthy(value)
 }
 
 /// evaluate a higher-order intrinsic (`map`/`filter`/`reduce`/...). the collection argument is

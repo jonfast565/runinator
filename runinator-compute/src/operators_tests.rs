@@ -82,16 +82,20 @@ fn neg_keeps_an_integer_an_integer() {
 }
 
 #[test]
-fn truthiness_is_the_vms_single_rule() {
-    // only null and false are falsy — notably 0 and "" are truthy, which is where the evaluator's
-    // three former rules disagreed with each other.
+fn truthiness_matches_the_condition_evaluator() {
+    // javascript-like: `0`, `""` and empty collections are falsy, because that is what a `{value: x}`
+    // condition has always meant. the `not`/`and`/`or` intrinsics use a different rule and are a
+    // different surface; they are not unified with this one.
     for (value, expected) in [
         (Value::Null, false),
         (Value::from(false), false),
         (Value::from(true), true),
-        (Value::from(0), true),
-        (Value::from(""), true),
-        (json!([]), true),
+        (Value::from(0), false),
+        (Value::from(1), true),
+        (Value::from(""), false),
+        (Value::from("x"), true),
+        (json!([]), false),
+        (json!({}), false),
     ] {
         assert_eq!(
             call_operator(crate::assemble::TRUTHY_INTRINSIC, &[value.clone()]).unwrap(),

@@ -99,11 +99,19 @@ fn a_pure_intrinsic_folds_in_process() {
 }
 
 #[test]
-fn an_unknown_local_is_an_error() {
-    let step = run_entry(vec![InvocationInstruction::LoadLocal {
-        name: "nope".to_string(),
-    }]);
-    assert!(matches!(step, InvocationStep::Failed { .. }));
+fn an_unknown_local_reads_as_null() {
+    // matching the tree evaluator, which resolves `let.x` through the same missing-path rule every
+    // other reference uses. reachable whenever a binding sits on a branch that did not run.
+    let step = run_entry(vec![
+        InvocationInstruction::LoadLocal {
+            name: "nope".to_string(),
+        },
+        InvocationInstruction::Return,
+    ]);
+    assert!(matches!(
+        step,
+        InvocationStep::Complete { value: Value::Null }
+    ));
 }
 
 #[test]
@@ -129,13 +137,20 @@ fn jump_if_false_takes_the_branch_on_a_falsy_value() {
 }
 
 #[test]
-fn only_null_and_false_are_falsy() {
-    // the evaluator this replaces had three different truthiness rules; this pins the one.
-    assert!(truthy(&Value::from(0i64)));
-    assert!(truthy(&Value::from("")));
-    assert!(truthy(&Value::Array(Vec::new())));
+fn truthiness_matches_the_condition_evaluator() {
+    // javascript-like, because that is the rule the tree evaluator already applied to a `{value: x}`
+    // condition and to a conditional expression. an earlier version of this test asserted the
+    // opposite — that only null and `false` are falsy — which is the rule behind the `not`/`and`/`or`
+    // intrinsics, a different surface. adopting it here inverted branches on `0` and on empty
+    // collections, silently and undetectably.
+    assert!(!truthy(&Value::from(0i64)));
+    assert!(!truthy(&Value::from("")));
+    assert!(!truthy(&Value::Array(Vec::new())));
     assert!(!truthy(&Value::Null));
     assert!(!truthy(&Value::Bool(false)));
+    assert!(truthy(&Value::from(1i64)));
+    assert!(truthy(&Value::from("x")));
+    assert!(truthy(&Value::Bool(true)));
 }
 
 #[test]

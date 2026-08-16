@@ -103,13 +103,13 @@ fn neg(value: &Value) -> Result<Value, WorkflowValidationError> {
     }
 }
 
-/// the vm's single truthiness rule, applied where a declarative condition asked for truthiness.
+/// the declarative-condition truthiness rule, shared with the tree evaluator.
 ///
-/// only null and `false` are falsy. this is the same rule the vm's `JumpIfFalse` uses, which is the
-/// point: the tree evaluator had three subtly different ones, and a condition that meant one thing
-/// as a jump and another as a test is exactly the bug that split caused.
+/// deliberately not restated here. a `{value: x}` condition decides which branch a workflow takes,
+/// and a second definition of "truthy" is how that decision quietly stops matching the one the
+/// evaluator made for the same program.
 fn truthy(value: &Value) -> bool {
-    !matches!(value, Value::Null | Value::Bool(false))
+    crate::conditions::is_truthy(value)
 }
 
 // `left in right` is `contains(right, left)`; the assembler pushes left then right, so the operands

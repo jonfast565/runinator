@@ -537,6 +537,15 @@ pub async fn cancel_workflow_run<T: DatabaseImpl>(
 ) -> Result<TaskResponse, SendableError> {
     let command = ControlCommand::new(workflow_run_id, ControlKind::Cancel);
     let response = cancel_workflow_run_command(db, &command).await?;
+    // an invocation's in-flight calls are not node runs, so settling the run's node runs leaves
+    // them open. left `Running` they would keep reporting as pending work for a run that is over,
+    // and a late worker result would resume a program whose run is already terminal.
+    if let Err(err) = db
+        .cancel_invocation_calls_for_run(workflow_run_id, "workflow run canceled")
+        .await
+    {
+        log::warn!("Failed to cancel invocation calls for run {workflow_run_id}: {err}");
+    }
     // reliable path first: a cancel routed to the replica holding each in-flight action's executor
     // lease, so it cannot be consumed (and dropped) by a worker holding nothing. the untargeted
     // run-wide command below stays as a best-effort catch-all for executions whose claim was never

@@ -1192,7 +1192,9 @@ async fn assert_invocation_lifecycle<T: DatabaseImpl>(db: &T, run_id: Uuid, node
     assert_eq!(invocation.status, WorkflowStatus::Running);
     assert_eq!(invocation.continuation, continuation);
 
+    let call_id = Uuid::now_v7();
     let new_call = || NewInvocationCall {
+        id: call_id,
         invocation_id: invocation.id,
         workflow_run_id: run_id,
         sequence: 0,
@@ -1324,6 +1326,29 @@ async fn assert_invocation_lifecycle<T: DatabaseImpl>(db: &T, run_id: Uuid, node
             .unwrap()
             .is_none()
     );
+
+    // a chunk from a call is attributed to both the node run and the call. this is written by
+    // `apply_workflow_result_event`, whose insert lists the column explicitly — a dialect that
+    // rejected it would fail here rather than silently dropping call attribution.
+    let chunk_event = WorkflowResultEvent {
+        command_id: Uuid::now_v7(),
+        event_id: Uuid::now_v7(),
+        workflow_run_id: run_id,
+        workflow_node_run_id: node_id,
+        node_id: "invoke-1".into(),
+        attempt: 0,
+        kind: WorkflowResultEventKind::Chunk {
+            chunk: runinator_models::runs::NewRunChunk {
+                stream: "stdout".into(),
+                content: "hello".into(),
+            },
+        },
+        timestamp: Utc::now(),
+        trace_id: Uuid::nil(),
+        notification_delivery_id: None,
+        invocation_call_id: Some(call.id),
+    };
+    assert!(db.apply_workflow_result_event(&chunk_event).await.unwrap());
 
     db.settle_invocation(
         invocation.id,

@@ -21,6 +21,46 @@ use runinator_models::invocation::{
 };
 use runinator_workflows::parse_invocation_parameters;
 
+/// the deadline a call gets when neither its `with { }` policy nor its node declares one.
+///
+/// there is deliberately no "no timeout" case: a call with no deadline is a run that parks forever
+/// when a worker dies, which is the failure mode the whole liveness apparatus exists to prevent.
+pub(super) const DEFAULT_CALL_TIMEOUT_SECONDS: i64 = 60;
+
+/// name a call's positional arguments with the parameter names its target declares.
+///
+/// the worker validates an action's parameters against that target's `ActionMetadata` as a closed
+/// struct, so a key the metadata does not declare is rejected before the provider ever runs. the
+/// positional `arg0`/`arg1` form [`InvocationEffect::to_parameters`] falls back to is therefore only
+/// usable for a target with no known signature — for anything the catalog can describe, the
+/// arguments have to travel under the names that target actually advertises.
+fn call_parameters(catalog: &CallableCatalog, effect: &InvocationEffect) -> Value {
+    let name = effect.target.display_name();
+    let Some(declared) = catalog
+        .resolve(&name)
+        .and_then(|entry| entry.signature.as_ref())
+        .map(|signature| &signature.parameters)
+    else {
+        return effect.to_parameters();
+    };
+    // a call with more arguments than the signature declares is one the type checker should have
+    // rejected; naming only some of them would silently drop the rest, so fall back instead.
+    if declared.len() < effect.args.len() {
+        return effect.to_parameters();
+    }
+    let mut map = runinator_models::value::Map::new();
+    for (parameter, value) in declared.iter().zip(&effect.args) {
+        map.insert(parameter.name.clone(), value.clone());
+    }
+    Value::Object(map)
+}
+
+/// whether a dispatched call is past its own deadline.
+fn call_expired(call: &WorkflowInvocationCall) -> bool {
+    call.deadline_at
+        .is_some_and(|deadline| Utc::now().timestamp() > deadline)
+}
+
 pub(super) struct InvocationHandler;
 
 impl<T: ReducerStore> super::handler::NodeHandler<T> for InvocationHandler {
@@ -58,28 +98,41 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for InvocationHandler {
         }
 
         // a fresh visit: one node run and one invocation, positioned at the start of the module.
-        let node_run = ctx
-            .db
-            .create_workflow_node_run(
-                ctx.workflow_run.id,
-                ctx.node.id.clone(),
-                ctx.node.parameters.clone().into(),
-                super::context::most_recently_finished_node_run(ctx.node_runs),
-                Some(ctx.cursor),
-            )
-            .await?;
+        //
+        // a `Queued` run is reused rather than replaced. it means a previous drive created the node
+        // run and stopped before marking it `Running` — creating a second one here would leave the
+        // first orphaned and give the node two invocations, which
+        // `fetch_invocation_for_node_run` would then have to choose between.
+        let node_run = match latest.filter(|run| run.status == WorkflowStatus::Queued) {
+            Some(node_run) => node_run.clone(),
+            None => {
+                ctx.db
+                    .create_workflow_node_run(
+                        ctx.workflow_run.id,
+                        ctx.node.id.clone(),
+                        ctx.node.parameters.clone().into(),
+                        super::context::most_recently_finished_node_run(ctx.node_runs),
+                        Some(ctx.cursor),
+                    )
+                    .await?
+            }
+        };
         let continuation = runinator_models::invocation::InvocationContinuation::start();
-        let invocation = ctx
-            .db
-            .create_invocation(
-                ctx.workflow_run.id,
-                node_run.id,
-                Some(ctx.cursor.id),
-                &ctx.node.id,
-                params.module.version,
-                &continuation,
-            )
-            .await?;
+        let invocation = match ctx.db.fetch_invocation_for_node_run(node_run.id).await? {
+            Some(invocation) => invocation,
+            None => {
+                ctx.db
+                    .create_invocation(
+                        ctx.workflow_run.id,
+                        node_run.id,
+                        Some(ctx.cursor.id),
+                        &ctx.node.id,
+                        params.module.version,
+                        &continuation,
+                    )
+                    .await?
+            }
+        };
         ctx.db
             .update_workflow_node_run(
                 node_run.id,
@@ -132,9 +185,14 @@ impl InvocationHandler {
 
         let pending = ctx.db.fetch_pending_invocation_call(invocation.id).await?;
         if let Some(call) = &pending {
-            // the call is still in flight. honour the node timeout so a lost worker or a dropped
-            // result cannot park the run forever.
-            if transitions::timed_out(ctx.timing(), node_run) {
+            // the call is still in flight. the deadline that matters is the *call's*, not the
+            // node's: a `do { }` block usually declares no `.timeout()`, and `node.timeout_seconds`
+            // being `None` makes `timed_out` permanently false — so a lost worker or a dropped
+            // result would park the run forever. every call carries a deadline by construction
+            // (`action_for_target` falls back to `DEFAULT_CALL_TIMEOUT_SECONDS`), so this always
+            // fires. a node-level timeout, when the author declared one, caps the whole program on
+            // top of it.
+            if call_expired(call) || transitions::timed_out(ctx.timing(), node_run) {
                 let message = format!(
                     "Invocation call '{}' did not return before the node timeout elapsed",
                     call.target.display_name()
@@ -169,6 +227,9 @@ impl InvocationHandler {
                     .map(|_| ()),
                 );
             }
+            // keep watching: the executor-claim check is the only prompt dead-worker detection a
+            // dispatch has, and it only runs when something drives this node.
+            super::action::arm_dispatch_liveness_poll(ctx).await?;
             return Ok(ReadyNodeDisposition::Complete);
         }
 
@@ -305,6 +366,9 @@ impl InvocationHandler {
                     .suspend_invocation(
                         &continuation,
                         NewInvocationCall {
+                            // the same id the command carries: a store-assigned one would leave the
+                            // dispatch naming a call that does not exist.
+                            id: call.id,
                             invocation_id: invocation.id,
                             workflow_run_id: ctx.workflow_run.id,
                             sequence: effect.sequence,
@@ -317,10 +381,15 @@ impl InvocationHandler {
                         call.command,
                     )
                     .await?;
-                // the deadline belongs to the node run, which is what the timeout check above
-                // reads; no ready node is pending while the call is in flight, so it has to arm
-                // its own wake-up.
-                transitions::arm_node_timeout(ctx).await?;
+                // no ready node is pending while the call is in flight, so the deadline has to arm
+                // its own wake-up. armed from the call's timeout rather than the node's, and
+                // unconditionally: `arm_node_timeout` returns without arming when the node declares
+                // no timeout, which for a `do { }` block is the common case.
+                let seconds = call
+                    .deadline_at
+                    .map(|deadline| (deadline - Utc::now().timestamp()).max(1))
+                    .unwrap_or(DEFAULT_CALL_TIMEOUT_SECONDS);
+                transitions::arm_node_timeout_in(ctx, seconds).await?;
                 Ok(ReadyNodeDisposition::Complete)
             }
         }
@@ -347,10 +416,13 @@ impl InvocationHandler {
             }
             None => None,
         };
-        let deadline_at = action
-            .timeout_seconds
-            .gt(&0)
-            .then(|| Utc::now().timestamp() + action.timeout_seconds);
+        // always set: a call with no deadline is a run that parks forever when a worker dies.
+        let timeout = if action.timeout_seconds > 0 {
+            action.timeout_seconds
+        } else {
+            DEFAULT_CALL_TIMEOUT_SECONDS
+        };
+        let deadline_at = Some(Utc::now().timestamp() + timeout);
 
         let command = ActionCommand {
             command_id: Uuid::new_v4(),
@@ -361,7 +433,7 @@ impl InvocationHandler {
             // an invocation's attempts are per call, not per node run, so the command carries the
             // call's attempt. this is the first attempt of a newly recorded call.
             attempt: 0,
-            parameters: effect.to_parameters(),
+            parameters: call_parameters(&CallableCatalog::builtin(), effect),
             target: runinator_comm::ActionTarget::Any,
             trace_id: Uuid::now_v7(),
             trace_context: runinator_utilities::telemetry::current_trace_context(),
@@ -370,6 +442,7 @@ impl InvocationHandler {
             idempotency_key: idempotency_key.clone(),
         };
         Ok(PreparedCall {
+            id: call_id,
             command,
             idempotency_key,
             deadline_at,
@@ -377,8 +450,10 @@ impl InvocationHandler {
     }
 }
 
-/// what `dispatch` prepared: the command plus the two fields the call row also needs.
+/// what `dispatch` prepared: the command plus the fields the call row also needs.
 struct PreparedCall {
+    /// the id the command names, which the call row must be written under.
+    id: Uuid,
     command: ActionCommand,
     idempotency_key: Option<String>,
     deadline_at: Option<i64>,
@@ -416,8 +491,8 @@ fn action_for_target(
         function,
         timeout_seconds: policy
             .timeout_seconds
-            .or_else(|| node.action.as_ref().map(|action| action.timeout_seconds))
-            .unwrap_or(60),
+            .or(node.timeout_seconds)
+            .unwrap_or(DEFAULT_CALL_TIMEOUT_SECONDS),
         configuration: Default::default(),
         mcp_enabled: false,
         tags: policy.tags.clone(),
@@ -452,20 +527,4 @@ fn resolve_goto_target(target: &str, nodes: &[WorkflowNode]) -> String {
         return node.id.clone();
     }
     target.to_string()
-}
-
-/// settle the call a landed result names, and report whether it was applied.
-///
-/// this is the engine-facing half: a result carrying an `invocation_call_id` settles that call
-/// rather than the node run, and a drive of the owning cursor is what resumes the program. a call
-/// already terminal returns `false`, which is how a duplicate or superseded delivery is discarded.
-pub async fn settle_call<T: ReducerStore>(
-    db: &T,
-    call: &WorkflowInvocationCall,
-    status: WorkflowStatus,
-    output: Option<Value>,
-    message: Option<String>,
-) -> Result<bool, SendableError> {
-    db.settle_invocation_call(call.id, call.attempt, status, output, message)
-        .await
 }

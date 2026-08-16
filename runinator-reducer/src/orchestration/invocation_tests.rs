@@ -221,3 +221,100 @@ async fn a_redriven_suspend_does_not_dispatch_twice() {
         WorkflowStatus::Running
     );
 }
+
+#[tokio::test]
+async fn the_dispatch_names_the_call_row_it_created() {
+    // the invariant the other tests silently assumed. they settle a call by reading its row id
+    // directly, which is not how a real result arrives: the worker echoes back the
+    // `invocation_call_id` the *command* carried, and the engine settles whatever that names. if the
+    // two ids differ the result settles nothing, and the invocation sits parked until its node
+    // timeout with no error anywhere saying why.
+    let (store, _) = start_run(durable_program()).await;
+
+    let calls = store.recorded_invocation_calls();
+    let dispatches = store.dispatches();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(dispatches.len(), 1);
+    assert_eq!(
+        dispatches[0].command.invocation_call_id,
+        Some(calls[0].id),
+        "the dispatched command must name the call row that was written"
+    );
+    // and the attempt has to match too, or `settle_invocation_call`'s attempt guard discards the
+    // result as a superseded one.
+    assert_eq!(dispatches[0].command.attempt, calls[0].attempt);
+    // the outbox key is scoped to that same call and attempt.
+    assert_eq!(dispatches[0].dedupe_key, calls[0].dispatch_key());
+}
+
+#[tokio::test]
+async fn a_call_carries_a_deadline_even_when_the_node_declares_no_timeout() {
+    // the workflow above declares no `.timeout()`, so `node.timeout_seconds` is `None` and
+    // `transitions::timed_out` is permanently false. without a per-call deadline a lost worker or a
+    // dropped result would park this run forever, with nothing scheduled to notice.
+    let (store, _) = start_run(durable_program()).await;
+    let call = store.recorded_invocation_calls().remove(0);
+    assert!(
+        call.deadline_at.is_some(),
+        "every dispatched call must carry a deadline"
+    );
+}
+
+#[tokio::test]
+async fn an_expired_call_times_the_invocation_out() {
+    let (store, run_id) = start_run(durable_program()).await;
+    let call = store.recorded_invocation_calls().remove(0);
+    store.expire_invocation_call(call.id);
+
+    process_ready_node(&store, &ready_node(run_id, "invoke"))
+        .await
+        .expect("drive the expired call");
+
+    let node_run = store.latest_node_run("invoke").expect("invocation run");
+    assert_eq!(node_run.status, WorkflowStatus::TimedOut);
+    let settled = store
+        .recorded_invocation_calls()
+        .into_iter()
+        .find(|item| item.id == call.id)
+        .expect("the call");
+    assert_eq!(settled.status, WorkflowStatus::TimedOut);
+}
+
+/// `return upper(prev.name)` — one durable-classified intrinsic call.
+fn intrinsic_program(name: &str) -> InvocationProgram {
+    InvocationProgram::new(vec![
+        InvocationInstruction::Const {
+            value: Value::from("ada"),
+        },
+        InvocationInstruction::Call {
+            target: CallableTarget::Intrinsic { name: name.into() },
+            argc: 1,
+            names: Vec::new(),
+            policy: None,
+        },
+        InvocationInstruction::Return,
+    ])
+}
+
+#[tokio::test]
+async fn a_dispatched_call_names_its_arguments_the_way_the_target_declares_them() {
+    // the worker validates an action's parameters against its `ActionMetadata` as a closed struct,
+    // so a positional `arg0` key is rejected before the provider ever runs. this asserts the
+    // arguments travel under the names the target actually advertises — for `http_get`, `url`.
+    let (store, _) = start_run(intrinsic_program("http_get")).await;
+
+    let dispatches = store.dispatches();
+    assert_eq!(dispatches.len(), 1, "the durable intrinsic dispatched");
+    let parameters = &dispatches[0].command.parameters;
+    assert_eq!(
+        parameters.get("url"),
+        Some(&Value::from("ada")),
+        "argument must travel under the declared parameter name, got {parameters}"
+    );
+    assert!(
+        parameters.get("arg0").is_none(),
+        "the positional fallback must not be used for a target with a known signature"
+    );
+    assert_eq!(dispatches[0].command.action.provider, "std");
+    assert_eq!(dispatches[0].command.action.function, "http_get");
+}

@@ -99,7 +99,24 @@ impl Provider for StdProvider {
         // `run`/`exec` path below still does — would send everything the worker no longer needs in
         // order to decide anything.
         if request.action_function != RUN_FUNCTION && request.action_function != EXEC_FUNCTION {
-            return execute_intrinsic(&request, token);
+            // the declared parameter names, in declared order. the reducer sends the call's
+            // arguments under exactly these — it has to, because the worker validates an action's
+            // parameters against this same metadata as a closed struct — so reading them back in
+            // this order is what recovers the positional list the library takes.
+            let declared = self
+                .metadata()
+                .actions
+                .iter()
+                .find(|action| action.function_name == request.action_function)
+                .map(|action| {
+                    action
+                        .parameters
+                        .iter()
+                        .map(|parameter| parameter.name.clone())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            return execute_intrinsic(&request, &declared, token);
         }
         let program_value = request
             .parameters
@@ -135,20 +152,24 @@ impl Provider for StdProvider {
 
 /// run one named intrinsic against the arguments an invocation call carried.
 ///
-/// arguments arrive positionally as `arg0`, `arg1`, … (or under their author-written names, which
-/// this ignores — the vm has already resolved keyword arguments into positional order, and the names
-/// ride along only so a stored call reads intelligibly). they are read back in that order, and a gap
-/// ends the list rather than being filled with null, because a missing `arg1` means the vm sent one
-/// argument and not two.
+/// arguments arrive under the parameter names this action's metadata declares, because the worker
+/// validates them against that metadata as a closed struct before the provider is reached — an
+/// undeclared key fails the action rather than arriving here. `declared` is that name list in
+/// declaration order, which is what turns the named object back into the positional list the
+/// library takes.
 fn execute_intrinsic(
     request: &ProviderExecutionRequest,
+    declared: &[String],
     token: runinator_plugin::cancel::CancellationToken,
 ) -> Result<TaskExecutionResult, SendableError> {
     let mut args = Vec::new();
-    while let Some(value) = request
-        .parameters
-        .get(format!("arg{}", args.len()).as_str())
-    {
+    for name in declared {
+        // stop at the first absent parameter rather than filling it with null: a trailing optional
+        // the caller omitted means the library should see a shorter argument list, not a longer one
+        // ending in null, which several intrinsics treat as a real value.
+        let Some(value) = request.parameters.get(name.as_str()) else {
+            break;
+        };
         args.push(value.clone());
     }
     let library = FullIntrinsics::new(request.timeout_secs, token);

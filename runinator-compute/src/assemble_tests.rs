@@ -256,3 +256,122 @@ fn a_module_function_is_called_by_name() {
         other => panic!("expected 8, got {other:?}"),
     }
 }
+
+#[test]
+fn a_local_bound_only_on_an_untaken_branch_reads_as_null() {
+    // `collect_locals` gathers bindings from nested branches, so `x` compiles to a local load even
+    // though the branch that stores it may not run. the tree evaluator resolves that through its
+    // missing-path rule and yields null; the vm has to agree, or converting a stored definition
+    // would start failing workflows that run today.
+    let program = json!([
+        {
+            "$if": { "value": false },
+            "then": [{ "$let": "x", "value": 1 }],
+            "else": []
+        },
+        { "$return": { "$ref": { "let": ["x"] } } }
+    ]);
+    assert_eq!(agree(&program, &json!({})), Value::Null);
+}
+
+#[test]
+fn a_local_bound_on_the_taken_branch_is_visible_after_it() {
+    let program = json!([
+        {
+            "$if": { "value": true },
+            "then": [{ "$let": "x", "value": 41 }],
+            "else": []
+        },
+        { "$return": { "$ref": { "let": ["x"] } } }
+    ]);
+    assert_eq!(agree(&program, &json!({})), Value::from(41));
+}
+
+#[test]
+fn every_declarative_comparator_agrees_with_the_evaluator() {
+    // operand order is the thing worth pinning: `{value: X, in: Y}` asks whether X is in Y, but the
+    // `contains` intrinsic takes the collection first — so the assembler and the evaluator have to
+    // agree about which way round they go, and nothing else would catch it being reversed.
+    let cases: Vec<(&str, Value, Value)> = vec![
+        ("equals", Value::from("a"), Value::from("a")),
+        ("equals", Value::from("a"), Value::from("b")),
+        ("not_equals", Value::from("a"), Value::from("b")),
+        ("greater_than", Value::from(3), Value::from(1)),
+        ("greater_than", Value::from(1), Value::from(3)),
+        ("greater_than_or_equal", Value::from(3), Value::from(3)),
+        ("less_than", Value::from(1), Value::from(3)),
+        ("less_than_or_equal", Value::from(3), Value::from(3)),
+        ("contains", json!(["a", "b"]), Value::from("a")),
+        ("contains", json!(["a", "b"]), Value::from("z")),
+        ("in", Value::from("a"), json!(["a", "b"])),
+        ("in", Value::from("z"), json!(["a", "b"])),
+        ("starts_with", Value::from("hello"), Value::from("he")),
+        ("starts_with", Value::from("hello"), Value::from("lo")),
+        ("ends_with", Value::from("hello"), Value::from("lo")),
+        ("ends_with", Value::from("hello"), Value::from("he")),
+    ];
+
+    for (op, left, right) in cases {
+        let mut condition = runinator_models::value::Map::new();
+        condition.insert("value".into(), left.clone());
+        condition.insert(op.into(), right.clone());
+        let program = Value::Array(vec![Value::Object(
+            runinator_models::value::Map::from_iter([
+                ("$if".into(), Value::Object(condition)),
+                ("then".into(), json!([{ "$return": true }])),
+                ("else".into(), json!([{ "$return": false }])),
+            ]),
+        )]);
+        // `agree` panics if the two disagree; the returned value just documents the outcome.
+        let outcome = agree(&program, &json!({}));
+        assert!(
+            outcome.as_bool().is_some(),
+            "{op}({left}, {right}) produced a non-boolean: {outcome}"
+        );
+    }
+}
+
+#[test]
+fn an_exists_condition_agrees_on_a_missing_reference() {
+    // a missing path resolves to null rather than erroring, in both. an assembler that let the
+    // reference fail would turn "this field is absent" into a failed run.
+    let program = json!([
+        {
+            "$if": { "value": { "$ref": { "input": ["absent"] } }, "exists": false },
+            "then": [{ "$return": "missing" }],
+            "else": [{ "$return": "present" }]
+        }
+    ]);
+    assert_eq!(
+        agree(&program, &json!({ "input": { "other": 1 } })),
+        Value::from("missing")
+    );
+}
+
+#[test]
+fn bare_truthiness_agrees_with_the_evaluator() {
+    // the vm deliberately has one truthiness rule where the evaluator had three. that unification is
+    // only safe if it matches the rule the *condition* evaluator used, because a disagreement here
+    // silently flips a branch rather than raising anything.
+    for value in [
+        Value::Null,
+        Value::from(false),
+        Value::from(true),
+        Value::from(0),
+        Value::from(1),
+        Value::from(""),
+        Value::from("x"),
+        json!([]),
+        json!({}),
+    ] {
+        let program = json!([
+            {
+                "$if": { "value": value },
+                "then": [{ "$return": "truthy" }],
+                "else": [{ "$return": "falsy" }]
+            }
+        ]);
+        // panics with the two answers if they differ.
+        agree(&program, &json!({}));
+    }
+}

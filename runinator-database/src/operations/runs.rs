@@ -437,12 +437,16 @@ where
                     .fetch_one(&mut *tx)
                     .await?
                     .get("next_sequence");
+                // the call is attributed as well as the node run: an invocation makes several
+                // calls under one node run, so without this every call's output is one
+                // undifferentiated log. null for every other kind of node, which has no call.
                 sqlx::query(&self.render(
-                    "INSERT INTO workflow_node_chunks (id, workflow_node_run_id, sequence, stream, content, created_at)
-                     VALUES (?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO workflow_node_chunks (id, workflow_node_run_id, invocation_call_id, sequence, stream, content, created_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?)",
                 ))
                 .bind(Uuid::now_v7())
                 .bind(event.workflow_node_run_id)
+                .bind(event.invocation_call_id)
                 .bind(sequence)
                 .bind(chunk.stream.as_str())
                 .bind(chunk.content.as_str())
@@ -452,11 +456,12 @@ where
             }
             WorkflowResultEventKind::Artifact { artifact } => {
                 sqlx::query(&self.render(
-                    "INSERT INTO workflow_node_artifacts (id, workflow_node_run_id, name, mime_type, size_bytes, uri, metadata, created_at)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO workflow_node_artifacts (id, workflow_node_run_id, invocation_call_id, name, mime_type, size_bytes, uri, metadata, created_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 ))
                 .bind(Uuid::now_v7())
                 .bind(event.workflow_node_run_id)
+                .bind(event.invocation_call_id)
                 .bind(artifact.name.as_str())
                 .bind(artifact.mime_type.as_str())
                 .bind(artifact.size_bytes)

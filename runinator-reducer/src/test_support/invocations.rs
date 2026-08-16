@@ -31,6 +31,19 @@ impl FakeStore {
             .clone()
     }
 
+    /// push a call's deadline into the past, so the next drive finds it expired.
+    pub fn expire_invocation_call(&self, call_id: Uuid) {
+        let mut state = self.state.lock().expect("state");
+        if let Some(call) = state
+            .invocations_state
+            .calls
+            .iter_mut()
+            .find(|item| item.id == call_id)
+        {
+            call.deadline_at = Some(Utc::now().timestamp() - 1);
+        }
+    }
+
     /// the invocation attached to a node run, if a handler created one.
     pub fn invocation_for(&self, workflow_node_run_id: Uuid) -> Option<WorkflowInvocation> {
         self.state
@@ -146,7 +159,7 @@ impl InvocationStore for FakeStore {
         }
 
         let record = WorkflowInvocationCall {
-            id: Uuid::now_v7(),
+            id: call.id,
             invocation_id: call.invocation_id,
             workflow_run_id: call.workflow_run_id,
             sequence: call.sequence,

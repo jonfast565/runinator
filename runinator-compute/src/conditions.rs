@@ -215,7 +215,13 @@ fn evaluate_condition_inner(
     ))
 }
 
-fn is_truthy(value: &Value) -> bool {
+/// truthiness for a declarative condition and for a conditional expression.
+///
+/// javascript-like: null, `false`, zero, the empty string and empty collections are falsy. this is
+/// the rule the language already had in two identical copies (here and in `expressions.rs`), and it
+/// is *not* the rule behind the `not`/`and`/`or` intrinsics, which treat only null and `false` as
+/// falsy. those are a separate author-facing surface; do not merge them.
+pub(crate) fn is_truthy(value: &Value) -> bool {
     match value {
         Value::Null => false,
         Value::Bool(value) => *value,
