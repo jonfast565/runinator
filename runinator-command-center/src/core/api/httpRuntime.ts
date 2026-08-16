@@ -60,6 +60,16 @@ function escape(part: unknown): string {
   return encodeURIComponent(String(part));
 }
 
+// who resolved an approval and what they said. every field is optional, so a ui that only clicks
+// "approve" sends the same body it always did.
+function approvalResolution(args: CommandArgs) {
+  return {
+    resolved_by: argOpt(args, "by") ?? null,
+    message: argOpt(args, "message") ?? null,
+    output_json: argOpt(args, "output") ?? null,
+  };
+}
+
 const REGISTRY: Record<string, HttpDescriptor> = {
   auth_config: { method: "GET", path: () => "auth/config" },
   auth_me: { method: "GET", path: () => "auth/me" },
@@ -291,6 +301,22 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     method: "DELETE",
     path: (args) => `workflow_triggers/${escape(arg(args, "triggerId"))}`,
   },
+  fetch_due_triggers: { method: "GET", path: () => "workflow_triggers/due" },
+  create_trigger_run: {
+    method: "POST",
+    path: (args) => `workflow_triggers/${escape(arg(args, "triggerId"))}/runs`,
+    body: (args) => ({
+      parameters: argOpt(args, "parameters") ?? {},
+      debug: argOpt(args, "debug") === true,
+    }),
+  },
+  export_workflow_bundle: {
+    method: "GET",
+    path: (args) => {
+      const workflowId = argOpt(args, "workflowId");
+      return workflowId == null ? "workflows/export" : `workflows/${escape(workflowId)}/export`;
+    },
+  },
   fetch_pipelines: { method: "GET", path: () => "pipelines" },
   fetch_pipeline: {
     method: "GET",
@@ -512,8 +538,19 @@ const REGISTRY: Record<string, HttpDescriptor> = {
   },
   invoke_function: {
     method: "POST",
-    path: (args) =>
-      `functions/${escape(arg(args, "packageName"))}/${escape(arg(args, "exportName"))}/invocations`,
+    path: (args) => {
+      const base = `functions/${escape(arg(args, "packageName"))}/${escape(arg(args, "exportName"))}/invocations`;
+      const alias = argOpt(args, "alias");
+
+      if (typeof alias === "string" && alias) {
+        return `${base}?alias=${escape(alias)}`;
+      }
+
+      const version = argOpt(args, "version");
+      // an alias wins over a version, matching the api client: the two select the same thing, and
+      // sending both would leave the server to break the tie.
+      return version == null ? base : `${base}?version=${escape(version)}`;
+    },
     body: (args) => arg(args, "input"),
   },
 
@@ -663,15 +700,24 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     path: (args) =>
       `credentials?scope=${escape(arg(args, "scope"))}&name=${escape(arg(args, "name"))}&kind=${escape(arg(args, "kind"))}`,
   },
+  fetch_approvals: {
+    method: "GET",
+    path: (args) => {
+      const workflowRunId = argOpt(args, "workflowRunId");
+      return workflowRunId == null
+        ? "approvals"
+        : `approvals?workflow_run_id=${escape(workflowRunId)}`;
+    },
+  },
   approve_approval: {
     method: "POST",
     path: (args) => `approvals/${escape(arg(args, "approvalId"))}/approve`,
-    body: () => ({}),
+    body: approvalResolution,
   },
   reject_approval: {
     method: "POST",
     path: (args) => `approvals/${escape(arg(args, "approvalId"))}/reject`,
-    body: () => ({}),
+    body: approvalResolution,
   },
   fetch_all_artifacts: { method: "GET", path: () => "artifacts" },
   fetch_notifications: {

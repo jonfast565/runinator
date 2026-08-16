@@ -1,19 +1,55 @@
 use super::*;
 
 #[tauri::command]
+pub async fn fetch_approvals(
+    state: State<'_, CommandCenterState>,
+    workflow_run_id: Option<Uuid>,
+) -> CommandResult<Vec<Value>> {
+    let path = match workflow_run_id {
+        Some(run_id) => format!("approvals?workflow_run_id={run_id}"),
+        None => "approvals".to_string(),
+    };
+    get_json(&state, &path).await
+}
+
+#[tauri::command]
 pub async fn approve_approval(
     state: State<'_, CommandCenterState>,
     approval_id: Uuid,
+    by: Option<String>,
+    message: Option<String>,
+    output: Option<Value>,
 ) -> CommandResult<Value> {
-    post_empty(&state, &format!("approvals/{approval_id}/approve")).await
+    resolve_approval(&state, approval_id, "approve", by, message, output).await
 }
 
 #[tauri::command]
 pub async fn reject_approval(
     state: State<'_, CommandCenterState>,
     approval_id: Uuid,
+    by: Option<String>,
+    message: Option<String>,
+    output: Option<Value>,
 ) -> CommandResult<Value> {
-    post_empty(&state, &format!("approvals/{approval_id}/reject")).await
+    resolve_approval(&state, approval_id, "reject", by, message, output).await
+}
+
+// who resolved it and what they said. every field is optional, so a ui that only clicks "approve"
+// sends the same body it always did.
+async fn resolve_approval(
+    state: &State<'_, CommandCenterState>,
+    approval_id: Uuid,
+    command: &str,
+    by: Option<String>,
+    message: Option<String>,
+    output: Option<Value>,
+) -> CommandResult<Value> {
+    post_json(
+        state,
+        &format!("approvals/{approval_id}/{command}"),
+        &json!({ "resolved_by": by, "message": message, "output_json": output }),
+    )
+    .await
 }
 
 #[tauri::command]

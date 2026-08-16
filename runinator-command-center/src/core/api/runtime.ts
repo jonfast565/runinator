@@ -17,7 +17,9 @@ export function getCommandRuntimeOptional(): CommandRuntime | null {
 
 export function getCommandRuntime(): CommandRuntime {
   if (!activeRuntime) {
-    throw new Error("Command runtime has not been configured. Call setCommandRuntime() at bootstrap.");
+    throw new Error(
+      "Command runtime has not been configured. Call setCommandRuntime() at bootstrap.",
+    );
   }
 
   return activeRuntime;

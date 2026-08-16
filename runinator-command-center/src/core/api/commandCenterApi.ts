@@ -409,6 +409,22 @@ export async function deleteWorkflowTrigger(triggerId: string) {
   return command<TaskResponse>("delete_workflow_trigger", { triggerId });
 }
 
+// triggers whose next execution has come due. the scheduler reads this too; the console exposes it
+// so an operator can see what is about to fire.
+export async function fetchDueTriggers() {
+  return command<WorkflowTrigger[]>("fetch_due_triggers", {});
+}
+
+// fire a trigger by hand, which creates a run exactly as the schedule would have.
+export async function createTriggerRun(triggerId: string, parameters: unknown = {}, debug = false) {
+  return command<JsonRecord>("create_trigger_run", { triggerId, parameters, debug });
+}
+
+// one workflow's bundle, or the whole set when no id is given.
+export async function exportWorkflowBundle(workflowId?: string) {
+  return command<WorkflowBundle>("export_workflow_bundle", { workflowId: workflowId ?? null });
+}
+
 export async function fetchPipelines() {
   return command<Pipeline[]>("fetch_pipelines");
 }
@@ -1005,12 +1021,23 @@ export async function saveForeignLanguageRuntime(
   return saveCredential(FOREIGN_LANGUAGE_SCOPE, language, value, "config");
 }
 
-export async function approveApproval(approvalId: string) {
-  return command<TaskResponse>("approve_approval", { approvalId });
+// pending approval requests, all of them or one run's.
+export async function fetchApprovals(workflowRunId?: string) {
+  return command<JsonRecord[]>("fetch_approvals", { workflowRunId: workflowRunId ?? null });
 }
 
-export async function rejectApproval(approvalId: string) {
-  return command<TaskResponse>("reject_approval", { approvalId });
+export interface ApprovalResolution {
+  by?: string | null;
+  message?: string | null;
+  output?: unknown;
+}
+
+export async function approveApproval(approvalId: string, resolution: ApprovalResolution = {}) {
+  return command<TaskResponse>("approve_approval", { approvalId, ...resolution });
+}
+
+export async function rejectApproval(approvalId: string, resolution: ApprovalResolution = {}) {
+  return command<TaskResponse>("reject_approval", { approvalId, ...resolution });
 }
 
 export async function fetchGates(workflowRunId?: string, status?: string) {
@@ -1060,7 +1087,6 @@ export async function requestRunInterrupt(
   });
 }
 
-
 // ---- packaged functions ----
 
 export async function fetchFunctionPackages() {
@@ -1104,8 +1130,17 @@ export async function invokeFunction(
   packageName: string,
   exportName: string,
   input: JsonRecord,
+  // an alias resolves at call time and a version pins; passing neither takes whatever the package's
+  // default alias currently names.
+  selector: { alias?: string | null; version?: number | null } = {},
 ) {
-  return command<JsonRecord>("invoke_function", { packageName, exportName, input });
+  return command<JsonRecord>("invoke_function", {
+    packageName,
+    exportName,
+    input,
+    alias: selector.alias ?? null,
+    version: selector.version ?? null,
+  });
 }
 
 // ---- the wdl console ----
@@ -1130,11 +1165,7 @@ export async function deleteConsoleSession(sessionId: string) {
   return command<JsonRecord>("delete_console_session", { sessionId });
 }
 
-export async function createConsoleCell(
-  sessionId: string,
-  source: string,
-  label?: string | null,
-) {
+export async function createConsoleCell(sessionId: string, source: string, label?: string | null) {
   return command<ConsoleCell>("create_console_cell", {
     sessionId,
     source,
@@ -1149,11 +1180,7 @@ export async function fetchConsoleCell(cellId: string) {
   return command<ConsoleCell>("fetch_console_cell", { cellId });
 }
 
-export async function updateConsoleCell(
-  cellId: string,
-  source: string,
-  label?: string | null,
-) {
+export async function updateConsoleCell(cellId: string, source: string, label?: string | null) {
   return command<ConsoleCell>("update_console_cell", {
     cellId,
     source,

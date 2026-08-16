@@ -117,6 +117,20 @@ pub struct Cli {
     #[arg(long, global = true, env = "RUNINATOR_API_KEY")]
     pub api_key: Option<String>,
 
+    /// Username to sign in with when the server enforces auth and no session is stored yet.
+    #[arg(long, global = true, env = "RUNINATOR_USERNAME")]
+    pub username: Option<String>,
+
+    /// Password for `--username`. Prefer the environment variable so it stays out of shell
+    /// history and process listings.
+    #[arg(
+        long,
+        global = true,
+        env = "RUNINATOR_PASSWORD",
+        hide_env_values = true
+    )]
+    pub password: Option<String>,
+
     #[arg(long, global = true)]
     pub json: bool,
 
@@ -126,13 +140,9 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Commands {
-    /// Store a local authenticated session for auth-enabled servers.
-    Login {
-        #[arg(long)]
-        username: Option<String>,
-        #[arg(long)]
-        password: Option<String>,
-    },
+    /// Store a local authenticated session for auth-enabled servers. Credentials come from the
+    /// global `--username`/`--password` options, and are prompted for when absent.
+    Login,
     /// Revoke the stored session for the selected server and remove it locally.
     Logout,
     /// Show API, supervisor, and active-run health.
@@ -184,6 +194,9 @@ pub enum Commands {
         /// Return as soon as an effectful cell has started.
         #[arg(long)]
         no_follow: bool,
+        /// Use the plain line editor instead of the terminal ui.
+        #[arg(long)]
+        plain: bool,
     },
     /// Inspect provider/action metadata.
     Providers {

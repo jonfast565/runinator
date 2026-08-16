@@ -4,8 +4,16 @@ use super::*;
 
 use std::io::{IsTerminal, Read};
 
-use reedline::{DefaultPrompt, Reedline, Signal, ValidationResult, Validator};
+use reedline::{
+    ColumnarMenu, DefaultPrompt, Emacs, KeyCode, KeyModifiers, MenuBuilder, Reedline,
+    ReedlineEvent, ReedlineMenu, Signal, ValidationResult, Validator, default_emacs_keybindings,
+};
 use runinator_models::console::{ConsoleCell, ConsoleCellStatus, ConsoleSession, NewConsoleCell};
+
+use crate::tui;
+
+use super::repl;
+use super::repl_completer::ReplCompleter;
 
 struct WdlValidator;
 
@@ -64,6 +72,8 @@ pub(super) async fn console(
     file: Option<&Path>,
     no_follow: bool,
     json_output: bool,
+    api_base_url: &str,
+    plain: bool,
 ) -> Result<()> {
     if execute.is_some() && file.is_some() {
         return Err(err("use --execute or --file, not both"));
@@ -72,7 +82,7 @@ pub(super) async fn console(
         return Err(err("use --session or --new, not both"));
     }
 
-    let mut session = select_session(client, requested_session, new_session).await?;
+    let session = select_session(client, requested_session, new_session).await?;
     let source = match (execute, file) {
         (Some(source), None) => Some(source.to_string()),
         (None, Some(path)) => Some(fs::read_to_string(path)?),
@@ -93,8 +103,44 @@ pub(super) async fn console(
     }
 
     println!("session {} ({})", session.name, session.id);
-    println!("type :help for commands; Ctrl+D exits and Ctrl+C clears the prompt.");
-    let mut editor = Reedline::create().with_validator(Box::new(WdlValidator));
+    println!(
+        "a bare line is WDL; a `:` line is a runinatorctl command. :help lists both, Tab completes,"
+    );
+    println!("Ctrl+D exits and Ctrl+C clears the prompt.");
+
+    // the terminal ui needs a real terminal: it draws an inline viewport, which it can only place by
+    // asking the terminal where the cursor is. a pipe cannot answer, so that case takes the plain
+    // prompt rather than failing.
+    if !plain && std::io::stdout().is_terminal() {
+        match tui::Prompt::new(session.name.clone(), api_base_url.to_string()) {
+            Ok(prompt) => {
+                return tui_console(
+                    client,
+                    prompt.with_history(read_history()),
+                    session,
+                    no_follow,
+                    json_output,
+                    api_base_url,
+                )
+                .await;
+            }
+            Err(error) => eprintln!("terminal ui unavailable ({error}); using the plain prompt"),
+        }
+    }
+
+    plain_console(client, session, no_follow, json_output, api_base_url).await
+}
+
+// the plain prompt: one reedline line at a time, for a terminal that cannot host the ui or an
+// operator who asked for it with `--plain`.
+async fn plain_console(
+    client: &Client,
+    mut session: ConsoleSession,
+    no_follow: bool,
+    json_output: bool,
+    api_base_url: &str,
+) -> Result<()> {
+    let mut editor = line_editor();
     let prompt = DefaultPrompt::default();
     let mut current_cell = None;
     loop {
@@ -105,11 +151,23 @@ pub(super) async fn console(
                     continue;
                 }
                 if source.starts_with(':') {
-                    match handle_command(client, &mut session, source, current_cell, no_follow)
-                        .await?
+                    // a failing command must not end the session: the repl reports it and returns
+                    // to the prompt, the way a shell does.
+                    match handle_command(
+                        client,
+                        &mut session,
+                        source,
+                        current_cell,
+                        no_follow,
+                        api_base_url,
+                    )
+                    .await
                     {
-                        CommandOutcome::Continue(cell) => current_cell = cell.or(current_cell),
-                        CommandOutcome::Exit => break,
+                        Ok(CommandOutcome::Continue(cell)) => {
+                            current_cell = cell.or(current_cell);
+                        }
+                        Ok(CommandOutcome::Exit) => break,
+                        Err(error) => eprintln!("error: {error}"),
                     }
                     continue;
                 }
@@ -133,6 +191,148 @@ pub(super) async fn console(
     }
     Ok(())
 }
+
+// the terminal-ui console: the same loop as the plain one, with the prompt drawn in an inline
+// viewport that is suspended while a command prints.
+async fn tui_console(
+    client: &Client,
+    mut prompt: tui::Prompt,
+    mut session: ConsoleSession,
+    no_follow: bool,
+    json_output: bool,
+    api_base_url: &str,
+) -> Result<()> {
+    let mut current_cell = None;
+
+    loop {
+        let source = match prompt.read_line()? {
+            tui::Submission::Exit => break,
+            tui::Submission::Line(source) => source,
+        };
+        let trimmed = source.trim().to_string();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        // the ui gets out of the way for the duration of the command: its output is ordinary
+        // stdout, and Ctrl+C has to reach it as a signal.
+        prompt.suspend()?;
+        prompt.echo(&trimmed);
+        let note = if trimmed.starts_with(':') {
+            match handle_command(
+                client,
+                &mut session,
+                &trimmed,
+                current_cell,
+                no_follow,
+                api_base_url,
+            )
+            .await
+            {
+                Ok(CommandOutcome::Continue(cell)) => {
+                    current_cell = cell.or(current_cell);
+                    None
+                }
+                Ok(CommandOutcome::Exit) => break,
+                Err(error) => Some(error.to_string()),
+            }
+        } else {
+            match submit(client, &session, &trimmed, no_follow).await {
+                Ok(cell) => {
+                    current_cell = Some(cell.id);
+                    let printed = if json_output {
+                        output::json(&cell)
+                    } else {
+                        print_cell(&cell)
+                    };
+                    printed.err().map(|error| error.to_string())
+                }
+                Err(error) => Some(error.to_string()),
+            }
+        };
+
+        prompt.set_session(session.name.clone());
+        prompt.set_note(note);
+        prompt.resume()?;
+    }
+
+    write_history(&prompt.history());
+    Ok(())
+}
+
+// history is a convenience: a home directory that cannot be read or written leaves the console
+// usable rather than refusing to open it.
+fn read_history() -> Vec<String> {
+    let Ok(path) = history_file() else {
+        return Vec::new();
+    };
+    fs::read_to_string(path)
+        .unwrap_or_default()
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| line.replace("\\n", "\n"))
+        .collect()
+}
+
+fn write_history(history: &[String]) {
+    let Ok(path) = history_file() else {
+        return;
+    };
+    // one line per entry, so a multi-line cell is escaped rather than splitting into several.
+    let body = history
+        .iter()
+        .rev()
+        .take(HISTORY_ENTRIES)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .map(|line| line.replace('\n', "\\n"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let _ = fs::write(path, body);
+}
+
+// the line editor: multiline WDL, tab completion over the command surface, and history that
+// outlives the session so a command typed yesterday is still one arrow-up away.
+fn line_editor() -> Reedline {
+    let mut keybindings = default_emacs_keybindings();
+    keybindings.add_binding(
+        KeyModifiers::NONE,
+        KeyCode::Tab,
+        ReedlineEvent::UntilFound(vec![
+            ReedlineEvent::Menu("completion_menu".to_string()),
+            ReedlineEvent::MenuNext,
+        ]),
+    );
+
+    let editor = Reedline::create()
+        .with_validator(Box::new(WdlValidator))
+        .with_completer(Box::new(ReplCompleter))
+        .with_menu(ReedlineMenu::EngineCompleter(Box::new(
+            ColumnarMenu::default().with_name("completion_menu"),
+        )))
+        .with_edit_mode(Box::new(Emacs::new(keybindings)));
+
+    // history is a convenience, so a home directory that cannot be written keeps the repl usable
+    // rather than refusing to open it.
+    match history_file().and_then(|path| {
+        Ok(reedline::FileBackedHistory::with_file(
+            HISTORY_ENTRIES,
+            path,
+        )?)
+    }) {
+        Ok(history) => editor.with_history(Box::new(history)),
+        Err(_) => editor,
+    }
+}
+
+fn history_file() -> Result<PathBuf> {
+    fs::create_dir_all(runinator_utilities::app_data::app_data_dir()?)?;
+    runinator_utilities::app_data::app_data_path(HISTORY_FILE)
+}
+
+const HISTORY_FILE: &str = "ctl-console-history.txt";
+const HISTORY_ENTRIES: usize = 2_000;
 
 async fn select_session(
     client: &Client,
@@ -172,7 +372,7 @@ async fn submit(
             },
         )
         .await?;
-    let mut cell = client.run_console_cell(cell.id).await?;
+    let cell = client.run_console_cell(cell.id).await?;
     if no_follow || cell.status != ConsoleCellStatus::Running {
         return Ok(cell);
     }
@@ -197,6 +397,7 @@ async fn handle_command(
     command: &str,
     current_cell: Option<Uuid>,
     no_follow: bool,
+    api_base_url: &str,
 ) -> Result<CommandOutcome> {
     let mut parts = command.splitn(2, char::is_whitespace);
     let verb = parts.next().unwrap_or_default();
@@ -205,18 +406,11 @@ async fn handle_command(
         .map(str::trim)
         .filter(|value| !value.is_empty());
     match verb {
-        ":help" => {
-            println!(":sessions              list personal sessions");
-            println!(":new <name>             create and use a session");
-            println!(":use <name|uuid>        switch sessions");
-            println!(":history                show durable cells");
-            println!(":bindings               show the current scope");
-            println!(":cancel [cell-uuid]     cancel durable remote work");
-            println!(":replay [cell-uuid]     run a settled cell again");
-            println!(":run workflow <name> [with <json>]");
-            println!(":run pipeline <name> [with <json>]");
-            println!(":invoke <package.export> [alias <name>|version <n>] [with <json>]");
-            println!(":exit                   leave the console");
+        ":help" => print!("{}", repl::help(argument)?),
+        ":clear" => {
+            // the ansi erase-display + cursor-home pair every terminal this repl runs in supports.
+            print!("\x1b[2J\x1b[H");
+            io::Write::flush(&mut io::stdout())?;
         }
         ":sessions" => print_sessions(&client.console_sessions().await?),
         ":new" => {
@@ -334,7 +528,53 @@ async fn handle_command(
             println!("{}", serde_json::to_string_pretty(&result)?);
         }
         ":exit" | ":quit" => return Ok(CommandOutcome::Exit),
-        other => return Err(err(format!("unknown console command '{other}'"))),
+        // anything else is a command-line command: same parser, same flags, same help as the
+        // process reached by `runinatorctl <verb>`.
+        other => return command_line(client, other, argument, api_base_url).await,
+    }
+    Ok(CommandOutcome::Continue(None))
+}
+
+// run one `runinatorctl` command from inside the repl.
+async fn command_line(
+    client: &Client,
+    verb: &str,
+    argument: Option<&str>,
+    api_base_url: &str,
+) -> Result<CommandOutcome> {
+    let mut tokens = vec![verb.trim_start_matches(':').to_string()];
+    tokens.extend(repl::tokenize(argument.unwrap_or_default())?);
+    let parsed = repl::parse(&tokens)?;
+    // `:console` would open a second console inside this one; the session verbs already move
+    // between sessions, so point at them instead of nesting.
+    if matches!(parsed.command, Commands::Console { .. }) {
+        return Err(err("already in a console; use :use, :new, or :sessions"));
+    }
+    // login rebuilds the client this repl is holding, so it belongs to the process rather than to a
+    // session that would keep using the old credentials.
+    if matches!(parsed.command, Commands::Login | Commands::Logout) {
+        return Err(err(
+            "run `runinatorctl login` or `logout` outside the console; this session is already authenticated",
+        ));
+    }
+
+    // a long command (a watch, a dev loop) stays interruptible: Ctrl+C ends it and returns to the
+    // prompt instead of killing the repl.
+    //
+    // the dispatcher can reach this console again (the `:console` guard above is what stops it), so
+    // the future is boxed to keep it a finite size.
+    let dispatch = Box::pin(super::run_command(
+        client,
+        &parsed.command,
+        api_base_url,
+        parsed.json,
+    ));
+    tokio::select! {
+        result = dispatch => result?,
+        interrupted = tokio::signal::ctrl_c() => {
+            interrupted?;
+            eprintln!("interrupted");
+        }
     }
     Ok(CommandOutcome::Continue(None))
 }

@@ -14,6 +14,15 @@ Primary runtime flow:
 4. `runinator-worker` polls the broker action channel, resolves a provider/plugin, executes the task, and publishes results on the broker result channel (records also reachable through `runinator-api` compatibility endpoints). It self-publishes its built-in provider metadata to the web service on startup.
 5. `runinator-desktop-agent` is the standalone, exclusive desktop worker. It reuses `runinator-worker`'s runtime, exposes built-in providers plus the sandboxed local-files provider, and can relay broker traffic through `runinator-ws`. It is a separate tray application, not a Tauri sidecar or command-center service.
 6. `runinator-ctl` is the control CLI (`runinatorctl`). Among other commands, `workflows apply` is the one-shot pack importer: it compiles a `.wdl`/`.wdlm`/directory (including any `.wdls` secrets and `.wdlp` pipelines) **client-side**, zips the compiled artifacts (`workflows.json` + optional `secrets.json` + optional `pipelines.json`), and uploads a single `application/zip` to the web service's `/packs/import` endpoint. Compilation never happens on the backend; `/packs/import` only reads the compiled JSON. There is no long-running importer service. Pack zip read/write lives in `runinator-utilities::pack`; the entry-name layout is the wire contract shared by ctl/api/command-center/mcp (writers) and ws (reader). File extensions: `.wdl` workflow, `.wdls` settings, `.wdlm` pack manifest (JSON — lists `workflows`/`pipelines`/`settings`), `.wdlp` pipeline (WDL pipeline grammar), `.wdlt` tests.
+
+   `runinatorctl console` is the terminal console. Its `:` lines are parsed by the **same clap
+   parser** the process uses (`commands/repl.rs` → `commands::run_command`), so every command-line
+   verb is reachable from the repl the day it is added — never add a second table of verbs. The
+   prompt is a ratatui inline viewport (`src/tui/`) that is *suspended* around each command so the
+   command modules keep printing with plain `println!`; `--plain`, a non-tty stdout, or a viewport
+   that cannot be placed falls back to the reedline prompt. The command center's Console tab mirrors
+   the same surface over HTTP (`runinator-command-center/src/core/console/`), so a command added to
+   one console should be added to the other or explained in `:help` as `runinatorctl`-only.
 7. `runinator-supervisor` runs the local stack from `runinator-supervisor.json`.
 
 There is also a Tauri `runinator-command-center` client. It discovers and calls the web service, compiles/edits packs, and presents runtime state; it never hosts a worker or executes provider actions. Keep frontend UI changes separate from runtime crates unless the change explicitly touches the desktop UI.
@@ -23,7 +32,8 @@ There is also a Tauri `runinator-command-center` client. It discovers and calls 
 Layout:
 
 Two areas were added with packaged functions and the console: `Functions` (packages, aliases, exports)
-and `Console` (the notebook). Both follow the per-area layout below — `core/domain/models/<area>/`,
+and `Console` (the terminal, whose portable command surface lives in `core/console/` and whose
+transcript state lives in `core/services/console-terminal.ts`). Both follow the per-area layout below — `core/domain/models/<area>/`,
 `core/services/<area>.ts`, `ui/adapters/pinia/<area>.ts`, `ui/views/<Area>View.vue` — plus entries in
 `core/domain/models/index.ts`, `core/api/commandCenterApi.ts`, `core/api/httpRuntime.ts`'s `REGISTRY`,
 `core/services/index.ts`, `core/navigation/app.ts`'s `AppTab`, `core/navigation/nav-config.ts`,

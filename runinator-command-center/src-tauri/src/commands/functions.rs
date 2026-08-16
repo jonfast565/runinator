@@ -65,13 +65,18 @@ pub async fn invoke_function(
     package_name: String,
     export_name: String,
     input: Value,
+    alias: Option<String>,
+    version: Option<i64>,
 ) -> CommandResult<Value> {
-    post_json(
-        &state,
-        &format!("functions/{package_name}/{export_name}/invocations"),
-        &input,
-    )
-    .await
+    let mut path = format!("functions/{package_name}/{export_name}/invocations");
+    // an alias wins over a version: the two select the same thing, and sending both would leave
+    // the server to break the tie.
+    if let Some(alias) = alias.filter(|alias| !alias.is_empty()) {
+        path.push_str(&format!("?alias={alias}"));
+    } else if let Some(version) = version {
+        path.push_str(&format!("?version={version}"));
+    }
+    post_json(&state, &path, &input).await
 }
 
 // ---- the wdl console ----

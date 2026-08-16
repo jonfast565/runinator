@@ -112,7 +112,19 @@ When auth is enabled, store a local CLI session with:
 runinatorctl login
 ```
 
-`runinatorctl` will refresh that session automatically on later commands and will ask you to log in before calling an auth-enabled server when no valid local session or `--api-key` is available. Remove the stored session with:
+That prompts for a username and password, or takes them from the global `--username` option and
+the `RUNINATOR_USERNAME`/`RUNINATOR_PASSWORD` environment variables. Those globals work on any
+command, so a one-shot invocation or the console signs in on demand without a separate `login`
+step:
+
+```bash
+RUNINATOR_PASSWORD=… runinatorctl --username admin status
+```
+
+Keep the password in the environment rather than on the command line so it stays out of shell
+history and the process listing.
+
+`runinatorctl` will refresh that session automatically on later commands and will ask you to log in before calling an auth-enabled server when no valid local session, credentials, or `--api-key` is available. Remove the stored session with:
 
 ```bash
 runinatorctl logout
@@ -514,6 +526,34 @@ an in-process scope would give different answers depending on which replica serv
 
 Editing a cell clears its previous result, and a failing cell drops its binding — in both cases
 because a stale value shown as a current one is worse than an absent one.
+
+### The two consoles
+
+The console has two front ends, and they are deliberately the same thing: a scrollback of what has
+been run, a prompt at the bottom, and the session's scope beside it.
+
+`runinatorctl console` opens it in the terminal. The prompt is a ratatui inline viewport — a status
+line naming the session and the service, the input, a completion menu, and a key legend — pinned to
+the bottom while command output scrolls above it as ordinary text. `--plain` falls back to the
+single-line reedline prompt, which is also what a terminal that cannot host the viewport (or a pipe)
+gets automatically. The Console tab in the command center is the same layout in the browser.
+
+In both, a **bare line is WDL** and becomes a durable cell; a **`:` line is a command**. Every
+`runinatorctl` command works with a `:` in front of it — `:runs list --open`, `:settings get aws
+key`, `:agents drain <replica>` — because the terminal console hands the line to the same clap
+parser the process uses rather than keeping a second table of verbs. The web console implements the
+same vocabulary over the HTTP API; the handful of commands that read or write a working tree
+(`workflows apply`, `functions publish`, `settings import`, `artifacts download`) stay listed in
+`:help` and say to run them with `runinatorctl`.
+
+`:help` lists both halves and `:help <command>` shows one command's flags. `Tab` completes verbs,
+subcommands, and long flags. `Enter` runs a finished line and opens a new one while a brace, bracket,
+paren, or quote is still open, so a multi-line workflow can be typed straight into the prompt and
+executed as a scratch run.
+
+A few verbs exist only inside a session, since they have no command-line counterpart: `:sessions`,
+`:new`, `:use`, `:history`, `:bindings`, `:cancel`, `:replay`, `:run workflow|pipeline`, `:invoke`,
+and `:clear`.
 
 ## Workflow Import
 

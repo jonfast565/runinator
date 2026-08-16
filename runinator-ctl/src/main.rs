@@ -5,6 +5,7 @@ mod commands;
 mod output;
 mod params;
 mod service;
+mod tui;
 
 use clap::Parser;
 
@@ -23,9 +24,7 @@ async fn run_process() -> commands::Result<()> {
         banner::print();
     }
     match &cli.command {
-        Commands::Login { username, password } => {
-            auth::login(&cli, username.clone(), password.clone()).await
-        }
+        Commands::Login => auth::login(&cli).await,
         Commands::Logout => auth::logout(&cli).await,
         // `workflows test` is a fully offline dry-run; run it without contacting the web service.
         Commands::Workflows {

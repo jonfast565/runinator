@@ -28,18 +28,10 @@ struct StoredSession {
     refresh_token: String,
 }
 
-pub async fn login(cli: &Cli, username: Option<String>, password: Option<String>) -> Result<()> {
-    let username = username.unwrap_or(prompt("username")?);
-    let password = password.unwrap_or(prompt("password")?);
-    let client = AsyncApiClient::new(StaticLocator::new(cli.api_base_url.clone()))?;
-    let session = client.login(&username, &password).await?;
-    let stored = StoredSession {
-        api_base_url: cli.api_base_url.clone(),
-        username: session.user.username.clone(),
-        access_token: session.access_token,
-        refresh_token: session.refresh_token,
-    };
-    write_session(&stored)?;
+pub async fn login(cli: &Cli) -> Result<()> {
+    let username = credential(&cli.username).map_or_else(|| prompt("username"), Ok)?;
+    let password = credential(&cli.password).map_or_else(|| prompt("password"), Ok)?;
+    let stored = store_login(cli, &username, &password).await?;
     if cli.json {
         return output::json(&json!({
             "logged_in": true,
@@ -52,6 +44,28 @@ pub async fn login(cli: &Cli, username: Option<String>, password: Option<String>
         stored.api_base_url, stored.username
     );
     Ok(())
+}
+
+/// exchange credentials for a session and persist it for later commands.
+async fn store_login(cli: &Cli, username: &str, password: &str) -> Result<StoredSession> {
+    let client = AsyncApiClient::new(StaticLocator::new(cli.api_base_url.clone()))?;
+    let session = client.login(username, password).await?;
+    let stored = StoredSession {
+        api_base_url: cli.api_base_url.clone(),
+        username: session.user.username.clone(),
+        access_token: session.access_token,
+        refresh_token: session.refresh_token,
+    };
+    write_session(&stored)?;
+    Ok(stored)
+}
+
+/// non-empty credential supplied on the command line or through the environment.
+fn credential(value: &Option<String>) -> Option<String> {
+    value
+        .as_ref()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
 }
 
 pub async fn logout(cli: &Cli) -> Result<()> {
@@ -109,18 +123,42 @@ pub async fn build_authenticated_client(cli: &Cli) -> Result<Client> {
         return Ok(unauthenticated);
     }
 
-    let Some(stored) = read_session()? else {
-        return Err(commands::err(login_required_message(&cli.api_base_url)));
+    // credentials passed on the command line (or through the environment) log in on demand, so a
+    // one-shot command and the repl both work without a separate `login` first.
+    let credentials = credential(&cli.username).zip(credential(&cli.password));
+    let usable_session = read_session()?.filter(|stored| {
+        same_api_base(&stored.api_base_url, &cli.api_base_url)
+            && credentials
+                .as_ref()
+                .is_none_or(|(username, _)| &stored.username == username)
+    });
+
+    let Some(stored) = usable_session else {
+        return match credentials {
+            Some((username, password)) => {
+                let stored = store_login(cli, &username, &password).await?;
+                Ok(AsyncApiClient::with_credentials(
+                    StaticLocator::new(cli.api_base_url.clone()),
+                    Some(stored.access_token),
+                )?)
+            }
+            None => Err(commands::err(login_required_message(&cli.api_base_url))),
+        };
     };
-    if !same_api_base(&stored.api_base_url, &cli.api_base_url) {
-        return Err(commands::err(login_required_message(&cli.api_base_url)));
-    }
 
     let refreshed = match unauthenticated.refresh_session(&stored.refresh_token).await {
         Ok(session) => session,
         Err(err) if should_forget_session(&err) => {
             remove_session_file()?;
-            return Err(commands::err(login_required_message(&cli.api_base_url)));
+            // an expired session is recoverable when credentials are at hand.
+            let Some((username, password)) = credentials else {
+                return Err(commands::err(login_required_message(&cli.api_base_url)));
+            };
+            let stored = store_login(cli, &username, &password).await?;
+            return Ok(AsyncApiClient::with_credentials(
+                StaticLocator::new(cli.api_base_url.clone()),
+                Some(stored.access_token),
+            )?);
         }
         Err(err) => return Err(Box::new(err)),
     };
@@ -151,7 +189,7 @@ fn prompt(label: &str) -> Result<String> {
 
 fn login_required_message(api_base_url: &str) -> String {
     format!(
-        "the server at {api_base_url} requires authentication; run `runinatorctl --api-base-url {api_base_url} login` first"
+        "the server at {api_base_url} requires authentication; run `runinatorctl --api-base-url {api_base_url} login` first, or pass --username with RUNINATOR_PASSWORD set"
     )
 }
 
