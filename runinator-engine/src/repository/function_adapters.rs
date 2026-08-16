@@ -33,10 +33,10 @@ pub const ADAPTER_NAMESPACE: &str = "functions";
 
 /// the workflow name for one export's adapter.
 pub fn adapter_workflow_name(entry: &FunctionCatalogEntry) -> String {
-    format!("{}.{}", entry.provider_name(), entry.export_name)
+    format!("functions.adapter.{}", entry.export_id.simple())
 }
 
-/// generate (or regenerate) the adapter workflows for a package's current exports.
+/// generate immutable adapter workflows for every published export version.
 ///
 /// keyed on the export id, so republishing a package mints new adapters for the new version's
 /// exports and leaves the old ones pointing at the old code — which is what keeps an in-flight
@@ -55,33 +55,21 @@ pub async fn sync_adapter_workflows<T: DatabaseImpl>(
         return Ok(Vec::new());
     };
 
-    // only the newest version of each export gets an adapter: the http path is the "call the current
-    // release" surface, and a caller that wants an exact version names it in a workflow instead.
-    let mut newest: std::collections::BTreeMap<String, FunctionCatalogEntry> =
-        std::collections::BTreeMap::new();
-    for entry in entries {
-        newest
-            .entry(entry.export_name.clone())
-            .and_modify(|current| {
-                if entry.version > current.version {
-                    *current = entry.clone();
-                }
-            })
-            .or_insert(entry);
-    }
-
-    let mut generated = Vec::with_capacity(newest.len());
-    for entry in newest.values() {
+    // direct invocation resolves latest/alias/version to an export before following this mapping.
+    // every immutable export therefore needs an immutable adapter of its own.
+    let mut generated = Vec::with_capacity(entries.len());
+    for entry in &entries {
+        if let Some(adapter) = db.fetch_function_adapter_workflow(entry.export_id).await?
+            && let Some(existing) = db.fetch_workflow(adapter.workflow_id).await?
+        {
+            generated.push(existing);
+            continue;
+        }
         let Some(export) = db.fetch_function_export(entry.export_id).await? else {
             continue;
         };
         let mut definition = build_adapter_workflow(entry, &export)?;
         definition.org_id = package.org_id;
-        // reuse the stored id so regenerating updates in place rather than orphaning a workflow the
-        // adapter table still points at.
-        if let Some(existing) = db.fetch_workflow_by_name(definition.name.clone()).await? {
-            definition.id = existing.id;
-        }
         let saved = super::definitions::upsert_workflow(
             db,
             &definition,
@@ -159,8 +147,6 @@ fn adapter_source(entry: &FunctionCatalogEntry, export: &FunctionExport) -> Stri
         entry.provider_name(),
         entry.export_name
     ));
-    // no `output` block: that is wdl's *artifact* declaration, not the run result. the single
-    // action node's output is already the run's, which is what the invocation endpoint reads back.
     source.push_str("}\n");
     source
 }

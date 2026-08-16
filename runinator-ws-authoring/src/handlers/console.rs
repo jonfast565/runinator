@@ -11,6 +11,7 @@
 use std::sync::Arc;
 
 use axum::{Extension, Json, extract::Path, http::StatusCode};
+use runinator_broker_core::Broker;
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::{
     auth::AuthContext,
@@ -24,7 +25,7 @@ use crate::repository;
 use runinator_ws_core::events::{EventSender, emit_workflow_run, nudge_wake_publisher};
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::openapi::docs::{EndpointDoc, Example, endpoint, json_body};
-use runinator_ws_core::responses::{api_error, not_found};
+use runinator_ws_core::responses::{api_error, bad_request, not_found};
 use runinator_ws_middleware::authz::AuthContextExt;
 
 /// what a caller sends to create or rename a session.
@@ -56,7 +57,10 @@ pub async fn get_console_sessions<T: DatabaseImpl>(
         Ok(sessions) => {
             let sessions: Vec<ConsoleSession> = sessions
                 .into_iter()
-                .filter(|session| ctx.org_visible(session.org_id))
+                .filter(|session| {
+                    ctx.org_visible(session.org_id)
+                        && (ctx.is_admin || session.created_by == ctx.principal_id)
+                })
                 .collect();
             (
                 StatusCode::OK,
@@ -179,6 +183,9 @@ pub async fn update_console_cell<T: DatabaseImpl>(
         Ok(cell) => cell,
         Err(reply) => return reply,
     };
+    if cell.status == runinator_models::console::ConsoleCellStatus::Running {
+        return bad_request("a running console cell must be canceled before it can be edited");
+    }
     match repository::console::upsert_cell(db.as_ref(), cell.session_id, Some(cell_id), &request)
         .await
     {
@@ -193,8 +200,12 @@ pub async fn delete_console_cell<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(cell_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = require_cell(db.as_ref(), &ctx, cell_id).await {
-        return reply;
+    let cell = match require_cell(db.as_ref(), &ctx, cell_id).await {
+        Ok(cell) => cell,
+        Err(reply) => return reply,
+    };
+    if cell.status == runinator_models::console::ConsoleCellStatus::Running {
+        return bad_request("a running console cell must be canceled before it can be deleted");
     }
     match repository::console::delete_cell(db.as_ref(), cell_id).await {
         Ok(true) => (
@@ -220,8 +231,12 @@ pub async fn run_console_cell<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(cell_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = require_cell(db.as_ref(), &ctx, cell_id).await {
-        return reply;
+    let cell = match require_cell(db.as_ref(), &ctx, cell_id).await {
+        Ok(cell) => cell,
+        Err(reply) => return reply,
+    };
+    if cell.status == runinator_models::console::ConsoleCellStatus::Running {
+        return bad_request("console cell is already running");
     }
     // the console is the same language as a workflow, so it compiles against the same catalog —
     // both halves of it, or a cell could not call what a workflow can.
@@ -246,6 +261,36 @@ pub async fn run_console_cell<T: DatabaseImpl>(
             }
             (StatusCode::OK, Json(ApiResponse::ConsoleCell(outcome.cell)))
         }
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+/// replay a settled cell against the session's current binding snapshot.
+pub async fn replay_console_cell<T: DatabaseImpl>(
+    db: Extension<Arc<T>>,
+    events: Extension<EventSender>,
+    ctx: Extension<AuthContext>,
+    cell_id: Path<Uuid>,
+) -> (StatusCode, Json<ApiResponse>) {
+    run_console_cell(db, events, ctx, cell_id).await
+}
+
+/// cancel the durable workflow behind an effectful cell.
+pub async fn cancel_console_cell<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(broker): Extension<Arc<dyn Broker>>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(cell_id): Path<Uuid>,
+) -> (StatusCode, Json<ApiResponse>) {
+    let cell = match require_cell(db.as_ref(), &ctx, cell_id).await {
+        Ok(cell) => cell,
+        Err(reply) => return reply,
+    };
+    let Some(run_id) = cell.workflow_run_id else {
+        return bad_request("console cell has no workflow run to cancel");
+    };
+    match repository::cancel_workflow_run(db.as_ref(), broker.as_ref(), run_id).await {
+        Ok(response) => (StatusCode::OK, Json(ApiResponse::TaskResponse(response))),
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -283,7 +328,12 @@ async fn require_session<T: DatabaseImpl>(
     // its own gate would still be stopped.
     ctx.require_capability(Capability::ConsoleUse)?;
     match repository::console::fetch_session_detail(db, session_id).await {
-        Ok(Some(detail)) if ctx.org_visible(detail.session.org_id) => Ok(()),
+        Ok(Some(detail))
+            if ctx.org_visible(detail.session.org_id)
+                && (ctx.is_admin || detail.session.created_by == ctx.principal_id) =>
+        {
+            Ok(())
+        }
         Ok(_) => Err(not_found(format!("console session {session_id} not found"))),
         Err(err) => Err(api_error(err.to_string())),
     }
@@ -336,6 +386,14 @@ pub fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
         .route(
             "/console/cells/{id}/run",
             post(run_console_cell::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/console/cells/{id}/cancel",
+            post(cancel_console_cell::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/console/cells/{id}/replay",
+            post(replay_console_cell::<T>).layer(Extension(pool.clone())),
         )
 }
 

@@ -167,6 +167,24 @@ pub enum Commands {
         #[command(subcommand)]
         command: FunctionCommands,
     },
+    /// Open a durable, multiline WDL execution console.
+    Console {
+        /// Resume a session by UUID or name.
+        #[arg(long)]
+        session: Option<String>,
+        /// Create and use a new named session.
+        #[arg(long = "new")]
+        new_session: Option<String>,
+        /// Execute one cell and exit.
+        #[arg(short = 'e', long)]
+        execute: Option<String>,
+        /// Execute a WDL cell read from a file and exit.
+        #[arg(short, long)]
+        file: Option<PathBuf>,
+        /// Return as soon as an effectful cell has started.
+        #[arg(long)]
+        no_follow: bool,
+    },
     /// Inspect provider/action metadata.
     Providers {
         #[command(subcommand)]
@@ -679,8 +697,10 @@ pub enum FunctionCommands {
     },
     /// Delete an alias. The version it named is untouched.
     Unalias { package: String, alias: String },
-    /// Delete a package and everything under it.
+    /// Archive a package while retaining versions pinned by workflows.
     Delete { package: String },
+    /// Restore an archived package.
+    Restore { package: String },
 }
 
 #[derive(Debug, Subcommand)]

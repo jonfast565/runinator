@@ -79,7 +79,15 @@ pub(super) async fn functions(
             if json_output {
                 return output::json(&result);
             }
-            println!("deleted package {package}");
+            println!("archived package {package}");
+            Ok(())
+        }
+        FunctionCommands::Restore { package } => {
+            let result = client.restore_function_package(package).await?;
+            if json_output {
+                return output::json(&result);
+            }
+            println!("restored package {package}");
             Ok(())
         }
     }

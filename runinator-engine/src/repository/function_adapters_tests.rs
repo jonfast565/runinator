@@ -47,7 +47,10 @@ fn export() -> FunctionExport {
 fn generates_a_workflow_that_calls_the_pinned_version() {
     let definition = build_adapter_workflow(&entry(), &export()).expect("adapter compiles");
 
-    assert_eq!(definition.name, "functions.image_tools.resize");
+    assert_eq!(
+        definition.name,
+        "functions.adapter.00000000000000000000000000000003"
+    );
     let action = definition
         .definition
         .nodes
@@ -148,16 +151,32 @@ fn a_structural_input_degrades_to_any_rather_than_failing_the_publish() {
 }
 
 #[test]
-fn a_namespaced_package_names_its_adapter_with_the_namespace() {
+fn adapter_identity_is_independent_of_movable_package_names() {
     let mut entry = entry();
     entry.namespace = Some("media".into());
     assert_eq!(
         adapter_workflow_name(&entry),
-        "functions.media.image_tools.resize"
+        "functions.adapter.00000000000000000000000000000003"
     );
     // and it still compiles, which is what proves the three-segment provider survives generation.
     let definition = build_adapter_workflow(&entry, &export()).expect("adapter compiles");
-    assert_eq!(definition.name, "functions.media.image_tools.resize");
+    assert_eq!(
+        definition.name,
+        "functions.adapter.00000000000000000000000000000003"
+    );
+}
+
+#[test]
+fn different_release_exports_never_share_an_adapter_name() {
+    let first = entry();
+    let mut second = entry();
+    second.version = first.version + 1;
+    second.export_id = Uuid::from_u128(4);
+
+    assert_ne!(
+        adapter_workflow_name(&first),
+        adapter_workflow_name(&second)
+    );
 }
 
 // silence the unused-import warning when only some fixtures are used.

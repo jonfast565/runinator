@@ -90,6 +90,7 @@ pub async fn complete_ready_node<T: DatabaseImpl>(
         )
         .await?;
     }
+    let _ = super::console::settle_cell_for_run(db, ready_node.workflow_run_id).await;
     Ok(TaskResponse {
         success: true,
         message: "Ready node processed".into(),
@@ -120,6 +121,7 @@ pub async fn drive_ready_node<T: DatabaseImpl>(
             // a reducer hard-error would otherwise leave the row claimed and get re-driven every
             // lease period (a poison pill). fail the run and settle the row so it stops looping.
             fail_driven_ready_node(db, &ready_node, driver_id, err.as_ref()).await?;
+            let _ = super::console::settle_cell_for_run(db, workflow_run_id).await;
             return Ok(Some(workflow_run_id));
         }
     };
@@ -129,6 +131,7 @@ pub async fn drive_ready_node<T: DatabaseImpl>(
         return Ok(Some(workflow_run_id));
     }
     db.complete_ready_node(ready_node_id, driver_id).await?;
+    let _ = super::console::settle_cell_for_run(db, workflow_run_id).await;
     Ok(Some(workflow_run_id))
 }
 

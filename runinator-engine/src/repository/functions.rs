@@ -291,7 +291,7 @@ pub async fn fetch_package_versions<T: DatabaseImpl>(
     db.fetch_function_versions(package_id).await
 }
 
-/// delete a package and everything under it, including its catalog mirror.
+/// archive a package and remove only its authoring catalog mirror.
 pub async fn delete_package<T: DatabaseImpl>(
     db: &T,
     package_id: Uuid,
@@ -314,6 +314,19 @@ pub async fn delete_package<T: DatabaseImpl>(
         .await;
     }
     Ok(deleted)
+}
+
+/// restore an archived package and rebuild its derived catalog mirror.
+pub async fn restore_package<T: DatabaseImpl>(
+    db: &T,
+    package_id: Uuid,
+) -> Result<bool, SendableError> {
+    let restored = db.restore_function_package(package_id).await?;
+    if restored {
+        sync_provider_catalog(db, package_id).await?;
+        super::function_adapters::sync_adapter_workflows(db, package_id).await?;
+    }
+    Ok(restored)
 }
 
 /// point an alias at a version, named either by number or by another alias.

@@ -37,6 +37,8 @@ export const useConsoleStore = defineStore("console", () => {
         prompt: (message) => window.prompt(message),
       }),
     runCell: (cellId: string) => consoleService.runCell(cellId),
+    cancelCell: (cellId: string) => consoleService.cancelCell(cellId),
+    replayCell: (cellId: string) => consoleService.replayCell(cellId),
     clearConsole: () => {
       consoleService.clearConsole();
     },

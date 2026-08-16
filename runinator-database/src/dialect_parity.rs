@@ -1583,7 +1583,16 @@ async fn assert_function_lifecycle<T: DatabaseImpl>(db: &T, workflow_id: Uuid) {
             .unwrap()
     );
     assert!(db.delete_function_package(package.id).await.unwrap());
-    // the package is gone, so nothing pins the artifact and it becomes collectable.
+    // archival removes authoring visibility without invalidating immutable bindings.
     assert!(db.fetch_function_catalog().await.unwrap().is_empty());
-    assert!(db.delete_function_artifact(&digest).await.unwrap());
+    let archived = db
+        .fetch_function_package_by_id(package.id)
+        .await
+        .unwrap()
+        .expect("archived package remains");
+    assert!(archived.archived_at.is_some());
+    assert!(db.delete_function_artifact(&digest).await.is_err());
+
+    assert!(db.restore_function_package(package.id).await.unwrap());
+    assert_eq!(db.fetch_function_catalog().await.unwrap().len(), 2);
 }

@@ -567,6 +567,14 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     method: "POST",
     path: (args) => `console/cells/${escape(arg(args, "cellId"))}/run`,
   },
+  cancel_console_cell: {
+    method: "POST",
+    path: (args) => `console/cells/${escape(arg(args, "cellId"))}/cancel`,
+  },
+  replay_console_cell: {
+    method: "POST",
+    path: (args) => `console/cells/${escape(arg(args, "cellId"))}/replay`,
+  },
 
   fetch_resource_records: {
     method: "GET",

@@ -186,11 +186,13 @@ pub async fn settle_cell_for_run<T: DatabaseImpl>(
         return Ok(Some(cell));
     }
 
-    // the last node's output is the cell's value, matching what an adapter workflow returns for a
-    // packaged function — one rule for "what a run produced".
+    // terminal nodes carry no value. select the latest completed value-producing node; generated
+    // console and function workflows end in an explicit `yield`, so this resolves that node rather
+    // than the later `end` bookkeeping row.
     let output = node_runs
         .iter()
-        .max_by_key(|node_run| node_run.created_at)
+        .filter(|node_run| node_run.output_json.is_some() && !node_run.speculative)
+        .max_by_key(|node_run| (node_run.finished_at, node_run.created_at))
         .and_then(|node_run| node_run.output_json.clone())
         .unwrap_or(Value::Null);
 

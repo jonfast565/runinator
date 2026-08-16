@@ -163,7 +163,7 @@ async fn a_publish_without_its_bytes_is_refused() {
 
     // the artifact was never uploaded, so publishing it would create a version nothing can run.
     let request = FunctionSource::load(&root).unwrap().publish_request();
-    let (status, _) = crate::handlers::functions::publish_function::<SqliteDb>(
+    let (status, _body) = crate::handlers::functions::publish_function::<SqliteDb>(
         Extension(db.clone()),
         Extension(admin_ctx()),
         Json(request),
@@ -304,12 +304,17 @@ async fn publishing_generates_a_hidden_adapter_workflow_per_export() {
         source.archive.bytes.clone().into(),
     )
     .await;
-    let (status, _) = crate::handlers::functions::publish_function::<SqliteDb>(
+    let (status, body) = crate::handlers::functions::publish_function::<SqliteDb>(
         Extension(db.clone()),
         Extension(admin_ctx()),
         Json(source.publish_request()),
     )
     .await;
+    if status != StatusCode::OK
+        && let ApiResponse::ApiError(error) = body.0
+    {
+        panic!("publish failed: {}", error.message);
+    }
     assert_eq!(status, StatusCode::OK);
 
     // one adapter per export, each recorded so the invocation path can find it.
@@ -358,7 +363,7 @@ async fn publishing_generates_a_hidden_adapter_workflow_per_export() {
 }
 
 #[tokio::test]
-async fn republishing_repoints_the_adapter_at_the_new_version() {
+async fn republishing_retains_an_immutable_adapter_for_each_version() {
     let (db, db_path) = test_db().await;
     let db = Arc::new(db);
     let (root, blobs, blob_root) = fixture("republish").await;
@@ -382,34 +387,74 @@ async fn republishing_repoints_the_adapter_at_the_new_version() {
         assert_eq!(status, StatusCode::OK);
     }
 
-    // the adapter tracks the newest version: the http path is the "call the current release"
-    // surface, and a caller wanting an exact version names it in a workflow instead.
+    // latest/alias/exact resolution selects an export first, so every release retains its own
+    // adapter and an exact-version request cannot drift after another publish.
     let all = crate::repository::fetch_workflows_with_managed(db.as_ref(), true)
         .await
         .unwrap();
-    // the adapter is named for the authored call path, hyphen and all.
-    let resize = all
+    let mut versions = all
         .iter()
-        .find(|workflow| workflow.name == "functions.image-tools.resize")
-        .unwrap_or_else(|| {
-            panic!(
-                "no resize adapter among {:?}",
-                all.iter().map(|w| w.name.clone()).collect::<Vec<_>>()
-            )
-        });
-    let binding = resize
-        .definition
-        .nodes
-        .iter()
-        .find_map(|node| {
-            node.action
-                .as_ref()
-                .and_then(|a| a.function_binding.clone())
+        .filter_map(|workflow| {
+            workflow.definition.nodes.iter().find_map(|node| {
+                node.action
+                    .as_ref()
+                    .and_then(|action| action.function_binding.as_ref())
+                    .map(|binding| binding.version)
+            })
         })
-        .expect("a binding");
-    assert_eq!(binding.version, 2);
-    // one adapter, updated in place, rather than a second workflow of the same name.
-    assert_eq!(all.len(), 2);
+        .collect::<Vec<_>>();
+    versions.sort_unstable();
+    assert_eq!(versions, vec![1, 1, 2, 2]);
+    assert_eq!(all.len(), 4);
+
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&blob_root);
+    let _ = std::fs::remove_file(db_path);
+}
+
+#[tokio::test]
+async fn deleting_a_package_archives_it_and_restore_reactivates_it() {
+    let (db, db_path) = test_db().await;
+    let db = Arc::new(db);
+    let (root, blobs, blob_root) = fixture("archive-restore").await;
+    let _ = published(&db, &blobs, &root).await;
+
+    let (status, _) = crate::handlers::functions::delete_function::<SqliteDb>(
+        Extension(db.clone()),
+        Extension(admin_ctx()),
+        Path("image-tools".to_string()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let package = db
+        .fetch_function_package(None, None, "image-tools")
+        .await
+        .unwrap()
+        .expect("archived package remains");
+    assert!(package.archived_at.is_some());
+
+    let (status, _) = crate::handlers::functions::get_function::<SqliteDb>(
+        Extension(db.clone()),
+        Extension(admin_ctx()),
+        Path("image-tools".to_string()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    let (status, _) = crate::handlers::functions::restore_function::<SqliteDb>(
+        Extension(db.clone()),
+        Extension(admin_ctx()),
+        Path("image-tools".to_string()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let restored = db
+        .fetch_function_package_by_id(package.id)
+        .await
+        .unwrap()
+        .expect("restored package");
+    assert!(restored.archived_at.is_none());
+    assert_eq!(db.fetch_function_catalog().await.unwrap().len(), 2);
 
     let _ = std::fs::remove_dir_all(&root);
     let _ = std::fs::remove_dir_all(&blob_root);
@@ -510,7 +555,7 @@ async fn an_idempotency_key_replays_the_run_it_already_started() {
     let (db, db_path) = test_db().await;
     let db = Arc::new(db);
     let (root, blobs, blob_root) = fixture("idempotent").await;
-    published(&db, &blobs, &root).await;
+    let adapters = published(&db, &blobs, &root).await;
     let events = test_event_bus();
 
     let headers = axum::http::HeaderMap::from_iter([
@@ -546,7 +591,6 @@ async fn an_idempotency_key_replays_the_run_it_already_started() {
     };
     // a retried request must not start a second execution of the same work.
     assert_eq!(first, second);
-    let adapters = published(&db, &blobs, &root).await;
     let runs = crate::repository::fetch_workflow_runs_for_workflow(db.as_ref(), adapters["resize"])
         .await
         .unwrap();

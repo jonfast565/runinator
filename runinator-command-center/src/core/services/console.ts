@@ -1,4 +1,5 @@
 import {
+  cancelConsoleCell,
   createConsoleCell,
   createConsoleSession,
   deleteConsoleCell,
@@ -7,6 +8,7 @@ import {
   fetchConsoleSession,
   fetchConsoleSessions,
   renameConsoleSession,
+  replayConsoleCell,
   runConsoleCell,
   updateConsoleCell,
 } from "../api/commandCenterApi";
@@ -200,6 +202,23 @@ export function createConsoleService(app: AppService) {
       // a pure cell has already settled by the time this returns; only an effectful one needs
       // following. that asymmetry is the console's whole point, so the ui does not poll for the
       // common case.
+      if (isCellPending(cell)) {
+        void followCell(cell.id);
+      } else {
+        await service.refreshActiveSession();
+      }
+
+      return cell;
+    },
+    async cancelCell(cellId: string) {
+      await app.runOperation("Canceling cell", () => cancelConsoleCell(cellId));
+      markPending(cellId, false);
+      await service.refreshActiveSession();
+    },
+    async replayCell(cellId: string) {
+      const cell = await app.runOperation("Replaying cell", () => replayConsoleCell(cellId));
+      replaceCell(cell);
+
       if (isCellPending(cell)) {
         void followCell(cell.id);
       } else {

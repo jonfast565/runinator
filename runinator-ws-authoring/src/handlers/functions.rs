@@ -46,7 +46,7 @@ pub async fn get_functions<T: DatabaseImpl>(
         Ok(packages) => {
             let packages: Vec<_> = packages
                 .into_iter()
-                .filter(|package| ctx.org_visible(package.org_id))
+                .filter(|package| package.archived_at.is_none() && ctx.org_visible(package.org_id))
                 .collect();
             (
                 StatusCode::OK,
@@ -156,11 +156,42 @@ pub async fn delete_function<T: DatabaseImpl>(
         Ok(true) => (
             StatusCode::OK,
             Json(ApiResponse::JsonValue(runinator_models::json!({
-                "deleted": true,
+                "archived": true,
                 "package": package,
             }))),
         ),
         Ok(false) => not_found(format!("function package '{package}' not found")),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+/// restore an archived package.
+pub async fn restore_function<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(package): Path<String>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = ctx.require_capability(Capability::FunctionsManage) {
+        return reply;
+    }
+    let (namespace, name) = split_qualified(&package);
+    let found = match db
+        .fetch_function_package(ctx.org_id, namespace.as_deref(), &name)
+        .await
+    {
+        Ok(Some(found)) if found.archived_at.is_some() && ctx.org_visible(found.org_id) => found,
+        Ok(_) => return not_found(format!("archived function package '{package}' not found")),
+        Err(err) => return api_error(err.to_string()),
+    };
+    match repository::functions::restore_package(db.as_ref(), found.id).await {
+        Ok(true) => (
+            StatusCode::OK,
+            Json(ApiResponse::JsonValue(runinator_models::json!({
+                "restored": true,
+                "package": package,
+            }))),
+        ),
+        Ok(false) => not_found(format!("archived function package '{package}' not found")),
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -245,9 +276,15 @@ pub async fn delete_function_alias<T: DatabaseImpl>(
 /// long as it caches the code, and a promotion never changes what an already-dispatched action runs.
 pub async fn resolve_function_export<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
-    Extension(_ctx): Extension<AuthContext>,
+    Extension(ctx): Extension<AuthContext>,
     Path(export_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = ctx.require_agent_service_or_admin() {
+        return reply;
+    }
+    if !function_export_visible(db.as_ref(), &ctx, export_id).await {
+        return not_found(format!("function export {export_id} not found"));
+    }
     match repository::functions::resolve_invocation_target(db.as_ref(), export_id).await {
         Ok(Some(target)) => (
             StatusCode::OK,
@@ -261,9 +298,12 @@ pub async fn resolve_function_export<T: DatabaseImpl>(
 /// the artifact record for a digest, or 404. this is the "do I need to upload?" probe.
 pub async fn get_function_artifact<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
-    Extension(_ctx): Extension<AuthContext>,
+    Extension(ctx): Extension<AuthContext>,
     Path(digest): Path<String>,
 ) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = ctx.require_capability(Capability::FunctionsManage) {
+        return reply;
+    }
     if !is_valid_digest(&digest) {
         return bad_request(format!("'{digest}' is not a sha256 artifact digest"));
     }
@@ -306,15 +346,21 @@ pub async fn upload_function_artifact<T: DatabaseImpl>(
 pub async fn download_function_artifact<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(blobs): Extension<Arc<dyn BlobStore>>,
-    Extension(_ctx): Extension<AuthContext>,
+    Extension(ctx): Extension<AuthContext>,
     Path(digest): Path<String>,
 ) -> Response {
+    if let Err(reply) = ctx.require_agent_service_or_admin() {
+        return reply.into_response();
+    }
     if !is_valid_digest(&digest) {
         return (
             StatusCode::BAD_REQUEST,
             format!("'{digest}' is not a sha256 artifact digest"),
         )
             .into_response();
+    }
+    if !function_artifact_visible(db.as_ref(), &ctx, &digest).await {
+        return (StatusCode::NOT_FOUND, "artifact not found").into_response();
     }
     let content =
         match repository::functions::open_artifact(db.as_ref(), &blobs, &digest, None).await {
@@ -337,6 +383,48 @@ pub async fn download_function_artifact<T: DatabaseImpl>(
         })
 }
 
+async fn function_export_visible<T: DatabaseImpl>(
+    db: &T,
+    ctx: &AuthContext,
+    export_id: Uuid,
+) -> bool {
+    let Ok(Some(export)) = db.fetch_function_export(export_id).await else {
+        return false;
+    };
+    let Ok(Some(version)) = db.fetch_function_version(export.version_id).await else {
+        return false;
+    };
+    let Ok(Some(package)) = db.fetch_function_package_by_id(version.package_id).await else {
+        return false;
+    };
+    ctx.org_visible(package.org_id)
+}
+
+async fn function_artifact_visible<T: DatabaseImpl>(
+    db: &T,
+    ctx: &AuthContext,
+    digest: &str,
+) -> bool {
+    let Ok(packages) = db.fetch_function_packages().await else {
+        return false;
+    };
+    for package in packages
+        .into_iter()
+        .filter(|package| ctx.org_visible(package.org_id))
+    {
+        let Ok(versions) = db.fetch_function_versions(package.id).await else {
+            continue;
+        };
+        if versions
+            .iter()
+            .any(|version| version.artifact_digest == digest)
+        {
+            return true;
+        }
+    }
+    false
+}
+
 // `namespace.name` or a bare `name`. names cannot contain dots (the manifest rejects them), so this
 // split is unambiguous and the dotted call path stays parseable in the same way everywhere.
 fn split_qualified(package: &str) -> (Option<String>, String) {
@@ -357,7 +445,7 @@ async fn resolve_package<T: DatabaseImpl>(
             .await?;
     Ok(found
         .map(|detail| detail.package)
-        .filter(|package| ctx.org_visible(package.org_id)))
+        .filter(|package| package.archived_at.is_none() && ctx.org_visible(package.org_id)))
 }
 
 async fn newest_version<T: DatabaseImpl>(
@@ -388,6 +476,10 @@ pub fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
             get(get_function::<T>)
                 .delete(delete_function::<T>)
                 .layer(Extension(pool.clone())),
+        )
+        .route(
+            "/functions/{package}/restore",
+            post(restore_function::<T>).layer(Extension(pool.clone())),
         )
         .route(
             "/functions/{package}/aliases",

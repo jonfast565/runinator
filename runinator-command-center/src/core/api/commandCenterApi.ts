@@ -1169,3 +1169,11 @@ export async function deleteConsoleCell(cellId: string) {
 export async function runConsoleCell(cellId: string) {
   return command<ConsoleCell>("run_console_cell", { cellId });
 }
+
+export async function cancelConsoleCell(cellId: string) {
+  return command<JsonRecord>("cancel_console_cell", { cellId });
+}
+
+export async function replayConsoleCell(cellId: string) {
+  return command<ConsoleCell>("replay_console_cell", { cellId });
+}

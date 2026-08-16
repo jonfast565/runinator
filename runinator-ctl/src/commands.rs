@@ -76,6 +76,24 @@ pub async fn run(client: &Client, cli: &Cli) -> Result<()> {
         Commands::Freeze { command } => freeze::freeze(client, command, cli.json).await,
         Commands::Providers { command } => providers::providers(client, command, cli.json).await,
         Commands::Functions { command } => functions::functions(client, command, cli.json).await,
+        Commands::Console {
+            session,
+            new_session,
+            execute,
+            file,
+            no_follow,
+        } => {
+            console::console(
+                client,
+                session.as_deref(),
+                new_session.as_deref(),
+                execute.as_deref(),
+                file.as_deref(),
+                *no_follow,
+                cli.json,
+            )
+            .await
+        }
         Commands::Artifacts { command } => artifacts::artifacts(client, command, cli.json).await,
         Commands::Wdl { command } => workflows::wdl(command, cli.json),
         Commands::Settings { command } => settings::settings(client, command, cli.json).await,
@@ -98,6 +116,7 @@ mod artifacts;
 mod freeze;
 mod functions;
 pub use functions::functions_validate;
+mod console;
 mod providers;
 mod runs;
 mod settings;

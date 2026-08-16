@@ -89,6 +89,22 @@
                     <Icon v-else name="play" />
                     <span>Run</span>
                   </button>
+                  <button
+                    v-if="console.isPending(cell.id)"
+                    class="btn btn-sm btn-danger"
+                    @click="console.cancelCell(cell.id)"
+                  >
+                    <Icon name="stop" />
+                    <span>Cancel</span>
+                  </button>
+                  <button
+                    v-else-if="cell.status !== 'idle'"
+                    class="btn btn-sm"
+                    @click="console.replayCell(cell.id)"
+                  >
+                    <Icon name="refresh" />
+                    <span>Replay</span>
+                  </button>
                   <button class="btn btn-sm" @click="console.removeCell(cell.id)">
                     <Icon name="trash" />
                   </button>

@@ -25,6 +25,10 @@ pub struct FunctionPackage {
     /// package.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latest_version: Option<i64>,
+    /// archived packages cannot be selected for new calls, but their immutable releases remain
+    /// available to workflow snapshots that already pin them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub archived_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

@@ -112,8 +112,11 @@ impl Capability {
 
     /// the capabilities an org admin holds in their active org. platform admins hold every capability
     /// (see `ALL`); ordinary members hold none of these.
-    pub const ORG_ADMIN: &'static [Capability] =
-        &[Capability::OrgMembersManage, Capability::OrgNodesScale];
+    pub const ORG_ADMIN: &'static [Capability] = &[
+        Capability::ConsoleUse,
+        Capability::OrgMembersManage,
+        Capability::OrgNodesScale,
+    ];
 
     pub fn as_str(self) -> &'static str {
         match self {

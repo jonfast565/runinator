@@ -9,7 +9,7 @@ use runinator_comm::{
     ActionCommand, ActionDispatchRecord, AgentDirectiveKind, AgentDirectiveRecord,
 };
 use runinator_models::json;
-use runinator_models::pipelines::PipelineBundle;
+use runinator_models::pipelines::{Pipeline, PipelineBundle, PipelineRun, PipelineRunDetail};
 use runinator_models::value::Value;
 use runinator_models::{
     api_routes::{
@@ -42,6 +42,7 @@ use runinator_models::{
     },
     billing::ScaleOrgNodesRequest,
     bundles::{Bundle, PackImportResult, ProviderBundle, SecretBundle},
+    console::{ConsoleCell, ConsoleSession, ConsoleSessionDetail, NewConsoleCell},
     functions::{
         FunctionAlias, FunctionArtifact, FunctionCatalogEntry, FunctionInvocationTarget,
         FunctionPackage, FunctionPackageDetail, FunctionVersion, NewFunctionVersion,
@@ -121,6 +122,139 @@ impl<L> AsyncApiClient<L>
 where
     L: ServiceLocator,
 {
+    /// List console sessions visible to the authenticated principal.
+    pub async fn console_sessions(&self) -> Result<Vec<ConsoleSession>> {
+        let url = self.build_url("/console/sessions").await?;
+        let response = self.http_get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Vec<ConsoleSession>>().await?)
+    }
+
+    /// Create a durable console session.
+    pub async fn create_console_session(&self, name: &str) -> Result<ConsoleSession> {
+        let url = self.build_url("/console/sessions").await?;
+        let response = self
+            .http_post(url.clone())
+            .json(&json!({ "name": name }))
+            .send()
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<ConsoleSession>().await?)
+    }
+
+    /// Fetch a session with its cells and bindings.
+    pub async fn console_session(&self, session_id: Uuid) -> Result<ConsoleSessionDetail> {
+        let url = self
+            .build_url(&format!("/console/sessions/{session_id}"))
+            .await?;
+        let response = self.http_get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<ConsoleSessionDetail>().await?)
+    }
+
+    /// Append a cell to a durable session.
+    pub async fn create_console_cell(
+        &self,
+        session_id: Uuid,
+        cell: &NewConsoleCell,
+    ) -> Result<ConsoleCell> {
+        let url = self
+            .build_url(&format!("/console/sessions/{session_id}/cells"))
+            .await?;
+        let response = self.http_post(url.clone()).json(cell).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<ConsoleCell>().await?)
+    }
+
+    /// Run a persisted console cell.
+    pub async fn run_console_cell(&self, cell_id: Uuid) -> Result<ConsoleCell> {
+        let url = self
+            .build_url(&format!("/console/cells/{cell_id}/run"))
+            .await?;
+        let response = self.http_post(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<ConsoleCell>().await?)
+    }
+
+    /// Read and, when terminal, settle a console cell.
+    pub async fn console_cell(&self, cell_id: Uuid) -> Result<ConsoleCell> {
+        let url = self.build_url(&format!("/console/cells/{cell_id}")).await?;
+        let response = self.http_get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<ConsoleCell>().await?)
+    }
+
+    /// Cancel the durable workflow behind a running console cell.
+    pub async fn cancel_console_cell(&self, cell_id: Uuid) -> Result<TaskResponse> {
+        let url = self
+            .build_url(&format!("/console/cells/{cell_id}/cancel"))
+            .await?;
+        let response = self.http_post(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<TaskResponse>().await?)
+    }
+
+    pub async fn replay_console_cell(&self, cell_id: Uuid) -> Result<ConsoleCell> {
+        let url = self
+            .build_url(&format!("/console/cells/{cell_id}/replay"))
+            .await?;
+        let response = self.http_post(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<ConsoleCell>().await?)
+    }
+
+    /// Invoke a packaged function through its generated workflow adapter.
+    pub async fn invoke_function(
+        &self,
+        package: &str,
+        export: &str,
+        alias: Option<&str>,
+        version: Option<i64>,
+        input: &Value,
+    ) -> Result<Value> {
+        let mut path = format!("/functions/{package}/{export}/invocations");
+        if let Some(alias) = alias {
+            path.push_str(&format!("?alias={alias}"));
+        } else if let Some(version) = version {
+            path.push_str(&format!("?version={version}"));
+        }
+        let url = self.build_url(&path).await?;
+        let response = self.http_post(url.clone()).json(input).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Value>().await?)
+    }
+
+    pub async fn fetch_pipelines(&self) -> Result<Vec<Pipeline>> {
+        let url = self.build_url("/pipelines").await?;
+        let response = self.http_get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Vec<Pipeline>>().await?)
+    }
+
+    pub async fn create_pipeline_run(
+        &self,
+        pipeline_id: Uuid,
+        parameters: Value,
+    ) -> Result<PipelineRun> {
+        let url = self
+            .build_url(&format!("/pipelines/{pipeline_id}/runs"))
+            .await?;
+        let response = self
+            .http_post(url.clone())
+            .json(&json!({ "parameters": parameters }))
+            .send()
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<PipelineRun>().await?)
+    }
+
+    pub async fn fetch_pipeline_run(&self, run_id: Uuid) -> Result<PipelineRunDetail> {
+        let url = self.build_url(&format!("/pipeline_runs/{run_id}")).await?;
+        let response = self.http_get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<PipelineRunDetail>().await?)
+    }
+
     /// redeem a self-authenticating agent enrollment request. the endpoint is public; this client's
     /// configured API credential, if any, is irrelevant to the proof inside `request`.
     pub async fn enroll_agent(&self, request: &EnrollAgentRequest) -> Result<EnrollAgentResponse> {
@@ -770,6 +904,15 @@ where
             .build_url(&format!("{API_FUNCTIONS}/{package}"))
             .await?;
         let response = self.http_delete(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Value>().await?)
+    }
+
+    pub async fn restore_function_package(&self, package: &str) -> Result<Value> {
+        let url = self
+            .build_url(&format!("{API_FUNCTIONS}/{package}/restore"))
+            .await?;
+        let response = self.http_post(url.clone()).send().await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Value>().await?)
     }

@@ -13,6 +13,7 @@ utoipa = { version = "5", features = ["axum_extras", "uuid", "chrono"] }
 uuid = { version = "1.18", features = ["v4"] }
 
 runinator-blob-core = { path = "../runinator-blob-core" }
+runinator-broker-core = { path = "../runinator-broker-core" }
 runinator-database = { path = "../runinator-database" }
 runinator-engine = { path = "../runinator-engine" }
 runinator-models = { path = "../runinator-models" }

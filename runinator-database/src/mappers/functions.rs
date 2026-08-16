@@ -26,6 +26,9 @@ macro_rules! function_package_from_row {
             name: $row.get("name"),
             description: $row.get("description"),
             latest_version: $row.get("latest_version"),
+            archived_at: $row
+                .get::<Option<i64>, _>("archived_at")
+                .and_then(|value| DateTime::<Utc>::from_timestamp(value, 0)),
             created_at: DateTime::<Utc>::from_timestamp($row.get("created_at"), 0)
                 .unwrap_or_else(Utc::now),
             updated_at: DateTime::<Utc>::from_timestamp($row.get("updated_at"), 0)

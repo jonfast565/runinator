@@ -7,7 +7,7 @@ use super::*;
 
 /// every column `mappers::row_to_function_package` reads.
 const FUNCTION_PACKAGE_COLUMNS: &str =
-    "id, org_id, namespace, name, description, latest_version, created_at, updated_at";
+    "id, org_id, namespace, name, description, latest_version, archived_at, created_at, updated_at";
 const FUNCTION_VERSION_COLUMNS: &str =
     "id, package_id, version, artifact_digest, manifest, runtime, published_by, created_at";
 const FUNCTION_EXPORT_COLUMNS: &str =
@@ -292,46 +292,29 @@ where
     }
 
     async fn delete_function_package(&self, package_id: Uuid) -> Result<bool, SendableError> {
-        // children are deleted explicitly rather than left to `ON DELETE CASCADE`, because the
-        // engines disagree about whether the constraint exists at all: mariadb creates a real
-        // foreign key from an inline `REFERENCES` clause and mysql 8 silently discards one. doing
-        // it here means the same rows disappear on every engine, whatever the schema managed to
-        // declare — and a package whose versions survived its deletion would keep pinning artifacts
-        // that nothing can reach.
-        //
-        // the artifacts themselves are deliberately left: a digest shared with another package must
-        // survive, and one left orphaned is collected separately.
-        let mut tx = self.pool().begin().await?;
-        // deepest dependant first: an adapter row points at an export, so it has to go before the
-        // export does or the engines that *do* enforce the constraint reject the delete.
-        sqlx::query(&self.render(
-            "DELETE FROM function_adapter_workflows WHERE export_id IN \
-             (SELECT id FROM function_exports WHERE version_id IN \
-              (SELECT id FROM function_versions WHERE package_id = ?))",
+        let now = Utc::now().timestamp();
+        let result = sqlx::query(&self.render(
+            "UPDATE function_packages SET archived_at = ?, updated_at = ? \
+             WHERE id = ? AND archived_at IS NULL",
         ))
+        .bind(now)
+        .bind(now)
         .bind(package_id)
-        .execute(&mut *tx)
+        .execute(self.pool())
         .await?;
-        sqlx::query(&self.render(
-            "DELETE FROM function_exports WHERE version_id IN \
-             (SELECT id FROM function_versions WHERE package_id = ?)",
+        Ok(result.affected() > 0)
+    }
+
+    async fn restore_function_package(&self, package_id: Uuid) -> Result<bool, SendableError> {
+        let now = Utc::now().timestamp();
+        let result = sqlx::query(&self.render(
+            "UPDATE function_packages SET archived_at = NULL, updated_at = ? \
+             WHERE id = ? AND archived_at IS NOT NULL",
         ))
+        .bind(now)
         .bind(package_id)
-        .execute(&mut *tx)
+        .execute(self.pool())
         .await?;
-        sqlx::query(&self.render("DELETE FROM function_aliases WHERE package_id = ?"))
-            .bind(package_id)
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query(&self.render("DELETE FROM function_versions WHERE package_id = ?"))
-            .bind(package_id)
-            .execute(&mut *tx)
-            .await?;
-        let result = sqlx::query(&self.render("DELETE FROM function_packages WHERE id = ?"))
-            .bind(package_id)
-            .execute(&mut *tx)
-            .await?;
-        tx.commit().await?;
         Ok(result.affected() > 0)
     }
 
@@ -500,6 +483,7 @@ where
              FROM function_exports e \
              JOIN function_versions v ON v.id = e.version_id \
              JOIN function_packages p ON p.id = v.package_id \
+             WHERE p.archived_at IS NULL \
              ORDER BY p.name, v.version DESC, e.name",
         ))
         .fetch_all(self.pool())

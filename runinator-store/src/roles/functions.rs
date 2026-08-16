@@ -70,9 +70,14 @@ pub trait FunctionStore: Send + Sync + 'static {
         package_id: Uuid,
     ) -> impl Future<Output = Result<Option<FunctionPackage>, SendableError>> + Send;
 
-    /// Delete a package and everything under it. Refused while any workflow still binds to one of
-    /// its versions; the caller checks that, since the store cannot see workflow definitions.
+    /// Archive a package. Versions, exports, adapters, and artifacts remain for pinned snapshots.
     fn delete_function_package(
+        &self,
+        package_id: Uuid,
+    ) -> impl Future<Output = Result<bool, SendableError>> + Send;
+
+    /// Restore a previously archived package.
+    fn restore_function_package(
         &self,
         package_id: Uuid,
     ) -> impl Future<Output = Result<bool, SendableError>> + Send;
