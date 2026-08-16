@@ -524,3 +524,140 @@ fn compute_arithmetic_round_trips() {
     "#;
     assert_round_trips(src);
 }
+
+// --- the invocation backend -------------------------------------------------------------------
+//
+// `emit_invocations` compiles a `do { }` block to an `invocation` node carrying assembled bytecode
+// instead of a `std.run`/`std.exec` node carrying a statement tree. it is off by default because it
+// changes what a compiled definition *is*: a runtime holding in-flight runs against the old shape
+// has to be drained and migrated before it can execute the new one.
+
+fn compile_as_invocation(src: &str) -> runinator_models::workflows::WorkflowDefinition {
+    let options = CompileOptions {
+        emit_invocations: true,
+        ..default_test_options()
+    };
+    compile_str(src, &options).expect("compile with invocations")
+}
+
+fn invocation_node(
+    definition: &runinator_models::workflows::WorkflowDefinition,
+) -> serde_json::Value {
+    let value = serde_json::to_value(&definition.definition).unwrap();
+    value["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|node| node["kind"] == "invocation")
+        .cloned()
+        .expect("an invocation node")
+}
+
+#[test]
+fn a_do_block_compiles_to_an_invocation_node_carrying_a_module() {
+    let src = r#"
+        workflow "Compute" v1 {
+            do {
+                let total = prev.cart.subtotal + prev.cart.tax
+                return { total: total }
+            }
+        }
+    "#;
+    let node = invocation_node(&compile_as_invocation(src));
+    let module = &node["parameters"]["module"];
+    assert_eq!(module["version"], 1);
+    assert!(
+        module["entry"]["instructions"]
+            .as_array()
+            .is_some_and(|instructions| !instructions.is_empty()),
+        "the module carries assembled instructions"
+    );
+}
+
+#[test]
+fn an_invocation_node_retains_its_source_for_decompiling() {
+    // the module is bytecode; recovering `let`/`if`/`return` from it would be control-flow
+    // reconstruction. the retained tree is what the decompiler renders, which is why the round trip
+    // below can succeed at all.
+    let src = r#"
+        workflow "Compute" v1 {
+            do {
+                let total = prev.cart.subtotal + prev.cart.tax
+                if total <= 0 { goto fail }
+                return { total: total }
+            }
+        }
+    "#;
+    let node = invocation_node(&compile_as_invocation(src));
+    assert!(
+        node["parameters"]["source"].is_array(),
+        "an invocation retains the statement tree it was assembled from"
+    );
+}
+
+#[test]
+fn an_invocation_round_trips_back_to_the_same_source() {
+    let src = r#"
+        workflow "Compute" v1 {
+            do {
+                let total = prev.cart.subtotal + prev.cart.tax
+                if total <= 0 { goto fail }
+                return { total: total }
+            }
+        }
+    "#;
+    let options = CompileOptions {
+        emit_invocations: true,
+        ..default_test_options()
+    };
+    let definition = compile_str(src, &options).expect("compile");
+    let rendered = crate::decompile(&definition).expect("decompile");
+    // decompiling and recompiling must reach the same definition: that is what makes the editor's
+    // save path safe, and it is the contract the retained source exists to keep.
+    let again = compile_str(&rendered, &options).expect("recompile the decompiled source");
+    assert_eq!(
+        serde_json::to_value(&definition.definition).unwrap(),
+        serde_json::to_value(&again.definition).unwrap(),
+        "an invocation definition did not survive a decompile/recompile round trip"
+    );
+}
+
+#[test]
+fn user_functions_are_compiled_into_the_module() {
+    let src = r#"
+        fn double(n: integer) -> integer = n * 2
+
+        workflow "Compute" v1 {
+            do {
+                return double(prev.value)
+            }
+        }
+    "#;
+    let node = invocation_node(&compile_as_invocation(src));
+    let functions = node["parameters"]["module"]["functions"]
+        .as_array()
+        .expect("the module carries its functions");
+    assert_eq!(functions.len(), 1);
+    assert_eq!(functions[0]["name"], "double");
+    assert_eq!(functions[0]["params"][0], "n");
+}
+
+#[test]
+fn the_default_still_emits_a_std_run_node() {
+    // the flip is opt-in. a default compile must keep producing what every stored definition and
+    // every running replica already understands.
+    let src = r#"
+        workflow "Compute" v1 {
+            do { return 1 }
+        }
+    "#;
+    let value = serde_json::to_value(&compile(src).definition).unwrap();
+    let kinds: Vec<_> = value["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|node| node["kind"].as_str().unwrap_or_default().to_string())
+        .collect();
+    assert!(kinds.contains(&"action".to_string()));
+    assert!(!kinds.contains(&"invocation".to_string()));
+}

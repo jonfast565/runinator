@@ -61,12 +61,21 @@ struct Lowerer {
     functions: Vec<runinator_models::functions::FunctionCatalogEntry>,
     // resolved `type <Name>` declarations, consulted when lowering named type references.
     named_types: std::collections::BTreeMap<String, runinator_models::types::RuninatorType>,
+    // user `fn` definitions in their lowered metadata form, available while the body is lowered so
+    // an `invocation` node can assemble them into its module.
+    lowered_functions: Vec<Value>,
+    // emit `invocation` nodes carrying compiled bytecode instead of `std.run`/`std.exec` action
+    // nodes carrying a statement tree. see `CompileOptions::emit_invocations`.
+    emit_invocations: bool,
     // base directory used for compile-time `file("...")` text includes.
     source_dir: Option<PathBuf>,
     // the callable registry (intrinsics + user functions), used to resolve keyword arguments.
     registry: runinator_wdl_sema::registry::FunctionRegistry,
     // provider actions available at compile time, used to generate action output type hints.
     provider_actions: std::collections::HashMap<(String, String), ActionMetadata>,
+    // the same provider metadata, kept whole so the assembler's catalog can classify a called name
+    // as a provider action rather than re-deriving it from the flattened action map.
+    provider_metadata: Vec<runinator_models::providers::ProviderMetadata>,
 }
 
 struct LowerEntry {
@@ -94,13 +103,19 @@ fn lower_workflow(
     lowerer.source_dir = options.source_dir.clone();
     // the callable registry resolves keyword args in both the workflow body and function bodies.
     lowerer.registry = runinator_wdl_sema::registry::FunctionRegistry::build(&document.functions);
-    lowerer.provider_actions = provider_actions(&options.all_providers());
+    lowerer.provider_metadata = options.all_providers();
+    lowerer.provider_actions = provider_actions(&lowerer.provider_metadata);
     lowerer.functions = options.functions.clone();
+    lowerer.emit_invocations = options.emit_invocations;
     // collect the header aliases so spreads can be expanded (graph) and recorded (sidecar) while
     // lowering, where node ids are available to key the recipes.
     lowerer.aliases = runinator_wdl_sema::desugar::collect_aliases(&workflow.aliases)?;
     // resolve named `type <Name>` declarations so they can be referenced by parameter/let types.
     lowerer.resolve_type_decls(&workflow.type_decls)?;
+    // user `fn` definitions are lowered *before* the body, not after, because an `invocation` node
+    // assembles them into its module as it is emitted. the lowered form is identical either way —
+    // function bodies do not depend on the body's node ids — so this only moves when it happens.
+    lowerer.lowered_functions = lowerer.lower_functions(&document.functions)?;
     let end_id = lowerer.end_id.clone();
     // handler regions lower into the same node list as the main flow, just unreachable from `start`.
     // they go *first* because decompile emits them first, in the header: generated node ids come
@@ -244,8 +259,7 @@ fn lower_workflow(
         Some(expr) => Some(lowerer.lower_expr(expr)?),
         None => None,
     };
-    // user `fn` definitions, lowered to runtime-evaluable expression bodies the engine calls.
-    let functions = lowerer.lower_functions(&document.functions)?;
+    let functions = lowerer.lowered_functions.clone();
     let mut metadata = Map::new();
     if !wdl.is_empty() {
         metadata.insert("wdl".into(), Value::Object(wdl));
@@ -348,9 +362,12 @@ impl Lowerer {
             control_vars: Map::new(),
             compute_locals: std::cell::RefCell::new(HashSet::new()),
             named_types: std::collections::BTreeMap::new(),
+            lowered_functions: Vec::new(),
+            emit_invocations: false,
             source_dir: None,
             registry: runinator_wdl_sema::registry::FunctionRegistry::build(&[]),
             provider_actions: std::collections::HashMap::new(),
+            provider_metadata: Vec::new(),
             functions: Vec::new(),
         }
     }

@@ -10,6 +10,10 @@ use runinator_wdl_sema::purity::block_is_effectful;
 use runinator_wdl_syntax::ast::*;
 use runinator_wdl_syntax::errors::WdlError;
 
+use runinator_compute::{CallableCatalog, assemble_module, parse_program};
+use runinator_models::invocation::EffectClass;
+use runinator_models::invocation::InvocationModule;
+
 use super::Lowerer;
 
 impl Lowerer {
@@ -38,6 +42,11 @@ impl Lowerer {
         collect_locals(&compute.body, &mut self.compute_locals.borrow_mut());
 
         let program = self.lower_program(&compute.body)?;
+        if self.emit_invocations {
+            let result = self.push_invocation_node(&program, compute, stmt, id, next);
+            self.compute_locals.replace(previous_locals);
+            return result;
+        }
         let function = if block_is_effectful(&compute.body, &self.registry) {
             "exec"
         } else {
@@ -68,6 +77,85 @@ impl Lowerer {
 
         self.compute_locals.replace(previous_locals);
         Ok(())
+    }
+
+    /// emit an `invocation` node: the assembled module the vm runs, plus the statement tree the
+    /// decompiler renders back.
+    ///
+    /// both, not one. the module is bytecode, and recovering `let`/`if`/`return` from a flat
+    /// instruction stream is control-flow reconstruction — a decompiler in the hard sense, which
+    /// would have to be exactly right or the editor pane would silently rewrite the author's code.
+    /// keeping the source beside the bytecode is the same arrangement `metadata.wdl.functions`
+    /// already uses for function signatures, and it costs a copy of a small json tree.
+    fn push_invocation_node(
+        &mut self,
+        program: &[Value],
+        compute: &DoStmt,
+        stmt: &Stmt,
+        id: &str,
+        next: &str,
+    ) -> Result<(), WdlError> {
+        let module = self.assemble_module(program)?;
+        let mut parameters = Map::new();
+        parameters.insert(
+            "module".into(),
+            serde_json::to_value(&module)
+                .map_err(|err| WdlError::lower(format!("failed to encode the module: {err}")))?
+                .into(),
+        );
+        parameters.insert("source".into(), Value::Array(program.to_vec()));
+        if let Some(timeout) = compute.modifiers.timeout_seconds {
+            parameters.insert("timeout_seconds".into(), Value::from(timeout));
+        }
+
+        let mut fields = vec![
+            ("parameters", Value::Object(parameters)),
+            (
+                "transitions",
+                self.leaf_transitions(&stmt.transitions, "on_success", next)?,
+            ),
+        ];
+        self.apply_modifier_fields(&mut fields, &compute.modifiers);
+        self.apply_annotations(&mut fields, stmt);
+        self.push(super::node(id, "invocation", fields));
+        Ok(())
+    }
+
+    /// assemble a lowered statement tree, plus every user function it may call, into a module.
+    ///
+    /// the functions go in whole rather than by reachability analysis: a call can be reached through
+    /// a closure or a `$if` branch the assembler never walks, and a module carrying an unused
+    /// function costs bytes, while one missing a reachable function fails at run time.
+    fn assemble_module(&self, program: &[Value]) -> Result<InvocationModule, WdlError> {
+        let entry = parse_program(&Value::Array(program.to_vec()))
+            .map_err(|err| WdlError::lower(format!("failed to read the program: {err}")))?;
+        let mut functions = Vec::new();
+        for entry in &self.lowered_functions {
+            functions.push(assembled_function(entry)?);
+        }
+        assemble_module(&entry, &functions, &self.callable_catalog())
+            .map_err(|err| WdlError::lower(format!("failed to assemble the program: {err}")))
+    }
+
+    /// the catalog the assembler classifies called names against.
+    ///
+    /// built from the same three sources the type checker sees — the intrinsic library, the
+    /// document's own `fn`s, and the compile options' providers and packaged exports — so a name
+    /// that type-checked as a provider action cannot assemble as a module function, or the reverse.
+    fn callable_catalog(&self) -> CallableCatalog {
+        let mut catalog = CallableCatalog::builtin();
+        for entry in &self.lowered_functions {
+            if let Some(name) = entry.get("name").and_then(Value::as_str) {
+                // arity and effect are the type checker's business, and it has already run: the
+                // assembler only needs to know that this name is a module function rather than a
+                // provider dispatch.
+                catalog.add_local(name, 0, EffectClass::Pure);
+            }
+        }
+        for provider in &self.provider_metadata {
+            catalog.add_provider(provider);
+        }
+        catalog
     }
 
     fn lower_foreign_do(
@@ -154,6 +242,58 @@ impl Lowerer {
             DoLine::Expr(expr) => self.lower_expr(expr),
         }
     }
+}
+
+/// read one lowered `metadata.functions` entry into the form the assembler takes.
+///
+/// a function body is lowered as either a single expression (`body`) or a statement list
+/// (`program`). the assembler only takes a program, so an expression body becomes a one-statement
+/// `return`, which is what it means.
+fn assembled_function(
+    entry: &Value,
+) -> Result<
+    (
+        String,
+        Vec<String>,
+        runinator_models::workflow_ast::ComputeProgram,
+        Option<u32>,
+    ),
+    WdlError,
+> {
+    let name = entry
+        .get("name")
+        .and_then(Value::as_str)
+        .ok_or_else(|| WdlError::lower("a lowered function has no name"))?
+        .to_string();
+    let params = entry
+        .get("params")
+        .and_then(Value::as_array)
+        .map(|params| {
+            params
+                .iter()
+                .filter_map(|param| param.get("name").and_then(Value::as_str))
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let program = match (entry.get("program"), entry.get("body")) {
+        (Some(program), _) => program.clone(),
+        (None, Some(body)) => Value::Array(vec![Value::Object(Map::from_iter([(
+            "$return".into(),
+            body.clone(),
+        )]))]),
+        (None, None) => {
+            return Err(WdlError::lower(format!("function '{name}' has no body")));
+        }
+    };
+    let body = parse_program(&program)
+        .map_err(|err| WdlError::lower(format!("failed to read the body of '{name}': {err}")))?;
+    let max_depth = entry
+        .get("recursive")
+        .and_then(|recursive| recursive.get("max_depth"))
+        .and_then(Value::as_i64)
+        .map(|depth| depth as u32);
+    Ok((name, params, body, max_depth))
 }
 
 /// collect every `let` name and lambda parameter declared anywhere in the block (including nested

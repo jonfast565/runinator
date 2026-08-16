@@ -12,19 +12,25 @@ use runinator_models::workflows::{WorkflowDefinition, WorkflowNodeKind};
 use crate::{CompileOptions, WdlError, WorkflowSignature, compile_str, decompile};
 
 /// compile options carrying the signatures the subflow fixture calls into.
-fn options() -> CompileOptions {
+///
+/// takes the kind because one of them needs a non-default option: `invocation` is what a `do { }`
+/// block compiles to when `emit_invocations` is on. the surface syntax is the same either way, so
+/// the kind belongs in `fixtures()` rather than in `NO_WDL_SURFACE` — it is not a kind an author
+/// cannot write, it is a kind a deployment has to opt into.
+fn options(kind: &WorkflowNodeKind) -> CompileOptions {
     CompileOptions {
         workflow_signatures: vec![WorkflowSignature {
             name: "Child".to_string(),
             input: RuninatorType::Any,
             output: RuninatorType::Any,
         }],
+        emit_invocations: *kind == WorkflowNodeKind::Invocation,
         ..CompileOptions::default()
     }
 }
 
-fn compile(src: &str) -> Result<WorkflowDefinition, WdlError> {
-    compile_str(src, &options())
+fn compile(kind: &WorkflowNodeKind, src: &str) -> Result<WorkflowDefinition, WdlError> {
+    compile_str(src, &options(kind))
 }
 
 /// kinds with no author-facing wdl syntax, each with the reason it has none.
@@ -55,6 +61,12 @@ fn fixtures() -> Vec<(WorkflowNodeKind, &'static str)> {
         (
             WorkflowNodeKind::Wait,
             r#"workflow "Conf Wait" v1 { wait 30s }"#,
+        ),
+        // the same `do { }` an author already writes; `emit_invocations` is what decides whether it
+        // compiles to bytecode or to a statement tree. see `options`.
+        (
+            WorkflowNodeKind::Invocation,
+            r#"workflow "Conf Invocation" v1 { do { return { total: prev.a } } }"#,
         ),
         // `resume` only ever appears inside an interrupt handler region, so its fixture has to
         // carry the region that gives it meaning.
@@ -340,7 +352,7 @@ fn every_node_kind_is_accounted_for() {
 #[test]
 fn every_fixture_produces_its_node_kind() {
     for (kind, src) in fixtures() {
-        let definition = compile(src)
+        let definition = compile(&kind, src)
             .unwrap_or_else(|err| panic!("{kind:?} fixture failed to compile: {err}\n{src}"));
         let produced = kinds_in(&definition);
         assert!(
@@ -357,11 +369,11 @@ fn every_fixture_produces_its_node_kind() {
 #[test]
 fn every_node_kind_round_trips_through_wdl() {
     for (kind, src) in fixtures() {
-        let first = compile(src)
+        let first = compile(&kind, src)
             .unwrap_or_else(|err| panic!("{kind:?} fixture failed to compile: {err}\n{src}"));
         let wdl = decompile(&first)
             .unwrap_or_else(|err| panic!("{kind:?} failed to decompile: {err}\n{src}"));
-        let second = compile(&wdl).unwrap_or_else(|err| {
+        let second = compile(&kind, &wdl).unwrap_or_else(|err| {
             panic!("{kind:?} failed to recompile\n{err}\n--- decompiled ---\n{wdl}")
         });
 
@@ -383,7 +395,7 @@ fn every_node_kind_round_trips_through_wdl() {
 #[test]
 fn every_node_kind_decompiles_to_formatted_wdl() {
     for (kind, src) in fixtures() {
-        let definition = compile(src)
+        let definition = compile(&kind, src)
             .unwrap_or_else(|err| panic!("{kind:?} fixture failed to compile: {err}\n{src}"));
         let decompiled = decompile(&definition)
             .unwrap_or_else(|err| panic!("{kind:?} failed to decompile: {err}"));

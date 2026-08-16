@@ -29,6 +29,14 @@ pub struct CompileOptions {
     /// against is *derived* from this ([`Self::function_providers`]), so a caller cannot supply a
     /// catalog the compiler types against but cannot bind, or the reverse.
     pub functions: Vec<FunctionCatalogEntry>,
+    /// emit `invocation` nodes running compiled bytecode instead of `std.run`/`std.exec` nodes
+    /// carrying a statement tree.
+    ///
+    /// off by default, and deliberately so: it changes what a compiled definition *is*, and a
+    /// runtime holding in-flight runs against the old shape has to be drained and migrated before
+    /// it can execute the new one. flipping this is a deployment decision, not a compile-time
+    /// preference, which is why it is a flag a caller sets rather than a version the compiler picks.
+    pub emit_invocations: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,6 +62,7 @@ impl Default for CompileOptions {
             type_policy: TypePolicy::Strict,
             workflow_signatures: Vec::new(),
             functions: Vec::new(),
+            emit_invocations: false,
         }
     }
 }
