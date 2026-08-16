@@ -41,11 +41,11 @@ pub struct FunctionDef {
 
 /// a function body: a single expression (`= expr`) or a compute-style block of statements
 /// (`= { let …; … ; return e }`). block bodies reuse the compute-line grammar and lower to the same
-/// `$let`/`$return`/`$if` program form a `compute` block produces.
+/// `$let`/`$return`/`$if` program form a `do` block produces.
 #[derive(Debug, Clone, PartialEq)]
 pub enum FnBody {
     Expr(Box<Expr>),
-    Block(Vec<ComputeLine>),
+    Block(Vec<DoLine>),
 }
 
 /// a function parameter: a typed name, optionally marked `?` or given a `= default` (both make it

@@ -146,10 +146,10 @@ describe("wdl language completions", () => {
   });
 
   it("completes std modules and module functions without provider metadata", async () => {
-    const modules = await completeLabels('workflow "x" { node compute { return std.<> }');
+    const modules = await completeLabels('workflow "x" { node do { return std.<> }');
     expect(modules).toEqual(expect.arrayContaining(["strings", "collections", "exec"]));
 
-    const functions = await completeLabels('workflow "x" { node compute { return std.strings.<> }');
+    const functions = await completeLabels('workflow "x" { node do { return std.strings.<> }');
     expect(functions).toEqual(expect.arrayContaining(["upper", "split"]));
     expect(functions).toContain("upper");
     expect(functions).not.toContain("http_get");
@@ -170,11 +170,11 @@ describe("wdl language completions", () => {
   });
 
   it("offers dot completions during normal typing", async () => {
-    const modules = await completeLabels('workflow "x" { node compute { return std.', false);
+    const modules = await completeLabels('workflow "x" { node do { return std.', false);
     expect(modules).toEqual(expect.arrayContaining(["strings", "collections", "exec"]));
 
     const functions = await completeLabels(
-      'workflow "x" { node compute { return std.strings.',
+      'workflow "x" { node do { return std.strings.',
       false,
     );
     expect(functions).toEqual(expect.arrayContaining(["upper", "split"]));
@@ -182,7 +182,7 @@ describe("wdl language completions", () => {
   });
 
   it("uses the rust-backed completion source when one is supplied", async () => {
-    const source = 'workflow "x" { node compute { return std.';
+    const source = 'workflow "x" { node do { return std.';
     const providerSource: CompletionSource = () => ({
       from: source.length,
       options: [{ label: "provider-sentinel" }],

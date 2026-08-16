@@ -334,7 +334,7 @@ fn evaluate_lowered_fragment(
                 .map(Value::Bool)
                 .map_err(|err| err.to_string())
         }
-        WdlFragmentKind::Compute => {
+        WdlFragmentKind::Do => {
             let program =
                 runinator_workflows::parse_program(value).map_err(|err| err.to_string())?;
             let outcome = runinator_workflows::run_program(

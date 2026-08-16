@@ -521,7 +521,7 @@ impl Formatter {
     fn stmt_kind(&mut self, kind: &StmtKind) -> String {
         match kind {
             StmtKind::Action(action) => self.action(action),
-            StmtKind::Compute(compute) => self.compute(compute),
+            StmtKind::Do(compute) => self.compute(compute),
             StmtKind::Subflow(subflow) => self.subflow(subflow),
             StmtKind::Wait(wait) => self.wait(wait),
             StmtKind::Output(output) => self.output(output),
@@ -565,11 +565,11 @@ impl Formatter {
         }
     }
 
-    fn compute(&mut self, compute: &ComputeStmt) -> String {
+    fn compute(&mut self, compute: &DoStmt) -> String {
         let mut out = match &compute.foreign {
-            Some(foreign) => self.foreign_compute(foreign),
+            Some(foreign) => self.foreign_do(foreign),
             None => {
-                let mut out = String::from("compute {\n");
+                let mut out = String::from("do {\n");
                 self.indent += 1;
                 self.compute_lines(&mut out, &compute.body);
                 self.indent -= 1;
@@ -590,8 +590,8 @@ impl Formatter {
         out
     }
 
-    fn foreign_compute(&self, foreign: &ForeignCompute) -> String {
-        let mut out = format!("compute {}", quote(&foreign.language));
+    fn foreign_do(&self, foreign: &ForeignDo) -> String {
+        let mut out = format!("do {}", quote(&foreign.language));
         out.push_str(" ```\n");
         out.push_str(&foreign.source);
         if !foreign.source.ends_with('\n') {
@@ -601,10 +601,10 @@ impl Formatter {
         out
     }
 
-    fn compute_lines(&mut self, out: &mut String, body: &[ComputeLine]) {
+    fn compute_lines(&mut self, out: &mut String, body: &[DoLine]) {
         for line in body {
             match line {
-                ComputeLine::Let { name, ty, value } => {
+                DoLine::Let { name, ty, value } => {
                     let ty = ty
                         .as_ref()
                         .map(|ty| format!(": {}", format_type(ty)))
@@ -612,19 +612,19 @@ impl Formatter {
                     self.push_indent(out);
                     out.push_str(&format!("let {name}{ty} = {}\n", format_expr(value)));
                 }
-                ComputeLine::Return(value) => {
+                DoLine::Return(value) => {
                     self.push_indent(out);
                     out.push_str(&format!("return {}\n", format_expr(value)));
                 }
-                ComputeLine::Goto(target) => {
+                DoLine::Goto(target) => {
                     self.push_indent(out);
                     out.push_str(&format!("goto {}\n", format_target(target)));
                 }
-                ComputeLine::Expr(value) => {
+                DoLine::Expr(value) => {
                     self.push_indent(out);
                     out.push_str(&format!("{}\n", format_expr(value)));
                 }
-                ComputeLine::If {
+                DoLine::If {
                     cond,
                     then_branch,
                     else_branch,

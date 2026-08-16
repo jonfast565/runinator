@@ -8,7 +8,7 @@ use std::collections::{BTreeSet, HashMap};
 
 use crate::registry::{FunctionRegistry, duplicate_errors};
 use runinator_wdl_syntax::ast::{
-    ComputeLine, Cond, CondKind, Expr, ExprKind, FnBody, FunctionDef, StrPart,
+    Cond, CondKind, DoLine, Expr, ExprKind, FnBody, FunctionDef, StrPart,
 };
 use runinator_wdl_syntax::errors::WdlError;
 
@@ -88,16 +88,16 @@ fn collect_user_calls_body(body: &FnBody, registry: &FunctionRegistry, out: &mut
 /// collect user-function calls across a block's compute lines, including nested `if` conditions and
 /// branches.
 fn collect_user_calls_lines(
-    lines: &[ComputeLine],
+    lines: &[DoLine],
     registry: &FunctionRegistry,
     out: &mut BTreeSet<String>,
 ) {
     for line in lines {
         match line {
-            ComputeLine::Let { value, .. }
-            | ComputeLine::Return(value)
-            | ComputeLine::Expr(value) => collect_user_calls(value, registry, out),
-            ComputeLine::If {
+            DoLine::Let { value, .. } | DoLine::Return(value) | DoLine::Expr(value) => {
+                collect_user_calls(value, registry, out)
+            }
+            DoLine::If {
                 cond,
                 then_branch,
                 else_branch,
@@ -106,7 +106,7 @@ fn collect_user_calls_lines(
                 collect_user_calls_lines(then_branch, registry, out);
                 collect_user_calls_lines(else_branch, registry, out);
             }
-            ComputeLine::Goto(_) => {}
+            DoLine::Goto(_) => {}
         }
     }
 }

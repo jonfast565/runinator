@@ -1,4 +1,4 @@
-// lowers a `compute { }` block into a `std.run`/`std.exec` action node. the block becomes a
+// lowers a `do { }` block into a `std.run`/`std.exec` action node. the block becomes a
 // program array under `action.configuration.program`; the function is `run` when every called
 // library function is pure and `exec` when any call is effectful.
 
@@ -13,7 +13,7 @@ use runinator_wdl_syntax::errors::WdlError;
 use super::Lowerer;
 
 impl Lowerer {
-    pub(super) fn lower_compute_fragment(&self, body: &[ComputeLine]) -> Result<Value, WdlError> {
+    pub(super) fn lower_do_fragment(&self, body: &[DoLine]) -> Result<Value, WdlError> {
         // collect every local name so fragment lowering matches normal compute-node lowering.
         let previous_locals = self.compute_locals.replace(HashSet::new());
         collect_locals(body, &mut self.compute_locals.borrow_mut());
@@ -22,16 +22,16 @@ impl Lowerer {
         program
     }
 
-    pub(super) fn lower_compute(
+    pub(super) fn lower_do(
         &mut self,
-        compute: &ComputeStmt,
+        compute: &DoStmt,
         stmt: &Stmt,
         id: &str,
         next: &str,
     ) -> Result<(), WdlError> {
         self.record_declared_type(id, stmt)?;
         if let Some(foreign) = &compute.foreign {
-            return self.lower_foreign_compute(foreign, compute, stmt, id, next);
+            return self.lower_foreign_do(foreign, compute, stmt, id, next);
         }
         // collect every local name so bare local paths lower to `let` refs.
         let previous_locals = self.compute_locals.replace(HashSet::new());
@@ -70,10 +70,10 @@ impl Lowerer {
         Ok(())
     }
 
-    fn lower_foreign_compute(
+    fn lower_foreign_do(
         &mut self,
-        foreign: &ForeignCompute,
-        compute: &ComputeStmt,
+        foreign: &ForeignDo,
+        compute: &DoStmt,
         stmt: &Stmt,
         id: &str,
         next: &str,
@@ -104,39 +104,37 @@ impl Lowerer {
         Ok(())
     }
 
-    /// lower a function block body into the same `$let`/`$return`/`$if` program array a `compute`
+    /// lower a function block body into the same `$let`/`$return`/`$if` program array a `do`
     /// block produces. the caller has already registered the function parameters as compute locals;
     /// this adds the block's own `let`/lambda locals so bare references lower to `let` refs.
-    pub(super) fn lower_fn_block(&self, body: &[ComputeLine]) -> Result<Vec<Value>, WdlError> {
+    pub(super) fn lower_fn_block(&self, body: &[DoLine]) -> Result<Vec<Value>, WdlError> {
         collect_locals(body, &mut self.compute_locals.borrow_mut());
         self.lower_program(body)
     }
 
-    fn lower_program(&self, body: &[ComputeLine]) -> Result<Vec<Value>, WdlError> {
-        body.iter()
-            .map(|line| self.lower_compute_line(line))
-            .collect()
+    fn lower_program(&self, body: &[DoLine]) -> Result<Vec<Value>, WdlError> {
+        body.iter().map(|line| self.lower_do_line(line)).collect()
     }
 
-    fn lower_compute_line(&self, line: &ComputeLine) -> Result<Value, WdlError> {
+    fn lower_do_line(&self, line: &DoLine) -> Result<Value, WdlError> {
         match line {
-            ComputeLine::Let { name, value, .. } => {
+            DoLine::Let { name, value, .. } => {
                 let mut map = Map::new();
                 map.insert("$let".into(), Value::String(name.clone()));
                 map.insert("value".into(), self.lower_expr(value)?);
                 Ok(Value::Object(map))
             }
-            ComputeLine::Return(expr) => {
+            DoLine::Return(expr) => {
                 let mut map = Map::new();
                 map.insert("$return".into(), self.lower_expr(expr)?);
                 Ok(Value::Object(map))
             }
-            ComputeLine::Goto(target) => {
+            DoLine::Goto(target) => {
                 let mut map = Map::new();
                 map.insert("$goto".into(), Value::String(self.target_id(target)));
                 Ok(Value::Object(map))
             }
-            ComputeLine::If {
+            DoLine::If {
                 cond,
                 then_branch,
                 else_branch,
@@ -153,22 +151,22 @@ impl Lowerer {
                 );
                 Ok(Value::Object(map))
             }
-            ComputeLine::Expr(expr) => self.lower_expr(expr),
+            DoLine::Expr(expr) => self.lower_expr(expr),
         }
     }
 }
 
 /// collect every `let` name and lambda parameter declared anywhere in the block (including nested
 /// `if` branches), so bare references to them lower to `let` refs.
-fn collect_locals(body: &[ComputeLine], out: &mut HashSet<String>) {
+fn collect_locals(body: &[DoLine], out: &mut HashSet<String>) {
     for line in body {
         match line {
-            ComputeLine::Let { name, value, .. } => {
+            DoLine::Let { name, value, .. } => {
                 out.insert(name.clone());
                 collect_locals_expr(value, out);
             }
-            ComputeLine::Return(expr) | ComputeLine::Expr(expr) => collect_locals_expr(expr, out),
-            ComputeLine::If {
+            DoLine::Return(expr) | DoLine::Expr(expr) => collect_locals_expr(expr, out),
+            DoLine::If {
                 cond,
                 then_branch,
                 else_branch,
@@ -177,7 +175,7 @@ fn collect_locals(body: &[ComputeLine], out: &mut HashSet<String>) {
                 collect_locals(then_branch, out);
                 collect_locals(else_branch, out);
             }
-            ComputeLine::Goto(_) => {}
+            DoLine::Goto(_) => {}
         }
     }
 }

@@ -38,7 +38,7 @@ workflow "SDLC: Deploy" v1 {
             .timeout(60s)
             .retry(4, backoff: 5s, max: 60s, jitter: true, on: any)
 
-        node impact: { api: boolean, dashboards: boolean, lambdas: string[] } <- compute {
+        node impact: { api: boolean, dashboards: boolean, lambdas: string[] } <- do {
             let files = split(merged_diff.stdout, "\n")
             return {
                 api: any(files, f => f.starts_with(config.deploy.api_prefix)),
@@ -90,7 +90,7 @@ workflow "SDLC: Deploy" v1 {
         )
             .timeout(30s)
             .retry(4, backoff: 5s, max: 60s, jitter: true, on: any)
-        node deploy_state: { failed: integer } <- compute {
+        node deploy_state: { failed: integer } <- do {
             let runs = deploy_runs.workflow_runs
             return { failed: len(filter(runs, r => r.conclusion == "failure")) }
         }

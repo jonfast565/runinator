@@ -63,8 +63,8 @@ pub fn resolve_cond_fragment(cond: &mut Cond) -> Result<(), WdlError> {
 }
 
 /// resolve a standalone compute fragment.
-pub fn resolve_compute_fragment(body: &mut [ComputeLine]) -> Result<(), WdlError> {
-    resolve_compute_block(body, &Scope::empty())
+pub fn resolve_compute_fragment(body: &mut [DoLine]) -> Result<(), WdlError> {
+    resolve_do_block(body, &Scope::empty())
 }
 
 /// resolve every namespaced call in the document to its bare runtime form, in place.
@@ -78,7 +78,7 @@ pub fn resolve(document: &mut Document) -> Result<(), WdlError> {
         }
         match &mut function.body {
             FnBody::Expr(expr) => resolve_expr(expr, &function_scope)?,
-            FnBody::Block(lines) => resolve_compute_block(lines, &function_scope)?,
+            FnBody::Block(lines) => resolve_do_block(lines, &function_scope)?,
         }
     }
     let user_fns = document
@@ -244,7 +244,7 @@ fn resolve_block(block: &mut Block, scope: &Scope) -> Result<(), WdlError> {
 fn resolve_stmt(stmt: &mut Stmt, scope: &Scope) -> Result<(), WdlError> {
     match &mut stmt.kind {
         StmtKind::Action(action) => resolve_entries(&mut action.args, scope)?,
-        StmtKind::Compute(compute) => resolve_compute_block(&mut compute.body, scope)?,
+        StmtKind::Do(compute) => resolve_do_block(&mut compute.body, scope)?,
         StmtKind::Subflow(subflow) => {
             if let Some(run_name) = subflow.run_name.as_mut() {
                 resolve_expr(run_name, scope)?;
@@ -401,22 +401,22 @@ fn resolve_stmt(stmt: &mut Stmt, scope: &Scope) -> Result<(), WdlError> {
     Ok(())
 }
 
-fn resolve_compute_block(body: &mut [ComputeLine], scope: &Scope) -> Result<(), WdlError> {
+fn resolve_do_block(body: &mut [DoLine], scope: &Scope) -> Result<(), WdlError> {
     for line in body.iter_mut() {
         match line {
-            ComputeLine::Let { value, .. }
-            | ComputeLine::Return(value)
-            | ComputeLine::Expr(value) => resolve_expr(value, scope)?,
-            ComputeLine::If {
+            DoLine::Let { value, .. } | DoLine::Return(value) | DoLine::Expr(value) => {
+                resolve_expr(value, scope)?
+            }
+            DoLine::If {
                 cond,
                 then_branch,
                 else_branch,
             } => {
                 resolve_cond(cond, scope)?;
-                resolve_compute_block(then_branch, scope)?;
-                resolve_compute_block(else_branch, scope)?;
+                resolve_do_block(then_branch, scope)?;
+                resolve_do_block(else_branch, scope)?;
             }
-            ComputeLine::Goto(_) => {}
+            DoLine::Goto(_) => {}
         }
     }
     Ok(())

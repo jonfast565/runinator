@@ -9,7 +9,7 @@ fn function_defaults_and_lambdas_lower_into_metadata() {
         fn fold_values(xs: integer[], seed: integer = 0) -> integer = std.collections.reduce(xs, seed, (acc, x) => std.math.add(acc, x))
 
         workflow "Fn" v1 {
-            compute {
+            do {
                 let total = fold_values(params.xs)
                 return total
             }
@@ -76,7 +76,7 @@ fn pure_block_body_function_lowers_to_program_and_round_trips() {
         }
 
         workflow "Fn" v1 {
-            compute {
+            do {
                 let total = build(params.x, params.y)
                 return total
             }
@@ -115,7 +115,7 @@ fn effectful_block_body_function_forces_caller_to_exec_and_round_trips() {
         }
 
         workflow "Fetch" v1 {
-            compute {
+            do {
                 let data = fetch(params.url)
                 return data
             }

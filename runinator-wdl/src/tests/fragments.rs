@@ -33,7 +33,7 @@ fn validates_and_evaluates_compute_fragment() {
     let context = Value::from(serde_json::json!({ "input": { "count": 3 } }));
     let value = evaluate_fragment(
         r#"{ let doubled = params.count * 2 return doubled + 1 }"#,
-        WdlFragmentKind::Compute,
+        WdlFragmentKind::Do,
         &context,
         &CompileOptions::default(),
     )

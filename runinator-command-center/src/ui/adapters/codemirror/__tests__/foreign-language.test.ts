@@ -3,7 +3,7 @@ import { EditorState } from "@codemirror/state";
 import { describe, expect, it } from "vitest";
 import { canonicalForeignLanguage, loadForeignLanguageExtension } from "../foreign-language";
 
-describe("foreign compute language highlighting", () => {
+describe("foreign do language highlighting", () => {
   it.each([
     ["py", "python"],
     ["node", "javascript"],

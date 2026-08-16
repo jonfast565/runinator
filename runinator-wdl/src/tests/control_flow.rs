@@ -124,7 +124,7 @@ fn for_loop_limit_accepts_expression() {
 fn typed_compute_output_hint_validates_loop_items() {
     let src = r#"
         workflow "TypedComputeLoop" v1 {
-            node impact: { lambdas: string[] } <- compute {
+            node impact: { lambdas: string[] } <- do {
                 return { lambdas: ["one", "two"] }
             }
             for lambda_path in impact.lambdas limit none {
@@ -253,7 +253,7 @@ fn round_trips_truthy_conditions() {
 fn round_trips_truthy_compute_conditions() {
     let bool_src = r#"
         workflow "TruthyComputeConditions" v1 {
-            compute {
+            do {
                 if true {
                     return 1
                 } else {
@@ -266,7 +266,7 @@ fn round_trips_truthy_compute_conditions() {
 
     let expr_src = r#"
         workflow "TruthyComputeExprConditions" v1 {
-            compute {
+            do {
                 if 1 + 1 {
                     return 1
                 } else {

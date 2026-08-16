@@ -315,10 +315,10 @@ fn construct_completion_items() -> Vec<WdlCompletionItem> {
             true,
         ),
         (
-            "compute",
+            "do",
             "keyword",
-            "compute block",
-            "node ${name} <- compute {\n    return ${value}\n}",
+            "do block",
+            "node ${name} <- do {\n    return ${value}\n}",
             true,
         ),
         (

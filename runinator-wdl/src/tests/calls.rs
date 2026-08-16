@@ -163,7 +163,7 @@ fn method_call_effectful_receiver_in_compute() {
     // a fluent effectful pipeline lives in a compute block (dispatches to a worker).
     let src = r#"
         workflow "Fetch" v1 {
-            compute {
+            do {
                 let host = std.exec.http_get(params.url).body.host
                 return { host: host }
             }
@@ -256,7 +256,7 @@ fn effectful_postfix_access_in_compute_lowers_to_exec() {
     // `http_get(url).body` is effectful (the call is), so the compute block dispatches to a worker.
     let src = r#"
         workflow "Fetch" v1 {
-            compute {
+            do {
                 let body = std.exec.http_get(params.url).body
                 return { body: body }
             }

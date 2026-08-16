@@ -130,7 +130,7 @@ fn completes_language_constructs_at_bare_position() {
         .map(|item| item.label.as_str())
         .collect::<Vec<_>>();
     assert!(labels.contains(&"node"), "labels: {labels:?}");
-    assert!(labels.contains(&"compute"), "labels: {labels:?}");
+    assert!(labels.contains(&"do"), "labels: {labels:?}");
     assert!(labels.contains(&"if"), "labels: {labels:?}");
     assert!(labels.contains(&"for"), "labels: {labels:?}");
     assert!(labels.contains(&"trigger cron"), "labels: {labels:?}");
@@ -199,7 +199,7 @@ fn hovers_inferred_node_result_field_type() {
         r#"
         workflow "Hover" v1 {
             node search <- jira.search(base_url: "", token: "", jql: "project = RUNI")
-            node inspect <- compute {
+            node inspect <- do {
                 return search.<>issues
             }
         }
@@ -223,7 +223,7 @@ fn completes_std_modules_and_functions() {
     let modules = completion_labels(
         r#"
         workflow "Complete" v1 {
-            compute { return std.<> }
+            do { return std.<> }
         }
     "#,
         "<>",
@@ -240,7 +240,7 @@ fn completes_std_modules_and_functions() {
     let functions = completion_labels(
         r#"
         workflow "Complete" v1 {
-            compute { return std.strings.<> }
+            do { return std.strings.<> }
         }
     "#,
         "<>",
@@ -269,7 +269,7 @@ fn completes_std_modules_when_std_provider_metadata_exists() {
     let modules = completion_labels_with_providers(
         r#"
         workflow "Complete" v1 {
-            compute { return std.<> }
+            do { return std.<> }
         }
     "#,
         "<>",
@@ -305,7 +305,7 @@ fn completes_aliased_std_module_leaves() {
         r#"
         workflow "Complete" v1 {
             import std.strings as s
-            compute { return s.<> }
+            do { return s.<> }
         }
     "#,
         "<>",
@@ -323,7 +323,7 @@ fn completes_bare_intrinsics_from_unaliased_import() {
         r#"
         workflow "Complete" v1 {
             import std.strings
-            compute { return up<> }
+            do { return up<> }
         }
     "#,
         "<>",
@@ -341,7 +341,7 @@ fn does_not_complete_unimported_intrinsics_bare() {
     let labels = completion_labels(
         r#"
         workflow "Complete" v1 {
-            compute { return up<> }
+            do { return up<> }
         }
     "#,
         "<>",
@@ -358,7 +358,7 @@ fn completes_user_functions_bare() {
         r#"
         fn shout(text: string) -> string = text
         workflow "Complete" v1 {
-            compute { return sh<> }
+            do { return sh<> }
         }
     "#,
         "<>",

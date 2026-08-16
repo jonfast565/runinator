@@ -73,7 +73,7 @@
     },
     "control-keywords": {
       "name": "keyword.control.wdl",
-      "match": "\\b(if|else|for|while|until|match|when|parallel|branch|join|race|winner|try|catch|finally|map|wait|emit|yield|approve|fail|subflow|compute|return|goto)\\b"
+      "match": "\\b(if|else|for|while|until|match|when|parallel|branch|join|race|winner|try|catch|finally|map|wait|emit|yield|approve|fail|subflow|do|return|goto)\\b"
     },
     "modifier-keywords": {
       "name": "storage.modifier.wdl",

@@ -48,7 +48,7 @@ export const CONTROL_KW = new Set([
   "approve",
   "fail",
   "subflow",
-  "compute",
+  "do",
   "return",
   "goto",
   "edges",

@@ -8,7 +8,7 @@ import type { ActionParameterMetadata } from "../../../../core/domain/models";
 import { isWorkflowExpressionValue } from "../../../../ui/adapters/codemirror/workflow-expression-completion";
 
 describe("TypedParameterEditor", () => {
-  it("renders foreign compute source in a language-aware code editor", async () => {
+  it("renders foreign do source in a language-aware code editor", async () => {
     const app = createSSRApp({
       render: () =>
         h(TypedParameterEditor, {

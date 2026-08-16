@@ -10,8 +10,8 @@ use crate::errors::{ConsoleError, Result};
 pub enum CellKind {
     /// a single expression, evaluable in process against the session's bindings.
     Expression,
-    /// a `compute` program: several pure statements, still evaluable in process.
-    Compute,
+    /// a `do` program: several pure statements, still evaluable in process.
+    Do,
     /// anything effectful or structural — an action call, control flow, several statements. it
     /// becomes a scratch workflow and goes through the reducer.
     Workflow,
@@ -30,14 +30,14 @@ pub struct Classification {
 impl Classification {
     /// true when this cell can be answered without starting a run.
     pub fn is_pure(&self) -> bool {
-        matches!(self.kind, CellKind::Expression | CellKind::Compute)
+        matches!(self.kind, CellKind::Expression | CellKind::Do)
     }
 
     /// the fragment kind a pure cell evaluates as.
     pub fn fragment_kind(&self) -> Option<WdlFragmentKind> {
         match self.kind {
             CellKind::Expression => Some(WdlFragmentKind::Expression),
-            CellKind::Compute => Some(WdlFragmentKind::Compute),
+            CellKind::Do => Some(WdlFragmentKind::Do),
             CellKind::Workflow => None,
         }
     }
@@ -46,7 +46,7 @@ impl Classification {
 /// classify one cell's source.
 ///
 /// the order is the whole design. an expression is tried first because it is the cheapest and most
-/// common cell; a `compute` block second; and *anything else* becomes a workflow. the fallback is
+/// common cell; a `do` block second; and *anything else* becomes a workflow. the fallback is
 /// deliberately last and unconditional — a cell this cannot prove is pure must not be evaluated
 /// inside the web service, where a provider action would run in an http handler with no run to
 /// record it, no retry, no timeout, and no cancellation.
@@ -70,10 +70,9 @@ pub fn classify(source: &str, options: &CompileOptions) -> Result<Classification
             workflow_source: None,
         });
     }
-    if let Ok(lowered) = runinator_wdl::validate_fragment(source, WdlFragmentKind::Compute, options)
-    {
+    if let Ok(lowered) = runinator_wdl::validate_fragment(source, WdlFragmentKind::Do, options) {
         return Ok(Classification {
-            kind: CellKind::Compute,
+            kind: CellKind::Do,
             lowered: Some(lowered),
             workflow_source: None,
         });

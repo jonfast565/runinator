@@ -64,7 +64,7 @@ pub(super) fn resolve_function_bodies(
             // a block body resolves like a compute block, with the params already in scope. the
             // `Function` context rejects any `goto` (a function body is not a graph region).
             runinator_wdl_syntax::ast::FnBody::Block(lines) => {
-                resolver.resolve_compute_block(
+                resolver.resolve_do_block(
                     lines,
                     &mut scope,
                     def.span,
@@ -171,7 +171,7 @@ fn collect_block(block: &Block, labels: &mut HashSet<String>, diagnostics: &mut 
     }
 }
 
-/// where a compute-line block sits: a `compute` graph node (where `goto` jumps to another node, and
+/// where a compute-line block sits: a `do` graph node (where `goto` jumps to another node, and
 /// is forbidden in an effectful block that dispatches to a worker) or a function body (not a graph
 /// region, so `goto` is always rejected).
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -209,8 +209,8 @@ impl Resolver<'_> {
                     self.resolve_expr(value, scope, ctx, diagnostics);
                 }
             }
-            StmtKind::Compute(compute) => {
-                self.resolve_compute(compute, scope, span, diagnostics);
+            StmtKind::Do(compute) => {
+                self.resolve_do(compute, scope, span, diagnostics);
             }
             StmtKind::Subflow(subflow) => {
                 if let Some(run_name) = &subflow.run_name {
@@ -431,18 +431,18 @@ impl Resolver<'_> {
         }
     }
 
-    /// resolve a `compute { }` block: thread block-scoped locals through `let`, reject duplicate
+    /// resolve a `do { }` block: thread block-scoped locals through `let`, reject duplicate
     /// locals, and enforce the purity rule that an effectful (`exec`) block may not use `goto`.
-    fn resolve_compute(
+    fn resolve_do(
         &self,
-        compute: &runinator_wdl_syntax::ast::ComputeStmt,
+        compute: &runinator_wdl_syntax::ast::DoStmt,
         scope: &mut Vec<String>,
         span: Span,
         diagnostics: &mut Vec<Diagnostic>,
     ) {
         let effectful = crate::purity::block_is_effectful(&compute.body, &self.symbols.registry);
         let base = scope.len();
-        self.resolve_compute_block(
+        self.resolve_do_block(
             &compute.body,
             scope,
             span,
@@ -452,20 +452,20 @@ impl Resolver<'_> {
         scope.truncate(base);
     }
 
-    fn resolve_compute_block(
+    fn resolve_do_block(
         &self,
-        body: &[runinator_wdl_syntax::ast::ComputeLine],
+        body: &[runinator_wdl_syntax::ast::DoLine],
         scope: &mut Vec<String>,
         span: Span,
         diagnostics: &mut Vec<Diagnostic>,
         ctx: BlockCtx,
     ) {
-        use runinator_wdl_syntax::ast::ComputeLine;
+        use runinator_wdl_syntax::ast::DoLine;
         // locals introduced at this block level, for duplicate detection.
         let block_start = scope.len();
         for line in body {
             match line {
-                ComputeLine::Let { name, value, .. } => {
+                DoLine::Let { name, value, .. } => {
                     self.resolve_expr(value, scope, ExprCtx::Compute, diagnostics);
                     if scope[block_start..].iter().any(|n| n == name) {
                         diagnostics.push(Diagnostic::error(
@@ -475,10 +475,10 @@ impl Resolver<'_> {
                     }
                     scope.push(name.clone());
                 }
-                ComputeLine::Return(value) | ComputeLine::Expr(value) => {
+                DoLine::Return(value) | DoLine::Expr(value) => {
                     self.resolve_expr(value, scope, ExprCtx::Compute, diagnostics);
                 }
-                ComputeLine::Goto(target) => match ctx {
+                DoLine::Goto(target) => match ctx {
                     BlockCtx::Function => diagnostics.push(Diagnostic::error(
                         span,
                         "goto is not allowed in a function body (it is not a graph region)",
@@ -500,16 +500,16 @@ impl Resolver<'_> {
                         }
                     }
                 },
-                ComputeLine::If {
+                DoLine::If {
                     cond,
                     then_branch,
                     else_branch,
                 } => {
                     self.resolve_cond(cond, scope, ExprCtx::Compute, diagnostics);
                     let branch_start = scope.len();
-                    self.resolve_compute_block(then_branch, scope, span, diagnostics, ctx);
+                    self.resolve_do_block(then_branch, scope, span, diagnostics, ctx);
                     scope.truncate(branch_start);
-                    self.resolve_compute_block(else_branch, scope, span, diagnostics, ctx);
+                    self.resolve_do_block(else_branch, scope, span, diagnostics, ctx);
                     scope.truncate(branch_start);
                 }
             }
@@ -641,7 +641,7 @@ impl Resolver<'_> {
                 } else if ctx == ExprCtx::Declarative && self.symbols.registry.is_effectful(name) {
                     // a declarative position is folded eagerly in the reducer, which cannot run
                     // side effects; an effectful call (intrinsic or user function) must live in a
-                    // `compute` block (it dispatches to a worker).
+                    // `do` block (it dispatches to a worker).
                     let kind = if is_user { "function" } else { "intrinsic" };
                     diagnostics.push(Diagnostic::error(
                         expr.span,

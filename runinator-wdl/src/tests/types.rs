@@ -318,7 +318,7 @@ fn cast_lets_parse_json_adopt_a_shape() {
     let ok = r#"
         workflow "Cast" v1 {
             params { raw: string }
-            compute {
+            do {
                 let data = std.encoding.parse_json(params.raw) as { id: integer }
                 return { id: data.id }
             }
@@ -329,7 +329,7 @@ fn cast_lets_parse_json_adopt_a_shape() {
     let bad = r#"
         workflow "Cast" v1 {
             params { raw: string }
-            compute {
+            do {
                 let data = std.encoding.parse_json(params.raw) as { id: integer }
                 return { id: data.missing }
             }
@@ -344,7 +344,7 @@ fn cast_rejects_incompatible_concrete_value() {
     // is a genuine mistake and is rejected (an opaque `any` inner would pass, which is the point).
     let src = r#"
         workflow "Cast" v1 {
-            compute {
+            do {
                 let bad = 5 as string
                 return { out: bad }
             }
@@ -363,7 +363,7 @@ fn cast_round_trips() {
     let src = r#"
         workflow "Cast" v1 {
             params { raw: string }
-            compute {
+            do {
                 let data = std.encoding.parse_json(params.raw) as { id: integer }
                 return { id: data.id }
             }
@@ -377,7 +377,7 @@ fn function_type_annotation_checks_and_round_trips() {
     // against the annotation and a later application resolves.
     let ok = r#"
         workflow "Fn" v1 {
-            compute {
+            do {
                 let inc: function<(integer) -> integer> = x => x + 1
                 return { out: inc(2) }
             }
@@ -389,7 +389,7 @@ fn function_type_annotation_checks_and_round_trips() {
     // a lambda whose body conflicts with the declared return type is rejected.
     let bad = r#"
         workflow "Fn" v1 {
-            compute {
+            do {
                 let inc: function<(integer) -> integer> = x => "not a number"
                 return { out: inc(2) }
             }
@@ -404,7 +404,7 @@ fn applies_a_field_held_closure_and_round_trips() {
     // keeps it from re-parsing as a `obj.f(args)` method call, and it round-trips.
     let src = r#"
         workflow "Apply" v1 {
-            compute {
+            do {
                 let ops = { inc: x => x + 1 }
                 return { out: (ops.inc)(5) }
             }
@@ -418,7 +418,7 @@ fn applies_an_index_held_closure_and_round_trips() {
     // a closure stored in an array element is applied with `fns[0](args)`.
     let src = r#"
         workflow "Apply" v1 {
-            compute {
+            do {
                 let fns = [x => x + 1, x => x + 2]
                 return { out: fns[0](10) }
             }
@@ -432,7 +432,7 @@ fn applied_closure_checks_arity() {
     // applying a known-arity closure with the wrong argument count is an author-time error.
     let src = r#"
         workflow "Apply" v1 {
-            compute {
+            do {
                 let ops = { inc: x => x + 1 }
                 return { out: (ops.inc)(1, 2) }
             }

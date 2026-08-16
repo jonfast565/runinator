@@ -29,7 +29,7 @@ pub struct Annotations {
 #[derive(Debug, Clone, PartialEq)]
 pub enum StmtKind {
     Action(ActionStmt),
-    Compute(ComputeStmt),
+    Do(DoStmt),
     Subflow(SubflowStmt),
     Wait(WaitStmt),
     Output(OutputStmt),
@@ -148,24 +148,24 @@ pub struct ActionStmt {
     pub modifiers: Modifiers,
 }
 
-/// an imperative `compute { ... }` block. lowers to a `std.run`/`std.exec` action node.
+/// an imperative `do { ... }` block. lowers to a `std.run`/`std.exec` action node.
 #[derive(Debug, Clone, PartialEq)]
-pub struct ComputeStmt {
-    pub body: Vec<ComputeLine>,
-    pub foreign: Option<ForeignCompute>,
+pub struct DoStmt {
+    pub body: Vec<DoLine>,
+    pub foreign: Option<ForeignDo>,
     pub modifiers: Modifiers,
 }
 
 /// a verbatim foreign-language compute block. lowers to `std.code` and runs on a worker.
 #[derive(Debug, Clone, PartialEq)]
-pub struct ForeignCompute {
+pub struct ForeignDo {
     pub language: String,
     pub source: String,
 }
 
 /// a single line in a compute block.
 #[derive(Debug, Clone, PartialEq)]
-pub enum ComputeLine {
+pub enum DoLine {
     Let {
         name: String,
         ty: Option<TypeExpr>,
@@ -175,8 +175,8 @@ pub enum ComputeLine {
     Goto(Target),
     If {
         cond: Cond,
-        then_branch: Vec<ComputeLine>,
-        else_branch: Vec<ComputeLine>,
+        then_branch: Vec<DoLine>,
+        else_branch: Vec<DoLine>,
     },
     Expr(Expr),
 }

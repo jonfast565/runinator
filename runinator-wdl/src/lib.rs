@@ -31,7 +31,7 @@ pub use errors::{Span, WdlError};
 pub use pipeline::{parse_pipeline_str, pipeline_to_wdlp};
 pub use runinator_wdl_syntax::included_file_paths;
 pub use runinator_wdl_syntax::{
-    parse_compute_fragment, parse_condition_fragment, parse_document, parse_expression_fragment,
+    parse_condition_fragment, parse_do_fragment, parse_document, parse_expression_fragment,
 };
 pub use secrets::{parse_secrets_str, secrets_to_wdls};
 pub use sema::{Diagnostic, Severity};
@@ -45,7 +45,7 @@ use runinator_wdl_sema::{desugar, namespace};
 pub enum WdlFragmentKind {
     Expression,
     Condition,
-    Compute,
+    Do,
 }
 
 /// compile wdl source into a validated WorkflowDefinition. semantic errors block the
@@ -225,10 +225,10 @@ pub fn lower_fragment(
             namespace::resolve_cond_fragment(&mut cond)?;
             lower::lower_condition_fragment(&cond, options)
         }
-        WdlFragmentKind::Compute => {
-            let mut body = parse_compute_fragment(src)?;
+        WdlFragmentKind::Do => {
+            let mut body = parse_do_fragment(src)?;
             namespace::resolve_compute_fragment(&mut body)?;
-            lower::lower_compute_fragment(&body, options)
+            lower::lower_do_fragment(&body, options)
         }
     }
 }
@@ -260,7 +260,7 @@ pub fn evaluate_fragment(
         WdlFragmentKind::Condition => runinator_workflows::evaluate_condition(&lowered, context)
             .map(Value::Bool)
             .map_err(|err| WdlError::Validation(err.to_string())),
-        WdlFragmentKind::Compute => {
+        WdlFragmentKind::Do => {
             let program = runinator_workflows::parse_program(&lowered)
                 .map_err(|err| WdlError::Validation(err.to_string()))?;
             let outcome = runinator_workflows::run_program(
@@ -278,7 +278,7 @@ fn validate_lowered_fragment(value: &Value, kind: WdlFragmentKind) -> Result<(),
     match kind {
         WdlFragmentKind::Expression => runinator_workflows::validate_expression(value),
         WdlFragmentKind::Condition => runinator_workflows::validate_condition_value(value),
-        WdlFragmentKind::Compute => runinator_workflows::parse_program(value).map(|_| ()),
+        WdlFragmentKind::Do => runinator_workflows::parse_program(value).map(|_| ()),
     }
     .map_err(|err| WdlError::Validation(err.to_string()))
 }

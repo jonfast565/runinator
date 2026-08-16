@@ -1032,7 +1032,7 @@ impl<'a> Decompiler<'a> {
     // trailing success arrow appends cleanly after the closing brace.
     fn compute_text(&self, node: &WorkflowNode, program: &[Value]) -> Result<String, WdlError> {
         let base = self.indent;
-        let mut out = String::from("compute {\n");
+        let mut out = String::from("do {\n");
         self.render_compute_lines(&mut out, program, base + 1)?;
         out.push_str(&"    ".repeat(base));
         out.push('}');
@@ -1119,7 +1119,7 @@ impl<'a> Decompiler<'a> {
         }
 
         let base = self.indent;
-        let mut out = format!("compute {}", quote(language));
+        let mut out = format!("do {}", quote(language));
         out.push_str(" ```\n");
         out.push_str(source);
         if !source.ends_with('\n') {

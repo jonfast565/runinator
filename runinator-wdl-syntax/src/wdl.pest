@@ -8,17 +8,17 @@ COMMENT    = _{ ("//" ~ (!"\n" ~ ANY)*) | ("/*" ~ (!"*/" ~ ANY)* ~ "*/") }
 document = { SOI ~ document_item* ~ EOI }
 expr_document = { SOI ~ expr ~ EOI }
 cond_document = { SOI ~ cond ~ EOI }
-compute_document = { SOI ~ compute_block ~ EOI }
+do_document = { SOI ~ do_block ~ EOI }
 
 // a top-level function definition: an optional `@recursive(max_depth: N)` cap, then a typed
 // signature and a body. params reuse the parameter-field shape (`name: type` with an optional `?`
 // or `= default`). the body after `=` is either a single expression or a compute-style statement
 // block `{ let …; … ; return e }` reusing the compute lines. an object literal `{ k: v }` still
-// parses as an expression because `compute_line` cannot consume the `:`; a brace body must hold at
+// parses as an expression because `do_line` cannot consume the `:`; a brace body must hold at
 // least one statement so `{}` stays an empty object.
 func_def     = { fn_recursive? ~ "fn" ~ ident ~ "(" ~ fn_params? ~ ")" ~ ("->" ~ type_expr)? ~ "=" ~ fn_body }
 fn_body      = { fn_block | expr }
-fn_block     = { "{" ~ compute_line+ ~ "}" }
+fn_block     = { "{" ~ do_line+ ~ "}" }
 fn_recursive = { "@recursive" ~ "(" ~ "max_depth" ~ ":" ~ integer ~ ")" }
 fn_params    = { fn_param ~ ("," ~ fn_param)* ~ ","? }
 fn_param     = { ident ~ optional_mark? ~ ":" ~ type_expr ~ field_default? }
@@ -282,26 +282,28 @@ stmt_body = {
   | config_stmt
   | fail_stmt
   | subflow_stmt
-  | compute_stmt
+  | do_stmt
   | action_stmt
 }
 
-// an imperative compute block. lowers to an action node invoking the `std` standard library:
+// an imperative `do` block. lowers to an action node invoking the `std` standard library:
 // `std.run` (pure, reduced in-process) when every called function is pure, `std.exec` (effectful,
-// dispatched to the worker) when any called function has side effects. a foreign compute block
+// dispatched to the worker) when any called function has side effects. a foreign `do` block
 // carries fenced source verbatim and lowers to `std.code`, executed by the worker through docker
 // using the admin-configured runtime for that language.
-// compute lines reuse the one expression/condition grammar; the only compute-specific surface is
+// `do` lines reuse the one expression/condition grammar; the only block-specific surface is
 // `let`/`return`/`goto`/`if`.
-compute_stmt  = { "compute" ~ (foreign_compute | compute_block) ~ modifier* }
-foreign_compute = { string ~ raw_block }
-compute_block = { "{" ~ compute_line* ~ "}" }
-compute_line  = { compute_let | compute_return | compute_goto | compute_if | compute_expr_stmt }
-compute_let   = { "let" ~ ident ~ (":" ~ type_expr)? ~ "=" ~ expr }
-compute_return = { "return" ~ expr }
-compute_goto  = { "goto" ~ target }
-compute_if    = { "if" ~ cond ~ compute_block ~ ("else" ~ compute_block)? }
-compute_expr_stmt = { expr }
+do_stmt  = { do_kw ~ (foreign_do | do_block) ~ modifier* }
+// `do` must not swallow the leading identifier of a longer word (e.g. a `document` alias).
+do_kw    = @{ "do" ~ !(ASCII_ALPHANUMERIC | "_") }
+foreign_do = { string ~ raw_block }
+do_block = { "{" ~ do_line* ~ "}" }
+do_line  = { do_let | do_return | do_goto | do_if | do_expr_stmt }
+do_let   = { "let" ~ ident ~ (":" ~ type_expr)? ~ "=" ~ expr }
+do_return = { "return" ~ expr }
+do_goto  = { "goto" ~ target }
+do_if    = { "if" ~ cond ~ do_block ~ ("else" ~ do_block)? }
+do_expr_stmt = { expr }
 
 // arithmetic operators, shared by the sum/term expression levels below.
 add_op   = { "+" | "-" }

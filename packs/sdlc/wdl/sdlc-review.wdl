@@ -106,7 +106,7 @@ workflow "SDLC: Review" v1 {
         node reviews: any <- github.reviews(...github_conn, pull_number: string(pr.number))
             .timeout(30s)
             .retry(4, backoff: 5s, max: 60s, jitter: true, on: any)
-        node review_state: { approved: integer, changes_requested: integer, two_plus: boolean, ready: boolean } <- compute {
+        node review_state: { approved: integer, changes_requested: integer, two_plus: boolean, ready: boolean } <- do {
             let approved = len(filter(reviews, r => r.state == "APPROVED"))
             let changes = len(filter(reviews, r => r.state == "CHANGES_REQUESTED"))
             return {

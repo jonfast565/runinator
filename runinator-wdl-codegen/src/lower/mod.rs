@@ -3,7 +3,7 @@
 // the output is a WorkflowDefinition whose `definition` is `{ start, nodes: [...] }`.
 
 mod blocks;
-mod compute;
+mod do_block;
 mod expr;
 mod spreads;
 
@@ -319,13 +319,10 @@ pub fn lower_condition_fragment(cond: &Cond, options: &CompileOptions) -> Result
     lowerer.lower_cond(cond)
 }
 
-pub fn lower_compute_fragment(
-    body: &[ComputeLine],
-    options: &CompileOptions,
-) -> Result<Value, WdlError> {
+pub fn lower_do_fragment(body: &[DoLine], options: &CompileOptions) -> Result<Value, WdlError> {
     let mut lowerer = Lowerer::new();
     lowerer.source_dir = options.source_dir.clone();
-    lowerer.lower_compute_fragment(body)
+    lowerer.lower_do_fragment(body)
 }
 
 impl Lowerer {
@@ -612,7 +609,7 @@ impl Lowerer {
     /// lower user `fn` definitions into the `metadata.functions` runtime form:
     /// `[{ name, params: [{name}], body|program, recursive?: { max_depth } }]`. an expression body
     /// lowers to `body`; a block body lowers to a `program` array (the same `$let`/`$return`/`$if`
-    /// form a `compute` block produces). each body lowers with its parameters registered as locals,
+    /// form a `do` block produces). each body lowers with its parameters registered as locals,
     /// so param references become `let` refs the engine binds at call time.
     fn lower_functions(&self, functions: &[FunctionDef]) -> Result<Vec<Value>, WdlError> {
         let mut out = Vec::with_capacity(functions.len());
@@ -778,7 +775,7 @@ impl Lowerer {
     fn lower_stmt(&mut self, stmt: &Stmt, id: &str, next: &str) -> Result<(), WdlError> {
         match &stmt.kind {
             StmtKind::Action(action) => self.lower_action(action, stmt, id, next),
-            StmtKind::Compute(compute) => self.lower_compute(compute, stmt, id, next),
+            StmtKind::Do(compute) => self.lower_do(compute, stmt, id, next),
             StmtKind::Subflow(subflow) => self.lower_subflow(subflow, stmt, id, next),
             StmtKind::Wait(wait) => self.lower_wait(wait, stmt, id, next),
             StmtKind::Output(output) => self.lower_output(output, stmt, id, next),
@@ -845,12 +842,12 @@ impl Lowerer {
         id: &str,
         next: &str,
     ) -> Result<(), WdlError> {
-        let compute = ComputeStmt {
-            body: vec![ComputeLine::Return(value.clone())],
+        let compute = DoStmt {
+            body: vec![DoLine::Return(value.clone())],
             foreign: None,
             modifiers: Modifiers::default(),
         };
-        self.lower_compute(&compute, stmt, id, next)
+        self.lower_do(&compute, stmt, id, next)
     }
 
     fn lower_value_collector(&mut self, stmt: &Stmt, id: &str, next: &str) -> Result<(), WdlError> {
@@ -861,8 +858,8 @@ impl Lowerer {
             annotations: Annotations::default(),
             label: stmt.label.clone(),
             label_type: stmt.label_type.clone(),
-            kind: StmtKind::Compute(ComputeStmt {
-                body: vec![ComputeLine::Return(value)],
+            kind: StmtKind::Do(DoStmt {
+                body: vec![DoLine::Return(value)],
                 foreign: None,
                 modifiers: Modifiers::default(),
             }),
@@ -872,12 +869,12 @@ impl Lowerer {
         };
         // the synthetic statement is built as a compute above; guard the invariant instead of
         // panicking if that ever changes.
-        let StmtKind::Compute(compute) = &synthetic.kind else {
+        let StmtKind::Do(compute) = &synthetic.kind else {
             return Err(WdlError::lower(
                 "synthetic value collector statement must be a compute statement",
             ));
         };
-        self.lower_compute(compute, &synthetic, id, next)
+        self.lower_do(compute, &synthetic, id, next)
     }
 
     // leaf statements -------------------------------------------------------
@@ -1864,7 +1861,7 @@ fn control_prefix(kind: &StmtKind) -> &'static str {
     match kind {
         StmtKind::Action(_) => "action",
         StmtKind::Resume(_) => "resume",
-        StmtKind::Compute(_) => "compute",
+        StmtKind::Do(_) => "do",
         StmtKind::Subflow(_) => "subflow",
         StmtKind::Wait(_) => "wait",
         StmtKind::Output(_) => "output",

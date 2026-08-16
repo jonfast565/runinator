@@ -221,7 +221,7 @@ export const wdlParser = StreamLanguage.define<WdlState>({
         return "typeName";
       }
 
-      // the name being bound by `node` (workflow scope) or `let` (compute-local); a following `:`
+      // the name being bound by `node` (workflow scope) or `let` (do-local); a following `:`
       // would open a type annotation.
       if (state.expectBindingName) {
         state.expectBindingName = false;

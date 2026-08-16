@@ -68,22 +68,22 @@ fn expand_block(block: &mut Block, aliases: &AliasTable) -> Result<(), WdlError>
 }
 
 // expand spreads inside a compute block's expressions, recursing into nested `if` branches.
-fn expand_compute_block(body: &mut [ComputeLine], aliases: &AliasTable) -> Result<(), WdlError> {
+fn expand_do_block(body: &mut [DoLine], aliases: &AliasTable) -> Result<(), WdlError> {
     for line in body.iter_mut() {
         match line {
-            ComputeLine::Let { value, .. }
-            | ComputeLine::Return(value)
-            | ComputeLine::Expr(value) => expand_expr(value, aliases)?,
-            ComputeLine::If {
+            DoLine::Let { value, .. } | DoLine::Return(value) | DoLine::Expr(value) => {
+                expand_expr(value, aliases)?
+            }
+            DoLine::If {
                 cond,
                 then_branch,
                 else_branch,
             } => {
                 expand_cond(cond, aliases)?;
-                expand_compute_block(then_branch, aliases)?;
-                expand_compute_block(else_branch, aliases)?;
+                expand_do_block(then_branch, aliases)?;
+                expand_do_block(else_branch, aliases)?;
             }
-            ComputeLine::Goto(_) => {}
+            DoLine::Goto(_) => {}
         }
     }
     Ok(())
@@ -93,7 +93,7 @@ fn expand_compute_block(body: &mut [ComputeLine], aliases: &AliasTable) -> Resul
 fn expand_stmt(stmt: &mut Stmt, aliases: &AliasTable) -> Result<(), WdlError> {
     match &mut stmt.kind {
         StmtKind::Action(action) => expand_entries(&mut action.args, aliases)?,
-        StmtKind::Compute(compute) => expand_compute_block(&mut compute.body, aliases)?,
+        StmtKind::Do(compute) => expand_do_block(&mut compute.body, aliases)?,
         StmtKind::Subflow(subflow) => {
             if let Some(run_name) = subflow.run_name.as_mut() {
                 expand_expr(run_name, aliases)?;

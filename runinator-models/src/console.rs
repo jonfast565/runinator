@@ -33,7 +33,7 @@ pub struct ConsoleSession {
 #[serde(rename_all = "snake_case")]
 pub enum ConsoleCellKind {
     Expression,
-    Compute,
+    Do,
     Workflow,
 }
 
@@ -41,7 +41,7 @@ impl ConsoleCellKind {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Expression => "expression",
-            Self::Compute => "compute",
+            Self::Do => "do",
             Self::Workflow => "workflow",
         }
     }
@@ -53,7 +53,7 @@ impl TryFrom<&str> for ConsoleCellKind {
     fn try_from(value: &str) -> Result<Self, Self::Error> {
         match value {
             "expression" => Ok(Self::Expression),
-            "compute" => Ok(Self::Compute),
+            "do" => Ok(Self::Do),
             "workflow" => Ok(Self::Workflow),
             other => Err(format!("Unknown console cell kind '{other}'")),
         }

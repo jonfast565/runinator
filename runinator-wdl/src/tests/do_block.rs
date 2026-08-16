@@ -1,4 +1,4 @@
-//! `compute` blocks: lowering pure bodies to `std.run` and effectful ones to `std.exec`, and the
+//! `do` blocks: lowering pure bodies to `std.run` and effectful ones to `std.exec`, and the
 //! type checking over both.
 
 use super::*;
@@ -7,7 +7,7 @@ use super::*;
 fn compute_pure_lowers_to_std_run() {
     let src = r#"
         workflow "Compute" v1 {
-            compute {
+            do {
                 let total = prev.cart.subtotal + prev.cart.tax
                 if total <= 0 { goto fail }
                 return { total: total }
@@ -31,7 +31,7 @@ fn compute_pure_lowers_to_std_run() {
 fn foreign_compute_lowers_to_std_code_and_round_trips() {
     let src = r#"
         workflow "Foreign Compute" v1 {
-            node result: { total: integer } <- compute "python" ```
+            node result: { total: integer } <- do "python" ```
 def main(context):
     return {"total": context["input"]["a"] + 1}
 ```.timeout(45s)
@@ -62,7 +62,7 @@ def main(context):
     );
 
     let wdl = decompile(&definition).expect("decompile");
-    assert!(wdl.contains("compute \"python\""), "{wdl}");
+    assert!(wdl.contains("do \"python\""), "{wdl}");
     assert!(!wdl.contains("using"), "{wdl}");
     assert!(wdl.contains("def main(context)"), "{wdl}");
     let second = compile_str(&wdl, &default_test_options()).expect("recompile");
@@ -72,7 +72,7 @@ def main(context):
 fn foreign_compute_keeps_restored_language_alias_as_string() {
     let src = r#"
         workflow "Foreign Compute Alias" v1 {
-            node result <- compute "js" ```
+            node result <- do "js" ```
 console.log(JSON.stringify({ total: 42 }))
 ```
         }
@@ -91,7 +91,7 @@ console.log(JSON.stringify({ total: 42 }))
     assert!(node["action"]["configuration"]["image"].is_null());
 
     let wdl = decompile(&definition).expect("decompile");
-    assert!(wdl.contains("compute \"js\""), "{wdl}");
+    assert!(wdl.contains("do \"js\""), "{wdl}");
     assert!(!wdl.contains("using"), "{wdl}");
     let second = compile_str(&wdl, &default_test_options()).expect("recompile");
     assert_eq!(graph_value(&definition), graph_value(&second));
@@ -100,7 +100,7 @@ console.log(JSON.stringify({ total: 42 }))
 fn compute_lambda_map_lowers_and_round_trips() {
     let src = r#"
         workflow "Map" v1 {
-            compute {
+            do {
                 let names = std.collections.map(params.users, u => u.name)
                 return { names: names }
             }
@@ -126,7 +126,7 @@ fn compute_lambda_filter_reduce_round_trip() {
     // filter/reduce drive predicates and folds through expression-level intrinsics (gt/add).
     let src = r#"
         workflow "Pipe" v1 {
-            compute {
+            do {
                 let big = std.collections.filter(params.xs, x => std.logic.gt(x, 1))
                 let total = std.collections.reduce(big, 0, (acc, x) => std.math.add(acc, x))
                 return { total: total }
@@ -139,7 +139,7 @@ fn compute_lambda_filter_reduce_round_trip() {
 fn compute_effectful_lowers_to_std_exec() {
     let src = r#"
         workflow "Fetch" v1 {
-            compute {
+            do {
                 let resp = std.exec.http_get(params.url)
                 return { status: resp.status }
             }
@@ -160,7 +160,7 @@ fn compute_effectful_lowers_to_std_exec() {
 fn compute_rejects_goto_in_effectful_block() {
     let src = r#"
         workflow "Bad" v1 {
-            compute {
+            do {
                 let resp = std.exec.http_get(params.url)
                 if resp.status > 0 { goto fail }
                 return resp
@@ -174,7 +174,7 @@ fn compute_rejects_goto_in_effectful_block() {
 fn compute_rejects_unknown_intrinsic() {
     let src = r#"
         workflow "Typo" v1 {
-            compute { return addd(1, 2) }
+            do { return addd(1, 2) }
         }
     "#;
     let (_, message) = expect_semantic(src);
@@ -184,7 +184,7 @@ fn compute_rejects_unknown_intrinsic() {
 fn compute_rejects_bad_arity() {
     let src = r#"
         workflow "Arity" v1 {
-            compute { return std.math.add(1) }
+            do { return std.math.add(1) }
         }
     "#;
     let (_, message) = expect_semantic(src);
@@ -194,7 +194,7 @@ fn compute_rejects_bad_arity() {
 fn compute_rejects_let_type_mismatch() {
     let src = r#"
         workflow "Mismatch" v1 {
-            compute { let x: integer = "hello" return x }
+            do { let x: integer = "hello" return x }
         }
     "#;
     let (_, message) = expect_semantic(src);
@@ -204,7 +204,7 @@ fn compute_rejects_let_type_mismatch() {
 fn compute_rejects_bad_argument_type() {
     let src = r#"
         workflow "BadArg" v1 {
-            compute { return std.math.add("a", 1) }
+            do { return std.math.add("a", 1) }
         }
     "#;
     let (_, message) = expect_semantic(src);
@@ -215,7 +215,7 @@ fn compute_lambda_uses_collection_item_type_for_field_access() {
     let src = r#"
         workflow "LambdaTypes" v1 {
             params { users: { id: string }[] }
-            compute {
+            do {
                 return std.collections.map(params.users, u => u.missing)
             }
         }
@@ -231,7 +231,7 @@ fn compute_lambda_result_drives_higher_order_return_type() {
     let src = r#"
         workflow "LambdaReturn" v1 {
             params { users: { id: string }[] }
-            compute {
+            do {
                 let ids: integer[] = std.collections.map(params.users, u => u.id)
                 return ids
             }
@@ -250,7 +250,7 @@ fn compute_first_recovers_element_type() {
     let src = r#"
         workflow "FirstTyped" v1 {
             params { items: string[] }
-            compute {
+            do {
                 let x: integer = std.collections.first(params.items)
                 return x
             }
@@ -269,7 +269,7 @@ fn compute_sort_preserves_element_type() {
     let src = r#"
         workflow "SortTyped" v1 {
             params { items: string[] }
-            compute {
+            do {
                 let sorted: integer[] = std.collections.sort(params.items)
                 return sorted
             }
@@ -285,7 +285,7 @@ fn compute_at_struct_recovers_field_type_from_literal_key() {
     let src = r#"
         workflow "AtStruct" v1 {
             params { obj: { id: integer } }
-            compute {
+            do {
                 let x: string = std.collections.at(params.obj, "id")
                 return x
             }
@@ -304,7 +304,7 @@ fn compute_pick_narrows_struct_to_named_keys() {
     let src = r#"
         workflow "Pick" v1 {
             params { obj: { id: integer, secret: string } }
-            compute {
+            do {
                 let picked = std.objects.pick(params.obj, ["id"])
                 return picked.secret
             }
@@ -318,7 +318,7 @@ fn run_context_field_is_typed_string() {
     // run.run_id is a string; assigning it to an integer local is an error.
     let src = r#"
         workflow "RunCtx" v1 {
-            compute {
+            do {
                 let x: integer = run.run_id
                 return x
             }
@@ -333,7 +333,7 @@ fn run_context_rejects_unknown_field() {
     // the run context is closed to its known keys; `run.name` does not exist.
     let src = r#"
         workflow "RunCtx" v1 {
-            compute {
+            do {
                 return run.name
             }
         }
@@ -348,7 +348,7 @@ fn typed_parse_json_adopts_annotated_shape() {
     let src = r#"
         workflow "P" v1 {
             params { s: string }
-            compute {
+            do {
                 let x: { id: integer } = std.encoding.parse_json(params.s)
                 let y: string = x.id
                 return y
@@ -367,7 +367,7 @@ fn empty_array_adopts_annotated_element_type() {
     // `[]` under a declaration resolves to the declared element type, so `first(x)` is that element.
     let src = r#"
         workflow "P" v1 {
-            compute {
+            do {
                 let x: string[] = []
                 let y: integer = std.collections.first(x)
                 return y
@@ -384,7 +384,7 @@ fn first_class_lambda_call_yields_result_type() {
     // so assigning a string-returning lambda's result to an integer is an error.
     let src = r#"
         workflow "F" v1 {
-            compute {
+            do {
                 let f = x => "hello"
                 let y: integer = f(2)
                 return y
@@ -406,7 +406,7 @@ fn first_class_lambda_round_trips() {
         r#"
         workflow "F" v1 {
             params { xs: integer[] }
-            compute {
+            do {
                 let double = x => std.math.mul(x, 2)
                 return std.collections.map(params.xs, double)
             }
@@ -418,7 +418,7 @@ fn first_class_lambda_round_trips() {
 fn first_class_lambda_call_checks_arity() {
     let src = r#"
         workflow "F" v1 {
-            compute {
+            do {
                 let f = x => x
                 return f(1, 2)
             }
@@ -435,7 +435,7 @@ fn compute_predicate_lambda_must_return_boolean() {
     let src = r#"
         workflow "LambdaPredicate" v1 {
             params { users: { id: string }[] }
-            compute {
+            do {
                 return std.collections.filter(params.users, u => u.id)
             }
         }
@@ -450,7 +450,7 @@ fn compute_accepts_well_typed_program() {
     let src = r#"
         workflow "Typed" v1 {
             params { a: integer, b: integer }
-            compute {
+            do {
                 let sum: number = std.math.add(params.a, params.b)
                 return sum
             }
@@ -462,7 +462,7 @@ fn compute_accepts_well_typed_program() {
 fn compute_secret_reference_forces_exec() {
     let src = r#"
         workflow "Sec" v1 {
-            compute { return secret.api.key }
+            do { return secret.api.key }
         }
     "#;
     let definition = compile(src);
@@ -481,7 +481,7 @@ fn compute_condition_allows_arithmetic_and_calls() {
     // arithmetic in a pure condition, and a call (which makes the block exec).
     let pure_src = r#"
         workflow "PureCond" v1 {
-            compute {
+            do {
                 let total = params.a + params.b
                 if total * 2 > 100 { goto fail }
                 return total
@@ -492,7 +492,7 @@ fn compute_condition_allows_arithmetic_and_calls() {
 
     let call_src = r#"
         workflow "CallCond" v1 {
-            compute {
+            do {
                 if std.collections.len(params.items) > 0 {
                     return std.exec.http_get(params.url)
                 }
@@ -516,7 +516,7 @@ fn compute_arithmetic_round_trips() {
     // arithmetic and library calls work both as let/return values and inside object/array literals.
     let src = r#"
         workflow "Math" v1 {
-            compute {
+            do {
                 let x = (params.a + params.b) * 2 - params.c
                 return { x: x, y: std.math.add(x, 1), zs: [x, x * 2] }
             }

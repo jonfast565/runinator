@@ -32,7 +32,7 @@ fn import_std_brings_intrinsics_into_bare_scope() {
     let src = r#"
         workflow "Imp" v1 {
             import std
-            compute {
+            do {
                 let total = add(params.a, params.b)
                 return upper(params.name)
             }
@@ -101,7 +101,7 @@ fn bare_intrinsic_prefix_call_is_rejected() {
     let (_, message) = expect_semantic(
         r#"
         workflow "Bare" v1 {
-            compute { return add(1, 2) }
+            do { return add(1, 2) }
         }
     "#,
     );
@@ -112,7 +112,7 @@ fn wrong_std_module_is_rejected() {
     let (_, message) = expect_semantic(
         r#"
         workflow "WrongMod" v1 {
-            compute { return std.math.upper(params.name) }
+            do { return std.math.upper(params.name) }
         }
     "#,
     );

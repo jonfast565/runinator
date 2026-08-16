@@ -138,9 +138,9 @@ pub async fn run_cell<T: DatabaseImpl>(
     let context = session_context(db, cell.session_id).await?;
 
     match classification.kind {
-        CellKind::Expression | CellKind::Compute => {
+        CellKind::Expression | CellKind::Do => {
             let kind = match classification.kind {
-                CellKind::Compute => ConsoleCellKind::Compute,
+                CellKind::Do => ConsoleCellKind::Do,
                 _ => ConsoleCellKind::Expression,
             };
             let Some(fragment_kind) = classification.fragment_kind() else {

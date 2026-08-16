@@ -98,7 +98,7 @@ fn accepts_document_level_and_namespace_block_workflows() {
 
         namespace core.more {
             workflow "Second" v1 {
-                node two <- compute {
+                node two <- do {
                     return "ok"
                 }
             }

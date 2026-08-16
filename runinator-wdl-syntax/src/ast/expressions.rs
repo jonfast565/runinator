@@ -56,7 +56,7 @@ pub enum ExprKind {
     /// a `...alias` spread placeholder, only valid as an argument or object entry value. expanded
     /// away by desugaring; never reaches sema or lowering. the carried name is the alias.
     Spread(String),
-    // compute-tier arithmetic; only produced inside `compute { }` blocks.
+    // compute-tier arithmetic; only produced inside `do { }` blocks.
     Add(Vec<Expr>),
     Sub(Vec<Expr>),
     Mul(Vec<Expr>),
@@ -91,7 +91,7 @@ pub enum ExprKind {
         named: Vec<(String, Expr)>,
         method: bool,
     },
-    /// an anonymous function `params => body`, only valid inside `compute { }` as the argument to a
+    /// an anonymous function `params => body`, only valid inside `do { }` as the argument to a
     /// higher-order library call (`map`, `filter`, `reduce`, ...).
     Lambda {
         params: Vec<String>,

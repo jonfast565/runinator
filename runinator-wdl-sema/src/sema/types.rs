@@ -244,7 +244,7 @@ impl Env {
                     self.check_expr(value, diagnostics);
                 }
             }
-            StmtKind::Compute(compute) => {
+            StmtKind::Do(compute) => {
                 let base = self.scope.len();
                 self.check_compute_block(&compute.body, diagnostics);
                 self.scope.truncate(base);
@@ -781,13 +781,13 @@ impl Env {
     /// with block scoping.
     fn check_compute_block(
         &mut self,
-        body: &[runinator_wdl_syntax::ast::ComputeLine],
+        body: &[runinator_wdl_syntax::ast::DoLine],
         diagnostics: &mut Vec<Diagnostic>,
     ) {
-        use runinator_wdl_syntax::ast::ComputeLine;
+        use runinator_wdl_syntax::ast::DoLine;
         for line in body {
             match line {
-                ComputeLine::Let { name, ty, value } => {
+                DoLine::Let { name, ty, value } => {
                     self.check_expr(value, diagnostics);
                     let declared = ty
                         .as_ref()
@@ -827,10 +827,8 @@ impl Env {
                     let local_ty = declared.unwrap_or(value_ty);
                     self.scope.push((name.clone(), local_ty));
                 }
-                ComputeLine::Return(value) | ComputeLine::Expr(value) => {
-                    self.check_expr(value, diagnostics)
-                }
-                ComputeLine::If {
+                DoLine::Return(value) | DoLine::Expr(value) => self.check_expr(value, diagnostics),
+                DoLine::If {
                     then_branch,
                     else_branch,
                     ..
@@ -841,7 +839,7 @@ impl Env {
                     self.check_compute_block(else_branch, diagnostics);
                     self.scope.truncate(base);
                 }
-                ComputeLine::Goto(_) => {}
+                DoLine::Goto(_) => {}
             }
         }
     }

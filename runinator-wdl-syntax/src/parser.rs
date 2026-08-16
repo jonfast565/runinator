@@ -200,13 +200,13 @@ pub fn parse_condition_fragment(src: &str) -> Result<Cond, WdlError> {
 }
 
 /// parse a standalone WDL compute block fragment, including the surrounding braces.
-pub fn parse_compute_fragment(src: &str) -> Result<Vec<ComputeLine>, WdlError> {
-    let pair = parse_fragment_rule(src, Rule::compute_document)?;
+pub fn parse_do_fragment(src: &str) -> Result<Vec<DoLine>, WdlError> {
+    let pair = parse_fragment_rule(src, Rule::do_document)?;
     let block = pair
         .into_inner()
-        .find(|inner| inner.as_rule() == Rule::compute_block)
+        .find(|inner| inner.as_rule() == Rule::do_block)
         .ok_or_else(|| WdlError::Parse("missing compute block".into()))?;
-    parse_compute_block(block)
+    parse_do_block(block)
 }
 
 fn parse_fragment_rule(src: &str, rule: Rule) -> Result<Pair<'_, Rule>, WdlError> {
@@ -270,8 +270,8 @@ fn parse_fn_body(pair: Pair<Rule>) -> Result<FnBody, WdlError> {
         Rule::fn_block => {
             let mut lines = Vec::new();
             for line in inner.into_inner() {
-                if line.as_rule() == Rule::compute_line {
-                    lines.push(parse_compute_line(line)?);
+                if line.as_rule() == Rule::do_line {
+                    lines.push(parse_do_line(line)?);
                 }
             }
             Ok(FnBody::Block(lines))
@@ -1289,7 +1289,7 @@ fn parse_stmt_body(pair: Pair<Rule>) -> Result<StmtKind, WdlError> {
     let inner = first_inner(pair)?;
     match inner.as_rule() {
         Rule::action_stmt => Ok(StmtKind::Action(parse_action(inner)?)),
-        Rule::compute_stmt => Ok(StmtKind::Compute(parse_compute(inner)?)),
+        Rule::do_stmt => Ok(StmtKind::Do(parse_do(inner)?)),
         Rule::subflow_stmt => Ok(StmtKind::Subflow(parse_subflow(inner)?)),
         Rule::wait_cond_stmt => Ok(StmtKind::While(parse_wait_until(inner)?)),
         Rule::wait_stmt => Ok(StmtKind::Wait(parse_wait(inner)?)),
@@ -1363,26 +1363,26 @@ fn parse_action(pair: Pair<Rule>) -> Result<ActionStmt, WdlError> {
     })
 }
 
-fn parse_compute(pair: Pair<Rule>) -> Result<ComputeStmt, WdlError> {
+fn parse_do(pair: Pair<Rule>) -> Result<DoStmt, WdlError> {
     let mut body = Vec::new();
     let mut foreign = None;
     let mut modifiers = Modifiers::default();
     for inner in pair.into_inner() {
         match inner.as_rule() {
-            Rule::compute_block => body = parse_compute_block(inner)?,
-            Rule::foreign_compute => foreign = Some(parse_foreign_compute(inner)?),
+            Rule::do_block => body = parse_do_block(inner)?,
+            Rule::foreign_do => foreign = Some(parse_foreign_do(inner)?),
             Rule::modifier => apply_modifier(&mut modifiers, inner)?,
             _ => {}
         }
     }
-    Ok(ComputeStmt {
+    Ok(DoStmt {
         body,
         foreign,
         modifiers,
     })
 }
 
-fn parse_foreign_compute(pair: Pair<Rule>) -> Result<ForeignCompute, WdlError> {
+fn parse_foreign_do(pair: Pair<Rule>) -> Result<ForeignDo, WdlError> {
     let mut language = None;
     let mut source = None;
     for inner in pair.into_inner() {
@@ -1392,26 +1392,26 @@ fn parse_foreign_compute(pair: Pair<Rule>) -> Result<ForeignCompute, WdlError> {
             _ => {}
         }
     }
-    Ok(ForeignCompute {
+    Ok(ForeignDo {
         language: language.unwrap_or_default(),
         source: source.unwrap_or_default(),
     })
 }
 
-fn parse_compute_block(pair: Pair<Rule>) -> Result<Vec<ComputeLine>, WdlError> {
+fn parse_do_block(pair: Pair<Rule>) -> Result<Vec<DoLine>, WdlError> {
     let mut lines = Vec::new();
     for inner in pair.into_inner() {
-        if inner.as_rule() == Rule::compute_line {
-            lines.push(parse_compute_line(inner)?);
+        if inner.as_rule() == Rule::do_line {
+            lines.push(parse_do_line(inner)?);
         }
     }
     Ok(lines)
 }
 
-fn parse_compute_line(pair: Pair<Rule>) -> Result<ComputeLine, WdlError> {
+fn parse_do_line(pair: Pair<Rule>) -> Result<DoLine, WdlError> {
     let inner = first_inner(pair)?;
     match inner.as_rule() {
-        Rule::compute_let => {
+        Rule::do_let => {
             let mut name = String::new();
             let mut ty = None;
             let mut value = None;
@@ -1424,17 +1424,17 @@ fn parse_compute_line(pair: Pair<Rule>) -> Result<ComputeLine, WdlError> {
                 }
             }
             let value = value.ok_or_else(|| WdlError::lower("compute let missing value"))?;
-            Ok(ComputeLine::Let { name, ty, value })
+            Ok(DoLine::Let { name, ty, value })
         }
-        Rule::compute_return => Ok(ComputeLine::Return(parse_expr(first_inner(inner)?)?)),
-        Rule::compute_goto => Ok(ComputeLine::Goto(parse_target(first_inner(inner)?)?)),
-        Rule::compute_if => {
+        Rule::do_return => Ok(DoLine::Return(parse_expr(first_inner(inner)?)?)),
+        Rule::do_goto => Ok(DoLine::Goto(parse_target(first_inner(inner)?)?)),
+        Rule::do_if => {
             let mut cond = None;
             let mut blocks = Vec::new();
             for part in inner.into_inner() {
                 match part.as_rule() {
                     Rule::cond => cond = Some(parse_cond(part)?),
-                    Rule::compute_block => blocks.push(parse_compute_block(part)?),
+                    Rule::do_block => blocks.push(parse_do_block(part)?),
                     _ => {}
                 }
             }
@@ -1442,13 +1442,13 @@ fn parse_compute_line(pair: Pair<Rule>) -> Result<ComputeLine, WdlError> {
             let mut blocks = blocks.into_iter();
             let then_branch = blocks.next().unwrap_or_default();
             let else_branch = blocks.next().unwrap_or_default();
-            Ok(ComputeLine::If {
+            Ok(DoLine::If {
                 cond,
                 then_branch,
                 else_branch,
             })
         }
-        Rule::compute_expr_stmt => Ok(ComputeLine::Expr(parse_expr(first_inner(inner)?)?)),
+        Rule::do_expr_stmt => Ok(DoLine::Expr(parse_expr(first_inner(inner)?)?)),
         other => Err(WdlError::lower(format!(
             "unexpected compute line {other:?}"
         ))),

@@ -34,7 +34,7 @@ workflow "SDLC: Development" v1 {
     node in_flight <- jira.search(...jira_conn, jql: config.jira.in_flight_jql)
         .timeout(120s)
         .retry(4, backoff: 5s, max: 60s, jitter: true, on: any)
-    node budget: integer <- compute {
+    node budget: integer <- do {
         return sub(config.selection.max_in_flight, len(in_flight.issues))
     }
 

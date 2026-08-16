@@ -73,7 +73,7 @@ fn collect_block(
 fn collect_stmt(stmt: &Stmt, source_dir: &Path, paths: &mut Vec<PathBuf>) -> Result<(), WdlError> {
     match &stmt.kind {
         StmtKind::Action(action) => collect_entries(&action.args, source_dir, paths)?,
-        StmtKind::Compute(compute) => collect_compute_lines(&compute.body, source_dir, paths)?,
+        StmtKind::Do(compute) => collect_do_lines(&compute.body, source_dir, paths)?,
         StmtKind::Subflow(subflow) => {
             if let Some(run_name) = &subflow.run_name {
                 collect_expr(run_name, source_dir, paths)?;
@@ -232,26 +232,26 @@ fn collect_stmt(stmt: &Stmt, source_dir: &Path, paths: &mut Vec<PathBuf>) -> Res
     Ok(())
 }
 
-fn collect_compute_lines(
-    lines: &[ComputeLine],
+fn collect_do_lines(
+    lines: &[DoLine],
     source_dir: &Path,
     paths: &mut Vec<PathBuf>,
 ) -> Result<(), WdlError> {
     for line in lines {
         match line {
-            ComputeLine::Let { value, .. }
-            | ComputeLine::Return(value)
-            | ComputeLine::Expr(value) => collect_expr(value, source_dir, paths)?,
-            ComputeLine::If {
+            DoLine::Let { value, .. } | DoLine::Return(value) | DoLine::Expr(value) => {
+                collect_expr(value, source_dir, paths)?
+            }
+            DoLine::If {
                 cond,
                 then_branch,
                 else_branch,
             } => {
                 collect_cond(cond, source_dir, paths)?;
-                collect_compute_lines(then_branch, source_dir, paths)?;
-                collect_compute_lines(else_branch, source_dir, paths)?;
+                collect_do_lines(then_branch, source_dir, paths)?;
+                collect_do_lines(else_branch, source_dir, paths)?;
             }
-            ComputeLine::Goto(_) => {}
+            DoLine::Goto(_) => {}
         }
     }
     Ok(())

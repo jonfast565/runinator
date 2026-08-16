@@ -14,7 +14,7 @@ export interface ConsoleSession {
 
 // what the backend classifier decided a cell was. persisted rather than re-derived, so the ui can
 // say why a cell did or did not start a run without re-classifying source that may have changed.
-export type ConsoleCellKind = "expression" | "compute" | "workflow";
+export type ConsoleCellKind = "expression" | "do" | "workflow";
 
 export type ConsoleCellStatus = "idle" | "running" | "succeeded" | "failed";
 
