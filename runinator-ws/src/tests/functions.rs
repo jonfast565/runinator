@@ -586,3 +586,57 @@ async fn invoking_an_unknown_export_is_not_found() {
     let _ = std::fs::remove_dir_all(&blob_root);
     let _ = std::fs::remove_file(db_path);
 }
+
+#[tokio::test]
+async fn invoking_is_gated_separately_from_publishing() {
+    use runinator_models::capabilities::Capability;
+    use runinator_ws_middleware::authz::AuthContextExt;
+
+    // publishing and calling are different privileges: a service account that runs a function
+    // should not be able to replace the code it runs. an admin holds both; neither implies the
+    // other for anyone else.
+    let member = AuthContext {
+        principal_id: Some(Uuid::new_v4()),
+        is_admin: false,
+        kind: PrincipalKind::User,
+        org_id: None,
+        org_role: None,
+    };
+    assert!(
+        member
+            .require_capability(Capability::FunctionsInvoke)
+            .is_err()
+    );
+    assert!(
+        member
+            .require_capability(Capability::FunctionsManage)
+            .is_err()
+    );
+    assert!(
+        admin_ctx()
+            .require_capability(Capability::FunctionsInvoke)
+            .is_ok()
+    );
+
+    let (db, db_path) = test_db().await;
+    let db = Arc::new(db);
+    let (root, blobs, blob_root) = fixture("invoke-gate").await;
+    published(&db, &blobs, &root).await;
+
+    let (status, _) =
+        crate::handlers::function_invocations::create_function_invocation::<SqliteDb>(
+            Extension(db.clone()),
+            Extension(test_event_bus()),
+            Extension(member),
+            axum::http::HeaderMap::new(),
+            Path(("image-tools".to_string(), "resize".to_string())),
+            axum::extract::Query(Default::default()),
+            Json(json!({ "source": "a.png" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&blob_root);
+    let _ = std::fs::remove_file(db_path);
+}

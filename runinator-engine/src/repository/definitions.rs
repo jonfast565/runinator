@@ -261,7 +261,12 @@ pub async fn fetch_workflows_with_managed<T: DatabaseImpl>(
     let mut normalized = Vec::with_capacity(workflows.len());
     for workflow in workflows {
         let workflow = normalize_persisted_workflow(db, workflow).await?;
-        if include_managed || !super::function_adapters::is_adapter_workflow(&workflow) {
+        // both generated kinds are hidden by the same rule: a function adapter and a console
+        // scratch workflow are each one row per published export / per cell run, and either alone
+        // would bury the authored workflows.
+        let generated = super::function_adapters::is_adapter_workflow(&workflow)
+            || super::console::is_console_workflow(&workflow);
+        if include_managed || !generated {
             normalized.push(workflow);
         }
     }

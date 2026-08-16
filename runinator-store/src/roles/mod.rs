@@ -8,6 +8,7 @@
 pub mod archive;
 pub mod auth;
 pub mod automation;
+pub mod console;
 pub mod definitions;
 pub mod dispatch;
 pub mod functions;
@@ -22,6 +23,7 @@ pub mod task_runs;
 pub use archive::ArchiveStore;
 pub use auth::AuthStore;
 pub use automation::AutomationStore;
+pub use console::ConsoleStore;
 pub use definitions::DefinitionStore;
 pub use dispatch::DispatchStore;
 pub use functions::FunctionStore;

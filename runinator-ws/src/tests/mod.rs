@@ -10,6 +10,7 @@
 mod authz;
 mod bootstrap;
 mod chaining;
+mod console;
 mod control_flow;
 mod correlation;
 #[cfg(feature = "ws")]

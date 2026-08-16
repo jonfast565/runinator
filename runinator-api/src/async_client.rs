@@ -630,8 +630,55 @@ where
         pipelines: Option<&PipelineBundle>,
         overwrite: bool,
     ) -> Result<PackImportResult> {
-        let body = runinator_utilities::pack::build_pack_zip(workflows, secrets, pipelines)
-            .map_err(|err| ApiError::Pack(err.to_string()))?;
+        self.import_pack_zip(
+            runinator_utilities::pack::PackBuilder::new(workflows)
+                .secrets(secrets)
+                .pipelines(pipelines)
+                .build()
+                .map_err(|err| ApiError::Pack(err.to_string()))?,
+            overwrite,
+        )
+        .await
+    }
+
+    /// Import a pack that also carries packaged functions.
+    ///
+    /// The artifacts are uploaded by digest *first*, and only the ones the server reports missing
+    /// ride in the zip. A pack that carried every artifact every time would push megabytes through
+    /// the 10 MB request limit to re-send bytes the server already holds — and the digest is
+    /// computed client-side, so asking is cheap.
+    pub async fn import_pack_with_functions(
+        &self,
+        workflows: &WorkflowBundle,
+        secrets: Option<&SecretBundle>,
+        pipelines: Option<&PipelineBundle>,
+        functions: Vec<NewFunctionVersion>,
+        artifacts: Vec<(String, Vec<u8>)>,
+        overwrite: bool,
+    ) -> Result<PackImportResult> {
+        let mut builder = runinator_utilities::pack::PackBuilder::new(workflows)
+            .secrets(secrets)
+            .pipelines(pipelines)
+            .functions(functions);
+
+        for (digest, bytes) in artifacts {
+            if self.fetch_function_artifact(&digest).await?.is_some() {
+                continue;
+            }
+
+            builder = builder.function_artifact(digest, bytes);
+        }
+
+        self.import_pack_zip(
+            builder
+                .build()
+                .map_err(|err| ApiError::Pack(err.to_string()))?,
+            overwrite,
+        )
+        .await
+    }
+
+    async fn import_pack_zip(&self, body: Vec<u8>, overwrite: bool) -> Result<PackImportResult> {
         let mut url = self.build_url(API_PACKS_IMPORT).await?;
         if overwrite {
             url.set_query(Some("overwrite=true"));

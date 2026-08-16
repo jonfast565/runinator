@@ -191,6 +191,20 @@ pub const FUNCTION_ARTIFACT_STORAGE: ErrorDescriptor = ErrorDescriptor::new(
 pub const FUNCTION_NOT_FOUND: ErrorDescriptor =
     ErrorDescriptor::new("RUNI164", "function.not_found", "Function not found");
 
+// the wdl console.
+/// a console session was not found.
+pub const CONSOLE_SESSION_NOT_FOUND: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI170",
+    "console.session_not_found",
+    "Console session not found",
+);
+/// a console cell was not found.
+pub const CONSOLE_CELL_NOT_FOUND: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI171",
+    "console.cell_not_found",
+    "Console cell not found",
+);
+
 pub const DICTIONARY: &[ErrorDescriptor] = &[
     IMPORT_UNKNOWN_SUBFLOW,
     IMPORT_INVALID_TRIGGER_BLACKOUT,
@@ -225,6 +239,8 @@ pub const DICTIONARY: &[ErrorDescriptor] = &[
     FUNCTION_ARTIFACT_MISSING,
     FUNCTION_ARTIFACT_STORAGE,
     FUNCTION_NOT_FOUND,
+    CONSOLE_SESSION_NOT_FOUND,
+    CONSOLE_CELL_NOT_FOUND,
 ];
 
 /// orchestration engine error dictionary.

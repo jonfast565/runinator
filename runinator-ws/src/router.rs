@@ -20,7 +20,7 @@ use crate::auth::{AuthConfig, AuthState, auth_middleware};
 use crate::events::EventSender;
 use crate::handlers::{
     action_dispatches, agents, artifacts, auth, automation, billing, catalog, catalog_metadata,
-    credentials, debug, function_invocations, functions, health, node_runs, notifications,
+    console, credentials, debug, function_invocations, functions, health, node_runs, notifications,
     observability, orgs, packs, pipelines, providers, provisioning, replicas, runs, schedules,
     supervisor, triggers, wdl, webhook, workflows,
 };
@@ -75,6 +75,7 @@ pub fn build_router<T: DatabaseImpl>(
         .merge(providers::routes(pool.clone()))
         .merge(functions::routes(pool.clone()))
         .merge(function_invocations::routes(pool.clone()))
+        .merge(console::routes(pool.clone()))
         .merge(catalog_metadata::routes())
         .merge(webhook::routes(pool.clone()))
         .merge(auth::routes(pool.clone()))

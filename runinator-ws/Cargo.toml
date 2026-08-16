@@ -50,6 +50,8 @@ runinator-engine = { path = "../runinator-engine", features = ["test-support"] }
 # the publish path's client half: the tests archive a real package directory rather than hand-rolling
 # a zip, so what they upload is exactly what `runinatorctl functions publish` would.
 runinator-pack = { path = "../runinator-pack" }
+# built-in provider metadata, which the server seeds at startup and a bare test database lacks.
+runinator-provider-catalog = { path = "../runinator-provider-catalog" }
 
 [features]
 kafka = ["runinator-broker/kafka"]

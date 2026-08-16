@@ -61,6 +61,7 @@ mod notifications;
 mod org_scope;
 // named rather than glob-exported: its artifact operations are `fetch_artifact`/`delete_artifact`
 // about a *function* artifact, and run artifacts already own those names at this level.
+pub mod console;
 pub mod function_adapters;
 pub mod functions;
 mod pipelines;

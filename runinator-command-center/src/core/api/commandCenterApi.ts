@@ -9,8 +9,14 @@ import type {
   CreateAgentEnrollmentTokenInput,
   CreateAgentEnrollmentTokenResponse,
   CreateApiKeyResponse,
+  ConsoleCell,
+  ConsoleSession,
+  ConsoleSessionDetail,
   CredentialSummary,
   CredentialDetail,
+  FunctionCatalogEntry,
+  FunctionPackage,
+  FunctionPackageDetail,
   DevPackApplyResult,
   BackfillRequest,
   BackfillResponse,
@@ -1052,4 +1058,114 @@ export async function requestRunInterrupt(
     payload,
     cursorId,
   });
+}
+
+
+// ---- packaged functions ----
+
+export async function fetchFunctionPackages() {
+  return command<FunctionPackage[]>("list_function_packages", {});
+}
+
+export async function fetchFunctionPackage(packageName: string) {
+  return command<FunctionPackageDetail>("fetch_function_package", { packageName });
+}
+
+// every published export, including older versions: a workflow pinned to version 2 still needs to be
+// explicable after version 3 ships.
+export async function fetchFunctionCatalog() {
+  return command<FunctionCatalogEntry[]>("fetch_function_catalog", {});
+}
+
+export async function deleteFunctionPackage(packageName: string) {
+  return command<JsonRecord>("delete_function_package", { packageName });
+}
+
+// point an alias at a version, by number or at whatever another alias currently names.
+export async function setFunctionAlias(
+  packageName: string,
+  alias: string,
+  version?: number,
+  fromAlias?: string,
+) {
+  return command<JsonRecord>("set_function_alias", {
+    packageName,
+    alias,
+    version: version ?? null,
+    fromAlias: fromAlias ?? null,
+  });
+}
+
+export async function deleteFunctionAlias(packageName: string, alias: string) {
+  return command<JsonRecord>("delete_function_alias", { packageName, alias });
+}
+
+export async function invokeFunction(
+  packageName: string,
+  exportName: string,
+  input: JsonRecord,
+) {
+  return command<JsonRecord>("invoke_function", { packageName, exportName, input });
+}
+
+// ---- the wdl console ----
+
+export async function fetchConsoleSessions() {
+  return command<ConsoleSession[]>("list_console_sessions", {});
+}
+
+export async function createConsoleSession(name?: string) {
+  return command<ConsoleSession>("create_console_session", { name: name ?? null });
+}
+
+export async function fetchConsoleSession(sessionId: string) {
+  return command<ConsoleSessionDetail>("fetch_console_session", { sessionId });
+}
+
+export async function renameConsoleSession(sessionId: string, name: string) {
+  return command<ConsoleSessionDetail>("rename_console_session", { sessionId, name });
+}
+
+export async function deleteConsoleSession(sessionId: string) {
+  return command<JsonRecord>("delete_console_session", { sessionId });
+}
+
+export async function createConsoleCell(
+  sessionId: string,
+  source: string,
+  label?: string | null,
+) {
+  return command<ConsoleCell>("create_console_cell", {
+    sessionId,
+    source,
+    label: label ?? null,
+    position: null,
+  });
+}
+
+// re-reading a cell is how the ui follows one waiting on a scratch run: the backend settles it from
+// the run before answering, so a poll never shows `running` forever.
+export async function fetchConsoleCell(cellId: string) {
+  return command<ConsoleCell>("fetch_console_cell", { cellId });
+}
+
+export async function updateConsoleCell(
+  cellId: string,
+  source: string,
+  label?: string | null,
+) {
+  return command<ConsoleCell>("update_console_cell", {
+    cellId,
+    source,
+    label: label ?? null,
+    position: null,
+  });
+}
+
+export async function deleteConsoleCell(cellId: string) {
+  return command<JsonRecord>("delete_console_cell", { cellId });
+}
+
+export async function runConsoleCell(cellId: string) {
+  return command<ConsoleCell>("run_console_cell", { cellId });
 }

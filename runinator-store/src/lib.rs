@@ -33,8 +33,8 @@ pub mod prelude {
     pub use crate::interfaces::DatabaseImpl;
     pub use crate::reducer_store::ReducerStore;
     pub use crate::roles::{
-        ArchiveStore, AuthStore, AutomationStore, DefinitionStore, DispatchStore, FunctionStore,
-        NotificationStore, OrgStore, ReplicaStore, RunStore, ScheduleStore, SettingStore,
-        TaskRunStore,
+        ArchiveStore, AuthStore, AutomationStore, ConsoleStore, DefinitionStore, DispatchStore,
+        FunctionStore, NotificationStore, OrgStore, ReplicaStore, RunStore, ScheduleStore,
+        SettingStore, TaskRunStore,
     };
 }

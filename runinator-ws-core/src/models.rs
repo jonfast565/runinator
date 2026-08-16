@@ -3,6 +3,7 @@ use runinator_comm::{AgentDirectiveKind, AgentDirectiveRecord};
 use runinator_models::value::Value;
 use runinator_models::{
     bundles::{PackImportResult, ProviderBundle, SecretBundle},
+    console::{ConsoleCell, ConsoleSession, ConsoleSessionDetail},
     functions::{
         FunctionAlias, FunctionArtifact, FunctionCatalogEntry, FunctionInvocationTarget,
         FunctionPackage, FunctionPackageDetail, FunctionVersion,
@@ -154,6 +155,11 @@ pub enum ApiResponse {
     FunctionCatalog(Vec<FunctionCatalogEntry>),
     // boxed: it nests a whole export, and an unboxed variant would widen every ApiResponse.
     FunctionInvocationTarget(Box<FunctionInvocationTarget>),
+    ConsoleSession(ConsoleSession),
+    ConsoleSessionList(Vec<ConsoleSession>),
+    // boxed: it nests every cell and binding, and an unboxed variant would widen every ApiResponse.
+    ConsoleSessionDetail(Box<ConsoleSessionDetail>),
+    ConsoleCell(ConsoleCell),
 }
 
 #[derive(Debug, Deserialize)]

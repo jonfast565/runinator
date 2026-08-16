@@ -174,6 +174,8 @@ pub(crate) async fn assert_dialect_parity<T: ExecutionStateParityDb>(db: &T) {
     assert_agent_enrollment_lifecycle(db).await;
     assert_agent_directive_lifecycle(db).await;
     assert_function_lifecycle(db, id).await;
+    assert_console_lifecycle(db).await;
+    assert_unreferenced_artifacts(db).await;
 
     // the legacy run mapper reads a column named `trigger`, which is reserved in mysql and has to
     // be quoted per dialect; an unquoted build fails here rather than in production.
@@ -1293,6 +1295,170 @@ async fn assert_automation_records<T: DatabaseImpl>(db: &T, run_id: Uuid) {
 ///
 /// exercised on every engine because the identity key, the version-number assignment, and the
 /// alias upsert all lean on conflict handling that each dialect spells differently.
+// the console's scope lives in the database rather than a replica's memory, so every engine has to
+// agree about replacing a binding in place and about deleting a session's children.
+// what a retention sweep reads. the query is a left join rather than `NOT IN` because the engines
+// disagree about how `NOT IN` treats a null in the subquery, so this has to be asserted on each.
+async fn assert_unreferenced_artifacts<T: DatabaseImpl>(db: &T) {
+    use runinator_models::functions::FunctionArtifact;
+
+    let orphan = FunctionArtifact {
+        digest: format!("sha256:{}", "c".repeat(64)),
+        size_bytes: 10,
+        uri: "blob://runinator-function-artifacts/sha256/cc/cc/c.zip".into(),
+        media_type: "application/zip".into(),
+        created_at: Utc::now(),
+    };
+    db.upsert_function_artifact(&orphan).await.unwrap();
+
+    let unreferenced = db.fetch_unreferenced_function_artifacts().await.unwrap();
+    assert!(
+        unreferenced.iter().any(|item| item.digest == orphan.digest),
+        "an artifact no version references must be sweepable"
+    );
+    // and an artifact a version pins must never appear, or a sweep would delete live code.
+    assert!(
+        unreferenced
+            .iter()
+            .all(|item| item.digest != format!("sha256:{}", "a".repeat(64))),
+        "a referenced artifact must not be listed as unreferenced"
+    );
+}
+
+async fn assert_console_lifecycle<T: DatabaseImpl>(db: &T) {
+    use runinator_models::console::{ConsoleCellKind, ConsoleCellStatus, NewConsoleCell};
+
+    let session = db
+        .create_console_session(None, "scratch", None)
+        .await
+        .unwrap();
+    assert_eq!(session.name, "scratch");
+
+    // positions are assigned by append when the caller does not name one.
+    let first = db
+        .upsert_console_cell(
+            session.id,
+            None,
+            &NewConsoleCell {
+                source: "1 + 2".into(),
+                label: Some("sum".into()),
+                position: None,
+            },
+        )
+        .await
+        .unwrap();
+    let second = db
+        .upsert_console_cell(
+            session.id,
+            None,
+            &NewConsoleCell {
+                source: "cells.sum * 2".into(),
+                label: None,
+                position: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(first.position, 0);
+    assert_eq!(second.position, 1);
+    assert_eq!(first.status, ConsoleCellStatus::Idle);
+
+    let outcome = db
+        .record_console_cell_outcome(
+            first.id,
+            Some(ConsoleCellKind::Expression),
+            ConsoleCellStatus::Succeeded,
+            Some(&runinator_models::json!(3)),
+            None,
+            None,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(outcome.status, ConsoleCellStatus::Succeeded);
+    assert_eq!(outcome.result, Some(runinator_models::json!(3)));
+    assert_eq!(outcome.kind, Some(ConsoleCellKind::Expression));
+
+    // re-running a cell must replace its binding rather than add a second row for the same name.
+    db.upsert_console_binding(
+        session.id,
+        "sum",
+        Some(first.id),
+        &runinator_models::json!(3),
+    )
+    .await
+    .unwrap();
+    db.upsert_console_binding(
+        session.id,
+        "sum",
+        Some(first.id),
+        &runinator_models::json!(4),
+    )
+    .await
+    .unwrap();
+    let bindings = db.fetch_console_bindings(session.id).await.unwrap();
+    assert_eq!(bindings.len(), 1, "a name must bind once per session");
+    assert_eq!(bindings[0].value, runinator_models::json!(4));
+
+    // editing a cell clears its outcome: a result beside changed source is a stale answer shown as
+    // a current one.
+    let edited = db
+        .upsert_console_cell(
+            session.id,
+            Some(first.id),
+            &NewConsoleCell {
+                source: "1 + 40".into(),
+                label: Some("sum".into()),
+                position: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(edited.status, ConsoleCellStatus::Idle);
+    assert!(edited.result.is_none());
+    assert!(edited.kind.is_none());
+
+    // a scratch run is found from its run id, which is how a settled run is attributed back.
+    let run_id = Uuid::new_v4();
+    db.record_console_cell_outcome(
+        second.id,
+        Some(ConsoleCellKind::Workflow),
+        ConsoleCellStatus::Running,
+        None,
+        None,
+        Some(run_id),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        db.fetch_console_cell_for_run(run_id)
+            .await
+            .unwrap()
+            .map(|cell| cell.id),
+        Some(second.id)
+    );
+
+    // deleting a cell takes its binding with it.
+    assert!(db.delete_console_cell(first.id).await.unwrap());
+    assert!(
+        db.fetch_console_bindings(session.id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    // and deleting the session takes the rest, explicitly rather than by cascade.
+    assert!(db.delete_console_session(session.id).await.unwrap());
+    assert!(db.fetch_console_cells(session.id).await.unwrap().is_empty());
+    assert!(
+        db.fetch_console_session(session.id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(!db.delete_console_session(session.id).await.unwrap());
+}
+
 async fn assert_function_lifecycle<T: DatabaseImpl>(db: &T, workflow_id: Uuid) {
     use runinator_models::functions::{
         FunctionArtifact, NewFunctionExport, NewFunctionPackage, NewFunctionVersion,

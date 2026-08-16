@@ -20,6 +20,10 @@ use runinator_models::{
         AuthSession, Grant, LocalCredential, Team, User,
     },
     billing::{OrgQuota, OrgResourceGroup, UsageSample},
+    console::{
+        ConsoleBinding, ConsoleCell, ConsoleCellKind, ConsoleCellStatus, ConsoleSession,
+        NewConsoleCell,
+    },
     errors::SendableError,
     functions::{
         FunctionAdapterWorkflow, FunctionAlias, FunctionArtifact, FunctionCatalogEntry,
@@ -1057,6 +1061,7 @@ where
 mod archive;
 mod auth;
 mod automation;
+mod console;
 mod database_impl;
 mod definitions;
 mod dispatch;

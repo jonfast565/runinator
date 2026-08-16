@@ -21,6 +21,19 @@ export const navSections: NavSection[] = [
       },
       { tab: "Runs", label: "Runs", icon: "runs", searchPlaceholder: "Search runs" },
       { tab: "Providers", label: "Providers", icon: "box", searchPlaceholder: "Search providers" },
+      {
+        tab: "Functions",
+        label: "Functions",
+        icon: "box",
+        searchPlaceholder: "Search function packages",
+      },
+      {
+        // gated: a console cell can start a workflow run, so this is a privilege rather than a view.
+        tab: "Console",
+        label: "Console",
+        icon: "debug",
+        requires: "console:use",
+      },
       { tab: "Replicas", label: "Replicas", icon: "list", searchPlaceholder: "Search replicas" },
     ],
   },

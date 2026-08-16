@@ -413,6 +413,48 @@ pub async fn resolve_invocation_target<T: DatabaseImpl>(
     }))
 }
 
+/// how long an unreferenced artifact is kept before a sweep may remove it.
+///
+/// a grace period rather than an immediate delete: republishing identical bytes reuses the artifact,
+/// so an artifact that is unreferenced *right now* may be referenced again minutes later by a
+/// re-apply of the same pack. deleting it immediately would turn a cheap no-op upload into a real
+/// one, and would race a publish that has stored its bytes but not yet written its version row.
+pub const ARTIFACT_RETENTION_HOURS: i64 = 24;
+
+/// remove artifacts no version references and that are older than the retention window.
+///
+/// returns the digests removed. bytes are deleted through [`delete_artifact`], which refuses any
+/// artifact a version still pins — so a row that gained a reference between the scan and the delete
+/// is skipped rather than orphaning a live version.
+pub async fn sweep_unreferenced_artifacts<T: DatabaseImpl>(
+    db: &T,
+    blobs: &Arc<dyn BlobStore>,
+    retention_hours: i64,
+) -> Result<Vec<String>, SendableError> {
+    let cutoff = chrono::Utc::now() - chrono::Duration::hours(retention_hours.max(0));
+    let mut removed = Vec::new();
+
+    for artifact in db.fetch_unreferenced_function_artifacts().await? {
+        if artifact.created_at > cutoff {
+            continue;
+        }
+
+        match delete_artifact(db, blobs, &artifact.digest).await {
+            Ok(true) => removed.push(artifact.digest),
+            // refused because something referenced it after the scan, which is the outcome the
+            // guard exists for; not an error for the sweep.
+            Ok(false) => {}
+            Err(err) => {
+                log::warn!(
+                    "could not sweep function artifact {}: {err}",
+                    artifact.digest
+                );
+            }
+        }
+    }
+    Ok(removed)
+}
+
 /// the flattened catalog of every published export.
 pub async fn fetch_catalog<T: DatabaseImpl>(
     db: &T,

@@ -136,6 +136,15 @@ pub trait FunctionStore: Send + Sync + 'static {
         name: &str,
     ) -> impl Future<Output = Result<bool, SendableError>> + Send;
 
+    /// Artifacts no version references any more.
+    ///
+    /// Deleting a package leaves its artifacts behind, because they are addressed by content and a
+    /// *different* package may have published the same bytes. This is what a retention sweep reads
+    /// to find the ones nothing points at.
+    fn fetch_unreferenced_function_artifacts(
+        &self,
+    ) -> impl Future<Output = Result<Vec<FunctionArtifact>, SendableError>> + Send;
+
     /// The flattened view of every published export: what the catalog is built from and what an
     /// offline compile is handed.
     ///

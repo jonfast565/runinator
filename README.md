@@ -427,6 +427,40 @@ entirely. `Idempotency-Key` replays the run an earlier identical request started
 export. `GET /function_invocations/{run_id}` and `POST /function_invocations/{run_id}/cancel` read
 and cancel one.
 
+### In the command center
+
+**Functions** lists published packages and, for the selected one, its aliases, exports, and version
+history. Moving an alias is the one mutable act available there — publishing happens through
+`runinatorctl`, because a publish uploads bytes and the digest is computed client-side.
+
+**Console** is the notebook. Both tabs gate their controls on the caller's capabilities
+(`functions:manage`, `console:use`), which is UX only — the backend enforces both.
+
+### Functions in a pack
+
+A pack directory may hold function packages beside its `.wdl` files — each is a subdirectory with
+its own `runinator-function.json`. `runinatorctl workflows apply` discovers them, publishes them as
+part of the same apply, and imports them **before** the workflows, for the same reason secrets go
+first: a workflow in the pack may bind to one, and binding validation would reject it against a
+catalog that did not yet know the package.
+
+Artifacts are uploaded by digest *first*, and only the ones the server reports missing ride inside
+the pack zip. A pack that carried every artifact every time would push megabytes through the 10 MB
+request limit to re-send bytes the server already holds — and since the digest is computed
+client-side, asking is nearly free. Discovery is one level deep only: a package's own
+subdirectories are its code, and recursing would treat a vendored dependency that happened to carry
+a manifest as a second package to publish.
+
+### Retention
+
+Deleting a package leaves its artifacts behind, because they are addressed by content and a
+*different* package may have published the same bytes.
+`repository::functions::sweep_unreferenced_artifacts` removes the ones no version references and
+that are older than a 24-hour grace window. The grace period is deliberate: republishing identical
+bytes reuses the artifact, so something unreferenced right now may be referenced again minutes later
+by a re-apply — deleting immediately would turn a free no-op upload into a real one, and would race
+a publish that has stored its bytes but not yet written its version row.
+
 ### How a function executes
 
 A worker that picks up a packaged-function action stages the code before running it: it downloads
@@ -450,6 +484,36 @@ operator can repoint with `RUNINATOR_FUNCTION_IMAGE_PYTHON` without republishing
 
 Running a function needs a container runtime, which the Kubernetes worker pods do not have — they
 report `FUNC008` rather than failing obscurely. Use a host worker or the desktop agent.
+
+## The WDL Console
+
+A notebook of cells sharing one scope, for working out what a workflow should say.
+
+```
+POST /console/sessions                 # start a notebook
+POST /console/sessions/{id}/cells      # append a cell
+POST /console/cells/{id}/run           # run it
+```
+
+A cell is a fragment of the same WDL a workflow is written in, and it is answered one of two ways.
+A **pure** cell — an expression or a `compute` block — is evaluated in process and has already
+settled when the request returns. **Anything else** becomes a hidden scratch workflow and goes
+through the ordinary reducer path. Classification is conservative and the workflow fallback is
+unconditional: a cell wrongly treated as pure would run a provider action inside an HTTP handler,
+with no run to record it and no retry, timeout, or cancellation.
+
+Cells share a scope. A cell's result binds under its label (or `cell_<n>` if unlabelled) and a later
+cell reads it as `params.<name>`. `params` rather than a console-only root because a bare dotted
+path in WDL already means *node output* — `cells.load` would be a reference to a node called
+`cells`. It is still a namespace, so a cell labelled `config` binds to `params.config` and cannot
+shadow the real `config` root. The scope is also what a scratch run receives as its parameters, so a
+name means one thing however the cell ran.
+
+The scope lives in the database, not in a replica's memory: a session outlives any one request, and
+an in-process scope would give different answers depending on which replica served the cell.
+
+Editing a cell clears its previous result, and a failing cell drops its binding — in both cases
+because a stale value shown as a current one is worse than an absent one.
 
 ## Workflow Import
 

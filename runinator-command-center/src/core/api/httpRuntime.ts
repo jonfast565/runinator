@@ -485,6 +485,89 @@ const REGISTRY: Record<string, HttpDescriptor> = {
       return { run: body.run, nodes: body.nodes ?? [] };
     },
   },
+  // packaged functions.
+  list_function_packages: { method: "GET", path: () => "functions" },
+  fetch_function_package: {
+    method: "GET",
+    path: (args) => `functions/${escape(arg(args, "packageName"))}`,
+  },
+  fetch_function_catalog: { method: "GET", path: () => "functions/catalog" },
+  delete_function_package: {
+    method: "DELETE",
+    path: (args) => `functions/${escape(arg(args, "packageName"))}`,
+  },
+  set_function_alias: {
+    method: "POST",
+    path: (args) => `functions/${escape(arg(args, "packageName"))}/aliases`,
+    body: (args) => ({
+      alias: arg(args, "alias"),
+      version: args?.version ?? null,
+      from_alias: args?.fromAlias ?? null,
+    }),
+  },
+  delete_function_alias: {
+    method: "DELETE",
+    path: (args) =>
+      `functions/${escape(arg(args, "packageName"))}/aliases/${escape(arg(args, "alias"))}`,
+  },
+  invoke_function: {
+    method: "POST",
+    path: (args) =>
+      `functions/${escape(arg(args, "packageName"))}/${escape(arg(args, "exportName"))}/invocations`,
+    body: (args) => arg(args, "input"),
+  },
+
+  // the wdl console.
+  list_console_sessions: { method: "GET", path: () => "console/sessions" },
+  create_console_session: {
+    method: "POST",
+    path: () => "console/sessions",
+    body: (args) => ({ name: args?.name ?? null }),
+  },
+  fetch_console_session: {
+    method: "GET",
+    path: (args) => `console/sessions/${escape(arg(args, "sessionId"))}`,
+  },
+  rename_console_session: {
+    method: "PATCH",
+    path: (args) => `console/sessions/${escape(arg(args, "sessionId"))}`,
+    body: (args) => ({ name: arg(args, "name") }),
+  },
+  delete_console_session: {
+    method: "DELETE",
+    path: (args) => `console/sessions/${escape(arg(args, "sessionId"))}`,
+  },
+  create_console_cell: {
+    method: "POST",
+    path: (args) => `console/sessions/${escape(arg(args, "sessionId"))}/cells`,
+    body: (args) => ({
+      source: arg(args, "source"),
+      label: args?.label ?? null,
+      position: args?.position ?? null,
+    }),
+  },
+  fetch_console_cell: {
+    method: "GET",
+    path: (args) => `console/cells/${escape(arg(args, "cellId"))}`,
+  },
+  update_console_cell: {
+    method: "PATCH",
+    path: (args) => `console/cells/${escape(arg(args, "cellId"))}`,
+    body: (args) => ({
+      source: arg(args, "source"),
+      label: args?.label ?? null,
+      position: args?.position ?? null,
+    }),
+  },
+  delete_console_cell: {
+    method: "DELETE",
+    path: (args) => `console/cells/${escape(arg(args, "cellId"))}`,
+  },
+  run_console_cell: {
+    method: "POST",
+    path: (args) => `console/cells/${escape(arg(args, "cellId"))}/run`,
+  },
+
   fetch_resource_records: {
     method: "GET",
     path: (args) => String(arg(args, "endpoint")),

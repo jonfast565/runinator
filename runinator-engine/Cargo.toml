@@ -23,6 +23,7 @@ runinator-database = { path = "../runinator-database" }
 runinator-models = { path = "../runinator-models" }
 runinator-comm = { path = "../runinator-comm" }
 runinator-utilities = { path = "../runinator-utilities" }
+runinator-console = { path = "../runinator-console" }
 runinator-wdl = { path = "../runinator-wdl" }
 runinator-workflows = { path = "../runinator-workflows" }
 

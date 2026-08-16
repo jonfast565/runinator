@@ -69,3 +69,100 @@ fn pack_zip_round_trips() {
     assert!(contents.secrets.is_none());
     assert!(contents.pipelines.is_none());
 }
+
+#[test]
+fn a_pack_carries_functions_and_their_artifacts() {
+    use runinator_models::functions::{
+        FunctionRuntimeSpec, NewFunctionExport, NewFunctionPackage, NewFunctionVersion,
+    };
+
+    let workflows = WorkflowBundle {
+        workflows: vec![],
+        triggers: vec![],
+    };
+    let digest = format!("sha256:{}", "a".repeat(64));
+    let publish = NewFunctionVersion {
+        package: NewFunctionPackage {
+            name: "image-tools".into(),
+            namespace: None,
+            description: None,
+            org_id: None,
+        },
+        artifact_digest: digest.clone(),
+        manifest: Default::default(),
+        runtime: FunctionRuntimeSpec::new("python3.13"),
+        exports: vec![NewFunctionExport {
+            name: "resize".into(),
+            handler: "src.images.resize".into(),
+            description: None,
+            input: vec![],
+            output: vec![],
+            limits: Default::default(),
+        }],
+        alias: Some("latest".into()),
+    };
+
+    let zipped = PackBuilder::new(&workflows)
+        .functions(vec![publish.clone()])
+        .function_artifact(digest.clone(), b"archive bytes".to_vec())
+        .build()
+        .expect("zip");
+    let contents = read_pack_zip(&zipped).expect("unzip");
+
+    assert_eq!(contents.functions, vec![publish]);
+    // the digest is recovered from the entry name, so the reader never has to trust a manifest to
+    // tell it what bytes it is holding.
+    assert_eq!(
+        contents.function_artifacts.get(&digest).map(Vec::as_slice),
+        Some(b"archive bytes".as_slice())
+    );
+}
+
+#[test]
+fn a_pack_without_functions_reads_back_empty_rather_than_failing() {
+    let workflows = WorkflowBundle {
+        workflows: vec![],
+        triggers: vec![],
+    };
+    // every existing pack in the wild has no `functions.json`, so absence has to be ordinary.
+    let contents =
+        read_pack_zip(&build_pack_zip(&workflows, None, None).expect("zip")).expect("unzip");
+    assert!(contents.functions.is_empty());
+    assert!(contents.function_artifacts.is_empty());
+}
+
+#[test]
+fn a_pack_may_carry_a_publish_without_its_artifact() {
+    use runinator_models::functions::{
+        FunctionRuntimeSpec, NewFunctionPackage, NewFunctionVersion,
+    };
+
+    let workflows = WorkflowBundle {
+        workflows: vec![],
+        triggers: vec![],
+    };
+    let publish = NewFunctionVersion {
+        package: NewFunctionPackage {
+            name: "image-tools".into(),
+            namespace: None,
+            description: None,
+            org_id: None,
+        },
+        artifact_digest: format!("sha256:{}", "b".repeat(64)),
+        manifest: Default::default(),
+        runtime: FunctionRuntimeSpec::new("python3.13"),
+        exports: vec![],
+        alias: None,
+    };
+
+    // this is the normal case on a re-apply: the client asked first, the server already held the
+    // bytes, so only the publish rides along. carrying every artifact every time would push
+    // megabytes through the request limit to re-send what the server has.
+    let zipped = PackBuilder::new(&workflows)
+        .functions(vec![publish])
+        .build()
+        .expect("zip");
+    let contents = read_pack_zip(&zipped).expect("unzip");
+    assert_eq!(contents.functions.len(), 1);
+    assert!(contents.function_artifacts.is_empty());
+}

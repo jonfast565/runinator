@@ -11,6 +11,31 @@ export {
   isJsonRecord,
 } from "../json";
 
+export type {
+  FunctionAlias,
+  FunctionArtifact,
+  FunctionCatalogEntry,
+  FunctionExport,
+  FunctionPackage,
+  FunctionPackageDetail,
+  FunctionParameter,
+  FunctionResourceLimits,
+  FunctionResult,
+  FunctionRuntimeSpec,
+  FunctionVersion,
+} from "./function";
+export { functionCallPath, qualifiedPackageName, shortDigest } from "./function";
+export type {
+  ConsoleBinding,
+  ConsoleCell,
+  ConsoleCellKind,
+  ConsoleCellStatus,
+  ConsoleSession,
+  ConsoleSessionDetail,
+  NewConsoleCell,
+} from "./console";
+export { CELL_SCOPE, cellBindingName, cellReference, isCellPending } from "./console";
+
 export type { PermissionLevel, PrincipalType } from "./auth/permission";
 export type { Capability } from "./auth/capability";
 export { ALL_CAPABILITIES } from "./auth/capability";

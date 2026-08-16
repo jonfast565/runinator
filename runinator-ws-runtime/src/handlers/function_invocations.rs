@@ -23,6 +23,7 @@ use axum::{
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::{
     auth::{AuthContext, Permission},
+    capabilities::Capability,
     functions::{DEFAULT_ALIAS, FunctionVersionRef},
     replicas::{TriggerActorType, TriggerSourceKind, WorkflowRunProvenance},
     value::Value,
@@ -69,6 +70,12 @@ pub async fn create_function_invocation<T: DatabaseImpl>(
     Query(query): Query<InvocationQuery>,
     Json(input): Json<Value>,
 ) -> (StatusCode, Json<ApiResponse>) {
+    // publishing and calling are different privileges: a service account that runs a function
+    // should not be able to replace the code it runs. the per-workflow `Run` grant below still
+    // applies — this is the coarse gate, not a replacement for it.
+    if let Err(reply) = ctx.require_capability(Capability::FunctionsInvoke) {
+        return reply;
+    }
     let (namespace, name) = split_qualified(&package);
     let Some(detail) = (match repository::functions::fetch_package_detail(
         db.as_ref(),

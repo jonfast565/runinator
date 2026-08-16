@@ -48,6 +48,36 @@ pub async fn post_json(
     Ok(response.json::<Value>().await?)
 }
 
+/// PATCH with a json body.
+///
+/// added alongside `delete` when the console arrived: both verbs were previously spelled out at each
+/// call site, and a proxy command is not the place to re-derive request plumbing.
+pub async fn patch_json(
+    state: &CommandCenterState,
+    path: &str,
+    body: &Value,
+) -> CommandResult<Value> {
+    let url = build_state_url(state, path).await?;
+    let response = state
+        .client
+        .read()
+        .await
+        .patch(url.clone())
+        .json(body)
+        .send()
+        .await?;
+    let response = handle_response(url, response).await?;
+    Ok(response.json::<Value>().await?)
+}
+
+/// DELETE, returning whatever json the service answered with.
+pub async fn delete(state: &CommandCenterState, path: &str) -> CommandResult<Value> {
+    let url = build_state_url(state, path).await?;
+    let response = state.client.read().await.delete(url.clone()).send().await?;
+    let response = handle_response(url, response).await?;
+    Ok(response.json::<Value>().await?)
+}
+
 pub async fn build_state_url(state: &CommandCenterState, path: &str) -> CommandResult<Url> {
     let base = state
         .service_url

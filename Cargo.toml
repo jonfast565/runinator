@@ -27,6 +27,7 @@ members = [
     "runinator-desktop-agent",
     "runinator-ctl",
     "runinator-comm",
+    "runinator-console",
     "runinator-api",
     "runinator-plugin",
     "runinator-provider-ai",

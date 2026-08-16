@@ -68,6 +68,8 @@ pub struct PackImportParams {
 pub async fn import_pack<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
+    // a pack may carry function archives, whose bytes go to the object store.
+    Extension(blobs): Extension<Arc<dyn runinator_blob_core::BlobStore>>,
     Extension(ctx): Extension<AuthContext>,
     Query(params): Query<PackImportParams>,
     headers: HeaderMap,
@@ -131,6 +133,46 @@ pub async fn import_pack<T: DatabaseImpl>(
             .map(|bundle| bundle.secrets.len())
             .unwrap_or(0),
     );
+    // packaged functions land before workflows, for the same reason secrets do: a workflow in this
+    // pack may bind to one, and import-time binding validation would reject it against a catalog
+    // that did not yet know the package.
+    //
+    // artifacts first, then the publishes that reference them — a publish naming bytes the server
+    // does not hold is refused, which is what keeps a half-imported pack from leaving versions
+    // nothing can run.
+    for (digest, bytes) in &contents.function_artifacts {
+        if let Err(err) = repository::functions::put_artifact_if_absent(
+            db.as_ref(),
+            &blobs,
+            digest,
+            bytes.clone(),
+        )
+        .await
+        {
+            return api_error(format!("pack artifact {digest} could not be stored: {err}"));
+        }
+    }
+    let mut published = Vec::with_capacity(contents.functions.len());
+    for request in &contents.functions {
+        let mut request = request.clone();
+        // the owning org is the importer's, never the pack's: a pack that named one would be
+        // publishing into a tenant it may not belong to.
+        request.package.org_id = import_org;
+
+        match repository::functions::publish_version(db.as_ref(), &request).await {
+            Ok(version) => published.push(version),
+            Err(err) => {
+                return api_error(format!(
+                    "pack function '{}' could not be published: {err}",
+                    request.package.name
+                ));
+            }
+        }
+    }
+    if !published.is_empty() {
+        log::info!("Imported {} function versions from pack", published.len());
+    }
+
     // apply config/secrets before workflows so a pack's own `config.*` values are present in the
     // store when its workflows are type-checked on import.
     let secrets = match &secret_bundle {

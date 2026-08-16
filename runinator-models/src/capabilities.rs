@@ -64,6 +64,16 @@ pub enum Capability {
     /// publish, promote, and delete packaged function versions.
     #[serde(rename = "functions:manage")]
     FunctionsManage,
+    /// invoke a packaged function over http.
+    ///
+    /// separate from `functions:manage` because publishing and calling are different privileges: a
+    /// service account that runs a function should not be able to replace the code it runs.
+    #[serde(rename = "functions:invoke")]
+    FunctionsInvoke,
+    /// use the wdl console. a console cell can start a workflow run, so this is a privilege rather
+    /// than a view: it is the difference between reading what the platform does and making it act.
+    #[serde(rename = "console:use")]
+    ConsoleUse,
 
     // ---- organization capabilities (admin of the caller's active org, or platform admin) ----
     /// manage membership and roles within the active organization.
@@ -94,6 +104,8 @@ impl Capability {
         Capability::NotificationsManage,
         Capability::SchedulesManage,
         Capability::FunctionsManage,
+        Capability::FunctionsInvoke,
+        Capability::ConsoleUse,
         Capability::OrgMembersManage,
         Capability::OrgNodesScale,
     ];
@@ -122,6 +134,8 @@ impl Capability {
             Capability::NotificationsManage => "notifications:manage",
             Capability::SchedulesManage => "schedules:manage",
             Capability::FunctionsManage => "functions:manage",
+            Capability::FunctionsInvoke => "functions:invoke",
+            Capability::ConsoleUse => "console:use",
             Capability::OrgMembersManage => "org:members:manage",
             Capability::OrgNodesScale => "org:nodes:scale",
         }

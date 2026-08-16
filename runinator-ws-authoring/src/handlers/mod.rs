@@ -1,4 +1,5 @@
 pub mod catalog;
+pub mod console;
 pub mod credentials;
 pub mod functions;
 pub mod packs;

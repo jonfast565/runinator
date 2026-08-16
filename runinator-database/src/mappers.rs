@@ -11,6 +11,7 @@ use runinator_models::{
         LocalCredential, Permission, PrincipalKind, PrincipalType, ResourceType, Team, User,
     },
     billing::{OrgQuota, OrgResourceGroup, UsageSample},
+    console::{ConsoleBinding, ConsoleCell, ConsoleCellKind, ConsoleCellStatus, ConsoleSession},
     errors::SendableError,
     functions::{
         FunctionAdapterWorkflow, FunctionAlias, FunctionArtifact, FunctionCatalogEntry,
@@ -83,6 +84,8 @@ macro_rules! row_mapper {
 
 mod core;
 pub use core::*;
+mod console;
+pub use console::*;
 mod functions;
 pub use functions::*;
 mod identity;

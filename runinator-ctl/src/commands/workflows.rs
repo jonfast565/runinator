@@ -213,15 +213,40 @@ async fn apply_workflow_source(
             functions: client.fetch_function_catalog().await.unwrap_or_default(),
         };
         let bundle = pack::load_workflow_bundle_with_catalog(file, &catalog)?;
+        // function packages the pack carries, published as part of the same apply. discovered from
+        // the source tree rather than declared in the manifest: the manifest lists what to compile,
+        // and a package directory is already self-identifying by its own manifest file.
+        let function_sources = runinator_pack::functions::discover_function_sources(file)?;
         // any settings (`settings.wdls`/`.json`) always ride in the same compiled pack zip.
         let settings = pack::load_pack_settings(file)?;
         // any pipelines (`.wdlp` files) ride along too; the backend upserts them and materializes
         // their managed chained triggers after the workflows land.
         let pipelines = pack::load_pack_pipelines(file)?;
         // `workflows apply` is an explicit re-apply: update existing items in place.
-        let result = client
-            .import_pack(&bundle, settings.as_ref(), pipelines.as_ref(), true)
-            .await?;
+        let result = if function_sources.is_empty() {
+            client
+                .import_pack(&bundle, settings.as_ref(), pipelines.as_ref(), true)
+                .await?
+        } else {
+            let functions = function_sources
+                .iter()
+                .map(|source| source.publish_request())
+                .collect();
+            let artifacts = function_sources
+                .iter()
+                .map(|source| (source.archive.digest.clone(), source.archive.bytes.clone()))
+                .collect();
+            client
+                .import_pack_with_functions(
+                    &bundle,
+                    settings.as_ref(),
+                    pipelines.as_ref(),
+                    functions,
+                    artifacts,
+                    true,
+                )
+                .await?
+        };
         let summary = WorkflowApplySummary {
             message: format!(
                 "imported {} workflows, {} triggers, {} settings, and {} pipelines",

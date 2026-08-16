@@ -7371,6 +7371,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "runinator-console"
+version = "0.2.367"
+dependencies = [
+ "runinator-models",
+ "runinator-wdl",
+ "uuid",
+]
+
+[[package]]
 name = "runinator-ctl"
 version = "0.2.367"
 dependencies = [
@@ -7473,6 +7482,7 @@ dependencies = [
  "runinator-blob-core",
  "runinator-broker-core",
  "runinator-comm",
+ "runinator-console",
  "runinator-database",
  "runinator-models",
  "runinator-reducer",
@@ -8000,6 +8010,7 @@ dependencies = [
  "runinator-engine",
  "runinator-models",
  "runinator-pack",
+ "runinator-provider-catalog",
  "runinator-provisioner",
  "runinator-reducer",
  "runinator-utilities",

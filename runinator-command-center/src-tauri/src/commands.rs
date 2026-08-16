@@ -20,7 +20,9 @@ use tauri::{AppHandle, State};
 use uuid::Uuid;
 
 use crate::{
-    client::{build_state_url, get_json, handle_response, post_empty, post_json},
+    client::{
+        build_state_url, delete, get_json, handle_response, patch_json, post_empty, post_json,
+    },
     discovery::start_discovery_thread,
     error::{CommandError, CommandResult},
     state::CommandCenterState,
@@ -82,3 +84,5 @@ mod organizations;
 pub use organizations::*;
 mod interactions;
 pub use interactions::*;
+mod functions;
+pub use functions::*;

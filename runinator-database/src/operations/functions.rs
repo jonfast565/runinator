@@ -118,6 +118,24 @@ where
         Ok(result.affected() > 0)
     }
 
+    async fn fetch_unreferenced_function_artifacts(
+        &self,
+    ) -> Result<Vec<FunctionArtifact>, SendableError> {
+        // a left join rather than `NOT IN`: the three engines disagree about how `NOT IN` treats a
+        // null in the subquery, and a null `artifact_digest` would make the whole set empty on one
+        // of them — which would silently disable the sweep rather than fail it.
+        let rows = sqlx::query(&self.render(&format!(
+            "SELECT a.digest, a.size_bytes, a.uri, a.media_type, a.created_at \
+             FROM function_artifacts a \
+             LEFT JOIN function_versions v ON v.artifact_digest = a.digest \
+             WHERE v.id IS NULL ORDER BY a.created_at ASC"
+        )))
+        .fetch_all(self.pool())
+        .await?;
+        let _ = FUNCTION_ARTIFACT_COLUMNS;
+        Ok(rows.iter().map(mappers::row_to_function_artifact).collect())
+    }
+
     async fn publish_function_version(
         &self,
         request: &NewFunctionVersion,

@@ -8,6 +8,8 @@ export type AppTab =
   | "Workflows"
   | "Runs"
   | "Providers"
+  | "Functions"
+  | "Console"
   | "Replicas"
   | "Approvals"
   | "Artifacts"

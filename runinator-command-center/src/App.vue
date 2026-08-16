@@ -19,6 +19,8 @@
     <NotificationsView v-if="app.activeTab === 'Notifications'" />
     <EventsView v-if="app.activeTab === 'Events'" />
     <ExternalItemsView v-if="app.activeTab === 'ExternalItems'" />
+    <FunctionsView v-if="app.activeTab === 'Functions'" />
+    <ConsoleView v-if="app.activeTab === 'Console'" />
     <GatesView v-if="app.activeTab === 'Gates'" />
     <SchedulesView v-if="app.activeTab === 'Schedules'" />
     <SecretsView v-if="app.activeTab === 'Configs'" setting-kind="config" />
@@ -54,6 +56,8 @@ import { useCatalogMetadataStore } from "./ui/adapters/pinia/catalogMetadata";
 import { usePermissionsStore } from "./ui/adapters/pinia/permissions";
 import { useAdminSettingsStore } from "./ui/adapters/pinia/adminSettings";
 import { useDisplayPreferencesStore } from "./ui/adapters/pinia/displayPreferences";
+import { useConsoleStore } from "./ui/adapters/pinia/console";
+import { useFunctionsStore } from "./ui/adapters/pinia/functions";
 import { useGatesStore } from "./ui/adapters/pinia/gates";
 
 const RunsView = defineAsyncComponent(() => import("./ui/views/RunsView.vue"));
@@ -69,6 +73,8 @@ const NotificationsView = defineAsyncComponent(() => import("./ui/views/Notifica
 const SchedulesView = defineAsyncComponent(() => import("./ui/views/SchedulesView.vue"));
 const EventsView = defineAsyncComponent(() => import("./ui/views/EventsView.vue"));
 const ExternalItemsView = defineAsyncComponent(() => import("./ui/views/ExternalItemsView.vue"));
+const FunctionsView = defineAsyncComponent(() => import("./ui/views/FunctionsView.vue"));
+const ConsoleView = defineAsyncComponent(() => import("./ui/views/ConsoleView.vue"));
 const GatesView = defineAsyncComponent(() => import("./ui/views/GatesView.vue"));
 const SecretsView = defineAsyncComponent(() => import("./ui/views/SecretsView.vue"));
 const PermissionsView = defineAsyncComponent(() => import("./ui/views/PermissionsView.vue"));
@@ -93,6 +99,8 @@ const providers = useProvidersStore();
 const catalogMetadata = useCatalogMetadataStore();
 const permissions = usePermissionsStore();
 const adminSettings = useAdminSettingsStore();
+const consoleStore = useConsoleStore();
+const functions = useFunctionsStore();
 const gates = useGatesStore();
 // initialize early so the theme data-theme attribute is set before first render.
 useDisplayPreferencesStore();
@@ -308,6 +316,8 @@ function clearBackendState() {
   notifications.clearNotifications();
   secrets.clearSecrets();
   gates.clearGates();
+  functions.clearFunctions();
+  consoleStore.clearConsole();
   adminSettings.clear();
   providers.clearProviders();
   permissions.clearPermissions();
@@ -323,6 +333,8 @@ function clearTenantScopedState() {
   secrets.clearSecrets();
   permissions.clearPermissions();
   gates.clearGates();
+  functions.clearFunctions();
+  consoleStore.clearConsole();
   providers.clearProviders();
   app.clearReplicaState();
 }
