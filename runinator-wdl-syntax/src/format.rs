@@ -1484,6 +1484,7 @@ fn format_expr_at(expr: &Expr, parent: ExprPrec) -> String {
             args,
             named,
             method,
+            policy,
         } => {
             // re-sugar `at(base, key)` into `base.key` / `base[index]` access syntax.
             let rendered = if name == "at"
@@ -1513,6 +1514,11 @@ fn format_expr_at(expr: &Expr, parent: ExprPrec) -> String {
                         .map(|(key, value)| format!("{key}: {}", format_expr(value))),
                 );
                 format!("{name}({})", rendered.join(", "))
+            };
+            // the call-site policy re-renders as the `with { … }` postfix it was written as.
+            let rendered = match policy {
+                Some(policy) => format!("{rendered} with {}", format_expr(policy)),
+                None => rendered,
             };
             (ExprPrec::Primary, rendered)
         }

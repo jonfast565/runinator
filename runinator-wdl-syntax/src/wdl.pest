@@ -586,8 +586,18 @@ neg_expr      = { "-" ~ unary_expr }
 //     is how a field- or index-held closure is called: `(obj.f)(x)`, `fns[0](x)`. a bare `name(x)`
 //     is still a `lib_call` primary, so this only kicks in after a parenthesized/indexed/field value.
 postfix_expr  = { primary ~ access* }
-access        = { ("." ~ ident ~ "(" ~ (call_arg ~ ("," ~ call_arg)*)? ~ ")") | ("." ~ path_seg) | ("[" ~ expr ~ "]") | apply_access }
+access        = { ("." ~ ident ~ "(" ~ (call_arg ~ ("," ~ call_arg)*)? ~ ")" ~ call_policy?) | ("." ~ path_seg) | ("[" ~ expr ~ "]") | apply_access }
 apply_access  = { "(" ~ (call_arg ~ ("," ~ call_arg)*)? ~ ")" }
+
+// per-call overrides for the enclosing node's policy, e.g.
+// `github.deploy(ref: "main") with { timeout: 30s, retry: { max_attempts: 3 } }`.
+//
+// this attaches to *call syntax only*, never to an arbitrary expression. `with` already introduces
+// an object in three statement positions (`trigger cron <expr> with { … }`, `trigger on_success
+// workflow <expr> with { … }`, and `notify … with { … }`), and an expression-level postfix would
+// greedily swallow those — a cron trigger's options would silently become a policy on its schedule
+// string. requiring a preceding call is what keeps the two unambiguous.
+call_policy   = { "with" ~ object }
 
 primary = {
     paren_expr
@@ -617,7 +627,7 @@ func_call  = { func_name ~ "(" ~ expr ~ ")" }
 func_name  = { "string" | "json" }
 // call arguments are positional expressions or trailing `name: value` keyword args. `named_arg`
 // is tried first; a bare positional expression (even a path or ternary) backtracks cleanly.
-lib_call   = { !(func_name ~ "(") ~ ident ~ "(" ~ (call_arg ~ ("," ~ call_arg)*)? ~ ")" }
+lib_call   = { !(func_name ~ "(") ~ ident ~ "(" ~ (call_arg ~ ("," ~ call_arg)*)? ~ ")" ~ call_policy? }
 call_arg   = { named_arg | expr }
 named_arg  = { ident ~ ":" ~ expr }
 

@@ -610,3 +610,71 @@ fn a_scaffolded_interrupt_region_survives_the_save_round_trip() {
         "the region must still end at a resume"
     );
 }
+
+#[test]
+fn a_call_site_policy_parses_and_survives_formatting() {
+    // the `with { … }` postfix on a call inside a `do` block: per-call overrides of the node policy.
+    // this pins the syntax contract — parse and re-render. carrying the policy through lowering
+    // into the compiled graph is the invocation-ir lowering's job, not the grammar's.
+    let src = r#"
+        workflow "Policy" v1 {
+            node result <- do {
+                return std.strings.upper("hi") with { timeout: 30s }
+            }
+        }
+    "#;
+    let formatted = crate::format_str(src).expect("format");
+    assert!(
+        formatted.contains("with {"),
+        "policy postfix lost:\n{formatted}"
+    );
+    // and it is stable: formatting the formatted source is a fixed point.
+    let again = crate::format_str(&formatted).expect("reformat");
+    assert_eq!(formatted, again, "formatting is not idempotent");
+}
+
+#[test]
+fn a_call_site_policy_does_not_swallow_a_cron_triggers_options() {
+    // `with` already introduces an object after a trigger's schedule expression. the policy postfix
+    // attaches to call syntax only, so a schedule string keeps its own `with`.
+    let definition = compile(
+        r#"
+        workflow "Scheduled" v1 {
+            trigger cron "0 * * * *" with { tz: "UTC" }
+            node go <- console.run(command: "echo hi")
+        }
+    "#,
+    );
+    let triggers = definition
+        .definition
+        .metadata
+        .get("triggers")
+        .and_then(runinator_models::value::Value::as_array)
+        .expect("triggers");
+    assert_eq!(triggers.len(), 1, "trigger lost: {triggers:?}");
+    // the `with` object belongs to the trigger, wherever the lowerer files it.
+    let rendered = format!("{:?}", triggers[0]);
+    assert!(
+        rendered.contains("UTC"),
+        "the trigger's own `with` object was captured elsewhere: {rendered}"
+    );
+}
+
+#[test]
+fn a_notify_policys_with_object_is_still_its_own() {
+    let definition = compile(
+        r#"
+        workflow "Notified" v1 {
+            notify on failure -> slack "ops" with { channel: "alerts" }
+            node go <- console.run(command: "echo hi")
+        }
+    "#,
+    );
+    let notifications = definition
+        .definition
+        .metadata
+        .get("notifications")
+        .and_then(runinator_models::value::Value::as_array)
+        .expect("notifications");
+    assert_eq!(notifications.len(), 1);
+}

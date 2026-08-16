@@ -1489,10 +1489,12 @@ fn parse_lib_call(pair: Pair<Rule>) -> Result<Expr, WdlError> {
     let mut name = String::new();
     let mut args = Vec::new();
     let mut named = Vec::new();
+    let mut policy = None;
     for inner in pair.into_inner() {
         match inner.as_rule() {
             Rule::ident => name = inner.as_str().to_string(),
             Rule::call_arg => parse_call_arg(inner, &mut args, &mut named)?,
+            Rule::call_policy => policy = Some(Box::new(parse_call_policy(inner)?)),
             _ => {}
         }
     }
@@ -1503,6 +1505,7 @@ fn parse_lib_call(pair: Pair<Rule>) -> Result<Expr, WdlError> {
             args,
             named,
             method: false,
+            policy,
         },
         span,
     ))
@@ -3073,8 +3076,13 @@ fn apply_access(base: Expr, access: Pair<Rule>) -> Result<Expr, WdlError> {
             let name = first.as_str().to_string();
             let mut args = vec![base];
             let mut named = Vec::new();
-            for arg in parts.filter(|p| p.as_rule() == Rule::call_arg) {
-                parse_call_arg(arg, &mut args, &mut named)?;
+            let mut policy = None;
+            for part in parts {
+                match part.as_rule() {
+                    Rule::call_arg => parse_call_arg(part, &mut args, &mut named)?,
+                    Rule::call_policy => policy = Some(Box::new(parse_call_policy(part)?)),
+                    _ => {}
+                }
             }
             // a fluent `recv.method(...)` call: exempt from std-qualification (the receiver carries
             // any namespace), distinguished from a prefix call by `method: true`.
@@ -3084,6 +3092,7 @@ fn apply_access(base: Expr, access: Pair<Rule>) -> Result<Expr, WdlError> {
                     args,
                     named,
                     method: true,
+                    policy,
                 },
                 span,
             ))
@@ -3149,6 +3158,7 @@ fn index_access(base: Expr, key: Expr, span: Span) -> Expr {
             args: vec![base, key],
             named: Vec::new(),
             method: true,
+            policy: None,
         },
         span,
     )
@@ -3311,6 +3321,16 @@ fn parse_path(pair: Pair<Rule>) -> Result<Expr, WdlError> {
         return Err(WdlError::syntax(span, "empty path"));
     }
     Ok(Expr::new(ExprKind::Path(segs), span))
+}
+
+// a `with { … }` call policy is just its object; the surface is kept as the authored expression so
+// it round-trips, and lowering is what reads the recognized keys out of it.
+fn parse_call_policy(pair: Pair<Rule>) -> Result<Expr, WdlError> {
+    let object = pair
+        .into_inner()
+        .find(|inner| inner.as_rule() == Rule::object)
+        .ok_or_else(|| WdlError::lower("call policy must be an object"))?;
+    parse_object(object)
 }
 
 fn parse_object(pair: Pair<Rule>) -> Result<Expr, WdlError> {

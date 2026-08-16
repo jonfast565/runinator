@@ -487,6 +487,7 @@ fn resolve_expr(expr: &mut Expr, scope: &Scope) -> Result<(), WdlError> {
             args,
             named,
             method,
+            policy,
         } => {
             // try to rewrite a namespaced method call (`std.module.leaf(..)` / `alias.leaf(..)`)
             // into a bare call; otherwise enforce the std-qualification rule on prefix calls.
@@ -504,6 +505,11 @@ fn resolve_expr(expr: &mut Expr, scope: &Scope) -> Result<(), WdlError> {
             }
             for (_, value) in named.iter_mut() {
                 resolve_expr(value, scope)?;
+            }
+            // the policy object holds ordinary expressions (an idempotency key is usually a ref),
+            // so it resolves like any other operand.
+            if let Some(policy) = policy {
+                resolve_expr(policy, scope)?;
             }
         }
         ExprKind::Lambda { body, .. } => resolve_expr(body, scope)?,

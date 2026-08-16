@@ -90,6 +90,11 @@ pub enum ExprKind {
         args: Vec<Expr>,
         named: Vec<(String, Expr)>,
         method: bool,
+        /// a `with { … }` postfix overriding the enclosing node's policy for this call alone.
+        ///
+        /// held as the authored object expression rather than a parsed policy so the surface can
+        /// round-trip: lowering is what turns it into a `CallPolicy`.
+        policy: Option<Box<Expr>>,
     },
     /// an anonymous function `params => body`, only valid inside `do { }` as the argument to a
     /// higher-order library call (`map`, `filter`, `reduce`, ...).
