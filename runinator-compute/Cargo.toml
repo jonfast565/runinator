@@ -11,3 +11,8 @@ regex = "1"
 serde = { version = "1", features = ["derive"] }
 thiserror = "2.0.18"
 uuid = { version = "1.18", features = ["serde", "v4", "v7"] }
+
+[dev-dependencies]
+# test-only: the serialization round-trip between a yield and a resume is the property the vm's
+# resumability rests on, so it is asserted against real json rather than a clone.
+serde_json = "1"

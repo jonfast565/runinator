@@ -18,6 +18,7 @@ mod errors;
 mod expressions;
 mod functions;
 mod intrinsic_typing;
+mod vm;
 
 /// the declarative-condition wire keys, shared with the graph layer's parameter parsers and type
 /// checker so the two cannot spell an operator differently.
@@ -45,6 +46,9 @@ pub use expressions::{
 };
 pub use functions::{FunctionTable, RuntimeFunction, intrinsic_catalog};
 pub use intrinsic_typing::intrinsic_result_type;
+pub use vm::{
+    MAX_FRAME_DEPTH, MAX_INSTRUCTIONS_PER_STEP, VmEnv, evaluate_pure, resume, start, step,
+};
 
 #[cfg(test)]
 mod compute_tests;

@@ -230,6 +230,15 @@ pub struct InvocationContinuation {
     /// replays them instead of observing the host a second time.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub recorded: Vec<RecordedLocal>,
+    /// closures built during this run.
+    ///
+    /// a closure has to be a *value* — it sits on the operand stack and is passed to `map` — but a
+    /// program is not a `Value`. so the closure lives here, typed, and the stack carries a handle
+    /// (`{"$closure": <index>}`) into this table. that keeps the body a real `InvocationProgram`
+    /// instead of json that would have to be re-parsed on every application, which is what the
+    /// evaluator this replaces did.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub closures: Vec<ClosureCell>,
     /// how many calls this invocation has made, which is what names the next one.
     #[serde(default)]
     pub call_sequence: i64,
@@ -242,6 +251,7 @@ impl InvocationContinuation {
             version: INVOCATION_IR_VERSION,
             frames: vec![InvocationFrame::entry()],
             recorded: Vec::new(),
+            closures: Vec::new(),
             call_sequence: 0,
         }
     }
@@ -258,6 +268,13 @@ pub struct InvocationFrame {
     /// which program this frame runs: the module entry, or a named function.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub function: Option<String>,
+    /// an inline program this frame runs instead of a module function — a closure body.
+    ///
+    /// a closure is not addressable by name, so a frame running one has to carry it. it is stored
+    /// rather than re-derived because the continuation must be resumable in a process that never
+    /// saw the closure being built.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<InvocationProgram>,
     /// the next instruction to execute.
     pub ip: usize,
     /// the operand stack.
@@ -276,6 +293,7 @@ impl InvocationFrame {
     pub fn entry() -> Self {
         Self {
             function: None,
+            body: None,
             ip: 0,
             stack: Vec::new(),
             locals: Vec::new(),
@@ -287,6 +305,19 @@ impl InvocationFrame {
     pub fn for_function(name: impl Into<String>, locals: Vec<(String, Value)>) -> Self {
         Self {
             function: Some(name.into()),
+            body: None,
+            ip: 0,
+            stack: Vec::new(),
+            locals,
+            awaiting: false,
+        }
+    }
+
+    /// a frame for an applied closure, carrying the body it runs.
+    pub fn for_closure(body: InvocationProgram, locals: Vec<(String, Value)>) -> Self {
+        Self {
+            function: None,
+            body: Some(body),
             ip: 0,
             stack: Vec::new(),
             locals,
@@ -301,4 +332,35 @@ pub struct RecordedLocal {
     pub sequence: i64,
     pub name: String,
     pub value: Value,
+}
+
+/// one closure: its parameters, its body, and the locals it captured where it was built.
+///
+/// capture is by value at construction, which is what makes it lexical — the closure sees the
+/// bindings visible where it was written, not whatever happens to be in scope where it is applied.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ClosureCell {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub params: Vec<String>,
+    pub body: InvocationProgram,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub captured: Vec<(String, Value)>,
+}
+
+/// the key a closure handle is stored under on the operand stack.
+pub const CLOSURE_HANDLE_KEY: &str = "$closure";
+
+/// build the operand-stack handle for a closure at `index`.
+pub fn closure_handle(index: usize) -> Value {
+    let mut map = crate::value::Map::new();
+    map.insert(CLOSURE_HANDLE_KEY.to_string(), Value::from(index as i64));
+    Value::Object(map)
+}
+
+/// read a closure handle's index back out of a value.
+pub fn closure_handle_index(value: &Value) -> Option<usize> {
+    value
+        .get(CLOSURE_HANDLE_KEY)
+        .and_then(|inner| inner.as_i64())
+        .and_then(|index| usize::try_from(index).ok())
 }
