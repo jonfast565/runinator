@@ -532,4 +532,32 @@ pub const DOCS: &[EndpointDoc] = &[
         "console cell",
         Example::None,
     ),
+    endpoint(
+        "post",
+        "/console/cells/{id}/cancel",
+        "Console",
+        "Cancel a running console cell",
+        "Cancels the scratch workflow run a cell started. A cell that settled in process has no \
+         run to cancel and is left as it is.",
+        false,
+        None,
+        &[],
+        200,
+        "console cell",
+        Example::None,
+    ),
+    endpoint(
+        "post",
+        "/console/cells/{id}/replay",
+        "Console",
+        "Replay a settled console cell",
+        "Runs a cell again against the session's current bindings, which is how a cell is \
+         re-evaluated after an earlier cell in the notebook changed what it reads.",
+        false,
+        None,
+        &[],
+        200,
+        "console cell",
+        Example::None,
+    ),
 ];

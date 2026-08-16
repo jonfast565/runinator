@@ -283,6 +283,46 @@ pub async fn fetch_package_detail<T: DatabaseImpl>(
     }))
 }
 
+/// the package one export belongs to, walking export -> version -> package.
+///
+/// here rather than in the handler because it is three chained row reads, which is orchestration by
+/// the definition `AGENTS.md` uses; the handler keeps the authorization decision it makes with the
+/// answer.
+pub async fn fetch_export_package<T: DatabaseImpl>(
+    db: &T,
+    export_id: Uuid,
+) -> Result<Option<FunctionPackage>, SendableError> {
+    let Some(export) = db.fetch_function_export(export_id).await? else {
+        return Ok(None);
+    };
+    let Some(version) = db.fetch_function_version(export.version_id).await? else {
+        return Ok(None);
+    };
+    db.fetch_function_package_by_id(version.package_id).await
+}
+
+/// every package holding a version that published this artifact digest.
+///
+/// an artifact is content-addressed and therefore shared: two packages that published identical
+/// bytes have the same digest, so this returns all of them and lets the caller decide which it may
+/// see.
+pub async fn packages_with_artifact<T: DatabaseImpl>(
+    db: &T,
+    digest: &str,
+) -> Result<Vec<FunctionPackage>, SendableError> {
+    let mut out = Vec::new();
+    for package in db.fetch_function_packages().await? {
+        let versions = db.fetch_function_versions(package.id).await?;
+        if versions
+            .iter()
+            .any(|version| version.artifact_digest == digest)
+        {
+            out.push(package);
+        }
+    }
+    Ok(out)
+}
+
 /// a package's versions, newest first.
 pub async fn fetch_package_versions<T: DatabaseImpl>(
     db: &T,

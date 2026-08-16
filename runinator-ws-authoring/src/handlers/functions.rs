@@ -129,7 +129,13 @@ pub async fn get_function<T: DatabaseImpl>(
     )
     .await
     {
-        Ok(Some(detail)) if !ctx.org_visible(detail.package.org_id) => {
+        // an archived package reads as absent, the same way the list endpoint filters it out.
+        // deleting is an archive rather than a row removal so a restore can bring it back, but that
+        // is a property of how deletion is *stored* — to every reader the package is gone, and a
+        // deleted package that still answered a fetch would be a delete that did not delete.
+        Ok(Some(detail))
+            if !ctx.org_visible(detail.package.org_id) || detail.package.archived_at.is_some() =>
+        {
             not_found(format!("function package '{package}' not found"))
         }
         Ok(Some(detail)) => (StatusCode::OK, Json(ApiResponse::FunctionPackage(detail))),
@@ -388,13 +394,7 @@ async fn function_export_visible<T: DatabaseImpl>(
     ctx: &AuthContext,
     export_id: Uuid,
 ) -> bool {
-    let Ok(Some(export)) = db.fetch_function_export(export_id).await else {
-        return false;
-    };
-    let Ok(Some(version)) = db.fetch_function_version(export.version_id).await else {
-        return false;
-    };
-    let Ok(Some(package)) = db.fetch_function_package_by_id(version.package_id).await else {
+    let Ok(Some(package)) = repository::functions::fetch_export_package(db, export_id).await else {
         return false;
     };
     ctx.org_visible(package.org_id)
@@ -405,24 +405,12 @@ async fn function_artifact_visible<T: DatabaseImpl>(
     ctx: &AuthContext,
     digest: &str,
 ) -> bool {
-    let Ok(packages) = db.fetch_function_packages().await else {
+    let Ok(packages) = repository::functions::packages_with_artifact(db, digest).await else {
         return false;
     };
-    for package in packages
-        .into_iter()
-        .filter(|package| ctx.org_visible(package.org_id))
-    {
-        let Ok(versions) = db.fetch_function_versions(package.id).await else {
-            continue;
-        };
-        if versions
-            .iter()
-            .any(|version| version.artifact_digest == digest)
-        {
-            return true;
-        }
-    }
-    false
+    packages
+        .iter()
+        .any(|package| ctx.org_visible(package.org_id))
 }
 
 // `namespace.name` or a bare `name`. names cannot contain dots (the manifest rejects them), so this
@@ -566,12 +554,27 @@ pub const DOCS: &[EndpointDoc] = &[
         "/functions/{package}",
         "Functions",
         "Delete a function package",
-        "Deletes a package and every version, export, and alias under it.",
+        "Archives a package and every version, export, and alias under it. The rows are kept so \
+         the package can be restored; to every reader it is gone.",
         false,
         None,
         &[],
         200,
         "package deleted",
+        Example::None,
+    ),
+    endpoint(
+        "post",
+        "/functions/{package}/restore",
+        "Functions",
+        "Restore a deleted function package",
+        "Reactivates a package that was deleted, along with its versions, exports, and aliases. \
+         Fails with 404 when no archived package of that name exists.",
+        false,
+        None,
+        &[],
+        200,
+        "package restored",
         Example::None,
     ),
     endpoint(

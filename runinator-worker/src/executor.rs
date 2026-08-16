@@ -247,6 +247,13 @@ pub(crate) fn validate_execution_result(
     let Some(output) = result.output_json.as_ref() else {
         return Ok(());
     };
+    // an action that declares no results is unconstrained, not constrained to return nothing.
+    // `results_type()` builds a *closed* structure, so an empty result list would reject every
+    // field a provider returned — and providers whose output is arbitrary by nature (`std.run` and
+    // `std.exec` return whatever their program returned) cannot describe it in advance.
+    if action_metadata.results.is_empty() {
+        return Ok(());
+    }
     let expected = action_metadata.results_type();
     expected.validate_value(output).map_err(|violation| {
         violation.message_with_label(&format!(

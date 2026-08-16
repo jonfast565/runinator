@@ -376,6 +376,34 @@ fn worker_validates_provider_output_fields_when_present() {
     assert!(err.contains("provider output 'console.run.exit_code' expected integer, got string"));
 }
 
+#[test]
+fn an_action_declaring_no_results_accepts_any_output() {
+    // `results_type()` builds a closed structure, so an empty result list would reject every field a
+    // provider returned. an action that describes no results is unconstrained — providers whose
+    // output is arbitrary by nature (`std.run`/`std.exec` return whatever their program returned)
+    // have nothing to declare in advance.
+    let action_metadata = ActionMetadata::new("exec", "run a program");
+    let action = WorkflowAction {
+        provider: "std".into(),
+        function: "exec".into(),
+        timeout_seconds: 60,
+        configuration: runinator_models::workflows::WorkflowObject::default(),
+        mcp_enabled: false,
+        tags: Vec::new(),
+        required_labels: Default::default(),
+        idempotency_key: None,
+        function_binding: None,
+    };
+    let result = TaskExecutionResult {
+        message: None,
+        output_json: Some(json!({ "anything": true, "at": [1, 2] })),
+        chunks: Vec::new(),
+        artifacts: Vec::new(),
+    };
+    crate::executor::validate_execution_result(&action_metadata, &action, &result)
+        .expect("undeclared output is unconstrained");
+}
+
 // a provider whose execution blocks until its cancellation token fires, flagging when it starts.
 struct BlockingProvider {
     started: std::sync::Arc<std::sync::atomic::AtomicBool>,
