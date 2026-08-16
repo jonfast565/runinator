@@ -34,6 +34,9 @@ pub(super) fn has_external_effect(kind: &WorkflowNodeKind) -> bool {
     matches!(
         kind,
         WorkflowNodeKind::Action
+            // an invocation's program dispatches provider actions, so it reaches outside the run
+            // exactly the way an action node does — a speculative cursor must shadow it.
+            | WorkflowNodeKind::Invocation
             | WorkflowNodeKind::Output
             | WorkflowNodeKind::Signal
             | WorkflowNodeKind::Audit

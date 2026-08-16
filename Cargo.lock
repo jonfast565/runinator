@@ -7873,6 +7873,7 @@ version = "0.2.367"
 dependencies = [
  "chrono",
  "runinator-comm",
+ "runinator-compute",
  "runinator-models",
  "runinator-store",
  "runinator-utilities",

@@ -33,6 +33,7 @@ fn command() -> ActionCommand {
         trace_id: Uuid::now_v7(),
         trace_context: Default::default(),
         notification_delivery_id: None,
+        invocation_call_id: None,
         idempotency_key: None,
     }
 }

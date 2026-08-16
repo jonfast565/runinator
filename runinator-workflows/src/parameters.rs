@@ -5,15 +5,17 @@ use runinator_models::workflows::{
 
 use crate::types::{
     ApprovalParameters, ArtifactItem, BranchPolicy, GateParameters, GateTimeoutPolicy,
-    InputParameters, JoinParameters, LoopParameters, MapParameters, OutputParameters,
-    ParallelParameters, PercentageBucket, PercentageParameters, RaceParameters, SignalParameters,
-    SwitchCase, SwitchParameters, ToggleParameters, TryParameters, WaitParameters,
+    InputParameters, InvocationParameters, JoinParameters, LoopParameters, MapParameters,
+    OutputParameters, ParallelParameters, PercentageBucket, PercentageParameters, RaceParameters,
+    SignalParameters, SwitchCase, SwitchParameters, ToggleParameters, TryParameters,
+    WaitParameters,
 };
 use runinator_compute::WorkflowValidationError;
 use runinator_compute::call_pure;
 use runinator_compute::evaluate_workflow_condition;
 use runinator_compute::keys::{COND_EQUALS, COND_EXISTS, COND_NOT_EQUALS, COND_VALUE};
 use runinator_compute::{evaluate_expression, parse_expression, parse_value_ref};
+use runinator_models::invocation::InvocationModule;
 use runinator_models::orchestration::GateKind;
 use runinator_models::workflow_ast::{WorkflowExpression, WorkflowValueRef};
 
@@ -214,6 +216,37 @@ pub fn parse_race_parameters(
     let winner = BranchPolicy::parse(object.get("winner"), BranchPolicy::FirstSuccess)
         .map_err(|message| invalid_parameters(node, message))?;
     Ok(RaceParameters { branches, winner })
+}
+
+/// read an `invocation` node's compiled module and per-call timeout.
+///
+/// a module that will not decode is rejected here rather than at runtime, so a definition carrying
+/// one cannot be saved. the ir version is checked too: a module from a newer compiler would step
+/// instructions this build does not understand, and failing at save time names both versions while
+/// failing at run time would only say the program crashed.
+pub fn parse_invocation_parameters(
+    node: &WorkflowNode,
+) -> Result<InvocationParameters, WorkflowValidationError> {
+    let object = parameter_object(node)?;
+    let raw = object
+        .get("module")
+        .ok_or_else(|| invalid_parameters(node, "invocation requires a module"))?;
+    let module: InvocationModule = serde_json::from_value(raw.clone().into())
+        .map_err(|err| invalid_parameters(node, format!("invocation module is invalid: {err}")))?;
+    if !module.is_supported() {
+        return Err(invalid_parameters(
+            node,
+            format!(
+                "invocation module version {} is not supported by this runtime (expected {})",
+                module.version,
+                runinator_models::invocation::INVOCATION_IR_VERSION
+            ),
+        ));
+    }
+    Ok(InvocationParameters {
+        module,
+        timeout_seconds: object.get("timeout_seconds").and_then(Value::as_i64),
+    })
 }
 
 pub fn parse_output_parameters(

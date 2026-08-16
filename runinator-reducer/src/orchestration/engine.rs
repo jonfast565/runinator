@@ -360,6 +360,7 @@ async fn process_workflow_run_step<T: ReducerStore>(
         WorkflowNodeKind::Start => basic::StartHandler.process(&ctx).await?,
         WorkflowNodeKind::Interrupt => basic::InterruptHandler.process(&ctx).await?,
         WorkflowNodeKind::Action => action::ActionHandler.process(&ctx).await?,
+        WorkflowNodeKind::Invocation => invocation::InvocationHandler.process(&ctx).await?,
         WorkflowNodeKind::Wait => wait::WaitHandler.process(&ctx).await?,
         WorkflowNodeKind::Condition => basic::ConditionHandler.process(&ctx).await?,
         WorkflowNodeKind::Switch => basic::SwitchHandler.process(&ctx).await?,
@@ -589,6 +590,12 @@ async fn active_node_awaits_worker<T: ReducerStore>(
         .find(|node| node.id == active_node_id)
         .is_some_and(|node| {
             // a pure `std.run` compute node reduces in-process, so it never parks awaiting a worker.
-            node.kind == WorkflowNodeKind::Action && !compute::is_inprocess_compute(node)
+            // an invocation parks the same way an action does whenever its program yields a durable
+            // call — without this the inline loop would spin it up to MAX_INLINE_WORKFLOW_STEPS.
+            match node.kind {
+                WorkflowNodeKind::Action => !compute::is_inprocess_compute(node),
+                WorkflowNodeKind::Invocation => true,
+                _ => false,
+            }
         }))
 }

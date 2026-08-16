@@ -708,6 +708,7 @@ impl<'a> Decompiler<'a> {
                 | WorkflowNodeKind::Collect
                 | WorkflowNodeKind::Barrier
                 | WorkflowNodeKind::CircuitBreaker
+                | WorkflowNodeKind::Invocation
                 | WorkflowNodeKind::EventSource => {
                     let success = self.emit_leaf(node, stop)?;
                     // keep walking only into a fresh linear successor; a jump to a terminal, the
@@ -1000,6 +1001,21 @@ impl<'a> Decompiler<'a> {
                     return Ok((self.foreign_compute_text(node)?, true));
                 }
                 Ok((self.action_text(node)?, true))
+            }
+            // an invocation renders from the authored statement list it retains, never from its
+            // compiled module. reconstructing `let`/`if`/`return` out of a flat instruction stream
+            // is control-flow recovery — a decompiler in the hard sense — and it would have to be
+            // exactly right or the editor pane would silently rewrite the user's code. carrying the
+            // source beside the bytecode is the same arrangement `metadata.wdl.functions` already
+            // uses for function signatures.
+            WorkflowNodeKind::Invocation => {
+                let program = invocation_source(node).ok_or_else(|| {
+                    WdlError::lower(format!(
+                        "node '{}' is an invocation with no retained source to render",
+                        node.id
+                    ))
+                })?;
+                Ok((self.compute_text(node, &program)?, true))
             }
             WorkflowNodeKind::Subflow => Ok((self.subflow_text(node)?, true)),
             WorkflowNodeKind::Resume => Ok((self.resume_text(node), false)),
@@ -2551,6 +2567,19 @@ fn node_ref_ids(value: Option<&Value>) -> Vec<String> {
 }
 
 /// the compute program of a `std` provider action node, if present.
+/// the authored statement list an `invocation` node retains for rendering.
+///
+/// separate from `parameters.module`, which is the compiled bytecode the vm runs. the two are
+/// written together by lowering and must describe the same program; only this one is ever read
+/// back into text.
+fn invocation_source(node: &WorkflowNode) -> Option<Vec<Value>> {
+    node.parameters
+        .as_object()?
+        .get("source")
+        .and_then(Value::as_array)
+        .cloned()
+}
+
 fn compute_program(node: &WorkflowNode) -> Option<&[Value]> {
     let action = node.action.as_ref()?;
     if action.provider != "std" {

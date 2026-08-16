@@ -14,6 +14,7 @@ runinator-comm = { path = "../runinator-comm" }
 runinator-store = { path = "../runinator-store" }
 runinator-models = { path = "../runinator-models" }
 runinator-utilities = { path = "../runinator-utilities" }
+runinator-compute = { path = "../runinator-compute" }
 runinator-workflows = { path = "../runinator-workflows" }
 
 [dev-dependencies]

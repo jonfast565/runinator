@@ -419,6 +419,7 @@ impl<T: DatabaseImpl> NotificationDispatcher<'_, T> {
             trace_id: Uuid::now_v7(),
             trace_context: Default::default(),
             notification_delivery_id: Some(delivery.id),
+            invocation_call_id: None,
             // the delivery row is already the dedupe record for an alert, and its id keys the
             // outbox entry, so a delivery needs no second idempotency reservation.
             idempotency_key: None,

@@ -294,6 +294,7 @@ pub fn spec_for(kind: &WorkflowNodeKind) -> &'static dyn NodeKindSpec {
         WorkflowNodeKind::Resume => &terminal::Resume,
         WorkflowNodeKind::Interrupt => &terminal::Interrupt,
         WorkflowNodeKind::Action => &task::Action,
+        WorkflowNodeKind::Invocation => &task::Invocation,
         WorkflowNodeKind::Subflow => &task::Subflow,
         WorkflowNodeKind::Wait => &control_flow::Wait,
         WorkflowNodeKind::Condition => &control_flow::Condition,

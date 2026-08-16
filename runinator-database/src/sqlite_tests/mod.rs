@@ -114,6 +114,7 @@ fn action_command(
         trace_id: Uuid::nil(),
         trace_context: Default::default(),
         notification_delivery_id: None,
+        invocation_call_id: None,
         idempotency_key: None,
     }
 }

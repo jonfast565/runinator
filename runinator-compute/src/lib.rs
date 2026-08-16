@@ -11,6 +11,7 @@
 //! both crates emit the same `WorkflowValidationError`; this mirrors how the `WDL` dictionary is
 //! single-sourced in `runinator-wdl-syntax` for the four wdl crates.
 
+mod assemble;
 mod catalog;
 mod compute;
 mod conditions;
@@ -18,12 +19,18 @@ mod errors;
 mod expressions;
 mod functions;
 mod intrinsic_typing;
+mod operators;
 mod vm;
 
 /// the declarative-condition wire keys, shared with the graph layer's parameter parsers and type
 /// checker so the two cannot spell an operator differently.
 pub mod keys;
 
+pub use assemble::{
+    CONCAT_INTRINSIC, EXISTS_INTRINSIC, IN_INTRINSIC, IS_NULL_INTRINSIC, NEG_INTRINSIC,
+    NOT_INTRINSIC, OPERATOR_INTRINSICS, TO_JSON_INTRINSIC, TO_STRING_INTRINSIC, TRUTHY_INTRINSIC,
+    assemble_module, assemble_program,
+};
 pub use catalog::{
     ArgumentBindError, CallableCatalog, CallableEntry, CallableKind, LOCAL_INTRINSIC_NAMES,
     SECRET_URI_PREFIX, contains_secret_reference, intrinsic_effect,
@@ -46,6 +53,7 @@ pub use expressions::{
 };
 pub use functions::{FunctionTable, RuntimeFunction, intrinsic_catalog};
 pub use intrinsic_typing::intrinsic_result_type;
+pub use operators::{call_operator, is_operator_intrinsic};
 pub use vm::{
     MAX_FRAME_DEPTH, MAX_INSTRUCTIONS_PER_STEP, VmEnv, evaluate_pure, resume, start, step,
 };

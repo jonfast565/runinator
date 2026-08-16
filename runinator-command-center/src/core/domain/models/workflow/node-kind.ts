@@ -32,6 +32,7 @@ export type WorkflowNodeKind =
   | "barrier"
   | "circuit_breaker"
   | "event_source"
+  | "invocation"
   | "end"
   | "fail"
   | "resume"

@@ -455,6 +455,7 @@ fn build_action_command(
         trace_context: runinator_utilities::telemetry::current_trace_context(),
         // node work, not a notification delivery.
         notification_delivery_id: None,
+        invocation_call_id: None,
         idempotency_key,
     }
 }

@@ -469,6 +469,12 @@ fn observe_local(
 }
 
 fn intrinsic(env: &VmEnv<'_>, name: &str, args: &[Value]) -> Result<Value, String> {
+    // operator intrinsics resolve first and unconditionally. they are `$`-prefixed so nothing else
+    // can be named one, and checking them first is what keeps `++` meaning `++` regardless of what
+    // a library happens to expose.
+    if crate::operators::is_operator_intrinsic(name) {
+        return crate::operators::call_operator(name, args).map_err(|err| err.to_string());
+    }
     if let Some(library) = env.locals
         && library.knows(name)
     {

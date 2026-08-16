@@ -50,6 +50,7 @@ async fn http_broker_delivers_published_messages() {
             trace_id: Uuid::nil(),
             trace_context: Default::default(),
             notification_delivery_id: None,
+            invocation_call_id: None,
             idempotency_key: None,
         },
         dedupe_key: Some("http-test".into()),
@@ -250,6 +251,7 @@ fn action_command() -> ActionCommand {
         trace_id: Uuid::nil(),
         trace_context: Default::default(),
         notification_delivery_id: None,
+        invocation_call_id: None,
         idempotency_key: None,
     }
 }

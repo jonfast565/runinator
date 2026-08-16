@@ -95,6 +95,14 @@ pub struct ActionCommand {
     /// the result consumer settles this delivery row instead of a node run. `None` for node actions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notification_delivery_id: Option<Uuid>,
+    /// set when this action is one durable call of a resumable invocation rather than a whole node.
+    ///
+    /// the second owner an action dispatch can have, following `notification_delivery_id`. an
+    /// invocation makes N calls under one node run, so the node run id alone cannot say *which*
+    /// call a result settles — this can, and the result consumer resumes the continuation parked on
+    /// it instead of settling the node run. `None` for plain node actions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub invocation_call_id: Option<Uuid>,
     /// resolved idempotency key for this action's external effect, from the node's
     /// `.idempotent(key: <expr>)`. the reducer evaluates the expression against the run context and
     /// stamps the result here; the worker reserves it before invoking the provider and replays a
@@ -550,6 +558,10 @@ pub struct WorkflowResultEvent {
     /// notification delivery rather than a workflow node run.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notification_delivery_id: Option<Uuid>,
+    /// carried back from the originating [`ActionCommand`]; when set, this result settles one
+    /// durable call of a resumable invocation rather than the node run as a whole.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub invocation_call_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -639,6 +651,7 @@ impl WorkflowResultEvent {
             timestamp: Utc::now(),
             trace_id: command.trace_id,
             notification_delivery_id: command.notification_delivery_id,
+            invocation_call_id: command.invocation_call_id,
         }
     }
 }

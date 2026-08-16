@@ -112,6 +112,22 @@ impl CallableCatalog {
             let effect = intrinsic_effect(&signature.function_name);
             catalog.insert_intrinsic(signature, effect, CallableKind::Intrinsic);
         }
+        // the assembler's operator intrinsics (`$concat`, `$truthy`, …). they are not author-facing
+        // — no completion offers them and no signature describes them — but the catalog is what the
+        // vm asks "can this be folded here", and an operator it did not recognize would come back
+        // `Unknown` and be dispatched to a worker. every one of them is pure by construction.
+        for name in crate::assemble::OPERATOR_INTRINSICS {
+            catalog.entries.insert(
+                (*name).to_string(),
+                CallableEntry {
+                    name: (*name).to_string(),
+                    kind: CallableKind::Intrinsic,
+                    effect: EffectClass::Pure,
+                    signature: None,
+                    arity: None,
+                },
+            );
+        }
         // the higher-order intrinsics carry no signature of their own: their result depends on the
         // lambda, which is what `intrinsic_result_type` is for. they are structurally pure — a call
         // is only as effectful as the collection and body passed to it.
@@ -240,6 +256,20 @@ impl CallableCatalog {
             .get(name)
             .map(|entry| entry.effect)
             .unwrap_or(EffectClass::Unknown)
+    }
+
+    /// the ir target a called name compiles to.
+    ///
+    /// an unknown name is treated as a `Local` — a module function the catalog was not told about.
+    /// resolving it as a provider instead would silently turn a typo into a broker dispatch, and the
+    /// vm's own "unknown function" error names the callee, which is the diagnostic an author wants.
+    pub fn target_for(&self, name: &str) -> CallableTarget {
+        self.entries
+            .get(name)
+            .map(CallableEntry::target)
+            .unwrap_or_else(|| CallableTarget::Local {
+                name: name.to_string(),
+            })
     }
 
     /// every known name, in stable order.

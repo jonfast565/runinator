@@ -57,6 +57,7 @@ mod gate;
 mod handler;
 mod input;
 mod interrupt;
+mod invocation;
 mod map;
 mod mutex;
 mod output;
@@ -81,6 +82,8 @@ mod debug_tests;
 mod gate_tests;
 #[cfg(test)]
 mod handler_tests;
+#[cfg(test)]
+mod invocation_tests;
 #[cfg(test)]
 mod mutex_tests;
 

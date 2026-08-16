@@ -26,10 +26,11 @@ pub use node_kinds::{
 pub use normalize::{normalize_definition, normalize_workflow};
 pub use parameters::{
     evaluate_percentage, evaluate_switch, evaluate_toggle, parse_approval_parameters,
-    parse_gate_parameters, parse_input_parameters, parse_join_parameters, parse_loop_parameters,
-    parse_map_parameters, parse_output_parameters, parse_parallel_parameters,
-    parse_percentage_parameters, parse_race_parameters, parse_signal_parameters,
-    parse_switch_parameters, parse_toggle_parameters, parse_try_parameters, parse_wait_parameters,
+    parse_gate_parameters, parse_input_parameters, parse_invocation_parameters,
+    parse_join_parameters, parse_loop_parameters, parse_map_parameters, parse_output_parameters,
+    parse_parallel_parameters, parse_percentage_parameters, parse_race_parameters,
+    parse_signal_parameters, parse_switch_parameters, parse_toggle_parameters,
+    parse_try_parameters, parse_wait_parameters,
 };
 pub use refs::expand_workflow_refs;
 pub use run_state::{

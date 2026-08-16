@@ -133,6 +133,13 @@ pub async fn apply_workflow_result_event<T: DatabaseImpl>(
     if let Some(delivery_id) = event.notification_delivery_id {
         return apply_notification_delivery_result(db, event, delivery_id).await;
     }
+    // one durable call of a resumable invocation. unlike a notification delivery this *does* own a
+    // node run — the invocation's — so the split is only about the terminal status: it settles the
+    // call rather than the node run, because the node stays `Running` across every call its program
+    // makes. chunks and artifacts still flow to the node run on the normal path.
+    if let Some(call_id) = event.invocation_call_id {
+        return apply_invocation_call_result(db, event, call_id).await;
+    }
     let applied = db.apply_workflow_result_event(event).await?;
     // enqueue the drive even when the event is a duplicate: a redelivery usually means a prior
     // attempt failed between persisting the event and enqueueing this ready node, and skipping it
@@ -153,6 +160,55 @@ pub async fn apply_workflow_result_event<T: DatabaseImpl>(
         )
         .await?;
     }
+    Ok(applied)
+}
+
+/// settle the call an invocation is parked on, then drive the node so its program resumes.
+///
+/// the drive is enqueued even when the settle was a no-op. a redelivery usually means a prior
+/// attempt failed between recording the result and enqueueing the ready node, and skipping it would
+/// strand the invocation parked on a call that already finished; a spurious drive re-reads the same
+/// settled call and is harmless.
+async fn apply_invocation_call_result<T: DatabaseImpl>(
+    db: &T,
+    event: &WorkflowResultEvent,
+    call_id: Uuid,
+) -> Result<bool, SendableError> {
+    let WorkflowResultEventKind::Status {
+        status,
+        output_json,
+        message,
+    } = &event.kind
+    else {
+        // a chunk or artifact from a call belongs to the invocation's node run, which is where the
+        // generic path already writes it.
+        return db.apply_workflow_result_event(event).await;
+    };
+    if !status.is_terminal() {
+        return Ok(false);
+    }
+    let applied = db
+        .settle_invocation_call(
+            call_id,
+            event.attempt,
+            *status,
+            output_json.clone(),
+            message.clone(),
+        )
+        .await?;
+    support::enqueue_node_ready(
+        db,
+        event.workflow_run_id,
+        event.node_id.clone(),
+        "invocation_call_settled",
+        Utc::now(),
+        runinator_models::json!({
+            "workflow_node_run_id": event.workflow_node_run_id,
+            "invocation_call_id": call_id,
+            "status": status,
+        }),
+    )
+    .await?;
     Ok(applied)
 }
 

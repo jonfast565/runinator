@@ -1,3 +1,4 @@
+use runinator_models::invocation::InvocationModule;
 use runinator_models::orchestration::GateKind;
 use runinator_models::value::Value;
 use runinator_models::workflow_ast::WorkflowExpression;
@@ -97,6 +98,18 @@ pub struct OutputParameters {
     pub data: WorkflowExpression,
     /// artifact declarations: name/source pairs promoted to run-level by this output node.
     pub items: Vec<ArtifactItem>,
+}
+
+/// an `invocation` node's compiled program plus how long one call of it may take.
+///
+/// the module is held decoded rather than as raw json: parsing it here is what makes an
+/// undecodable module a *validation* error, caught when the definition is saved, instead of a
+/// runtime failure on the first run that reaches the node.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InvocationParameters {
+    pub module: InvocationModule,
+    /// the per-call deadline the node's policy supplies, which a `with { }` postfix may override.
+    pub timeout_seconds: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

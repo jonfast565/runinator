@@ -408,6 +408,20 @@ fn evaluate_node(
             });
             Outcome::new(outcome.status, Some(outcome.output), "action_result")
         }
+        // an invocation resolves through the same hook an action does. the simulator deliberately
+        // does not step the vm: a program makes an unbounded number of durable calls, and a dry run
+        // that executed the pure parts while stubbing the effectful ones would report an output the
+        // real run could never produce. what the walk needs from this node is its *outcome*, which
+        // is exactly what the env is for.
+        WorkflowNodeKind::Invocation => {
+            let resolved: Value = node.parameters.clone().into();
+            let outcome = env.evaluate_action(&NodeEvalRequest {
+                node,
+                resolved,
+                context,
+            });
+            Outcome::new(outcome.status, Some(outcome.output), "invocation_result")
+        }
         // every parked kind resolves through the evaluator's park hook.
         WorkflowNodeKind::Approval
         | WorkflowNodeKind::Gate
