@@ -33,6 +33,10 @@ const FUNCTIONS_KEY: &str = "functions";
 const LANGUAGE_KEY: &str = "language";
 const SOURCE_KEY: &str = "source";
 const RUNTIME_KEY: &str = "runtime";
+/// the two program entry points, kept as names so the intrinsic branch can exclude exactly them.
+const RUN_FUNCTION: &str = "run";
+const EXEC_FUNCTION: &str = "exec";
+const CODE_FUNCTION: &str = "code";
 
 #[derive(Clone)]
 pub struct StdProvider;
@@ -84,8 +88,18 @@ impl Provider for StdProvider {
         _sink: Option<Arc<dyn ProviderEventSink>>,
         token: runinator_plugin::cancel::CancellationToken,
     ) -> Result<TaskExecutionResult, SendableError> {
-        if request.action_function == "code" {
+        if request.action_function == CODE_FUNCTION {
             return execute_code(&request, _sink, token);
+        }
+        // a single named intrinsic, dispatched by an `invocation` node's yielded call.
+        //
+        // this is the path the invocation runtime uses, and it is why the provider advertises every
+        // intrinsic as an action rather than only `run`/`exec`. the reducer has already decided
+        // which one function it wants, so shipping a whole program plus the run context — which the
+        // `run`/`exec` path below still does — would send everything the worker no longer needs in
+        // order to decide anything.
+        if request.action_function != RUN_FUNCTION && request.action_function != EXEC_FUNCTION {
+            return execute_intrinsic(&request, token);
         }
         let program_value = request
             .parameters
@@ -117,4 +131,34 @@ impl Provider for StdProvider {
             ComputeOutcome::Goto(target) => Err(GOTO_NOT_ALLOWED.error(target)),
         }
     }
+}
+
+/// run one named intrinsic against the arguments an invocation call carried.
+///
+/// arguments arrive positionally as `arg0`, `arg1`, … (or under their author-written names, which
+/// this ignores — the vm has already resolved keyword arguments into positional order, and the names
+/// ride along only so a stored call reads intelligibly). they are read back in that order, and a gap
+/// ends the list rather than being filled with null, because a missing `arg1` means the vm sent one
+/// argument and not two.
+fn execute_intrinsic(
+    request: &ProviderExecutionRequest,
+    token: runinator_plugin::cancel::CancellationToken,
+) -> Result<TaskExecutionResult, SendableError> {
+    let mut args = Vec::new();
+    while let Some(value) = request
+        .parameters
+        .get(format!("arg{}", args.len()).as_str())
+    {
+        args.push(value.clone());
+    }
+    let library = FullIntrinsics::new(request.timeout_secs, token);
+    let value =
+        runinator_compute::IntrinsicLibrary::call(&library, &request.action_function, &args)
+            .map_err(map_run_error)?;
+    Ok(TaskExecutionResult {
+        message: None,
+        output_json: Some(value),
+        chunks: Vec::new(),
+        artifacts: Vec::new(),
+    })
 }

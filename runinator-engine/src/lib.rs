@@ -9,6 +9,7 @@ pub mod artifact_storage;
 pub mod audit;
 pub mod errors;
 pub mod events;
+pub mod invocation_migration;
 pub mod notifications;
 pub mod repository;
 pub mod repository_runs;

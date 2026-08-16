@@ -20,6 +20,7 @@ runinator-blob-core = { path = "../runinator-blob-core" }
 runinator-broker-core = { path = "../runinator-broker-core" }
 runinator-reducer = { path = "../runinator-reducer" }
 runinator-database = { path = "../runinator-database" }
+runinator-compute = { path = "../runinator-compute" }
 runinator-models = { path = "../runinator-models" }
 runinator-comm = { path = "../runinator-comm" }
 runinator-utilities = { path = "../runinator-utilities" }

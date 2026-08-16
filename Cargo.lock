@@ -7553,6 +7553,7 @@ dependencies = [
  "runinator-blob-core",
  "runinator-broker-core",
  "runinator-comm",
+ "runinator-compute",
  "runinator-console",
  "runinator-database",
  "runinator-models",
