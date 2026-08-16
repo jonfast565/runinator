@@ -17,6 +17,9 @@ use runinator_models::{
         FunctionAdapterWorkflow, FunctionAlias, FunctionArtifact, FunctionCatalogEntry,
         FunctionExport, FunctionPackage, FunctionRuntimeSpec, FunctionVersion,
     },
+    invocation::{
+        CallableTarget, InvocationContinuation, WorkflowInvocation, WorkflowInvocationCall,
+    },
     notifications::{
         Notification, NotificationChannel, NotificationDelivery, NotificationDeliveryStatus,
         NotificationEvent, NotificationPolicy, NotificationSeverity,
@@ -88,6 +91,8 @@ mod console;
 pub use console::*;
 mod functions;
 pub use functions::*;
+mod invocations;
+pub use invocations::*;
 mod identity;
 pub use identity::*;
 mod workflows;

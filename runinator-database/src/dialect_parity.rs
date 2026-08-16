@@ -21,6 +21,7 @@ use runinator_comm::{
 };
 use runinator_models::{
     auth::{AgentEnrollmentToken, AgentEnrollmentTokenRecord, ApiKey, ApiKeyRecord, PrincipalKind},
+    invocation::{CallableTarget, InvocationContinuation, NewInvocationCall},
     json,
     orchestration::NewOrchestrationEvent,
     revisions::{RevisionSource, WorkflowRevision},
@@ -175,6 +176,7 @@ pub(crate) async fn assert_dialect_parity<T: ExecutionStateParityDb>(db: &T) {
     assert_agent_directive_lifecycle(db).await;
     assert_function_lifecycle(db, id).await;
     assert_console_lifecycle(db).await;
+    assert_invocation_lifecycle(db, run_id, node_id).await;
     assert_unreferenced_artifacts(db).await;
 
     // the legacy run mapper reads a column named `trigger`, which is reserved in mysql and has to
@@ -1163,6 +1165,183 @@ async fn assert_action_dispatch<T: DatabaseImpl>(db: &T, run_id: Uuid, node_id: 
         .await
         .unwrap();
     assert!(claimed.iter().any(|d| d.id == first.id));
+}
+
+/// the resumable-invocation lifecycle: create, suspend on a call, settle the call, retry, and
+/// settle the invocation.
+///
+/// the two assertions worth having here are the ones a single-engine test would miss: that
+/// `suspend_invocation` is idempotent by `(invocation, sequence)` — which depends on a unique index
+/// each dialect declares in its own file — and that `settle_invocation_call` refuses a stale
+/// attempt, which depends on the `status IN (...)` guard rendering correctly per dialect.
+async fn assert_invocation_lifecycle<T: DatabaseImpl>(db: &T, run_id: Uuid, node_id: Uuid) {
+    let continuation = InvocationContinuation::start();
+    let invocation = db
+        .create_invocation(
+            run_id,
+            node_id,
+            Some(Uuid::now_v7()),
+            "invoke-1",
+            runinator_models::invocation::INVOCATION_IR_VERSION,
+            &continuation,
+        )
+        .await
+        .unwrap();
+    assert_eq!(invocation.status, WorkflowStatus::Running);
+    assert_eq!(invocation.continuation, continuation);
+
+    let new_call = || NewInvocationCall {
+        invocation_id: invocation.id,
+        workflow_run_id: run_id,
+        sequence: 0,
+        target: CallableTarget::Provider {
+            provider: "test".into(),
+            function: "execute".into(),
+        },
+        arguments: vec![runinator_models::value::Value::from(1_i64)],
+        policy: Default::default(),
+        idempotency_key: Some("key-1".into()),
+        deadline_at: Some(Utc::now().timestamp() + 60),
+    };
+
+    let call = db
+        .suspend_invocation(&continuation, new_call(), sample_action(run_id, node_id))
+        .await
+        .unwrap();
+    // a re-drive reaches the same sequence and must not create a second call.
+    let again = db
+        .suspend_invocation(&continuation, new_call(), sample_action(run_id, node_id))
+        .await
+        .unwrap();
+    assert_eq!(
+        call.id, again.id,
+        "a duplicate sequence returns the same call"
+    );
+    assert_eq!(
+        db.fetch_invocation_calls(invocation.id)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+
+    let pending = db
+        .fetch_pending_invocation_call(invocation.id)
+        .await
+        .unwrap()
+        .expect("the invocation is parked on its call");
+    assert_eq!(pending.id, call.id);
+    assert_eq!(pending.attempt, 0);
+    assert_eq!(pending.idempotency_key.as_deref(), Some("key-1"));
+
+    // a real replica id: the lease columns carry a foreign key, so an invented uuid would fail here
+    // on every engine rather than exercise the claim.
+    let executor = db
+        .register_replica(
+            runinator_models::replicas::ReplicaRegistrationRequest {
+                replica_type: runinator_models::replicas::ReplicaKind::Worker,
+                instance_id: "parity-invocation-executor".to_string(),
+                runtime_id: "parity-invocation-runtime".to_string(),
+                display_name: None,
+                host: None,
+                port: None,
+                base_path: None,
+                version: None,
+                attributes: json!({}),
+            },
+            None,
+            &runinator_models::auth::AuthContext::disabled_admin(),
+        )
+        .await
+        .unwrap();
+    db.set_invocation_call_executor(call.id, Some(executor.replica_id))
+        .await
+        .unwrap();
+    let claimed = db.fetch_invocation_call(call.id).await.unwrap().unwrap();
+    assert_eq!(
+        claimed.current_executor_replica_id,
+        Some(executor.replica_id)
+    );
+    db.set_invocation_call_executor(call.id, None)
+        .await
+        .unwrap();
+    assert!(
+        db.fetch_invocation_call(call.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .current_executor_replica_id
+            .is_none()
+    );
+
+    // a result naming the wrong attempt is discarded rather than applied.
+    assert!(
+        !db.settle_invocation_call(call.id, 7, WorkflowStatus::Succeeded, None, None)
+            .await
+            .unwrap()
+    );
+    assert!(
+        db.settle_invocation_call(
+            call.id,
+            0,
+            WorkflowStatus::Failed,
+            None,
+            Some("boom".into()),
+        )
+        .await
+        .unwrap()
+    );
+    // and a duplicate of one already applied is discarded too.
+    assert!(
+        !db.settle_invocation_call(call.id, 0, WorkflowStatus::Succeeded, None, None)
+            .await
+            .unwrap()
+    );
+
+    let retried = db
+        .retry_invocation_call(call.id, None, sample_action(run_id, node_id))
+        .await
+        .unwrap();
+    assert_eq!(retried.attempt, 1);
+    assert_eq!(retried.status, WorkflowStatus::Running);
+    assert!(retried.finished_at.is_none());
+    assert_eq!(
+        retried.dispatch_key(),
+        format!("workflow-invocation-call:{}:1", call.id)
+    );
+
+    assert_eq!(
+        db.cancel_invocation_calls_for_run(run_id, "run canceled")
+            .await
+            .unwrap(),
+        1
+    );
+    assert!(
+        db.fetch_pending_invocation_call(invocation.id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    db.settle_invocation(
+        invocation.id,
+        WorkflowStatus::Succeeded,
+        Some(runinator_models::value::Value::from(42_i64)),
+        None,
+    )
+    .await
+    .unwrap();
+    let settled = db.fetch_invocation(invocation.id).await.unwrap().unwrap();
+    assert_eq!(settled.status, WorkflowStatus::Succeeded);
+    assert!(settled.finished_at.is_some());
+    assert_eq!(
+        db.fetch_invocation_for_node_run(node_id)
+            .await
+            .unwrap()
+            .map(|item| item.id),
+        Some(invocation.id)
+    );
+    assert_eq!(db.fetch_invocations_for_run(run_id).await.unwrap().len(), 1);
 }
 
 async fn assert_notifications<T: DatabaseImpl>(db: &T) {

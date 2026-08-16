@@ -32,6 +32,7 @@ pub trait DatabaseImpl:
     + DispatchStore
     + ConsoleStore
     + FunctionStore
+    + InvocationStore
     + AutomationStore
     + NotificationStore
     + ReplicaStore

@@ -17,8 +17,10 @@ use crate::value::Value;
 
 mod effect;
 mod program;
+mod record;
 pub use effect::*;
 pub use program::*;
+pub use record::*;
 
 /// the ir version stamped on every module.
 ///

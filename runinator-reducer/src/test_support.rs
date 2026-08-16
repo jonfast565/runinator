@@ -39,6 +39,9 @@ use runinator_store::workflow_mutex::{
 };
 use uuid::Uuid;
 
+mod invocations;
+use invocations::InvocationState;
+
 #[derive(Clone)]
 struct FakeMutexHolder {
     workflow_run_id: Uuid,
@@ -62,6 +65,8 @@ struct State {
     mutex_waiters: HashMap<Uuid, WorkflowMutexClaim>,
     /// keyed by record type, matching `automation_records` rows.
     automation: HashMap<String, Vec<Value>>,
+    /// the `InvocationStore` half, kept in its own struct beside its impl.
+    invocations_state: InvocationState,
 }
 
 /// an in-memory store for driving node handlers in a unit test.

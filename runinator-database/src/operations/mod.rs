@@ -29,6 +29,9 @@ use runinator_models::{
         FunctionAdapterWorkflow, FunctionAlias, FunctionArtifact, FunctionCatalogEntry,
         FunctionExport, FunctionPackage, FunctionVersion, NewFunctionVersion,
     },
+    invocation::{
+        InvocationContinuation, NewInvocationCall, WorkflowInvocation, WorkflowInvocationCall,
+    },
     notifications::{
         NewNotification, NewNotificationPolicy, Notification, NotificationChannel,
         NotificationDelivery, NotificationDeliveryStatus, NotificationEvent, NotificationPolicy,
@@ -1067,6 +1070,7 @@ mod definitions;
 mod dispatch;
 mod execution_state_sql;
 mod functions;
+mod invocations;
 mod notifications;
 mod orgs;
 mod reducer;
