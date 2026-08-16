@@ -11,6 +11,7 @@ pub mod debug;
 pub mod errors;
 pub mod functions;
 pub mod interrupt;
+pub mod invocation;
 pub mod notifications;
 pub mod orchestration;
 pub mod orgs;
