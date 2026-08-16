@@ -11,6 +11,7 @@
 //! both crates emit the same `WorkflowValidationError`; this mirrors how the `WDL` dictionary is
 //! single-sourced in `runinator-wdl-syntax` for the four wdl crates.
 
+mod catalog;
 mod compute;
 mod conditions;
 mod errors;
@@ -22,6 +23,10 @@ mod intrinsic_typing;
 /// checker so the two cannot spell an operator differently.
 pub mod keys;
 
+pub use catalog::{
+    ArgumentBindError, CallableCatalog, CallableEntry, CallableKind, LOCAL_INTRINSIC_NAMES,
+    SECRET_URI_PREFIX, contains_secret_reference, intrinsic_effect,
+};
 pub use compute::{
     ComputeOutcome, EFFECTFUL_INTRINSIC_NAMES, HIGHER_ORDER_NAMES, IntrinsicLibrary,
     PureIntrinsics, STD_MODULES, STD_NAMESPACE, call_pure, effectful_signatures, intrinsic_arity,
