@@ -8,6 +8,10 @@ fn tokens(line: &str) -> Vec<String> {
     tokenize(line).expect("line tokenizes")
 }
 
+fn scanned(line: &str) -> Vec<Token> {
+    scan(line).expect("line scans")
+}
+
 #[test]
 fn splits_on_whitespace() {
     assert_eq!(tokens("workflows list"), vec!["workflows", "list"]);
@@ -82,17 +86,55 @@ fn reports_an_unknown_verb() {
 }
 
 #[test]
-fn help_lists_console_and_command_line_verbs() {
+fn help_lists_console_and_command_line_verbs_as_a_table() {
     let text = help(None).expect("help renders");
+
+    assert!(text.contains("command"));
+    assert!(text.contains("what it does"));
     assert!(text.contains(":bindings"));
-    assert!(text.contains("workflows"));
-    assert!(text.contains("settings"));
+    assert!(text.contains(":workflows list"));
+    assert!(text.contains(":settings set"));
 }
 
 #[test]
-fn help_for_one_command_shows_its_flags() {
+fn help_for_a_prefix_lists_every_command_under_it() {
     let text = help(Some("runs")).expect("help renders");
-    assert!(text.contains("watch"));
+
+    assert!(text.contains("usage"));
+    assert!(text.contains("runs watch"));
+    assert!(text.contains("runs cancel"));
+}
+
+#[test]
+fn help_for_one_command_explains_its_arguments() {
+    let text = help(Some("runs list")).expect("help renders");
+
+    assert!(text.contains("argument"));
+    assert!(text.contains("--status"));
+}
+
+#[test]
+fn help_for_an_unknown_topic_suggests_the_nearest_verb() {
+    let error = help(Some("wrkflows")).expect_err("no such command");
+
+    assert!(error.to_string().contains("workflows"));
+}
+
+#[test]
+fn help_for_a_prefix_of_one_command_shows_its_full_call_shape() {
+    // `workflow` matches every `workflows …` entry as a prefix, so it lists rather than expands.
+    assert!(
+        help(Some("workflow"))
+            .expect("help renders")
+            .contains("workflows apply")
+    );
+}
+
+#[test]
+fn an_unknown_verb_suggests_the_nearest_one() {
+    assert!(unknown_command("workflws").contains(":workflows"));
+    // something that is not a typo of anything is reported without a guess.
+    assert!(!unknown_command("zzzzzzzzzz").contains("did you mean"));
 }
 
 #[test]
@@ -100,8 +142,52 @@ fn completion_sources_come_from_the_clap_tree() {
     let names = command_names();
     assert!(names.contains(&"workflows".to_string()));
     assert!(names.contains(&"agents".to_string()));
-    assert!(subcommand_names("runs").contains(&"cancel".to_string()));
-    assert!(flag_names(&["runs".into(), "list".into()]).contains(&"--status".to_string()));
+    assert!(names.contains(&"replicas".to_string()));
+}
+
+#[test]
+fn flags_are_split_from_positionals_in_either_spelling() {
+    let parsed = parse_arguments(
+        &scanned("daily --param a=1 --param=b=2 --debug --alias production"),
+        &["debug"],
+    );
+
+    assert_eq!(parsed.args, vec!["daily"]);
+    assert_eq!(parsed.flag_list("param"), ["a=1".to_string(), "b=2".into()]);
+    assert!(parsed.is_set("debug"));
+    assert_eq!(parsed.flag("alias"), Some("production"));
+    // a boolean never swallows the word after it.
+    assert_eq!(parsed.flag("debug"), None);
+}
+
+#[test]
+fn a_trailing_flag_reads_as_a_boolean() {
+    let parsed = parse_arguments(&scanned("list --open"), &[]);
+
+    assert!(parsed.is_set("open"));
+    assert_eq!(parsed.args, vec!["list"]);
+}
+
+#[test]
+fn a_json_tail_is_read_from_what_was_written() {
+    let parsed = parse_arguments(&scanned(r#"daily with {"width": 320}"#), &[]);
+
+    // the tokens themselves have lost their quotes, which is what quoting is for; the raw tail has
+    // not, which is what keeps an unquoted payload parseable.
+    assert_eq!(
+        parsed.raw_after("with").as_deref(),
+        Some(r#"{"width": 320}"#)
+    );
+    assert_eq!(parsed.raw_after("without"), None);
+}
+
+#[test]
+fn a_console_verb_is_matched_before_the_clap_surface() {
+    let matched = match_meta(&scanned("run workflow daily --param a=1")).expect("a console verb");
+
+    assert_eq!(matched.command.path, ["run", "workflow"]);
+    assert_eq!(matched.arguments.args, vec!["daily"]);
+    assert_eq!(matched.arguments.flag_list("param"), ["a=1".to_string()]);
 }
 
 #[test]
@@ -129,6 +215,53 @@ fn completes_only_command_lines() {
 
     let flags = complete(":runs list --").options;
     assert!(flags.contains(&"--status".to_string()));
+}
+
+#[test]
+fn completes_a_console_verbs_second_word() {
+    assert_eq!(
+        complete(":run ").options,
+        vec!["pipeline".to_string(), "workflow".to_string()]
+    );
+}
+
+#[test]
+fn completes_the_values_a_flag_accepts() {
+    let offered = complete(":replicas list --status ").options;
+    assert_eq!(offered, vec!["live", "offline", "stale"]);
+
+    let narrowed = complete(":replicas list --status li").options;
+    assert_eq!(narrowed, vec!["live".to_string()]);
+}
+
+#[test]
+fn hints_at_a_value_that_cannot_be_completed() {
+    // a flag whose values are open-ended still says what it wants.
+    let flag = complete(":runs list --status ");
+    assert!(flag.options.is_empty());
+    assert!(flag.hint.expect("a hint").contains("--status"));
+
+    // so does a positional, whether it belongs to a console verb or a command-line one.
+    assert!(
+        complete(":workflows show ")
+            .hint
+            .expect("a hint")
+            .contains("WORKFLOW")
+    );
+    assert!(
+        complete(":run workflow ")
+            .hint
+            .expect("a hint")
+            .contains("workflow")
+    );
+}
+
+#[test]
+fn a_finished_command_offers_nothing_and_hints_nothing() {
+    let completion = complete(":workflows list ");
+
+    assert!(completion.options.is_empty());
+    assert_eq!(completion.hint, None);
 }
 
 #[test]

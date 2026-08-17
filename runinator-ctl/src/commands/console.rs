@@ -391,6 +391,12 @@ enum CommandOutcome {
     Exit,
 }
 
+/// read one `:` line and run what it names.
+///
+/// the line is tokenized once, then matched against the console-local verbs by longest path before
+/// anything else is considered — the same order the web console resolves a line in. only when no
+/// console verb claims it does the line go to clap, and only when clap has no such verb either is
+/// it an error, which is where the nearest-verb suggestion comes from.
 async fn handle_command(
     client: &Client,
     session: &mut ConsoleSession,
@@ -399,70 +405,97 @@ async fn handle_command(
     no_follow: bool,
     api_base_url: &str,
 ) -> Result<CommandOutcome> {
-    let mut parts = command.splitn(2, char::is_whitespace);
-    let verb = parts.next().unwrap_or_default();
-    let argument = parts
-        .next()
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    match verb {
-        ":help" => print!("{}", repl::help(argument)?),
-        ":clear" => {
+    let mut tokens = repl::scan(command.trim().trim_start_matches(':'))?;
+    let Some(first) = tokens.first().map(|token| token.text.clone()) else {
+        return Ok(CommandOutcome::Continue(None));
+    };
+    // `:quit` has always been accepted beside `:exit`; the catalog lists one of the two.
+    if first == "quit" {
+        tokens[0].text = "exit".to_string();
+    }
+    if let Some(matched) = repl::match_meta(&tokens) {
+        return meta_command(client, session, &matched, current_cell, no_follow).await;
+    }
+    let words: Vec<String> = tokens.into_iter().map(|token| token.text).collect();
+    if repl::command_names().contains(&words[0]) {
+        return command_line(client, &words, api_base_url).await;
+    }
+    Err(err(repl::unknown_command(&words[0])))
+}
+
+// the console's own verbs: the ones that read a session, a cell, or the notebook, and so have no
+// command-line counterpart to defer to.
+async fn meta_command(
+    client: &Client,
+    session: &mut ConsoleSession,
+    matched: &repl::MetaMatch,
+    current_cell: Option<Uuid>,
+    no_follow: bool,
+) -> Result<CommandOutcome> {
+    let arguments = &matched.arguments;
+    match matched.command.path {
+        ["help"] => {
+            let topic = arguments.args.join(" ");
+            print!(
+                "{}",
+                repl::help(Some(topic.as_str()).filter(|topic| !topic.is_empty()))?
+            );
+        }
+        ["clear"] => {
             // the ansi erase-display + cursor-home pair every terminal this repl runs in supports.
             print!("\x1b[2J\x1b[H");
             io::Write::flush(&mut io::stdout())?;
         }
-        ":sessions" => print_sessions(&client.console_sessions().await?),
-        ":new" => {
-            let name = argument.ok_or_else(|| err(":new requires a name"))?;
-            *session = client.create_console_session(name).await?;
+        ["sessions"] => print_sessions(&client.console_sessions().await?, session.id),
+        ["new"] => {
+            *session = client
+                .create_console_session(arguments.required(0, "session name")?)
+                .await?;
             println!("using session {} ({})", session.name, session.id);
         }
-        ":use" => {
-            let requested = argument.ok_or_else(|| err(":use requires a name or uuid"))?;
+        ["use"] => {
+            let requested = arguments.required(0, "session name or id")?;
             *session = select_session(client, Some(requested), None).await?;
             println!("using session {} ({})", session.name, session.id);
         }
-        ":history" => {
+        ["history"] => {
             let detail = client.console_session(session.id).await?;
-            for cell in detail.cells {
-                println!(
-                    "{:>4} {:<10} {}  {}",
-                    cell.position,
-                    cell.status.as_str(),
-                    cell.id,
-                    one_line(&cell.source)
-                );
-            }
+            let rows = detail
+                .cells
+                .iter()
+                .map(|cell| {
+                    vec![
+                        cell.position.to_string(),
+                        cell.status.as_str().to_string(),
+                        cell.id.to_string(),
+                        one_line(&cell.source),
+                    ]
+                })
+                .collect::<Vec<_>>();
+            print!("{}", output::table(&["#", "status", "id", "source"], &rows));
         }
-        ":bindings" => {
+        ["bindings"] => {
             let detail = client.console_session(session.id).await?;
-            for binding in detail.bindings {
-                println!(
-                    "{} = {}",
-                    binding.name,
-                    serde_json::to_string_pretty(&binding.value)?
-                );
-            }
+            let rows = detail
+                .bindings
+                .iter()
+                .map(|binding| {
+                    Ok(vec![
+                        binding.name.clone(),
+                        output::truncate(&serde_json::to_string(&binding.value)?, 72),
+                    ])
+                })
+                .collect::<Result<Vec<_>>>()?;
+            print!("{}", output::table(&["name", "value"], &rows));
         }
-        ":cancel" => {
-            let cell_id = argument
-                .map(str::parse)
-                .transpose()
-                .map_err(|_| err("invalid cell uuid"))?
-                .or(current_cell)
-                .ok_or_else(|| err(":cancel requires a cell uuid"))?;
+        ["cancel"] => {
+            let cell_id = cell_reference(arguments, current_cell, "cancel")?;
             let response = client.cancel_console_cell(cell_id).await?;
             println!("{}", response.message);
             return Ok(CommandOutcome::Continue(Some(cell_id)));
         }
-        ":replay" => {
-            let cell_id = argument
-                .map(str::parse)
-                .transpose()
-                .map_err(|_| err("invalid cell uuid"))?
-                .or(current_cell)
-                .ok_or_else(|| err(":replay requires a cell uuid"))?;
+        ["replay"] => {
+            let cell_id = cell_reference(arguments, current_cell, "replay")?;
             let mut cell = client.replay_console_cell(cell_id).await?;
             if !no_follow && cell.status == ConsoleCellStatus::Running {
                 cell = follow_cell(client, cell).await?;
@@ -470,81 +503,114 @@ async fn handle_command(
             print_cell(&cell)?;
             return Ok(CommandOutcome::Continue(Some(cell_id)));
         }
-        ":run" => {
-            let argument = argument.ok_or_else(|| err(":run requires workflow or pipeline"))?;
-            let (kind, rest) = argument
-                .split_once(char::is_whitespace)
-                .ok_or_else(|| err(":run requires a target"))?;
-            let (target, parameters) = target_and_json(rest)?;
-            match kind {
-                "workflow" => {
-                    let workflow = fetch_workflow_ref(client, &target).await?;
-                    let workflow_id = workflow.id.ok_or_else(|| err("workflow has no id"))?;
-                    let run = client.create_workflow_run(workflow_id, parameters).await?;
-                    println!("workflow run {}", run.id);
-                    if !no_follow {
-                        follow_workflow(client, run.id).await?;
-                    }
-                }
-                "pipeline" => {
-                    let id = match target.parse::<Uuid>() {
-                        Ok(id) => id,
-                        Err(_) => client
-                            .fetch_pipelines()
-                            .await?
-                            .into_iter()
-                            .find(|pipeline| pipeline.name == target)
-                            .and_then(|pipeline| pipeline.id)
-                            .ok_or_else(|| err(format!("pipeline '{target}' not found")))?,
-                    };
-                    let run = client.create_pipeline_run(id, parameters).await?;
-                    println!("pipeline run {}", run.id);
-                    if !no_follow {
-                        follow_pipeline(client, run.id).await?;
-                    }
-                }
-                _ => return Err(err(":run supports workflow or pipeline")),
+        ["run", "workflow"] => {
+            let target = arguments.required(0, "workflow")?.to_string();
+            let parameters = run_parameters(arguments)?;
+            let workflow = fetch_workflow_ref(client, &target).await?;
+            let workflow_id = workflow.id.ok_or_else(|| err("workflow has no id"))?;
+            let run = client
+                .create_workflow_run_with_options(
+                    workflow_id,
+                    parameters,
+                    arguments.is_set("debug"),
+                    arguments.flag("name").map(str::to_string),
+                )
+                .await?;
+            println!("workflow run {}", run.id);
+            if !no_follow {
+                follow_workflow(client, run.id).await?;
             }
         }
-        ":invoke" => {
-            let argument = argument.ok_or_else(|| err(":invoke requires package.export"))?;
-            let (head, input) = target_and_json(argument)?;
-            let mut words = head.split_whitespace();
-            let target = words.next().ok_or_else(|| err("missing function target"))?;
+        ["run", "pipeline"] => {
+            let target = arguments.required(0, "pipeline")?.to_string();
+            let parameters = run_parameters(arguments)?;
+            let id = match target.parse::<Uuid>() {
+                Ok(id) => id,
+                Err(_) => client
+                    .fetch_pipelines()
+                    .await?
+                    .into_iter()
+                    .find(|pipeline| pipeline.name == target)
+                    .and_then(|pipeline| pipeline.id)
+                    .ok_or_else(|| err(format!("pipeline '{target}' not found")))?,
+            };
+            let run = client.create_pipeline_run(id, parameters).await?;
+            println!("pipeline run {}", run.id);
+            if !no_follow {
+                follow_pipeline(client, run.id).await?;
+            }
+        }
+        ["invoke"] => {
+            let target = arguments.required(0, "package.export")?;
             let (package, export) = target
                 .rsplit_once('.')
-                .ok_or_else(|| err("function target must be package.export"))?;
-            let mut alias = None;
-            let mut version = None;
-            match (words.next(), words.next()) {
-                (Some("alias"), Some(value)) => alias = Some(value),
-                (Some("version"), Some(value)) => version = Some(value.parse::<i64>()?),
-                (None, None) => {}
-                _ => return Err(err("use alias <name> or version <number>")),
-            }
+                .ok_or_else(|| err("the function target must be package.export"))?;
+            let (alias, version) = function_selector(arguments)?;
+            let input = run_parameters(arguments)?;
             let result = client
-                .invoke_function(package, export, alias, version, &input)
+                .invoke_function(package, export, alias.as_deref(), version, &input)
                 .await?;
             println!("{}", serde_json::to_string_pretty(&result)?);
         }
-        ":exit" | ":quit" => return Ok(CommandOutcome::Exit),
-        // anything else is a command-line command: same parser, same flags, same help as the
-        // process reached by `runinatorctl <verb>`.
-        other => return command_line(client, other, argument, api_base_url).await,
+        ["exit"] => return Ok(CommandOutcome::Exit),
+        // every path in `META_COMMANDS` has an arm above; a new one without a body is a bug worth
+        // reporting rather than silently doing nothing.
+        other => return Err(err(format!("':{}' has no handler", other.join(" ")))),
     }
     Ok(CommandOutcome::Continue(None))
+}
+
+// `:cancel` and `:replay` both act on a cell: the one named by uuid, else the last one this session
+// started, which is what makes a bare `:cancel` mean "the thing i just ran".
+fn cell_reference(
+    arguments: &repl::Arguments,
+    current_cell: Option<Uuid>,
+    verb: &str,
+) -> Result<Uuid> {
+    arguments
+        .arg(0)
+        .map(str::parse)
+        .transpose()
+        .map_err(|_| err("invalid cell uuid"))?
+        .or(current_cell)
+        .ok_or_else(|| err(format!(":{verb} requires a cell uuid")))
+}
+
+// run parameters, from either spelling: `--param k=v` pairs, or a `… with {json}` tail. the web
+// console accepts both too, so a line copied between the two consoles keeps working.
+fn run_parameters(arguments: &repl::Arguments) -> Result<Value> {
+    if let Some(json) = arguments.raw_after("with") {
+        return Ok(serde_json::from_str(&json)?);
+    }
+    if let Some(input) = arguments.flag("input") {
+        return Ok(serde_json::from_str(input)?);
+    }
+    params::load_object(None, arguments.flag_list("param"))
+}
+
+// which version of a packaged function to call: an alias resolves at call time, a version pins.
+// the bare `alias production` / `version 3` spelling predates the flags and still works.
+fn function_selector(arguments: &repl::Arguments) -> Result<(Option<String>, Option<i64>)> {
+    let mut alias = arguments.flag("alias").map(str::to_string);
+    let mut version = arguments
+        .flag("version")
+        .map(str::parse::<i64>)
+        .transpose()?;
+    match (arguments.arg(1), arguments.arg(2)) {
+        (Some("alias"), Some(value)) => alias = Some(value.to_string()),
+        (Some("version"), Some(value)) => version = Some(value.parse()?),
+        _ => {}
+    }
+    Ok((alias, version))
 }
 
 // run one `runinatorctl` command from inside the repl.
 async fn command_line(
     client: &Client,
-    verb: &str,
-    argument: Option<&str>,
+    tokens: &[String],
     api_base_url: &str,
 ) -> Result<CommandOutcome> {
-    let mut tokens = vec![verb.trim_start_matches(':').to_string()];
-    tokens.extend(repl::tokenize(argument.unwrap_or_default())?);
-    let parsed = repl::parse(&tokens)?;
+    let parsed = repl::parse(tokens)?;
     // `:console` would open a second console inside this one; the session verbs already move
     // between sessions, so point at them instead of nesting.
     if matches!(parsed.command, Commands::Console { .. }) {
@@ -597,18 +663,6 @@ async fn follow_cell(client: &Client, mut cell: ConsoleCell) -> Result<ConsoleCe
     }
 }
 
-fn target_and_json(value: &str) -> Result<(String, Value)> {
-    let (target, parameters) = match value.split_once(" with ") {
-        Some((target, json)) => (target, serde_json::from_str::<Value>(json)?),
-        None => (value, Value::Object(Default::default())),
-    };
-    let target = target.trim().trim_matches('"').to_string();
-    if target.is_empty() {
-        return Err(err("target is required"));
-    }
-    Ok((target, parameters))
-}
-
 async fn follow_workflow(client: &Client, run_id: Uuid) -> Result<()> {
     loop {
         tokio::select! {
@@ -650,15 +704,21 @@ async fn follow_pipeline(client: &Client, run_id: Uuid) -> Result<()> {
     }
 }
 
-fn print_sessions(sessions: &[ConsoleSession]) {
-    for session in sessions {
-        println!(
-            "{}  {:<24} {}",
-            session.id,
-            session.name,
-            session.updated_at.to_rfc3339()
-        );
-    }
+// the session in use is marked, the way the web console's `:sessions` marks it: a list of names
+// with no "you are here" is a list you have to hold in your head.
+fn print_sessions(sessions: &[ConsoleSession], active: Uuid) {
+    let rows = sessions
+        .iter()
+        .map(|session| {
+            vec![
+                if session.id == active { "*" } else { " " }.to_string(),
+                session.id.to_string(),
+                output::truncate(&session.name, 28),
+                session.updated_at.to_rfc3339(),
+            ]
+        })
+        .collect::<Vec<_>>();
+    print!("{}", output::table(&["", "id", "name", "updated"], &rows));
 }
 
 fn print_cell(cell: &ConsoleCell) -> Result<()> {

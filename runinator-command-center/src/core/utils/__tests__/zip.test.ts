@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createZip } from "../zip";
+import { createZip, readZipTextEntry } from "../zip";
 
 // minimal store-only zip reader: walk the end-of-central-directory record and pull each entry back
 // out by its local header so we can assert the writer round-trips names and contents.
@@ -48,5 +48,30 @@ describe("createZip", () => {
     const blob = createZip([{ name: "u.wdl", content: "héllo → wörld" }]);
     const entries = await readZip(blob);
     expect(entries.get("u.wdl")).toBe("héllo → wörld");
+  });
+});
+
+describe("readZipTextEntry", () => {
+  const archive = () =>
+    createZip([
+      { name: "pkg/src/main.py", content: "print('hi')\n" },
+      { name: "pkg/runinator-function.json", content: '{"name":"images"}' },
+    ]).arrayBuffer();
+
+  it("finds an entry by name, wherever it sits in the tree", async () => {
+    const entry = await readZipTextEntry(
+      await archive(),
+      (name) => name.split("/").pop() === "runinator-function.json",
+    );
+
+    expect(entry).toEqual({ name: "pkg/runinator-function.json", text: '{"name":"images"}' });
+  });
+
+  it("reports nothing when no entry matches", async () => {
+    expect(await readZipTextEntry(await archive(), (name) => name === "absent")).toBeNull();
+  });
+
+  it("reports nothing for bytes that are not an archive", async () => {
+    expect(await readZipTextEntry(new TextEncoder().encode("not a zip").buffer, () => true)).toBeNull();
   });
 });

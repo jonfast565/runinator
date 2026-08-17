@@ -546,14 +546,26 @@ same vocabulary over the HTTP API; the handful of commands that read or write a 
 (`workflows apply`, `functions publish`, `settings import`, `artifacts download`) stay listed in
 `:help` and say to run them with `runinatorctl`.
 
-`:help` lists both halves and `:help <command>` shows one command's flags. `Tab` completes verbs,
-subcommands, and long flags. `Enter` runs a finished line and opens a new one while a brace, bracket,
-paren, or quote is still open, so a multi-line workflow can be typed straight into the prompt and
-executed as a scratch run.
+`:help` prints one table of every command against what it does, and `:help <command>` narrows to a
+prefix or expands one command into its call shape and each argument. The list is *derived* — the
+terminal console walks the same clap tree the process parses with, so a verb added to the CLI is
+listed, completed, and explained the day it is added.
+
+Both consoles read a line the same way: tokenize, take the longest command path that prefixes the
+tokens, then split what is left into positionals and flags (`--name value`, `--name=value`, and a
+bare switch all work). A flag the command does not take is an error naming the ones it does, and an
+unknown verb suggests the nearest one rather than only refusing.
+
+`Tab` completes verbs, subcommands, long flags, and the **values** a flag accepts when they are a
+closed set (`:replicas list --status ` offers `live`, `stale`, `offline`). When there is nothing to
+insert, the band under the prompt says what belongs there instead — `<workflow>`, `--kind <KIND>`.
+`Enter` runs a finished line and opens a new one while a brace, bracket, paren, or quote is still
+open, so a multi-line workflow can be typed straight into the prompt and executed as a scratch run.
 
 A few verbs exist only inside a session, since they have no command-line counterpart: `:sessions`,
 `:new`, `:use`, `:history`, `:bindings`, `:cancel`, `:replay`, `:run workflow|pipeline`, `:invoke`,
-and `:clear`.
+and `:clear`. `:run` and `:invoke` take their payload either way — `--param KEY=VALUE` or a
+`… with {"a": 1}` tail — so a line copied between the two consoles keeps working.
 
 ## Workflow Import
 
@@ -1258,6 +1270,13 @@ a Kubernetes discovery mechanism. Kubernetes keeps `--disable-gossip` and uses s
 Web-service announcements include their `http`/`https` scheme, relay path, version, enrollment
 availability, and optional SPKI pin. Set `RUNINATOR_CLUSTER_ID` to the same stable UUID on every web
 replica when its public enrollment URL differs from the address advertised on the LAN.
+
+`runinatorctl replicas` reads the fleet: `list` (with `--kind`, `--status`, or `--live`), `ids` for
+just the identifiers one per line, `show <id>` for one replica and the attributes it heartbeats,
+`providers <id>` for what a worker advertises, and `samples <id>` for its recent cpu/memory
+telemetry. The same verbs are in both consoles as `:replicas …`. They are read-only on purpose: a
+replica row is a report *from* a runtime, so the way to change one is to scale a node group
+(`nodes`), direct an agent (`agents`), or stop the process itself.
 
 The service reaps silent replicas after 10 minutes and deletes offline rows after 60 minutes by
 default. Set `RUNINATOR_REPLICA_REAP_SECONDS` and `RUNINATOR_REPLICA_DELETE_SECONDS` to tune those

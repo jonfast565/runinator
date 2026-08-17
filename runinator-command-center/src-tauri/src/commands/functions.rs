@@ -26,6 +26,72 @@ pub async fn fetch_function_catalog(state: State<'_, CommandCenterState>) -> Com
     get_json(&state, "functions/catalog").await
 }
 
+/// store a package archive under the digest of its bytes.
+///
+/// the archive arrives base64-encoded because tauri's ipc is json; the web build posts the bytes
+/// themselves. either way the server keeps them only if it does not already hold that digest.
+#[tauri::command]
+pub async fn upload_function_artifact(
+    state: State<'_, CommandCenterState>,
+    digest: String,
+    base64: String,
+) -> CommandResult<Value> {
+    let bytes = decode_base64(&base64)?;
+    crate::client::post_bytes(
+        &state,
+        &format!("function_artifacts/{digest}"),
+        runinator_models::functions::ARTIFACT_MEDIA_TYPE,
+        bytes,
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn publish_function_version(
+    state: State<'_, CommandCenterState>,
+    request: Value,
+) -> CommandResult<Value> {
+    post_json(&state, "functions", &request).await
+}
+
+#[tauri::command]
+pub async fn restore_function_package(
+    state: State<'_, CommandCenterState>,
+    package_name: String,
+) -> CommandResult<Value> {
+    crate::client::post_empty(&state, &format!("functions/{package_name}/restore")).await
+}
+
+// standard base64, decoded by hand: one call site does not earn a dependency, and the alphabet has
+// not moved since 1987.
+fn decode_base64(text: &str) -> CommandResult<Vec<u8>> {
+    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut bytes = Vec::with_capacity(text.len() / 4 * 3);
+    let mut accumulator: u32 = 0;
+    let mut bits = 0;
+    for character in text.bytes() {
+        if character == b'=' || character.is_ascii_whitespace() {
+            continue;
+        }
+        let Some(value) = ALPHABET
+            .iter()
+            .position(|candidate| *candidate == character)
+        else {
+            return Err(CommandError::Unexpected(format!(
+                "'{}' is not base64",
+                character as char
+            )));
+        };
+        accumulator = (accumulator << 6) | value as u32;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            bytes.push((accumulator >> bits) as u8);
+        }
+    }
+    Ok(bytes)
+}
+
 #[tauri::command]
 pub async fn delete_function_package(
     state: State<'_, CommandCenterState>,

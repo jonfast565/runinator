@@ -26,6 +26,19 @@ export type {
 } from "./function";
 export { functionCallPath, qualifiedPackageName, shortDigest } from "./function";
 export type {
+  FunctionManifest,
+  NewFunctionExport,
+  NewFunctionPackage,
+  NewFunctionVersion,
+} from "./function/manifest";
+export {
+  DEFAULT_ALIAS,
+  MANIFEST_FILE,
+  parseManifest,
+  publishRequest,
+  validateManifest,
+} from "./function/manifest";
+export type {
   ConsoleBinding,
   ConsoleCell,
   ConsoleCellKind,
@@ -160,6 +173,7 @@ export type {
   ReplicaCounts,
   ReplicaKind,
   ReplicaListResponse,
+  ReplicaProviderRegistration,
   ReplicaRecord,
   ReplicaStatus,
 } from "./replica";

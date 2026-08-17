@@ -36,6 +36,9 @@ pub(crate) struct PromptEditor {
     draft: String,
     /// the completion candidates shown under the input, if any.
     pub(crate) menu: Vec<String>,
+    /// what belongs at the caret when there is nothing to complete: the value's name and what it
+    /// means. shown instead of the menu, since the two are never interesting at once.
+    pub(crate) hint: Option<String>,
 }
 
 impl PromptEditor {
@@ -122,7 +125,7 @@ impl PromptEditor {
                 Outcome::Pending
             }
             KeyCode::Esc => {
-                self.menu.clear();
+                self.dismiss();
                 Outcome::Pending
             }
             _ => Outcome::Pending,
@@ -195,7 +198,7 @@ impl PromptEditor {
     fn insert(&mut self, character: char) {
         self.characters.insert(self.cursor, character);
         self.cursor += 1;
-        self.menu.clear();
+        self.dismiss();
     }
 
     fn backspace(&mut self) {
@@ -204,7 +207,7 @@ impl PromptEditor {
         }
         self.cursor -= 1;
         self.characters.remove(self.cursor);
-        self.menu.clear();
+        self.dismiss();
     }
 
     fn delete(&mut self) {
@@ -229,7 +232,13 @@ impl PromptEditor {
         self.characters.clear();
         self.cursor = 0;
         self.recall = None;
+        self.dismiss();
+    }
+
+    // the menu and the hint answer the same question, so they appear and disappear together.
+    fn dismiss(&mut self) {
         self.menu.clear();
+        self.hint = None;
     }
 
     fn remember(&mut self, line: String) {
@@ -271,7 +280,7 @@ impl PromptEditor {
     fn set(&mut self, text: &str) {
         self.characters = text.chars().collect();
         self.cursor = self.characters.len();
-        self.menu.clear();
+        self.dismiss();
     }
 
     // tab completes the word under the caret when there is one answer, and lists the choices when
@@ -280,14 +289,19 @@ impl PromptEditor {
         let buffer = self.buffer();
         let completion = repl::complete(&buffer);
         if completion.options.is_empty() {
+            // nothing to insert, but the catalog may still know what belongs here — a uuid, a
+            // workflow name, a closed set the argument did not declare — and saying so is more use
+            // than a silent Tab.
             self.menu.clear();
+            self.hint = completion.hint;
             return;
         }
+        self.hint = None;
         // the replaced word is measured in bytes by the completer and in characters here.
         let start = buffer[..completion.start].chars().count();
         if let [only] = completion.options.as_slice() {
             self.replace_word(start, &format!("{only} "));
-            self.menu.clear();
+            self.dismiss();
             return;
         }
         let shared = common_prefix(&completion.options);

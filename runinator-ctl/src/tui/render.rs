@@ -26,6 +26,8 @@ pub(crate) struct PromptView<'a> {
     /// caret position in the buffer, as (line, column).
     pub caret: (usize, usize),
     pub menu: &'a [String],
+    /// what belongs at the caret, when `Tab` had nothing to insert.
+    pub hint: Option<&'a str>,
     /// a transient message: the last error, or what a command reported.
     pub note: Option<&'a str>,
 }
@@ -100,13 +102,15 @@ fn input_box<'a>(view: &'a PromptView<'a>, rows: u16) -> Paragraph<'a> {
         )
 }
 
-// the completion candidates, or the note when there are none — one band, because they are never
-// interesting at the same moment.
+// the completion candidates, the hint for the value being typed, or the note — one band, because
+// no two of them are interesting at the same moment. an error outranks a hint: it is about the line
+// that just ran, and the hint is only about the one being written.
 fn menu_list<'a>(view: &'a PromptView<'a>) -> Paragraph<'a> {
     if view.menu.is_empty() {
-        return Paragraph::new(match view.note {
-            Some(note) => Line::styled(note, Style::new().red()),
-            None => Line::raw(""),
+        return Paragraph::new(match (view.note, view.hint) {
+            (Some(note), _) => Line::styled(note, Style::new().red()),
+            (None, Some(hint)) => Line::styled(hint, Style::new().dark_gray()),
+            (None, None) => Line::raw(""),
         });
     }
 

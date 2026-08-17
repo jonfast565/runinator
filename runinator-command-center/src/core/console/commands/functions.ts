@@ -7,6 +7,7 @@ import {
   fetchFunctionPackage,
   fetchFunctionPackages,
   invokeFunction,
+  restoreFunctionPackage,
   setFunctionAlias,
 } from "../../api/commandCenterApi";
 import type { JsonRecord } from "../../domain/json";
@@ -177,15 +178,29 @@ export const functionCommands: ConsoleCommand[] = [
       print(json(result));
     },
   },
+  {
+    path: ["functions", "restore"],
+    usage: "functions restore <package>",
+    summary: "restore an archived package",
+    run: async ({ args, print }) => {
+      const packageName = requiredArg(args, 0, "package");
+      await restoreFunctionPackage(packageName);
+      print(done(`restored ${packageName}`));
+    },
+  },
   ...localOnly([
     ["validate", "functions validate <path>", "check a package directory offline"],
-    ["publish", "functions publish <path> [--alias NAME]", "publish one version of a package"],
-    ["restore", "functions restore <package>", "restore an archived package"],
+    [
+      "publish",
+      "functions publish <path> [--alias NAME]",
+      "publish one version of a package; the Functions tab's Publish dialog takes a built archive",
+    ],
   ]),
 ];
 
-// publishing reads a working tree, and restore has no web-service binding here yet; both stay in
-// the catalog so `:help` says where to run them.
+// publishing archives a working tree, which a browser tab does not have. it stays in the catalog so
+// `:help` says where to run it — either `runinatorctl`, or the Functions tab's Publish dialog, which
+// takes an archive that has already been built.
 function localOnly(entries: [string, string, string][]): ConsoleCommand[] {
   return entries.map(([name, usage, summary]) => ({
     path: ["functions", name],

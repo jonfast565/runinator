@@ -4,7 +4,7 @@ use uuid::Uuid;
 use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand, ValueEnum};
 use runinator_models::provisioning::ProvisionBackend;
-use runinator_models::replicas::ReplicaKind;
+use runinator_models::replicas::{ReplicaKind, ReplicaStatus};
 use runinator_models::semver::SemVerBump;
 use runinator_models::settings::SettingKind;
 use runinator_wdl::TypePolicy;
@@ -228,10 +228,97 @@ pub enum Commands {
         #[command(subcommand)]
         command: OrgCommands,
     },
+    /// Inspect the registered runtime replicas behind the fleet.
+    Replicas {
+        #[command(subcommand)]
+        command: ReplicaCommands,
+    },
     /// Enroll and manage externally hosted worker agents.
     Agents {
         #[command(subcommand)]
         command: AgentCommands,
+    },
+}
+
+/// cli-facing replica kind. wider than `CliNodeKind`, which only names the kinds a provisioner can
+/// scale; every kind that registers can be listed.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum CliReplicaKind {
+    Worker,
+    Waker,
+    Webservice,
+    Background,
+    Archiver,
+    Postgres,
+}
+
+impl From<CliReplicaKind> for ReplicaKind {
+    fn from(kind: CliReplicaKind) -> Self {
+        match kind {
+            CliReplicaKind::Worker => ReplicaKind::Worker,
+            CliReplicaKind::Waker => ReplicaKind::Waker,
+            CliReplicaKind::Webservice => ReplicaKind::Webservice,
+            CliReplicaKind::Background => ReplicaKind::Background,
+            CliReplicaKind::Archiver => ReplicaKind::Archiver,
+            CliReplicaKind::Postgres => ReplicaKind::Postgres,
+        }
+    }
+}
+
+/// cli-facing replica status.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum CliReplicaStatus {
+    Live,
+    Stale,
+    Offline,
+}
+
+impl From<CliReplicaStatus> for ReplicaStatus {
+    fn from(status: CliReplicaStatus) -> Self {
+        match status {
+            CliReplicaStatus::Live => ReplicaStatus::Live,
+            CliReplicaStatus::Stale => ReplicaStatus::Stale,
+            CliReplicaStatus::Offline => ReplicaStatus::Offline,
+        }
+    }
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ReplicaCommands {
+    /// List registered replicas and their ids, optionally filtered by kind or status.
+    List {
+        /// Only replicas of one kind.
+        #[arg(long, value_enum)]
+        kind: Option<CliReplicaKind>,
+        /// Only replicas in one status.
+        #[arg(long, value_enum)]
+        status: Option<CliReplicaStatus>,
+        /// Only show replicas still reporting in.
+        #[arg(long)]
+        live: bool,
+    },
+    /// Show one replica by id, including the attributes it heartbeats.
+    Show { replica_id: Uuid },
+    /// Print just the replica ids, one per line, for piping into another command.
+    Ids {
+        /// Only replicas of one kind.
+        #[arg(long, value_enum)]
+        kind: Option<CliReplicaKind>,
+        /// Only replicas in one status.
+        #[arg(long, value_enum)]
+        status: Option<CliReplicaStatus>,
+    },
+    /// List the providers one replica has registered.
+    Providers { replica_id: Uuid },
+    /// Show one replica's recent cpu/memory telemetry.
+    Samples {
+        replica_id: Uuid,
+        /// Look-back window in seconds; defaults to the last hour.
+        #[arg(long)]
+        since_seconds: Option<i64>,
+        /// Cap on the samples printed, newest last.
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
     },
 }
 
@@ -246,12 +333,14 @@ pub enum AgentCommands {
     /// Fetch recent desktop-agent log lines.
     Logs {
         replica_id: Uuid,
+        /// How many trailing log lines to ask for.
         #[arg(long, default_value_t = 200)]
         lines: usize,
     },
     /// List recent directive state for one agent.
     Directives {
         replica_id: Uuid,
+        /// Cap on directives returned, newest first.
         #[arg(long, default_value_t = 50)]
         limit: i64,
     },
@@ -293,10 +382,13 @@ pub enum OrgCommands {
     /// Set an org's dedicated node count for a kind on a backend (quota-enforced).
     Scale {
         org: uuid::Uuid,
+        /// Provisioning backend the nodes live on.
         #[arg(long, value_enum)]
         backend: CliProvisionBackend,
+        /// Node kind to size.
         #[arg(long, value_enum)]
         kind: CliNodeKind,
+        /// Exact number of nodes this org should hold.
         #[arg(long)]
         desired: u32,
     },
@@ -310,8 +402,10 @@ pub enum NodeCommands {
     List,
     /// Add nodes of a kind on a backend, raising the desired count by --count.
     SpinUp {
+        /// Provisioning backend to add nodes on.
         #[arg(long, value_enum)]
         backend: CliProvisionBackend,
+        /// Node kind to add.
         #[arg(long, value_enum)]
         kind: CliNodeKind,
         /// How many nodes to add to the current desired count.
@@ -323,17 +417,22 @@ pub enum NodeCommands {
     },
     /// Set the exact desired node count for a kind on a backend.
     Scale {
+        /// Provisioning backend the node group lives on.
         #[arg(long, value_enum)]
         backend: CliProvisionBackend,
+        /// Node kind to size.
         #[arg(long, value_enum)]
         kind: CliNodeKind,
+        /// Exact number of nodes to run.
         #[arg(long)]
         desired: u32,
     },
     /// Stop and remove a single node instance by id.
     Stop {
+        /// Provisioning backend the node runs on.
         #[arg(long, value_enum)]
         backend: CliProvisionBackend,
+        /// Instance id, as listed by `nodes list`.
         #[arg(long)]
         node: String,
     },
@@ -351,6 +450,7 @@ pub enum SettingsCommands {
     Get {
         scope: String,
         name: String,
+        /// Which store the slot lives in.
         #[arg(long, value_enum, default_value_t = CliSettingKind::Secret)]
         kind: CliSettingKind,
     },
@@ -365,6 +465,7 @@ pub enum SettingsCommands {
         /// read the value from a file instead of the VALUE argument.
         #[arg(long, value_name = "PATH", conflicts_with = "value")]
         value_file: Option<PathBuf>,
+        /// Which store the slot lives in.
         #[arg(long, value_enum, default_value_t = CliSettingKind::Secret)]
         kind: CliSettingKind,
         /// JSON-schema for a config value (json text), required on first write of a config slot.
@@ -378,6 +479,7 @@ pub enum SettingsCommands {
     Delete {
         scope: String,
         name: String,
+        /// Which store the slot lives in.
         #[arg(long, value_enum, default_value_t = CliSettingKind::Secret)]
         kind: CliSettingKind,
     },
@@ -388,6 +490,7 @@ pub enum WdlCommands {
     /// Compile a .wdl file into a workflow definition JSON.
     Compile {
         file: PathBuf,
+        /// Write the JSON here instead of to stdout.
         #[arg(short, long)]
         output: Option<PathBuf>,
         /// WDL type checking policy. Use permissive only for legacy investigation.
@@ -397,6 +500,7 @@ pub enum WdlCommands {
     /// Decompile a workflow definition JSON file back into .wdl source.
     Decompile {
         file: PathBuf,
+        /// Write the .wdl here instead of to stdout.
         #[arg(short, long)]
         output: Option<PathBuf>,
         /// Emit the canonical fully-explicit form: start edge, ids and arrows on every node,
@@ -407,8 +511,10 @@ pub enum WdlCommands {
     /// Format a .wdl file.
     Format {
         file: PathBuf,
+        /// Write the formatted source here instead of over the file.
         #[arg(short, long)]
         output: Option<PathBuf>,
+        /// Report whether the file is already formatted, changing nothing.
         #[arg(long)]
         check: bool,
     },
@@ -453,10 +559,13 @@ pub enum WorkflowCommands {
         /// Workflow id or name to run after each successful apply.
         #[arg(long)]
         run: Option<String>,
+        /// Run parameter as KEY=VALUE; repeat for several. Values parse as json when they can.
         #[arg(long = "param", value_name = "KEY=VALUE")]
         params: Vec<String>,
+        /// Read the run parameters from a json file instead.
         #[arg(long = "json-file")]
         json_file: Option<PathBuf>,
+        /// Start the run paused for the debugger.
         #[arg(long)]
         debug: bool,
         /// Name assigned to each created workflow run.
@@ -472,6 +581,7 @@ pub enum WorkflowCommands {
     /// Export one workflow or the full workflow bundle.
     Export {
         workflow_id: Option<Uuid>,
+        /// Write the bundle here instead of to stdout.
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
@@ -479,6 +589,7 @@ pub enum WorkflowCommands {
     Revisions {
         /// Workflow id or name.
         workflow: String,
+        /// Cap on revisions listed, newest first.
         #[arg(long, default_value_t = 20)]
         limit: i64,
     },
@@ -501,18 +612,23 @@ pub enum WorkflowCommands {
     Duplicate {
         /// Workflow id or name to duplicate.
         workflow: String,
+        /// How much of the version to raise on the copy.
         #[arg(long, value_enum, default_value_t = CliBumpLevel::default())]
         bump: CliBumpLevel,
     },
     /// Create a workflow run.
     Run {
         workflow: String,
+        /// Run parameter as KEY=VALUE; repeat for several. Values parse as json when they can.
         #[arg(long = "param", value_name = "KEY=VALUE")]
         params: Vec<String>,
+        /// Read the run parameters from a json file instead.
         #[arg(long = "json-file")]
         json_file: Option<PathBuf>,
+        /// Start the run paused for the debugger.
         #[arg(long)]
         debug: bool,
+        /// Name assigned to the created run.
         #[arg(long)]
         name: Option<String>,
     },
@@ -522,10 +638,13 @@ pub enum WorkflowCommands {
 pub enum RunCommands {
     /// List recent or filtered workflow runs.
     List {
+        /// Only runs in this status, such as running, waiting, or failed.
         #[arg(long)]
         status: Option<String>,
+        /// Only runs of one workflow.
         #[arg(long = "workflow-id")]
         workflow_id: Option<Uuid>,
+        /// Only runs that have not reached a terminal status.
         #[arg(long)]
         open: bool,
     },
@@ -534,14 +653,17 @@ pub enum RunCommands {
     /// Refresh a workflow run until interrupted or terminal.
     Watch {
         id: Uuid,
+        /// How often to refresh.
         #[arg(long, default_value_t = 2)]
         interval_seconds: u64,
     },
     /// Print log chunks for a workflow node run.
     Logs {
         node_run_id: Uuid,
+        /// Resume from a chunk sequence returned by an earlier call.
         #[arg(long)]
         cursor: Option<i64>,
+        /// Cap on chunks returned.
         #[arg(long, default_value_t = 100)]
         limit: i64,
     },
@@ -554,6 +676,7 @@ pub enum RunCommands {
     /// Replay a workflow run.
     Replay {
         id: Uuid,
+        /// Replay from this node id rather than from the start.
         #[arg(long = "from-step")]
         from_step_id: Option<String>,
     },
@@ -567,12 +690,14 @@ pub enum RunCommands {
 pub enum ArtifactCommands {
     /// List the artifacts a workflow node run produced.
     List {
+        /// The node run whose artifacts to list.
         #[arg(long = "node-run")]
         node_run_id: Uuid,
     },
     /// Download an artifact by id to a file (defaults to its name in the cwd).
     Download {
         id: Uuid,
+        /// Write the bytes here instead of to the artifact's name in the cwd.
         #[arg(short, long)]
         out: Option<PathBuf>,
     },
@@ -582,28 +707,36 @@ pub enum ArtifactCommands {
 pub enum ApprovalCommands {
     /// List approval requests.
     List {
+        /// Only requests raised by one run.
         #[arg(long = "workflow-run-id")]
         workflow_run_id: Option<Uuid>,
+        /// Only requests still awaiting a decision.
         #[arg(long)]
         open: bool,
     },
     /// Approve an approval request.
     Approve {
         id: Uuid,
+        /// Who is deciding, recorded on the approval.
         #[arg(long)]
         by: Option<String>,
+        /// Note recorded with the decision.
         #[arg(long)]
         message: Option<String>,
+        /// Json payload handed back to the workflow.
         #[arg(long = "json-file")]
         json_file: Option<PathBuf>,
     },
     /// Reject an approval request.
     Reject {
         id: Uuid,
+        /// Who is deciding, recorded on the approval.
         #[arg(long)]
         by: Option<String>,
+        /// Note recorded with the decision.
         #[arg(long)]
         message: Option<String>,
+        /// Json payload handed back to the workflow.
         #[arg(long = "json-file")]
         json_file: Option<PathBuf>,
     },
@@ -618,10 +751,13 @@ pub enum TriggerCommands {
     /// Create a run from a trigger.
     Run {
         trigger_id: Uuid,
+        /// Run parameter as KEY=VALUE; repeat for several.
         #[arg(long = "param", value_name = "KEY=VALUE")]
         params: Vec<String>,
+        /// Read the run parameters from a json file instead.
         #[arg(long = "json-file")]
         json_file: Option<PathBuf>,
+        /// Start the run paused for the debugger.
         #[arg(long)]
         debug: bool,
     },
@@ -667,6 +803,7 @@ pub enum FreezeCommands {
         /// Freeze one org rather than the whole platform.
         #[arg(long)]
         org_id: Option<Uuid>,
+        /// Why the window exists, shown wherever it is listed.
         #[arg(long)]
         reason: Option<String>,
     },

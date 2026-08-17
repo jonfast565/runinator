@@ -23,13 +23,17 @@
     </button>
   </div>
   <!-- the completion menu and the key legend, laid out like the runinatorctl prompt's two bottom
-       bands: candidates when there are any, the keys otherwise. -->
+       bands: candidates when there are any, what belongs at the caret when there are none, and the
+       keys otherwise. -->
   <div
     v-if="menu.length"
     class="flex flex-wrap gap-x-4 gap-y-0.5 px-3 pb-1 font-mono text-[11px] text-accent-pulse"
   >
     <span v-for="option in menu" :key="option">{{ option }}</span>
   </div>
+  <p v-else-if="hint" class="m-0 px-3 pb-1 font-mono text-[11px] text-fg-inverse-faint">
+    {{ hint }}
+  </p>
   <p class="m-0 px-3 pb-2 font-mono text-[11px] text-fg-inverse-faint">{{ LEGEND }}</p>
 </template>
 
@@ -48,6 +52,8 @@ const LEGEND =
 const buffer = ref("");
 const input = ref<HTMLTextAreaElement | null>(null);
 const menu = ref<string[]>([]);
+// what belongs at the caret when Tab had nothing to insert, e.g. `<workflow>`.
+const hint = ref<string | undefined>(undefined);
 // where arrow-up currently is in the recalled history; -1 means "editing a fresh line".
 const historyIndex = ref(-1);
 const draft = ref("");
@@ -65,6 +71,7 @@ watch(
   buffer,
   () => {
     menu.value = [];
+    hint.value = undefined;
   },
   { flush: "sync" },
 );
@@ -131,6 +138,7 @@ function onEnter(event: KeyboardEvent) {
   buffer.value = "";
   historyIndex.value = -1;
   menu.value = [];
+  hint.value = undefined;
 }
 
 // arrow keys walk the history only from the edges of the buffer, so a multi-line cell can still be
@@ -175,12 +183,17 @@ function onHistory(event: KeyboardEvent) {
 // tab completes the word under the caret when there is one answer, and lists the choices when there
 // are several — the same bargain a shell makes.
 function applyCompletion() {
-  const { start, options } = complete(buffer.value);
+  const { start, options, hint: offered } = complete(buffer.value);
 
   if (options.length === 0) {
+    // nothing to insert, but the usage line may still know what belongs here — saying so beats a
+    // silent Tab.
     menu.value = [];
+    hint.value = offered;
     return;
   }
+
+  hint.value = undefined;
 
   if (options.length === 1) {
     buffer.value = `${buffer.value.slice(0, start)}${options[0]} `;

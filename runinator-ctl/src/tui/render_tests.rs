@@ -31,6 +31,7 @@ fn view<'a>(buffer: &'a str, menu: &'a [String], note: Option<&'a str>) -> Promp
         buffer,
         caret: (0, buffer.chars().count()),
         menu,
+        hint: None,
         note,
     }
 }

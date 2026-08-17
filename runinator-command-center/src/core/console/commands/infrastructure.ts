@@ -1,4 +1,4 @@
-// `:nodes …`, `:orgs …`, `:agents …` — the fleet behind the runs.
+// `:nodes …`, `:orgs …`, `:replicas …`, `:agents …` — the fleet behind the runs.
 
 import {
   createAgentEnrollmentToken,
@@ -8,6 +8,9 @@ import {
   fetchNodes,
   fetchOrgNodes,
   fetchOrgUsage,
+  fetchReplicaProviders,
+  fetchReplicas,
+  fetchReplicaSamples,
   listAgentDirectives,
   listAgentEnrollmentTokens,
   listMyOrgs,
@@ -17,7 +20,7 @@ import {
   stopNode,
 } from "../../api/commandCenterApi";
 import { getCommandRuntime } from "../../api/runtime";
-import type { AgentDirectiveKind } from "../../domain/models";
+import type { AgentDirectiveKind, ReplicaRecord } from "../../domain/models";
 import { cell, done, json, table, text, time, truncate } from "../format";
 import { flag, flagList, numberFlag, requiredArg, requiredFlag } from "../options";
 import type { ConsoleCommand, ConsoleFlags } from "../types";
@@ -104,6 +107,192 @@ export const nodeCommands: ConsoleCommand[] = [
     },
   },
 ];
+
+export const replicaCommands: ConsoleCommand[] = [
+  {
+    path: ["replicas", "list"],
+    usage: "replicas list [--kind KIND] [--status live|stale|offline] [--live]",
+    summary: "list registered replicas and their ids",
+    run: async ({ flags, json: raw, print }) => {
+      const replicas = await selectReplicas(flags);
+
+      if (raw) {
+        print(json(replicas));
+        return;
+      }
+
+      print(
+        table(
+          ["id", "kind", "status", "name", "endpoint", "last_heartbeat"],
+          replicas.map((replica) => [
+            replica.replica_id,
+            replica.replica_type,
+            replica.status,
+            truncate(replicaName(replica), 28),
+            truncate(endpoint(replica), 32),
+            time(replica.last_heartbeat_at),
+          ]),
+        ),
+      );
+    },
+  },
+  {
+    path: ["replicas", "ids"],
+    usage: "replicas ids [--kind KIND] [--status live|stale|offline] [--live]",
+    summary: "print just the replica ids, one per line",
+    run: async ({ flags, json: raw, print }) => {
+      const replicas = await selectReplicas(flags);
+
+      if (raw) {
+        print(json(replicas.map((replica) => replica.replica_id)));
+        return;
+      }
+
+      for (const replica of replicas) {
+        print(text(replica.replica_id));
+      }
+    },
+  },
+  {
+    path: ["replicas", "show"],
+    usage: "replicas show <replica-id>",
+    summary: "show one replica, including the attributes it heartbeats",
+    run: async ({ args, json: raw, print }) => {
+      // there is no fetch-one endpoint, and adding one for a list this size would be a route that
+      // only saves a filter.
+      const wanted = requiredArg(args, 0, "replica id");
+      const { replicas } = await fetchReplicas();
+      const replica = replicas.find((candidate) => candidate.replica_id === wanted);
+
+      if (!replica) {
+        throw new Error(`replica ${wanted} not found`);
+      }
+
+      if (raw) {
+        print(json(replica));
+        return;
+      }
+
+      print(
+        table(
+          ["field", "value"],
+          [
+            ["id", replica.replica_id],
+            ["kind", replica.replica_type],
+            ["status", replica.status],
+            ["name", replicaName(replica)],
+            ["instance", replica.instance_id],
+            ["runtime", replica.runtime_id],
+            ["endpoint", endpoint(replica)],
+            ["observed_ip", cell(replica.observed_ip)],
+            ["version", cell(replica.version)],
+            ["first_seen", time(replica.first_seen_at)],
+            ["last_heartbeat", time(replica.last_heartbeat_at)],
+            ["offline_at", time(replica.offline_at)],
+          ],
+        ),
+      );
+      print(json(replica.attributes));
+    },
+  },
+  {
+    path: ["replicas", "providers"],
+    usage: "replicas providers <replica-id>",
+    summary: "list the providers one replica has registered",
+    run: async ({ args, json: raw, print }) => {
+      const registrations = await fetchReplicaProviders(requiredArg(args, 0, "replica id"));
+
+      if (raw) {
+        print(json(registrations));
+        return;
+      }
+
+      print(
+        table(
+          ["provider", "actions", "credential_scopes"],
+          registrations.map((registration) => [
+            truncate(registration.provider_name, 28),
+            String(registration.provider.actions.length),
+            truncate(registration.provider.metadata.credential_scopes.join(","), 36),
+          ]),
+        ),
+      );
+    },
+  },
+  {
+    path: ["replicas", "samples"],
+    usage: "replicas samples <replica-id> [--since-seconds N] [--limit N]",
+    summary: "show one replica's recent cpu/memory telemetry",
+    run: async ({ args, flags, json: raw, print }) => {
+      const series = await fetchReplicaSamples(
+        requiredArg(args, 0, "replica id"),
+        numberFlag(flags, "since-seconds"),
+      );
+
+      if (raw) {
+        print(json(series));
+        return;
+      }
+
+      const limit = numberFlag(flags, "limit") ?? 20;
+      print(
+        table(
+          ["sampled_at", "cpu%", "mem%", "proc_cpu%", "proc_mem", "load1"],
+          series.samples.slice(-limit).map((sample) => [
+            time(sample.sampled_at),
+            sample.cpu_percent.toFixed(1),
+            sample.mem_percent.toFixed(1),
+            sample.process_cpu_percent.toFixed(1),
+            bytes(sample.process_mem_bytes),
+            sample.load_one === null || sample.load_one === undefined
+              ? "-"
+              : sample.load_one.toFixed(2),
+          ]),
+        ),
+      );
+    },
+  },
+];
+
+// the filters `replicas list` and `replicas ids` share. `--live` is the one almost every use of
+// this wants, so it is a flag of its own rather than a status to remember the spelling of.
+async function selectReplicas(flags: ConsoleFlags): Promise<ReplicaRecord[]> {
+  const { replicas } = await fetchReplicas();
+  const kind = flag(flags, "kind");
+  const status = flag(flags, "status") ?? (flags.live === undefined ? undefined : "live");
+
+  return replicas.filter(
+    (replica) =>
+      (kind === undefined || replica.replica_type === kind) &&
+      (status === undefined || replica.status === status),
+  );
+}
+
+// a replica names itself when it can; an unnamed one is still addressable by its instance.
+function replicaName(replica: ReplicaRecord): string {
+  return replica.display_name ?? replica.instance_id;
+}
+
+function endpoint(replica: ReplicaRecord): string {
+  if (!replica.host) {
+    return "-";
+  }
+
+  return replica.port ? `${replica.host}:${String(replica.port)}` : replica.host;
+}
+
+function bytes(value: number): string {
+  const units = ["B", "KiB", "MiB", "GiB"];
+  let size = value;
+  let unit = 0;
+
+  while (size >= 1024 && unit + 1 < units.length) {
+    size /= 1024;
+    unit += 1;
+  }
+
+  return `${size.toFixed(1)}${units[unit]}`;
+}
 
 export const orgCommands: ConsoleCommand[] = [
   {
@@ -202,10 +391,12 @@ export const agentCommands: ConsoleCommand[] = [
   })),
   directive("drain", "stop one agent from accepting new actions", () => ({ type: "drain" })),
   directive("restart", "restart one agent's broker worker loop", () => ({ type: "restart" })),
-  directive("logs", "fetch recent desktop-agent log lines", (flags) => ({
-    type: "tail_logs",
-    lines: numberFlag(flags, "lines") ?? 200,
-  })),
+  directive(
+    "logs",
+    "fetch recent desktop-agent log lines",
+    (flags) => ({ type: "tail_logs", lines: numberFlag(flags, "lines") ?? 200 }),
+    "[--lines N]",
+  ),
   {
     path: ["agents", "directives"],
     usage: "agents directives <replica-id> [--limit N]",
@@ -237,7 +428,8 @@ export const agentCommands: ConsoleCommand[] = [
   },
   {
     path: ["agents", "enroll-token"],
-    usage: "agents enroll-token [--ttl 15m] [--label KEY=VALUE] [--org ID] [--service-url URL]",
+    usage:
+      "agents enroll-token [--ttl 15m] [--label KEY=VALUE] [--org ID] [--service-url URL] [--cluster-id ID] [--spki-pin PIN]",
     summary: "create a single-use enrollment token, shown only once",
     run: async ({ flags, print }) => {
       const response = await createAgentEnrollmentToken({
@@ -296,15 +488,17 @@ export const agentCommands: ConsoleCommand[] = [
   },
 ];
 
-// the four directive verbs differ only in the kind they send.
+// the four directive verbs differ only in the kind they send, and in whether that kind reads a
+// flag — which the usage has to name, since the usage is what a line is checked against.
 function directive(
   name: string,
   summary: string,
   kind: (flags: ConsoleFlags) => AgentDirectiveKind,
+  options = "",
 ): ConsoleCommand {
   return {
     path: ["agents", name],
-    usage: `agents ${name} <replica-id>`,
+    usage: `agents ${name} <replica-id> ${options}`.trimEnd(),
     summary,
     run: async ({ args, flags, print }) => {
       const record = await createAgentDirective(requiredArg(args, 0, "replica id"), kind(flags));

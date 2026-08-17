@@ -2,6 +2,7 @@ import { defineStore } from "pinia";
 import { computed } from "vue";
 import { functionsService, appService } from "../../../core/services";
 import type { FunctionPackage } from "../../../core/domain/models";
+import type { FunctionPublish } from "../../../core/services/functions";
 import { mirrorServiceState } from "./sync";
 
 export const useFunctionsStore = defineStore("functions", () => {
@@ -28,6 +29,8 @@ export const useFunctionsStore = defineStore("functions", () => {
       functionsService.clearFunctions();
     },
     promote: (alias: string, version: number) => functionsService.promote(alias, version),
+    publish: (request: FunctionPublish) => functionsService.publish(request),
+    restore: (packageName: string) => functionsService.restore(packageName),
     removeAlias: (alias: string) =>
       functionsService.removeAlias(alias, {
         confirm: (message) => window.confirm(message),

@@ -23,6 +23,16 @@ Primary runtime flow:
    that cannot be placed falls back to the reedline prompt. The command center's Console tab mirrors
    the same surface over HTTP (`runinator-command-center/src/core/console/`), so a command added to
    one console should be added to the other or explained in `:help` as `runinatorctl`-only.
+
+   `:help`, completion, and flag validation are all **derived**, never declared twice.
+   `commands/catalog.rs` walks the clap tree into one flat list of `(path, usage, summary)` and reads
+   an argument's possible values, defaults, and help straight off the `Arg`; only the console-local
+   verbs (`META_COMMANDS`) are written down, because they have no clap counterpart. The web console
+   has no clap tree, so it reads the same facts back off each command's `usage` string
+   (`core/console/usage.ts`): which flags exist, which take a value, and which name a closed set.
+   That is what makes a mistyped flag an error there rather than silence — so a `usage` line that
+   omits a flag its `run` reads *breaks that flag*, and `__tests__/usage-parity.test.ts` fails on it.
+   Update the usage line in the same edit.
 7. `runinator-supervisor` runs the local stack from `runinator-supervisor.json`.
 
 There is also a Tauri `runinator-command-center` client. It discovers and calls the web service, compiles/edits packs, and presents runtime state; it never hosts a worker or executes provider actions. Keep frontend UI changes separate from runtime crates unless the change explicitly touches the desktop UI.
@@ -39,6 +49,14 @@ transcript state lives in `core/services/console-terminal.ts`). Both follow the 
 `core/services/index.ts`, `core/navigation/app.ts`'s `AppTab`, `core/navigation/nav-config.ts`,
 `App.vue`, and — for desktop parity — `src-tauri/src/commands/functions.rs` and `app.rs`'s
 `generate_handler![]`.
+
+The Functions tab can publish as well as read: `PublishFunctionDialog.vue` takes an archive the
+operator already built plus its `runinator-function.json`, addresses the archive by the sha-256 of
+its bytes, and posts it. `runinatorctl functions publish` archives a *directory* deterministically;
+a browser tab has no working tree to archive, which is why the two paths differ and why the digest
+is computed from the uploaded bytes rather than accepted from the caller. `core/utils/zip.ts` reads
+the manifest back out of the archive so it is not asked for twice; a zip it cannot walk simply
+leaves the field to be filled in by hand.
 
 - `src/core/` — portable domain logic: `domain/`, `api/`, `services/`, `realtime/`, `navigation/`, `workflow/`, `utils/`, `platform/`. Must not import Vue, Pinia, Vue Flow, CodeMirror, Tauri, or `ui/`.
 - `src/ui/` — Vue presentation: `views/`, `components/`, `composables/`, `adapters/` (pinia, vue-flow, codemirror, browser, tauri).

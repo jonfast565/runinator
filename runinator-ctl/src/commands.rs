@@ -116,6 +116,7 @@ pub async fn run_command(
         Commands::Settings { command } => settings::settings(client, command, json_output).await,
         Commands::Nodes { command } => nodes::nodes(client, command, json_output).await,
         Commands::Orgs { command } => orgs::orgs(client, command, json_output).await,
+        Commands::Replicas { command } => replicas::replicas(client, command, json_output).await,
         Commands::Agents { command } => {
             agents::agents(client, command, api_base_url, json_output).await
         }
@@ -133,10 +134,12 @@ mod artifacts;
 mod freeze;
 mod functions;
 pub use functions::functions_validate;
+pub(crate) mod catalog;
 mod console;
 mod providers;
 pub(crate) mod repl;
 mod repl_completer;
+mod replicas;
 mod runs;
 mod settings;
 mod triggers;

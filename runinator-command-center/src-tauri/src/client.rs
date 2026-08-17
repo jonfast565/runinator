@@ -30,6 +30,27 @@ pub async fn post_empty(state: &CommandCenterState, path: &str) -> CommandResult
     Ok(response.json::<Value>().await?)
 }
 
+/// post a body verbatim under its own content type, for the endpoints that take bytes.
+pub async fn post_bytes(
+    state: &CommandCenterState,
+    path: &str,
+    content_type: &str,
+    body: Vec<u8>,
+) -> CommandResult<Value> {
+    let url = build_state_url(state, path).await?;
+    let response = state
+        .client
+        .read()
+        .await
+        .post(url.clone())
+        .header(reqwest::header::CONTENT_TYPE, content_type)
+        .body(body)
+        .send()
+        .await?;
+    let response = handle_response(url, response).await?;
+    Ok(response.json::<Value>().await?)
+}
+
 pub async fn post_json(
     state: &CommandCenterState,
     path: &str,

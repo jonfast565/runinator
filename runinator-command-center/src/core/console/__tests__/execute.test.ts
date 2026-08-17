@@ -65,11 +65,15 @@ vi.mock("../../api/commandCenterApi", () => ({
   stopNode: vi.fn(),
   createPipelineRun: vi.fn(),
   fetchPipelines: vi.fn(),
+  fetchReplicas: vi.fn(),
+  fetchReplicaProviders: vi.fn(),
+  fetchReplicaSamples: vi.fn(),
 }));
 
 import {
   createWorkflowRun,
   fetchCredentials,
+  fetchReplicas,
   fetchWorkflows,
   invokeFunction,
 } from "../../api/commandCenterApi";
@@ -169,6 +173,57 @@ describe("executeCommand", () => {
 
   it("reports an unknown command", async () => {
     await expect(run("nonsense")).rejects.toThrow(/unknown console command/);
+  });
+
+  it("suggests the nearest verb for a typo", async () => {
+    await expect(run("wrkflows list")).rejects.toThrow(/did you mean ':workflows'/);
+  });
+
+  it("rejects a flag the command does not take", async () => {
+    // a mistyped filter used to be ignored, which made `--stauts failed` read as 'every run'.
+    await expect(run("runs list --stauts failed")).rejects.toThrow(/does not take --stauts/);
+  });
+
+  it("rejects a value outside a flag's closed set", async () => {
+    await expect(run("settings list --kind sekret")).rejects.toThrow(
+      /--kind takes secret or config/,
+    );
+  });
+
+  it("lists the replicas a filter selects", async () => {
+    vi.mocked(fetchReplicas).mockResolvedValue({
+      counts: { workers: 1, wakers: 0, webservices: 0, background: 0 },
+      replicas: [
+        {
+          replica_id: "r-1",
+          replica_type: "worker",
+          instance_id: "worker-a",
+          runtime_id: "run-1",
+          status: "live",
+          attributes: {},
+          first_seen_at: "2026-08-01T00:00:00Z",
+          last_heartbeat_at: "2026-08-01T00:05:00Z",
+          last_seen_at: "2026-08-01T00:05:00Z",
+        },
+        {
+          replica_id: "r-2",
+          replica_type: "waker",
+          instance_id: "waker-a",
+          runtime_id: "run-2",
+          status: "offline",
+          attributes: {},
+          first_seen_at: "2026-08-01T00:00:00Z",
+          last_heartbeat_at: "2026-08-01T00:01:00Z",
+          last_seen_at: "2026-08-01T00:01:00Z",
+        },
+      ],
+    });
+
+    const [output] = await run("replicas list --live");
+
+    expect(output.kind === "table" && output.rows).toEqual([
+      ["r-1", "worker", "live", "worker-a", "-", "2026-08-01 00:05"],
+    ]);
   });
 
   it("says where a local-only command has to run instead", async () => {

@@ -2,7 +2,12 @@
 
 import { done, table, text } from "./format";
 import { functionCommands } from "./commands/functions";
-import { agentCommands, nodeCommands, orgCommands } from "./commands/infrastructure";
+import {
+  agentCommands,
+  nodeCommands,
+  orgCommands,
+  replicaCommands,
+} from "./commands/infrastructure";
 import { operationCommands } from "./commands/operations";
 import { runCommands } from "./commands/runs";
 import { sessionCommands } from "./commands/session";
@@ -70,6 +75,7 @@ export const COMMANDS: ConsoleCommand[] = [
   ...wdlCommands,
   ...nodeCommands,
   ...orgCommands,
+  ...replicaCommands,
   ...agentCommands,
 ];
 
@@ -95,6 +101,35 @@ export function matchCommand(tokens: string[]): CommandMatch | null {
   }
 
   return best;
+}
+
+/// the first word closest to `word`, when it is close enough to be a typo rather than a different
+/// word entirely.
+export function nearestCommand(word: string): string | null {
+  const limit = 1 + Math.floor(word.length / 3);
+  const ranked = [...new Set(COMMANDS.map((command) => command.path[0]))]
+    .map((candidate) => ({ candidate, distance: editDistance(word, candidate) }))
+    .filter((entry) => entry.distance <= limit)
+    .sort((left, right) => left.distance - right.distance || left.candidate.localeCompare(right.candidate));
+
+  return ranked.at(0)?.candidate ?? null;
+}
+
+function editDistance(left: string, right: string): number {
+  let previous = [...Array(right.length + 1).keys()];
+
+  for (let row = 0; row < left.length; row += 1) {
+    const current = [row + 1];
+
+    for (let column = 0; column < right.length; column += 1) {
+      const cost = left[row] === right[column] ? 0 : 1;
+      current.push(Math.min(previous[column] + cost, previous[column + 1] + 1, current[column] + 1));
+    }
+
+    previous = current;
+  }
+
+  return previous[right.length];
 }
 
 /// the words that may follow what has been typed, for tab completion.

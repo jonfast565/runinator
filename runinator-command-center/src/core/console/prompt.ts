@@ -4,8 +4,9 @@
 // and what keeps the two consoles agreeing, since `runinatorctl`'s reedline validator decides the
 // same way.
 
-import { completions } from "./registry";
+import { completions, matchCommand } from "./registry";
 import { tokenize } from "./tokenize";
+import { usageShape } from "./usage";
 
 /// true when Enter should submit rather than open a new line.
 ///
@@ -75,6 +76,8 @@ export interface Completion {
   start: number;
   /// the candidates, already narrowed to what has been typed.
   options: string[];
+  /// what belongs here when there is nothing to offer: the value's name, from the usage line.
+  hint?: string;
 }
 
 /// what Tab offers at the end of a buffer.
@@ -94,8 +97,57 @@ export function complete(buffer: string): Completion {
   const [prefix, start] =
     lastSpace >= 0 ? [body.slice(lastSpace + 1), bodyStart + lastSpace + 1] : [body, bodyStart];
   const typed = tokenizeQuietly(body.slice(0, start - bodyStart));
+  const { options, hint } = candidates(typed, prefix);
 
-  return { start, options: completions(typed, prefix) };
+  return { start, options: options.filter((option) => option.startsWith(prefix)).sort(), hint };
+}
+
+// what may follow the words already typed, and what to say when nothing can be offered.
+function candidates(typed: string[], prefix: string): { options: string[]; hint?: string } {
+  const match = matchCommand(typed);
+  const shape = match ? usageShape(match.command.usage, match.command.path) : null;
+
+  // a value for the flag just typed comes first: after `--kind ` the answer is a kind, never a
+  // subcommand.
+  const pending = shape ? pendingFlag(typed, shape) : undefined;
+
+  if (pending) {
+    if (pending.values) {
+      return { options: pending.values };
+    }
+
+    if (!prefix.startsWith("--")) {
+      return { options: [], hint: `--${pending.name} <${pending.placeholder ?? "VALUE"}>` };
+    }
+  }
+
+  if (prefix.startsWith("--")) {
+    const flags = shape?.flags.map((flag) => `--${flag.name}`) ?? [];
+    return { options: [...flags, "--json"] };
+  }
+
+  const words = completions(typed, prefix);
+
+  if (words.length > 0 || !match) {
+    return { options: words };
+  }
+
+  // the path is complete, so what follows is one of its positionals.
+  const position = typed.length - match.command.path.length;
+  const positional = shape?.positionals.at(position);
+  return { options: [], hint: positional && `<${positional.name}>` };
+}
+
+// the flag whose value is being typed: the last word is a flag that takes one.
+function pendingFlag(typed: string[], shape: ReturnType<typeof usageShape>) {
+  const last = typed.at(-1);
+
+  if (!last?.startsWith("--") || last.includes("=")) {
+    return undefined;
+  }
+
+  const flag = shape.flags.find((candidate) => candidate.name === last.slice(2));
+  return flag?.placeholder === undefined ? undefined : flag;
 }
 
 // an unterminated quote mid-line is normal while typing, so a completion never fails on it.

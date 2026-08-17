@@ -17,6 +17,9 @@ interface HttpDescriptor {
   method: Method | ((args: CommandArgs) => Method);
   path: (args: CommandArgs) => string;
   body?: (args: CommandArgs) => unknown;
+  /// a body sent verbatim under its own content type, for the endpoints that take bytes rather
+  /// than json. mutually exclusive with `body`.
+  rawBody?: (args: CommandArgs) => { body: BodyInit; contentType: string };
   headers?: (args: CommandArgs) => Record<string, string>;
   transform?: (raw: unknown) => unknown;
   accept404?: boolean;
@@ -806,6 +809,28 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     method: "DELETE",
     path: (args) => `automation_events/${escape(arg(args, "eventId"))}`,
   },
+  // packaged function archives: bytes under their own digest, stored only if absent.
+  upload_function_artifact: {
+    method: "POST",
+    path: (args) => `function_artifacts/${escape(arg(args, "digest"))}`,
+    rawBody: (args) => ({
+      body: arg(args, "bytes") as ArrayBuffer,
+      contentType: "application/zip",
+    }),
+  },
+  publish_function_version: {
+    method: "POST",
+    path: () => "functions",
+    body: (args) => arg(args, "request"),
+  },
+  restore_function_package: {
+    method: "POST",
+    path: (args) => `functions/${escape(arg(args, "packageName"))}/restore`,
+  },
+  fetch_replica_providers: {
+    method: "GET",
+    path: (args) => `replicas/${escape(arg(args, "replicaId"))}/providers`,
+  },
   fetch_replica_samples: {
     method: "GET",
     path: (args) => {
@@ -984,6 +1009,12 @@ export async function invokeViaHttp<T>(name: string, args?: Record<string, unkno
   if (descriptor.body) {
     headers["content-type"] = "application/json";
     init.body = JSON.stringify(descriptor.body(args));
+  }
+
+  if (descriptor.rawBody) {
+    const raw = descriptor.rawBody(args);
+    headers["content-type"] = raw.contentType;
+    init.body = raw.body;
   }
 
   if (Object.keys(headers).length > 0) {

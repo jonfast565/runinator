@@ -1001,4 +1001,10 @@ main[inert] {
 
 .terminal-surface textarea {
   field-sizing: content;
+
+  /* a terminal's caret is a block, not a hairline. progressive enhancement: a browser without
+     `caret-shape` keeps its own thin caret rather than losing one, and the accent colour is what
+     makes it findable either way. */
+  caret-shape: block;
+  caret-color: var(--accent-pulse);
 }

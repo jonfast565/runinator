@@ -61,6 +61,20 @@ export interface ReplicaRecord {
   offline_at?: string | null;
 }
 
+/// one provider a replica advertises. the metadata is the provider's own, so it is typed loosely
+/// here and read only for its name and action count.
+export interface ReplicaProviderRegistration {
+  replica_id: string;
+  provider_name: string;
+  provider: {
+    name: string;
+    actions: { function_name: string; description?: string | null }[];
+    metadata: { credential_scopes: string[] };
+  };
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface ReplicaCounts {
   workers: number;
   wakers: number;

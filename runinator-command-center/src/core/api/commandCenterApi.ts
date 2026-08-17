@@ -14,9 +14,12 @@ import type {
   ConsoleSessionDetail,
   CredentialSummary,
   CredentialDetail,
+  FunctionArtifact,
   FunctionCatalogEntry,
   FunctionPackage,
   FunctionPackageDetail,
+  FunctionVersion,
+  NewFunctionVersion,
   DevPackApplyResult,
   BackfillRequest,
   BackfillResponse,
@@ -39,6 +42,7 @@ import type {
   WorkflowTriggerKindMetadata,
   EnumCatalogMetadata,
   ReplicaListResponse,
+  ReplicaProviderRegistration,
   RunArtifact,
   RunChunk,
   RunSummary,
@@ -722,6 +726,10 @@ export async function fetchReplicaSamples(replicaId: string, sinceSeconds?: numb
   return command<ReplicaSampleSeries>("fetch_replica_samples", { replicaId, sinceSeconds });
 }
 
+export async function fetchReplicaProviders(replicaId: string) {
+  return command<ReplicaProviderRegistration[]>("fetch_replica_providers", { replicaId });
+}
+
 export async function setWorkflowOwner(workflowId: string, orgId: string | null) {
   return command<WorkflowDefinition>("set_workflow_owner", { workflowId, orgId });
 }
@@ -1105,6 +1113,40 @@ export async function fetchFunctionCatalog() {
 
 export async function deleteFunctionPackage(packageName: string) {
   return command<JsonRecord>("delete_function_package", { packageName });
+}
+
+export async function restoreFunctionPackage(packageName: string) {
+  return command<JsonRecord>("restore_function_package", { packageName });
+}
+
+/// store a package archive under the digest of its bytes.
+///
+/// the server keeps it only if it does not already hold that digest, so re-publishing unchanged
+/// code moves the bytes once and never again.
+export async function uploadFunctionArtifact(digest: string, bytes: ArrayBuffer) {
+  // tauri's ipc is json, so the desktop build hands the archive over base64-encoded and the rust
+  // side decodes it; the web build posts the bytes themselves.
+  return command<FunctionArtifact>(
+    "upload_function_artifact",
+    isTauriRuntime() ? { digest, base64: base64Encode(bytes) } : { digest, bytes },
+  );
+}
+
+function base64Encode(bytes: ArrayBuffer): string {
+  // chunked so a multi-megabyte archive does not blow the argument limit of `String.fromCharCode`.
+  const view = new Uint8Array(bytes);
+  const chunks: string[] = [];
+
+  for (let at = 0; at < view.length; at += 0x8000) {
+    chunks.push(String.fromCharCode(...view.subarray(at, at + 0x8000)));
+  }
+
+  return btoa(chunks.join(""));
+}
+
+/// publish one version of a package against an artifact already stored.
+export async function publishFunctionVersion(request: NewFunctionVersion) {
+  return command<FunctionVersion>("publish_function_version", { request });
 }
 
 // point an alias at a version, by number or at whatever another alias currently names.

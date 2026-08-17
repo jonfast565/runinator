@@ -20,6 +20,10 @@
                 <Icon v-else name="refresh" />
                 <span>Refresh</span>
               </button>
+              <button class="btn btn-primary" :disabled="!canManage" @click="publishing = true">
+                <Icon name="upload" />
+                <span>Publish</span>
+              </button>
               <button
                 class="btn btn-danger"
                 :disabled="!functions.selectedPackage || !canManage"
@@ -32,9 +36,9 @@
           </div>
           <p class="hint m-0">
             A packaged function is immutable code published to the platform and called like any
-            other action. Publish with
-            <code>runinatorctl functions publish</code>; versions never change, and only the
-            <strong>aliases</strong> move.
+            other action. <strong>Publish</strong> uploads a built archive and its manifest;
+            <code>runinatorctl functions publish &lt;path&gt;</code> builds that archive from a
+            working tree. Versions never change, and only the <strong>aliases</strong> move.
           </p>
           <DataTable>
             <table>
@@ -214,6 +218,7 @@
         </div>
       </template>
     </SplitPane>
+    <PublishFunctionDialog v-if="publishing" @close="publishing = false" />
   </section>
 </template>
 
@@ -226,6 +231,7 @@ import LoadingPanel from "../components/shared/LoadingPanel.vue";
 import LoadingSpinner from "../components/shared/LoadingSpinner.vue";
 import MobileBackBar from "../components/shared/MobileBackBar.vue";
 import SplitPane from "../components/shared/SplitPane.vue";
+import PublishFunctionDialog from "../components/functions/PublishFunctionDialog.vue";
 import { useFunctionsStore } from "../adapters/pinia/functions";
 import { useOrgsStore } from "../adapters/pinia/orgs";
 import { useAppStore } from "../adapters/pinia/app";
@@ -242,6 +248,7 @@ const { isLoading: loading, loadingMessage } = useOperationLoading("Refreshing f
 const { can } = useCan();
 const canManage = computed(() => can("functions:manage"));
 
+const publishing = ref(false);
 const promoteAlias = ref("production");
 const promoteVersion = ref<number | null>(null);
 

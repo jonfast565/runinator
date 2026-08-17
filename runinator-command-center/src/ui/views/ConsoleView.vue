@@ -47,7 +47,13 @@
             title="Console unavailable"
             description="Using the console requires the console:use capability. A line can start a workflow run, so it is a privilege rather than a view."
           />
-          <div v-else class="terminal-surface flex min-h-0 flex-1 flex-col">
+          <!-- clicking anywhere on the surface puts the caret back in the prompt, the way a
+               terminal emulator does. -->
+          <div
+            v-else
+            class="terminal-surface flex min-h-0 flex-1 flex-col"
+            @click="focusPrompt"
+          >
             <TerminalStatusBar
               :session="notebook.activeSession?.name ?? 'no session'"
               :busy="terminal.busy"
@@ -153,10 +159,23 @@ async function refresh() {
   // rather than leaving output above a scope that no longer exists.
   terminal.reset();
 
-  if (canUse.value) {
-    await notebook.refreshSessions();
-    await prompt.value?.focus();
+  if (!canUse.value) {
+    return;
   }
+
+  // focused before the session load rather than after it: the prompt is already on screen, and
+  // whether the tab is typeable should not depend on how long that call takes or whether it fails.
+  await focusPrompt();
+  await notebook.refreshSessions();
+}
+
+// a click that was really a text selection leaves the selection alone.
+async function focusPrompt(event?: MouseEvent) {
+  if (event && !(window.getSelection()?.isCollapsed ?? true)) {
+    return;
+  }
+
+  await prompt.value?.focus();
 }
 
 onMounted(refresh);

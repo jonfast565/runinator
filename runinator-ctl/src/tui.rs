@@ -97,12 +97,30 @@ impl Prompt {
     /// raw mode goes with it: a command that runs for a while has to stay interruptible with Ctrl+C,
     /// and in raw mode that keystroke would never become a signal.
     pub(crate) fn suspend(&mut self) -> Result<()> {
+        // where the viewport starts, taken before it is cleared: that row is the first line the
+        // command may print on.
+        let top = self.terminal.get_frame().area().y;
         self.terminal.clear()?;
-        self.leave_raw()
+        self.leave_raw()?;
+        // `Terminal::clear` restores the cursor to wherever the caret was — several columns into
+        // the input band, plus however much had been typed. printing from there would indent the
+        // echoed line and everything the command writes after it, so output starts at the left
+        // edge of the space the viewport just gave back.
+        execute!(io::stdout(), cursor::MoveTo(0, top))?;
+        Ok(())
     }
 
     /// take the terminal back after a command has printed.
     pub(crate) fn resume(&mut self) -> Result<()> {
+        // the viewport always starts at column 0, so a command whose last write had no trailing
+        // newline would have the prompt drawn over it. one newline puts the anchor on a clean row.
+        //
+        // the flush is what makes the question answerable: stdout is line-buffered, so a `print!`
+        // with no newline is still in the buffer and the terminal's cursor has not moved for it.
+        io::stdout().flush()?;
+        if cursor::position().is_ok_and(|(column, _)| column > 0) {
+            println!();
+        }
         // the viewport is anchored where it was created, and the command just scrolled the screen,
         // so it is re-anchored rather than redrawn in place.
         self.terminal = inline_terminal()?;
@@ -138,6 +156,7 @@ impl Prompt {
             buffer: &buffer,
             caret: self.editor.caret(),
             menu: &self.editor.menu,
+            hint: self.editor.hint.as_deref(),
             note: self.note.as_deref(),
         };
         self.terminal.draw(|frame| render::draw(frame, &view))?;
@@ -180,9 +199,9 @@ impl Prompt {
 impl Drop for Prompt {
     fn drop(&mut self) {
         // the terminal must come back even on an error path: a console left in raw mode is a shell
-        // that no longer echoes what is typed into it.
-        let _ = self.terminal.clear();
-        let _ = self.leave_raw();
+        // that no longer echoes what is typed into it. suspending is exactly that plus putting the
+        // cursor back at the left edge, so the shell prompt is not indented by the console's caret.
+        let _ = self.suspend();
     }
 }
 

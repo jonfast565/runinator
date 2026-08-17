@@ -57,4 +57,26 @@ describe("complete", () => {
     const line = ":workflows rollb";
     expect(line.slice(complete(line).start)).toBe("rollb");
   });
+
+  it("offers the flags a command accepts", () => {
+    const { options } = complete(":runs list --");
+    expect(options).toContain("--status");
+    expect(options).toContain("--json");
+  });
+
+  it("offers the values a flag accepts", () => {
+    expect(complete(":settings list --kind ").options).toEqual(["config", "secret"]);
+    expect(complete(":settings list --kind sec").options).toEqual(["secret"]);
+  });
+
+  it("hints at a value it cannot complete", () => {
+    // a flag whose values are open-ended still says what it wants.
+    expect(complete(":replicas samples --since-seconds ").hint).toBe("--since-seconds <N>");
+    // so does a positional, once the command path is finished.
+    expect(complete(":workflows show ").hint).toBe("<workflow>");
+  });
+
+  it("hints nothing once a command has all its arguments", () => {
+    expect(complete(":workflows list ")).toMatchObject({ options: [], hint: undefined });
+  });
 });

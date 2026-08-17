@@ -98,7 +98,7 @@ export const freezeCommands: ConsoleCommand[] = [
   },
   {
     path: ["freeze", "create"],
-    usage: "freeze create <name> --from RFC3339 --to RFC3339 [--workflow-id ID] [--reason TEXT]",
+    usage: "freeze create <name> --from RFC3339 --to RFC3339 [--workflow-id ID] [--org-id ID] [--reason TEXT]",
     summary: "suspend trigger firing over a time range",
     run: async ({ args, flags, print }) => {
       const created = await createFreezeWindow({
