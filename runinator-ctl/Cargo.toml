@@ -24,3 +24,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time"] }
 uuid = { version = "1.18", features = ["v4", "serde"] }
+
+# the console's output pane redirects the process's own stdout into itself, which is a file
+# descriptor operation; see src/tui/capture.rs for why it is done there rather than in the command
+# modules. windows falls back to the plain prompt, so it needs none of this.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

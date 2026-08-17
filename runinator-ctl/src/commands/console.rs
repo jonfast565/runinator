@@ -102,18 +102,14 @@ pub(super) async fn console(
         };
     }
 
-    println!("session {} ({})", session.name, session.id);
-    println!(
-        "a bare line is WDL; a `:` line is a runinatorctl command. :help lists both, Tab completes,"
-    );
-    println!("Ctrl+D exits and Ctrl+C clears the prompt.");
-
-    // the terminal ui needs a real terminal: it draws an inline viewport, which it can only place by
-    // asking the terminal where the cursor is. a pipe cannot answer, so that case takes the plain
-    // prompt rather than failing.
+    // the terminal ui needs a real terminal, and it needs to be able to take stdout so its output
+    // pane has something to scroll. a pipe answers neither, so that case takes the plain prompt
+    // rather than failing.
     if !plain && std::io::stdout().is_terminal() {
         match tui::Prompt::new(session.name.clone(), api_base_url.to_string()) {
             Ok(prompt) => {
+                // printed after the ui is up, so the greeting is the first thing in its output pane.
+                greet(&session, true);
                 return tui_console(
                     client,
                     prompt.with_history(read_history()),
@@ -128,7 +124,23 @@ pub(super) async fn console(
         }
     }
 
+    greet(&session, false);
     plain_console(client, session, no_follow, json_output, api_base_url).await
+}
+
+// what the console can do, in the three lines an operator reads once.
+fn greet(session: &ConsoleSession, scrollable: bool) {
+    println!("session {} ({})", session.name, session.id);
+    println!(
+        "a bare line is WDL; a `:` line is a runinatorctl command. :help lists both, Tab completes,"
+    );
+    println!("Ctrl+D exits and Ctrl+C clears the prompt.");
+    if scrollable {
+        println!(
+            "PgUp/PgDn or the wheel scrolls this output (Shift+End follows); \
+             hold Shift to select text."
+        );
+    }
 }
 
 // the plain prompt: one reedline line at a time, for a terminal that cannot host the ui or an
@@ -192,8 +204,13 @@ async fn plain_console(
     Ok(())
 }
 
-// the terminal-ui console: the same loop as the plain one, with the prompt drawn in an inline
-// viewport that is suspended while a command prints.
+// the terminal-ui console: the same loop as the plain one, with the ui drawn throughout. a command's
+// output arrives in the scrollable pane rather than on the terminal, so nothing is suspended around
+// it and a long run can be read while it is still going.
+//
+// Ctrl+C is answered by dropping the command's future, since raw mode means the keystroke never
+// becomes a signal. dropping cancels whatever it was awaiting, which is why the cell id is recorded
+// before the follow rather than after it — an interrupted follow still leaves `:cancel` a target.
 async fn tui_console(
     client: &Client,
     mut prompt: tui::Prompt,
@@ -213,51 +230,87 @@ async fn tui_console(
         if trimmed.is_empty() {
             continue;
         }
-
-        // the ui gets out of the way for the duration of the command: its output is ordinary
-        // stdout, and Ctrl+C has to reach it as a signal.
-        prompt.suspend()?;
         prompt.echo(&trimmed);
+
         let note = if trimmed.starts_with(':') {
-            match handle_command(
+            let command = handle_command(
                 client,
                 &mut session,
                 &trimmed,
                 current_cell,
                 no_follow,
                 api_base_url,
-            )
-            .await
-            {
-                Ok(CommandOutcome::Continue(cell)) => {
+            );
+            match prompt.run(command).await? {
+                None => Some("interrupted".to_string()),
+                Some(Ok(CommandOutcome::Continue(cell))) => {
                     current_cell = cell.or(current_cell);
                     None
                 }
-                Ok(CommandOutcome::Exit) => break,
-                Err(error) => Some(error.to_string()),
+                Some(Ok(CommandOutcome::Exit)) => break,
+                Some(Err(error)) => Some(error.to_string()),
             }
         } else {
-            match submit(client, &session, &trimmed, no_follow).await {
-                Ok(cell) => {
-                    current_cell = Some(cell.id);
-                    let printed = if json_output {
-                        output::json(&cell)
-                    } else {
-                        print_cell(&cell)
-                    };
-                    printed.err().map(|error| error.to_string())
-                }
-                Err(error) => Some(error.to_string()),
-            }
+            cell_line(
+                client,
+                &mut prompt,
+                &session,
+                &trimmed,
+                &mut current_cell,
+                no_follow,
+                json_output,
+            )
+            .await?
         };
 
         prompt.set_session(session.name.clone());
         prompt.set_note(note);
-        prompt.resume()?;
     }
 
     write_history(&prompt.history());
     Ok(())
+}
+
+// run one WDL cell from the terminal ui, in the two steps the interrupt story needs: start it, then
+// wait for it. the note it returns is what the prompt shows under the input.
+async fn cell_line(
+    client: &Client,
+    prompt: &mut tui::Prompt,
+    session: &ConsoleSession,
+    source: &str,
+    current_cell: &mut Option<Uuid>,
+    no_follow: bool,
+    json_output: bool,
+) -> Result<Option<String>> {
+    let cell = match prompt.run(start_cell(client, session, source)).await? {
+        None => return Ok(Some("interrupted".to_string())),
+        Some(Err(error)) => return Ok(Some(error.to_string())),
+        Some(Ok(cell)) => cell,
+    };
+    *current_cell = Some(cell.id);
+
+    if no_follow || cell.status != ConsoleCellStatus::Running {
+        return Ok(printed(&cell, json_output));
+    }
+
+    announce_cell(&cell);
+    let id = cell.id;
+    match prompt.run(follow_cell(client, cell)).await? {
+        None => Ok(Some(format!(
+            "interrupted; remote work is still running (use :cancel {id})"
+        ))),
+        Some(Err(error)) => Ok(Some(error.to_string())),
+        Some(Ok(cell)) => Ok(printed(&cell, json_output)),
+    }
+}
+
+fn printed(cell: &ConsoleCell, json_output: bool) -> Option<String> {
+    let printed = if json_output {
+        output::json(cell)
+    } else {
+        print_cell(cell)
+    };
+    printed.err().map(|error| error.to_string())
 }
 
 // history is a convenience: a home directory that cannot be read or written leaves the console
@@ -362,6 +415,23 @@ async fn submit(
     source: &str,
     no_follow: bool,
 ) -> Result<ConsoleCell> {
+    let cell = start_cell(client, session, source).await?;
+    if no_follow || cell.status != ConsoleCellStatus::Running {
+        return Ok(cell);
+    }
+    announce_cell(&cell);
+    follow_cell(client, cell).await
+}
+
+// create a cell and start it, without waiting for it to settle.
+//
+// separate from the follow so a caller that can be interrupted knows the cell's id before it starts
+// waiting; a cell nobody can name is one nobody can cancel.
+async fn start_cell(
+    client: &Client,
+    session: &ConsoleSession,
+    source: &str,
+) -> Result<ConsoleCell> {
     let cell = client
         .create_console_cell(
             session.id,
@@ -372,10 +442,10 @@ async fn submit(
             },
         )
         .await?;
-    let cell = client.run_console_cell(cell.id).await?;
-    if no_follow || cell.status != ConsoleCellStatus::Running {
-        return Ok(cell);
-    }
+    Ok(client.run_console_cell(cell.id).await?)
+}
+
+fn announce_cell(cell: &ConsoleCell) {
     eprintln!(
         "running cell {}{}",
         cell.id,
@@ -383,7 +453,6 @@ async fn submit(
             .map(|id| format!(" (workflow run {id})"))
             .unwrap_or_default()
     );
-    follow_cell(client, cell).await
 }
 
 enum CommandOutcome {

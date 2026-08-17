@@ -18,9 +18,25 @@ Primary runtime flow:
    `runinatorctl console` is the terminal console. Its `:` lines are parsed by the **same clap
    parser** the process uses (`commands/repl.rs` → `commands::run_command`), so every command-line
    verb is reachable from the repl the day it is added — never add a second table of verbs. The
-   prompt is a ratatui inline viewport (`src/tui/`) that is *suspended* around each command so the
-   command modules keep printing with plain `println!`; `--plain`, a non-tty stdout, or a viewport
-   that cannot be placed falls back to the reedline prompt. The command center's Console tab mirrors
+   console is a full-screen ratatui interface (`src/tui/`) with a **scrollable output pane**: a
+   status line, everything commands have printed, the input, the completion menu, and a key legend.
+   The command modules still print with plain `println!` — `tui/capture.rs` redirects the process's
+   own descriptors 1 and 2 into a pipe and a reader thread appends to `tui/transcript.rs`, so output
+   from anywhere in the process (or a dependency) is scrollable without threading a writer through
+   two dozen modules. Three invariants follow from that and must not be weakened: the ratatui
+   backend draws on a **duplicate of the original stdout** (`Capture::install` hands it back), since
+   drawing through `io::stdout()` would paint the interface into the log it is displaying; nothing on
+   the reader thread may print, and it must not stop early, because closing the read end turns the
+   next `println!` into a broken-pipe panic; and the transcript is **replayed to the terminal on
+   exit**, so quitting leaves the session's output in the shell's scrollback as it was before the
+   console owned the screen. Startup avoids `Terminal::clear` and anything else that waits on a
+   cursor-position reply — a terminal slow to answer would drop the console to the plain prompt for
+   no reason. Keyboard scrolling (PgUp/PgDn, Shift+arrows/Home/End) is handled in `tui.rs` *before*
+   the editor sees the key, so `tui/editor.rs` stays purely about the line and history recall keeps
+   every key it had; the wheel scrolls whichever pane the pointer is over, hit-tested against
+   `render::bands`, which is why layout arithmetic lives in one function that both drawing and
+   hit-testing read. `--plain`, a non-tty stdout, or a platform without descriptor redirection
+   (windows) falls back to the reedline prompt. The command center's Console tab mirrors
    the same surface over HTTP (`runinator-command-center/src/core/console/`), so a command added to
    one console should be added to the other or explained in `:help` as `runinatorctl`-only.
 

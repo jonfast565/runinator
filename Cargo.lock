@@ -7913,6 +7913,7 @@ version = "0.2.367"
 dependencies = [
  "chrono",
  "clap",
+ "libc",
  "ratatui",
  "reedline",
  "runinator-api",

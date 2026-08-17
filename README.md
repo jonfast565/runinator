@@ -532,11 +532,26 @@ because a stale value shown as a current one is worse than an absent one.
 The console has two front ends, and they are deliberately the same thing: a scrollback of what has
 been run, a prompt at the bottom, and the session's scope beside it.
 
-`runinatorctl console` opens it in the terminal. The prompt is a ratatui inline viewport — a status
-line naming the session and the service, the input, a completion menu, and a key legend — pinned to
-the bottom while command output scrolls above it as ordinary text. `--plain` falls back to the
-single-line reedline prompt, which is also what a terminal that cannot host the viewport (or a pipe)
-gets automatically. The Console tab in the command center is the same layout in the browser.
+`runinatorctl console` opens it in the terminal, as a full-screen ratatui interface: a status line
+naming the session and the service, a scrollable pane holding everything commands have printed, the
+input, a completion menu, and a key legend.
+
+The output pane is the console's own scrollback, not the terminal's. `PgUp`/`PgDn` page through it,
+`Shift+↑`/`Shift+↓` move a line, `Shift+Home`/`Shift+End` jump to the oldest line or back to
+following, and `Shift+←`/`Shift+→` scroll sideways for output wider than the pane (tables are
+truncated rather than wrapped, the way `less -S` does it). The wheel scrolls whichever pane the
+pointer is over — the output, or the input when a multi-line cell is taller than the four rows it
+gets. `↑`/`↓` remain history recall, and typing anything puts the input pane back under the caret.
+
+A pane that has been scrolled back stays where it was put while a command keeps printing, and says
+so in its header rather than looking live. Output arriving during a long run reaches the pane as it
+happens, so a run can be read while it is still going, and `Ctrl+C` interrupts the wait without
+leaving the console. Quitting replays the session's output to the terminal, so the shell's own
+scrollback ends up holding what it would have held anyway.
+
+`--plain` falls back to the single-line reedline prompt, which is also what a pipe, or a platform
+where the console cannot take stdout, gets automatically. The Console tab in the command center is
+the same layout in the browser.
 
 In both, a **bare line is WDL** and becomes a durable cell; a **`:` line is a command**. Every
 `runinatorctl` command works with a `:` in front of it — `:runs list --open`, `:settings get aws
