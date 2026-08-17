@@ -4,17 +4,30 @@ import {
   fetchFunctionCatalog,
   fetchFunctionPackage,
   fetchFunctionPackages,
+  publishFunctionVersion,
+  restoreFunctionPackage,
   setFunctionAlias,
+  uploadFunctionArtifact,
 } from "../api/commandCenterApi";
 import type {
   FunctionCatalogEntry,
+  FunctionManifest,
   FunctionPackage,
   FunctionPackageDetail,
+  FunctionVersion,
 } from "../domain/models";
-import { qualifiedPackageName } from "../domain/models";
+import { publishRequest, qualifiedPackageName, validateManifest } from "../domain/models";
 import { createStore } from "./event-bus";
 import type { AppService } from "./app";
 import type { ConfirmContext } from "./operation-context";
+
+/// what a publish uploads: an already-built archive and the manifest that describes it.
+export interface FunctionPublish {
+  manifest: FunctionManifest;
+  archive: ArrayBuffer;
+  /// an alias to move instead of the manifest's, or `null` to move none.
+  alias?: string | null;
+}
 
 export interface FunctionsState {
   packages: FunctionPackage[];
@@ -91,6 +104,37 @@ export function createFunctionsService(app: AppService) {
         .catch(() => null);
       store.setState((state) => ({ ...state, selectedPackage: detail }));
     },
+    // publishing from an archive the operator built. `runinatorctl functions publish` archives a
+    // directory itself, deterministically; a browser has no working tree to archive, so the zip
+    // arrives already made and is addressed by the digest of exactly those bytes.
+    async publish({ manifest, archive, alias }: FunctionPublish): Promise<FunctionVersion | null> {
+      validateManifest(manifest);
+      const digest = await archiveDigest(archive);
+      const request = publishRequest(manifest, digest);
+
+      if (alias !== undefined) {
+        request.alias = alias;
+      }
+
+      const published = await app.runOperation(`Publishing ${qualifiedPackageName(manifest)}`, async () => {
+        // the server keeps the bytes only if it does not already hold that digest, so republishing
+        // unchanged code is a no-op rather than a second copy.
+        await uploadFunctionArtifact(digest, archive);
+        return publishFunctionVersion(request);
+      });
+      app.setStatus(
+        `Published ${qualifiedPackageName(manifest)} version ${String(published.version)}`,
+      );
+      await service.refreshPackages();
+      return published;
+    },
+    async restore(packageName: string) {
+      await app.runOperation("Restoring function package", () =>
+        restoreFunctionPackage(packageName),
+      );
+      app.setStatus(`Restored ${packageName}`);
+      await service.refreshPackages();
+    },
     clearFunctions() {
       store.setState(() => ({ packages: [], selectedPackage: null, catalog: [] }));
     },
@@ -162,3 +206,15 @@ export function createFunctionsService(app: AppService) {
 }
 
 export type FunctionsService = ReturnType<typeof createFunctionsService>;
+
+/// `sha256:<hex>` of the archive, which is the address the platform stores it under.
+///
+/// computed here rather than taken from the caller: a digest that did not come from these exact
+/// bytes would publish a version pinned to something else entirely.
+export async function archiveDigest(archive: ArrayBuffer): Promise<string> {
+  const hashed = await crypto.subtle.digest("SHA-256", archive);
+  const hex = [...new Uint8Array(hashed)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+  return `sha256:${hex}`;
+}

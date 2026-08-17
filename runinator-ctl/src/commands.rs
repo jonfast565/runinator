@@ -62,26 +62,41 @@ pub fn err(message: impl Into<String>) -> Box<dyn Error + Send + Sync> {
 }
 
 pub async fn run(client: &Client, cli: &Cli) -> Result<()> {
-    match &cli.command {
+    run_command(client, &cli.command, &cli.api_base_url, cli.json).await
+}
+
+/// dispatch one command.
+///
+/// separate from `run` so the console repl reaches the same commands the command line does: it
+/// parses a `:`-prefixed line into a `Commands` and lands here, rather than keeping a second,
+/// smaller table of verbs that would drift.
+pub async fn run_command(
+    client: &Client,
+    command: &Commands,
+    api_base_url: &str,
+    json_output: bool,
+) -> Result<()> {
+    match command {
         // login/logout are intercepted in main before dispatch; reaching here means that wiring
         // changed, so report it instead of panicking.
-        Commands::Login { .. } | Commands::Logout => Err(err(
+        Commands::Login | Commands::Logout => Err(err(
             "login and logout must be handled before command dispatch",
         )),
-        Commands::Status => status::status(client, cli.json).await,
-        Commands::Workflows { command } => workflows::workflows(client, command, cli.json).await,
-        Commands::Runs { command } => runs::runs(client, command, cli.json).await,
-        Commands::Approvals { command } => approvals::approvals(client, command, cli.json).await,
-        Commands::Triggers { command } => triggers::triggers(client, command, cli.json).await,
-        Commands::Freeze { command } => freeze::freeze(client, command, cli.json).await,
-        Commands::Providers { command } => providers::providers(client, command, cli.json).await,
-        Commands::Functions { command } => functions::functions(client, command, cli.json).await,
+        Commands::Status => status::status(client, json_output).await,
+        Commands::Workflows { command } => workflows::workflows(client, command, json_output).await,
+        Commands::Runs { command } => runs::runs(client, command, json_output).await,
+        Commands::Approvals { command } => approvals::approvals(client, command, json_output).await,
+        Commands::Triggers { command } => triggers::triggers(client, command, json_output).await,
+        Commands::Freeze { command } => freeze::freeze(client, command, json_output).await,
+        Commands::Providers { command } => providers::providers(client, command, json_output).await,
+        Commands::Functions { command } => functions::functions(client, command, json_output).await,
         Commands::Console {
             session,
             new_session,
             execute,
             file,
             no_follow,
+            plain,
         } => {
             console::console(
                 client,
@@ -90,17 +105,20 @@ pub async fn run(client: &Client, cli: &Cli) -> Result<()> {
                 execute.as_deref(),
                 file.as_deref(),
                 *no_follow,
-                cli.json,
+                json_output,
+                api_base_url,
+                *plain,
             )
             .await
         }
-        Commands::Artifacts { command } => artifacts::artifacts(client, command, cli.json).await,
-        Commands::Wdl { command } => workflows::wdl(command, cli.json),
-        Commands::Settings { command } => settings::settings(client, command, cli.json).await,
-        Commands::Nodes { command } => nodes::nodes(client, command, cli.json).await,
-        Commands::Orgs { command } => orgs::orgs(client, command, cli.json).await,
+        Commands::Artifacts { command } => artifacts::artifacts(client, command, json_output).await,
+        Commands::Wdl { command } => workflows::wdl(command, json_output),
+        Commands::Settings { command } => settings::settings(client, command, json_output).await,
+        Commands::Nodes { command } => nodes::nodes(client, command, json_output).await,
+        Commands::Orgs { command } => orgs::orgs(client, command, json_output).await,
+        Commands::Replicas { command } => replicas::replicas(client, command, json_output).await,
         Commands::Agents { command } => {
-            agents::agents(client, command, &cli.api_base_url, cli.json).await
+            agents::agents(client, command, api_base_url, json_output).await
         }
     }
 }
@@ -116,8 +134,12 @@ mod artifacts;
 mod freeze;
 mod functions;
 pub use functions::functions_validate;
+pub(crate) mod catalog;
 mod console;
 mod providers;
+pub(crate) mod repl;
+mod repl_completer;
+mod replicas;
 mod runs;
 mod settings;
 mod triggers;

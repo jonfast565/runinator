@@ -1,6 +1,7 @@
 import { createAppService } from "./app";
 import { createAuthService } from "./auth";
 import { createConsoleService } from "./console";
+import { createConsoleTerminalService } from "./console-terminal";
 import { createFunctionsService } from "./functions";
 import { createGatesService } from "./gates";
 import { createResourcesService } from "./resources";
@@ -35,6 +36,7 @@ export const appService = createAppService();
 export const authService = createAuthService();
 export const resourcesService = createResourcesService(appService);
 export const consoleService = createConsoleService(appService);
+export const consoleTerminalService = createConsoleTerminalService(consoleService);
 export const functionsService = createFunctionsService(appService);
 export const gatesService = createGatesService(appService);
 export const artifactsService = createArtifactsService(appService);

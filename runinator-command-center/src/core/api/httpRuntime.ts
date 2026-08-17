@@ -17,6 +17,9 @@ interface HttpDescriptor {
   method: Method | ((args: CommandArgs) => Method);
   path: (args: CommandArgs) => string;
   body?: (args: CommandArgs) => unknown;
+  /// a body sent verbatim under its own content type, for the endpoints that take bytes rather
+  /// than json. mutually exclusive with `body`.
+  rawBody?: (args: CommandArgs) => { body: BodyInit; contentType: string };
   headers?: (args: CommandArgs) => Record<string, string>;
   transform?: (raw: unknown) => unknown;
   accept404?: boolean;
@@ -58,6 +61,16 @@ function argOpt(args: CommandArgs, key: string): unknown {
 
 function escape(part: unknown): string {
   return encodeURIComponent(String(part));
+}
+
+// who resolved an approval and what they said. every field is optional, so a ui that only clicks
+// "approve" sends the same body it always did.
+function approvalResolution(args: CommandArgs) {
+  return {
+    resolved_by: argOpt(args, "by") ?? null,
+    message: argOpt(args, "message") ?? null,
+    output_json: argOpt(args, "output") ?? null,
+  };
 }
 
 const REGISTRY: Record<string, HttpDescriptor> = {
@@ -291,6 +304,22 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     method: "DELETE",
     path: (args) => `workflow_triggers/${escape(arg(args, "triggerId"))}`,
   },
+  fetch_due_triggers: { method: "GET", path: () => "workflow_triggers/due" },
+  create_trigger_run: {
+    method: "POST",
+    path: (args) => `workflow_triggers/${escape(arg(args, "triggerId"))}/runs`,
+    body: (args) => ({
+      parameters: argOpt(args, "parameters") ?? {},
+      debug: argOpt(args, "debug") === true,
+    }),
+  },
+  export_workflow_bundle: {
+    method: "GET",
+    path: (args) => {
+      const workflowId = argOpt(args, "workflowId");
+      return workflowId == null ? "workflows/export" : `workflows/${escape(workflowId)}/export`;
+    },
+  },
   fetch_pipelines: { method: "GET", path: () => "pipelines" },
   fetch_pipeline: {
     method: "GET",
@@ -512,8 +541,19 @@ const REGISTRY: Record<string, HttpDescriptor> = {
   },
   invoke_function: {
     method: "POST",
-    path: (args) =>
-      `functions/${escape(arg(args, "packageName"))}/${escape(arg(args, "exportName"))}/invocations`,
+    path: (args) => {
+      const base = `functions/${escape(arg(args, "packageName"))}/${escape(arg(args, "exportName"))}/invocations`;
+      const alias = argOpt(args, "alias");
+
+      if (typeof alias === "string" && alias) {
+        return `${base}?alias=${escape(alias)}`;
+      }
+
+      const version = argOpt(args, "version");
+      // an alias wins over a version, matching the api client: the two select the same thing, and
+      // sending both would leave the server to break the tie.
+      return version == null ? base : `${base}?version=${escape(version)}`;
+    },
     body: (args) => arg(args, "input"),
   },
 
@@ -663,15 +703,24 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     path: (args) =>
       `credentials?scope=${escape(arg(args, "scope"))}&name=${escape(arg(args, "name"))}&kind=${escape(arg(args, "kind"))}`,
   },
+  fetch_approvals: {
+    method: "GET",
+    path: (args) => {
+      const workflowRunId = argOpt(args, "workflowRunId");
+      return workflowRunId == null
+        ? "approvals"
+        : `approvals?workflow_run_id=${escape(workflowRunId)}`;
+    },
+  },
   approve_approval: {
     method: "POST",
     path: (args) => `approvals/${escape(arg(args, "approvalId"))}/approve`,
-    body: () => ({}),
+    body: approvalResolution,
   },
   reject_approval: {
     method: "POST",
     path: (args) => `approvals/${escape(arg(args, "approvalId"))}/reject`,
-    body: () => ({}),
+    body: approvalResolution,
   },
   fetch_all_artifacts: { method: "GET", path: () => "artifacts" },
   fetch_notifications: {
@@ -759,6 +808,28 @@ const REGISTRY: Record<string, HttpDescriptor> = {
   delete_automation_event: {
     method: "DELETE",
     path: (args) => `automation_events/${escape(arg(args, "eventId"))}`,
+  },
+  // packaged function archives: bytes under their own digest, stored only if absent.
+  upload_function_artifact: {
+    method: "POST",
+    path: (args) => `function_artifacts/${escape(arg(args, "digest"))}`,
+    rawBody: (args) => ({
+      body: arg(args, "bytes") as ArrayBuffer,
+      contentType: "application/zip",
+    }),
+  },
+  publish_function_version: {
+    method: "POST",
+    path: () => "functions",
+    body: (args) => arg(args, "request"),
+  },
+  restore_function_package: {
+    method: "POST",
+    path: (args) => `functions/${escape(arg(args, "packageName"))}/restore`,
+  },
+  fetch_replica_providers: {
+    method: "GET",
+    path: (args) => `replicas/${escape(arg(args, "replicaId"))}/providers`,
   },
   fetch_replica_samples: {
     method: "GET",
@@ -938,6 +1009,12 @@ export async function invokeViaHttp<T>(name: string, args?: Record<string, unkno
   if (descriptor.body) {
     headers["content-type"] = "application/json";
     init.body = JSON.stringify(descriptor.body(args));
+  }
+
+  if (descriptor.rawBody) {
+    const raw = descriptor.rawBody(args);
+    headers["content-type"] = raw.contentType;
+    init.body = raw.body;
   }
 
   if (Object.keys(headers).length > 0) {

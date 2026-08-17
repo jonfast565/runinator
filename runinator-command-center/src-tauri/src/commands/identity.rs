@@ -149,6 +149,14 @@ pub async fn delete_automation_event(
 }
 
 #[tauri::command]
+pub async fn fetch_replica_providers(
+    state: State<'_, CommandCenterState>,
+    replica_id: Uuid,
+) -> CommandResult<Value> {
+    get_json(&state, &format!("replicas/{replica_id}/providers")).await
+}
+
+#[tauri::command]
 pub async fn fetch_replica_samples(
     state: State<'_, CommandCenterState>,
     replica_id: Uuid,

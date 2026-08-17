@@ -281,3 +281,37 @@ pub async fn delete_workflow_trigger(
     let response = handle_response(url, response).await?;
     Ok(response.json::<TaskResponse>().await?)
 }
+
+#[tauri::command]
+pub async fn fetch_due_triggers(
+    state: State<'_, CommandCenterState>,
+) -> CommandResult<Vec<WorkflowTrigger>> {
+    get_json(&state, "workflow_triggers/due").await
+}
+
+#[tauri::command]
+pub async fn create_trigger_run(
+    state: State<'_, CommandCenterState>,
+    trigger_id: Uuid,
+    parameters: Value,
+    debug: bool,
+) -> CommandResult<Value> {
+    post_json(
+        &state,
+        &format!("workflow_triggers/{trigger_id}/runs"),
+        &json!({ "parameters": parameters, "debug": debug }),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn export_workflow_bundle(
+    state: State<'_, CommandCenterState>,
+    workflow_id: Option<Uuid>,
+) -> CommandResult<WorkflowBundle> {
+    let path = match workflow_id {
+        Some(workflow_id) => format!("workflows/{workflow_id}/export"),
+        None => "workflows/export".to_string(),
+    };
+    get_json(&state, &path).await
+}

@@ -1,5 +1,13 @@
-// minimal, dependency-free zip writer (store / no compression). enough to bundle a few small text
-// files (e.g. an exported .wdlm pack and its .wdl sources) into one downloadable archive.
+// a dependency-free zip writer and a single-entry reader.
+//
+// the writer stores (no compression) and is enough to bundle a few small text files — an exported
+// `.wdlm` pack and its `.wdl` sources — into one downloadable archive.
+//
+// the reader exists for one thing: pulling `runinator-function.json` out of a package archive the
+// operator picked, so publishing does not also ask them to hand over the manifest separately. it
+// walks the central directory and inflates a single entry through the platform's own
+// `DecompressionStream`; anything it does not understand — zip64, an encrypted entry, a compression
+// method other than stored or deflate — reports nothing found, and the caller falls back to asking.
 
 export interface ZipEntry {
   name: string;
@@ -125,4 +133,111 @@ export function createZip(entries: ZipEntry[]): Blob {
   }
 
   return new Blob([combined], { type: "application/zip" });
+}
+
+const END_OF_CENTRAL_DIRECTORY = 0x06054b50;
+const CENTRAL_FILE_HEADER = 0x02014b50;
+const LOCAL_FILE_HEADER = 0x04034b50;
+
+/// the largest an end-of-central-directory record can be: the fixed 22 bytes plus a comment of at
+/// most 65535.
+const MAX_END_RECORD = 22 + 0xffff;
+
+const STORED = 0;
+const DEFLATED = 8;
+
+/// one entry read back out of an archive.
+export interface ZipTextEntry {
+  name: string;
+  text: string;
+}
+
+/// the first entry whose name satisfies `matches`, decoded as utf-8 text.
+export async function readZipTextEntry(
+  archive: ArrayBuffer,
+  matches: (name: string) => boolean,
+): Promise<ZipTextEntry | null> {
+  const view = new DataView(archive);
+  const end = findEndRecord(view);
+
+  if (end === null) {
+    return null;
+  }
+
+  const count = view.getUint16(end + 10, true);
+  let at = view.getUint32(end + 16, true);
+
+  for (let index = 0; index < count; index += 1) {
+    if (at + 46 > view.byteLength || view.getUint32(at, true) !== CENTRAL_FILE_HEADER) {
+      return null;
+    }
+
+    const method = view.getUint16(at + 10, true);
+    const compressedSize = view.getUint32(at + 20, true);
+    const nameLength = view.getUint16(at + 28, true);
+    const extraLength = view.getUint16(at + 30, true);
+    const commentLength = view.getUint16(at + 32, true);
+    const localOffset = view.getUint32(at + 42, true);
+    const name = decodeName(archive, at + 46, nameLength);
+
+    if (matches(name)) {
+      const bytes = await entryBytes(archive, view, localOffset, compressedSize, method);
+      return bytes && { name, text: new TextDecoder().decode(bytes) };
+    }
+
+    at += 46 + nameLength + extraLength + commentLength;
+  }
+
+  return null;
+}
+
+async function entryBytes(
+  archive: ArrayBuffer,
+  view: DataView,
+  localOffset: number,
+  compressedSize: number,
+  method: number,
+): Promise<Uint8Array | null> {
+  // a zip64 entry stores its real sizes in the extra field, which this reader does not walk.
+  if (compressedSize === 0xffffffff || view.getUint32(localOffset, true) !== LOCAL_FILE_HEADER) {
+    return null;
+  }
+
+  const nameLength = view.getUint16(localOffset + 26, true);
+  const extraLength = view.getUint16(localOffset + 28, true);
+  const start = localOffset + 30 + nameLength + extraLength;
+  const data = new Uint8Array(archive, start, compressedSize);
+
+  if (method === STORED) {
+    return data;
+  }
+
+  if (method !== DEFLATED || typeof DecompressionStream === "undefined") {
+    return null;
+  }
+
+  try {
+    const stream = new Blob([data]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+    return new Uint8Array(await new Response(stream).arrayBuffer());
+  } catch {
+    return null;
+  }
+}
+
+// the record is at the end of the file, after a comment of unknown length, so it is found by
+// scanning backwards for its signature.
+function findEndRecord(view: DataView): number | null {
+  const floor = Math.max(0, view.byteLength - MAX_END_RECORD);
+
+  for (let at = view.byteLength - 22; at >= floor; at -= 1) {
+    if (view.getUint32(at, true) === END_OF_CENTRAL_DIRECTORY) {
+      return at;
+    }
+  }
+
+  return null;
+}
+
+function decodeName(archive: ArrayBuffer, at: number, length: number): string {
+  return new TextDecoder().decode(new Uint8Array(archive, at, length));
 }

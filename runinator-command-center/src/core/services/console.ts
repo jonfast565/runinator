@@ -166,16 +166,21 @@ export function createConsoleService(app: AppService) {
       store.setState((state) => ({ ...state, activeSession: null }));
       await service.refreshSessions();
     },
-    async addCell(source: string, label?: string | null) {
+    // returns the created cell so a caller that means to run it immediately — the terminal does —
+    // does not have to find it again in the refreshed session.
+    async addCell(source: string, label?: string | null): Promise<ConsoleCell | null> {
       const sessionId = store.getState().activeSession?.id;
 
       if (!sessionId) {
         app.setError("No console session open");
-        return;
+        return null;
       }
 
-      await app.runOperation("Adding cell", () => createConsoleCell(sessionId, source, label));
+      const cell = await app.runOperation("Adding cell", () =>
+        createConsoleCell(sessionId, source, label),
+      );
       await service.refreshActiveSession();
+      return cell;
     },
     async editCell(cellId: string, source: string, label?: string | null) {
       const cell = await app.runOperation("Saving cell", () =>

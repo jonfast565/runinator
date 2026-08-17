@@ -14,9 +14,12 @@ import type {
   ConsoleSessionDetail,
   CredentialSummary,
   CredentialDetail,
+  FunctionArtifact,
   FunctionCatalogEntry,
   FunctionPackage,
   FunctionPackageDetail,
+  FunctionVersion,
+  NewFunctionVersion,
   DevPackApplyResult,
   BackfillRequest,
   BackfillResponse,
@@ -39,6 +42,7 @@ import type {
   WorkflowTriggerKindMetadata,
   EnumCatalogMetadata,
   ReplicaListResponse,
+  ReplicaProviderRegistration,
   RunArtifact,
   RunChunk,
   RunSummary,
@@ -409,6 +413,22 @@ export async function deleteWorkflowTrigger(triggerId: string) {
   return command<TaskResponse>("delete_workflow_trigger", { triggerId });
 }
 
+// triggers whose next execution has come due. the scheduler reads this too; the console exposes it
+// so an operator can see what is about to fire.
+export async function fetchDueTriggers() {
+  return command<WorkflowTrigger[]>("fetch_due_triggers", {});
+}
+
+// fire a trigger by hand, which creates a run exactly as the schedule would have.
+export async function createTriggerRun(triggerId: string, parameters: unknown = {}, debug = false) {
+  return command<JsonRecord>("create_trigger_run", { triggerId, parameters, debug });
+}
+
+// one workflow's bundle, or the whole set when no id is given.
+export async function exportWorkflowBundle(workflowId?: string) {
+  return command<WorkflowBundle>("export_workflow_bundle", { workflowId: workflowId ?? null });
+}
+
 export async function fetchPipelines() {
   return command<Pipeline[]>("fetch_pipelines");
 }
@@ -704,6 +724,10 @@ export interface ReplicaSampleSeries {
 
 export async function fetchReplicaSamples(replicaId: string, sinceSeconds?: number) {
   return command<ReplicaSampleSeries>("fetch_replica_samples", { replicaId, sinceSeconds });
+}
+
+export async function fetchReplicaProviders(replicaId: string) {
+  return command<ReplicaProviderRegistration[]>("fetch_replica_providers", { replicaId });
 }
 
 export async function setWorkflowOwner(workflowId: string, orgId: string | null) {
@@ -1005,12 +1029,23 @@ export async function saveForeignLanguageRuntime(
   return saveCredential(FOREIGN_LANGUAGE_SCOPE, language, value, "config");
 }
 
-export async function approveApproval(approvalId: string) {
-  return command<TaskResponse>("approve_approval", { approvalId });
+// pending approval requests, all of them or one run's.
+export async function fetchApprovals(workflowRunId?: string) {
+  return command<JsonRecord[]>("fetch_approvals", { workflowRunId: workflowRunId ?? null });
 }
 
-export async function rejectApproval(approvalId: string) {
-  return command<TaskResponse>("reject_approval", { approvalId });
+export interface ApprovalResolution {
+  by?: string | null;
+  message?: string | null;
+  output?: unknown;
+}
+
+export async function approveApproval(approvalId: string, resolution: ApprovalResolution = {}) {
+  return command<TaskResponse>("approve_approval", { approvalId, ...resolution });
+}
+
+export async function rejectApproval(approvalId: string, resolution: ApprovalResolution = {}) {
+  return command<TaskResponse>("reject_approval", { approvalId, ...resolution });
 }
 
 export async function fetchGates(workflowRunId?: string, status?: string) {
@@ -1060,7 +1095,6 @@ export async function requestRunInterrupt(
   });
 }
 
-
 // ---- packaged functions ----
 
 export async function fetchFunctionPackages() {
@@ -1079,6 +1113,40 @@ export async function fetchFunctionCatalog() {
 
 export async function deleteFunctionPackage(packageName: string) {
   return command<JsonRecord>("delete_function_package", { packageName });
+}
+
+export async function restoreFunctionPackage(packageName: string) {
+  return command<JsonRecord>("restore_function_package", { packageName });
+}
+
+/// store a package archive under the digest of its bytes.
+///
+/// the server keeps it only if it does not already hold that digest, so re-publishing unchanged
+/// code moves the bytes once and never again.
+export async function uploadFunctionArtifact(digest: string, bytes: ArrayBuffer) {
+  // tauri's ipc is json, so the desktop build hands the archive over base64-encoded and the rust
+  // side decodes it; the web build posts the bytes themselves.
+  return command<FunctionArtifact>(
+    "upload_function_artifact",
+    isTauriRuntime() ? { digest, base64: base64Encode(bytes) } : { digest, bytes },
+  );
+}
+
+function base64Encode(bytes: ArrayBuffer): string {
+  // chunked so a multi-megabyte archive does not blow the argument limit of `String.fromCharCode`.
+  const view = new Uint8Array(bytes);
+  const chunks: string[] = [];
+
+  for (let at = 0; at < view.length; at += 0x8000) {
+    chunks.push(String.fromCharCode(...view.subarray(at, at + 0x8000)));
+  }
+
+  return btoa(chunks.join(""));
+}
+
+/// publish one version of a package against an artifact already stored.
+export async function publishFunctionVersion(request: NewFunctionVersion) {
+  return command<FunctionVersion>("publish_function_version", { request });
 }
 
 // point an alias at a version, by number or at whatever another alias currently names.
@@ -1104,8 +1172,17 @@ export async function invokeFunction(
   packageName: string,
   exportName: string,
   input: JsonRecord,
+  // an alias resolves at call time and a version pins; passing neither takes whatever the package's
+  // default alias currently names.
+  selector: { alias?: string | null; version?: number | null } = {},
 ) {
-  return command<JsonRecord>("invoke_function", { packageName, exportName, input });
+  return command<JsonRecord>("invoke_function", {
+    packageName,
+    exportName,
+    input,
+    alias: selector.alias ?? null,
+    version: selector.version ?? null,
+  });
 }
 
 // ---- the wdl console ----
@@ -1130,11 +1207,7 @@ export async function deleteConsoleSession(sessionId: string) {
   return command<JsonRecord>("delete_console_session", { sessionId });
 }
 
-export async function createConsoleCell(
-  sessionId: string,
-  source: string,
-  label?: string | null,
-) {
+export async function createConsoleCell(sessionId: string, source: string, label?: string | null) {
   return command<ConsoleCell>("create_console_cell", {
     sessionId,
     source,
@@ -1149,11 +1222,7 @@ export async function fetchConsoleCell(cellId: string) {
   return command<ConsoleCell>("fetch_console_cell", { cellId });
 }
 
-export async function updateConsoleCell(
-  cellId: string,
-  source: string,
-  label?: string | null,
-) {
+export async function updateConsoleCell(cellId: string, source: string, label?: string | null) {
   return command<ConsoleCell>("update_console_cell", {
     cellId,
     source,

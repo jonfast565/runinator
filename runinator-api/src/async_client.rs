@@ -62,6 +62,7 @@ use runinator_models::{
     revisions::WorkflowRevision,
     runs::{RunStatus, RunSummary},
     schedules::{BackfillRequest, BackfillResponse, FreezeWindow, NewFreezeWindow},
+    telemetry::ReplicaSampleSeries,
     web::TaskResponse,
     workflows::{
         WorkflowBundle, WorkflowDefinition, WorkflowNodeRun, WorkflowNodeRunArtifact,
@@ -466,6 +467,24 @@ where
         let response = self.http_get(url.clone()).send().await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<ReplicaListResponse>().await?)
+    }
+
+    /// One replica's recent telemetry samples, over the given look-back window in seconds.
+    pub async fn fetch_replica_samples(
+        &self,
+        replica_id: Uuid,
+        since_seconds: Option<i64>,
+    ) -> Result<ReplicaSampleSeries> {
+        let mut url = self
+            .build_url(&format!("{API_REPLICAS}/{replica_id}/samples"))
+            .await?;
+        if let Some(since_seconds) = since_seconds {
+            url.query_pairs_mut()
+                .append_pair("since_seconds", &since_seconds.to_string());
+        }
+        let response = self.http_get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<ReplicaSampleSeries>().await?)
     }
 
     /// list configured node-provisioning backends and the kinds they support.

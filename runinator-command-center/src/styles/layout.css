@@ -976,3 +976,35 @@ main[inert] {
     transform: none !important;
   }
 }
+
+/*
+ * the console terminal. it is always dark, in both themes: a terminal that followed the light theme
+ * would read as a text editor, and the console is the one surface where "this is a shell" is the
+ * whole affordance.
+ *
+ * the status tokens are re-pointed to their dark-theme values inside it, so a `--danger-fg` message
+ * stays legible on the inverse surface no matter which theme the rest of the app is in.
+ */
+.terminal-surface {
+  background: var(--surface-inverse);
+  color: var(--text-inverse);
+  font-family: var(--font-mono);
+
+  --danger-fg: #ff9b91;
+  --success-fg: #74d99f;
+  --warning-fg: #f1c86d;
+  --info-fg: #9ac9ff;
+  --accent-pulse: #2de0d1;
+  --scrollbar-thumb: rgba(230, 235, 242, 0.18);
+  --scrollbar-thumb-hover: rgba(230, 235, 242, 0.34);
+}
+
+.terminal-surface textarea {
+  field-sizing: content;
+
+  /* a terminal's caret is a block, not a hairline. progressive enhancement: a browser without
+     `caret-shape` keeps its own thin caret rather than losing one, and the accent colour is what
+     makes it findable either way. */
+  caret-shape: block;
+  caret-color: var(--accent-pulse);
+}
