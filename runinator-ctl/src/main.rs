@@ -19,8 +19,9 @@ async fn main() -> commands::Result<()> {
 
 async fn run_process() -> commands::Result<()> {
     let cli = Cli::parse();
-    // skip the banner in json mode to keep machine-readable output clean.
-    if !cli.json {
+    // skip the banner in json mode to keep machine-readable output clean, and for the mcp
+    // server, whose caller is a protocol client rather than a terminal.
+    if !cli.json && !matches!(cli.command, Commands::Mcp { .. }) {
         banner::print();
     }
     match &cli.command {
@@ -39,6 +40,11 @@ async fn run_process() -> commands::Result<()> {
         Commands::Functions {
             command: FunctionCommands::Validate { path },
         } => commands::functions_validate(path, cli.json),
+        // the mcp server outlives a web service that is not up yet; see `build_client_or_offline`.
+        Commands::Mcp { .. } => {
+            let client = auth::build_client_or_offline(&cli).await?;
+            commands::run(&client, &cli).await
+        }
         _ => {
             let client = auth::build_authenticated_client(&cli).await?;
             commands::run(&client, &cli).await

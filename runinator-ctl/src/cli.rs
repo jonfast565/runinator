@@ -177,6 +177,25 @@ pub enum Commands {
         #[command(subcommand)]
         command: FunctionCommands,
     },
+    /// Inspect and run pipelines. Pipeline *shape* is pack-managed (`.wdlp`, applied by
+    /// `workflows apply`); these verbs read and drive what a pack defined.
+    Pipelines {
+        #[command(subcommand)]
+        command: PipelineCommands,
+    },
+    /// Serve the Model Context Protocol on stdin/stdout, exposing every runinatorctl command as a
+    /// tool. Meant to be launched by an MCP client rather than run by hand; it speaks json-rpc, so
+    /// command output is captured into tool results instead of being printed.
+    Mcp {
+        /// Also expose every enabled workflow as a tool that starts a run of it. Off by default:
+        /// the tool list is context the model pays for on every turn, and a fleet of workflows
+        /// would bury the commands that author them.
+        #[arg(long)]
+        workflow_tools: bool,
+        /// Seconds one command may run before its tool call gives up.
+        #[arg(long, default_value_t = 300)]
+        timeout: u64,
+    },
     /// Open a durable, multiline WDL execution console.
     Console {
         /// Resume a session by UUID or name.
@@ -812,6 +831,70 @@ pub enum FreezeCommands {
 }
 
 #[derive(Debug, Subcommand)]
+pub enum PipelineCommands {
+    /// List pipelines.
+    List,
+    /// Show a pipeline by id or name, with its member workflows.
+    Show { pipeline: String },
+    /// Start a pipeline run.
+    Run {
+        /// Pipeline id or name.
+        pipeline: String,
+        /// Run parameter as KEY=VALUE; repeat for several. Values parse as json when they can.
+        #[arg(long = "param", value_name = "KEY=VALUE")]
+        params: Vec<String>,
+        /// Read the run parameters from a json file instead.
+        #[arg(long = "json-file")]
+        json_file: Option<PathBuf>,
+        /// Wait for the run to reach a terminal status before returning.
+        #[arg(long)]
+        follow: bool,
+    },
+    /// List pipeline runs, newest first.
+    Runs {
+        /// Only runs of one pipeline, by id or name.
+        #[arg(long)]
+        pipeline: Option<String>,
+    },
+    /// Show a pipeline run and the member workflow runs it started.
+    RunShow { run_id: Uuid },
+    /// Cancel a pipeline run.
+    Cancel { run_id: Uuid },
+    /// Resolve a pipeline run paused on an `inquire` member failure.
+    Resolve {
+        run_id: Uuid,
+        /// Continue the pipeline or abort it.
+        #[arg(long, value_enum, default_value_t = CliInquiryDecision::Continue)]
+        decision: CliInquiryDecision,
+        /// Who is deciding, recorded on the run.
+        #[arg(long)]
+        by: Option<String>,
+        /// Note recorded with the decision.
+        #[arg(long)]
+        message: Option<String>,
+    },
+    /// Delete a pipeline. Its member workflows are untouched.
+    Delete { pipeline: String },
+}
+
+/// cli-facing decision for a pipeline run's open `inquire` pause.
+#[derive(Debug, Clone, Copy, Default, ValueEnum)]
+pub enum CliInquiryDecision {
+    #[default]
+    Continue,
+    Abort,
+}
+
+impl CliInquiryDecision {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CliInquiryDecision::Continue => "continue",
+            CliInquiryDecision::Abort => "abort",
+        }
+    }
+}
+
+#[derive(Debug, Subcommand)]
 pub enum FunctionCommands {
     /// Check a package directory and print the digest a publish would upload. Runs offline.
     Validate {
@@ -825,6 +908,23 @@ pub enum FunctionCommands {
         /// Alias to move onto the new version, overriding the manifest's.
         #[arg(long)]
         alias: Option<String>,
+    },
+    /// Call a published export and print what it returned.
+    Invoke {
+        /// Export to call, as `package.export`.
+        target: String,
+        /// Resolve the version this alias names.
+        #[arg(long)]
+        alias: Option<String>,
+        /// Call this exact version instead of the alias.
+        #[arg(long)]
+        version: Option<i64>,
+        /// Input payload as inline json.
+        #[arg(long)]
+        input: Option<String>,
+        /// Read the input payload from a json file instead.
+        #[arg(long = "input-file")]
+        input_file: Option<PathBuf>,
     },
     /// List published packages.
     List,

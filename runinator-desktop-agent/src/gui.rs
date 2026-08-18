@@ -25,9 +25,17 @@ struct Snapshot {
     busy: bool,
 }
 
+// the status-dot palette. amber and red are the two the operator is meant to tell apart at a
+// glance: amber is "still trying", red is "stopped, and not coming back without you".
+const DOT_GRAY: egui::Color32 = egui::Color32::from_rgb(130, 130, 130);
+const DOT_BLUE: egui::Color32 = egui::Color32::from_rgb(45, 140, 200);
+const DOT_GREEN: egui::Color32 = egui::Color32::from_rgb(64, 180, 96);
+const DOT_AMBER: egui::Color32 = egui::Color32::from_rgb(220, 170, 45);
+const DOT_RED: egui::Color32 = egui::Color32::from_rgb(210, 70, 70);
+
 /// how a connection state renders: header dot text + color, and the matching tray color/tooltip.
 struct StatusPresentation {
-    label: &'static str,
+    label: String,
     color: egui::Color32,
     tray_color: TrayColor,
     tooltip: String,
@@ -37,49 +45,73 @@ fn present_status(connection: &ConnectionState, busy: bool) -> StatusPresentatio
     // a start/stop transition in flight reads as "working" regardless of the underlying phase.
     if busy {
         return StatusPresentation {
-            label: "● working…",
-            color: egui::Color32::from_rgb(210, 170, 60),
+            label: "● working…".to_string(),
+            color: DOT_AMBER,
             tray_color: TrayColor::Connecting,
             tooltip: "Runinator Desktop Agent — working…".to_string(),
         };
     }
     match connection {
         ConnectionState::Stopped => StatusPresentation {
-            label: "● stopped",
-            color: egui::Color32::GRAY,
+            label: "● stopped".to_string(),
+            color: DOT_GRAY,
             tray_color: TrayColor::Idle,
             tooltip: "Runinator Desktop Agent — stopped".to_string(),
         },
         ConnectionState::Registering => StatusPresentation {
-            label: "● registering…",
-            color: egui::Color32::from_rgb(45, 140, 200),
+            label: "● registering…".to_string(),
+            color: DOT_BLUE,
             tray_color: TrayColor::Connecting,
             tooltip: "Runinator Desktop Agent — registering…".to_string(),
         },
         ConnectionState::Connecting => StatusPresentation {
-            label: "● connecting…",
-            color: egui::Color32::from_rgb(45, 140, 200),
+            label: "● connecting…".to_string(),
+            color: DOT_BLUE,
             tray_color: TrayColor::Connecting,
             tooltip: "Runinator Desktop Agent — connecting…".to_string(),
         },
         ConnectionState::Connected => StatusPresentation {
-            label: "● running",
-            color: egui::Color32::from_rgb(64, 180, 96),
+            label: "● running".to_string(),
+            color: DOT_GREEN,
             tray_color: TrayColor::Connected,
             tooltip: "Runinator Desktop Agent — running".to_string(),
         },
-        ConnectionState::Reconnecting { retry_secs } => StatusPresentation {
-            label: "● reconnecting",
-            color: egui::Color32::from_rgb(210, 90, 70),
-            tray_color: TrayColor::Degraded,
-            tooltip: format!("Runinator Desktop Agent — reconnecting (retry in {retry_secs}s)"),
+        ConnectionState::Reconnecting {
+            retry_secs,
+            attempt,
+            max_attempts,
+        } => StatusPresentation {
+            label: format!("● reconnecting{}", attempt_suffix(*attempt, *max_attempts)),
+            color: DOT_AMBER,
+            tray_color: TrayColor::Reconnecting,
+            tooltip: format!(
+                "Runinator Desktop Agent — reconnecting{} (retry in {retry_secs}s)",
+                attempt_suffix(*attempt, *max_attempts)
+            ),
+        },
+        ConnectionState::Disconnected { attempts, reason } => StatusPresentation {
+            label: "● disconnected".to_string(),
+            color: DOT_RED,
+            tray_color: TrayColor::Disconnected,
+            tooltip: format!(
+                "Runinator Desktop Agent — disconnected after {attempts} attempts ({reason})"
+            ),
         },
         ConnectionState::ReenrollmentRequired { reason } => StatusPresentation {
-            label: "● re-enrollment required",
-            color: egui::Color32::from_rgb(210, 70, 70),
-            tray_color: TrayColor::Degraded,
+            label: "● re-enrollment required".to_string(),
+            color: DOT_RED,
+            tray_color: TrayColor::Disconnected,
             tooltip: format!("Runinator Desktop Agent — credential rejected ({reason})"),
         },
+    }
+}
+
+// " 3/10", or nothing when the agent retries indefinitely — the count only means something against
+// a budget.
+fn attempt_suffix(attempt: u32, max_attempts: Option<u32>) -> String {
+    match max_attempts {
+        Some(max) => format!(" {attempt}/{max}"),
+        None => String::new(),
     }
 }
 
@@ -511,14 +543,39 @@ impl eframe::App for DesktopAgentApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.heading("Runinator Desktop Agent");
-                ui.colored_label(presentation.color, presentation.label);
+                ui.colored_label(presentation.color, &presentation.label);
             });
-            if let ConnectionState::Reconnecting { retry_secs } = connection {
-                ui.colored_label(
-                    presentation.color,
-                    egui::RichText::new(format!("Broker unreachable — retrying in {retry_secs}s"))
+            match &connection {
+                ConnectionState::Reconnecting {
+                    retry_secs,
+                    attempt,
+                    max_attempts,
+                } => {
+                    let budget = match max_attempts {
+                        Some(max) => format!(" (attempt {attempt} of {max})"),
+                        None => String::new(),
+                    };
+                    ui.colored_label(
+                        presentation.color,
+                        egui::RichText::new(format!(
+                            "Broker unreachable — retrying in {retry_secs}s{budget}"
+                        ))
                         .small(),
-                );
+                    );
+                }
+                // the agent stopped itself here, so say what ends the state: the operator has to
+                // start it again once the service is back.
+                ConnectionState::Disconnected { attempts, reason } => {
+                    ui.colored_label(
+                        presentation.color,
+                        egui::RichText::new(format!(
+                            "Disconnected after {attempts} reconnect attempts ({reason}). The \
+                             agent stopped; press Start agent to try again."
+                        ))
+                        .small(),
+                    );
+                }
+                _ => {}
             }
             ui.separator();
 
@@ -716,6 +773,24 @@ impl eframe::App for DesktopAgentApp {
                                         .range(1..=300),
                                 );
                                 ui.end_row();
+
+                                ui.label("Reconnect attempts").on_hover_text(
+                                    "Consecutive failed reconnects tolerated before the agent \
+                                     disconnects and stops itself. The count resets after a \
+                                     connection that stays up. 0 retries forever.",
+                                );
+                                ui.add(
+                                    egui::DragValue::new(&mut self.draft.reconnect_max_attempts)
+                                        .range(0..=100)
+                                        .custom_formatter(|value, _| {
+                                            if value < 1.0 {
+                                                "unlimited".to_string()
+                                            } else {
+                                                format!("{value:.0}")
+                                            }
+                                        }),
+                                );
+                                ui.end_row();
                             });
                     });
 
@@ -762,3 +837,7 @@ impl eframe::App for DesktopAgentApp {
         });
     }
 }
+
+#[cfg(test)]
+#[path = "gui_tests.rs"]
+mod tests;

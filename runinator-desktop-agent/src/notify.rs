@@ -6,10 +6,22 @@
 /// post a "went degraded" toast (broker unreachable / worker loop crash-looping).
 pub fn notify_degraded(detail: &str) {
     toast(
-        "Runinator Desktop Agent disconnected",
+        "Runinator Desktop Agent reconnecting",
         format!("Reconnecting to the broker. {detail}")
             .trim()
             .to_string(),
+    );
+}
+
+/// post a "gave up" toast: the reconnect budget is spent and the agent has stopped itself, so this
+/// machine is no longer taking work until someone starts it again.
+pub fn notify_disconnected(attempts: u32) {
+    toast(
+        "Runinator Desktop Agent disconnected",
+        format!(
+            "Stopped after {attempts} failed reconnect attempts. Open the agent and press Start \
+             once the service is reachable."
+        ),
     );
 }
 

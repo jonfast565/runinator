@@ -34,8 +34,14 @@ impl StatusReporter {
     }
 
     pub fn set_connection(&self, connection: AgentConnection) {
-        if let AgentConnection::ReenrollmentRequired { reason } = &connection {
-            self.record_error(reason.clone());
+        // the two terminal states are the ones an operator has to act on, so what caused them is
+        // carried in `last_error` and reaches the replica registry through the heartbeat.
+        match &connection {
+            AgentConnection::ReenrollmentRequired { reason } => self.record_error(reason.clone()),
+            AgentConnection::Disconnected { attempts, reason } => {
+                self.record_error(format!("disconnected after {attempts} attempts: {reason}"))
+            }
+            _ => {}
         }
         self.update(|status| status.connection = connection);
     }

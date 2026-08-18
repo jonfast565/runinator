@@ -27,17 +27,53 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   const state = mirrorServiceState(services);
   const catalogState = mirrorServiceState(catalogMetadataService);
   const app = useAppStore();
+  // these four are edited from both sides: a component writes a form field, and a service writes a
+  // freshly hydrated draft. installing the *proxies* back into the service state is what makes both
+  // directions observable — a service assignment like `host.state.triggerJson.configuration = ...`
+  // reaches the raw object either way, but only a write through the proxy notifies a watcher, and
+  // re-copying the object onto itself afterwards notifies nothing because nothing changed.
   const workflowDraft = reactive(services.getState().workflowDraft);
   const triggerDraft = reactive(services.getState().triggerDraft);
   const triggerJson = reactive(services.getState().triggerJson);
   const stepEditor = reactive(services.getState().stepEditor);
+  services.setState((current) => ({
+    ...current,
+    workflowDraft,
+    triggerDraft,
+    triggerJson,
+    stepEditor,
+  }));
 
+  // the services mutate these four in place (`Object.assign(host.state.workflowDraft, ...)`), never
+  // by replacing the object. a replacement would orphan the installed proxy — the state would point
+  // at a plain object nothing observes — so fold it back in and re-install rather than letting the
+  // editors go quietly dead. the guard keeps the re-install from recursing past one pass.
+  let reinstalling = false;
   services.subscribe(() => {
     const next = services.getState();
+    const drifted =
+      next.workflowDraft !== workflowDraft ||
+      next.triggerDraft !== triggerDraft ||
+      next.triggerJson !== triggerJson ||
+      next.stepEditor !== stepEditor;
+
+    if (!drifted || reinstalling) {
+      return;
+    }
+
     Object.assign(workflowDraft, next.workflowDraft);
     Object.assign(triggerDraft, next.triggerDraft);
     Object.assign(triggerJson, next.triggerJson);
     Object.assign(stepEditor, next.stepEditor);
+    reinstalling = true;
+    services.setState((current) => ({
+      ...current,
+      workflowDraft,
+      triggerDraft,
+      triggerJson,
+      stepEditor,
+    }));
+    reinstalling = false;
   });
 
   let workflowWdlSyncTimer: ReturnType<typeof setTimeout> | null = null;
@@ -79,7 +115,10 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   watch(
     stepEditor,
     () => {
-      if (state.value.stepEditorOpen) {
+      // hydrating the editor from a node is not an edit of it. without this the act of opening a
+      // step would apply the freshly-read draft straight back over the node it came from, which is
+      // how a half-populated field would overwrite a good one.
+      if (state.value.stepEditorOpen && !services.internal.stepEditorHydrating) {
         services.editor.scheduleStepEditorApply();
       }
     },

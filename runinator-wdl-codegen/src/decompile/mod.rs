@@ -1274,12 +1274,43 @@ impl<'a> Decompiler<'a> {
             self.call_args(&arg_parts, base)
         );
         let mut modifiers = Vec::new();
-        if self.explicit || action.timeout_seconds != 60 {
-            modifiers.push(format!(".timeout({}s)", action.timeout_seconds));
-        }
+        modifiers.extend(self.call_timeout_modifier(action));
         if let Some(retry) = decompile_retry(&node.retry, self.explicit) {
             modifiers.push(retry);
         }
+        modifiers.extend(self.call_modifiers(action)?);
+        if node.reentry.enabled {
+            modifiers.push(format!(".reentry({})", node.reentry.max_visits));
+        }
+        text.push_str(&self.modifier_suffix(base, &modifiers, multiline));
+        if let Some(compensation) = &node.compensation {
+            text.push_str(&format!(
+                " compensate {}",
+                self.action_call_text(compensation, base)?
+            ));
+        }
+        Ok(text)
+    }
+
+    /// the call's `.timeout(...)`, kept apart from [`Self::call_modifiers`] because a node's
+    /// `.retry(...)` renders between the two and the formatter's golden output pins that order.
+    fn call_timeout_modifier(
+        &self,
+        action: &runinator_models::workflows::WorkflowAction,
+    ) -> Option<String> {
+        (self.explicit || action.timeout_seconds != 60)
+            .then(|| format!(".timeout({}s)", action.timeout_seconds))
+    }
+
+    /// the remaining modifiers that belong to the call itself rather than to the node around it.
+    /// shared with `compensate`, whose clause is the same `action_stmt` and therefore carries the
+    /// same modifiers — lowering has always preserved them, so dropping them here silently reverted
+    /// a compensation's timeout, tags, and runner on every editor round trip.
+    fn call_modifiers(
+        &self,
+        action: &runinator_models::workflows::WorkflowAction,
+    ) -> Result<Vec<String>, WdlError> {
+        let mut modifiers = Vec::new();
         if !action.tags.is_empty() {
             let tags = action
                 .tags
@@ -1304,20 +1335,10 @@ impl<'a> Decompiler<'a> {
         if let Some(key) = &action.idempotency_key {
             modifiers.push(format!(".idempotent(key: {})", self.expr(key)?));
         }
-        if node.reentry.enabled {
-            modifiers.push(format!(".reentry({})", node.reentry.max_visits));
-        }
-        text.push_str(&self.modifier_suffix(base, &modifiers, multiline));
-        if let Some(compensation) = &node.compensation {
-            text.push_str(&format!(
-                " compensate {}",
-                self.action_call_text(compensation, base)?
-            ));
-        }
-        Ok(text)
+        Ok(modifiers)
     }
 
-    /// render a bare `provider.function(args)` call from a `WorkflowAction` (used for `compensate`).
+    /// render a `provider.function(args)` call from a `WorkflowAction` (used for `compensate`).
     fn action_call_text(
         &self,
         action: &runinator_models::workflows::WorkflowAction,
@@ -1329,11 +1350,16 @@ impl<'a> Decompiler<'a> {
                 args.push(format!("{name}: {}", self.expr_multiline(value, base + 1)?));
             }
         }
+        let multiline = !args.is_empty();
+        let mut modifiers = Vec::new();
+        modifiers.extend(self.call_timeout_modifier(action));
+        modifiers.extend(self.call_modifiers(action)?);
         Ok(format!(
-            "{}.{}{}",
+            "{}.{}{}{}",
             action.provider,
             action.function,
-            self.call_args(&args, base)
+            self.call_args(&args, base),
+            self.modifier_suffix(base, &modifiers, multiline),
         ))
     }
 

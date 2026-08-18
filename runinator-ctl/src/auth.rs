@@ -109,6 +109,21 @@ pub async fn logout(cli: &Cli) -> Result<()> {
     Ok(())
 }
 
+/// an authenticated client, or an unauthenticated one when the web service cannot be reached.
+///
+/// for the mcp server only. it is started by its client, often before the web service is up, and a
+/// process that exits at startup is one the client marks failed for the whole session. an
+/// unreachable service becomes an error on the first tool call instead — which names the real
+/// problem, to a caller that can retry it.
+pub async fn build_client_or_offline(cli: &Cli) -> Result<Client> {
+    match build_authenticated_client(cli).await {
+        Ok(client) => Ok(client),
+        Err(_) => Ok(AsyncApiClient::new(StaticLocator::new(
+            cli.api_base_url.clone(),
+        ))?),
+    }
+}
+
 pub async fn build_authenticated_client(cli: &Cli) -> Result<Client> {
     if let Some(api_key) = cli.api_key.clone().filter(|value| !value.trim().is_empty()) {
         return Ok(AsyncApiClient::with_credentials(

@@ -8045,21 +8045,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "runinator-mcp"
-version = "0.2.367"
-dependencies = [
- "chrono",
- "clap",
- "reqwest",
- "runinator-models",
- "runinator-provider-catalog",
- "runinator-utilities",
- "runinator-wdl",
- "serde_json",
- "uuid",
-]
-
-[[package]]
 name = "runinator-models"
 version = "0.2.367"
 dependencies = [

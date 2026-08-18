@@ -582,6 +582,55 @@ A few verbs exist only inside a session, since they have no command-line counter
 and `:clear`. `:run` and `:invoke` take their payload either way — `--param KEY=VALUE` or a
 `… with {"a": 1}` tail — so a line copied between the two consoles keeps working.
 
+### The MCP server
+
+`runinatorctl mcp` is the same control surface again, for a model rather than a person: a Model
+Context Protocol server speaking json-rpc on stdin and stdout. It is meant to be launched by an MCP
+client, not run by hand.
+
+```jsonc
+// claude_desktop_config.json, .mcp.json, or whatever your client reads
+{
+  "mcpServers": {
+    "runinator": {
+      "command": "runinatorctl",
+      "args": ["mcp", "--api-base-url", "http://127.0.0.1:8080"],
+      "env": { "RUNINATOR_API_KEY": "…" }
+    }
+  }
+}
+```
+
+**Every `runinatorctl` command is a tool**, named `runinator_<command>_<subcommand>` —
+`runinator_workflows_apply`, `runinator_runs_show`, `runinator_settings_set`, and eighty-odd more.
+Each one's description, arguments, types, closed sets, and defaults are read out of the same clap
+tree the process parses its own argv with, so a verb added to the CLI is a tool with a correct
+schema the day it is added; nothing is written down twice. A call is turned back into argv and run
+through the ordinary parser and dispatch, so there is one execution path, not two.
+
+Two tools sit in front of that set. `runinator_help` is the index — the `:help` table, for finding a
+verb without pulling ninety schemas into the conversation. `runinator_exec` runs a raw command line,
+which is the escape hatch for a longer timeout, for output as a table rather than json, or for
+anything a schema does not express.
+
+Runs, their logs, and their artifacts are also readable as **resources** (`runinator://runs/{id}`,
+`runinator://node_runs/{id}/chunks`, …), so a client can attach what a run left behind to the
+conversation without spending a tool call on it. `--workflow-tools` additionally exposes every
+enabled workflow as a tool that starts a run of it, typed by the workflow's own declared input; it
+is off by default, because a fleet of workflows would bury the commands that author them.
+
+The verbs that never return or read the terminal are refused rather than left to hang the call —
+`console`, `mcp`, `login`/`logout`, `workflows dev`, `runs watch` — each naming what to do instead.
+Two commands that need no server (`workflows test`, `functions validate`) run offline, which is when
+a dry run is most useful. The server also starts against a web service that is not up yet: a client
+launches it before the stack is running, so an unreachable service becomes an error on the first
+tool call rather than a process that exits at startup.
+
+Command output is captured at the file descriptor, the way the terminal console captures it, because
+the command modules print with plain `println!` and a table written into the middle of a json-rpc
+frame would desynchronise the client. That makes the server a unix arrangement; on Windows, use the
+console or the CLI.
+
 ## Workflow Import
 
 `runinatorctl workflows apply <path>` imports a workflow pack in one shot. The
@@ -672,6 +721,26 @@ Workflow syntax now includes richer declarative control-flow nodes:
 - `race` starts branch roots until one satisfies the winner policy, then cancels the still-running losing branches (their latest non-terminal node run is marked `Canceled`).
 - `emit` records structured node output without calling a provider.
 - `reentry` allows explicit bounded cycles back to a node and can route to `on_exhausted`.
+
+#### Retry and compensation
+
+An action node carries two failure-handling policies, both editable in the step editor and both
+previewed there so the effect is visible before saving:
+
+- **Retry** (`.retry(attempts, backoff: 2s, max: 60s, jitter: true, on: failure)`) re-runs the node
+  itself. The delay before attempt *n+1* is `clamp(backoff * 2^(n-1), backoff, max)`, optionally
+  jittered into the lower half to spread a retry storm. `on` narrows which terminals are eligible
+  (`any`, `failure`, `timeout`) so a long expensive action is not blindly re-run on a timeout. The
+  editor renders the resulting schedule, since exponential backoff under a cap is hard to eyeball.
+- **Compensation** (`compensate provider.fn(args)`) is a saga rollback. Once the node has succeeded,
+  a run that later reaches `fail` calls the compensating action; compensations unwind in reverse
+  order and are best-effort, so one that fails does not stop the unwind. The clause is the same call
+  form as the forward action and carries the same modifiers.
+
+```wdl
+node deploy <- k8s.apply(manifest: params.manifest).retry(3, backoff: 5s, on: failure)
+    compensate k8s.rollback(release: deploy.release).timeout(300s)
+```
 
 #### Triggers and workflow chaining
 
@@ -765,6 +834,14 @@ them (engine downtime, a freeze window, or a `queue` policy holding the schedule
 
 The compiler rejects `grace` on a non-`skip` policy and `max` on a non-`fire_all` one
 rather than storing a knob the runtime never reads.
+
+**Disabling a workflow** stops every path that starts it automatically, not just its own
+schedule: its cron triggers drop out of the due claim, and a chained trigger pointing at
+it declines to start it. Both leave the link and the due slot in place, so re-enabling
+resumes on the same terms a freeze window does. A trigger keeps its own `enabled` flag on
+top of this — turning off one schedule is not the same as turning off the workflow. Only
+an explicit run (`runinatorctl triggers run`, the Run button, a backfill) still starts a
+disabled workflow, because that is somebody asking for it by hand.
 
 **Freeze windows** suspend firing over a date range, independently of any pack. A window
 scopes to one workflow, one org, or the whole platform (and platform/org windows also
@@ -1272,8 +1349,18 @@ cargo run -p runinator-desktop-agent -- \
 Command-line values take precedence over environment variables, which take precedence over the
 saved GUI configuration. The corresponding environment variables are `RUNINATOR_SERVICE_URL`,
 `RUNINATOR_API_KEY`, `RUNINATOR_WORKER_LABELS`, `RUNINATOR_BROKER_MODE`,
-`RUNINATOR_MAX_CONCURRENT_ACTIONS`, `RUNINATOR_SHUTDOWN_GRACE_SECONDS`, and
-`RUNINATOR_LIVENESS_FILE`.
+`RUNINATOR_MAX_CONCURRENT_ACTIONS`, `RUNINATOR_SHUTDOWN_GRACE_SECONDS`,
+`RUNINATOR_RECONNECT_MAX_ATTEMPTS`, and `RUNINATOR_LIVENESS_FILE`.
+
+If the web service or broker becomes unreachable, the agent retries with backoff and shows an
+amber **reconnecting** dot (in the window header and the tray icon) carrying the attempt number.
+After `--reconnect-max-attempts` consecutive failures — 10 by default, roughly seven minutes of
+capped backoff — it gives up: the dot turns red **disconnected**, a desktop notification fires, the
+replica is marked offline, and the agent stops rather than heartbeating a worker that can never take
+an action. Pressing **Start agent** (or restarting the process) tries again. The count is
+consecutive, so a connection that stays up clears it; `--reconnect-max-attempts 0` restores retrying
+forever. `runinator-worker` takes the same flag but defaults to `0`, since an in-cluster pod's
+orchestrator is what decides whether to restart it.
 
 For LAN/local development, `--discover --enroll <token>` (or `RUNINATOR_DISCOVER=true`) listens
 for web-service gossip and selects only an announcement whose `cluster_id` matches the identity

@@ -1,4 +1,5 @@
 import { expect, it, vi } from "vitest";
+import { nextTick, watch } from "vue";
 import { useWorkflowsStore } from "../workflows";
 import { useProvidersStore } from "../providers";
 import { decompileToWdl, fetchWorkflows, saveWorkflowWdl } from "../../../../core/api/commandCenterApi";
@@ -346,6 +347,146 @@ export function registerWorkflowAuthoringTests() {
         approved: true,
       },
     });
+  });
+
+  // production symptom: the form only ever showed `max_attempts`, and applying a step rebuilt the
+  // whole `retry` object from it — so opening any wdl-authored step and pressing Apply silently
+  // reverted its backoff, jitter, and retry class to the defaults.
+  it("keeps the rest of the retry policy when a step is applied", () => {
+    const workflows = useWorkflowsStore();
+    useProvidersStore().providers = [untypedActionProvider()];
+    Object.assign(workflows.workflowDraft, workflowDefinition(WORKFLOW_ID, "retry policy"));
+    workflows.ensureWorkflowNodes().push({
+      id: "flaky",
+      kind: "action",
+      action: { provider: "webhook", function: "send", configuration: {} },
+      retry: {
+        max_attempts: 3,
+        backoff_base_seconds: 10,
+        backoff_max_seconds: 600,
+        jitter: true,
+        retry_on: "timeout",
+      },
+      transitions: {},
+    });
+
+    workflows.populateStepEditor("flaky");
+    expect(workflows.stepEditor.max_attempts).toBe(3);
+    expect(workflows.stepEditor.backoff_base_seconds).toBe(10);
+    expect(workflows.stepEditor.jitter).toBe(true);
+    expect(workflows.stepEditor.retry_on).toBe("timeout");
+
+    workflows.stepEditor.max_attempts = 5;
+
+    expect(workflows.applyStepEditor()).toBe(true);
+    expect(
+      (workflows.ensureWorkflowNodes().find((node) => node.id === "flaky") as any)?.retry,
+    ).toEqual({
+      max_attempts: 5,
+      backoff_base_seconds: 10,
+      backoff_max_seconds: 600,
+      jitter: true,
+      retry_on: "timeout",
+    });
+  });
+
+  // the node deadline and the action's call deadline are different fields. reading the action's as
+  // a fallback made the box show 60 and then write that 60 to the node, inventing a node timeout
+  // nobody asked for while the worker deadline the operator was actually editing never moved.
+  it("does not confuse the node timeout with the action call timeout", () => {
+    const workflows = useWorkflowsStore();
+    useProvidersStore().providers = [untypedActionProvider()];
+    Object.assign(workflows.workflowDraft, workflowDefinition(WORKFLOW_ID, "timeouts"));
+    workflows.ensureWorkflowNodes().push({
+      id: "call",
+      kind: "action",
+      action: { provider: "webhook", function: "send", timeout_seconds: 60, configuration: {} },
+      transitions: {},
+    });
+
+    workflows.populateStepEditor("call");
+    expect(workflows.stepEditor.timeout_seconds).toBe(0);
+
+    expect(workflows.applyStepEditor()).toBe(true);
+    const applied = workflows.ensureWorkflowNodes().find((node) => node.id === "call") as any;
+    expect(applied.timeout_seconds).toBeUndefined();
+    expect(applied.action.timeout_seconds).toBe(60);
+  });
+
+  // compensation has no catalog field and no step-editor state of its own; it rides along in
+  // `nodeDraft`, so the thing worth pinning is that applying a step neither drops it nor invents one.
+  it("carries a compensation through an applied step", () => {
+    const workflows = useWorkflowsStore();
+    useProvidersStore().providers = [untypedActionProvider()];
+    Object.assign(workflows.workflowDraft, workflowDefinition(WORKFLOW_ID, "saga"));
+    workflows.ensureWorkflowNodes().push({
+      id: "deploy",
+      kind: "action",
+      action: { provider: "webhook", function: "send", configuration: { url: "deploy" } },
+      compensation: {
+        provider: "webhook",
+        function: "send",
+        timeout_seconds: 300,
+        configuration: { url: "rollback" },
+      },
+      transitions: {},
+    });
+
+    workflows.populateStepEditor("deploy");
+    workflows.stepEditor.max_attempts = 2;
+
+    expect(workflows.applyStepEditor()).toBe(true);
+    expect(
+      (workflows.ensureWorkflowNodes().find((node) => node.id === "deploy") as any)?.compensation,
+    ).toEqual({
+      provider: "webhook",
+      function: "send",
+      timeout_seconds: 300,
+      configuration: { url: "rollback" },
+    });
+  });
+
+  // a half-filled compensation lowers to `compensate .()`, which fails to parse on the next save
+  // with an error pointing at generated text the author never wrote. reject it at the step instead.
+  it("refuses a compensation that names no provider action", () => {
+    const workflows = useWorkflowsStore();
+    useProvidersStore().providers = [untypedActionProvider()];
+    Object.assign(workflows.workflowDraft, workflowDefinition(WORKFLOW_ID, "saga"));
+    workflows.ensureWorkflowNodes().push({
+      id: "deploy",
+      kind: "action",
+      action: { provider: "webhook", function: "send", configuration: {} },
+      transitions: {},
+    });
+
+    workflows.populateStepEditor("deploy");
+    workflows.stepEditor.nodeDraft = {
+      ...workflows.stepEditor.nodeDraft,
+      compensation: { provider: "", function: "", timeout_seconds: 60, configuration: {} },
+    };
+
+    expect(workflows.applyStepEditor()).toBe(false);
+    expect(workflows.stepEditorError).toBe("Compensation: Select a valid task provider action");
+  });
+
+  // production symptom: the trigger dialog's per-field editors read a snapshot taken when the dialog
+  // mounted. the service hydrates the draft by writing through the state object, and those writes
+  // reached the raw object without ever notifying a watcher — so opening a second trigger showed the
+  // first one's values, and editing one field wrote them back over the real ones.
+  it("notifies watchers when the service hydrates the trigger draft", async () => {
+    const workflows = useWorkflowsStore();
+    const seen: string[] = [];
+    watch(() => workflows.triggerJson.configuration, (json) => seen.push(json));
+
+    workflows.editWorkflowTrigger(workflowTrigger(TRIGGER_ID, WORKFLOW_ID, "0 * * * *"));
+    await nextTick();
+    workflows.editWorkflowTrigger(workflowTrigger("other", WORKFLOW_ID, "30 2 * * *"));
+    await nextTick();
+
+    expect(seen).toHaveLength(2);
+    expect(JSON.parse(seen[0]).cron).toBe("0 * * * *");
+    expect(JSON.parse(seen[1]).cron).toBe("30 2 * * *");
+    expect(workflows.triggerDraft.id).toBe("other");
   });
 
 }

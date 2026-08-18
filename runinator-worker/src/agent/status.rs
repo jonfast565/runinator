@@ -27,8 +27,17 @@ pub enum AgentConnection {
     Connecting,
     /// the action loop is up and consuming.
     Connected,
-    /// the loop exited or the broker failed; backing off before the next attempt.
-    Reconnecting { retry_secs: u64 },
+    /// the loop exited or the broker failed; backing off before the next attempt. `attempt` is
+    /// 1-based and counts *consecutive* failures, so it resets once an attempt stays up.
+    Reconnecting {
+        retry_secs: u64,
+        attempt: u32,
+        /// the budget this attempt counts against; `None` when the agent retries indefinitely.
+        max_attempts: Option<u32>,
+    },
+    /// the reconnect budget is spent: the agent gave up and stopped rather than retrying forever
+    /// against a service or broker that is not coming back. terminal — only a fresh start clears it.
+    Disconnected { attempts: u32, reason: String },
     /// the relay rejected this credential; waiting cannot repair it.
     ReenrollmentRequired { reason: String },
 }
@@ -46,6 +55,7 @@ impl AgentConnection {
             AgentConnection::Connecting => "connecting",
             AgentConnection::Connected => "connected",
             AgentConnection::Reconnecting { .. } => "reconnecting",
+            AgentConnection::Disconnected { .. } => "disconnected",
             AgentConnection::ReenrollmentRequired { .. } => "reenrollment_required",
         }
     }
@@ -108,24 +118,42 @@ impl AgentReportContext {
         heartbeat_seq: u64,
         clock_skew_ms: i64,
     ) -> AgentStatusReport {
-        let (mut connection_state, reconnect_retry_seconds) = match &status.connection {
-            AgentConnection::Stopped => (AgentConnectionState::Stopped, None),
-            AgentConnection::Registering => (AgentConnectionState::Registering, None),
-            AgentConnection::Connecting => (AgentConnectionState::Connecting, None),
-            AgentConnection::Connected => (AgentConnectionState::Connected, None),
-            AgentConnection::Reconnecting { retry_secs } => {
-                (AgentConnectionState::Reconnecting, Some(*retry_secs))
-            }
-            AgentConnection::ReenrollmentRequired { .. } => {
-                (AgentConnectionState::ReenrollmentRequired, None)
-            }
-        };
+        let (mut connection_state, reconnect_retry_seconds, reconnect_attempt, reconnect_budget) =
+            match &status.connection {
+                AgentConnection::Stopped => (AgentConnectionState::Stopped, None, None, None),
+                AgentConnection::Registering => {
+                    (AgentConnectionState::Registering, None, None, None)
+                }
+                AgentConnection::Connecting => (AgentConnectionState::Connecting, None, None, None),
+                AgentConnection::Connected => (AgentConnectionState::Connected, None, None, None),
+                AgentConnection::Reconnecting {
+                    retry_secs,
+                    attempt,
+                    max_attempts,
+                } => (
+                    AgentConnectionState::Reconnecting,
+                    Some(*retry_secs),
+                    Some(*attempt),
+                    *max_attempts,
+                ),
+                AgentConnection::Disconnected { attempts, .. } => (
+                    AgentConnectionState::Disconnected,
+                    None,
+                    Some(*attempts),
+                    Some(*attempts),
+                ),
+                AgentConnection::ReenrollmentRequired { .. } => {
+                    (AgentConnectionState::ReenrollmentRequired, None, None, None)
+                }
+            };
         if self.outbox.is_full() {
             connection_state = AgentConnectionState::Draining;
         }
         AgentStatusReport {
             connection_state,
             reconnect_retry_seconds,
+            reconnect_attempt,
+            reconnect_max_attempts: reconnect_budget,
             broker_mode: self.broker_mode.clone(),
             broker_endpoint: self.broker_endpoint.clone(),
             in_flight: status.metrics.in_flight,

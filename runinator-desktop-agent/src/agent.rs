@@ -78,9 +78,12 @@ pub struct Shared {
     pub metrics: AgentMetrics,
     pub busy: bool,
     pub logs: VecDeque<String>,
-    // latch so one degraded episode fires exactly one "disconnected" toast (and one "reconnected"
+    // latch so one degraded episode fires exactly one "reconnecting" toast (and one "reconnected"
     // toast on recovery), rather than one per backoff retry.
     degraded_notified: bool,
+    // a separate latch, because giving up is a different event from retrying: an operator who has
+    // already seen "reconnecting" still needs to be told the agent stopped.
+    disconnected_notified: bool,
     handle: Option<AgentHandle>,
 }
 
@@ -240,13 +243,26 @@ impl AgentObserver for DesktopObserver {
                 broker_connection: status.broker_connection.clone(),
             };
             match &status.connection {
-                ConnectionState::Reconnecting { .. } if !guard.degraded_notified => {
+                ConnectionState::Reconnecting {
+                    attempt,
+                    max_attempts,
+                    ..
+                } if !guard.degraded_notified => {
                     guard.degraded_notified = true;
-                    Some(Toast::Degraded)
+                    Some(Toast::Degraded {
+                        attempt: *attempt,
+                        max_attempts: *max_attempts,
+                    })
                 }
                 ConnectionState::ReenrollmentRequired { .. } if !guard.degraded_notified => {
                     guard.degraded_notified = true;
                     Some(Toast::Credential)
+                }
+                ConnectionState::Disconnected { attempts, .. } if !guard.disconnected_notified => {
+                    guard.disconnected_notified = true;
+                    Some(Toast::Disconnected {
+                        attempts: *attempts,
+                    })
                 }
                 ConnectionState::Connected if guard.degraded_notified => {
                     guard.degraded_notified = false;
@@ -256,8 +272,18 @@ impl AgentObserver for DesktopObserver {
             }
         };
         match toast {
-            Some(Toast::Degraded) => crate::notify::notify_degraded("The broker is unreachable."),
+            Some(Toast::Degraded {
+                attempt,
+                max_attempts,
+            }) => crate::notify::notify_degraded(&match max_attempts {
+                Some(max) => format!(
+                    "The broker is unreachable (attempt {attempt} of {max}); the agent stops if it \
+                     runs out."
+                ),
+                None => "The broker is unreachable.".to_string(),
+            }),
             Some(Toast::Recovered) => crate::notify::notify_recovered(),
+            Some(Toast::Disconnected { attempts }) => crate::notify::notify_disconnected(attempts),
             Some(Toast::Credential) => crate::notify::notify_degraded(
                 "The agent credential was rejected; re-enrollment is required.",
             ),
@@ -272,8 +298,14 @@ impl AgentObserver for DesktopObserver {
 
 // which health toast a connection transition warrants, if any.
 enum Toast {
-    Degraded,
+    Degraded {
+        attempt: u32,
+        max_attempts: Option<u32>,
+    },
     Recovered,
+    Disconnected {
+        attempts: u32,
+    },
     Credential,
 }
 
@@ -456,6 +488,7 @@ pub fn runtime_config(config: &AgentConfig) -> Result<AgentRuntimeConfig, Sendab
         heartbeat_interval: DEFAULT_HEARTBEAT_INTERVAL,
         stale_after: Duration::from_secs(90),
         register_max_attempts: DEFAULT_REGISTER_MAX_ATTEMPTS,
+        reconnect_max_attempts: config.reconnect_max_attempts,
         sample_telemetry: true,
         directive_handler: Arc::new(runinator_worker::agent::DefaultDirectiveHandler),
     })
@@ -475,6 +508,7 @@ pub fn start(rt: &tokio::runtime::Handle, shared: SharedHandle, config: AgentCon
         guard.metrics = AgentMetrics::default();
         guard.connection = ConnectionState::Registering;
         guard.degraded_notified = false;
+        guard.disconnected_notified = false;
         guard.status.running = false;
     }
 
@@ -572,6 +606,7 @@ pub fn stop(rt: &tokio::runtime::Handle, shared: SharedHandle) {
         guard.connection = ConnectionState::Stopped;
         guard.metrics = AgentMetrics::default();
         guard.degraded_notified = false;
+        guard.disconnected_notified = false;
         guard.busy = false;
     });
 }

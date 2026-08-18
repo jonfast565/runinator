@@ -176,6 +176,17 @@ async fn start_chained_run<T: ReducerStore>(
     let Some(target_id) = target.id else {
         return Err(crate::errors::CHAIN_TARGET_UNRESOLVED.error(target_name));
     };
+    // a disabled workflow is not startable by a schedule, and a chain must not be the back door
+    // that starts it anyway. not an error: the link stays declared, and the next source run to
+    // reach a terminal after the target is re-enabled starts it as usual.
+    if !target.enabled {
+        tracing::info!(
+            source_run_id = %source_run.id,
+            target = target_name,
+            "skipping chained workflow: target is disabled"
+        );
+        return Ok(());
+    }
     let parameters = trigger
         .configuration
         .get("parameters")

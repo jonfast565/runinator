@@ -13,7 +13,7 @@ Primary runtime flow:
 3. `runinator-waker` is a small, horizontally scalable, broker-only timer/relay: it consumes the `wake` channel, sleeps until each ready node is due, then publishes a drive on the `ingress` channel. It has no database, no HTTP client to the web service, and shares no channel with the worker.
 4. `runinator-worker` polls the broker action channel, resolves a provider/plugin, executes the task, and publishes results on the broker result channel (records also reachable through `runinator-api` compatibility endpoints). It self-publishes its built-in provider metadata to the web service on startup.
 5. `runinator-desktop-agent` is the standalone, exclusive desktop worker. It reuses `runinator-worker`'s runtime, exposes built-in providers plus the sandboxed local-files provider, and can relay broker traffic through `runinator-ws`. It is a separate tray application, not a Tauri sidecar or command-center service.
-6. `runinator-ctl` is the control CLI (`runinatorctl`). Among other commands, `workflows apply` is the one-shot pack importer: it compiles a `.wdl`/`.wdlm`/directory (including any `.wdls` secrets and `.wdlp` pipelines) **client-side**, zips the compiled artifacts (`workflows.json` + optional `secrets.json` + optional `pipelines.json`), and uploads a single `application/zip` to the web service's `/packs/import` endpoint. Compilation never happens on the backend; `/packs/import` only reads the compiled JSON. There is no long-running importer service. Pack zip read/write lives in `runinator-utilities::pack`; the entry-name layout is the wire contract shared by ctl/api/command-center/mcp (writers) and ws (reader). File extensions: `.wdl` workflow, `.wdls` settings, `.wdlm` pack manifest (JSON — lists `workflows`/`pipelines`/`settings`), `.wdlp` pipeline (WDL pipeline grammar), `.wdlt` tests.
+6. `runinator-ctl` is the control CLI (`runinatorctl`). Among other commands, `workflows apply` is the one-shot pack importer: it compiles a `.wdl`/`.wdlm`/directory (including any `.wdls` secrets and `.wdlp` pipelines) **client-side**, zips the compiled artifacts (`workflows.json` + optional `secrets.json` + optional `pipelines.json`), and uploads a single `application/zip` to the web service's `/packs/import` endpoint. Compilation never happens on the backend; `/packs/import` only reads the compiled JSON. There is no long-running importer service. Pack zip read/write lives in `runinator-utilities::pack`; the entry-name layout is the wire contract shared by ctl/api/command-center (writers) and ws (reader). File extensions: `.wdl` workflow, `.wdls` settings, `.wdlm` pack manifest (JSON — lists `workflows`/`pipelines`/`settings`), `.wdlp` pipeline (WDL pipeline grammar), `.wdlt` tests.
 
    `runinatorctl console` is the terminal console. Its `:` lines are parsed by the **same clap
    parser** the process uses (`commands/repl.rs` → `commands::run_command`), so every command-line
@@ -39,6 +39,24 @@ Primary runtime flow:
    (windows) falls back to the reedline prompt. The command center's Console tab mirrors
    the same surface over HTTP (`runinator-command-center/src/core/console/`), so a command added to
    one console should be added to the other or explained in `:help` as `runinatorctl`-only.
+
+   `runinatorctl mcp` is the third front end onto that surface: a Model Context Protocol server on
+   stdin/stdout (`src/commands/mcp/`), launched by an mcp client. It advertises **one tool per
+   command**, derived in `mcp/schema.rs` from the clap tree — name from the command path, description
+   from its `about`, properties from its `Arg`s, json types from each argument's `ValueParser`,
+   closed sets and defaults from clap — so a verb added to `Commands` is a correctly-typed tool the
+   day it is added. A call is turned back into argv and dispatched through the same
+   `repl::parse` → `run_command` path as everything else; do not add a second execution path, and do
+   not hand-write a schema. `mcp/exec.rs`'s `BLOCKED` list is the single source for what cannot be
+   run over mcp (verbs that never return or read the terminal), and `schema.rs` filters the
+   advertised tools through it, so the two can never disagree.
+
+   `mcp/capture.rs` redirects descriptors 1 and 2 into an unlinked scratch file and hands back a
+   duplicate of the real stdout for the protocol to answer on — the same reason `tui/capture.rs`
+   exists, since a table written into the middle of a json-rpc frame would desynchronise the client.
+   It is a *file* rather than the console's pipe because a tool result needs a sync point: a flush
+   says "this command is finished", with nothing of the next command's output in it. Unix only, for
+   the reason documented on `tui::capture`.
 
    `:help`, completion, and flag validation are all **derived**, never declared twice.
    `commands/catalog.rs` walks the clap tree into one flat list of `(path, usage, summary)` and reads

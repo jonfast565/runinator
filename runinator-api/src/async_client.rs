@@ -256,6 +256,64 @@ where
         Ok(response.json::<PipelineRunDetail>().await?)
     }
 
+    pub async fn fetch_pipeline(&self, pipeline_id: Uuid) -> Result<Pipeline> {
+        let url = self.build_url(&format!("/pipelines/{pipeline_id}")).await?;
+        let response = self.http_get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Pipeline>().await?)
+    }
+
+    pub async fn delete_pipeline(&self, pipeline_id: Uuid) -> Result<()> {
+        let url = self.build_url(&format!("/pipelines/{pipeline_id}")).await?;
+        let response = self.http_delete(url.clone()).send().await?;
+        Self::handle_response(url, response).await?;
+        Ok(())
+    }
+
+    pub async fn fetch_pipeline_runs(&self, pipeline_id: Option<Uuid>) -> Result<Vec<PipelineRun>> {
+        let path = match pipeline_id {
+            Some(pipeline_id) => format!("/pipeline_runs?pipeline_id={pipeline_id}"),
+            None => "/pipeline_runs".to_string(),
+        };
+        let url = self.build_url(&path).await?;
+        let response = self.http_get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<Vec<PipelineRun>>().await?)
+    }
+
+    pub async fn cancel_pipeline_run(&self, run_id: Uuid) -> Result<PipelineRun> {
+        let url = self
+            .build_url(&format!("/pipeline_runs/{run_id}/cancel"))
+            .await?;
+        let response = self.http_post(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<PipelineRun>().await?)
+    }
+
+    /// resolve an open `inquire` pause on a pipeline run: continue the pipeline or abort it.
+    pub async fn resolve_pipeline_run(
+        &self,
+        run_id: Uuid,
+        decision: &str,
+        resolved_by: Option<&str>,
+        message: Option<&str>,
+    ) -> Result<PipelineRun> {
+        let url = self
+            .build_url(&format!("/pipeline_runs/{run_id}/resolve"))
+            .await?;
+        let response = self
+            .http_post(url.clone())
+            .json(&json!({
+                "decision": decision,
+                "resolved_by": resolved_by,
+                "message": message,
+            }))
+            .send()
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<PipelineRun>().await?)
+    }
+
     /// redeem a self-authenticating agent enrollment request. the endpoint is public; this client's
     /// configured API credential, if any, is irrelevant to the proof inside `request`.
     pub async fn enroll_agent(&self, request: &EnrollAgentRequest) -> Result<EnrollAgentResponse> {

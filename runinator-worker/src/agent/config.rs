@@ -166,6 +166,12 @@ pub struct AgentRuntimeConfig {
     /// how many times to retry replica registration before giving up. registration is interruptible
     /// by shutdown regardless.
     pub register_max_attempts: u32,
+    /// how many *consecutive* failed worker-loop attempts to tolerate before the agent gives up and
+    /// stops itself. the counter resets once an attempt stays up long enough to call it healthy, so
+    /// this bounds one unreachable episode rather than a machine's lifetime. `0` retries forever,
+    /// which is what an orchestrator-supervised worker wants; a desktop agent nobody is watching
+    /// wants a finite budget so it drops off the registry instead of spinning against a dead broker.
+    pub reconnect_max_attempts: u32,
     /// sample host cpu/memory on every heartbeat, so this agent reports the same telemetry an
     /// in-cluster worker does.
     pub sample_telemetry: bool,
@@ -178,6 +184,13 @@ pub const DEFAULT_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10);
 
 /// default registration retry budget; roughly two minutes of backoff before giving up.
 pub const DEFAULT_REGISTER_MAX_ATTEMPTS: u32 = 8;
+
+/// default reconnect budget for a host that wants a finite one: ten consecutive failures, which the
+/// capped backoff spreads over roughly seven minutes before the agent stops.
+pub const DEFAULT_RECONNECT_MAX_ATTEMPTS: u32 = 10;
+
+/// retry indefinitely, for a host whose orchestrator restarts it on exit.
+pub const RECONNECT_UNLIMITED: u32 = 0;
 
 #[cfg(test)]
 #[path = "config_tests.rs"]

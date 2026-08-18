@@ -778,6 +778,7 @@ fn test_config() -> Config {
         broker_consumer_id: "test-consumer".into(),
         max_concurrent_actions: 1,
         shutdown_grace_seconds: 30,
+        reconnect_max_attempts: crate::agent::RECONNECT_UNLIMITED,
         api_base_url: "http://127.0.0.1:8080/".into(),
         locator_mode: crate::agent::LocatorMode::Static,
         gossip_bind: "127.0.0.1".into(),

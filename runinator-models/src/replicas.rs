@@ -88,6 +88,9 @@ pub enum AgentConnectionState {
     Connected,
     Draining,
     Reconnecting,
+    /// the reconnect budget is spent: the agent gave up and stopped its lifecycle. distinct from
+    /// `Stopped`, which is an operator-requested stop.
+    Disconnected,
     ReenrollmentRequired,
 }
 
@@ -99,6 +102,12 @@ pub struct AgentStatusReport {
     pub connection_state: AgentConnectionState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reconnect_retry_seconds: Option<u64>,
+    /// which consecutive reconnect attempt is pending (1-based), while reconnecting or disconnected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reconnect_attempt: Option<u32>,
+    /// the agent's reconnect budget; `None` when it retries indefinitely.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reconnect_max_attempts: Option<u32>,
     pub broker_mode: String,
     pub broker_endpoint: String,
     pub in_flight: u32,

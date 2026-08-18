@@ -174,6 +174,20 @@ fn active_freeze_window_sql(dialect: SqlDialect, scope: &str) -> String {
     )
 }
 
+/// a correlated predicate keeping a `workflow_triggers` row out of the due set while its workflow is
+/// disabled. a trigger has an `enabled` flag of its own, but disabling the *workflow* is the switch
+/// operators reach for, and it has to stop the schedule too. enforced in sql rather than skipped in
+/// the firing loop for the same reason a freeze window is: a disabled workflow's slot stays due, so
+/// it would otherwise sit at the head of the due ordering and crowd live triggers out of the claim
+/// limit. re-enabling leaves the stale slot due, which the trigger's catch-up policy then decides
+/// about — the same handling a trigger gets when it comes out of a freeze.
+fn workflow_enabled_sql(dialect: SqlDialect) -> String {
+    format!(
+        "SELECT 1 FROM workflows w WHERE w.id = workflow_triggers.workflow_id AND w.enabled = {}",
+        dialect.bool_true(),
+    )
+}
+
 /// the per-slot steps of a cron firing, shared by the trigger loop and the manual backfill so both
 /// paths record firings, snapshot workflows, and start runs the same way.
 trait ScheduleSqlExt: SqlBackend {

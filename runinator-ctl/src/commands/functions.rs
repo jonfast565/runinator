@@ -16,6 +16,32 @@ pub(super) async fn functions(
         FunctionCommands::Validate { .. } => Err(err(
             "functions validate must be handled before command dispatch",
         )),
+        FunctionCommands::Invoke {
+            target,
+            alias,
+            version,
+            input,
+            input_file,
+        } => {
+            let (package, export) = target
+                .rsplit_once('.')
+                .ok_or_else(|| err("the function target must be package.export"))?;
+            let input = match (input, input_file) {
+                (Some(_), Some(_)) => return Err(err("pass --input or --input-file, not both")),
+                (Some(text), None) => serde_json::from_str::<Value>(text)
+                    .map_err(|e| err(format!("--input must be valid json: {e}")))?,
+                (None, Some(path)) => params::load_json_file(path)?,
+                (None, None) => Value::Object(Map::new()),
+            };
+            let result = client
+                .invoke_function(package, export, alias.as_deref(), *version, &input)
+                .await?;
+            if json_output {
+                return output::json(&result);
+            }
+            println!("{}", serde_json::to_string_pretty(&result)?);
+            Ok(())
+        }
         FunctionCommands::List => {
             let packages = client.fetch_function_packages().await?;
             if json_output {

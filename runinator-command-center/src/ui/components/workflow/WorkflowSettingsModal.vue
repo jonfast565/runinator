@@ -1,6 +1,6 @@
 <template>
   <div class="modal-backdrop">
-    <form class="modal w-[min(1040px,100%)]" @submit.prevent="workflows.closeWorkflowSettings">
+    <form class="modal w-[min(1040px,100%)]" @submit.prevent="saveAndClose">
       <header class="modal-header">
         <h2>Workflow Settings</h2>
         <button type="button" @click="workflows.closeWorkflowSettings">Close</button>
@@ -228,7 +228,10 @@
         >
           Duplicate (bump version)
         </button>
-        <button type="submit">Done</button>
+        <button type="submit" :disabled="saving">
+          <LoadingSpinner v-if="saving" size="sm" label="Saving workflow" />
+          {{ saving ? "Saving…" : workflows.isDirty ? "Save & Close" : "Done" }}
+        </button>
       </div>
     </form>
   </div>
@@ -258,28 +261,26 @@ const ownerSaving = ref(false);
 
 const triggerKindMeta = computed(() => catalogMetadata.triggerKind(workflows.triggerDraft.kind));
 
-// local mutable config record kept in sync with the trigger json for field-by-field editing.
-const configDraft = ref<Record<string, unknown>>({});
-
-watch(
-  () => workflows.triggerJson.configuration,
-  (json) => {
-    try {
-      const parsed = JSON.parse(json) as unknown;
-      configDraft.value =
-        parsed && typeof parsed === "object" && !Array.isArray(parsed)
-          ? (parsed as Record<string, unknown>)
-          : {};
-    } catch {
-      configDraft.value = {};
-    }
-  },
-  { immediate: true },
-);
+// the trigger json is the single copy of the configuration; the per-field editors read it back out
+// on every render rather than keeping a snapshot, so opening a second trigger cannot show — or save
+// — the first one's values.
+const configDraft = computed<Record<string, unknown>>(() => {
+  try {
+    const parsed = JSON.parse(workflows.triggerJson.configuration) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+});
 
 function setConfigField(name: string, value: unknown) {
-  configDraft.value = { ...configDraft.value, [name]: value };
-  workflows.triggerJson.configuration = JSON.stringify(configDraft.value, null, 2);
+  workflows.triggerJson.configuration = JSON.stringify(
+    { ...configDraft.value, [name]: value },
+    null,
+    2,
+  );
 }
 
 // adapts a UiField to NodeFieldMetadata for CatalogFieldEditor (location is unused by the editor).
@@ -294,6 +295,40 @@ watch(
     ownerOrgId.value = workflows.workflowDraft.org_id ?? "";
   },
 );
+
+// name, version, and enabled only mark the draft dirty; the triggers beside them save through their
+// own endpoint the moment they are submitted. leaving the two halves of one dialog on different
+// rules is what made an unchecked "Enabled" look applied while the workflow kept running on its
+// schedule, so closing commits the draft too.
+const saving = ref(false);
+
+// a new workflow has no id to save against yet; it is created from the toolbar.
+function draftNeedsSave(): boolean {
+  return workflows.isDirty && workflows.workflowDraft.id !== null;
+}
+
+async function saveAndClose() {
+  if (draftNeedsSave()) {
+    saving.value = true;
+
+    try {
+      await workflows.saveSelectedWorkflow();
+    } catch {
+      // the operation runner already raised the error toast. keep the dialog open so the edit is
+      // still there to retry rather than closing over a save that did not happen.
+      return;
+    } finally {
+      saving.value = false;
+    }
+
+    // a save can also decline without throwing; the draft staying dirty is how that reads.
+    if (draftNeedsSave()) {
+      return;
+    }
+  }
+
+  workflows.closeWorkflowSettings();
+}
 
 async function saveOwner() {
   const id = workflows.workflowDraft.id;

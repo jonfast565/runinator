@@ -76,6 +76,11 @@ pub struct CliArgs {
     #[arg(long, env = "RUNINATOR_SHUTDOWN_GRACE_SECONDS")]
     pub shutdown_grace_seconds: Option<u64>,
 
+    /// consecutive failed reconnects tolerated before the agent disconnects and stops; `0` retries
+    /// forever.
+    #[arg(long, env = "RUNINATOR_RECONNECT_MAX_ATTEMPTS")]
+    pub reconnect_max_attempts: Option<u32>,
+
     /// path to a file touched periodically while the agent is alive; empty disables it.
     #[arg(long, env = "RUNINATOR_LIVENESS_FILE")]
     pub liveness_file: Option<String>,
@@ -138,6 +143,10 @@ impl CliArgs {
         }
         if let Some(value) = self.shutdown_grace_seconds {
             config.shutdown_grace_seconds = value.max(1);
+        }
+        // `0` is meaningful here (retry forever), so this one is not clamped away.
+        if let Some(value) = self.reconnect_max_attempts {
+            config.reconnect_max_attempts = value;
         }
         if let Some(level) = self.log_level.as_deref().and_then(LogLevel::parse) {
             config.log_level = level;

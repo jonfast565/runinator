@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use crate::agent::{
     AgentRuntimeConfig, BrokerMode, BrokerSelection, DEFAULT_HEARTBEAT_INTERVAL,
-    DEFAULT_REGISTER_MAX_ATTEMPTS, LocatorMode,
+    DEFAULT_REGISTER_MAX_ATTEMPTS, LocatorMode, RECONNECT_UNLIMITED,
 };
 use crate::provider_repository::default_provider_factory;
 
@@ -27,6 +27,8 @@ pub struct Config {
     pub broker_consumer_id: String,
     pub max_concurrent_actions: usize,
     pub shutdown_grace_seconds: u64,
+    /// consecutive reconnect failures tolerated before the worker stops itself; `0` retries forever.
+    pub reconnect_max_attempts: u32,
     pub api_base_url: String,
     pub locator_mode: LocatorMode,
     pub gossip_bind: String,
@@ -83,6 +85,18 @@ struct CliArgs {
 
     #[arg(long, default_value_t = 30)]
     shutdown_grace_seconds: u64,
+
+    /// how many consecutive failed reconnects to tolerate before the worker disconnects and exits
+    /// non-zero. the count resets after an attempt that stays up, so this bounds one outage rather
+    /// than the process's lifetime. defaults to `0` — retry forever — because an in-cluster worker's
+    /// orchestrator is what decides whether a pod that cannot reach the broker should be restarted
+    /// or rescheduled.
+    #[arg(
+        long,
+        env = "RUNINATOR_RECONNECT_MAX_ATTEMPTS",
+        default_value_t = RECONNECT_UNLIMITED
+    )]
+    reconnect_max_attempts: u32,
 
     #[arg(long, default_value = "http://127.0.0.1:8080/")]
     api_base_url: String,
@@ -171,6 +185,7 @@ pub fn parse_config() -> Result<Config, SendableError> {
         broker_consumer_id: consumer_id,
         max_concurrent_actions: args.max_concurrent_actions.max(1),
         shutdown_grace_seconds: args.shutdown_grace_seconds.max(1),
+        reconnect_max_attempts: args.reconnect_max_attempts,
         api_base_url,
         locator_mode: if args.discover {
             LocatorMode::Discover
@@ -245,6 +260,7 @@ impl Config {
             heartbeat_interval: DEFAULT_HEARTBEAT_INTERVAL,
             stale_after: Duration::from_secs(30),
             register_max_attempts: DEFAULT_REGISTER_MAX_ATTEMPTS,
+            reconnect_max_attempts: self.reconnect_max_attempts,
             sample_telemetry: true,
             directive_handler: std::sync::Arc::new(crate::agent::DefaultDirectiveHandler),
         })

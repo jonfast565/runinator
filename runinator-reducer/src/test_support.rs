@@ -54,6 +54,7 @@ struct FakeMutexHolder {
 #[derive(Default)]
 struct State {
     workflows: Vec<WorkflowDefinition>,
+    triggers: Vec<WorkflowTrigger>,
     runs: HashMap<Uuid, WorkflowRun>,
     node_runs: Vec<WorkflowNodeRun>,
     ready_nodes: Vec<ReadyNodeRecord>,
@@ -83,6 +84,23 @@ impl FakeStore {
     /// register a workflow definition handlers can resolve by id.
     pub fn insert_workflow(&self, workflow: WorkflowDefinition) {
         self.state.lock().expect("state").workflows.push(workflow);
+    }
+
+    /// register a trigger on a workflow, for the chaining path that reads them on a terminal.
+    pub fn insert_trigger(&self, trigger: WorkflowTrigger) {
+        self.state.lock().expect("state").triggers.push(trigger);
+    }
+
+    /// flip a stored workflow's `enabled` flag, the switch the schedule and the chain both read.
+    pub fn set_workflow_enabled(&self, workflow_id: Uuid, enabled: bool) {
+        let mut guard = self.state.lock().expect("state");
+        if let Some(workflow) = guard
+            .workflows
+            .iter_mut()
+            .find(|workflow| workflow.id == Some(workflow_id))
+        {
+            workflow.enabled = enabled;
+        }
     }
 
     /// register a run. returns the run id for convenience.
@@ -581,9 +599,17 @@ impl ReducerStore for FakeStore {
 
     async fn fetch_workflow_triggers(
         &self,
-        _workflow_id: Uuid,
+        workflow_id: Uuid,
     ) -> Result<Vec<WorkflowTrigger>, SendableError> {
-        Ok(Vec::new())
+        Ok(self
+            .state
+            .lock()
+            .expect("state")
+            .triggers
+            .iter()
+            .filter(|trigger| trigger.workflow_id == workflow_id)
+            .cloned()
+            .collect())
     }
 
     async fn fetch_pipeline(&self, _pipeline_id: Uuid) -> Result<Option<Pipeline>, SendableError> {

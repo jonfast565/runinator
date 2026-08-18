@@ -94,6 +94,10 @@ impl AgentTray {
 
 /// the tray-icon color that maps to an agent connection state. kept here rather than in `agent` so
 /// the tray owns its own palette and callers don't reach into rgba details.
+///
+/// the amber/red split is the point: amber means the agent is still trying and may well come back,
+/// red means it has stopped and will not come back on its own. an operator glancing at the menu bar
+/// should be able to tell those two apart without opening the window.
 #[derive(Debug, Clone, Copy)]
 pub enum TrayColor {
     /// stopped / not started — neutral gray.
@@ -102,8 +106,10 @@ pub enum TrayColor {
     Connecting,
     /// running and consuming actions — green.
     Connected,
-    /// broker down or crash-looping — red.
-    Degraded,
+    /// broker down, retrying within its budget — amber.
+    Reconnecting,
+    /// disconnected for good: the reconnect budget is spent, or the credential was rejected — red.
+    Disconnected,
 }
 
 impl TrayColor {
@@ -112,7 +118,8 @@ impl TrayColor {
             TrayColor::Idle => [130, 130, 130],
             TrayColor::Connecting => [45, 140, 200],
             TrayColor::Connected => [64, 180, 96],
-            TrayColor::Degraded => [210, 90, 70],
+            TrayColor::Reconnecting => [220, 170, 45],
+            TrayColor::Disconnected => [210, 70, 70],
         }
     }
 }

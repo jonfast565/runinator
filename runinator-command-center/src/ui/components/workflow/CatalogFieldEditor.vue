@@ -68,14 +68,9 @@
       </select>
     </template>
 
-    <!-- cron expression text input. -->
+    <!-- cron: preset picker, per-field builder, and a raw escape hatch. -->
     <template v-else-if="widget === 'cron'">
-      <input
-        type="text"
-        :value="stringModelValue"
-        placeholder="0 * * * *"
-        @input="emitString(($event.target as HTMLInputElement).value)"
-      />
+      <CronEditor :model-value="stringModelValue" @update:model-value="emitString" />
     </template>
 
     <!-- duration: integer number of seconds. -->
@@ -151,6 +146,7 @@ import { nodeRef as makeNodeRef } from "../../../core/workflow/index";
 import type { NodeFieldMetadata } from "../../../core/domain/models";
 import { useProvidersStore } from "../../adapters/pinia/providers";
 import type { WorkflowDefinition } from "../../../core/domain/models";
+import CronEditor from "../shared/CronEditor.vue";
 import ExpressionJsonEditor from "../shared/ExpressionJsonEditor.vue";
 import TypedValueEditor from "../shared/TypedValueEditor.vue";
 

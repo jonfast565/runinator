@@ -413,8 +413,9 @@ where
         now: DateTime<Utc>,
     ) -> Result<Vec<WorkflowTrigger>, SendableError> {
         let sql = self.render(&format!(
-            "SELECT id, workflow_id, kind, enabled, configuration, next_execution, blackout_start, blackout_end, metadata, created_at, updated_at FROM workflow_triggers WHERE enabled = {} AND kind = 'cron' AND (next_execution IS NULL OR next_execution <= ?) ORDER BY COALESCE(next_execution, 0), id",
+            "SELECT id, workflow_id, kind, enabled, configuration, next_execution, blackout_start, blackout_end, metadata, created_at, updated_at FROM workflow_triggers WHERE enabled = {} AND kind = 'cron' AND EXISTS ({}) AND (next_execution IS NULL OR next_execution <= ?) ORDER BY COALESCE(next_execution, 0), id",
             self.dialect().bool_true(),
+            workflow_enabled_sql(self.dialect()),
         ));
         let rows = sqlx::query(&sql)
             .bind(now.timestamp())
@@ -448,16 +449,19 @@ where
         limit: i64,
     ) -> Result<TriggerFiringBatch<WorkflowRun>, SendableError> {
         let mut tx = self.pool().begin().await?;
-        // frozen triggers are excluded in sql rather than skipped in the loop below. a freeze leaves
-        // the slot due, so a frozen trigger would otherwise sit at the head of the due ordering for
-        // the whole window and crowd every other trigger out of the claim limit.
+        // frozen triggers, and triggers on a disabled workflow, are excluded in sql rather than
+        // skipped in the loop below. either one leaves the slot due, so such a trigger would
+        // otherwise sit at the head of the due ordering for the whole window and crowd every other
+        // trigger out of the claim limit.
         let select_sql = self.render(&format!(
             "SELECT id, workflow_id, kind, enabled, configuration, next_execution, blackout_start, blackout_end, metadata, created_at, updated_at \
              FROM workflow_triggers \
              WHERE enabled = {} AND kind = 'cron' AND (next_execution IS NULL OR next_execution <= ?) \
+               AND EXISTS ({}) \
                AND NOT EXISTS ({}) \
              ORDER BY COALESCE(next_execution, 0), id LIMIT ?{}",
             self.dialect().bool_true(),
+            workflow_enabled_sql(self.dialect()),
             active_freeze_window_sql(self.dialect(), WORKFLOW_FREEZE_SCOPE),
             self.dialect().skip_locked(),
         ));

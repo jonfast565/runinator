@@ -101,6 +101,14 @@ pub const FUNCTION_BINDING_UNRESOLVED: ErrorDescriptor = ErrorDescriptor::new(
     "Function binding could not be resolved",
 );
 
+/// the agent spent its consecutive-reconnect budget against an unreachable service or broker and
+/// stopped itself rather than retrying forever.
+pub const RECONNECT_EXHAUSTED: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI223",
+    "worker.agent.reconnect_exhausted",
+    "Agent disconnected after exhausting its reconnect attempts",
+);
+
 pub const DICTIONARY: &[ErrorDescriptor] = &[
     RUNTIME_BUILD,
     SIGNAL_CTRL_C,
@@ -121,6 +129,7 @@ pub const DICTIONARY: &[ErrorDescriptor] = &[
     FUNCTION_STAGING_FAILED,
     FUNCTION_UNTRUSTED_ARCHIVE,
     FUNCTION_BINDING_UNRESOLVED,
+    RECONNECT_EXHAUSTED,
 ];
 
 /// worker engine error dictionary.

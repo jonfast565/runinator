@@ -464,6 +464,54 @@ async fn an_active_freeze_window_keeps_a_due_trigger_out_of_the_claim() {
 }
 
 #[tokio::test]
+async fn a_disabled_workflow_keeps_its_due_trigger_out_of_the_claim() {
+    let (db, path) = schedule_test_db("disabled-workflow").await;
+    let mut definition = db
+        .upsert_workflow(&workflow("disabled-test"))
+        .await
+        .unwrap();
+    let workflow_id = definition.id.unwrap();
+    let due_at = seconds_ago(60);
+    let trigger = db
+        .upsert_workflow_trigger(&cron_trigger(
+            workflow_id,
+            due_at,
+            runinator_models::json!({ "cron": "*/5 * * * * *" }),
+        ))
+        .await
+        .unwrap();
+
+    definition.enabled = false;
+    db.upsert_workflow(&definition).await.unwrap();
+
+    let disabled = db
+        .claim_due_workflow_trigger_firings("scheduler-a".into(), Utc::now(), 10)
+        .await
+        .unwrap();
+    assert!(disabled.runs.is_empty());
+    // the slot must survive, exactly as it does behind a freeze window: burning it here would make
+    // disabling a workflow silently lose the run that was already due.
+    let refreshed = db
+        .fetch_workflow_trigger(trigger.id.unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(refreshed.next_execution, Some(due_at));
+    // the trigger's own `enabled` flag is untouched: it is the workflow that is off.
+    assert!(refreshed.enabled);
+
+    definition.enabled = true;
+    db.upsert_workflow(&definition).await.unwrap();
+    let re_enabled = db
+        .claim_due_workflow_trigger_firings("scheduler-a".into(), Utc::now(), 10)
+        .await
+        .unwrap();
+    assert_eq!(re_enabled.runs.len(), 1);
+
+    let _ = fs::remove_file(path);
+}
+
+#[tokio::test]
 async fn backfill_replays_a_range_without_re_running_slots_the_loop_already_fired() {
     let (db, path) = schedule_test_db("backfill").await;
     let workflow_id = db

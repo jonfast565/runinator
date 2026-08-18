@@ -1,5 +1,6 @@
 import type { JsonRecord, RuninatorType } from "../../../core/domain/models";
 import { nodeRefId } from "../../../core/workflow";
+import { describeRetryPolicy } from "../../../core/workflow/retry";
 import { displayValue } from "../../../core/utils/values";
 
 export function conditionLabel(value: unknown): string {
@@ -129,4 +130,72 @@ export function waitSummary(wait: unknown): string {
 
 export function isRecord(value: unknown): value is JsonRecord {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+/** a `label: value` pair in one of the detail grids. */
+export interface MetaEntry {
+  label: string;
+  value: string;
+  mono?: boolean;
+}
+
+/**
+ * the node's retry policy as a sentence rather than an attempt count. the backoff, cap, jitter, and
+ * retry class together decide what actually happens, and four numbers in a grid do not say it.
+ */
+export function retrySummary(node: JsonRecord): string {
+  const retry = isRecord(node.retry) ? node.retry : {};
+  return describeRetryPolicy({
+    max_attempts: Number(retry.max_attempts ?? node.max_attempts ?? 1),
+    backoff_base_seconds: Number(retry.backoff_base_seconds ?? 1),
+    backoff_max_seconds: Number(retry.backoff_max_seconds ?? 300),
+    jitter: retry.jitter === true,
+    retry_on: displayValue(retry.retry_on) || "any",
+  });
+}
+
+/**
+ * the action band: provider, function, both deadlines, and the retry reading.
+ *
+ * the two timeouts are listed separately on purpose — `action.timeout_seconds` is the worker's call
+ * deadline and `node.timeout_seconds` is the reducer's node deadline, and collapsing them into one
+ * "Timeout" row is what made the editor write an edit to the field nobody was looking at.
+ */
+export function actionMetaRows(
+  node: JsonRecord,
+  provider: string,
+  actionFunction: string,
+): MetaEntry[] {
+  const call = isRecord(node.action) ? node.action.timeout_seconds : undefined;
+  const nodeTimeout = node.timeout_seconds;
+  return [
+    { label: "Provider", value: provider || "—", mono: true },
+    { label: "Function", value: actionFunction || "—", mono: true },
+    { label: "Call Timeout", value: call != null ? `${displayValue(call)}s` : "default" },
+    {
+      label: "Node Timeout",
+      value: nodeTimeout != null ? `${displayValue(nodeTimeout)}s` : "none",
+    },
+    { label: "Retry", value: retrySummary(node) },
+  ];
+}
+
+/** the compensating call's band, empty when the node declares none. */
+export function compensationRows(node: JsonRecord): MetaEntry[] {
+  const compensation = node.compensation;
+
+  if (!isRecord(compensation)) {
+    return [];
+  }
+
+  const configured = isRecord(compensation.configuration)
+    ? Object.keys(compensation.configuration)
+    : [];
+  const timeout = compensation.timeout_seconds;
+  return [
+    { label: "Provider", value: displayValue(compensation.provider) || "—", mono: true },
+    { label: "Function", value: displayValue(compensation.function) || "—", mono: true },
+    { label: "Timeout", value: timeout != null ? `${displayValue(timeout)}s` : "default" },
+    { label: "Parameters", value: configured.length ? configured.join(", ") : "none", mono: true },
+  ];
 }

@@ -80,6 +80,45 @@ fn compensation_lowers_and_round_trips() {
     "#,
     );
 }
+
+/// a `compensate` clause is the same `action_stmt` as the forward call, so it carries the same
+/// modifiers and lowering has always kept them. the decompiler used to render only
+/// `provider.function(args)`, which silently reverted a compensation's timeout, tags, and runner
+/// every time the graph editor saved through its wdl round trip.
+#[test]
+fn compensation_modifiers_survive_the_round_trip() {
+    let source = r#"
+        workflow "Saga" v1 {
+            node deploy <- console.run(command: "deploy")
+                compensate console.run(command: "rollback").timeout(300s).tags("undo").runner("ops")
+            node verify <- console.run(command: "verify")
+        }
+    "#;
+    let definition = compile(source);
+    let compensation = definition
+        .definition
+        .nodes
+        .iter()
+        .find(|node| node.id == "deploy")
+        .and_then(|node| node.compensation.as_ref())
+        .expect("compensation present");
+    assert_eq!(compensation.timeout_seconds, 300);
+    assert_eq!(compensation.tags, vec!["undo".to_string()]);
+    assert_eq!(
+        compensation
+            .required_labels
+            .get("runner")
+            .map(String::as_str),
+        Some("ops")
+    );
+
+    let text = crate::decompile(&definition).expect("decompile");
+    assert!(
+        text.contains(".timeout(300s)") && text.contains(".tags(\"undo\")"),
+        "compensation modifiers missing from the rendered wdl:\n{text}"
+    );
+    assert_round_trips_unordered(source);
+}
 #[test]
 fn watch_guard_lowers_to_metadata_and_round_trips() {
     let definition = compile(

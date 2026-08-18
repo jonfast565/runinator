@@ -149,6 +149,14 @@ pub struct AgentConfig {
     /// them; same knob as `runinator-worker`'s `--shutdown-grace-seconds`.
     #[serde(default = "default_shutdown_grace_seconds")]
     pub shutdown_grace_seconds: u64,
+    /// how many consecutive failed reconnects to tolerate before the agent disconnects and stops
+    /// itself. unlike an in-cluster worker, this machine has no orchestrator to restart it and no
+    /// reason to sit heartbeating a replica that can never take work — a laptop that left the
+    /// network should drop off the registry rather than spin against a service that is not there.
+    /// the count resets after a connection that stayed up, so this bounds one outage rather than the
+    /// agent's lifetime; `0` retries forever.
+    #[serde(default = "default_reconnect_max_attempts")]
+    pub reconnect_max_attempts: u32,
     /// path touched periodically while the shared runtime is alive; empty disables the probe.
     #[serde(default)]
     pub liveness_file: String,
@@ -178,6 +186,10 @@ fn default_shutdown_grace_seconds() -> u64 {
     10
 }
 
+fn default_reconnect_max_attempts() -> u32 {
+    runinator_worker::agent::DEFAULT_RECONNECT_MAX_ATTEMPTS
+}
+
 impl Default for AgentConfig {
     fn default() -> Self {
         Self {
@@ -199,6 +211,7 @@ impl Default for AgentConfig {
             auto_start: false,
             max_concurrent_actions: default_max_concurrent_actions(),
             shutdown_grace_seconds: default_shutdown_grace_seconds(),
+            reconnect_max_attempts: default_reconnect_max_attempts(),
             liveness_file: String::new(),
             log_level: LogLevel::default(),
         }

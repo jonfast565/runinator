@@ -616,11 +616,58 @@ async fn assert_trigger_upsert<T: DatabaseImpl>(db: &T, workflow_id: Uuid) {
         .unwrap();
     let trigger_id = saved.id.expect("trigger insert assigns an id");
 
+    assert_due_set_skips_disabled_workflow(db, workflow_id, trigger_id).await;
+
     let mut retrig = saved.clone();
     retrig.enabled = false;
     let retrigged = db.upsert_workflow_trigger(&retrig).await.unwrap();
     assert_eq!(retrigged.id, Some(trigger_id));
     assert!(!retrigged.enabled);
+}
+
+/// an enabled trigger on a *disabled* workflow is not due and cannot be claimed. the predicate is a
+/// correlated `EXISTS` carrying a per-dialect boolean literal, so it is exactly the kind of thing
+/// that works on one engine and silently matches nothing on another.
+async fn assert_due_set_skips_disabled_workflow<T: DatabaseImpl>(
+    db: &T,
+    workflow_id: Uuid,
+    trigger_id: Uuid,
+) {
+    let now = Utc::now();
+    let contains_trigger = |triggers: Vec<WorkflowTrigger>| {
+        triggers
+            .iter()
+            .any(|trigger| trigger.id == Some(trigger_id))
+    };
+
+    assert!(
+        contains_trigger(db.fetch_due_workflow_triggers(now).await.unwrap()),
+        "a trigger on an enabled workflow is due"
+    );
+
+    let mut workflow = db.fetch_workflow(workflow_id).await.unwrap().unwrap();
+    workflow.enabled = false;
+    db.upsert_workflow(&workflow).await.unwrap();
+
+    assert!(
+        !contains_trigger(db.fetch_due_workflow_triggers(now).await.unwrap()),
+        "a trigger on a disabled workflow is not due"
+    );
+    let claimed = db
+        .claim_due_workflow_trigger_firings("parity".to_string(), now, 10)
+        .await
+        .unwrap();
+    assert!(
+        claimed.runs.is_empty(),
+        "a disabled workflow's trigger is not claimable"
+    );
+
+    workflow.enabled = true;
+    db.upsert_workflow(&workflow).await.unwrap();
+    assert!(
+        contains_trigger(db.fetch_due_workflow_triggers(now).await.unwrap()),
+        "re-enabling the workflow puts its trigger back in the due set"
+    );
 }
 
 // the scheduler claim is a multi-row conditional UPDATE plus a read of the rows it took. dialects

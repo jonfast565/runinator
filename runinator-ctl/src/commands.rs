@@ -90,6 +90,21 @@ pub async fn run_command(
         Commands::Freeze { command } => freeze::freeze(client, command, json_output).await,
         Commands::Providers { command } => providers::providers(client, command, json_output).await,
         Commands::Functions { command } => functions::functions(client, command, json_output).await,
+        Commands::Pipelines { command } => pipelines::pipelines(client, command, json_output).await,
+        Commands::Mcp {
+            workflow_tools,
+            timeout,
+        } => {
+            mcp::serve(
+                client,
+                api_base_url,
+                mcp::Options {
+                    workflow_tools: *workflow_tools,
+                    timeout: Duration::from_secs(*timeout),
+                },
+            )
+            .await
+        }
         Commands::Console {
             session,
             new_session,
@@ -136,6 +151,8 @@ mod functions;
 pub use functions::functions_validate;
 pub(crate) mod catalog;
 mod console;
+mod mcp;
+mod pipelines;
 mod providers;
 pub(crate) mod repl;
 mod repl_completer;

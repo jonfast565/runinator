@@ -181,7 +181,13 @@ export function createStepEditorState() {
     kind: "action",
     locked: false,
     skipped: false,
+    // the whole `retry` policy, not just the attempt count: applying the step rewrites the node's
+    // retry object, so every field it holds has to be represented here or it is lost on save.
     max_attempts: 1,
+    backoff_base_seconds: 1,
+    backoff_max_seconds: 300,
+    jitter: false,
+    retry_on: "any",
     timeout_seconds: 0,
     // working copy of the full node json — the modal and catalog field editors read/write here.
     nodeDraft: {} as JsonRecord,

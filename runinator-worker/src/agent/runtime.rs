@@ -222,9 +222,12 @@ async fn run_lifecycle(
     reporter.log(format!("Broker: {}", config.broker_description));
 
     let inputs = SupervisedLoop::new(&config, api_client, replica_id, libraries, result_outbox);
-    run_supervised(inputs, Arc::clone(&reporter), shutdown).await;
+    let outcome = run_supervised(inputs, Arc::clone(&reporter), shutdown).await;
 
     settle(&reporter, liveness_task);
+    // an exhausted reconnect budget is the agent stopping itself, not a clean stop; propagate it so
+    // a headless host exits non-zero and a gui host can say why the agent is no longer running.
+    outcome?;
     reporter.log("Agent stopped.");
     Ok(())
 }
@@ -237,6 +240,10 @@ fn settle(reporter: &StatusReporter, liveness_task: Option<JoinHandle<()>>) {
     }
     reporter.update(|status| {
         status.running = false;
-        status.connection = AgentConnection::Stopped;
+        // `Disconnected` is a terminal state of its own; overwriting it with `Stopped` would make an
+        // agent that gave up indistinguishable from one an operator stopped.
+        if !matches!(status.connection, AgentConnection::Disconnected { .. }) {
+            status.connection = AgentConnection::Stopped;
+        }
     });
 }

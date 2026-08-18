@@ -211,7 +211,7 @@ pub(crate) fn arguments(path: &[String]) -> Vec<(String, String)> {
 
 // what an argument is. most carry a doc comment; the ones that do not still have a closed set or a
 // default worth saying, which beats an empty column.
-fn describe(argument: &Arg) -> String {
+pub(crate) fn describe(argument: &Arg) -> String {
     if let Some(help) = argument.get_help() {
         return one_line(&help.to_string());
     }
@@ -322,7 +322,7 @@ fn walk(path: &[String]) -> Vec<Command> {
     chain
 }
 
-fn possible_values(argument: &Arg) -> Vec<String> {
+pub(crate) fn possible_values(argument: &Arg) -> Vec<String> {
     argument
         .get_possible_values()
         .iter()
@@ -371,7 +371,7 @@ fn value_name(argument: &Arg) -> String {
         .unwrap_or_else(|| argument.get_id().as_str().to_uppercase())
 }
 
-fn takes_value(argument: &Arg) -> bool {
+pub(crate) fn takes_value(argument: &Arg) -> bool {
     !matches!(
         argument.get_action(),
         ArgAction::SetTrue | ArgAction::SetFalse | ArgAction::Count | ArgAction::Help
@@ -380,7 +380,7 @@ fn takes_value(argument: &Arg) -> bool {
 
 // `--help` is clap's, and `--json` is global and explained once in the help preamble rather than
 // repeated on all ninety commands.
-fn listed(argument: &Arg) -> bool {
+pub(crate) fn listed(argument: &Arg) -> bool {
     !argument.is_hide_set() && !matches!(argument.get_id().as_str(), "help" | "json" | "version")
 }
 

@@ -80,6 +80,41 @@ fn the_last_completed_action_is_retained() {
     assert!(last.summary.contains("console.run"), "{}", last.summary);
 }
 
+// giving up has to be reportable as its own thing: a host that folded it into `stopped` could not
+// tell an agent that quit from one an operator stopped.
+#[test]
+fn every_connection_state_has_a_distinct_label() {
+    let states = [
+        AgentConnection::Stopped,
+        AgentConnection::Registering,
+        AgentConnection::Connecting,
+        AgentConnection::Connected,
+        AgentConnection::Reconnecting {
+            retry_secs: 2,
+            attempt: 1,
+            max_attempts: Some(10),
+        },
+        AgentConnection::Disconnected {
+            attempts: 10,
+            reason: "connection closed".to_string(),
+        },
+        AgentConnection::ReenrollmentRequired {
+            reason: "http 401".to_string(),
+        },
+    ];
+    let labels: std::collections::BTreeSet<_> =
+        states.iter().map(AgentConnection::as_str).collect();
+    assert_eq!(labels.len(), states.len());
+    assert!(labels.contains("disconnected"));
+    assert!(
+        !AgentConnection::Disconnected {
+            attempts: 1,
+            reason: String::new()
+        }
+        .is_connected()
+    );
+}
+
 #[test]
 fn a_duplicate_delivery_only_moves_its_own_counter() {
     let mut metrics = AgentMetrics::default();

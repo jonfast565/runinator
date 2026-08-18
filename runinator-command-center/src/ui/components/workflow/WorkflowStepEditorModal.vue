@@ -71,14 +71,23 @@
             Skipped
           </label>
           <label
-            >Max Attempts
-            <input v-model.number="workflows.stepEditor.max_attempts" type="number" min="1"
-          /></label>
-          <label
-            >Timeout Seconds
-            <input v-model.number="workflows.stepEditor.timeout_seconds" type="number" min="0"
-          /></label>
+            >Node Timeout (s)
+            <input v-model.number="workflows.stepEditor.timeout_seconds" type="number" min="0" />
+            <small class="text-fg-muted">0 = no node deadline.</small>
+          </label>
         </div>
+      </section>
+
+      <section class="form-section">
+        <h3>Retry</h3>
+        <RetryPolicyEditor v-model="retryPolicy" />
+      </section>
+
+      <!-- compensation is an action-node property end to end: only `lower_action` reads the
+           `compensate` clause, and only an action node's decompile writes one back. -->
+      <section v-if="workflows.stepEditor.kind === 'action'" class="form-section">
+        <h3>Compensation</h3>
+        <CompensationEditor v-model="compensation" :expression-context="expressionContext" />
       </section>
 
       <!-- catalog-driven parameter fields for this node kind. -->
@@ -219,6 +228,9 @@ import Icon from "../shared/Icon.vue";
 import LoadingSpinner from "../shared/LoadingSpinner.vue";
 import CatalogFieldEditor from "./CatalogFieldEditor.vue";
 import CatalogEdgeSlotEditor from "./CatalogEdgeSlotEditor.vue";
+import CompensationEditor from "./CompensationEditor.vue";
+import RetryPolicyEditor from "./RetryPolicyEditor.vue";
+import type { RetryPolicy } from "../../../core/workflow/retry";
 import { findNodeKindMetadata, cloneTemplate } from "../../../core/workflow";
 import { interruptRegionOrigins } from "../../../core/workflow/interrupt-regions";
 import { useOperationLoading } from "../../composables/useOperationLoading";
@@ -262,6 +274,52 @@ const editableNodeKinds = computed(() => {
   return workflows.workflowNodeKinds.filter(
     (kind) => findNodeKindMetadata(kind)?.handler_safe === true,
   );
+});
+
+// --- retry policy ---
+
+// the retry fields live on the step editor state rather than in `nodeDraft`, because applying a
+// step rebuilds the node's `retry` object from them.
+const retryPolicy = computed<RetryPolicy>({
+  get: () => ({
+    max_attempts: workflows.stepEditor.max_attempts,
+    backoff_base_seconds: workflows.stepEditor.backoff_base_seconds,
+    backoff_max_seconds: workflows.stepEditor.backoff_max_seconds,
+    jitter: workflows.stepEditor.jitter,
+    retry_on: workflows.stepEditor.retry_on,
+  }),
+  set: (value) => {
+    workflows.stepEditor.max_attempts = value.max_attempts;
+    workflows.stepEditor.backoff_base_seconds = value.backoff_base_seconds;
+    workflows.stepEditor.backoff_max_seconds = value.backoff_max_seconds;
+    workflows.stepEditor.jitter = value.jitter;
+    workflows.stepEditor.retry_on = value.retry_on;
+  },
+});
+
+// --- compensation ---
+
+const compensation = computed<JsonRecord | null>({
+  get: () => {
+    const value = workflows.stepEditor.nodeDraft.compensation;
+    return value && typeof value === "object" && !Array.isArray(value)
+      ? (value as JsonRecord)
+      : null;
+  },
+  set: (value) => {
+    const draft: JsonRecord = { ...workflows.stepEditor.nodeDraft };
+
+    if (value === null) {
+      // drop the key rather than nulling it: the node model skips serializing an absent
+      // compensation, so a lingering `"compensation": null` would show up as noise in the json and
+      // wdl panes for a step that has none.
+      Reflect.deleteProperty(draft, "compensation");
+    } else {
+      draft.compensation = value;
+    }
+
+    workflows.stepEditor.nodeDraft = draft;
+  },
 });
 
 // --- kind change ---

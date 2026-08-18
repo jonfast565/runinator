@@ -79,6 +79,19 @@
           <p v-else class="empty-note">No parameters defined for this action.</p>
         </section>
 
+        <section v-if="compensation.length" class="detail-section">
+          <h3>Compensation</h3>
+          <p class="section-note">
+            Called in reverse order if a later step fails the run, once this step has succeeded.
+          </p>
+          <div class="detail-grid">
+            <div v-for="entry in compensation" :key="entry.label" class="detail-item">
+              <span>{{ entry.label }}</span>
+              <strong :class="{ mono: entry.mono }">{{ entry.value }}</strong>
+            </div>
+          </div>
+        </section>
+
         <section v-if="resultRows.length" class="detail-section">
           <h3>
             Outputs <span class="count-pill">{{ resultRows.length }}</span>
@@ -175,12 +188,15 @@ import { findNodeKindMetadata } from "../../../core/workflow/catalog-registry";
 import { getAtLocation } from "../../../core/workflow/field-location";
 import { displayValue } from "../../../core/utils/values";
 import {
+  actionMetaRows,
+  compensationRows,
   conditionLabel,
   isRecord,
   refLabel,
   renderType,
   valueLabel,
   waitSummary,
+  type MetaEntry,
 } from "./step-detail-format";
 
 interface DetailItem {
@@ -197,12 +213,6 @@ interface DetailSection {
   items: DetailItem[];
   chips: string[];
   rows: DetailRow[];
-}
-
-interface MetaEntry {
-  label: string;
-  value: string;
-  mono?: boolean;
 }
 
 interface ParamRow {
@@ -273,6 +283,10 @@ const flags = computed<{ label: string; tone: string }[]>(() => {
     out.push({ label: "run once", tone: "neutral" });
   }
 
+  if (isRecord(current.compensation)) {
+    out.push({ label: "compensated", tone: "neutral" });
+  }
+
   return out;
 });
 
@@ -307,23 +321,15 @@ const headline = computed(() => {
   }
 });
 
-// action header band: provider, function, timeout, retries.
-const actionMeta = computed<MetaEntry[]>(() => {
-  const current = node.value;
+const actionMeta = computed<MetaEntry[]>(() =>
+  node.value?.kind === "action"
+    ? actionMetaRows(node.value, actionConfig.value.provider, actionConfig.value.action)
+    : [],
+);
 
-  if (current?.kind !== "action") {
-    return [];
-  }
-
-  const retries = current.retry?.max_attempts ?? current.max_attempts ?? 1;
-  const timeout = current.timeout_seconds ?? current.action?.timeout_seconds;
-  return [
-    { label: "Provider", value: actionConfig.value.provider || "—", mono: true },
-    { label: "Function", value: actionConfig.value.action || "—", mono: true },
-    { label: "Timeout", value: timeout != null ? `${displayValue(timeout)}s` : "default" },
-    { label: "Max Attempts", value: displayValue(retries) },
-  ];
-});
+const compensation = computed<MetaEntry[]>(() =>
+  node.value ? compensationRows(node.value) : [],
+);
 
 // one row per provider parameter, merged with the value configured on this node.
 const paramRows = computed<ParamRow[]>(() => {

@@ -245,6 +245,7 @@ export function createWorkflowEditorService(
       transitions?: JsonRecord;
       wait?: JsonRecord;
       retry?: JsonRecord;
+      compensation?: JsonRecord;
     };
     const next = cloneJson(host.state.stepEditor.nodeDraft) as EditableNode;
 
@@ -264,7 +265,17 @@ export function createWorkflowEditorService(
     }
 
     next.kind = host.state.stepEditor.kind;
-    next.retry = { max_attempts: host.state.stepEditor.max_attempts };
+    // merge rather than replace: `retry` also carries the backoff, jitter, and retry-class policy,
+    // and rebuilding the object from the one field the form used to expose silently reverted every
+    // other one to its default on the first Apply.
+    next.retry = {
+      ...asRecord(next.retry),
+      max_attempts: host.state.stepEditor.max_attempts,
+      backoff_base_seconds: host.state.stepEditor.backoff_base_seconds,
+      backoff_max_seconds: host.state.stepEditor.backoff_max_seconds,
+      jitter: host.state.stepEditor.jitter,
+      retry_on: host.state.stepEditor.retry_on,
+    };
 
     if (host.state.stepEditor.timeout_seconds > 0) {
       next.timeout_seconds = host.state.stepEditor.timeout_seconds;
@@ -300,6 +311,27 @@ export function createWorkflowEditorService(
         host.state.stepEditorError = parameterError;
         host.ctx.setError(parameterError);
         return false;
+      }
+
+      // a compensation is an action call in its own right, so hold it to the same bar. left half
+      // configured it lowers to a `compensate .()` the compiler rejects, and the failure would
+      // surface on save as a wdl parse error pointing at nothing the author recognises.
+      const compensation = next.compensation;
+
+      if (compensation !== undefined) {
+        const draft = asRecord(compensation);
+        const compensationError = validateStepParameters(
+          displayValue(draft.provider),
+          displayValue(draft.function),
+          asRecord(draft.configuration),
+        );
+
+        if (compensationError) {
+          const message = `Compensation: ${compensationError}`;
+          host.state.stepEditorError = message;
+          host.ctx.setError(message);
+          return false;
+        }
       }
     }
 
@@ -358,9 +390,14 @@ export function createWorkflowEditorService(
     host.state.stepEditor.locked = isLockedWorkflowNode(node);
     host.state.stepEditor.skipped = node.skipped === true;
     host.state.stepEditor.max_attempts = Number(retry.max_attempts ?? 1);
-    host.state.stepEditor.timeout_seconds = Number(
-      node.timeout_seconds ?? asRecord(node.action).timeout_seconds ?? 0,
-    );
+    host.state.stepEditor.backoff_base_seconds = Number(retry.backoff_base_seconds ?? 1);
+    host.state.stepEditor.backoff_max_seconds = Number(retry.backoff_max_seconds ?? 300);
+    host.state.stepEditor.jitter = retry.jitter === true;
+    host.state.stepEditor.retry_on = displayValue(retry.retry_on) || "any";
+    // the node's own deadline only. an action node *also* carries `action.timeout_seconds` — the
+    // worker-side call deadline, edited as its own catalog field — and reading that as a fallback
+    // made this box show a number it would then write somewhere else.
+    host.state.stepEditor.timeout_seconds = Number(node.timeout_seconds ?? 0);
     // nodeDraft is the canonical working copy; the modal reads/writes here.
     host.state.stepEditor.nodeDraft = cloneJson(node);
     host.state.workflowInspectorMode = "step";

@@ -73,6 +73,8 @@ mod wait;
 #[cfg(test)]
 mod action_tests;
 #[cfg(test)]
+mod chaining_tests;
+#[cfg(test)]
 mod control_flow_tests;
 #[cfg(test)]
 mod cooldown_tests;

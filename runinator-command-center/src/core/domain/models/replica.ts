@@ -17,11 +17,15 @@ export type AgentConnectionState =
   | "connected"
   | "draining"
   | "reconnecting"
+  // the agent spent its reconnect budget and stopped itself; distinct from an operator's "stopped".
+  | "disconnected"
   | "reenrollment_required";
 
 export interface AgentStatusReport {
   connection_state: AgentConnectionState;
   reconnect_retry_seconds?: number | null;
+  reconnect_attempt?: number | null;
+  reconnect_max_attempts?: number | null;
   broker_mode: string;
   broker_endpoint: string;
   in_flight: number;
