@@ -128,8 +128,16 @@ pub(super) async fn console(
     plain_console(client, session, no_follow, json_output, api_base_url).await
 }
 
-// what the console can do, in the three lines an operator reads once.
+// the banner and what the console can do, in the few lines an operator reads once.
+//
+// printed rather than drawn as a band of the frame: it goes down the same pipe a command's output
+// does, so it starts at the top of the scrollable pane, scrolls away as work arrives, and is
+// replayed to the shell on the way out — none of which a fixed header would do, and it costs no
+// rows on a short terminal.
 fn greet(session: &ConsoleSession, scrollable: bool) {
+    // `main` skips the banner for this command so that this is the only one.
+    println!("{}", crate::banner::text());
+    println!();
     println!("session {} ({})", session.name, session.id);
     println!(
         "a bare line is WDL; a `:` line is a runinatorctl command. :help lists both, Tab completes,"

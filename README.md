@@ -549,9 +549,16 @@ happens, so a run can be read while it is still going, and `Ctrl+C` interrupts t
 leaving the console. Quitting replays the session's output to the terminal, so the shell's own
 scrollback ends up holding what it would have held anyway.
 
-`--plain` falls back to the single-line reedline prompt, which is also what a pipe, or a platform
-where the console cannot take stdout, gets automatically. The Console tab in the command center is
-the same layout in the browser.
+`--plain` falls back to the single-line reedline prompt, which is also what a pipe gets
+automatically. The Console tab in the command center is the same layout in the browser.
+
+The console runs on Linux, macOS, and Windows. Taking stdout away from the command modules is the
+one per-platform part — `dup2` on a descriptor, `SetStdHandle` on a std handle — and crossterm is
+what makes the Windows half work: it reaches the terminal through `CONOUT$` and `CONIN$`, opened by
+name, so the size query, raw mode, the alternate screen, and the event source cannot see the
+redirection at all. The console also puts the Windows console into UTF-8 for the duration and puts
+the code page back on the way out, since it draws through a handle that carries bytes rather than
+through Rust's own `Stdout`.
 
 In both, a **bare line is WDL** and becomes a durable cell; a **`:` line is a command**. Every
 `runinatorctl` command works with a `:` in front of it — `:runs list --open`, `:settings get aws

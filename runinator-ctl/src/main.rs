@@ -19,9 +19,11 @@ async fn main() -> commands::Result<()> {
 
 async fn run_process() -> commands::Result<()> {
     let cli = Cli::parse();
-    // skip the banner in json mode to keep machine-readable output clean, and for the mcp
-    // server, whose caller is a protocol client rather than a terminal.
-    if !cli.json && !matches!(cli.command, Commands::Mcp { .. }) {
+    // skip the banner in json mode to keep machine-readable output clean; for the mcp server,
+    // whose caller is a protocol client rather than a terminal; and for the console, which prints
+    // it itself once its interface is up so that it lands at the top of the output pane instead of
+    // on the screen the console is about to take over.
+    if !cli.json && !matches!(cli.command, Commands::Mcp { .. } | Commands::Console { .. }) {
         banner::print();
     }
     match &cli.command {

@@ -35,8 +35,18 @@ Primary runtime flow:
    the editor sees the key, so `tui/editor.rs` stays purely about the line and history recall keeps
    every key it had; the wheel scrolls whichever pane the pointer is over, hit-tested against
    `render::bands`, which is why layout arithmetic lives in one function that both drawing and
-   hit-testing read. `--plain`, a non-tty stdout, or a platform without descriptor redirection
-   (windows) falls back to the reedline prompt. The command center's Console tab mirrors
+   hit-testing read. `--plain` or a non-tty stdout falls back to the reedline prompt.
+
+   The console is **not unix-only**. `tui/capture.rs` holds the shared half — the pipe reader, the
+   transcript — and `capture/unix.rs` and `capture/windows.rs` hold the one part that differs:
+   `dup2` on a descriptor against `SetStdHandle` on a std handle. What makes the windows half
+   possible is that crossterm never uses the std handles: `crossterm_winapi` opens `CONOUT$` and
+   `CONIN$` by name with `CreateFileW`, so the size query, raw mode, the alternate screen, cursor
+   visibility, and the event source cannot see the redirection. Do not "simplify" the windows module
+   to draw on a duplicate of stdout — `CONOUT$` names whichever screen buffer is *active*, which a
+   duplicate taken at startup would stop being. The windows half also sets the console output code
+   page to UTF-8 and restores it, because the interface draws through a handle that carries bytes
+   where rust's own `Stdout` would have converted to utf-16. The command center's Console tab mirrors
    the same surface over HTTP (`runinator-command-center/src/core/console/`), so a command added to
    one console should be added to the other or explained in `:help` as `runinatorctl`-only.
 

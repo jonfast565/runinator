@@ -34,7 +34,11 @@ libc = "0.2"
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.60", features = [
     "Win32_Foundation",
+    "Win32_Globalization",
+    # CreateFileW and CreatePipe both name SECURITY_ATTRIBUTES in their signatures.
+    "Win32_Security",
     "Win32_Storage_FileSystem",
     "Win32_System_Console",
+    "Win32_System_Pipes",
     "Win32_System_Threading",
 ] }

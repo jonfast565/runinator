@@ -35,10 +35,6 @@ use crate::commands::Result;
 pub(crate) mod capture;
 pub(crate) mod editor;
 pub(crate) mod render;
-// the capture is what feeds the transcript, so on a platform that has none nothing writes to it and
-// its reader is dead code. it is still compiled and unit-tested there, which is the point: the
-// scrolling rules are portable even where the plumbing under them is not.
-#[cfg_attr(not(unix), allow(dead_code))]
 pub(crate) mod transcript;
 
 use capture::{Capture, Screen, Shared};
