@@ -51,12 +51,22 @@ Primary runtime flow:
    run over mcp (verbs that never return or read the terminal), and `schema.rs` filters the
    advertised tools through it, so the two can never disagree.
 
-   `mcp/capture.rs` redirects descriptors 1 and 2 into an unlinked scratch file and hands back a
-   duplicate of the real stdout for the protocol to answer on — the same reason `tui/capture.rs`
-   exists, since a table written into the middle of a json-rpc frame would desynchronise the client.
-   It is a *file* rather than the console's pipe because a tool result needs a sync point: a flush
-   says "this command is finished", with nothing of the next command's output in it. Unix only, for
-   the reason documented on `tui::capture`.
+   `mcp/capture.rs` points stdout and stderr at a scratch file and hands back a duplicate of the
+   real stdout for the protocol to answer on — the same reason `tui/capture.rs` exists, since a
+   table written into the middle of a json-rpc frame would desynchronise the client. It is a *file*
+   rather than the console's pipe because a tool result needs a sync point: a flush says "this
+   command is finished", with nothing of the next command's output in it.
+
+   Unlike `tui/capture.rs`, this one is **not unix-only**. `println!` on windows does not travel
+   through descriptor 1, but it does call `GetStdHandle(STD_OUTPUT_HANDLE)` on *every* write rather
+   than caching it, so `SetStdHandle` is the exact analogue of `dup2` and moves the whole process's
+   output the same way. Moving the stream is therefore the only per-platform part, and it is the
+   whole of `capture/unix.rs` and `capture/windows.rs`; the scratch file, the read-and-discard, and
+   the rewind are shared and live in `capture.rs`. (The console stays unix-only for its *second*
+   reason — crossterm reads the console handle the redirection would replace — which does not apply
+   to a server that never draws.) The capture assertions are behavioural, not per-syscall, and CI's
+   `cross-platform` job runs `cargo test -p runinator-ctl` on windows for exactly that reason: a
+   compile check would pass just as happily on a redirect that never took effect.
 
    `:help`, completion, and flag validation are all **derived**, never declared twice.
    `commands/catalog.rs` walks the clap tree into one flat list of `(path, usage, summary)` and reads

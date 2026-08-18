@@ -387,8 +387,11 @@ jobs:
         run: cargo check --locked --all-targets -p runinator-provider-db --no-default-features
 
   # the release workflow only runs on dispatch/publish, so a macos- or windows-only compile break
-  # would otherwise stay hidden until release day. this is a compile check, not a test run: the
-  # assertions all live in the linux job above.
+  # would otherwise stay hidden until release day. this is a compile check: nearly every assertion
+  # lives in the linux job above. the one exception is `runinator-ctl`, whose output capture moves a
+  # standard stream through a different syscall per platform (`dup2` vs `SetStdHandle`) — a compile
+  # check would pass just as happily on a redirect that never took effect, so those assertions have
+  # to run where the syscall is.
   cross-platform:
     name: Compile ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
@@ -414,6 +417,11 @@ jobs:
 
       - name: Check workspace
         run: cargo check --workspace --all-targets
+
+      # the console's and the mcp server's capture: see the note on this job. cheap enough (one
+      # crate, a couple of seconds) that it is not worth narrowing to a filter that would go stale.
+      - name: Test runinator-ctl
+        run: cargo test -p runinator-ctl
 
   command-center:
     name: Command Center

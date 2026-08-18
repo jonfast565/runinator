@@ -12,7 +12,7 @@
 //!
 //! the one thing this server has to be careful about is its own stdout: the command modules print
 //! with plain `println!`, and a table written into the middle of a json-rpc frame would desynchronise
-//! the client. `capture` takes descriptors 1 and 2 away from them and hands back a duplicate of the
+//! the client. `capture` takes stdout and stderr away from them and hands back a duplicate of the
 //! real stdout, which is the only thing the protocol answers on.
 
 mod capture;
@@ -88,7 +88,7 @@ pub(crate) async fn serve(client: &Client, api_base_url: &str, options: Options)
         screen.flush()?;
     }
 
-    // the descriptors go back before the process ends, so anything printed afterwards — a shutdown
+    // the standard streams go back before the process ends, so anything printed afterwards — a shutdown
     // error, a panic message — reaches the terminal rather than the scratch file.
     capture.restore();
     Ok(())

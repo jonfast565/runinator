@@ -1,10 +1,14 @@
 //! covers taking the process's stdout away from the protocol channel and giving it back.
 //!
-//! two things about how these are written. they move process-wide file descriptors, so they hold a
-//! lock against each other: two redirections installed at once would each restore the other's
-//! descriptor. and they write through `io::stdout()` rather than with `println!`, because the test
-//! harness hooks the print macros into a per-test buffer that never reaches descriptor 1 — the
-//! descriptor is what the server redirects, and the descriptor is what these have to exercise.
+//! these run on every platform the capture supports, against whichever `capture/` module was
+//! compiled in — the point of asserting behaviour rather than syscalls is that `dup2` and
+//! `SetStdHandle` have to produce the same observable result.
+//!
+//! two things about how they are written. they move a process-wide standard stream, so they hold a
+//! lock against each other: two redirections installed at once would each restore the other's.
+//! and they write through `io::stdout()` rather than with `println!`, because the test harness
+//! hooks the print macros into a per-test buffer that never reaches the standard stream at all —
+//! the stream is what the server redirects, and the stream is what these have to exercise.
 
 use super::*;
 
@@ -109,19 +113,26 @@ fn restoring_is_idempotent_and_survives_the_drop() {
     drop(capture);
 }
 
-// the scratch file is unlinked while both handles still hold it open, so no exit path leaves one
-// behind.
+// however the server ends, it leaves no scratch file behind: unix unlinks it while both handles
+// still hold it open, and windows opens it delete-on-close.
+//
+// asserted after the capture is dropped rather than during it, because the two platforms differ on
+// exactly that point — the unix file is already gone the moment it is opened, the windows one is
+// visible until the last handle closes. what they agree on is the state afterwards, which is the
+// property worth holding.
 #[test]
 fn the_scratch_file_is_not_left_on_disk() {
     let _guard = exclusive();
     let before = scratch_files();
-    let (mut capture, _screen) = OutputCapture::install().expect("capture installs");
+
+    let (mut capture, screen) = OutputCapture::install().expect("capture installs");
     to_stdout("something");
     let _ = capture.take();
-    let during = scratch_files();
     capture.restore();
+    drop(capture);
+    drop(screen);
 
-    assert_eq!(during, before, "a scratch file is visible on disk");
+    assert_eq!(scratch_files(), before, "a scratch file was left behind");
 }
 
 fn scratch_files() -> usize {

@@ -626,10 +626,12 @@ a dry run is most useful. The server also starts against a web service that is n
 launches it before the stack is running, so an unreachable service becomes an error on the first
 tool call rather than a process that exits at startup.
 
-Command output is captured at the file descriptor, the way the terminal console captures it, because
-the command modules print with plain `println!` and a table written into the middle of a json-rpc
-frame would desynchronise the client. That makes the server a unix arrangement; on Windows, use the
-console or the CLI.
+Command output is captured underneath the command modules, the way the terminal console captures it,
+because they print with plain `println!` and a table written into the middle of a json-rpc frame
+would desynchronise the client. Moving a standard stream is the one per-platform part —
+`dup2` on a descriptor, `SetStdHandle` on a console handle — and it is the whole of
+`capture/unix.rs` and `capture/windows.rs`; everything above that line is shared. The server runs on
+Linux, macOS, and Windows alike.
 
 ## Workflow Import
 

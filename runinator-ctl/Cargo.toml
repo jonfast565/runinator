@@ -25,8 +25,16 @@ serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time"] }
 uuid = { version = "1.18", features = ["v4", "serde"] }
 
-# the console's output pane redirects the process's own stdout into itself, which is a file
-# descriptor operation; see src/tui/capture.rs for why it is done there rather than in the command
-# modules. windows falls back to the plain prompt, so it needs none of this.
+# both the console's output pane and the mcp server take the process's own stdout away from the
+# command modules; see src/tui/capture.rs and src/commands/mcp/capture.rs for why it is done under
+# them rather than in them. moving a standard stream is the one part that is per-platform.
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.60", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Console",
+    "Win32_System_Threading",
+] }
