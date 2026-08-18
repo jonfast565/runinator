@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "runinator": {
+      "type": "stdio",
+      "command": "/Users/jfast/Documents/Github/runinator/scripts/start-runinatorctl.sh",
+      "args": [
+        "--mcp",
+        "--port",
+        "8081",
+        "--namespace",
+        "runinator",
+        "--"
+      ],
+      "env": {}
+    }
+  }
+}
