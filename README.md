@@ -640,6 +640,13 @@ would desynchronise the client. Moving a standard stream is the one per-platform
 `capture/unix.rs` and `capture/windows.rs`; everything above that line is shared. The server runs on
 Linux, macOS, and Windows alike.
 
+When the web service lives in kubernetes rather than on localhost, `scripts/start-runinatorctl.sh
+--mcp` is the launcher to point the client at: it brings up the same port-forward the console uses,
+signs in if the service enforces auth, and then runs `runinatorctl mcp` against it, tearing the
+forward down when the client disconnects. Every message the script prints moves to stderr under
+`--mcp`, since stdout carries the protocol. Arguments after the script's own flags go to the
+subcommand, so `scripts/start-runinatorctl.sh --mcp --workflow-tools` works as expected.
+
 ## Workflow Import
 
 `runinatorctl workflows apply <path>` imports a workflow pack in one shot. The
@@ -1370,6 +1377,12 @@ an action. Pressing **Start agent** (or restarting the process) tries again. The
 consecutive, so a connection that stays up clears it; `--reconnect-max-attempts 0` restores retrying
 forever. `runinator-worker` takes the same flag but defaults to `0`, since an in-cluster pod's
 orchestrator is what decides whether to restart it.
+
+While the agent is coming up — enrolling, registering, or parked waiting for re-enrollment — the
+window offers **Cancel startup** in place of **Start agent**. It aborts the attempt wherever it is
+waiting, stops anything it already brought up, and returns to the configuration form, so a start
+pointed at an unreachable service does not have to be ended by killing the process. "Exit" in the
+tray cancels a startup the same way it stops a running agent.
 
 For LAN/local development, `--discover --enroll <token>` (or `RUNINATOR_DISCOVER=true`) listens
 for web-service gossip and selects only an announcement whose `cluster_id` matches the identity

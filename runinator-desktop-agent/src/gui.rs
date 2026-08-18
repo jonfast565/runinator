@@ -1,13 +1,15 @@
-//! the desktop agent's control surface: a small window to configure the sandbox folder, start/stop
-//! the worker loop, and watch its status. the window's close button hides it behind the tray icon
-//! (see [`crate::tray`]), so "Exit" from the tray menu is the one real quit
-//! path. deliberately minimal — this is a status console for the agent process, not a workflow editor.
+//! the desktop agent's control surface: a small window to configure the sandbox folder, start the
+//! worker loop — or cancel a start still coming up — stop it, and watch its status. the window's
+//! close button hides it behind the tray icon (see [`crate::tray`]), so "Exit" from the tray menu is
+//! the one real quit path. deliberately minimal — this is a status console for the agent process, not a workflow editor.
 
 use std::time::Duration;
 
 use eframe::egui;
 
-use crate::agent::{self, AgentConfig, AgentMetrics, AgentStatus, ConnectionState, SharedHandle};
+use crate::agent::{
+    self, AgentConfig, AgentMetrics, AgentStatus, ConnectionState, Control, SharedHandle,
+};
 use crate::config::{self, LogLevel};
 use crate::logging;
 use crate::tray::{AgentTray, TrayAction, TrayColor};
@@ -23,6 +25,8 @@ struct Snapshot {
     connection: ConnectionState,
     metrics: AgentMetrics,
     busy: bool,
+    /// which of Start / Cancel startup / Stop this phase warrants; see [`agent::Control`].
+    control: Control,
 }
 
 // the status-dot palette. amber and red are the two the operator is meant to tell apart at a
@@ -217,6 +221,24 @@ impl DesktopAgentApp {
             connection: guard.connection.clone(),
             metrics: guard.metrics.clone(),
             busy: guard.busy,
+            control: agent::control_state(&guard),
+        }
+    }
+
+    // the "stop whatever is happening" path, for callers that aren't rendering a phase-specific
+    // button: a lifecycle that is up is stopped, one still coming up is canceled. a plain stop would
+    // be a no-op during a startup, since the start holds the transition latch.
+    fn stop_or_cancel(&self) {
+        let control = {
+            let guard = self
+                .shared
+                .lock()
+                .expect("desktop agent state lock poisoned");
+            agent::control_state(&guard)
+        };
+        match control {
+            Control::Starting => agent::cancel_start(self.rt.handle(), self.shared.clone()),
+            _ => agent::stop(self.rt.handle(), self.shared.clone()),
         }
     }
 
@@ -233,7 +255,7 @@ impl DesktopAgentApp {
             Some(TrayAction::OpenUi) => self.open_command_center(),
             Some(TrayAction::Exit) => {
                 self.quitting = true;
-                agent::stop(self.rt.handle(), self.shared.clone());
+                self.stop_or_cancel();
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
             None => {}
@@ -526,6 +548,7 @@ impl eframe::App for DesktopAgentApp {
             connection,
             metrics,
             busy,
+            control,
         } = self.snapshot();
 
         let presentation = present_status(&connection, busy);
@@ -614,6 +637,19 @@ impl eframe::App for DesktopAgentApp {
                     agent::stop(self.rt.handle(), self.shared.clone());
                 }
             } else {
+                let starting = control == Control::Starting;
+                if starting {
+                    // the form stays editable while a start is in flight, so say what an edit does
+                    // now: the running attempt is already carrying the config it was given.
+                    ui.colored_label(
+                        DOT_BLUE,
+                        egui::RichText::new(
+                            "Starting — changes below apply the next time you start.",
+                        )
+                        .small(),
+                    );
+                    ui.add_space(4.0);
+                }
                 egui::Grid::new("agent-config-form")
                     .num_columns(2)
                     .spacing([8.0, 6.0])
@@ -797,16 +833,31 @@ impl eframe::App for DesktopAgentApp {
                 ui.add_space(8.0);
                 let validation = validate_config(&self.draft);
                 ui.horizontal(|ui| {
-                    let can_start = !busy && validation.is_none();
-                    let start = ui.add_enabled(can_start, egui::Button::new("Start agent"));
-                    // surface why Start is blocked on hover rather than leaving a dead button.
-                    let start = match &validation {
-                        Some(reason) => start.on_disabled_hover_text(reason.clone()),
-                        None => start,
-                    };
-                    if start.clicked() {
-                        config::save(&self.draft);
-                        agent::start(self.rt.handle(), self.shared.clone(), self.draft.clone());
+                    // coming up is its own phase, and it can park for a long time (an unreachable
+                    // service, registration backoff, a relay that never accepts the credential), so
+                    // it gets a way out that isn't killing the process.
+                    if starting {
+                        if ui
+                            .button("Cancel startup")
+                            .on_hover_text(
+                                "Stop the agent coming up and go back to the configuration",
+                            )
+                            .clicked()
+                        {
+                            agent::cancel_start(self.rt.handle(), self.shared.clone());
+                        }
+                    } else {
+                        let can_start = !busy && validation.is_none();
+                        let start = ui.add_enabled(can_start, egui::Button::new("Start agent"));
+                        // surface why Start is blocked on hover rather than leaving a dead button.
+                        let start = match &validation {
+                            Some(reason) => start.on_disabled_hover_text(reason.clone()),
+                            None => start,
+                        };
+                        if start.clicked() {
+                            config::save(&self.draft);
+                            agent::start(self.rt.handle(), self.shared.clone(), self.draft.clone());
+                        }
                     }
 
                     // a throwaway connectivity probe; independent of the sandbox/broker config, so
@@ -827,7 +878,7 @@ impl eframe::App for DesktopAgentApp {
                         );
                     }
                 });
-                if let Some(reason) = &validation {
+                if let Some(reason) = validation.filter(|_| !starting) {
                     ui.colored_label(
                         egui::Color32::from_rgb(210, 90, 70),
                         egui::RichText::new(reason).small(),

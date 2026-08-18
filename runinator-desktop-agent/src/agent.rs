@@ -85,6 +85,55 @@ pub struct Shared {
     // already seen "reconnecting" still needs to be told the agent stopped.
     disconnected_notified: bool,
     handle: Option<AgentHandle>,
+    // set for the window between a Start click and the lifecycle handle existing. `busy` alone
+    // cannot say which transition is in flight, and only a start is cancellable.
+    starting: bool,
+    // the in-flight `start_inner` task, kept so a cancel can abort it mid-registration rather than
+    // leaving the operator to wait out a backoff that may never succeed.
+    start_task: Option<tokio::task::JoinHandle<()>>,
+    // bumped by every start and every cancel. a startup compares it before publishing its handle, so
+    // an abort that lands too late (or one issued before the task was even recorded) still cannot
+    // leave a lifecycle running that the operator asked to cancel.
+    start_generation: u64,
+}
+
+/// what the operator can do to the lifecycle right now, derived from the shared state in one place
+/// so the window can never offer a Stop for a phase with nothing to stop — or strand a slow startup
+/// with no way out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Control {
+    /// nothing is running: offer Start.
+    Startable,
+    /// a start is in flight and the action loop is not up yet: offer Cancel startup.
+    Starting,
+    /// the action loop is up: offer Stop.
+    Running,
+    /// a stop is draining: offer nothing until it settles.
+    Stopping,
+}
+
+/// which control the current state warrants. see [`Control`].
+pub fn control_state(shared: &Shared) -> Control {
+    if shared.starting {
+        return Control::Starting;
+    }
+    if shared.busy {
+        return Control::Stopping;
+    }
+    // registration and the first broker connect happen *after* `start` returns its handle, so a live
+    // lifecycle that has not reached the loop is still a startup — and still cancellable.
+    if shared
+        .handle
+        .as_ref()
+        .is_some_and(|handle| !handle.is_finished())
+    {
+        return if shared.status.running {
+            Control::Running
+        } else {
+            Control::Starting
+        };
+    }
+    Control::Startable
 }
 
 pub type SharedHandle = Arc<Mutex<Shared>>;
@@ -499,12 +548,16 @@ pub fn runtime_config(config: &AgentConfig) -> Result<AgentRuntimeConfig, Sendab
 /// (or is parked waiting for re-enrollment) is stopped first, so Start can recover without a
 /// process restart.
 pub fn start(rt: &tokio::runtime::Handle, shared: SharedHandle, config: AgentConfig) {
+    let generation;
     {
         let mut guard = shared.lock().expect("desktop agent state lock poisoned");
         if should_skip_start(&guard) {
             return;
         }
         guard.busy = true;
+        guard.starting = true;
+        guard.start_generation = guard.start_generation.wrapping_add(1);
+        generation = guard.start_generation;
         guard.metrics = AgentMetrics::default();
         guard.connection = ConnectionState::Registering;
         guard.degraded_notified = false;
@@ -512,24 +565,35 @@ pub fn start(rt: &tokio::runtime::Handle, shared: SharedHandle, config: AgentCon
         guard.status.running = false;
     }
 
-    let rt = rt.clone();
-    rt.clone().spawn(async move {
-        start_inner(rt, shared, config).await;
-    });
+    let task = {
+        let shared = shared.clone();
+        let rt = rt.clone();
+        rt.clone().spawn(async move {
+            start_inner(rt, shared, config, generation).await;
+        })
+    };
+    // retain the startup task so a Cancel startup click can abort it wherever it is parked.
+    let mut guard = shared.lock().expect("desktop agent state lock poisoned");
+    guard.start_task = Some(task);
 }
 
 /// true when a Start click should be ignored: a transition is already in flight, or a live
 /// lifecycle is actually running. a leftover handle from a failed start (or a parked re-enrollment
 /// wait) must not count — that is what made Start a no-op after the first failure.
 fn should_skip_start(shared: &Shared) -> bool {
-    if shared.busy {
+    if shared.busy || shared.starting {
         return true;
     }
     let live = shared.handle.as_ref().is_some_and(|h| !h.is_finished());
     live && shared.status.running
 }
 
-async fn start_inner(rt: tokio::runtime::Handle, shared: SharedHandle, config: AgentConfig) {
+async fn start_inner(
+    rt: tokio::runtime::Handle,
+    shared: SharedHandle,
+    config: AgentConfig,
+    generation: u64,
+) {
     let leftover = {
         let mut guard = shared.lock().expect("desktop agent state lock poisoned");
         guard.handle.take()
@@ -558,8 +622,23 @@ async fn start_inner(rt: tokio::runtime::Handle, shared: SharedHandle, config: A
     }
     .await;
 
+    let superseded = {
+        let guard = shared.lock().expect("desktop agent state lock poisoned");
+        guard.start_generation != generation
+    };
+    if superseded {
+        // canceled (or restarted) while this attempt was coming up. tear down whatever it built
+        // rather than publishing a lifecycle nothing is tracking.
+        if let Ok(mut handle) = started {
+            handle.shutdown();
+            let _ = handle.stop(STOP_GRACE).await;
+        }
+        return;
+    }
+
     let mut guard = shared.lock().expect("desktop agent state lock poisoned");
     guard.busy = false;
+    guard.starting = false;
     match started {
         Ok(handle) => {
             if let Some(telemetry) = handle.telemetry() {
@@ -585,7 +664,7 @@ pub fn stop(rt: &tokio::runtime::Handle, shared: SharedHandle) {
         guard.handle.take()
     };
 
-    let Some(mut handle) = handle else {
+    let Some(handle) = handle else {
         let mut guard = shared.lock().expect("desktop agent state lock poisoned");
         guard.busy = false;
         return;
@@ -595,20 +674,67 @@ pub fn stop(rt: &tokio::runtime::Handle, shared: SharedHandle) {
 
     let shared_task = shared.clone();
     rt.spawn(async move {
-        if let Err(err) = handle.stop(STOP_GRACE).await {
-            log_line(&shared_task, format!("Desktop agent stop: {err}"));
-        }
-        log_line(&shared_task, "Desktop agent stopped.");
-        let mut guard = shared_task
-            .lock()
-            .expect("desktop agent state lock poisoned");
-        guard.status = AgentStatus::default();
-        guard.connection = ConnectionState::Stopped;
-        guard.metrics = AgentMetrics::default();
-        guard.degraded_notified = false;
-        guard.disconnected_notified = false;
-        guard.busy = false;
+        drain_and_settle(&shared_task, Some(handle), "Desktop agent stopped.").await;
     });
+}
+
+/// abandon a start that has not reached the action loop: abort the startup task and stop whatever it
+/// managed to bring up. a no-op unless [`control_state`] reports [`Control::Starting`], so a stray
+/// click cannot tear down a healthy agent.
+///
+/// this is the operator's way out of a startup that cannot finish — an unreachable service, a relay
+/// that never accepts the credential, a registration budget still backing off — without killing the
+/// process and losing the console.
+pub fn cancel_start(rt: &tokio::runtime::Handle, shared: SharedHandle) {
+    let task = {
+        let mut guard = shared.lock().expect("desktop agent state lock poisoned");
+        if control_state(&guard) != Control::Starting {
+            return;
+        }
+        guard.starting = false;
+        // hold the transition latch, so a Start or Stop click cannot interleave with the teardown.
+        guard.busy = true;
+        // invalidate the startup even if the abort below lands after it finished, or before the task
+        // was recorded at all.
+        guard.start_generation = guard.start_generation.wrapping_add(1);
+        guard.start_task.take()
+    };
+    log_line(&shared, "Canceling desktop agent startup...");
+
+    rt.spawn(async move {
+        // the startup parks on network calls and registration backoff, so aborting is what makes the
+        // cancel immediate rather than "once the current retry window elapses".
+        if let Some(task) = task {
+            task.abort();
+            let _ = task.await;
+        }
+        // take the handle only once the startup task is finished: a lifecycle it stored on its way
+        // out still has to be stopped rather than left running with nothing watching it.
+        let handle = {
+            let mut guard = shared.lock().expect("desktop agent state lock poisoned");
+            guard.handle.take()
+        };
+        drain_and_settle(&shared, handle, "Desktop agent startup canceled.").await;
+    });
+}
+
+/// drain a live lifecycle and return the shared state to its stopped shape. shared by stop and
+/// cancel, so a canceled startup settles exactly the way a stop does.
+async fn drain_and_settle(shared: &SharedHandle, handle: Option<AgentHandle>, settled: &str) {
+    if let Some(mut handle) = handle {
+        handle.shutdown();
+        if let Err(err) = handle.stop(STOP_GRACE).await {
+            log_line(shared, format!("Desktop agent stop: {err}"));
+        }
+    }
+    log_line(shared, settled);
+    let mut guard = shared.lock().expect("desktop agent state lock poisoned");
+    guard.status = AgentStatus::default();
+    guard.connection = ConnectionState::Stopped;
+    guard.metrics = AgentMetrics::default();
+    guard.degraded_notified = false;
+    guard.disconnected_notified = false;
+    guard.busy = false;
 }
 
 // cadence for refreshing the header's cpu/ram readout; the heartbeat already reports telemetry to the
