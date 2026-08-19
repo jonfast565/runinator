@@ -1127,6 +1127,14 @@ and the workspace `target/` as BuildKit caches, so an image rebuild after a
 source edit is an *incremental* cargo build rather than a cold one. That syntax
 requires BuildKit; xtask sets `DOCKER_BUILDKIT=1` on every invocation.
 
+Kubernetes image builds compile only the chosen backend drivers. The defaults
+are Postgres and RabbitMQ; choose `--database-backend sqlite|postgres|mysql|mariadb`
+and `--broker-backend http|tcp|kafka|rabbitmq` when building a deployment. The
+selected values must match the database and broker configured by the selected
+Kustomize manifest. The bundled overlays provision only Postgres and RabbitMQ,
+so other combinations need an overlay that points at the corresponding
+external services.
+
 Image binaries are **statically linked** (`+crt-static` is the musl default).
 A static binary has no dynamic loader, so containerized workers cannot `dlopen`
 a `.so` and ship no plugin directory — they run only the providers compiled into
@@ -1204,6 +1212,16 @@ without invalidating live tokens or stranding stored secrets:
 # Builds the K8s images, renders a temporary local overlay with matching
 # image tags, applies it, and waits for Postgres, RabbitMQ, and app rollouts.
 cargo run -p xtask -- k8s deploy
+```
+
+For example, an overlay configured for an external MySQL database and Kafka
+broker can build the matching runtime images with:
+
+```bash
+cargo run -p xtask -- k8s deploy \
+  --manifest deploy/k8s/overlays/my-mysql-kafka \
+  --database-backend mysql \
+  --broker-backend kafka
 ```
 
 The deploy waits up to 10 minutes for the pack-import Job to complete. Override

@@ -110,6 +110,8 @@ pub fn build_container_images(
     include_names: Option<&[&str]>,
     exclude_names: Option<&[&str]>,
     push_images: bool,
+    database_backend: &str,
+    broker_backend: &str,
 ) -> Result<HashMap<String, String>> {
     exec::require_tool("docker")?;
 
@@ -146,6 +148,12 @@ pub fn build_container_images(
         if let Some(target) = image.target {
             args.push("--target".to_string());
             args.push(target.to_string());
+        }
+        if image.dockerfile == "deploy/Dockerfile" {
+            args.push("--build-arg".to_string());
+            args.push(format!("RUNINATOR_K8S_DATABASE_BACKEND={database_backend}"));
+            args.push("--build-arg".to_string());
+            args.push(format!("RUNINATOR_K8S_BROKER_BACKEND={broker_backend}"));
         }
         args.push("--tag".to_string());
         args.push(tagged_name.clone());

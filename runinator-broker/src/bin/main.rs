@@ -1,4 +1,7 @@
-use runinator_broker::{http, in_memory::InMemoryBroker, tcp};
+#[cfg(feature = "http")]
+use runinator_broker::http;
+use runinator_broker::in_memory::InMemoryBroker;
+use runinator_broker::tcp;
 use std::{env, net::SocketAddr};
 
 #[path = "main/service.rs"]
@@ -22,6 +25,7 @@ async fn run_process() -> Result<(), Box<dyn std::error::Error>> {
             println!("Runinator TCP broker listening on {}", addr);
             tcp::server::run_server(addr, broker).await?;
         }
+        #[cfg(feature = "http")]
         "http" => {
             println!("Runinator HTTP broker listening on {}", addr);
             http::server::run_server(addr, broker).await?;

@@ -7,19 +7,19 @@ use std::time::Duration;
 
 use runinator_models::errors::SendableError;
 use serde_json::Value;
+#[cfg(feature = "sqlite")]
+use sqlx::{ConnectOptions, Connection, SqlitePool, sqlite::SqliteConnectOptions};
 #[cfg(feature = "mysql")]
 use sqlx::{MySqlPool, mysql::MySqlConnectOptions};
 #[cfg(feature = "postgres")]
 use sqlx::{PgPool, postgres::PgConnectOptions};
-#[cfg(feature = "sqlite")]
-use sqlx::{ConnectOptions, Connection, SqlitePool, sqlite::SqliteConnectOptions};
 use tokio::runtime::Runtime;
 
 use crate::connector::{DatabaseConnector, OnConflict, ProvisionSpec, SeedSpec};
 use crate::engine::Engine;
-use crate::errors::{CONNECTION_FAILED, INVALID_STATEMENT, UNSUPPORTED_ENGINE};
 #[cfg(any(feature = "postgres", feature = "mysql"))]
 use crate::errors::DATABASE_MISSING;
+use crate::errors::{CONNECTION_FAILED, INVALID_STATEMENT, UNSUPPORTED_ENGINE};
 use crate::rowset::{ColumnSummary, ExecOutcome, RowSet, StepOutcome, TableInfo};
 use crate::statement::StatementSpec;
 
@@ -95,7 +95,8 @@ impl SqlConnector {
                     .map(SqlPool::Sqlite)
                     .map_err(connect_error)
             }
-            other => Err(UNSUPPORTED_ENGINE.error(format!("{} is not enabled in this build", other.as_str()))),
+            other => Err(UNSUPPORTED_ENGINE
+                .error(format!("{} is not enabled in this build", other.as_str()))),
         }
     }
 
@@ -151,7 +152,8 @@ impl DatabaseConnector for SqlConnector {
                 Engine::Mysql => {
                     ensure_mysql(&connection, admin.as_deref(), database.as_deref(), timeout).await
                 }
-                other => Err(UNSUPPORTED_ENGINE.error(format!("{} is not enabled in this build", other.as_str()))),
+                other => Err(UNSUPPORTED_ENGINE
+                    .error(format!("{} is not enabled in this build", other.as_str()))),
             }
         })
     }

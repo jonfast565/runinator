@@ -1,17 +1,18 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+#[cfg(feature = "http")]
 use reqwest::Url;
 use runinator_api::{AsyncApiClient, ReplicaClient, ReplicaServiceConfig, StaticLocator};
+#[cfg(feature = "http")]
+use runinator_broker::http::client::HttpBroker;
+#[cfg(feature = "tcp")]
+use runinator_broker::tcp::client::TcpBroker;
 use runinator_broker::{
     Broker,
     adapters::{kafka::KafkaBrokerConfig, rabbitmq::RabbitMqBrokerConfig},
     in_memory::InMemoryBroker,
 };
-#[cfg(feature = "http")]
-use runinator_broker::http::client::HttpBroker;
-#[cfg(feature = "tcp")]
-use runinator_broker::tcp::client::TcpBroker;
 use runinator_models::errors::SendableError;
 use runinator_models::replicas::ReplicaKind;
 use runinator_utilities::resource_telemetry::{TelemetryCollector, attributes_with_host_metadata};

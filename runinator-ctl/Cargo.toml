@@ -15,8 +15,8 @@ reedline = "0.50.0"
 runinator-api = { path = "../runinator-api" }
 runinator-comm = { path = "../runinator-comm" }
 runinator-models = { path = "../runinator-models" }
-runinator-pack = { path = "../runinator-pack" }
-runinator-provider-catalog = { path = "../runinator-provider-catalog" }
+runinator-pack = { path = "../runinator-pack", default-features = false }
+runinator-provider-catalog = { path = "../runinator-provider-catalog", default-features = false }
 runinator-utilities = { path = "../runinator-utilities" }
 runinator-wdl = { path = "../runinator-wdl" }
 runinator-workflows = { path = "../runinator-workflows" }
@@ -24,6 +24,13 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time"] }
 uuid = { version = "1.18", features = ["v4", "serde"] }
+
+[features]
+default = ["db-sqlite", "db-postgres", "db-mysql", "db-mongo"]
+db-sqlite = ["runinator-pack/db-sqlite", "runinator-provider-catalog/db-sqlite"]
+db-postgres = ["runinator-pack/db-postgres", "runinator-provider-catalog/db-postgres"]
+db-mysql = ["runinator-pack/db-mysql", "runinator-provider-catalog/db-mysql"]
+db-mongo = ["runinator-pack/db-mongo", "runinator-provider-catalog/db-mongo"]
 
 # both the console's output pane and the mcp server take the process's own stdout away from the
 # command modules; see src/tui/capture.rs and src/commands/mcp/capture.rs for why it is done under

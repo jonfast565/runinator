@@ -1,5 +1,9 @@
 use std::sync::Arc;
 
+#[cfg(feature = "http")]
+use runinator_broker::http::client::HttpBroker;
+#[cfg(feature = "tcp")]
+use runinator_broker::tcp::client::TcpBroker;
 #[cfg(feature = "ws")]
 use runinator_broker::ws::client::WsBroker;
 use runinator_broker::{
@@ -7,10 +11,6 @@ use runinator_broker::{
     adapters::{kafka::KafkaBrokerConfig, rabbitmq::RabbitMqBrokerConfig},
     in_memory::InMemoryBroker,
 };
-#[cfg(feature = "http")]
-use runinator_broker::http::client::HttpBroker;
-#[cfg(feature = "tcp")]
-use runinator_broker::tcp::client::TcpBroker;
 use runinator_models::errors::{RuntimeError, SendableError};
 
 use crate::config;

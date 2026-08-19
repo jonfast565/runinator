@@ -48,7 +48,10 @@ macro_rules! dispatch_database {
                 $body
             }
             other => {
-                return Err(format!("database backend '{other:?}' is not compiled into this binary").into());
+                return Err(format!(
+                    "database backend '{other:?}' is not compiled into this binary"
+                )
+                .into());
             }
         }
     };

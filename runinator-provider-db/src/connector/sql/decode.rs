@@ -8,11 +8,11 @@ use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 #[cfg(all(feature = "mysql", not(feature = "postgres")))]
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use serde_json::{Number, Value};
-use sqlx::{Column, Row, TypeInfo};
 #[cfg(feature = "mysql")]
 use sqlx::mysql::MySqlRow;
 #[cfg(feature = "postgres")]
 use sqlx::postgres::PgRow;
+use sqlx::{Column, Row, TypeInfo};
 #[cfg(feature = "sqlite")]
 use sqlx::{ValueRef, sqlite::SqliteRow};
 #[cfg(feature = "postgres")]

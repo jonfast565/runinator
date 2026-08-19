@@ -127,6 +127,14 @@ struct K8sDeployArgs {
     /// deploy is versioned and distinguishable.
     #[arg(long, default_value = "local")]
     image_tag: String,
+    /// Database driver compiled into Kubernetes runtime images. The manifest must configure the
+    /// same backend (the bundled overlays use postgres).
+    #[arg(long, value_parser = ["sqlite", "postgres", "mysql", "mariadb"], default_value = "postgres")]
+    database_backend: String,
+    /// Broker transport compiled into Kubernetes runtime images. The manifest must configure the
+    /// same backend (the bundled overlays use rabbitmq).
+    #[arg(long, value_parser = ["http", "tcp", "kafka", "rabbitmq"], default_value = "rabbitmq")]
+    broker_backend: String,
     /// shorthand for --image-repository pointing at a registry mirrored to the local cluster.
     #[arg(long)]
     local_registry: Option<String>,
@@ -304,6 +312,8 @@ fn run_k8s_deploy(workspace_root: &std::path::Path, args: &K8sDeployArgs) -> any
             include_names.as_deref(),
             None,
             should_push,
+            &args.database_backend,
+            &args.broker_backend,
         )?)
     };
 

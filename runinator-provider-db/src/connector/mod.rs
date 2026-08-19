@@ -133,8 +133,7 @@ pub fn connector_for(
                  --features runinator-provider-db/mongo",
             ))
         }
-        other => Err(crate::errors::UNSUPPORTED_ENGINE.error(format!(
-            "{} is not enabled in this build", other.as_str()
-        ))),
+        other => Err(crate::errors::UNSUPPORTED_ENGINE
+            .error(format!("{} is not enabled in this build", other.as_str()))),
     }
 }

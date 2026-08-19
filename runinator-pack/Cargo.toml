@@ -6,13 +6,20 @@ edition = "2024"
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }
 runinator-models = { path = "../runinator-models" }
-runinator-provider-catalog = { path = "../runinator-provider-catalog" }
+runinator-provider-catalog = { path = "../runinator-provider-catalog", default-features = false }
 runinator-wdl = { path = "../runinator-wdl" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 thiserror = "2.0.18"
 zip = { version = "7.2", default-features = false }
+
+[features]
+default = ["db-sqlite", "db-postgres", "db-mysql", "db-mongo"]
+db-sqlite = ["runinator-provider-catalog/db-sqlite"]
+db-postgres = ["runinator-provider-catalog/db-postgres"]
+db-mysql = ["runinator-provider-catalog/db-mysql"]
+db-mongo = ["runinator-provider-catalog/db-mongo"]
 
 [dev-dependencies]
 runinator-workflows = { path = "../runinator-workflows" }

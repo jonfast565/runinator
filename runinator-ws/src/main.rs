@@ -4,15 +4,15 @@ use std::sync::Arc;
 
 use clap::Parser;
 use log::info;
+#[cfg(feature = "http")]
+use runinator_broker::http::client::HttpBroker;
+#[cfg(feature = "tcp")]
+use runinator_broker::tcp::client::TcpBroker;
 use runinator_broker::{
     Broker,
     adapters::{kafka::KafkaBrokerConfig, rabbitmq::RabbitMqBrokerConfig},
     in_memory::InMemoryBroker,
 };
-#[cfg(feature = "http")]
-use runinator_broker::http::client::HttpBroker;
-#[cfg(feature = "tcp")]
-use runinator_broker::tcp::client::TcpBroker;
 use runinator_db_cli::{DatabaseBackend, dispatch_database};
 use runinator_models::errors::SendableError;
 use tokio::sync::Notify;

@@ -8,13 +8,13 @@ use std::{future::Future, time::Duration};
 
 use log::warn;
 use runinator_models::errors::SendableError;
-use sqlx::{Database, Pool};
 #[cfg(feature = "mysql")]
 use sqlx::mysql::MySqlQueryResult;
 #[cfg(feature = "postgres")]
 use sqlx::postgres::PgQueryResult;
 #[cfg(feature = "sqlite")]
 use sqlx::sqlite::SqliteQueryResult;
+use sqlx::{Database, Pool};
 
 use crate::queries::SqlDialect;
 

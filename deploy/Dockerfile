@@ -35,6 +35,8 @@ FROM rust:${RUST_VERSION}-alpine${ALPINE_VERSION} AS builder
 # BuildKit-provided; only used to key the target/ cache so a cross-arch build does not thrash the
 # cache of the other arch (cargo would rebuild the world on every alternation).
 ARG TARGETARCH
+ARG RUNINATOR_K8S_DATABASE_BACKEND=postgres
+ARG RUNINATOR_K8S_BROKER_BACKEND=rabbitmq
 WORKDIR /workspace
 RUN apk add --no-cache build-base ca-certificates
 # strip the symbol table from the shipped binaries: it is ~33% of a static musl binary here
@@ -47,7 +49,20 @@ COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,target=/workspace/target,id=runinator-target-${TARGETARCH},sharing=locked \
-    cargo build --release --locked --no-default-features \
+    case "$RUNINATOR_K8S_DATABASE_BACKEND" in \
+      sqlite) database_features='runinator-ws/sqlite,runinator-background-worker/sqlite,runinator-worker/db-sqlite,runinator-archiver/sqlite,runinator-bootstrap/sqlite,runinator-ctl/db-sqlite' ;; \
+      postgres) database_features='runinator-ws/postgres,runinator-background-worker/postgres,runinator-worker/db-postgres,runinator-archiver/postgres,runinator-bootstrap/postgres,runinator-ctl/db-postgres' ;; \
+      mysql|mariadb) database_features='runinator-ws/mysql,runinator-background-worker/mysql,runinator-worker/db-mysql,runinator-archiver/mysql,runinator-bootstrap/mysql,runinator-ctl/db-mysql' ;; \
+      *) echo "unsupported RUNINATOR_K8S_DATABASE_BACKEND: $RUNINATOR_K8S_DATABASE_BACKEND (expected sqlite, postgres, mysql, or mariadb)" >&2; exit 2 ;; \
+    esac \
+    && case "$RUNINATOR_K8S_BROKER_BACKEND" in \
+      http) broker_features='runinator-ws/http,runinator-background-worker/http,runinator-worker/http,runinator-waker/http' ;; \
+      tcp) broker_features='runinator-ws/tcp,runinator-background-worker/tcp,runinator-worker/tcp,runinator-waker/tcp' ;; \
+      kafka) broker_features='runinator-ws/kafka,runinator-background-worker/kafka,runinator-worker/kafka,runinator-waker/kafka' ;; \
+      rabbitmq) broker_features='runinator-ws/rabbitmq,runinator-background-worker/rabbitmq,runinator-worker/rabbitmq,runinator-waker/rabbitmq' ;; \
+      *) echo "unsupported RUNINATOR_K8S_BROKER_BACKEND: $RUNINATOR_K8S_BROKER_BACKEND (expected http, tcp, kafka, or rabbitmq)" >&2; exit 2 ;; \
+    esac \
+    && cargo build --release --locked --no-default-features \
         -p runinator-ws \
         -p runinator-background-worker \
         -p runinator-worker \
@@ -57,7 +72,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
         -p runinator-bootstrap \
         -p runinator-broker \
         -p runinator-blob \
-        --features runinator-ws/postgres,runinator-ws/rabbitmq,runinator-ws/kubernetes,runinator-background-worker/postgres,runinator-background-worker/rabbitmq,runinator-worker/rabbitmq,runinator-waker/rabbitmq,runinator-archiver/postgres,runinator-bootstrap/postgres,runinator-broker/tcp,runinator-blob/server \
+        --features "$database_features,$broker_features,runinator-ws/kubernetes,runinator-broker/tcp,runinator-blob/server" \
     && mkdir -p /out \
     && cp target/release/runinator-ws \
           target/release/runinator-background-worker \

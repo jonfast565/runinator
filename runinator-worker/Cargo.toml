@@ -27,12 +27,16 @@ runinator-utilities = { path = "../runinator-utilities" }
 opentelemetry = "0.32"
 runinator-api = { path = "../runinator-api" }
 runinator-broker = { path = "../runinator-broker", default-features = false }
-runinator-provider-catalog = { path = "../runinator-provider-catalog" }
+runinator-provider-catalog = { path = "../runinator-provider-catalog", default-features = false }
 
 [features]
-default = ["http", "tcp"]
+default = ["http", "tcp", "db-sqlite", "db-postgres", "db-mysql", "db-mongo"]
 http = ["runinator-broker/http"]
 tcp = ["runinator-broker/tcp"]
+db-sqlite = ["runinator-provider-catalog/db-sqlite"]
+db-postgres = ["runinator-provider-catalog/db-postgres"]
+db-mysql = ["runinator-provider-catalog/db-mysql"]
+db-mongo = ["runinator-provider-catalog/db-mongo"]
 kafka = ["runinator-broker/kafka"]
 rabbitmq = ["runinator-broker/rabbitmq"]
 # enables `--broker-backend ws`, relaying through runinator-ws's /ws/desktop-worker endpoint instead
