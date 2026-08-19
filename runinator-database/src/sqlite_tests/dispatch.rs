@@ -26,6 +26,10 @@ async fn action_dispatch_outbox_is_idempotent_and_tracks_publish_state() {
     let pending = db.fetch_pending_action_dispatches(10).await.unwrap();
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].command.command_id, command.command_id);
+    let snapshot = db.action_dispatch_queue_snapshot(Utc::now()).await.unwrap();
+    assert_eq!(snapshot.depth, 1);
+    assert_eq!(snapshot.claimed, 0);
+    assert!(snapshot.oldest_enqueued_at.is_some());
 
     db.mark_action_dispatch_failed(first.id, "broker unavailable".into())
         .await
@@ -41,6 +45,10 @@ async fn action_dispatch_outbox_is_idempotent_and_tracks_publish_state() {
             .unwrap()
             .is_empty()
     );
+    let snapshot = db.action_dispatch_queue_snapshot(Utc::now()).await.unwrap();
+    assert_eq!(snapshot.depth, 0);
+    assert_eq!(snapshot.claimed, 0);
+    assert!(snapshot.oldest_enqueued_at.is_none());
 
     let _ = fs::remove_file(path);
 }

@@ -1,0 +1,77 @@
+{
+  "uid": "runinator-operations",
+  "title": "Runinator Operations",
+  "schemaVersion": 39,
+  "version": 1,
+  "time": { "from": "now-1h", "to": "now" },
+  "refresh": "10s",
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "HTTP traffic by status class",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [{ "refId": "A", "expr": "sum by (status_class) (rate({__name__=~\"runinator_ws_http_requests.*\"}[5m]))", "legendFormat": "{{status_class}}" }]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "HTTP p95 latency (ms)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [{ "refId": "A", "expr": "histogram_quantile(0.95, sum by (le, route) (rate({__name__=~\"runinator_ws_http_request_duration_ms.*_bucket\"}[5m])))", "legendFormat": "{{route}}" }]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Queue depth",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [{ "refId": "A", "expr": "sum by (queue) ({__name__=~\"runinator_engine_queue_depth.*\"})", "legendFormat": "{{queue}}" }]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Oldest queued item (seconds)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [{ "refId": "A", "expr": "max by (queue) ({__name__=~\"runinator_engine_queue_oldest_age_seconds.*\"})", "legendFormat": "{{queue}}" }]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Background loop freshness (seconds)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "targets": [{ "refId": "A", "expr": "time() - max by (loop) ({__name__=~\"runinator_engine_loop_last_success_unixtime.*\"})", "legendFormat": "{{loop}}" }]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Replica fleet",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "targets": [{ "refId": "A", "expr": "sum by (kind, status) ({__name__=~\"runinator_engine_replicas.*\"})", "legendFormat": "{{kind}} {{status}}" }]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Worker capacity and in-flight actions",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "targets": [
+        { "refId": "A", "expr": "sum({__name__=~\"runinator_worker_capacity.*\"})", "legendFormat": "capacity" },
+        { "refId": "B", "expr": "sum({__name__=~\"runinator_worker_actions_in_flight.*\"})", "legendFormat": "in flight" }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Broker errors / sec",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "targets": [{ "refId": "A", "expr": "sum by (backend, channel, op) (rate({__name__=~\"runinator_broker_operations.*\",outcome=\"error\"}[5m]))", "legendFormat": "{{backend}} {{channel}} {{op}}" }]
+    }
+  ]
+}

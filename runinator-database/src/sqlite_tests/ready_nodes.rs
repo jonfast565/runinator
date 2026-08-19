@@ -160,6 +160,70 @@ async fn terminal_run_status_settles_its_pending_ready_nodes() {
 }
 
 #[tokio::test]
+async fn ready_node_queue_snapshots_separate_due_future_and_claimed_work() {
+    let path = std::env::temp_dir().join(format!(
+        "runinator-ready-queue-snapshot-{}.db",
+        Utc::now().timestamp_nanos_opt().unwrap()
+    ));
+    let db = SqliteDb::new(path.to_str().unwrap()).await.unwrap();
+    db.run_init_scripts(&Vec::new()).await.unwrap();
+    let workflow_id = db
+        .upsert_workflow(&workflow("ready-queue-snapshot-test"))
+        .await
+        .unwrap()
+        .id
+        .unwrap();
+    let snapshot = db.fetch_workflow(workflow_id).await.unwrap().unwrap();
+    let run = db
+        .create_workflow_run(
+            workflow_id,
+            snapshot,
+            runinator_models::json!({}),
+            runinator_models::json!({}),
+            None,
+            Default::default(),
+        )
+        .await
+        .unwrap();
+    let now = Utc::now();
+    let due_event = runinator_models::orchestration::NewOrchestrationEvent::new(
+        run.id,
+        Some("due".into()),
+        "ready",
+        runinator_models::json!({}),
+    );
+    db.enqueue_ready_node(due_event, "due".into(), now - Duration::seconds(1))
+        .await
+        .unwrap();
+    let future_event = runinator_models::orchestration::NewOrchestrationEvent::new(
+        run.id,
+        Some("future".into()),
+        "ready",
+        runinator_models::json!({}),
+    );
+    db.enqueue_ready_node(future_event, "future".into(), now + Duration::seconds(60))
+        .await
+        .unwrap();
+
+    let (due, future) = db.ready_node_queue_snapshots(now).await.unwrap();
+    assert_eq!((due.depth, due.claimed), (1, 0));
+    assert_eq!((future.depth, future.claimed), (1, 0));
+    assert!(due.oldest_enqueued_at.is_some());
+    assert!(future.oldest_enqueued_at.is_some());
+
+    let claimed = db
+        .claim_ready_nodes("snapshot-test".into(), now, now + Duration::seconds(30), 10)
+        .await
+        .unwrap();
+    assert_eq!(claimed.len(), 1);
+    let (due, future) = db.ready_node_queue_snapshots(now).await.unwrap();
+    assert_eq!((due.depth, due.claimed), (1, 1));
+    assert_eq!((future.depth, future.claimed), (1, 0));
+
+    let _ = fs::remove_file(path);
+}
+
+#[tokio::test]
 async fn claim_ready_nodes_for_announce_leases_once_per_window() {
     let path = std::env::temp_dir().join(format!(
         "runinator-announce-lease-{}.db",
