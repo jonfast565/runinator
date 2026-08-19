@@ -17,7 +17,9 @@ use runinator_models::{
     errors::SendableError,
     orchestration::{NewOrchestrationEvent, ReadyNodeRecord},
     orgs::Organization,
-    pipelines::{Pipeline, PipelineRun, PipelineTrigger},
+    pipelines::{
+        Pipeline, PipelineMemberAttempt, PipelineMemberAttemptStatus, PipelineRun, PipelineTrigger,
+    },
     replicas::{ReplicaKind, ReplicaRecord, ReplicaStatus, WorkflowRunProvenance},
     settings::{SettingKind, SettingRecord},
     workflows::{
@@ -65,6 +67,11 @@ pub trait ReducerStore: crate::roles::InvocationStore + Send + Sync + 'static {
         pipeline_run_id: Uuid,
     ) -> impl Future<Output = Result<Option<PipelineRun>, SendableError>> + Send;
 
+    fn fetch_pipeline_runs_for_concurrency(
+        &self,
+        pipeline_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<PipelineRun>, SendableError>> + Send;
+
     /// Update the top-level status of a pipeline run.
     fn update_pipeline_run_status(
         &self,
@@ -72,6 +79,13 @@ pub trait ReducerStore: crate::roles::InvocationStore + Send + Sync + 'static {
         status: WorkflowStatus,
         state: Option<Value>,
         message: Option<String>,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
+
+    /// Reopen a terminal pipeline run for a frontier retry.
+    fn reopen_pipeline_run(
+        &self,
+        pipeline_run_id: Uuid,
+        message: String,
     ) -> impl Future<Output = Result<(), SendableError>> + Send;
 
     /// Tag a workflow run as a member of a pipeline run.
@@ -227,6 +241,12 @@ pub trait ReducerStore: crate::roles::InvocationStore + Send + Sync + 'static {
         workflow_run_id: Uuid,
     ) -> impl Future<Output = Result<Vec<WorkflowNodeRun>, SendableError>> + Send;
 
+    /// Fetch artifacts promoted to the workflow-run result surface by output nodes.
+    fn fetch_promoted_workflow_run_artifacts(
+        &self,
+        workflow_run_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<WorkflowRunArtifact>, SendableError>> + Send;
+
     /// Clear the current executor and record the last executor for a node run. A no-op unless
     /// `replica_id` is the current holder, so a stray release cannot free another replica's lease.
     fn release_workflow_node_run_executor(
@@ -337,6 +357,48 @@ pub trait ReducerStore: crate::roles::InvocationStore + Send + Sync + 'static {
         state: Value,
         provenance: WorkflowRunProvenance,
     ) -> impl Future<Output = Result<PipelineRun, SendableError>> + Send;
+
+    /// Delete a still-queued pipeline run rejected by a concurrency `skip` decision.
+    fn discard_queued_pipeline_run(
+        &self,
+        pipeline_run_id: Uuid,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
+
+    /// Atomically claim a member attempt. `None` means another driver already created it.
+    fn create_pipeline_member_attempt(
+        &self,
+        pipeline_run_id: Uuid,
+        member_key: String,
+        workflow_id: Uuid,
+        attempt: i64,
+        parameters: Value,
+    ) -> impl Future<Output = Result<Option<PipelineMemberAttempt>, SendableError>> + Send;
+
+    fn bind_pipeline_member_attempt_run(
+        &self,
+        attempt_id: Uuid,
+        workflow_run_id: Uuid,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
+
+    fn update_pipeline_member_attempt(
+        &self,
+        attempt_id: Uuid,
+        status: PipelineMemberAttemptStatus,
+        result: Value,
+        message: Option<String>,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
+
+    fn fetch_pipeline_member_attempts(
+        &self,
+        pipeline_run_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<PipelineMemberAttempt>, SendableError>> + Send;
+
+    /// Remove derived skipped/resolution-failed attempts that never started a workflow run.
+    fn delete_unstarted_pipeline_member_attempts(
+        &self,
+        pipeline_run_id: Uuid,
+        member_key: String,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
 
     /// Fetch every member workflow run tagged with the given pipeline run.
     fn fetch_workflow_runs_for_pipeline_run(

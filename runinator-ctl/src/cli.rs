@@ -873,6 +873,15 @@ pub enum PipelineCommands {
         #[arg(long)]
         message: Option<String>,
     },
+    /// Retry a failed or timed-out member that is still on the pipeline frontier.
+    Retry {
+        run_id: Uuid,
+        member: String,
+        #[arg(long = "param", value_name = "KEY=VALUE")]
+        params: Vec<String>,
+        #[arg(long = "json-file")]
+        json_file: Option<PathBuf>,
+    },
     /// Delete a pipeline. Its member workflows are untouched.
     Delete { pipeline: String },
 }

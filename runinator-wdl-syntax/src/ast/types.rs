@@ -47,6 +47,15 @@ pub struct PipelineLinkDecl {
     pub from: String,
     pub to: String,
     pub on: Option<String>,
+    pub parameters: Option<Expr>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PipelineJoinDecl {
+    pub target: String,
+    pub mode: String,
+    pub parameters: Option<Expr>,
     pub span: Span,
 }
 
@@ -84,6 +93,8 @@ pub struct PipelineDecl {
     pub max_depth: Option<u32>,
     pub members: Vec<PipelineMemberDecl>,
     pub links: Vec<PipelineLinkDecl>,
+    pub joins: Vec<PipelineJoinDecl>,
+    pub concurrency: Option<super::ConcurrencyDecl>,
     pub triggers: Vec<PipelineTriggerDecl>,
     pub span: Span,
 }

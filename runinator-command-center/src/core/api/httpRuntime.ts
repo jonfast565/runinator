@@ -364,6 +364,12 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     method: "POST",
     path: (args) => `pipeline_runs/${escape(arg(args, "pipelineRunId"))}/cancel`,
   },
+  retry_pipeline_member: {
+    method: "POST",
+    path: (args) =>
+      `pipeline_runs/${escape(arg(args, "pipelineRunId"))}/members/${escape(arg(args, "memberKey"))}/retry`,
+    body: (args) => ({ parameters: argOpt(args, "parameters") ?? {} }),
+  },
   resolve_pipeline_run: {
     method: "POST",
     path: (args) => `pipeline_runs/${escape(arg(args, "pipelineRunId"))}/resolve`,

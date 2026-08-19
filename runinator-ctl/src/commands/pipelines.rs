@@ -94,11 +94,11 @@ pub(super) async fn pipelines(
             Ok(())
         }
         PipelineCommands::Cancel { run_id } => {
-            let run = client.cancel_pipeline_run(*run_id).await?;
+            let response = client.cancel_pipeline_run(*run_id).await?;
             if json_output {
-                return output::json(&run);
+                return output::json(&response);
             }
-            println!("canceled pipeline run {} [{}]", run.id, run.status.as_str());
+            println!("{}", response.message);
             Ok(())
         }
         PipelineCommands::Resolve {
@@ -123,6 +123,27 @@ pub(super) async fn pipelines(
                 run.id,
                 decision.as_str(),
                 run.status.as_str()
+            );
+            Ok(())
+        }
+        PipelineCommands::Retry {
+            run_id,
+            member,
+            params,
+            json_file,
+        } => {
+            let parameters = params::load_object(json_file.as_deref(), params)?;
+            let attempt = client
+                .retry_pipeline_member(*run_id, member, parameters)
+                .await?;
+            if json_output {
+                return output::json(&attempt);
+            }
+            println!(
+                "retried {} as attempt {} [{}]",
+                attempt.member_key,
+                attempt.attempt,
+                attempt.status.as_str()
             );
             Ok(())
         }
@@ -179,7 +200,7 @@ fn print_pipelines(pipelines: &[Pipeline]) {
                     .map(|id| id.to_string())
                     .unwrap_or_else(|| "-".into()),
                 pipeline.name.clone(),
-                pipeline.workflow_ids.len().to_string(),
+                pipeline.graph.members.len().to_string(),
                 pipeline.description.clone().unwrap_or_default(),
             ]
         })
@@ -203,22 +224,20 @@ fn print_pipeline(pipeline: &Pipeline) {
         println!("{description}");
     }
     let rows = pipeline
-        .workflow_ids
+        .graph
+        .members
         .iter()
-        .map(|workflow_id| {
+        .map(|member| {
             vec![
-                workflow_id.to_string(),
-                pipeline
-                    .member_failure_modes
-                    .get(workflow_id)
-                    .map(|mode| mode.as_str().to_string())
-                    .unwrap_or_else(|| pipeline.defaults.default_failure_mode.as_str().to_string()),
+                member.key.clone(),
+                member.workflow_id.to_string(),
+                member.failure_mode.as_str().to_string(),
             ]
         })
         .collect::<Vec<_>>();
     print!(
         "{}",
-        output::table(&["MEMBER WORKFLOW", "ON FAILURE"], &rows)
+        output::table(&["MEMBER", "WORKFLOW", "ON FAILURE"], &rows)
     );
 }
 

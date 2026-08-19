@@ -41,7 +41,9 @@ use runinator_models::{
         OrchestrationEvent, ReadyNodeRecord,
     },
     orgs::{OrgMembership, OrgRole, Organization},
-    pipelines::{Pipeline, PipelineRun, PipelineTrigger},
+    pipelines::{
+        Pipeline, PipelineMemberAttempt, PipelineMemberAttemptStatus, PipelineRun, PipelineTrigger,
+    },
     rbac::{
         ResourceOwnership, Role, RoleAssignment, ScopeKind, ScopeRef, ServiceAccount, TeamRole,
     },
@@ -92,9 +94,11 @@ pub(super) const READY_NODE_COLUMNS: &str = "id, source_event_id, workflow_run_i
 const REPLICA_COLUMNS: &str = "replica_id, replica_type, instance_id, runtime_id, status, display_name, host, port, base_path, observed_ip, version, attributes, first_seen_at, last_heartbeat_at, last_seen_at, offline_at, registered_by_principal_id, registered_by_kind, registered_by_org_id";
 const REPLICA_PROVIDER_COLUMNS: &str = "replica_id, provider_name, provider_json, first_registered_at, last_registered_at, last_heartbeat_at";
 const AGENT_DIRECTIVE_COLUMNS: &str = "directive_id, replica_id, kind_json, state, issued_at, expires_at, published_at, completed_at, payload_json, message, attempts, claimed_at, claimed_by_runtime_id";
-const PIPELINE_COLUMNS: &str = "id, name, description, org_id, workflow_ids, member_failure_modes, defaults, metadata, created_at, updated_at";
+const PIPELINE_COLUMNS: &str =
+    "id, name, description, org_id, defaults, metadata, graph, concurrency, created_at, updated_at";
 const PIPELINE_TRIGGER_COLUMNS: &str = "id, pipeline_id, kind, enabled, configuration, next_execution, blackout_start, blackout_end, metadata, created_at, updated_at";
 const PIPELINE_RUN_COLUMNS: &str = "id, pipeline_id, pipeline_snapshot, status, parameters, state, created_at, started_at, finished_at, message, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_metadata";
+const PIPELINE_MEMBER_ATTEMPT_COLUMNS: &str = "id, pipeline_run_id, member_key, workflow_id, attempt, workflow_run_id, status, parameters, result, message, created_at, started_at, finished_at";
 
 const NOTIFICATION_POLICY_COLUMNS: &str = "id, workflow_id, name, event, severity, channel, target, threshold_seconds, enabled, managed_by, configuration, created_at, updated_at";
 const NOTIFICATION_DELIVERY_COLUMNS: &str = "id, notification_id, policy_id, channel, target, status, attempts, last_error, created_at, updated_at";

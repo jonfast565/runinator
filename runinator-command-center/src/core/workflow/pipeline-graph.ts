@@ -16,6 +16,13 @@ export interface PipelineNodeData {
   outgoing: number;
   incoming: number;
   failureMode: PipelineMemberFailureMode;
+  status?: string;
+  attempt?: number;
+  duration?: string;
+  hasResult?: boolean;
+  artifactCount?: number;
+  message?: string | null;
+  workflowRunId?: string | null;
 }
 
 export interface PipelineNodeModel {
@@ -31,6 +38,7 @@ export interface PipelineEdgeData {
   targetName: string;
   on: ChainEvent;
   enabled: boolean;
+  parameters: JsonRecord;
 }
 
 export interface PipelineEdgeModel {
@@ -73,7 +81,7 @@ export interface BuildPipelineGraphOptions {
   pipelineId?: string | null;
   /** the member workflow ids that scope the graph (used with `pipelineId`). */
   memberIds?: string[];
-  /** per-member failure-mode override, keyed by workflow id (`Pipeline.member_failure_modes`). */
+  /** per-member failure mode, keyed by workflow id. */
   memberFailureModes?: Record<string, PipelineMemberFailureMode>;
   /** the mode a member with no override takes (`Pipeline.defaults.default_failure_mode`). */
   defaultFailureMode?: PipelineMemberFailureMode;
@@ -155,6 +163,7 @@ export function buildPipelineGraph(
           targetName,
           on,
           enabled: trigger.enabled,
+          parameters: (trigger.configuration.parameters as JsonRecord | undefined) ?? {},
         },
       });
       outgoing.set(wf.id, (outgoing.get(wf.id) ?? 0) + 1);

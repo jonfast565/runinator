@@ -58,6 +58,7 @@
                 <tr v-else-if="!functions.filteredPackages.length">
                   <td colspan="3" class="!p-0 hover:!bg-transparent">
                     <EmptyState
+                      class="functions-empty-state"
                       compact
                       :icon="functions.packages.length ? 'search' : 'box'"
                       :title="functions.packages.length ? 'No matches' : 'No functions published'"

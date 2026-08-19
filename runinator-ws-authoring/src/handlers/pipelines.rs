@@ -14,9 +14,10 @@ use runinator_ws_core::events::{
     nudge_wake_publisher,
 };
 use runinator_ws_core::models::{
-    ApiResponse, PipelineRunInquiryDecision, PipelineRunRequest, PipelineRunResolutionRequest,
+    ApiResponse, PipelineMemberRetryRequest, PipelineRunInquiryDecision, PipelineRunRequest,
+    PipelineRunResolutionRequest,
 };
-use runinator_ws_core::responses::{api_error, not_found};
+use runinator_ws_core::responses::{api_error, bad_request, not_found};
 use runinator_ws_middleware::authz::AuthzChecker;
 
 pub async fn get_pipelines<T: DatabaseImpl>(
@@ -82,7 +83,7 @@ pub async fn create_pipeline<T: DatabaseImpl>(
             emit_workflows_changed(&events, pipeline.org_id);
             (StatusCode::OK, Json(ApiResponse::Pipeline(pipeline)))
         }
-        Err(err) => api_error(err.to_string()),
+        Err(err) => bad_request(err.to_string()),
     }
 }
 
@@ -111,7 +112,7 @@ pub async fn update_pipeline<T: DatabaseImpl>(
             emit_workflows_changed(&events, pipeline.org_id);
             (StatusCode::OK, Json(ApiResponse::Pipeline(pipeline)))
         }
-        Err(err) => api_error(err.to_string()),
+        Err(err) => bad_request(err.to_string()),
     }
 }
 
@@ -417,6 +418,45 @@ pub async fn resolve_pipeline_run<T: DatabaseImpl>(
     }
 }
 
+pub async fn retry_pipeline_member<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(events): Extension<EventSender>,
+    Extension(ctx): Extension<AuthContext>,
+    Path((pipeline_run_id, member_key)): Path<(Uuid, String)>,
+    Json(request): Json<PipelineMemberRetryRequest>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_pipeline_run(pipeline_run_id, Permission::Run)
+        .await
+    {
+        return reply;
+    }
+    match repository::retry_pipeline_run_member(
+        db.as_ref(),
+        pipeline_run_id,
+        member_key,
+        request.parameters,
+    )
+    .await
+    {
+        Ok(attempt) => {
+            let org_id = repository::org_id_for_pipeline_run(db.as_ref(), pipeline_run_id).await;
+            emit_pipeline_run(&events, pipeline_run_id, org_id);
+            nudge_wake_publisher(&events);
+            (
+                StatusCode::ACCEPTED,
+                Json(ApiResponse::PipelineMemberAttempt(attempt)),
+            )
+        }
+        Err(err) => (
+            StatusCode::CONFLICT,
+            Json(ApiResponse::ApiError(
+                runinator_ws_core::models::ApiError::new(err.to_string()),
+            )),
+        ),
+    }
+}
+
 async fn pipeline_org<T: DatabaseImpl>(
     db: &T,
     pipeline_id: Uuid,
@@ -481,5 +521,9 @@ pub fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
         .route(
             "/pipeline_runs/{id}/resolve",
             post(resolve_pipeline_run::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/pipeline_runs/{id}/members/{member_key}/retry",
+            post(retry_pipeline_member::<T>).layer(Extension(pool.clone())),
         )
 }

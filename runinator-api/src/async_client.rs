@@ -281,13 +281,13 @@ where
         Ok(response.json::<Vec<PipelineRun>>().await?)
     }
 
-    pub async fn cancel_pipeline_run(&self, run_id: Uuid) -> Result<PipelineRun> {
+    pub async fn cancel_pipeline_run(&self, run_id: Uuid) -> Result<TaskResponse> {
         let url = self
             .build_url(&format!("/pipeline_runs/{run_id}/cancel"))
             .await?;
         let response = self.http_post(url.clone()).send().await?;
         let response = Self::handle_response(url, response).await?;
-        Ok(response.json::<PipelineRun>().await?)
+        Ok(response.json::<TaskResponse>().await?)
     }
 
     /// resolve an open `inquire` pause on a pipeline run: continue the pipeline or abort it.
@@ -312,6 +312,30 @@ where
             .await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<PipelineRun>().await?)
+    }
+
+    pub async fn retry_pipeline_member(
+        &self,
+        run_id: Uuid,
+        member_key: &str,
+        parameters: Value,
+    ) -> Result<runinator_models::pipelines::PipelineMemberAttempt> {
+        let mut url = self
+            .build_url(&format!("/pipeline_runs/{run_id}/members"))
+            .await?;
+        url.path_segments_mut()
+            .map_err(|_| {
+                ApiError::UnexpectedResponse("pipeline retry URL cannot be a base URL".into())
+            })?
+            .push(member_key)
+            .push("retry");
+        let response = self
+            .http_post(url.clone())
+            .json(&json!({ "parameters": parameters }))
+            .send()
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json().await?)
     }
 
     /// redeem a self-authenticating agent enrollment request. the endpoint is public; this client's

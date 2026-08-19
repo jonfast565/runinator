@@ -1,25 +1,176 @@
-use std::collections::{BTreeMap, HashMap};
-
 use super::*;
 use runinator_models::pipelines::{
-    PipelineBundle, PipelineLinkSpec, PipelineMemberFailureMode, PipelineRun, PipelineRunDetail,
+    PIPELINE_GRAPH_VERSION, PipelineBundle, PipelineGraph, PipelineJoin, PipelineLink,
+    PipelineMember, PipelineRun, PipelineRunDetail, PipelineRunEdgeState, PipelineRunJoinState,
     PipelineSpec, PipelineTrigger,
 };
 use runinator_models::replicas::{TriggerActorType, TriggerSourceKind, WorkflowRunProvenance};
-use runinator_models::workflows::WorkflowTriggerKind;
 use uuid::Uuid;
 
 pub async fn upsert_pipeline<T: DatabaseImpl>(
     db: &T,
     pipeline: &Pipeline,
 ) -> Result<Pipeline, SendableError> {
+    validate_pipeline(pipeline)?;
     db.upsert_pipeline(pipeline).await
+}
+
+fn invalid_pipeline(message: impl Into<String>) -> SendableError {
+    Box::new(std::io::Error::new(
+        std::io::ErrorKind::InvalidInput,
+        message.into(),
+    ))
+}
+
+fn validate_mapping(value: &Value) -> Result<(), SendableError> {
+    runinator_workflows::validate_expression(value)
+        .map_err(|error| invalid_pipeline(error.to_string()))?;
+    fn walk(value: &Value) -> Result<(), SendableError> {
+        match value {
+            Value::Array(values) => values.iter().try_for_each(walk),
+            Value::Object(object) => {
+                if let Some(reference) = object.get("$ref").and_then(Value::as_object)
+                    && let Some(root) = reference.get("node").and_then(Value::as_str)
+                    && !matches!(root, "source" | "members")
+                {
+                    return Err(invalid_pipeline(format!(
+                        "unsupported pipeline mapping root '{root}'"
+                    )));
+                }
+                if let Some(call) = object.get("$call").and_then(Value::as_str) {
+                    let leaf = call.rsplit('.').next().unwrap_or(call);
+                    if !runinator_workflows::PureIntrinsics::contains(leaf)
+                        && !runinator_workflows::is_higher_order(leaf)
+                    {
+                        return Err(invalid_pipeline(format!(
+                            "pipeline mapping call '{call}' is not pure"
+                        )));
+                    }
+                }
+                object.values().try_for_each(walk)
+            }
+            _ => Ok(()),
+        }
+    }
+    walk(value)
+}
+
+fn validate_pipeline(pipeline: &Pipeline) -> Result<(), SendableError> {
+    if !pipeline.graph.is_current() {
+        return Err(invalid_pipeline(
+            "pipeline graph requires source pack reimport",
+        ));
+    }
+    if pipeline.concurrency.max_concurrent_runs < 0 {
+        return Err(invalid_pipeline("max_concurrent_runs cannot be negative"));
+    }
+    let mut members = std::collections::HashSet::new();
+    for member in &pipeline.graph.members {
+        if member.key.trim().is_empty() || !members.insert(member.key.as_str()) {
+            return Err(invalid_pipeline(format!(
+                "duplicate or empty pipeline member key '{}'",
+                member.key
+            )));
+        }
+    }
+    let mut links = std::collections::HashSet::new();
+    let mut link_ids = std::collections::HashSet::new();
+    let mut inbound: std::collections::HashMap<&str, Vec<&PipelineLink>> =
+        std::collections::HashMap::new();
+    let mut adjacency: std::collections::HashMap<&str, Vec<&str>> =
+        std::collections::HashMap::new();
+    for link in &pipeline.graph.links {
+        if !members.contains(link.from.as_str()) || !members.contains(link.to.as_str()) {
+            return Err(invalid_pipeline(format!(
+                "pipeline link {} -> {} names an unknown member",
+                link.from, link.to
+            )));
+        }
+        if link.from == link.to
+            || !links.insert((link.from.as_str(), link.to.as_str()))
+            || !link_ids.insert(link.id)
+        {
+            return Err(invalid_pipeline(format!(
+                "duplicate, self, or reused-id pipeline link {} -> {}",
+                link.from, link.to
+            )));
+        }
+        validate_mapping(&link.parameters)?;
+        if link.enabled {
+            inbound.entry(&link.to).or_default().push(link);
+            adjacency.entry(&link.from).or_default().push(&link.to);
+        }
+    }
+    fn cyclic<'a>(
+        node: &'a str,
+        adjacency: &std::collections::HashMap<&'a str, Vec<&'a str>>,
+        visiting: &mut std::collections::HashSet<&'a str>,
+        done: &mut std::collections::HashSet<&'a str>,
+    ) -> bool {
+        if done.contains(node) {
+            return false;
+        }
+        if !visiting.insert(node) {
+            return true;
+        }
+        if adjacency.get(node).is_some_and(|next| {
+            next.iter()
+                .any(|next| cyclic(next, adjacency, visiting, done))
+        }) {
+            return true;
+        }
+        visiting.remove(node);
+        done.insert(node);
+        false
+    }
+    let mut visiting = std::collections::HashSet::new();
+    let mut done = std::collections::HashSet::new();
+    if members
+        .iter()
+        .any(|member| cyclic(member, &adjacency, &mut visiting, &mut done))
+    {
+        return Err(invalid_pipeline("pipeline graph contains a cycle"));
+    }
+    for (target, incoming) in &inbound {
+        if incoming.len() > 1 && !pipeline.graph.joins.contains_key(*target) {
+            return Err(invalid_pipeline(format!(
+                "member '{target}' has multiple inbound links but no join"
+            )));
+        }
+    }
+    for (key, join) in &pipeline.graph.joins {
+        if key != &join.target || !members.contains(key.as_str()) {
+            return Err(invalid_pipeline(format!(
+                "join '{key}' has an invalid target"
+            )));
+        }
+        let incoming = inbound
+            .get(key.as_str())
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        if incoming.len() < 2 {
+            return Err(invalid_pipeline(format!(
+                "join '{key}' requires at least two enabled inputs"
+            )));
+        }
+        if join.mode == runinator_models::pipelines::PipelineJoinMode::FirstSuccess
+            && incoming
+                .iter()
+                .any(|link| link.on != runinator_models::pipelines::PipelineLinkSelector::Success)
+        {
+            return Err(invalid_pipeline(format!(
+                "first_success join '{key}' requires success selectors"
+            )));
+        }
+        validate_mapping(&join.parameters)?;
+    }
+    Ok(())
 }
 
 /// import a compiled pipeline bundle from a pack. for each pipeline: resolve member workflow names to
 /// ids, upsert the pipeline (reusing an existing id with the same name + org so re-import updates in
-/// place), and materialize its links as managed `chained` triggers. pack-managed pipelines carry
-/// `metadata.managed_by = "wdl"`, and their link triggers carry `configuration.pipeline_id`.
+/// place), and atomically replace its first-class graph. pack-managed pipelines carry
+/// `metadata.managed_by = "wdl"`; only pipeline start triggers are materialized separately.
 pub async fn import_pipeline_bundle_with<T: DatabaseImpl>(
     db: &T,
     bundle: &PipelineBundle,
@@ -40,9 +191,7 @@ async fn import_pipeline_spec<T: DatabaseImpl>(
     existing: &[Pipeline],
 ) -> Result<Pipeline, SendableError> {
     // resolve each member workflow name to its id; an unknown member fails the import loudly.
-    let mut workflow_ids = Vec::with_capacity(spec.members.len());
-    let mut member_ids: HashMap<&str, Uuid> = HashMap::new();
-    let mut member_failure_modes: BTreeMap<Uuid, PipelineMemberFailureMode> = BTreeMap::new();
+    let mut graph_members = Vec::with_capacity(spec.members.len());
     for member in &spec.members {
         let id = db
             .fetch_workflow_by_name(member.name.clone())
@@ -51,34 +200,74 @@ async fn import_pipeline_spec<T: DatabaseImpl>(
             .ok_or_else(|| {
                 crate::errors::IMPORT_UNKNOWN_PIPELINE_MEMBER.error(member.name.as_str())
             })?;
-        workflow_ids.push(id);
-        member_ids.insert(member.name.as_str(), id);
-        if let Some(mode) = member.failure_mode {
-            member_failure_modes.insert(id, mode);
-        }
+        graph_members.push(PipelineMember {
+            key: member.name.clone(),
+            workflow_id: id,
+            failure_mode: member
+                .failure_mode
+                .unwrap_or(spec.defaults.default_failure_mode),
+        });
     }
     // reuse the id of an existing pipeline with the same name and org so re-import updates in place.
-    let prior_id = existing
+    let prior = existing
         .iter()
-        .find(|p| p.name == spec.name && p.org_id == import_org)
-        .and_then(|p| p.id);
+        .find(|p| p.name == spec.name && p.org_id == import_org);
+    let prior_id = prior.and_then(|p| p.id);
     let pipeline = Pipeline {
         id: prior_id,
         name: spec.name.clone(),
         description: spec.description.clone(),
         org_id: import_org,
-        workflow_ids,
-        member_failure_modes,
+        graph: PipelineGraph {
+            version: PIPELINE_GRAPH_VERSION,
+            members: graph_members,
+            links: spec
+                .links
+                .iter()
+                .map(|link| PipelineLink {
+                    id: prior
+                        .and_then(|pipeline| {
+                            pipeline
+                                .graph
+                                .links
+                                .iter()
+                                .find(|prior| prior.from == link.from && prior.to == link.to)
+                        })
+                        .map(|prior| prior.id)
+                        .unwrap_or_else(Uuid::new_v4),
+                    from: link.from.clone(),
+                    to: link.to.clone(),
+                    on: link.on,
+                    enabled: link.enabled,
+                    parameters: link.parameters.clone(),
+                })
+                .collect(),
+            joins: spec
+                .joins
+                .iter()
+                .map(|join| {
+                    (
+                        join.target.clone(),
+                        PipelineJoin {
+                            target: join.target.clone(),
+                            mode: join.mode,
+                            parameters: join.parameters.clone(),
+                        },
+                    )
+                })
+                .collect(),
+        },
+        concurrency: spec.concurrency,
         defaults: spec.defaults.clone(),
-        metadata: runinator_models::json!({ "managed_by": "wdl" }),
+        metadata: runinator_models::json!({ "managed_by": "wdl", "requires_reimport": false }),
         created_at: None,
         updated_at: None,
     };
+    validate_pipeline(&pipeline)?;
     let saved = db.upsert_pipeline(&pipeline).await?;
     let pipeline_id = saved
         .id
         .ok_or_else(|| crate::errors::IMPORT_UNKNOWN_PIPELINE_MEMBER.error(spec.name.as_str()))?;
-    materialize_pipeline_links(db, spec, pipeline_id, &member_ids).await?;
     materialize_pipeline_triggers(db, spec, pipeline_id).await?;
     Ok(saved)
 }
@@ -116,62 +305,6 @@ async fn materialize_pipeline_triggers<T: DatabaseImpl>(
             updated_at: None,
         };
         db.upsert_pipeline_trigger(&trigger).await?;
-    }
-    Ok(())
-}
-
-// realize a pipeline's links as managed `chained` triggers. reconciles idempotently: on every member
-// workflow, drop this pipeline's prior link triggers (keyed by `configuration.pipeline_id`), then
-// insert the current links sourced from that workflow. header triggers (no `pipeline_id`) and other
-// pipelines' triggers on the same workflow are left untouched.
-async fn materialize_pipeline_links<T: DatabaseImpl>(
-    db: &T,
-    spec: &PipelineSpec,
-    pipeline_id: Uuid,
-    member_ids: &HashMap<&str, Uuid>,
-) -> Result<(), SendableError> {
-    let pipeline_key = pipeline_id.to_string();
-    let mut by_source: HashMap<Uuid, Vec<&PipelineLinkSpec>> = HashMap::new();
-    for link in &spec.links {
-        if let Some(from_id) = member_ids.get(link.from.as_str()) {
-            by_source.entry(*from_id).or_default().push(link);
-        }
-    }
-    for workflow_id in member_ids.values().copied() {
-        for existing in db.fetch_workflow_triggers(workflow_id).await? {
-            let belongs = existing
-                .configuration
-                .pointer("/pipeline_id")
-                .and_then(Value::as_str)
-                == Some(pipeline_key.as_str());
-            if let (true, Some(trigger_id)) = (belongs, existing.id) {
-                db.delete_workflow_trigger(trigger_id).await?;
-            }
-        }
-        let Some(links) = by_source.get(&workflow_id) else {
-            continue;
-        };
-        for link in links {
-            let trigger = WorkflowTrigger {
-                id: None,
-                workflow_id,
-                kind: WorkflowTriggerKind::Chained,
-                enabled: link.enabled,
-                configuration: runinator_models::json!({
-                    "on": link.on.as_str(),
-                    "target_workflow": link.to,
-                    "parameters": {},
-                    "pipeline_id": pipeline_key,
-                }),
-                next_execution: None,
-                blackout_start: None,
-                blackout_end: None,
-                metadata: runinator_models::json!({ "managed_by": "wdl" }),
-                created_at: None,
-                updated_at: None,
-            };
-            db.upsert_workflow_trigger(&trigger).await?;
-        }
     }
     Ok(())
 }
@@ -308,10 +441,14 @@ pub async fn claim_due_pipeline_trigger_firings<T: DatabaseImpl>(
     let runs = db
         .claim_due_pipeline_trigger_firings(scheduler_id, Utc::now(), limit)
         .await?;
-    for run in &runs {
-        runinator_reducer::start_pipeline_run(db, run).await?;
+    let mut admitted = Vec::with_capacity(runs.len());
+    for run in runs {
+        let outcome = runinator_reducer::start_pipeline_run(db, &run).await?;
+        if outcome != runinator_reducer::PipelineStartOutcome::Skipped {
+            admitted.push(run);
+        }
     }
-    Ok(runs)
+    Ok(admitted)
 }
 
 pub async fn fetch_pipeline_run<T: DatabaseImpl>(
@@ -339,7 +476,60 @@ pub async fn fetch_pipeline_run_detail<T: DatabaseImpl>(
     let members = db
         .fetch_workflow_runs_for_pipeline_run(pipeline_run_id)
         .await?;
-    Ok(Some(PipelineRunDetail { run, members }))
+    let attempts = db.fetch_pipeline_member_attempts(pipeline_run_id).await?;
+    let latest = |key: &str| {
+        attempts
+            .iter()
+            .filter(|attempt| attempt.member_key == key)
+            .max_by_key(|attempt| attempt.attempt)
+    };
+    let edges = run.pipeline_snapshot.as_ref().map(|pipeline| pipeline.graph.links.iter().map(|link| {
+        let source = latest(&link.from);
+        let target = latest(&link.to);
+        let stopped = source.is_some_and(|attempt| {
+            matches!(attempt.status, runinator_models::pipelines::PipelineMemberAttemptStatus::Failed | runinator_models::pipelines::PipelineMemberAttemptStatus::TimedOut)
+                && pipeline.graph.members.iter().find(|member| member.key == link.from)
+                    .is_some_and(|member| member.failure_mode == runinator_models::pipelines::PipelineMemberFailureMode::Stop)
+        });
+        let state = match source {
+            None => "pending",
+            Some(source) if !source.status.is_terminal() => "pending",
+            Some(_) if stopped => "skipped",
+            Some(source) if match link.on {
+                runinator_models::pipelines::PipelineLinkSelector::Success => source.status == runinator_models::pipelines::PipelineMemberAttemptStatus::Succeeded,
+                runinator_models::pipelines::PipelineLinkSelector::Failure => matches!(source.status, runinator_models::pipelines::PipelineMemberAttemptStatus::Failed | runinator_models::pipelines::PipelineMemberAttemptStatus::TimedOut),
+                runinator_models::pipelines::PipelineLinkSelector::Complete => source.status != runinator_models::pipelines::PipelineMemberAttemptStatus::Skipped,
+            } => if target.is_some_and(|target| !target.status.is_terminal()) { "active" } else { "satisfied" },
+            Some(_) => "skipped",
+        };
+        PipelineRunEdgeState { link_id: link.id, state: state.into() }
+    }).collect()).unwrap_or_default();
+    let joins = run.pipeline_snapshot.as_ref().map(|pipeline| pipeline.graph.joins.values().map(|join| {
+        let inbound = pipeline.graph.links.iter().filter(|link| link.enabled && link.to == join.target).collect::<Vec<_>>();
+        let satisfied = inbound.iter().filter(|link| latest(&link.from).is_some_and(|attempt| {
+            let stopped = matches!(attempt.status, runinator_models::pipelines::PipelineMemberAttemptStatus::Failed | runinator_models::pipelines::PipelineMemberAttemptStatus::TimedOut)
+                && pipeline.graph.members.iter().find(|member| member.key == link.from)
+                    .is_some_and(|member| member.failure_mode == runinator_models::pipelines::PipelineMemberFailureMode::Stop);
+            !stopped && match link.on {
+            runinator_models::pipelines::PipelineLinkSelector::Success => attempt.status == runinator_models::pipelines::PipelineMemberAttemptStatus::Succeeded,
+            runinator_models::pipelines::PipelineLinkSelector::Failure => matches!(attempt.status, runinator_models::pipelines::PipelineMemberAttemptStatus::Failed | runinator_models::pipelines::PipelineMemberAttemptStatus::TimedOut),
+            runinator_models::pipelines::PipelineLinkSelector::Complete => attempt.status.is_terminal() && attempt.status != runinator_models::pipelines::PipelineMemberAttemptStatus::Skipped,
+        }})).count();
+        let terminal = inbound.iter().filter(|link| latest(&link.from).is_some_and(|attempt| attempt.status.is_terminal())).count();
+        let target = latest(&join.target);
+        let ready = match join.mode { runinator_models::pipelines::PipelineJoinMode::All => satisfied == inbound.len(), _ => satisfied > 0 };
+        let state = if target.is_some_and(|attempt| !attempt.status.is_terminal()) { "active" }
+            else if target.is_some() || ready { "satisfied" }
+            else if terminal == inbound.len() { "skipped" } else { "pending" };
+        PipelineRunJoinState { target: join.target.clone(), mode: join.mode, state: state.into(), satisfied_inputs: satisfied, total_inputs: inbound.len() }
+    }).collect()).unwrap_or_default();
+    Ok(Some(PipelineRunDetail {
+        run,
+        members,
+        attempts,
+        edges,
+        joins,
+    }))
 }
 
 pub async fn fetch_pipeline_runs_for_pipeline<T: DatabaseImpl>(
@@ -368,6 +558,17 @@ pub async fn cancel_pipeline_run<T: DatabaseImpl>(
             )
             .await?;
             super::release_run_mutexes(db, member.id).await?;
+        }
+    }
+    for attempt in db.fetch_pipeline_member_attempts(pipeline_run_id).await? {
+        if !attempt.status.is_terminal() {
+            db.update_pipeline_member_attempt(
+                attempt.id,
+                runinator_models::pipelines::PipelineMemberAttemptStatus::Canceled,
+                attempt.result,
+                Some("Pipeline run canceled".into()),
+            )
+            .await?;
         }
     }
     db.update_pipeline_run_status(
@@ -406,4 +607,14 @@ pub async fn resolve_pipeline_run_inquiry<T: DatabaseImpl>(
         message,
     )
     .await
+}
+
+pub async fn retry_pipeline_run_member<T: DatabaseImpl>(
+    db: &T,
+    pipeline_run_id: Uuid,
+    member_key: String,
+    parameter_override: Value,
+) -> Result<runinator_models::pipelines::PipelineMemberAttempt, SendableError> {
+    runinator_reducer::retry_pipeline_member(db, pipeline_run_id, &member_key, parameter_override)
+        .await
 }

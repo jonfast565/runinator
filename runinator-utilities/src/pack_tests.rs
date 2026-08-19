@@ -50,7 +50,10 @@ fn pack_zip_round_trips() {
                 to: "demo".into(),
                 on: PipelineLinkSelector::Complete,
                 enabled: true,
+                parameters: Default::default(),
             }],
+            joins: vec![],
+            concurrency: Default::default(),
             triggers: vec![],
         }],
     };

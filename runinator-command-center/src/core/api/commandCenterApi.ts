@@ -66,6 +66,7 @@ import type {
   WorkflowTrigger,
   SimulationRun,
   Pipeline,
+  PipelineMemberAttempt,
   PipelineRun,
   PipelineRunDetail,
   PipelineTrigger,
@@ -494,6 +495,18 @@ export async function fetchPipelineRun(pipelineRunId: string) {
 
 export async function cancelPipelineRun(pipelineRunId: string) {
   return command<TaskResponse>("cancel_pipeline_run", { pipelineRunId });
+}
+
+export async function retryPipelineMember(
+  pipelineRunId: string,
+  memberKey: string,
+  parameters: unknown = {},
+) {
+  return command<PipelineMemberAttempt>("retry_pipeline_member", {
+    pipelineRunId,
+    memberKey,
+    parameters,
+  });
 }
 
 // resolve a pipeline run's pending inquiry (a member with the `inquire` failure mode paused it).

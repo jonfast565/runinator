@@ -167,6 +167,16 @@ pub const PIPELINE_INQUIRY_MEMBER_MISSING: ErrorDescriptor = ErrorDescriptor::ne
     "pipeline.run.inquiry_member_missing",
     "The pipeline member run behind the pending inquiry no longer exists",
 );
+pub const PIPELINE_CONCURRENCY_REJECTED: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI175",
+    "pipeline.run.concurrency_rejected",
+    "Pipeline run rejected by its concurrency policy",
+);
+pub const PIPELINE_MEMBER_NOT_RETRYABLE: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI176",
+    "pipeline.run.member_not_retryable",
+    "Pipeline member is not on the retry frontier",
+);
 
 pub const DICTIONARY: &[ErrorDescriptor] = &[
     ASSERT_PARAMS_MISSING,
@@ -202,6 +212,8 @@ pub const DICTIONARY: &[ErrorDescriptor] = &[
     PIPELINE_NO_ENTRY_MEMBERS,
     PIPELINE_NO_PENDING_INQUIRY,
     PIPELINE_INQUIRY_MEMBER_MISSING,
+    PIPELINE_CONCURRENCY_REJECTED,
+    PIPELINE_MEMBER_NOT_RETRYABLE,
     RUN_STATE_CONFLICT,
 ];
 

@@ -34,87 +34,8 @@ pub(super) async fn maybe_start_chained_workflows<T: ReducerStore>(
         return Ok(());
     }
 
-    // a pipeline member's failure mode can suppress or pause its onward *pipeline-tagged* links.
-    // resolved lazily, at most once, and only when a pipeline-tagged trigger actually reaches this
-    // check — a leaf member with no onward pipeline links must not pause the pipeline run just
-    // because it has an `Inquire` mode nothing would ever consult.
-    let mut pipeline_gate: Option<pipeline_orchestration::PipelineLinkGate> = None;
-
     for trigger in ctx.db.fetch_workflow_triggers(run.workflow_id).await? {
         if trigger.kind != WorkflowTriggerKind::Chained || !trigger.enabled {
-            continue;
-        }
-        let Some(trigger_id) = trigger.id else {
-            continue;
-        };
-        if !chain_status_matches(&trigger, run.status) {
-            continue;
-        }
-        if trigger.configuration.pointer("/pipeline_id").is_some() {
-            let gate = match pipeline_gate {
-                Some(gate) => gate,
-                None => {
-                    let gate = pipeline_orchestration::pipeline_link_gate(ctx).await?;
-                    pipeline_gate = Some(gate);
-                    gate
-                }
-            };
-            if matches!(
-                gate,
-                pipeline_orchestration::PipelineLinkGate::Suppress
-                    | pipeline_orchestration::PipelineLinkGate::Paused
-            ) {
-                continue;
-            }
-        }
-        let Some(target_name) = trigger
-            .configuration
-            .get("target_workflow")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|name| !name.is_empty())
-            .map(str::to_string)
-        else {
-            continue;
-        };
-        // exactly-once per (trigger, source run): only the caller that records the firing starts.
-        if !ctx
-            .db
-            .try_record_trigger_firing(trigger_id, run.id.to_string())
-            .await?
-        {
-            continue;
-        }
-        start_chained_run(ctx, &trigger, &target_name, depth + 1).await?;
-    }
-    Ok(())
-}
-
-/// fire `run`'s pipeline-tagged onward links unconditionally, for a member whose pending inquiry was
-/// just resolved as "continue" (see [`super::pipeline_orchestration::resolve_pipeline_run_inquiry`]).
-/// scoped to `pipeline_id`'s links only: any non-pipeline chained trigger on this workflow already
-/// fired at the original terminal-processing pass, since only pipeline-tagged links are ever gated.
-pub(super) async fn fire_pipeline_links_for_member<T: ReducerStore>(
-    ctx: &WorkflowRunContext<'_, T>,
-    pipeline_id: Uuid,
-) -> Result<(), SendableError> {
-    let run = ctx.workflow_run;
-    let pipeline_key = pipeline_id.to_string();
-    let depth = run
-        .trigger_metadata
-        .get("chain_depth")
-        .and_then(Value::as_i64)
-        .unwrap_or(0);
-    for trigger in ctx.db.fetch_workflow_triggers(run.workflow_id).await? {
-        if trigger.kind != WorkflowTriggerKind::Chained || !trigger.enabled {
-            continue;
-        }
-        if trigger
-            .configuration
-            .pointer("/pipeline_id")
-            .and_then(Value::as_str)
-            != Some(pipeline_key.as_str())
-        {
             continue;
         }
         let Some(trigger_id) = trigger.id else {
@@ -133,6 +54,7 @@ pub(super) async fn fire_pipeline_links_for_member<T: ReducerStore>(
         else {
             continue;
         };
+        // exactly-once per (trigger, source run): only the caller that records the firing starts.
         if !ctx
             .db
             .try_record_trigger_firing(trigger_id, run.id.to_string())

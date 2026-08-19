@@ -189,18 +189,22 @@ async fn import_pipeline_creates_managed_chained_triggers_idempotently() {
                 to: "SDLC: Review".into(),
                 on: PipelineLinkSelector::Complete,
                 enabled: true,
+                parameters: Default::default(),
             }],
+            joins: vec![],
+            concurrency: Default::default(),
             triggers: vec![],
         }],
     };
 
-    // first import: creates the pipeline and one managed chained trigger on the source workflow.
+    // first import: creates the pipeline with its first-class graph.
     let imported = crate::repository::import_pipeline_bundle_with(&db, &bundle, None)
         .await
         .unwrap();
     assert_eq!(imported.len(), 1);
     let pipeline_id = imported[0].id.expect("pipeline id");
-    assert_eq!(imported[0].workflow_ids.len(), 2);
+    assert_eq!(imported[0].graph.members.len(), 2);
+    assert_eq!(imported[0].graph.links.len(), 1);
 
     let dev_id = db
         .fetch_workflow_by_name("SDLC: Development".into())
@@ -209,36 +213,15 @@ async fn import_pipeline_creates_managed_chained_triggers_idempotently() {
         .unwrap()
         .id
         .unwrap();
-    let triggers = db.fetch_workflow_triggers(dev_id).await.unwrap();
-    assert_eq!(triggers.len(), 1);
-    let trigger = &triggers[0];
-    assert_eq!(
-        trigger
-            .configuration
-            .pointer("/target_workflow")
-            .and_then(Value::as_str),
-        Some("SDLC: Review")
-    );
-    assert_eq!(
-        trigger.configuration.pointer("/on").and_then(Value::as_str),
-        Some("complete")
-    );
-    // the frontend keys pipeline membership off configuration.pipeline_id.
-    assert_eq!(
-        trigger
-            .configuration
-            .pointer("/pipeline_id")
-            .and_then(Value::as_str),
-        Some(pipeline_id.to_string().as_str())
-    );
+    assert!(db.fetch_workflow_triggers(dev_id).await.unwrap().is_empty());
 
-    // re-import: reconciles in place — no duplicate pipeline and no duplicate trigger.
+    // re-import reconciles in place without creating workflow triggers.
     let reimported = crate::repository::import_pipeline_bundle_with(&db, &bundle, None)
         .await
         .unwrap();
     assert_eq!(reimported[0].id, Some(pipeline_id));
     assert_eq!(db.fetch_pipelines().await.unwrap().len(), 1);
-    assert_eq!(db.fetch_workflow_triggers(dev_id).await.unwrap().len(), 1);
+    assert!(db.fetch_workflow_triggers(dev_id).await.unwrap().is_empty());
 
     let _ = std::fs::remove_file(path);
 }
@@ -271,7 +254,10 @@ async fn manual_pipeline_run_starts_entry_member_chains_and_settles() {
                 to: "Deploy".into(),
                 on: PipelineLinkSelector::Complete,
                 enabled: true,
+                parameters: Default::default(),
             }],
+            joins: vec![],
+            concurrency: Default::default(),
             triggers: vec![],
         }],
     };

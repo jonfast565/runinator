@@ -376,6 +376,8 @@ fn parse_pipeline_decl(pair: Pair<Rule>) -> Result<PipelineDecl, WdlError> {
     let mut max_depth = None;
     let mut members = Vec::new();
     let mut links = Vec::new();
+    let mut joins = Vec::new();
+    let mut concurrency = None;
     let mut triggers = Vec::new();
     for inner in pair.into_inner() {
         match inner.as_rule() {
@@ -408,6 +410,8 @@ fn parse_pipeline_decl(pair: Pair<Rule>) -> Result<PipelineDecl, WdlError> {
                     }
                     Rule::pipeline_member => members.push(parse_pipeline_member(item)?),
                     Rule::pipeline_link => links.push(parse_pipeline_link(item)?),
+                    Rule::pipeline_join => joins.push(parse_pipeline_join(item)?),
+                    Rule::concurrency_decl => concurrency = Some(parse_concurrency_decl(item)?),
                     Rule::pipeline_trigger => triggers.push(parse_pipeline_trigger(item)?),
                     _ => {}
                 }
@@ -422,6 +426,8 @@ fn parse_pipeline_decl(pair: Pair<Rule>) -> Result<PipelineDecl, WdlError> {
         max_depth,
         members,
         links,
+        joins,
+        concurrency,
         triggers,
         span,
     })
@@ -494,10 +500,12 @@ fn parse_pipeline_link(pair: Pair<Rule>) -> Result<PipelineLinkDecl, WdlError> {
     let span = span_of(&pair);
     let mut endpoints = Vec::with_capacity(2);
     let mut on = None;
+    let mut parameters = None;
     for inner in pair.into_inner() {
         match inner.as_rule() {
             Rule::string => endpoints.push(plain_string(inner)?),
             Rule::pipeline_link_selector => on = Some(inner.as_str().to_string()),
+            Rule::object => parameters = Some(parse_object(inner)?),
             _ => {}
         }
     }
@@ -509,7 +517,34 @@ fn parse_pipeline_link(pair: Pair<Rule>) -> Result<PipelineLinkDecl, WdlError> {
     }
     let to = endpoints.pop().unwrap();
     let from = endpoints.pop().unwrap();
-    Ok(PipelineLinkDecl { from, to, on, span })
+    Ok(PipelineLinkDecl {
+        from,
+        to,
+        on,
+        parameters,
+        span,
+    })
+}
+
+fn parse_pipeline_join(pair: Pair<Rule>) -> Result<PipelineJoinDecl, WdlError> {
+    let span = span_of(&pair);
+    let mut target = None;
+    let mut mode = None;
+    let mut parameters = None;
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::string => target = Some(plain_string(inner)?),
+            Rule::pipeline_join_mode => mode = Some(inner.as_str().to_string()),
+            Rule::object => parameters = Some(parse_object(inner)?),
+            _ => {}
+        }
+    }
+    Ok(PipelineJoinDecl {
+        target: target.ok_or_else(|| WdlError::syntax(span, "a pipeline join needs a target"))?,
+        mode: mode.unwrap_or_else(|| "all".into()),
+        parameters,
+        span,
+    })
 }
 
 fn parse_namespace_block(pair: Pair<Rule>) -> Result<Vec<Workflow>, WdlError> {

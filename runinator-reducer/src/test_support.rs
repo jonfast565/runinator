@@ -22,7 +22,9 @@ use runinator_models::cursor::RunCursor;
 use runinator_models::errors::SendableError;
 use runinator_models::orchestration::{NewOrchestrationEvent, ReadyNodeRecord};
 use runinator_models::orgs::Organization;
-use runinator_models::pipelines::{Pipeline, PipelineRun, PipelineTrigger};
+use runinator_models::pipelines::{
+    Pipeline, PipelineMemberAttempt, PipelineMemberAttemptStatus, PipelineRun, PipelineTrigger,
+};
 use runinator_models::replicas::{
     ReplicaKind, ReplicaRecord, ReplicaStatus, WorkflowRunProvenance,
 };
@@ -54,9 +56,13 @@ struct FakeMutexHolder {
 #[derive(Default)]
 struct State {
     workflows: Vec<WorkflowDefinition>,
+    pipelines: Vec<Pipeline>,
     triggers: Vec<WorkflowTrigger>,
     runs: HashMap<Uuid, WorkflowRun>,
+    pipeline_runs: HashMap<Uuid, PipelineRun>,
+    pipeline_attempts: Vec<PipelineMemberAttempt>,
     node_runs: Vec<WorkflowNodeRun>,
+    run_artifacts: Vec<WorkflowRunArtifact>,
     ready_nodes: Vec<ReadyNodeRecord>,
     dispatches: Vec<ActionDispatchRecord>,
     audit: Vec<Value>,
@@ -86,6 +92,37 @@ impl FakeStore {
         self.state.lock().expect("state").workflows.push(workflow);
     }
 
+    pub fn insert_pipeline(&self, pipeline: Pipeline) {
+        self.state.lock().expect("state").pipelines.push(pipeline);
+    }
+
+    pub fn pipeline_attempts(&self, pipeline_run_id: Uuid) -> Vec<PipelineMemberAttempt> {
+        self.state
+            .lock()
+            .expect("state")
+            .pipeline_attempts
+            .iter()
+            .filter(|attempt| attempt.pipeline_run_id == pipeline_run_id)
+            .cloned()
+            .collect()
+    }
+
+    pub fn insert_pipeline_run(&self, run: PipelineRun) {
+        self.state
+            .lock()
+            .expect("state")
+            .pipeline_runs
+            .insert(run.id, run);
+    }
+
+    pub fn insert_pipeline_attempt(&self, attempt: PipelineMemberAttempt) {
+        self.state
+            .lock()
+            .expect("state")
+            .pipeline_attempts
+            .push(attempt);
+    }
+
     /// register a trigger on a workflow, for the chaining path that reads them on a terminal.
     pub fn insert_trigger(&self, trigger: WorkflowTrigger) {
         self.state.lock().expect("state").triggers.push(trigger);
@@ -113,6 +150,14 @@ impl FakeStore {
 
     pub fn insert_node_run(&self, node_run: WorkflowNodeRun) {
         self.state.lock().expect("state").node_runs.push(node_run);
+    }
+
+    pub fn insert_run_artifact(&self, artifact: WorkflowRunArtifact) {
+        self.state
+            .lock()
+            .expect("state")
+            .run_artifacts
+            .push(artifact);
     }
 
     pub fn run(&self, id: Uuid) -> Option<WorkflowRun> {
@@ -465,6 +510,21 @@ impl ReducerStore for FakeStore {
             .collect())
     }
 
+    async fn fetch_promoted_workflow_run_artifacts(
+        &self,
+        workflow_run_id: Uuid,
+    ) -> Result<Vec<WorkflowRunArtifact>, SendableError> {
+        Ok(self
+            .state
+            .lock()
+            .expect("state")
+            .run_artifacts
+            .iter()
+            .filter(|artifact| artifact.workflow_run_id == workflow_run_id)
+            .cloned()
+            .collect())
+    }
+
     async fn fetch_workflow_node_runs_by_status(
         &self,
         status: WorkflowStatus,
@@ -612,8 +672,15 @@ impl ReducerStore for FakeStore {
             .collect())
     }
 
-    async fn fetch_pipeline(&self, _pipeline_id: Uuid) -> Result<Option<Pipeline>, SendableError> {
-        Ok(None)
+    async fn fetch_pipeline(&self, pipeline_id: Uuid) -> Result<Option<Pipeline>, SendableError> {
+        Ok(self
+            .state
+            .lock()
+            .expect("state")
+            .pipelines
+            .iter()
+            .find(|pipeline| pipeline.id == Some(pipeline_id))
+            .cloned())
     }
 
     async fn fetch_enabled_chained_pipeline_triggers(
@@ -624,26 +691,100 @@ impl ReducerStore for FakeStore {
 
     async fn fetch_pipeline_run(
         &self,
-        _pipeline_run_id: Uuid,
+        pipeline_run_id: Uuid,
     ) -> Result<Option<PipelineRun>, SendableError> {
-        Ok(None)
+        Ok(self
+            .state
+            .lock()
+            .expect("state")
+            .pipeline_runs
+            .get(&pipeline_run_id)
+            .cloned())
+    }
+
+    async fn fetch_pipeline_runs_for_concurrency(
+        &self,
+        pipeline_id: Uuid,
+    ) -> Result<Vec<PipelineRun>, SendableError> {
+        Ok(self
+            .state
+            .lock()
+            .expect("state")
+            .pipeline_runs
+            .values()
+            .filter(|run| run.pipeline_id == pipeline_id)
+            .cloned()
+            .collect())
     }
 
     async fn update_pipeline_run_status(
         &self,
-        _pipeline_run_id: Uuid,
-        _status: WorkflowStatus,
-        _state: Option<Value>,
-        _message: Option<String>,
+        pipeline_run_id: Uuid,
+        status: WorkflowStatus,
+        state: Option<Value>,
+        message: Option<String>,
     ) -> Result<(), SendableError> {
+        if let Some(run) = self
+            .state
+            .lock()
+            .expect("state")
+            .pipeline_runs
+            .get_mut(&pipeline_run_id)
+        {
+            run.status = status;
+            if let Some(state) = state {
+                run.state = state;
+            }
+            if let Some(message) = message {
+                run.message = Some(message);
+            }
+            if status == WorkflowStatus::Running && run.started_at.is_none() {
+                run.started_at = Some(Utc::now());
+            }
+            if status.is_terminal() {
+                run.finished_at = Some(Utc::now());
+            }
+        }
+        Ok(())
+    }
+
+    async fn reopen_pipeline_run(
+        &self,
+        pipeline_run_id: Uuid,
+        message: String,
+    ) -> Result<(), SendableError> {
+        if let Some(run) = self
+            .state
+            .lock()
+            .expect("state")
+            .pipeline_runs
+            .get_mut(&pipeline_run_id)
+            && matches!(
+                run.status,
+                WorkflowStatus::Failed | WorkflowStatus::TimedOut
+            )
+        {
+            run.status = WorkflowStatus::Running;
+            run.finished_at = None;
+            run.message = Some(message);
+        }
         Ok(())
     }
 
     async fn set_workflow_run_pipeline_run(
         &self,
-        _workflow_run_id: Uuid,
-        _pipeline_run_id: Uuid,
+        workflow_run_id: Uuid,
+        pipeline_run_id: Uuid,
     ) -> Result<(), SendableError> {
+        if let Some(run) = self
+            .state
+            .lock()
+            .expect("state")
+            .runs
+            .get_mut(&workflow_run_id)
+        {
+            run.pipeline_run_id = Some(pipeline_run_id);
+        }
         Ok(())
     }
 
@@ -924,20 +1065,177 @@ impl ReducerStore for FakeStore {
 
     async fn create_pipeline_run(
         &self,
-        _pipeline_id: Uuid,
-        _pipeline_snapshot: Pipeline,
-        _parameters: Value,
-        _state: Value,
-        _provenance: WorkflowRunProvenance,
+        pipeline_id: Uuid,
+        pipeline_snapshot: Pipeline,
+        parameters: Value,
+        state: Value,
+        provenance: WorkflowRunProvenance,
     ) -> Result<PipelineRun, SendableError> {
-        unimplemented!("FakeStore::create_pipeline_run is not needed by any handler test yet")
+        let run = PipelineRun {
+            id: Uuid::now_v7(),
+            pipeline_id,
+            pipeline_snapshot: Some(pipeline_snapshot),
+            status: WorkflowStatus::Queued,
+            parameters,
+            state,
+            created_at: Utc::now(),
+            started_at: None,
+            finished_at: None,
+            message: None,
+            trigger_source_kind: provenance.source_kind,
+            trigger_actor_type: provenance.actor_type,
+            trigger_actor_replica_id: provenance.actor_replica_id,
+            trigger_actor_display_name: provenance.actor_display_name,
+            trigger_metadata: provenance.metadata,
+        };
+        self.state
+            .lock()
+            .expect("state")
+            .pipeline_runs
+            .insert(run.id, run.clone());
+        Ok(run)
+    }
+
+    async fn discard_queued_pipeline_run(
+        &self,
+        pipeline_run_id: Uuid,
+    ) -> Result<(), SendableError> {
+        let mut state = self.state.lock().expect("state");
+        if state
+            .pipeline_runs
+            .get(&pipeline_run_id)
+            .is_some_and(|run| run.status == WorkflowStatus::Queued)
+        {
+            state.pipeline_runs.remove(&pipeline_run_id);
+        }
+        Ok(())
+    }
+
+    async fn create_pipeline_member_attempt(
+        &self,
+        pipeline_run_id: Uuid,
+        member_key: String,
+        workflow_id: Uuid,
+        attempt: i64,
+        parameters: Value,
+    ) -> Result<Option<PipelineMemberAttempt>, SendableError> {
+        let mut state = self.state.lock().expect("state");
+        if state.pipeline_attempts.iter().any(|row| {
+            row.pipeline_run_id == pipeline_run_id
+                && row.member_key == member_key
+                && row.attempt == attempt
+        }) {
+            return Ok(None);
+        }
+        let row = PipelineMemberAttempt {
+            id: Uuid::now_v7(),
+            pipeline_run_id,
+            member_key,
+            workflow_id,
+            attempt,
+            workflow_run_id: None,
+            status: PipelineMemberAttemptStatus::Pending,
+            parameters,
+            result: Value::Null,
+            message: None,
+            created_at: Utc::now(),
+            started_at: None,
+            finished_at: None,
+        };
+        state.pipeline_attempts.push(row.clone());
+        Ok(Some(row))
+    }
+
+    async fn bind_pipeline_member_attempt_run(
+        &self,
+        attempt_id: Uuid,
+        workflow_run_id: Uuid,
+    ) -> Result<(), SendableError> {
+        if let Some(row) = self
+            .state
+            .lock()
+            .expect("state")
+            .pipeline_attempts
+            .iter_mut()
+            .find(|row| row.id == attempt_id)
+        {
+            row.workflow_run_id = Some(workflow_run_id);
+            row.status = PipelineMemberAttemptStatus::Running;
+            row.started_at = Some(Utc::now());
+        }
+        Ok(())
+    }
+
+    async fn update_pipeline_member_attempt(
+        &self,
+        attempt_id: Uuid,
+        status: PipelineMemberAttemptStatus,
+        result: Value,
+        message: Option<String>,
+    ) -> Result<(), SendableError> {
+        if let Some(row) = self
+            .state
+            .lock()
+            .expect("state")
+            .pipeline_attempts
+            .iter_mut()
+            .find(|row| row.id == attempt_id)
+        {
+            row.status = status;
+            row.result = result;
+            row.message = message;
+            if status.is_terminal() {
+                row.finished_at = Some(Utc::now());
+            }
+        }
+        Ok(())
+    }
+
+    async fn fetch_pipeline_member_attempts(
+        &self,
+        pipeline_run_id: Uuid,
+    ) -> Result<Vec<PipelineMemberAttempt>, SendableError> {
+        Ok(self
+            .state
+            .lock()
+            .expect("state")
+            .pipeline_attempts
+            .iter()
+            .filter(|row| row.pipeline_run_id == pipeline_run_id)
+            .cloned()
+            .collect())
+    }
+
+    async fn delete_unstarted_pipeline_member_attempts(
+        &self,
+        pipeline_run_id: Uuid,
+        member_key: String,
+    ) -> Result<(), SendableError> {
+        self.state
+            .lock()
+            .expect("state")
+            .pipeline_attempts
+            .retain(|attempt| {
+                attempt.pipeline_run_id != pipeline_run_id
+                    || attempt.member_key != member_key
+                    || attempt.workflow_run_id.is_some()
+            });
+        Ok(())
     }
 
     async fn fetch_workflow_runs_for_pipeline_run(
         &self,
-        _pipeline_run_id: Uuid,
+        pipeline_run_id: Uuid,
     ) -> Result<Vec<WorkflowRun>, SendableError> {
-        Ok(Vec::new())
+        Ok(self
+            .state
+            .lock()
+            .expect("state")
+            .runs
+            .values()
+            .filter(|run| run.pipeline_run_id == Some(pipeline_run_id))
+            .cloned()
+            .collect())
     }
 
     async fn try_record_trigger_firing(

@@ -111,11 +111,9 @@ macro_rules! pipeline_from_row {
             name: $row.get("name"),
             description: $row.get::<Option<String>, _>("description"),
             org_id: $row.get("org_id"),
-            workflow_ids: serde_json::from_str($row.get::<String, _>("workflow_ids").as_str())
+            graph: serde_json::from_str($row.get::<String, _>("graph").as_str())
                 .unwrap_or_default(),
-            member_failure_modes: $row
-                .get::<Option<String>, _>("member_failure_modes")
-                .and_then(|raw| serde_json::from_str(raw.as_str()).ok())
+            concurrency: serde_json::from_str($row.get::<String, _>("concurrency").as_str())
                 .unwrap_or_default(),
             defaults: serde_json::from_str::<PipelineDefaults>(
                 $row.get::<String, _>("defaults").as_str(),
@@ -268,6 +266,25 @@ macro_rules! pipeline_run_from_row {
 }
 
 row_mapper!(row_to_pipeline_run(row) -> PipelineRun { pipeline_run_from_row!(row) });
+
+row_mapper!(row_to_pipeline_member_attempt(row) -> PipelineMemberAttempt {
+    PipelineMemberAttempt {
+        id: row.get("id"),
+        pipeline_run_id: row.get("pipeline_run_id"),
+        member_key: row.get("member_key"),
+        workflow_id: row.get("workflow_id"),
+        attempt: row.get("attempt"),
+        workflow_run_id: row.get("workflow_run_id"),
+        status: PipelineMemberAttemptStatus::try_from(row.get::<String, _>("status").as_str())
+            .unwrap_or(PipelineMemberAttemptStatus::Failed),
+        parameters: parse_json(row.get::<String, _>("parameters")),
+        result: parse_json(row.get::<String, _>("result")),
+        message: row.get("message"),
+        created_at: DateTime::<Utc>::from_timestamp(row.get("created_at"), 0).unwrap_or_else(Utc::now),
+        started_at: row.get::<Option<i64>, _>("started_at").and_then(|v| DateTime::<Utc>::from_timestamp(v, 0)),
+        finished_at: row.get::<Option<i64>, _>("finished_at").and_then(|v| DateTime::<Utc>::from_timestamp(v, 0)),
+    }
+});
 
 macro_rules! workflow_node_run_from_row {
     ($row:expr) => {{

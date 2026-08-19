@@ -382,14 +382,13 @@ impl Decompiler<'_> {
         let mut out = head.to_string();
         for seg in segs {
             match seg {
-                Value::String(key) => {
+                Value::String(key) if is_ident(key) => {
                     out.push('.');
                     out.push_str(key);
                 }
-                other => {
-                    out.push('.');
-                    out.push_str(&other.to_string());
-                }
+                Value::String(key) => out.push_str(&format!("[{}]", quote(key))),
+                Value::Number(index) => out.push_str(&format!("[{index}]")),
+                other => out.push_str(&format!("[{}]", other)),
             }
         }
         out

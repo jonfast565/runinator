@@ -21,7 +21,14 @@
       >
         {{ failureModeLabel[data.failureMode] }}
       </span>
+      <span v-if="data.status" class="pipeline-node-badge pipeline-node-badge-status">
+        {{ data.status }}<template v-if="data.attempt && data.attempt > 1"> · #{{ data.attempt }}</template>
+      </span>
+      <span v-if="data.duration" class="pipeline-node-badge">{{ data.duration }}</span>
+      <span v-if="data.hasResult" class="pipeline-node-badge">result</span>
+      <span v-if="data.artifactCount" class="pipeline-node-badge">{{ data.artifactCount }} artifact{{ data.artifactCount === 1 ? "" : "s" }}</span>
     </div>
+    <div v-if="data.message" class="pipeline-node-message" :title="data.message">{{ data.message }}</div>
     <Handle
       class="pipeline-handle pipeline-handle-source"
       type="source"
@@ -94,6 +101,9 @@ const failureModeLabel: Record<PipelineMemberFailureMode, string> = {
   background: var(--warning-bg, #fff2cc);
   color: var(--warning-fg, #84620d);
 }
+
+.pipeline-node-badge-status { font-weight: 600; }
+.pipeline-node-message { margin-top: 6px; max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--danger-fg, #b42318); font-size: 11px; }
 
 .pipeline-handle {
   width: 9px;

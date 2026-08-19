@@ -26,7 +26,10 @@ use runinator_models::{
     },
     orchestration::{OrchestrationEvent, ReadyNodeRecord},
     orgs::{OrgMembership, OrgRole, Organization},
-    pipelines::{Pipeline, PipelineDefaults, PipelineRun, PipelineTrigger},
+    pipelines::{
+        Pipeline, PipelineDefaults, PipelineMemberAttempt, PipelineMemberAttemptStatus,
+        PipelineRun, PipelineTrigger,
+    },
     provisioning::ProvisionBackend,
     rbac::{ScopeKind, ScopeRef},
     replicas::{

@@ -1,6 +1,6 @@
 <template>
   <div
-    class="flex flex-col items-center justify-center text-center text-fg-muted"
+    class="flex w-full flex-col items-center justify-center text-center text-fg-muted"
     :class="compact ? 'gap-1.5 px-3 py-4' : 'gap-2 px-5 py-8'"
     role="status"
     :aria-live="loading ? 'polite' : undefined"

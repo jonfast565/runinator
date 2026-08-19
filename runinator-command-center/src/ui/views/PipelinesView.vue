@@ -82,7 +82,7 @@
                   @click="choosePipeline(item)"
                 >
                   <td>{{ item.name }}</td>
-                  <td>{{ item.workflow_ids.length }}</td>
+                  <td>{{ item.graph.members.length }}</td>
                   <td>{{ item.org_id ? "Org" : "Global" }}</td>
                 </tr>
               </tbody>
@@ -182,6 +182,12 @@
                     />
                     <span>Enabled</span>
                   </label>
+                  <div class="flex flex-col gap-1 text-sm">
+                    <span>Downstream input mapping</span>
+                    <JsonEditor v-model="edgeParametersText" title="Link mapping" />
+                    <p v-if="mappingError" class="error m-0 text-xs">{{ mappingError }}</p>
+                    <button class="btn btn-sm" :disabled="Boolean(mappingError)" @click="saveEdgeMapping">Save mapping</button>
+                  </div>
                   <button class="btn btn-danger" @click="pipeline.deleteSelected">
                     <Icon name="trash" />
                     <span>Delete chain</span>
@@ -207,6 +213,19 @@
                     <strong>{{ selectedNode.data.name }}</strong> fails. Mirrors PowerShell's
                     $ErrorActionPreference.
                   </p>
+                  <div v-if="selectedNodeJoin" class="grid gap-2 border-t border-border-subtle pt-3">
+                    <h4 class="m-0 text-sm font-semibold text-fg">Join</h4>
+                    <label class="flex flex-col gap-1 text-sm">
+                      <span>Readiness</span>
+                      <select v-model="joinMode">
+                        <option value="all">All inputs</option><option value="any">Any input</option>
+                        <option value="first_success">First success</option>
+                      </select>
+                    </label>
+                    <JsonEditor v-model="joinParametersText" title="Join mapping" />
+                    <p v-if="joinMappingError" class="error m-0 text-xs">{{ joinMappingError }}</p>
+                    <button class="btn btn-sm" :disabled="Boolean(joinMappingError)" @click="saveJoin">Save join</button>
+                  </div>
                 </template>
                 <p v-else class="m-0 text-sm text-fg-muted">
                   Select a chain edge or a workflow to edit it, or drag from one workflow to another
@@ -302,6 +321,7 @@
     >
       <PipelineDefaultsEditor
         :defaults="selectedPipeline.defaults"
+        :concurrency="selectedPipeline.concurrency"
         @cancel="defaultsModalOpen = false"
         @save="submitDefaults"
       />
@@ -310,7 +330,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref, watch } from "vue";
 import { usePipelineStore } from "../adapters/pinia/pipeline";
 import { usePipelineRunsStore } from "../adapters/pinia/pipeline-runs";
 import { useWorkflowsStore } from "../adapters/pinia/workflows";
@@ -319,6 +339,8 @@ import { useOrgsStore } from "../adapters/pinia/orgs";
 import type {
   Pipeline,
   PipelineDefaults,
+  PipelineConcurrency,
+  PipelineJoinMode,
   PipelineMemberFailureMode,
 } from "../../core/domain/models";
 import type { ChainEvent } from "../../core/workflow/pipeline-graph";
@@ -332,6 +354,7 @@ import MobileBackBar from "../components/shared/MobileBackBar.vue";
 import PanelHeader from "../components/shared/PanelHeader.vue";
 import PipelineCanvas from "../components/pipeline/PipelineCanvas.vue";
 import PipelineDefaultsEditor from "../components/pipeline/PipelineDefaultsEditor.vue";
+import JsonEditor from "../components/shared/JsonEditor.vue";
 
 const pipeline = usePipelineStore();
 const pipelineRuns = usePipelineRunsStore();
@@ -342,12 +365,43 @@ const orgs = useOrgsStore();
 const selectedPipeline = computed(() => pipeline.selectedPipeline);
 const selectedEdge = computed(() => pipeline.selectedEdge);
 const selectedNode = computed(() => pipeline.selectedNode);
+const selectedNodeJoin = computed(() => {
+  const member = selectedPipeline.value?.graph.members.find((item) => item.workflow_id === selectedNode.value?.data.workflowId);
+  return member ? selectedPipeline.value?.graph.joins[member.key] ?? null : null;
+});
+const edgeParametersText = ref("{}");
+const mappingError = ref<string | null>(null);
+const joinMode = ref<PipelineJoinMode>("all");
+const joinParametersText = ref("{}");
+const joinMappingError = ref<string | null>(null);
+
+watch(selectedEdge, (edge) => { edgeParametersText.value = JSON.stringify(edge?.data.parameters ?? {}, null, 2); mappingError.value = null; }, { immediate: true });
+watch(selectedNodeJoin, (join) => { joinMode.value = join?.mode ?? "all"; joinParametersText.value = JSON.stringify(join?.parameters ?? {}, null, 2); joinMappingError.value = null; }, { immediate: true });
+
+function parseMapping(text: string, setError: (message: string | null) => void): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(text || "{}") as unknown;
+    if (parsed == null || typeof parsed !== "object" || Array.isArray(parsed)) {throw new Error("Mapping must be a JSON object.");}
+    setError(null); return parsed as Record<string, unknown>;
+  } catch (error) { setError(error instanceof Error ? error.message : String(error)); return null; }
+}
+
+function saveEdgeMapping() {
+  const parameters = parseMapping(edgeParametersText.value, (message) => { mappingError.value = message; });
+  if (parameters) {void pipeline.updateSelected({ parameters });}
+}
+
+function saveJoin() {
+  const join = selectedNodeJoin.value;
+  const parameters = parseMapping(joinParametersText.value, (message) => { joinMappingError.value = message; });
+  if (join && parameters) {void pipeline.updateJoin(join.target, joinMode.value, parameters);}
+}
 
 // "" means no per-member override (the pipeline default applies).
 const memberFailureModeValue = computed(() => {
   const node = selectedNode.value;
-  const modes = selectedPipeline.value?.member_failure_modes;
-  return (node && modes?.[node.data.workflowId]) ?? "";
+  const member = selectedPipeline.value?.graph.members.find((item) => item.workflow_id === node?.data.workflowId);
+  return member?.failure_mode ?? "";
 });
 
 const defaultFailureModeLabel = computed(
@@ -393,7 +447,7 @@ const scopedPipelines = computed(() => {
 });
 
 const memberWorkflowCount = computed(
-  () => new Set(scopedPipelines.value.flatMap((item) => item.workflow_ids)).size,
+  () => new Set(scopedPipelines.value.flatMap((item) => item.graph.members.map((member) => member.workflow_id))).size,
 );
 const selectedPipelineLabel = computed(() => selectedPipeline.value?.name ?? "None");
 
@@ -502,8 +556,9 @@ function openDefaults() {
   defaultsModalOpen.value = true;
 }
 
-async function submitDefaults(defaults: PipelineDefaults) {
+async function submitDefaults(defaults: PipelineDefaults, concurrency: PipelineConcurrency) {
   await pipeline.savePipelineDefaults(defaults);
+  await pipeline.savePipelineConcurrency(concurrency);
   defaultsModalOpen.value = false;
 }
 
@@ -514,7 +569,7 @@ async function confirmDelete() {
     return;
   }
 
-  if (window.confirm(`Delete pipeline “${current.name}”? Chained links stay on the workflows.`)) {
+  if (window.confirm(`Delete pipeline “${current.name}” and its graph?`)) {
     await pipeline.deletePipeline(current.id);
     mobileView.value = "list";
   }

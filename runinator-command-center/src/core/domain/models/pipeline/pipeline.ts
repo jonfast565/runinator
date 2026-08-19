@@ -4,8 +4,7 @@ import type { JsonRecord } from "../../json";
 // selector of newly drawn links (`halt` -> on success, `continue` -> on complete).
 export type PipelineFailurePolicy = "halt" | "continue";
 
-// what happens to the *pipeline run* when a member workflow fails, evaluated per member (an
-// override in `Pipeline.member_failure_modes`, falling back to `PipelineDefaults.default_failure_mode`).
+// What happens to the pipeline run when a graph member workflow fails.
 // named after PowerShell's $ErrorActionPreference, which this mirrors one-for-one:
 //   - stop: the failed member fires none of its outgoing links; the run still settles once every
 //     already-started member quiesces, and this failure counts toward that settlement.
@@ -21,22 +20,55 @@ export interface PipelineDefaults {
   links_enabled_by_default: boolean;
   default_parameters: JsonRecord;
   max_chain_depth: number | null;
-  // the failure mode applied to a member with no entry in `Pipeline.member_failure_modes`.
+  // the failure mode copied onto newly-added/imported members.
   default_failure_mode: PipelineMemberFailureMode;
 }
 
-// a named pipeline instance: a chosen set of member workflows plus authoring defaults. links
-// between members stay `chained` workflow triggers stamped with this pipeline's id.
+export type PipelineJoinMode = "all" | "any" | "first_success";
+export type PipelineLinkSelector = "success" | "failure" | "complete";
+
+export interface PipelineMember {
+  key: string;
+  workflow_id: string;
+  failure_mode: PipelineMemberFailureMode;
+}
+
+export interface PipelineLink {
+  id: string;
+  from: string;
+  to: string;
+  on: PipelineLinkSelector;
+  enabled: boolean;
+  parameters: JsonRecord;
+}
+
+export interface PipelineJoin {
+  target: string;
+  mode: PipelineJoinMode;
+  parameters: JsonRecord;
+}
+
+export interface PipelineGraph {
+  version: number;
+  members: PipelineMember[];
+  links: PipelineLink[];
+  joins: Record<string, PipelineJoin>;
+}
+
+export interface PipelineConcurrency {
+  max_concurrent_runs: number;
+  on_conflict: "allow" | "skip" | "queue" | "cancel_previous";
+}
+
+// A named, versioned first-class pipeline DAG plus its authoring and concurrency settings.
 export interface Pipeline {
   id: string | null;
   name: string;
   description: string | null;
   // owning organization (tenant); null = platform-global. server-managed (stamped on create).
   org_id?: string | null;
-  workflow_ids: string[];
-  // per-member override of defaults.default_failure_mode, keyed by member workflow id. a member
-  // absent from this map uses the pipeline's default.
-  member_failure_modes: Record<string, PipelineMemberFailureMode>;
+  graph: PipelineGraph;
+  concurrency: PipelineConcurrency;
   defaults: PipelineDefaults;
   metadata: JsonRecord;
   created_at?: string | null;

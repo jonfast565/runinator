@@ -118,10 +118,17 @@ async fn pipeline_round_trip_create_update_delete() {
             name: "Release".into(),
             description: Some("ship it".into()),
             org_id: Some(org),
-            workflow_ids: vec![member],
-            member_failure_modes: [(member, PipelineMemberFailureMode::SilentlyContinue)]
-                .into_iter()
-                .collect(),
+            graph: runinator_models::pipelines::PipelineGraph {
+                version: runinator_models::pipelines::PIPELINE_GRAPH_VERSION,
+                members: vec![runinator_models::pipelines::PipelineMember {
+                    key: "member".into(),
+                    workflow_id: member,
+                    failure_mode: PipelineMemberFailureMode::SilentlyContinue,
+                }],
+                links: vec![],
+                joins: Default::default(),
+            },
+            concurrency: Default::default(),
             defaults: PipelineDefaults {
                 on_step_failure: PipelineFailurePolicy::Continue,
                 links_enabled_by_default: false,
@@ -137,9 +144,13 @@ async fn pipeline_round_trip_create_update_delete() {
         .unwrap();
     let id = created.id.unwrap();
     assert_eq!(created.org_id, Some(org));
-    assert_eq!(created.workflow_ids, vec![member]);
+    assert_eq!(created.graph.members[0].workflow_id, member);
     assert_eq!(
-        created.member_failure_modes.get(&member).copied(),
+        created
+            .graph
+            .members
+            .first()
+            .map(|member| member.failure_mode),
         Some(PipelineMemberFailureMode::SilentlyContinue)
     );
     assert_eq!(

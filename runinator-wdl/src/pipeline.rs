@@ -1,15 +1,17 @@
 // the `.wdlp` pipeline surface: `pipeline "Name" { workflow "…" … "A" -> "B" on <selector> }`.
 // lowers to a portable `PipelineBundle` (members and links by workflow name) for import; the web
-// service resolves names to ids and materializes links as managed `chained` triggers. the reverse
+// service resolves names to ids and persists the graph atomically. the reverse
 // (`pipeline_to_wdlp`) re-renders a bundle so exports round-trip and the editor can format.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use runinator_models::pipelines::{
-    PipelineBundle, PipelineDefaults, PipelineFailurePolicy, PipelineLinkSelector,
-    PipelineLinkSpec, PipelineMemberFailureMode, PipelineMemberSpec, PipelineSpec,
-    PipelineTriggerSpec,
+    PipelineBundle, PipelineDefaults, PipelineFailurePolicy, PipelineJoinMode, PipelineJoinSpec,
+    PipelineLinkSelector, PipelineLinkSpec, PipelineMemberFailureMode, PipelineMemberSpec,
+    PipelineSpec, PipelineTriggerSpec,
 };
+use runinator_models::schedules::{ConcurrencyPolicy, WorkflowConcurrency};
+use runinator_models::value::{Map, Value};
 use runinator_models::workflows::WorkflowTriggerKind;
 
 use crate::ast::{PipelineDecl, PipelineLinkDecl, PipelineMemberDecl, PipelineTriggerDecl};
@@ -55,6 +57,29 @@ fn lower_pipeline(decl: &PipelineDecl) -> Result<PipelineSpec, WdlError> {
     for link in &decl.links {
         links.push(lower_link(link, &members, on_step_failure)?);
     }
+    validate_links(&links, &members, decl.span)?;
+    let mut joins = Vec::with_capacity(decl.joins.len());
+    for join in &decl.joins {
+        if !members.contains(join.target.as_str()) {
+            return Err(WdlError::syntax(
+                join.span,
+                format!(
+                    "join target \"{}\" is not a declared workflow member",
+                    join.target
+                ),
+            ));
+        }
+        joins.push(PipelineJoinSpec {
+            target: join.target.clone(),
+            mode: match join.mode.as_str() {
+                "any" => PipelineJoinMode::Any,
+                "first_success" => PipelineJoinMode::FirstSuccess,
+                _ => PipelineJoinMode::All,
+            },
+            parameters: lower_mapping(join.parameters.as_ref())?,
+        });
+    }
+    validate_joins(&links, &joins, decl.span)?;
     let mut triggers = Vec::with_capacity(decl.triggers.len());
     for trigger in &decl.triggers {
         triggers.push(lower_trigger(trigger)?);
@@ -70,6 +95,22 @@ fn lower_pipeline(decl: &PipelineDecl) -> Result<PipelineSpec, WdlError> {
         defaults,
         members,
         links,
+        joins,
+        concurrency: decl
+            .concurrency
+            .as_ref()
+            .map(|c| WorkflowConcurrency {
+                max_concurrent_runs: c.max_concurrent_runs,
+                on_conflict: match c.on_conflict {
+                    crate::ast::ConcurrencyPolicy::Allow => ConcurrencyPolicy::Allow,
+                    crate::ast::ConcurrencyPolicy::Queue => ConcurrencyPolicy::Queue,
+                    crate::ast::ConcurrencyPolicy::CancelPrevious => {
+                        ConcurrencyPolicy::CancelPrevious
+                    }
+                    crate::ast::ConcurrencyPolicy::Skip => ConcurrencyPolicy::Skip,
+                },
+            })
+            .unwrap_or_default(),
         triggers,
     })
 }
@@ -169,7 +210,166 @@ fn lower_link(
         to: link.to.clone(),
         on,
         enabled: true,
+        parameters: lower_mapping(link.parameters.as_ref())?,
     })
+}
+
+fn lower_mapping(expr: Option<&crate::ast::Expr>) -> Result<Value, WdlError> {
+    match expr {
+        Some(expr) => {
+            let value = runinator_wdl_codegen::lower::lower_expression_fragment(
+                expr,
+                &crate::CompileOptions::default(),
+            )?;
+            validate_mapping_roots(&value, expr.span)?;
+            Ok(value)
+        }
+        None => Ok(Value::Object(Map::new())),
+    }
+}
+
+fn validate_mapping_roots(value: &Value, span: crate::errors::Span) -> Result<(), WdlError> {
+    match value {
+        Value::Array(values) => {
+            for value in values {
+                validate_mapping_roots(value, span)?;
+            }
+        }
+        Value::Object(object) => {
+            if let Some(reference) = object.get("$ref").and_then(Value::as_object) {
+                if let Some(node) = reference.get("node").and_then(Value::as_str)
+                    && !matches!(node, "source" | "members")
+                {
+                    return Err(WdlError::syntax(
+                        span,
+                        format!(
+                            "pipeline mapping root '{node}' is unsupported; use params, source, or members"
+                        ),
+                    ));
+                }
+            }
+            if let Some(call) = object.get("$call").and_then(Value::as_str) {
+                let leaf = call.rsplit('.').next().unwrap_or(call);
+                if !runinator_workflows::PureIntrinsics::contains(leaf)
+                    && !runinator_workflows::is_higher_order(leaf)
+                {
+                    return Err(WdlError::syntax(
+                        span,
+                        format!("pipeline mapping call '{call}' must be a pure intrinsic"),
+                    ));
+                }
+            }
+            for value in object.values() {
+                validate_mapping_roots(value, span)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn validate_links(
+    links: &[PipelineLinkSpec],
+    members: &HashSet<&str>,
+    span: crate::errors::Span,
+) -> Result<(), WdlError> {
+    let mut seen = HashSet::new();
+    let mut adjacency: HashMap<&str, Vec<&str>> = HashMap::new();
+    for link in links {
+        if link.from == link.to {
+            return Err(WdlError::syntax(
+                span,
+                "pipeline links cannot target themselves",
+            ));
+        }
+        if !seen.insert((link.from.as_str(), link.to.as_str())) {
+            return Err(WdlError::syntax(
+                span,
+                format!("duplicate pipeline link {} -> {}", link.from, link.to),
+            ));
+        }
+        adjacency.entry(&link.from).or_default().push(&link.to);
+    }
+    fn visit<'a>(
+        node: &'a str,
+        adjacency: &HashMap<&'a str, Vec<&'a str>>,
+        visiting: &mut HashSet<&'a str>,
+        done: &mut HashSet<&'a str>,
+    ) -> bool {
+        if done.contains(node) {
+            return false;
+        }
+        if !visiting.insert(node) {
+            return true;
+        }
+        if adjacency
+            .get(node)
+            .is_some_and(|next| next.iter().any(|n| visit(n, adjacency, visiting, done)))
+        {
+            return true;
+        }
+        visiting.remove(node);
+        done.insert(node);
+        false
+    }
+    let mut visiting = HashSet::new();
+    let mut done = HashSet::new();
+    if members
+        .iter()
+        .any(|m| visit(m, &adjacency, &mut visiting, &mut done))
+    {
+        return Err(WdlError::syntax(span, "pipeline graph must be acyclic"));
+    }
+    Ok(())
+}
+
+fn validate_joins(
+    links: &[PipelineLinkSpec],
+    joins: &[PipelineJoinSpec],
+    span: crate::errors::Span,
+) -> Result<(), WdlError> {
+    let mut inbound: HashMap<&str, Vec<&PipelineLinkSpec>> = HashMap::new();
+    for link in links.iter().filter(|l| l.enabled) {
+        inbound.entry(&link.to).or_default().push(link);
+    }
+    let join_by_target: BTreeMap<&str, &PipelineJoinSpec> =
+        joins.iter().map(|j| (j.target.as_str(), j)).collect();
+    for (target, incoming) in inbound {
+        if incoming.len() > 1 && !join_by_target.contains_key(target) {
+            return Err(WdlError::syntax(
+                span,
+                format!(
+                    "member \"{target}\" has multiple inbound links and requires an explicit join"
+                ),
+            ));
+        }
+    }
+    for join in joins {
+        let incoming = links
+            .iter()
+            .filter(|l| l.enabled && l.to == join.target)
+            .collect::<Vec<_>>();
+        if incoming.len() < 2 {
+            return Err(WdlError::syntax(
+                span,
+                format!(
+                    "join target \"{}\" needs at least two inbound links",
+                    join.target
+                ),
+            ));
+        }
+        if join.mode == PipelineJoinMode::FirstSuccess
+            && incoming
+                .iter()
+                .any(|l| l.on != PipelineLinkSelector::Success)
+        {
+            return Err(WdlError::syntax(
+                span,
+                "first_success joins require success-selecting inbound links",
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// render a `PipelineBundle` back into `.wdlp` source so exports round-trip and the editor can
@@ -189,6 +389,13 @@ pub fn pipeline_to_wdlp(bundle: &PipelineBundle) -> String {
         }
         if let Some(max_depth) = spec.defaults.max_chain_depth {
             out.push_str(&format!("    max_depth {max_depth}\n"));
+        }
+        if spec.concurrency.max_concurrent_runs > 0 {
+            out.push_str(&format!(
+                "    concurrency {} on_conflict {}\n",
+                spec.concurrency.max_concurrent_runs,
+                spec.concurrency.on_conflict.as_str()
+            ));
         }
         if !spec.triggers.is_empty() {
             out.push('\n');
@@ -212,11 +419,43 @@ pub fn pipeline_to_wdlp(bundle: &PipelineBundle) -> String {
         if !spec.links.is_empty() {
             out.push('\n');
             for link in &spec.links {
+                let mapping = if link.parameters.as_object().is_some_and(|m| !m.is_empty()) {
+                    format!(
+                        " with {}",
+                        runinator_wdl_codegen::render_expression(&link.parameters)
+                            .unwrap_or_else(|_| "{}".into())
+                    )
+                } else {
+                    String::new()
+                };
                 out.push_str(&format!(
-                    "    {} -> {} on {}\n",
+                    "    {} -> {} on {}{}\n",
                     quote(&link.from),
                     quote(&link.to),
-                    link.on.as_str()
+                    link.on.as_str(),
+                    mapping,
+                ));
+            }
+        }
+        if !spec.joins.is_empty() {
+            for join in &spec.joins {
+                let mode = match join.mode {
+                    PipelineJoinMode::All => "all",
+                    PipelineJoinMode::Any => "any",
+                    PipelineJoinMode::FirstSuccess => "first_success",
+                };
+                let mapping = if join.parameters.as_object().is_some_and(|m| !m.is_empty()) {
+                    format!(
+                        " with {}",
+                        runinator_wdl_codegen::render_expression(&join.parameters)
+                            .unwrap_or_else(|_| "{}".into())
+                    )
+                } else {
+                    String::new()
+                };
+                out.push_str(&format!(
+                    "    join {} {mode}{mapping}\n",
+                    quote(&join.target)
                 ));
             }
         }

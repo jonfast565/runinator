@@ -1,6 +1,7 @@
 use runinator_models::pipelines::{
-    PipelineFailurePolicy, PipelineLinkSelector, PipelineMemberFailureMode,
+    PipelineFailurePolicy, PipelineJoinMode, PipelineLinkSelector, PipelineMemberFailureMode,
 };
+use runinator_models::schedules::ConcurrencyPolicy;
 
 use super::{parse_pipeline_str, pipeline_to_wdlp};
 
@@ -188,4 +189,98 @@ fn round_trips_member_failure_modes() {
     let rendered = pipeline_to_wdlp(&bundle);
     let reparsed = parse_pipeline_str(&rendered).expect("reparse");
     assert_eq!(bundle, reparsed);
+}
+
+const MAPPED_JOIN: &str = r#"
+pipeline "Release" {
+    concurrency 2 on_conflict queue
+
+    workflow "Linux Build"
+    workflow "macOS Build"
+    workflow "Publish"
+
+    "Linux Build" -> "Publish" on success
+    "macOS Build" -> "Publish" on success
+    join "Publish" all with {
+        linux: members["Linux Build"].result,
+        macos: members["macOS Build"].result,
+        environment: params.environment
+    }
+}
+"#;
+
+#[test]
+fn parses_and_round_trips_mappings_joins_and_concurrency() {
+    let bundle = parse_pipeline_str(MAPPED_JOIN).expect("parse");
+    let pipeline = &bundle.pipelines[0];
+    assert_eq!(pipeline.concurrency.max_concurrent_runs, 2);
+    assert_eq!(pipeline.concurrency.on_conflict, ConcurrencyPolicy::Queue);
+    assert_eq!(pipeline.joins.len(), 1);
+    assert_eq!(pipeline.joins[0].mode, PipelineJoinMode::All);
+    assert!(pipeline.joins[0].parameters.to_string().contains("members"));
+    let rendered = pipeline_to_wdlp(&bundle);
+    assert_eq!(bundle, parse_pipeline_str(&rendered).expect("reparse"));
+}
+
+#[test]
+fn rejects_ambiguous_multi_inbound_member_without_join() {
+    let source = r#"pipeline "P" {
+        workflow "A" workflow "B" workflow "C"
+        "A" -> "C" on success
+        "B" -> "C" on success
+    }"#;
+    assert!(
+        parse_pipeline_str(source)
+            .unwrap_err()
+            .to_string()
+            .contains("explicit join")
+    );
+}
+
+#[test]
+fn rejects_cycles_and_unsupported_mapping_roots() {
+    let cycle = r#"pipeline "P" { workflow "A" workflow "B" "A" -> "B" "B" -> "A" }"#;
+    assert!(
+        parse_pipeline_str(cycle)
+            .unwrap_err()
+            .to_string()
+            .contains("acyclic")
+    );
+
+    let bad_root = r#"pipeline "P" {
+        workflow "A" workflow "B"
+        "A" -> "B" with { value: unknown.result }
+    }"#;
+    assert!(
+        parse_pipeline_str(bad_root)
+            .unwrap_err()
+            .to_string()
+            .contains("unsupported")
+    );
+}
+
+#[test]
+fn rejects_invalid_first_success_join_selectors() {
+    let source = r#"pipeline "P" {
+        workflow "A" workflow "B" workflow "C"
+        "A" -> "C" on complete
+        "B" -> "C" on success
+        join "C" first_success
+    }"#;
+    assert!(
+        parse_pipeline_str(source)
+            .unwrap_err()
+            .to_string()
+            .contains("success-selecting")
+    );
+}
+
+#[test]
+fn rejects_effectful_pipeline_mapping_calls() {
+    let source = r#"pipeline "P" {
+        workflow "A" workflow "B"
+        "A" -> "B" with { generated_at: now() }
+    }"#;
+    let message = parse_pipeline_str(source).unwrap_err().to_string();
+    assert!(message.contains("pure intrinsic"), "{message}");
 }

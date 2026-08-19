@@ -208,6 +208,29 @@ pub fn decompile_definition(
     Ok(decompiler.out)
 }
 
+/// Render one lowered pure expression using the same inverse mapping as workflow decompilation.
+pub fn render_expression(value: &Value) -> Result<String, WdlError> {
+    Decompiler {
+        nodes: HashMap::new(),
+        end_ids: HashSet::new(),
+        fail_ids: HashSet::new(),
+        explicit: false,
+        loop_vars: Vec::new(),
+        declared_types: HashMap::new(),
+        input_types: HashMap::new(),
+        alias_decls: Vec::new(),
+        spreads: HashMap::new(),
+        control_ids: HashSet::new(),
+        control_vars: HashMap::new(),
+        visited: HashSet::new(),
+        worklist: VecDeque::new(),
+        queued: HashSet::new(),
+        out: String::new(),
+        indent: 0,
+    }
+    .expr(value)
+}
+
 /// collect every node id referenced as a target anywhere in the graph: typed transitions, branch
 /// targets, and any `{"$node": "..."}` ref nested in node parameters (control-flow targets, join
 /// dependencies, switch cases, etc.). a node absent from this set has no incoming edge.

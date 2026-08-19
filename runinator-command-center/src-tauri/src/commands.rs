@@ -4,7 +4,7 @@ use runinator_models::{
         WORKFLOW_JSON_IMPORT_RISK_HEADER,
     },
     orchestration::{NodeTransition, NodeTransitionStat},
-    pipelines::{Pipeline, PipelineRun, PipelineRunDetail, PipelineTrigger},
+    pipelines::{Pipeline, PipelineMemberAttempt, PipelineRun, PipelineRunDetail, PipelineTrigger},
     providers::ProviderMetadata,
     replicas::ReplicaListResponse,
     runs::{RunArtifact, RunChunk},

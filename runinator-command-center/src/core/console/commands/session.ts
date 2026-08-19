@@ -3,7 +3,7 @@
 // these are the commands that only mean something inside a console session, which is why they have
 // no `runinatorctl` subcommand to defer to — they are the console's own vocabulary.
 
-import { createPipelineRun, createWorkflowRun } from "../../api/commandCenterApi";
+import { createPipelineRun, createWorkflowRun, retryPipelineMember } from "../../api/commandCenterApi";
 import { cellReference } from "../../domain/models";
 import { cell, done, json, table, text, time, truncate } from "../format";
 import { resolvePipeline, resolveWorkflowId } from "../lookup";
@@ -162,6 +162,17 @@ export const sessionCommands: ConsoleCommand[] = [
 
       const created = await createPipelineRun(pipeline.id, parameters(args, flags));
       print(done(`pipeline run ${cell(created.id)}`));
+    },
+  },
+  {
+    path: ["pipelines", "retry"],
+    usage: "pipelines retry <run-id> <member-key> [--param KEY=VALUE] | with <json>",
+    summary: "retry a failed frontier member in the same pipeline run",
+    run: async ({ args, flags, print }) => {
+      const runId = requiredArg(args, 0, "pipeline run id");
+      const memberKey = requiredArg(args, 1, "member key");
+      const attempt = await retryPipelineMember(runId, memberKey, parameters(args, flags));
+      print(done(`pipeline member ${attempt.member_key} retry #${String(attempt.attempt)}`));
     },
   },
 ];

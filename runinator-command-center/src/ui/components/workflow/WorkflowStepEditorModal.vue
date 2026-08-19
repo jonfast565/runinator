@@ -5,7 +5,10 @@
     tabindex="-1"
     @keydown.esc.stop.prevent="workflows.closeStepEditor"
   >
-    <form class="modal w-[min(1040px,100%)]" @submit.prevent="workflows.submitStepEditor">
+    <form
+      class="modal step-editor-modal w-[min(1040px,100%)]"
+      @submit.prevent="workflows.submitStepEditor"
+    >
       <header class="modal-header">
         <div>
           <h2>{{ workflows.stepEditorCreating ? "Add Workflow Step" : "Edit Workflow Step" }}</h2>

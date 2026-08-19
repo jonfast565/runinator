@@ -159,6 +159,31 @@ pub async fn cancel_pipeline_run(
         .map_err(|err| CommandError::Unexpected(format!("invalid cancel response: {err}")))
 }
 
+#[tauri::command]
+pub async fn retry_pipeline_member(
+    state: State<'_, CommandCenterState>,
+    pipeline_run_id: Uuid,
+    member_key: String,
+    parameters: Option<Value>,
+) -> CommandResult<PipelineMemberAttempt> {
+    let mut url =
+        build_state_url(&state, &format!("pipeline_runs/{pipeline_run_id}/members")).await?;
+    url.path_segments_mut()
+        .map_err(|_| CommandError::Unexpected("pipeline retry URL cannot be a base URL".into()))?
+        .push(&member_key)
+        .push("retry");
+    let response = state
+        .client
+        .read()
+        .await
+        .post(url.clone())
+        .json(&json!({ "parameters": parameters.unwrap_or_else(|| json!({})) }))
+        .send()
+        .await?;
+    let response = handle_response(url, response).await?;
+    Ok(response.json::<PipelineMemberAttempt>().await?)
+}
+
 /// resolve a pipeline run's pending inquiry (a member with the `inquire` failure mode paused it).
 #[tauri::command]
 pub async fn resolve_pipeline_run(

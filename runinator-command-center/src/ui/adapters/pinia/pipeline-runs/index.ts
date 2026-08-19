@@ -8,6 +8,7 @@ import {
   fetchPipelineRuns,
   fetchPipelines,
   resolvePipelineRun as resolvePipelineRunService,
+  retryPipelineMember as retryPipelineMemberService,
 } from "../../../../core/services/pipeline";
 
 // the pipeline-runs monitor store. mirrors the workflow-runs list+detail model: a flat list of recent
@@ -73,6 +74,15 @@ export const usePipelineRunsStore = defineStore("pipelineRuns", () => {
     await refresh();
   }
 
+  async function retryMember(
+    pipelineRunId: string,
+    memberKey: string,
+    parameters: Record<string, unknown> = {},
+  ): Promise<void> {
+    await retryPipelineMemberService(pipelineRunId, memberKey, parameters);
+    await refresh();
+  }
+
   // resolve a pending inquiry (a member with the `inquire` failure mode paused the run).
   async function resolveRun(
     pipelineRunId: string,
@@ -103,6 +113,7 @@ export const usePipelineRunsStore = defineStore("pipelineRuns", () => {
     startRun,
     cancelRun,
     resolveRun,
+    retryMember,
     refreshDetailIfMember,
   };
 });

@@ -8,6 +8,21 @@
       </select>
     </label>
 
+    <div class="grid grid-cols-2 gap-2 border-t border-border-subtle pt-3">
+      <label class="flex flex-col gap-1 text-[13px]">
+        <span>Max concurrent pipeline runs</span>
+        <input v-model.number="maxConcurrentRuns" type="number" min="0" />
+        <small class="text-fg-muted">0 means unlimited.</small>
+      </label>
+      <label class="flex flex-col gap-1 text-[13px]">
+        <span>At capacity</span>
+        <select v-model="onConflict">
+          <option value="allow">Allow</option><option value="skip">Skip</option>
+          <option value="queue">Queue</option><option value="cancel_previous">Cancel previous</option>
+        </select>
+      </label>
+    </div>
+
     <label class="flex flex-row items-center gap-2 text-[13px]">
       <input v-model="linksEnabled" type="checkbox" />
       <span>New links enabled by default</span>
@@ -59,13 +74,14 @@ import { ref } from "vue";
 import type { JsonRecord } from "../../../core/domain/json";
 import type {
   PipelineDefaults,
+  PipelineConcurrency,
   PipelineFailurePolicy,
   PipelineMemberFailureMode,
 } from "../../../core/domain/models";
 import JsonEditor from "../shared/JsonEditor.vue";
 
-const props = defineProps<{ defaults: PipelineDefaults }>();
-const emit = defineEmits<{ save: [defaults: PipelineDefaults]; cancel: [] }>();
+const props = defineProps<{ defaults: PipelineDefaults; concurrency: PipelineConcurrency }>();
+const emit = defineEmits<{ save: [defaults: PipelineDefaults, concurrency: PipelineConcurrency]; cancel: [] }>();
 
 const onStepFailure = ref<PipelineFailurePolicy>(props.defaults.on_step_failure);
 const linksEnabled = ref<boolean>(props.defaults.links_enabled_by_default);
@@ -77,6 +93,8 @@ const parametersText = ref<string>(
   JSON.stringify(props.defaults.default_parameters, null, 2),
 );
 const parametersError = ref<string | null>(null);
+const maxConcurrentRuns = ref(props.concurrency.max_concurrent_runs);
+const onConflict = ref<PipelineConcurrency["on_conflict"]>(props.concurrency.on_conflict);
 
 function parseParameters(): JsonRecord | null {
   const raw = parametersText.value.trim();
@@ -117,6 +135,6 @@ function save() {
     default_parameters: parameters,
     max_chain_depth: Number.isFinite(parsedDepth) && parsedDepth > 0 ? parsedDepth : null,
     default_failure_mode: defaultFailureMode.value,
-  });
+  }, { max_concurrent_runs: Math.max(0, Math.trunc(maxConcurrentRuns.value || 0)), on_conflict: onConflict.value });
 }
 </script>

@@ -9,7 +9,7 @@ use runinator_models::{
         FunctionPackage, FunctionPackageDetail, FunctionVersion,
     },
     notifications::{Notification, NotificationDelivery, NotificationPolicy},
-    pipelines::{Pipeline, PipelineRun, PipelineRunDetail, PipelineTrigger},
+    pipelines::{Pipeline, PipelineMemberAttempt, PipelineRun, PipelineRunDetail, PipelineTrigger},
     providers::ProviderMetadata,
     provisioning::{NodeBackendsResponse, ProvisionedGroup},
     replicas::{ReplicaListResponse, ReplicaProviderRegistration, ReplicaRecord, ReplicaStatus},
@@ -113,6 +113,7 @@ pub enum ApiResponse {
     PipelineRun(PipelineRun),
     PipelineRunDetail(PipelineRunDetail),
     PipelineRunList(Vec<PipelineRun>),
+    PipelineMemberAttempt(PipelineMemberAttempt),
     WorkflowRun(WorkflowRunResponse),
     WorkflowRunList(Vec<WorkflowRun>),
     WorkflowNodeRun(WorkflowNodeRun),
@@ -194,6 +195,12 @@ pub struct WorkflowTriggerRunRequest {
 
 #[derive(Debug, Default, Deserialize)]
 pub struct PipelineRunRequest {
+    #[serde(default)]
+    pub parameters: Value,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct PipelineMemberRetryRequest {
     #[serde(default)]
     pub parameters: Value,
 }

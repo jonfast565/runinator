@@ -1,7 +1,4 @@
-// data + write helpers behind the pipeline canvas. a pipeline is a named instance grouping member
-// workflows; the links between members are `chained` workflow triggers stamped with the pipeline's
-// id. there is no bulk "all triggers" endpoint, so member triggers are fetched per workflow and
-// fanned out (same pattern as the pack export).
+// Data + write helpers behind the first-class pipeline graph and run monitor.
 
 import {
   cancelPipelineRun as cancelPipelineRunApi,
@@ -16,6 +13,7 @@ import {
   fetchWorkflowTriggers,
   fetchWorkflows,
   resolvePipelineRun as resolvePipelineRunApi,
+  retryPipelineMember as retryPipelineMemberApi,
   savePipeline as savePipelineApi,
   savePipelineTrigger as savePipelineTriggerApi,
   setPipelineOwner as setPipelineOwnerApi,
@@ -116,6 +114,14 @@ export async function cancelPipelineRun(pipelineRunId: string): Promise<void> {
   await cancelPipelineRunApi(pipelineRunId);
 }
 
+export async function retryPipelineMember(
+  pipelineRunId: string,
+  memberKey: string,
+  parameters: JsonRecord = {},
+) {
+  return retryPipelineMemberApi(pipelineRunId, memberKey, parameters);
+}
+
 /** resolve a pipeline run's pending inquiry (a member with the `inquire` failure mode paused it). */
 export async function resolvePipelineRun(
   pipelineRunId: string,
@@ -125,7 +131,7 @@ export async function resolvePipelineRun(
   return resolvePipelineRunApi(pipelineRunId, decision, null, message ?? null);
 }
 
-/** create a chained trigger tagged with the pipeline, pre-filled from the pipeline's defaults. */
+/** Compatibility helper for ordinary workflow-to-workflow chaining; pipeline links do not use it. */
 export async function createChainLink(
   sourceWorkflowId: string,
   targetName: string,

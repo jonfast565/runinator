@@ -77,6 +77,7 @@ pub fn run() {
             crate::commands::fetch_pipeline_runs,
             crate::commands::fetch_pipeline_run,
             crate::commands::cancel_pipeline_run,
+            crate::commands::retry_pipeline_member,
             crate::commands::resolve_pipeline_run,
             crate::commands::create_workflow_run,
             crate::commands::step_workflow_run,

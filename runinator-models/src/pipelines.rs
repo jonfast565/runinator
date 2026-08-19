@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::replicas::{TriggerActorType, TriggerSourceKind};
+use crate::schedules::WorkflowConcurrency;
 use crate::value::Value;
 use crate::workflows::{WorkflowRun, WorkflowStatus, WorkflowTriggerKind};
 
@@ -29,9 +30,8 @@ impl PipelineFailurePolicy {
     }
 }
 
-/// what happens to the *pipeline run* when one of its member workflows fails, evaluated per member
-/// (an override in [`Pipeline::member_failure_modes`], falling back to
-/// [`PipelineDefaults::default_failure_mode`]). Named after PowerShell's `$ErrorActionPreference`,
+/// what happens to the *pipeline run* when one of its member workflows fails, evaluated per graph
+/// member (falling back to [`PipelineDefaults::default_failure_mode`] during import). Named after PowerShell's `$ErrorActionPreference`,
 /// whose `Stop`/`Continue`/`SilentlyContinue`/`Inquire` values this mirrors one-for-one. Unlike
 /// [`PipelineFailurePolicy`] (which only seeds a newly-drawn link's `on` selector), this is enforced
 /// at runtime by the chaining/settlement orchestration.
@@ -77,7 +77,7 @@ pub struct PipelineDefaults {
     pub default_parameters: Value,
     #[serde(default)]
     pub max_chain_depth: Option<u32>,
-    /// the failure mode applied to a member with no entry in [`Pipeline::member_failure_modes`].
+    /// the failure mode copied onto a member that omits one during import.
     #[serde(default)]
     pub default_failure_mode: PipelineMemberFailureMode,
 }
@@ -133,11 +133,30 @@ pub struct PipelineLinkSpec {
     pub on: PipelineLinkSelector,
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// pure expression object over `params`, `source`, and `members`, overlaid onto pipeline input.
+    #[serde(default)]
+    pub parameters: Value,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PipelineJoinMode {
+    #[default]
+    All,
+    Any,
+    FirstSuccess,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PipelineJoinSpec {
+    pub target: String,
+    pub mode: PipelineJoinMode,
+    #[serde(default)]
+    pub parameters: Value,
 }
 
 /// a portable, id-free pipeline declaration compiled from a `.wdlp` file. members and links are by
-/// workflow name; the web service resolves names to ids at import and materializes the links as
-/// managed `chained` triggers stamped with the upserted pipeline's id.
+/// workflow name; the web service resolves names to ids and persists one atomic graph.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PipelineSpec {
     pub name: String,
@@ -149,6 +168,10 @@ pub struct PipelineSpec {
     pub members: Vec<PipelineMemberSpec>,
     #[serde(default)]
     pub links: Vec<PipelineLinkSpec>,
+    #[serde(default)]
+    pub joins: Vec<PipelineJoinSpec>,
+    #[serde(default)]
+    pub concurrency: WorkflowConcurrency,
     /// pipeline-level triggers (cron / manual / chained) declared in the `.wdlp` header. materialized
     /// on import as managed `pipeline_triggers` reconciled by pipeline id.
     #[serde(default)]
@@ -214,6 +237,56 @@ pub struct PipelineBundle {
     pub pipelines: Vec<PipelineSpec>,
 }
 
+pub const PIPELINE_GRAPH_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PipelineMember {
+    /// stable pipeline-local identity and expression key. Initially the authored workflow name.
+    pub key: String,
+    pub workflow_id: Uuid,
+    #[serde(default)]
+    pub failure_mode: PipelineMemberFailureMode,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PipelineLink {
+    pub id: Uuid,
+    pub from: String,
+    pub to: String,
+    #[serde(default)]
+    pub on: PipelineLinkSelector,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub parameters: Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PipelineJoin {
+    pub target: String,
+    pub mode: PipelineJoinMode,
+    #[serde(default)]
+    pub parameters: Value,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct PipelineGraph {
+    #[serde(default)]
+    pub version: u32,
+    #[serde(default)]
+    pub members: Vec<PipelineMember>,
+    #[serde(default)]
+    pub links: Vec<PipelineLink>,
+    #[serde(default)]
+    pub joins: BTreeMap<String, PipelineJoin>,
+}
+
+impl PipelineGraph {
+    pub fn is_current(&self) -> bool {
+        self.version == PIPELINE_GRAPH_VERSION
+    }
+}
+
 /// a named pipeline instance: a chosen set of member workflows plus authoring defaults. the links
 /// between members remain `chained` workflow triggers stamped with this pipeline's id; the runtime
 /// chaining engine is unaware of pipelines.
@@ -228,12 +301,9 @@ pub struct Pipeline {
     #[serde(default)]
     pub org_id: Option<Uuid>,
     #[serde(default)]
-    pub workflow_ids: Vec<Uuid>,
-    /// per-member override of [`PipelineDefaults::default_failure_mode`], keyed by member workflow
-    /// id. a member absent from this map uses the pipeline's default. persisted in its own column
-    /// (unlike `defaults`, this is keyed by id rather than being purely id-free authoring data).
+    pub graph: PipelineGraph,
     #[serde(default)]
-    pub member_failure_modes: BTreeMap<Uuid, PipelineMemberFailureMode>,
+    pub concurrency: WorkflowConcurrency,
     #[serde(default)]
     pub defaults: PipelineDefaults,
     #[serde(default)]
@@ -242,6 +312,98 @@ pub struct Pipeline {
     pub created_at: Option<DateTime<Utc>>,
     #[serde(default)]
     pub updated_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PipelineMemberAttemptStatus {
+    Pending,
+    Queued,
+    Running,
+    Waiting,
+    ApprovalRequired,
+    Succeeded,
+    Failed,
+    TimedOut,
+    Canceled,
+    Skipped,
+}
+
+impl PipelineMemberAttemptStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Queued => "queued",
+            Self::Running => "running",
+            Self::Waiting => "waiting",
+            Self::ApprovalRequired => "approval_required",
+            Self::Succeeded => "succeeded",
+            Self::Failed => "failed",
+            Self::TimedOut => "timed_out",
+            Self::Canceled => "canceled",
+            Self::Skipped => "skipped",
+        }
+    }
+
+    pub fn is_terminal(self) -> bool {
+        matches!(
+            self,
+            Self::Succeeded | Self::Failed | Self::TimedOut | Self::Canceled | Self::Skipped
+        )
+    }
+}
+
+impl TryFrom<&str> for PipelineMemberAttemptStatus {
+    type Error = String;
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "pending" => Ok(Self::Pending),
+            "queued" => Ok(Self::Queued),
+            "running" => Ok(Self::Running),
+            "waiting" => Ok(Self::Waiting),
+            "approval_required" => Ok(Self::ApprovalRequired),
+            "succeeded" => Ok(Self::Succeeded),
+            "failed" => Ok(Self::Failed),
+            "timed_out" => Ok(Self::TimedOut),
+            "canceled" => Ok(Self::Canceled),
+            "skipped" => Ok(Self::Skipped),
+            other => Err(format!("unknown pipeline member attempt status {other}")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PipelineMemberAttempt {
+    pub id: Uuid,
+    pub pipeline_run_id: Uuid,
+    pub member_key: String,
+    pub workflow_id: Uuid,
+    pub attempt: i64,
+    pub workflow_run_id: Option<Uuid>,
+    pub status: PipelineMemberAttemptStatus,
+    #[serde(default)]
+    pub parameters: Value,
+    #[serde(default)]
+    pub result: Value,
+    pub message: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub finished_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PipelineRunEdgeState {
+    pub link_id: Uuid,
+    pub state: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PipelineRunJoinState {
+    pub target: String,
+    pub mode: PipelineJoinMode,
+    pub state: String,
+    pub satisfied_inputs: usize,
+    pub total_inputs: usize,
 }
 
 /// a persisted pipeline-level trigger. mirrors [`crate::workflows::WorkflowTrigger`] but is owned by a
@@ -301,4 +463,10 @@ pub struct PipelineRun {
 pub struct PipelineRunDetail {
     pub run: PipelineRun,
     pub members: Vec<WorkflowRun>,
+    #[serde(default)]
+    pub attempts: Vec<PipelineMemberAttempt>,
+    #[serde(default)]
+    pub edges: Vec<PipelineRunEdgeState>,
+    #[serde(default)]
+    pub joins: Vec<PipelineRunJoinState>,
 }

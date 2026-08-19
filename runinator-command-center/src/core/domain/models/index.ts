@@ -93,11 +93,17 @@ export type {
   PipelineDefaults,
   PipelineFailurePolicy,
   PipelineMemberFailureMode,
+  PipelineGraph,
+  PipelineMember,
+  PipelineLink,
+  PipelineJoin,
+  PipelineJoinMode,
+  PipelineConcurrency,
 } from "./pipeline/pipeline";
 export { defaultPipelineDefaults } from "./pipeline/pipeline";
 export type { PipelineTrigger } from "./pipeline/pipeline-trigger";
 export type { PipelineRun } from "./pipeline/pipeline-run";
-export type { PipelineRunDetail } from "./pipeline/pipeline-run-detail";
+export type { PipelineRunDetail, PipelineMemberAttempt, PipelineRunEdgeState } from "./pipeline/pipeline-run-detail";
 export type { WorkflowNodeRun } from "./workflow/node-run";
 export type { NodeTransition, NodeTransitionStat } from "./workflow/transition";
 export type { WorkflowRunDetail } from "./workflow/run-detail";

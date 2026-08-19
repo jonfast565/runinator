@@ -317,6 +317,11 @@ pub(crate) const MINIMAL_ENDPOINTS: &[(&str, &str, docs::EndpointPolicy)] = &[
     ),
     (
         "post",
+        "/pipeline_runs/{id}/members/{member_key}/retry",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "post",
         "/pipeline_triggers/{id}/runs",
         docs::EndpointPolicy::Authenticated,
     ),

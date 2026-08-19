@@ -936,6 +936,16 @@ main[inert] {
     max-width: 140px;
   }
 
+  .panel-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .panel-toolbar > .btn-row,
+  .panel-toolbar > .actions {
+    justify-content: flex-start;
+  }
+
   .topbar .user-trigger {
     width: 32px;
     height: 32px;

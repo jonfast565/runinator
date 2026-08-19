@@ -93,6 +93,16 @@ where
         Ok(row.map(|row| mappers::row_to_pipeline_run(&row)))
     }
 
+    async fn fetch_pipeline_runs_for_concurrency(
+        &self,
+        pipeline_id: Uuid,
+    ) -> Result<Vec<PipelineRun>, SendableError> {
+        let rows = sqlx::query(&self.render(&format!(
+            "SELECT {PIPELINE_RUN_COLUMNS} FROM pipeline_runs WHERE pipeline_id = ? ORDER BY created_at, id"
+        ))).bind(pipeline_id).fetch_all(self.pool()).await?;
+        Ok(rows.iter().map(mappers::row_to_pipeline_run).collect())
+    }
+
     async fn update_pipeline_run_status(
         &self,
         pipeline_run_id: Uuid,
@@ -117,6 +127,21 @@ where
                 .bind(pipeline_run_id),
             )
             .await?;
+        Ok(())
+    }
+
+    async fn reopen_pipeline_run(
+        &self,
+        pipeline_run_id: Uuid,
+        message: String,
+    ) -> Result<(), SendableError> {
+        sqlx::query(&self.render(
+            "UPDATE pipeline_runs SET status = 'running', finished_at = NULL, message = ? WHERE id = ? AND status IN ('failed', 'timed_out')",
+        ))
+        .bind(message)
+        .bind(pipeline_run_id)
+        .execute(self.pool())
+        .await?;
         Ok(())
     }
 
@@ -501,6 +526,22 @@ where
             .fetch_all(self.pool())
             .await?;
         Ok(rows.iter().map(mappers::row_to_workflow_node_run).collect())
+    }
+
+    async fn fetch_promoted_workflow_run_artifacts(
+        &self,
+        workflow_run_id: Uuid,
+    ) -> Result<Vec<WorkflowRunArtifact>, SendableError> {
+        let rows = sqlx::query(&self.render(
+            "SELECT id, workflow_run_id, node_id, artifact_id, name, mime_type, size_bytes, uri, metadata, created_at FROM workflow_run_artifacts WHERE workflow_run_id = ? ORDER BY created_at, id",
+        ))
+        .bind(workflow_run_id)
+        .fetch_all(self.pool())
+        .await?;
+        Ok(rows
+            .iter()
+            .map(mappers::row_to_workflow_run_artifact)
+            .collect())
     }
 
     async fn release_workflow_node_run_executor(
@@ -1576,6 +1617,110 @@ where
         .fetch_one(self.pool())
         .await?;
         Ok(mappers::row_to_pipeline_run(&row))
+    }
+
+    async fn discard_queued_pipeline_run(
+        &self,
+        pipeline_run_id: Uuid,
+    ) -> Result<(), SendableError> {
+        sqlx::query(&self.render("DELETE FROM pipeline_runs WHERE id = ? AND status = 'queued'"))
+            .bind(pipeline_run_id)
+            .execute(self.pool())
+            .await?;
+        Ok(())
+    }
+
+    async fn create_pipeline_member_attempt(
+        &self,
+        pipeline_run_id: Uuid,
+        member_key: String,
+        workflow_id: Uuid,
+        attempt: i64,
+        parameters: Value,
+    ) -> Result<Option<PipelineMemberAttempt>, SendableError> {
+        let id = Uuid::now_v7();
+        let now = Utc::now().timestamp();
+        let sql = self.render(&self.dialect().insert_ignore(
+            "pipeline_member_attempts",
+            "id, pipeline_run_id, member_key, workflow_id, attempt, workflow_run_id, status, parameters, result, message, created_at, started_at, finished_at",
+            "?, ?, ?, ?, ?, NULL, 'pending', ?, 'null', NULL, ?, NULL, NULL",
+            "pipeline_run_id, member_key, attempt",
+            None,
+        ));
+        let inserted = sqlx::query(&sql)
+            .bind(id)
+            .bind(pipeline_run_id)
+            .bind(member_key)
+            .bind(workflow_id)
+            .bind(attempt)
+            .bind(parameters.to_string())
+            .bind(now)
+            .execute(self.pool())
+            .await?;
+        if inserted.affected() == 0 {
+            return Ok(None);
+        }
+        let row = sqlx::query(&self.render(&format!(
+            "SELECT {PIPELINE_MEMBER_ATTEMPT_COLUMNS} FROM pipeline_member_attempts WHERE id = ?"
+        )))
+        .bind(id)
+        .fetch_one(self.pool())
+        .await?;
+        Ok(Some(mappers::row_to_pipeline_member_attempt(&row)))
+    }
+
+    async fn bind_pipeline_member_attempt_run(
+        &self,
+        attempt_id: Uuid,
+        workflow_run_id: Uuid,
+    ) -> Result<(), SendableError> {
+        let now = Utc::now().timestamp();
+        sqlx::query(&self.render("UPDATE pipeline_member_attempts SET workflow_run_id = ?, status = 'running', started_at = COALESCE(started_at, ?) WHERE id = ?"))
+            .bind(workflow_run_id).bind(now).bind(attempt_id).execute(self.pool()).await?;
+        Ok(())
+    }
+
+    async fn update_pipeline_member_attempt(
+        &self,
+        attempt_id: Uuid,
+        status: PipelineMemberAttemptStatus,
+        result: Value,
+        message: Option<String>,
+    ) -> Result<(), SendableError> {
+        let finished = status.is_terminal().then(|| Utc::now().timestamp());
+        sqlx::query(&self.render("UPDATE pipeline_member_attempts SET status = ?, result = ?, message = ?, finished_at = COALESCE(?, finished_at) WHERE id = ?"))
+            .bind(status.as_str()).bind(result.to_string()).bind(message).bind(finished).bind(attempt_id)
+            .execute(self.pool()).await?;
+        Ok(())
+    }
+
+    async fn fetch_pipeline_member_attempts(
+        &self,
+        pipeline_run_id: Uuid,
+    ) -> Result<Vec<PipelineMemberAttempt>, SendableError> {
+        let rows = sqlx::query(&self.render(&format!(
+            "SELECT {PIPELINE_MEMBER_ATTEMPT_COLUMNS} FROM pipeline_member_attempts WHERE pipeline_run_id = ? ORDER BY member_key, attempt"
+        )))
+        .bind(pipeline_run_id).fetch_all(self.pool()).await?;
+        Ok(rows
+            .iter()
+            .map(mappers::row_to_pipeline_member_attempt)
+            .collect())
+    }
+
+    async fn delete_unstarted_pipeline_member_attempts(
+        &self,
+        pipeline_run_id: Uuid,
+        member_key: String,
+    ) -> Result<(), SendableError> {
+        sqlx::query(&self.render(
+            "DELETE FROM pipeline_member_attempts WHERE pipeline_run_id = ? AND member_key = ? AND workflow_run_id IS NULL",
+        ))
+        .bind(pipeline_run_id)
+        .bind(member_key)
+        .execute(self.pool())
+        .await?;
+        Ok(())
     }
 
     async fn fetch_workflow_runs_for_pipeline_run(
