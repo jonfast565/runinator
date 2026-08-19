@@ -19,10 +19,12 @@ use log::info;
 use runinator_broker::{
     Broker,
     adapters::{kafka::KafkaBrokerConfig, rabbitmq::RabbitMqBrokerConfig},
-    http::client::HttpBroker,
     in_memory::InMemoryBroker,
-    tcp::client::TcpBroker,
 };
+#[cfg(feature = "http")]
+use runinator_broker::http::client::HttpBroker;
+#[cfg(feature = "tcp")]
+use runinator_broker::tcp::client::TcpBroker;
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_db_cli::{DatabaseBackend, dispatch_database};
 use runinator_engine::{EnginePublisher, run_background_engine};
@@ -36,7 +38,9 @@ use tokio::sync::Notify;
 use uuid::Uuid;
 
 use crate::config::CliArgs;
-use runinator_utilities::{app_data, resource_telemetry, startup};
+#[cfg(feature = "sqlite")]
+use runinator_utilities::app_data;
+use runinator_utilities::{resource_telemetry, startup};
 use service::BackgroundWorkerService;
 
 #[tokio::main]
@@ -79,6 +83,7 @@ async fn run_process() -> Result<(), SendableError> {
         broker_client_id,
         instance_id,
     } = args;
+    let _ = (&sqlite_path, &database_url);
 
     // a stable per-process id used when claiming trigger/action-dispatch rows; k8s passes the pod name.
     let instance = instance_id
@@ -242,6 +247,7 @@ async fn build_broker(
     kafka_config: KafkaBrokerConfig,
     rabbitmq_config: RabbitMqBrokerConfig,
 ) -> Result<Arc<dyn Broker>, SendableError> {
+    let _ = endpoint;
     let result_channel = match backend {
         "kafka" => kafka_config.result_topic.as_str(),
         "rabbitmq" => rabbitmq_config.result_queue.as_str(),
@@ -251,6 +257,7 @@ async fn build_broker(
         .map_err(|err| -> SendableError { err.into() })?;
 
     let broker: Arc<dyn Broker> = match backend {
+        #[cfg(feature = "http")]
         "http" => {
             let url = reqwest::Url::parse(endpoint).map_err(|err| -> SendableError {
                 format!("invalid broker endpoint '{endpoint}': {err}").into()
@@ -261,6 +268,7 @@ async fn build_broker(
             Arc::new(HttpBroker::new(url, client))
         }
         "in-memory" => Arc::new(InMemoryBroker::new()),
+        #[cfg(feature = "tcp")]
         "tcp" => Arc::new(TcpBroker::new(endpoint.to_string())),
         "kafka" => runinator_broker::build_kafka_broker(kafka_config)
             .map_err(|err| -> SendableError { err.into() })?,

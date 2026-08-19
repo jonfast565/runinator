@@ -198,7 +198,7 @@ impl PromptEditor {
     fn insert(&mut self, character: char) {
         self.characters.insert(self.cursor, character);
         self.cursor += 1;
-        self.dismiss();
+        self.refresh_hint();
     }
 
     fn backspace(&mut self) {
@@ -207,12 +207,13 @@ impl PromptEditor {
         }
         self.cursor -= 1;
         self.characters.remove(self.cursor);
-        self.dismiss();
+        self.refresh_hint();
     }
 
     fn delete(&mut self) {
         if self.cursor < self.characters.len() {
             self.characters.remove(self.cursor);
+            self.refresh_hint();
         }
     }
 
@@ -226,6 +227,7 @@ impl PromptEditor {
         }
         self.characters.drain(at..self.cursor);
         self.cursor = at;
+        self.refresh_hint();
     }
 
     fn reset(&mut self) {
@@ -239,6 +241,16 @@ impl PromptEditor {
     fn dismiss(&mut self) {
         self.menu.clear();
         self.hint = None;
+    }
+
+    // Hints do not need a key press: they are the prompt's quiet answer to "what goes here?".
+    // Candidate lists remain opt-in through Tab, so ordinary typing never makes the input jump.
+    fn refresh_hint(&mut self) {
+        self.dismiss();
+        let completion = repl::complete(&self.buffer());
+        if completion.options.is_empty() {
+            self.hint = completion.hint;
+        }
     }
 
     fn remember(&mut self, line: String) {
@@ -280,7 +292,7 @@ impl PromptEditor {
     fn set(&mut self, text: &str) {
         self.characters = text.chars().collect();
         self.cursor = self.characters.len();
-        self.dismiss();
+        self.refresh_hint();
     }
 
     // tab completes the word under the caret when there is one answer, and lists the choices when
@@ -301,7 +313,7 @@ impl PromptEditor {
         let start = buffer[..completion.start].chars().count();
         if let [only] = completion.options.as_slice() {
             self.replace_word(start, &format!("{only} "));
-            self.dismiss();
+            self.refresh_hint();
             return;
         }
         let shared = common_prefix(&completion.options);

@@ -16,5 +16,12 @@ runinator-provider-git = { path = "../runinator-provider-git" }
 runinator-provider-github = { path = "../runinator-provider-github" }
 runinator-provider-jira = { path = "../runinator-provider-jira" }
 runinator-provider-slack = { path = "../runinator-provider-slack" }
-runinator-provider-db = { path = "../runinator-provider-db" }
+runinator-provider-db = { path = "../runinator-provider-db", default-features = false }
 runinator-provider-std = { path = "../runinator-provider-std" }
+
+[features]
+default = ["db-sqlite", "db-postgres", "db-mysql", "db-mongo"]
+db-sqlite = ["runinator-provider-db/sqlite"]
+db-postgres = ["runinator-provider-db/postgres"]
+db-mysql = ["runinator-provider-db/mysql"]
+db-mongo = ["runinator-provider-db/mongo"]

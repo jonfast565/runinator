@@ -12,6 +12,7 @@
 pub mod adapters;
 pub mod dispatch;
 mod factory;
+#[cfg(feature = "http")]
 pub mod http;
 pub mod tcp;
 pub mod ws;

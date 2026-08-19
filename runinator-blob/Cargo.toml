@@ -7,22 +7,30 @@ license = "Apache-2.0"
 [[bin]]
 name = "runinator-blob"
 path = "src/bin/main.rs"
+required-features = ["server"]
 
 [dependencies]
-async-trait = "0.1"
-axum = { version = "0.8.9", default-features = false, features = ["http1", "tokio", "query"] }
+async-trait = { version = "0.1", optional = true }
+axum = { version = "0.8.9", default-features = false, features = ["http1", "tokio", "query"], optional = true }
 chrono = { version = "0.4", features = ["serde"] }
-futures-util = "0.3"
-reqwest = { version = "0.13.3", default-features = false, features = ["rustls", "stream"] }
+futures-util = { version = "0.3", optional = true }
+reqwest = { version = "0.13.3", default-features = false, features = ["rustls", "stream"], optional = true }
 runinator-blob-core = { path = "../runinator-blob-core" }
 runinator-models = { path = "../runinator-models" }
 runinator-utilities = { path = "../runinator-utilities" }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", optional = true }
 tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync"] }
 tokio-util = { version = "0.7", features = ["io"] }
 tracing = "0.1"
-uuid = { version = "1", features = ["v4", "v7"] }
+uuid = { version = "1", features = ["v4", "v7"], optional = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[features]
+# Keep the historical full transport surface for standalone `runinator-blob` users. Runtime
+# binaries select `client` only, so they do not link the S3-compatible HTTP service.
+default = ["client", "server"]
+client = ["dep:async-trait", "dep:futures-util", "dep:reqwest"]
+server = ["dep:axum", "dep:serde_json", "dep:uuid"]

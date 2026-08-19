@@ -7,10 +7,12 @@ use log::info;
 use runinator_broker::{
     Broker,
     adapters::{kafka::KafkaBrokerConfig, rabbitmq::RabbitMqBrokerConfig},
-    http::client::HttpBroker,
     in_memory::InMemoryBroker,
-    tcp::client::TcpBroker,
 };
+#[cfg(feature = "http")]
+use runinator_broker::http::client::HttpBroker;
+#[cfg(feature = "tcp")]
+use runinator_broker::tcp::client::TcpBroker;
 use runinator_db_cli::{DatabaseBackend, dispatch_database};
 use runinator_models::errors::SendableError;
 use tokio::sync::Notify;
@@ -22,7 +24,9 @@ use runinator_ws::{
 
 use crate::config::CliArgs;
 use runinator_comm::discovery::{WebServiceAdvertiserConfig, spawn_web_service_advertiser};
-use runinator_utilities::{app_data, startup};
+#[cfg(feature = "sqlite")]
+use runinator_utilities::app_data;
+use runinator_utilities::startup;
 use service::WebService;
 
 #[tokio::main]
@@ -89,6 +93,9 @@ async fn run_process() -> Result<(), SendableError> {
         request_timeout_seconds,
         run_engine,
     } = args;
+    // A single-backend build compiles the other dispatch arms out. Keep their CLI fields accepted
+    // (so the command surface stays stable) without warning when that happens.
+    let _ = (&sqlite_path, &database_url);
     if !matches!(announce_scheme.as_str(), "http" | "https") {
         return Err(
             format!("--announce-scheme must be http or https, got '{announce_scheme}'").into(),
@@ -236,6 +243,7 @@ async fn build_broker(
     kafka_config: KafkaBrokerConfig,
     rabbitmq_config: RabbitMqBrokerConfig,
 ) -> Result<Arc<dyn Broker>, SendableError> {
+    let _ = endpoint;
     let result_channel = match backend {
         "kafka" => kafka_config.result_topic.as_str(),
         "rabbitmq" => rabbitmq_config.result_queue.as_str(),
@@ -245,6 +253,7 @@ async fn build_broker(
         .map_err(|err| runinator_ws::errors::BROKER_WORKFLOW_RESULTS.error(err))?;
 
     let broker: Arc<dyn Broker> = match backend {
+        #[cfg(feature = "http")]
         "http" => {
             let url = reqwest::Url::parse(endpoint)
                 .map_err(|err| runinator_ws::errors::BROKER_INVALID_ENDPOINT.error(err))?;
@@ -254,6 +263,7 @@ async fn build_broker(
             Arc::new(HttpBroker::new(url, client))
         }
         "in-memory" => Arc::new(InMemoryBroker::new()),
+        #[cfg(feature = "tcp")]
         "tcp" => Arc::new(TcpBroker::new(endpoint.to_string())),
         "kafka" => runinator_broker::build_kafka_broker(kafka_config)
             .map_err(|err| runinator_ws::errors::BROKER_KAFKA.error(err))?,

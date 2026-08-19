@@ -20,14 +20,22 @@
 //! server-side encryption, and `STREAMING-AWS4-HMAC-SHA256-PAYLOAD` chunk signing. an etag here is a
 //! quoted sha-256, not an md5.
 
+#[cfg(feature = "client")]
 pub mod client;
 pub mod config;
+#[cfg(feature = "client")]
 pub mod factory;
+#[cfg(feature = "server")]
 pub mod server;
 
+#[cfg(feature = "client")]
 pub use client::S3BlobClient;
-pub use config::{BlobClientConfig, BlobServerConfig};
+pub use config::BlobClientConfig;
+#[cfg(feature = "server")]
+pub use config::BlobServerConfig;
+#[cfg(feature = "client")]
 pub use factory::{ensure_buckets, from_env};
+#[cfg(feature = "server")]
 pub use server::{router, run_server};
 
 // the contract, re-exported at its historical path so a binary that builds a store names one crate.

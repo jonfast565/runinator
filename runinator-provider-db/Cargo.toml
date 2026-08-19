@@ -11,10 +11,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "time"] }
 uuid = { version = "1", features = ["serde"] }
 # `bigdecimal` is what makes DECIMAL/NUMERIC decodable at all — without it sqlx has no rust type
 # for them and every value renders as `<unsupported:…>`.
-sqlx = { version = "0.8.6", features = [
-    "sqlite",
-    "postgres",
-    "mysql",
+sqlx = { version = "0.8.6", default-features = false, features = [
     "runtime-tokio-rustls",
     "bigdecimal",
     "chrono",
@@ -31,7 +28,10 @@ runinator-utilities = { path = "../runinator-utilities" }
 runinator-models = { path = "../runinator-models" }
 
 [features]
-default = ["mongo"]
+default = ["sqlite", "postgres", "mysql", "mongo"]
+sqlite = ["sqlx/sqlite"]
+postgres = ["sqlx/postgres"]
+mysql = ["sqlx/mysql"]
 # mongodb is a first-class store backend, not an add-on, so it ships by default. its `bson`
 # dependency hard-enables `serde_json/preserve_order`, which cargo unifies across the workspace —
 # that is intended, not a hazard to route around. the domain and wire type is

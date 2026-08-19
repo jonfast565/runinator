@@ -30,7 +30,7 @@ ARG ALPINE_VERSION=3.24
 ARG RUST_VERSION=1.97.1
 ARG RUNINATOR_VERSION=0.2.367
 
-# ---- shared builder: compile every binary once ----
+# ---- shared builder: compile every Kubernetes binary once ----
 FROM rust:${RUST_VERSION}-alpine${ALPINE_VERSION} AS builder
 # BuildKit-provided; only used to key the target/ cache so a cross-arch build does not thrash the
 # cache of the other arch (cargo would rebuild the world on every alternation).
@@ -47,7 +47,7 @@ COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,target=/workspace/target,id=runinator-target-${TARGETARCH},sharing=locked \
-    cargo build --release --locked \
+    cargo build --release --locked --no-default-features \
         -p runinator-ws \
         -p runinator-background-worker \
         -p runinator-worker \
@@ -57,7 +57,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
         -p runinator-bootstrap \
         -p runinator-broker \
         -p runinator-blob \
-        --features runinator-ws/rabbitmq,runinator-ws/kubernetes,runinator-background-worker/rabbitmq,runinator-worker/rabbitmq,runinator-waker/rabbitmq \
+        --features runinator-ws/postgres,runinator-ws/rabbitmq,runinator-ws/kubernetes,runinator-background-worker/postgres,runinator-background-worker/rabbitmq,runinator-worker/rabbitmq,runinator-waker/rabbitmq,runinator-archiver/postgres,runinator-bootstrap/postgres,runinator-broker/tcp,runinator-blob/server \
     && mkdir -p /out \
     && cp target/release/runinator-ws \
           target/release/runinator-background-worker \

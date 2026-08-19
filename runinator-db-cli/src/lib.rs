@@ -2,7 +2,12 @@
 
 use clap::ValueEnum;
 
-pub use runinator_database::{mysql::MySqlDb, postgres::PostgresDb, sqlite::SqliteDb};
+#[cfg(feature = "mysql")]
+pub use runinator_database::mysql::MySqlDb;
+#[cfg(feature = "postgres")]
+pub use runinator_database::postgres::PostgresDb;
+#[cfg(feature = "sqlite")]
+pub use runinator_database::sqlite::SqliteDb;
 
 /// database backend selected by a CLI flag (also reads `RUNINATOR_DATABASE`).
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -24,20 +29,26 @@ pub enum DatabaseBackend {
 macro_rules! dispatch_database {
     ($backend:expr, sqlite: $sqlite:expr, url: $url:expr, |$db:ident| $body:block) => {
         match $backend {
+            #[cfg(feature = "sqlite")]
             $crate::DatabaseBackend::Sqlite => {
                 let __conn: String = $sqlite;
                 let $db = ::std::sync::Arc::new($crate::SqliteDb::new(&__conn).await?);
                 $body
             }
+            #[cfg(feature = "postgres")]
             $crate::DatabaseBackend::Postgres => {
                 let __conn: String = $url;
                 let $db = ::std::sync::Arc::new($crate::PostgresDb::new(&__conn).await?);
                 $body
             }
+            #[cfg(feature = "mysql")]
             $crate::DatabaseBackend::Mysql => {
                 let __conn: String = $url;
                 let $db = ::std::sync::Arc::new($crate::MySqlDb::new(&__conn).await?);
                 $body
+            }
+            other => {
+                return Err(format!("database backend '{other:?}' is not compiled into this binary").into());
             }
         }
     };

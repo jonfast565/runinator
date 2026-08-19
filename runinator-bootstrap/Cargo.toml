@@ -8,10 +8,16 @@ clap = { version = "4.5", features = ["derive", "env"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 tracing = "0.1"
 
-runinator-database = { path = "../runinator-database" }
-runinator-db-cli = { path = "../runinator-db-cli" }
+runinator-database = { path = "../runinator-database", default-features = false }
+runinator-db-cli = { path = "../runinator-db-cli", default-features = false }
 runinator-models = { path = "../runinator-models" }
 runinator-utilities = { path = "../runinator-utilities" }
+
+[features]
+default = ["sqlite"]
+sqlite = ["runinator-database/sqlite", "runinator-db-cli/sqlite"]
+postgres = ["runinator-database/postgres", "runinator-db-cli/postgres"]
+mysql = ["runinator-database/mysql", "runinator-db-cli/mysql"]
 
 [[bin]]
 name = "runinator-bootstrap"

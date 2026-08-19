@@ -14,9 +14,12 @@ reqwest = { version = "0.13.3", default-features = false, features = ["json", "r
 runinator-models = { path = "../runinator-models" }
 runinator-utilities = { path = "../runinator-utilities" }
 opentelemetry = "0.32"
-runinator-broker = { path = "../runinator-broker" }
+runinator-broker = { path = "../runinator-broker", default-features = false }
 runinator-api = { path = "../runinator-api" }
 
 [features]
+default = ["http", "tcp"]
+http = ["runinator-broker/http"]
+tcp = ["runinator-broker/tcp"]
 kafka = ["runinator-broker/kafka"]
 rabbitmq = ["runinator-broker/rabbitmq"]

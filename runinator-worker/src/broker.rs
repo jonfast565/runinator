@@ -5,10 +5,12 @@ use runinator_broker::ws::client::WsBroker;
 use runinator_broker::{
     Broker, BrokerError,
     adapters::{kafka::KafkaBrokerConfig, rabbitmq::RabbitMqBrokerConfig},
-    http::client::HttpBroker,
     in_memory::InMemoryBroker,
-    tcp::client::TcpBroker,
 };
+#[cfg(feature = "http")]
+use runinator_broker::http::client::HttpBroker;
+#[cfg(feature = "tcp")]
+use runinator_broker::tcp::client::TcpBroker;
 use runinator_models::errors::{RuntimeError, SendableError};
 
 use crate::config;
@@ -57,6 +59,7 @@ pub async fn build_broker(config: &BrokerConfig) -> Result<Arc<dyn Broker>, Send
     .map_err(|err| broker_error("workflow_results", err))?;
 
     let broker: Arc<dyn Broker> = match config.broker_backend.as_str() {
+        #[cfg(feature = "http")]
         "http" => {
             let url = reqwest::Url::parse(&config.broker_endpoint)
                 .map_err(|err| crate::errors::BROKER_INVALID_ENDPOINT.error(err))?;
@@ -80,6 +83,7 @@ pub async fn build_broker(config: &BrokerConfig) -> Result<Arc<dyn Broker>, Send
                 .error("'ws' requires building runinator-worker with the `ws` feature"));
         }
         "in-memory" => Arc::new(InMemoryBroker::new()),
+        #[cfg(feature = "tcp")]
         "tcp" => Arc::new(TcpBroker::new(config.broker_endpoint.clone())),
         "kafka" => runinator_broker::build_kafka_broker(
             KafkaBrokerConfig::new(config.broker_endpoint.clone())

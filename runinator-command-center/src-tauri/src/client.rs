@@ -91,12 +91,15 @@ pub async fn patch_json(
     Ok(response.json::<Value>().await?)
 }
 
-/// DELETE, returning whatever json the service answered with.
-pub async fn delete(state: &CommandCenterState, path: &str) -> CommandResult<Value> {
+/// DELETE, decoding the service response at the call site's declared type.
+pub async fn delete<T>(state: &CommandCenterState, path: &str) -> CommandResult<T>
+where
+    T: serde::de::DeserializeOwned,
+{
     let url = build_state_url(state, path).await?;
     let response = state.client.read().await.delete(url.clone()).send().await?;
     let response = handle_response(url, response).await?;
-    Ok(response.json::<Value>().await?)
+    Ok(response.json::<T>().await?)
 }
 
 pub async fn build_state_url(state: &CommandCenterState, path: &str) -> CommandResult<Url> {

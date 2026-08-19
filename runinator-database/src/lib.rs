@@ -27,11 +27,14 @@ mod migration_parity;
 // for the callers that already use those paths.
 pub use runinator_store::workflow_mutex;
 pub use runinator_store::{archive, interfaces};
+#[cfg(feature = "mysql")]
 pub mod mysql;
 mod operations;
 mod pool;
+#[cfg(feature = "postgres")]
 pub mod postgres;
 mod queries;
+#[cfg(feature = "sqlite")]
 pub mod sqlite;
 
 #[derive(Debug, Clone, Default)]

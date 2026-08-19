@@ -10,10 +10,10 @@ path = "src/bin/main.rs"
 
 [dependencies]
 async-trait = "0.1"
-axum = { version = "0.8.9", default-features = false, features = ["json", "tokio", "http1"] }
+axum = { version = "0.8.9", default-features = false, features = ["json", "tokio", "http1"], optional = true }
 chrono = { version = "0.4", features = ["serde"] }
 parking_lot = "0.12"
-reqwest = { version = "0.13.3", default-features = false, features = ["json", "rustls"] }
+reqwest = { version = "0.13.3", default-features = false, features = ["json", "rustls"], optional = true }
 rdkafka = { version = "0.39", features = ["cmake-build"], optional = true }
 lapin = { version = "4.9.1", optional = true }
 futures-util = { version = "0.3", optional = true }
@@ -43,6 +43,10 @@ tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", 
 uuid = { version = "1", features = ["serde", "v4"] }
 
 [features]
+default = ["http", "tcp"]
+http = ["dep:axum", "dep:reqwest"]
+tcp = []
 kafka = ["dep:rdkafka"]
 rabbitmq = ["dep:lapin", "dep:futures-util", "dep:log"]
 ws = ["dep:tokio-tungstenite", "dep:futures-util", "dep:log", "dep:rustls"]
+full = ["http", "tcp", "kafka", "rabbitmq", "ws"]

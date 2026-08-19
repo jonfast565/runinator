@@ -6,10 +6,12 @@
 
 use std::env;
 
-use runinator_blob_core::sigv4::{BlobCredential, CredentialStore, DEFAULT_REGION};
-use runinator_blob_core::BlobError;
+use runinator_blob_core::sigv4::{BlobCredential, DEFAULT_REGION};
+#[cfg(feature = "server")]
+use runinator_blob_core::{BlobError, CredentialStore};
 
 /// where the service listens.
+#[cfg(feature = "server")]
 pub const ENV_LISTEN_ADDR: &str = "RUNINATOR_BLOB_ADDR";
 /// the directory the service stores objects in.
 pub const ENV_DATA_DIR: &str = "RUNINATOR_BLOB_DATA_DIR";
@@ -18,20 +20,26 @@ pub const ENV_ENDPOINT: &str = "RUNINATOR_BLOB_ENDPOINT";
 pub const ENV_ACCESS_KEY_ID: &str = "RUNINATOR_BLOB_ACCESS_KEY_ID";
 pub const ENV_SECRET_ACCESS_KEY: &str = "RUNINATOR_BLOB_SECRET_ACCESS_KEY";
 /// a json array of `{access_key_id, secret_access_key}` for deployments with more than one key.
+#[cfg(feature = "server")]
 pub const ENV_CREDENTIALS: &str = "RUNINATOR_BLOB_CREDENTIALS";
 pub const ENV_REGION: &str = "RUNINATOR_BLOB_REGION";
 /// accept unsigned requests. development only.
+#[cfg(feature = "server")]
 pub const ENV_ALLOW_ANONYMOUS: &str = "RUNINATOR_BLOB_ALLOW_ANONYMOUS";
 /// the largest single-part upload the service will buffer, in bytes.
+#[cfg(feature = "server")]
 pub const ENV_MAX_OBJECT_BYTES: &str = "RUNINATOR_BLOB_MAX_OBJECT_BYTES";
 
+#[cfg(feature = "server")]
 pub const DEFAULT_LISTEN_ADDR: &str = "0.0.0.0:9000";
 pub const DEFAULT_DATA_DIR: &str = "/var/lib/runinator/blobs";
 /// 256 MiB. a single-part upload is buffered in memory to verify its digest, so this is a memory
 /// bound as much as a size limit; larger objects go through multipart, which buffers one part.
+#[cfg(feature = "server")]
 pub const DEFAULT_MAX_OBJECT_BYTES: usize = 256 * 1024 * 1024;
 
 /// the service's runtime configuration.
+#[cfg(feature = "server")]
 #[derive(Clone, Debug)]
 pub struct BlobServerConfig {
     pub listen_addr: String,
@@ -41,6 +49,7 @@ pub struct BlobServerConfig {
     pub max_object_bytes: usize,
 }
 
+#[cfg(feature = "server")]
 impl BlobServerConfig {
     /// read the configuration from the environment.
     pub fn from_env() -> Result<Self, BlobError> {
@@ -88,6 +97,7 @@ impl BlobClientConfig {
 }
 
 /// the credentials the service will accept.
+#[cfg(feature = "server")]
 pub fn credential_store_from_env() -> Result<CredentialStore, BlobError> {
     let mut credentials = Vec::new();
     if let Ok(raw) = env::var(ENV_CREDENTIALS) {
@@ -128,6 +138,7 @@ fn env_or(name: &str, fallback: &str) -> String {
         .unwrap_or_else(|| fallback.to_string())
 }
 
+#[cfg(feature = "server")]
 fn env_flag(name: &str) -> bool {
     env::var(name)
         .map(|value| {

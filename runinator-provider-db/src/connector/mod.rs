@@ -96,22 +96,26 @@ pub trait DatabaseConnector: Send + Sync {
 
 /// build the connector for an engine. the runtime is shared so a single provider call does not
 /// stand up more than one reactor.
+#[allow(unreachable_patterns)]
 pub fn connector_for(
     engine: Engine,
     connection: &str,
     runtime: Arc<Runtime>,
 ) -> Result<Box<dyn DatabaseConnector>, SendableError> {
     match engine {
+        #[cfg(feature = "sqlite")]
         Engine::Sqlite => Ok(Box::new(sql::SqlConnector::new(
             Engine::Sqlite,
             connection,
             runtime,
         )?)),
+        #[cfg(feature = "postgres")]
         Engine::Postgres => Ok(Box::new(sql::SqlConnector::new(
             Engine::Postgres,
             connection,
             runtime,
         )?)),
+        #[cfg(feature = "mysql")]
         Engine::Mysql => Ok(Box::new(sql::SqlConnector::new(
             Engine::Mysql,
             connection,
@@ -129,5 +133,8 @@ pub fn connector_for(
                  --features runinator-provider-db/mongo",
             ))
         }
+        other => Err(crate::errors::UNSUPPORTED_ENGINE.error(format!(
+            "{} is not enabled in this build", other.as_str()
+        ))),
     }
 }

@@ -14,7 +14,7 @@ serde_json = "1.0"
 clap = { version = "4.5", features = ["derive", "env"] }
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.18", features = ["v4"] }
-reqwest = { version = "0.13.3", default-features = false, features = ["json", "rustls"] }
+reqwest = { version = "0.13.3", default-features = false, features = ["json", "rustls"], optional = true }
 # used only to install a process-default rustls CryptoProvider at startup (see main.rs).
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 utoipa = { version = "5", features = ["axum_extras", "uuid", "chrono"] }
@@ -22,8 +22,8 @@ tracing = "0.1"
 metrics = "0.24"
 opentelemetry = "0.32"
 
-runinator-blob = { path = "../runinator-blob" }
-runinator-broker = { path = "../runinator-broker" }
+runinator-blob = { path = "../runinator-blob", default-features = false, features = ["client"] }
+runinator-broker = { path = "../runinator-broker", default-features = false }
 runinator-ws-core = { path = "../runinator-ws-core" }
 runinator-ws-middleware = { path = "../runinator-ws-middleware" }
 runinator-ws-identity = { path = "../runinator-ws-identity" }
@@ -31,8 +31,8 @@ runinator-ws-authoring = { path = "../runinator-ws-authoring" }
 runinator-ws-runtime = { path = "../runinator-ws-runtime" }
 runinator-engine = { path = "../runinator-engine" }
 runinator-reducer = { path = "../runinator-reducer" }
-runinator-database = { path = "../runinator-database" }
-runinator-db-cli = { path = "../runinator-db-cli" }
+runinator-database = { path = "../runinator-database", default-features = false }
+runinator-db-cli = { path = "../runinator-db-cli", default-features = false }
 runinator-models = { path = "../runinator-models" }
 runinator-comm = { path = "../runinator-comm" }
 runinator-utilities = { path = "../runinator-utilities" }
@@ -55,6 +55,13 @@ runinator-pack = { path = "../runinator-pack" }
 runinator-provider-catalog = { path = "../runinator-provider-catalog" }
 
 [features]
+default = ["sqlite", "http", "tcp"]
+sqlite = ["runinator-database/sqlite", "runinator-db-cli/sqlite", "runinator-ws-authoring/db-sqlite"]
+postgres = ["runinator-database/postgres", "runinator-db-cli/postgres", "runinator-ws-authoring/db-postgres"]
+mysql = ["runinator-database/mysql", "runinator-db-cli/mysql", "runinator-ws-authoring/db-mysql"]
+mongo = ["runinator-ws-authoring/db-mongo"]
+http = ["runinator-broker/http", "dep:reqwest"]
+tcp = ["runinator-broker/tcp"]
 kafka = ["runinator-broker/kafka"]
 rabbitmq = ["runinator-broker/rabbitmq"]
 # enables the real `WsBroker` client, needed to test the /ws/desktop-worker relay end to end.

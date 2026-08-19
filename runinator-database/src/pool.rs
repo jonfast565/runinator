@@ -7,6 +7,7 @@ use std::time::Duration;
 
 /// default maximum pooled connections. sqlx's built-in default is 10; 20 gives the web service and
 /// in-process engine headroom without risking a small managed postgres's connection cap.
+#[cfg(any(feature = "postgres", feature = "mysql"))]
 const DEFAULT_MAX_CONNECTIONS: u32 = 20;
 
 /// default acquire timeout. long enough to ride out a brief burst, short enough that a genuinely
@@ -15,6 +16,7 @@ const DEFAULT_ACQUIRE_TIMEOUT_SECONDS: u64 = 30;
 
 /// maximum pooled connections, overridable via `RUNINATOR_DB_MAX_CONNECTIONS`. a missing, unparseable,
 /// or zero value falls back to the default.
+#[cfg(any(feature = "postgres", feature = "mysql"))]
 pub(crate) fn pool_max_connections() -> u32 {
     std::env::var("RUNINATOR_DB_MAX_CONNECTIONS")
         .ok()

@@ -7,15 +7,19 @@ use std::time::Duration;
 
 use runinator_models::errors::SendableError;
 use serde_json::Value;
-use sqlx::mysql::MySqlConnectOptions;
-use sqlx::postgres::PgConnectOptions;
-use sqlx::sqlite::SqliteConnectOptions;
-use sqlx::{ConnectOptions, Connection, MySqlPool, PgPool, SqlitePool};
+#[cfg(feature = "mysql")]
+use sqlx::{MySqlPool, mysql::MySqlConnectOptions};
+#[cfg(feature = "postgres")]
+use sqlx::{PgPool, postgres::PgConnectOptions};
+#[cfg(feature = "sqlite")]
+use sqlx::{ConnectOptions, Connection, SqlitePool, sqlite::SqliteConnectOptions};
 use tokio::runtime::Runtime;
 
 use crate::connector::{DatabaseConnector, OnConflict, ProvisionSpec, SeedSpec};
 use crate::engine::Engine;
-use crate::errors::{CONNECTION_FAILED, DATABASE_MISSING, INVALID_STATEMENT, UNSUPPORTED_ENGINE};
+use crate::errors::{CONNECTION_FAILED, INVALID_STATEMENT, UNSUPPORTED_ENGINE};
+#[cfg(any(feature = "postgres", feature = "mysql"))]
+use crate::errors::DATABASE_MISSING;
 use crate::rowset::{ColumnSummary, ExecOutcome, RowSet, StepOutcome, TableInfo};
 use crate::statement::StatementSpec;
 
@@ -25,16 +29,22 @@ use ops::{SqlStep, sql_returns_rows};
 /// on the way out; a workflow task is not a hot path, and this keeps the desktop agent from
 /// holding sockets open between runs.
 enum SqlPool {
+    #[cfg(feature = "postgres")]
     Postgres(PgPool),
+    #[cfg(feature = "mysql")]
     Mysql(MySqlPool),
+    #[cfg(feature = "sqlite")]
     Sqlite(SqlitePool),
 }
 
 impl SqlPool {
     async fn close(&self) {
         match self {
+            #[cfg(feature = "postgres")]
             SqlPool::Postgres(pool) => pool.close().await,
+            #[cfg(feature = "mysql")]
             SqlPool::Mysql(pool) => pool.close().await,
+            #[cfg(feature = "sqlite")]
             SqlPool::Sqlite(pool) => pool.close().await,
         }
     }
@@ -64,14 +74,17 @@ impl SqlConnector {
 
     async fn connect(&self) -> Result<SqlPool, SendableError> {
         match self.engine {
+            #[cfg(feature = "postgres")]
             Engine::Postgres => PgPool::connect(&self.connection)
                 .await
                 .map(SqlPool::Postgres)
                 .map_err(connect_error),
+            #[cfg(feature = "mysql")]
             Engine::Mysql => MySqlPool::connect(&self.connection)
                 .await
                 .map(SqlPool::Mysql)
                 .map_err(connect_error),
+            #[cfg(feature = "sqlite")]
             Engine::Sqlite => {
                 // never create the file as a side effect of a query; `provision` owns creation.
                 let options = SqliteConnectOptions::from_str(&self.connection)
@@ -82,7 +95,7 @@ impl SqlConnector {
                     .map(SqlPool::Sqlite)
                     .map_err(connect_error)
             }
-            Engine::Mongodb => Err(UNSUPPORTED_ENGINE.error("mongodb is not a sql engine")),
+            other => Err(UNSUPPORTED_ENGINE.error(format!("{} is not enabled in this build", other.as_str()))),
         }
     }
 
@@ -123,18 +136,22 @@ impl DatabaseConnector for SqlConnector {
         let connection = self.connection.clone();
         let admin = spec.admin_connection.clone();
         let database = spec.database.clone();
+        let _ = (&admin, &database, timeout);
 
         self.runtime.clone().block_on(async move {
             match engine {
+                #[cfg(feature = "sqlite")]
                 Engine::Sqlite => ensure_sqlite(&connection).await,
+                #[cfg(feature = "postgres")]
                 Engine::Postgres => {
                     ensure_postgres(&connection, admin.as_deref(), database.as_deref(), timeout)
                         .await
                 }
+                #[cfg(feature = "mysql")]
                 Engine::Mysql => {
                     ensure_mysql(&connection, admin.as_deref(), database.as_deref(), timeout).await
                 }
-                Engine::Mongodb => Err(UNSUPPORTED_ENGINE.error("mongodb is not a sql engine")),
+                other => Err(UNSUPPORTED_ENGINE.error(format!("{} is not enabled in this build", other.as_str()))),
             }
         })
     }
@@ -144,8 +161,11 @@ impl DatabaseConnector for SqlConnector {
         self.runtime.clone().block_on(async move {
             let pool = self.connect().await?;
             let result = match &pool {
+                #[cfg(feature = "postgres")]
                 SqlPool::Postgres(pool) => ops::pg::query(pool, text, params, timeout).await,
+                #[cfg(feature = "mysql")]
                 SqlPool::Mysql(pool) => ops::mysql::query(pool, text, params, timeout).await,
+                #[cfg(feature = "sqlite")]
                 SqlPool::Sqlite(pool) => ops::sqlite::query(pool, text, params, timeout).await,
             };
             pool.close().await;
@@ -162,8 +182,11 @@ impl DatabaseConnector for SqlConnector {
         self.runtime.clone().block_on(async move {
             let pool = self.connect().await?;
             let result = match &pool {
+                #[cfg(feature = "postgres")]
                 SqlPool::Postgres(pool) => ops::pg::execute(pool, text, params, timeout).await,
+                #[cfg(feature = "mysql")]
                 SqlPool::Mysql(pool) => ops::mysql::execute(pool, text, params, timeout).await,
+                #[cfg(feature = "sqlite")]
                 SqlPool::Sqlite(pool) => ops::sqlite::execute(pool, text, params, timeout).await,
             };
             pool.close().await;
@@ -272,12 +295,15 @@ impl SqlConnector {
         self.runtime.clone().block_on(async move {
             let pool = self.connect().await?;
             let result = match &pool {
+                #[cfg(feature = "postgres")]
                 SqlPool::Postgres(pool) => {
                     ops::pg::script(pool, &steps, transactional, timeout).await
                 }
+                #[cfg(feature = "mysql")]
                 SqlPool::Mysql(pool) => {
                     ops::mysql::script(pool, &steps, transactional, timeout).await
                 }
+                #[cfg(feature = "sqlite")]
                 SqlPool::Sqlite(pool) => {
                     ops::sqlite::script(pool, &steps, transactional, timeout).await
                 }
@@ -289,6 +315,7 @@ impl SqlConnector {
 }
 
 /// create the sqlite file (and its parent directory) when missing. returns whether it was created.
+#[cfg(feature = "sqlite")]
 async fn ensure_sqlite(connection: &str) -> Result<bool, SendableError> {
     let options = SqliteConnectOptions::from_str(connection).map_err(connect_error)?;
     let path = options.get_filename().to_path_buf();
@@ -311,6 +338,7 @@ async fn ensure_sqlite(connection: &str) -> Result<bool, SendableError> {
 }
 
 /// derive the maintenance connection for postgres by pointing the same credentials at `postgres`.
+#[cfg(feature = "postgres")]
 async fn ensure_postgres(
     connection: &str,
     admin: Option<&str>,
@@ -360,6 +388,7 @@ async fn ensure_postgres(
     Ok(true)
 }
 
+#[cfg(feature = "mysql")]
 async fn ensure_mysql(
     connection: &str,
     admin: Option<&str>,

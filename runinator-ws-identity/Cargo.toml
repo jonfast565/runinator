@@ -15,7 +15,7 @@ utoipa = { version = "5", features = ["axum_extras", "uuid", "chrono"] }
 uuid = { version = "1.18", features = ["v4"] }
 
 runinator-auth = { path = "../runinator-auth" }
-runinator-database = { path = "../runinator-database" }
+runinator-database = { path = "../runinator-database", default-features = false }
 runinator-engine = { path = "../runinator-engine" }
 runinator-models = { path = "../runinator-models" }
 runinator-provisioner = { path = "../runinator-provisioner" }

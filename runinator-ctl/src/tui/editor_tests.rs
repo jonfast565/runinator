@@ -136,6 +136,39 @@ fn tab_offers_nothing_on_a_wdl_line() {
 }
 
 #[test]
+fn typing_a_command_shows_its_next_open_ended_argument_hint() {
+    let mut editor = PromptEditor::default();
+    type_line(&mut editor, ":workflows show ");
+
+    assert!(editor.menu.is_empty());
+    assert!(
+        editor
+            .hint
+            .as_deref()
+            .is_some_and(|hint| hint.contains("WORKFLOW"))
+    );
+}
+
+#[test]
+fn completing_a_command_refreshes_the_hint_for_its_next_argument() {
+    let mut editor = PromptEditor::default();
+    type_line(&mut editor, ":work");
+    editor.handle(key(KeyCode::Tab));
+
+    // The command itself is complete; its subcommands are still candidates, not a hint.
+    assert_eq!(editor.buffer(), ":workflows ");
+    assert!(editor.hint.is_none());
+
+    type_line(&mut editor, "show ");
+    assert!(
+        editor
+            .hint
+            .as_deref()
+            .is_some_and(|hint| hint.contains("WORKFLOW"))
+    );
+}
+
+#[test]
 fn a_key_release_is_ignored() {
     let mut editor = PromptEditor::default();
     let mut press = key(KeyCode::Char('a'));

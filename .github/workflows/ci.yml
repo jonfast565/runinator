@@ -341,7 +341,7 @@ jobs:
       # cannot be built, which no other job would tell us until a release.
       - name: Check deployed feature set (rabbitmq + kubernetes)
         run: |
-          cargo check --locked --all-targets \
+          cargo check --locked --no-default-features \
             -p runinator-ws \
             -p runinator-background-worker \
             -p runinator-worker \
@@ -350,7 +350,8 @@ jobs:
             -p runinator-ctl \
             -p runinator-bootstrap \
             -p runinator-broker \
-            --features runinator-ws/rabbitmq,runinator-ws/kubernetes,runinator-background-worker/rabbitmq,runinator-worker/rabbitmq,runinator-waker/rabbitmq
+            -p runinator-blob \
+            --features runinator-ws/postgres,runinator-ws/rabbitmq,runinator-ws/kubernetes,runinator-background-worker/postgres,runinator-background-worker/rabbitmq,runinator-worker/rabbitmq,runinator-waker/rabbitmq,runinator-archiver/postgres,runinator-bootstrap/postgres,runinator-broker/tcp,runinator-blob/server
 
       - name: Check kafka backend
         run: |

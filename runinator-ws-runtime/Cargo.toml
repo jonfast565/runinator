@@ -19,7 +19,7 @@ uuid = { version = "1.18", features = ["v4"] }
 runinator-blob-core = { path = "../runinator-blob-core" }
 runinator-broker-core = { path = "../runinator-broker-core" }
 runinator-comm = { path = "../runinator-comm" }
-runinator-database = { path = "../runinator-database" }
+runinator-database = { path = "../runinator-database", default-features = false }
 runinator-engine = { path = "../runinator-engine" }
 runinator-models = { path = "../runinator-models" }
 runinator-provisioner = { path = "../runinator-provisioner" }

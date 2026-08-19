@@ -256,6 +256,7 @@ macro_rules! sql_ops {
     };
 }
 
+#[cfg(feature = "postgres")]
 fn bind_pg<'q>(
     query: sqlx::query::Query<'q, sqlx::Postgres, sqlx::postgres::PgArguments>,
     param: &'q Value,
@@ -274,6 +275,7 @@ fn bind_pg<'q>(
     }
 }
 
+#[cfg(feature = "mysql")]
 fn bind_mysql<'q>(
     query: sqlx::query::Query<'q, sqlx::MySql, sqlx::mysql::MySqlArguments>,
     param: &'q Value,
@@ -289,6 +291,7 @@ fn bind_mysql<'q>(
     }
 }
 
+#[cfg(feature = "sqlite")]
 fn bind_sqlite<'q>(
     query: sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments<'q>>,
     param: &'q Value,
@@ -306,21 +309,25 @@ fn bind_sqlite<'q>(
     }
 }
 
+#[cfg(feature = "postgres")]
 fn pg_last_insert_id(_result: &sqlx::postgres::PgQueryResult) -> Option<Value> {
     // postgres has no implicit last-insert id; callers use `insert … returning id` instead.
     None
 }
 
+#[cfg(feature = "mysql")]
 fn mysql_last_insert_id(result: &sqlx::mysql::MySqlQueryResult) -> Option<Value> {
     let id = result.last_insert_id();
     (id != 0).then(|| Value::Number(id.into()))
 }
 
+#[cfg(feature = "sqlite")]
 fn sqlite_last_insert_id(result: &sqlx::sqlite::SqliteQueryResult) -> Option<Value> {
     let id = result.last_insert_rowid();
     (id != 0).then(|| Value::Number(id.into()))
 }
 
+#[cfg(feature = "postgres")]
 sql_ops!(
     pg,
     pool = sqlx::PgPool,
@@ -331,6 +338,7 @@ sql_ops!(
     last_insert_id = super::pg_last_insert_id
 );
 
+#[cfg(feature = "mysql")]
 sql_ops!(
     mysql,
     pool = sqlx::MySqlPool,
@@ -341,6 +349,7 @@ sql_ops!(
     last_insert_id = super::mysql_last_insert_id
 );
 
+#[cfg(feature = "sqlite")]
 sql_ops!(
     sqlite,
     pool = sqlx::SqlitePool,

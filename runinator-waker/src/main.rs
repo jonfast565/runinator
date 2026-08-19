@@ -6,10 +6,12 @@ use runinator_api::{AsyncApiClient, ReplicaClient, ReplicaServiceConfig, StaticL
 use runinator_broker::{
     Broker,
     adapters::{kafka::KafkaBrokerConfig, rabbitmq::RabbitMqBrokerConfig},
-    http::client::HttpBroker,
     in_memory::InMemoryBroker,
-    tcp::client::TcpBroker,
 };
+#[cfg(feature = "http")]
+use runinator_broker::http::client::HttpBroker;
+#[cfg(feature = "tcp")]
+use runinator_broker::tcp::client::TcpBroker;
 use runinator_models::errors::SendableError;
 use runinator_models::replicas::ReplicaKind;
 use runinator_utilities::resource_telemetry::{TelemetryCollector, attributes_with_host_metadata};
@@ -161,6 +163,7 @@ fn advertise_host(value: &str) -> Option<String> {
 
 async fn build_broker(config: &Config) -> Result<Arc<dyn Broker>, SendableError> {
     let broker: Arc<dyn Broker> = match config.broker_backend.as_str() {
+        #[cfg(feature = "http")]
         "http" => {
             let url = Url::parse(&config.broker_endpoint)
                 .map_err(|err| runinator_waker::errors::BROKER_INVALID_ENDPOINT.error(err))?;
@@ -170,6 +173,7 @@ async fn build_broker(config: &Config) -> Result<Arc<dyn Broker>, SendableError>
             Ok(Arc::new(HttpBroker::new(url, client)) as Arc<dyn Broker>)
         }
         "in-memory" => Ok(Arc::new(InMemoryBroker::new()) as Arc<dyn Broker>),
+        #[cfg(feature = "tcp")]
         "tcp" => Ok(Arc::new(TcpBroker::new(config.broker_endpoint.clone())) as Arc<dyn Broker>),
         "kafka" => runinator_broker::build_kafka_broker(
             KafkaBrokerConfig::new(config.broker_endpoint.clone())

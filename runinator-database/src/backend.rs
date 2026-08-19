@@ -8,9 +8,13 @@ use std::{future::Future, time::Duration};
 
 use log::warn;
 use runinator_models::errors::SendableError;
-use sqlx::{
-    Database, Pool, mysql::MySqlQueryResult, postgres::PgQueryResult, sqlite::SqliteQueryResult,
-};
+use sqlx::{Database, Pool};
+#[cfg(feature = "mysql")]
+use sqlx::mysql::MySqlQueryResult;
+#[cfg(feature = "postgres")]
+use sqlx::postgres::PgQueryResult;
+#[cfg(feature = "sqlite")]
+use sqlx::sqlite::SqliteQueryResult;
 
 use crate::queries::SqlDialect;
 
@@ -81,18 +85,21 @@ pub trait RowsAffected {
     fn affected(&self) -> u64;
 }
 
+#[cfg(feature = "sqlite")]
 impl RowsAffected for SqliteQueryResult {
     fn affected(&self) -> u64 {
         self.rows_affected()
     }
 }
 
+#[cfg(feature = "postgres")]
 impl RowsAffected for PgQueryResult {
     fn affected(&self) -> u64 {
         self.rows_affected()
     }
 }
 
+#[cfg(feature = "mysql")]
 impl RowsAffected for MySqlQueryResult {
     fn affected(&self) -> u64 {
         self.rows_affected()

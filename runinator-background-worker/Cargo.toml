@@ -12,17 +12,23 @@ log = "0.4"
 tokio = { version = "1", features = ["full"] }
 clap = { version = "4.5", features = ["derive", "env"] }
 uuid = { version = "1.18", features = ["v4"] }
-reqwest = { version = "0.13.3", default-features = false, features = ["json", "rustls"] }
+reqwest = { version = "0.13.3", default-features = false, features = ["json", "rustls"], optional = true }
 # used only to install a process-default rustls CryptoProvider at startup (see main.rs).
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 
 runinator-engine = { path = "../runinator-engine" }
-runinator-broker = { path = "../runinator-broker" }
-runinator-database = { path = "../runinator-database" }
-runinator-db-cli = { path = "../runinator-db-cli" }
+runinator-broker = { path = "../runinator-broker", default-features = false }
+runinator-database = { path = "../runinator-database", default-features = false }
+runinator-db-cli = { path = "../runinator-db-cli", default-features = false }
 runinator-models = { path = "../runinator-models" }
 runinator-utilities = { path = "../runinator-utilities" }
 
 [features]
+default = ["sqlite", "http", "tcp"]
+sqlite = ["runinator-database/sqlite", "runinator-db-cli/sqlite"]
+postgres = ["runinator-database/postgres", "runinator-db-cli/postgres"]
+mysql = ["runinator-database/mysql", "runinator-db-cli/mysql"]
+http = ["runinator-broker/http", "dep:reqwest"]
+tcp = ["runinator-broker/tcp"]
 kafka = ["runinator-broker/kafka"]
 rabbitmq = ["runinator-broker/rabbitmq"]

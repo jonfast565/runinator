@@ -32,11 +32,13 @@ pub struct DbProvider;
 fn engine_parameter() -> ParameterMetadata {
     // mongodb is only advertised when this build actually carries the driver, so a pack that
     // names it fails wdl type-checking rather than at run time.
-    let mut engines = vec![
-        json!("sqlite").into(),
-        json!("postgres").into(),
-        json!("mysql").into(),
-    ];
+    let mut engines = Vec::new();
+    #[cfg(feature = "sqlite")]
+    engines.push(json!("sqlite").into());
+    #[cfg(feature = "postgres")]
+    engines.push(json!("postgres").into());
+    #[cfg(feature = "mysql")]
+    engines.push(json!("mysql").into());
     if cfg!(feature = "mongo") {
         engines.push(json!("mongodb").into());
     }
