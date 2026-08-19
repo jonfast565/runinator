@@ -368,7 +368,7 @@ impl Env {
             }
             StmtKind::Parallel(parallel) => {
                 for branch in &parallel.branches {
-                    self.check_block(branch, diagnostics);
+                    self.check_block(&branch.body, diagnostics);
                 }
             }
             StmtKind::Race(race) => {

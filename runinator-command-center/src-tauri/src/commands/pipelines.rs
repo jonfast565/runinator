@@ -150,6 +150,14 @@ pub async fn fetch_pipeline_run(
 }
 
 #[tauri::command]
+pub async fn delete_pipeline_run(
+    state: State<'_, CommandCenterState>,
+    pipeline_run_id: Uuid,
+) -> CommandResult<TaskResponse> {
+    delete(&state, &format!("pipeline_runs/{pipeline_run_id}")).await
+}
+
+#[tauri::command]
 pub async fn cancel_pipeline_run(
     state: State<'_, CommandCenterState>,
     pipeline_run_id: Uuid,
@@ -157,6 +165,26 @@ pub async fn cancel_pipeline_run(
     let value = post_empty(&state, &format!("pipeline_runs/{pipeline_run_id}/cancel")).await?;
     serde_json::from_value(value)
         .map_err(|err| CommandError::Unexpected(format!("invalid cancel response: {err}")))
+}
+
+#[tauri::command]
+pub async fn pause_pipeline_run(
+    state: State<'_, CommandCenterState>,
+    pipeline_run_id: Uuid,
+) -> CommandResult<TaskResponse> {
+    let value = post_empty(&state, &format!("pipeline_runs/{pipeline_run_id}/pause")).await?;
+    serde_json::from_value(value)
+        .map_err(|err| CommandError::Unexpected(format!("invalid pause response: {err}")))
+}
+
+#[tauri::command]
+pub async fn resume_pipeline_run(
+    state: State<'_, CommandCenterState>,
+    pipeline_run_id: Uuid,
+) -> CommandResult<TaskResponse> {
+    let value = post_empty(&state, &format!("pipeline_runs/{pipeline_run_id}/resume")).await?;
+    serde_json::from_value(value)
+        .map_err(|err| CommandError::Unexpected(format!("invalid resume response: {err}")))
 }
 
 #[tauri::command]

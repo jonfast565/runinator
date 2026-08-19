@@ -53,6 +53,9 @@ struct Lowerer {
     control_ids: Vec<String>,
     // authored item/index names for loop-like controls, keyed by lowered node id.
     control_vars: Map,
+    // parallel branch labels and their generated stop nodes, kept so decompile can recover a
+    // selected join without making labels part of the runtime graph contract.
+    parallel_branches: Map,
     // in-scope local names (compute-block `let`s and lambda params), so a bare local path lowers to
     // a `let` ref. interior-mutable because `lower_expr` (`&self`) scopes a lambda's params while
     // lowering its body, whether the lambda sits in a compute block or inline in any expression.
@@ -234,6 +237,12 @@ fn lower_workflow(
             Value::Object(lowerer.control_vars.clone()),
         );
     }
+    if !lowerer.parallel_branches.is_empty() {
+        wdl.insert(
+            "parallel_branches".into(),
+            Value::Object(lowerer.parallel_branches.clone()),
+        );
+    }
     // per-function surface signatures (`(params) -> ret`), recorded so decompile can reconstruct the
     // typed `fn` headers the runtime `functions` form does not carry. the runtime ignores this hint.
     if !document.functions.is_empty() {
@@ -360,6 +369,7 @@ impl Lowerer {
             spreads: Map::new(),
             control_ids: Vec::new(),
             control_vars: Map::new(),
+            parallel_branches: Map::new(),
             compute_locals: std::cell::RefCell::new(HashSet::new()),
             named_types: std::collections::BTreeMap::new(),
             lowered_functions: Vec::new(),

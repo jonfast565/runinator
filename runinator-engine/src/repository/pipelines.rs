@@ -539,9 +539,21 @@ pub async fn fetch_pipeline_runs_for_pipeline<T: DatabaseImpl>(
     db.fetch_pipeline_runs_for_pipeline(pipeline_id).await
 }
 
+pub async fn delete_pipeline_run<T: DatabaseImpl>(
+    db: &T,
+    pipeline_run_id: Uuid,
+) -> Result<TaskResponse, SendableError> {
+    db.delete_pipeline_run(pipeline_run_id).await?;
+    Ok(TaskResponse {
+        success: true,
+        message: "Pipeline run deleted".into(),
+    })
+}
+
 /// cancel a pipeline run and every active member workflow run it owns.
 pub async fn cancel_pipeline_run<T: DatabaseImpl>(
     db: &T,
+    broker: &dyn runinator_broker_core::Broker,
     pipeline_run_id: Uuid,
 ) -> Result<TaskResponse, SendableError> {
     for member in db
@@ -549,15 +561,7 @@ pub async fn cancel_pipeline_run<T: DatabaseImpl>(
         .await?
     {
         if member.status.is_active() {
-            db.update_workflow_run_status(
-                member.id,
-                WorkflowStatus::Canceled,
-                None,
-                None,
-                Some("Pipeline run canceled".into()),
-            )
-            .await?;
-            super::release_run_mutexes(db, member.id).await?;
+            super::cancel_workflow_run(db, broker, member.id).await?;
         }
     }
     for attempt in db.fetch_pipeline_member_attempts(pipeline_run_id).await? {
@@ -581,6 +585,75 @@ pub async fn cancel_pipeline_run<T: DatabaseImpl>(
     Ok(TaskResponse {
         success: true,
         message: "Pipeline run canceled".into(),
+    })
+}
+
+pub async fn pause_pipeline_run<T: DatabaseImpl>(
+    db: &T,
+    pipeline_run_id: Uuid,
+) -> Result<TaskResponse, SendableError> {
+    let Some(run) = db.fetch_pipeline_run(pipeline_run_id).await? else {
+        return Err(crate::errors::PIPELINE_PAUSE_NOT_FOUND.error(pipeline_run_id));
+    };
+    if run.status.is_terminal() {
+        return Ok(TaskResponse {
+            success: true,
+            message: format!("Pipeline run {pipeline_run_id} is already terminal"),
+        });
+    }
+    for member in db
+        .fetch_workflow_runs_for_pipeline_run(pipeline_run_id)
+        .await?
+    {
+        if member.status.is_active() {
+            super::pause_workflow_run(db, member.id).await?;
+        }
+    }
+    let mut state = run.state;
+    if let Some(object) = state.as_object_mut() {
+        object.insert(
+            "control".into(),
+            runinator_models::json!({ "pause_requested": true }),
+        );
+    }
+    db.update_pipeline_run_status(
+        pipeline_run_id,
+        WorkflowStatus::Paused,
+        Some(state),
+        Some("Pipeline run paused".into()),
+    )
+    .await?;
+    Ok(TaskResponse {
+        success: true,
+        message: format!("Pipeline run {pipeline_run_id} paused"),
+    })
+}
+
+pub async fn resume_pipeline_run<T: DatabaseImpl>(
+    db: &T,
+    pipeline_run_id: Uuid,
+) -> Result<TaskResponse, SendableError> {
+    let Some(run) = db.fetch_pipeline_run(pipeline_run_id).await? else {
+        return Err(crate::errors::PIPELINE_RESUME_NOT_FOUND.error(pipeline_run_id));
+    };
+    if run.status.is_terminal() {
+        return Ok(TaskResponse {
+            success: true,
+            message: format!("Pipeline run {pipeline_run_id} is already terminal"),
+        });
+    }
+    for member in db
+        .fetch_workflow_runs_for_pipeline_run(pipeline_run_id)
+        .await?
+    {
+        if member.status.is_active() {
+            super::resume_workflow_run(db, member.id).await?;
+        }
+    }
+    runinator_reducer::resume_pipeline_run(db, pipeline_run_id).await?;
+    Ok(TaskResponse {
+        success: true,
+        message: format!("Pipeline run {pipeline_run_id} resumed"),
     })
 }
 

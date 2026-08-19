@@ -460,7 +460,11 @@ fn nested_blocks_mut(kind: &mut StmtKind) -> Vec<&mut Block> {
             }
             blocks
         }
-        StmtKind::Parallel(stmt) => stmt.branches.iter_mut().collect(),
+        StmtKind::Parallel(stmt) => stmt
+            .branches
+            .iter_mut()
+            .map(|branch| &mut branch.body)
+            .collect(),
         StmtKind::Race(stmt) => stmt.branches.iter_mut().collect(),
         StmtKind::Try(stmt) => {
             let mut blocks = vec![&mut stmt.body];

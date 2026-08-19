@@ -3,6 +3,9 @@
       <h2 class="run-detail-heading">
         <template v-if="!renaming">
           <span>{{ runHeadingLabel }}</span>
+          <button class="btn btn-danger btn-sm" @click="deleteRun" title="Permanently delete run">
+            Delete
+          </button>
           <button
             v-if="workflows.workflowRunDetail"
             class="btn btn-icon btn-ghost btn-sm"

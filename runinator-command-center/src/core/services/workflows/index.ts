@@ -195,7 +195,7 @@ export function createWorkflowServices(inputDeps: WorkflowServiceDeps) {
     const status = state.workflowRunDetail?.run.status;
     return Boolean(
       status &&
-      ["running", "waiting", "approval_required"].includes(status) &&
+      ["queued", "running", "waiting", "approval_required", "input_required", "blocked"].includes(status) &&
       !getControlState()?.pause_requested,
     );
   }

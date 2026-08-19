@@ -503,12 +503,13 @@ try_catch  = { "catch" ~ block }
 try_finally = { "finally" ~ block }
 
 parallel_stmt = { "parallel" ~ "{" ~ branch+ ~ "}" ~ join_clause? }
-join_clause   = { "join" ~ branch_policy }
+join_clause   = { "join" ~ branch_selector? ~ branch_policy }
+branch_selector = { "[" ~ (string ~ ("," ~ string)*)? ~ "]" }
 
 race_stmt    = { "race" ~ winner_clause? ~ "{" ~ branch+ ~ "}" }
 winner_clause = { "winner" ~ branch_policy }
 
-branch        = { "branch" ~ block }
+branch        = { "branch" ~ string? ~ block }
 branch_policy = { "all" | "any" | "first_success" }
 
 block = { "{" ~ stmt* ~ "}" }

@@ -18,6 +18,30 @@ fn parses_minimal_workflow() {
     );
     assert_eq!(workflow.body.len(), 1);
 }
+
+#[test]
+fn rejects_invalid_parallel_join_selectors() {
+    for (source, expected) in [
+        (
+            r#"workflow "Bad" v1 { parallel { branch "lint" { wait 1s } branch "lint" { wait 1s } } join all }"#,
+            "duplicate parallel branch label 'lint'",
+        ),
+        (
+            r#"workflow "Bad" v1 { parallel { branch { wait 1s } } join ["lint"] all }"#,
+            "unknown or unnamed branch 'lint'",
+        ),
+        (
+            r#"workflow "Bad" v1 { parallel { branch "lint" { wait 1s } } join [] all }"#,
+            "selector cannot be empty",
+        ),
+    ] {
+        let err = parse_document(source).expect_err("invalid selector should fail");
+        assert!(
+            err.to_string().contains(expected),
+            "unexpected error: {err}"
+        );
+    }
+}
 #[test]
 fn parses_kitchen_sink() {
     let src = r#"

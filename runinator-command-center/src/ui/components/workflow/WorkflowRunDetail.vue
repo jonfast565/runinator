@@ -94,6 +94,12 @@ async function commitRename() {
   await workflows.renameSelectedWorkflowRun(run.id, next.length === 0 ? null : next);
 }
 
+async function deleteRun() {
+  const run = workflows.workflowRunDetail?.run;
+  if (!run || !window.confirm("Permanently delete this workflow run and all execution history?")) return;
+  await workflows.deleteSelectedWorkflowRun();
+}
+
 // quick actions emitted by RunNodeActions in the timeline (feature 7).
 async function onNodeAction(payload: { type: RunNodeActionType; node: WorkflowNodeRun }) {
   const run = workflows.workflowRunDetail?.run;

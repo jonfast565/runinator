@@ -1215,16 +1215,33 @@ impl Formatter {
         self.indent += 1;
         for branch in &parallel.branches {
             self.push_indent(&mut out);
-            out.push_str("branch {\n");
+            out.push_str("branch");
+            if let Some(label) = &branch.label {
+                out.push(' ');
+                out.push_str(&quote(label));
+            }
+            out.push_str(" {\n");
             self.indent += 1;
-            self.push_block_into(&mut out, branch);
+            self.push_block_into(&mut out, &branch.body);
             self.indent -= 1;
             self.push_indent(&mut out);
             out.push_str("}\n");
         }
         self.indent -= 1;
         self.push_indent(&mut out);
-        out.push_str(&format!("}} join {}", format_branch_policy(parallel.join)));
+        out.push_str("} join");
+        if let Some(selected) = &parallel.selected_branches {
+            out.push_str(" [");
+            out.push_str(
+                &selected
+                    .iter()
+                    .map(|label| quote(label))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            );
+            out.push(']');
+        }
+        out.push_str(&format!(" {}", format_branch_policy(parallel.join)));
         out
     }
 

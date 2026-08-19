@@ -692,6 +692,8 @@ pub enum RunCommands {
     Resume { id: Uuid },
     /// Cancel a workflow run.
     Cancel { id: Uuid },
+    /// Permanently delete a workflow run and its execution history.
+    Delete { id: Uuid },
     /// Replay a workflow run.
     Replay {
         id: Uuid,
@@ -860,6 +862,12 @@ pub enum PipelineCommands {
     RunShow { run_id: Uuid },
     /// Cancel a pipeline run.
     Cancel { run_id: Uuid },
+    /// Permanently delete a pipeline run and its member workflow history.
+    DeleteRun { run_id: Uuid },
+    /// Pause a pipeline run.
+    Pause { run_id: Uuid },
+    /// Resume a paused pipeline run.
+    Resume { run_id: Uuid },
     /// Resolve a pipeline run paused on an `inquire` member failure.
     Resolve {
         run_id: Uuid,

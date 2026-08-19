@@ -493,8 +493,20 @@ export async function fetchPipelineRun(pipelineRunId: string) {
   return command<PipelineRunDetail>("fetch_pipeline_run", { pipelineRunId });
 }
 
+export async function deletePipelineRun(pipelineRunId: string) {
+  return command<TaskResponse>("delete_pipeline_run", { pipelineRunId });
+}
+
 export async function cancelPipelineRun(pipelineRunId: string) {
   return command<TaskResponse>("cancel_pipeline_run", { pipelineRunId });
+}
+
+export async function pausePipelineRun(pipelineRunId: string) {
+  return command<TaskResponse>("pause_pipeline_run", { pipelineRunId });
+}
+
+export async function resumePipelineRun(pipelineRunId: string) {
+  return command<TaskResponse>("resume_pipeline_run", { pipelineRunId });
 }
 
 export async function retryPipelineMember(
@@ -543,6 +555,10 @@ export async function fetchWorkflowRuns(workflowId?: string) {
 
 export async function fetchWorkflowRun(workflowRunId: string) {
   return command<WorkflowRunDetail>("fetch_workflow_run", { workflowRunId });
+}
+
+export async function deleteWorkflowRun(workflowRunId: string) {
+  return command<TaskResponse>("delete_workflow_run", { workflowRunId });
 }
 
 export async function stepWorkflowRun(workflowRunId: string, cursor?: string | null) {

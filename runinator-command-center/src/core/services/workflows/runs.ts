@@ -1,5 +1,6 @@
 import {
   cancelWorkflowRun,
+  deleteWorkflowRun,
   closeGate,
   continueWorkflowRun,
   createWorkflowRun,
@@ -312,6 +313,23 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
 
     host.ctx.setStatus(response.message || `Workflow run ${runId} canceled`);
     await fetchWorkflowRunDetail(runId, true);
+    host.notify();
+  }
+
+  async function deleteSelectedWorkflowRun() {
+    const run = host.state.workflowRunDetail?.run;
+    if (!run) return;
+    const response = await host.ctx.runOperation(`Deleting workflow run ${run.id}`, () =>
+      deleteWorkflowRun(run.id),
+    );
+    if (!response.success) {
+      host.ctx.setError(response.message || "Failed to delete workflow run");
+      return;
+    }
+    host.ctx.setStatus(response.message || `Workflow run ${run.id} deleted`);
+    await fetchRecentWorkflowRuns();
+    host.state.selectedWorkflowRunId = null;
+    host.state.workflowRunDetail = null;
     host.notify();
   }
 
@@ -1199,6 +1217,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     retireCursor,
     armNodeForReal,
     cancelSelectedWorkflowRun,
+    deleteSelectedWorkflowRun,
     requestSelectedRunInterrupt,
     pauseSelectedWorkflowRun,
     resumeSelectedWorkflowRun,

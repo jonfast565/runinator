@@ -444,13 +444,33 @@ where
 
     async fn delete_pipeline(&self, pipeline_id: Uuid) -> Result<(), SendableError> {
         retry_delete(|| async {
-            self.pool()
-                .execute(
-                    sqlx::query(&self.render("DELETE FROM pipelines WHERE id = ?"))
-                        .bind(pipeline_id),
-                )
-                .await
-                .map(|_| ())
+            let mut tx = self.pool().begin().await?;
+            let pipeline_runs = "pipeline_run_id IN (SELECT id FROM pipeline_runs WHERE pipeline_id = ?)";
+            let workflow_runs = "workflow_run_id IN (SELECT id FROM workflow_runs WHERE pipeline_run_id IN (SELECT id FROM pipeline_runs WHERE pipeline_id = ?))";
+            let workflow_node_runs = "workflow_node_run_id IN (SELECT id FROM workflow_node_runs WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE pipeline_run_id IN (SELECT id FROM pipeline_runs WHERE pipeline_id = ?)))";
+
+            // Pipeline and member workflow runs use restrict-mode foreign keys, so remove their
+            // execution history child-to-parent before deleting the definitions.
+            for sql in [
+                format!("DELETE FROM pipeline_trigger_firings WHERE {pipeline_runs}"),
+                format!("DELETE FROM pipeline_member_attempts WHERE {pipeline_runs}"),
+                format!("DELETE FROM workflow_ready_nodes WHERE {workflow_runs}"),
+                format!("DELETE FROM workflow_orchestration_events WHERE {workflow_runs}"),
+                format!("DELETE FROM workflow_node_chunks WHERE {workflow_node_runs}"),
+                format!("DELETE FROM workflow_node_artifacts WHERE {workflow_node_runs}"),
+                format!("DELETE FROM workflow_result_events WHERE {workflow_runs}"),
+                format!("DELETE FROM workflow_trigger_firings WHERE {workflow_runs}"),
+                format!("DELETE FROM workflow_node_runs WHERE {workflow_runs}"),
+                "DELETE FROM workflow_runs WHERE pipeline_run_id IN (SELECT id FROM pipeline_runs WHERE pipeline_id = ?)".to_string(),
+                "DELETE FROM pipeline_runs WHERE pipeline_id = ?".to_string(),
+                "DELETE FROM pipelines WHERE id = ?".to_string(),
+            ] {
+                sqlx::query(&self.render(&sql))
+                    .bind(pipeline_id)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+            tx.commit().await
         })
         .await?;
         Ok(())
@@ -506,6 +526,28 @@ where
         .fetch_all(self.pool())
         .await?;
         Ok(rows.iter().map(mappers::row_to_pipeline_run).collect())
+    }
+
+    async fn delete_pipeline_run(&self, pipeline_run_id: Uuid) -> Result<(), SendableError> {
+        retry_delete(|| async {
+            let mut tx = self.pool().begin().await?;
+            for sql in [
+                "DELETE FROM pipeline_trigger_firings WHERE pipeline_run_id = ?",
+                "DELETE FROM pipeline_member_attempts WHERE pipeline_run_id = ?",
+                "DELETE FROM workflow_ready_nodes WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE pipeline_run_id = ?)",
+                "DELETE FROM workflow_orchestration_events WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE pipeline_run_id = ?)",
+                "DELETE FROM workflow_node_chunks WHERE workflow_node_run_id IN (SELECT id FROM workflow_node_runs WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE pipeline_run_id = ?))",
+                "DELETE FROM workflow_node_artifacts WHERE workflow_node_run_id IN (SELECT id FROM workflow_node_runs WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE pipeline_run_id = ?))",
+                "DELETE FROM workflow_result_events WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE pipeline_run_id = ?)",
+                "DELETE FROM workflow_node_runs WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE pipeline_run_id = ?)",
+                "DELETE FROM workflow_runs WHERE pipeline_run_id = ?",
+                "DELETE FROM pipeline_runs WHERE id = ?",
+            ] {
+                sqlx::query(&self.render(sql)).bind(pipeline_run_id).execute(&mut *tx).await?;
+            }
+            tx.commit().await
+        }).await?;
+        Ok(())
     }
 
     async fn upsert_catalog_item(&self, item: Value) -> Result<Value, SendableError> {

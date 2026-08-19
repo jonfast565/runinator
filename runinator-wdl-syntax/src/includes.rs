@@ -159,7 +159,7 @@ fn collect_stmt(stmt: &Stmt, source_dir: &Path, paths: &mut Vec<PathBuf>) -> Res
         }
         StmtKind::Parallel(parallel) => {
             for branch in &parallel.branches {
-                collect_block(branch, source_dir, paths)?;
+                collect_block(&branch.body, source_dir, paths)?;
             }
         }
         // `resume` carries no expressions, so there is nothing to resolve inside it.

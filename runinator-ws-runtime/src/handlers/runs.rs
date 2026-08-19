@@ -350,6 +350,7 @@ pub async fn cancel_workflow_run<T: DatabaseImpl>(
         Ok(resp) => {
             let org_id = repository::org_id_for_workflow_run(db.as_ref(), workflow_run_id).await;
             emit_workflow_run(&events, workflow_run_id, org_id);
+            nudge_wake_publisher(&events);
             (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
         }
         Err(err) => bad_request(err.to_string()),
@@ -847,6 +848,23 @@ pub async fn get_workflow_run<T: DatabaseImpl>(
     }
 }
 
+pub async fn delete_workflow_run<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<runinator_models::auth::AuthContext>,
+    Path(workflow_run_id): Path<Uuid>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_run_workflow(workflow_run_id, runinator_models::auth::Permission::Edit)
+        .await
+    {
+        return reply;
+    }
+    match repository::delete_workflow_run(db.as_ref(), workflow_run_id).await {
+        Ok(resp) => (StatusCode::OK, Json(ApiResponse::TaskResponse(resp))),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
 pub fn compute_stale_seconds(updated_at: &str) -> Option<i64> {
     let parsed = chrono::DateTime::parse_from_rfc3339(updated_at).ok()?;
     let now = chrono::Utc::now();
@@ -909,6 +927,7 @@ pub fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
             "/workflow_runs/{id}",
             get(get_workflow_run::<T>)
                 .patch(update_workflow_run::<T>)
+                .delete(delete_workflow_run::<T>)
                 .layer(Extension(pool.clone())),
         )
         .route(

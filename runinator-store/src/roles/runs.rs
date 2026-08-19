@@ -73,6 +73,12 @@ pub trait RunStore: Send + Sync + 'static {
         limit: i64,
     ) -> impl Future<Output = Result<Vec<WorkflowRun>, SendableError>> + Send;
 
+    /// Permanently delete a workflow run and all of its execution history.
+    fn delete_workflow_run(
+        &self,
+        workflow_run_id: Uuid,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
+
     /// Acquire the executor lease for a node run, returning whether it was acquired. The claim only
     /// succeeds when no live executor holds the slot, making duplicate/redelivered executions of the
     /// same node run mutually exclusive. A slot is free when unclaimed, when the prior claim predates

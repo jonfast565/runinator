@@ -193,9 +193,70 @@ async fn pipeline_round_trip_create_update_delete() {
     );
     assert!(db.fetch_pipeline_ids_for_org(org).await.unwrap().is_empty());
 
+    // deleting a pipeline also removes its pipeline runs and the member workflow-run history;
+    // both parent rows use restrict-mode foreign keys.
+    let member_workflow = db
+        .upsert_workflow(&workflow("pipeline-member"))
+        .await
+        .unwrap();
+    let pipeline_run = db
+        .create_pipeline_run(
+            id,
+            updated.clone(),
+            runinator_models::json!({}),
+            runinator_models::json!({}),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+    let member_attempt = db
+        .create_pipeline_member_attempt(
+            pipeline_run.id,
+            "member".into(),
+            member_workflow.id.unwrap(),
+            1,
+            runinator_models::json!({}),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let member_snapshot = db
+        .fetch_workflow(member_workflow.id.unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    let member_run = db
+        .create_workflow_run(
+            member_workflow.id.unwrap(),
+            member_snapshot,
+            runinator_models::json!({}),
+            runinator_models::json!({}),
+            None,
+            Default::default(),
+        )
+        .await
+        .unwrap();
+    db.set_workflow_run_pipeline_run(member_run.id, pipeline_run.id)
+        .await
+        .unwrap();
+    db.bind_pipeline_member_attempt_run(member_attempt.id, member_run.id)
+        .await
+        .unwrap();
+    db.create_workflow_node_run(
+        member_run.id,
+        "member-node".into(),
+        runinator_models::json!({}),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
     db.delete_pipeline(id).await.unwrap();
     assert!(db.fetch_pipeline(id).await.unwrap().is_none());
     assert!(db.fetch_pipelines().await.unwrap().is_empty());
+    assert!(db.fetch_recent_pipeline_runs(100).await.unwrap().is_empty());
+    assert!(db.fetch_recent_workflow_runs(100).await.unwrap().is_empty());
 
     let _ = std::fs::remove_file(path);
 }

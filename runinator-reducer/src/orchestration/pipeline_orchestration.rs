@@ -289,6 +289,44 @@ pub async fn retry_pipeline_member<T: ReducerStore>(
         .ok_or_else(|| crate::errors::PIPELINE_NOT_FOUND.error(member_key))
 }
 
+/// Resume a manually paused pipeline and advance any newly-unblocked frontier members.
+pub async fn resume_pipeline_run<T: ReducerStore>(
+    db: &T,
+    pipeline_run_id: Uuid,
+) -> Result<PipelineRun, SendableError> {
+    let run = db
+        .fetch_pipeline_run(pipeline_run_id)
+        .await?
+        .ok_or_else(|| crate::errors::PIPELINE_NOT_FOUND.error(pipeline_run_id))?;
+    if run.status.is_terminal() || run.status != WorkflowStatus::Paused {
+        return Ok(run);
+    }
+    let pipeline = pipeline_for_run(db, &run)
+        .await?
+        .ok_or_else(|| crate::errors::PIPELINE_NOT_FOUND.error(run.pipeline_id))?;
+    let mut state = run.state.clone();
+    if let Some(object) = state.as_object_mut() {
+        object.insert(
+            "control".into(),
+            runinator_models::json!({ "pause_requested": false }),
+        );
+    }
+    db.update_pipeline_run_status(
+        run.id,
+        WorkflowStatus::Running,
+        Some(state),
+        Some("Pipeline run resumed".into()),
+    )
+    .await?;
+    let mut resumed = run;
+    resumed.status = WorkflowStatus::Running;
+    advance_pipeline_graph(db, &resumed, &pipeline).await?;
+    settle_pipeline_run_if_complete(db, &resumed, &pipeline).await?;
+    db.fetch_pipeline_run(pipeline_run_id)
+        .await?
+        .ok_or_else(|| crate::errors::PIPELINE_NOT_FOUND.error(pipeline_run_id))
+}
+
 /// Resolve entry members: graph members with no enabled inbound link.
 fn pipeline_entry_members(pipeline: &Pipeline) -> Vec<&PipelineMember> {
     let downstream: HashSet<&str> = pipeline
@@ -579,6 +617,9 @@ async fn settle_pipeline_run_if_complete<T: ReducerStore>(
     pipeline_run: &PipelineRun,
     pipeline: &Pipeline,
 ) -> Result<(), SendableError> {
+    if pipeline_run.status == WorkflowStatus::Paused {
+        return Ok(());
+    }
     let attempts = db.fetch_pipeline_member_attempts(pipeline_run.id).await?;
     let latest: HashMap<&str, &PipelineMemberAttempt> =
         attempts.iter().fold(HashMap::new(), |mut map, attempt| {
@@ -761,6 +802,9 @@ async fn advance_pipeline_graph<T: ReducerStore>(
     pipeline_run: &PipelineRun,
     pipeline: &Pipeline,
 ) -> Result<(), SendableError> {
+    if pipeline_run.status == WorkflowStatus::Paused {
+        return Ok(());
+    }
     loop {
         let attempts = db.fetch_pipeline_member_attempts(pipeline_run.id).await?;
         let latest: HashMap<&str, &PipelineMemberAttempt> =

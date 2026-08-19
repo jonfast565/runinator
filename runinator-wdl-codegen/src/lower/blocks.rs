@@ -2,6 +2,7 @@
 // receives its pre-allocated entry id and the continuation the block flows into.
 
 use runinator_models::value::{Map, Value};
+use std::collections::HashSet;
 
 use runinator_wdl_syntax::ast::*;
 use runinator_wdl_syntax::errors::WdlError;
@@ -317,11 +318,53 @@ impl Lowerer {
         let join_id = self
             .claim(&format!("{id}_join"))
             .unwrap_or_else(|_| self.fresh("join"));
+        let selected = parallel
+            .selected_branches
+            .as_ref()
+            .map(|labels| labels.iter().map(String::as_str).collect::<HashSet<_>>());
         let mut branch_refs = Vec::new();
-        for branch in &parallel.branches {
-            let entry = self.lower_block(branch, &join_id)?;
+        let mut branch_stops = Vec::new();
+        for (index, branch) in parallel.branches.iter().enumerate() {
+            let joins = selected.as_ref().is_none_or(|labels| {
+                branch
+                    .label
+                    .as_deref()
+                    .is_some_and(|label| labels.contains(label))
+            });
+            let stop = if joins {
+                join_id.clone()
+            } else {
+                // This id is derived from the enclosing control id rather than the global fresh
+                // counter. Decompile emits the branch's inner node ids explicitly, which would
+                // otherwise shift a counter-generated terminal on the next compile.
+                let preferred = format!("{id}_branch_{index}_end");
+                let terminal = self
+                    .claim(&preferred)
+                    .unwrap_or_else(|_| self.fresh("parallel_branch_end"));
+                self.push(node(&terminal, "end", vec![]));
+                terminal
+            };
+            let entry = self.lower_block(&branch.body, &stop)?;
             branch_refs.push(node_ref(&entry));
+            branch_stops.push(Value::String(stop));
         }
+
+        let wait_for = if let Some(selected) = &selected {
+            parallel
+                .branches
+                .iter()
+                .zip(branch_refs.iter())
+                .filter_map(|(branch, entry)| {
+                    branch
+                        .label
+                        .as_deref()
+                        .is_some_and(|label| selected.contains(label))
+                        .then(|| entry.clone())
+                })
+                .collect()
+        } else {
+            branch_refs.clone()
+        };
 
         let mut parallel_params = Map::new();
         parallel_params.insert("branches".into(), Value::Array(branch_refs.clone()));
@@ -330,7 +373,7 @@ impl Lowerer {
         self.push(node(id, "parallel", parallel_fields));
 
         let mut join_params = Map::new();
-        join_params.insert("wait_for".into(), Value::Array(branch_refs));
+        join_params.insert("wait_for".into(), Value::Array(wait_for));
         join_params.insert(
             "mode".into(),
             Value::String(policy_str(parallel.join).into()),
@@ -345,6 +388,33 @@ impl Lowerer {
                 ("transitions", Value::Object(join_transitions)),
             ],
         ));
+
+        let mut surface = Map::new();
+        surface.insert(
+            "labels".into(),
+            Value::Array(
+                parallel
+                    .branches
+                    .iter()
+                    .map(|branch| {
+                        branch
+                            .label
+                            .clone()
+                            .map(Value::String)
+                            .unwrap_or(Value::Null)
+                    })
+                    .collect(),
+            ),
+        );
+        surface.insert("stops".into(), Value::Array(branch_stops));
+        if let Some(selected) = &parallel.selected_branches {
+            surface.insert(
+                "selected".into(),
+                Value::Array(selected.iter().cloned().map(Value::String).collect()),
+            );
+        }
+        self.parallel_branches
+            .insert(id.to_string(), Value::Object(surface));
         Ok(())
     }
 

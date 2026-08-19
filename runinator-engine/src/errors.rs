@@ -91,6 +91,16 @@ pub const CONTROL_PUBLISH: ErrorDescriptor = ErrorDescriptor::new(
     "workflow.control.publish",
     "Failed to publish control command",
 );
+pub const PIPELINE_PAUSE_NOT_FOUND: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI150",
+    "pipeline.pause.not_found",
+    "Pipeline run not found",
+);
+pub const PIPELINE_RESUME_NOT_FOUND: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI151",
+    "pipeline.resume.not_found",
+    "Pipeline run not found",
+);
 pub const REPLAY_NOT_FOUND: ErrorDescriptor = ErrorDescriptor::new(
     "RUNI139",
     "workflow.replay.not_found",

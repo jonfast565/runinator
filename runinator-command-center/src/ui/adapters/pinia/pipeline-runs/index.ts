@@ -4,11 +4,14 @@ import type { Pipeline, PipelineRun, PipelineRunDetail } from "../../../../core/
 import {
   cancelPipelineRun as cancelPipelineRunService,
   createPipelineRun as createPipelineRunService,
+  deletePipelineRun as deletePipelineRunService,
   fetchPipelineRun,
   fetchPipelineRuns,
   fetchPipelines,
   resolvePipelineRun as resolvePipelineRunService,
   retryPipelineMember as retryPipelineMemberService,
+  pausePipelineRun as pausePipelineRunService,
+  resumePipelineRun as resumePipelineRunService,
 } from "../../../../core/services/pipeline";
 
 // the pipeline-runs monitor store. mirrors the workflow-runs list+detail model: a flat list of recent
@@ -74,6 +77,23 @@ export const usePipelineRunsStore = defineStore("pipelineRuns", () => {
     await refresh();
   }
 
+  async function deleteRun(pipelineRunId: string): Promise<void> {
+    await deletePipelineRunService(pipelineRunId);
+    selectedRunId.value = null;
+    detail.value = null;
+    await refresh();
+  }
+
+  async function pauseRun(pipelineRunId: string): Promise<void> {
+    await pausePipelineRunService(pipelineRunId);
+    await refresh();
+  }
+
+  async function resumeRun(pipelineRunId: string): Promise<void> {
+    await resumePipelineRunService(pipelineRunId);
+    await refresh();
+  }
+
   async function retryMember(
     pipelineRunId: string,
     memberKey: string,
@@ -112,6 +132,9 @@ export const usePipelineRunsStore = defineStore("pipelineRuns", () => {
     selectRun,
     startRun,
     cancelRun,
+    deleteRun,
+    pauseRun,
+    resumeRun,
     resolveRun,
     retryMember,
     refreshDetailIfMember,

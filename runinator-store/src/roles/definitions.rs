@@ -124,6 +124,12 @@ pub trait DefinitionStore: Send + Sync + 'static {
         pipeline_id: Uuid,
     ) -> impl Future<Output = Result<Vec<PipelineRun>, SendableError>> + Send;
 
+    /// Permanently delete a pipeline run and all member workflow-run history.
+    fn delete_pipeline_run(
+        &self,
+        pipeline_run_id: Uuid,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
+
     /// Create or update a generic catalog item.
     fn upsert_catalog_item(
         &self,

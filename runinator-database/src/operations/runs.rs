@@ -208,6 +208,33 @@ where
         Ok(rows.iter().map(mappers::row_to_workflow_run).collect())
     }
 
+    async fn delete_workflow_run(&self, workflow_run_id: Uuid) -> Result<(), SendableError> {
+        retry_delete(|| async {
+            let mut tx = self.pool().begin().await?;
+            for sql in [
+                "DELETE FROM workflow_ready_nodes WHERE workflow_run_id = ?",
+                "DELETE FROM workflow_orchestration_events WHERE workflow_run_id = ?",
+                "DELETE FROM workflow_node_chunks WHERE workflow_node_run_id IN (SELECT id FROM workflow_node_runs WHERE workflow_run_id = ?)",
+                "DELETE FROM workflow_node_artifacts WHERE workflow_node_run_id IN (SELECT id FROM workflow_node_runs WHERE workflow_run_id = ?)",
+                "DELETE FROM workflow_result_events WHERE workflow_run_id = ?",
+                "DELETE FROM workflow_trigger_firings WHERE workflow_run_id = ?",
+                "DELETE FROM pipeline_member_attempts WHERE workflow_run_id = ?",
+                "DELETE FROM workflow_node_runs WHERE workflow_run_id = ?",
+                "DELETE FROM run_chunks WHERE run_id IN (SELECT id FROM runs WHERE workflow_run_id = ?)",
+                "DELETE FROM run_artifacts WHERE run_id IN (SELECT id FROM runs WHERE workflow_run_id = ?)",
+                "DELETE FROM runs WHERE workflow_run_id = ?",
+                "DELETE FROM automation_records WHERE workflow_run_id = ?",
+                "DELETE FROM notifications WHERE workflow_run_id = ?",
+                "DELETE FROM gates WHERE workflow_run_id = ?",
+                "DELETE FROM workflow_runs WHERE id = ?",
+            ] {
+                sqlx::query(&self.render(sql)).bind(workflow_run_id).execute(&mut *tx).await?;
+            }
+            tx.commit().await
+        }).await?;
+        Ok(())
+    }
+
     async fn claim_workflow_node_run_executor(
         &self,
         node_run_id: Uuid,

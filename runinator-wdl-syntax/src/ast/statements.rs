@@ -425,8 +425,16 @@ pub struct MatchArm {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParallelStmt {
-    pub branches: Vec<Block>,
+    pub branches: Vec<ParallelBranch>,
     pub join: BranchPolicy,
+    /// `None` retains the historical implicit "all branches" join.
+    pub selected_branches: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParallelBranch {
+    pub label: Option<String>,
+    pub body: Block,
 }
 
 #[derive(Debug, Clone, PartialEq)]

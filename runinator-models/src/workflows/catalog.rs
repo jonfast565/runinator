@@ -75,6 +75,7 @@ impl WorkflowStatus {
                 | WorkflowStatus::Waiting
                 | WorkflowStatus::ApprovalRequired
                 | WorkflowStatus::InputRequired
+                | WorkflowStatus::Blocked
         )
     }
 }

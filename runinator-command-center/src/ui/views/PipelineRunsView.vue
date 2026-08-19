@@ -106,6 +106,27 @@
                 <Icon name="reject" />
                 <span>Cancel</span>
               </button>
+              <button
+                v-if="store.detail.run.status === 'paused'"
+                class="btn btn-sm"
+                @click="resumeRun(store.detail.run.id)"
+              >
+                <Icon name="play" />
+                <span>Resume</span>
+              </button>
+              <button
+                v-else
+                class="btn btn-sm"
+                :disabled="!isActiveRunStatus(store.detail.run.status)"
+                @click="pauseRun(store.detail.run.id)"
+              >
+                <Icon name="pause" />
+                <span>Pause</span>
+              </button>
+              <button class="btn btn-danger btn-sm" @click="deleteRun(store.detail.run.id)">
+                <Icon name="trash" />
+                <span>Delete</span>
+              </button>
             </div>
             <dl class="m-0 grid grid-cols-[repeat(auto-fit,minmax(160px,1fr))] gap-2">
               <div
@@ -281,6 +302,8 @@ import { formatDate } from "../../core/utils/format";
 import { countActiveRuns, isActiveRunStatus } from "../../core/utils/status";
 
 const store = usePipelineRunsStore();
+const pauseRun = (id: string) => store.pauseRun(id);
+const resumeRun = (id: string) => store.resumeRun(id);
 const workflows = useWorkflowsStore();
 const app = useAppStore();
 const selectedPipelineId = ref("");
@@ -425,6 +448,11 @@ async function startRun(): Promise<void> {
 
 async function cancelRun(pipelineRunId: string): Promise<void> {
   await store.cancelRun(pipelineRunId);
+}
+
+async function deleteRun(pipelineRunId: string): Promise<void> {
+  if (!window.confirm("Permanently delete this pipeline run and all member workflow history?")) return;
+  await store.deleteRun(pipelineRunId);
 }
 
 onMounted(() => {

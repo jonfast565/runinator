@@ -2,6 +2,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use axum::{Extension, Json, extract::Path, http::StatusCode};
+use runinator_broker_core::Broker;
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::{
     auth::{AuthContext, Permission},
@@ -352,7 +353,51 @@ pub async fn get_pipeline_run<T: DatabaseImpl>(
     }
 }
 
+pub async fn delete_pipeline_run<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(pipeline_run_id): Path<Uuid>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_pipeline_run(pipeline_run_id, Permission::Edit)
+        .await
+    {
+        return reply;
+    }
+    match repository::delete_pipeline_run(db.as_ref(), pipeline_run_id).await {
+        Ok(resp) => (StatusCode::OK, Json(ApiResponse::TaskResponse(resp))),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
 pub async fn cancel_pipeline_run<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(broker): Extension<Arc<dyn Broker>>,
+    Extension(events): Extension<EventSender>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(pipeline_run_id): Path<Uuid>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_pipeline_run(pipeline_run_id, Permission::Run)
+        .await
+    {
+        return reply;
+    }
+    match repository::cancel_pipeline_run(db.as_ref(), broker.as_ref(), pipeline_run_id).await {
+        Ok(resp) => {
+            let org_id = repository::org_id_for_pipeline_run(db.as_ref(), pipeline_run_id).await;
+            emit_pipeline_run(&events, pipeline_run_id, org_id);
+            emit(
+                &events,
+                AppEvent::new(org_id, AppEventKind::PipelineRunActivity),
+            );
+            (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
+        }
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+pub async fn pause_pipeline_run<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<AuthContext>,
@@ -364,14 +409,34 @@ pub async fn cancel_pipeline_run<T: DatabaseImpl>(
     {
         return reply;
     }
-    match repository::cancel_pipeline_run(db.as_ref(), pipeline_run_id).await {
+    match repository::pause_pipeline_run(db.as_ref(), pipeline_run_id).await {
         Ok(resp) => {
             let org_id = repository::org_id_for_pipeline_run(db.as_ref(), pipeline_run_id).await;
             emit_pipeline_run(&events, pipeline_run_id, org_id);
-            emit(
-                &events,
-                AppEvent::new(org_id, AppEventKind::PipelineRunActivity),
-            );
+            nudge_wake_publisher(&events);
+            (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
+        }
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+pub async fn resume_pipeline_run<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(events): Extension<EventSender>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(pipeline_run_id): Path<Uuid>,
+) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_pipeline_run(pipeline_run_id, Permission::Run)
+        .await
+    {
+        return reply;
+    }
+    match repository::resume_pipeline_run(db.as_ref(), pipeline_run_id).await {
+        Ok(resp) => {
+            let org_id = repository::org_id_for_pipeline_run(db.as_ref(), pipeline_run_id).await;
+            emit_pipeline_run(&events, pipeline_run_id, org_id);
+            nudge_wake_publisher(&events);
             (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
         }
         Err(err) => api_error(err.to_string()),
@@ -512,11 +577,21 @@ pub fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
         )
         .route(
             "/pipeline_runs/{id}",
-            get(get_pipeline_run::<T>).layer(Extension(pool.clone())),
+            get(get_pipeline_run::<T>)
+                .delete(delete_pipeline_run::<T>)
+                .layer(Extension(pool.clone())),
         )
         .route(
             "/pipeline_runs/{id}/cancel",
             post(cancel_pipeline_run::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/pipeline_runs/{id}/pause",
+            post(pause_pipeline_run::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/pipeline_runs/{id}/resume",
+            post(resume_pipeline_run::<T>).layer(Extension(pool.clone())),
         )
         .route(
             "/pipeline_runs/{id}/resolve",

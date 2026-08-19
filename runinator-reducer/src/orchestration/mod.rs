@@ -99,5 +99,5 @@ mod stacked_control_flow_tests;
 pub use engine::process_ready_node;
 pub use pipeline_orchestration::{
     PipelineInquiryDecision, PipelineStartOutcome, create_and_start_pipeline_run,
-    resolve_pipeline_run_inquiry, retry_pipeline_member, start_pipeline_run,
+    resolve_pipeline_run_inquiry, resume_pipeline_run, retry_pipeline_member, start_pipeline_run,
 };

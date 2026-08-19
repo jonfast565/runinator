@@ -91,6 +91,63 @@ fn assert_run_succeeded(store: &FakeStore) {
     assert_eq!(run.status, WorkflowStatus::Succeeded, "{:?}", run.message);
 }
 
+/// A join may wait for only a subset of a parallel fan-out. The selected branches release the
+/// continuation, while an unselected branch remains live on its private terminal path.
+#[tokio::test]
+async fn selected_join_releases_continuation_while_unselected_branch_is_live() {
+    let store = FakeStore::new();
+    store.insert_workflow(workflow(serde_json::json!([
+        { "id": "start", "kind": "start", "transitions": { "next": { "$node": "fork" } } },
+        { "id": "fork", "kind": "parallel",
+          "parameters": { "branches": [{ "$node": "lint" }, { "$node": "tests" }, { "$node": "security" }] } },
+        { "id": "lint", "kind": "audit", "parameters": { "action": "lint" },
+          "transitions": { "on_success": { "$node": "join" } } },
+        { "id": "tests", "kind": "audit", "parameters": { "action": "tests" },
+          "transitions": { "on_success": { "$node": "join" } } },
+        { "id": "security", "kind": "action",
+          "action": { "provider": "test", "function": "wait", "configuration": {} },
+          "transitions": { "on_success": { "$node": "security_end" } } },
+        { "id": "join", "kind": "join",
+          "parameters": { "wait_for": [{ "$node": "lint" }, { "$node": "tests" }], "mode": "all" },
+          "transitions": { "on_success": { "$node": "after" } } },
+        { "id": "after", "kind": "audit", "parameters": { "action": "after" },
+          "transitions": { "on_success": { "$node": "end" } } },
+        { "id": "security_end", "kind": "end" },
+        { "id": "end", "kind": "end" }
+    ])));
+    store.insert_run(queued_run());
+
+    process_ready_node(&store, &ready_node("start"))
+        .await
+        .expect("fan out");
+    process_ready_node(&store, &ready_node("lint"))
+        .await
+        .expect("complete lint");
+    process_ready_node(&store, &ready_node("tests"))
+        .await
+        .expect("complete tests and join");
+
+    assert_eq!(
+        succeeded_runs(&store, "after"),
+        1,
+        "selected join should release after"
+    );
+    let run = store.run(RUN_ID.parse().expect("run id")).expect("run");
+    assert_eq!(
+        run.status,
+        WorkflowStatus::Running,
+        "security is still live: {:?}",
+        run.execution_state
+    );
+    assert!(
+        run.execution_state
+            .cursors
+            .iter()
+            .any(|cursor| cursor.is_at("security")),
+        "the unselected branch must not traverse the post-join continuation"
+    );
+}
+
 /// two fan-out/reconvergence pairs are stacked inside a `for` body and revisited three times.
 ///
 /// this simultaneously pins branch retirement, one-cursor join continuation, and freshness of

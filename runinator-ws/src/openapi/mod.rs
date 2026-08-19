@@ -209,6 +209,11 @@ pub(crate) const MINIMAL_ENDPOINTS: &[(&str, &str, docs::EndpointPolicy)] = &[
         "/pipeline_runs/{id}",
         docs::EndpointPolicy::Authenticated,
     ),
+    (
+        "delete",
+        "/pipeline_runs/{id}",
+        docs::EndpointPolicy::Authenticated,
+    ),
     ("get", "/pipelines", docs::EndpointPolicy::Authenticated),
     (
         "get",
@@ -229,6 +234,11 @@ pub(crate) const MINIMAL_ENDPOINTS: &[(&str, &str, docs::EndpointPolicy)] = &[
     (
         "get",
         "/workflow_runs/{id}/transitions",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "delete",
+        "/workflow_runs/{id}",
         docs::EndpointPolicy::Authenticated,
     ),
     (
@@ -308,6 +318,16 @@ pub(crate) const MINIMAL_ENDPOINTS: &[(&str, &str, docs::EndpointPolicy)] = &[
     (
         "post",
         "/pipeline_runs/{id}/cancel",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "post",
+        "/pipeline_runs/{id}/pause",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "post",
+        "/pipeline_runs/{id}/resume",
         docs::EndpointPolicy::Authenticated,
     ),
     (

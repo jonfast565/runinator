@@ -50,6 +50,8 @@ pub(super) struct Decompiler<'a> {
     control_ids: HashSet<String>,
     // authored loop/map binding names recovered from metadata.
     control_vars: HashMap<String, ControlVars>,
+    // authored parallel labels and generated private branch terminals.
+    parallel_branches: HashMap<String, metadata::ParallelSurface>,
     // node ids already emitted; each node is emitted exactly once and every other edge into
     // it becomes an explicit `-> label` arrow (labels are global, so this round-trips).
     visited: HashSet<String>,
@@ -89,6 +91,7 @@ pub fn decompile_definition(
     let spreads = metadata.spreads();
     let control_ids = metadata.control_ids();
     let control_vars = metadata.control_vars();
+    let parallel_branches = metadata.parallel_branches();
 
     let mut decompiler = Decompiler {
         nodes,
@@ -102,6 +105,7 @@ pub fn decompile_definition(
         spreads,
         control_ids,
         control_vars,
+        parallel_branches,
         visited: HashSet::new(),
         worklist: VecDeque::new(),
         queued: HashSet::new(),
@@ -222,6 +226,7 @@ pub fn render_expression(value: &Value) -> Result<String, WdlError> {
         spreads: HashMap::new(),
         control_ids: HashSet::new(),
         control_vars: HashMap::new(),
+        parallel_branches: HashMap::new(),
         visited: HashSet::new(),
         worklist: VecDeque::new(),
         queued: HashSet::new(),
@@ -2373,23 +2378,65 @@ impl<'a> Decompiler<'a> {
         stop: Option<&str>,
     ) -> Result<Option<String>, WdlError> {
         let branches = node_ref_ids(node.parameters.get("branches"));
-        let join = self.find_join(&branches).ok_or_else(|| {
+        let surface = self
+            .parallel_branches
+            .get(&node.id)
+            .cloned()
+            .unwrap_or_default();
+        let selected_ids = if let Some(selected) = &surface.selected {
+            let selected = selected.iter().map(String::as_str).collect::<HashSet<_>>();
+            branches
+                .iter()
+                .zip(surface.labels.iter())
+                .filter_map(|(branch, label)| {
+                    label
+                        .as_deref()
+                        .is_some_and(|label| selected.contains(label))
+                        .then(|| branch.clone())
+                })
+                .collect::<Vec<_>>()
+        } else {
+            branches.clone()
+        };
+        let join = self.find_join(&selected_ids).ok_or_else(|| {
             WdlError::Decompile(format!("parallel '{}' has no matching join", node.id))
         })?;
         let (join_id, mode, cont) = join;
 
         self.line(&format!("{}parallel {{", self.block_id_prefix(node)));
         self.indent += 1;
-        for branch in &branches {
-            self.line("branch {");
+        for (index, branch) in branches.iter().enumerate() {
+            let label = surface.labels.get(index).and_then(Option::as_deref);
+            self.line(&match label {
+                Some(label) => format!("branch {} {{", quote(label)),
+                None => "branch {".to_string(),
+            });
             self.indent += 1;
-            self.emit_region(branch, Some(join_id.as_str()))?;
+            let branch_stop = surface
+                .stops
+                .get(index)
+                .map(String::as_str)
+                .unwrap_or(join_id.as_str());
+            self.emit_region(branch, Some(branch_stop))?;
             self.indent -= 1;
             self.line("}");
         }
         self.indent -= 1;
 
-        Ok(self.close_block_line(&format!("}} join {mode}"), cont, stop))
+        let selector = surface
+            .selected
+            .map(|labels| {
+                format!(
+                    " [{}]",
+                    labels
+                        .iter()
+                        .map(|label| quote(label))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            })
+            .unwrap_or_default();
+        Ok(self.close_block_line(&format!("}} join{selector} {mode}"), cont, stop))
     }
 
     fn emit_race(
@@ -2465,7 +2512,7 @@ impl<'a> Decompiler<'a> {
         Ok(self.close_block_line("}", cont, outer_stop))
     }
 
-    /// find the join node that synchronizes the given parallel branches.
+    /// find the join node that synchronizes the given parallel branch endpoints.
     fn find_join(&self, branches: &[String]) -> Option<(String, String, Option<String>)> {
         let target: HashSet<&str> = branches.iter().map(String::as_str).collect();
         for node in self.nodes.values() {

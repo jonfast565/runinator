@@ -319,7 +319,7 @@ impl Resolver<'_> {
             }
             StmtKind::Parallel(parallel) => {
                 for branch in &parallel.branches {
-                    self.resolve_block(branch, scope, diagnostics);
+                    self.resolve_block(&branch.body, scope, diagnostics);
                 }
             }
             StmtKind::Race(race) => {

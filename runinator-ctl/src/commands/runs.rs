@@ -71,6 +71,11 @@ pub(super) async fn runs(client: &Client, command: &RunCommands, json_output: bo
             "canceled workflow run",
             json_output,
         )?,
+        RunCommands::Delete { id } => print_task_response(
+            client.delete_workflow_run(*id).await?,
+            "deleted workflow run",
+            json_output,
+        )?,
         RunCommands::Replay { id, from_step_id } => {
             let run = client
                 .replay_workflow_run(*id, from_step_id.clone())

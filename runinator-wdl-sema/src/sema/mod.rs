@@ -138,7 +138,11 @@ pub(super) fn child_blocks(kind: &StmtKind) -> Vec<&Block> {
             }
             blocks
         }
-        StmtKind::Parallel(parallel) => parallel.branches.iter().collect(),
+        StmtKind::Parallel(parallel) => parallel
+            .branches
+            .iter()
+            .map(|branch| &branch.body)
+            .collect(),
         StmtKind::Race(race) => race.branches.iter().collect(),
         StmtKind::Try(try_stmt) => {
             let mut blocks = vec![&try_stmt.body];

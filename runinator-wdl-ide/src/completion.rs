@@ -1034,7 +1034,11 @@ fn completion_child_blocks(kind: &StmtKind) -> Vec<&Block> {
             }
             blocks
         }
-        StmtKind::Parallel(parallel) => parallel.branches.iter().collect(),
+        StmtKind::Parallel(parallel) => parallel
+            .branches
+            .iter()
+            .map(|branch| &branch.body)
+            .collect(),
         StmtKind::Race(race) => race.branches.iter().collect(),
         StmtKind::Try(try_stmt) => {
             let mut blocks = vec![&try_stmt.body];
@@ -1178,8 +1182,8 @@ fn collect_child_context(
             }
         }
         StmtKind::Parallel(parallel) => {
-            for body in &parallel.branches {
-                collect_block_context(body, cursor, providers, context);
+            for branch in &parallel.branches {
+                collect_block_context(&branch.body, cursor, providers, context);
             }
         }
         StmtKind::Race(race) => {

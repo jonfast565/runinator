@@ -496,3 +496,11 @@ pub async fn fetch_workflow_run(
         .map_err(|err| CommandError::Unexpected(err.to_string()))?;
     Ok(WorkflowRunDetail { run, nodes })
 }
+
+#[tauri::command]
+pub async fn delete_workflow_run(
+    state: State<'_, CommandCenterState>,
+    workflow_run_id: Uuid,
+) -> CommandResult<TaskResponse> {
+    delete(&state, &format!("workflow_runs/{workflow_run_id}")).await
+}

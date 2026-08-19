@@ -332,7 +332,7 @@ fn resolve_stmt(stmt: &mut Stmt, scope: &Scope) -> Result<(), WdlError> {
         }
         StmtKind::Parallel(parallel) => {
             for branch in parallel.branches.iter_mut() {
-                resolve_block(branch, scope)?;
+                resolve_block(&mut branch.body, scope)?;
             }
         }
         StmtKind::Race(race) => {

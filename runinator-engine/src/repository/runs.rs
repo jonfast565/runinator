@@ -8,6 +8,17 @@ use uuid::Uuid;
 
 use runinator_database::workflow_mutex::WorkflowMutexWake;
 
+pub async fn delete_workflow_run<T: DatabaseImpl>(
+    db: &T,
+    workflow_run_id: Uuid,
+) -> Result<TaskResponse, SendableError> {
+    db.delete_workflow_run(workflow_run_id).await?;
+    Ok(TaskResponse {
+        success: true,
+        message: "Workflow run deleted".into(),
+    })
+}
+
 pub async fn create_workflow_run<T: DatabaseImpl>(
     db: &T,
     workflow_id: Uuid,

@@ -36,6 +36,59 @@ fn decompile_output_is_format_idempotent() {
         );
     }
 }
+
+#[test]
+fn selected_parallel_join_leaves_unselected_branches_on_private_terminals() {
+    use runinator_models::workflows::WorkflowNodeKind;
+
+    let src = r#"
+        workflow "Selected Parallel" v1 {
+            parallel {
+                branch "lint" { console.run(command: "lint") }
+                branch "tests" { console.run(command: "test") }
+                branch "security" { console.run(command: "security") }
+            } join ["lint", "tests"] all
+            console.run(command: "publish")
+        }
+    "#;
+    let definition = compile(src);
+    let graph = &definition.definition;
+    let parallel = graph
+        .nodes
+        .iter()
+        .find(|node| node.kind == WorkflowNodeKind::Parallel)
+        .expect("parallel node");
+    let join = graph
+        .nodes
+        .iter()
+        .find(|node| node.kind == WorkflowNodeKind::Join)
+        .expect("join node");
+    let branch_ids = parallel
+        .parameters
+        .get("branches")
+        .and_then(Value::as_array)
+        .expect("parallel branches");
+    let wait_for = join
+        .parameters
+        .get("wait_for")
+        .and_then(Value::as_array)
+        .expect("join wait_for");
+    assert_eq!(branch_ids.len(), 3);
+    assert_eq!(wait_for.len(), 2);
+    assert!(
+        graph
+            .nodes
+            .iter()
+            .filter(|node| node.kind == WorkflowNodeKind::End)
+            .count()
+            >= 2
+    );
+
+    let decompiled = decompile(&definition).expect("decompile selected join");
+    assert!(decompiled.contains("branch \"security\""));
+    assert!(decompiled.contains("} join [\"lint\", \"tests\"] all"));
+    assert_round_trips(src);
+}
 /// the twelve coordination/resilience/diagnostic node kinds each compile to the expected kind and
 /// survive a compile -> decompile -> compile round trip.
 #[test]

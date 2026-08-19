@@ -2,8 +2,11 @@
 
 import {
   cancelPipelineRun as cancelPipelineRunApi,
+  pausePipelineRun as pausePipelineRunApi,
+  resumePipelineRun as resumePipelineRunApi,
   createPipelineRun as createPipelineRunApi,
   deletePipeline as deletePipelineApi,
+  deletePipelineRun as deletePipelineRunApi,
   deletePipelineTrigger as deletePipelineTriggerApi,
   deleteWorkflowTrigger,
   fetchPipelineRun as fetchPipelineRunApi,
@@ -67,6 +70,11 @@ export async function deletePipeline(pipelineId: string): Promise<void> {
   await deletePipelineApi(pipelineId);
 }
 
+export async function deletePipelineRun(pipelineRunId: string): Promise<void> {
+  const response = await deletePipelineRunApi(pipelineRunId);
+  if (!response.success) throw new Error(response.message || "Failed to delete pipeline run");
+}
+
 /** reassign a pipeline's owning organization; null makes it platform-global. */
 export async function setPipelineOwner(
   pipelineId: string,
@@ -112,6 +120,14 @@ export async function fetchPipelineRun(pipelineRunId: string): Promise<PipelineR
 
 export async function cancelPipelineRun(pipelineRunId: string): Promise<void> {
   await cancelPipelineRunApi(pipelineRunId);
+}
+
+export async function pausePipelineRun(pipelineRunId: string): Promise<void> {
+  await pausePipelineRunApi(pipelineRunId);
+}
+
+export async function resumePipelineRun(pipelineRunId: string): Promise<void> {
+  await resumePipelineRunApi(pipelineRunId);
 }
 
 export async function retryPipelineMember(

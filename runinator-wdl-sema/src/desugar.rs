@@ -183,7 +183,7 @@ fn expand_stmt(stmt: &mut Stmt, aliases: &AliasTable) -> Result<(), WdlError> {
         }
         StmtKind::Parallel(parallel) => {
             for branch in parallel.branches.iter_mut() {
-                expand_block(branch, aliases)?;
+                expand_block(&mut branch.body, aliases)?;
             }
         }
         StmtKind::Race(race) => {

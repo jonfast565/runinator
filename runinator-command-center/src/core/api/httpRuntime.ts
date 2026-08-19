@@ -360,9 +360,21 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     method: "GET",
     path: (args) => `pipeline_runs/${escape(arg(args, "pipelineRunId"))}`,
   },
+  delete_pipeline_run: {
+    method: "DELETE",
+    path: (args) => `pipeline_runs/${escape(arg(args, "pipelineRunId"))}`,
+  },
   cancel_pipeline_run: {
     method: "POST",
     path: (args) => `pipeline_runs/${escape(arg(args, "pipelineRunId"))}/cancel`,
+  },
+  pause_pipeline_run: {
+    method: "POST",
+    path: (args) => `pipeline_runs/${escape(arg(args, "pipelineRunId"))}/pause`,
+  },
+  resume_pipeline_run: {
+    method: "POST",
+    path: (args) => `pipeline_runs/${escape(arg(args, "pipelineRunId"))}/resume`,
   },
   retry_pipeline_member: {
     method: "POST",
@@ -524,6 +536,10 @@ const REGISTRY: Record<string, HttpDescriptor> = {
 
       return { run: body.run, nodes: body.nodes ?? [] };
     },
+  },
+  delete_workflow_run: {
+    method: "DELETE",
+    path: (args) => `workflow_runs/${escape(arg(args, "workflowRunId"))}`,
   },
   // packaged functions.
   list_function_packages: { method: "GET", path: () => "functions" },

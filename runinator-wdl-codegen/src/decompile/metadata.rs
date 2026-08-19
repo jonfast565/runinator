@@ -7,6 +7,13 @@ use runinator_models::{
 
 use super::expr;
 
+#[derive(Debug, Clone, Default)]
+pub(super) struct ParallelSurface {
+    pub labels: Vec<Option<String>>,
+    pub selected: Option<Vec<String>>,
+    pub stops: Vec<String>,
+}
+
 pub(super) struct MetadataReader<'a> {
     metadata: &'a Value,
 }
@@ -145,6 +152,58 @@ impl<'a> MetadataReader<'a> {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    pub(super) fn parallel_branches(&self) -> HashMap<String, ParallelSurface> {
+        let mut result = HashMap::new();
+        let Some(entries) = self.object("/wdl/parallel_branches") else {
+            return result;
+        };
+        for (id, value) in entries {
+            let Some(surface) = value.as_object() else {
+                continue;
+            };
+            let labels = surface
+                .get("labels")
+                .and_then(Value::as_array)
+                .map(|labels| {
+                    labels
+                        .iter()
+                        .map(|label| label.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let selected = surface
+                .get("selected")
+                .and_then(Value::as_array)
+                .map(|labels| {
+                    labels
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect()
+                });
+            let stops = surface
+                .get("stops")
+                .and_then(Value::as_array)
+                .map(|stops| {
+                    stops
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default();
+            result.insert(
+                id.clone(),
+                ParallelSurface {
+                    labels,
+                    selected,
+                    stops,
+                },
+            );
+        }
+        result
     }
 
     pub(super) fn functions(&self) -> Vec<FnEntry> {

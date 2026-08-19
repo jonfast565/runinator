@@ -101,6 +101,30 @@ pub(super) async fn pipelines(
             println!("{}", response.message);
             Ok(())
         }
+        PipelineCommands::DeleteRun { run_id } => {
+            let response = client.delete_pipeline_run(*run_id).await?;
+            if json_output {
+                return output::json(&response);
+            }
+            println!("{}", response.message);
+            Ok(())
+        }
+        PipelineCommands::Pause { run_id } => {
+            let response = client.pause_pipeline_run(*run_id).await?;
+            if json_output {
+                return output::json(&response);
+            }
+            println!("{}", response.message);
+            Ok(())
+        }
+        PipelineCommands::Resume { run_id } => {
+            let response = client.resume_pipeline_run(*run_id).await?;
+            if json_output {
+                return output::json(&response);
+            }
+            println!("{}", response.message);
+            Ok(())
+        }
         PipelineCommands::Resolve {
             run_id,
             decision,

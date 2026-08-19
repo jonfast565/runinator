@@ -2608,14 +2608,85 @@ fn parse_arm_body(pair: Pair<Rule>) -> Result<Block, WdlError> {
 fn parse_parallel(pair: Pair<Rule>) -> Result<ParallelStmt, WdlError> {
     let mut branches = Vec::new();
     let mut join = BranchPolicy::All;
+    let mut selected_branches = None;
     for inner in pair.into_inner() {
         match inner.as_rule() {
-            Rule::branch => branches.push(parse_block(first_inner(inner)?)?),
-            Rule::join_clause => join = parse_branch_policy(first_inner(inner)?)?,
+            Rule::branch => {
+                let mut label = None;
+                let mut body = None;
+                for part in inner.into_inner() {
+                    match part.as_rule() {
+                        Rule::string => label = Some(plain_string(part)?),
+                        Rule::block => body = Some(parse_block(part)?),
+                        _ => {}
+                    }
+                }
+                branches.push(ParallelBranch {
+                    label,
+                    body: body.ok_or_else(|| WdlError::lower("parallel branch requires a body"))?,
+                });
+            }
+            Rule::join_clause => {
+                for part in inner.into_inner() {
+                    match part.as_rule() {
+                        Rule::branch_selector => {
+                            let labels = part
+                                .into_inner()
+                                .filter(|item| item.as_rule() == Rule::string)
+                                .map(plain_string)
+                                .collect::<Result<Vec<_>, _>>()?;
+                            selected_branches = Some(labels);
+                        }
+                        Rule::branch_policy => join = parse_branch_policy(part)?,
+                        _ => {}
+                    }
+                }
+            }
             _ => {}
         }
     }
-    Ok(ParallelStmt { branches, join })
+    validate_parallel_branches(&branches, selected_branches.as_deref())?;
+    Ok(ParallelStmt {
+        branches,
+        join,
+        selected_branches,
+    })
+}
+
+fn validate_parallel_branches(
+    branches: &[ParallelBranch],
+    selected: Option<&[String]>,
+) -> Result<(), WdlError> {
+    let mut labels = std::collections::HashSet::new();
+    for branch in branches {
+        if let Some(label) = &branch.label
+            && !labels.insert(label.as_str())
+        {
+            return Err(WdlError::lower(format!(
+                "duplicate parallel branch label '{label}'"
+            )));
+        }
+    }
+    let Some(selected) = selected else {
+        return Ok(());
+    };
+    if selected.is_empty() {
+        return Err(WdlError::lower("parallel join selector cannot be empty"));
+    }
+    let mut requested = std::collections::HashSet::new();
+    for label in selected {
+        if !requested.insert(label.as_str()) {
+            return Err(WdlError::lower(format!(
+                "parallel join selector repeats branch '{label}'"
+            )));
+        }
+        if !labels.contains(label.as_str()) {
+            return Err(WdlError::lower(format!(
+                "parallel join selector references unknown or unnamed branch '{label}'"
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn parse_race(pair: Pair<Rule>) -> Result<RaceStmt, WdlError> {

@@ -256,6 +256,13 @@ where
         Ok(response.json::<PipelineRunDetail>().await?)
     }
 
+    pub async fn delete_pipeline_run(&self, run_id: Uuid) -> Result<TaskResponse> {
+        let url = self.build_url(&format!("/pipeline_runs/{run_id}")).await?;
+        let response = self.http_delete(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<TaskResponse>().await?)
+    }
+
     pub async fn fetch_pipeline(&self, pipeline_id: Uuid) -> Result<Pipeline> {
         let url = self.build_url(&format!("/pipelines/{pipeline_id}")).await?;
         let response = self.http_get(url.clone()).send().await?;
@@ -287,6 +294,24 @@ where
             .await?;
         let response = self.http_post(url.clone()).send().await?;
         let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<TaskResponse>().await?)
+    }
+
+    pub async fn pause_pipeline_run(&self, run_id: Uuid) -> Result<TaskResponse> {
+        let url = self
+            .build_url(&format!("/pipeline_runs/{run_id}/pause"))
+            .await?;
+        let response =
+            Self::handle_response(url.clone(), self.http_post(url).send().await?).await?;
+        Ok(response.json::<TaskResponse>().await?)
+    }
+
+    pub async fn resume_pipeline_run(&self, run_id: Uuid) -> Result<TaskResponse> {
+        let url = self
+            .build_url(&format!("/pipeline_runs/{run_id}/resume"))
+            .await?;
+        let response =
+            Self::handle_response(url.clone(), self.http_post(url).send().await?).await?;
         Ok(response.json::<TaskResponse>().await?)
     }
 
@@ -1647,6 +1672,15 @@ where
         )
         .map_err(|err| ApiError::UnexpectedResponse(err.to_string()))?;
         Ok((run, nodes))
+    }
+
+    pub async fn delete_workflow_run(&self, workflow_run_id: Uuid) -> Result<TaskResponse> {
+        let url = self
+            .build_url(&format!("/workflow_runs/{workflow_run_id}"))
+            .await?;
+        let response = self.http_delete(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<TaskResponse>().await?)
     }
 
     pub async fn create_workflow_node_run(
