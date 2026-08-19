@@ -14,11 +14,9 @@ use runinator_ws_core::events::{
     nudge_wake_publisher,
 };
 use runinator_ws_core::models::{
-    ApiResponse, PipelineOwnerRequest, PipelineRunInquiryDecision, PipelineRunRequest,
-    PipelineRunResolutionRequest,
+    ApiResponse, PipelineRunInquiryDecision, PipelineRunRequest, PipelineRunResolutionRequest,
 };
 use runinator_ws_core::responses::{api_error, not_found};
-use runinator_ws_middleware::authz::AuthContextExt;
 use runinator_ws_middleware::authz::AuthzChecker;
 
 pub async fn get_pipelines<T: DatabaseImpl>(
@@ -27,21 +25,16 @@ pub async fn get_pipelines<T: DatabaseImpl>(
 ) -> (StatusCode, Json<ApiResponse>) {
     match repository::fetch_pipelines(db.as_ref()).await {
         Ok(pipelines) => {
-            // scope to the caller's org first (cross-tenant pipelines are never listed), then to the
-            // grant-based visibility set (None = admin/auth-disabled = all).
-            let pipelines: Vec<_> = pipelines
-                .into_iter()
-                .filter(|pipeline| ctx.org_visible(pipeline.org_id))
-                .collect();
             let visible = AuthzChecker::new(db.as_ref(), &ctx)
                 .visible_pipeline_ids()
                 .await;
             let pipelines = match visible {
-                Some(ids) => pipelines
+                Ok(Some(ids)) => pipelines
                     .into_iter()
                     .filter(|pipeline| pipeline.id.is_some_and(|id| ids.contains(&id)))
                     .collect(),
-                None => pipelines,
+                Ok(None) => pipelines,
+                Err(reply) => return reply,
             };
             (StatusCode::OK, Json(ApiResponse::PipelineList(pipelines)))
         }
@@ -61,10 +54,6 @@ pub async fn get_pipeline<T: DatabaseImpl>(
         return reply;
     }
     match repository::fetch_pipeline(db.as_ref(), pipeline_id).await {
-        // a cross-tenant pipeline is not-found even if a stray grant would otherwise reveal it.
-        Ok(Some(pipeline)) if !ctx.org_visible(pipeline.org_id) => {
-            not_found(format!("Pipeline {pipeline_id} not found"))
-        }
         Ok(Some(pipeline)) => (StatusCode::OK, Json(ApiResponse::Pipeline(pipeline))),
         Ok(None) => not_found(format!("Pipeline {pipeline_id} not found")),
         Err(err) => api_error(err.to_string()),
@@ -83,9 +72,12 @@ pub async fn create_pipeline<T: DatabaseImpl>(
     match repository::upsert_pipeline(db.as_ref(), &pipeline).await {
         Ok(pipeline) => {
             if let Some(id) = pipeline.id {
-                AuthzChecker::new(db.as_ref(), &ctx)
+                if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
                     .grant_pipeline_owner(id)
-                    .await;
+                    .await
+                {
+                    return reply;
+                }
             }
             emit_workflows_changed(&events, pipeline.org_id);
             (StatusCode::OK, Json(ApiResponse::Pipeline(pipeline)))
@@ -118,39 +110,6 @@ pub async fn update_pipeline<T: DatabaseImpl>(
         Ok(pipeline) => {
             emit_workflows_changed(&events, pipeline.org_id);
             (StatusCode::OK, Json(ApiResponse::Pipeline(pipeline)))
-        }
-        Err(err) => api_error(err.to_string()),
-    }
-}
-
-/// reassign a pipeline's owning organization. requires `Own` on the pipeline (owner or platform
-/// admin); moving it into an org additionally requires org-admin on the target org.
-pub async fn set_pipeline_owner<T: DatabaseImpl>(
-    Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
-    Extension(ctx): Extension<AuthContext>,
-    Path(pipeline_id): Path<Uuid>,
-    Json(request): Json<PipelineOwnerRequest>,
-) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
-        .require_pipeline(pipeline_id, Permission::Own)
-        .await
-    {
-        return reply;
-    }
-    if let Some(org_id) = request.org_id
-        && let Err(reply) = ctx.require_org_admin(org_id)
-    {
-        return reply;
-    }
-    match repository::set_pipeline_org(db.as_ref(), pipeline_id, request.org_id).await {
-        Ok(()) => {
-            emit_workflows_changed(&events, request.org_id);
-            match repository::fetch_pipeline(db.as_ref(), pipeline_id).await {
-                Ok(Some(pipeline)) => (StatusCode::OK, Json(ApiResponse::Pipeline(pipeline))),
-                Ok(None) => not_found(format!("Pipeline {pipeline_id} not found")),
-                Err(err) => api_error(err.to_string()),
-            }
         }
         Err(err) => api_error(err.to_string()),
     }
@@ -361,11 +320,12 @@ pub async fn get_pipeline_runs<T: DatabaseImpl>(
                 .visible_pipeline_ids()
                 .await;
             let runs = match visible {
-                Some(ids) => runs
+                Ok(Some(ids)) => runs
                     .into_iter()
                     .filter(|run| ids.contains(&run.pipeline_id))
                     .collect(),
-                None => runs,
+                Ok(None) => runs,
+                Err(reply) => return reply,
             };
             (StatusCode::OK, Json(ApiResponse::PipelineRunList(runs)))
         }
@@ -485,10 +445,6 @@ pub fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
                 .patch(update_pipeline::<T>)
                 .delete(delete_pipeline::<T>)
                 .layer(Extension(pool.clone())),
-        )
-        .route(
-            "/pipelines/{id}/owner",
-            patch(set_pipeline_owner::<T>).layer(Extension(pool.clone())),
         )
         .route(
             "/pipelines/{id}/triggers",

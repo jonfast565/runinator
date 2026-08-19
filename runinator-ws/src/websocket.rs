@@ -7,7 +7,7 @@ use axum::{
         Path,
         ws::{Message, WebSocketUpgrade},
     },
-    response::Response,
+    response::{IntoResponse, Response},
 };
 use futures::{SinkExt, StreamExt};
 use runinator_broker::{
@@ -17,16 +17,29 @@ use runinator_broker::{
     ws::types::{WsRequestFrame, WsResponseFrame},
 };
 use runinator_database::interfaces::DatabaseImpl;
-use runinator_models::auth::AuthContext;
+use runinator_models::auth::{AuthContext, Permission, ResourceType};
+use runinator_models::rbac::{Action, ScopeKind, ScopeRef, SystemRole};
 use serde::Serialize;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
 use crate::events::{AppEventKind, EventSender};
 use crate::models;
-use crate::openapi::docs::{EndpointDoc, Example, endpoint};
+use crate::openapi::docs::{EndpointDoc, EndpointPolicy, Example, endpoint_with_policy};
 use crate::repository;
-use runinator_ws_middleware::authz::AuthContextExt;
+use runinator_ws_middleware::authz::{AuthContextExt, AuthzChecker};
+
+fn event_scope_visible(ctx: &AuthContext, org_id: Option<Uuid>) -> bool {
+    let scope = org_id
+        .and_then(|id| {
+            runinator_models::rbac::ScopeRef::new(
+                runinator_models::rbac::ScopeKind::Organization,
+                Some(id),
+            )
+        })
+        .unwrap_or(runinator_models::rbac::ScopeRef::PLATFORM);
+    ctx.authorize_scope(runinator_models::rbac::Action::View, scope)
+}
 
 pub(crate) async fn send_json<T: Serialize>(
     tx: &mut futures::stream::SplitSink<axum::extract::ws::WebSocket, Message>,
@@ -90,9 +103,17 @@ pub(crate) async fn ws_events(
     Extension(ctx): Extension<AuthContext>,
     ws: WebSocketUpgrade,
 ) -> Response {
+    let scope = ctx
+        .org_id
+        .and_then(|id| ScopeRef::new(ScopeKind::Organization, Some(id)))
+        .unwrap_or(ScopeRef::PLATFORM);
+    if let Err(reply) = ctx.require_scope_action(Action::View, scope) {
+        return reply.into_response();
+    }
     log::info!("WebSocket upgrade request for /ws/events");
     let mut rx = events.subscribe();
     ws.on_upgrade(move |socket| async move {
+        let _connection = crate::metrics::websocket_connected("events");
         log::info!("WebSocket connection established for /ws/events");
         let (mut tx, mut rx_ws) = socket.split();
         loop {
@@ -101,7 +122,7 @@ pub(crate) async fn ws_events(
                     match event {
                         Ok(event) => {
                             // org-scoped egress: drop cross-tenant hints; unscoped events stay visible.
-                            if !ctx.org_visible(event.org_id) {
+                            if !event_scope_visible(&ctx, event.org_id) {
                                 continue;
                             }
                             if send_json(&mut tx, &event).await.is_err() {
@@ -157,8 +178,15 @@ pub(crate) async fn ws_workflow_run<T: DatabaseImpl>(
     Path(run_id): Path<Uuid>,
     ws: WebSocketUpgrade,
 ) -> Response {
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_run_workflow(run_id, Permission::View)
+        .await
+    {
+        return reply.into_response();
+    }
     log::info!("WebSocket upgrade request for /ws/workflow-runs/{}", run_id);
     ws.on_upgrade(move |socket| async move {
+        let _connection = crate::metrics::websocket_connected("workflow_run");
         log::info!(
             "WebSocket connection established for /ws/workflow-runs/{}",
             run_id
@@ -171,7 +199,7 @@ pub(crate) async fn ws_workflow_run<T: DatabaseImpl>(
                 event = event_rx.recv() => {
                     match event {
                         Ok(event) => {
-                            if !ctx.org_visible(event.org_id) {
+                            if !event_scope_visible(&ctx, event.org_id) {
                                 continue;
                             }
                             let relevant = matches!(
@@ -215,11 +243,18 @@ pub(crate) async fn ws_workflow_node_run_stream<T: DatabaseImpl>(
     Path(node_run_id): Path<Uuid>,
     ws: WebSocketUpgrade,
 ) -> Response {
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_node_run_workflow(node_run_id, Permission::View)
+        .await
+    {
+        return reply.into_response();
+    }
     log::info!(
         "WebSocket upgrade request for /ws/workflow-node-runs/{}/stream",
         node_run_id
     );
     ws.on_upgrade(move |socket| async move {
+        let _connection = crate::metrics::websocket_connected("node_run_stream");
         log::info!("WebSocket connection established for /ws/workflow-node-runs/{}/stream", node_run_id);
         let (mut tx, mut rx_ws) = socket.split();
         let mut cursor: Option<i64> = None;
@@ -237,7 +272,7 @@ pub(crate) async fn ws_workflow_node_run_stream<T: DatabaseImpl>(
                     match event {
                         Ok(event) => {
                             if matches!(&event.kind, AppEventKind::WorkflowRunChanged { .. })
-                                && ctx.org_visible(event.org_id)
+                                && event_scope_visible(&ctx, event.org_id)
                                 && send_workflow_node_run_chunks(db.as_ref(), &mut tx, node_run_id, &mut cursor, 100).await.is_err() {
                                     break;
                                 }
@@ -274,8 +309,15 @@ pub(crate) async fn ws_run_stream<T: DatabaseImpl>(
     Path(run_id): Path<Uuid>,
     ws: WebSocketUpgrade,
 ) -> Response {
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_run_workflow(run_id, Permission::View)
+        .await
+    {
+        return reply.into_response();
+    }
     log::info!("WebSocket upgrade request for /ws/run-stream/{}", run_id);
     ws.on_upgrade(move |socket| async move {
+        let _connection = crate::metrics::websocket_connected("run_stream");
         log::info!("WebSocket connection established for /ws/run-stream/{}", run_id);
         let (mut tx, mut rx_ws) = socket.split();
         let mut cursor: Option<i64> = None;
@@ -292,7 +334,7 @@ pub(crate) async fn ws_run_stream<T: DatabaseImpl>(
                 event = event_rx.recv() => {
                     match event {
                         Ok(event) => {
-                            if !ctx.org_visible(event.org_id) {
+                            if !event_scope_visible(&ctx, event.org_id) {
                                 continue;
                             }
                             let is_chunk = matches!(
@@ -352,8 +394,12 @@ pub(crate) async fn ws_desktop_worker<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     ws: WebSocketUpgrade,
 ) -> Response {
+    if let Err(reply) = ctx.require_system_role(&[SystemRole::Agent, SystemRole::Worker]) {
+        return reply.into_response();
+    }
     log::info!("WebSocket upgrade request for /ws/desktop-worker");
     ws.on_upgrade(move |socket| async move {
+        let _connection = crate::metrics::websocket_connected("desktop_worker");
         log::info!("WebSocket connection established for /ws/desktop-worker");
         let (tx, mut rx_ws) = socket.split();
         let tx = Arc::new(tokio::sync::Mutex::new(tx));
@@ -685,52 +731,52 @@ pub(crate) fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
 
 /// the openapi entries for the routes above.
 pub(crate) const DOCS: &[EndpointDoc] = &[
-    endpoint(
+    endpoint_with_policy(
         "get",
         "/ws/events",
         "WebSockets",
         "Subscribe to UI events",
         "Upgrades to a websocket stream of fan-out UI events emitted by this web-service replica.",
-        false,
+        EndpointPolicy::ScopedAction(Action::View),
         None,
         &[],
         101,
         "websocket upgrade accepted",
         Example::None,
     ),
-    endpoint(
+    endpoint_with_policy(
         "get",
         "/ws/workflow-runs/{id}",
         "WebSockets",
         "Subscribe to one workflow run",
         "Upgrades to a websocket stream for workflow-run changes and node activity for one run.",
-        false,
+        EndpointPolicy::ResourceAction(ResourceType::Workflow, Action::View),
         None,
         &[],
         101,
         "websocket upgrade accepted",
         Example::None,
     ),
-    endpoint(
+    endpoint_with_policy(
         "get",
         "/ws/run-stream/{id}",
         "WebSockets",
         "Subscribe to task run output",
         "Upgrades to a websocket stream for chunks emitted by one low-level task run.",
-        false,
+        EndpointPolicy::ResourceAction(ResourceType::Workflow, Action::View),
         None,
         &[],
         101,
         "websocket upgrade accepted",
         Example::None,
     ),
-    endpoint(
+    endpoint_with_policy(
         "get",
         "/ws/workflow-node-runs/{id}/stream",
         "WebSockets",
         "Subscribe to node-run output",
         "Upgrades to a websocket stream for chunks emitted by one workflow node run.",
-        false,
+        EndpointPolicy::ResourceAction(ResourceType::Workflow, Action::View),
         None,
         &[],
         101,

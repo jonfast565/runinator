@@ -1,7 +1,7 @@
 import {
-  createWorkflowGrant,
-  listWorkflowGrants,
-  revokeWorkflowGrant,
+  createResourceGrant,
+  listResourceGrants,
+  revokeResourceGrant,
   setWorkflowOwner,
 } from "../api/commandCenterApi";
 import type { PermissionLevel, PrincipalType } from "../domain/models";
@@ -10,7 +10,7 @@ import type { AppService } from "./app";
 export function createWorkflowSharingService(app: AppService) {
   return {
     listGrants(workflowId: string) {
-      return app.runOperation("Loading workflow grants", () => listWorkflowGrants(workflowId));
+      return app.runOperation("Loading workflow grants", () => listResourceGrants("workflow", workflowId));
     },
     createGrant(
       workflowId: string,
@@ -19,12 +19,12 @@ export function createWorkflowSharingService(app: AppService) {
       permission: PermissionLevel,
     ) {
       return app.runOperation("Granting workflow access", () =>
-        createWorkflowGrant(workflowId, principalType, principalId, permission),
+        createResourceGrant("workflow", workflowId, principalType, principalId, permission),
       );
     },
     revokeGrant(workflowId: string, grantId: string) {
       return app.runOperation("Revoking workflow access", () =>
-        revokeWorkflowGrant(workflowId, grantId),
+        revokeResourceGrant("workflow", workflowId, grantId),
       );
     },
     setOwner(workflowId: string, orgId: string | null) {

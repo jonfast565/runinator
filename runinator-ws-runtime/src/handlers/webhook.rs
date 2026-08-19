@@ -3,6 +3,7 @@ use std::sync::Arc;
 use axum::{Extension, Json, http::StatusCode};
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::auth::AuthContext;
+use runinator_models::rbac::SystemRole;
 
 use crate::repository;
 use runinator_ws_core::events::{
@@ -10,7 +11,9 @@ use runinator_ws_core::events::{
 };
 use runinator_ws_core::merge_json;
 use runinator_ws_core::models::{ApiResponse, WebhookSignalRequest, WebhookWakeRequest};
-use runinator_ws_core::openapi::docs::{EndpointDoc, Example, endpoint, json_body};
+use runinator_ws_core::openapi::docs::{
+    EndpointDoc, EndpointPolicy, Example, endpoint_with_policy, json_body,
+};
 use runinator_ws_core::responses::{api_error, not_found, task_response_success};
 use runinator_ws_middleware::authz::AuthContextExt;
 
@@ -20,7 +23,10 @@ pub async fn webhook_wake<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<WebhookWakeRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_service_or_admin() {
+    if let Err(reply) = ctx.require_system_role(&[
+        runinator_models::rbac::SystemRole::Engine,
+        runinator_models::rbac::SystemRole::Waker,
+    ]) {
         return reply;
     }
     let workflow_run =
@@ -95,7 +101,10 @@ pub async fn webhook_signal<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<WebhookSignalRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_service_or_admin() {
+    if let Err(reply) = ctx.require_system_role(&[
+        runinator_models::rbac::SystemRole::Engine,
+        runinator_models::rbac::SystemRole::Waker,
+    ]) {
         return reply;
     }
     match repository::deliver_signal_by_correlation(
@@ -133,26 +142,26 @@ pub fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
 
 /// the openapi entries for the routes above.
 pub const DOCS: &[EndpointDoc] = &[
-    endpoint(
+    endpoint_with_policy(
         "post",
         "/webhooks/wake",
         "Webhooks",
         "Drive a waiting run by webhook",
         "External webhook ingress that wakes or updates a parked workflow node by run id.",
-        false,
+        EndpointPolicy::SystemRole(&[SystemRole::Engine, SystemRole::Waker]),
         json_body("Webhook wake payload.", Example::WebhookWake),
         &[],
         202,
         "webhook accepted",
         Example::TaskResponse,
     ),
-    endpoint(
+    endpoint_with_policy(
         "post",
         "/webhooks/signal",
         "Webhooks",
         "Deliver a signal by correlation key",
         "External webhook ingress that routes a signal to a parked node by business correlation key.",
-        false,
+        EndpointPolicy::SystemRole(&[SystemRole::Engine, SystemRole::Waker]),
         json_body("Webhook signal payload.", Example::WebhookSignal),
         &[],
         202,

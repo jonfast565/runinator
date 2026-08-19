@@ -8,13 +8,20 @@ use runinator_models::billing::{
     OrgQuota, OrgResourceGroup, OrgUsage, RateCard, ScaleOrgNodesRequest, UpdateOrgQuotaRequest,
     UsageSample,
 };
-use runinator_models::capabilities::Capability;
 use runinator_models::provisioning::{NodeSpec, ProvisionBackend};
 use runinator_models::replicas::ReplicaKind;
 use runinator_models::value::Value;
 use runinator_provisioner::ProvisionerRegistry;
 use serde::Serialize;
 use uuid::Uuid;
+
+fn org_scope(org_id: Uuid) -> runinator_models::rbac::ScopeRef {
+    runinator_models::rbac::ScopeRef::new(
+        runinator_models::rbac::ScopeKind::Organization,
+        Some(org_id),
+    )
+    .unwrap()
+}
 
 use runinator_ws_core::models::{ApiError, ApiResponse};
 use runinator_ws_core::responses::{api_error, bad_request};
@@ -66,7 +73,9 @@ pub async fn get_org_nodes<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(org_id): Path<Uuid>,
 ) -> Reply {
-    if let Err(reply) = ctx.require_org_member(org_id) {
+    if let Err(reply) =
+        ctx.require_scope_action(runinator_models::rbac::Action::View, org_scope(org_id))
+    {
         return reply;
     }
     let groups = match db.list_org_resource_groups(org_id).await {
@@ -90,7 +99,10 @@ pub async fn scale_org_nodes<T: DatabaseImpl>(
     Path(org_id): Path<Uuid>,
     Json(request): Json<ScaleOrgNodesRequest>,
 ) -> Reply {
-    if let Err(reply) = ctx.require_org_admin(org_id) {
+    if let Err(reply) = ctx.require_scope_action(
+        runinator_models::rbac::Action::NodesOperate,
+        org_scope(org_id),
+    ) {
         return reply;
     }
     let card = rate_card();
@@ -168,7 +180,9 @@ pub async fn get_org_quota<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(org_id): Path<Uuid>,
 ) -> Reply {
-    if let Err(reply) = ctx.require_org_member(org_id) {
+    if let Err(reply) =
+        ctx.require_scope_action(runinator_models::rbac::Action::View, org_scope(org_id))
+    {
         return reply;
     }
     let quota = match db.fetch_org_quota(org_id).await {
@@ -189,7 +203,10 @@ pub async fn put_org_quota<T: DatabaseImpl>(
     Path(org_id): Path<Uuid>,
     Json(request): Json<UpdateOrgQuotaRequest>,
 ) -> Reply {
-    if let Err(reply) = ctx.require_capability(Capability::BillingManage) {
+    if let Err(reply) = ctx.require_scope_action(
+        runinator_models::rbac::Action::BillingManage,
+        runinator_models::rbac::ScopeRef::PLATFORM,
+    ) {
         return reply;
     }
     // reject unknown replica-kind keys so a typo never silently disables a cap.
@@ -217,7 +234,9 @@ pub async fn get_org_usage<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(org_id): Path<Uuid>,
 ) -> Reply {
-    if let Err(reply) = ctx.require_org_member(org_id) {
+    if let Err(reply) =
+        ctx.require_scope_action(runinator_models::rbac::Action::View, org_scope(org_id))
+    {
         return reply;
     }
     let since = chrono::Utc::now() - chrono::Duration::days(30);

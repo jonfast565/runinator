@@ -16,6 +16,7 @@
 
 pub mod errors;
 mod event_consumer;
+mod metrics;
 mod openapi;
 mod provisioner_config;
 pub mod orchestration {
@@ -37,7 +38,7 @@ pub(crate) mod handlers {
     pub(crate) use runinator_ws_authoring::handlers::{
         catalog, console, credentials, functions, packs, pipelines, providers, wdl, workflows,
     };
-    pub(crate) use runinator_ws_identity::handlers::{auth, billing, orgs};
+    pub(crate) use runinator_ws_identity::handlers::{auth, authz, billing, orgs};
     pub(crate) use runinator_ws_runtime::handlers::{
         action_dispatches, agents, artifacts, automation, catalog_metadata, debug,
         function_invocations, health, node_runs, notifications, observability, provisioning,

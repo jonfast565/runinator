@@ -5,6 +5,7 @@
 
 use std::future::Future;
 
+use super::QueueSnapshot;
 use uuid::Uuid;
 
 use runinator_models::{
@@ -22,6 +23,11 @@ pub use crate::reducer_store::ReducerStore;
 /// Core persistence operations for Runinator.
 /// Notifications, the policies that raise them, and per-channel delivery attempts.
 pub trait NotificationStore: Send + Sync + 'static {
+    /// Operational snapshot of notification deliveries awaiting settlement.
+    fn notification_delivery_queue_snapshot(
+        &self,
+    ) -> impl Future<Output = Result<QueueSnapshot, SendableError>> + Send;
+
     /// Persist a notification record.
     fn create_notification(
         &self,
@@ -63,6 +69,11 @@ pub trait NotificationStore: Send + Sync + 'static {
         &self,
         workflow_id: Option<Uuid>,
     ) -> impl Future<Output = Result<Vec<NotificationPolicy>, SendableError>> + Send;
+
+    fn fetch_notification_policy(
+        &self,
+        policy_id: Uuid,
+    ) -> impl Future<Output = Result<Option<NotificationPolicy>, SendableError>> + Send;
 
     /// Fetch the enabled policies that apply to a workflow for one event: the workflow's own plus
     /// the global (`workflow_id IS NULL`) ones.

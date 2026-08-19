@@ -62,7 +62,11 @@ pub async fn update_workflow_node_run<T: DatabaseImpl>(
     Path(node_run_id): Path<Uuid>,
     Json(request): Json<WorkflowNodeRunStatusRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_agent_service_or_admin() {
+    if let Err(reply) = ctx.require_system_role(&[
+        runinator_models::rbac::SystemRole::Engine,
+        runinator_models::rbac::SystemRole::Worker,
+        runinator_models::rbac::SystemRole::Agent,
+    ]) {
         return reply;
     }
     match repository::update_workflow_node_run(
@@ -123,7 +127,11 @@ pub async fn claim_workflow_node_run_executor<T: DatabaseImpl>(
     Path(node_run_id): Path<Uuid>,
     Json(request): Json<WorkflowNodeRunExecutorClaimRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_agent_service_or_admin() {
+    if let Err(reply) = ctx.require_system_role(&[
+        runinator_models::rbac::SystemRole::Engine,
+        runinator_models::rbac::SystemRole::Worker,
+        runinator_models::rbac::SystemRole::Agent,
+    ]) {
         return reply;
     }
     match repository::claim_workflow_node_run_executor(
@@ -150,7 +158,11 @@ pub async fn release_workflow_node_run_executor<T: DatabaseImpl>(
     Path(node_run_id): Path<Uuid>,
     Json(request): Json<WorkflowNodeRunExecutorReleaseRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_agent_service_or_admin() {
+    if let Err(reply) = ctx.require_system_role(&[
+        runinator_models::rbac::SystemRole::Engine,
+        runinator_models::rbac::SystemRole::Worker,
+        runinator_models::rbac::SystemRole::Agent,
+    ]) {
         return reply;
     }
     match repository::release_workflow_node_run_executor(
@@ -204,7 +216,11 @@ pub async fn append_workflow_node_run_chunk<T: DatabaseImpl>(
     Path(node_run_id): Path<Uuid>,
     Json(chunk): Json<NewRunChunk>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_service_or_admin() {
+    if let Err(reply) = ctx.require_system_role(&[
+        runinator_models::rbac::SystemRole::Engine,
+        runinator_models::rbac::SystemRole::Worker,
+        runinator_models::rbac::SystemRole::Agent,
+    ]) {
         return reply;
     }
     match repository::append_workflow_node_run_chunk(db.as_ref(), node_run_id, &chunk).await {
@@ -306,7 +322,11 @@ pub async fn add_workflow_node_run_artifact<T: DatabaseImpl>(
     Path(node_run_id): Path<Uuid>,
     Json(artifact): Json<NewRunArtifact>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_service_or_admin() {
+    if let Err(reply) = ctx.require_system_role(&[
+        runinator_models::rbac::SystemRole::Engine,
+        runinator_models::rbac::SystemRole::Worker,
+        runinator_models::rbac::SystemRole::Agent,
+    ]) {
         return reply;
     }
     match repository::add_workflow_node_run_artifact(db.as_ref(), node_run_id, &artifact).await {

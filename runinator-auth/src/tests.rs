@@ -18,19 +18,19 @@ fn password_hash_round_trips() {
 }
 
 #[test]
-fn access_token_round_trips_and_carries_admin() {
+fn access_token_round_trips_and_carries_only_identity() {
     let cfg = config();
     let user_id = Uuid::new_v4();
-    let (token, _exp) = issue_access_token(&cfg, user_id, true, None, None).expect("issue");
+    let (token, _exp) = issue_access_token(&cfg, user_id, Uuid::new_v4(), None).expect("issue");
     let claims = verify_access_token(&cfg, &token).expect("verify");
     assert_eq!(claims.sub, user_id.to_string());
-    assert!(claims.adm);
+    assert!(claims.org.is_none());
 }
 
 #[test]
 fn access_token_rejected_under_wrong_secret() {
     let (token, _) =
-        issue_access_token(&config(), Uuid::new_v4(), false, None, None).expect("issue");
+        issue_access_token(&config(), Uuid::new_v4(), Uuid::new_v4(), None).expect("issue");
     let other = AuthConfig {
         jwt_secret: b"different-secret".to_vec(),
         ..config()
@@ -42,7 +42,7 @@ fn access_token_rejected_under_wrong_secret() {
 fn rotated_token_verifies_against_previous_secret() {
     // a token minted before rotation (signed with the old secret).
     let old = config();
-    let (token, _) = issue_access_token(&old, Uuid::new_v4(), false, None, None).expect("issue");
+    let (token, _) = issue_access_token(&old, Uuid::new_v4(), Uuid::new_v4(), None).expect("issue");
 
     // after rotation the old secret moves to the previous slot; new tokens use a fresh primary.
     let rotated = AuthConfig {

@@ -10,8 +10,8 @@ use tracing::{error, info};
 use crate::events::EnginePublisher;
 use crate::loops::{
     run_action_dispatch_publisher, run_agent_directive_publisher, run_ingress_consumer,
-    run_ready_node_reaper, run_replica_reaper, run_trigger_loop, run_usage_sampler,
-    run_wake_publisher,
+    run_operational_metrics_sampler, run_ready_node_reaper, run_replica_reaper, run_trigger_loop,
+    run_usage_sampler, run_wake_publisher,
 };
 use crate::result_consumer::run_result_consumer;
 
@@ -78,6 +78,10 @@ pub async fn run_background_engine<T: DatabaseImpl>(
     loops.spawn(run_replica_reaper(pool.clone(), shutdown.clone()));
     loops.spawn(run_ready_node_reaper(pool.clone(), shutdown.clone()));
     loops.spawn(run_usage_sampler(pool.clone(), shutdown.clone()));
+    loops.spawn(run_operational_metrics_sampler(
+        pool.clone(),
+        shutdown.clone(),
+    ));
     loops.spawn(crate::notifications::run_notification_scanner(
         pool.clone(),
         publisher.clone(),

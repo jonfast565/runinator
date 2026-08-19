@@ -44,7 +44,7 @@ describe("admin settings store", () => {
       tab: "AdminSettings",
       label: "Settings",
       icon: "settings",
-      requires: "settings:manage",
+      requires: "credentials:manage",
     });
   });
 

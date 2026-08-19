@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::env;
 
+use opentelemetry::metrics::ObservableGauge;
 use opentelemetry::propagation::{Extractor, Injector};
 use opentelemetry::trace::TracerProvider as _;
 use opentelemetry_sdk::Resource;
@@ -21,6 +22,9 @@ pub struct TelemetryGuard {
     tracer_provider: Option<SdkTracerProvider>,
     meter_provider: Option<SdkMeterProvider>,
     logger_provider: Option<SdkLoggerProvider>,
+    // Retaining the asynchronous instrument keeps its callback registered for the provider's
+    // lifetime. It deliberately lives in the guard beside that provider.
+    uptime: Option<ObservableGauge<u64>>,
 }
 
 impl TelemetryGuard {
@@ -41,6 +45,7 @@ impl TelemetryGuard {
         if let Some(provider) = self.tracer_provider.take() {
             let _ = provider.shutdown();
         }
+        self.uptime.take();
         if let Some(provider) = self.meter_provider.take() {
             let _ = provider.shutdown();
         }
@@ -103,6 +108,18 @@ pub fn init(service_name: &str) -> Result<TelemetryLayers, SendableError> {
         .with_resource(resource.clone())
         .build();
     opentelemetry::global::set_meter_provider(meter_provider.clone());
+    let started = std::time::Instant::now();
+    let service = service_name.to_string();
+    let uptime = opentelemetry::global::meter("runinator-process")
+        .u64_observable_gauge("runinator_process_uptime_seconds")
+        .with_unit("s")
+        .with_callback(move |observer| {
+            observer.observe(
+                started.elapsed().as_secs(),
+                &[opentelemetry::KeyValue::new("service", service.clone())],
+            );
+        })
+        .build();
 
     let log_exporter = opentelemetry_otlp::LogExporter::builder()
         .with_http()
@@ -118,6 +135,7 @@ pub fn init(service_name: &str) -> Result<TelemetryLayers, SendableError> {
             tracer_provider: Some(tracer_provider),
             meter_provider: Some(meter_provider),
             logger_provider: Some(logger_provider.clone()),
+            uptime: Some(uptime),
         },
         tracer: Some(tracer),
         logger_provider: Some(logger_provider),

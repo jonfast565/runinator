@@ -101,8 +101,8 @@ import { errorMessage } from "../../../core/utils/format";
 
 const { can } = useCan();
 
-// global worker-node scaling is a platform capability (backend: nodes:scale).
-const canScale = computed(() => can("nodes:scale"));
+// global worker-node scaling is a platform action (backend: nodes:scale).
+const canScale = computed(() => can("nodes:operate"));
 
 // the scale-to-zero floor is backend-provided: control-plane kinds (webservice/postgres) report a
 // min_desired of one so they cannot be scaled to zero from here, and any future protected kind is

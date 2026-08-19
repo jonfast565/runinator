@@ -84,7 +84,7 @@ const email = computed(() => {
   return typeof value === "string" ? value : "";
 });
 
-const isAdmin = computed(() => auth.user?.is_admin === true);
+const isAdmin = computed(() => auth.user?.platform_role === "admin");
 
 const initials = computed(() => {
   const source = username.value.trim();

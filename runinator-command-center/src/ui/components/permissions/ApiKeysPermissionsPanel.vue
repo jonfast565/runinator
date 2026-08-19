@@ -34,7 +34,9 @@
         </div>
         <div class="form-grid !grid-cols-1">
           <label><span>Name</span><input v-model="permissions.apiKeyDraft.name" autocomplete="off" /></label>
-          <label><span>Owner</span><select v-model="owner" :disabled="Boolean(permissions.selectedApiKey)"><option value="service">Service key</option><option v-for="user in ownerOptions" :key="String(user.id)" :value="String(user.id)">{{ user.username }}</option></select></label>
+          <label><span>Principal type</span><select v-model="permissions.apiKeyDraft.principal_kind" :disabled="Boolean(permissions.selectedApiKey)"><option value="user">User</option><option value="service">Service account</option></select></label>
+          <label><span>Principal ID</span><input v-model="permissions.apiKeyDraft.principal_id" :disabled="Boolean(permissions.selectedApiKey)" /></label>
+          <label v-if="permissions.apiKeyDraft.principal_kind === 'service'"><span>System role</span><select v-model="permissions.apiKeyDraft.system_role"><option value="">None</option><option value="engine">Engine</option><option value="worker">Worker</option><option value="waker">Waker</option><option value="agent">Agent</option><option value="replica">Replica</option></select></label>
           <label><span>Expires At</span><input v-model="permissions.apiKeyDraft.expires_at" type="datetime-local" /></label>
           <label class="inline-flex items-center gap-1.5 text-[13px] text-fg"><input v-model="permissions.apiKeyDraft.disabled" type="checkbox" /><span>Disabled</span></label>
         </div>
@@ -64,22 +66,6 @@ const app = useAppStore();
 const permissions = usePermissionsStore();
 const { isLoading: loading, loadingMessage } = useOperationLoading(["Loading API keys"]);
 const modalOpen = ref(false);
-const owner = computed({
-  get() {
-    if (permissions.apiKeyDraft.is_service) {
-      return "service";
-    }
-
-    return permissions.apiKeyDraft.user_id
-      ? permissions.apiKeyDraft.user_id
-      : (permissions.selectedUserId ?? "");
-  },
-  set(value: string) {
-    permissions.apiKeyDraft.is_service = value === "service";
-    permissions.apiKeyDraft.user_id = value === "service" ? "" : value;
-  },
-});
-const ownerOptions = computed(() => permissions.selectedUser ? [permissions.selectedUser] : permissions.users);
 const scopeLabel = computed(() => permissions.selectedUser ? `Showing service keys and keys owned by ${permissions.selectedUser.username}.` : "Showing all API keys.");
 
 function openNew() {
@@ -126,7 +112,7 @@ async function copySecret() {
 }
 
 function ownerLabel(apiKey: ApiKey): string {
-  if (apiKey.is_service) {return "service";}
-  return permissions.users.find((user) => user.id === apiKey.user_id)?.username ?? apiKey.user_id ?? "user";
+  if (apiKey.principal_kind === "service") {return `service:${apiKey.principal_id}`;}
+  return permissions.users.find((user) => user.id === apiKey.principal_id)?.username ?? apiKey.principal_id;
 }
 </script>

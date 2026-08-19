@@ -44,7 +44,10 @@ pub async fn upsert_provider<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Json(provider): Json<ProviderMetadata>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_agent_service_or_admin() {
+    if let Err(reply) = ctx.require_system_role(&[
+        runinator_models::rbac::SystemRole::Worker,
+        runinator_models::rbac::SystemRole::Agent,
+    ]) {
         return reply;
     }
     if let Err(err) = validate_provider_metadata(&provider) {
@@ -67,7 +70,10 @@ pub async fn import_provider_bundle<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Json(bundle): Json<ProviderBundle>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_service_or_admin() {
+    if let Err(reply) = ctx.require_system_role(&[
+        runinator_models::rbac::SystemRole::Worker,
+        runinator_models::rbac::SystemRole::Agent,
+    ]) {
         return reply;
     }
     let mut imported = Vec::with_capacity(bundle.providers.len());

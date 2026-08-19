@@ -5,6 +5,17 @@
 //! use-case trait cut to what the state machine calls, deliberately spanning several of these
 //! domains, because keeping it small is what makes an in-memory fake practical.
 
+use chrono::{DateTime, Utc};
+
+/// A bounded operational view of one durable queue. The metrics layer converts the timestamp to an
+/// age at observation time; keeping the timestamp here avoids baking clock policy into storage.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct QueueSnapshot {
+    pub depth: u64,
+    pub claimed: u64,
+    pub oldest_enqueued_at: Option<DateTime<Utc>>,
+}
+
 pub mod archive;
 pub mod auth;
 pub mod automation;
@@ -15,6 +26,7 @@ pub mod functions;
 pub mod invocations;
 pub mod notifications;
 pub mod orgs;
+pub mod rbac;
 pub mod replicas;
 pub mod runs;
 pub mod schedules;
@@ -31,6 +43,7 @@ pub use functions::FunctionStore;
 pub use invocations::InvocationStore;
 pub use notifications::NotificationStore;
 pub use orgs::OrgStore;
+pub use rbac::RbacStore;
 pub use replicas::ReplicaStore;
 pub use runs::RunStore;
 pub use schedules::ScheduleStore;

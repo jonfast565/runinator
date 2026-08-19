@@ -16,10 +16,13 @@ use crate::models::ApiResponse;
 fn admin() -> AuthContext {
     AuthContext {
         principal_id: Some(Uuid::new_v4()),
-        is_admin: true,
+        session_id: None,
+        platform_role: Some(runinator_models::rbac::PlatformRole::Admin),
+        assignments: Vec::new(),
+        system_role: None,
+        action_ceiling: Vec::new(),
         kind: PrincipalKind::User,
         org_id: None,
-        org_role: None,
     }
 }
 
@@ -286,20 +289,36 @@ async fn deleting_a_session_takes_its_cells_and_scope() {
 
 #[tokio::test]
 async fn the_console_is_gated_on_a_capability() {
-    use runinator_models::capabilities::Capability;
     use runinator_ws_middleware::authz::AuthContextExt;
 
     // a console cell can start a workflow run, so using the console is a privilege rather than a
     // view. gated on a named capability so the backend and the ui reference one dictionary.
     let member = AuthContext {
         principal_id: Some(Uuid::new_v4()),
-        is_admin: false,
+        session_id: None,
+        platform_role: None,
+        assignments: Vec::new(),
+        system_role: None,
+        action_ceiling: Vec::new(),
         kind: PrincipalKind::User,
         org_id: None,
-        org_role: None,
     };
-    assert!(member.require_capability(Capability::ConsoleUse).is_err());
-    assert!(admin().require_capability(Capability::ConsoleUse).is_ok());
+    assert!(
+        member
+            .require_scope_action(
+                runinator_models::rbac::Action::ConsoleUse,
+                member.selected_scope()
+            )
+            .is_err()
+    );
+    assert!(
+        admin()
+            .require_scope_action(
+                runinator_models::rbac::Action::ConsoleUse,
+                runinator_models::rbac::ScopeRef::PLATFORM
+            )
+            .is_ok()
+    );
 
     let (db, db_path) = test_db().await;
     let db = Arc::new(db);
@@ -315,8 +334,6 @@ async fn the_console_is_gated_on_a_capability() {
 
 #[tokio::test]
 async fn a_cell_endpoint_is_gated_even_though_it_takes_no_session_id() {
-    use runinator_models::capabilities::Capability;
-
     // every non-listing endpoint reaches the database through `require_session`, and the gate lives
     // there too — so an endpoint that forgot its own check is still stopped.
     let (db, db_path) = test_db().await;
@@ -326,10 +343,13 @@ async fn a_cell_endpoint_is_gated_even_though_it_takes_no_session_id() {
 
     let member = AuthContext {
         principal_id: Some(Uuid::new_v4()),
-        is_admin: false,
+        session_id: None,
+        platform_role: None,
+        assignments: Vec::new(),
+        system_role: None,
+        action_ceiling: Vec::new(),
         kind: PrincipalKind::User,
         org_id: None,
-        org_role: None,
     };
     let (status, _) = crate::handlers::console::run_console_cell::<SqliteDb>(
         Extension(db.clone()),
@@ -338,8 +358,7 @@ async fn a_cell_endpoint_is_gated_even_though_it_takes_no_session_id() {
         Path(cell_id),
     )
     .await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
-    let _ = Capability::ConsoleUse;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 
     let _ = std::fs::remove_file(db_path);
 }

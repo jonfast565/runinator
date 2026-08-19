@@ -34,7 +34,7 @@ pub mod prelude {
     pub use crate::reducer_store::ReducerStore;
     pub use crate::roles::{
         ArchiveStore, AuthStore, AutomationStore, ConsoleStore, DefinitionStore, DispatchStore,
-        FunctionStore, InvocationStore, NotificationStore, OrgStore, ReplicaStore, RunStore,
-        ScheduleStore, SettingStore, TaskRunStore,
+        FunctionStore, InvocationStore, NotificationStore, OrgStore, QueueSnapshot, RbacStore,
+        ReplicaStore, RunStore, ScheduleStore, SettingStore, TaskRunStore,
     };
 }

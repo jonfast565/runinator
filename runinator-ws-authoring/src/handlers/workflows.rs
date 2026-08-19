@@ -10,7 +10,6 @@ use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::{
     api_routes::{WORKFLOW_JSON_IMPORT_RISK_ACK, WORKFLOW_JSON_IMPORT_RISK_HEADER},
     auth::{AuthContext, Permission},
-    capabilities::Capability,
     errors::error_code_or_unknown,
     value::Value,
     workflows::{
@@ -57,43 +56,12 @@ pub async fn upsert_workflow<T: DatabaseImpl>(
     match repository::upsert_workflow(db.as_ref(), &workflow, &ctx.revision_author()).await {
         Ok(workflow) => {
             if !is_update && let Some(id) = workflow.id {
-                AuthzChecker::new(db.as_ref(), &ctx).grant_owner(id).await;
+                if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx).grant_owner(id).await {
+                    return reply;
+                }
             }
             emit_workflows_changed(&events, workflow.org_id);
             (StatusCode::OK, Json(ApiResponse::Workflow(workflow)))
-        }
-        Err(err) => api_error(err.to_string()),
-    }
-}
-
-/// reassign a workflow's owning organization. requires `Own` on the workflow (owner or platform
-/// admin); moving it into an org additionally requires org-admin on the target org.
-pub async fn set_workflow_owner<T: DatabaseImpl>(
-    Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
-    Extension(ctx): Extension<AuthContext>,
-    Path(workflow_id): Path<Uuid>,
-    Json(request): Json<runinator_ws_core::models::WorkflowOwnerRequest>,
-) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
-        .require_workflow(workflow_id, Permission::Own)
-        .await
-    {
-        return reply;
-    }
-    if let Some(org_id) = request.org_id
-        && let Err(reply) = ctx.require_org_admin(org_id)
-    {
-        return reply;
-    }
-    match repository::set_workflow_org(db.as_ref(), workflow_id, request.org_id).await {
-        Ok(()) => {
-            emit_workflows_changed(&events, request.org_id);
-            match repository::fetch_workflow(db.as_ref(), workflow_id).await {
-                Ok(Some(workflow)) => (StatusCode::OK, Json(ApiResponse::Workflow(workflow))),
-                Ok(None) => not_found(format!("Workflow {workflow_id} not found")),
-                Err(err) => api_error(err.to_string()),
-            }
         }
         Err(err) => api_error(err.to_string()),
     }
@@ -173,10 +141,6 @@ pub async fn get_workflows<T: DatabaseImpl>(
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Some(name) = query.name {
         return match repository::fetch_workflow_by_name(db.as_ref(), name).await {
-            // hide cross-tenant workflows behind a not-found before consulting grants.
-            Ok(Some(workflow)) if !ctx.org_visible(workflow.org_id) => {
-                not_found("Workflow not found")
-            }
             Ok(Some(workflow)) => match workflow.id {
                 Some(id)
                     if AuthzChecker::new(db.as_ref(), &ctx)
@@ -195,21 +159,16 @@ pub async fn get_workflows<T: DatabaseImpl>(
 
     match repository::fetch_workflows(db.as_ref()).await {
         Ok(workflows) => {
-            // scope to the caller's org first (cross-tenant workflows are never listed), then to the
-            // grant-based visibility set (None = admin/auth-disabled = all grant-visible).
-            let workflows: Vec<_> = workflows
-                .into_iter()
-                .filter(|workflow| ctx.org_visible(workflow.org_id))
-                .collect();
             let visible = AuthzChecker::new(db.as_ref(), &ctx)
                 .visible_workflow_ids()
                 .await;
             let workflows = match visible {
-                Some(ids) => workflows
+                Ok(Some(ids)) => workflows
                     .into_iter()
                     .filter(|workflow| workflow.id.is_some_and(|id| ids.contains(&id)))
                     .collect(),
-                None => workflows,
+                Ok(None) => workflows,
+                Err(reply) => return reply,
             };
             (StatusCode::OK, Json(ApiResponse::WorkflowList(workflows)))
         }
@@ -246,7 +205,9 @@ pub async fn import_workflow_bundle<T: DatabaseImpl>(
     headers: HeaderMap,
     Json(bundle): Json<WorkflowBundle>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_capability(Capability::WorkflowsImport) {
+    if let Err(reply) =
+        ctx.require_scope_action(runinator_models::rbac::Action::Edit, ctx.selected_scope())
+    {
         return reply;
     }
     if !json_workflow_import_risk_acknowledged(&headers) {
@@ -307,10 +268,13 @@ pub async fn export_workflow_bundle<T: DatabaseImpl>(
 ) -> (StatusCode, Json<ApiResponse>) {
     match repository::export_workflow_bundle(db.as_ref(), None).await {
         Ok(mut bundle) => {
-            if let Some(ids) = AuthzChecker::new(db.as_ref(), &ctx)
+            if let Some(ids) = match AuthzChecker::new(db.as_ref(), &ctx)
                 .visible_workflow_ids()
                 .await
             {
+                Ok(ids) => ids,
+                Err(reply) => return reply,
+            } {
                 bundle
                     .workflows
                     .retain(|workflow| workflow.id.is_some_and(|id| ids.contains(&id)));
@@ -357,9 +321,6 @@ pub async fn get_workflow<T: DatabaseImpl>(
     }
     match repository::fetch_workflow(db.as_ref(), workflow_id).await {
         // a cross-tenant workflow is not-found even if a stray grant would otherwise reveal it.
-        Ok(Some(workflow)) if !ctx.org_visible(workflow.org_id) => {
-            not_found(format!("Workflow {workflow_id} not found"))
-        }
         Ok(Some(workflow)) => (StatusCode::OK, Json(ApiResponse::Workflow(workflow))),
         Ok(None) => not_found(format!("Workflow {workflow_id} not found")),
         Err(err) => api_error(err.to_string()),
@@ -512,7 +473,9 @@ pub async fn duplicate_workflow<T: DatabaseImpl>(
     {
         Ok(workflow) => {
             if let Some(id) = workflow.id {
-                AuthzChecker::new(db.as_ref(), &ctx).grant_owner(id).await;
+                if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx).grant_owner(id).await {
+                    return reply;
+                }
             }
             emit_workflows_changed(&events, workflow.org_id.or(ctx.org_id));
             (StatusCode::OK, Json(ApiResponse::Workflow(workflow)))
@@ -541,7 +504,7 @@ pub async fn delete_workflow<T: DatabaseImpl>(
 /// the `workflows` endpoints.
 pub fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
     use axum::Extension;
-    use axum::routing::{get, patch, post};
+    use axum::routing::{get, post};
     axum::Router::new()
         .route(
             runinator_models::api_routes::API_WORKFLOWS,
@@ -591,10 +554,6 @@ pub fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
         .route(
             "/workflows/{id}/revisions/{revision}/restore",
             post(restore_workflow_revision::<T>).layer(Extension(pool.clone())),
-        )
-        .route(
-            "/workflows/{id}/owner",
-            patch(set_workflow_owner::<T>).layer(Extension(pool.clone())),
         )
 }
 

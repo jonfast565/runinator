@@ -1,4 +1,4 @@
-import type { Capability } from "../domain/models";
+import type { Action } from "../domain/models";
 import type { AppTab, NavSection } from "./app";
 
 export const navSections: NavSection[] = [
@@ -119,12 +119,12 @@ export const navSections: NavSection[] = [
   {
     label: "Admin",
     items: [
-      { tab: "AdminSettings", label: "Settings", icon: "settings", requires: "settings:manage" },
+      { tab: "AdminSettings", label: "Settings", icon: "settings", requires: "credentials:manage" },
       {
         tab: "Permissions",
         label: "Permissions",
         icon: "shield",
-        requires: "users:manage",
+        requires: "members:manage",
         searchPlaceholder: "Search users & teams",
       },
       { tab: "DeadLetters", label: "Dead Letters", icon: "flag", requires: "deadletters:read" },
@@ -160,7 +160,7 @@ export function isResourceTab(tab: AppTab): boolean {
 }
 
 export function visibleNavSections(options: {
-  can: (capability: Capability) => boolean;
+  can: (action: Action) => boolean;
   isDesktop: boolean;
 }): NavSection[] {
   const sections = navSections

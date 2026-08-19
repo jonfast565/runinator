@@ -372,12 +372,14 @@ async fn drain_one(outbox: &dyn ResultOutbox, broker: &dyn Broker) -> Result<boo
     };
     match broker.publish_result(entry.message).await {
         Ok(()) => {
+            crate::metrics::result_publish("replayed");
             outbox
                 .acknowledge(entry.id)
                 .map_err(|err| Box::new(err) as SendableError)?;
             Ok(true)
         }
         Err(err) => {
+            crate::metrics::result_publish("error");
             outbox
                 .record_failure(entry.id, err.to_string())
                 .map_err(|err| Box::new(err) as SendableError)?;

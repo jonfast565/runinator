@@ -2,6 +2,9 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
+rule_files:
+  - /etc/prometheus/alerts.yml
+
 scrape_configs:
   # the otlp metrics pushed by ws/worker/waker/broker, re-exposed by the collector.
   - job_name: runinator-otlp

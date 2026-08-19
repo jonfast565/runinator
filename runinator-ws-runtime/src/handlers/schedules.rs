@@ -8,8 +8,7 @@ use axum::{
 };
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::{
-    auth::AuthContext,
-    capabilities::Capability,
+    auth::{AuthContext, Permission},
     schedules::{BackfillRequest, NewFreezeWindow},
 };
 use serde::Deserialize;
@@ -18,7 +17,7 @@ use crate::repository;
 use runinator_ws_core::events::{AppEvent, AppEventKind, EventSender, emit, nudge_wake_publisher};
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::responses::{api_error, not_found};
-use runinator_ws_middleware::authz::AuthContextExt;
+use runinator_ws_middleware::authz::{AuthContextExt, AuthzChecker};
 
 type Reply = (StatusCode, Json<ApiResponse>);
 
@@ -35,8 +34,21 @@ pub struct FreezeWindowsQuery {
 
 pub async fn list_freeze_windows<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
     Query(query): Query<FreezeWindowsQuery>,
 ) -> Reply {
+    let scope = query
+        .org_id
+        .and_then(|id| {
+            runinator_models::rbac::ScopeRef::new(
+                runinator_models::rbac::ScopeKind::Organization,
+                Some(id),
+            )
+        })
+        .unwrap_or(runinator_models::rbac::ScopeRef::PLATFORM);
+    if let Err(reply) = ctx.require_scope_action(runinator_models::rbac::Action::View, scope) {
+        return reply;
+    }
     let windows = match query.active.unwrap_or(false) {
         true => repository::fetch_active_freeze_windows(db.as_ref()).await,
         false => repository::fetch_freeze_windows(db.as_ref(), query.org_id).await,
@@ -51,10 +63,17 @@ pub async fn create_freeze_window<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<AuthContext>,
-    Json(window): Json<NewFreezeWindow>,
+    Json(mut window): Json<NewFreezeWindow>,
 ) -> Reply {
-    if let Err(reply) = ctx.require_capability(Capability::SchedulesManage) {
+    if let Err(reply) = require_window_target(db.as_ref(), &ctx, &window, Permission::Edit).await {
         return reply;
+    }
+    if let Some(workflow_id) = window.workflow_id {
+        window.org_id = match repository::fetch_workflow(db.as_ref(), workflow_id).await {
+            Ok(Some(workflow)) => workflow.org_id,
+            Ok(None) => return not_found(format!("Workflow {workflow_id} not found")),
+            Err(err) => return api_error(err.to_string()),
+        };
     }
     match repository::create_freeze_window(db.as_ref(), &window).await {
         Ok(window) => {
@@ -70,10 +89,36 @@ pub async fn update_freeze_window<T: DatabaseImpl>(
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<AuthContext>,
     Path(window_id): Path<Uuid>,
-    Json(window): Json<NewFreezeWindow>,
+    Json(mut window): Json<NewFreezeWindow>,
 ) -> Reply {
-    if let Err(reply) = ctx.require_capability(Capability::SchedulesManage) {
+    let current = match repository::fetch_freeze_window(db.as_ref(), window_id).await {
+        Ok(Some(window)) => window,
+        Ok(None) => return not_found(format!("Freeze window {window_id} not found")),
+        Err(err) => return api_error(err.to_string()),
+    };
+    let current_target = NewFreezeWindow {
+        org_id: current.org_id,
+        workflow_id: current.workflow_id,
+        name: current.name,
+        reason: current.reason,
+        starts_at: current.starts_at,
+        ends_at: current.ends_at,
+        enabled: current.enabled,
+    };
+    if let Err(reply) =
+        require_window_target(db.as_ref(), &ctx, &current_target, Permission::Edit).await
+    {
         return reply;
+    }
+    if let Err(reply) = require_window_target(db.as_ref(), &ctx, &window, Permission::Edit).await {
+        return reply;
+    }
+    if let Some(workflow_id) = window.workflow_id {
+        window.org_id = match repository::fetch_workflow(db.as_ref(), workflow_id).await {
+            Ok(Some(workflow)) => workflow.org_id,
+            Ok(None) => return not_found(format!("Workflow {workflow_id} not found")),
+            Err(err) => return api_error(err.to_string()),
+        };
     }
     match repository::update_freeze_window(db.as_ref(), window_id, &window).await {
         Ok(Some(window)) => {
@@ -91,7 +136,21 @@ pub async fn delete_freeze_window<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(window_id): Path<Uuid>,
 ) -> Reply {
-    if let Err(reply) = ctx.require_capability(Capability::SchedulesManage) {
+    let current = match repository::fetch_freeze_window(db.as_ref(), window_id).await {
+        Ok(Some(window)) => window,
+        Ok(None) => return not_found(format!("Freeze window {window_id} not found")),
+        Err(err) => return api_error(err.to_string()),
+    };
+    let target = NewFreezeWindow {
+        org_id: current.org_id,
+        workflow_id: current.workflow_id,
+        name: current.name,
+        reason: current.reason,
+        starts_at: current.starts_at,
+        ends_at: current.ends_at,
+        enabled: current.enabled,
+    };
+    if let Err(reply) = require_window_target(db.as_ref(), &ctx, &target, Permission::Edit).await {
         return reply;
     }
     match repository::delete_freeze_window(db.as_ref(), window_id).await {
@@ -112,7 +171,10 @@ pub async fn backfill_workflow_trigger<T: DatabaseImpl>(
     Path(trigger_id): Path<Uuid>,
     Json(request): Json<BackfillRequest>,
 ) -> Reply {
-    if let Err(reply) = ctx.require_capability(Capability::SchedulesManage) {
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_trigger_workflow(trigger_id, Permission::Edit)
+        .await
+    {
         return reply;
     }
     if let Err(err) = repository::validate_backfill_request(&request) {
@@ -136,6 +198,29 @@ pub async fn backfill_workflow_trigger<T: DatabaseImpl>(
         }
         Err(err) => api_error(err.to_string()),
     }
+}
+
+async fn require_window_target<T: DatabaseImpl>(
+    db: &T,
+    ctx: &AuthContext,
+    window: &NewFreezeWindow,
+    needed: Permission,
+) -> Result<(), (StatusCode, Json<ApiResponse>)> {
+    if let Some(workflow_id) = window.workflow_id {
+        return AuthzChecker::new(db, ctx)
+            .require_workflow(workflow_id, needed)
+            .await;
+    }
+    let scope = window
+        .org_id
+        .and_then(|id| {
+            runinator_models::rbac::ScopeRef::new(
+                runinator_models::rbac::ScopeKind::Organization,
+                Some(id),
+            )
+        })
+        .unwrap_or(runinator_models::rbac::ScopeRef::PLATFORM);
+    ctx.require_scope_action(runinator_models::rbac::Action::SchedulesManage, scope)
 }
 
 /// the `schedules` endpoints.

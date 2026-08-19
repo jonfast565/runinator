@@ -37,6 +37,30 @@ where
     for<'c> &'c mut <B::Db as Database>::Connection: Executor<'c, Database = B::Db>,
     <B::Db as Database>::QueryResult: RowsAffected,
 {
+    async fn agent_directive_queue_snapshot(
+        &self,
+        now: DateTime<Utc>,
+        stale_before: DateTime<Utc>,
+    ) -> Result<QueueSnapshot, SendableError> {
+        let row = sqlx::query(&self.render(
+            "SELECT COUNT(*) AS depth,
+                    COALESCE(SUM(CASE WHEN claimed_at > ? THEN 1 ELSE 0 END), 0) AS claimed,
+                    MIN(issued_at) AS oldest
+             FROM agent_directives
+             WHERE state IN ('pending', 'published', 'accepted') AND expires_at > ?",
+        ))
+        .bind(stale_before.timestamp())
+        .bind(now.timestamp())
+        .fetch_one(self.pool())
+        .await?;
+        let oldest: Option<i64> = row.try_get("oldest")?;
+        Ok(QueueSnapshot {
+            depth: row.try_get::<i64, _>("depth")?.max(0) as u64,
+            claimed: row.try_get::<i64, _>("claimed")?.max(0) as u64,
+            oldest_enqueued_at: oldest.and_then(|value| DateTime::from_timestamp(value, 0)),
+        })
+    }
+
     async fn enqueue_agent_directive(
         &self,
         replica_id: Uuid,

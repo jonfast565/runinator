@@ -91,12 +91,17 @@ pub async fn run_notification_scanner<T: DatabaseImpl>(
 ) {
     info!("notification scanner started");
     loop {
-        if let Err(err) = scan_once(db.as_ref(), &events).await {
+        let started = std::time::Instant::now();
+        let succeeded = if let Err(err) = scan_once(db.as_ref(), &events).await {
             error!(
                 error_code = error_code_or_unknown(err.as_ref()),
                 "notification scanner iteration failed: {}", err
             );
-        }
+            false
+        } else {
+            true
+        };
+        crate::stability::loop_iteration("notification_scanner", succeeded, started.elapsed());
         tokio::select! {
             _ = shutdown.notified() => {
                 info!("notification scanner shutting down");

@@ -180,7 +180,7 @@ async fn run_engine_with_replica<T: DatabaseImpl>(
         },
         None,
         // the worker registering its own replica at startup, not an external caller.
-        &AuthContext::disabled_admin(),
+        &AuthContext::disabled_platform_admin(),
     )
     .await?;
 

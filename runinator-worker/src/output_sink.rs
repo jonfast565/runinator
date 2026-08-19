@@ -211,12 +211,24 @@ async fn publish_event(
     // preserve event order after the first outage: once an artifact is queued, later terminal
     // statuses join it instead of jumping ahead through a recovered broker connection.
     if bufferable && outbox.depth() > 0 {
-        return append_outbox(outbox, message);
+        let result = append_outbox(outbox, message);
+        crate::metrics::result_publish(if result.is_ok() { "buffered" } else { "error" });
+        return result;
     }
     match broker.publish_result(message.clone()).await {
-        Ok(()) => Ok(()),
-        Err(_broker_error) if bufferable => append_outbox(outbox, message),
-        Err(err) => Err(err),
+        Ok(()) => {
+            crate::metrics::result_publish("published");
+            Ok(())
+        }
+        Err(_broker_error) if bufferable => {
+            let result = append_outbox(outbox, message);
+            crate::metrics::result_publish(if result.is_ok() { "buffered" } else { "error" });
+            result
+        }
+        Err(err) => {
+            crate::metrics::result_publish("error");
+            Err(err)
+        }
     }
 }
 
@@ -232,13 +244,15 @@ fn should_buffer(event: &WorkflowResultEvent) -> bool {
 /// backends already bound their in-memory write queues, and overflow is dropped rather than making
 /// a completed action re-execute merely because a log line could not be delivered.
 async fn publish_chunk(broker: &dyn Broker, event: WorkflowResultEvent) -> Result<(), BrokerError> {
-    broker
+    let result = broker
         .publish_result(ResultMessage {
             dedupe_key: Some(event.event_id.to_string()),
             event,
             enqueued_at: Utc::now(),
         })
-        .await
+        .await;
+    crate::metrics::result_publish(if result.is_ok() { "published" } else { "error" });
+    result
 }
 
 fn append_outbox(outbox: &dyn ResultOutbox, message: ResultMessage) -> Result<(), BrokerError> {

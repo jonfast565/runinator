@@ -37,6 +37,49 @@ where
     for<'c> &'c mut <B::Db as Database>::Connection: Executor<'c, Database = B::Db>,
     <B::Db as Database>::QueryResult: RowsAffected,
 {
+    async fn ready_node_queue_snapshots(
+        &self,
+        now: DateTime<Utc>,
+    ) -> Result<(QueueSnapshot, QueueSnapshot), SendableError> {
+        async fn snapshot<B>(
+            store: &SqlStore<B>,
+            now: DateTime<Utc>,
+            comparison: &'static str,
+        ) -> Result<QueueSnapshot, SendableError>
+        where
+            B: SqlBackend,
+            for<'q> i64: Encode<'q, B::Db> + Type<B::Db>,
+            for<'r> i64: Decode<'r, B::Db> + Type<B::Db>,
+            for<'r> Option<i64>: Decode<'r, B::Db> + Type<B::Db>,
+            for<'c> &'c str: ColumnIndex<<B::Db as Database>::Row>,
+            for<'q> <B::Db as Database>::Arguments<'q>: IntoArguments<'q, B::Db>,
+            for<'c> &'c mut <B::Db as Database>::Connection: Executor<'c, Database = B::Db>,
+        {
+            let row = sqlx::query(&store.render(&format!(
+                "SELECT COUNT(*) AS depth,
+                        COALESCE(SUM(CASE WHEN claimed_until > ? THEN 1 ELSE 0 END), 0) AS claimed,
+                        MIN(created_at) AS oldest
+                 FROM workflow_ready_nodes
+                 WHERE completed_at IS NULL AND ready_at {comparison} ?"
+            )))
+            .bind(now.timestamp())
+            .bind(now.timestamp())
+            .fetch_one(store.pool())
+            .await?;
+            let oldest: Option<i64> = row.try_get("oldest")?;
+            Ok(QueueSnapshot {
+                depth: row.try_get::<i64, _>("depth")?.max(0) as u64,
+                claimed: row.try_get::<i64, _>("claimed")?.max(0) as u64,
+                oldest_enqueued_at: oldest.and_then(|value| DateTime::from_timestamp(value, 0)),
+            })
+        }
+
+        Ok((
+            snapshot(self, now, "<=").await?,
+            snapshot(self, now, ">").await?,
+        ))
+    }
+
     async fn fetch_workflow_runs_by_status(
         &self,
         status: WorkflowStatus,

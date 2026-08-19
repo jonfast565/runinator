@@ -157,7 +157,11 @@ pub async fn import_wdl<T: DatabaseImpl>(
             if is_create {
                 for workflow in &saved.workflows {
                     if let Some(id) = workflow.id {
-                        AuthzChecker::new(db.as_ref(), &ctx).grant_owner(id).await;
+                        if let Err(reply) =
+                            AuthzChecker::new(db.as_ref(), &ctx).grant_owner(id).await
+                        {
+                            return reply;
+                        }
                     }
                 }
             }

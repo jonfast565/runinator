@@ -64,6 +64,13 @@ pub async fn fetch_freeze_windows<T: DatabaseImpl>(
     db.fetch_freeze_windows(org_id).await
 }
 
+pub async fn fetch_freeze_window<T: DatabaseImpl>(
+    db: &T,
+    window_id: Uuid,
+) -> Result<Option<FreezeWindow>, SendableError> {
+    db.fetch_freeze_window(window_id).await
+}
+
 pub async fn fetch_active_freeze_windows<T: DatabaseImpl>(
     db: &T,
 ) -> Result<Vec<FreezeWindow>, SendableError> {

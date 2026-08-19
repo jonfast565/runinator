@@ -26,10 +26,11 @@ use chrono::{Duration, Utc};
 use runinator_comm::{ActionCommand, WorkflowResultEvent};
 use runinator_models::value::Value;
 use runinator_models::{
-    auth::{ApiKey, ApiKeyRecord, Grant, Permission, PrincipalType, ResourceType},
+    auth::{ApiKey, ApiKeyRecord, Grant, Permission, PrincipalKind, PrincipalType, ResourceType},
     notifications::NewNotification,
     orchestration::IdempotencyClaim,
     orgs::OrgRole,
+    rbac::{PlatformRole, ResourceOwnership, Role, ScopeRef, TeamRole},
     revisions::{RevisionSource, WorkflowRevision},
     runs::NewRunChunk,
     schedules::{BackfillRequest, NewFreezeWindow},

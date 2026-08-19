@@ -22,8 +22,7 @@ use axum::{
 };
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::{
-    auth::{AuthContext, Permission},
-    capabilities::Capability,
+    auth::{AuthContext, Permission, ResourceType},
     functions::{DEFAULT_ALIAS, FunctionVersionRef},
     replicas::{TriggerActorType, TriggerSourceKind, WorkflowRunProvenance},
     value::Value,
@@ -37,7 +36,7 @@ use runinator_ws_core::events::{EventSender, emit_workflow_run, nudge_wake_publi
 use runinator_ws_core::models::{self, ApiResponse};
 use runinator_ws_core::openapi::docs::{EndpointDoc, Example, endpoint, json_body};
 use runinator_ws_core::responses::{api_error, bad_request, not_found};
-use runinator_ws_middleware::authz::{AuthContextExt, AuthzChecker};
+use runinator_ws_middleware::authz::AuthzChecker;
 
 /// how long a synchronous invocation waits before falling back to 202.
 const SYNC_WAIT: Duration = Duration::from_secs(5);
@@ -70,12 +69,6 @@ pub async fn create_function_invocation<T: DatabaseImpl>(
     Query(query): Query<InvocationQuery>,
     Json(input): Json<Value>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    // publishing and calling are different privileges: a service account that runs a function
-    // should not be able to replace the code it runs. the per-workflow `Run` grant below still
-    // applies — this is the coarse gate, not a replacement for it.
-    if let Err(reply) = ctx.require_capability(Capability::FunctionsInvoke) {
-        return reply;
-    }
     let (namespace, name) = split_qualified(&package);
     let Some(detail) = (match repository::functions::fetch_package_detail(
         db.as_ref(),
@@ -90,8 +83,15 @@ pub async fn create_function_invocation<T: DatabaseImpl>(
     }) else {
         return not_found(format!("function package '{package}' not found"));
     };
-    if !ctx.org_visible(detail.package.org_id) {
-        return not_found(format!("function package '{package}' not found"));
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_resource(
+            ResourceType::FunctionPackage,
+            detail.package.id,
+            Permission::Run,
+        )
+        .await
+    {
+        return reply;
     }
 
     // the alias resolves at call time, which is exactly the difference between this path and a

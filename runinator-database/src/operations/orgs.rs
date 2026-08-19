@@ -121,6 +121,7 @@ where
             let mut tx = self.pool().begin().await?;
             for sql in [
                 "DELETE FROM org_memberships WHERE org_id = ?",
+                "DELETE FROM role_assignments WHERE scope_kind = 'organization' AND scope_id = ?",
                 "DELETE FROM organizations WHERE id = ?",
             ] {
                 sqlx::query(&self.render(sql))
@@ -160,6 +161,14 @@ where
             .bind(now)
             .execute(&mut *tx)
             .await?;
+            sqlx::query(&self.render(
+                "DELETE FROM role_assignments WHERE principal_kind = 'user' AND principal_id = ? AND scope_kind = 'organization' AND scope_id = ?",
+            )).bind(user_id).bind(org_id).execute(&mut *tx).await?;
+            sqlx::query(&self.render(
+                "INSERT INTO role_assignments (principal_kind, principal_id, scope_kind, scope_id, scope_key, role_kind, role, created_by, created_at, updated_at) \
+                 VALUES ('user', ?, 'organization', ?, ?, 'organization', ?, NULL, ?, ?)",
+            )).bind(user_id).bind(org_id).bind(format!("organization:{org_id}"))
+                .bind(role.as_str()).bind(now).bind(now).execute(&mut *tx).await?;
             tx.commit().await
         })
         .await?;
@@ -168,14 +177,17 @@ where
 
     async fn remove_org_member(&self, org_id: Uuid, user_id: Uuid) -> Result<(), SendableError> {
         retry_delete(|| async {
+            let mut tx = self.pool().begin().await?;
             sqlx::query(
                 &self.render("DELETE FROM org_memberships WHERE org_id = ? AND user_id = ?"),
             )
             .bind(org_id)
             .bind(user_id)
-            .execute(self.pool())
-            .await
-            .map(|_| ())
+            .execute(&mut *tx).await?;
+            sqlx::query(&self.render(
+                "DELETE FROM role_assignments WHERE principal_kind = 'user' AND principal_id = ? AND scope_kind = 'organization' AND scope_id = ?",
+            )).bind(user_id).bind(org_id).execute(&mut *tx).await?;
+            tx.commit().await
         })
         .await?;
         Ok(())

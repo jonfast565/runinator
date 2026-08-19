@@ -57,7 +57,7 @@ async fn executor_lease_is_mutually_exclusive_until_stale_or_released() {
                     attributes: runinator_models::json!({}),
                 },
                 None,
-                &runinator_models::auth::AuthContext::disabled_admin(),
+                &runinator_models::auth::AuthContext::disabled_platform_admin(),
             )
             .await
             .unwrap()
@@ -199,7 +199,7 @@ async fn executor_lease_frees_when_the_holder_stops_heartbeating() {
                     attributes: runinator_models::json!({}),
                 },
                 None,
-                &runinator_models::auth::AuthContext::disabled_admin(),
+                &runinator_models::auth::AuthContext::disabled_platform_admin(),
             )
             .await
             .unwrap()

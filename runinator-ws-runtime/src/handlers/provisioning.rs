@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use axum::{Extension, Json, http::StatusCode};
 use runinator_models::auth::AuthContext;
-use runinator_models::capabilities::Capability;
 use runinator_models::provisioning::{NodeBackendsResponse, ScaleNodesRequest, StopNodeRequest};
 use runinator_provisioner::ProvisionerRegistry;
 
@@ -21,7 +20,10 @@ pub async fn get_node_backends(
     Extension(registry): Extension<Arc<ProvisionerRegistry>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_service_or_admin() {
+    if let Err(reply) = ctx.require_system_role(&[
+        runinator_models::rbac::SystemRole::Engine,
+        runinator_models::rbac::SystemRole::Replica,
+    ]) {
         return reply;
     }
     let backends = registry.backends().await;
@@ -42,7 +44,10 @@ pub async fn get_nodes(
     Extension(registry): Extension<Arc<ProvisionerRegistry>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_service_or_admin() {
+    if let Err(reply) = ctx.require_system_role(&[
+        runinator_models::rbac::SystemRole::Engine,
+        runinator_models::rbac::SystemRole::Replica,
+    ]) {
         return reply;
     }
     let groups = registry.list_all().await;
@@ -55,7 +60,10 @@ pub async fn scale_nodes(
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<ScaleNodesRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_capability(Capability::NodesScale) {
+    if let Err(reply) = ctx.require_scope_action(
+        runinator_models::rbac::Action::NodesOperate,
+        runinator_models::rbac::ScopeRef::PLATFORM,
+    ) {
         return reply;
     }
     let provisioner = match registry.require(request.backend) {
@@ -77,7 +85,10 @@ pub async fn stop_node(
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<StopNodeRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_capability(Capability::NodesScale) {
+    if let Err(reply) = ctx.require_scope_action(
+        runinator_models::rbac::Action::NodesOperate,
+        runinator_models::rbac::ScopeRef::PLATFORM,
+    ) {
         return reply;
     }
     let provisioner = match registry.require(request.backend) {

@@ -59,25 +59,6 @@ pub async fn delete_pipeline(
 }
 
 #[tauri::command]
-pub async fn set_pipeline_owner(
-    state: State<'_, CommandCenterState>,
-    pipeline_id: Uuid,
-    org_id: Option<Uuid>,
-) -> CommandResult<Pipeline> {
-    let url = build_state_url(&state, &format!("pipelines/{pipeline_id}/owner")).await?;
-    let response = state
-        .client
-        .read()
-        .await
-        .patch(url.clone())
-        .json(&json!({ "org_id": org_id }))
-        .send()
-        .await?;
-    let response = handle_response(url, response).await?;
-    Ok(response.json::<Pipeline>().await?)
-}
-
-#[tauri::command]
 pub async fn fetch_pipeline_triggers(
     state: State<'_, CommandCenterState>,
     pipeline_id: Uuid,

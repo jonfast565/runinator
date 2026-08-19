@@ -8,7 +8,10 @@ use axum::{
 use chrono::{Duration, Utc};
 use runinator_comm::AgentDirectiveKind;
 use runinator_database::interfaces::DatabaseImpl;
-use runinator_models::{auth::AuthContext, capabilities::Capability};
+use runinator_models::{
+    auth::AuthContext,
+    rbac::{Action, ScopeRef},
+};
 use runinator_ws_core::{
     events::{AppEvent, AppEventKind, EventSender, emit, nudge_agent_directive_publisher},
     models::{AgentDirectiveQuery, ApiResponse, CreateAgentDirectiveRequest},
@@ -27,8 +30,8 @@ pub async fn create<T: DatabaseImpl>(
     Path(replica_id): Path<Uuid>,
     Json(request): Json<CreateAgentDirectiveRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    let capability = required_capability(&request.kind);
-    if let Err(reply) = ctx.require_capability(capability) {
+    let (action, scope) = required_policy(&ctx, &request.kind);
+    if let Err(reply) = ctx.require_scope_action(action, scope) {
         return reply;
     }
     match repository::fetch_replica(db.as_ref(), replica_id).await {
@@ -63,10 +66,18 @@ pub async fn list<T: DatabaseImpl>(
     Path(replica_id): Path<Uuid>,
     Query(query): Query<AgentDirectiveQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_capability(Capability::AuditRead) {
+    if let Err(reply) = ctx.require_scope_action(
+        runinator_models::rbac::Action::AuditRead,
+        runinator_models::rbac::ScopeRef::PLATFORM,
+    ) {
         return reply;
     }
-    let can_read_files = ctx.require_capability(Capability::SecretsRead).is_ok();
+    let can_read_files = ctx
+        .require_scope_action(
+            runinator_models::rbac::Action::SecretsRead,
+            ctx.selected_scope(),
+        )
+        .is_ok();
     match repository::list_agent_directives(db.as_ref(), replica_id, query.limit.unwrap_or(100))
         .await
     {
@@ -88,12 +99,12 @@ pub async fn list<T: DatabaseImpl>(
     }
 }
 
-fn required_capability(kind: &AgentDirectiveKind) -> Capability {
+fn required_policy(ctx: &AuthContext, kind: &AgentDirectiveKind) -> (Action, ScopeRef) {
     match kind {
         AgentDirectiveKind::Diagnostics
         | AgentDirectiveKind::TailLogs { .. }
-        | AgentDirectiveKind::ListSandbox { .. } => Capability::AuditRead,
-        AgentDirectiveKind::FetchFile { .. } => Capability::SecretsRead,
+        | AgentDirectiveKind::ListSandbox { .. } => (Action::AuditRead, ScopeRef::PLATFORM),
+        AgentDirectiveKind::FetchFile { .. } => (Action::SecretsRead, ctx.selected_scope()),
         AgentDirectiveKind::SetLabels { .. }
         | AgentDirectiveKind::SetConcurrency { .. }
         | AgentDirectiveKind::SetLogLevel { .. }
@@ -102,7 +113,7 @@ fn required_capability(kind: &AgentDirectiveKind) -> Capability {
         | AgentDirectiveKind::Undrain
         | AgentDirectiveKind::Restart
         | AgentDirectiveKind::RotateCredential
-        | AgentDirectiveKind::Unknown => Capability::NodesScale,
+        | AgentDirectiveKind::Unknown => (Action::NodesOperate, ScopeRef::PLATFORM),
     }
 }
 

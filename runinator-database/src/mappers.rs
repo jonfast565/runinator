@@ -28,6 +28,7 @@ use runinator_models::{
     orgs::{OrgMembership, OrgRole, Organization},
     pipelines::{Pipeline, PipelineDefaults, PipelineRun, PipelineTrigger},
     provisioning::ProvisionBackend,
+    rbac::{ScopeKind, ScopeRef},
     replicas::{
         ReplicaKind, ReplicaProviderRegistration, ReplicaRecord, ReplicaStatus, TriggerActorType,
         TriggerSourceKind,

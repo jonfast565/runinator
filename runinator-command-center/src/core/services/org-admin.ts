@@ -46,7 +46,7 @@ export function createOrgAdminService(app: AppService) {
       return app.runOperation("Loading team members", () => listTeamMembers(teamId));
     },
     addTeamMember(teamId: string, userId: string) {
-      return app.runOperation("Adding team member", () => addTeamMember(teamId, userId));
+      return app.runOperation("Adding team member", () => addTeamMember(teamId, userId, "member"));
     },
     removeTeamMember(teamId: string, userId: string) {
       return app.runOperation("Removing team member", () => removeTeamMember(teamId, userId));

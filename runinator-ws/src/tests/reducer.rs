@@ -742,10 +742,13 @@ async fn action_node_fails_promptly_when_its_executing_worker_disconnects() {
             None,
             &AuthContext {
                 principal_id: None,
-                is_admin: true,
+                session_id: None,
+                platform_role: Some(runinator_models::rbac::PlatformRole::Admin),
+                assignments: Vec::new(),
+                system_role: None,
+                action_ceiling: Vec::new(),
                 kind: PrincipalKind::User,
                 org_id: None,
-                org_role: None,
             },
         )
         .await

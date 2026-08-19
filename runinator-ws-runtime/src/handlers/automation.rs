@@ -54,7 +54,11 @@ async fn create_record<T: DatabaseImpl>(
     record_type: &'static str,
     Json(record): Json<Value>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_service_or_admin() {
+    if let Err(reply) = ctx.require_system_role(&[
+        runinator_models::rbac::SystemRole::Engine,
+        runinator_models::rbac::SystemRole::Worker,
+        runinator_models::rbac::SystemRole::Agent,
+    ]) {
         return reply;
     }
     match repository::create_automation_record(db.as_ref(), record_type, record).await {
@@ -116,7 +120,11 @@ pub async fn create_gate<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Json(record): Json<Value>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_service_or_admin() {
+    if let Err(reply) = ctx.require_system_role(&[
+        runinator_models::rbac::SystemRole::Engine,
+        runinator_models::rbac::SystemRole::Worker,
+        runinator_models::rbac::SystemRole::Agent,
+    ]) {
         return reply;
     }
     match repository::create_gate(db.as_ref(), record).await {
@@ -322,7 +330,6 @@ async fn resolve_approval_audited<T: DatabaseImpl>(
             let actor_kind = match ctx.kind {
                 PrincipalKind::User => "user",
                 PrincipalKind::Service => "service",
-                PrincipalKind::Agent => "agent",
             };
             let workflow_run_id = runinator_ws_middleware::authz::record_workflow_run_id(&record);
             crate::audit::record_audit(
@@ -353,7 +360,11 @@ pub async fn get_idempotency_key<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Query(query): Query<HashMap<String, String>>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_service_or_admin() {
+    if let Err(reply) = ctx.require_system_role(&[
+        runinator_models::rbac::SystemRole::Engine,
+        runinator_models::rbac::SystemRole::Worker,
+        runinator_models::rbac::SystemRole::Agent,
+    ]) {
         return reply;
     }
     let Some(scope) = query.get("scope").cloned() else {
@@ -374,7 +385,11 @@ pub async fn put_idempotency_key<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<IdempotencyRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_service_or_admin() {
+    if let Err(reply) = ctx.require_system_role(&[
+        runinator_models::rbac::SystemRole::Engine,
+        runinator_models::rbac::SystemRole::Worker,
+        runinator_models::rbac::SystemRole::Agent,
+    ]) {
         return reply;
     }
     match repository::put_idempotency_key(db.as_ref(), request.scope, request.key, request.result)
@@ -390,7 +405,11 @@ pub async fn claim_idempotency_key<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<IdempotencyClaimRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_agent_service_or_admin() {
+    if let Err(reply) = ctx.require_system_role(&[
+        runinator_models::rbac::SystemRole::Engine,
+        runinator_models::rbac::SystemRole::Worker,
+        runinator_models::rbac::SystemRole::Agent,
+    ]) {
         return reply;
     }
     match repository::claim_idempotency_key(
@@ -415,7 +434,11 @@ pub async fn complete_idempotency_key<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<IdempotencyCompleteRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_agent_service_or_admin() {
+    if let Err(reply) = ctx.require_system_role(&[
+        runinator_models::rbac::SystemRole::Engine,
+        runinator_models::rbac::SystemRole::Worker,
+        runinator_models::rbac::SystemRole::Agent,
+    ]) {
         return reply;
     }
     match repository::complete_idempotency_key(
@@ -447,7 +470,11 @@ pub async fn release_idempotency_key<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<IdempotencyReleaseRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_agent_service_or_admin() {
+    if let Err(reply) = ctx.require_system_role(&[
+        runinator_models::rbac::SystemRole::Engine,
+        runinator_models::rbac::SystemRole::Worker,
+        runinator_models::rbac::SystemRole::Agent,
+    ]) {
         return reply;
     }
     match repository::release_idempotency_key(
@@ -478,10 +505,17 @@ async fn filter_records<T: DatabaseImpl>(
     ctx: &AuthContext,
     records: Vec<Value>,
 ) -> Result<Vec<Value>, (StatusCode, Json<ApiResponse>)> {
-    if ctx.is_admin || matches!(ctx.kind, PrincipalKind::Service) {
+    if ctx.is_platform_admin()
+        || ctx
+            .require_system_role(&[
+                runinator_models::rbac::SystemRole::Engine,
+                runinator_models::rbac::SystemRole::Worker,
+            ])
+            .is_ok()
+    {
         return Ok(records);
     }
-    let Some(visible) = AuthzChecker::new(db, ctx).visible_workflow_ids().await else {
+    let Some(visible) = AuthzChecker::new(db, ctx).visible_workflow_ids().await? else {
         return Ok(records);
     };
     let mut filtered = Vec::with_capacity(records.len());

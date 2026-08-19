@@ -11,8 +11,10 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::Utc;
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use rand::RngCore;
-use runinator_models::auth::{ApiKeyRecord, AuthContext, Claims, PrincipalKind};
-use runinator_models::orgs::OrgRole;
+use runinator_models::auth::{
+    ApiKeyRecord, AuthContext, AuthSession, Claims, PrincipalKind, ReplicaClaims, User,
+};
+use runinator_models::rbac::{PlatformRole, Role, RoleAssignment, ServiceAccount};
 use std::future::Future;
 use uuid::Uuid;
 
@@ -118,26 +120,22 @@ pub fn new_refresh_token() -> (String, String) {
 
 // ---- jwt access tokens ----
 
-/// issue an access token for a user. `org`/`org_role` bind the token to an active organization when
-/// the user has selected one. returns the token and its expiry (unix seconds).
+/// Issue an access token carrying identity and selected context only. Roles resolve live.
 pub fn issue_access_token(
     config: &AuthConfig,
     user_id: Uuid,
-    is_admin: bool,
+    session_id: Uuid,
     org: Option<Uuid>,
-    org_role: Option<OrgRole>,
 ) -> Result<(String, i64), String> {
     let now = Utc::now().timestamp();
     let exp = now + config.access_ttl_secs;
     let claims = Claims {
         sub: user_id.to_string(),
-        adm: is_admin,
+        sid: session_id.to_string(),
         iat: now,
         exp,
         jti: Uuid::new_v4().to_string(),
-        rid: None,
         org: org.map(|id| id.to_string()),
-        orl: org_role.map(|role| role.as_str().to_string()),
     };
     encode(
         &Header::new(Algorithm::HS256),
@@ -158,15 +156,12 @@ pub fn issue_replica_token(
 ) -> Result<(String, i64), String> {
     let now = Utc::now().timestamp();
     let exp = now + config.access_ttl_secs;
-    let claims = Claims {
+    let claims = ReplicaClaims {
         sub: user_id.to_string(),
-        adm: false,
         iat: now,
         exp,
         jti: Uuid::new_v4().to_string(),
-        rid: Some(replica_id.to_string()),
-        org: None,
-        orl: None,
+        rid: replica_id.to_string(),
     };
     encode(
         &Header::new(Algorithm::HS256),
@@ -175,6 +170,26 @@ pub fn issue_replica_token(
     )
     .map(|token| (token, exp))
     .map_err(|err| err.to_string())
+}
+
+pub fn verify_replica_token(config: &AuthConfig, token: &str) -> Option<ReplicaClaims> {
+    if let Some(claims) = verify_replica_with_secret(&config.jwt_secret, token) {
+        return Some(claims);
+    }
+    config
+        .jwt_secret_previous
+        .as_deref()
+        .and_then(|previous| verify_replica_with_secret(previous, token))
+}
+
+fn verify_replica_with_secret(secret: &[u8], token: &str) -> Option<ReplicaClaims> {
+    decode::<ReplicaClaims>(
+        token,
+        &DecodingKey::from_secret(secret),
+        &Validation::new(Algorithm::HS256),
+    )
+    .ok()
+    .map(|data| data.claims)
 }
 
 /// verify and decode an access token; `None` on any failure (bad signature, expired, malformed).
@@ -211,6 +226,21 @@ pub trait CredentialStore {
     ) -> impl Future<Output = Option<ApiKeyRecord>> + Send;
 
     fn touch_api_key(&self, id: Uuid, last_used_at: i64) -> impl Future<Output = ()> + Send;
+
+    fn user_by_id(&self, id: Uuid) -> impl Future<Output = Option<User>> + Send;
+
+    fn session_by_id(&self, id: Uuid) -> impl Future<Output = Option<AuthSession>> + Send;
+
+    fn service_account_by_id(
+        &self,
+        id: Uuid,
+    ) -> impl Future<Output = Option<ServiceAccount>> + Send;
+
+    fn role_assignments(
+        &self,
+        kind: PrincipalKind,
+        id: Uuid,
+    ) -> impl Future<Output = Option<Vec<RoleAssignment>>> + Send;
 }
 
 /// resolve a presented credential to a principal: try it as a jwt first, then as a
@@ -221,12 +251,39 @@ pub async fn resolve_credential<S: CredentialStore>(
     presented: &str,
 ) -> Option<AuthContext> {
     if let Some(claims) = verify_access_token(config, presented) {
+        let principal_id = claims.sub.parse::<Uuid>().ok()?;
+        let session_id = claims.sid.parse::<Uuid>().ok()?;
+        let session = store.session_by_id(session_id).await?;
+        if session.revoked || session.expires_at < Utc::now() || session.user_id != principal_id {
+            return None;
+        }
+        let user = store.user_by_id(principal_id).await?;
+        if user.disabled {
+            return None;
+        }
+        let assignments = store
+            .role_assignments(PrincipalKind::User, principal_id)
+            .await?;
+        let platform_role = platform_role(&assignments);
+        let org_id = claims.org.as_deref().and_then(|id| id.parse::<Uuid>().ok());
+        if let Some(org_id) = org_id
+            && platform_role != Some(PlatformRole::Admin)
+            && !assignments.iter().any(|assignment| {
+                assignment.scope.kind == runinator_models::rbac::ScopeKind::Organization
+                    && assignment.scope.id == Some(org_id)
+            })
+        {
+            return None;
+        }
         return Some(AuthContext {
-            principal_id: claims.sub.parse::<Uuid>().ok(),
-            is_admin: claims.adm,
+            principal_id: Some(principal_id),
+            session_id: Some(session_id),
             kind: PrincipalKind::User,
-            org_id: claims.org.as_deref().and_then(|id| id.parse::<Uuid>().ok()),
-            org_role: claims.orl.as_deref().and_then(OrgRole::from_str_lossy),
+            platform_role,
+            assignments,
+            system_role: None,
+            action_ceiling: Vec::new(),
+            org_id,
         });
     }
     let prefix = presented.split('.').next()?.to_string();
@@ -242,17 +299,46 @@ pub async fn resolve_credential<S: CredentialStore>(
     if hash_secret(presented) != record.key_hash {
         return None;
     }
+    match record.key.principal_kind {
+        PrincipalKind::User if store.user_by_id(record.key.principal_id).await?.disabled => {
+            return None;
+        }
+        PrincipalKind::Service
+            if store
+                .service_account_by_id(record.key.principal_id)
+                .await?
+                .disabled =>
+        {
+            return None;
+        }
+        _ => {}
+    }
+    let assignments = store
+        .role_assignments(record.key.principal_kind, record.key.principal_id)
+        .await?;
     if let Some(id) = record.key.id {
         store.touch_api_key(id, Utc::now().timestamp()).await;
     }
     Some(AuthContext {
-        principal_id: record.key.user_id,
-        is_admin: record.is_admin,
-        kind: record.principal_kind,
-        // service keys carry no org claim; the ws middleware resolves an org from `X-Org-Id`.
-        org_id: record.org_id,
-        org_role: None,
+        principal_id: Some(record.key.principal_id),
+        session_id: None,
+        kind: record.key.principal_kind,
+        platform_role: platform_role(&assignments),
+        assignments,
+        system_role: record.key.system_role,
+        action_ceiling: record.key.action_ceiling,
+        org_id: record.key.org_id,
     })
+}
+
+fn platform_role(assignments: &[RoleAssignment]) -> Option<PlatformRole> {
+    assignments
+        .iter()
+        .filter_map(|assignment| match assignment.role {
+            Role::Platform(role) => Some(role),
+            _ => None,
+        })
+        .max()
 }
 
 #[cfg(test)]

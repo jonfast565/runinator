@@ -1,5 +1,6 @@
 use super::*;
 use runinator_comm::ConsumerProfile;
+use runinator_models::auth::ReplicaClaims;
 use uuid::Uuid;
 
 fn auth() -> BrokerAuth {
@@ -7,7 +8,7 @@ fn auth() -> BrokerAuth {
 }
 
 #[test]
-fn rejects_garbage_and_accepts_issued_tokens() {
+fn rejects_garbage_and_identity_tokens() {
     let auth = auth();
     assert!(auth.verify("not-a-token").is_none());
 
@@ -19,8 +20,8 @@ fn rejects_garbage_and_accepts_issued_tokens() {
         refresh_ttl_secs: 60,
     };
     let (token, _) =
-        runinator_auth::issue_access_token(&config, Uuid::now_v7(), false, None, None).unwrap();
-    assert!(auth.verify(&token).is_some());
+        runinator_auth::issue_access_token(&config, Uuid::now_v7(), Uuid::now_v7(), None).unwrap();
+    assert!(auth.verify(&token).is_none());
 }
 
 #[test]
@@ -35,22 +36,19 @@ fn replica_token_carries_its_replica_claim() {
     let replica = Uuid::now_v7();
     let (token, _) = runinator_auth::issue_replica_token(&config, Uuid::now_v7(), replica).unwrap();
     let claims = auth().verify(&token).expect("valid replica token");
-    assert_eq!(claims.rid.as_deref(), Some(replica.to_string().as_str()));
+    assert_eq!(claims.rid, replica.to_string());
 }
 
 #[test]
 fn authorize_receive_enforces_replica_scope() {
     let replica = Uuid::now_v7();
     let other = Uuid::now_v7();
-    let scoped = Claims {
+    let scoped = ReplicaClaims {
         sub: Uuid::now_v7().to_string(),
-        adm: false,
         iat: 0,
         exp: 0,
         jti: String::new(),
-        rid: Some(replica.to_string()),
-        org: None,
-        orl: None,
+        rid: replica.to_string(),
     };
 
     // a scoped token may only receive for its own replica.

@@ -1,6 +1,4 @@
-//! resource-based authorization helpers (phase 2). admins (and the synthetic admin used when auth is
-//! disabled) implicitly own everything, so these short-circuit and existing behavior is unchanged
-//! until grants exist.
+//! Deny-by-default hierarchical authorization helpers.
 
 use std::collections::HashSet;
 
@@ -10,8 +8,10 @@ use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::auth::{
     AuthContext, Grant, Permission, PrincipalKind, PrincipalType, ResourceType,
 };
-use runinator_models::capabilities::Capability;
 use runinator_models::orgs::OrgRole;
+use runinator_models::rbac::{
+    Action, PlatformRole, Role, ScopeKind, ScopeRef, SystemRole, TeamRole,
+};
 use runinator_models::revisions::{RevisionAuthor, RevisionSource};
 use runinator_models::value::Value;
 use uuid::Uuid;
@@ -36,119 +36,92 @@ fn not_found() -> Reply {
     )
 }
 
-fn workflow_kind() -> String {
-    ResourceType::Workflow.as_str().to_string()
-}
-
-fn pipeline_kind() -> String {
-    ResourceType::Pipeline.as_str().to_string()
+fn authorization_error() -> Reply {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(ApiResponse::ApiError(ApiError::new(
+            "authorization state could not be resolved",
+        ))),
+    )
 }
 
 /// pure predicates over an [`AuthContext`] with no store access. a local trait since `AuthContext`
-/// lives in `runinator-models`, which stays free of ws-layer concepts (`Capability`, `Reply`).
+/// lives in `runinator-models`, which stays free of ws-layer response concepts.
 #[allow(clippy::result_large_err)] // callers return the ready-to-send HTTP reply unchanged.
 pub trait AuthContextExt {
-    fn require_admin(&self) -> Result<(), Reply>;
-    fn require_service_or_admin(&self) -> Result<(), Reply>;
-    fn require_agent_service_or_admin(&self) -> Result<(), Reply>;
-    fn capabilities(&self) -> HashSet<Capability>;
-    fn require_capability(&self, cap: Capability) -> Result<(), Reply>;
-    fn require_org_role(&self, org_id: Uuid, min: OrgRole) -> Result<(), Reply>;
-    fn require_org_admin(&self, org_id: Uuid) -> Result<(), Reply>;
-    fn require_org_member(&self, org_id: Uuid) -> Result<(), Reply>;
-    fn org_visible(&self, resource_org: Option<Uuid>) -> bool;
+    fn is_platform_admin(&self) -> bool;
+    fn selected_scope(&self) -> ScopeRef;
+    fn authorize_scope(&self, action: Action, scope: ScopeRef) -> bool;
+    fn require_scope_action(&self, action: Action, scope: ScopeRef) -> Result<(), Reply>;
+    fn require_system_role(&self, roles: &[SystemRole]) -> Result<(), Reply>;
     fn actor_kind(&self) -> &'static str;
     fn revision_author(&self) -> RevisionAuthor;
 }
 
 impl AuthContextExt for AuthContext {
-    fn require_admin(&self) -> Result<(), Reply> {
-        if self.is_admin {
-            Ok(())
-        } else {
-            Err(forbidden())
-        }
+    fn is_platform_admin(&self) -> bool {
+        self.platform_role == Some(PlatformRole::Admin)
     }
 
-    fn require_service_or_admin(&self) -> Result<(), Reply> {
-        if self.is_admin || matches!(self.kind, PrincipalKind::Service) {
-            Ok(())
-        } else {
-            Err(forbidden())
-        }
+    fn selected_scope(&self) -> ScopeRef {
+        self.org_id
+            .and_then(|id| ScopeRef::new(ScopeKind::Organization, Some(id)))
+            .unwrap_or(ScopeRef::PLATFORM)
     }
 
-    /// gate the narrow worker data plane. callers must opt individual endpoints into this; an agent
-    /// principal never inherits the much wider service-key surface by its kind alone.
-    fn require_agent_service_or_admin(&self) -> Result<(), Reply> {
-        if self.is_admin || matches!(self.kind, PrincipalKind::Service | PrincipalKind::Agent) {
-            Ok(())
-        } else {
-            Err(forbidden())
+    fn authorize_scope(&self, action: Action, scope: ScopeRef) -> bool {
+        if !self.action_ceiling.is_empty() && !self.action_ceiling.contains(&action) {
+            return false;
         }
-    }
-
-    /// the capability set a caller holds. this is the single documented mapping of who-holds-what:
-    /// platform admins (including the synthetic admin used when auth is disabled) hold every
-    /// capability; admins of the caller's active org hold the org-scoped capabilities; ordinary
-    /// members hold none. returned on `/auth/me` so the command center gates against the same truth
-    /// the handlers enforce.
-    fn capabilities(&self) -> HashSet<Capability> {
-        if self.is_admin {
-            return Capability::ALL.iter().copied().collect();
-        }
-        match self.org_role {
-            Some(role) if role.allows(OrgRole::Admin) => {
-                Capability::ORG_ADMIN.iter().copied().collect()
-            }
-            _ => HashSet::new(),
-        }
-    }
-
-    /// gate an action on a named capability, else a 403 reply. platform-scoped capabilities pass
-    /// only for platform admins; org-scoped capabilities pass for admins of the active org (see
-    /// [`Self::capabilities`]).
-    fn require_capability(&self, cap: Capability) -> Result<(), Reply> {
-        if self.capabilities().contains(&cap) {
-            Ok(())
-        } else {
-            Err(forbidden())
-        }
-    }
-
-    /// gate an org-scoped action: platform admins transcend org roles; otherwise the caller's active
-    /// org must match `org_id` and their role must be at least `min`.
-    fn require_org_role(&self, org_id: Uuid, min: OrgRole) -> Result<(), Reply> {
-        if self.is_admin {
-            return Ok(());
-        }
-        match (self.org_id, self.org_role) {
-            (Some(active), Some(role)) if active == org_id && role.allows(min) => Ok(()),
-            _ => Err(forbidden()),
-        }
-    }
-
-    /// require org-admin (or platform admin) for `org_id`.
-    fn require_org_admin(&self, org_id: Uuid) -> Result<(), Reply> {
-        self.require_org_role(org_id, OrgRole::Admin)
-    }
-
-    /// require any membership (or platform admin) in `org_id`.
-    fn require_org_member(&self, org_id: Uuid) -> Result<(), Reply> {
-        self.require_org_role(org_id, OrgRole::Member)
-    }
-
-    /// whether the caller may see a resource owned by `resource_org`. platform admins see
-    /// everything; `None` (platform-global / unassigned) is a shared library visible to all;
-    /// otherwise the caller's active org must match. this composes with, and is orthogonal to,
-    /// per-resource grants.
-    fn org_visible(&self, resource_org: Option<Uuid>) -> bool {
-        if self.is_admin {
+        if self.is_platform_admin() {
             return true;
         }
-        match resource_org {
-            None => true,
-            Some(org) => self.org_id == Some(org),
+        let local_role = match scope.kind {
+            ScopeKind::Platform => None,
+            ScopeKind::User if scope.id == self.principal_id => {
+                if user_owner_allows(action) {
+                    return true;
+                }
+                None
+            }
+            ScopeKind::Organization | ScopeKind::Team => self
+                .assignments
+                .iter()
+                .filter(|assignment| assignment.scope == scope)
+                .map(|assignment| assignment.role)
+                .max_by_key(|role| role_rank(*role)),
+            _ => None,
+        };
+        let role = self
+            .platform_role
+            .map(Role::Platform)
+            .into_iter()
+            .chain(local_role)
+            .max_by_key(|role| role_rank(*role));
+        role.is_some_and(|role| role_allows(role, action))
+    }
+
+    fn require_scope_action(&self, action: Action, scope: ScopeRef) -> Result<(), Reply> {
+        self.authorize_scope(action, scope)
+            .then_some(())
+            .ok_or_else(forbidden)
+    }
+
+    fn require_system_role(&self, roles: &[SystemRole]) -> Result<(), Reply> {
+        let assigned = self.system_role.filter(|role| roles.contains(role));
+        if !self.is_platform_admin() && assigned.is_none() {
+            return Err(forbidden());
+        }
+        let ceiling_allows = self.action_ceiling.is_empty()
+            || assigned
+                .map(system_role_action)
+                .into_iter()
+                .chain(roles.iter().copied().map(system_role_action))
+                .any(|action| self.action_ceiling.contains(&action));
+        if ceiling_allows {
+            Ok(())
+        } else {
+            Err(forbidden())
         }
     }
 
@@ -157,7 +130,6 @@ impl AuthContextExt for AuthContext {
         match self.kind {
             PrincipalKind::User => "user",
             PrincipalKind::Service => "service",
-            PrincipalKind::Agent => "agent",
         }
     }
 
@@ -174,11 +146,125 @@ impl AuthContextExt for AuthContext {
             source: match self.kind {
                 PrincipalKind::User => RevisionSource::Ui,
                 PrincipalKind::Service => RevisionSource::Api,
-                PrincipalKind::Agent => RevisionSource::Api,
             },
             note: None,
         }
     }
+}
+
+fn system_role_action(role: SystemRole) -> Action {
+    match role {
+        SystemRole::Engine => Action::EngineOperate,
+        SystemRole::Worker => Action::WorkerOperate,
+        SystemRole::Waker => Action::WakerOperate,
+        SystemRole::Agent => Action::AgentOperate,
+        SystemRole::Replica => Action::ReplicaOperate,
+    }
+}
+
+fn role_rank(role: Role) -> u8 {
+    match role {
+        Role::Platform(PlatformRole::Member) => 1,
+        Role::Platform(PlatformRole::Auditor) => 2,
+        Role::Platform(PlatformRole::Operator) => 3,
+        Role::Platform(PlatformRole::Admin) => 4,
+        Role::Organization(OrgRole::Member) => 1,
+        Role::Organization(OrgRole::Operator) => 2,
+        Role::Organization(OrgRole::Admin) => 3,
+        Role::Organization(OrgRole::Owner) => 4,
+        Role::Team(TeamRole::Member) => 1,
+        Role::Team(TeamRole::Operator) => 2,
+        Role::Team(TeamRole::Admin) => 3,
+        Role::Team(TeamRole::Owner) => 4,
+        Role::System(_) => 0,
+    }
+}
+
+fn user_owner_allows(action: Action) -> bool {
+    matches!(
+        action,
+        Action::View | Action::Run | Action::Edit | Action::Own | Action::CredentialsManage
+    )
+}
+
+fn role_allows(role: Role, action: Action) -> bool {
+    match role {
+        Role::Platform(PlatformRole::Admin) => true,
+        Role::Platform(PlatformRole::Operator) => !matches!(
+            action,
+            Action::Own
+                | Action::RolesManage
+                | Action::MembersManage
+                | Action::CredentialsManage
+                | Action::SecretsRead
+                | Action::SecretsWrite
+                | Action::BillingManage
+        ),
+        Role::Platform(PlatformRole::Auditor) => matches!(
+            action,
+            Action::View | Action::AuditRead | Action::DeadLettersRead
+        ),
+        Role::Platform(PlatformRole::Member) => action == Action::View,
+        Role::Organization(OrgRole::Owner) => true,
+        Role::Organization(OrgRole::Admin) => action != Action::Own,
+        Role::Organization(OrgRole::Operator) => matches!(
+            action,
+            Action::View
+                | Action::Run
+                | Action::Edit
+                | Action::NodesOperate
+                | Action::SchedulesManage
+                | Action::NotificationsManage
+                | Action::FunctionsManage
+                | Action::ConsoleUse
+                | Action::CatalogManage
+        ),
+        Role::Organization(OrgRole::Member) => action == Action::View,
+        Role::Team(TeamRole::Owner) => true,
+        Role::Team(TeamRole::Admin) => action != Action::Own,
+        Role::Team(TeamRole::Operator) => matches!(
+            action,
+            Action::View
+                | Action::Run
+                | Action::Edit
+                | Action::SchedulesManage
+                | Action::NotificationsManage
+                | Action::FunctionsManage
+                | Action::ConsoleUse
+        ),
+        Role::Team(TeamRole::Member) => action == Action::View,
+        Role::System(_) => false,
+    }
+}
+
+fn scope_permission(ctx: &AuthContext, scope: ScopeRef) -> Option<Permission> {
+    if scope.kind == ScopeKind::User && scope.id == ctx.principal_id {
+        return Some(Permission::Own);
+    }
+    ctx.platform_role
+        .map(Role::Platform)
+        .into_iter()
+        .chain(
+            ctx.assignments
+                .iter()
+                .filter(|assignment| assignment.scope == scope)
+                .map(|assignment| assignment.role),
+        )
+        .map(Role::default_permission)
+        .max()
+}
+
+fn permission_action(permission: Permission) -> Action {
+    match permission {
+        Permission::View => Action::View,
+        Permission::Run => Action::Run,
+        Permission::Edit => Action::Edit,
+        Permission::Own => Action::Own,
+    }
+}
+
+fn ceiling_allows(ctx: &AuthContext, permission: Permission) -> bool {
+    ctx.action_ceiling.is_empty() || ctx.action_ceiling.contains(&permission_action(permission))
 }
 
 /// resource-visibility checks that need both a store handle and the caller's identity. `db` and
@@ -194,30 +280,39 @@ impl<'a, T: DatabaseImpl> AuthzChecker<'a, T> {
         Self { db, ctx }
     }
 
+    /// Require a permission on any ACL-backed top-level resource. Callers must resolve child
+    /// identifiers to one of these authoritative parents before invoking this method.
+    pub async fn require_resource(
+        &self,
+        resource_type: ResourceType,
+        resource_id: Uuid,
+        needed: Permission,
+    ) -> Result<(), Reply> {
+        if !ceiling_allows(self.ctx, needed) {
+            return Err(forbidden());
+        }
+        match self.resource_permission(resource_type, resource_id).await {
+            Err(reply) => Err(reply),
+            Ok(Some(permission)) if permission.allows(needed) => Ok(()),
+            Ok(None) => {
+                self.audit_resource_denied(resource_type, resource_id, needed)
+                    .await;
+                Err(not_found())
+            }
+            Ok(Some(_)) => {
+                self.audit_resource_denied(resource_type, resource_id, needed)
+                    .await;
+                Err(forbidden())
+            }
+        }
+    }
+
     /// the caller's effective permission on a workflow, or `None` when they have no access.
     pub async fn workflow_permission(&self, workflow_id: Uuid) -> Option<Permission> {
-        if self.ctx.is_admin {
-            return Some(Permission::Own);
-        }
-        let user_id = self.ctx.principal_id?;
-        let team_ids = self
-            .db
-            .list_user_team_ids(user_id)
+        self.resource_permission(ResourceType::Workflow, workflow_id)
             .await
-            .unwrap_or_default();
-        let grants = self
-            .db
-            .list_grants(workflow_kind(), workflow_id)
-            .await
-            .ok()?;
-        grants
-            .into_iter()
-            .filter(|grant| match grant.principal_type {
-                PrincipalType::User => grant.principal_id == user_id,
-                PrincipalType::Team => team_ids.contains(&grant.principal_id),
-            })
-            .map(|grant| grant.permission)
-            .max()
+            .ok()
+            .flatten()
     }
 
     /// require at least `needed` permission on the workflow, else a 403 reply.
@@ -226,106 +321,122 @@ impl<'a, T: DatabaseImpl> AuthzChecker<'a, T> {
         workflow_id: Uuid,
         needed: Permission,
     ) -> Result<(), Reply> {
-        if self.ctx.is_admin {
-            return Ok(());
-        }
-        match self.workflow_permission(workflow_id).await {
-            Some(permission) if permission.allows(needed) => Ok(()),
-            _ => {
-                self.audit_denied(workflow_id, needed).await;
-                Err(forbidden())
-            }
-        }
+        self.require_resource(ResourceType::Workflow, workflow_id, needed)
+            .await
     }
 
     /// record an authorization denial against a workflow resource.
-    async fn audit_denied(&self, workflow_id: Uuid, needed: Permission) {
+    async fn audit_resource_denied(
+        &self,
+        resource_type: ResourceType,
+        resource_id: Uuid,
+        needed: Permission,
+    ) {
         crate::audit::record_audit(
             self.db,
             self.ctx.principal_id,
             self.ctx.actor_kind(),
             "authz.denied",
             crate::audit::AuditOutcome::Denied,
-            Some(ResourceType::Workflow.as_str()),
-            Some(workflow_id),
+            Some(resource_type.as_str()),
+            Some(resource_id),
             Some(&format!("missing {:?} permission", needed)),
         )
         .await;
     }
 
     /// the workflow ids the caller can see, or `None` meaning "all" (admin / auth disabled).
-    pub async fn visible_workflow_ids(&self) -> Option<HashSet<Uuid>> {
-        if self.ctx.is_admin {
-            return None;
+    pub async fn visible_workflow_ids(&self) -> Result<Option<HashSet<Uuid>>, Reply> {
+        self.visible_resource_ids(ResourceType::Workflow).await
+    }
+
+    pub async fn visible_resource_ids(
+        &self,
+        resource_type: ResourceType,
+    ) -> Result<Option<HashSet<Uuid>>, Reply> {
+        if self.ctx.is_platform_admin() && ceiling_allows(self.ctx, Permission::View) {
+            return Ok(None);
         }
         let mut ids = HashSet::new();
-        // every workflow owned by the caller's active org is visible to its members, so org
-        // membership grants run visibility without needing an explicit per-workflow grant. this is
-        // what isolates runs by org: a caller only ever sees runs whose workflow is org-owned or
-        // explicitly granted.
-        if let Some(org_id) = self.ctx.org_id
-            && let Ok(org_ids) = self.db.fetch_workflow_ids_for_org(org_id).await
-        {
-            ids.extend(org_ids);
-        }
-        let Some(user_id) = self.ctx.principal_id else {
-            return Some(ids);
-        };
-        if let Ok(grants) = self.db.list_user_grants(workflow_kind(), user_id).await {
-            ids.extend(grants.into_iter().map(|grant| grant.resource_id));
-        }
-        if let Ok(team_ids) = self.db.list_user_team_ids(user_id).await {
-            for team_id in team_ids {
-                if let Ok(grants) = self.db.list_team_grants(workflow_kind(), team_id).await {
-                    ids.extend(grants.into_iter().map(|grant| grant.resource_id));
-                }
+        let ownerships = self
+            .db
+            .list_resource_ownerships(resource_type)
+            .await
+            .map_err(|_| authorization_error())?;
+        for ownership in ownerships {
+            if self
+                .resource_permission(resource_type, ownership.resource_id)
+                .await?
+                .is_some_and(|permission| permission.allows(Permission::View))
+            {
+                ids.insert(ownership.resource_id);
             }
         }
-        Some(ids)
+        Ok(Some(ids))
     }
 
     /// stamp the creator as `own` on a freshly created workflow. a no-op for service/admin
     /// principals without a user id (nothing to own it).
-    pub async fn grant_owner(&self, workflow_id: Uuid) {
+    pub async fn grant_owner(&self, workflow_id: Uuid) -> Result<(), Reply> {
+        self.grant_resource_owner(ResourceType::Workflow, workflow_id)
+            .await
+    }
+
+    /// Register a newly-created top-level resource under the caller's selected tenant. Human
+    /// creators own their resource directly; machine principals create for the selected scope.
+    pub async fn grant_resource_owner(
+        &self,
+        resource_type: ResourceType,
+        resource_id: Uuid,
+    ) -> Result<(), Reply> {
+        let tenant = self
+            .ctx
+            .org_id
+            .and_then(|id| ScopeRef::new(ScopeKind::Organization, Some(id)))
+            .unwrap_or(ScopeRef::PLATFORM);
+        let owner = match (self.ctx.kind, self.ctx.principal_id) {
+            (PrincipalKind::User, Some(id)) => ScopeRef::new(ScopeKind::User, Some(id)).unwrap(),
+            _ => tenant,
+        };
+        let now = Utc::now();
+        self.db
+            .put_resource_ownership(runinator_models::rbac::ResourceOwnership {
+                resource_type,
+                resource_id,
+                tenant,
+                owner,
+                created_by: self.ctx.principal_id,
+                authz_version: 1,
+                created_at: now,
+                updated_at: now,
+            })
+            .await
+            .map_err(|_| authorization_error())?;
         let Some(user_id) = self.ctx.principal_id else {
-            return;
+            return Ok(());
         };
         let grant = Grant {
             id: None,
-            resource_type: ResourceType::Workflow,
-            resource_id: workflow_id,
+            resource_type,
+            resource_id,
             principal_type: PrincipalType::User,
             principal_id: user_id,
             permission: Permission::Own,
             created_at: Utc::now(),
         };
-        let _ = self.db.create_grant(grant).await;
+        self.db
+            .create_grant(grant)
+            .await
+            .map_err(|_| authorization_error())?;
+        Ok(())
     }
 
     /// the caller's effective permission on a pipeline, or `None` when they have no access.
     pub async fn pipeline_permission(&self, pipeline_id: Uuid) -> Option<Permission> {
-        if self.ctx.is_admin {
-            return Some(Permission::Own);
-        }
-        let user_id = self.ctx.principal_id?;
-        let team_ids = self
-            .db
-            .list_user_team_ids(user_id)
+        self.resource_permission(ResourceType::Pipeline, pipeline_id)
             .await
-            .unwrap_or_default();
-        let grants = self
-            .db
-            .list_grants(pipeline_kind(), pipeline_id)
-            .await
-            .ok()?;
-        grants
-            .into_iter()
-            .filter(|grant| match grant.principal_type {
-                PrincipalType::User => grant.principal_id == user_id,
-                PrincipalType::Team => team_ids.contains(&grant.principal_id),
-            })
-            .map(|grant| grant.permission)
-            .max()
+            .ok()
+            .flatten()
     }
 
     /// require at least `needed` permission on the pipeline, else a 403 reply.
@@ -334,59 +445,64 @@ impl<'a, T: DatabaseImpl> AuthzChecker<'a, T> {
         pipeline_id: Uuid,
         needed: Permission,
     ) -> Result<(), Reply> {
-        if self.ctx.is_admin {
-            return Ok(());
+        self.require_resource(ResourceType::Pipeline, pipeline_id, needed)
+            .await
+    }
+
+    async fn resource_permission(
+        &self,
+        resource_type: ResourceType,
+        resource_id: Uuid,
+    ) -> Result<Option<Permission>, Reply> {
+        if self.ctx.is_platform_admin() {
+            return Ok(Some(Permission::Own));
         }
-        match self.pipeline_permission(pipeline_id).await {
-            Some(permission) if permission.allows(needed) => Ok(()),
-            _ => Err(forbidden()),
+        let ownership = self
+            .db
+            .fetch_resource_ownership(resource_type, resource_id)
+            .await
+            .map_err(|_| authorization_error())?;
+        let Some(ownership) = ownership else {
+            return Ok(None);
+        };
+        if ownership.tenant.kind == ScopeKind::Organization
+            && !self.ctx.authorize_scope(Action::View, ownership.tenant)
+        {
+            return Ok(None);
         }
+
+        let inherited = if ownership.owner.kind == ScopeKind::User {
+            scope_permission(self.ctx, ownership.owner)
+        } else {
+            scope_permission(self.ctx, ownership.owner)
+                .into_iter()
+                .chain(scope_permission(self.ctx, ownership.tenant))
+                .max()
+        };
+        let direct = if let Some(principal_id) = self.ctx.principal_id {
+            self.db
+                .list_effective_resource_grants(resource_type, resource_id, principal_id)
+                .await
+                .map_err(|_| authorization_error())?
+                .into_iter()
+                .map(|grant| grant.permission)
+                .max()
+        } else {
+            None
+        };
+        Ok(inherited.into_iter().chain(direct).max())
     }
 
     /// the pipeline ids the caller can see, or `None` meaning "all" (admin / auth disabled).
-    pub async fn visible_pipeline_ids(&self) -> Option<HashSet<Uuid>> {
-        if self.ctx.is_admin {
-            return None;
-        }
-        let mut ids = HashSet::new();
-        // every pipeline owned by the caller's active org is visible to its members.
-        if let Some(org_id) = self.ctx.org_id
-            && let Ok(org_ids) = self.db.fetch_pipeline_ids_for_org(org_id).await
-        {
-            ids.extend(org_ids);
-        }
-        let Some(user_id) = self.ctx.principal_id else {
-            return Some(ids);
-        };
-        if let Ok(grants) = self.db.list_user_grants(pipeline_kind(), user_id).await {
-            ids.extend(grants.into_iter().map(|grant| grant.resource_id));
-        }
-        if let Ok(team_ids) = self.db.list_user_team_ids(user_id).await {
-            for team_id in team_ids {
-                if let Ok(grants) = self.db.list_team_grants(pipeline_kind(), team_id).await {
-                    ids.extend(grants.into_iter().map(|grant| grant.resource_id));
-                }
-            }
-        }
-        Some(ids)
+    pub async fn visible_pipeline_ids(&self) -> Result<Option<HashSet<Uuid>>, Reply> {
+        self.visible_resource_ids(ResourceType::Pipeline).await
     }
 
     /// stamp the creator as `own` on a freshly created pipeline. a no-op for service/admin
     /// principals without a user id (nothing to own it).
-    pub async fn grant_pipeline_owner(&self, pipeline_id: Uuid) {
-        let Some(user_id) = self.ctx.principal_id else {
-            return;
-        };
-        let grant = Grant {
-            id: None,
-            resource_type: ResourceType::Pipeline,
-            resource_id: pipeline_id,
-            principal_type: PrincipalType::User,
-            principal_id: user_id,
-            permission: Permission::Own,
-            created_at: Utc::now(),
-        };
-        let _ = self.db.create_grant(grant).await;
+    pub async fn grant_pipeline_owner(&self, pipeline_id: Uuid) -> Result<(), Reply> {
+        self.grant_resource_owner(ResourceType::Pipeline, pipeline_id)
+            .await
     }
 
     /// convenience for run-scoped handlers: gate by the parent workflow's permission.
@@ -395,7 +511,7 @@ impl<'a, T: DatabaseImpl> AuthzChecker<'a, T> {
         workflow_run_id: Uuid,
         needed: Permission,
     ) -> Result<(), Reply> {
-        if self.ctx.is_admin {
+        if self.ctx.is_platform_admin() {
             return Ok(());
         }
         match crate::repository::fetch_workflow_run(self.db, workflow_run_id).await {
@@ -409,7 +525,7 @@ impl<'a, T: DatabaseImpl> AuthzChecker<'a, T> {
         trigger_id: Uuid,
         needed: Permission,
     ) -> Result<(), Reply> {
-        if self.ctx.is_admin {
+        if self.ctx.is_platform_admin() {
             return Ok(());
         }
         match self.db.fetch_workflow_trigger(trigger_id).await {
@@ -424,7 +540,7 @@ impl<'a, T: DatabaseImpl> AuthzChecker<'a, T> {
         trigger_id: Uuid,
         needed: Permission,
     ) -> Result<(), Reply> {
-        if self.ctx.is_admin {
+        if self.ctx.is_platform_admin() {
             return Ok(());
         }
         match self.db.fetch_pipeline_trigger(trigger_id).await {
@@ -439,7 +555,7 @@ impl<'a, T: DatabaseImpl> AuthzChecker<'a, T> {
         pipeline_run_id: Uuid,
         needed: Permission,
     ) -> Result<(), Reply> {
-        if self.ctx.is_admin {
+        if self.ctx.is_platform_admin() {
             return Ok(());
         }
         match self.db.fetch_pipeline_run(pipeline_run_id).await {
@@ -453,7 +569,7 @@ impl<'a, T: DatabaseImpl> AuthzChecker<'a, T> {
         node_run_id: Uuid,
         needed: Permission,
     ) -> Result<(), Reply> {
-        if self.ctx.is_admin {
+        if self.ctx.is_platform_admin() {
             return Ok(());
         }
         let workflow_run_id = match self.db.fetch_workflow_node_run(node_run_id).await {
@@ -468,7 +584,7 @@ impl<'a, T: DatabaseImpl> AuthzChecker<'a, T> {
         gate_id: Uuid,
         needed: Permission,
     ) -> Result<(), Reply> {
-        if self.ctx.is_admin {
+        if self.ctx.is_platform_admin() {
             return Ok(());
         }
         let workflow_run_id = match self.db.fetch_gate(gate_id).await {
@@ -487,7 +603,7 @@ impl<'a, T: DatabaseImpl> AuthzChecker<'a, T> {
         record_id: Uuid,
         needed: Permission,
     ) -> Result<(), Reply> {
-        if self.ctx.is_admin {
+        if self.ctx.is_platform_admin() {
             return Ok(());
         }
         let workflow_run_id = match self
@@ -510,4 +626,116 @@ pub fn record_workflow_run_id(record: &Value) -> Option<Uuid> {
         .get("workflow_run_id")
         .and_then(Value::as_str)
         .and_then(|raw| raw.parse::<Uuid>().ok())
+}
+
+#[cfg(test)]
+mod policy_tests {
+    use super::*;
+    use runinator_models::rbac::RoleAssignment;
+
+    fn assignment(principal_id: Uuid, scope: ScopeRef, role: Role) -> RoleAssignment {
+        let now = Utc::now();
+        RoleAssignment {
+            principal_kind: PrincipalKind::User,
+            principal_id,
+            scope,
+            role,
+            created_by: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    fn context(
+        platform_role: Option<PlatformRole>,
+        assignments: Vec<RoleAssignment>,
+    ) -> AuthContext {
+        AuthContext {
+            principal_id: assignments.first().map(|a| a.principal_id),
+            session_id: None,
+            kind: PrincipalKind::User,
+            platform_role,
+            assignments,
+            system_role: None,
+            action_ceiling: Vec::new(),
+            org_id: None,
+        }
+    }
+
+    #[test]
+    fn fixed_role_action_matrix_is_deny_by_default() {
+        let user = Uuid::now_v7();
+        let org = ScopeRef::new(ScopeKind::Organization, Some(Uuid::now_v7())).unwrap();
+        let member = context(
+            None,
+            vec![assignment(user, org, Role::Organization(OrgRole::Member))],
+        );
+        assert!(member.authorize_scope(Action::View, org));
+        assert!(!member.authorize_scope(Action::Run, org));
+        assert!(!member.authorize_scope(Action::MembersManage, org));
+
+        let operator = context(
+            None,
+            vec![assignment(user, org, Role::Organization(OrgRole::Operator))],
+        );
+        assert!(operator.authorize_scope(Action::Edit, org));
+        assert!(!operator.authorize_scope(Action::MembersManage, org));
+
+        let admin = context(
+            None,
+            vec![assignment(user, org, Role::Organization(OrgRole::Admin))],
+        );
+        assert!(admin.authorize_scope(Action::MembersManage, org));
+        assert!(!admin.authorize_scope(Action::Own, org));
+    }
+
+    #[test]
+    fn platform_hierarchy_flows_down_and_auditor_stays_read_only() {
+        let team = ScopeRef::new(ScopeKind::Team, Some(Uuid::now_v7())).unwrap();
+        let auditor = context(Some(PlatformRole::Auditor), Vec::new());
+        assert!(auditor.authorize_scope(Action::View, team));
+        assert!(auditor.authorize_scope(Action::AuditRead, ScopeRef::PLATFORM));
+        assert!(!auditor.authorize_scope(Action::Run, team));
+
+        let operator = context(Some(PlatformRole::Operator), Vec::new());
+        assert!(operator.authorize_scope(Action::Edit, team));
+        assert!(!operator.authorize_scope(Action::CredentialsManage, team));
+
+        let admin = context(Some(PlatformRole::Admin), Vec::new());
+        assert!(admin.authorize_scope(Action::Own, team));
+        assert!(admin.is_platform_admin());
+    }
+
+    #[test]
+    fn assignments_are_additive_and_action_ceiling_restricts_keys() {
+        let user = Uuid::now_v7();
+        let team = ScopeRef::new(ScopeKind::Team, Some(Uuid::now_v7())).unwrap();
+        let mut ctx = context(
+            None,
+            vec![
+                assignment(user, team, Role::Team(TeamRole::Member)),
+                assignment(user, team, Role::Team(TeamRole::Operator)),
+            ],
+        );
+        assert!(ctx.authorize_scope(Action::Edit, team));
+        ctx.action_ceiling = vec![Action::View];
+        assert!(ctx.authorize_scope(Action::View, team));
+        assert!(!ctx.authorize_scope(Action::Edit, team));
+    }
+
+    #[test]
+    fn system_role_endpoints_honor_api_key_action_ceilings() {
+        let principal_id = Uuid::now_v7();
+        let mut ctx = context(None, Vec::new());
+        ctx.principal_id = Some(principal_id);
+        ctx.kind = PrincipalKind::Service;
+        ctx.system_role = Some(SystemRole::Engine);
+        assert!(ctx.require_system_role(&[SystemRole::Engine]).is_ok());
+
+        ctx.action_ceiling = vec![Action::View];
+        assert!(ctx.require_system_role(&[SystemRole::Engine]).is_err());
+
+        ctx.action_ceiling = vec![Action::EngineOperate];
+        assert!(ctx.require_system_role(&[SystemRole::Engine]).is_ok());
+    }
 }

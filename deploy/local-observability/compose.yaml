@@ -40,6 +40,7 @@ services:
       - "9090:9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./alerts.yml:/etc/prometheus/alerts.yml:ro
       - prometheus-data:/prometheus
 
   # durable, queryable (logql) sink for the logs otel signal, so trace_id/run_id/error_code fields

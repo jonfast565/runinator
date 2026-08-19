@@ -13,6 +13,7 @@ struct WakerMetrics {
     wakes_requeued: Counter<u64>,
     drive_failures: Counter<u64>,
     wake_lead_ms: Histogram<f64>,
+    wake_due_lag_ms: Histogram<f64>,
 }
 
 static METRICS: OnceLock<WakerMetrics> = OnceLock::new();
@@ -37,6 +38,10 @@ fn metrics() -> &'static WakerMetrics {
                 .f64_histogram("runinator_waker_wake_lead_ms")
                 .with_unit("ms")
                 .build(),
+            wake_due_lag_ms: meter
+                .f64_histogram("runinator_waker_due_lag_ms")
+                .with_unit("ms")
+                .build(),
         }
     })
 }
@@ -46,6 +51,10 @@ fn metrics() -> &'static WakerMetrics {
 pub(crate) fn wake_received(lead_ms: f64) {
     metrics().wakes_received.add(1, &[]);
     metrics().wake_lead_ms.record(lead_ms, &[]);
+}
+
+pub(crate) fn wake_due_lag(lag_ms: f64) {
+    metrics().wake_due_lag_ms.record(lag_ms.max(0.0), &[]);
 }
 
 /// a due wake was relayed to the ingress channel as a drive (or was already in flight).

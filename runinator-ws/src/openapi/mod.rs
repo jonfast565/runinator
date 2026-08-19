@@ -54,6 +54,298 @@ const DOC_SETS: &[&[EndpointDoc]] = &[
     handlers::console::DOCS,
     handlers::webhook::DOCS,
     handlers::auth::DOCS,
+    handlers::authz::DOCS,
+];
+
+/// Routes whose full prose/examples have not yet been authored still declare an explicit policy
+/// and receive a minimal OpenAPI operation. This keeps route, documentation, and authorization
+/// parity fail-closed without making descriptive documentation a prerequisite for enforcement.
+pub(crate) const MINIMAL_ENDPOINTS: &[(&str, &str, docs::EndpointPolicy)] = &[
+    (
+        "get",
+        "/audit_log",
+        docs::EndpointPolicy::ScopedAction(runinator_models::rbac::Action::AuditRead),
+    ),
+    (
+        "get",
+        "/dead_letters",
+        docs::EndpointPolicy::ScopedAction(runinator_models::rbac::Action::DeadLettersRead),
+    ),
+    ("get", "/catalog/enums", docs::EndpointPolicy::Authenticated),
+    ("get", "/metrics", docs::EndpointPolicy::Public),
+    ("get", "/node-kinds", docs::EndpointPolicy::Authenticated),
+    ("get", "/trigger-kinds", docs::EndpointPolicy::Authenticated),
+    (
+        "get",
+        "/nodes",
+        docs::EndpointPolicy::SystemRole(&[
+            runinator_models::rbac::SystemRole::Engine,
+            runinator_models::rbac::SystemRole::Replica,
+        ]),
+    ),
+    (
+        "get",
+        "/nodes/backends",
+        docs::EndpointPolicy::SystemRole(&[
+            runinator_models::rbac::SystemRole::Engine,
+            runinator_models::rbac::SystemRole::Replica,
+        ]),
+    ),
+    (
+        "get",
+        "/workflows/{id}/revisions",
+        docs::EndpointPolicy::ResourceAction(
+            runinator_models::auth::ResourceType::Workflow,
+            runinator_models::rbac::Action::View,
+        ),
+    ),
+    (
+        "get",
+        "/workflows/{id}/revisions/{revision}",
+        docs::EndpointPolicy::ResourceAction(
+            runinator_models::auth::ResourceType::Workflow,
+            runinator_models::rbac::Action::View,
+        ),
+    ),
+    (
+        "post",
+        "/workflows/{id}/revisions/{revision}/restore",
+        docs::EndpointPolicy::ResourceAction(
+            runinator_models::auth::ResourceType::Workflow,
+            runinator_models::rbac::Action::Edit,
+        ),
+    ),
+    (
+        "get",
+        "/ws/desktop-worker",
+        docs::EndpointPolicy::SystemRole(&[
+            runinator_models::rbac::SystemRole::Agent,
+            runinator_models::rbac::SystemRole::Worker,
+        ]),
+    ),
+    (
+        "delete",
+        "/artifacts/{id}",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "delete",
+        "/automation_events/{id}",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "delete",
+        "/freeze_windows/{id}",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    ("delete", "/gates/{id}", docs::EndpointPolicy::Authenticated),
+    (
+        "delete",
+        "/notification_policies/{id}",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "delete",
+        "/notifications/{id}",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    ("delete", "/orgs/{id}", docs::EndpointPolicy::Authenticated),
+    (
+        "delete",
+        "/orgs/{id}/members/{user_id}",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "delete",
+        "/pipeline_triggers/{id}",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "delete",
+        "/pipelines/{id}",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "get",
+        "/freeze_windows",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "get",
+        "/notification_policies",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "get",
+        "/notifications/{id}/deliveries",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    ("get", "/orgs", docs::EndpointPolicy::Authenticated),
+    ("get", "/orgs/me", docs::EndpointPolicy::Authenticated),
+    ("get", "/orgs/{id}", docs::EndpointPolicy::Authenticated),
+    (
+        "get",
+        "/orgs/{id}/members",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "get",
+        "/orgs/{id}/nodes",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "get",
+        "/orgs/{id}/quota",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "get",
+        "/orgs/{id}/usage",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    ("get", "/pipeline_runs", docs::EndpointPolicy::Authenticated),
+    (
+        "get",
+        "/pipeline_runs/{id}",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    ("get", "/pipelines", docs::EndpointPolicy::Authenticated),
+    (
+        "get",
+        "/pipelines/{id}",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "get",
+        "/pipelines/{id}/triggers",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    ("get", "/rate-card", docs::EndpointPolicy::Authenticated),
+    (
+        "get",
+        "/replicas/{replica_id}/samples",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "get",
+        "/workflow_runs/{id}/transitions",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "get",
+        "/workflows/{id}/nodes/{node_id}/transitions",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "patch",
+        "/freeze_windows/{id}",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "patch",
+        "/notification_policies/{id}",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    ("patch", "/orgs/{id}", docs::EndpointPolicy::Authenticated),
+    (
+        "patch",
+        "/orgs/{id}/members/{user_id}",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "patch",
+        "/pipeline_triggers/{id}",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "patch",
+        "/pipelines/{id}",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "post",
+        "/auth/switch-org",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "post",
+        "/freeze_windows",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "post",
+        "/idempotency_keys/claim",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "post",
+        "/idempotency_keys/complete",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "post",
+        "/idempotency_keys/release",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    ("post", "/nodes/scale", docs::EndpointPolicy::Authenticated),
+    ("post", "/nodes/stop", docs::EndpointPolicy::Authenticated),
+    (
+        "post",
+        "/notification_policies",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    ("post", "/orgs", docs::EndpointPolicy::Authenticated),
+    (
+        "post",
+        "/orgs/{id}/members",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "post",
+        "/orgs/{id}/nodes/scale",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "post",
+        "/pipeline_runs/{id}/cancel",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "post",
+        "/pipeline_runs/{id}/resolve",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "post",
+        "/pipeline_triggers/{id}/runs",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    ("post", "/pipelines", docs::EndpointPolicy::Authenticated),
+    (
+        "post",
+        "/pipelines/{id}/runs",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "post",
+        "/pipelines/{id}/triggers",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "post",
+        "/workflow_triggers/{id}/backfill",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "post",
+        "/workflows/simulate",
+        docs::EndpointPolicy::Authenticated,
+    ),
+    (
+        "put",
+        "/orgs/{id}/quota",
+        docs::EndpointPolicy::Authenticated,
+    ),
 ];
 
 /// the documented endpoints, flattened across [`DOC_SETS`].
@@ -212,6 +504,31 @@ fn enrich_openapi_document(document: &mut Value) {
             .or_insert_with(|| Value::Object(Map::new()));
         enrich_operation(operation, doc);
     }
+    for (method, path, policy) in MINIMAL_ENDPOINTS {
+        let path_item = paths
+            .entry((*path).to_string())
+            .or_insert_with(|| Value::Object(Map::new()))
+            .as_object_mut()
+            .expect("path item is an object");
+        let operation = path_item
+            .entry((*method).to_string())
+            .or_insert_with(|| Value::Object(Map::new()))
+            .as_object_mut()
+            .expect("operation is an object");
+        operation
+            .entry("summary")
+            .or_insert_with(|| json!(format!("{} {path}", method.to_uppercase())));
+        operation.entry("description").or_insert_with(|| {
+            json!("Authorization is enforced by the registered handler policy.")
+        });
+        operation.insert(
+            "x-runinator-authorization".into(),
+            endpoint_policy_json(*policy),
+        );
+        operation
+            .entry("responses")
+            .or_insert_with(|| json!({ "200": { "description": "successful response" } }));
+    }
 }
 
 fn enrich_operation(operation: &mut Value, doc: &EndpointDoc) {
@@ -219,9 +536,13 @@ fn enrich_operation(operation: &mut Value, doc: &EndpointDoc) {
     operation.insert("tags".into(), json!([doc.tag]));
     operation.insert("summary".into(), json!(doc.summary));
     operation.insert("description".into(), json!(doc.description));
-    if doc.public {
+    if doc.policy.is_public() {
         operation.insert("security".into(), json!([]));
     }
+    operation.insert(
+        "x-runinator-authorization".into(),
+        endpoint_policy_json(doc.policy),
+    );
     operation.insert("parameters".into(), json!(parameters_for(doc)));
     if let Some(request) = doc.request {
         enrich_request_body(operation, request);
@@ -350,7 +671,7 @@ fn curl_sample(doc: &EndpointDoc) -> String {
         doc.method.to_uppercase(),
         path
     );
-    if !doc.public {
+    if !doc.policy.is_public() {
         command.push_str(" \\\n  -H 'Authorization: Bearer $RUNINATOR_TOKEN'");
     }
     if let Some(request) = doc.request {
@@ -368,6 +689,29 @@ fn curl_sample(doc: &EndpointDoc) -> String {
         }
     }
     command
+}
+
+fn endpoint_policy_json(policy: docs::EndpointPolicy) -> Value {
+    use docs::EndpointPolicy;
+    match policy {
+        EndpointPolicy::Public => json!({ "kind": "public" }),
+        EndpointPolicy::Authenticated => json!({ "kind": "authenticated" }),
+        EndpointPolicy::ScopedAction(action) => {
+            json!({ "kind": "scoped_action", "action": action.as_str() })
+        }
+        EndpointPolicy::AnyResourceAction(action) => {
+            json!({ "kind": "resource_action", "resource_type": "path", "action": action.as_str() })
+        }
+        EndpointPolicy::ResourceAction(resource, action) => json!({
+            "kind": "resource_action",
+            "resource_type": resource.as_str(),
+            "action": action.as_str(),
+        }),
+        EndpointPolicy::SystemRole(roles) => json!({
+            "kind": "system_role",
+            "roles": roles.iter().map(|role| role.as_str()).collect::<Vec<_>>(),
+        }),
+    }
 }
 
 fn compact_json(value: Value) -> String {
@@ -411,3 +755,56 @@ pub(crate) const DOCS: &[EndpointDoc] = &[
         Example::None,
     ),
 ];
+
+#[cfg(test)]
+mod policy_tests {
+    use std::collections::BTreeSet;
+
+    use super::*;
+
+    #[test]
+    fn only_the_explicit_bootstrap_surface_is_public() {
+        let actual = endpoint_docs()
+            .filter(|doc| doc.policy.is_public())
+            .map(|doc| (doc.method, doc.path))
+            .chain(
+                MINIMAL_ENDPOINTS
+                    .iter()
+                    .filter(|(_, _, policy)| policy.is_public())
+                    .map(|(method, path, _)| (*method, *path)),
+            )
+            .collect::<BTreeSet<_>>();
+        let expected = BTreeSet::from([
+            ("get", "/auth/config"),
+            ("post", "/auth/login"),
+            ("post", "/auth/refresh"),
+            ("post", "/agents/enroll"),
+            ("get", "/health"),
+            ("get", "/ready"),
+            ("get", "/metrics"),
+            ("get", "/openapi.json"),
+            ("get", "/docs"),
+        ]);
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn every_openapi_operation_exports_its_authorization_policy() {
+        let document = openapi_document();
+        let mut missing = Vec::new();
+        for (path, item) in document["paths"].as_object().expect("paths object") {
+            for method in ["get", "post", "put", "patch", "delete"] {
+                let Some(operation) = item.get(method) else {
+                    continue;
+                };
+                if operation.get("x-runinator-authorization").is_none() {
+                    missing.push(format!("{method} {path}"));
+                }
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "missing authorization metadata: {missing:?}"
+        );
+    }
+}

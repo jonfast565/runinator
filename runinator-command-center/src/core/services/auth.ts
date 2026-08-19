@@ -7,7 +7,7 @@ import {
   setAccessToken,
   type LoginResult,
 } from "../api/commandCenterApi";
-import { ALL_CAPABILITIES, type Capability, type JsonRecord } from "../domain/models";
+import { type Action, type JsonRecord } from "../domain/models";
 import { getPlatformAdapterOptional } from "../platform";
 import type { AuthStorage } from "../platform/types";
 import { createStore } from "./event-bus";
@@ -20,20 +20,25 @@ export interface AuthState {
   authenticated: boolean;
   ready: boolean;
   user: JsonRecord | null;
-  // the caller's resolved capability set (see runinator-models capabilities). the whole ui gates
-  // against this; auth-disabled stacks ignore it (every capability is granted).
-  capabilities: Capability[];
+  effectiveActions: Action[];
   error: string;
   accessTokenRevision: number;
 }
 
-function isCapability(value: unknown): value is Capability {
-  return typeof value === "string" && (ALL_CAPABILITIES as readonly string[]).includes(value);
+function isAction(value: unknown): value is Action {
+  return typeof value === "string";
 }
 
-function readCapabilities(source: unknown): Capability[] {
-  const raw = (source as { capabilities?: unknown } | null)?.capabilities;
-  return Array.isArray(raw) ? raw.filter(isCapability) : [];
+function readEffectiveActions(source: unknown): Action[] {
+  const raw = (source as { effective_actions?: unknown } | null)?.effective_actions;
+  return Array.isArray(raw) ? raw.filter(isAction) : [];
+}
+
+function readPrincipal(source: unknown): JsonRecord | null {
+  const record = source as JsonRecord | null;
+  if (!record) {return null;}
+  const principal = record.principal;
+  return principal && typeof principal === "object" ? principal as JsonRecord : record;
 }
 
 const fallbackAuthStorage: AuthStorage = {
@@ -75,7 +80,7 @@ export function createAuthService() {
     authenticated: false,
     ready: false,
     user: null,
-    capabilities: [],
+    effectiveActions: [],
     error: "",
     accessTokenRevision: 0,
   });
@@ -110,8 +115,8 @@ export function createAuthService() {
     await publishAccessToken(result.access_token);
     store.setState((state) => ({
       ...state,
-      user: result.user,
-      capabilities: result.capabilities?.filter(isCapability) ?? [],
+      user: readPrincipal(result.user),
+      effectiveActions: result.effective_actions.filter(isAction),
       authenticated: true,
     }));
   }
@@ -123,7 +128,7 @@ export function createAuthService() {
       ...state,
       authenticated: false,
       user: null,
-      capabilities: [],
+      effectiveActions: [],
     }));
   }
 
@@ -146,7 +151,7 @@ export function createAuthService() {
         authenticated: false,
         ready: false,
         user: null,
-        capabilities: [],
+        effectiveActions: [],
         error: "",
         accessTokenRevision: 0,
       }));
@@ -177,8 +182,8 @@ export function createAuthService() {
           const user = await fetchAuthMe();
           store.setState((state) => ({
             ...state,
-            user,
-            capabilities: readCapabilities(user),
+            user: readPrincipal(user),
+            effectiveActions: readEffectiveActions(user),
             authenticated: true,
           }));
         } catch {
@@ -218,8 +223,8 @@ export function createAuthService() {
       persist(access, refreshToken);
       await publishAccessToken(access);
     },
-    // re-hydrate the principal (and its capabilities) under the current token. called after an org
-    // switch, where the token — and therefore the org-derived capability set — changes.
+    // re-hydrate the principal (and its actions) under the current token. called after an org
+    // switch, where the token — and therefore the org-derived action set — changes.
     async reloadMe() {
       if (!store.getState().required) {
         return;
@@ -227,7 +232,7 @@ export function createAuthService() {
 
       try {
         const user = await fetchAuthMe();
-        store.setState((state) => ({ ...state, user, capabilities: readCapabilities(user) }));
+        store.setState((state) => ({ ...state, user: readPrincipal(user), effectiveActions: readEffectiveActions(user) }));
       } catch {
         /* keep the current principal on a transient failure */
       }

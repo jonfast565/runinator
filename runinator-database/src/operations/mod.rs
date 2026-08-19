@@ -42,6 +42,9 @@ use runinator_models::{
     },
     orgs::{OrgMembership, OrgRole, Organization},
     pipelines::{Pipeline, PipelineRun, PipelineTrigger},
+    rbac::{
+        ResourceOwnership, Role, RoleAssignment, ScopeKind, ScopeRef, ServiceAccount, TeamRole,
+    },
     replicas::{
         ReplicaHeartbeatRequest, ReplicaKind, ReplicaProviderRegistration,
         ReplicaProviderRegistrationRequest, ReplicaRecord, ReplicaRegistrationRequest,
@@ -1087,6 +1090,7 @@ mod functions;
 mod invocations;
 mod notifications;
 mod orgs;
+mod rbac;
 mod reducer;
 mod replicas;
 mod runs;

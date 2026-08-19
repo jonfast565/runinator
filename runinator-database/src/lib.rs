@@ -5,6 +5,7 @@ use interfaces::DatabaseImpl;
 use log::{info, warn};
 use runinator_models::auth::{ApiKey, ApiKeyRecord, PrincipalKind};
 use runinator_models::errors::SendableError;
+use runinator_models::rbac::{PlatformRole, Role, ScopeRef};
 use runinator_models::settings::SettingKind;
 use runinator_utilities::secret_cipher::SecretCipher;
 use uuid::Uuid;
@@ -232,8 +233,15 @@ pub async fn seed_bootstrap_admin<T: DatabaseImpl>(
         };
         db.set_local_password(user_id, hash_admin_password(password)?)
             .await?;
-        db.update_user(user_id, None, Some(true), Some(false))
-            .await?;
+        db.update_user(user_id, None, Some(false)).await?;
+        db.upsert_role_assignment(
+            PrincipalKind::User,
+            user_id,
+            ScopeRef::PLATFORM,
+            Role::Platform(PlatformRole::Admin),
+            None,
+        )
+        .await?;
         info!("Reset bootstrap admin '{username}' password (force).");
         return Ok(());
     }
@@ -243,11 +251,12 @@ pub async fn seed_bootstrap_admin<T: DatabaseImpl>(
     if !force && db.count_users().await? > 0 {
         return Ok(());
     }
-    db.create_user(
+    db.create_user_with_platform_role(
         username.to_string(),
         None,
-        true,
         Some(hash_admin_password(password)?),
+        PlatformRole::Admin,
+        None,
     )
     .await?;
     info!("Seeded bootstrap admin user '{username}'.");
@@ -284,21 +293,38 @@ pub async fn seed_bootstrap_service_api_key<T: DatabaseImpl>(
         return Ok(());
     }
 
+    let service = match db
+        .list_service_accounts()
+        .await?
+        .into_iter()
+        .find(|account| account.name == name)
+    {
+        Some(account) => account,
+        None => db.create_service_account(name.to_string(), None).await?,
+    };
+    db.upsert_role_assignment(
+        PrincipalKind::Service,
+        service.id,
+        ScopeRef::PLATFORM,
+        Role::Platform(PlatformRole::Admin),
+        None,
+    )
+    .await?;
     let record = ApiKeyRecord {
         key: ApiKey {
             id: Some(Uuid::now_v7()),
             name: name.to_string(),
-            user_id: None,
-            is_service: true,
+            principal_kind: PrincipalKind::Service,
+            principal_id: service.id,
+            system_role: None,
+            org_id: None,
+            action_ceiling: Vec::new(),
             key_prefix: prefix.to_string(),
             last_used_at: None,
             expires_at: None,
             disabled: false,
             created_at: Utc::now(),
         },
-        is_admin: true,
-        principal_kind: PrincipalKind::Service,
-        org_id: None,
         key_hash: runinator_auth::hash_secret(raw_key),
     };
     db.create_api_key(record).await?;

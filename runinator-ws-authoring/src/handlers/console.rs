@@ -14,9 +14,9 @@ use axum::{Extension, Json, extract::Path, http::StatusCode};
 use runinator_broker_core::Broker;
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::{
-    auth::AuthContext,
-    capabilities::Capability,
+    auth::{AuthContext, Permission, ResourceType},
     console::{ConsoleSession, NewConsoleCell},
+    rbac::{Action, ScopeKind, ScopeRef},
 };
 use serde::Deserialize;
 use uuid::Uuid;
@@ -26,7 +26,13 @@ use runinator_ws_core::events::{EventSender, emit_workflow_run, nudge_wake_publi
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::openapi::docs::{EndpointDoc, Example, endpoint, json_body};
 use runinator_ws_core::responses::{api_error, bad_request, not_found};
-use runinator_ws_middleware::authz::AuthContextExt;
+use runinator_ws_middleware::authz::{AuthContextExt, AuthzChecker};
+
+fn selected_scope(ctx: &AuthContext) -> ScopeRef {
+    ctx.org_id
+        .and_then(|id| ScopeRef::new(ScopeKind::Organization, Some(id)))
+        .unwrap_or(ScopeRef::PLATFORM)
+}
 
 /// what a caller sends to create or rename a session.
 #[derive(Debug, Deserialize)]
@@ -50,17 +56,21 @@ pub async fn get_console_sessions<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_capability(Capability::ConsoleUse) {
+    if let Err(reply) = ctx.require_scope_action(Action::ConsoleUse, selected_scope(&ctx)) {
         return reply;
     }
+    let visible = match AuthzChecker::new(db.as_ref(), &ctx)
+        .visible_resource_ids(ResourceType::ConsoleSession)
+        .await
+    {
+        Ok(visible) => visible,
+        Err(reply) => return reply,
+    };
     match repository::console::fetch_sessions(db.as_ref()).await {
         Ok(sessions) => {
             let sessions: Vec<ConsoleSession> = sessions
                 .into_iter()
-                .filter(|session| {
-                    ctx.org_visible(session.org_id)
-                        && (ctx.is_admin || session.created_by == ctx.principal_id)
-                })
+                .filter(|session| visible.as_ref().is_none_or(|ids| ids.contains(&session.id)))
                 .collect();
             (
                 StatusCode::OK,
@@ -77,7 +87,7 @@ pub async fn create_console_session<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<ConsoleSessionRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_capability(Capability::ConsoleUse) {
+    if let Err(reply) = ctx.require_scope_action(Action::ConsoleUse, selected_scope(&ctx)) {
         return reply;
     }
     match repository::console::create_session(
@@ -88,7 +98,15 @@ pub async fn create_console_session<T: DatabaseImpl>(
     )
     .await
     {
-        Ok(session) => (StatusCode::OK, Json(ApiResponse::ConsoleSession(session))),
+        Ok(session) => {
+            if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+                .grant_resource_owner(ResourceType::ConsoleSession, session.id)
+                .await
+            {
+                return reply;
+            }
+            (StatusCode::OK, Json(ApiResponse::ConsoleSession(session)))
+        }
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -99,13 +117,13 @@ pub async fn get_console_session<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(session_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_capability(Capability::ConsoleUse) {
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_resource(ResourceType::ConsoleSession, session_id, Permission::View)
+        .await
+    {
         return reply;
     }
     match repository::console::fetch_session_detail(db.as_ref(), session_id).await {
-        Ok(Some(detail)) if !ctx.org_visible(detail.session.org_id) => {
-            not_found(format!("console session {session_id} not found"))
-        }
         Ok(Some(detail)) => (
             StatusCode::OK,
             Json(ApiResponse::ConsoleSessionDetail(Box::new(detail))),
@@ -122,7 +140,7 @@ pub async fn rename_console_session<T: DatabaseImpl>(
     Path(session_id): Path<Uuid>,
     Json(request): Json<ConsoleSessionRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = require_session(db.as_ref(), &ctx, session_id).await {
+    if let Err(reply) = require_session(db.as_ref(), &ctx, session_id, Permission::Edit).await {
         return reply;
     }
     match repository::console::rename_session(db.as_ref(), session_id, &session_name(&request))
@@ -140,7 +158,7 @@ pub async fn delete_console_session<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(session_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = require_session(db.as_ref(), &ctx, session_id).await {
+    if let Err(reply) = require_session(db.as_ref(), &ctx, session_id, Permission::Own).await {
         return reply;
     }
     match repository::console::delete_session(db.as_ref(), session_id).await {
@@ -163,7 +181,7 @@ pub async fn create_console_cell<T: DatabaseImpl>(
     Path(session_id): Path<Uuid>,
     Json(cell): Json<NewConsoleCell>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = require_session(db.as_ref(), &ctx, session_id).await {
+    if let Err(reply) = require_session(db.as_ref(), &ctx, session_id, Permission::Edit).await {
         return reply;
     }
     match repository::console::upsert_cell(db.as_ref(), session_id, None, &cell).await {
@@ -179,7 +197,7 @@ pub async fn update_console_cell<T: DatabaseImpl>(
     Path(cell_id): Path<Uuid>,
     Json(request): Json<NewConsoleCell>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    let cell = match require_cell(db.as_ref(), &ctx, cell_id).await {
+    let cell = match require_cell(db.as_ref(), &ctx, cell_id, Permission::Edit).await {
         Ok(cell) => cell,
         Err(reply) => return reply,
     };
@@ -200,7 +218,7 @@ pub async fn delete_console_cell<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(cell_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    let cell = match require_cell(db.as_ref(), &ctx, cell_id).await {
+    let cell = match require_cell(db.as_ref(), &ctx, cell_id, Permission::Edit).await {
         Ok(cell) => cell,
         Err(reply) => return reply,
     };
@@ -231,7 +249,7 @@ pub async fn run_console_cell<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(cell_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    let cell = match require_cell(db.as_ref(), &ctx, cell_id).await {
+    let cell = match require_cell(db.as_ref(), &ctx, cell_id, Permission::Run).await {
         Ok(cell) => cell,
         Err(reply) => return reply,
     };
@@ -282,7 +300,7 @@ pub async fn cancel_console_cell<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(cell_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    let cell = match require_cell(db.as_ref(), &ctx, cell_id).await {
+    let cell = match require_cell(db.as_ref(), &ctx, cell_id, Permission::Run).await {
         Ok(cell) => cell,
         Err(reply) => return reply,
     };
@@ -301,7 +319,7 @@ pub async fn get_console_cell<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(cell_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    let cell = match require_cell(db.as_ref(), &ctx, cell_id).await {
+    let cell = match require_cell(db.as_ref(), &ctx, cell_id, Permission::View).await {
         Ok(cell) => cell,
         Err(reply) => return reply,
     };
@@ -322,27 +340,18 @@ async fn require_session<T: DatabaseImpl>(
     db: &T,
     ctx: &AuthContext,
     session_id: Uuid,
+    needed: Permission,
 ) -> Result<(), (StatusCode, Json<ApiResponse>)> {
-    // the capability check lives here as well as on the three entry points above, because every
-    // other console endpoint reaches the database through this function. a new endpoint that forgot
-    // its own gate would still be stopped.
-    ctx.require_capability(Capability::ConsoleUse)?;
-    match repository::console::fetch_session_detail(db, session_id).await {
-        Ok(Some(detail))
-            if ctx.org_visible(detail.session.org_id)
-                && (ctx.is_admin || detail.session.created_by == ctx.principal_id) =>
-        {
-            Ok(())
-        }
-        Ok(_) => Err(not_found(format!("console session {session_id} not found"))),
-        Err(err) => Err(api_error(err.to_string())),
-    }
+    AuthzChecker::new(db, ctx)
+        .require_resource(ResourceType::ConsoleSession, session_id, needed)
+        .await
 }
 
 async fn require_cell<T: DatabaseImpl>(
     db: &T,
     ctx: &AuthContext,
     cell_id: Uuid,
+    needed: Permission,
 ) -> Result<runinator_models::console::ConsoleCell, (StatusCode, Json<ApiResponse>)> {
     let cell = match repository::console::fetch_cell(db, cell_id).await {
         Ok(Some(cell)) => cell,
@@ -350,7 +359,7 @@ async fn require_cell<T: DatabaseImpl>(
         Err(err) => return Err(api_error(err.to_string())),
     };
     // authorized through the owning session, so a cell id alone never reveals another org's work.
-    require_session(db, ctx, cell.session_id).await?;
+    require_session(db, ctx, cell.session_id, needed).await?;
     Ok(cell)
 }
 

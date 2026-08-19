@@ -184,7 +184,7 @@ import Icon from "../components/shared/Icon.vue";
 import PanelHeader from "../components/shared/PanelHeader.vue";
 import { useNotificationsStore } from "../../ui/adapters/pinia/notifications";
 import { useAppStore } from "../../ui/adapters/pinia/app";
-import { useCapabilitiesStore } from "../../ui/adapters/pinia/capabilities";
+import { useActionsStore } from "../../ui/adapters/pinia/actions";
 import type {
   NewNotificationPolicy,
   Notification,
@@ -196,7 +196,7 @@ import { formatDate } from "../../core/utils/format";
 
 const store = useNotificationsStore();
 const app = useAppStore();
-const capabilities = useCapabilitiesStore();
+const actions = useActionsStore();
 const loading = ref(false);
 
 const columns: DataTableColumn<Notification>[] = [
@@ -268,7 +268,7 @@ async function deleteRead() {
 
 // ---- alert policies ----
 
-const canManagePolicies = computed(() => capabilities.has("notifications:manage"));
+const canManagePolicies = computed(() => actions.has("notifications:manage"));
 const policiesLoading = ref(false);
 const draft = ref<NewNotificationPolicy | null>(null);
 const editingId = ref<string | null>(null);

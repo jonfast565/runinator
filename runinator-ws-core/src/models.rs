@@ -66,7 +66,6 @@ pub struct UserSchema {
     pub id: Option<Uuid>,
     pub username: String,
     pub email: Option<String>,
-    pub is_admin: bool,
     pub disabled: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -478,20 +477,6 @@ pub struct CredentialQuery {
 pub struct ReplicaQuery {
     pub replica_type: Option<runinator_models::replicas::ReplicaKind>,
     pub status: Option<ReplicaStatus>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct WorkflowOwnerRequest {
-    /// the org to own the workflow, or `null`/absent to make it platform-global.
-    #[serde(default)]
-    pub org_id: Option<Uuid>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct PipelineOwnerRequest {
-    /// the org to own the pipeline, or `null`/absent to make it platform-global.
-    #[serde(default)]
-    pub org_id: Option<Uuid>,
 }
 
 #[derive(Debug, Deserialize)]

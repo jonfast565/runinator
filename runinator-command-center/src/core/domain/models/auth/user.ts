@@ -2,7 +2,7 @@ export interface User {
   id: string | null;
   username: string;
   email?: string | null;
-  is_admin: boolean;
+  platform_role: "admin" | "operator" | "auditor" | "member";
   disabled: boolean;
   created_at: string;
   updated_at: string;

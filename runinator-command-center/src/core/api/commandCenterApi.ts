@@ -95,7 +95,8 @@ export interface LoginResult {
   refresh_token: string;
   expires_in: number;
   user: JsonRecord;
-  capabilities?: string[];
+  assignments: JsonRecord[];
+  effective_actions: string[];
 }
 
 export async function fetchAuthConfig() {
@@ -127,46 +128,60 @@ export async function setAccessToken(token: string | null) {
   }
 }
 
-export async function listWorkflowGrants(workflowId: string) {
-  return command<JsonRecord[]>("list_workflow_grants", { workflowId });
+export async function listResourceGrants(resourceType: string, resourceId: string) {
+  return command<JsonRecord[]>("list_resource_grants", { resourceType, resourceId });
 }
 
-export async function createWorkflowGrant(
-  workflowId: string,
+export async function createResourceGrant(
+  resourceType: string,
+  resourceId: string,
   principalType: "user" | "team",
   principalId: string,
   permission: "view" | "run" | "edit" | "own",
 ) {
-  return command<JsonRecord>("create_workflow_grant", {
-    workflowId,
+  return command<JsonRecord>("create_resource_grant", {
+    resourceType,
+    resourceId,
     principalType,
     principalId,
     permission,
   });
 }
 
-export async function revokeWorkflowGrant(workflowId: string, grantId: string) {
-  return command<TaskResponse>("revoke_workflow_grant", { workflowId, grantId });
+export async function revokeResourceGrant(resourceType: string, resourceId: string, grantId: string) {
+  return command<TaskResponse>("revoke_resource_grant", { resourceType, resourceId, grantId });
+}
+
+export async function transferResourceOwner(
+  resourceType: "workflow" | "pipeline" | "function_package" | "console_session",
+  resourceId: string,
+  scopeKind: "platform" | "organization" | "team" | "user",
+  scopeId: string | null,
+) {
+  return command<JsonRecord>("transfer_resource_owner", { resourceType, resourceId, scopeKind, scopeId });
 }
 
 export interface CreateUserInput {
   username: string;
   password: string;
   email?: string | null;
-  is_admin?: boolean;
+  platform_role: "admin" | "operator" | "auditor" | "member";
 }
 
 export interface UpdateUserInput {
   email?: string | null;
   password?: string | null;
-  is_admin?: boolean | null;
+  platform_role?: "admin" | "operator" | "auditor" | "member" | null;
   disabled?: boolean | null;
 }
 
 export interface CreateApiKeyInput {
   name: string;
-  user_id?: string | null;
-  is_service?: boolean;
+  principal_kind: "user" | "service";
+  principal_id: string;
+  system_role?: "engine" | "worker" | "waker" | "agent" | "replica" | null;
+  org_id?: string | null;
+  action_ceiling?: string[];
   expires_at?: string | null;
 }
 
@@ -216,8 +231,8 @@ export async function listUserTeams(userId: string) {
   return command<Team[]>("list_user_teams", { userId });
 }
 
-export async function addTeamMember(teamId: string, userId: string) {
-  return command<TaskResponse>("add_team_member", { teamId, userId });
+export async function addTeamMember(teamId: string, userId: string, role: "owner" | "admin" | "operator" | "member") {
+  return command<TaskResponse>("add_team_member", { teamId, userId, role });
 }
 
 export async function removeTeamMember(teamId: string, userId: string) {
@@ -252,14 +267,16 @@ export async function rotateApiKey(keyId: string) {
   return command<CreateApiKeyResponse>("rotate_api_key", { keyId });
 }
 
-export async function grantWorkflowAccess(
+export async function grantResourceAccess(
+  resourceType: string,
   workflowId: string,
   principalType: PrincipalType,
   principalId: string,
   permission: PermissionLevel,
 ) {
-  return command<Grant>("create_workflow_grant", {
-    workflowId,
+  return command<Grant>("create_resource_grant", {
+    resourceType,
+    resourceId: workflowId,
     principalType,
     principalId,
     permission,
@@ -447,7 +464,8 @@ export async function deletePipeline(pipelineId: string) {
 
 // reassign a pipeline's owning organization; null makes it platform-global.
 export async function setPipelineOwner(pipelineId: string, orgId: string | null) {
-  return command<Pipeline>("set_pipeline_owner", { pipelineId, orgId });
+  await transferResourceOwner("pipeline", pipelineId, orgId == null ? "platform" : "organization", orgId);
+  return fetchPipeline(pipelineId);
 }
 
 export async function fetchPipelineTriggers(pipelineId: string) {
@@ -731,7 +749,15 @@ export async function fetchReplicaProviders(replicaId: string) {
 }
 
 export async function setWorkflowOwner(workflowId: string, orgId: string | null) {
-  return command<WorkflowDefinition>("set_workflow_owner", { workflowId, orgId });
+  await transferResourceOwner("workflow", workflowId, orgId == null ? "platform" : "organization", orgId);
+
+  const workflow = (await fetchWorkflows()).find((candidate) => candidate.id === workflowId);
+
+  if (workflow == null) {
+    throw new Error(`Workflow ${workflowId} was not returned after its ownership transfer`);
+  }
+
+  return workflow;
 }
 
 export interface SupervisorProcessSnapshot {

@@ -4,6 +4,7 @@ use runinator_broker_core::Broker;
 use runinator_comm::{ControlCommand, ControlKind, WsIngressCommand};
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::errors::error_code_or_unknown;
+use runinator_models::replicas::{ReplicaKind, ReplicaStatus};
 use runinator_models::workflows::WorkflowStatus;
 use tokio::sync::Notify;
 use tracing::{Instrument, error, info, warn};
@@ -27,6 +28,149 @@ const REPLICA_REAP_INTERVAL: Duration = Duration::from_secs(60);
 const USAGE_SAMPLE_INTERVAL: Duration = Duration::from_secs(300);
 const READY_NODE_REAP_INTERVAL: Duration = Duration::from_secs(30);
 const READY_NODE_REAP_LIMIT: i64 = 1000;
+const OPERATIONAL_METRICS_INTERVAL: Duration = Duration::from_secs(15);
+
+fn queue_age(
+    now: chrono::DateTime<chrono::Utc>,
+    oldest: Option<chrono::DateTime<chrono::Utc>>,
+) -> u64 {
+    oldest
+        .map(|value| (now - value).num_seconds().max(0) as u64)
+        .unwrap_or(0)
+}
+
+/// Periodically samples durable operational state so an idle deployment still has useful gauges.
+/// This deliberately queries only aggregate queue/fleet state and never emits record identities.
+pub async fn run_operational_metrics_sampler<T: DatabaseImpl>(db: Arc<T>, shutdown: Arc<Notify>) {
+    info!("operational metrics sampler started");
+    loop {
+        let started = std::time::Instant::now();
+        let now = chrono::Utc::now();
+        let mut succeeded = true;
+
+        match db.ready_node_queue_snapshots(now).await {
+            Ok((due, future)) => {
+                stability::queue_snapshot(
+                    "ready_due",
+                    due.depth,
+                    due.claimed,
+                    queue_age(now, due.oldest_enqueued_at),
+                );
+                stability::queue_snapshot(
+                    "ready_future",
+                    future.depth,
+                    future.claimed,
+                    queue_age(now, future.oldest_enqueued_at),
+                );
+            }
+            Err(err) => {
+                succeeded = false;
+                stability::queue_failure("ready", "snapshot");
+                warn!(
+                    error_code = error_code_or_unknown(err.as_ref()),
+                    "ready queue metrics snapshot failed: {err}"
+                );
+            }
+        }
+        match db.action_dispatch_queue_snapshot(now).await {
+            Ok(snapshot) => stability::queue_snapshot(
+                "action_dispatch",
+                snapshot.depth,
+                snapshot.claimed,
+                queue_age(now, snapshot.oldest_enqueued_at),
+            ),
+            Err(err) => {
+                succeeded = false;
+                stability::queue_failure("action_dispatch", "snapshot");
+                warn!(
+                    error_code = error_code_or_unknown(err.as_ref()),
+                    "action dispatch metrics snapshot failed: {err}"
+                );
+            }
+        }
+        match db
+            .agent_directive_queue_snapshot(now, now - chrono::Duration::seconds(30))
+            .await
+        {
+            Ok(snapshot) => stability::queue_snapshot(
+                "agent_directive",
+                snapshot.depth,
+                snapshot.claimed,
+                queue_age(now, snapshot.oldest_enqueued_at),
+            ),
+            Err(err) => {
+                succeeded = false;
+                stability::queue_failure("agent_directive", "snapshot");
+                warn!(
+                    error_code = error_code_or_unknown(err.as_ref()),
+                    "agent directive metrics snapshot failed: {err}"
+                );
+            }
+        }
+        match db.notification_delivery_queue_snapshot().await {
+            Ok(snapshot) => stability::queue_snapshot(
+                "notification_delivery",
+                snapshot.depth,
+                snapshot.claimed,
+                queue_age(now, snapshot.oldest_enqueued_at),
+            ),
+            Err(err) => {
+                succeeded = false;
+                stability::queue_failure("notification_delivery", "snapshot");
+                warn!(
+                    error_code = error_code_or_unknown(err.as_ref()),
+                    "notification delivery metrics snapshot failed: {err}"
+                );
+            }
+        }
+
+        let stale_before = now - chrono::Duration::seconds(repository::REPLICA_STALE_SECONDS);
+        match db.fetch_replicas(None, None, stale_before).await {
+            Ok(replicas) => {
+                for kind in ReplicaKind::ALL {
+                    for status in [
+                        ReplicaStatus::Live,
+                        ReplicaStatus::Stale,
+                        ReplicaStatus::Offline,
+                    ] {
+                        let count = replicas
+                            .iter()
+                            .filter(|replica| {
+                                replica.replica_type == *kind && replica.status == status
+                            })
+                            .count() as u64;
+                        stability::replica_snapshot(kind.as_str(), status.as_str(), count);
+                    }
+                    let age = replicas
+                        .iter()
+                        .filter(|replica| {
+                            replica.replica_type == *kind
+                                && replica.status != ReplicaStatus::Offline
+                        })
+                        .map(|replica| {
+                            (now - replica.last_heartbeat_at).num_seconds().max(0) as u64
+                        })
+                        .max()
+                        .unwrap_or(0);
+                    stability::replica_heartbeat_age(kind.as_str(), age);
+                }
+            }
+            Err(err) => {
+                succeeded = false;
+                warn!(
+                    error_code = error_code_or_unknown(err.as_ref()),
+                    "replica metrics snapshot failed: {err}"
+                );
+            }
+        }
+        stability::loop_iteration("operational_metrics", succeeded, started.elapsed());
+
+        tokio::select! {
+            _ = shutdown.notified() => return,
+            _ = tokio::time::sleep(OPERATIONAL_METRICS_INTERVAL) => {}
+        }
+    }
+}
 
 /// periodically announce pending ready nodes for drive. due nodes are driven directly on ingress;
 /// future-dated nodes are published on the wake channel for the waker. `wake_nudge` interrupts the
@@ -40,14 +184,20 @@ pub async fn run_wake_publisher<T: DatabaseImpl>(
 ) {
     info!("wake publisher started");
     loop {
-        if let Err(err) =
+        let started = std::time::Instant::now();
+        let succeeded = if let Err(err) =
             repository::publish_pending_wakes(db.as_ref(), broker.as_ref(), CLAIM_LIMIT).await
         {
+            stability::queue_failure("ready", "publish");
             error!(
                 error_code = error_code_or_unknown(err.as_ref()),
                 "wake publisher iteration failed: {}", err
             );
-        }
+            false
+        } else {
+            true
+        };
+        stability::loop_iteration("wake_publisher", succeeded, started.elapsed());
         tokio::select! {
             _ = shutdown.notified() => {
                 info!("wake publisher shutting down");
@@ -66,30 +216,56 @@ pub async fn run_wake_publisher<T: DatabaseImpl>(
 pub async fn run_replica_reaper<T: DatabaseImpl>(db: Arc<T>, shutdown: Arc<Notify>) {
     info!("replica reaper started");
     loop {
+        let started = std::time::Instant::now();
+        let mut succeeded = true;
         match repository::reap_inactive_replicas(db.as_ref()).await {
-            Ok(count) if count > 0 => info!(count, "reaped inactive replica(s) to offline"),
+            Ok(count) if count > 0 => {
+                stability::cleanup("replica_reap", true, count);
+                stability::replica_transition("all", "offline", count);
+                info!(count, "reaped inactive replica(s) to offline")
+            }
             Ok(_) => {}
-            Err(err) => error!(
-                error_code = error_code_or_unknown(err.as_ref()),
-                "replica reaper iteration failed: {}", err
-            ),
+            Err(err) => {
+                succeeded = false;
+                stability::cleanup("replica_reap", false, 1);
+                error!(
+                    error_code = error_code_or_unknown(err.as_ref()),
+                    "replica reaper iteration failed: {}", err
+                )
+            }
         }
         match repository::delete_expired_replicas(db.as_ref()).await {
-            Ok(count) if count > 0 => info!(count, "purged long-stale replica(s)"),
+            Ok(count) if count > 0 => {
+                stability::cleanup("replica_purge", true, count);
+                stability::replica_transition("all", "deleted", count);
+                info!(count, "purged long-stale replica(s)")
+            }
             Ok(_) => {}
-            Err(err) => error!(
-                error_code = error_code_or_unknown(err.as_ref()),
-                "replica purge iteration failed: {}", err
-            ),
+            Err(err) => {
+                succeeded = false;
+                stability::cleanup("replica_purge", false, 1);
+                error!(
+                    error_code = error_code_or_unknown(err.as_ref()),
+                    "replica purge iteration failed: {}", err
+                )
+            }
         }
         match repository::prune_replica_samples(db.as_ref()).await {
-            Ok(count) if count > 0 => info!(count, "pruned expired replica sample(s)"),
+            Ok(count) if count > 0 => {
+                stability::cleanup("replica_sample_prune", true, count);
+                info!(count, "pruned expired replica sample(s)")
+            }
             Ok(_) => {}
-            Err(err) => error!(
-                error_code = error_code_or_unknown(err.as_ref()),
-                "replica sample prune iteration failed: {}", err
-            ),
+            Err(err) => {
+                succeeded = false;
+                stability::cleanup("replica_sample_prune", false, 1);
+                error!(
+                    error_code = error_code_or_unknown(err.as_ref()),
+                    "replica sample prune iteration failed: {}", err
+                )
+            }
         }
+        stability::loop_iteration("replica_reaper", succeeded, started.elapsed());
         tokio::select! {
             _ = shutdown.notified() => {
                 info!("replica reaper shutting down");
@@ -109,17 +285,25 @@ pub async fn run_replica_reaper<T: DatabaseImpl>(db: Arc<T>, shutdown: Arc<Notif
 pub async fn run_ready_node_reaper<T: DatabaseImpl>(db: Arc<T>, shutdown: Arc<Notify>) {
     info!("ready node reaper started");
     loop {
+        let started = std::time::Instant::now();
+        let mut succeeded = true;
         match repository::settle_terminal_run_ready_nodes(db.as_ref(), READY_NODE_REAP_LIMIT).await
         {
             Ok(count) if count > 0 => {
+                stability::cleanup("ready_node_reap", true, count);
                 info!(count, "settled orphaned ready node(s) for terminal run(s)")
             }
             Ok(_) => {}
-            Err(err) => error!(
-                error_code = error_code_or_unknown(err.as_ref()),
-                "ready node reaper iteration failed: {}", err
-            ),
+            Err(err) => {
+                succeeded = false;
+                stability::cleanup("ready_node_reap", false, 1);
+                error!(
+                    error_code = error_code_or_unknown(err.as_ref()),
+                    "ready node reaper iteration failed: {}", err
+                )
+            }
         }
+        stability::loop_iteration("ready_node_reaper", succeeded, started.elapsed());
         tokio::select! {
             _ = shutdown.notified() => {
                 info!("ready node reaper shutting down");
@@ -154,6 +338,8 @@ mod tests;
 pub async fn run_usage_sampler<T: DatabaseImpl>(db: Arc<T>, shutdown: Arc<Notify>) {
     info!("usage sampler started");
     loop {
+        let started = std::time::Instant::now();
+        let mut succeeded = true;
         match db.list_all_resource_groups().await {
             Ok(groups) => {
                 // bucket the timestamp to the sampling-interval boundary so every instance sampling
@@ -171,6 +357,7 @@ pub async fn run_usage_sampler<T: DatabaseImpl>(db: Arc<T>, shutdown: Arc<Notify
                         sampled_at: now,
                     };
                     if let Err(err) = db.insert_usage_sample(sample).await {
+                        succeeded = false;
                         warn!(
                             org_id = %org_id,
                             error_code = error_code_or_unknown(err.as_ref()),
@@ -179,11 +366,15 @@ pub async fn run_usage_sampler<T: DatabaseImpl>(db: Arc<T>, shutdown: Arc<Notify
                     }
                 }
             }
-            Err(err) => error!(
-                error_code = error_code_or_unknown(err.as_ref()),
-                "usage sampler iteration failed: {}", err
-            ),
+            Err(err) => {
+                succeeded = false;
+                error!(
+                    error_code = error_code_or_unknown(err.as_ref()),
+                    "usage sampler iteration failed: {}", err
+                )
+            }
         }
+        stability::loop_iteration("usage_sampler", succeeded, started.elapsed());
         tokio::select! {
             _ = shutdown.notified() => {
                 info!("usage sampler shutting down");
@@ -204,6 +395,8 @@ pub async fn run_trigger_loop<T: DatabaseImpl>(
 ) {
     info!("trigger firing loop started");
     loop {
+        let started = std::time::Instant::now();
+        let mut succeeded = true;
         match repository::claim_due_workflow_trigger_firings(
             db.as_ref(),
             instance_id.clone(),
@@ -254,10 +447,13 @@ pub async fn run_trigger_loop<T: DatabaseImpl>(
                     events.nudge_wake_publisher();
                 }
             }
-            Err(err) => error!(
-                error_code = error_code_or_unknown(err.as_ref()),
-                "trigger firing iteration failed: {}", err
-            ),
+            Err(err) => {
+                succeeded = false;
+                error!(
+                    error_code = error_code_or_unknown(err.as_ref()),
+                    "trigger firing iteration failed: {}", err
+                )
+            }
         }
 
         // fire due cron pipeline triggers and start each created pipeline run's entry members.
@@ -282,11 +478,15 @@ pub async fn run_trigger_loop<T: DatabaseImpl>(
                     events.nudge_wake_publisher();
                 }
             }
-            Err(err) => error!(
-                error_code = error_code_or_unknown(err.as_ref()),
-                "pipeline trigger firing iteration failed: {}", err
-            ),
+            Err(err) => {
+                succeeded = false;
+                error!(
+                    error_code = error_code_or_unknown(err.as_ref()),
+                    "pipeline trigger firing iteration failed: {}", err
+                )
+            }
         }
+        stability::loop_iteration("trigger_poll", succeeded, started.elapsed());
         tokio::select! {
             _ = shutdown.notified() => {
                 info!("trigger firing loop shutting down");
@@ -309,7 +509,8 @@ pub async fn run_action_dispatch_publisher<T: DatabaseImpl>(
 ) {
     info!("action dispatch publisher started");
     loop {
-        if let Err(err) = repository::publish_pending_action_dispatches(
+        let started = std::time::Instant::now();
+        let succeeded = if let Err(err) = repository::publish_pending_action_dispatches(
             db.as_ref(),
             broker.as_ref(),
             &instance_id,
@@ -318,11 +519,16 @@ pub async fn run_action_dispatch_publisher<T: DatabaseImpl>(
         )
         .await
         {
+            stability::queue_failure("action_dispatch", "publish");
             error!(
                 error_code = error_code_or_unknown(err.as_ref()),
                 "action dispatch publisher iteration failed: {}", err
             );
-        }
+            false
+        } else {
+            true
+        };
+        stability::loop_iteration("action_dispatch", succeeded, started.elapsed());
         tokio::select! {
             _ = shutdown.notified() => {
                 info!("action dispatch publisher shutting down");
@@ -344,7 +550,8 @@ pub async fn run_agent_directive_publisher<T: DatabaseImpl>(
 ) {
     info!("agent directive publisher started");
     loop {
-        if let Err(err) = repository::publish_due_agent_directives(
+        let started = std::time::Instant::now();
+        let succeeded = if let Err(err) = repository::publish_due_agent_directives(
             db.as_ref(),
             broker.as_ref(),
             &instance_id,
@@ -352,11 +559,16 @@ pub async fn run_agent_directive_publisher<T: DatabaseImpl>(
         )
         .await
         {
+            stability::queue_failure("agent_directive", "publish");
             error!(
                 error_code = error_code_or_unknown(err.as_ref()),
                 "agent directive publisher iteration failed: {err}"
             );
-        }
+            false
+        } else {
+            true
+        };
+        stability::loop_iteration("agent_directive", succeeded, started.elapsed());
         tokio::select! {
             _ = shutdown.notified() => return,
             _ = agent_nudge.notified() => {}
@@ -376,6 +588,8 @@ pub async fn run_ingress_consumer<T: DatabaseImpl>(
 ) {
     info!("ingress consumer started");
     let mut attempts = HashMap::<String, u32>::new();
+    let mut health_tick = tokio::time::interval(std::time::Duration::from_secs(15));
+    health_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
         let delivery = tokio::select! {
             _ = shutdown.notified() => {
@@ -402,6 +616,10 @@ pub async fn run_ingress_consumer<T: DatabaseImpl>(
                     }
                 }
             }
+            _ = health_tick.tick() => {
+                stability::loop_iteration("ingress", true, std::time::Duration::ZERO);
+                continue;
+            }
         };
 
         // correlate this delivery's logs with the run/node it targets. `Drive` carries the reducer's
@@ -425,6 +643,7 @@ pub async fn run_ingress_consumer<T: DatabaseImpl>(
                 tracing::info_span!("ingress_agent_directive_result", directive_id = %result.directive_id)
             }
         };
+        let started = std::time::Instant::now();
 
         async {
             let key = delivery.dedupe_key.clone();
@@ -449,6 +668,8 @@ pub async fn run_ingress_consumer<T: DatabaseImpl>(
                             "failed to ack ingress message: {}", err
                         );
                     }
+                    stability::queue_snapshot("ingress_retry", attempts.len() as u64, 0, 0);
+                    stability::loop_iteration("ingress", true, started.elapsed());
                 }
                 Err(err) => {
                     let count = {
@@ -485,6 +706,8 @@ pub async fn run_ingress_consumer<T: DatabaseImpl>(
                                 "failed to ack dead-lettered ingress message: {}", err
                             );
                         }
+                        stability::queue_snapshot("ingress_retry", attempts.len() as u64, 0, 0);
+                        stability::loop_iteration("ingress", false, started.elapsed());
                         return;
                     }
                     stability::ingress_retried();
@@ -498,6 +721,8 @@ pub async fn run_ingress_consumer<T: DatabaseImpl>(
                             "failed to nack ingress message: {}", err
                         );
                     }
+                    stability::queue_snapshot("ingress_retry", attempts.len() as u64, 0, 0);
+                    stability::loop_iteration("ingress", false, started.elapsed());
                 }
             }
         }

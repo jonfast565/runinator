@@ -2,20 +2,44 @@
 //! capability set each principal kind resolves to.
 
 use super::*;
+use runinator_models::rbac::{Action, ScopeRef};
+
+async fn register_workflow_ownership(db: &SqliteDb, workflow_id: Uuid, org_id: Option<Uuid>) {
+    let now = chrono::Utc::now();
+    let tenant = org_id
+        .and_then(|id| ScopeRef::new(runinator_models::rbac::ScopeKind::Organization, Some(id)))
+        .unwrap_or(ScopeRef::PLATFORM);
+    db.put_resource_ownership(runinator_models::rbac::ResourceOwnership {
+        resource_type: ResourceType::Workflow,
+        resource_id: workflow_id,
+        tenant,
+        owner: tenant,
+        created_by: None,
+        authz_version: 1,
+        created_at: now,
+        updated_at: now,
+    })
+    .await
+    .unwrap();
+}
 
 #[tokio::test]
 async fn visible_workflow_ids_include_direct_and_team_grants() {
     let (db, path) = test_db().await;
     let direct = save_workflow(&db, &workflow(None, "direct")).await.unwrap();
     let team = save_workflow(&db, &workflow(None, "team")).await.unwrap();
-    let user = db
-        .create_user("member".into(), None, false, None)
+    register_workflow_ownership(&db, direct.id.unwrap(), None).await;
+    register_workflow_ownership(&db, team.id.unwrap(), None).await;
+    let user = db.create_user("member".into(), None, None).await.unwrap();
+    let user_id = user.id.expect("user id");
+    let team_record = db
+        .create_team("ops".into(), ScopeRef::PLATFORM)
         .await
         .unwrap();
-    let user_id = user.id.expect("user id");
-    let team_record = db.create_team("ops".into()).await.unwrap();
     let team_id = team_record.id.expect("team id");
-    db.add_team_member(team_id, user_id).await.unwrap();
+    db.add_team_member(team_id, user_id, runinator_models::rbac::TeamRole::Member)
+        .await
+        .unwrap();
     db.create_grant(Grant {
         id: None,
         resource_type: ResourceType::Workflow,
@@ -43,15 +67,19 @@ async fn visible_workflow_ids_include_direct_and_team_grants() {
         &db,
         &AuthContext {
             principal_id: Some(user_id),
-            is_admin: false,
+            session_id: None,
+            platform_role: None,
+            assignments: Vec::new(),
+            system_role: None,
+            action_ceiling: Vec::new(),
             kind: PrincipalKind::User,
             org_id: None,
-            org_role: None,
         },
     )
     .visible_workflow_ids()
     .await
-    .expect("scoped set");
+    .unwrap_or_else(|_| panic!("authorization lookup failed"))
+    .expect("non-admin visibility set");
 
     assert_eq!(visible.len(), 2);
     assert!(visible.contains(&direct.id.unwrap()));
@@ -78,11 +106,13 @@ async fn workflow_listing_is_isolated_by_org() {
         .await
         .unwrap();
     let shared_id = shared.id.unwrap();
+    register_workflow_ownership(db.as_ref(), wf_a_id, Some(org_a)).await;
+    register_workflow_ownership(db.as_ref(), shared_id, None).await;
 
     // the org-B user is granted view on BOTH workflows, so only org scoping (not missing grants)
     // can hide org A's workflow from them.
     let user_id = db
-        .create_user("orgb-user".into(), None, false, None)
+        .create_user("orgb-user".into(), None, None)
         .await
         .unwrap()
         .id
@@ -107,10 +137,22 @@ async fn workflow_listing_is_isolated_by_org() {
     // a member of org B sees the shared workflow but not org A's.
     let ctx_b = AuthContext {
         principal_id: Some(user_id),
-        is_admin: false,
+        session_id: None,
+        platform_role: None,
+        assignments: vec![runinator_models::rbac::RoleAssignment {
+            principal_kind: PrincipalKind::User,
+            principal_id: user_id,
+            scope: ScopeRef::new(runinator_models::rbac::ScopeKind::Organization, Some(org_b))
+                .unwrap(),
+            role: runinator_models::rbac::Role::Organization(OrgRole::Member),
+            created_by: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        }],
+        system_role: None,
+        action_ceiling: Vec::new(),
         kind: PrincipalKind::User,
         org_id: Some(org_b),
-        org_role: Some(OrgRole::Member),
     };
     let (status, body) = crate::handlers::workflows::get_workflows::<SqliteDb>(
         Extension(db.clone()),
@@ -135,10 +177,13 @@ async fn workflow_listing_is_isolated_by_org() {
     // the platform admin sees every workflow regardless of org.
     let admin_ctx = AuthContext {
         principal_id: None,
-        is_admin: true,
+        session_id: None,
+        platform_role: Some(runinator_models::rbac::PlatformRole::Admin),
+        assignments: Vec::new(),
+        system_role: None,
+        action_ceiling: Vec::new(),
         kind: PrincipalKind::Service,
         org_id: None,
-        org_role: None,
     };
     let (_, body) = crate::handlers::workflows::get_workflows::<SqliteDb>(
         Extension(db.clone()),
@@ -169,19 +214,22 @@ async fn workflow_permission_takes_highest_of_user_and_team_grants() {
     let (db, path) = test_db().await;
     let wf = save_workflow(&db, &workflow(None, "shared")).await.unwrap();
     let workflow_id = wf.id.expect("workflow id");
+    register_workflow_ownership(&db, workflow_id, None).await;
     let user_id = db
-        .create_user("member".into(), None, false, None)
+        .create_user("member".into(), None, None)
         .await
         .unwrap()
         .id
         .expect("user id");
     let team_id = db
-        .create_team("ops".into())
+        .create_team("ops".into(), ScopeRef::PLATFORM)
         .await
         .unwrap()
         .id
         .expect("team id");
-    db.add_team_member(team_id, user_id).await.unwrap();
+    db.add_team_member(team_id, user_id, runinator_models::rbac::TeamRole::Member)
+        .await
+        .unwrap();
     // a weak direct grant and a stronger team grant on the same workflow.
     db.create_grant(grant(
         workflow_id,
@@ -238,7 +286,7 @@ async fn workflow_permission_is_none_without_a_grant() {
         .unwrap();
     let workflow_id = wf.id.expect("workflow id");
     let user_id = db
-        .create_user("stranger".into(), None, false, None)
+        .create_user("stranger".into(), None, None)
         .await
         .unwrap()
         .id
@@ -256,7 +304,7 @@ async fn workflow_permission_is_none_without_a_grant() {
         .await;
     assert_eq!(
         denied.expect_err("view should be denied").0,
-        StatusCode::FORBIDDEN
+        StatusCode::NOT_FOUND
     );
 
     let _ = std::fs::remove_file(path);
@@ -270,10 +318,13 @@ async fn workflow_permission_admin_owns_everything_without_grants() {
 
     let admin = AuthContext {
         principal_id: None,
-        is_admin: true,
+        session_id: None,
+        platform_role: Some(runinator_models::rbac::PlatformRole::Admin),
+        assignments: Vec::new(),
+        system_role: None,
+        action_ceiling: Vec::new(),
         kind: PrincipalKind::User,
         org_id: None,
-        org_role: None,
     };
     assert_eq!(
         AuthzChecker::new(&db, &admin)
@@ -291,129 +342,200 @@ async fn workflow_permission_admin_owns_everything_without_grants() {
     let _ = std::fs::remove_file(path);
 }
 
-fn auth_ctx(is_admin: bool, org_role: Option<OrgRole>) -> AuthContext {
+fn auth_ctx(is_platform_admin: bool, org_role: Option<OrgRole>) -> AuthContext {
+    let principal_id = Uuid::now_v7();
+    let org_id = org_role.map(|_| Uuid::now_v7());
+    let now = chrono::Utc::now();
     AuthContext {
-        principal_id: Some(Uuid::now_v7()),
-        is_admin,
+        principal_id: Some(principal_id),
+        session_id: None,
+        platform_role: is_platform_admin.then_some(runinator_models::rbac::PlatformRole::Admin),
+        assignments: org_role
+            .into_iter()
+            .map(|role| runinator_models::rbac::RoleAssignment {
+                principal_kind: PrincipalKind::User,
+                principal_id,
+                scope: ScopeRef::new(runinator_models::rbac::ScopeKind::Organization, org_id)
+                    .unwrap(),
+                role: runinator_models::rbac::Role::Organization(role),
+                created_by: None,
+                created_at: now,
+                updated_at: now,
+            })
+            .collect(),
+        system_role: None,
+        action_ceiling: Vec::new(),
         kind: PrincipalKind::User,
-        org_id: org_role.map(|_| Uuid::now_v7()),
-        org_role,
+        org_id,
     }
 }
 
 #[test]
-fn org_visible_matches_ui_event_egress_policy() {
+fn scoped_view_matches_ui_event_egress_policy() {
     let org_a = Uuid::now_v7();
     let org_b = Uuid::now_v7();
     let admin = AuthContext {
         principal_id: Some(Uuid::now_v7()),
-        is_admin: true,
+        session_id: None,
+        platform_role: Some(runinator_models::rbac::PlatformRole::Admin),
+        assignments: Vec::new(),
+        system_role: None,
+        action_ceiling: Vec::new(),
         kind: PrincipalKind::User,
         org_id: Some(org_a),
-        org_role: Some(OrgRole::Admin),
     };
     let member_a = AuthContext {
         principal_id: Some(Uuid::now_v7()),
-        is_admin: false,
+        session_id: None,
+        platform_role: None,
+        assignments: vec![runinator_models::rbac::RoleAssignment {
+            principal_kind: PrincipalKind::User,
+            principal_id: Uuid::now_v7(),
+            scope: ScopeRef::new(runinator_models::rbac::ScopeKind::Organization, Some(org_a))
+                .unwrap(),
+            role: runinator_models::rbac::Role::Organization(OrgRole::Member),
+            created_by: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        }],
+        system_role: None,
+        action_ceiling: Vec::new(),
         kind: PrincipalKind::User,
         org_id: Some(org_a),
-        org_role: Some(OrgRole::Member),
     };
     let member_b = AuthContext {
         principal_id: Some(Uuid::now_v7()),
-        is_admin: false,
+        session_id: None,
+        platform_role: None,
+        assignments: vec![runinator_models::rbac::RoleAssignment {
+            principal_kind: PrincipalKind::User,
+            principal_id: Uuid::now_v7(),
+            scope: ScopeRef::new(runinator_models::rbac::ScopeKind::Organization, Some(org_b))
+                .unwrap(),
+            role: runinator_models::rbac::Role::Organization(OrgRole::Member),
+            created_by: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        }],
+        system_role: None,
+        action_ceiling: Vec::new(),
         kind: PrincipalKind::User,
         org_id: Some(org_b),
-        org_role: Some(OrgRole::Member),
     };
 
+    let scope =
+        |org| ScopeRef::new(runinator_models::rbac::ScopeKind::Organization, Some(org)).unwrap();
     // platform admin sees every scoped and unscoped event.
-    assert!(admin.org_visible(Some(org_a)));
-    assert!(admin.org_visible(Some(org_b)));
-    assert!(admin.org_visible(None));
-    // unscoped (rollout / global) tips stay visible to every client.
-    assert!(member_a.org_visible(None));
-    assert!(member_b.org_visible(None));
+    assert!(admin.authorize_scope(Action::View, scope(org_a)));
+    assert!(admin.authorize_scope(Action::View, scope(org_b)));
+    assert!(admin.authorize_scope(Action::View, ScopeRef::PLATFORM));
+    // org-only principals do not receive unscoped platform events.
+    assert!(!member_a.authorize_scope(Action::View, ScopeRef::PLATFORM));
+    assert!(!member_b.authorize_scope(Action::View, ScopeRef::PLATFORM));
     // scoped tips only reach the matching active org.
-    assert!(member_a.org_visible(Some(org_a)));
-    assert!(!member_a.org_visible(Some(org_b)));
-    assert!(!member_b.org_visible(Some(org_a)));
+    assert!(member_a.authorize_scope(Action::View, scope(org_a)));
+    assert!(!member_a.authorize_scope(Action::View, scope(org_b)));
+    assert!(!member_b.authorize_scope(Action::View, scope(org_a)));
 }
 
 #[test]
-fn platform_admin_holds_every_capability() {
+fn platform_admin_holds_every_action() {
     let ctx = auth_ctx(true, None);
-    let caps = ctx.capabilities();
-    for cap in runinator_models::capabilities::Capability::ALL {
-        assert!(caps.contains(cap), "admin must hold {cap:?}");
+    for action in runinator_models::rbac::Action::ALL {
+        assert!(
+            ctx.authorize_scope(*action, ScopeRef::PLATFORM),
+            "admin must hold {action:?}"
+        );
     }
 }
 
 #[test]
-fn disabled_admin_holds_every_capability() {
-    let caps = AuthContext::disabled_admin().capabilities();
-    assert_eq!(
-        caps.len(),
-        runinator_models::capabilities::Capability::ALL.len()
+fn disabled_admin_holds_every_action() {
+    let ctx = AuthContext::disabled_platform_admin();
+    assert!(
+        runinator_models::rbac::Action::ALL
+            .iter()
+            .all(|action| ctx.authorize_scope(*action, ScopeRef::PLATFORM))
     );
 }
 
 #[test]
-fn org_admin_holds_only_org_capabilities() {
-    use runinator_models::capabilities::Capability;
+fn org_admin_holds_only_org_actions() {
     let ctx = auth_ctx(false, Some(OrgRole::Admin));
-    let caps = ctx.capabilities();
-    assert!(caps.contains(&Capability::OrgMembersManage));
-    assert!(caps.contains(&Capability::OrgNodesScale));
-    assert!(!caps.contains(&Capability::UsersManage));
-    assert!(!caps.contains(&Capability::SecretsRead));
-    assert!(!caps.contains(&Capability::NodesScale));
+    let scope = ctx.selected_scope();
+    assert!(ctx.authorize_scope(Action::MembersManage, scope));
+    assert!(ctx.authorize_scope(Action::NodesOperate, scope));
+    assert!(!ctx.authorize_scope(Action::Own, scope));
+    assert!(!ctx.authorize_scope(Action::MembersManage, ScopeRef::PLATFORM));
 }
 
 #[test]
-fn org_member_holds_no_capabilities() {
+fn org_member_is_read_only() {
     let ctx = auth_ctx(false, Some(OrgRole::Member));
-    assert!(ctx.capabilities().is_empty());
+    let scope = ctx.selected_scope();
+    assert!(ctx.authorize_scope(Action::View, scope));
+    assert!(!ctx.authorize_scope(Action::Edit, scope));
 }
 
 #[test]
-fn require_capability_gates_by_holder() {
-    use runinator_models::capabilities::Capability;
+fn scoped_actions_gate_by_role() {
     let admin = auth_ctx(true, None);
     let member = auth_ctx(false, Some(OrgRole::Member));
     let org_admin = auth_ctx(false, Some(OrgRole::Admin));
 
-    assert!(admin.require_capability(Capability::UsersManage).is_ok());
-    assert!(member.require_capability(Capability::UsersManage).is_err());
     assert!(
-        org_admin
-            .require_capability(Capability::UsersManage)
+        admin
+            .require_scope_action(Action::MembersManage, ScopeRef::PLATFORM)
+            .is_ok()
+    );
+    assert!(
+        member
+            .require_scope_action(Action::MembersManage, ScopeRef::PLATFORM)
             .is_err()
     );
     assert!(
         org_admin
-            .require_capability(Capability::OrgMembersManage)
+            .require_scope_action(Action::MembersManage, ScopeRef::PLATFORM)
+            .is_err()
+    );
+    assert!(
+        org_admin
+            .require_scope_action(Action::MembersManage, org_admin.selected_scope())
             .is_ok()
     );
 }
 
 #[tokio::test]
-async fn me_returns_resolved_capabilities() {
+async fn me_returns_resolved_actions() {
     let (db, path) = test_db().await;
     let db = Arc::new(db);
-    let user = db
-        .create_user("member".into(), None, false, None)
-        .await
-        .unwrap();
+    let user = db.create_user("member".into(), None, None).await.unwrap();
     let user_id = user.id.expect("user id");
 
     // an org admin sees the org capabilities but none of the platform ones.
+    let org_id = Uuid::now_v7();
+    let now = chrono::Utc::now();
     let ctx = AuthContext {
         principal_id: Some(user_id),
-        is_admin: false,
+        session_id: None,
+        platform_role: None,
+        assignments: vec![runinator_models::rbac::RoleAssignment {
+            principal_kind: PrincipalKind::User,
+            principal_id: user_id,
+            scope: ScopeRef::new(
+                runinator_models::rbac::ScopeKind::Organization,
+                Some(org_id),
+            )
+            .unwrap(),
+            role: runinator_models::rbac::Role::Organization(OrgRole::Admin),
+            created_by: None,
+            created_at: now,
+            updated_at: now,
+        }],
+        system_role: None,
+        action_ceiling: Vec::new(),
         kind: PrincipalKind::User,
-        org_id: Some(Uuid::now_v7()),
-        org_role: Some(OrgRole::Admin),
+        org_id: Some(org_id),
     };
     let (status, Json(body)) =
         crate::handlers::auth::me::<SqliteDb>(Extension(db.clone()), Extension(ctx)).await;
@@ -421,15 +543,15 @@ async fn me_returns_resolved_capabilities() {
     let crate::models::ApiResponse::JsonValue(value) = body else {
         panic!("me response must be json");
     };
-    let capabilities: Vec<String> = value
-        .get("capabilities")
+    let actions: Vec<String> = value
+        .get("effective_actions")
         .and_then(|caps| caps.as_array())
-        .expect("capabilities array")
+        .expect("effective actions array")
         .iter()
         .filter_map(|cap| cap.as_str().map(str::to_string))
         .collect();
-    assert!(capabilities.contains(&"org:members:manage".to_string()));
-    assert!(!capabilities.contains(&"users:manage".to_string()));
+    assert!(actions.contains(&"members:manage".to_string()));
+    assert!(!actions.contains(&"resource:own".to_string()));
 
     let _ = std::fs::remove_file(path);
 }

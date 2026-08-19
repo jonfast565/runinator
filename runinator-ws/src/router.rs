@@ -19,10 +19,10 @@ use tower_http::cors::{Any, CorsLayer};
 use crate::auth::{AuthConfig, AuthState, auth_middleware};
 use crate::events::EventSender;
 use crate::handlers::{
-    action_dispatches, agents, artifacts, auth, automation, billing, catalog, catalog_metadata,
-    console, credentials, debug, function_invocations, functions, health, node_runs, notifications,
-    observability, orgs, packs, pipelines, providers, provisioning, replicas, runs, schedules,
-    supervisor, triggers, wdl, webhook, workflows,
+    action_dispatches, agents, artifacts, auth, authz, automation, billing, catalog,
+    catalog_metadata, console, credentials, debug, function_invocations, functions, health,
+    node_runs, notifications, observability, orgs, packs, pipelines, providers, provisioning,
+    replicas, runs, schedules, supervisor, triggers, wdl, webhook, workflows,
 };
 use crate::models::{ApiError, ApiResponse};
 use crate::overload::{OverloadConfig, apply_overload_protection};
@@ -79,6 +79,7 @@ pub fn build_router<T: DatabaseImpl>(
         .merge(catalog_metadata::routes())
         .merge(webhook::routes(pool.clone()))
         .merge(auth::routes(pool.clone()))
+        .merge(authz::routes(pool.clone()))
         .merge(orgs::routes(pool.clone()))
         .merge(billing::routes(pool.clone()))
         .layer(Extension(events))
@@ -131,6 +132,12 @@ async fn trace_propagation_middleware(
 
     let method = request.method().clone();
     let path = request.uri().path().to_string();
+    let metric_method = crate::metrics::method(&method);
+    let metric_route = request
+        .extensions()
+        .get::<axum::extract::MatchedPath>()
+        .map(|matched| matched.as_str().to_string())
+        .unwrap_or_else(|| "unmatched".to_string());
     // reuse an inbound request id from a fronting proxy/gateway when present, so this request's logs
     // line up with that layer's; otherwise mint one so every request is correlatable even with otel off.
     let request_id = request
@@ -150,7 +157,14 @@ async fn trace_propagation_middleware(
 
     async move {
         let started = std::time::Instant::now();
+        let _in_flight = crate::metrics::request_started();
         let mut response = next.run(request).await;
+        crate::metrics::request_completed(
+            metric_method,
+            &metric_route,
+            response.status(),
+            started.elapsed(),
+        );
         let duration_ms = started.elapsed().as_millis() as u64;
         let status = response.status().as_u16();
         if status >= 500 {

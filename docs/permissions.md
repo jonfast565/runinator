@@ -1,81 +1,37 @@
-# Permission Model
+# Hierarchical RBAC
 
-Runinator's authorization has two independent axes. This document is the source of truth for the
-first; the code enforces both.
+Runinator authorizes every request from live database state. Credentials identify a principal;
+they do not carry copied administrative authority.
 
-1. **Capabilities** — named, global/organization-scoped privileges (this document). The catalog lives
-   in `runinator-models/src/capabilities.rs` (`Capability`), is mirrored to the command center in
-   `src/core/domain/models/auth/capability.ts`, and is resolved per-request by
-   `runinator-ws-middleware/src/authz.rs::capabilities_for`.
-2. **Resource grants** — a per-resource ladder (`View < Run < Edit < Own`) on individual workflows and
-   pipelines, held by a user or a team. Defined by `Permission` in `runinator-models/src/auth.rs` and
-   enforced by `authz::require_workflow` / `require_pipeline` (and the `require_*_workflow` helpers for
-   sub-resources). Not enumerated here; see those functions.
+Authority flows downward through `Platform → Organization → Team → Resource/User`. Assignments and
+direct grants are additive. Platform roles are `Member < Auditor < Operator < Admin`;
+organization and team roles are `Member < Operator < Admin < Owner`. A platform admin is the only
+superuser. Machine principals use explicit `Engine`, `Worker`, `Waker`, `Agent`, or `Replica` system
+roles and may also have an action ceiling.
 
-## Who holds a capability
+The canonical vocabulary lives in `runinator-models/src/rbac.rs` and is returned by
+`GET /authz/catalog`. `GET /auth/me` returns the selected scope, current assignments, and effective
+actions. Middleware reloads the enabled principal, session, assignments, and API-key restrictions on
+every request, so revocation and demotion take effect immediately.
 
-Capabilities are resolved from the caller's platform-admin flag and their role in the **active
-organization** (`capabilities_for`):
+Top-level shareable resources—workflows, pipelines, function packages, and console sessions—have an
+authoritative ownership row and generic grants using `View < Run < Edit < Own` (`Edit` includes
+`Run`). Runs, node runs, triggers, artifacts, invocations, cells, gates, approvals, and automation
+records inherit through their stored parent. Organization and team roles do not expose user-owned
+resources without an explicit grant.
 
-- **Platform admin** (`is_admin`, including the synthetic admin used when auth is disabled) — holds
-  **every** capability.
-- **Organization admin/owner** (active-org role ≥ `admin`) — holds the organization capabilities only.
-- **Organization member** / signed-out — holds none.
+Handlers use `require_scope_action` for scoped operations, `AuthzChecker::require_resource` for
+top-level resources, and a database-backed child resolver for descendants. `is_platform_admin()` is
+the sole administrative short-circuit. Service credentials never bypass these checks; data-plane
+routes require an explicit `SystemRole`.
 
-When auth is disabled (`RUNINATOR_AUTH_ENABLED=false`, the default), every request runs as the
-synthetic platform admin, so nothing is gated.
+The generic administration surface is:
 
-## Catalog
+- `/authz/assignments/{scope_kind}/{scope_id}` for scoped assignments;
+- `/authz/resources/{resource_type}/{resource_id}/grants` for generic ACLs;
+- `/authz/resources/{resource_type}/{resource_id}/owner` for ownership transfer;
+- `/authz/service-accounts` for machine principals;
+- `/authz/catalog` and `/auth/me` for clients.
 
-### Platform capabilities (platform admin only)
-
-| Capability | Grants | Enforced at |
-| --- | --- | --- |
-| `users:manage` | create/update/delete user accounts | `handlers/auth.rs` (users) |
-| `teams:manage` | create/update/delete teams and membership | `handlers/auth.rs` (teams) |
-| `apikeys:manage` | administer api keys beyond one's own (service keys, others', rotate/revoke) | `handlers/auth.rs` (api keys) |
-| `secrets:read` | read decrypted settings/secrets | `handlers/credentials.rs` (get/list) |
-| `secrets:write` | create/update/delete/import/re-encrypt settings/secrets | `handlers/credentials.rs` (mutations) |
-| `catalog:manage` | upsert catalog metadata items | `handlers/catalog.rs` |
-| `audit:read` | read the audit log | `handlers/observability.rs` |
-| `deadletters:read` | read the dead-letter queue | `handlers/observability.rs` |
-| `nodes:scale` | scale/stop platform worker nodes | `handlers/provisioning.rs` |
-| `workflows:import` | import workflow bundles | `handlers/workflows.rs` |
-| `orgs:manage` | platform-wide org administration (list all) | `handlers/orgs.rs` |
-| `billing:manage` | set organization billing quotas | `handlers/billing.rs` |
-| `settings:manage` | manage platform/admin settings | command center admin settings |
-| `notifications:manage` | create, update, and delete notification (failure-alerting) policies | `handlers/notifications.rs` |
-| `schedules:manage` | manage freeze windows and replay missed cron slots (trigger backfill) | `handlers/schedules.rs` |
-| `functions:manage` | publish, promote, and delete packaged function versions | `handlers/functions.rs` |
-| `functions:invoke` | invoke a packaged function over HTTP | `handlers/function_invocations.rs` |
-| `console:use` | use the WDL console (a cell can start a workflow run) | `handlers/console.rs` |
-
-### Organization capabilities (active-org admin, or platform admin)
-
-| Capability | Grants | Enforced at |
-| --- | --- | --- |
-| `org:members:manage` | manage membership and roles in the active org | `handlers/orgs.rs` (`require_org_admin`) |
-| `org:nodes:scale` | scale worker nodes within the active org | `handlers/billing.rs` (`require_org_admin`) |
-
-The organization endpoints keep `require_org_admin(ctx, org_id)`, which also checks the caller is an
-admin of the *target* org. The org capabilities above are the command center's signal for the same
-rule (they are derived from the active-org role) and must not be applied to platform-global handlers.
-
-## Enforcement
-
-- **Backend is authoritative.** Handlers gate with `authz::require_capability(&ctx, Capability::X)` for
-  platform capabilities, `require_org_admin` for org-scoped resources, and `require_workflow` /
-  `require_pipeline` for resource grants. `GET /auth/me` returns the caller's resolved capability set
-  (`capabilities`), and `/auth/login` embeds it in the token response.
-- **Command center gates against `/auth/me`.** Capabilities are stored on the auth principal
-  (`core/services/auth.ts`), exposed through `useCapabilitiesStore` / the `useCan()` composable, and
-  refreshed on login, refresh, and org switch (`auth.reloadMe()`). The ui **hides** navigation tabs and
-  admin panels the caller lacks (`nav-config.ts` `requires`), and **disables** individual action
-  controls. This is defense-in-depth and UX; it never replaces backend enforcement.
-
-## Extending the model
-
-Add a new privileged action as a `Capability` variant (backend + the mirrored TS union), map it in
-`capabilities_for`, gate the handler with `require_capability`, and document it in the table above.
-Prefer a named capability over a new bare `require_admin` gate so both the backend and the ui reference
-one dictionary.
+The Command Center consumes backend action strings directly. It hides or disables unavailable
+controls, but backend authorization remains authoritative.

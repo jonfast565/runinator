@@ -41,8 +41,9 @@ describe("permissions store", () => {
       {
         id: "k-1",
         name: "ada key",
-        user_id: "u-1",
-        is_service: false,
+        principal_kind: "user",
+        principal_id: "u-1",
+        action_ceiling: [],
         key_prefix: "ada",
         last_used_at: null,
         expires_at: null,
@@ -52,8 +53,9 @@ describe("permissions store", () => {
       {
         id: "k-2",
         name: "service key",
-        user_id: null,
-        is_service: true,
+        principal_kind: "service",
+        principal_id: "s-1",
+        action_ceiling: [],
         key_prefix: "svc",
         last_used_at: null,
         expires_at: null,
@@ -66,7 +68,7 @@ describe("permissions store", () => {
         id: "u-1",
         username: "ada",
         email: "ada@example.com",
-        is_admin: true,
+        platform_role: "admin",
         disabled: false,
         created_at: "2026-01-01T00:00:00Z",
         updated_at: "2026-01-01T00:00:00Z",
@@ -86,8 +88,9 @@ describe("permissions store", () => {
       api_key: {
         id: "k-3",
         name: "new key",
-        user_id: "u-1",
-        is_service: false,
+        principal_kind: "user",
+        principal_id: "u-1",
+        action_ceiling: [],
         key_prefix: "new",
         last_used_at: null,
         expires_at: null,
@@ -99,8 +102,10 @@ describe("permissions store", () => {
     vi.mocked(updateApiKey).mockResolvedValue({
       id: "k-1",
       name: "renamed key",
-      user_id: "u-1",
-      is_service: false,
+      principal_kind: "user",
+      principal_id: "u-1",
+      system_role: null,
+      action_ceiling: [],
       key_prefix: "ada",
       last_used_at: null,
       expires_at: null,
@@ -112,8 +117,9 @@ describe("permissions store", () => {
       api_key: {
         id: "k-4",
         name: "ada key",
-        user_id: "u-1",
-        is_service: false,
+        principal_kind: "user",
+        principal_id: "u-1",
+        action_ceiling: [],
         key_prefix: "rotated",
         last_used_at: null,
         expires_at: null,
@@ -142,7 +148,7 @@ describe("permissions store", () => {
 
     await permissions.assignSelectedUserToTeam("t-1");
 
-    expect(addTeamMember).toHaveBeenCalledWith("t-1", "u-1");
+    expect(addTeamMember).toHaveBeenCalledWith("t-1", "u-1", "member");
     expect(listUserTeams).toHaveBeenCalledWith("u-1");
   });
 
@@ -164,8 +170,10 @@ describe("permissions store", () => {
 
     expect(createApiKey).toHaveBeenCalledWith({
       name: "new key",
-      is_service: false,
-      user_id: "u-1",
+      principal_kind: "user",
+      principal_id: "u-1",
+      system_role: null,
+      action_ceiling: [],
       expires_at: null,
     });
     expect(permissions.revealedApiKey?.secret).toBe("new.secret");

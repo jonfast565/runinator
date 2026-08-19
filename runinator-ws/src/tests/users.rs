@@ -21,17 +21,26 @@ use runinator_utilities::secret_cipher::SecretCipher;
 async fn user_admin_handlers_preserve_last_enabled_admin() {
     let (db, path) = test_db().await;
     let db = Arc::new(db);
-    let admin = db
-        .create_user("admin".into(), None, true, None)
-        .await
-        .unwrap();
+    let admin = db.create_user("admin".into(), None, None).await.unwrap();
     let admin_id = admin.id.expect("admin id");
+    db.upsert_role_assignment(
+        PrincipalKind::User,
+        admin_id,
+        runinator_models::rbac::ScopeRef::PLATFORM,
+        runinator_models::rbac::Role::Platform(runinator_models::rbac::PlatformRole::Admin),
+        None,
+    )
+    .await
+    .unwrap();
     let ctx = AuthContext {
         principal_id: Some(admin_id),
-        is_admin: true,
+        session_id: None,
+        platform_role: Some(runinator_models::rbac::PlatformRole::Admin),
+        assignments: Vec::new(),
+        system_role: None,
+        action_ceiling: Vec::new(),
         kind: PrincipalKind::User,
         org_id: None,
-        org_role: None,
     };
 
     let (status, _) = crate::handlers::auth::update_user::<SqliteDb>(
@@ -41,7 +50,7 @@ async fn user_admin_handlers_preserve_last_enabled_admin() {
         Json(UpdateUserRequest {
             email: None,
             password: None,
-            is_admin: Some(false),
+            platform_role: Some(runinator_models::rbac::PlatformRole::Member),
             disabled: None,
         }),
     )
@@ -55,7 +64,7 @@ async fn user_admin_handlers_preserve_last_enabled_admin() {
         Json(UpdateUserRequest {
             email: None,
             password: None,
-            is_admin: None,
+            platform_role: None,
             disabled: Some(true),
         }),
     )
@@ -70,24 +79,33 @@ async fn user_admin_handlers_preserve_last_enabled_admin() {
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
 
-    let second = db
-        .create_user("second".into(), None, true, None)
-        .await
-        .unwrap();
+    let second = db.create_user("second".into(), None, None).await.unwrap();
+    db.upsert_role_assignment(
+        PrincipalKind::User,
+        second.id.unwrap(),
+        runinator_models::rbac::ScopeRef::PLATFORM,
+        runinator_models::rbac::Role::Platform(runinator_models::rbac::PlatformRole::Admin),
+        None,
+    )
+    .await
+    .unwrap();
     let (status, _) = crate::handlers::auth::update_user::<SqliteDb>(
         Extension(db.clone()),
         Extension(AuthContext {
             principal_id: second.id,
-            is_admin: true,
+            session_id: None,
+            platform_role: Some(runinator_models::rbac::PlatformRole::Admin),
+            assignments: Vec::new(),
+            system_role: None,
+            action_ceiling: Vec::new(),
             kind: PrincipalKind::User,
             org_id: None,
-            org_role: None,
         }),
         Path(admin_id),
         Json(UpdateUserRequest {
             email: None,
             password: None,
-            is_admin: Some(false),
+            platform_role: Some(runinator_models::rbac::PlatformRole::Member),
             disabled: None,
         }),
     )
@@ -101,20 +119,17 @@ async fn user_admin_handlers_preserve_last_enabled_admin() {
 async fn api_key_handlers_support_admin_user_keys_and_rotation() {
     let (db, path) = test_db().await;
     let db = Arc::new(db);
-    let admin = db
-        .create_user("admin".into(), None, true, None)
-        .await
-        .unwrap();
-    let user = db
-        .create_user("operator".into(), None, false, None)
-        .await
-        .unwrap();
+    let admin = db.create_user("admin".into(), None, None).await.unwrap();
+    let user = db.create_user("operator".into(), None, None).await.unwrap();
     let admin_ctx = AuthContext {
         principal_id: admin.id,
-        is_admin: true,
+        session_id: None,
+        platform_role: Some(runinator_models::rbac::PlatformRole::Admin),
+        assignments: Vec::new(),
+        system_role: None,
+        action_ceiling: Vec::new(),
         kind: PrincipalKind::User,
         org_id: None,
-        org_role: None,
     };
     let user_id = user.id.expect("user id");
 
@@ -123,8 +138,11 @@ async fn api_key_handlers_support_admin_user_keys_and_rotation() {
         Extension(admin_ctx.clone()),
         Json(CreateApiKeyRequest {
             name: "operator key".into(),
-            user_id: Some(user_id),
-            is_service: false,
+            principal_kind: PrincipalKind::User,
+            principal_id: user_id,
+            system_role: None,
+            org_id: None,
+            action_ceiling: Vec::new(),
             expires_at: None,
         }),
     )
@@ -133,7 +151,7 @@ async fn api_key_handlers_support_admin_user_keys_and_rotation() {
     let keys = db.list_api_keys(Some(user_id)).await.unwrap();
     assert_eq!(keys.len(), 1);
     assert_eq!(keys[0].name, "operator key");
-    assert!(!keys[0].is_service);
+    assert_eq!(keys[0].principal_kind, PrincipalKind::User);
 
     let key_id = keys[0].id.expect("key id");
     let (status, _) = crate::handlers::auth::update_api_key::<SqliteDb>(
@@ -172,14 +190,8 @@ async fn api_key_handlers_support_admin_user_keys_and_rotation() {
 async fn non_admin_api_key_creation_stays_owned_by_caller() {
     let (db, path) = test_db().await;
     let db = Arc::new(db);
-    let caller = db
-        .create_user("caller".into(), None, false, None)
-        .await
-        .unwrap();
-    let other = db
-        .create_user("other".into(), None, false, None)
-        .await
-        .unwrap();
+    let caller = db.create_user("caller".into(), None, None).await.unwrap();
+    let other = db.create_user("other".into(), None, None).await.unwrap();
     let caller_id = caller.id.expect("caller id");
     let other_id = other.id.expect("other id");
 
@@ -187,25 +199,29 @@ async fn non_admin_api_key_creation_stays_owned_by_caller() {
         Extension(db.clone()),
         Extension(AuthContext {
             principal_id: Some(caller_id),
-            is_admin: false,
+            session_id: None,
+            platform_role: None,
+            assignments: Vec::new(),
+            system_role: None,
+            action_ceiling: Vec::new(),
             kind: PrincipalKind::User,
             org_id: None,
-            org_role: None,
         }),
         Json(CreateApiKeyRequest {
             name: "attempted service key".into(),
-            user_id: Some(other_id),
-            is_service: true,
+            principal_kind: PrincipalKind::Service,
+            principal_id: other_id,
+            system_role: Some(runinator_models::rbac::SystemRole::Worker),
+            org_id: None,
+            action_ceiling: Vec::new(),
             expires_at: None,
         }),
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, StatusCode::FORBIDDEN);
 
     let caller_keys = db.list_api_keys(Some(caller_id)).await.unwrap();
-    assert_eq!(caller_keys.len(), 1);
-    assert!(!caller_keys[0].is_service);
-    assert_eq!(caller_keys[0].user_id, Some(caller_id));
+    assert!(caller_keys.is_empty());
     assert!(db.list_api_keys(Some(other_id)).await.unwrap().is_empty());
 
     let _ = std::fs::remove_file(path);
@@ -296,9 +312,12 @@ async fn agent_enrollment_is_single_use_and_mints_a_scoped_non_admin_key() {
         .await
         .unwrap()
         .expect("agent key record");
-    assert_eq!(record.principal_kind, PrincipalKind::Agent);
-    assert!(!record.is_admin);
-    assert!(record.org_id.is_some());
+    assert_eq!(record.key.principal_kind, PrincipalKind::Service);
+    assert_eq!(
+        record.key.system_role,
+        Some(runinator_models::rbac::SystemRole::Agent)
+    );
+    assert!(record.key.org_id.is_some());
 
     let _ = std::fs::remove_file(path);
 }
@@ -372,10 +391,13 @@ async fn agent_principals_cannot_mutate_another_agents_replica() {
     let owner_id = Uuid::new_v4();
     let owner = AuthContext {
         principal_id: Some(owner_id),
-        is_admin: false,
-        kind: PrincipalKind::Agent,
+        session_id: None,
+        platform_role: None,
+        assignments: Vec::new(),
+        system_role: Some(runinator_models::rbac::SystemRole::Agent),
+        action_ceiling: Vec::new(),
+        kind: PrincipalKind::Service,
         org_id: None,
-        org_role: None,
     };
     let request = ReplicaRegistrationRequest {
         replica_type: ReplicaKind::Worker,
@@ -406,10 +428,13 @@ async fn agent_principals_cannot_mutate_another_agents_replica() {
 
     let intruder = AuthContext {
         principal_id: Some(Uuid::new_v4()),
-        is_admin: false,
-        kind: PrincipalKind::Agent,
+        session_id: None,
+        platform_role: None,
+        assignments: Vec::new(),
+        system_role: Some(runinator_models::rbac::SystemRole::Agent),
+        action_ceiling: Vec::new(),
+        kind: PrincipalKind::Service,
         org_id: None,
-        org_role: None,
     };
     let (status, _) = crate::handlers::replicas::heartbeat_replica::<SqliteDb>(
         Extension(db.clone()),

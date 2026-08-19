@@ -5,6 +5,7 @@
 
 use std::future::Future;
 
+use super::QueueSnapshot;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
@@ -29,6 +30,12 @@ pub use crate::reducer_store::ReducerStore;
 /// Core persistence operations for Runinator.
 /// The durable record of execution: run/node-run claims, chunks, artifacts, orchestration events, and the ready-node queue.
 pub trait RunStore: Send + Sync + 'static {
+    /// Operational snapshots of due and future ready work, respectively.
+    fn ready_node_queue_snapshots(
+        &self,
+        now: DateTime<Utc>,
+    ) -> impl Future<Output = Result<(QueueSnapshot, QueueSnapshot), SendableError>> + Send;
+
     /// Fetch workflow runs filtered by status.
     fn fetch_workflow_runs_by_status(
         &self,

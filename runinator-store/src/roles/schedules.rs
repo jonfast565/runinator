@@ -112,6 +112,11 @@ pub trait ScheduleStore: Send + Sync + 'static {
         org_id: Option<Uuid>,
     ) -> impl Future<Output = Result<Vec<FreezeWindow>, SendableError>> + Send;
 
+    fn fetch_freeze_window(
+        &self,
+        window_id: Uuid,
+    ) -> impl Future<Output = Result<Option<FreezeWindow>, SendableError>> + Send;
+
     /// The freeze windows in effect at `now`, used to explain why a schedule is not firing.
     fn fetch_active_freeze_windows(
         &self,

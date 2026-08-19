@@ -37,6 +37,21 @@ where
     for<'c> &'c mut <B::Db as Database>::Connection: Executor<'c, Database = B::Db>,
     <B::Db as Database>::QueryResult: RowsAffected,
 {
+    async fn notification_delivery_queue_snapshot(&self) -> Result<QueueSnapshot, SendableError> {
+        let row = sqlx::query(&self.render(
+            "SELECT COUNT(*) AS depth, MIN(created_at) AS oldest
+             FROM notification_deliveries WHERE status IN ('pending', 'retrying')",
+        ))
+        .fetch_one(self.pool())
+        .await?;
+        let oldest: Option<i64> = row.try_get("oldest")?;
+        Ok(QueueSnapshot {
+            depth: row.try_get::<i64, _>("depth")?.max(0) as u64,
+            claimed: 0,
+            oldest_enqueued_at: oldest.and_then(|value| DateTime::from_timestamp(value, 0)),
+        })
+    }
+
     async fn create_notification(
         &self,
         notification: &NewNotification,
@@ -240,6 +255,20 @@ where
             .iter()
             .map(mappers::row_to_notification_policy)
             .collect())
+    }
+
+    async fn fetch_notification_policy(
+        &self,
+        policy_id: Uuid,
+    ) -> Result<Option<NotificationPolicy>, SendableError> {
+        let columns = NOTIFICATION_POLICY_COLUMNS;
+        let row = sqlx::query(&self.render(&format!(
+            "SELECT {columns} FROM notification_policies WHERE id = ?"
+        )))
+        .bind(policy_id)
+        .fetch_optional(self.pool())
+        .await?;
+        Ok(row.map(|row| mappers::row_to_notification_policy(&row)))
     }
 
     async fn fetch_matching_notification_policies(

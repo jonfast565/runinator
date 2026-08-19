@@ -45,7 +45,7 @@
             v-if="!canUse"
             icon="lock"
             title="Console unavailable"
-            description="Using the console requires the console:use capability. A line can start a workflow run, so it is a privilege rather than a view."
+            description="Using the console requires the console:use action. A line can start a workflow run, so it is a privilege rather than a view."
           />
           <!-- clicking anywhere on the surface puts the caret back in the prompt, the way a
                terminal emulator does. -->

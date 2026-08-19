@@ -2,6 +2,32 @@
 
 use super::*;
 
+fn org_context(principal_id: Uuid, org_id: Uuid, role: OrgRole) -> AuthContext {
+    let now = chrono::Utc::now();
+    AuthContext {
+        principal_id: Some(principal_id),
+        session_id: None,
+        platform_role: None,
+        assignments: vec![runinator_models::rbac::RoleAssignment {
+            principal_kind: PrincipalKind::User,
+            principal_id,
+            scope: runinator_models::rbac::ScopeRef::new(
+                runinator_models::rbac::ScopeKind::Organization,
+                Some(org_id),
+            )
+            .unwrap(),
+            role: runinator_models::rbac::Role::Organization(role),
+            created_by: None,
+            created_at: now,
+            updated_at: now,
+        }],
+        system_role: None,
+        action_ceiling: Vec::new(),
+        kind: PrincipalKind::User,
+        org_id: Some(org_id),
+    }
+}
+
 #[tokio::test]
 async fn org_scale_enforces_node_and_budget_quotas() {
     use runinator_models::billing::{OrgQuota, ScaleOrgNodesRequest};
@@ -28,13 +54,7 @@ async fn org_scale_enforces_node_and_budget_quotas() {
     .await
     .unwrap();
 
-    let admin = AuthContext {
-        principal_id: Some(Uuid::now_v7()),
-        is_admin: false,
-        kind: PrincipalKind::User,
-        org_id: Some(org_id),
-        org_role: Some(OrgRole::Admin),
-    };
+    let admin = org_context(Uuid::now_v7(), org_id, OrgRole::Admin);
     let scale = |desired: u32| ScaleOrgNodesRequest {
         backend: ProvisionBackend::Supervisor,
         kind: ReplicaKind::Worker,
@@ -119,17 +139,17 @@ async fn org_handlers_enforce_membership_roles_and_last_owner() {
     let db = Arc::new(db);
 
     // a non-admin user self-serves an org and becomes its owner.
-    let alice = db
-        .create_user("alice".into(), None, false, None)
-        .await
-        .unwrap();
+    let alice = db.create_user("alice".into(), None, None).await.unwrap();
     let alice_id = alice.id.unwrap();
     let alice_ctx = AuthContext {
         principal_id: Some(alice_id),
-        is_admin: false,
+        session_id: None,
+        platform_role: None,
+        assignments: Vec::new(),
+        system_role: None,
+        action_ceiling: Vec::new(),
         kind: PrincipalKind::User,
         org_id: None,
-        org_role: None,
     };
     let (status, _) = crate::handlers::orgs::create_org::<SqliteDb>(
         Extension(db.clone()),
@@ -149,13 +169,7 @@ async fn org_handlers_enforce_membership_roles_and_last_owner() {
     let org_id = orgs[0].0.id.unwrap();
 
     // a switched-in owner context can rename the org.
-    let owner_ctx = AuthContext {
-        principal_id: Some(alice_id),
-        is_admin: false,
-        kind: PrincipalKind::User,
-        org_id: Some(org_id),
-        org_role: Some(OrgRole::Owner),
-    };
+    let owner_ctx = org_context(alice_id, org_id, OrgRole::Owner);
     let (status, _) = crate::handlers::orgs::update_org::<SqliteDb>(
         Extension(db.clone()),
         Extension(owner_ctx.clone()),
@@ -169,17 +183,17 @@ async fn org_handlers_enforce_membership_roles_and_last_owner() {
     assert_eq!(status, StatusCode::OK);
 
     // a non-member (no org context) is forbidden from reading the org.
-    let bob = db
-        .create_user("bob".into(), None, false, None)
-        .await
-        .unwrap();
+    let bob = db.create_user("bob".into(), None, None).await.unwrap();
     let bob_id = bob.id.unwrap();
     let bob_ctx = AuthContext {
         principal_id: Some(bob_id),
-        is_admin: false,
+        session_id: None,
+        platform_role: None,
+        assignments: Vec::new(),
+        system_role: None,
+        action_ceiling: Vec::new(),
         kind: PrincipalKind::User,
         org_id: None,
-        org_role: None,
     };
     let (status, _) = crate::handlers::orgs::get_org::<SqliteDb>(
         Extension(db.clone()),

@@ -104,6 +104,8 @@ pub async fn run_result_consumer_with_policy<T: DatabaseImpl>(
 ) {
     info!("workflow result consumer started");
     let mut attempts = HashMap::<Uuid, u32>::new();
+    let mut health_tick = tokio::time::interval(std::time::Duration::from_secs(15));
+    health_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
         let delivery = tokio::select! {
             _ = shutdown.notified() => {
@@ -131,6 +133,10 @@ pub async fn run_result_consumer_with_policy<T: DatabaseImpl>(
                     }
                 }
             }
+            _ = health_tick.tick() => {
+                stability::loop_iteration("results", true, std::time::Duration::ZERO);
+                continue;
+            }
         };
 
         // re-parent this delivery's processing onto the trace the worker carried the result back on,
@@ -142,6 +148,7 @@ pub async fn run_result_consumer_with_policy<T: DatabaseImpl>(
             node_run_id = %delivery.event.workflow_node_run_id,
             event_id = %delivery.event.event_id,
         );
+        let started = std::time::Instant::now();
         async {
             let node_run_id = delivery.event.workflow_node_run_id;
             match apply_result_event(db.as_ref(), &delivery.event).await {
@@ -160,6 +167,8 @@ pub async fn run_result_consumer_with_policy<T: DatabaseImpl>(
                             "failed to ack workflow result event: {}", err
                         );
                     }
+                    stability::queue_snapshot("result_retry", attempts.len() as u64, 0, 0);
+                    stability::loop_iteration("results", true, started.elapsed());
                 }
                 Err(err) => {
                     let attempt_count = {
@@ -199,6 +208,8 @@ pub async fn run_result_consumer_with_policy<T: DatabaseImpl>(
                                 "failed to ack dead-lettered workflow result event: {}", err
                             );
                         }
+                        stability::queue_snapshot("result_retry", attempts.len() as u64, 0, 0);
+                        stability::loop_iteration("results", false, started.elapsed());
                         return;
                     }
 
@@ -213,6 +224,8 @@ pub async fn run_result_consumer_with_policy<T: DatabaseImpl>(
                             "failed to nack workflow result event: {}", err
                         );
                     }
+                    stability::queue_snapshot("result_retry", attempts.len() as u64, 0, 0);
+                    stability::loop_iteration("results", false, started.elapsed());
                 }
             }
         }

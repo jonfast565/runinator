@@ -388,7 +388,7 @@ async fn assert_agent_directive_lifecycle<T: DatabaseImpl>(db: &T) {
                 attributes: json!({}),
             },
             None,
-            &runinator_models::auth::AuthContext::disabled_admin(),
+            &runinator_models::auth::AuthContext::disabled_platform_admin(),
         )
         .await
         .unwrap();
@@ -490,17 +490,17 @@ async fn assert_agent_enrollment_lifecycle<T: DatabaseImpl>(db: &T) {
         key: ApiKey {
             id: Some(key_id),
             name: "parity agent".to_string(),
-            user_id: Some(principal_id),
-            is_service: true,
+            principal_kind: PrincipalKind::Service,
+            principal_id,
+            system_role: Some(runinator_models::rbac::SystemRole::Agent),
+            org_id: token.org_id,
+            action_ceiling: Vec::new(),
             key_prefix: "parityagent".to_string(),
             last_used_at: None,
             expires_at: None,
             disabled: false,
             created_at: now,
         },
-        is_admin: false,
-        principal_kind: PrincipalKind::Agent,
-        org_id: token.org_id,
         key_hash: "parity-hash".to_string(),
     };
     assert!(
@@ -521,8 +521,8 @@ async fn assert_agent_enrollment_lifecycle<T: DatabaseImpl>(db: &T) {
         .await
         .unwrap()
         .expect("agent key committed with token consumption");
-    assert_eq!(key.principal_kind, PrincipalKind::Agent);
-    assert_eq!(key.org_id, token.org_id);
+    assert_eq!(key.key.principal_kind, PrincipalKind::Service);
+    assert_eq!(key.key.org_id, token.org_id);
 
     assert_eq!(db.purge_expired_enrollment_tokens(now).await.unwrap(), 1);
     assert!(
@@ -1301,7 +1301,7 @@ async fn assert_invocation_lifecycle<T: DatabaseImpl>(db: &T, run_id: Uuid, node
                 attributes: json!({}),
             },
             None,
-            &runinator_models::auth::AuthContext::disabled_admin(),
+            &runinator_models::auth::AuthContext::disabled_platform_admin(),
         )
         .await
         .unwrap();

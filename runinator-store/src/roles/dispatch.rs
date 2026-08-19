@@ -5,6 +5,7 @@
 
 use std::future::Future;
 
+use super::QueueSnapshot;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
@@ -19,6 +20,12 @@ pub use crate::reducer_store::ReducerStore;
 /// Core persistence operations for Runinator.
 /// At-least-once delivery plumbing: the action-dispatch outbox, idempotency claims, and dead letters.
 pub trait DispatchStore: Send + Sync + 'static {
+    /// Operational snapshot of unpublished action-dispatch intents.
+    fn action_dispatch_queue_snapshot(
+        &self,
+        now: DateTime<Utc>,
+    ) -> impl Future<Output = Result<QueueSnapshot, SendableError>> + Send;
+
     /// Persist a dead-lettered broker message for later inspection/replay.
     fn record_dead_letter(
         &self,

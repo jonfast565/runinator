@@ -3,7 +3,6 @@ use std::sync::Arc;
 use axum::{Extension, Json, extract::Query, http::StatusCode};
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::auth::AuthContext;
-use runinator_models::capabilities::Capability;
 use runinator_models::errors::SendableError;
 use runinator_models::json;
 use runinator_models::value::Value;
@@ -40,7 +39,10 @@ pub async fn upsert_catalog_item<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Json(item): Json<Value>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_capability(Capability::CatalogManage) {
+    if let Err(reply) = ctx.require_scope_action(
+        runinator_models::rbac::Action::CatalogManage,
+        runinator_models::rbac::ScopeRef::PLATFORM,
+    ) {
         return reply;
     }
     match repository::upsert_catalog_item(db.as_ref(), item).await {

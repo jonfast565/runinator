@@ -14,6 +14,7 @@ use runinator_models::{
         LocalCredential, Team, User,
     },
     errors::SendableError,
+    rbac::PlatformRole,
 };
 
 // re-exported here so callers that reach for the contract at its historical path
@@ -30,8 +31,17 @@ pub trait AuthStore: Send + Sync + 'static {
         &self,
         username: String,
         email: Option<String>,
-        is_admin: bool,
         password_hash: Option<String>,
+    ) -> impl Future<Output = Result<User, SendableError>> + Send;
+
+    /// Atomically create a user, optional local identity, and mandatory initial platform role.
+    fn create_user_with_platform_role(
+        &self,
+        username: String,
+        email: Option<String>,
+        password_hash: Option<String>,
+        role: PlatformRole,
+        created_by: Option<Uuid>,
     ) -> impl Future<Output = Result<User, SendableError>> + Send;
 
     /// Fetch a user by id.
@@ -63,7 +73,6 @@ pub trait AuthStore: Send + Sync + 'static {
         &self,
         id: Uuid,
         email: Option<String>,
-        is_admin: Option<bool>,
         disabled: Option<bool>,
     ) -> impl Future<Output = Result<User, SendableError>> + Send;
 
@@ -164,6 +173,11 @@ pub trait AuthStore: Send + Sync + 'static {
         refresh_token_hash: String,
     ) -> impl Future<Output = Result<Option<AuthSession>, SendableError>> + Send;
 
+    fn fetch_session(
+        &self,
+        id: Uuid,
+    ) -> impl Future<Output = Result<Option<AuthSession>, SendableError>> + Send;
+
     /// Revoke a single session.
     fn revoke_session(&self, id: Uuid) -> impl Future<Output = Result<(), SendableError>> + Send;
 
@@ -176,8 +190,11 @@ pub trait AuthStore: Send + Sync + 'static {
     // ---- authz: teams + resource grants ----
 
     /// Create a team.
-    fn create_team(&self, name: String)
-    -> impl Future<Output = Result<Team, SendableError>> + Send;
+    fn create_team(
+        &self,
+        name: String,
+        scope: runinator_models::rbac::ScopeRef,
+    ) -> impl Future<Output = Result<Team, SendableError>> + Send;
 
     /// Rename a team.
     fn update_team(
@@ -197,6 +214,7 @@ pub trait AuthStore: Send + Sync + 'static {
         &self,
         team_id: Uuid,
         user_id: Uuid,
+        role: runinator_models::rbac::TeamRole,
     ) -> impl Future<Output = Result<(), SendableError>> + Send;
 
     /// Remove a user from a team.

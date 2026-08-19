@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Capability } from "../../domain/models";
+import type { Action } from "../../domain/models";
 import { visibleNavSections } from "../nav-config";
 
 function labels(sections: ReturnType<typeof visibleNavSections>): string[] {
@@ -7,7 +7,7 @@ function labels(sections: ReturnType<typeof visibleNavSections>): string[] {
 }
 
 describe("visibleNavSections", () => {
-  it("hides capability-gated tabs when the capability is absent", () => {
+  it("hides action-gated tabs when the action is absent", () => {
     const tabs = labels(visibleNavSections({ can: () => false, isDesktop: true }));
 
     // gated admin/secrets tabs are hidden...
@@ -22,17 +22,17 @@ describe("visibleNavSections", () => {
     expect(tabs).toContain("Runs");
   });
 
-  it("shows a tab exactly when its required capability is held", () => {
-    const held = new Set<Capability>(["audit:read"]);
+  it("shows a tab exactly when its required action is held", () => {
+    const held = new Set<Action>(["audit:read"]);
     const tabs = labels(
-      visibleNavSections({ can: (capability) => held.has(capability), isDesktop: true }),
+      visibleNavSections({ can: (action) => held.has(action), isDesktop: true }),
     );
 
     expect(tabs).toContain("AuditLog");
     expect(tabs).not.toContain("Permissions");
   });
 
-  it("shows every gated tab when all capabilities are held (e.g. auth disabled)", () => {
+  it("shows every gated tab when all actions are held (e.g. auth disabled)", () => {
     const tabs = labels(visibleNavSections({ can: () => true, isDesktop: true }));
 
     expect(tabs).toContain("AdminSettings");

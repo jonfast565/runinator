@@ -20,6 +20,7 @@ rustls = { version = "0.23", default-features = false, features = ["ring"] }
 utoipa = { version = "5", features = ["axum_extras", "uuid", "chrono"] }
 tracing = "0.1"
 metrics = "0.24"
+opentelemetry = "0.32"
 
 runinator-blob = { path = "../runinator-blob" }
 runinator-broker = { path = "../runinator-broker" }

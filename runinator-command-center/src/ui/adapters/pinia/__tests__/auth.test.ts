@@ -62,6 +62,8 @@ describe("auth store", () => {
       refresh_token: "fresh-refresh",
       expires_in: 3600,
       user: { id: "u-1", username: "admin" },
+      assignments: [],
+      effective_actions: [],
     });
     const { getPlatformAdapter } = await import("../../../../core/platform");
     getPlatformAdapter().authStorage.set("runinator.auth.access", "stale-access");

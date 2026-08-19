@@ -11,6 +11,7 @@ use runinator_models::workflows::WorkflowBundle;
 use runinator_models::{
     auth::AuthContext,
     bundles::{PackImportResult, SecretBundle},
+    rbac::{Action, ScopeKind, ScopeRef},
 };
 use serde::Deserialize;
 use utoipa::IntoParams;
@@ -78,11 +79,10 @@ pub async fn import_pack<T: DatabaseImpl>(
     // a platform admin imports globally; an org admin imports into their active org. imported
     // workflows are stamped with `import_org` so the pack lands in the right tenant.
     let import_org = ctx.org_id;
-    if let Some(org_id) = import_org {
-        if let Err(reply) = ctx.require_org_admin(org_id) {
-            return reply;
-        }
-    } else if let Err(reply) = ctx.require_admin() {
+    let import_scope = import_org
+        .and_then(|id| ScopeRef::new(ScopeKind::Organization, Some(id)))
+        .unwrap_or(ScopeRef::PLATFORM);
+    if let Err(reply) = ctx.require_scope_action(Action::Edit, import_scope) {
         return reply;
     }
     let overwrite = params.overwrite;

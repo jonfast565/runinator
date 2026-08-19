@@ -108,7 +108,10 @@ pub async fn get_due_workflow_triggers<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_service_or_admin() {
+    if let Err(reply) = ctx.require_system_role(&[
+        runinator_models::rbac::SystemRole::Engine,
+        runinator_models::rbac::SystemRole::Waker,
+    ]) {
         return reply;
     }
     match repository::fetch_due_workflow_triggers(db.as_ref()).await {
@@ -125,7 +128,10 @@ pub async fn claim_due_workflow_trigger_firings<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<SchedulerTriggerClaimRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_service_or_admin() {
+    if let Err(reply) = ctx.require_system_role(&[
+        runinator_models::rbac::SystemRole::Engine,
+        runinator_models::rbac::SystemRole::Waker,
+    ]) {
         return reply;
     }
     match repository::claim_due_workflow_trigger_firings(

@@ -13,7 +13,10 @@ use runinator_models::{auth::AuthContext, orchestration::ActionDispatchClaimRequ
 use serde::Deserialize;
 
 use crate::repository;
-use runinator_ws_core::openapi::docs::{EndpointDoc, Example, endpoint, json_body};
+use runinator_models::rbac::SystemRole;
+use runinator_ws_core::openapi::docs::{
+    EndpointDoc, EndpointPolicy, Example, endpoint_with_policy, json_body,
+};
 use runinator_ws_core::responses::api_error;
 use runinator_ws_middleware::authz::AuthContextExt;
 
@@ -42,7 +45,7 @@ pub async fn enqueue_action_dispatch<T: DatabaseImpl>(
     (StatusCode, Json<ActionDispatchRecord>),
     (StatusCode, Json<runinator_ws_core::models::ApiResponse>),
 > {
-    ctx.require_service_or_admin()?;
+    ctx.require_system_role(&[runinator_models::rbac::SystemRole::Engine])?;
     repository::enqueue_action_dispatch(db.as_ref(), request.dedupe_key, request.command)
         .await
         .map(|record| (StatusCode::ACCEPTED, Json(record)))
@@ -57,7 +60,7 @@ pub async fn pending_action_dispatches<T: DatabaseImpl>(
     Json<Vec<ActionDispatchRecord>>,
     (StatusCode, Json<runinator_ws_core::models::ApiResponse>),
 > {
-    ctx.require_service_or_admin()?;
+    ctx.require_system_role(&[runinator_models::rbac::SystemRole::Engine])?;
     repository::fetch_pending_action_dispatches(db.as_ref(), query.limit.unwrap_or(100))
         .await
         .map(Json)
@@ -72,7 +75,7 @@ pub async fn claim_action_dispatches<T: DatabaseImpl>(
     Json<Vec<ActionDispatchRecord>>,
     (StatusCode, Json<runinator_ws_core::models::ApiResponse>),
 > {
-    ctx.require_service_or_admin()?;
+    ctx.require_system_role(&[runinator_models::rbac::SystemRole::Engine])?;
     repository::claim_pending_action_dispatches(
         db.as_ref(),
         request.scheduler_id,
@@ -89,7 +92,7 @@ pub async fn mark_action_dispatch_published<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(dispatch_id): Path<Uuid>,
 ) -> Result<Json<TaskResponse>, (StatusCode, Json<runinator_ws_core::models::ApiResponse>)> {
-    ctx.require_service_or_admin()?;
+    ctx.require_system_role(&[runinator_models::rbac::SystemRole::Engine])?;
     repository::mark_action_dispatch_published(db.as_ref(), dispatch_id)
         .await
         .map(|_| Json(success("Action dispatch marked published")))
@@ -102,7 +105,7 @@ pub async fn mark_action_dispatch_failed<T: DatabaseImpl>(
     Path(dispatch_id): Path<Uuid>,
     Json(request): Json<ActionDispatchFailureRequest>,
 ) -> Result<Json<TaskResponse>, (StatusCode, Json<runinator_ws_core::models::ApiResponse>)> {
-    ctx.require_service_or_admin()?;
+    ctx.require_system_role(&[runinator_models::rbac::SystemRole::Engine])?;
     repository::mark_action_dispatch_failed(db.as_ref(), dispatch_id, request.error)
         .await
         .map(|_| Json(success("Action dispatch failure recorded")))
@@ -145,65 +148,65 @@ pub fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
 
 /// the openapi entries for the routes above.
 pub const DOCS: &[EndpointDoc] = &[
-    endpoint(
+    endpoint_with_policy(
         "post",
         "/scheduler/action_dispatches",
         "Control Plane",
         "Enqueue an action dispatch",
         "Durable outbox endpoint for scheduling an action command that a worker will execute.",
-        false,
+        EndpointPolicy::SystemRole(&[SystemRole::Engine]),
         json_body("Action dispatch record.", Example::ActionDispatch),
         &[],
         200,
         "action dispatch queued",
         Example::ActionDispatch,
     ),
-    endpoint(
+    endpoint_with_policy(
         "get",
         "/scheduler/action_dispatches/pending",
         "Control Plane",
         "List pending action dispatches",
         "Lists action dispatches waiting to be published to the broker action channel.",
-        false,
+        EndpointPolicy::SystemRole(&[SystemRole::Engine]),
         None,
         &[],
         200,
         "pending action dispatches",
         Example::ActionDispatchList,
     ),
-    endpoint(
+    endpoint_with_policy(
         "post",
         "/scheduler/action_dispatches/claim",
         "Control Plane",
         "Claim action dispatches",
         "Claims pending action dispatches for the action publisher loop.",
-        false,
+        EndpointPolicy::SystemRole(&[SystemRole::Engine]),
         json_body("Claim owner and limit.", Example::ActionDispatch),
         &[],
         200,
         "claimed action dispatches",
         Example::ActionDispatchList,
     ),
-    endpoint(
+    endpoint_with_policy(
         "post",
         "/scheduler/action_dispatches/{id}/published",
         "Control Plane",
         "Mark action dispatch published",
         "Marks an action dispatch as successfully published to the broker.",
-        false,
+        EndpointPolicy::SystemRole(&[SystemRole::Engine]),
         None,
         &[],
         200,
         "action dispatch marked published",
         Example::TaskResponse,
     ),
-    endpoint(
+    endpoint_with_policy(
         "post",
         "/scheduler/action_dispatches/{id}/failed",
         "Control Plane",
         "Mark action dispatch failed",
         "Records a publish failure for an action dispatch.",
-        false,
+        EndpointPolicy::SystemRole(&[SystemRole::Engine]),
         json_body("Failure detail.", Example::ActionDispatch),
         &[],
         200,

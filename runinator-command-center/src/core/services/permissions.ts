@@ -5,16 +5,16 @@ import {
   createUser,
   deleteTeam,
   deleteUser,
-  grantWorkflowAccess,
+  grantResourceAccess,
   listApiKeys,
   listTeamMembers,
   listTeams,
   listUserTeams,
   listUsers,
-  listWorkflowGrants,
+  listResourceGrants,
   removeTeamMember,
   revokeApiKey,
-  revokeWorkflowGrant,
+  revokeResourceGrant,
   rotateApiKey,
   updateApiKey,
   updateTeam,
@@ -42,7 +42,7 @@ export interface UserDraft {
   username: string;
   email: string;
   password: string;
-  is_admin: boolean;
+  platform_role: "admin" | "operator" | "auditor" | "member";
   disabled: boolean;
 }
 
@@ -54,8 +54,9 @@ export interface GrantDraft {
 
 export interface ApiKeyDraft {
   name: string;
-  user_id: string;
-  is_service: boolean;
+  principal_kind: "user" | "service";
+  principal_id: string;
+  system_role: "" | "engine" | "worker" | "waker" | "agent" | "replica";
   expires_at: string;
   disabled: boolean;
 }
@@ -79,7 +80,7 @@ export function blankUserDraft(): UserDraft {
     username: "",
     email: "",
     password: "",
-    is_admin: false,
+    platform_role: "member",
     disabled: false,
   };
 }
@@ -89,7 +90,7 @@ export function userDraftFrom(user: User): UserDraft {
     username: user.username,
     email: user.email ?? "",
     password: "",
-    is_admin: user.is_admin,
+    platform_role: user.platform_role,
     disabled: user.disabled,
   };
 }
@@ -97,8 +98,9 @@ export function userDraftFrom(user: User): UserDraft {
 export function blankApiKeyDraft(userId: string | null = null): ApiKeyDraft {
   return {
     name: "",
-    user_id: userId ?? "",
-    is_service: false,
+    principal_kind: "user",
+    principal_id: userId ?? "",
+    system_role: "",
     expires_at: "",
     disabled: false,
   };
@@ -107,8 +109,9 @@ export function blankApiKeyDraft(userId: string | null = null): ApiKeyDraft {
 export function apiKeyDraftFrom(apiKey: ApiKey): ApiKeyDraft {
   return {
     name: apiKey.name,
-    user_id: apiKey.user_id ?? "",
-    is_service: apiKey.is_service,
+    principal_kind: apiKey.principal_kind,
+    principal_id: apiKey.principal_id,
+    system_role: apiKey.system_role ?? "",
     expires_at: apiKey.expires_at ? toDateTimeInput(apiKey.expires_at) : "",
     disabled: apiKey.disabled,
   };
@@ -175,7 +178,7 @@ export function createPermissionsService(app: AppService) {
   function visibleApiKeys(query: string): ApiKey[] {
     const { apiKeys, selectedUserId } = store.getState();
     const visible = selectedUserId
-      ? apiKeys.filter((key) => key.is_service || key.user_id === selectedUserId)
+      ? apiKeys.filter((key) => key.principal_kind === "service" || key.principal_id === selectedUserId)
       : apiKeys;
 
     if (!query) {
@@ -186,7 +189,7 @@ export function createPermissionsService(app: AppService) {
   }
 
   function enabledAdminCount(): number {
-    return store.getState().users.filter((user) => user.is_admin && !user.disabled).length;
+    return store.getState().users.filter((user) => user.platform_role === "admin" && !user.disabled).length;
   }
 
   const service = {
@@ -303,7 +306,7 @@ export function createPermissionsService(app: AppService) {
         if (currentUser?.id) {
           const request: UpdateUserInput = {
             email: email || null,
-            is_admin: userDraft.is_admin,
+            platform_role: userDraft.platform_role,
             disabled: userDraft.disabled,
           };
 
@@ -318,7 +321,7 @@ export function createPermissionsService(app: AppService) {
           username,
           password: userDraft.password,
           email: email || null,
-          is_admin: userDraft.is_admin,
+          platform_role: userDraft.platform_role,
         };
         return createUser(request);
       });
@@ -383,8 +386,11 @@ export function createPermissionsService(app: AppService) {
 
           const request: CreateApiKeyInput = {
             name,
-            is_service: apiKeyDraft.is_service,
-            user_id: apiKeyDraft.is_service ? null : apiKeyDraft.user_id || selectedUserId,
+            principal_kind: apiKeyDraft.principal_kind,
+            principal_id:
+              apiKeyDraft.principal_id === "" ? (selectedUserId ?? "") : apiKeyDraft.principal_id,
+            system_role: apiKeyDraft.system_role === "" ? null : apiKeyDraft.system_role,
+            action_ceiling: [],
             expires_at: apiKeyDraft.expires_at
               ? new Date(apiKeyDraft.expires_at).toISOString()
               : null,
@@ -467,7 +473,7 @@ export function createPermissionsService(app: AppService) {
         return;
       }
 
-      await app.runOperation("Assigning team", () => addTeamMember(teamId, userId));
+      await app.runOperation("Assigning team", () => addTeamMember(teamId, userId, "member"));
       await Promise.all([
         service.refreshSelectedUserTeams(),
         selectedTeam() ? service.refreshSelectedTeamMembers() : Promise.resolve(),
@@ -559,7 +565,7 @@ export function createPermissionsService(app: AppService) {
         return;
       }
 
-      await app.runOperation("Adding member", () => addTeamMember(teamId, userId));
+      await app.runOperation("Adding member", () => addTeamMember(teamId, userId, "member"));
       await Promise.all([
         service.refreshSelectedTeamMembers(),
         selectedUser() ? service.refreshSelectedUserTeams() : Promise.resolve(),
@@ -602,7 +608,7 @@ export function createPermissionsService(app: AppService) {
       }
 
       const workflowGrants = (await app.runOperation("Loading workflow access", () =>
-        listWorkflowGrants(workflowId),
+        listResourceGrants("workflow", workflowId),
       )) as unknown as Grant[];
       store.setState((state) => ({ ...state, workflowGrants }));
     },
@@ -620,7 +626,8 @@ export function createPermissionsService(app: AppService) {
       }
 
       await app.runOperation("Saving access", () =>
-        grantWorkflowAccess(
+        grantResourceAccess(
+          "workflow",
           workflowId,
           grantDraft.principal_type,
           grantDraft.principal_id,
@@ -638,7 +645,7 @@ export function createPermissionsService(app: AppService) {
         return;
       }
 
-      await app.runOperation("Revoking access", () => revokeWorkflowGrant(workflowId, grantId));
+      await app.runOperation("Revoking access", () => revokeResourceGrant("workflow", workflowId, grantId));
       await service.refreshWorkflowGrants();
       app.setStatus("Access revoked.");
     },
@@ -654,7 +661,7 @@ function userSearchText(user: User): string {
     user.id,
     user.username,
     user.email,
-    user.is_admin ? "admin" : "user",
+    user.platform_role,
     user.disabled ? "disabled" : "enabled",
   ]
     .filter(Boolean)
@@ -667,15 +674,15 @@ function teamSearchText(team: Team): string {
 }
 
 function apiKeySearchText(apiKey: ApiKey, users: User[]): string {
-  const owner = apiKey.user_id
-    ? users.find((user) => user.id === apiKey.user_id)?.username
+  const owner = apiKey.principal_kind === "user"
+    ? users.find((user) => user.id === apiKey.principal_id)?.username
     : "service";
   return [
     apiKey.id,
     apiKey.name,
     apiKey.key_prefix,
     owner,
-    apiKey.is_service ? "service" : "user",
+    apiKey.principal_kind,
     apiKey.disabled ? "disabled" : "active",
   ]
     .filter(Boolean)

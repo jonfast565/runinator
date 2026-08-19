@@ -6,7 +6,6 @@ macro_rules! user_from_row {
             id: Some($row.get::<Uuid, _>("id")),
             username: $row.get::<String, _>("username"),
             email: $row.get::<Option<String>, _>("email"),
-            is_admin: $row.get::<bool, _>("is_admin"),
             disabled: $row.get::<bool, _>("disabled"),
             created_at: DateTime::<Utc>::from_timestamp($row.get::<i64, _>("created_at"), 0)
                 .unwrap_or_else(Utc::now),
@@ -21,8 +20,17 @@ macro_rules! api_key_from_row {
         ApiKey {
             id: Some($row.get::<Uuid, _>("id")),
             name: $row.get::<String, _>("name"),
-            user_id: $row.get::<Option<Uuid>, _>("user_id"),
-            is_service: $row.get::<bool, _>("is_service"),
+            principal_kind: PrincipalKind::from_str_lossy(&$row.get::<String, _>("principal_kind"))
+                .unwrap_or(PrincipalKind::User),
+            principal_id: $row.get::<Uuid, _>("principal_id"),
+            system_role: $row
+                .get::<Option<String>, _>("system_role")
+                .and_then(|value| runinator_models::rbac::SystemRole::from_str_lossy(&value)),
+            org_id: $row.get::<Option<Uuid>, _>("org_id"),
+            action_ceiling: $row
+                .get::<Option<String>, _>("action_ceiling_json")
+                .and_then(|value| serde_json::from_str(&value).ok())
+                .unwrap_or_default(),
             key_prefix: $row.get::<String, _>("key_prefix"),
             last_used_at: $row
                 .get::<Option<i64>, _>("last_used_at")
@@ -51,12 +59,6 @@ row_mapper!(row_to_api_key(row) -> ApiKey { api_key_from_row!(row) });
 row_mapper!(row_to_api_key_record(row) -> ApiKeyRecord {
     ApiKeyRecord {
         key: api_key_from_row!(row),
-        is_admin: row.get::<bool, _>("is_admin"),
-        principal_kind: PrincipalKind::from_str_lossy(
-            &row.get::<String, _>("principal_kind"),
-        )
-        .unwrap_or(PrincipalKind::User),
-        org_id: row.get::<Option<Uuid>, _>("org_id"),
         key_hash: row.get::<String, _>("key_hash"),
     }
 });
@@ -98,6 +100,11 @@ row_mapper!(row_to_team(row) -> Team {
     Team {
         id: Some(row.get::<Uuid, _>("id")),
         name: row.get::<String, _>("name"),
+        scope: ScopeRef::new(
+            ScopeKind::from_str_lossy(&row.get::<String, _>("scope_kind"))
+                .unwrap_or(ScopeKind::Platform),
+            row.get::<Option<Uuid>, _>("scope_id"),
+        ).unwrap_or(ScopeRef::PLATFORM),
         created_at: DateTime::<Utc>::from_timestamp(row.get::<i64, _>("created_at"), 0)
             .unwrap_or_else(Utc::now),
     }
@@ -163,8 +170,8 @@ row_mapper!(row_to_org_resource_group(row) -> OrgResourceGroup {
 row_mapper!(row_to_grant(row) -> Grant {
     Grant {
         id: Some(row.get::<Uuid, _>("id")),
-        // only `workflow` exists today; the column is stored for forward compatibility.
-        resource_type: ResourceType::Workflow,
+        resource_type: ResourceType::from_str_lossy(&row.get::<String, _>("resource_type"))
+            .unwrap_or(ResourceType::Workflow),
         resource_id: row.get::<Uuid, _>("resource_id"),
         principal_type: PrincipalType::from_str_lossy(&row.get::<String, _>("principal_type"))
             .unwrap_or(PrincipalType::User),

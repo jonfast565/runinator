@@ -5,7 +5,6 @@ use std::sync::Arc;
 use axum::{Extension, Json, extract::Query, http::StatusCode};
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::auth::AuthContext;
-use runinator_models::capabilities::Capability;
 
 use runinator_ws_core::models::{ApiResponse, AuditLogQuery, DeadLetterQuery};
 use runinator_ws_core::responses::api_error;
@@ -31,7 +30,10 @@ pub async fn get_dead_letters<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Query(query): Query<DeadLetterQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_capability(Capability::DeadLettersRead) {
+    if let Err(reply) = ctx.require_scope_action(
+        runinator_models::rbac::Action::DeadLettersRead,
+        runinator_models::rbac::ScopeRef::PLATFORM,
+    ) {
         return reply;
     }
     match db
@@ -55,7 +57,10 @@ pub async fn get_audit_log<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Query(query): Query<AuditLogQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_capability(Capability::AuditRead) {
+    if let Err(reply) = ctx.require_scope_action(
+        runinator_models::rbac::Action::AuditRead,
+        runinator_models::rbac::ScopeRef::PLATFORM,
+    ) {
         return reply;
     }
     match db

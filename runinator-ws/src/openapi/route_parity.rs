@@ -24,7 +24,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::openapi_document;
+use super::{MINIMAL_ENDPOINTS, openapi_document};
 
 use crate::{HANDLER_CRATES, workspace_root};
 
@@ -39,6 +39,10 @@ const ROUTER_SOURCES: &[(&str, &str)] = &[
     (
         "runinator-ws-identity/handlers/auth",
         include_str!("../../../runinator-ws-identity/src/handlers/auth.rs"),
+    ),
+    (
+        "runinator-ws-identity/handlers/authz",
+        include_str!("../../../runinator-ws-identity/src/handlers/authz.rs"),
     ),
     (
         "runinator-ws-identity/handlers/billing",
@@ -175,80 +179,7 @@ const VERBS: &[&str] = &["get", "post", "put", "patch", "delete"];
 /// speak a non-http protocol that openapi cannot describe.
 /// note how short this is: the spec already documents the websocket upgrades and its own
 /// `/openapi.json` and `/docs`, so an upgrade endpoint is not automatically excusable here.
-const UNDOCUMENTED: &[(&str, &str)] = &[(
-    "/ws/desktop-worker",
-    "broker relay for the desktop agent, not a client-facing api",
-)];
-
-/// routes that *should* be documented but are not yet: recorded debt, not an exemption.
-///
-/// this list is a ratchet. `every_route_is_documented` fails for any route outside both lists, so
-/// new drift is blocked the moment it appears; `pending_documentation_has_no_stale_entries` fails
-/// once an entry gains documentation, so the list can only shrink. writing the `ENDPOINT_DOCS`
-/// entries for these is content work, tracked separately — the guard exists so the number cannot
-/// grow while that happens.
-///
-/// entire feature areas are missing here (pipelines, orgs, freeze windows, notification policies,
-/// billing/quota), which is why the count is what it is.
-const PENDING_DOCUMENTATION: &[(&str, &str)] = &[
-    ("delete", "/artifacts/{id}"),
-    ("delete", "/automation_events/{id}"),
-    ("delete", "/freeze_windows/{id}"),
-    ("delete", "/gates/{id}"),
-    ("delete", "/notification_policies/{id}"),
-    ("delete", "/notifications/{id}"),
-    ("delete", "/orgs/{id}"),
-    ("delete", "/orgs/{id}/members/{user_id}"),
-    ("delete", "/pipeline_triggers/{id}"),
-    ("delete", "/pipelines/{id}"),
-    ("get", "/freeze_windows"),
-    ("get", "/notification_policies"),
-    ("get", "/notifications/{id}/deliveries"),
-    ("get", "/orgs"),
-    ("get", "/orgs/me"),
-    ("get", "/orgs/{id}"),
-    ("get", "/orgs/{id}/members"),
-    ("get", "/orgs/{id}/nodes"),
-    ("get", "/orgs/{id}/quota"),
-    ("get", "/orgs/{id}/usage"),
-    ("get", "/pipeline_runs"),
-    ("get", "/pipeline_runs/{id}"),
-    ("get", "/pipelines"),
-    ("get", "/pipelines/{id}"),
-    ("get", "/pipelines/{id}/triggers"),
-    ("get", "/rate-card"),
-    ("get", "/replicas/{replica_id}/samples"),
-    ("get", "/workflow_runs/{id}/transitions"),
-    ("get", "/workflows/{id}/nodes/{node_id}/transitions"),
-    ("patch", "/freeze_windows/{id}"),
-    ("patch", "/notification_policies/{id}"),
-    ("patch", "/orgs/{id}"),
-    ("patch", "/orgs/{id}/members/{user_id}"),
-    ("patch", "/pipeline_triggers/{id}"),
-    ("patch", "/pipelines/{id}"),
-    ("patch", "/pipelines/{id}/owner"),
-    ("patch", "/workflows/{id}/owner"),
-    ("post", "/auth/switch-org"),
-    ("post", "/freeze_windows"),
-    ("post", "/idempotency_keys/claim"),
-    ("post", "/idempotency_keys/complete"),
-    ("post", "/idempotency_keys/release"),
-    ("post", "/nodes/scale"),
-    ("post", "/nodes/stop"),
-    ("post", "/notification_policies"),
-    ("post", "/orgs"),
-    ("post", "/orgs/{id}/members"),
-    ("post", "/orgs/{id}/nodes/scale"),
-    ("post", "/pipeline_runs/{id}/cancel"),
-    ("post", "/pipeline_runs/{id}/resolve"),
-    ("post", "/pipeline_triggers/{id}/runs"),
-    ("post", "/pipelines"),
-    ("post", "/pipelines/{id}/runs"),
-    ("post", "/pipelines/{id}/triggers"),
-    ("post", "/workflow_triggers/{id}/backfill"),
-    ("post", "/workflows/simulate"),
-    ("put", "/orgs/{id}/quota"),
-];
+const UNDOCUMENTED: &[(&str, &str)] = &[];
 
 /// `pub const NAME: &str = "value";` declarations from the shared api-route constants.
 ///
@@ -458,13 +389,6 @@ fn every_route_is_documented() {
         .into_iter()
         .filter(|route| !documented.contains(route))
         .filter(|(_, path)| !UNDOCUMENTED.iter().any(|(excused, _)| excused == path))
-        .filter(|(method, path)| {
-            !PENDING_DOCUMENTATION
-                .iter()
-                .any(|(pending_method, pending_path)| {
-                    pending_method == method && pending_path == path
-                })
-        })
         .map(|(method, path)| format!("{} {path}", method.to_uppercase()))
         .collect();
     missing.sort();
@@ -477,27 +401,24 @@ fn every_route_is_documented() {
     );
 }
 
-/// the documentation-debt list only shrinks.
-///
-/// an entry that has since been documented must be removed, so the list stays an accurate count of
-/// what is still missing rather than decaying into a permanent exemption.
+/// Minimal policy declarations are real OpenAPI operations and cannot outlive their routes.
 #[test]
-fn pending_documentation_has_no_stale_entries() {
+fn minimal_policy_declarations_have_no_stale_entries() {
     let documented = documented_routes();
     let registered = registered_routes();
     let mut stale = Vec::new();
 
-    for (method, path) in PENDING_DOCUMENTATION {
+    for (method, path, _) in MINIMAL_ENDPOINTS {
         let route = ((*method).to_string(), (*path).to_string());
-        if documented.contains(&route) {
+        if !documented.contains(&route) {
             stale.push(format!(
-                "{} {path} is documented now; remove it from PENDING_DOCUMENTATION",
+                "{} {path} has no OpenAPI operation",
                 method.to_uppercase()
             ));
         }
         if !registered.contains(&route) {
             stale.push(format!(
-                "{} {path} is no longer served; remove it from PENDING_DOCUMENTATION",
+                "{} {path} is no longer served; remove its minimal policy declaration",
                 method.to_uppercase()
             ));
         }

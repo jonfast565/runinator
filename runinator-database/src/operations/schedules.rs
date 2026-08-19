@@ -773,6 +773,20 @@ where
         Ok(rows.iter().map(mappers::row_to_freeze_window).collect())
     }
 
+    async fn fetch_freeze_window(
+        &self,
+        window_id: Uuid,
+    ) -> Result<Option<FreezeWindow>, SendableError> {
+        let columns = FREEZE_WINDOW_COLUMNS;
+        let row = sqlx::query(&self.render(&format!(
+            "SELECT {columns} FROM freeze_windows WHERE id = ?"
+        )))
+        .bind(window_id)
+        .fetch_optional(self.pool())
+        .await?;
+        Ok(row.as_ref().map(mappers::row_to_freeze_window))
+    }
+
     async fn fetch_active_freeze_windows(
         &self,
         now: DateTime<Utc>,

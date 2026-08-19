@@ -334,10 +334,13 @@ fn workflow(id: Option<Uuid>, name: &str) -> WorkflowDefinition {
 fn user_ctx(user_id: Uuid) -> AuthContext {
     AuthContext {
         principal_id: Some(user_id),
-        is_admin: false,
+        session_id: None,
+        platform_role: None,
+        assignments: Vec::new(),
+        system_role: None,
+        action_ceiling: Vec::new(),
         kind: PrincipalKind::User,
         org_id: None,
-        org_role: None,
     }
 }
 

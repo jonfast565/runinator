@@ -1,5 +1,5 @@
 //! authentication primitives + the request-gating middleware. authorization (resource grants) is a
-//! later phase; phase 1 enforces "is this a valid principal?" plus an `is_admin` flag.
+//! Authentication resolves a credential to a live principal and current RBAC assignments.
 
 use std::sync::Arc;
 
@@ -48,6 +48,29 @@ impl<T: DatabaseImpl> runinator_auth::CredentialStore for AuthState<T> {
 
     async fn touch_api_key(&self, id: Uuid, last_used_at: i64) {
         let _ = self.db.touch_api_key(id, last_used_at).await;
+    }
+
+    async fn user_by_id(&self, id: Uuid) -> Option<runinator_models::auth::User> {
+        self.db.fetch_user(id).await.ok().flatten()
+    }
+
+    async fn session_by_id(&self, id: Uuid) -> Option<runinator_models::auth::AuthSession> {
+        self.db.fetch_session(id).await.ok().flatten()
+    }
+
+    async fn service_account_by_id(
+        &self,
+        id: Uuid,
+    ) -> Option<runinator_models::rbac::ServiceAccount> {
+        self.db.fetch_service_account(id).await.ok().flatten()
+    }
+
+    async fn role_assignments(
+        &self,
+        kind: runinator_models::auth::PrincipalKind,
+        id: Uuid,
+    ) -> Option<Vec<runinator_models::rbac::RoleAssignment>> {
+        self.db.list_principal_role_assignments(kind, id).await.ok()
     }
 }
 
@@ -103,7 +126,8 @@ pub async fn auth_middleware<T: DatabaseImpl>(
     next: Next,
 ) -> Response {
     if !state.config.enabled {
-        req.extensions_mut().insert(AuthContext::disabled_admin());
+        req.extensions_mut()
+            .insert(AuthContext::disabled_platform_admin());
         return next.run(req).await;
     }
     if is_public_path(req.uri().path()) {
@@ -132,24 +156,19 @@ pub async fn auth_middleware<T: DatabaseImpl>(
     next.run(req).await
 }
 
-/// bind an `X-Org-Id` org onto the request's principal: members get their stored role; a platform
-/// admin gets org context with no role (they transcend org roles). a non-member non-admin is left
-/// org-less, so org-gated endpoints reject them.
+/// Bind an `X-Org-Id` only when a live assignment authorizes that organization.
 async fn resolve_header_org<T: DatabaseImpl>(
-    state: &AuthState<T>,
+    _state: &AuthState<T>,
     context: &mut AuthContext,
     org_id: Uuid,
 ) {
-    if let Some(user_id) = context.principal_id
-        && let Ok(Some(membership)) = state.db.fetch_org_membership(org_id, user_id).await
+    if context.platform_role == Some(runinator_models::rbac::PlatformRole::Admin)
+        || context.assignments.iter().any(|assignment| {
+            assignment.scope.kind == runinator_models::rbac::ScopeKind::Organization
+                && assignment.scope.id == Some(org_id)
+        })
     {
         context.org_id = Some(org_id);
-        context.org_role = Some(membership.role);
-        return;
-    }
-    if context.is_admin {
-        context.org_id = Some(org_id);
-        context.org_role = None;
     }
 }
 

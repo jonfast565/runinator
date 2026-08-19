@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use async_trait::async_trait;
-use opentelemetry::metrics::{Counter, Histogram};
+use opentelemetry::metrics::{Counter, Histogram, ObservableGauge};
 use opentelemetry::KeyValue;
 
 use crate::types::{
@@ -34,9 +34,11 @@ const CH_EVENT: &str = "events";
 /// drop-in for the wrapped one; when otel is disabled the meter is a no-op and this adds only a
 /// per-call timestamp read.
 pub fn instrument(inner: Arc<dyn Broker>, backend: impl Into<String>) -> Arc<dyn Broker> {
+    let backend = backend.into();
+    let connection_state = inner.connection_state();
     Arc::new(InstrumentedBroker {
         inner,
-        metrics: BrokerMetrics::new(backend.into()),
+        metrics: BrokerMetrics::new(backend, connection_state),
     })
 }
 
@@ -44,11 +46,28 @@ struct BrokerMetrics {
     backend: String,
     operations: Counter<u64>,
     duration_ms: Histogram<f64>,
+    _connection_state: ObservableGauge<u64>,
 }
 
 impl BrokerMetrics {
-    fn new(backend: String) -> Self {
+    fn new(
+        backend: String,
+        connection_state: Option<tokio::sync::watch::Receiver<ConnectionState>>,
+    ) -> Self {
         let meter = opentelemetry::global::meter(METER_NAME);
+        let callback_backend = backend.clone();
+        let connection_state = meter
+            .u64_observable_gauge("runinator_broker_connection_state")
+            .with_callback(move |observer| {
+                let connected = connection_state
+                    .as_ref()
+                    .is_none_or(|state| state.borrow().is_connected());
+                observer.observe(
+                    u64::from(connected),
+                    &[KeyValue::new("backend", callback_backend.clone())],
+                );
+            })
+            .build();
         Self {
             backend,
             operations: meter.u64_counter(METRIC_OPERATIONS).build(),
@@ -56,6 +75,7 @@ impl BrokerMetrics {
                 .f64_histogram(METRIC_DURATION_MS)
                 .with_unit("ms")
                 .build(),
+            _connection_state: connection_state,
         }
     }
 

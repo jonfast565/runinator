@@ -1,5 +1,5 @@
-// authentication & identity domain/wire types. authorization (grants/teams) lands in a later phase;
-// phase 1 carries only a global `is_admin` flag plus service api keys.
+// Authentication and identity wire types. Credentials carry identity only; authorization is
+// resolved from live RBAC state.
 
 use std::collections::BTreeMap;
 
@@ -7,12 +7,12 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::capabilities::Capability;
+use crate::rbac::{Action, PlatformRole, RoleAssignment, SystemRole};
 
 /// the local-password identity provider tag. future SSO providers use `"oidc:<issuer>"`.
 pub const PROVIDER_LOCAL: &str = "local";
 
-// ---- resource-based authorization (phase 2) ----
+// ---- resource-based authorization ----
 
 /// the permission ladder for a resource grant. higher variants subsume lower ones.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -57,6 +57,8 @@ impl Permission {
 pub enum ResourceType {
     Workflow,
     Pipeline,
+    FunctionPackage,
+    ConsoleSession,
 }
 
 impl ResourceType {
@@ -64,6 +66,18 @@ impl ResourceType {
         match self {
             ResourceType::Workflow => "workflow",
             ResourceType::Pipeline => "pipeline",
+            ResourceType::FunctionPackage => "function_package",
+            ResourceType::ConsoleSession => "console_session",
+        }
+    }
+
+    pub fn from_str_lossy(value: &str) -> Option<Self> {
+        match value {
+            "workflow" => Some(Self::Workflow),
+            "pipeline" => Some(Self::Pipeline),
+            "function_package" => Some(Self::FunctionPackage),
+            "console_session" => Some(Self::ConsoleSession),
+            _ => None,
         }
     }
 }
@@ -110,6 +124,7 @@ pub struct Grant {
 pub struct Team {
     pub id: Option<Uuid>,
     pub name: String,
+    pub scope: crate::rbac::ScopeRef,
     pub created_at: DateTime<Utc>,
 }
 
@@ -126,6 +141,7 @@ pub struct UpdateTeamRequest {
 #[derive(Debug, Clone, Deserialize)]
 pub struct AddTeamMemberRequest {
     pub user_id: Uuid,
+    pub role: crate::rbac::TeamRole,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -142,7 +158,6 @@ pub struct User {
     pub username: String,
     #[serde(default)]
     pub email: Option<String>,
-    pub is_admin: bool,
     pub disabled: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -161,8 +176,14 @@ pub struct ApiKey {
     pub id: Option<Uuid>,
     pub name: String,
     #[serde(default)]
-    pub user_id: Option<Uuid>,
-    pub is_service: bool,
+    pub principal_kind: PrincipalKind,
+    pub principal_id: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_role: Option<SystemRole>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub org_id: Option<Uuid>,
+    #[serde(default)]
+    pub action_ceiling: Vec<Action>,
     pub key_prefix: String,
     #[serde(default)]
     pub last_used_at: Option<DateTime<Utc>>,
@@ -176,10 +197,6 @@ pub struct ApiKey {
 #[derive(Debug, Clone)]
 pub struct ApiKeyRecord {
     pub key: ApiKey,
-    /// resolved admin flag for the principal this key acts as (service keys are admin in phase 1).
-    pub is_admin: bool,
-    pub principal_kind: PrincipalKind,
-    pub org_id: Option<Uuid>,
     pub key_hash: String,
 }
 
@@ -198,26 +215,29 @@ pub struct AuthSession {
 pub struct Claims {
     /// subject: the user id.
     pub sub: String,
-    /// admin flag, carried so the middleware needn't re-read the db per request.
-    pub adm: bool,
+    /// backing refresh-session id; access is revoked immediately with the session.
+    pub sid: String,
     /// issued-at (unix seconds).
     pub iat: i64,
     /// expiry (unix seconds).
     pub exp: i64,
     /// token id, for future revocation lists.
     pub jti: String,
-    /// optional replica capability: when set, scopes a broker token to exactly one worker replica so
-    /// the broker can authorize a consumer's targeting without a registry lookup. absent on ordinary
-    /// user access tokens.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rid: Option<String>,
     /// active organization for this token, when the user has switched into one. absent on tokens
     /// minted before an org was selected, and on service/replica tokens.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub org: Option<String>,
-    /// the user's role in the active org (`org`), carried so the middleware needn't re-read the db.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub orl: Option<String>,
+}
+
+/// Broker-only token claims. Kept separate so an ordinary identity JWT can never acquire transport
+/// authority by presenting an extra claim.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplicaClaims {
+    pub sub: String,
+    pub iat: i64,
+    pub exp: i64,
+    pub jti: String,
+    pub rid: String,
 }
 
 /// how a request was authenticated.
@@ -227,7 +247,6 @@ pub enum PrincipalKind {
     #[default]
     User,
     Service,
-    Agent,
 }
 
 impl PrincipalKind {
@@ -235,7 +254,6 @@ impl PrincipalKind {
         match self {
             Self::User => "user",
             Self::Service => "service",
-            Self::Agent => "agent",
         }
     }
 
@@ -243,34 +261,42 @@ impl PrincipalKind {
         match raw {
             "user" => Some(Self::User),
             "service" => Some(Self::Service),
-            "agent" => Some(Self::Agent),
             _ => None,
         }
     }
 }
 
 /// the resolved principal for an authenticated request, injected as an axum extension.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthContext {
     pub principal_id: Option<Uuid>,
-    pub is_admin: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<Uuid>,
     pub kind: PrincipalKind,
+    pub platform_role: Option<PlatformRole>,
+    #[serde(default)]
+    pub assignments: Vec<RoleAssignment>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_role: Option<SystemRole>,
+    #[serde(default)]
+    pub action_ceiling: Vec<Action>,
     /// active organization for this request, resolved from the token's `org` claim (or an
     /// `X-Org-Id` header for service keys). `None` means platform-global / no org selected.
     pub org_id: Option<Uuid>,
-    /// the caller's role in `org_id`, when in an org context.
-    pub org_role: Option<crate::orgs::OrgRole>,
 }
 
 impl AuthContext {
     /// the synthetic admin used when auth is disabled, so existing behavior is unchanged.
-    pub fn disabled_admin() -> Self {
+    pub fn disabled_platform_admin() -> Self {
         Self {
             principal_id: None,
-            is_admin: true,
+            session_id: None,
             kind: PrincipalKind::Service,
+            platform_role: Some(PlatformRole::Admin),
+            assignments: Vec::new(),
+            system_role: None,
+            action_ceiling: Vec::new(),
             org_id: None,
-            org_role: None,
         }
     }
 }
@@ -295,10 +321,8 @@ pub struct LoginResponse {
     /// access-token lifetime in seconds.
     pub expires_in: i64,
     pub user: User,
-    /// the capabilities this token grants, so the client can gate the ui without a follow-up call.
-    /// login issues an org-less token, so only platform capabilities appear until an org is selected.
-    #[serde(default)]
-    pub capabilities: Vec<Capability>,
+    pub assignments: Vec<RoleAssignment>,
+    pub effective_actions: Vec<Action>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -312,8 +336,8 @@ pub struct CreateUserRequest {
     pub password: String,
     #[serde(default)]
     pub email: Option<String>,
-    #[serde(default)]
-    pub is_admin: bool,
+    #[serde(default = "default_platform_role")]
+    pub platform_role: PlatformRole,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -323,7 +347,7 @@ pub struct UpdateUserRequest {
     #[serde(default)]
     pub password: Option<String>,
     #[serde(default)]
-    pub is_admin: Option<bool>,
+    pub platform_role: Option<PlatformRole>,
     #[serde(default)]
     pub disabled: Option<bool>,
 }
@@ -331,12 +355,20 @@ pub struct UpdateUserRequest {
 #[derive(Debug, Clone, Deserialize)]
 pub struct CreateApiKeyRequest {
     pub name: String,
+    pub principal_kind: PrincipalKind,
+    pub principal_id: Uuid,
     #[serde(default)]
-    pub user_id: Option<Uuid>,
+    pub system_role: Option<SystemRole>,
     #[serde(default)]
-    pub is_service: bool,
+    pub org_id: Option<Uuid>,
+    #[serde(default)]
+    pub action_ceiling: Vec<Action>,
     #[serde(default)]
     pub expires_at: Option<DateTime<Utc>>,
+}
+
+fn default_platform_role() -> PlatformRole {
+    PlatformRole::Member
 }
 
 #[derive(Debug, Clone, Deserialize)]

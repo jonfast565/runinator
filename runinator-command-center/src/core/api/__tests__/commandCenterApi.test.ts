@@ -105,7 +105,7 @@ describe("command center permissions API in web mode", () => {
       username: "ada",
       password: "secret",
       email: "ada@example.com",
-      is_admin: true,
+      platform_role: "admin",
     });
 
     expect(fetch).toHaveBeenCalledWith(
@@ -116,7 +116,7 @@ describe("command center permissions API in web mode", () => {
           username: "ada",
           password: "secret",
           email: "ada@example.com",
-          is_admin: true,
+          platform_role: "admin",
         }),
       }),
     );
@@ -127,6 +127,7 @@ describe("command center permissions API in web mode", () => {
     await addTeamMember(
       "00000000-0000-0000-0000-000000000001",
       "00000000-0000-0000-0000-000000000002",
+      "member",
     );
     await listTeamMembers("00000000-0000-0000-0000-000000000001");
 
@@ -143,7 +144,7 @@ describe("command center permissions API in web mode", () => {
       "/api/teams/00000000-0000-0000-0000-000000000001/members",
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify({ user_id: "00000000-0000-0000-0000-000000000002" }),
+        body: JSON.stringify({ user_id: "00000000-0000-0000-0000-000000000002", role: "member" }),
       }),
     );
     expect(fetch).toHaveBeenNthCalledWith(
@@ -156,8 +157,9 @@ describe("command center permissions API in web mode", () => {
   it("maps api key lifecycle endpoints", async () => {
     await createApiKey({
       name: "deploy",
-      user_id: "00000000-0000-0000-0000-000000000002",
-      is_service: false,
+      principal_kind: "user",
+      principal_id: "00000000-0000-0000-0000-000000000002",
+      action_ceiling: [],
       expires_at: null,
     });
     await updateApiKey("00000000-0000-0000-0000-000000000003", {
@@ -174,8 +176,9 @@ describe("command center permissions API in web mode", () => {
         method: "POST",
         body: JSON.stringify({
           name: "deploy",
-          user_id: "00000000-0000-0000-0000-000000000002",
-          is_service: false,
+          principal_kind: "user",
+          principal_id: "00000000-0000-0000-0000-000000000002",
+          action_ceiling: [],
           expires_at: null,
         }),
       }),

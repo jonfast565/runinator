@@ -3,7 +3,6 @@ use std::sync::Arc;
 use axum::{Extension, Json, extract::Path, http::StatusCode};
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::auth::AuthContext;
-use runinator_models::capabilities::Capability;
 use runinator_models::orgs::{
     AddOrgMemberRequest, CreateOrgRequest, OrgContextResponse, OrgMembershipView, OrgRole,
     SwitchOrgRequest, UpdateOrgMemberRequest, UpdateOrgRequest, slugify,
@@ -11,6 +10,14 @@ use runinator_models::orgs::{
 use runinator_models::value::Value;
 use serde::Serialize;
 use uuid::Uuid;
+
+fn org_scope(org_id: Uuid) -> runinator_models::rbac::ScopeRef {
+    runinator_models::rbac::ScopeRef::new(
+        runinator_models::rbac::ScopeKind::Organization,
+        Some(org_id),
+    )
+    .unwrap()
+}
 
 use runinator_ws_core::models::{ApiError, ApiResponse};
 use runinator_ws_core::responses::{api_error, bad_request, not_found};
@@ -94,7 +101,10 @@ pub async fn list_orgs<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> Reply {
-    if let Err(reply) = ctx.require_capability(Capability::OrgsManage) {
+    if let Err(reply) = ctx.require_scope_action(
+        runinator_models::rbac::Action::Own,
+        runinator_models::rbac::ScopeRef::PLATFORM,
+    ) {
         return reply;
     }
     match db.list_orgs().await {
@@ -130,7 +140,9 @@ pub async fn get_org<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(org_id): Path<Uuid>,
 ) -> Reply {
-    if let Err(reply) = ctx.require_org_member(org_id) {
+    if let Err(reply) =
+        ctx.require_scope_action(runinator_models::rbac::Action::View, org_scope(org_id))
+    {
         return reply;
     }
     match db.fetch_org(org_id).await {
@@ -147,7 +159,9 @@ pub async fn update_org<T: DatabaseImpl>(
     Path(org_id): Path<Uuid>,
     Json(request): Json<UpdateOrgRequest>,
 ) -> Reply {
-    if let Err(reply) = ctx.require_org_admin(org_id) {
+    if let Err(reply) =
+        ctx.require_scope_action(runinator_models::rbac::Action::Own, org_scope(org_id))
+    {
         return reply;
     }
     let name = request.name.map(|n| n.trim().to_string());
@@ -166,7 +180,9 @@ pub async fn delete_org<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(org_id): Path<Uuid>,
 ) -> Reply {
-    if let Err(reply) = ctx.require_org_role(org_id, OrgRole::Owner) {
+    if let Err(reply) =
+        ctx.require_scope_action(runinator_models::rbac::Action::Own, org_scope(org_id))
+    {
         return reply;
     }
     match db.delete_org(org_id).await {
@@ -181,7 +197,9 @@ pub async fn list_org_members<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(org_id): Path<Uuid>,
 ) -> Reply {
-    if let Err(reply) = ctx.require_org_member(org_id) {
+    if let Err(reply) =
+        ctx.require_scope_action(runinator_models::rbac::Action::View, org_scope(org_id))
+    {
         return reply;
     }
     match db.list_org_members(org_id).await {
@@ -197,7 +215,12 @@ pub async fn add_org_member<T: DatabaseImpl>(
     Path(org_id): Path<Uuid>,
     Json(request): Json<AddOrgMemberRequest>,
 ) -> Reply {
-    if let Err(reply) = ctx.require_org_admin(org_id) {
+    let action = if request.role == OrgRole::Owner {
+        runinator_models::rbac::Action::Own
+    } else {
+        runinator_models::rbac::Action::MembersManage
+    };
+    if let Err(reply) = ctx.require_scope_action(action, org_scope(org_id)) {
         return reply;
     }
     if db
@@ -224,7 +247,12 @@ pub async fn update_org_member<T: DatabaseImpl>(
     Path((org_id, user_id)): Path<(Uuid, Uuid)>,
     Json(request): Json<UpdateOrgMemberRequest>,
 ) -> Reply {
-    if let Err(reply) = ctx.require_org_admin(org_id) {
+    let action = if request.role == OrgRole::Owner {
+        runinator_models::rbac::Action::Own
+    } else {
+        runinator_models::rbac::Action::MembersManage
+    };
+    if let Err(reply) = ctx.require_scope_action(action, org_scope(org_id)) {
         return reply;
     }
     // guard the last owner: an org must always retain at least one owner.
@@ -243,7 +271,10 @@ pub async fn remove_org_member<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path((org_id, user_id)): Path<(Uuid, Uuid)>,
 ) -> Reply {
-    if let Err(reply) = ctx.require_org_admin(org_id) {
+    if let Err(reply) = ctx.require_scope_action(
+        runinator_models::rbac::Action::MembersManage,
+        org_scope(org_id),
+    ) {
         return reply;
     }
     // removing an owner demotes them out of the org; block if they are the last one.
@@ -283,9 +314,11 @@ pub async fn switch_org<T: DatabaseImpl>(
     let (access_token, _exp) = match issue_access_token(
         &config,
         user_id,
-        ctx.is_admin,
+        match ctx.session_id {
+            Some(id) => id,
+            None => return forbidden(),
+        },
         Some(request.org_id),
-        Some(membership.role),
     ) {
         Ok(pair) => pair,
         Err(err) => return api_error(err),

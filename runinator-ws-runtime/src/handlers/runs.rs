@@ -160,7 +160,11 @@ pub async fn claim_workflow_runs_for_scheduler<T: DatabaseImpl>(
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Json(request): Json<SchedulerRunClaimRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_service_or_admin() {
+    if let Err(reply) = ctx.require_system_role(&[
+        runinator_models::rbac::SystemRole::Engine,
+        runinator_models::rbac::SystemRole::Worker,
+        runinator_models::rbac::SystemRole::Agent,
+    ]) {
         return reply;
     }
     let statuses = if request.statuses.is_empty() {
@@ -195,7 +199,11 @@ pub async fn claim_ready_nodes<T: DatabaseImpl>(
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Json(request): Json<ReadyNodeClaimRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_service_or_admin() {
+    if let Err(reply) = ctx.require_system_role(&[
+        runinator_models::rbac::SystemRole::Engine,
+        runinator_models::rbac::SystemRole::Worker,
+        runinator_models::rbac::SystemRole::Agent,
+    ]) {
         return reply;
     }
     match repository::claim_ready_nodes(
@@ -220,7 +228,11 @@ pub async fn process_ready_node<T: DatabaseImpl>(
     Path(ready_node_id): Path<Uuid>,
     Json(request): Json<ReadyNodeProcessRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_service_or_admin() {
+    if let Err(reply) = ctx.require_system_role(&[
+        runinator_models::rbac::SystemRole::Engine,
+        runinator_models::rbac::SystemRole::Worker,
+        runinator_models::rbac::SystemRole::Agent,
+    ]) {
         return reply;
     }
     let next_ready = match (
@@ -252,7 +264,11 @@ pub async fn renew_workflow_run_claim<T: DatabaseImpl>(
     Path(workflow_run_id): Path<Uuid>,
     Json(request): Json<SchedulerRunClaimRenewRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_service_or_admin() {
+    if let Err(reply) = ctx.require_system_role(&[
+        runinator_models::rbac::SystemRole::Engine,
+        runinator_models::rbac::SystemRole::Worker,
+        runinator_models::rbac::SystemRole::Agent,
+    ]) {
         return reply;
     }
     match repository::renew_workflow_run_claim(
@@ -283,7 +299,11 @@ pub async fn release_workflow_run_claim<T: DatabaseImpl>(
     Path(workflow_run_id): Path<Uuid>,
     Json(request): Json<SchedulerRunClaimReleaseRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_service_or_admin() {
+    if let Err(reply) = ctx.require_system_role(&[
+        runinator_models::rbac::SystemRole::Engine,
+        runinator_models::rbac::SystemRole::Worker,
+        runinator_models::rbac::SystemRole::Agent,
+    ]) {
         return reply;
     }
     match repository::release_workflow_run_claim(db.as_ref(), workflow_run_id, request.scheduler_id)
@@ -597,9 +617,13 @@ pub async fn get_workflow_runs<T: DatabaseImpl>(
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Query(query): Query<WorkflowRunStatusQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    let visible = AuthzChecker::new(db.as_ref(), &ctx)
+    let visible = match AuthzChecker::new(db.as_ref(), &ctx)
         .visible_workflow_ids()
-        .await;
+        .await
+    {
+        Ok(visible) => visible,
+        Err(reply) => return reply,
+    };
 
     if let Some(name) = query.name {
         return match repository::fetch_workflow_runs_by_name(
@@ -665,7 +689,11 @@ pub async fn get_runs<T: DatabaseImpl>(
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Query(query): Query<RunStatusQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_service_or_admin() {
+    if let Err(reply) = ctx.require_system_role(&[
+        runinator_models::rbac::SystemRole::Engine,
+        runinator_models::rbac::SystemRole::Worker,
+        runinator_models::rbac::SystemRole::Agent,
+    ]) {
         return reply;
     }
     let Some(status) = query.status else {
@@ -684,7 +712,11 @@ pub async fn update_run<T: DatabaseImpl>(
     Path(run_id): Path<Uuid>,
     Json(request): Json<RunStatusRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_service_or_admin() {
+    if let Err(reply) = ctx.require_system_role(&[
+        runinator_models::rbac::SystemRole::Engine,
+        runinator_models::rbac::SystemRole::Worker,
+        runinator_models::rbac::SystemRole::Agent,
+    ]) {
         return reply;
     }
     match repository::update_run_status(
@@ -710,7 +742,11 @@ pub async fn get_run_chunks<T: DatabaseImpl>(
     Path(run_id): Path<Uuid>,
     Query(query): Query<ChunkQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_service_or_admin() {
+    if let Err(reply) = ctx.require_system_role(&[
+        runinator_models::rbac::SystemRole::Engine,
+        runinator_models::rbac::SystemRole::Worker,
+        runinator_models::rbac::SystemRole::Agent,
+    ]) {
         return reply;
     }
     match repository::fetch_run_chunks(
@@ -733,7 +769,11 @@ pub async fn append_run_chunk<T: DatabaseImpl>(
     Path(run_id): Path<Uuid>,
     Json(chunk): Json<NewRunChunk>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_service_or_admin() {
+    if let Err(reply) = ctx.require_system_role(&[
+        runinator_models::rbac::SystemRole::Engine,
+        runinator_models::rbac::SystemRole::Worker,
+        runinator_models::rbac::SystemRole::Agent,
+    ]) {
         return reply;
     }
     match repository::append_run_chunk(db.as_ref(), run_id, &chunk).await {
@@ -758,7 +798,11 @@ pub async fn update_workflow_run<T: DatabaseImpl>(
     Path(workflow_run_id): Path<Uuid>,
     Json(request): Json<WorkflowRunStatusRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_service_or_admin() {
+    if let Err(reply) = ctx.require_system_role(&[
+        runinator_models::rbac::SystemRole::Engine,
+        runinator_models::rbac::SystemRole::Worker,
+        runinator_models::rbac::SystemRole::Agent,
+    ]) {
         return reply;
     }
     match repository::update_workflow_run_status(

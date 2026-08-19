@@ -32,7 +32,7 @@
               <td>{{ user.username }}</td>
               <td>{{ user.email || "-" }}</td>
               <td>{{ user.disabled ? "disabled" : "active" }}</td>
-              <td>{{ user.is_admin ? "admin" : "user" }}</td>
+              <td>{{ user.platform_role }}</td>
             </tr>
           </tbody>
         </table>
@@ -56,10 +56,7 @@
             <input v-model="permissions.userDraft.password" type="password" autocomplete="new-password" />
           </label>
           <div class="flex min-h-[54px] items-end gap-3.5">
-            <label class="inline-flex items-center gap-1.5 text-[13px] text-fg">
-              <input v-model="permissions.userDraft.is_admin" type="checkbox" :disabled="isLastEnabledAdmin && permissions.userDraft.is_admin" />
-              <span>Admin</span>
-            </label>
+            <label><span>Platform role</span><select v-model="permissions.userDraft.platform_role" :disabled="isLastEnabledAdmin"><option value="member">Member</option><option value="auditor">Auditor</option><option value="operator">Operator</option><option value="admin">Admin</option></select></label>
             <label class="inline-flex items-center gap-1.5 text-[13px] text-fg">
               <input v-model="permissions.userDraft.disabled" type="checkbox" :disabled="isLastEnabledAdmin && !permissions.userDraft.disabled" />
               <span>Disabled</span>
@@ -115,7 +112,7 @@ const teamId = ref("");
 
 const isLastEnabledAdmin = computed(() => {
   const user = permissions.selectedUser;
-  return Boolean(user?.is_admin && !user.disabled && permissions.enabledAdminCount <= 1);
+  return user?.platform_role === "admin" && !user.disabled && permissions.enabledAdminCount <= 1;
 });
 const availableTeams = computed(() => {
   const assigned = new Set(permissions.userTeams.map((team) => team.id));

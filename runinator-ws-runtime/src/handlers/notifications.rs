@@ -8,8 +8,7 @@ use axum::{
 };
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::{
-    auth::AuthContext,
-    capabilities::Capability,
+    auth::{AuthContext, Permission},
     notifications::{NewNotification, NewNotificationPolicy},
     web::TaskResponse,
 };
@@ -20,7 +19,7 @@ use runinator_ws_core::events::{AppEvent, AppEventKind, EventSender, emit};
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::openapi::docs::{EndpointDoc, Example, endpoint, json_body};
 use runinator_ws_core::responses::{api_error, not_found};
-use runinator_ws_middleware::authz::AuthContextExt;
+use runinator_ws_middleware::authz::{AuthContextExt, AuthzChecker};
 
 type Reply = (StatusCode, Json<ApiResponse>);
 
@@ -34,8 +33,14 @@ pub struct NotificationsListQuery {
 
 pub async fn list_notifications<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
     Query(query): Query<NotificationsListQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) =
+        ctx.require_scope_action(runinator_models::rbac::Action::View, ctx.selected_scope())
+    {
+        return reply;
+    }
     let unread_only = query.unread.unwrap_or(false);
     let limit = query.limit.unwrap_or(200);
     match repository::fetch_notifications(db.as_ref(), unread_only, limit).await {
@@ -50,8 +55,12 @@ pub async fn list_notifications<T: DatabaseImpl>(
 pub async fn create_notification<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
+    Extension(ctx): Extension<AuthContext>,
     Json(notification): Json<NewNotification>,
 ) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = ctx.require_system_role(&[runinator_models::rbac::SystemRole::Engine]) {
+        return reply;
+    }
     match repository::create_notification(db.as_ref(), &notification).await {
         Ok(created) => {
             emit(
@@ -75,11 +84,17 @@ pub async fn create_notification<T: DatabaseImpl>(
 pub async fn mark_notification_read<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
+    Extension(ctx): Extension<AuthContext>,
     Path(notification_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = ctx.require_scope_action(
+        runinator_models::rbac::Action::NotificationsManage,
+        ctx.selected_scope(),
+    ) {
+        return reply;
+    }
     match repository::mark_notification_read(db.as_ref(), notification_id).await {
         Ok(Some(notification)) => {
-            // no auth ctx on this handler — leave global.
             emit(
                 &events,
                 AppEvent::global(AppEventKind::NotificationsChanged),
@@ -97,8 +112,15 @@ pub async fn mark_notification_read<T: DatabaseImpl>(
 pub async fn delete_notification<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
+    Extension(ctx): Extension<AuthContext>,
     Path(notification_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
+    if let Err(reply) = ctx.require_scope_action(
+        runinator_models::rbac::Action::NotificationsManage,
+        ctx.selected_scope(),
+    ) {
+        return reply;
+    }
     match repository::delete_notification(db.as_ref(), notification_id).await {
         Ok(true) => {
             emit(
@@ -127,8 +149,22 @@ pub struct NotificationPoliciesQuery {
 
 pub async fn list_notification_policies<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
     Query(query): Query<NotificationPoliciesQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
+    if let Some(workflow_id) = query.workflow_id {
+        if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+            .require_workflow(workflow_id, Permission::View)
+            .await
+        {
+            return reply;
+        }
+    } else if let Err(reply) = ctx.require_scope_action(
+        runinator_models::rbac::Action::View,
+        runinator_models::rbac::ScopeRef::PLATFORM,
+    ) {
+        return reply;
+    }
     match repository::fetch_notification_policies(db.as_ref(), query.workflow_id).await {
         Ok(policies) => (
             StatusCode::OK,
@@ -143,7 +179,9 @@ pub async fn create_notification_policy<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Json(policy): Json<NewNotificationPolicy>,
 ) -> Reply {
-    if let Err(reply) = ctx.require_capability(Capability::NotificationsManage) {
+    if let Err(reply) =
+        require_policy_target(db.as_ref(), &ctx, policy.workflow_id, Permission::Edit).await
+    {
         return reply;
     }
     match repository::create_notification_policy(db.as_ref(), &policy).await {
@@ -161,7 +199,19 @@ pub async fn update_notification_policy<T: DatabaseImpl>(
     Path(policy_id): Path<Uuid>,
     Json(policy): Json<NewNotificationPolicy>,
 ) -> Reply {
-    if let Err(reply) = ctx.require_capability(Capability::NotificationsManage) {
+    let current = match repository::fetch_notification_policy(db.as_ref(), policy_id).await {
+        Ok(Some(policy)) => policy,
+        Ok(None) => return not_found(format!("Notification policy {policy_id} not found")),
+        Err(err) => return api_error(err.to_string()),
+    };
+    if let Err(reply) =
+        require_policy_target(db.as_ref(), &ctx, current.workflow_id, Permission::Edit).await
+    {
+        return reply;
+    }
+    if let Err(reply) =
+        require_policy_target(db.as_ref(), &ctx, policy.workflow_id, Permission::Edit).await
+    {
         return reply;
     }
     match repository::update_notification_policy(db.as_ref(), policy_id, &policy).await {
@@ -179,7 +229,14 @@ pub async fn delete_notification_policy<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(policy_id): Path<Uuid>,
 ) -> Reply {
-    if let Err(reply) = ctx.require_capability(Capability::NotificationsManage) {
+    let current = match repository::fetch_notification_policy(db.as_ref(), policy_id).await {
+        Ok(Some(policy)) => policy,
+        Ok(None) => return not_found(format!("Notification policy {policy_id} not found")),
+        Err(err) => return api_error(err.to_string()),
+    };
+    if let Err(reply) =
+        require_policy_target(db.as_ref(), &ctx, current.workflow_id, Permission::Own).await
+    {
         return reply;
     }
     match repository::delete_notification_policy(db.as_ref(), policy_id).await {
@@ -192,6 +249,25 @@ pub async fn delete_notification_policy<T: DatabaseImpl>(
         ),
         Ok(false) => not_found(format!("Notification policy {policy_id} not found")),
         Err(err) => api_error(err.to_string()),
+    }
+}
+
+async fn require_policy_target<T: DatabaseImpl>(
+    db: &T,
+    ctx: &AuthContext,
+    workflow_id: Option<Uuid>,
+    needed: Permission,
+) -> Result<(), (StatusCode, Json<ApiResponse>)> {
+    match workflow_id {
+        Some(workflow_id) => {
+            AuthzChecker::new(db, ctx)
+                .require_workflow(workflow_id, needed)
+                .await
+        }
+        None => ctx.require_scope_action(
+            runinator_models::rbac::Action::NotificationsManage,
+            runinator_models::rbac::ScopeRef::PLATFORM,
+        ),
     }
 }
 

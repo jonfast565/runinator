@@ -94,7 +94,7 @@ pub async fn run_webserver<T: DatabaseImpl>(
         },
         None,
         // the web service registering its own replica at startup, not an external caller.
-        &AuthContext::disabled_admin(),
+        &AuthContext::disabled_platform_admin(),
     )
     .await?;
     let heartbeat_db = pool.clone();

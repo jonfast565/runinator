@@ -522,7 +522,7 @@ import {
 } from "../../core/services";
 import type { ReplicaSample } from "../../core/services";
 import { useAppStore } from "../../ui/adapters/pinia/app";
-import { useCapabilitiesStore } from "../../ui/adapters/pinia/capabilities";
+import { useActionsStore } from "../../ui/adapters/pinia/actions";
 import { useOperationLoading } from "../composables/useOperationLoading";
 import type {
   AgentDirectiveKind,
@@ -534,10 +534,10 @@ import type {
 import { formatDate, pretty } from "../../core/utils/format";
 
 const app = useAppStore();
-const capabilities = useCapabilitiesStore();
-const canEnrollAgents = computed(() => capabilities.has("agents:enroll"));
-const canReadAgent = computed(() => capabilities.has("audit:read"));
-const canManageAgent = computed(() => capabilities.has("nodes:scale"));
+const actions = useActionsStore();
+const canEnrollAgents = computed(() => actions.has("agents:enroll"));
+const canReadAgent = computed(() => actions.has("audit:read"));
+const canManageAgent = computed(() => actions.has("nodes:operate"));
 const enrollmentOpen = ref(false);
 const enrollmentServiceUrl = ref("");
 const enrollmentTtlMinutes = ref(15);
@@ -558,7 +558,7 @@ const directiveBusy = ref(false);
 const directiveError = ref("");
 
 async function loadDirectives(replicaId: string | null) {
-  if (!replicaId || (!canReadAgent.value && !capabilities.has("secrets:read"))) {
+  if (!replicaId || (!canReadAgent.value && !actions.has("secrets:read"))) {
     agentDirectives.value = [];
     return;
   }

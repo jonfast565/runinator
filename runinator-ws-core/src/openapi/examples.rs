@@ -283,10 +283,10 @@ pub fn example_value(example: Example) -> Option<Value> {
         Example::User => user_example(),
         Example::UserList => json!([user_example()]),
         Example::ApiKey => {
-            json!({ "name": "local automation", "user_id": UUID_EXAMPLE, "is_service": false, "expires_at": null })
+            json!({ "name": "local automation", "principal_kind": "user", "principal_id": UUID_EXAMPLE, "system_role": null, "action_ceiling": [], "expires_at": null })
         }
         Example::ApiKeyList => {
-            json!([{ "id": UUID_EXAMPLE, "name": "local automation", "user_id": UUID_EXAMPLE, "is_service": false, "key_prefix": "runi_live_1234", "expires_at": null, "disabled": false }])
+            json!([{ "id": UUID_EXAMPLE, "name": "local automation", "principal_kind": "user", "principal_id": UUID_EXAMPLE, "system_role": null, "action_ceiling": [], "key_prefix": "runi_live_1234", "expires_at": null, "disabled": false }])
         }
         Example::AgentEnrollmentCreate => json!({
             "ttl_seconds": 900,
@@ -447,7 +447,7 @@ fn user_example() -> Value {
         "id": UUID_EXAMPLE,
         "username": "admin",
         "email": "admin@example.test",
-        "is_admin": true,
+        "platform_role": "admin",
         "disabled": false,
     })
 }

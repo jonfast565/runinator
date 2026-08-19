@@ -3,8 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::{Extension, Json, extract::Query, http::StatusCode};
 use runinator_database::interfaces::DatabaseImpl;
-use runinator_models::auth::{AuthContext, PrincipalKind};
-use runinator_models::capabilities::Capability;
+use runinator_models::auth::AuthContext;
 use runinator_models::value::Value;
 use runinator_models::{
     bundles::{SecretBundle, SecretBundleEntry},
@@ -44,7 +43,7 @@ pub async fn get_credential<T: DatabaseImpl>(
     Query(query): Query<CredentialQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
     let cipher = settings_cipher();
-    if matches!(ctx.kind, PrincipalKind::Agent) {
+    if ctx.system_role == Some(runinator_models::rbac::SystemRole::Agent) {
         let (Some(scope), Some(name)) = (query.scope.as_deref(), query.name.as_deref()) else {
             return not_found("credential not found");
         };
@@ -56,7 +55,10 @@ pub async fn get_credential<T: DatabaseImpl>(
             return not_found("credential not found");
         }
         let _ = name;
-    } else if let Err(reply) = ctx.require_capability(Capability::SecretsRead) {
+    } else if let Err(reply) = ctx.require_scope_action(
+        runinator_models::rbac::Action::SecretsRead,
+        ctx.selected_scope(),
+    ) {
         return reply;
     }
     if query.scope.is_none() && query.name.is_none() {
@@ -130,7 +132,10 @@ pub async fn put_credential<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<CredentialPutRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_capability(Capability::SecretsWrite) {
+    if let Err(reply) = ctx.require_scope_action(
+        runinator_models::rbac::Action::SecretsWrite,
+        ctx.selected_scope(),
+    ) {
         return reply;
     }
     let cipher = settings_cipher();
@@ -191,7 +196,10 @@ pub async fn reencrypt_settings<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_capability(Capability::SecretsWrite) {
+    if let Err(reply) = ctx.require_scope_action(
+        runinator_models::rbac::Action::SecretsWrite,
+        ctx.selected_scope(),
+    ) {
         return reply;
     }
     let cipher = settings_cipher();
@@ -239,7 +247,10 @@ pub async fn import_secret_bundle<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Json(bundle): Json<SecretBundle>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_capability(Capability::SecretsWrite) {
+    if let Err(reply) = ctx.require_scope_action(
+        runinator_models::rbac::Action::SecretsWrite,
+        ctx.selected_scope(),
+    ) {
         return reply;
     }
     match import_secret_entries(db.as_ref(), &bundle).await {
@@ -390,7 +401,10 @@ pub async fn delete_credential<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Query(query): Query<CredentialQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_capability(Capability::SecretsWrite) {
+    if let Err(reply) = ctx.require_scope_action(
+        runinator_models::rbac::Action::SecretsWrite,
+        ctx.selected_scope(),
+    ) {
         return reply;
     }
     let (Some(scope), Some(name)) = (query.scope, query.name) else {

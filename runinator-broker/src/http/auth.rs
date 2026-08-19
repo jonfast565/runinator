@@ -1,5 +1,5 @@
 use runinator_auth::AuthConfig;
-use runinator_models::auth::Claims;
+use runinator_models::auth::ReplicaClaims;
 
 // env vars configuring the broker's bearer-token gate. when no secret is set the broker stays open
 // (the local/dev default); the supervisor stack is unaffected.
@@ -42,15 +42,15 @@ impl BrokerAuth {
     }
 
     /// verify a bearer token, returning its claims on success.
-    pub fn verify(&self, token: &str) -> Option<Claims> {
-        runinator_auth::verify_access_token(&self.config, token)
+    pub fn verify(&self, token: &str) -> Option<ReplicaClaims> {
+        runinator_auth::verify_replica_token(&self.config, token)
     }
 }
 
 /// the authenticated identity attached to a request: `None` when broker auth is disabled (every
 /// request is anonymous) — handlers treat that as "no authz constraints".
 #[derive(Clone)]
-pub struct AuthIdentity(pub Option<Claims>);
+pub struct AuthIdentity(pub Option<ReplicaClaims>);
 
 #[cfg(test)]
 #[path = "auth_tests.rs"]

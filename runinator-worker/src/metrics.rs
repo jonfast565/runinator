@@ -4,7 +4,7 @@
 use std::sync::OnceLock;
 
 use opentelemetry::KeyValue;
-use opentelemetry::metrics::{Counter, Histogram, UpDownCounter};
+use opentelemetry::metrics::{Counter, Gauge, Histogram, UpDownCounter};
 
 const METER_NAME: &str = "runinator-worker";
 
@@ -17,6 +17,10 @@ struct WorkerMetrics {
     actions_in_flight: UpDownCounter<i64>,
     control_commands: Counter<u64>,
     secret_resolution_failures: Counter<u64>,
+    capacity: Gauge<u64>,
+    action_queue_wait_ms: Histogram<f64>,
+    result_publish: Counter<u64>,
+    lease_contention: Counter<u64>,
 }
 
 static METRICS: OnceLock<WorkerMetrics> = OnceLock::new();
@@ -50,6 +54,17 @@ fn metrics() -> &'static WorkerMetrics {
             secret_resolution_failures: meter
                 .u64_counter("runinator_worker_secret_resolution_failures_total")
                 .build(),
+            capacity: meter.u64_gauge("runinator_worker_capacity").build(),
+            action_queue_wait_ms: meter
+                .f64_histogram("runinator_worker_action_queue_wait_ms")
+                .with_unit("ms")
+                .build(),
+            result_publish: meter
+                .u64_counter("runinator_worker_result_publish_total")
+                .build(),
+            lease_contention: meter
+                .u64_counter("runinator_worker_lease_contention_total")
+                .build(),
         }
     })
 }
@@ -57,6 +72,26 @@ fn metrics() -> &'static WorkerMetrics {
 /// an action delivery was accepted for processing (before lease/dedupe checks).
 pub(crate) fn action_received() {
     metrics().actions_received.add(1, &[]);
+}
+
+pub(crate) fn capacity(value: usize) {
+    metrics().capacity.record(value as u64, &[]);
+}
+
+pub(crate) fn action_queue_wait(duration_ms: f64) {
+    metrics()
+        .action_queue_wait_ms
+        .record(duration_ms.max(0.0), &[]);
+}
+
+pub(crate) fn result_publish(outcome: &'static str) {
+    metrics()
+        .result_publish
+        .add(1, &[KeyValue::new("outcome", outcome)]);
+}
+
+pub(crate) fn lease_contention() {
+    metrics().lease_contention.add(1, &[]);
 }
 
 /// a delivery was dropped as a duplicate because its executor lease is held elsewhere.

@@ -26,6 +26,10 @@ const DIRECT_STORE_ACCESS: &[(&str, &str)] = &[
         "users, api keys, sessions: crud the runtime never drives",
     ),
     (
+        "runinator-ws-identity/authz.rs",
+        "role assignments, service accounts, ownership and grants are identity-domain CRUD",
+    ),
+    (
         "runinator-ws-identity/orgs.rs",
         "orgs, memberships, quotas: crud the runtime never drives",
     ),

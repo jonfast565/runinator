@@ -50,8 +50,7 @@ export type {
 export { CELL_SCOPE, cellBindingName, cellReference, isCellPending } from "./console";
 
 export type { PermissionLevel, PrincipalType } from "./auth/permission";
-export type { Capability } from "./auth/capability";
-export { ALL_CAPABILITIES } from "./auth/capability";
+export type { Action } from "./auth/action";
 export type { User } from "./auth/user";
 export type { Team } from "./auth/team";
 export type { Grant } from "./auth/grant";

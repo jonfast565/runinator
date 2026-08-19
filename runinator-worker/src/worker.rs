@@ -131,6 +131,7 @@ pub async fn start_worker_loop(runtime: WorkerRuntime) -> Result<(), SendableErr
         ..profile.clone()
     };
     let max_concurrent_actions = max_concurrent_actions.max(1);
+    metrics::capacity(max_concurrent_actions);
     let semaphore = Arc::new(Semaphore::new(max_concurrent_actions));
     // keyed by node-run id so concurrent node runs of the same workflow run (parallel/race/map child
     // work) each get their own cancellation token; a targeted cancel reaches exactly one branch.
@@ -512,6 +513,11 @@ async fn process_delivery(
         &delivery.command.trace_context,
     );
     metrics::action_received();
+    metrics::action_queue_wait(
+        (chrono::Utc::now() - delivery.enqueued_at)
+            .num_milliseconds()
+            .max(0) as f64,
+    );
     let command = delivery.command.clone();
     let action = command.action.clone();
     let token = CancellationToken::new();
@@ -564,6 +570,7 @@ async fn process_delivery(
             "skipping duplicate delivery: executor lease held elsewhere"
         );
         metrics::action_duplicate();
+        metrics::lease_contention();
         events.handle(WorkerEvent::ActionSkippedDuplicate {
             node_run_id: command.workflow_node_run_id,
         });

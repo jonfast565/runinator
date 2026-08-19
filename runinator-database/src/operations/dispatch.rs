@@ -37,6 +37,27 @@ where
     for<'c> &'c mut <B::Db as Database>::Connection: Executor<'c, Database = B::Db>,
     <B::Db as Database>::QueryResult: RowsAffected,
 {
+    async fn action_dispatch_queue_snapshot(
+        &self,
+        now: DateTime<Utc>,
+    ) -> Result<QueueSnapshot, SendableError> {
+        let row = sqlx::query(&self.render(
+            "SELECT COUNT(*) AS depth,
+                    COALESCE(SUM(CASE WHEN claimed_until > ? THEN 1 ELSE 0 END), 0) AS claimed,
+                    MIN(created_at) AS oldest
+             FROM workflow_action_dispatches WHERE published_at IS NULL",
+        ))
+        .bind(now.timestamp())
+        .fetch_one(self.pool())
+        .await?;
+        let oldest: Option<i64> = row.try_get("oldest")?;
+        Ok(QueueSnapshot {
+            depth: row.try_get::<i64, _>("depth")?.max(0) as u64,
+            claimed: row.try_get::<i64, _>("claimed")?.max(0) as u64,
+            oldest_enqueued_at: oldest.and_then(|value| DateTime::from_timestamp(value, 0)),
+        })
+    }
+
     async fn record_dead_letter(&self, record: Value) -> Result<Value, SendableError> {
         let now = Utc::now().timestamp();
         let id = Uuid::now_v7();

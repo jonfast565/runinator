@@ -1,7 +1,7 @@
 import { defineStore } from "pinia";
 import { computed } from "vue";
 import { authService } from "../../../core/services";
-import type { Capability, ReplicaCounts, ReplicaRecord } from "../../../core/domain/models";
+import type { Action, ReplicaCounts, ReplicaRecord } from "../../../core/domain/models";
 import { isTauriRuntime } from "../../../ui/adapters/tauri/runtime";
 import {
   endpointForTab,
@@ -32,14 +32,14 @@ export const useAppStore = defineStore("app", () => {
   const state = mirrorServiceState(appService);
   const authState = mirrorServiceState(authService);
 
-  // capability predicate mirroring the capabilities store, reading reactive auth state so any computed
-  // that calls it re-runs when the caller's auth or capability set changes.
-  function can(capability: Capability): boolean {
+  // action predicate mirroring the actions store, reading reactive auth state so any computed
+  // that calls it re-runs when the caller's auth or action set changes.
+  function can(action: Action): boolean {
     if (!authState.value.required) {
       return true;
     }
 
-    return authState.value.capabilities.includes(capability);
+    return authState.value.effectiveActions.includes(action);
   }
 
   const normalizedSearch = computed(() => appService.normalizedSearch);
@@ -104,7 +104,7 @@ export const useAppStore = defineStore("app", () => {
     activeTab: computed({
       get: () => state.value.activeTab,
       set: (tab: AppTab) => {
-        // never land on a tab the caller lacks the capability for (deep link, restored default).
+        // never land on a tab the caller lacks the action for (deep link, restored default).
         const required = navItemForTab(tab)?.requires;
         appService.setActiveTab(required && !can(required) ? "Workflows" : tab);
       },

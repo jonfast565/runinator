@@ -149,11 +149,8 @@ pub(crate) fn authorize_receive(
     let Some(claims) = &identity.0 else {
         return Ok(());
     };
-    let Some(rid) = &claims.rid else {
-        return Ok(());
-    };
     match profile.and_then(|profile| profile.replica_id) {
-        Some(replica_id) if replica_id.to_string() == *rid => Ok(()),
+        Some(replica_id) if replica_id.to_string() == claims.rid => Ok(()),
         _ => Err(forbidden("token is scoped to a different replica")),
     }
 }
@@ -162,7 +159,7 @@ pub(crate) fn authorize_receive(
 #[allow(clippy::result_large_err)] // the response is returned directly by the axum handler.
 fn authorize_poll(identity: &AuthIdentity) -> Result<(), Response> {
     match &identity.0 {
-        Some(claims) if claims.rid.is_some() => Err(forbidden(
+        Some(_) => Err(forbidden(
             "replica-scoped token cannot use the general poll path",
         )),
         _ => Ok(()),

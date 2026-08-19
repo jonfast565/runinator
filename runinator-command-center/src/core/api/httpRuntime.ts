@@ -91,23 +91,33 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     path: () => "auth/logout",
     body: (args) => ({ refresh_token: arg(args, "refreshToken") }),
   },
-  list_workflow_grants: {
+  list_resource_grants: {
     method: "GET",
-    path: (args) => `workflows/${escape(arg(args, "workflowId"))}/grants`,
+    path: (args) => `authz/resources/${escape(arg(args, "resourceType"))}/${escape(arg(args, "resourceId"))}/grants`,
   },
-  create_workflow_grant: {
+  create_resource_grant: {
     method: "POST",
-    path: (args) => `workflows/${escape(arg(args, "workflowId"))}/grants`,
+    path: (args) => `authz/resources/${escape(arg(args, "resourceType"))}/${escape(arg(args, "resourceId"))}/grants`,
     body: (args) => ({
       principal_type: arg(args, "principalType"),
       principal_id: arg(args, "principalId"),
       permission: arg(args, "permission"),
     }),
   },
-  revoke_workflow_grant: {
+  revoke_resource_grant: {
     method: "DELETE",
     path: (args) =>
-      `workflows/${escape(arg(args, "workflowId"))}/grants/${escape(arg(args, "grantId"))}`,
+      `authz/resources/${escape(arg(args, "resourceType"))}/${escape(arg(args, "resourceId"))}/grants/${escape(arg(args, "grantId"))}`,
+  },
+  transfer_resource_owner: {
+    method: "POST",
+    path: (args) => `authz/resources/${escape(arg(args, "resourceType"))}/${escape(arg(args, "resourceId"))}/owner`,
+    body: (args) => ({
+      owner: {
+        kind: arg(args, "scopeKind"),
+        id: argOpt(args, "scopeId") ?? null,
+      },
+    }),
   },
   list_dead_letters: {
     method: "GET",
@@ -196,7 +206,7 @@ const REGISTRY: Record<string, HttpDescriptor> = {
   add_team_member: {
     method: "POST",
     path: (args) => `teams/${escape(arg(args, "teamId"))}/members`,
-    body: (args) => ({ user_id: arg(args, "userId") }),
+    body: (args) => ({ user_id: arg(args, "userId"), role: arg(args, "role") }),
   },
   remove_team_member: {
     method: "DELETE",
@@ -339,11 +349,6 @@ const REGISTRY: Record<string, HttpDescriptor> = {
   delete_pipeline: {
     method: "DELETE",
     path: (args) => `pipelines/${escape(arg(args, "pipelineId"))}`,
-  },
-  set_pipeline_owner: {
-    method: "PATCH",
-    path: (args) => `pipelines/${escape(arg(args, "pipelineId"))}/owner`,
-    body: (args) => ({ org_id: argOpt(args, "orgId") ?? null }),
   },
   create_pipeline_run: {
     method: "POST",
@@ -838,11 +843,6 @@ const REGISTRY: Record<string, HttpDescriptor> = {
       const since = argOpt(args, "sinceSeconds");
       return since ? `${base}?since_seconds=${escape(since)}` : base;
     },
-  },
-  set_workflow_owner: {
-    method: "PATCH",
-    path: (args) => `workflows/${escape(arg(args, "workflowId"))}/owner`,
-    body: (args) => ({ org_id: argOpt(args, "orgId") ?? null }),
   },
   // --- organizations (tenants), membership, resource allocation, and billing ---
   list_my_orgs: { method: "GET", path: () => "orgs/me" },

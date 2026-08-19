@@ -1,8 +1,11 @@
 export interface ApiKey {
   id: string | null;
   name: string;
-  user_id?: string | null;
-  is_service: boolean;
+  principal_kind: "user" | "service";
+  principal_id: string;
+  system_role?: "engine" | "worker" | "waker" | "agent" | "replica" | null;
+  org_id?: string | null;
+  action_ceiling: string[];
   key_prefix: string;
   last_used_at?: string | null;
   expires_at?: string | null;

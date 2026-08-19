@@ -16,7 +16,6 @@ async fn users_grants_and_teams_round_trip() {
         .create_user(
             "alice".into(),
             Some("a@x.io".into()),
-            false,
             Some("argon-hash".into()),
         )
         .await
@@ -75,12 +74,19 @@ async fn users_grants_and_teams_round_trip() {
     assert_eq!(grants[0].permission, Permission::Own);
 
     // teams: membership feeds team-scoped grants.
-    let team = db.create_team("ops".into()).await.unwrap();
+    let team = db
+        .create_team("ops".into(), ScopeRef::PLATFORM)
+        .await
+        .unwrap();
     let team_id = team.id.unwrap();
     let updated_team = db.update_team(team_id, "platform".into()).await.unwrap();
     assert_eq!(updated_team.name, "platform");
-    db.add_team_member(team_id, user_id).await.unwrap();
-    db.add_team_member(team_id, user_id).await.unwrap(); // idempotent
+    db.add_team_member(team_id, user_id, TeamRole::Member)
+        .await
+        .unwrap();
+    db.add_team_member(team_id, user_id, TeamRole::Member)
+        .await
+        .unwrap(); // idempotent
     assert_eq!(db.list_user_team_ids(user_id).await.unwrap(), vec![team_id]);
     assert_eq!(
         db.list_user_teams(user_id).await.unwrap()[0].name,
@@ -124,10 +130,7 @@ async fn orgs_and_memberships_round_trip() {
     assert!(db.fetch_org_by_slug("acme".into()).await.unwrap().is_some());
     assert_eq!(db.list_orgs().await.unwrap().len(), 1);
 
-    let user = db
-        .create_user("bob".into(), None, false, None)
-        .await
-        .unwrap();
+    let user = db.create_user("bob".into(), None, None).await.unwrap();
     let user_id = user.id.unwrap();
 
     // membership is idempotent on (org, user); re-adding updates the role in place.
@@ -175,10 +178,7 @@ async fn api_keys_support_admin_lookup_update_and_revoke() {
     let db = SqliteDb::new(path.to_str().unwrap()).await.unwrap();
     db.run_init_scripts(&Vec::new()).await.unwrap();
 
-    let user = db
-        .create_user("api-user".into(), None, false, None)
-        .await
-        .unwrap();
+    let user = db.create_user("api-user".into(), None, None).await.unwrap();
     let user_id = user.id.unwrap();
     let key_id = Uuid::now_v7();
     let expires_at = Utc::now() + Duration::days(1);
@@ -187,17 +187,17 @@ async fn api_keys_support_admin_lookup_update_and_revoke() {
             key: ApiKey {
                 id: Some(key_id),
                 name: "initial".into(),
-                user_id: Some(user_id),
-                is_service: false,
+                principal_kind: runinator_models::auth::PrincipalKind::User,
+                principal_id: user_id,
+                system_role: None,
+                org_id: None,
+                action_ceiling: Vec::new(),
                 key_prefix: "testprefix".into(),
                 last_used_at: None,
                 expires_at: Some(expires_at),
                 disabled: false,
                 created_at: Utc::now(),
             },
-            is_admin: false,
-            principal_kind: runinator_models::auth::PrincipalKind::User,
-            org_id: None,
             key_hash: "hash".into(),
         })
         .await
@@ -219,6 +219,110 @@ async fn api_keys_support_admin_lookup_update_and_revoke() {
     db.revoke_api_key(key_id).await.unwrap();
     let revoked = db.fetch_api_key(key_id).await.unwrap().unwrap();
     assert!(revoked.key.disabled);
+
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn hierarchical_assignments_ownership_and_scoped_grants_are_enforced() {
+    let path = std::env::temp_dir().join(format!(
+        "runinator-rbac-{}.db",
+        Utc::now().timestamp_nanos_opt().unwrap()
+    ));
+    let db = SqliteDb::new(path.to_str().unwrap()).await.unwrap();
+    db.run_init_scripts(&Vec::new()).await.unwrap();
+    let user_id = db
+        .create_user("owner".into(), None, None)
+        .await
+        .unwrap()
+        .id
+        .unwrap();
+
+    db.upsert_role_assignment(
+        PrincipalKind::User,
+        user_id,
+        ScopeRef::PLATFORM,
+        Role::Platform(PlatformRole::Admin),
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(
+        db.delete_role_assignment(PrincipalKind::User, user_id, ScopeRef::PLATFORM)
+            .await
+            .is_err()
+    );
+
+    let service = db
+        .create_service_account("control-plane".into(), Some(user_id))
+        .await
+        .unwrap();
+    db.upsert_role_assignment(
+        PrincipalKind::Service,
+        service.id,
+        ScopeRef::PLATFORM,
+        Role::Platform(PlatformRole::Admin),
+        Some(user_id),
+    )
+    .await
+    .unwrap();
+    db.delete_role_assignment(PrincipalKind::User, user_id, ScopeRef::PLATFORM)
+        .await
+        .unwrap();
+    assert!(
+        db.set_service_account_disabled(service.id, true)
+            .await
+            .is_err()
+    );
+
+    let resource_id = Uuid::now_v7();
+    let now = Utc::now();
+    db.put_resource_ownership(ResourceOwnership {
+        resource_type: ResourceType::ConsoleSession,
+        resource_id,
+        tenant: ScopeRef::PLATFORM,
+        owner: ScopeRef::new(runinator_models::rbac::ScopeKind::User, Some(user_id)).unwrap(),
+        created_by: Some(user_id),
+        authz_version: 1,
+        created_at: now,
+        updated_at: now,
+    })
+    .await
+    .unwrap();
+    let ownership = db
+        .fetch_resource_ownership(ResourceType::ConsoleSession, resource_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(ownership.owner.id, Some(user_id));
+
+    let other_resource_id = Uuid::now_v7();
+    let grant = db
+        .create_grant(Grant {
+            id: None,
+            resource_type: ResourceType::ConsoleSession,
+            resource_id,
+            principal_type: PrincipalType::User,
+            principal_id: user_id,
+            permission: Permission::Edit,
+            created_at: now,
+        })
+        .await
+        .unwrap();
+    assert!(
+        !db.revoke_scoped_grant(
+            ResourceType::ConsoleSession,
+            other_resource_id,
+            grant.id.unwrap(),
+        )
+        .await
+        .unwrap()
+    );
+    assert!(
+        db.revoke_scoped_grant(ResourceType::ConsoleSession, resource_id, grant.id.unwrap(),)
+            .await
+            .unwrap()
+    );
 
     let _ = std::fs::remove_file(path);
 }

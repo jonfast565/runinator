@@ -15,11 +15,11 @@ use runinator_models::auth::{
     AddTeamMemberRequest, AgentEnrollmentToken, AgentEnrollmentTokenRecord, ApiKey, ApiKeyRecord,
     AuthContext, AuthSession, CreateAgentEnrollmentTokenRequest,
     CreateAgentEnrollmentTokenResponse, CreateApiKeyRequest, CreateApiKeyResponse,
-    CreateGrantRequest, CreateTeamRequest, CreateUserRequest, EnrollAgentRequest,
-    EnrollAgentResponse, Grant, LoginRequest, LoginResponse, Permission, PrincipalKind,
-    RefreshRequest, ResourceType, UpdateApiKeyRequest, UpdateTeamRequest, UpdateUserRequest, User,
+    CreateTeamRequest, CreateUserRequest, EnrollAgentRequest, EnrollAgentResponse, LoginRequest,
+    LoginResponse, PrincipalKind, RefreshRequest, UpdateApiKeyRequest, UpdateTeamRequest,
+    UpdateUserRequest, User,
 };
-use runinator_models::capabilities::Capability;
+use runinator_models::rbac::{Action, PlatformRole, Role, ScopeKind, ScopeRef, SystemRole};
 use runinator_models::value::Value;
 use runinator_utilities::secret_cipher::SecretCipher;
 use serde::Serialize;
@@ -36,7 +36,6 @@ use runinator_ws_middleware::auth::{
     verify_password,
 };
 use runinator_ws_middleware::authz::AuthContextExt;
-use runinator_ws_middleware::authz::AuthzChecker;
 
 type Reply = (StatusCode, Json<ApiResponse>);
 
@@ -65,23 +64,46 @@ fn too_many_requests(retry_after_secs: f64) -> Reply {
 }
 
 async fn enabled_admin_count<T: DatabaseImpl>(db: &T) -> Result<usize, Reply> {
-    db.list_users()
+    let assignments = db
+        .list_scope_role_assignments(ScopeRef::PLATFORM)
         .await
-        .map(|users| {
-            users
-                .iter()
-                .filter(|user| user.is_admin && !user.disabled)
-                .count()
-        })
-        .map_err(|err| api_error(err.to_string()))
+        .map_err(|err| api_error(err.to_string()))?;
+    let mut count = 0;
+    for assignment in assignments {
+        if assignment.role == Role::Platform(PlatformRole::Admin) {
+            let enabled = match assignment.principal_kind {
+                PrincipalKind::User => db
+                    .fetch_user(assignment.principal_id)
+                    .await
+                    .map_err(|err| api_error(err.to_string()))?
+                    .is_some_and(|user| !user.disabled),
+                PrincipalKind::Service => db
+                    .fetch_service_account(assignment.principal_id)
+                    .await
+                    .map_err(|err| api_error(err.to_string()))?
+                    .is_some_and(|account| !account.disabled),
+            };
+            count += usize::from(enabled);
+        }
+    }
+    Ok(count)
 }
 
 async fn would_remove_last_enabled_admin<T: DatabaseImpl>(
     db: &T,
     user: &User,
-    demote: bool,
+    removes_admin: bool,
 ) -> Result<bool, Reply> {
-    if !user.is_admin || user.disabled || !demote {
+    let Some(user_id) = user.id else {
+        return Ok(false);
+    };
+    let is_platform_admin = db
+        .list_principal_role_assignments(PrincipalKind::User, user_id)
+        .await
+        .map_err(|err| api_error(err.to_string()))?
+        .iter()
+        .any(|assignment| assignment.role == Role::Platform(PlatformRole::Admin));
+    if !is_platform_admin || user.disabled || !removes_admin {
         return Ok(false);
     }
     Ok(enabled_admin_count(db).await? <= 1)
@@ -101,6 +123,29 @@ fn ok_value<T: Serialize>(value: &T) -> Reply {
     }
 }
 
+async fn user_with_platform_role<T: DatabaseImpl>(db: &T, user: &User) -> Result<Value, Reply> {
+    let mut value = serde_json::to_value(user).map_err(|err| api_error(err.to_string()))?;
+    let id = user.id.ok_or_else(|| api_error("stored user has no id"))?;
+    let role = db
+        .list_principal_role_assignments(PrincipalKind::User, id)
+        .await
+        .map_err(|err| api_error(err.to_string()))?
+        .into_iter()
+        .filter_map(|assignment| match assignment.role {
+            Role::Platform(role) => Some(role),
+            _ => None,
+        })
+        .max()
+        .ok_or_else(|| api_error("user has no platform role assignment"))?;
+    if let Some(object) = value.as_object_mut() {
+        object.insert(
+            "platform_role".to_string(),
+            serde_json::to_value(role).unwrap(),
+        );
+    }
+    Ok(Value::from(value))
+}
+
 // ---- session helpers ----
 
 async fn issue_session<T: DatabaseImpl>(
@@ -109,22 +154,6 @@ async fn issue_session<T: DatabaseImpl>(
     user: User,
 ) -> Result<LoginResponse, Reply> {
     let user_id = user.id.ok_or_else(|| api_error("user is missing an id"))?;
-    // login issues an org-less token; the client selects an active org via /auth/switch-org.
-    let (access_token, _exp) =
-        issue_access_token(config, user_id, user.is_admin, None, None).map_err(api_error)?;
-    // capabilities for the org-less session: platform caps for admins, none otherwise. org caps
-    // arrive when the client switches org and reloads its principal.
-    let mut capabilities: Vec<Capability> = AuthContext {
-        principal_id: Some(user_id),
-        is_admin: user.is_admin,
-        kind: PrincipalKind::User,
-        org_id: None,
-        org_role: None,
-    }
-    .capabilities()
-    .into_iter()
-    .collect();
-    capabilities.sort();
     let (refresh_token, refresh_hash) = new_refresh_token();
     let session = AuthSession {
         id: Uuid::new_v4(),
@@ -133,15 +162,45 @@ async fn issue_session<T: DatabaseImpl>(
         expires_at: Utc::now() + Duration::seconds(config.refresh_ttl_secs),
         revoked: false,
     };
-    db.create_session(session)
+    db.create_session(session.clone())
         .await
         .map_err(|err| api_error(err.to_string()))?;
+    // login issues an org-less token; the client selects an active org via /auth/switch-org.
+    let (access_token, _exp) =
+        issue_access_token(config, user_id, session.id, None).map_err(api_error)?;
+    let assignments = db
+        .list_principal_role_assignments(PrincipalKind::User, user_id)
+        .await
+        .map_err(|err| api_error(err.to_string()))?;
+    let platform_role = assignments
+        .iter()
+        .filter_map(|assignment| match assignment.role {
+            Role::Platform(role) => Some(role),
+            _ => None,
+        })
+        .max();
+    let context = AuthContext {
+        principal_id: Some(user_id),
+        session_id: Some(session.id),
+        kind: PrincipalKind::User,
+        platform_role,
+        assignments: assignments.clone(),
+        system_role: None,
+        action_ceiling: Vec::new(),
+        org_id: None,
+    };
+    let effective_actions = Action::ALL
+        .iter()
+        .copied()
+        .filter(|action| context.authorize_scope(*action, ScopeRef::PLATFORM))
+        .collect();
     Ok(LoginResponse {
         access_token,
         refresh_token,
         expires_in: config.access_ttl_secs,
         user,
-        capabilities,
+        assignments,
+        effective_actions,
     })
 }
 
@@ -243,6 +302,25 @@ async fn audit_login_failure<T: DatabaseImpl>(db: &T, username: &str, reason: &s
     .await;
 }
 
+async fn audit_credential_change<T: DatabaseImpl>(
+    db: &T,
+    ctx: &AuthContext,
+    action: &str,
+    key_id: Uuid,
+) {
+    crate::audit::record_audit(
+        db,
+        ctx.principal_id,
+        ctx.actor_kind(),
+        action,
+        crate::audit::AuditOutcome::Success,
+        Some("api_key"),
+        Some(key_id),
+        None,
+    )
+    .await;
+}
+
 #[utoipa::path(
     post,
     path = "/auth/refresh",
@@ -317,28 +395,35 @@ pub async fn me<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> Reply {
-    // the caller's resolved capability set, sorted for a stable wire order; the command center gates
-    // the whole ui against exactly this list (see `capabilities_for`).
-    let mut capabilities: Vec<Capability> = ctx.capabilities().into_iter().collect();
-    capabilities.sort();
+    let scope = ctx
+        .org_id
+        .and_then(|id| ScopeRef::new(ScopeKind::Organization, Some(id)))
+        .unwrap_or(ScopeRef::PLATFORM);
+    let effective_actions: Vec<Action> = Action::ALL
+        .iter()
+        .copied()
+        .filter(|action| ctx.authorize_scope(*action, scope))
+        .collect();
     let Some(user_id) = ctx.principal_id else {
-        return ok_value(&serde_json::json!({
-            "service": true,
-            "is_admin": ctx.is_admin,
-            "capabilities": capabilities,
-        }));
+        return unauthorized("principal missing id");
     };
+    if ctx.kind == PrincipalKind::Service {
+        return match db.fetch_service_account(user_id).await {
+            Ok(Some(account)) => ok_value(&serde_json::json!({
+                "principal": account, "principal_kind": "service", "selected_scope": scope,
+                "assignments": ctx.assignments, "effective_actions": effective_actions,
+                "system_role": ctx.system_role,
+            })),
+            Ok(None) => not_found("service account not found"),
+            Err(err) => api_error(err.to_string()),
+        };
+    }
     match db.fetch_user(user_id).await {
-        Ok(Some(user)) => {
-            let mut value = match serde_json::to_value(&user) {
-                Ok(value) => value,
-                Err(err) => return api_error(err.to_string()),
-            };
-            if let Some(object) = value.as_object_mut() {
-                object.insert("capabilities".to_string(), serde_json::json!(capabilities));
-            }
-            ok_value(&value)
-        }
+        Ok(Some(user)) => ok_value(&serde_json::json!({
+            "principal": user, "principal_kind": "user", "selected_scope": scope,
+            "platform_role": ctx.platform_role, "assignments": ctx.assignments,
+            "effective_actions": effective_actions,
+        })),
         Ok(None) => not_found("user not found"),
         Err(err) => api_error(err.to_string()),
     }
@@ -350,14 +435,23 @@ pub async fn list_users<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> Reply {
-    if let Err(reply) = ctx.require_capability(Capability::UsersManage) {
+    if let Err(reply) = ctx.require_scope_action(
+        runinator_models::rbac::Action::MembersManage,
+        runinator_models::rbac::ScopeRef::PLATFORM,
+    ) {
         return reply;
     }
     match db.list_users().await {
-        Ok(users) => match users.iter().map(json_value).collect::<Result<Vec<_>, _>>() {
-            Ok(values) => (StatusCode::OK, Json(ApiResponse::JsonList(values))),
-            Err(reply) => reply,
-        },
+        Ok(users) => {
+            let mut values = Vec::with_capacity(users.len());
+            for user in &users {
+                match user_with_platform_role(db.as_ref(), user).await {
+                    Ok(value) => values.push(value),
+                    Err(reply) => return reply,
+                }
+            }
+            (StatusCode::OK, Json(ApiResponse::JsonList(values)))
+        }
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -367,7 +461,10 @@ pub async fn create_user<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<CreateUserRequest>,
 ) -> Reply {
-    if let Err(reply) = ctx.require_capability(Capability::UsersManage) {
+    if let Err(reply) = ctx.require_scope_action(
+        runinator_models::rbac::Action::MembersManage,
+        runinator_models::rbac::ScopeRef::PLATFORM,
+    ) {
         return reply;
     }
     let hash = match hash_password(&request.password) {
@@ -375,15 +472,19 @@ pub async fn create_user<T: DatabaseImpl>(
         Err(err) => return api_error(err),
     };
     match db
-        .create_user(
+        .create_user_with_platform_role(
             request.username,
             request.email,
-            request.is_admin,
             Some(hash),
+            request.platform_role,
+            ctx.principal_id,
         )
         .await
     {
-        Ok(user) => ok_value(&user),
+        Ok(user) => match user_with_platform_role(db.as_ref(), &user).await {
+            Ok(value) => (StatusCode::OK, Json(ApiResponse::JsonValue(value))),
+            Err(reply) => reply,
+        },
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -394,7 +495,10 @@ pub async fn update_user<T: DatabaseImpl>(
     Path(user_id): Path<Uuid>,
     Json(request): Json<UpdateUserRequest>,
 ) -> Reply {
-    if let Err(reply) = ctx.require_capability(Capability::UsersManage) {
+    if let Err(reply) = ctx.require_scope_action(
+        runinator_models::rbac::Action::MembersManage,
+        runinator_models::rbac::ScopeRef::PLATFORM,
+    ) {
         return reply;
     }
     let current = match db.fetch_user(user_id).await {
@@ -402,7 +506,10 @@ pub async fn update_user<T: DatabaseImpl>(
         Ok(None) => return not_found("user not found"),
         Err(err) => return api_error(err.to_string()),
     };
-    let demotes_enabled_admin = request.is_admin == Some(false) || request.disabled == Some(true);
+    let demotes_enabled_admin = request
+        .platform_role
+        .is_some_and(|role| role != PlatformRole::Admin)
+        || request.disabled == Some(true);
     match would_remove_last_enabled_admin(db.as_ref(), &current, demotes_enabled_admin).await {
         Ok(true) => return forbidden("cannot remove the last enabled admin user"),
         Ok(false) => {}
@@ -418,17 +525,34 @@ pub async fn update_user<T: DatabaseImpl>(
             return api_error(err.to_string());
         }
     }
+    let next_role = request.platform_role;
     match db
-        .update_user(user_id, request.email, request.is_admin, request.disabled)
+        .update_user(user_id, request.email, request.disabled)
         .await
     {
         Ok(user) => {
+            if let Some(role) = next_role
+                && let Err(err) = db
+                    .upsert_role_assignment(
+                        PrincipalKind::User,
+                        user_id,
+                        ScopeRef::PLATFORM,
+                        Role::Platform(role),
+                        ctx.principal_id,
+                    )
+                    .await
+            {
+                return api_error(err.to_string());
+            }
             if (password_changed || user.disabled)
                 && let Err(err) = db.revoke_user_sessions(user_id).await
             {
                 return api_error(err.to_string());
             }
-            ok_value(&user)
+            match user_with_platform_role(db.as_ref(), &user).await {
+                Ok(value) => (StatusCode::OK, Json(ApiResponse::JsonValue(value))),
+                Err(reply) => reply,
+            }
         }
         Err(err) => api_error(err.to_string()),
     }
@@ -439,7 +563,10 @@ pub async fn delete_user<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(user_id): Path<Uuid>,
 ) -> Reply {
-    if let Err(reply) = ctx.require_capability(Capability::UsersManage) {
+    if let Err(reply) = ctx.require_scope_action(
+        runinator_models::rbac::Action::MembersManage,
+        runinator_models::rbac::ScopeRef::PLATFORM,
+    ) {
         return reply;
     }
     let current = match db.fetch_user(user_id).await {
@@ -465,7 +592,11 @@ pub async fn list_api_keys<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
 ) -> Reply {
     // admins see every key; everyone else sees only their own.
-    let scope = if ctx.is_admin { None } else { ctx.principal_id };
+    let scope = if ctx.is_platform_admin() {
+        None
+    } else {
+        ctx.principal_id
+    };
     match db.list_api_keys(scope).await {
         Ok(keys) => match keys.iter().map(json_value).collect::<Result<Vec<_>, _>>() {
             Ok(values) => (StatusCode::OK, Json(ApiResponse::JsonList(values))),
@@ -480,38 +611,62 @@ pub async fn create_api_key<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<CreateApiKeyRequest>,
 ) -> Reply {
-    // only admins may mint service keys or keys for another user.
-    let is_service = request.is_service && ctx.is_admin;
-    let user_id = if is_service {
-        None
-    } else if ctx.is_admin {
-        request.user_id.or(ctx.principal_id)
-    } else {
-        ctx.principal_id
-    };
-    let owner = if let Some(user_id) = user_id {
-        match db.fetch_user(user_id).await {
-            Ok(Some(user)) => Some(user),
-            Ok(None) => return not_found("user not found"),
+    let target_scope = request
+        .org_id
+        .and_then(|id| ScopeRef::new(ScopeKind::Organization, Some(id)))
+        .or_else(|| {
+            (request.principal_kind == PrincipalKind::User)
+                .then(|| ScopeRef::new(ScopeKind::User, Some(request.principal_id)).unwrap())
+        })
+        .unwrap_or(ScopeRef::PLATFORM);
+    if let Err(reply) = ctx.require_scope_action(Action::CredentialsManage, target_scope) {
+        return reply;
+    }
+    if request.system_role.is_some() && !ctx.is_platform_admin() {
+        return forbidden("only a platform admin may assign a system role");
+    }
+    match request.principal_kind {
+        PrincipalKind::User => match db.fetch_user(request.principal_id).await {
+            Ok(Some(user)) if !user.disabled => {}
+            Ok(_) => return not_found("user not found"),
             Err(err) => return api_error(err.to_string()),
+        },
+        PrincipalKind::Service => match db.fetch_service_account(request.principal_id).await {
+            Ok(Some(account)) if !account.disabled => {}
+            Ok(_) => return not_found("service account not found"),
+            Err(err) => return api_error(err.to_string()),
+        },
+    }
+    if let Some(org_id) = request.org_id {
+        let assignments = match db
+            .list_principal_role_assignments(request.principal_kind, request.principal_id)
+            .await
+        {
+            Ok(assignments) => assignments,
+            Err(err) => return api_error(err.to_string()),
+        };
+        if !assignments.iter().any(|assignment| {
+            assignment.scope.kind == ScopeKind::Organization && assignment.scope.id == Some(org_id)
+        }) {
+            return bad_request("key principal is not assigned to the requested organization");
         }
-    } else {
-        None
-    };
-    let is_admin = if is_service {
-        true
-    } else {
-        owner
-            .as_ref()
-            .map(|user| user.is_admin)
-            .unwrap_or(ctx.is_admin)
-    };
+    }
+    if request
+        .action_ceiling
+        .iter()
+        .any(|action| !ctx.authorize_scope(*action, target_scope))
+    {
+        return forbidden("api key action ceiling exceeds the caller's authority");
+    }
     let generated = new_api_key();
     let key = ApiKey {
         id: Some(Uuid::new_v4()),
         name: request.name,
-        user_id,
-        is_service,
+        principal_kind: request.principal_kind,
+        principal_id: request.principal_id,
+        system_role: request.system_role,
+        org_id: request.org_id,
+        action_ceiling: request.action_ceiling,
         key_prefix: generated.prefix,
         last_used_at: None,
         expires_at: request.expires_at,
@@ -520,20 +675,18 @@ pub async fn create_api_key<T: DatabaseImpl>(
     };
     let record = ApiKeyRecord {
         key,
-        is_admin,
-        principal_kind: if is_service {
-            PrincipalKind::Service
-        } else {
-            PrincipalKind::User
-        },
-        org_id: None,
         key_hash: generated.key_hash,
     };
     match db.create_api_key(record).await {
-        Ok(stored) => ok_value(&CreateApiKeyResponse {
-            api_key: stored,
-            secret: generated.secret,
-        }),
+        Ok(stored) => {
+            if let Some(id) = stored.id {
+                audit_credential_change(db.as_ref(), &ctx, "credential.create", id).await;
+            }
+            ok_value(&CreateApiKeyResponse {
+                api_key: stored,
+                secret: generated.secret,
+            })
+        }
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -544,14 +697,22 @@ pub async fn update_api_key<T: DatabaseImpl>(
     Path(key_id): Path<Uuid>,
     Json(request): Json<UpdateApiKeyRequest>,
 ) -> Reply {
-    if let Err(reply) = ctx.require_capability(Capability::ApiKeysManage) {
-        return reply;
+    let current = match db.fetch_api_key(key_id).await {
+        Ok(Some(record)) => record,
+        Ok(None) => return not_found("api key not found"),
+        Err(err) => return api_error(err.to_string()),
+    };
+    if !can_manage_api_key(&ctx, &current.key) {
+        return not_found("api key not found");
     }
     match db
         .update_api_key(key_id, request.name, request.expires_at, request.disabled)
         .await
     {
-        Ok(key) => ok_value(&key),
+        Ok(key) => {
+            audit_credential_change(db.as_ref(), &ctx, "credential.update", key_id).await;
+            ok_value(&key)
+        }
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -561,20 +722,23 @@ pub async fn rotate_api_key<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(key_id): Path<Uuid>,
 ) -> Reply {
-    if let Err(reply) = ctx.require_capability(Capability::ApiKeysManage) {
-        return reply;
-    }
     let current = match db.fetch_api_key(key_id).await {
         Ok(Some(record)) => record,
         Ok(None) => return not_found("api key not found"),
         Err(err) => return api_error(err.to_string()),
     };
+    if !can_manage_api_key(&ctx, &current.key) {
+        return not_found("api key not found");
+    }
     let generated = new_api_key();
     let key = ApiKey {
         id: Some(Uuid::new_v4()),
         name: current.key.name,
-        user_id: current.key.user_id,
-        is_service: current.key.is_service,
+        principal_kind: current.key.principal_kind,
+        principal_id: current.key.principal_id,
+        system_role: current.key.system_role,
+        org_id: current.key.org_id,
+        action_ceiling: current.key.action_ceiling,
         key_prefix: generated.prefix,
         last_used_at: None,
         expires_at: current.key.expires_at,
@@ -583,9 +747,6 @@ pub async fn rotate_api_key<T: DatabaseImpl>(
     };
     let record = ApiKeyRecord {
         key,
-        is_admin: current.is_admin,
-        principal_kind: current.principal_kind,
-        org_id: current.org_id,
         key_hash: generated.key_hash,
     };
     match db.create_api_key(record).await {
@@ -593,6 +754,7 @@ pub async fn rotate_api_key<T: DatabaseImpl>(
             if let Err(err) = db.revoke_api_key(key_id).await {
                 return api_error(err.to_string());
             }
+            audit_credential_change(db.as_ref(), &ctx, "credential.rotate", key_id).await;
             ok_value(&CreateApiKeyResponse {
                 api_key: stored,
                 secret: generated.secret,
@@ -607,13 +769,33 @@ pub async fn revoke_api_key<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(key_id): Path<Uuid>,
 ) -> Reply {
-    if let Err(reply) = ctx.require_capability(Capability::ApiKeysManage) {
-        return reply;
+    let current = match db.fetch_api_key(key_id).await {
+        Ok(Some(record)) => record,
+        Ok(None) => return not_found("api key not found"),
+        Err(err) => return api_error(err.to_string()),
+    };
+    if !can_manage_api_key(&ctx, &current.key) {
+        return not_found("api key not found");
     }
     match db.revoke_api_key(key_id).await {
-        Ok(()) => task_response_success("API key revoked"),
+        Ok(()) => {
+            audit_credential_change(db.as_ref(), &ctx, "credential.revoke", key_id).await;
+            task_response_success("API key revoked")
+        }
         Err(err) => api_error(err.to_string()),
     }
+}
+
+fn can_manage_api_key(ctx: &AuthContext, key: &ApiKey) -> bool {
+    if ctx.is_platform_admin() {
+        return true;
+    }
+    if key.principal_kind == ctx.kind && Some(key.principal_id) == ctx.principal_id {
+        return true;
+    }
+    key.org_id
+        .and_then(|id| ScopeRef::new(ScopeKind::Organization, Some(id)))
+        .is_some_and(|scope| ctx.authorize_scope(Action::CredentialsManage, scope))
 }
 
 // ---- agent enrollment ----
@@ -626,7 +808,10 @@ pub async fn create_agent_enrollment_token<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<CreateAgentEnrollmentTokenRequest>,
 ) -> Reply {
-    if let Err(reply) = ctx.require_capability(Capability::AgentsEnroll) {
+    if let Err(reply) = ctx.require_scope_action(
+        runinator_models::rbac::Action::AgentsEnroll,
+        runinator_models::rbac::ScopeRef::PLATFORM,
+    ) {
         return reply;
     }
     if request.ttl_seconds == 0 || request.ttl_seconds > MAX_ENROLLMENT_TTL_SECONDS {
@@ -687,7 +872,10 @@ pub async fn list_agent_enrollment_tokens<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> Reply {
-    if let Err(reply) = ctx.require_capability(Capability::AgentsEnroll) {
+    if let Err(reply) = ctx.require_scope_action(
+        runinator_models::rbac::Action::AgentsEnroll,
+        runinator_models::rbac::ScopeRef::PLATFORM,
+    ) {
         return reply;
     }
     match db.list_agent_enrollment_tokens().await {
@@ -704,7 +892,10 @@ pub async fn delete_agent_enrollment_token<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(token_id): Path<String>,
 ) -> Reply {
-    if let Err(reply) = ctx.require_capability(Capability::AgentsEnroll) {
+    if let Err(reply) = ctx.require_scope_action(
+        runinator_models::rbac::Action::AgentsEnroll,
+        runinator_models::rbac::ScopeRef::PLATFORM,
+    ) {
         return reply;
     }
     match db.delete_agent_enrollment_token(token_id).await {
@@ -780,12 +971,20 @@ async fn authorize_enrollment<T: DatabaseImpl>(
     }
 
     let generated = new_api_key();
-    let principal_id = Uuid::new_v4();
+    let service = db
+        .create_service_account(
+            format!("agent:{}", request.request_body.instance_id),
+            stored.token.issued_by,
+        )
+        .await?;
     let key = ApiKey {
         id: Some(Uuid::new_v4()),
         name: format!("agent:{}", request.request_body.instance_id),
-        user_id: Some(principal_id),
-        is_service: true,
+        principal_kind: PrincipalKind::Service,
+        principal_id: service.id,
+        system_role: Some(SystemRole::Agent),
+        org_id: stored.token.org_id,
+        action_ceiling: Vec::new(),
         key_prefix: generated.prefix,
         last_used_at: None,
         expires_at: None,
@@ -794,9 +993,6 @@ async fn authorize_enrollment<T: DatabaseImpl>(
     };
     let record = ApiKeyRecord {
         key,
-        is_admin: false,
-        principal_kind: PrincipalKind::Agent,
-        org_id: stored.token.org_id,
         key_hash: generated.key_hash,
     };
     let Some(_) = db
@@ -813,83 +1009,16 @@ async fn authorize_enrollment<T: DatabaseImpl>(
     }))
 }
 
-// ---- resource grants (sharing) ----
-
-pub async fn list_workflow_grants<T: DatabaseImpl>(
-    Extension(db): Extension<Arc<T>>,
-    Extension(ctx): Extension<AuthContext>,
-    Path(workflow_id): Path<Uuid>,
-) -> Reply {
-    // only an owner (or admin) may inspect/manage a workflow's sharing.
-    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
-        .require_workflow(workflow_id, Permission::Own)
-        .await
-    {
-        return reply;
-    }
-    match db
-        .list_grants(ResourceType::Workflow.as_str().into(), workflow_id)
-        .await
-    {
-        Ok(grants) => match grants.iter().map(json_value).collect::<Result<Vec<_>, _>>() {
-            Ok(values) => (StatusCode::OK, Json(ApiResponse::JsonList(values))),
-            Err(reply) => reply,
-        },
-        Err(err) => api_error(err.to_string()),
-    }
-}
-
-pub async fn create_workflow_grant<T: DatabaseImpl>(
-    Extension(db): Extension<Arc<T>>,
-    Extension(ctx): Extension<AuthContext>,
-    Path(workflow_id): Path<Uuid>,
-    Json(request): Json<CreateGrantRequest>,
-) -> Reply {
-    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
-        .require_workflow(workflow_id, Permission::Own)
-        .await
-    {
-        return reply;
-    }
-    let grant = Grant {
-        id: None,
-        resource_type: ResourceType::Workflow,
-        resource_id: workflow_id,
-        principal_type: request.principal_type,
-        principal_id: request.principal_id,
-        permission: request.permission,
-        created_at: Utc::now(),
-    };
-    match db.create_grant(grant).await {
-        Ok(stored) => ok_value(&stored),
-        Err(err) => api_error(err.to_string()),
-    }
-}
-
-pub async fn revoke_workflow_grant<T: DatabaseImpl>(
-    Extension(db): Extension<Arc<T>>,
-    Extension(ctx): Extension<AuthContext>,
-    Path((workflow_id, grant_id)): Path<(Uuid, Uuid)>,
-) -> Reply {
-    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
-        .require_workflow(workflow_id, Permission::Own)
-        .await
-    {
-        return reply;
-    }
-    match db.revoke_grant(grant_id).await {
-        Ok(()) => task_response_success("Grant revoked"),
-        Err(err) => api_error(err.to_string()),
-    }
-}
-
 // ---- teams (admin only) ----
 
 pub async fn list_teams<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> Reply {
-    if let Err(reply) = ctx.require_capability(Capability::TeamsManage) {
+    if let Err(reply) = ctx.require_scope_action(
+        runinator_models::rbac::Action::MembersManage,
+        runinator_models::rbac::ScopeRef::PLATFORM,
+    ) {
         return reply;
     }
     match db.list_teams().await {
@@ -906,7 +1035,10 @@ pub async fn list_user_teams<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(user_id): Path<Uuid>,
 ) -> Reply {
-    if let Err(reply) = ctx.require_capability(Capability::TeamsManage) {
+    if let Err(reply) = ctx.require_scope_action(
+        runinator_models::rbac::Action::MembersManage,
+        runinator_models::rbac::ScopeRef::PLATFORM,
+    ) {
         return reply;
     }
     match db.list_user_teams(user_id).await {
@@ -923,10 +1055,17 @@ pub async fn create_team<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<CreateTeamRequest>,
 ) -> Reply {
-    if let Err(reply) = ctx.require_capability(Capability::TeamsManage) {
+    if let Err(reply) = ctx.require_scope_action(
+        runinator_models::rbac::Action::MembersManage,
+        runinator_models::rbac::ScopeRef::PLATFORM,
+    ) {
         return reply;
     }
-    match db.create_team(request.name).await {
+    let scope = ctx
+        .org_id
+        .and_then(|id| ScopeRef::new(ScopeKind::Organization, Some(id)))
+        .unwrap_or(ScopeRef::PLATFORM);
+    match db.create_team(request.name, scope).await {
         Ok(team) => ok_value(&team),
         Err(err) => api_error(err.to_string()),
     }
@@ -938,7 +1077,10 @@ pub async fn update_team<T: DatabaseImpl>(
     Path(team_id): Path<Uuid>,
     Json(request): Json<UpdateTeamRequest>,
 ) -> Reply {
-    if let Err(reply) = ctx.require_capability(Capability::TeamsManage) {
+    if let Err(reply) = ctx.require_scope_action(
+        runinator_models::rbac::Action::MembersManage,
+        runinator_models::rbac::ScopeRef::PLATFORM,
+    ) {
         return reply;
     }
     match db.update_team(team_id, request.name).await {
@@ -952,7 +1094,10 @@ pub async fn delete_team<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(team_id): Path<Uuid>,
 ) -> Reply {
-    if let Err(reply) = ctx.require_capability(Capability::TeamsManage) {
+    if let Err(reply) = ctx.require_scope_action(
+        runinator_models::rbac::Action::MembersManage,
+        runinator_models::rbac::ScopeRef::PLATFORM,
+    ) {
         return reply;
     }
     match db.delete_team(team_id).await {
@@ -966,7 +1111,10 @@ pub async fn list_team_members<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(team_id): Path<Uuid>,
 ) -> Reply {
-    if let Err(reply) = ctx.require_capability(Capability::TeamsManage) {
+    if let Err(reply) = ctx.require_scope_action(
+        runinator_models::rbac::Action::MembersManage,
+        runinator_models::rbac::ScopeRef::PLATFORM,
+    ) {
         return reply;
     }
     match db.list_team_members(team_id).await {
@@ -984,10 +1132,16 @@ pub async fn add_team_member<T: DatabaseImpl>(
     Path(team_id): Path<Uuid>,
     Json(request): Json<AddTeamMemberRequest>,
 ) -> Reply {
-    if let Err(reply) = ctx.require_capability(Capability::TeamsManage) {
+    if let Err(reply) = ctx.require_scope_action(
+        runinator_models::rbac::Action::MembersManage,
+        runinator_models::rbac::ScopeRef::PLATFORM,
+    ) {
         return reply;
     }
-    match db.add_team_member(team_id, request.user_id).await {
+    match db
+        .add_team_member(team_id, request.user_id, request.role)
+        .await
+    {
         Ok(()) => task_response_success("Member added"),
         Err(err) => api_error(err.to_string()),
     }
@@ -998,7 +1152,10 @@ pub async fn remove_team_member<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path((team_id, user_id)): Path<(Uuid, Uuid)>,
 ) -> Reply {
-    if let Err(reply) = ctx.require_capability(Capability::TeamsManage) {
+    if let Err(reply) = ctx.require_scope_action(
+        runinator_models::rbac::Action::MembersManage,
+        runinator_models::rbac::ScopeRef::PLATFORM,
+    ) {
         return reply;
     }
     match db.remove_team_member(team_id, user_id).await {
@@ -1071,16 +1228,6 @@ pub fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
         .route(
             "/agents/enroll",
             post(enroll_agent::<T>).layer(Extension(pool.clone())),
-        )
-        .route(
-            "/workflows/{id}/grants",
-            get(list_workflow_grants::<T>)
-                .post(create_workflow_grant::<T>)
-                .layer(Extension(pool.clone())),
-        )
-        .route(
-            "/workflows/{id}/grants/{grant_id}",
-            delete(revoke_workflow_grant::<T>).layer(Extension(pool.clone())),
         )
         .route(
             "/teams",
@@ -1360,45 +1507,6 @@ pub const DOCS: &[EndpointDoc] = &[
         200,
         "issued agent credential",
         Example::AgentEnrollmentResponse,
-    ),
-    endpoint(
-        "get",
-        "/workflows/{id}/grants",
-        "Auth",
-        "List workflow grants",
-        "Lists sharing grants for one workflow. Owner or admin access is required.",
-        false,
-        None,
-        &[],
-        200,
-        "workflow grants",
-        Example::Grant,
-    ),
-    endpoint(
-        "post",
-        "/workflows/{id}/grants",
-        "Auth",
-        "Create a workflow grant",
-        "Creates a sharing grant for one workflow. Owner or admin access is required.",
-        false,
-        json_body("Workflow grant payload.", Example::Grant),
-        &[],
-        200,
-        "workflow grant created",
-        Example::Grant,
-    ),
-    endpoint(
-        "delete",
-        "/workflows/{id}/grants/{grant_id}",
-        "Auth",
-        "Revoke a workflow grant",
-        "Revokes a sharing grant for one workflow. Owner or admin access is required.",
-        false,
-        None,
-        &[],
-        200,
-        "workflow grant revoked",
-        Example::TaskResponse,
     ),
     endpoint(
         "get",

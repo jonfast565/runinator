@@ -61,24 +61,30 @@ pub async fn set_access_token(
 }
 
 #[tauri::command]
-pub async fn list_workflow_grants(
+pub async fn list_resource_grants(
     state: State<'_, CommandCenterState>,
-    workflow_id: Uuid,
+    resource_type: String,
+    resource_id: Uuid,
 ) -> CommandResult<Vec<Value>> {
-    get_json(&state, &format!("workflows/{workflow_id}/grants")).await
+    get_json(
+        &state,
+        &format!("authz/resources/{resource_type}/{resource_id}/grants"),
+    )
+    .await
 }
 
 #[tauri::command]
-pub async fn create_workflow_grant(
+pub async fn create_resource_grant(
     state: State<'_, CommandCenterState>,
-    workflow_id: Uuid,
+    resource_type: String,
+    resource_id: Uuid,
     principal_type: String,
     principal_id: Uuid,
     permission: String,
 ) -> CommandResult<Value> {
     post_json(
         &state,
-        &format!("workflows/{workflow_id}/grants"),
+        &format!("authz/resources/{resource_type}/{resource_id}/grants"),
         &json!({
             "principal_type": principal_type,
             "principal_id": principal_id,
@@ -89,19 +95,36 @@ pub async fn create_workflow_grant(
 }
 
 #[tauri::command]
-pub async fn revoke_workflow_grant(
+pub async fn revoke_resource_grant(
     state: State<'_, CommandCenterState>,
-    workflow_id: Uuid,
+    resource_type: String,
+    resource_id: Uuid,
     grant_id: Uuid,
 ) -> CommandResult<Value> {
     let url = build_state_url(
         &state,
-        &format!("workflows/{workflow_id}/grants/{grant_id}"),
+        &format!("authz/resources/{resource_type}/{resource_id}/grants/{grant_id}"),
     )
     .await?;
     let response = state.client.read().await.delete(url.clone()).send().await?;
     let response = handle_response(url, response).await?;
     Ok(response.json::<Value>().await?)
+}
+
+#[tauri::command]
+pub async fn transfer_resource_owner(
+    state: State<'_, CommandCenterState>,
+    resource_type: String,
+    resource_id: Uuid,
+    scope_kind: String,
+    scope_id: Option<Uuid>,
+) -> CommandResult<Value> {
+    post_json(
+        &state,
+        &format!("authz/resources/{resource_type}/{resource_id}/owner"),
+        &json!({ "owner": { "kind": scope_kind, "id": scope_id } }),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -167,25 +190,6 @@ pub async fn fetch_replica_samples(
         None => format!("replicas/{replica_id}/samples"),
     };
     get_json(&state, &path).await
-}
-
-#[tauri::command]
-pub async fn set_workflow_owner(
-    state: State<'_, CommandCenterState>,
-    workflow_id: Uuid,
-    org_id: Option<Uuid>,
-) -> CommandResult<Value> {
-    let url = build_state_url(&state, &format!("workflows/{workflow_id}/owner")).await?;
-    let response = state
-        .client
-        .read()
-        .await
-        .patch(url.clone())
-        .json(&json!({ "org_id": org_id }))
-        .send()
-        .await?;
-    let response = handle_response(url, response).await?;
-    Ok(response.json::<Value>().await?)
 }
 
 #[tauri::command]
@@ -295,11 +299,12 @@ pub async fn add_team_member(
     state: State<'_, CommandCenterState>,
     team_id: Uuid,
     user_id: Uuid,
+    role: String,
 ) -> CommandResult<Value> {
     post_json(
         &state,
         &format!("teams/{team_id}/members"),
-        &json!({ "user_id": user_id }),
+        &json!({ "user_id": user_id, "role": role }),
     )
     .await
 }

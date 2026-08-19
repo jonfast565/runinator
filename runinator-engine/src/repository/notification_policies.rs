@@ -9,6 +9,13 @@ pub async fn fetch_notification_policies<T: DatabaseImpl>(
     db.fetch_notification_policies(workflow_id).await
 }
 
+pub async fn fetch_notification_policy<T: DatabaseImpl>(
+    db: &T,
+    policy_id: Uuid,
+) -> Result<Option<NotificationPolicy>, SendableError> {
+    db.fetch_notification_policy(policy_id).await
+}
+
 pub async fn create_notification_policy<T: DatabaseImpl>(
     db: &T,
     policy: &NewNotificationPolicy,

@@ -21,12 +21,12 @@ use axum::{
 use runinator_blob_core::BlobStore;
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::{
-    auth::AuthContext,
-    capabilities::Capability,
+    auth::{AuthContext, Permission, ResourceType},
     functions::{
         ARTIFACT_MEDIA_TYPE, FunctionPackage, FunctionVersionRef, NewFunctionVersion,
         is_valid_digest,
     },
+    rbac::{Action, ScopeKind, ScopeRef},
 };
 use serde::Deserialize;
 use uuid::Uuid;
@@ -35,18 +35,34 @@ use crate::repository;
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::openapi::docs::{EndpointDoc, Example, endpoint, json_body};
 use runinator_ws_core::responses::{api_error, bad_request, not_found};
-use runinator_ws_middleware::authz::AuthContextExt;
+use runinator_ws_middleware::authz::{AuthContextExt, AuthzChecker};
+
+fn selected_scope(ctx: &AuthContext) -> ScopeRef {
+    ctx.org_id
+        .and_then(|id| ScopeRef::new(ScopeKind::Organization, Some(id)))
+        .unwrap_or(ScopeRef::PLATFORM)
+}
 
 /// list packages visible to the caller.
 pub async fn get_functions<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> (StatusCode, Json<ApiResponse>) {
+    let visible = match AuthzChecker::new(db.as_ref(), &ctx)
+        .visible_resource_ids(ResourceType::FunctionPackage)
+        .await
+    {
+        Ok(visible) => visible,
+        Err(reply) => return reply,
+    };
     match repository::functions::fetch_packages(db.as_ref()).await {
         Ok(packages) => {
             let packages: Vec<_> = packages
                 .into_iter()
-                .filter(|package| package.archived_at.is_none() && ctx.org_visible(package.org_id))
+                .filter(|package| {
+                    package.archived_at.is_none()
+                        && visible.as_ref().is_none_or(|ids| ids.contains(&package.id))
+                })
                 .collect();
             (
                 StatusCode::OK,
@@ -70,11 +86,17 @@ pub async fn get_function_catalog<T: DatabaseImpl>(
         Ok(packages) => packages,
         Err(err) => return api_error(err.to_string()),
     };
-    let visible: Vec<Uuid> = packages
-        .iter()
-        .filter(|package| ctx.org_visible(package.org_id))
-        .map(|package| package.id)
-        .collect();
+    let visible = match AuthzChecker::new(db.as_ref(), &ctx)
+        .visible_resource_ids(ResourceType::FunctionPackage)
+        .await
+    {
+        Ok(None) => packages
+            .iter()
+            .map(|package| package.id)
+            .collect::<Vec<_>>(),
+        Ok(Some(ids)) => ids.into_iter().collect(),
+        Err(reply) => return reply,
+    };
     match repository::functions::fetch_catalog(db.as_ref()).await {
         Ok(entries) => {
             let entries: Vec<_> = entries
@@ -93,12 +115,30 @@ pub async fn publish_function<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Json(mut request): Json<NewFunctionVersion>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_capability(Capability::FunctionsManage) {
+    if let Err(reply) = ctx.require_scope_action(Action::FunctionsManage, selected_scope(&ctx)) {
         return reply;
     }
     // the owning org is the caller's, never the request's: a manifest that named an org would be
     // publishing into a tenant the publisher may not belong to.
     request.package.org_id = ctx.org_id;
+    let existing = match db
+        .fetch_function_package(
+            ctx.org_id,
+            request.package.namespace.as_deref(),
+            &request.package.name,
+        )
+        .await
+    {
+        Ok(existing) => existing,
+        Err(err) => return api_error(err.to_string()),
+    };
+    if let Some(package) = existing.as_ref()
+        && let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+            .require_resource(ResourceType::FunctionPackage, package.id, Permission::Edit)
+            .await
+    {
+        return reply;
+    }
     if !is_valid_digest(&request.artifact_digest) {
         return bad_request(format!(
             "'{}' is not a sha256 artifact digest",
@@ -109,7 +149,16 @@ pub async fn publish_function<T: DatabaseImpl>(
         return bad_request("a version must declare at least one export");
     }
     match repository::functions::publish_version(db.as_ref(), &request).await {
-        Ok(version) => (StatusCode::OK, Json(ApiResponse::FunctionVersion(version))),
+        Ok(version) => {
+            if existing.is_none()
+                && let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+                    .grant_resource_owner(ResourceType::FunctionPackage, version.package_id)
+                    .await
+            {
+                return reply;
+            }
+            (StatusCode::OK, Json(ApiResponse::FunctionVersion(version)))
+        }
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -133,12 +182,22 @@ pub async fn get_function<T: DatabaseImpl>(
         // deleting is an archive rather than a row removal so a restore can bring it back, but that
         // is a property of how deletion is *stored* — to every reader the package is gone, and a
         // deleted package that still answered a fetch would be a delete that did not delete.
-        Ok(Some(detail))
-            if !ctx.org_visible(detail.package.org_id) || detail.package.archived_at.is_some() =>
-        {
+        Ok(Some(detail)) if detail.package.archived_at.is_some() => {
             not_found(format!("function package '{package}' not found"))
         }
-        Ok(Some(detail)) => (StatusCode::OK, Json(ApiResponse::FunctionPackage(detail))),
+        Ok(Some(detail)) => {
+            if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+                .require_resource(
+                    ResourceType::FunctionPackage,
+                    detail.package.id,
+                    Permission::View,
+                )
+                .await
+            {
+                return reply;
+            }
+            (StatusCode::OK, Json(ApiResponse::FunctionPackage(detail)))
+        }
         Ok(None) => not_found(format!("function package '{package}' not found")),
         Err(err) => api_error(err.to_string()),
     }
@@ -150,14 +209,17 @@ pub async fn delete_function<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(package): Path<String>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_capability(Capability::FunctionsManage) {
-        return reply;
-    }
     let found = match resolve_package(db.as_ref(), &ctx, &package).await {
         Ok(Some(found)) => found,
         Ok(None) => return not_found(format!("function package '{package}' not found")),
         Err(err) => return api_error(err.to_string()),
     };
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_resource(ResourceType::FunctionPackage, found.id, Permission::Own)
+        .await
+    {
+        return reply;
+    }
     match repository::functions::delete_package(db.as_ref(), found.id).await {
         Ok(true) => (
             StatusCode::OK,
@@ -177,18 +239,21 @@ pub async fn restore_function<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(package): Path<String>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_capability(Capability::FunctionsManage) {
-        return reply;
-    }
     let (namespace, name) = split_qualified(&package);
     let found = match db
         .fetch_function_package(ctx.org_id, namespace.as_deref(), &name)
         .await
     {
-        Ok(Some(found)) if found.archived_at.is_some() && ctx.org_visible(found.org_id) => found,
+        Ok(Some(found)) if found.archived_at.is_some() => found,
         Ok(_) => return not_found(format!("archived function package '{package}' not found")),
         Err(err) => return api_error(err.to_string()),
     };
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_resource(ResourceType::FunctionPackage, found.id, Permission::Own)
+        .await
+    {
+        return reply;
+    }
     match repository::functions::restore_package(db.as_ref(), found.id).await {
         Ok(true) => (
             StatusCode::OK,
@@ -221,14 +286,17 @@ pub async fn set_function_alias<T: DatabaseImpl>(
     Path(package): Path<String>,
     Json(request): Json<SetFunctionAliasRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_capability(Capability::FunctionsManage) {
-        return reply;
-    }
     let found = match resolve_package(db.as_ref(), &ctx, &package).await {
         Ok(Some(found)) => found,
         Ok(None) => return not_found(format!("function package '{package}' not found")),
         Err(err) => return api_error(err.to_string()),
     };
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_resource(ResourceType::FunctionPackage, found.id, Permission::Edit)
+        .await
+    {
+        return reply;
+    }
     let target = match (&request.version, &request.from_alias) {
         (Some(_), Some(_)) => {
             return bad_request("name the target by version or by from_alias, not both");
@@ -255,14 +323,17 @@ pub async fn delete_function_alias<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path((package, alias)): Path<(String, String)>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_capability(Capability::FunctionsManage) {
-        return reply;
-    }
     let found = match resolve_package(db.as_ref(), &ctx, &package).await {
         Ok(Some(found)) => found,
         Ok(None) => return not_found(format!("function package '{package}' not found")),
         Err(err) => return api_error(err.to_string()),
     };
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_resource(ResourceType::FunctionPackage, found.id, Permission::Edit)
+        .await
+    {
+        return reply;
+    }
     match repository::functions::delete_alias(db.as_ref(), found.id, &alias).await {
         Ok(true) => (
             StatusCode::OK,
@@ -285,7 +356,10 @@ pub async fn resolve_function_export<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(export_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_agent_service_or_admin() {
+    if let Err(reply) = ctx.require_system_role(&[
+        runinator_models::rbac::SystemRole::Worker,
+        runinator_models::rbac::SystemRole::Agent,
+    ]) {
         return reply;
     }
     if !function_export_visible(db.as_ref(), &ctx, export_id).await {
@@ -307,7 +381,7 @@ pub async fn get_function_artifact<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(digest): Path<String>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_capability(Capability::FunctionsManage) {
+    if let Err(reply) = ctx.require_scope_action(Action::FunctionsManage, selected_scope(&ctx)) {
         return reply;
     }
     if !is_valid_digest(&digest) {
@@ -331,7 +405,7 @@ pub async fn upload_function_artifact<T: DatabaseImpl>(
     Path(digest): Path<String>,
     body: axum::body::Bytes,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_capability(Capability::FunctionsManage) {
+    if let Err(reply) = ctx.require_scope_action(Action::FunctionsManage, selected_scope(&ctx)) {
         return reply;
     }
     if !is_valid_digest(&digest) {
@@ -355,7 +429,10 @@ pub async fn download_function_artifact<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(digest): Path<String>,
 ) -> Response {
-    if let Err(reply) = ctx.require_agent_service_or_admin() {
+    if let Err(reply) = ctx.require_system_role(&[
+        runinator_models::rbac::SystemRole::Worker,
+        runinator_models::rbac::SystemRole::Agent,
+    ]) {
         return reply.into_response();
     }
     if !is_valid_digest(&digest) {
@@ -397,7 +474,10 @@ async fn function_export_visible<T: DatabaseImpl>(
     let Ok(Some(package)) = repository::functions::fetch_export_package(db, export_id).await else {
         return false;
     };
-    ctx.org_visible(package.org_id)
+    AuthzChecker::new(db, ctx)
+        .require_resource(ResourceType::FunctionPackage, package.id, Permission::View)
+        .await
+        .is_ok()
 }
 
 async fn function_artifact_visible<T: DatabaseImpl>(
@@ -408,9 +488,16 @@ async fn function_artifact_visible<T: DatabaseImpl>(
     let Ok(packages) = repository::functions::packages_with_artifact(db, digest).await else {
         return false;
     };
-    packages
-        .iter()
-        .any(|package| ctx.org_visible(package.org_id))
+    for package in packages {
+        if AuthzChecker::new(db, ctx)
+            .require_resource(ResourceType::FunctionPackage, package.id, Permission::View)
+            .await
+            .is_ok()
+        {
+            return true;
+        }
+    }
+    false
 }
 
 // `namespace.name` or a bare `name`. names cannot contain dots (the manifest rejects them), so this
@@ -433,7 +520,7 @@ async fn resolve_package<T: DatabaseImpl>(
             .await?;
     Ok(found
         .map(|detail| detail.package)
-        .filter(|package| package.archived_at.is_none() && ctx.org_visible(package.org_id)))
+        .filter(|package| package.archived_at.is_none()))
 }
 
 async fn newest_version<T: DatabaseImpl>(

@@ -408,11 +408,19 @@ documented by `runinator-ws-identity`'s `handlers/auth.rs`, because that is wher
 
 ## Authorization
 
-Two axes, both enforced backend-side; see `docs/permissions.md` for the full model.
+Authorization is deny-by-default and hierarchical; see `docs/permissions.md` for the full model.
 
-- **Capabilities** are the named, documented catalog of platform/org privileges (`runinator-models/src/capabilities.rs`, mirrored to the command center). Gate a privileged handler with `authz::require_capability(&ctx, Capability::X)` and add the caller's set to the resolver in `authz::capabilities_for`. Do **not** add a new bare `require_admin` gate for a user-facing action — add a capability so the backend and the ui reference one dictionary. `require_admin`/`require_service_or_admin` remain for platform-admin-or-service internal traffic; `require_org_admin(ctx, org_id)` remains for org-scoped resource checks.
-- **Resource grants** (`Permission` View/Run/Edit/Own) gate individual workflows/pipelines via `authz::require_workflow`/`require_pipeline`; leave these as-is.
-- The command center gates against `GET /auth/me`'s `capabilities`; it hides nav/panels and disables actions the caller lacks, but this never replaces backend enforcement.
+- Use the typed `Action`, `ScopeRef`, and fixed platform/organization/team roles in
+  `runinator-models::rbac`. Privileged handlers call `require_scope_action`; resource handlers call
+  `AuthzChecker::require_resource` (or a child-to-parent helper). Never add an admin boolean,
+  principal-kind bypass, or a second capability catalog.
+- `is_platform_admin()` is the sole administrative short-circuit. Machine traffic is authorized by
+  an explicit non-assignable `SystemRole`, never merely because a credential is a service key.
+- Workflows, pipelines, function packages, and console sessions use the generic ownership registry
+  and `Permission` ladder (`View < Run < Edit < Own`). Child resources resolve their stored parent
+  before authorization.
+- The command center reads `GET /auth/me`'s `effective_actions` and `/authz/catalog`; UI gating is
+  defense in depth and never replaces backend enforcement.
 
 ## Configuration
 

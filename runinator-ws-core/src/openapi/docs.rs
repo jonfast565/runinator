@@ -7,6 +7,30 @@
 pub use super::examples::Example;
 
 use super::examples::UUID_EXAMPLE;
+use runinator_models::{
+    auth::ResourceType,
+    rbac::{Action, SystemRole},
+};
+
+/// The single authorization policy declared by an endpoint. Handler code still resolves stored
+/// ancestry and performs the decision; this metadata makes the intended gate reviewable and lets
+/// OpenAPI consumers understand whether a route is public, scope-bound, resource-bound, or a
+/// machine data-plane surface.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EndpointPolicy {
+    Public,
+    Authenticated,
+    ScopedAction(Action),
+    AnyResourceAction(Action),
+    ResourceAction(ResourceType, Action),
+    SystemRole(&'static [SystemRole]),
+}
+
+impl EndpointPolicy {
+    pub const fn is_public(self) -> bool {
+        matches!(self, Self::Public)
+    }
+}
 
 #[derive(Clone, Copy)]
 pub struct EndpointDoc {
@@ -15,7 +39,7 @@ pub struct EndpointDoc {
     pub tag: &'static str,
     pub summary: &'static str,
     pub description: &'static str,
-    pub public: bool,
+    pub policy: EndpointPolicy,
     pub request: Option<RequestDoc>,
     pub query: &'static [ParamDoc],
     pub success_status: u16,
@@ -247,13 +271,46 @@ pub const fn endpoint(
     success_description: &'static str,
     response_example: Example,
 ) -> EndpointDoc {
+    endpoint_with_policy(
+        method,
+        path,
+        tag,
+        summary,
+        description,
+        if public {
+            EndpointPolicy::Public
+        } else {
+            EndpointPolicy::Authenticated
+        },
+        request,
+        query,
+        success_status,
+        success_description,
+        response_example,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub const fn endpoint_with_policy(
+    method: &'static str,
+    path: &'static str,
+    tag: &'static str,
+    summary: &'static str,
+    description: &'static str,
+    policy: EndpointPolicy,
+    request: Option<RequestDoc>,
+    query: &'static [ParamDoc],
+    success_status: u16,
+    success_description: &'static str,
+    response_example: Example,
+) -> EndpointDoc {
     EndpointDoc {
         method,
         path,
         tag,
         summary,
         description,
-        public,
+        policy,
         request,
         query,
         success_status,

@@ -25,7 +25,11 @@ pub async fn get_run_artifacts<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(run_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_service_or_admin() {
+    if let Err(reply) = ctx.require_system_role(&[
+        runinator_models::rbac::SystemRole::Engine,
+        runinator_models::rbac::SystemRole::Worker,
+        runinator_models::rbac::SystemRole::Agent,
+    ]) {
         return reply;
     }
     match repository::fetch_run_artifacts(db.as_ref(), run_id).await {
@@ -40,7 +44,11 @@ pub async fn add_run_artifact<T: DatabaseImpl>(
     Path(run_id): Path<Uuid>,
     Json(artifact): Json<NewRunArtifact>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_agent_service_or_admin() {
+    if let Err(reply) = ctx.require_system_role(&[
+        runinator_models::rbac::SystemRole::Engine,
+        runinator_models::rbac::SystemRole::Worker,
+        runinator_models::rbac::SystemRole::Agent,
+    ]) {
         return reply;
     }
     match repository::add_run_artifact(db.as_ref(), run_id, &artifact).await {
@@ -56,7 +64,11 @@ pub async fn list_artifacts<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_service_or_admin() {
+    if let Err(reply) = ctx.require_system_role(&[
+        runinator_models::rbac::SystemRole::Engine,
+        runinator_models::rbac::SystemRole::Worker,
+        runinator_models::rbac::SystemRole::Agent,
+    ]) {
         return reply;
     }
     match repository::fetch_all_artifacts(db.as_ref()).await {
@@ -72,7 +84,11 @@ pub async fn upload_artifact<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     mut multipart: Multipart,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_agent_service_or_admin() {
+    if let Err(reply) = ctx.require_system_role(&[
+        runinator_models::rbac::SystemRole::Engine,
+        runinator_models::rbac::SystemRole::Worker,
+        runinator_models::rbac::SystemRole::Agent,
+    ]) {
         return reply;
     }
     let mut run_id: Option<Uuid> = None;
@@ -196,7 +212,11 @@ pub async fn delete_artifact<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(artifact_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_service_or_admin() {
+    if let Err(reply) = ctx.require_system_role(&[
+        runinator_models::rbac::SystemRole::Engine,
+        runinator_models::rbac::SystemRole::Worker,
+        runinator_models::rbac::SystemRole::Agent,
+    ]) {
         return reply;
     }
     match repository::delete_artifact(db.as_ref(), &blobs, artifact_id).await {
@@ -222,7 +242,11 @@ pub async fn download_artifact<T: DatabaseImpl>(
     Extension(ctx): Extension<AuthContext>,
     Path(artifact_id): Path<Uuid>,
 ) -> Response {
-    if let Err(reply) = ctx.require_service_or_admin() {
+    if let Err(reply) = ctx.require_system_role(&[
+        runinator_models::rbac::SystemRole::Engine,
+        runinator_models::rbac::SystemRole::Worker,
+        runinator_models::rbac::SystemRole::Agent,
+    ]) {
         return reply.into_response();
     }
     let artifact = match repository::fetch_artifact(db.as_ref(), artifact_id).await {
@@ -295,7 +319,11 @@ pub async fn upload_artifact_content(
     Query(query): Query<ArtifactContentQuery>,
     body: axum::body::Bytes,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_agent_service_or_admin() {
+    if let Err(reply) = ctx.require_system_role(&[
+        runinator_models::rbac::SystemRole::Engine,
+        runinator_models::rbac::SystemRole::Worker,
+        runinator_models::rbac::SystemRole::Agent,
+    ]) {
         return reply;
     }
     let bytes = body.to_vec();

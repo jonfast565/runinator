@@ -11,6 +11,8 @@ data:
     global:
       scrape_interval: 15s
       evaluation_interval: 15s
+    rule_files:
+      - /etc/prometheus/alerts.yml
     scrape_configs:
       # the otlp metrics pushed by ws/worker/waker, re-exposed by the collector's prometheus exporter.
       - job_name: runinator-otlp
@@ -20,6 +22,57 @@ data:
       - job_name: otel-collector
         static_configs:
           - targets: ["runinator-otel-collector.runinator.svc.cluster.local:8888"]
+  alerts.yml: |
+    groups:
+      - name: runinator-operations
+        rules:
+          - alert: RuninatorBackgroundLoopStale
+            expr: time() - max by (loop) ({__name__=~"runinator_engine_loop_last_success_unixtime.*",loop=~"wake_publisher|action_dispatch|agent_directive|trigger_poll|notification_scanner|ingress|results|operational_metrics"}) > 180
+            for: 2m
+            labels: { severity: critical }
+            annotations:
+              summary: "Runinator background loop {{ $labels.loop }} is stale"
+          - alert: RuninatorQueueAgeGrowing
+            expr: max by (queue) ({__name__=~"runinator_engine_queue_oldest_age_seconds.*",queue=~"ready_due|action_dispatch|agent_directive|notification_delivery|ingress_retry|result_retry"}) > 120
+            for: 5m
+            labels: { severity: warning }
+            annotations:
+              summary: "Runinator queue {{ $labels.queue }} has old work"
+          - alert: RuninatorNoWorkerCapacity
+            expr: absent({__name__=~"runinator_worker_capacity.*"}) or sum({__name__=~"runinator_worker_capacity.*"}) < 1
+            for: 2m
+            labels: { severity: critical }
+            annotations:
+              summary: "Runinator has no reported worker capacity"
+          - alert: RuninatorBrokerDisconnected
+            expr: min by (backend) ({__name__=~"runinator_broker_connection_state.*"}) == 0
+            for: 2m
+            labels: { severity: critical }
+            annotations:
+              summary: "Runinator broker backend {{ $labels.backend }} is disconnected"
+          - alert: RuninatorReplicaHeartbeatStale
+            expr: max by (kind) ({__name__=~"runinator_engine_replica_max_heartbeat_age_seconds.*",kind=~"worker|waker|webservice|background"}) > 60
+            for: 2m
+            labels: { severity: warning }
+            annotations:
+              summary: "Runinator {{ $labels.kind }} heartbeat is stale"
+          - alert: RuninatorHttpErrorsHigh
+            expr: sum(rate({__name__=~"runinator_ws_http_requests.*",status_class="5xx"}[5m])) / clamp_min(sum(rate({__name__=~"runinator_ws_http_requests.*"}[5m])), 0.001) > 0.05
+            for: 5m
+            labels: { severity: warning }
+            annotations:
+              summary: "Runinator HTTP 5xx ratio exceeds 5%"
+          - alert: RuninatorResultPublishingFailed
+            expr: sum(rate({__name__=~"runinator_worker_result_publish.*",outcome="error"}[5m])) > 0
+            for: 2m
+            labels: { severity: critical }
+            annotations:
+              summary: "Runinator workers cannot publish results"
+          - alert: RuninatorDeadLettersCreated
+            expr: sum(increase({__name__=~"runinator_ws_.*dead_lettered.*"}[5m])) > 0
+            labels: { severity: critical }
+            annotations:
+              summary: "Runinator created dead-letter records"
 ---
 apiVersion: apps/v1
 kind: Deployment

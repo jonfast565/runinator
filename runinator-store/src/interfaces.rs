@@ -38,6 +38,7 @@ pub trait DatabaseImpl:
     + ReplicaStore
     + SettingStore
     + AuthStore
+    + RbacStore
     + OrgStore
 {
     /// Execute initialization scripts for the database.

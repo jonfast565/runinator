@@ -1,24 +1,26 @@
 // organization (tenant) domain/wire types. an org owns workflows/runs/resources; users belong to
 // many orgs, each with a role, and act within one active org at a time. authorization within an org
-// uses the `OrgRole` ladder; the global `is_admin` on a user is the platform admin that transcends orgs.
+// Uses the `OrgRole` ladder beneath the platform role hierarchy.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// the per-org role ladder. higher variants subsume lower ones (owner ⊇ admin ⊇ member).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OrgRole {
     Member,
+    Operator,
     Admin,
     Owner,
 }
 
 impl OrgRole {
-    pub fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             OrgRole::Member => "member",
+            OrgRole::Operator => "operator",
             OrgRole::Admin => "admin",
             OrgRole::Owner => "owner",
         }
@@ -27,6 +29,7 @@ impl OrgRole {
     pub fn from_str_lossy(raw: &str) -> Option<Self> {
         match raw {
             "member" => Some(OrgRole::Member),
+            "operator" => Some(OrgRole::Operator),
             "admin" => Some(OrgRole::Admin),
             "owner" => Some(OrgRole::Owner),
             _ => None,

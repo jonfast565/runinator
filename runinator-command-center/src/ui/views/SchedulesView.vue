@@ -109,18 +109,18 @@ import Icon from "../components/shared/Icon.vue";
 import PanelHeader from "../components/shared/PanelHeader.vue";
 import { useSchedulesStore } from "../../ui/adapters/pinia/schedules";
 import { useAppStore } from "../../ui/adapters/pinia/app";
-import { useCapabilitiesStore } from "../../ui/adapters/pinia/capabilities";
+import { useActionsStore } from "../../ui/adapters/pinia/actions";
 import type { FreezeWindow, NewFreezeWindow } from "../../core/domain/models";
 import { formatDate } from "../../core/utils/format";
 
 const store = useSchedulesStore();
 const app = useAppStore();
-const capabilities = useCapabilitiesStore();
+const actions = useActionsStore();
 const loading = ref(false);
 const draft = ref<NewFreezeWindow | null>(null);
 const editingId = ref<string | null>(null);
 
-const canManage = computed(() => capabilities.has("schedules:manage"));
+const canManage = computed(() => actions.has("schedules:manage"));
 
 const columns: DataTableColumn<FreezeWindow>[] = [
   { key: "name", label: "Name", sortable: true },

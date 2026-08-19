@@ -8519,6 +8519,7 @@ dependencies = [
  "futures",
  "log",
  "metrics",
+ "opentelemetry",
  "reqwest",
  "runinator-auth",
  "runinator-blob",

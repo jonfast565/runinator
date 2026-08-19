@@ -2,7 +2,8 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
-use opentelemetry::metrics::{Counter, Histogram};
+use opentelemetry::KeyValue;
+use opentelemetry::metrics::{Counter, Gauge, Histogram};
 use serde::Serialize;
 use utoipa::ToSchema;
 
@@ -25,6 +26,17 @@ const METRIC_INGRESS_RETRIED: &str = "runinator_ws_ingress_retried_total";
 const METRIC_INGRESS_DEAD_LETTERED: &str = "runinator_ws_ingress_dead_lettered_total";
 const METRIC_TRIGGERS_FIRED: &str = "runinator_ws_triggers_fired_total";
 const METRIC_REDUCER_DRIVE_MS: &str = "runinator_ws_reducer_drive_ms";
+const METRIC_LOOP_ITERATIONS: &str = "runinator_engine_loop_iterations_total";
+const METRIC_LOOP_DURATION_MS: &str = "runinator_engine_loop_duration_ms";
+const METRIC_LOOP_LAST_SUCCESS: &str = "runinator_engine_loop_last_success_unixtime";
+const METRIC_CLEANUP: &str = "runinator_engine_cleanup_total";
+const METRIC_QUEUE_DEPTH: &str = "runinator_engine_queue_depth";
+const METRIC_QUEUE_OLDEST_AGE: &str = "runinator_engine_queue_oldest_age_seconds";
+const METRIC_QUEUE_CLAIMED: &str = "runinator_engine_queue_claimed";
+const METRIC_QUEUE_FAILURES: &str = "runinator_engine_queue_failures_total";
+const METRIC_REPLICAS: &str = "runinator_engine_replicas";
+const METRIC_REPLICA_HEARTBEAT_AGE: &str = "runinator_engine_replica_max_heartbeat_age_seconds";
+const METRIC_REPLICA_TRANSITIONS: &str = "runinator_engine_replica_transitions_total";
 
 static PROMETHEUS: OnceLock<PrometheusHandle> = OnceLock::new();
 
@@ -44,6 +56,17 @@ struct OtelCounters {
     ingress_dead_lettered: Counter<u64>,
     triggers_fired: Counter<u64>,
     reducer_drive_ms: Histogram<f64>,
+    loop_iterations: Counter<u64>,
+    loop_duration_ms: Histogram<f64>,
+    loop_last_success: Gauge<u64>,
+    cleanup: Counter<u64>,
+    queue_depth: Gauge<u64>,
+    queue_oldest_age: Gauge<u64>,
+    queue_claimed: Gauge<u64>,
+    queue_failures: Counter<u64>,
+    replicas: Gauge<u64>,
+    replica_heartbeat_age: Gauge<u64>,
+    replica_transitions: Counter<u64>,
 }
 
 static OTEL_COUNTERS: OnceLock<OtelCounters> = OnceLock::new();
@@ -67,6 +90,29 @@ fn otel_counters() -> &'static OtelCounters {
                 .f64_histogram(METRIC_REDUCER_DRIVE_MS)
                 .with_unit("ms")
                 .build(),
+            loop_iterations: meter.u64_counter(METRIC_LOOP_ITERATIONS).build(),
+            loop_duration_ms: meter
+                .f64_histogram(METRIC_LOOP_DURATION_MS)
+                .with_unit("ms")
+                .build(),
+            loop_last_success: meter
+                .u64_gauge(METRIC_LOOP_LAST_SUCCESS)
+                .with_unit("s")
+                .build(),
+            cleanup: meter.u64_counter(METRIC_CLEANUP).build(),
+            queue_depth: meter.u64_gauge(METRIC_QUEUE_DEPTH).build(),
+            queue_oldest_age: meter
+                .u64_gauge(METRIC_QUEUE_OLDEST_AGE)
+                .with_unit("s")
+                .build(),
+            queue_claimed: meter.u64_gauge(METRIC_QUEUE_CLAIMED).build(),
+            queue_failures: meter.u64_counter(METRIC_QUEUE_FAILURES).build(),
+            replicas: meter.u64_gauge(METRIC_REPLICAS).build(),
+            replica_heartbeat_age: meter
+                .u64_gauge(METRIC_REPLICA_HEARTBEAT_AGE)
+                .with_unit("s")
+                .build(),
+            replica_transitions: meter.u64_counter(METRIC_REPLICA_TRANSITIONS).build(),
         }
     })
 }
@@ -178,6 +224,94 @@ pub fn triggers_fired(count: u64) {
 pub fn record_reducer_drive_ms(millis: f64) {
     metrics::histogram!(METRIC_REDUCER_DRIVE_MS).record(millis);
     otel_counters().reducer_drive_ms.record(millis, &[]);
+}
+
+/// Record one bounded background-loop iteration. Callers pass only constants declared beside the
+/// loop; identifiers and error messages never become metric attributes.
+pub fn loop_iteration(loop_name: &'static str, succeeded: bool, elapsed: std::time::Duration) {
+    let outcome = if succeeded { "success" } else { "error" };
+    let attrs = [
+        KeyValue::new("loop", loop_name),
+        KeyValue::new("outcome", outcome),
+    ];
+    let millis = elapsed.as_secs_f64() * 1000.0;
+    metrics::counter!(METRIC_LOOP_ITERATIONS, "loop" => loop_name, "outcome" => outcome)
+        .increment(1);
+    metrics::histogram!(METRIC_LOOP_DURATION_MS, "loop" => loop_name).record(millis);
+    otel_counters().loop_iterations.add(1, &attrs);
+    otel_counters()
+        .loop_duration_ms
+        .record(millis, &[KeyValue::new("loop", loop_name)]);
+    if succeeded {
+        let timestamp = chrono::Utc::now().timestamp().max(0) as u64;
+        metrics::gauge!(METRIC_LOOP_LAST_SUCCESS, "loop" => loop_name).set(timestamp as f64);
+        otel_counters()
+            .loop_last_success
+            .record(timestamp, &[KeyValue::new("loop", loop_name)]);
+    }
+}
+
+pub fn cleanup(job: &'static str, succeeded: bool, count: u64) {
+    let outcome = if succeeded { "success" } else { "error" };
+    metrics::counter!(METRIC_CLEANUP, "job" => job, "outcome" => outcome).increment(count.max(1));
+    otel_counters().cleanup.add(
+        count.max(1),
+        &[KeyValue::new("job", job), KeyValue::new("outcome", outcome)],
+    );
+}
+
+pub fn queue_snapshot(queue: &'static str, depth: u64, claimed: u64, oldest_age_seconds: u64) {
+    let attrs = [KeyValue::new("queue", queue)];
+    metrics::gauge!(METRIC_QUEUE_DEPTH, "queue" => queue).set(depth as f64);
+    metrics::gauge!(METRIC_QUEUE_CLAIMED, "queue" => queue).set(claimed as f64);
+    metrics::gauge!(METRIC_QUEUE_OLDEST_AGE, "queue" => queue).set(oldest_age_seconds as f64);
+    otel_counters().queue_depth.record(depth, &attrs);
+    otel_counters().queue_claimed.record(claimed, &attrs);
+    otel_counters()
+        .queue_oldest_age
+        .record(oldest_age_seconds, &attrs);
+}
+
+pub fn queue_failure(queue: &'static str, operation: &'static str) {
+    metrics::counter!(METRIC_QUEUE_FAILURES, "queue" => queue, "operation" => operation)
+        .increment(1);
+    otel_counters().queue_failures.add(
+        1,
+        &[
+            KeyValue::new("queue", queue),
+            KeyValue::new("operation", operation),
+        ],
+    );
+}
+
+pub fn replica_snapshot(kind: &'static str, status: &'static str, count: u64) {
+    metrics::gauge!(METRIC_REPLICAS, "kind" => kind, "status" => status).set(count as f64);
+    otel_counters().replicas.record(
+        count,
+        &[KeyValue::new("kind", kind), KeyValue::new("status", status)],
+    );
+}
+
+pub fn replica_heartbeat_age(kind: &'static str, age_seconds: u64) {
+    metrics::gauge!(METRIC_REPLICA_HEARTBEAT_AGE, "kind" => kind).set(age_seconds as f64);
+    otel_counters()
+        .replica_heartbeat_age
+        .record(age_seconds, &[KeyValue::new("kind", kind)]);
+}
+
+pub fn replica_transition(kind: &'static str, transition: &'static str, count: u64) {
+    if count == 0 {
+        return;
+    }
+    metrics::counter!(METRIC_REPLICA_TRANSITIONS, "kind" => kind, "transition" => transition)
+        .increment(count);
+    otel_counters().replica_transitions.add(
+        count,
+        &[
+            KeyValue::new("kind", kind),
+            KeyValue::new("transition", transition),
+        ],
+    );
 }
 
 pub fn snapshot() -> StabilityCounters {

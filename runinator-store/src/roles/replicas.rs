@@ -5,6 +5,7 @@
 
 use std::future::Future;
 
+use super::QueueSnapshot;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
@@ -26,6 +27,13 @@ pub use crate::reducer_store::ReducerStore;
 /// Core persistence operations for Runinator.
 /// The fleet: replica registration, heartbeats, reaping, telemetry samples, and provider registrations.
 pub trait ReplicaStore: Send + Sync + 'static {
+    /// Operational snapshot of due, incomplete agent directives.
+    fn agent_directive_queue_snapshot(
+        &self,
+        now: DateTime<Utc>,
+        stale_before: DateTime<Utc>,
+    ) -> impl Future<Output = Result<QueueSnapshot, SendableError>> + Send;
+
     /// Persist a replica-scoped directive before it is offered to the broker.
     fn enqueue_agent_directive(
         &self,

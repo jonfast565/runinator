@@ -22,7 +22,16 @@ async fn seed_bootstrap_admin_creates_local_admin_credentials() {
         .unwrap()
         .expect("seeded credential");
 
-    assert!(user.is_admin);
+    assert!(
+        db.list_principal_role_assignments(PrincipalKind::User, user.id.unwrap())
+            .await
+            .unwrap()
+            .iter()
+            .any(|a| a.role
+                == runinator_models::rbac::Role::Platform(
+                    runinator_models::rbac::PlatformRole::Admin
+                ))
+    );
     assert_eq!(db.count_users().await.unwrap(), 1);
     assert_eq!(credential.user.id, user.id);
     assert!(crate::auth::verify_password(
@@ -37,9 +46,7 @@ async fn seed_bootstrap_admin_creates_local_admin_credentials() {
 async fn seed_bootstrap_admin_does_not_overwrite_existing_users() {
     let (db, path) = test_db().await;
 
-    db.create_user("existing".into(), None, false, None)
-        .await
-        .unwrap();
+    db.create_user("existing".into(), None, None).await.unwrap();
 
     seed_bootstrap_admin(&db, "admin:secret-pass", false)
         .await
@@ -103,9 +110,7 @@ async fn seed_bootstrap_admin_force_resets_existing_admin() {
 async fn seed_bootstrap_admin_force_provisions_alongside_existing_users() {
     let (db, path) = test_db().await;
 
-    db.create_user("existing".into(), None, false, None)
-        .await
-        .unwrap();
+    db.create_user("existing".into(), None, None).await.unwrap();
     seed_bootstrap_admin(&db, "admin:secret-pass", true)
         .await
         .unwrap();
@@ -115,7 +120,16 @@ async fn seed_bootstrap_admin_force_provisions_alongside_existing_users() {
         .await
         .unwrap()
         .expect("seeded admin");
-    assert!(user.is_admin);
+    assert!(
+        db.list_principal_role_assignments(PrincipalKind::User, user.id.unwrap())
+            .await
+            .unwrap()
+            .iter()
+            .any(|a| a.role
+                == runinator_models::rbac::Role::Platform(
+                    runinator_models::rbac::PlatformRole::Admin
+                ))
+    );
     assert_eq!(db.count_users().await.unwrap(), 2);
 
     let _ = std::fs::remove_file(path);
@@ -137,8 +151,17 @@ async fn seed_bootstrap_service_api_key_creates_admin_service_key() {
         .expect("seeded api key");
 
     assert_eq!(record.key.name, "local-dev");
-    assert!(record.key.is_service);
-    assert!(record.is_admin);
+    assert_eq!(record.key.principal_kind, PrincipalKind::Service);
+    assert!(
+        db.list_principal_role_assignments(PrincipalKind::Service, record.key.principal_id)
+            .await
+            .unwrap()
+            .iter()
+            .any(|a| a.role
+                == runinator_models::rbac::Role::Platform(
+                    runinator_models::rbac::PlatformRole::Admin
+                ))
+    );
     assert_eq!(record.key_hash, crate::auth::hash_secret(raw_key));
 
     let _ = std::fs::remove_file(path);

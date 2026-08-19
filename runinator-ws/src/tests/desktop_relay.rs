@@ -25,10 +25,13 @@ async fn ws_desktop_worker_relay_enforces_policy_and_ownership() {
     let broker_ext: Arc<dyn Broker> = inner_broker.clone();
     let ctx = AuthContext {
         principal_id: Some(Uuid::now_v7()),
-        is_admin: false,
+        session_id: None,
+        platform_role: None,
+        assignments: Vec::new(),
+        system_role: None,
+        action_ceiling: Vec::new(),
         kind: PrincipalKind::Service,
         org_id: None,
-        org_role: None,
     };
 
     let router = Router::new()
@@ -250,10 +253,13 @@ async fn relay_returns_a_delivery_it_could_not_forward() {
     let broker_ext: Arc<dyn Broker> = inner_broker.clone();
     let ctx = AuthContext {
         principal_id: Some(Uuid::now_v7()),
-        is_admin: false,
+        session_id: None,
+        platform_role: None,
+        assignments: Vec::new(),
+        system_role: None,
+        action_ceiling: Vec::new(),
         kind: PrincipalKind::Service,
         org_id: None,
-        org_role: None,
     };
 
     let router = Router::new()

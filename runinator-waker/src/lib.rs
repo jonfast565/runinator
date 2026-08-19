@@ -142,6 +142,11 @@ async fn handle_wake(
 }
 
 async fn drive(broker: &dyn Broker, group: &str, delivery: &runinator_broker::WakeDelivery) {
+    metrics::wake_due_lag(
+        (Utc::now() - delivery.command.ready_at)
+            .num_milliseconds()
+            .max(0) as f64,
+    );
     let command = WsIngressCommand::drive(
         delivery.command.ready_node_id,
         delivery.command.workflow_run_id,

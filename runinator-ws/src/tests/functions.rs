@@ -9,7 +9,6 @@ use super::*;
 use std::sync::Arc;
 
 use runinator_blob::{BlobStore, FUNCTION_ARTIFACT_BUCKET, FsBlobStore};
-use runinator_models::capabilities::Capability;
 use runinator_models::functions::{FunctionVersionRef, NewFunctionVersion};
 use runinator_pack::functions::{FunctionSource, MANIFEST_FILE, archive_directory};
 use runinator_ws_middleware::authz::AuthContextExt;
@@ -34,10 +33,13 @@ const MANIFEST: &str = r#"{
 fn admin_ctx() -> AuthContext {
     AuthContext {
         principal_id: Some(Uuid::new_v4()),
-        is_admin: true,
+        session_id: None,
+        platform_role: Some(runinator_models::rbac::PlatformRole::Admin),
+        assignments: Vec::new(),
+        system_role: None,
+        action_ceiling: Vec::new(),
         kind: PrincipalKind::User,
         org_id: None,
-        org_role: None,
     }
 }
 
@@ -272,19 +274,28 @@ async fn publishing_requires_the_functions_capability() {
     // one dictionary; a plain member holds none of it.
     let member = AuthContext {
         principal_id: Some(Uuid::new_v4()),
-        is_admin: false,
+        session_id: None,
+        platform_role: None,
+        assignments: Vec::new(),
+        system_role: None,
+        action_ceiling: Vec::new(),
         kind: PrincipalKind::User,
         org_id: None,
-        org_role: None,
     };
     assert!(
         member
-            .require_capability(Capability::FunctionsManage)
+            .require_scope_action(
+                runinator_models::rbac::Action::FunctionsManage,
+                member.selected_scope()
+            )
             .is_err()
     );
     assert!(
         admin_ctx()
-            .require_capability(Capability::FunctionsManage)
+            .require_scope_action(
+                runinator_models::rbac::Action::FunctionsManage,
+                runinator_models::rbac::ScopeRef::PLATFORM
+            )
             .is_ok()
     );
 }
@@ -633,7 +644,6 @@ async fn invoking_an_unknown_export_is_not_found() {
 
 #[tokio::test]
 async fn invoking_is_gated_separately_from_publishing() {
-    use runinator_models::capabilities::Capability;
     use runinator_ws_middleware::authz::AuthContextExt;
 
     // publishing and calling are different privileges: a service account that runs a function
@@ -641,24 +651,33 @@ async fn invoking_is_gated_separately_from_publishing() {
     // other for anyone else.
     let member = AuthContext {
         principal_id: Some(Uuid::new_v4()),
-        is_admin: false,
+        session_id: None,
+        platform_role: None,
+        assignments: Vec::new(),
+        system_role: None,
+        action_ceiling: Vec::new(),
         kind: PrincipalKind::User,
         org_id: None,
-        org_role: None,
     };
     assert!(
         member
-            .require_capability(Capability::FunctionsInvoke)
+            .require_scope_action(runinator_models::rbac::Action::Run, member.selected_scope())
             .is_err()
     );
     assert!(
         member
-            .require_capability(Capability::FunctionsManage)
+            .require_scope_action(
+                runinator_models::rbac::Action::FunctionsManage,
+                member.selected_scope()
+            )
             .is_err()
     );
     assert!(
         admin_ctx()
-            .require_capability(Capability::FunctionsInvoke)
+            .require_scope_action(
+                runinator_models::rbac::Action::Run,
+                runinator_models::rbac::ScopeRef::PLATFORM
+            )
             .is_ok()
     );
 
@@ -678,7 +697,8 @@ async fn invoking_is_gated_separately_from_publishing() {
             Json(json!({ "source": "a.png" })),
         )
         .await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
+    // An inaccessible ID-addressed resource is deliberately concealed as not found.
+    assert_eq!(status, StatusCode::NOT_FOUND);
 
     let _ = std::fs::remove_dir_all(&root);
     let _ = std::fs::remove_dir_all(&blob_root);
