@@ -24,8 +24,8 @@
       title="Cancel run immediately"
       @click="workflows.cancelSelectedWorkflowRun"
     >
-      <Icon name="stop" :size="14" />
-      <span>Stop</span>
+      <Icon name="reject" :size="14" />
+      <span>Cancel</span>
     </button>
     <button
       class="btn btn-sm"

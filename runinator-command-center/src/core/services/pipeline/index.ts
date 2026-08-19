@@ -72,7 +72,10 @@ export async function deletePipeline(pipelineId: string): Promise<void> {
 
 export async function deletePipelineRun(pipelineRunId: string): Promise<void> {
   const response = await deletePipelineRunApi(pipelineRunId);
-  if (!response.success) throw new Error(response.message || "Failed to delete pipeline run");
+
+  if (!response.success) {
+    throw new Error(response.message || "Failed to delete pipeline run");
+  }
 }
 
 /** reassign a pipeline's owning organization; null makes it platform-global. */

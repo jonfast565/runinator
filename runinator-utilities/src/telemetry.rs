@@ -157,8 +157,21 @@ fn is_enabled() -> bool {
 // build the resource describing this binary. `OTEL_SERVICE_NAME`/`OTEL_RESOURCE_ATTRIBUTES` in the
 // environment still win via the sdk's env detector; the passed name is the default service.name.
 fn build_resource(service_name: &str) -> Resource {
+    // The Prometheus exporter uses resource attributes as series labels. Include a stable
+    // per-process identity so replicas of the same service do not produce duplicate samples
+    // with the same label set when they export the same instrument to one collector.
+    let instance_id = std::env::var("HOSTNAME")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .map(|hostname| format!("{hostname}-{}", std::process::id()))
+        .unwrap_or_else(|| format!("pid-{}", std::process::id()));
+
     Resource::builder()
         .with_service_name(service_name.to_string())
+        .with_attribute(opentelemetry::KeyValue::new(
+            opentelemetry_semantic_conventions::resource::SERVICE_INSTANCE_ID,
+            instance_id,
+        ))
         .with_attribute(opentelemetry::KeyValue::new(
             opentelemetry_semantic_conventions::resource::SERVICE_VERSION,
             env!("CARGO_PKG_VERSION"),

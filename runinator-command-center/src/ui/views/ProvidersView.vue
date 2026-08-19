@@ -1,11 +1,24 @@
 <template>
-  <section class="pane h-full overflow-hidden max-md:overflow-auto">
-    <div
-      class="grid h-full min-h-0 gap-2.5 grid-cols-1 md:grid-cols-[minmax(220px,280px)_minmax(0,1fr)] max-md:h-auto max-md:min-h-full"
+  <section class="pane h-full overflow-hidden">
+    <SplitPane
+      class="h-full w-full"
+      storage-key="command-center.providers.split"
+      :initial-first-pct="26"
+      :min-first="220"
+      :min-second="420"
+      collapsible-first
+      first-label="Providers"
+      first-icon="box"
+      mobile-mode="toggle"
+      :mobile-detail-active="!!currentProvider"
     >
-      <aside class="panel flex min-h-0 flex-col max-md:max-h-[50vh]">
+      <template #first>
+        <aside class="panel flex min-h-0 flex-col">
         <div class="panel-toolbar">
-          <h2 class="m-0 text-base font-semibold text-fg">Providers</h2>
+          <div class="flex min-w-0 items-baseline gap-2">
+            <h2 class="m-0 text-base font-semibold text-fg">Providers</h2>
+            <span class="text-xs text-fg-muted">{{ providers.providers.length }}</span>
+          </div>
           <button class="btn" :disabled="providers.loading" @click="providers.fetchProviders()">
             <LoadingSpinner v-if="providers.loading" size="sm" label="Refreshing providers" />
             <Icon v-else name="refresh" />
@@ -25,7 +38,7 @@
         <div v-else-if="!filteredProviders.length" class="py-3.5 text-fg-muted">
           No providers match "{{ app.searchQuery }}".
         </div>
-        <div class="flex min-h-0 flex-col gap-0.5 overflow-auto">
+        <div class="-mx-1 flex min-h-0 flex-col gap-0.5 overflow-auto px-1">
           <div v-for="provider in filteredProviders" :key="provider.name" class="flex flex-col">
             <button
               type="button"
@@ -60,10 +73,13 @@
           </div>
         </div>
       </aside>
+      </template>
 
-      <section class="panel flex min-h-0 flex-col overflow-auto [&_code]:font-mono [&_code]:text-[11px] [&_code]:leading-snug [&_code]:text-fg">
+      <template #second>
+      <section class="panel details overflow-auto [&_code]:font-mono [&_code]:text-[11px] [&_code]:leading-snug [&_code]:text-fg">
+        <MobileBackBar label="Back to providers" @back="clearSelection" />
         <template v-if="currentAction && currentProvider">
-          <div>
+          <div class="detail-header">
             <h2 class="m-0 text-base font-semibold text-fg">
               {{ currentProvider.name }}.{{ currentAction.function_name }}
             </h2>
@@ -202,7 +218,8 @@
 
         <div v-else class="py-3.5 text-fg-muted">Select a provider to view its actions.</div>
       </section>
-    </div>
+      </template>
+    </SplitPane>
   </section>
 </template>
 <script setup lang="ts">
@@ -210,6 +227,8 @@ import { computed, onMounted, ref, watch } from "vue";
 import Icon from "../components/shared/Icon.vue";
 import LoadingPanel from "../components/shared/LoadingPanel.vue";
 import LoadingSpinner from "../components/shared/LoadingSpinner.vue";
+import MobileBackBar from "../components/shared/MobileBackBar.vue";
+import SplitPane from "../components/shared/SplitPane.vue";
 import { useProvidersStore } from "../../ui/adapters/pinia/providers";
 import { useAppStore } from "../../ui/adapters/pinia/app";
 import type { RuninatorType } from "../../core/domain/models";
@@ -257,6 +276,11 @@ function selectProvider(name: string) {
 function selectAction(provider: string, action: string) {
   selectedProvider.value = provider;
   selectedAction.value = action;
+}
+
+function clearSelection() {
+  selectedProvider.value = "";
+  selectedAction.value = "";
 }
 
 // apply a deep-linked focus, falling back to the first provider when nothing is selected.
@@ -327,4 +351,3 @@ function shortJson(value: unknown): string {
   return text.length > 48 ? `${text.slice(0, 45)}…` : text;
 }
 </script>
-

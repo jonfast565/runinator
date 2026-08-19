@@ -25,6 +25,18 @@ pub struct DeployOptions<'a> {
     pub expose_direct_ingress: bool,
 }
 
+pub struct GrafanaRedeployOptions<'a> {
+    pub workspace_root: &'a Path,
+    pub manifest_path: &'a Path,
+    pub kube_context: Option<&'a str>,
+}
+
+pub struct DatabaseRedeployOptions<'a> {
+    pub workspace_root: &'a Path,
+    pub manifest_path: &'a Path,
+    pub kube_context: Option<&'a str>,
+}
+
 const STALE_RESOURCES: &[&str] = &[
     "deployment/runinator-importer",
     "job/runinator-importer",
@@ -292,6 +304,87 @@ pub fn deploy_kubernetes_stack(options: DeployOptions) -> Result<()> {
         exec::run("kubectl", &args, options.workspace_root)
     });
 
+    Ok(())
+}
+
+/// Apply only the resources owned by the Grafana dashboard. This deliberately filters the
+/// rendered overlay instead of applying the observability component directly, so the command
+/// works with the same local/prod overlay and never rolls the collector, Prometheus, or Runinator
+/// runtime workloads.
+pub fn redeploy_grafana(options: GrafanaRedeployOptions) -> Result<()> {
+    exec::require_tool("kubectl")?;
+
+    let resolved_path = if options.manifest_path.is_absolute() {
+        options.manifest_path.to_path_buf()
+    } else {
+        options.workspace_root.join(options.manifest_path)
+    };
+    anyhow::ensure!(
+        resolved_path.is_dir(),
+        "Grafana redeploy requires a kustomize overlay directory, got {}",
+        resolved_path.display()
+    );
+
+    let ctx_args = context_args(options.kube_context);
+    let overlay_path = resolved_path.display().to_string();
+    let rendered = kustomize_render(options.workspace_root, &ctx_args, &resolved_path)?;
+    let docs = yaml_docs::parse_documents(&rendered)?;
+    let names = [
+        "runinator-grafana-datasources",
+        "runinator-grafana-dashboards-provider",
+        "runinator-grafana-dashboard-overview",
+        "runinator-grafana",
+    ];
+    let filtered = yaml_docs::select_by_names(&docs, &names);
+    anyhow::ensure!(
+        !filtered.is_empty(),
+        "no Grafana resources were found in kustomize overlay {overlay_path}"
+    );
+    let stdin = yaml_docs::serialize_documents(&filtered)?;
+    let apply_args = kubectl_args(&ctx_args, &["apply", "-f", "-"]);
+    println!("==> Applying Grafana resources from {overlay_path}");
+    exec::run_with_stdin("kubectl", &apply_args, options.workspace_root, &stdin)?;
+
+    let rollout = yaml_docs::rollout_target(&filtered, "runinator-grafana", "Deployment");
+    run_rollout_checks(options.workspace_root, &ctx_args, &[rollout]);
+    Ok(())
+}
+
+/// Apply only PostgreSQL's Service and StatefulSet from a rendered overlay. Re-applying the
+/// StatefulSet updates its pod template without deleting its PVC, while leaving RabbitMQ and all
+/// application workloads untouched.
+pub fn redeploy_database(options: DatabaseRedeployOptions) -> Result<()> {
+    exec::require_tool("kubectl")?;
+
+    let resolved_path = if options.manifest_path.is_absolute() {
+        options.manifest_path.to_path_buf()
+    } else {
+        options.workspace_root.join(options.manifest_path)
+    };
+    anyhow::ensure!(
+        resolved_path.is_dir(),
+        "Database redeploy requires a kustomize overlay directory, got {}",
+        resolved_path.display()
+    );
+
+    let ctx_args = context_args(options.kube_context);
+    let overlay_path = resolved_path.display().to_string();
+    let rendered = kustomize_render(options.workspace_root, &ctx_args, &resolved_path)?;
+    let docs = yaml_docs::parse_documents(&rendered)?;
+    let filtered = yaml_docs::select_by_names(&docs, &["runinator-postgres"]);
+    anyhow::ensure!(
+        filtered
+            .iter()
+            .any(|doc| yaml_docs::doc_kind(doc) == Some("StatefulSet")),
+        "no PostgreSQL StatefulSet was found in kustomize overlay {overlay_path}"
+    );
+    let stdin = yaml_docs::serialize_documents(&filtered)?;
+    let apply_args = kubectl_args(&ctx_args, &["apply", "-f", "-"]);
+    println!("==> Applying PostgreSQL resources from {overlay_path}");
+    exec::run_with_stdin("kubectl", &apply_args, options.workspace_root, &stdin)?;
+
+    let rollout = yaml_docs::rollout_target(&filtered, "runinator-postgres", "StatefulSet");
+    run_rollout_checks(options.workspace_root, &ctx_args, &[rollout]);
     Ok(())
 }
 

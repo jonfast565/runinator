@@ -318,18 +318,45 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
 
   async function deleteSelectedWorkflowRun() {
     const run = host.state.workflowRunDetail?.run;
-    if (!run) return;
+
+    if (!run) {
+      return;
+    }
+
     const response = await host.ctx.runOperation(`Deleting workflow run ${run.id}`, () =>
       deleteWorkflowRun(run.id),
     );
+
     if (!response.success) {
       host.ctx.setError(response.message || "Failed to delete workflow run");
       return;
     }
+
     host.ctx.setStatus(response.message || `Workflow run ${run.id} deleted`);
     await fetchRecentWorkflowRuns();
     host.state.selectedWorkflowRunId = null;
     host.state.workflowRunDetail = null;
+    host.notify();
+  }
+
+  async function deleteWorkflowRunById(runId: string) {
+    const response = await host.ctx.runOperation(`Deleting workflow run ${runId}`, () =>
+      deleteWorkflowRun(runId),
+    );
+
+    if (!response.success) {
+      host.ctx.setError(response.message || "Failed to delete workflow run");
+      return;
+    }
+
+    host.ctx.setStatus(response.message || `Workflow run ${runId} deleted`);
+
+    if (host.state.selectedWorkflowRunId === runId) {
+      host.state.selectedWorkflowRunId = null;
+      host.state.workflowRunDetail = null;
+    }
+
+    await fetchRecentWorkflowRuns();
     host.notify();
   }
 
@@ -1218,6 +1245,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     armNodeForReal,
     cancelSelectedWorkflowRun,
     deleteSelectedWorkflowRun,
+    deleteWorkflowRunById,
     requestSelectedRunInterrupt,
     pauseSelectedWorkflowRun,
     resumeSelectedWorkflowRun,

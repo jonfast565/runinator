@@ -86,8 +86,32 @@ struct LocalUpArgs {
 enum K8sCommand {
     /// Build (unless --skip-build) and apply the runinator stack to a cluster.
     Deploy(K8sDeployArgs),
+    /// Apply only the Grafana dashboard, datasource, provider, deployment, and service resources.
+    RedeployGrafana(K8sGrafanaArgs),
+    /// Apply only the PostgreSQL Service and StatefulSet resources.
+    RedeployDatabase(K8sDatabaseArgs),
     /// Tear down the runinator stack from a cluster.
     Delete(K8sDeleteArgs),
+}
+
+#[derive(clap::Args)]
+struct K8sGrafanaArgs {
+    /// kubectl context to use; defaults to the current context.
+    #[arg(long)]
+    kube_context: Option<String>,
+    /// kustomize overlay directory or a raw manifest file.
+    #[arg(long, default_value = "deploy/k8s/overlays/local")]
+    manifest: PathBuf,
+}
+
+#[derive(clap::Args)]
+struct K8sDatabaseArgs {
+    /// kubectl context to use; defaults to the current context.
+    #[arg(long)]
+    kube_context: Option<String>,
+    /// kustomize overlay directory.
+    #[arg(long, default_value = "deploy/k8s/overlays/local")]
+    manifest: PathBuf,
 }
 
 #[derive(clap::Args)]
@@ -158,6 +182,8 @@ fn run_process() -> anyhow::Result<()> {
         },
         Command::K8s { command } => match command {
             K8sCommand::Deploy(args) => run_k8s_deploy(&workspace_root, &args),
+            K8sCommand::RedeployGrafana(args) => run_k8s_redeploy_grafana(&workspace_root, &args),
+            K8sCommand::RedeployDatabase(args) => run_k8s_redeploy_database(&workspace_root, &args),
             K8sCommand::Delete(args) => run_k8s_delete(&workspace_root, &args),
         },
     }
@@ -313,5 +339,41 @@ fn run_k8s_delete(workspace_root: &std::path::Path, args: &K8sDeleteArgs) -> any
         command_center_only: args.command_center_only,
         recreate_infra: false,
         expose_direct_ingress: args.expose_direct_ingress,
+    })
+}
+
+fn run_k8s_redeploy_grafana(
+    workspace_root: &std::path::Path,
+    args: &K8sGrafanaArgs,
+) -> anyhow::Result<()> {
+    let manifest_path = if args.manifest.is_absolute() {
+        args.manifest.clone()
+    } else {
+        workspace_root.join(&args.manifest)
+    };
+
+    println!("==> Redeploying only Grafana observability resources");
+    k8s::deploy::redeploy_grafana(k8s::deploy::GrafanaRedeployOptions {
+        workspace_root,
+        manifest_path: &manifest_path,
+        kube_context: args.kube_context.as_deref(),
+    })
+}
+
+fn run_k8s_redeploy_database(
+    workspace_root: &std::path::Path,
+    args: &K8sDatabaseArgs,
+) -> anyhow::Result<()> {
+    let manifest_path = if args.manifest.is_absolute() {
+        args.manifest.clone()
+    } else {
+        workspace_root.join(&args.manifest)
+    };
+
+    println!("==> Redeploying only the PostgreSQL database resources");
+    k8s::deploy::redeploy_database(k8s::deploy::DatabaseRedeployOptions {
+        workspace_root,
+        manifest_path: &manifest_path,
+        kube_context: args.kube_context.as_deref(),
     })
 }

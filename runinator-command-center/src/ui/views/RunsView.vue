@@ -70,9 +70,11 @@
                 :selected-run-ids="selection.selectedKeys.value as string[]"
                 :all-selected="selection.allSelected.value"
                 :some-selected="selection.someSelected.value"
+                deletable
                 @select="workflows.selectWorkflowRun"
                 @toggle-row="selection.toggle"
                 @toggle-all="selection.toggleAll"
+                @delete="deleteRun"
               />
             </div>
           </template>
@@ -269,6 +271,15 @@ const activeRunCount = computed(() => countActiveRuns(workflows.recentWorkflowRu
 const selectedRunLabel = computed(() =>
   workflows.selectedWorkflowRunId ? `#${workflows.selectedWorkflowRunId}` : "None",
 );
+
+async function deleteRun(run: (typeof recentRuns.value)[number]): Promise<void> {
+  if (!window.confirm("Permanently delete this workflow run and all execution history?")) {
+    return;
+  }
+
+  await workflows.deleteWorkflowRunById(run.id);
+  selection.clear();
+}
 
 const recentRuns = computed(() => workflows.recentWorkflowRuns);
 const selection = useBulkSelection(recentRuns, (run) => run.id);

@@ -1235,6 +1235,21 @@ To redeploy only the web interface, rebuild and apply just the
 cargo run -p xtask -- k8s deploy --command-center-only
 ```
 
+To refresh only Grafana after changing the dashboard or datasource manifests,
+render the selected overlay, apply Grafana's ConfigMaps/Deployment/Service, and
+wait for its rollout:
+
+```bash
+cargo run -p xtask -- k8s redeploy-grafana
+```
+
+To re-apply only PostgreSQL's Service and StatefulSet, without touching
+RabbitMQ or the application workloads:
+
+```bash
+cargo run -p xtask -- k8s redeploy-database
+```
+
 By default only the command-center is reachable from outside the cluster (it
 proxies `/api` and `/ws` to the web service). To additionally expose the web
 service API/websocket directly and open a debugging-only NodePort to Postgres,

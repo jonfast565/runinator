@@ -17,6 +17,7 @@
         <th class="col-low">Created</th>
         <th class="col-low">Started</th>
         <th>Finished</th>
+        <th v-if="deletable" class="w-10"></th>
       </tr>
     </thead>
     <tbody>
@@ -44,6 +45,16 @@
         <td class="col-low">{{ formatDate(run.created_at) }}</td>
         <td class="col-low">{{ formatDate(run.started_at) }}</td>
         <td>{{ formatDate(run.finished_at) }}</td>
+        <td v-if="deletable" class="w-10" @click.stop>
+          <button
+            class="btn btn-icon btn-ghost"
+            title="Delete run"
+            aria-label="Delete run"
+            @click="$emit('delete', run)"
+          >
+            <Icon name="trash" />
+          </button>
+        </td>
       </tr>
     </tbody>
   </table>
@@ -54,6 +65,7 @@ import { computed } from "vue";
 import type { RunSummary } from "../../../core/domain/models";
 import { formatDate } from "../../../core/utils/format";
 import { isBadStatus, isGoodStatus } from "../../../core/utils/status";
+import Icon from "./Icon.vue";
 import SelectCheckbox from "./SelectCheckbox.vue";
 import StatusBadge from "./StatusBadge.vue";
 
@@ -71,6 +83,7 @@ const props = withDefaults(
     selectedRunIds?: string[];
     allSelected?: boolean;
     someSelected?: boolean;
+    deletable?: boolean;
   }>(),
   {
     compact: false,
@@ -81,6 +94,7 @@ const props = withDefaults(
     selectedRunIds: () => [],
     allSelected: false,
     someSelected: false,
+    deletable: false,
   },
 );
 
@@ -88,6 +102,7 @@ defineEmits<{
   select: [run: RunSummary];
   "toggle-row": [run: RunSummary, event: MouseEvent];
   "toggle-all": [];
+  delete: [run: RunSummary];
 }>();
 
 const selectedSet = computed(() => new Set(props.selectedRunIds));

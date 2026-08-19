@@ -69,22 +69,22 @@ data:
       "uid": "runinator-overview",
       "title": "Runinator Overview",
       "schemaVersion": 39,
-      "version": 1,
+      "version": 2,
       "time": { "from": "now-1h", "to": "now" },
       "refresh": "10s",
       "panels": [
         {
           "id": 1,
           "type": "timeseries",
-          "title": "Result events / sec by outcome",
+          "title": "Result events / sec",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "gridPos": { "h": 9, "w": 12, "x": 0, "y": 0 },
           "targets": [
             {
               "refId": "A",
               "datasource": { "type": "prometheus", "uid": "prometheus" },
-              "expr": "sum by (__name__) (rate({__name__=~\"runinator_ws_result_events.*\"}[5m]))",
-              "legendFormat": "{{__name__}}"
+              "expr": "sum by (metric) (rate(label_replace({__name__=~\"runinator_ws_result_events.*\"}, \"metric\", \"$1\", \"__name__\", \"(.+)\")[5m:]))",
+              "legendFormat": "{{metric}}"
             }
           ]
         },
@@ -109,6 +109,14 @@ data:
           "title": "Handler panics (total)",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "gridPos": { "h": 6, "w": 6, "x": 0, "y": 9 },
+          "fieldConfig": {
+            "defaults": {
+              "noValue": "0",
+              "color": { "mode": "thresholds" },
+              "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }] }
+            },
+            "overrides": []
+          },
           "targets": [
             {
               "refId": "A",
@@ -123,6 +131,14 @@ data:
           "title": "Background loop failures (total)",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "gridPos": { "h": 6, "w": 6, "x": 6, "y": 9 },
+          "fieldConfig": {
+            "defaults": {
+              "noValue": "0",
+              "color": { "mode": "thresholds" },
+              "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }] }
+            },
+            "overrides": []
+          },
           "targets": [
             {
               "refId": "A",
@@ -137,6 +153,14 @@ data:
           "title": "Dead-lettered result events (total)",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "gridPos": { "h": 6, "w": 6, "x": 12, "y": 9 },
+          "fieldConfig": {
+            "defaults": {
+              "noValue": "0",
+              "color": { "mode": "thresholds" },
+              "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }] }
+            },
+            "overrides": []
+          },
           "targets": [
             {
               "refId": "A",
@@ -148,7 +172,7 @@ data:
         {
           "id": 6,
           "type": "timeseries",
-          "title": "Worker actions / sec by outcome",
+          "title": "Worker actions / sec",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "gridPos": { "h": 9, "w": 12, "x": 0, "y": 15 },
           "targets": [
@@ -176,6 +200,39 @@ data:
           ]
         },
         {
+          "id": 25,
+          "type": "timeseries",
+          "title": "Worker action outcomes / sec",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 9, "w": 12, "x": 0, "y": 91 },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum by (outcome) (rate({__name__=~\"runinator_worker_actions_completed.*\"}[5m]))",
+              "legendFormat": "{{outcome}}"
+            },
+            {
+              "refId": "B",
+              "expr": "sum by (outcome) (rate({__name__=~\"runinator_worker_result_publish.*\"}[5m]))",
+              "legendFormat": "publish {{outcome}}"
+            }
+          ]
+        },
+        {
+          "id": 26,
+          "type": "timeseries",
+          "title": "Worker action queue wait p95 (ms)",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 9, "w": 12, "x": 12, "y": 91 },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "histogram_quantile(0.95, sum by (le) (rate({__name__=~\"runinator_worker_action_queue_wait_ms.*_bucket\"}[5m])))",
+              "legendFormat": "p95"
+            }
+          ]
+        },
+        {
           "id": 8,
           "type": "timeseries",
           "title": "Waker wakes / sec",
@@ -185,8 +242,41 @@ data:
             {
               "refId": "A",
               "datasource": { "type": "prometheus", "uid": "prometheus" },
-              "expr": "sum by (__name__) (rate({__name__=~\"runinator_waker_wakes.*\"}[5m]))",
-              "legendFormat": "{{__name__}}"
+              "expr": "sum by (metric) (rate(label_replace({__name__=~\"runinator_waker_wakes.*\"}, \"metric\", \"$1\", \"__name__\", \"(.+)\")[5m:]))",
+              "legendFormat": "{{metric}}"
+            }
+          ]
+        },
+        {
+          "id": 27,
+          "type": "timeseries",
+          "title": "Waker timing p95 (ms)",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 9, "w": 12, "x": 0, "y": 100 },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "histogram_quantile(0.95, sum by (le) (rate({__name__=~\"runinator_waker_wake_lead_ms.*_bucket\"}[5m])))",
+              "legendFormat": "lead p95"
+            },
+            {
+              "refId": "B",
+              "expr": "histogram_quantile(0.95, sum by (le) (rate({__name__=~\"runinator_waker_due_lag_ms.*_bucket\"}[5m])))",
+              "legendFormat": "due lag p95"
+            }
+          ]
+        },
+        {
+          "id": 28,
+          "type": "timeseries",
+          "title": "Waker retries and drive failures / sec",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 9, "w": 12, "x": 12, "y": 100 },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum by (metric) (rate(label_replace({__name__=~\"runinator_waker_wakes_requeued.*|runinator_waker_drive_failures.*\"}, \"metric\", \"$1\", \"__name__\", \"(.+)\")[5m:]))",
+              "legendFormat": "{{metric}}"
             }
           ]
         },
@@ -241,6 +331,20 @@ data:
           "title": "Service uptime (seconds)",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "gridPos": { "h": 6, "w": 8, "x": 0, "y": 42 },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "thresholds" },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "red", "value": null },
+                  { "color": "yellow", "value": 300 },
+                  { "color": "green", "value": 3600 }
+                ]
+              }
+            },
+            "overrides": []
+          },
           "targets": [{ "refId": "A", "expr": "max by (service) ({__name__=~\"runinator_process_uptime_seconds.*\"})", "legendFormat": "{{service}}" }]
         },
         {
@@ -319,6 +423,34 @@ data:
           ]
         },
         {
+          "id": 29,
+          "type": "timeseries",
+          "title": "Worker duplicate and lease contention / sec",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 108 },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum by (metric) (rate(label_replace({__name__=~\"runinator_worker_actions_duplicate.*|runinator_worker_actions_replayed.*|runinator_worker_lease_contention.*\"}, \"metric\", \"$1\", \"__name__\", \"(.+)\")[5m:]))",
+              "legendFormat": "{{metric}}"
+            }
+          ]
+        },
+        {
+          "id": 30,
+          "type": "timeseries",
+          "title": "Worker control and secret-resolution failures / sec",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 108 },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum by (metric) (rate(label_replace({__name__=~\"runinator_worker_control_commands.*|runinator_worker_secret_resolution_failures.*\"}, \"metric\", \"$1\", \"__name__\", \"(.+)\")[5m:]))",
+              "legendFormat": "{{metric}}"
+            }
+          ]
+        },
+        {
           "id": 22,
           "type": "timeseries",
           "title": "WebSocket connections",
@@ -342,7 +474,151 @@ data:
           "gridPos": { "h": 8, "w": 12, "x": 12, "y": 82 },
           "targets": [
             { "refId": "A", "expr": "sum by (job) (rate({__name__=~\"runinator_engine_cleanup.*\"}[5m]))", "legendFormat": "cleanup {{job}}" },
-            { "refId": "B", "expr": "sum by (__name__) (rate({__name__=~\"runinator_ws_.*dead_lettered.*\"}[5m]))", "legendFormat": "{{__name__}}" }
+            { "refId": "B", "expr": "sum by (metric) (rate(label_replace({__name__=~\"runinator_ws_.*dead_lettered.*\"}, \"metric\", \"$1\", \"__name__\", \"(.+)\")[5m:]))", "legendFormat": "{{metric}}" }
+          ]
+        },
+        {
+          "id": 31,
+          "type": "timeseries",
+          "title": "HTTP requests in flight",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 116 },
+          "targets": [
+            { "refId": "A", "expr": "sum({__name__=~\"runinator_ws_http_requests_in_flight.*\"})", "legendFormat": "in flight" }
+          ]
+        },
+        {
+          "id": 32,
+          "type": "timeseries",
+          "title": "HTTP request rejections / sec",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 116 },
+          "targets": [
+            { "refId": "A", "expr": "sum by (reason) (rate({__name__=~\"runinator_ws_request_rejections.*\"}[5m]))", "legendFormat": "{{reason}}" }
+          ]
+        },
+        {
+          "id": 33,
+          "type": "timeseries",
+          "title": "WebSocket connections",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 124 },
+          "targets": [
+            { "refId": "A", "expr": "sum({__name__=~\"runinator_ws_websocket_connections$|runinator_ws_websocket_connections_total\"})", "legendFormat": "connections" }
+          ]
+        },
+        {
+          "id": 34,
+          "type": "timeseries",
+          "title": "Ingress outcomes / sec",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 124 },
+          "targets": [
+            { "refId": "A", "expr": "sum by (metric) (rate(label_replace({__name__=~\"runinator_ws_ingress_applied.*|runinator_ws_ingress_retried.*|runinator_ws_ingress_dead_lettered.*\"}, \"metric\", \"$1\", \"__name__\", \"(.+)\")[5m:]))", "legendFormat": "{{metric}}" }
+          ]
+        },
+        {
+          "id": 35,
+          "type": "timeseries",
+          "title": "Result consumer outcomes / sec",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 132 },
+          "targets": [
+            { "refId": "A", "expr": "sum by (metric) (rate(label_replace({__name__=~\"runinator_ws_result_events_applied.*|runinator_ws_result_events_duplicate.*|runinator_ws_result_events_retried.*|runinator_ws_result_receive_errors.*\"}, \"metric\", \"$1\", \"__name__\", \"(.+)\")[5m:]))", "legendFormat": "{{metric}}" }
+          ]
+        },
+        {
+          "id": 36,
+          "type": "timeseries",
+          "title": "Triggers fired / sec",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 132 },
+          "targets": [
+            { "refId": "A", "expr": "sum(rate({__name__=~\"runinator_ws_triggers_fired.*\"}[5m]))", "legendFormat": "fired" }
+          ]
+        },
+        {
+          "id": 37,
+          "type": "timeseries",
+          "title": "Engine queue claims and failures / sec",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 140 },
+          "targets": [
+            { "refId": "A", "expr": "sum by (queue) (rate({__name__=~\"runinator_engine_queue_claimed.*\"}[5m]))", "legendFormat": "claimed {{queue}}" },
+            { "refId": "B", "expr": "sum by (queue, operation) (rate({__name__=~\"runinator_engine_queue_failures.*\"}[5m]))", "legendFormat": "failed {{queue}} {{operation}}" }
+          ]
+        },
+        {
+          "id": 38,
+          "type": "timeseries",
+          "title": "Engine loop duration p95 (ms)",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 140 },
+          "targets": [
+            { "refId": "A", "expr": "histogram_quantile(0.95, sum by (le, loop) (rate({__name__=~\"runinator_engine_loop_duration_ms.*_bucket\"}[5m])))", "legendFormat": "{{loop}}" }
+          ]
+        },
+        {
+          "id": 39,
+          "type": "timeseries",
+          "title": "Replica transitions / sec",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 148 },
+          "targets": [
+            { "refId": "A", "expr": "sum by (kind, transition) (rate({__name__=~\"runinator_engine_replica_transitions.*\"}[5m]))", "legendFormat": "{{kind}} {{transition}}" }
+          ]
+        },
+        {
+          "id": 40,
+          "type": "timeseries",
+          "title": "Broker connection state",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 148 },
+          "targets": [
+            { "refId": "A", "expr": "min by (backend) ({__name__=~\"runinator_broker_connection_state.*\"})", "legendFormat": "{{backend}}" }
+          ]
+        },
+        {
+          "id": 41,
+          "type": "timeseries",
+          "title": "Collector accepted / refused / dropped points / sec",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 156 },
+          "targets": [
+            { "refId": "A", "expr": "sum(rate({__name__=~\"otelcol_receiver_accepted_metric_points.*\"}[5m]))", "legendFormat": "accepted" },
+            { "refId": "B", "expr": "sum(rate({__name__=~\"otelcol_receiver_refused_metric_points.*\"}[5m]))", "legendFormat": "refused" },
+            { "refId": "C", "expr": "sum(rate(label_replace({__name__=~\"otelcol_processor_dropped_metric_points.*|otelcol_exporter_send_failed_metric_points.*\"}, \"metric\", \"$1\", \"__name__\", \"(.+)\")[5m:]))", "legendFormat": "dropped/failed" }
+          ]
+        },
+        {
+          "id": 42,
+          "type": "timeseries",
+          "title": "Broker operations / sec by outcome",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 156 },
+          "targets": [
+            { "refId": "A", "expr": "sum by (outcome) (rate({__name__=~\"runinator_broker_operations.*\"}[5m]))", "legendFormat": "{{outcome}}" }
+          ]
+        },
+        {
+          "id": 43,
+          "type": "timeseries",
+          "title": "Worker action duration p95 (ms)",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 164 },
+          "targets": [
+            { "refId": "A", "expr": "histogram_quantile(0.95, sum by (le, outcome) (rate({__name__=~\"runinator_worker_action_duration_ms.*_bucket\"}[5m])))", "legendFormat": "{{outcome}}" }
+          ]
+        },
+        {
+          "id": 44,
+          "type": "timeseries",
+          "title": "Worker received vs completed / sec",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 164 },
+          "targets": [
+            { "refId": "A", "expr": "sum(rate({__name__=~\"runinator_worker_actions_received.*\"}[5m]))", "legendFormat": "received" },
+            { "refId": "B", "expr": "sum(rate({__name__=~\"runinator_worker_actions_completed.*\"}[5m]))", "legendFormat": "completed" }
           ]
         }
       ]

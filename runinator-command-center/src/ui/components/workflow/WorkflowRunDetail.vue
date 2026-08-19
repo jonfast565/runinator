@@ -96,7 +96,11 @@ async function commitRename() {
 
 async function deleteRun() {
   const run = workflows.workflowRunDetail?.run;
-  if (!run || !window.confirm("Permanently delete this workflow run and all execution history?")) return;
+
+  if (!run || !window.confirm("Permanently delete this workflow run and all execution history?")) {
+    return;
+  }
+
   await workflows.deleteSelectedWorkflowRun();
 }
 

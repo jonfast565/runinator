@@ -28,6 +28,10 @@ data:
       # metrics -> prometheus text exposition on :8889 for scraping or ad-hoc curl.
       prometheus:
         endpoint: 0.0.0.0:8889
+        # Preserve service.name/service.instance.id so replicas exporting the same instrument
+        # remain distinct Prometheus series instead of causing duplicate-label scrape failures.
+        resource_to_telemetry_conversion:
+          enabled: true
       # logs -> loki's native otlp ingestion endpoint (loki 3.x+), so structured fields like
       # trace_id/run_id/error_code set by the rust binaries stay queryable via logql in grafana
       # instead of only living in kubectl logs.
@@ -39,6 +43,11 @@ data:
       debug:
         verbosity: detailed
     service:
+      # The Prometheus self-metrics endpoint is scraped through the Kubernetes Service, so it
+      # must listen on the pod network rather than the collector's loopback interface.
+      telemetry:
+        metrics:
+          address: 0.0.0.0:8888
       pipelines:
         traces:
           receivers: [otlp]
