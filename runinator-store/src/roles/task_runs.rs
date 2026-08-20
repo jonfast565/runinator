@@ -7,10 +7,11 @@ use std::future::Future;
 
 use uuid::Uuid;
 
-use runinator_models::value::Value;
 use runinator_models::{
     errors::SendableError,
     runs::{NewRunArtifact, NewRunChunk, RunArtifact, RunChunk, RunStatus, RunSummary},
+    value::Value,
+    workflows::{WorkflowAction, WorkflowStatus, WorkflowTaskRun},
 };
 
 // re-exported here so callers that reach for the contract at its historical path
@@ -20,6 +21,37 @@ pub use crate::reducer_store::ReducerStore;
 /// Core persistence operations for Runinator.
 /// The standalone task-run model (`runs`, chunks, artifacts) that predates workflow runs and is still served over the compatibility endpoints.
 pub trait TaskRunStore: Send + Sync + 'static {
+    /// Create a durable provider task that is owned by a workflow run but not by its active cursor.
+    fn create_workflow_task_run(
+        &self,
+        workflow_run_id: Uuid,
+        launch_node_run_id: Uuid,
+        node_id: String,
+        action: WorkflowAction,
+        parameters: Value,
+    ) -> impl Future<Output = Result<WorkflowTaskRun, SendableError>> + Send;
+
+    fn fetch_workflow_task_run(
+        &self,
+        task_run_id: Uuid,
+    ) -> impl Future<Output = Result<Option<WorkflowTaskRun>, SendableError>> + Send;
+
+    /// Every independently running provider task owned by a workflow run. Used to settle tasks
+    /// promptly when their parent run is canceled.
+    fn fetch_workflow_task_runs(
+        &self,
+        workflow_run_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<WorkflowTaskRun>, SendableError>> + Send;
+
+    fn update_workflow_task_run(
+        &self,
+        task_run_id: Uuid,
+        status: WorkflowStatus,
+        attempt: Option<i64>,
+        output_json: Option<Value>,
+        message: Option<String>,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
+
     /// Fetch all runs filtered by their current status.
     fn fetch_runs_by_status(
         &self,

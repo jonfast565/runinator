@@ -61,19 +61,21 @@ pub(super) async fn settings(
             println!("stored {} {scope}/{name}", kind.as_str());
         }
         SettingsCommands::Import { file } => {
-            // settings import requires a `.rexraps` secrets file; json is not accepted.
-            if file.extension().and_then(|ext| ext.to_str()) != Some("rexraps") {
+            if file.extension().and_then(|ext| ext.to_str()) != Some("rrx") {
                 return Err(err(format!(
-                    "settings import requires a .rexraps file, got {}",
+                    "settings import requires an .rrx file with a settings block, got {}",
                     file.display()
                 )));
             }
             let data = fs::read_to_string(file)?;
-            let bundle = runinator_rexrap::parse_secrets_str(&data).map_err(|e| {
+            let blocks = runinator_rexrap::parse_rrx_blocks(&data)
+                .map_err(|e| err(e.render(&data)))?;
+            let source = blocks.settings.join("\n");
+            let bundle = runinator_rexrap::parse_secrets_str(&source).map_err(|e| {
                 err(format!(
                     "failed to parse {}:\n{}",
                     file.display(),
-                    e.render(&data)
+                    e.render(&source)
                 ))
             })?;
             let imported = client.import_secret_bundle(&bundle).await?;

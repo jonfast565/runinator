@@ -8,7 +8,7 @@ use runinator_models::settings::SettingKind;
 use runinator_models::value::{Map, Value};
 
 use crate::ast::{Expr, ExprKind, PathSeg, SecretDecl, StrPart};
-use crate::errors::{Span, RexRapError};
+use crate::errors::{RexRapError, Span};
 use runinator_rexrap_syntax::parser::parse_secrets_document;
 
 /// parse `.rexraps` source into a `SecretBundle`. values must be literals; references and

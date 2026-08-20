@@ -37,7 +37,9 @@ use crate::workflow_mutex::{WorkflowMutexClaim, WorkflowMutexClaimResult, Workfl
 /// [`InvocationStore`] is a supertrait rather than a separate bound because the reducer *drives*
 /// invocations: stepping one, suspending it on a call, and settling that call are node-handler work,
 /// so a handler that could not reach them would have to hand the run back to a caller mid-step.
-pub trait ReducerStore: crate::roles::InvocationStore + Send + Sync + 'static {
+pub trait ReducerStore:
+    crate::roles::InvocationStore + crate::roles::TaskRunStore + Send + Sync + 'static
+{
     /// Fetch a workflow definition by its identifier.
     fn fetch_workflow(
         &self,

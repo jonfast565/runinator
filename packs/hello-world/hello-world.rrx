@@ -1,0 +1,23 @@
+language rexrap-1
+
+package {
+  { "name": "Hello World Smoke Pack", "version": 1 }
+}
+
+workflow "Hello World Test" v1 {
+    // run a single console command, then terminate at the synthetic end node.
+    node greeting <- console.run(command: "echo hello world")
+        -> done
+}
+
+tests {
+  {
+    "tests": [
+      {
+        "name": "greeting runs and the workflow completes",
+        "mocks": { "greeting": { "output": { "stdout": "hello world" } } },
+        "expect": { "status": "succeeded", "reached": ["greeting"] }
+      }
+    ]
+  }
+}

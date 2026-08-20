@@ -25,6 +25,40 @@ workflow "Smoke" v1 {
         graph["metadata"]["rexrap"]["types"]["result"],
         "task[SmokeResult]"
     );
+    let result = graph["nodes"]
+        .as_array()
+        .expect("nodes")
+        .iter()
+        .find(|node| node["id"] == "result")
+        .expect("result node");
+    assert_eq!(result["parameters"]["rexrap_task"], true);
+}
+
+#[test]
+fn provider_task_is_joined_by_its_durable_task_handle() {
+    let definition = compile(
+        r#"language rexrap-1
+
+workflow "Smoke" v1 {
+    let result: task[SmokeResult] = monitoring.smoke(target: "api")
+    await result
+}"#,
+    );
+    let graph = serde_json::to_value(&definition.definition).expect("serialize graph");
+    let await_node = graph["nodes"]
+        .as_array()
+        .expect("nodes")
+        .iter()
+        .find(|node| node["kind"] == "await_run")
+        .expect("await node");
+    assert_eq!(
+        await_node["parameters"]["task_run_id"]["$ref"]["node"],
+        "result"
+    );
+    assert_eq!(
+        await_node["parameters"]["task_run_id"]["$ref"]["output"],
+        serde_json::json!(["task_run_id"])
+    );
 }
 
 #[test]

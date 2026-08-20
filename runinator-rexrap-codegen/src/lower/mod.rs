@@ -28,10 +28,18 @@ struct VarBinding {
     base: Vec<PathSeg>,
 }
 
+/// The runtime target represented by an authored `task[T]` binding. Detached subflows and
+/// provider tasks both produce awaitable handles, but their durable identifiers are different.
+#[derive(Clone)]
+enum TaskBinding {
+    Subflow,
+    Provider,
+}
+
 struct Lowerer {
     nodes: Vec<Value>,
     used_ids: HashSet<String>,
-    task_bindings: HashMap<String, String>,
+    task_bindings: HashMap<String, TaskBinding>,
     counter: u64,
     /// a counter of its own for `resume` node ids — see `fresh_resume`.
     resume_counter: u64,
@@ -928,6 +936,14 @@ impl Lowerer {
         next: &str,
     ) -> Result<(), RexRapError> {
         self.record_declared_type(id, stmt)?;
+        if matches!(stmt.label_type, Some(TypeExpr::Task(_))) {
+            let label = stmt
+                .label
+                .as_ref()
+                .ok_or_else(|| RexRapError::semantic(stmt.span, "a task binding needs a name"))?;
+            self.task_bindings
+                .insert(label.clone(), TaskBinding::Provider);
+        }
         if stmt.label_type.is_none() {
             self.record_generated_type_hint(id, action)?;
         }
@@ -980,6 +996,15 @@ impl Lowerer {
                 self.leaf_transitions(&stmt.transitions, "on_success", next)?,
             ),
         ];
+        // This marker is intentionally node metadata rather than an action property: workers run
+        // the exact same provider action; only orchestration differs (the cursor advances once the
+        // durable task record has been dispatched).
+        if matches!(stmt.label_type, Some(TypeExpr::Task(_))) {
+            fields.push((
+                "parameters",
+                Value::Object(Map::from_iter([("rexrap_task".into(), Value::Bool(true))])),
+            ));
+        }
         if let Some(compensation) = &stmt.compensation {
             fields.push(("compensation", self.lower_action_object(compensation)?));
         }
@@ -1056,7 +1081,7 @@ impl Lowerer {
                 .as_ref()
                 .ok_or_else(|| RexRapError::semantic(stmt.span, "a task binding needs a name"))?;
             self.task_bindings
-                .insert(label.clone(), subflow.workflow_name.clone());
+                .insert(label.clone(), TaskBinding::Subflow);
         }
         let mut subflow_obj = Map::new();
         subflow_obj.insert(
@@ -1526,20 +1551,28 @@ impl Lowerer {
                 params.insert("workflow".into(), Value::String(workflow.clone()));
             }
             AwaitTarget::Task(task) => {
-                if !self.task_bindings.contains_key(task) {
+                let Some(binding) = self.task_bindings.get(task) else {
                     return Err(RexRapError::semantic(
                         stmt.span,
                         format!("`await {task}` must reference an earlier task binding"),
                     ));
-                }
+                };
+                let field = match binding {
+                    TaskBinding::Subflow => "subflow_run_id",
+                    TaskBinding::Provider => "task_run_id",
+                };
                 let task_run_id = Expr::new(
-                    ExprKind::Path(vec![
-                        PathSeg::Key(task.clone()),
-                        PathSeg::Key("subflow_run_id".into()),
-                    ]),
+                    ExprKind::Path(vec![PathSeg::Key(task.clone()), PathSeg::Key(field.into())]),
                     stmt.span,
                 );
-                params.insert("run_id".into(), self.lower_expr(&task_run_id)?);
+                params.insert(
+                    match binding {
+                        TaskBinding::Subflow => "run_id",
+                        TaskBinding::Provider => "task_run_id",
+                    }
+                    .into(),
+                    self.lower_expr(&task_run_id)?,
+                );
             }
         }
         if let Some(key) = &await_stmt.key {

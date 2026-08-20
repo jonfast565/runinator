@@ -27,7 +27,10 @@ fn explicit_decompile_surfaces_loop_edges_and_none_caps() {
         rexrap.contains("concurrency none"),
         "missing explicit map cap:\n{rexrap}"
     );
-    assert!(rexrap.contains("@id("), "missing control-block id:\n{rexrap}");
+    assert!(
+        rexrap.contains("@id("),
+        "missing control-block id:\n{rexrap}"
+    );
     assert!(
         rexrap.contains("} next -> "),
         "missing block continuation arrow:\n{rexrap}"

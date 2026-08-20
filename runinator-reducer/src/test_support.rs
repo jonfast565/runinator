@@ -28,14 +28,19 @@ use runinator_models::pipelines::{
 use runinator_models::replicas::{
     ReplicaKind, ReplicaRecord, ReplicaStatus, WorkflowRunProvenance,
 };
+use runinator_models::runs::{
+    NewRunArtifact, NewRunChunk, RunArtifact, RunChunk, RunStatus, RunSummary,
+};
 use runinator_models::settings::{SettingKind, SettingRecord};
 use runinator_models::value::Value;
 use runinator_models::workflow_state::WorkflowExecutionState;
 use runinator_models::workflows::{
-    NewWorkflowRunArtifact, WorkflowDefinition, WorkflowNodeRun, WorkflowNodeRunArtifact,
-    WorkflowRun, WorkflowRunArtifact, WorkflowStatus, WorkflowTrigger,
+    NewWorkflowRunArtifact, WorkflowAction, WorkflowDefinition, WorkflowNodeRun,
+    WorkflowNodeRunArtifact, WorkflowRun, WorkflowRunArtifact, WorkflowStatus, WorkflowTaskRun,
+    WorkflowTrigger,
 };
 use runinator_store::ReducerStore;
+use runinator_store::roles::TaskRunStore;
 use runinator_store::workflow_mutex::{
     WorkflowMutexClaim, WorkflowMutexClaimResult, WorkflowMutexWake,
 };
@@ -62,6 +67,7 @@ struct State {
     pipeline_runs: HashMap<Uuid, PipelineRun>,
     pipeline_attempts: Vec<PipelineMemberAttempt>,
     node_runs: Vec<WorkflowNodeRun>,
+    workflow_task_runs: HashMap<Uuid, WorkflowTaskRun>,
     run_artifacts: Vec<WorkflowRunArtifact>,
     ready_nodes: Vec<ReadyNodeRecord>,
     dispatches: Vec<ActionDispatchRecord>,
@@ -1337,6 +1343,165 @@ impl ReducerStore for FakeStore {
         _name: String,
     ) -> Result<Option<SettingRecord>, SendableError> {
         Ok(None)
+    }
+}
+
+impl TaskRunStore for FakeStore {
+    async fn create_workflow_task_run(
+        &self,
+        workflow_run_id: Uuid,
+        launch_node_run_id: Uuid,
+        node_id: String,
+        action: WorkflowAction,
+        parameters: Value,
+    ) -> Result<WorkflowTaskRun, SendableError> {
+        let now = Utc::now();
+        let task = WorkflowTaskRun {
+            id: Uuid::now_v7(),
+            workflow_run_id,
+            launch_node_run_id,
+            node_id,
+            action,
+            status: WorkflowStatus::Queued,
+            attempt: 0,
+            parameters,
+            output_json: None,
+            created_at: now,
+            started_at: None,
+            finished_at: None,
+            message: None,
+            current_executor_replica_id: None,
+            last_executor_replica_id: None,
+            executor_claimed_at: None,
+            executor_released_at: None,
+        };
+        self.state
+            .lock()
+            .expect("state")
+            .workflow_task_runs
+            .insert(task.id, task.clone());
+        Ok(task)
+    }
+
+    async fn fetch_workflow_task_run(
+        &self,
+        task_run_id: Uuid,
+    ) -> Result<Option<WorkflowTaskRun>, SendableError> {
+        Ok(self
+            .state
+            .lock()
+            .expect("state")
+            .workflow_task_runs
+            .get(&task_run_id)
+            .cloned())
+    }
+
+    async fn fetch_workflow_task_runs(
+        &self,
+        workflow_run_id: Uuid,
+    ) -> Result<Vec<WorkflowTaskRun>, SendableError> {
+        Ok(self
+            .state
+            .lock()
+            .expect("state")
+            .workflow_task_runs
+            .values()
+            .filter(|task| task.workflow_run_id == workflow_run_id)
+            .cloned()
+            .collect())
+    }
+
+    async fn update_workflow_task_run(
+        &self,
+        task_run_id: Uuid,
+        status: WorkflowStatus,
+        attempt: Option<i64>,
+        output_json: Option<Value>,
+        message: Option<String>,
+    ) -> Result<(), SendableError> {
+        let mut state = self.state.lock().expect("state");
+        let Some(task) = state.workflow_task_runs.get_mut(&task_run_id) else {
+            return Err(format!("unknown fake workflow task run {task_run_id}").into());
+        };
+        task.status = status;
+        if let Some(attempt) = attempt {
+            task.attempt = attempt;
+        }
+        if output_json.is_some() {
+            task.output_json = output_json;
+        }
+        if message.is_some() {
+            task.message = message;
+        }
+        let now = Utc::now();
+        if status == WorkflowStatus::Running && task.started_at.is_none() {
+            task.started_at = Some(now);
+        }
+        if status.is_terminal() {
+            task.finished_at = Some(now);
+        }
+        Ok(())
+    }
+
+    async fn fetch_runs_by_status(
+        &self,
+        _status: RunStatus,
+    ) -> Result<Vec<RunSummary>, SendableError> {
+        Ok(Vec::new())
+    }
+
+    async fn update_run_status(
+        &self,
+        _run_id: Uuid,
+        _status: RunStatus,
+        _output_json: Option<Value>,
+        _message: Option<String>,
+    ) -> Result<(), SendableError> {
+        Ok(())
+    }
+
+    async fn append_run_chunk(
+        &self,
+        _run_id: Uuid,
+        _chunk: &NewRunChunk,
+    ) -> Result<RunChunk, SendableError> {
+        Err("standalone task runs are not modelled by FakeStore".into())
+    }
+
+    async fn fetch_run_chunks(
+        &self,
+        _run_id: Uuid,
+        _cursor: Option<i64>,
+        _limit: i64,
+    ) -> Result<Vec<RunChunk>, SendableError> {
+        Ok(Vec::new())
+    }
+
+    async fn add_run_artifact(
+        &self,
+        _run_id: Uuid,
+        _artifact: &NewRunArtifact,
+    ) -> Result<RunArtifact, SendableError> {
+        Err("standalone task runs are not modelled by FakeStore".into())
+    }
+
+    async fn fetch_run_artifacts(&self, _run_id: Uuid) -> Result<Vec<RunArtifact>, SendableError> {
+        Ok(Vec::new())
+    }
+
+    async fn fetch_all_artifacts(&self) -> Result<Vec<RunArtifact>, SendableError> {
+        Ok(Vec::new())
+    }
+
+    async fn fetch_artifact(
+        &self,
+        _artifact_id: Uuid,
+    ) -> Result<Option<RunArtifact>, SendableError> {
+        Ok(None)
+    }
+
+    async fn delete_artifact(&self, _artifact_id: Uuid) -> Result<bool, SendableError> {
+        Ok(false)
     }
 }
 

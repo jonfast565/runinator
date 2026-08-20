@@ -21,8 +21,14 @@ fn explicit_decompile_surfaces_every_implicit_part() {
         rexrap.contains(".timeout(60s)"),
         "missing default timeout:\n{rexrap}"
     );
-    assert!(rexrap.contains(".retry(1)"), "missing default retry:\n{rexrap}");
-    assert!(rexrap.contains("ok -> done"), "missing success arrow:\n{rexrap}");
+    assert!(
+        rexrap.contains(".retry(1)"),
+        "missing default retry:\n{rexrap}"
+    );
+    assert!(
+        rexrap.contains("ok -> done"),
+        "missing success arrow:\n{rexrap}"
+    );
 }
 #[test]
 fn retry_lowers_backoff_and_classification() {

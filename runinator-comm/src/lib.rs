@@ -103,6 +103,10 @@ pub struct ActionCommand {
     /// it instead of settling the node run. `None` for plain node actions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub invocation_call_id: Option<Uuid>,
+    /// set when this dispatch belongs to a durable RexRap `task[T]` handle. Its launcher node
+    /// advances immediately; only the task record is settled when the worker returns.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_run_id: Option<Uuid>,
     /// resolved idempotency key for this action's external effect, from the node's
     /// `.idempotent(key: <expr>)`. the reducer evaluates the expression against the run context and
     /// stamps the result here; the worker reserves it before invoking the provider and replays a
@@ -562,6 +566,10 @@ pub struct WorkflowResultEvent {
     /// durable call of a resumable invocation rather than the node run as a whole.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub invocation_call_id: Option<Uuid>,
+    /// copied from the originating action command. A task result settles its independent task
+    /// record rather than the already-completed launch node.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_run_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -652,6 +660,7 @@ impl WorkflowResultEvent {
             trace_id: command.trace_id,
             notification_delivery_id: command.notification_delivery_id,
             invocation_call_id: command.invocation_call_id,
+            task_run_id: command.task_run_id,
         }
     }
 }

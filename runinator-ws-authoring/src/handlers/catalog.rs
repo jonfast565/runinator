@@ -52,7 +52,7 @@ pub async fn upsert_catalog_item<T: DatabaseImpl>(
 }
 
 pub async fn seed_builtin_catalog<T: DatabaseImpl>(db: &T) -> Result<(), SendableError> {
-    for raw in [include_str!("../../../packs/sdlc/sdlc.rexrapm")] {
+    for raw in [include_str!("../../../packs/sdlc/sdlc.rrx")] {
         let item = rexrap_pack_catalog_item(raw)?;
         db.upsert_catalog_item(item).await?;
     }
@@ -64,7 +64,12 @@ pub async fn seed_builtin_catalog<T: DatabaseImpl>(db: &T) -> Result<(), Sendabl
 }
 
 fn rexrap_pack_catalog_item(raw: &str) -> Result<Value, SendableError> {
-    let manifest: Value = serde_json::from_str(raw)?;
+    let blocks = runinator_rexrap::parse_rrx_blocks(raw)?;
+    let package = blocks
+        .packages
+        .first()
+        .ok_or_else(|| "builtin pack is missing a package block".to_string())?;
+    let manifest: Value = serde_json::from_str(package)?;
     let version = manifest
         .get("version")
         .and_then(|value| {

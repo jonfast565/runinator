@@ -334,6 +334,7 @@ fn action_command() -> ActionCommand {
         trace_context: Default::default(),
         notification_delivery_id: None,
         invocation_call_id: None,
+        task_run_id: None,
         idempotency_key: None,
     }
 }

@@ -101,6 +101,7 @@ fn workflow_result_events_round_trip_with_json() {
         trace_context: Default::default(),
         notification_delivery_id: None,
         invocation_call_id: None,
+        task_run_id: None,
         idempotency_key: None,
     };
     let event = WorkflowResultEvent::chunk(

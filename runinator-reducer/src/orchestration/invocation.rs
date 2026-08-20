@@ -439,6 +439,7 @@ impl InvocationHandler {
             trace_context: runinator_utilities::telemetry::current_trace_context(),
             notification_delivery_id: None,
             invocation_call_id: Some(call_id),
+            task_run_id: None,
             idempotency_key: idempotency_key.clone(),
         };
         Ok(PreparedCall {

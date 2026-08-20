@@ -128,6 +128,12 @@ pub async fn apply_workflow_result_event<T: DatabaseImpl>(
     db: &T,
     event: &WorkflowResultEvent,
 ) -> Result<bool, SendableError> {
+    // A RexRap provider task is launched from a node but deliberately outlives that node's cursor.
+    // Its terminal result must therefore never use the generic node-result path: that would replay
+    // the launch node's transition after the workflow has already moved on.
+    if let Some(task_run_id) = event.task_run_id {
+        return apply_workflow_task_result(db, event, task_run_id).await;
+    }
     // a notification delivery reuses the action path but owns no node run; settle its delivery row
     // and stop, so the generic node-run apply never sees a synthetic node run id.
     if let Some(delivery_id) = event.notification_delivery_id {
@@ -161,6 +167,42 @@ pub async fn apply_workflow_result_event<T: DatabaseImpl>(
         .await?;
     }
     Ok(applied)
+}
+
+async fn apply_workflow_task_result<T: DatabaseImpl>(
+    db: &T,
+    event: &WorkflowResultEvent,
+    task_run_id: Uuid,
+) -> Result<bool, SendableError> {
+    let WorkflowResultEventKind::Status {
+        status,
+        output_json,
+        message,
+    } = &event.kind
+    else {
+        // Logs and artifacts still belong to the launch node's familiar transport surface. They
+        // carry no terminal transition, so the generic path is safe for them.
+        return db.apply_workflow_result_event(event).await;
+    };
+    if !status.is_terminal() {
+        return Ok(false);
+    }
+    let Some(task) = db.fetch_workflow_task_run(task_run_id).await? else {
+        return Ok(false);
+    };
+    // A redelivered or older-attempt result may never regress a task that already settled.
+    if task.status.is_terminal() || (event.attempt > 0 && event.attempt < task.attempt) {
+        return Ok(false);
+    }
+    db.update_workflow_task_run(
+        task_run_id,
+        *status,
+        Some(event.attempt),
+        output_json.clone(),
+        message.clone(),
+    )
+    .await?;
+    Ok(true)
 }
 
 /// settle the call an invocation is parked on, then drive the node so its program resumes.

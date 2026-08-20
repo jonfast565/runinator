@@ -224,7 +224,7 @@ fn is_workflow_uri(uri: &Url) -> bool {
         Ok(path) => path
             .extension()
             .and_then(|ext| ext.to_str())
-            .map(|ext| ext.eq_ignore_ascii_case("rexrap"))
+            .map(|ext| ext.eq_ignore_ascii_case("rrx"))
             .unwrap_or(false),
         Err(_) => true,
     }

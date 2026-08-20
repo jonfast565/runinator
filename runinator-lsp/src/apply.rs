@@ -10,7 +10,7 @@ use runinator_pack::source;
 pub async fn apply(service_url: &str, path: &Path) -> Result<String, String> {
     if !source::is_pack_source(path) {
         return Err(format!(
-            "{} is not a pack source (.rexrap/.rexrapm/directory)",
+            "{} is not a pack source (.rrx/directory)",
             path.display()
         ));
     }

@@ -21,7 +21,7 @@ pub fn workflows_test(
     };
     if suite_files.is_empty() {
         return Err(err(
-            "no .rexrapt test suites found; pass one or more with --tests <path>",
+            "no tests blocks found; pass one or more .rrx sources with --tests <path>",
         ));
     }
 
@@ -29,22 +29,26 @@ pub fn workflows_test(
     for suite_path in &suite_files {
         let data = fs::read_to_string(suite_path)
             .map_err(|e| err(format!("read {}: {e}", suite_path.display())))?;
-        let suite: runinator_workflows::WorkflowTestSuite = serde_json::from_str(&data)
-            .map_err(|e| err(format!("parse {}: {e}", suite_path.display())))?;
-        for case in &suite.tests {
-            if let Some(needle) = filter
-                && !case.name.contains(needle)
-            {
-                continue;
+        let blocks = runinator_rexrap::parse_rrx_blocks(&data)
+            .map_err(|e| err(format!("parse {}: {}", suite_path.display(), e.render(&data))))?;
+        for test_source in blocks.tests {
+            let suite: runinator_workflows::WorkflowTestSuite = serde_json::from_str(&test_source)
+                .map_err(|e| err(format!("parse tests in {}: {e}", suite_path.display())))?;
+            for case in &suite.tests {
+                if let Some(needle) = filter
+                    && !case.name.contains(needle)
+                {
+                    continue;
+                }
+                let target = case.workflow.as_deref().or(suite.workflow.as_deref());
+                let definition = select_test_workflow(&bundle.workflows, target)?;
+                let result = runinator_workflows::run_test_case(definition, case);
+                reports.push(CaseReport {
+                    suite: suite_path.display().to_string(),
+                    workflow: definition.name.clone(),
+                    result,
+                });
             }
-            let target = case.workflow.as_deref().or(suite.workflow.as_deref());
-            let definition = select_test_workflow(&bundle.workflows, target)?;
-            let result = runinator_workflows::run_test_case(definition, case);
-            reports.push(CaseReport {
-                suite: suite_path.display().to_string(),
-                workflow: definition.name.clone(),
-                result,
-            });
         }
     }
 
@@ -109,22 +113,19 @@ fn select_test_workflow<'a>(
     }
 }
 
-// find .rexrapt suites next to the pack source: every *.rexrapt in a directory source, or the sibling
-// <stem>.rexrapt for a single-file source.
+// Every `.rrx` source can carry `tests { ... }`, so discover the same source set the pack compiler
+// reads rather than looking for a second extension.
 fn discover_rexrapt_suites(file: &Path) -> Result<Vec<PathBuf>> {
     let mut suites = Vec::new();
     if file.is_dir() {
         for entry in fs::read_dir(file).map_err(|e| err(e.to_string()))? {
             let path = entry.map_err(|e| err(e.to_string()))?.path();
-            if path.extension().and_then(|ext| ext.to_str()) == Some("rexrapt") {
+            if path.extension().and_then(|ext| ext.to_str()) == Some("rrx") {
                 suites.push(path);
             }
         }
-    } else if let Some(stem) = file.file_stem() {
-        let sibling = file.with_file_name(format!("{}.rexrapt", stem.to_string_lossy()));
-        if sibling.exists() {
-            suites.push(sibling);
-        }
+    } else if file.extension().and_then(|ext| ext.to_str()) == Some("rrx") {
+        suites.push(file.to_path_buf());
     }
     suites.sort();
     Ok(suites)

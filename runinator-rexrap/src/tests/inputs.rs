@@ -43,8 +43,14 @@ fn input_default_expression_round_trips() {
     "#;
     let def = compile(src);
     let rexrap = decompile(&def).expect("decompile");
-    assert!(rexrap.contains("base: string = config.api.base_url"), "{rexrap}");
-    assert!(rexrap.contains("token: string = secret.api.token"), "{rexrap}");
+    assert!(
+        rexrap.contains("base: string = config.api.base_url"),
+        "{rexrap}"
+    );
+    assert!(
+        rexrap.contains("token: string = secret.api.token"),
+        "{rexrap}"
+    );
     assert!(
         rexrap.contains(r#"full: string = config.api.base_url ++ "/v1""#),
         "{rexrap}"

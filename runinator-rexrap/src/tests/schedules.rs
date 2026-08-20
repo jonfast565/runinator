@@ -110,7 +110,10 @@ fn concurrency_defaults_to_skip_and_round_trips() {
         Some("skip")
     );
     let rexrap = decompile(&def).expect("decompile");
-    assert!(rexrap.contains("concurrency 2 on_conflict skip"), "{rexrap}");
+    assert!(
+        rexrap.contains("concurrency 2 on_conflict skip"),
+        "{rexrap}"
+    );
     assert!(rexrap.contains("catchup skip grace 5m"), "{rexrap}");
     let second = compile_str(&rexrap, &CompileOptions::default()).expect("recompile");
     assert_eq!(

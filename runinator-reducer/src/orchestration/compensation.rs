@@ -150,6 +150,7 @@ async fn dispatch_compensation<T: ReducerStore>(
         trace_context: runinator_utilities::telemetry::current_trace_context(),
         notification_delivery_id: None,
         invocation_call_id: None,
+        task_run_id: None,
         // a compensation is the undo of an effect that already happened, so it is its own effect and
         // must not share the forward action's key. declaring one on the compensating handler itself
         // is the way to make an undo idempotent.

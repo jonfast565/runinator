@@ -18,6 +18,7 @@ fn event(kind: WorkflowResultEventKind) -> WorkflowResultEvent {
         trace_id: Uuid::new_v4(),
         notification_delivery_id: None,
         invocation_call_id: None,
+        task_run_id: None,
     }
 }
 

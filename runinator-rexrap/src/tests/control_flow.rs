@@ -397,6 +397,9 @@ fn switch_shorthand_conditions_decompile() {
 
     let exists = rebuild(serde_json::json!({ "exists": true }));
     let rexrap = decompile(&exists).expect("decompile exists shorthand");
-    assert!(rexrap.contains("exists"), "exists rendered as guard:\n{rexrap}");
+    assert!(
+        rexrap.contains("exists"),
+        "exists rendered as guard:\n{rexrap}"
+    );
     compile_str(&rexrap, &CompileOptions::default()).expect("recompile exists shorthand");
 }

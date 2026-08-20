@@ -17,7 +17,10 @@ fn round_trips_named_type_decls() {
     "#;
     assert_round_trips(src);
     let rexrap = decompile(&compile(src)).expect("decompile");
-    assert!(rexrap.contains("type Cart {"), "struct decl missing:\n{rexrap}");
+    assert!(
+        rexrap.contains("type Cart {"),
+        "struct decl missing:\n{rexrap}"
+    );
     assert!(
         rexrap.contains("type Ids = integer[]"),
         "alias decl missing:\n{rexrap}"
@@ -456,7 +459,10 @@ fn round_trips_let_type_annotation() {
     assert_round_trips(src);
     // the declared type survives compile -> decompile and re-appears in the source.
     let rexrap = decompile(&compile(src)).expect("decompile");
-    assert!(rexrap.contains("node probe:"), "annotation missing:\n{rexrap}");
+    assert!(
+        rexrap.contains("node probe:"),
+        "annotation missing:\n{rexrap}"
+    );
 }
 
 // expression-granular spans -------------------------------------------------

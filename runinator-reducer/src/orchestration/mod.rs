@@ -20,7 +20,7 @@ use runinator_models::{
     },
     workflows::{
         WorkflowAction, WorkflowNode, WorkflowNodeKind, WorkflowNodeRun, WorkflowNodeRunArtifact,
-        WorkflowRun, WorkflowStatus, WorkflowSubflowType,
+        WorkflowRun, WorkflowStatus, WorkflowSubflowType, WorkflowTaskRun,
     },
 };
 use runinator_store::ReducerStore;

@@ -1,3 +1,4 @@
+settings {
 // SDLC Automation Pack settings.
 //
 // every entry below is a config.*/secret.* value the pack's workflows reference,
@@ -106,3 +107,4 @@ secret slack.token = "<<insert here>>"
 
 // slack channel for success and failure notifications.
 config slack.channel = "<<insert here>>"
+}

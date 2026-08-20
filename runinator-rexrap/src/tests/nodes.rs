@@ -259,9 +259,11 @@ fn new_node_kinds_optional_clauses_round_trip() {
         );
         let first = compile_str(&src, &default_test_options())
             .unwrap_or_else(|err| panic!("compile {label} failed: {err}"));
-        let rexrap = decompile(&first).unwrap_or_else(|err| panic!("decompile {label} failed: {err}"));
-        let second = compile_str(&rexrap, &default_test_options())
-            .unwrap_or_else(|err| panic!("recompile {label} failed: {err}\n--- rexrap ---\n{rexrap}"));
+        let rexrap =
+            decompile(&first).unwrap_or_else(|err| panic!("decompile {label} failed: {err}"));
+        let second = compile_str(&rexrap, &default_test_options()).unwrap_or_else(|err| {
+            panic!("recompile {label} failed: {err}\n--- rexrap ---\n{rexrap}")
+        });
         assert_eq!(
             graph_value(&first),
             graph_value(&second),

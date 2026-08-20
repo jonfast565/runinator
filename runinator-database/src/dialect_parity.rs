@@ -146,6 +146,8 @@ fn sample_action(workflow_run_id: Uuid, workflow_node_run_id: Uuid) -> ActionCom
         trace_context: Default::default(),
         notification_delivery_id: None,
         invocation_call_id: None,
+        task_run_id: None,
+        task_run_id: None,
         idempotency_key: None,
     }
 }
@@ -1394,6 +1396,7 @@ async fn assert_invocation_lifecycle<T: DatabaseImpl>(db: &T, run_id: Uuid, node
         trace_id: Uuid::nil(),
         notification_delivery_id: None,
         invocation_call_id: Some(call.id),
+        task_run_id: None,
     };
     assert!(db.apply_workflow_result_event(&chunk_event).await.unwrap());
 

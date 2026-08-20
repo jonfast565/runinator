@@ -75,7 +75,10 @@ fn round_trips_cron_triggers() {
     let def = compile(src);
     let rexrap = decompile(&def).expect("decompile");
     assert!(rexrap.contains("trigger cron \"0 9 * * *\""), "{rexrap}");
-    assert!(rexrap.contains("trigger cron \"*/5 * * * *\" with {"), "{rexrap}");
+    assert!(
+        rexrap.contains("trigger cron \"*/5 * * * *\" with {"),
+        "{rexrap}"
+    );
     let second = compile_str(&rexrap, &CompileOptions::default()).expect("recompile");
     assert_eq!(
         def.definition.metadata.pointer("/triggers"),

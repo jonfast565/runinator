@@ -43,9 +43,9 @@ use runinator_models::{
     telemetry::ReplicaSample,
     types::RuninatorType,
     workflows::{
-        WorkflowDefinition, WorkflowGraph, WorkflowNodeRun, WorkflowNodeRunArtifact,
-        WorkflowNodeRunChunk, WorkflowRun, WorkflowRunArtifact, WorkflowStatus, WorkflowTrigger,
-        WorkflowTriggerKind,
+        WorkflowAction, WorkflowDefinition, WorkflowGraph, WorkflowNodeRun,
+        WorkflowNodeRunArtifact, WorkflowNodeRunChunk, WorkflowRun, WorkflowRunArtifact,
+        WorkflowStatus, WorkflowTaskRun, WorkflowTrigger, WorkflowTriggerKind,
     },
 };
 use sqlx::{ColumnIndex, Decode, Row, Type};

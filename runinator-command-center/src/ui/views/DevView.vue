@@ -30,7 +30,7 @@ import {
   relativePackPath,
 } from "./dev-view-files";
 
-const DEFAULT_PACK_PATH = "packs/sdlc/sdlc.rexrapm";
+const DEFAULT_PACK_PATH = "packs/sdlc";
 const TERMINAL_STATUSES = new Set(["succeeded", "failed", "canceled", "timed_out"]);
 
 const workflows = useWorkflowsStore();
@@ -80,7 +80,7 @@ let lastFingerprint = "";
 
 const watchedFiles = computed(() => inspectResult.value?.files ?? []);
 const availableWorkflows = computed(() => inspectResult.value?.workflows ?? workflows.workflows);
-const selectedIsRexRap = computed(() => selectedFilePath.value.endsWith(".rexrap"));
+const selectedIsRexRap = computed(() => selectedFilePath.value.endsWith(".rrx"));
 const selectedIsJson = computed(() => selectedFilePath.value.endsWith(".json"));
 const runWorkflowInputType = computed((): RuninatorType => {
   const workflow = resolveRunWorkflow();

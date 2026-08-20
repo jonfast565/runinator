@@ -9,6 +9,7 @@ struct AwaitParams {
     workflow_name: Option<String>,
     workflow_id: Option<Uuid>,
     run_id_expr: Option<Value>,
+    task_run_id_expr: Option<Value>,
     key_expr: Option<Value>,
     mode: String,
 }
@@ -40,10 +41,15 @@ fn parse_await_params(node: &WorkflowNode) -> AwaitParams {
         .get("run_id")
         .cloned()
         .filter(|value| !value.is_null());
+    let task_run_id_expr = params
+        .get("task_run_id")
+        .cloned()
+        .filter(|value| !value.is_null());
     AwaitParams {
         workflow_name,
         workflow_id,
         run_id_expr,
+        task_run_id_expr,
         key_expr,
         mode: parse_await_mode(&params),
     }
@@ -103,6 +109,23 @@ async fn resolve_run_id<T: ReducerStore>(
     raw.parse::<Uuid>()
         .map(Some)
         .map_err(|_| format!("await task run_id '{raw}' is not a UUID").into())
+}
+
+async fn resolve_task_run_id<T: ReducerStore>(
+    ctx: &super::handler::NodeHandlerContext<'_, T>,
+    expression: Option<&Value>,
+) -> Result<Option<Uuid>, SendableError> {
+    let Some(expression) = expression else {
+        return Ok(None);
+    };
+    let context = runtime_context(ctx).await;
+    let resolved = runinator_workflows::resolve_value_refs(expression, &context)
+        .map_err(|err| -> SendableError { Box::new(err) })?;
+    let raw = coerce_scalar_string(&resolved)
+        .ok_or_else(|| "await task task_run_id must resolve to a UUID".to_string())?;
+    raw.parse::<Uuid>()
+        .map(Some)
+        .map_err(|_| format!("await task task_run_id '{raw}' is not a UUID").into())
 }
 
 struct MatchSet {
@@ -220,6 +243,22 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for AwaitRunHandler {
                 time_out(ctx, node_run, "Await workflow timed out").await?;
                 return Ok(ReadyNodeDisposition::Complete);
             }
+            if let Some(task_run_id) = state.exact_task_run_id {
+                let task = ctx
+                    .db
+                    .fetch_workflow_task_run(task_run_id)
+                    .await?
+                    .ok_or_else(|| format!("await task {task_run_id} does not exist"))?;
+                if task.status.is_terminal() {
+                    transition_task_await(ctx, node_run, task_run_id, &task).await?;
+                    return Ok(ReadyNodeDisposition::Complete);
+                }
+                // Task results do not touch their already-completed launcher nodes. Until a
+                // future push wake is available, use a durable short recheck to keep an exact
+                // task await responsive across worker/result consumer restarts.
+                enqueue_await_recheck(ctx, Utc::now() + chrono::Duration::seconds(1)).await?;
+                return Ok(ReadyNodeDisposition::KeepClaim);
+            }
             let matches = evaluate_matches(
                 ctx,
                 state.workflow_id,
@@ -238,6 +277,62 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for AwaitRunHandler {
 
         // first visit: resolve the target + correlation, check immediately, else park.
         let exact_run_id = resolve_run_id(ctx, params.run_id_expr.as_ref()).await?;
+        let exact_task_run_id = resolve_task_run_id(ctx, params.task_run_id_expr.as_ref()).await?;
+        if let Some(task_run_id) = exact_task_run_id {
+            let task = ctx
+                .db
+                .fetch_workflow_task_run(task_run_id)
+                .await?
+                .ok_or_else(|| format!("await task {task_run_id} does not exist"))?;
+            let node_run = ctx
+                .db
+                .create_workflow_node_run(
+                    ctx.workflow_run.id,
+                    ctx.node.id.clone(),
+                    ctx.node.parameters.clone().into(),
+                    super::context::most_recently_finished_node_run(ctx.node_runs),
+                    Some(ctx.cursor),
+                )
+                .await?;
+            if task.status.is_terminal() {
+                transition_task_await(ctx, &node_run, task_run_id, &task).await?;
+                return Ok(ReadyNodeDisposition::Complete);
+            }
+            let state = AwaitWorkflowState {
+                workflow_id: ctx.workflow_run.workflow_id,
+                workflow_name: "task".into(),
+                exact_run_id: None,
+                exact_task_run_id: Some(task_run_id),
+                correlation_value: None,
+                since_unix: None,
+                mode: "all".into(),
+                deadline_unix: ctx.node.timeout_seconds.map(|t| Utc::now().timestamp() + t),
+            };
+            ctx.db
+                .update_workflow_node_run(
+                    node_run.id,
+                    WorkflowStatus::Waiting,
+                    Some(node_run.attempt + 1),
+                    None,
+                    None,
+                    Some(state.to_wire_value()?),
+                    Some("await_task_waiting".into()),
+                    None,
+                )
+                .await?;
+            ctx.db
+                .update_workflow_run_status(
+                    ctx.workflow_run.id,
+                    WorkflowStatus::Waiting,
+                    Some(ctx.node.id.clone()),
+                    None,
+                    None,
+                )
+                .await?;
+            arm_node_timeout(ctx).await?;
+            enqueue_await_recheck(ctx, Utc::now() + chrono::Duration::seconds(1)).await?;
+            return Ok(ReadyNodeDisposition::Complete);
+        }
         let (target_id, target_name) = if let Some(run_id) = exact_run_id {
             let run = ctx
                 .db
@@ -288,6 +383,7 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for AwaitRunHandler {
             workflow_name: target_name,
             correlation_value: correlation.clone(),
             exact_run_id,
+            exact_task_run_id: None,
             since_unix,
             mode: params.mode.clone(),
             deadline_unix: ctx.node.timeout_seconds.map(|t| Utc::now().timestamp() + t),
@@ -330,6 +426,43 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for AwaitRunHandler {
         }
         Ok(ReadyNodeDisposition::Complete)
     }
+}
+
+async fn enqueue_await_recheck<T: ReducerStore>(
+    ctx: &super::handler::NodeHandlerContext<'_, T>,
+    ready_at: chrono::DateTime<Utc>,
+) -> Result<(), SendableError> {
+    let event = NewOrchestrationEvent::new(
+        ctx.workflow_run.id,
+        Some(ctx.node.id.clone()),
+        "await_task_recheck",
+        runinator_models::json!({ "node_id": ctx.node.id }),
+    );
+    ctx.db
+        .enqueue_ready_node(event, ctx.node.id.clone(), ready_at)
+        .await?;
+    Ok(())
+}
+
+async fn transition_task_await<T: ReducerStore>(
+    ctx: &super::handler::NodeHandlerContext<'_, T>,
+    node_run: &WorkflowNodeRun,
+    task_run_id: Uuid,
+    task: &WorkflowTaskRun,
+) -> Result<(), SendableError> {
+    transition_from_node(
+        ctx,
+        node_run,
+        task.status,
+        Some(runinator_models::json!({
+            "task_run_id": task_run_id,
+            "status": task.status.as_str(),
+            "output": task.output_json.clone(),
+        })),
+        task.message.clone(),
+    )
+    .await
+    .map(|_| ())
 }
 
 async fn transition_await<T: ReducerStore>(

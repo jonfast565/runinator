@@ -13,7 +13,7 @@ use crate::workflow_ast::ConditionNode;
 
 pub use crate::workflow_runs::{
     NewWorkflowRunArtifact, WorkflowNodeRun, WorkflowNodeRunArtifact, WorkflowNodeRunChunk,
-    WorkflowRun, WorkflowRunArtifact,
+    WorkflowRun, WorkflowRunArtifact, WorkflowTaskRun,
 };
 
 mod definition;

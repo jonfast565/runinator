@@ -1,0 +1,18 @@
+package {
+{
+  "item_type": "rexrap_pack",
+  "name": "SDLC Automation Pack",
+  "version": 7,
+  "workflows": [
+    "rexrap/sdlc-development.rrx",
+    "rexrap/sdlc-review.rrx",
+    "rexrap/sdlc-deploy.rrx",
+    "rexrap/sdlc-qa.rrx"
+  ],
+  "pipelines": [
+    "pipeline/core-sdlc.rrx"
+  ],
+  "settings": "settings.rrx",
+  "triggers": []
+}
+}

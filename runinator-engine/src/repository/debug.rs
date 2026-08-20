@@ -546,6 +546,9 @@ pub async fn cancel_workflow_run<T: DatabaseImpl>(
     {
         log::warn!("Failed to cancel invocation calls for run {workflow_run_id}: {err}");
     }
+    if let Err(err) = cancel_workflow_task_runs(db, workflow_run_id).await {
+        log::warn!("Failed to cancel provider tasks for run {workflow_run_id}: {err}");
+    }
     // reliable path first: a cancel routed to the replica holding each in-flight action's executor
     // lease, so it cannot be consumed (and dropped) by a worker holding nothing. the untargeted
     // run-wide command below stays as a best-effort catch-all for executions whose claim was never
@@ -553,6 +556,25 @@ pub async fn cancel_workflow_run<T: DatabaseImpl>(
     publish_targeted_run_cancels(db, broker, workflow_run_id).await;
     publish_worker_control_command(broker, command).await?;
     Ok(response)
+}
+
+async fn cancel_workflow_task_runs<T: DatabaseImpl>(
+    db: &T,
+    workflow_run_id: Uuid,
+) -> Result<(), SendableError> {
+    for task in db.fetch_workflow_task_runs(workflow_run_id).await? {
+        if !task.status.is_terminal() {
+            db.update_workflow_task_run(
+                task.id,
+                WorkflowStatus::Canceled,
+                None,
+                None,
+                Some("workflow run canceled".into()),
+            )
+            .await?;
+        }
+    }
+    Ok(())
 }
 
 /// tell the workers holding a run's in-flight actions that it is over, for a run whose terminal

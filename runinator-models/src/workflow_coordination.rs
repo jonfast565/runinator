@@ -70,6 +70,10 @@ pub struct AwaitWorkflowState {
     /// the workflow. Optional for backward-compatible persisted await state.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exact_run_id: Option<Uuid>,
+    /// When awaiting a provider task handle, join exactly this independent task run. This stays
+    /// alongside `exact_run_id` so previously persisted workflow-await state remains readable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exact_task_run_id: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub correlation_value: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

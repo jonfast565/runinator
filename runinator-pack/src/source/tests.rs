@@ -29,11 +29,11 @@ fn collect_files_with_extension(dir: &Path, extension: &str, out: &mut Vec<PathB
 }
 
 #[test]
-fn loads_hello_world_smoke_pack_manifest() {
+fn loads_hello_world_unified_source() {
     let manifest = repo_root()
         .join("packs")
         .join("hello-world")
-        .join("hello-world.rexrapm");
+        .join("hello-world.rrx");
 
     let bundle = load_workflow_bundle(&manifest).expect("hello-world pack should load");
 
@@ -49,13 +49,15 @@ fn loads_hello_world_smoke_pack_manifest() {
 #[test]
 fn checked_in_packs_all_compile_and_settings_parse() {
     let packs_dir = repo_root().join("packs");
-    let mut manifests = Vec::new();
-    collect_files_with_extension(&packs_dir, "rexrapm", &mut manifests);
-    manifests.sort();
+    let manifests = vec![
+        packs_dir.join("hello-world"),
+        packs_dir.join("creds-sync"),
+        packs_dir.join("sdlc"),
+    ];
 
     assert!(
         !manifests.is_empty(),
-        "expected checked-in .rexrapm manifests under {}",
+        "expected checked-in unified packs under {}",
         packs_dir.display()
     );
 
@@ -93,7 +95,7 @@ fn checked_in_packs_all_compile_and_settings_parse() {
     manifest_sources.dedup();
 
     let mut rexrap_files = Vec::new();
-    collect_files_with_extension(&packs_dir, "rexrap", &mut rexrap_files);
+    collect_files_with_extension(&packs_dir, "rrx", &mut rexrap_files);
     rexrap_files.sort();
 
     for rexrap_path in rexrap_files {
@@ -116,27 +118,11 @@ fn checked_in_packs_all_compile_and_settings_parse() {
             });
         }
     }
-
-    let mut settings_files = Vec::new();
-    collect_files_with_extension(&packs_dir, "rexraps", &mut settings_files);
-    settings_files.sort();
-
-    for settings_path in settings_files {
-        if manifest_sources.contains(&settings_path) {
-            continue;
-        }
-        super::parse_settings_file(&settings_path).unwrap_or_else(|err| {
-            panic!(
-                "settings file {} failed to parse: {err}",
-                settings_path.display()
-            )
-        });
-    }
 }
 
 #[test]
 fn sdlc_manifest_settings_entry_loads_bundle() {
-    let manifest = repo_root().join("packs").join("sdlc").join("sdlc.rexrapm");
+    let manifest = repo_root().join("packs").join("sdlc");
 
     let settings = load_pack_settings(&manifest)
         .expect("sdlc settings should load")
@@ -150,7 +136,7 @@ fn sdlc_manifest_settings_entry_loads_bundle() {
 
 #[test]
 fn sdlc_manifest_loads_core_pipeline() {
-    let manifest = repo_root().join("packs").join("sdlc").join("sdlc.rexrapm");
+    let manifest = repo_root().join("packs").join("sdlc");
 
     let pipelines = load_pack_pipelines(&manifest)
         .expect("sdlc pipelines should load")
@@ -177,22 +163,17 @@ fn directory_pack_loads_rexraps_settings() {
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).expect("temp pack dir");
     fs::write(
-        dir.join("flow.rexrap"),
-        "workflow \"Temp\" v1 {\n  node go <- console.run(command: \"hi\")\n}\n",
+        dir.join("flow.rrx"),
+        "workflow \"Temp\" v1 {\n  node go <- console.run(command: \"hi\")\n}\n\nsettings {\nsecret app.token = \"abc\"\nconfig app.url = \"https://example.test\"\n}\n",
     )
     .expect("write rexrap");
-    fs::write(
-        dir.join("settings.rexraps"),
-        "secret app.token = \"abc\"\nconfig app.url = \"https://example.test\"\n",
-    )
-    .expect("write rexraps");
 
     let bundle = load_workflow_bundle(&dir).expect("directory pack should load");
     assert_eq!(bundle.workflows.len(), 1);
 
     let settings = load_pack_settings(&dir)
         .expect("settings should load")
-        .expect("settings.rexraps should be picked up");
+        .expect("settings block should be picked up");
     assert_eq!(settings.secrets.len(), 2);
     assert_eq!(settings.secrets[0].scope, "app");
     assert_eq!(settings.secrets[0].name, "token");
@@ -211,7 +192,7 @@ fn directory_pack_types_pack_local_subflows() {
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).expect("temp pack dir");
     fs::write(
-        dir.join("child.rexrap"),
+        dir.join("child.rrx"),
         r#"workflow "Child" v1 returns { url: string } {
   params { id: string }
   console.run(command: params.id)
@@ -220,7 +201,7 @@ fn directory_pack_types_pack_local_subflows() {
     )
     .expect("write child");
     fs::write(
-        dir.join("parent.rexrap"),
+        dir.join("parent.rrx"),
         r#"workflow "Parent" v1 {
   node child <- subflow("Child", params: { id: "RUNI-1" })
   console.run(command: child.state.url)
@@ -246,7 +227,7 @@ fn rexrap_context_signatures_include_sibling_workflows() {
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).expect("temp pack dir");
     fs::write(
-        dir.join("child.rexrap"),
+        dir.join("child.rrx"),
         r#"workflow "Child" v1 {
   params { id: string }
   console.run(command: params.id)
@@ -255,7 +236,7 @@ fn rexrap_context_signatures_include_sibling_workflows() {
     )
     .expect("write child");
 
-    let parent_path = dir.join("parent.rexrap");
+    let parent_path = dir.join("parent.rrx");
     let parent = r#"workflow "Parent" v1 {
   node child <- subflow("Child", params: { id: "RUNI-1" })
 }
@@ -278,7 +259,7 @@ fn manifest_without_settings_entry_yields_none() {
     let manifest = repo_root()
         .join("packs")
         .join("hello-world")
-        .join("hello-world.rexrapm");
+        .join("hello-world.rrx");
 
     let settings = load_pack_settings(&manifest).expect("loader should not error");
 

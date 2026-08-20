@@ -122,8 +122,8 @@ fn round_trips_sdlc() {
 }
 #[test]
 fn compiles_checked_in_sdlc_review_workflow() {
-    let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs/sdlc/rexrap/sdlc-review.rexrap");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../packs/sdlc/rexrap/sdlc-review.rrx");
     let src = fs::read_to_string(&path).expect("read sdlc review workflow");
     let definition = compile_with_providers(&src);
     assert_eq!(definition.name, "SDLC: Review");
@@ -138,8 +138,8 @@ fn compiles_checked_in_sdlc_review_workflow() {
 }
 #[test]
 fn compiles_checked_in_sdlc_deploy_workflow() {
-    let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs/sdlc/rexrap/sdlc-deploy.rexrap");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../packs/sdlc/rexrap/sdlc-deploy.rrx");
     let src = fs::read_to_string(&path).expect("read sdlc deploy workflow");
     let definition = compile_with_providers(&src);
     assert_eq!(definition.name, "SDLC: Deploy");
@@ -163,7 +163,7 @@ fn compiles_checked_in_sdlc_deploy_workflow() {
 #[test]
 fn compiles_checked_in_sdlc_development_workflow() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../packs/sdlc/rexrap/sdlc-development.rexrap");
+        .join("../packs/sdlc/rexrap/sdlc-development.rrx");
     let src = fs::read_to_string(&path).expect("read sdlc development workflow");
     let definition = compile_with_providers(&src);
     assert_eq!(definition.name, "SDLC: Development");

@@ -339,7 +339,9 @@ fn every_node_kind_is_accounted_for() {
     let fixtures = fixtures();
     for kind in WorkflowNodeKind::ALL {
         let has_fixture = fixtures.iter().any(|(fixture, _)| *fixture == kind);
-        let excused = NO_REXRAP_SURFACE.iter().any(|(excused, _)| *excused == kind);
+        let excused = NO_REXRAP_SURFACE
+            .iter()
+            .any(|(excused, _)| *excused == kind);
         assert!(
             has_fixture ^ excused,
             "{kind:?} needs exactly one of: a rexrap fixture in `fixtures()`, or an entry in \

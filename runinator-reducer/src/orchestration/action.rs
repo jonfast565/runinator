@@ -1,7 +1,7 @@
 use super::context::{is_reentry_stale, merge_parameters, runtime_context};
 use super::transitions::{
     arm_node_timeout, arm_node_timeout_or, retry_or_transition, settle_node, time_out, timed_out,
-    timed_out_since_created_or,
+    timed_out_since_created_or, transition_from_node,
 };
 use super::*;
 use runinator_comm::ActionTarget;
@@ -127,6 +127,9 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for ActionHandler {
             .action
             .as_ref()
             .ok_or_else(|| crate::errors::ACTION_CONFIG_MISSING.error(&ctx.node.id))?;
+        if is_rexrap_task(ctx.node) {
+            return launch_rexrap_task(ctx, action).await;
+        }
         // a loop body re-entering this node sees the prior iteration's terminal run; treat it as a
         // fresh visit so the action dispatches again instead of transitioning from the stale run.
         let latest = ctx
@@ -456,8 +459,98 @@ fn build_action_command(
         // node work, not a notification delivery.
         notification_delivery_id: None,
         invocation_call_id: None,
+        task_run_id: None,
         idempotency_key,
     }
+}
+
+fn is_rexrap_task(node: &WorkflowNode) -> bool {
+    node.parameters
+        .get("rexrap_task")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+/// Start an independent provider task and immediately advance the launch node.  The command keeps
+/// the launcher node id for worker leases/log transport, while `task_run_id` makes its terminal
+/// result settle the task record only.
+async fn launch_rexrap_task<T: ReducerStore>(
+    ctx: &super::handler::NodeHandlerContext<'_, T>,
+    action: &WorkflowAction,
+) -> Result<ReadyNodeDisposition, SendableError> {
+    let latest = ctx
+        .latest
+        .filter(|run| !is_reentry_stale(run, ctx.node_runs, ctx.cursor));
+    if let Some(node_run) = latest {
+        if node_run.status.is_terminal() {
+            return Ok(ReadyNodeDisposition::Complete);
+        }
+    }
+    let node_run = match latest
+        .filter(|run| matches!(run.status, WorkflowStatus::Queued | WorkflowStatus::Waiting))
+    {
+        Some(run) => run.clone(),
+        None => {
+            ctx.db
+                .create_workflow_node_run(
+                    ctx.workflow_run.id,
+                    ctx.node.id.clone(),
+                    ctx.node.parameters.clone().into(),
+                    super::context::most_recently_finished_node_run(ctx.node_runs),
+                    Some(ctx.cursor),
+                )
+                .await?
+        }
+    };
+    let target = match resolve_action_target(ctx, action).await? {
+        TargetResolution::Ready(target) => target,
+        TargetResolution::Park => {
+            return super::handler::complete(park_for_target(ctx, &node_run).await);
+        }
+    };
+    let parameters = build_node_parameters(ctx, action).await?;
+    let idempotency_key = match action.idempotency_key {
+        Some(_) => {
+            let context = runtime_context(ctx).await;
+            resolve_idempotency_key(action, ctx.workflow_run.workflow_id, &context)
+        }
+        None => None,
+    };
+    let task = ctx
+        .db
+        .create_workflow_task_run(
+            ctx.workflow_run.id,
+            node_run.id,
+            ctx.node.id.clone(),
+            action.clone(),
+            parameters.clone(),
+        )
+        .await?;
+    let mut command = build_action_command(
+        ctx.workflow_run.id,
+        &node_run,
+        action,
+        parameters,
+        target,
+        idempotency_key,
+    );
+    command.task_run_id = Some(task.id);
+    let attempt = command.attempt;
+    ctx.db
+        .enqueue_action_dispatch(format!("workflow-task-run:{}:{attempt}", task.id), command)
+        .await?;
+    ctx.db
+        .update_workflow_task_run(task.id, WorkflowStatus::Running, Some(attempt), None, None)
+        .await?;
+    transition_from_node(
+        ctx,
+        &node_run,
+        WorkflowStatus::Succeeded,
+        Some(runinator_models::json!({ "task_run_id": task.id })),
+        Some("task_started".into()),
+    )
+    .await?;
+    Ok(ReadyNodeDisposition::Complete)
 }
 
 /// explain a dispatched action timeout using the executor-claim history. no claim is materially

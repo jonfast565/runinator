@@ -23,9 +23,7 @@
           "rexrap"
         ],
         "extensions": [
-          ".rexrap",
-          ".rexrapp",
-          ".rexraps"
+          ".rrx"
         ],
         "configuration": "./language-configuration.json"
       }

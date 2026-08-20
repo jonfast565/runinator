@@ -25,17 +25,13 @@ fn file_modified(path: &Path) -> Option<DateTime<Utc>> {
         .map(DateTime::<Utc>::from)
 }
 
-// Returns true when the path is a RexRap pack source: a `.rexrap` workflow, a `.rexrapm` manifest,
-// or a directory pack.
+// Returns true when the path is a unified `.rrx` source or a directory pack.
 // rather than a raw workflow/bundle json file.
 pub fn is_pack_source(path: &Path) -> bool {
     if path.is_dir() {
         return true;
     }
-    matches!(
-        path.extension().and_then(|ext| ext.to_str()),
-        Some("rexrap") | Some("rexrapm")
-    )
+    matches!(path.extension().and_then(|ext| ext.to_str()), Some("rrx"))
 }
 
 // list source files that make up a pack so dev mode can detect changes without compiling the pack.
@@ -55,16 +51,7 @@ pub fn pack_source_files(path: &Path) -> Result<Vec<PathBuf>> {
     }
 
     match path.extension().and_then(|ext| ext.to_str()) {
-        Some("rexrapm") => {
-            files.push(path.to_path_buf());
-            files.extend(rexrap_pack_manifest_paths(path)?);
-            extend_rexrap_includes(&mut files);
-            if let Some(settings_path) = pack_settings_path(path)? {
-                files.push(settings_path);
-            }
-            files.extend(pack_pipeline_paths(path)?);
-        }
-        Some("rexrap") => {
+        Some("rrx") => {
             files.push(path.to_path_buf());
             extend_rexrap_includes(&mut files);
         }
@@ -79,7 +66,7 @@ pub fn pack_source_files(path: &Path) -> Result<Vec<PathBuf>> {
 fn extend_rexrap_includes(files: &mut Vec<PathBuf>) {
     let rexrap_files = files
         .iter()
-        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("rexrap"))
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("rrx"))
         .cloned()
         .collect::<Vec<_>>();
     for path in rexrap_files {
@@ -99,10 +86,38 @@ fn extend_rexrap_includes(files: &mut Vec<PathBuf>) {
 // `.rexraps` settings file is parsed with the rexrap secrets front end; `.json` is read directly. a
 // single .rexrap or a pack without a settings file yields None.
 pub fn load_pack_settings(path: &Path) -> Result<Option<SecretBundle>> {
-    let Some(settings_path) = pack_settings_path(path)? else {
-        return Ok(None);
+    let paths = if path.is_dir() {
+        rexrap_directory_paths(path)?
+    } else {
+        vec![path.to_path_buf()]
     };
-    parse_settings_file(&settings_path).map(Some)
+    let mut secrets = Vec::new();
+    for source_path in paths {
+        let data = fs::read_to_string(&source_path)?;
+        let blocks = runinator_rexrap::parse_rrx_blocks(&data).map_err(|e| {
+            PackError::compile(format!(
+                "failed to parse {}:\n{}",
+                source_path.display(),
+                e.render(&data)
+            ))
+        })?;
+        for settings in blocks.settings {
+            let mut bundle = runinator_rexrap::parse_secrets_str(&settings).map_err(|e| {
+                PackError::compile(format!(
+                    "failed to parse {} settings:\n{}",
+                    source_path.display(),
+                    e.render(&settings)
+                ))
+            })?;
+            if let Some(modified) = file_modified(&source_path) {
+                for entry in &mut bundle.secrets {
+                    entry.updated_at.get_or_insert(modified);
+                }
+            }
+            secrets.extend(bundle.secrets);
+        }
+    }
+    Ok((!secrets.is_empty()).then_some(SecretBundle { secrets }))
 }
 
 // parse a settings file, choosing the `.rexraps` secrets front end or json by extension.
@@ -132,23 +147,33 @@ fn parse_settings_file(path: &Path) -> Result<SecretBundle> {
 // rexrap pipeline front end and merged into one bundle. a single `.rexrap` or a pack without pipeline files
 // yields None.
 pub fn load_pack_pipelines(path: &Path) -> Result<Option<PipelineBundle>> {
-    let paths = pack_pipeline_paths(path)?;
-    if paths.is_empty() {
-        return Ok(None);
-    }
+    let paths = if path.is_dir() {
+        rexrap_directory_paths(path)?
+    } else {
+        vec![path.to_path_buf()]
+    };
     let mut pipelines = Vec::new();
-    for pipeline_path in paths {
-        let data = fs::read_to_string(&pipeline_path)?;
-        let bundle = runinator_rexrap::parse_pipeline_str(&data).map_err(|e| {
+    for source_path in paths {
+        let data = fs::read_to_string(&source_path)?;
+        let blocks = runinator_rexrap::parse_rrx_blocks(&data).map_err(|e| {
             PackError::compile(format!(
                 "failed to parse {}:\n{}",
-                pipeline_path.display(),
+                source_path.display(),
                 e.render(&data)
             ))
         })?;
-        pipelines.extend(bundle.pipelines);
+        if !blocks.pipelines.trim().is_empty() {
+            let bundle = runinator_rexrap::parse_pipeline_str(&blocks.pipelines).map_err(|e| {
+                PackError::compile(format!(
+                    "failed to parse {} pipelines:\n{}",
+                    source_path.display(),
+                    e.render(&blocks.pipelines)
+                ))
+            })?;
+            pipelines.extend(bundle.pipelines);
+        }
     }
-    Ok(Some(PipelineBundle { pipelines }))
+    Ok((!pipelines.is_empty()).then_some(PipelineBundle { pipelines }))
 }
 
 // resolve the pipeline file paths for a pack source: a directory pack's `*.rexrapp` files, or a `.rexrapm`
@@ -257,13 +282,19 @@ pub fn load_workflow_bundle_with_catalog(
     }
 
     match path.extension().and_then(|ext| ext.to_str()) {
-        Some("rexrapm") => load_rexrap_pack_manifest(path, catalog),
-        Some("rexrap") => {
+        Some("rrx") => {
             let data = fs::read_to_string(path)?;
+            let blocks = runinator_rexrap::parse_rrx_blocks(&data).map_err(|e| {
+                PackError::compile(format!(
+                    "failed to parse {}:\n{}",
+                    path.display(),
+                    e.render(&data)
+                ))
+            })?;
             Ok(WorkflowBundle {
                 workflows: compile_rexrap_all_with_signatures(
                     path,
-                    &data,
+                    &blocks.workflows,
                     SemVer::default(),
                     catalog,
                     &[],
@@ -280,7 +311,11 @@ pub fn load_workflow_bundle_with_catalog(
 
 // format and compile one .rexrap source into a definition.
 // imported workflows are enabled so a pack is live as soon as it lands.
-pub fn compile_rexrap(path: &Path, data: &str, default_version: SemVer) -> Result<WorkflowDefinition> {
+pub fn compile_rexrap(
+    path: &Path,
+    data: &str,
+    default_version: SemVer,
+) -> Result<WorkflowDefinition> {
     compile_rexrap_with_providers(path, data, default_version, &[])
 }
 
@@ -409,12 +444,22 @@ fn collect_workflow_signatures_with_current(
             data = fs::read_to_string(path)?;
             &data
         };
+        let blocks = runinator_rexrap::parse_rrx_blocks(source).map_err(|e| {
+            PackError::compile(format!(
+                "failed to read unified source {}:\n{}",
+                path.display(),
+                e.render(source)
+            ))
+        })?;
+        if blocks.workflows.trim().is_empty() {
+            continue;
+        }
         let mut source_signatures =
-            runinator_rexrap::workflow_signature_from_source(source).map_err(|e| {
+            runinator_rexrap::workflow_signature_from_source(&blocks.workflows).map_err(|e| {
                 PackError::compile(format!(
                     "failed to read workflow signature from {}:\n{}",
                     path.display(),
-                    e.render(source)
+                    e.render(&blocks.workflows)
                 ))
             })?;
         signatures.append(&mut source_signatures);
@@ -427,7 +472,7 @@ pub fn rexrap_context_workflow_signatures(
     path: &Path,
     current_source: Option<&str>,
 ) -> Result<Vec<WorkflowSignature>> {
-    if path.extension().and_then(|ext| ext.to_str()) != Some("rexrap") {
+    if path.extension().and_then(|ext| ext.to_str()) != Some("rrx") {
         return Ok(Vec::new());
     }
 
@@ -451,12 +496,12 @@ fn compile_providers(providers: &[ProviderMetadata]) -> Vec<ProviderMetadata> {
     merged.into_values().collect()
 }
 
-// compile every *.rexrap in a directory (sorted for deterministic ids) into one bundle.
+// compile every unified `.rrx` source in a directory (sorted for deterministic ids) into one bundle.
 fn load_rexrap_directory(dir: &Path, catalog: &PackCatalog) -> Result<WorkflowBundle> {
     let rexrap_paths = rexrap_directory_paths(dir)?;
     if rexrap_paths.is_empty() {
         return Err(PackError::source(format!(
-            "no .rexrap files found in {}",
+            "no .rrx files found in {}",
             dir.display()
         )));
     }
@@ -465,9 +510,19 @@ fn load_rexrap_directory(dir: &Path, catalog: &PackCatalog) -> Result<WorkflowBu
     let mut workflows = Vec::with_capacity(rexrap_paths.len());
     for rexrap_path in &rexrap_paths {
         let data = fs::read_to_string(rexrap_path)?;
+        let blocks = runinator_rexrap::parse_rrx_blocks(&data).map_err(|e| {
+            PackError::compile(format!(
+                "failed to parse {}:\n{}",
+                rexrap_path.display(),
+                e.render(&data)
+            ))
+        })?;
+        if blocks.workflows.trim().is_empty() {
+            continue;
+        }
         workflows.extend(compile_rexrap_all_with_signatures(
             rexrap_path,
-            &data,
+            &blocks.workflows,
             SemVer::default(),
             catalog,
             &workflow_signatures,
@@ -483,7 +538,9 @@ fn rexrap_directory_paths(dir: &Path) -> Result<Vec<PathBuf>> {
     let mut rexrap_paths = Vec::new();
     for entry in fs::read_dir(dir)? {
         let entry_path = entry?.path();
-        if entry_path.extension().and_then(|ext| ext.to_str()) == Some("rexrap") {
+        if entry_path.is_dir() {
+            rexrap_paths.extend(rexrap_directory_paths(&entry_path)?);
+        } else if entry_path.extension().and_then(|ext| ext.to_str()) == Some("rrx") {
             rexrap_paths.push(entry_path);
         }
     }

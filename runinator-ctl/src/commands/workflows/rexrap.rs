@@ -8,6 +8,9 @@ pub(crate) fn rexrap(command: &RexRapCommands, json_output: bool) -> Result<()> 
             typing,
         } => {
             let source = fs::read_to_string(file)?;
+            let workflow_source = runinator_rexrap::parse_rrx_blocks(&source)
+                .map_err(|e| err(e.render(&source)))?
+                .workflows;
             let options = runinator_rexrap::CompileOptions {
                 source_dir: file.parent().map(Path::to_path_buf),
                 providers: runinator_provider_catalog::metadata(),
@@ -18,8 +21,8 @@ pub(crate) fn rexrap(command: &RexRapCommands, json_output: bool) -> Result<()> 
                 )?,
                 ..runinator_rexrap::CompileOptions::default()
             };
-            let definition = runinator_rexrap::compile_str(&source, &options)
-                .map_err(|e| err(e.render(&source)))?;
+            let definition = runinator_rexrap::compile_str(&workflow_source, &options)
+                .map_err(|e| err(e.render(&workflow_source)))?;
             if json_output {
                 return output::json(&definition);
             }
@@ -76,18 +79,21 @@ pub(crate) fn rexrap(command: &RexRapCommands, json_output: bool) -> Result<()> 
         }
         RexRapCommands::Check { file, typing } => {
             let source = fs::read_to_string(file)?;
+            let workflow_source = runinator_rexrap::parse_rrx_blocks(&source)
+                .map_err(|e| err(e.render(&source)))?
+                .workflows;
             // analyze first so every error and warning is reported, not just the first.
             let providers = runinator_provider_catalog::metadata();
             let type_policy = (*typing).into();
             let workflow_signatures =
                 runinator_pack::source::rexrap_context_workflow_signatures(file, Some(&source))?;
             let diagnostics = runinator_rexrap::analyze_source_with_options(
-                &source,
+                &workflow_source,
                 &providers,
                 type_policy,
                 &workflow_signatures,
             )
-            .map_err(|e| err(e.render(&source)))?;
+            .map_err(|e| err(e.render(&workflow_source)))?;
             let error_count = diagnostics.iter().filter(|d| d.is_error()).count();
             if json_output {
                 return output::json(&json!({
@@ -105,7 +111,7 @@ pub(crate) fn rexrap(command: &RexRapCommands, json_output: bool) -> Result<()> 
                 }));
             }
             for diagnostic in &diagnostics {
-                eprintln!("{}\n", diagnostic.render(&source));
+                eprintln!("{}\n", diagnostic.render(&workflow_source));
             }
             if error_count > 0 {
                 return Err(err(format!(
@@ -121,8 +127,8 @@ pub(crate) fn rexrap(command: &RexRapCommands, json_output: bool) -> Result<()> 
                 workflow_signatures,
                 ..runinator_rexrap::CompileOptions::default()
             };
-            let definition = runinator_rexrap::compile_str(&source, &options)
-                .map_err(|e| err(e.render(&source)))?;
+            let definition = runinator_rexrap::compile_str(&workflow_source, &options)
+                .map_err(|e| err(e.render(&workflow_source)))?;
             println!("{} v{} ok", definition.name, definition.version);
         }
     }

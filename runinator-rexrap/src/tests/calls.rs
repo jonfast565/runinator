@@ -295,7 +295,10 @@ fn explicit_at_with_literal_key_is_preserved() {
         .to_string();
     assert!(params.contains("\"$call\":\"at\""), "params: {params}");
     let rexrap = decompile(&compile(src)).expect("decompile");
-    assert!(rexrap.contains("at("), "explicit at not preserved: {rexrap}");
+    assert!(
+        rexrap.contains("at("),
+        "explicit at not preserved: {rexrap}"
+    );
     assert_round_trips(src);
 }
 #[test]

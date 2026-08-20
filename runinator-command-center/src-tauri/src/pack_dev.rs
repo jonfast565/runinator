@@ -106,9 +106,9 @@ pub fn read_dev_pack_file(path: String) -> CommandResult<DevPackTextFile> {
 #[tauri::command]
 pub fn write_dev_pack_file(path: String, content: String) -> CommandResult<DevPackTextFile> {
     let source = PathBuf::from(path);
-    if source.extension().and_then(|ext| ext.to_str()) != Some("rexrap") {
+    if source.extension().and_then(|ext| ext.to_str()) != Some("rrx") {
         return Err(command_error(
-            "only .rexrap source files can be saved from the dev panel",
+            "only .rrx source files can be saved from the dev panel",
         ));
     }
     fs::write(&source, content).map_err(|err| CommandError::Unexpected(err.to_string()))?;
@@ -163,43 +163,12 @@ fn file_modified(path: &Path) -> Option<DateTime<Utc>> {
 }
 
 fn is_pack_source(path: &Path) -> bool {
-    if path.is_dir() {
-        return true;
-    }
-    matches!(
-        path.extension().and_then(|ext| ext.to_str()),
-        Some("rexrap") | Some("rexrapm")
-    )
+    runinator_pack::source::is_pack_source(path)
 }
 
 fn pack_source_files(path: &Path) -> CommandResult<Vec<DevPackFile>> {
-    let mut files = Vec::new();
-
-    if path.is_dir() {
-        files.extend(rexrap_directory_paths(path)?);
-        extend_rexrap_includes(&mut files);
-        if let Some(settings_path) = pack_settings_path(path)? {
-            files.push(settings_path);
-        }
-        return Ok(source_file_summaries(files));
-    }
-
-    match path.extension().and_then(|ext| ext.to_str()) {
-        Some("rexrapm") => {
-            files.push(path.to_path_buf());
-            files.extend(rexrap_pack_manifest_paths(path)?);
-            extend_rexrap_includes(&mut files);
-            if let Some(settings_path) = pack_settings_path(path)? {
-                files.push(settings_path);
-            }
-        }
-        Some("rexrap") => {
-            files.push(path.to_path_buf());
-            extend_rexrap_includes(&mut files);
-        }
-        _ => files.push(path.to_path_buf()),
-    }
-
+    let files = runinator_pack::source::pack_source_files(path)
+        .map_err(|err| command_error(err.to_string()))?;
     Ok(source_file_summaries(files))
 }
 
@@ -246,19 +215,14 @@ fn source_file_kind(path: &Path) -> String {
         return "directory".into();
     }
     match path.extension().and_then(|ext| ext.to_str()) {
-        Some("rexrapm") => "manifest".into(),
-        Some("rexrap") => "workflow".into(),
-        Some("rexraps") => "settings".into(),
+        Some("rrx") => "rrx source".into(),
         Some("json") => "json".into(),
         _ => "file".into(),
     }
 }
 
 fn load_pack_settings(path: &Path) -> CommandResult<Option<SecretBundle>> {
-    let Some(settings_path) = pack_settings_path(path)? else {
-        return Ok(None);
-    };
-    parse_settings_file(&settings_path).map(Some)
+    runinator_pack::source::load_pack_settings(path).map_err(|err| command_error(err.to_string()))
 }
 
 fn parse_settings_file(path: &Path) -> CommandResult<SecretBundle> {
@@ -307,30 +271,8 @@ fn pack_settings_path(path: &Path) -> CommandResult<Option<PathBuf>> {
 }
 
 fn load_workflow_bundle(path: &Path) -> CommandResult<WorkflowBundle> {
-    if !is_pack_source(path) {
-        return Err(command_error(format!(
-            "unsupported pack source: {}",
-            path.display()
-        )));
-    }
-    if path.is_dir() {
-        return load_rexrap_directory(path);
-    }
-    match path.extension().and_then(|ext| ext.to_str()) {
-        Some("rexrapm") => load_rexrap_pack_manifest(path),
-        Some("rexrap") => {
-            let data = fs::read_to_string(path)
-                .map_err(|err| CommandError::Unexpected(err.to_string()))?;
-            Ok(WorkflowBundle {
-                workflows: compile_rexrap_all(path, &data, SemVer::default())?,
-                triggers: Vec::new(),
-            })
-        }
-        _ => Err(command_error(format!(
-            "unsupported pack source: {}",
-            path.display()
-        ))),
-    }
+    runinator_pack::source::load_workflow_bundle(path)
+        .map_err(|err| command_error(err.to_string()))
 }
 
 fn compile_rexrap_all(
@@ -419,17 +361,8 @@ pub(crate) fn rexrap_context_workflow_signatures(
     path: &Path,
     current_source: Option<&str>,
 ) -> CommandResult<Vec<WorkflowSignature>> {
-    if path.extension().and_then(|ext| ext.to_str()) != Some("rexrap") {
-        return Ok(Vec::new());
-    }
-
-    let dir = path.parent().unwrap_or_else(|| Path::new("."));
-    let mut paths = rexrap_directory_paths(dir)?;
-    if !paths.iter().any(|candidate| candidate == path) {
-        paths.push(path.to_path_buf());
-        paths.sort();
-    }
-    collect_workflow_signatures_with_current(&paths, Some(path), current_source)
+    runinator_pack::source::rexrap_context_workflow_signatures(path, current_source)
+        .map_err(|err| command_error(err.to_string()))
 }
 
 fn load_rexrap_directory(dir: &Path) -> CommandResult<WorkflowBundle> {

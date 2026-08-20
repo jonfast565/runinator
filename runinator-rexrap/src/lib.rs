@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod analysis;
 mod pipeline;
+mod rrx;
 mod secrets;
 
 // the language core, re-exported at its historical paths so consumers name one crate.
@@ -27,8 +28,9 @@ pub use runinator_rexrap_sema::sema;
 pub use runinator_rexrap_sema::{CompileOptions, TypePolicy, WorkflowSignature};
 pub use runinator_rexrap_syntax::{ast, comments, errors};
 
-pub use errors::{Span, RexRapError};
+pub use errors::{RexRapError, Span};
 pub use pipeline::{parse_pipeline_str, pipeline_to_rexrapp};
+pub use rrx::{RrxBlocks, parse_rrx_blocks};
 pub use runinator_rexrap_syntax::included_file_paths;
 pub use runinator_rexrap_syntax::{
     parse_condition_fragment, parse_do_fragment, parse_document, parse_expression_fragment,

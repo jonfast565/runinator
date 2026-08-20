@@ -54,6 +54,54 @@ macro_rules! workflow_from_row {
 
 row_mapper!(row_to_workflow(row) -> WorkflowDefinition { workflow_from_row!(row) });
 
+macro_rules! workflow_task_run_from_row {
+    ($row:expr) => {{
+        WorkflowTaskRun {
+            id: $row.get("id"),
+            workflow_run_id: $row.get("workflow_run_id"),
+            launch_node_run_id: $row.get("launch_node_run_id"),
+            node_id: $row.get("node_id"),
+            action: serde_json::from_str(&$row.get::<String, _>("action")).unwrap_or_else(|_| {
+                WorkflowAction {
+                    provider: String::new(),
+                    function: String::new(),
+                    timeout_seconds: 60,
+                    configuration: Default::default(),
+                    mcp_enabled: false,
+                    tags: Vec::new(),
+                    required_labels: Default::default(),
+                    idempotency_key: None,
+                    function_binding: None,
+                }
+            }),
+            status: WorkflowStatus::try_from($row.get::<String, _>("status").as_str())
+                .unwrap_or(WorkflowStatus::Queued),
+            attempt: $row.get("attempt"),
+            parameters: parse_json($row.get::<String, _>("parameters")),
+            output_json: $row.get::<Option<String>, _>("output_json").map(parse_json),
+            created_at: DateTime::<Utc>::from_timestamp($row.get("created_at"), 0)
+                .unwrap_or_else(Utc::now),
+            started_at: $row
+                .get::<Option<i64>, _>("started_at")
+                .and_then(|v| DateTime::from_timestamp(v, 0)),
+            finished_at: $row
+                .get::<Option<i64>, _>("finished_at")
+                .and_then(|v| DateTime::from_timestamp(v, 0)),
+            message: $row.get("message"),
+            current_executor_replica_id: $row.get("current_executor_replica_id"),
+            last_executor_replica_id: $row.get("last_executor_replica_id"),
+            executor_claimed_at: $row
+                .get::<Option<i64>, _>("executor_claimed_at")
+                .and_then(|v| DateTime::from_timestamp(v, 0)),
+            executor_released_at: $row
+                .get::<Option<i64>, _>("executor_released_at")
+                .and_then(|v| DateTime::from_timestamp(v, 0)),
+        }
+    }};
+}
+
+row_mapper!(row_to_workflow_task_run(row) -> WorkflowTaskRun { workflow_task_run_from_row!(row) });
+
 macro_rules! workflow_revision_from_row {
     ($row:expr) => {{
         WorkflowRevision {

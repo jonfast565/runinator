@@ -7,5 +7,7 @@
 //! deliberately, not by reaching into a core crate directly.
 
 pub use runinator_rexrap_sema::namespace::resolve as resolve_namespaces;
-pub use runinator_rexrap_sema::types::{NamedTypes, lower_type, lower_type_with, resolve_named_types};
+pub use runinator_rexrap_sema::types::{
+    NamedTypes, lower_type, lower_type_with, resolve_named_types,
+};
 pub use runinator_rexrap_syntax::vocabulary::{GRAMMAR_KEYWORDS, STATEMENT_KEYWORDS};
