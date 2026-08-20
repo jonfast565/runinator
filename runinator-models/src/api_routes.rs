@@ -39,6 +39,9 @@ pub const API_FUNCTION_EXPORTS: &str = "/function_exports";
 /// content-addressed package archives, keyed by `sha256:<hex>`.
 pub const API_FUNCTION_ARTIFACTS: &str = "/function_artifacts";
 pub const API_WORKFLOW_RUNS: &str = "/workflow_runs";
+/// Compiled-VM execution records. These replace node-run history for VM-backed runs.
+pub const API_WORKFLOW_CONTINUATIONS: &str = "/workflow_continuations";
+pub const API_WORKFLOW_EFFECTS: &str = "/workflow_effects";
 pub const API_SCHEDULER_WORKFLOW_RUNS_CLAIM: &str = "/scheduler/workflow_runs/claim";
 pub const API_SCHEDULER_READY_NODES_CLAIM: &str = "/scheduler/ready_nodes/claim";
 pub const API_RUNS: &str = "/runs";
@@ -132,6 +135,32 @@ pub fn api_workflow_run_command(workflow_run_id: Uuid, command: &str) -> String 
 
 pub fn api_workflow_run_nodes(workflow_run_id: Uuid) -> String {
     format!("{API_WORKFLOW_RUNS}/{workflow_run_id}/nodes")
+}
+
+pub fn api_workflow_run_continuations(workflow_run_id: Uuid) -> String {
+    format!("{API_WORKFLOW_RUNS}/{workflow_run_id}/continuations")
+}
+
+pub fn api_workflow_run_effects(workflow_run_id: Uuid) -> String {
+    format!("{API_WORKFLOW_RUNS}/{workflow_run_id}/effects")
+}
+
+pub fn api_workflow_run_journal(workflow_run_id: Uuid) -> String {
+    format!("{API_WORKFLOW_RUNS}/{workflow_run_id}/journal")
+}
+
+/// Author-facing graph positions, projected from continuation instruction pointers and the
+/// immutable module source map.
+pub fn api_workflow_run_cursors(workflow_run_id: Uuid) -> String {
+    format!("{API_WORKFLOW_RUNS}/{workflow_run_id}/cursors")
+}
+
+pub fn api_workflow_continuation(continuation_id: Uuid) -> String {
+    format!("{API_WORKFLOW_CONTINUATIONS}/{continuation_id}")
+}
+
+pub fn api_workflow_effect(effect_id: Uuid) -> String {
+    format!("{API_WORKFLOW_EFFECTS}/{effect_id}")
 }
 
 pub fn api_workflow_run_artifacts(workflow_run_id: Uuid) -> String {

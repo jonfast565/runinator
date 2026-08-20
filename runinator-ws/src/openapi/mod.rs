@@ -45,6 +45,7 @@ const DOC_SETS: &[&[EndpointDoc]] = &[
     handlers::debug::DOCS,
     handlers::supervisor::DOCS,
     handlers::node_runs::DOCS,
+    handlers::workflow_vm::DOCS,
     handlers::catalog::DOCS,
     handlers::automation::DOCS,
     handlers::credentials::DOCS,

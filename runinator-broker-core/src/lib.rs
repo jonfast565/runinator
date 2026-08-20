@@ -29,9 +29,9 @@ pub use runinator_comm::{
     ConsumerProfile, ControlCommand, UiEvent, WakeCommand, WsIngressCommand,
 };
 pub use types::{
-    AgentDelivery, BrokerDelivery, BrokerMessage, ConnectionState, ControlDelivery, EventDelivery,
-    EventMessage, IngressDelivery, IngressMessage, ResultDelivery, ResultMessage, WakeDelivery,
-    WakeMessage,
+    AgentDelivery, BrokerDelivery, BrokerMessage, ConnectionState, ControlDelivery, EffectDelivery,
+    EffectMessage, EffectResultDelivery, EffectResultMessage, EventDelivery, EventMessage,
+    IngressDelivery, IngressMessage, ResultDelivery, ResultMessage, WakeDelivery, WakeMessage,
 };
 
 use async_trait::async_trait;
@@ -44,6 +44,11 @@ pub const STALE_CONTROL_TTL_SECONDS: i64 = 300;
 /// Trait implemented by queue backends capable of delivering task commands.
 #[async_trait]
 pub trait Broker: Send + Sync + 'static {
+    /// Whether this backend can carry the VM's generic effect protocol. The legacy action/result
+    /// channel is intentionally separate: a VM run must never be reconstructed as a node action.
+    fn supports_workflow_effect_channels(&self) -> bool {
+        false
+    }
     /// Report whether this backend supports workflow result channels.
     fn supports_workflow_result_channels(&self) -> bool {
         false
@@ -97,6 +102,76 @@ pub trait Broker: Send + Sync + 'static {
 
     /// Return the delivery to the queue for another attempt.
     async fn nack(&self, consumer: &str, delivery_id: uuid::Uuid) -> Result<(), BrokerError>;
+
+    /// Publish a generic workflow VM effect command.
+    async fn publish_effect(&self, _message: EffectMessage) -> Result<(), BrokerError> {
+        Err(BrokerError::NotImplemented("publish_effect"))
+    }
+
+    async fn receive_effect(&self, _consumer: &str) -> Result<EffectDelivery, BrokerError> {
+        Err(BrokerError::NotImplemented("receive_effect"))
+    }
+
+    async fn receive_effect_for(
+        &self,
+        profile: &ConsumerProfile,
+    ) -> Result<EffectDelivery, BrokerError> {
+        loop {
+            let delivery = self.receive_effect(&profile.id).await?;
+            if delivery.command.target.matches(profile) {
+                return Ok(delivery);
+            }
+            self.nack_effect(&profile.id, delivery.delivery_id).await?;
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    }
+
+    async fn ack_effect(
+        &self,
+        _consumer: &str,
+        _delivery_id: uuid::Uuid,
+    ) -> Result<(), BrokerError> {
+        Err(BrokerError::NotImplemented("ack_effect"))
+    }
+
+    async fn nack_effect(
+        &self,
+        _consumer: &str,
+        _delivery_id: uuid::Uuid,
+    ) -> Result<(), BrokerError> {
+        Err(BrokerError::NotImplemented("nack_effect"))
+    }
+
+    /// Publish the terminal/streaming result of a generic VM effect.
+    async fn publish_effect_result(
+        &self,
+        _message: EffectResultMessage,
+    ) -> Result<(), BrokerError> {
+        Err(BrokerError::NotImplemented("publish_effect_result"))
+    }
+
+    async fn receive_effect_result(
+        &self,
+        _consumer: &str,
+    ) -> Result<EffectResultDelivery, BrokerError> {
+        Err(BrokerError::NotImplemented("receive_effect_result"))
+    }
+
+    async fn ack_effect_result(
+        &self,
+        _consumer: &str,
+        _delivery_id: uuid::Uuid,
+    ) -> Result<(), BrokerError> {
+        Err(BrokerError::NotImplemented("ack_effect_result"))
+    }
+
+    async fn nack_effect_result(
+        &self,
+        _consumer: &str,
+        _delivery_id: uuid::Uuid,
+    ) -> Result<(), BrokerError> {
+        Err(BrokerError::NotImplemented("nack_effect_result"))
+    }
 
     /// Publish a workflow control message on the control channel.
     async fn publish_control(&self, command: ControlCommand) -> Result<(), BrokerError>;

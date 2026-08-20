@@ -62,6 +62,10 @@ import type {
   WorkflowRunCreated,
   WorkflowRunArtifact,
   WorkflowRunDetail,
+  WorkflowContinuation,
+  WorkflowEffect,
+  WorkflowJournalRecord,
+  WorkflowVmCursor,
   WorkflowSimulateRequest,
   WorkflowTrigger,
   SimulationRun,
@@ -322,6 +326,22 @@ export async function fetchWorkflowNodeRunArtifacts(nodeRunId: string) {
 
 export async function fetchWorkflowRunArtifacts(workflowRunId: string) {
   return command<WorkflowRunArtifact[]>("fetch_workflow_run_artifacts", { workflowRunId });
+}
+
+export async function fetchWorkflowContinuations(workflowRunId: string) {
+  return command<WorkflowContinuation[]>("fetch_workflow_continuations", { workflowRunId });
+}
+
+export async function fetchWorkflowEffects(workflowRunId: string) {
+  return command<WorkflowEffect[]>("fetch_workflow_effects", { workflowRunId });
+}
+
+export async function fetchWorkflowJournal(workflowRunId: string) {
+  return command<WorkflowJournalRecord[]>("fetch_workflow_journal", { workflowRunId });
+}
+
+export async function fetchWorkflowVmCursors(workflowRunId: string) {
+  return command<WorkflowVmCursor[]>("fetch_workflow_vm_cursors", { workflowRunId });
 }
 
 // the edges a single run actually walked, in order, reconstructed from the node-run chain.

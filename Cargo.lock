@@ -8653,6 +8653,7 @@ dependencies = [
  "runinator-engine",
  "runinator-models",
  "runinator-provisioner",
+ "runinator-store",
  "runinator-supervisor",
  "runinator-utilities",
  "runinator-workflows",

@@ -22,6 +22,7 @@ runinator-comm = { path = "../runinator-comm" }
 runinator-database = { path = "../runinator-database", default-features = false }
 runinator-engine = { path = "../runinator-engine" }
 runinator-models = { path = "../runinator-models" }
+runinator-store = { path = "../runinator-store" }
 runinator-provisioner = { path = "../runinator-provisioner" }
 runinator-supervisor = { path = "../runinator-supervisor" }
 runinator-utilities = { path = "../runinator-utilities" }

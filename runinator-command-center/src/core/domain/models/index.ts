@@ -83,6 +83,12 @@ export type {
 export type { WorkflowLayoutDirection, WorkflowLayoutPosition } from "./workflow/layout";
 export type { WorkflowEditorNodeRecord } from "./workflow/editor-node";
 export type { WorkflowDefinition } from "./workflow/definition";
+export type {
+  WorkflowContinuation,
+  WorkflowEffect,
+  WorkflowJournalRecord,
+  WorkflowVmCursor,
+} from "./workflow/vm";
 export { workflowInputType } from "./workflow/definition";
 export type { RevisionSource, WorkflowRevision } from "./workflow/revision";
 export { revisionAuthorLabel } from "./workflow/revision";

@@ -53,6 +53,42 @@ pub async fn fetch_workflow_run_artifacts(
 }
 
 #[tauri::command]
+pub async fn fetch_workflow_continuations(
+    state: State<'_, CommandCenterState>,
+    workflow_run_id: Uuid,
+) -> CommandResult<Vec<WorkflowContinuation>> {
+    get_json(
+        &state,
+        &format!("workflow_runs/{workflow_run_id}/continuations"),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn fetch_workflow_effects(
+    state: State<'_, CommandCenterState>,
+    workflow_run_id: Uuid,
+) -> CommandResult<Vec<WorkflowEffect>> {
+    get_json(&state, &format!("workflow_runs/{workflow_run_id}/effects")).await
+}
+
+#[tauri::command]
+pub async fn fetch_workflow_journal(
+    state: State<'_, CommandCenterState>,
+    workflow_run_id: Uuid,
+) -> CommandResult<Vec<WorkflowJournalRecord>> {
+    get_json(&state, &format!("workflow_runs/{workflow_run_id}/journal")).await
+}
+
+#[tauri::command]
+pub async fn fetch_workflow_vm_cursors(
+    state: State<'_, CommandCenterState>,
+    workflow_run_id: Uuid,
+) -> CommandResult<Vec<WorkflowVmCursor>> {
+    get_json(&state, &format!("workflow_runs/{workflow_run_id}/cursors")).await
+}
+
+#[tauri::command]
 pub async fn fetch_workflow_run_transitions(
     state: State<'_, CommandCenterState>,
     workflow_run_id: Uuid,

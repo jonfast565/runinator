@@ -612,6 +612,15 @@ pub(super) async fn maybe_settle_pipeline_run<T: RuntimeStore>(
     settle_pipeline_run_if_complete(ctx.db, &pipeline_run, &pipeline).await
 }
 
+/// Apply the pipeline-side consequences of a terminal member workflow run.
+pub async fn settle_pipeline_member_run<T: RuntimeStore>(
+    db: &T,
+    member_run: &WorkflowRun,
+) -> Result<(), SendableError> {
+    let ctx = super::execution::WorkflowRunContext::new(db, member_run);
+    maybe_settle_pipeline_run(&ctx).await
+}
+
 async fn settle_pipeline_run_if_complete<T: RuntimeStore>(
     db: &T,
     pipeline_run: &PipelineRun,

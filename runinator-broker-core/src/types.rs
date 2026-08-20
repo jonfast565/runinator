@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use runinator_comm::{
-    ActionCommand, AgentCommand, ControlCommand, UiEvent, WakeCommand, WorkflowResultEvent,
-    WsIngressCommand,
+    ActionCommand, AgentCommand, ControlCommand, EffectCommand, EffectResult, UiEvent, WakeCommand,
+    WorkflowResultEvent, WsIngressCommand,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
@@ -58,6 +58,46 @@ pub struct ResultMessage {
 pub struct ResultDelivery {
     pub delivery_id: Uuid,
     pub event: WorkflowResultEvent,
+    pub dedupe_key: String,
+    #[serde(default = "utc_now")]
+    pub enqueued_at: DateTime<Utc>,
+}
+
+/// A VM effect command queued for a provider worker or an infrastructure effect host.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EffectMessage {
+    pub command: EffectCommand,
+    #[serde(default)]
+    pub dedupe_key: Option<String>,
+    #[serde(default = "utc_now")]
+    pub enqueued_at: DateTime<Utc>,
+}
+
+/// A leased VM effect command delivery.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EffectDelivery {
+    pub delivery_id: Uuid,
+    pub command: EffectCommand,
+    pub dedupe_key: String,
+    #[serde(default = "utc_now")]
+    pub enqueued_at: DateTime<Utc>,
+}
+
+/// A VM effect result queued for the durable VM host.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EffectResultMessage {
+    pub result: EffectResult,
+    #[serde(default)]
+    pub dedupe_key: Option<String>,
+    #[serde(default = "utc_now")]
+    pub enqueued_at: DateTime<Utc>,
+}
+
+/// A leased VM effect result delivery.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EffectResultDelivery {
+    pub delivery_id: Uuid,
+    pub result: EffectResult,
     pub dedupe_key: String,
     #[serde(default = "utc_now")]
     pub enqueued_at: DateTime<Utc>,
@@ -201,6 +241,22 @@ impl ResultMessage {
     }
 }
 
+impl EffectMessage {
+    pub fn dedupe_key_or_hash(&self) -> String {
+        self.dedupe_key
+            .clone()
+            .unwrap_or_else(|| self.command.effect_id.to_string())
+    }
+}
+
+impl EffectResultMessage {
+    pub fn dedupe_key_or_hash(&self) -> String {
+        self.dedupe_key
+            .clone()
+            .unwrap_or_else(|| self.result.event_id.to_string())
+    }
+}
+
 impl From<BrokerMessage> for BrokerDelivery {
     fn from(message: BrokerMessage) -> Self {
         let dedupe = message.dedupe_key_or_hash();
@@ -209,6 +265,28 @@ impl From<BrokerMessage> for BrokerDelivery {
             dedupe_key: dedupe,
             enqueued_at: message.enqueued_at,
             command: message.command,
+        }
+    }
+}
+
+impl From<EffectMessage> for EffectDelivery {
+    fn from(message: EffectMessage) -> Self {
+        Self {
+            delivery_id: Uuid::new_v4(),
+            dedupe_key: message.dedupe_key_or_hash(),
+            enqueued_at: message.enqueued_at,
+            command: message.command,
+        }
+    }
+}
+
+impl From<EffectResultMessage> for EffectResultDelivery {
+    fn from(message: EffectResultMessage) -> Self {
+        Self {
+            delivery_id: Uuid::new_v4(),
+            dedupe_key: message.dedupe_key_or_hash(),
+            enqueued_at: message.enqueued_at,
+            result: message.result,
         }
     }
 }

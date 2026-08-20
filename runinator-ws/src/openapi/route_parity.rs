@@ -160,6 +160,10 @@ const ROUTER_SOURCES: &[(&str, &str)] = &[
         "runinator-ws-runtime/handlers/webhook",
         include_str!("../../../runinator-ws-runtime/src/handlers/webhook.rs"),
     ),
+    (
+        "runinator-ws-runtime/handlers/workflow_vm",
+        include_str!("../../../runinator-ws-runtime/src/handlers/workflow_vm.rs"),
+    ),
 ];
 
 const API_ROUTES_SRC: &str = include_str!("../../../runinator-models/src/api_routes.rs");

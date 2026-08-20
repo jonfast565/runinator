@@ -44,7 +44,7 @@ pub(crate) mod handlers {
     pub(crate) use runinator_ws_runtime::handlers::{
         action_dispatches, agents, artifacts, automation, catalog_metadata, debug,
         function_invocations, health, node_runs, notifications, observability, provisioning,
-        replicas, runs, schedules, supervisor, triggers, webhook,
+        replicas, runs, schedules, supervisor, triggers, webhook, workflow_vm,
     };
 }
 

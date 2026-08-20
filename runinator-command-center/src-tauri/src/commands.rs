@@ -9,6 +9,7 @@ use runinator_models::{
     replicas::ReplicaListResponse,
     runs::{RunArtifact, RunChunk},
     web::TaskResponse,
+    workflow_vm::{WorkflowContinuation, WorkflowEffect, WorkflowJournalRecord, WorkflowVmCursor},
     workflows::{
         WorkflowBundle, WorkflowDefinition, WorkflowNodeRunArtifact, WorkflowNodeRunChunk,
         WorkflowRun, WorkflowRunArtifact, WorkflowSimulateRequest, WorkflowTrigger,

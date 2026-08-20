@@ -3,13 +3,66 @@ use runinator_comm::ActionCommand;
 use runinator_models::json;
 use runinator_models::workflows::WorkflowAction;
 
-use crate::{Broker, BrokerMessage, ResultMessage};
+use crate::{Broker, BrokerMessage, EffectMessage, EffectResultMessage, ResultMessage};
 
 use super::*;
 
 #[test]
 fn in_memory_broker_supports_workflow_result_channels() {
     assert!(InMemoryBroker::new().supports_workflow_result_channels());
+}
+
+#[tokio::test]
+async fn in_memory_broker_round_trips_vm_effects_without_action_identity() {
+    let broker = InMemoryBroker::new();
+    let command = runinator_comm::EffectCommand {
+        version: runinator_models::workflow_vm::WORKFLOW_EFFECT_PROTOCOL_VERSION,
+        command_id: Uuid::now_v7(),
+        effect_id: Uuid::now_v7(),
+        workflow_run_id: Uuid::now_v7(),
+        continuation_id: Uuid::now_v7(),
+        attempt: 0,
+        request: runinator_models::workflow_vm::WorkflowEffectRequest::Timer { due_at: 42 },
+        target: Default::default(),
+        trace_id: Uuid::now_v7(),
+        trace_context: Default::default(),
+        idempotency_key: "timer:42".into(),
+    };
+    broker
+        .publish_effect(EffectMessage {
+            command: command.clone(),
+            dedupe_key: None,
+            enqueued_at: Utc::now(),
+        })
+        .await
+        .unwrap();
+    let delivery = broker.receive_effect("worker").await.unwrap();
+    assert_eq!(delivery.command.effect_id, command.effect_id);
+    broker
+        .ack_effect("worker", delivery.delivery_id)
+        .await
+        .unwrap();
+
+    let result = runinator_comm::EffectResult::status(
+        &command,
+        runinator_models::workflow_vm::WorkflowEffectStatus::Succeeded,
+        None,
+        None,
+    );
+    broker
+        .publish_effect_result(EffectResultMessage {
+            result: result.clone(),
+            dedupe_key: None,
+            enqueued_at: Utc::now(),
+        })
+        .await
+        .unwrap();
+    let delivery = broker.receive_effect_result("ws").await.unwrap();
+    assert_eq!(delivery.result.effect_id, result.effect_id);
+    broker
+        .ack_effect_result("ws", delivery.delivery_id)
+        .await
+        .unwrap();
 }
 
 #[tokio::test]

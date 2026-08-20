@@ -34,6 +34,16 @@ pub const READY_NODE_NOT_CLAIMED: ErrorDescriptor = ErrorDescriptor::new(
     "workflow.ready_node.not_claimed",
     "Ready node is not claimed by this scheduler",
 );
+pub const WORKFLOW_VM_MODULE_MISSING: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI108",
+    "workflow_vm.module_missing",
+    "Workflow VM module not found for run",
+);
+pub const WORKFLOW_VM_EFFECT_MISSING: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI109",
+    "workflow_vm.effect_missing",
+    "Workflow VM continuation is missing its settled effect receipt",
+);
 
 pub const SUBFLOW_RUN_MISSING: ErrorDescriptor = ErrorDescriptor::new(
     "RUNI110",

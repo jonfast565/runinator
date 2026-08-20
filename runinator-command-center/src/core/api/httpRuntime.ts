@@ -417,6 +417,22 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     method: "GET",
     path: (args) => `workflow_runs/${escape(arg(args, "workflowRunId"))}/artifacts`,
   },
+  fetch_workflow_continuations: {
+    method: "GET",
+    path: (args) => `workflow_runs/${escape(arg(args, "workflowRunId"))}/continuations`,
+  },
+  fetch_workflow_effects: {
+    method: "GET",
+    path: (args) => `workflow_runs/${escape(arg(args, "workflowRunId"))}/effects`,
+  },
+  fetch_workflow_journal: {
+    method: "GET",
+    path: (args) => `workflow_runs/${escape(arg(args, "workflowRunId"))}/journal`,
+  },
+  fetch_workflow_vm_cursors: {
+    method: "GET",
+    path: (args) => `workflow_runs/${escape(arg(args, "workflowRunId"))}/cursors`,
+  },
   fetch_workflow_run_transitions: {
     method: "GET",
     path: (args) => `workflow_runs/${escape(arg(args, "workflowRunId"))}/transitions`,

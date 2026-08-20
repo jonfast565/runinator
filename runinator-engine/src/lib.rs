@@ -17,6 +17,7 @@ pub mod settings;
 pub mod simulate;
 pub mod stability;
 
+mod effect_consumer;
 mod engine;
 mod loops;
 mod mutex_migration;
@@ -33,6 +34,7 @@ pub use engine::{EngineConfig, run_background_engine};
 pub use events::{AppEvent, AppEventKind, EnginePublisher, EventSender};
 
 // exposed so the web service can reuse the same result-consumer policy/loop in-process.
+pub use effect_consumer::run_effect_result_consumer;
 pub use result_consumer::{
     ResultConsumerPolicy, run_result_consumer, run_result_consumer_with_policy,
 };

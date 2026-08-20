@@ -17,11 +17,13 @@ use runinator_models::{
         api_replica_offline, api_replica_providers, api_run, api_run_artifacts, api_run_chunks,
         api_scheduler_action_dispatch_failed, api_scheduler_action_dispatch_published,
         api_scheduler_ready_node_process, api_scheduler_workflow_run_claim_release,
-        api_scheduler_workflow_run_claim_renew, api_workflow, api_workflow_duplicate,
-        api_workflow_node_run, api_workflow_node_run_artifacts, api_workflow_node_run_chunks,
-        api_workflow_node_run_claim, api_workflow_node_run_release, api_workflow_node_transitions,
-        api_workflow_revision, api_workflow_revision_restore, api_workflow_revisions,
-        api_workflow_run, api_workflow_run_artifacts, api_workflow_run_command,
+        api_scheduler_workflow_run_claim_renew, api_workflow, api_workflow_continuation,
+        api_workflow_duplicate, api_workflow_effect, api_workflow_node_run,
+        api_workflow_node_run_artifacts, api_workflow_node_run_chunks, api_workflow_node_run_claim,
+        api_workflow_node_run_release, api_workflow_node_transitions, api_workflow_revision,
+        api_workflow_revision_restore, api_workflow_revisions, api_workflow_run,
+        api_workflow_run_artifacts, api_workflow_run_command, api_workflow_run_continuations,
+        api_workflow_run_cursors, api_workflow_run_effects, api_workflow_run_journal,
         api_workflow_run_nodes, api_workflow_run_rename, api_workflow_run_replay,
         api_workflow_run_transitions, api_workflow_runs, api_workflow_trigger,
         api_workflow_trigger_backfill, api_workflow_trigger_runs, api_workflow_triggers,
@@ -64,6 +66,7 @@ use runinator_models::{
     schedules::{BackfillRequest, BackfillResponse, FreezeWindow, NewFreezeWindow},
     telemetry::ReplicaSampleSeries,
     web::TaskResponse,
+    workflow_vm::{WorkflowContinuation, WorkflowEffect, WorkflowJournalRecord, WorkflowVmCursor},
     workflows::{
         WorkflowBundle, WorkflowDefinition, WorkflowNodeRun, WorkflowNodeRunArtifact,
         WorkflowNodeRunChunk, WorkflowRun, WorkflowRunArtifact, WorkflowSimulateRequest,
@@ -1847,6 +1850,76 @@ where
         let response = self.http_get(url.clone()).send().await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<Vec<WorkflowRunArtifact>>().await?)
+    }
+
+    /// Read VM execution branches for a workflow run.  This is the successor to graph-cursor and
+    /// node-run reads for compiled runs.
+    pub async fn fetch_workflow_continuations(
+        &self,
+        workflow_run_id: Uuid,
+    ) -> Result<Vec<WorkflowContinuation>> {
+        let url = self
+            .build_url(&api_workflow_run_continuations(workflow_run_id))
+            .await?;
+        let response =
+            Self::handle_response(url.clone(), self.http_get(url.clone()).send().await?).await?;
+        Ok(response.json::<Vec<WorkflowContinuation>>().await?)
+    }
+
+    pub async fn fetch_workflow_continuation(
+        &self,
+        continuation_id: Uuid,
+    ) -> Result<WorkflowContinuation> {
+        let url = self
+            .build_url(&api_workflow_continuation(continuation_id))
+            .await?;
+        let response =
+            Self::handle_response(url.clone(), self.http_get(url.clone()).send().await?).await?;
+        Ok(response.json::<WorkflowContinuation>().await?)
+    }
+
+    pub async fn fetch_workflow_effects(
+        &self,
+        workflow_run_id: Uuid,
+    ) -> Result<Vec<WorkflowEffect>> {
+        let url = self
+            .build_url(&api_workflow_run_effects(workflow_run_id))
+            .await?;
+        let response =
+            Self::handle_response(url.clone(), self.http_get(url.clone()).send().await?).await?;
+        Ok(response.json::<Vec<WorkflowEffect>>().await?)
+    }
+
+    pub async fn fetch_workflow_effect(&self, effect_id: Uuid) -> Result<WorkflowEffect> {
+        let url = self.build_url(&api_workflow_effect(effect_id)).await?;
+        let response =
+            Self::handle_response(url.clone(), self.http_get(url.clone()).send().await?).await?;
+        Ok(response.json::<WorkflowEffect>().await?)
+    }
+
+    pub async fn fetch_workflow_journal(
+        &self,
+        workflow_run_id: Uuid,
+    ) -> Result<Vec<WorkflowJournalRecord>> {
+        let url = self
+            .build_url(&api_workflow_run_journal(workflow_run_id))
+            .await?;
+        let response =
+            Self::handle_response(url.clone(), self.http_get(url.clone()).send().await?).await?;
+        Ok(response.json::<Vec<WorkflowJournalRecord>>().await?)
+    }
+
+    /// Render graph markers from the persisted continuation IP and the immutable source map.
+    pub async fn fetch_workflow_vm_cursors(
+        &self,
+        workflow_run_id: Uuid,
+    ) -> Result<Vec<WorkflowVmCursor>> {
+        let url = self
+            .build_url(&api_workflow_run_cursors(workflow_run_id))
+            .await?;
+        let response =
+            Self::handle_response(url.clone(), self.http_get(url.clone()).send().await?).await?;
+        Ok(response.json::<Vec<WorkflowVmCursor>>().await?)
     }
 
     pub async fn fetch_workflow_run_transitions(

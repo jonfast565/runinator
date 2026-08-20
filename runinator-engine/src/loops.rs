@@ -32,6 +32,8 @@ const USAGE_SAMPLE_INTERVAL: Duration = Duration::from_secs(300);
 const READY_NODE_REAP_INTERVAL: Duration = Duration::from_secs(30);
 const READY_NODE_REAP_LIMIT: i64 = 1000;
 const OPERATIONAL_METRICS_INTERVAL: Duration = Duration::from_secs(15);
+const WORKFLOW_VM_DRIVE_INTERVAL: Duration = Duration::from_millis(250);
+const WORKFLOW_EFFECT_DISPATCH_INTERVAL: Duration = Duration::from_millis(250);
 
 fn queue_age(
     now: chrono::DateTime<chrono::Utc>,
@@ -40,6 +42,81 @@ fn queue_age(
     oldest
         .map(|value| (now - value).num_seconds().max(0) as u64)
         .unwrap_or(0)
+}
+
+/// Drive compiled workflow continuations. Effect publication is intentionally separate: the VM
+/// host writes an outbox record and Phase 12 will replace the legacy action publisher with the
+/// generic effect protocol.
+pub async fn run_workflow_vm_driver<T: DatabaseImpl>(
+    db: Arc<T>,
+    instance: String,
+    shutdown: Arc<Notify>,
+) {
+    info!("workflow VM driver started");
+    let host = runinator_runtime::WorkflowVmHost::new(db.as_ref());
+    loop {
+        match host.drive_runnable(instance.clone(), CLAIM_LIMIT).await {
+            Ok(_) => {}
+            Err(err) => warn!(error = %err, "workflow VM drive failed"),
+        }
+        tokio::select! {
+            _ = shutdown.notified() => return,
+            _ = tokio::time::sleep(WORKFLOW_VM_DRIVE_INTERVAL) => {}
+        }
+    }
+}
+
+/// Drain the VM effect outbox. The command was frozen in the same transaction as the suspended
+/// continuation, so this publisher never re-reads graph or node-run state to rebuild a delivery.
+pub async fn run_workflow_effect_dispatcher<T: DatabaseImpl>(
+    db: Arc<T>,
+    broker: Arc<dyn Broker>,
+    instance: String,
+    shutdown: Arc<Notify>,
+) {
+    info!("workflow VM effect dispatcher started");
+    loop {
+        let now = chrono::Utc::now();
+        match db
+            .claim_pending_workflow_effect_dispatches(
+                instance.clone(),
+                now,
+                now + chrono::Duration::seconds(ACTION_DISPATCH_LEASE_SECONDS),
+                CLAIM_LIMIT,
+            )
+            .await
+        {
+            Ok(dispatches) => {
+                for dispatch in dispatches {
+                    match broker
+                        .publish_effect(runinator_broker_core::EffectMessage {
+                            dedupe_key: Some(dispatch.dedupe_key.clone()),
+                            command: dispatch.command,
+                            enqueued_at: now,
+                        })
+                        .await
+                    {
+                        Ok(()) | Err(runinator_broker_core::BrokerError::Duplicate(_)) => {
+                            if let Err(err) = db
+                                .mark_workflow_effect_dispatch_published(dispatch.id)
+                                .await
+                            {
+                                warn!(error = %err, dispatch_id = %dispatch.id, "failed to acknowledge VM effect publication");
+                            }
+                        }
+                        Err(err) => {
+                            warn!(error = %err, dispatch_id = %dispatch.id, "failed to publish VM effect");
+                            let _ = db
+                                .mark_workflow_effect_dispatch_failed(dispatch.id, err.to_string())
+                                .await;
+                        }
+                    }
+                }
+            }
+            Err(err) => warn!(error = %err, "failed to claim VM effect dispatches"),
+        }
+        tokio::select! { _ = shutdown.notified() => return, _ = tokio::time::sleep(WORKFLOW_EFFECT_DISPATCH_INTERVAL) => {} }
+    }
 }
 
 /// Periodically samples durable operational state so an idle deployment still has useful gauges.

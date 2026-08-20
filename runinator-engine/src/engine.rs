@@ -7,11 +7,12 @@ use tokio::sync::Notify;
 use tokio::task::JoinSet;
 use tracing::{error, info};
 
+use crate::effect_consumer::run_effect_result_consumer;
 use crate::events::EnginePublisher;
 use crate::loops::{
     run_action_dispatch_publisher, run_agent_directive_publisher, run_ingress_consumer,
     run_operational_metrics_sampler, run_ready_node_reaper, run_replica_reaper, run_trigger_loop,
-    run_usage_sampler, run_wake_publisher,
+    run_usage_sampler, run_wake_publisher, run_workflow_effect_dispatcher, run_workflow_vm_driver,
 };
 use crate::result_consumer::run_result_consumer;
 
@@ -87,6 +88,11 @@ pub async fn run_background_engine<T: DatabaseImpl>(
         publisher.clone(),
         shutdown.clone(),
     ));
+    loops.spawn(run_effect_result_consumer(
+        pool.clone(),
+        broker.clone(),
+        shutdown.clone(),
+    ));
     loops.spawn(run_ingress_consumer(
         pool.clone(),
         broker.clone(),
@@ -120,6 +126,17 @@ pub async fn run_background_engine<T: DatabaseImpl>(
         broker.clone(),
         instance.clone(),
         publisher.agent_nudge(),
+        shutdown.clone(),
+    ));
+    loops.spawn(run_workflow_vm_driver(
+        pool.clone(),
+        instance.clone(),
+        shutdown.clone(),
+    ));
+    loops.spawn(run_workflow_effect_dispatcher(
+        pool.clone(),
+        broker.clone(),
+        instance.clone(),
         shutdown.clone(),
     ));
     loops.spawn(run_replica_reaper(pool.clone(), shutdown.clone()));

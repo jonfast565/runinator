@@ -1,6 +1,7 @@
 use crate::{
     AgentCommand, AgentDelivery, Broker, BrokerDelivery, BrokerError, BrokerMessage,
-    ConsumerProfile, ControlCommand, ControlDelivery, EventDelivery, EventMessage, IngressDelivery,
+    ConsumerProfile, ControlCommand, ControlDelivery, EffectDelivery, EffectMessage,
+    EffectResultDelivery, EffectResultMessage, EventDelivery, EventMessage, IngressDelivery,
     IngressMessage, ResultDelivery, ResultMessage, WakeDelivery, WakeMessage,
 };
 use async_trait::async_trait;
@@ -25,6 +26,12 @@ struct BrokerState {
     result_queue: VecDeque<ResultDelivery>,
     result_inflight: HashMap<Uuid, Leased<ResultDelivery>>,
     result_dedupe: HashSet<String>,
+    effect_queue: VecDeque<EffectDelivery>,
+    effect_inflight: HashMap<Uuid, Leased<EffectDelivery>>,
+    effect_dedupe: HashSet<String>,
+    effect_result_queue: VecDeque<EffectResultDelivery>,
+    effect_result_inflight: HashMap<Uuid, Leased<EffectResultDelivery>>,
+    effect_result_dedupe: HashSet<String>,
     wake_queue: VecDeque<WakeDelivery>,
     wake_inflight: HashMap<Uuid, Leased<WakeDelivery>>,
     wake_dedupe: HashSet<String>,
@@ -47,6 +54,8 @@ pub struct InMemoryBroker {
     control_notify: Arc<Notify>,
     agent_notify: Arc<Notify>,
     result_notify: Arc<Notify>,
+    effect_notify: Arc<Notify>,
+    effect_result_notify: Arc<Notify>,
     wake_notify: Arc<Notify>,
     ingress_notify: Arc<Notify>,
     // fan-out: every subscriber drains its own receiver of every published event.
@@ -79,6 +88,8 @@ impl Default for InMemoryBroker {
             control_notify: Arc::new(Notify::new()),
             agent_notify: Arc::new(Notify::new()),
             result_notify: Arc::new(Notify::new()),
+            effect_notify: Arc::new(Notify::new()),
+            effect_result_notify: Arc::new(Notify::new()),
             wake_notify: Arc::new(Notify::new()),
             ingress_notify: Arc::new(Notify::new()),
             event_tx,
@@ -184,6 +195,10 @@ impl InMemoryBroker {
 
 #[async_trait]
 impl Broker for InMemoryBroker {
+    fn supports_workflow_effect_channels(&self) -> bool {
+        true
+    }
+
     fn supports_workflow_result_channels(&self) -> bool {
         true
     }
@@ -362,6 +377,135 @@ impl Broker for InMemoryBroker {
                 .push_front(redeliver_agent(leased.delivery));
             drop(guard);
             self.agent_notify.notify_waiters();
+            Ok(())
+        } else {
+            Err(BrokerError::UnknownDelivery(delivery_id))
+        }
+    }
+
+    async fn publish_effect(&self, message: EffectMessage) -> Result<(), BrokerError> {
+        let mut guard = self.state.lock();
+        let dedupe = message.dedupe_key_or_hash();
+        if !guard.effect_dedupe.insert(dedupe.clone()) {
+            return Err(BrokerError::Duplicate(dedupe));
+        }
+        guard.effect_queue.push_back(message.into());
+        drop(guard);
+        self.effect_notify.notify_one();
+        Ok(())
+    }
+
+    async fn receive_effect(&self, _consumer: &str) -> Result<EffectDelivery, BrokerError> {
+        loop {
+            if let Some(delivery) = {
+                let mut guard = self.state.lock();
+                guard.reclaim_expired_effects(Instant::now());
+                guard.effect_queue.pop_front().map(|delivery| {
+                    guard.effect_inflight.insert(
+                        delivery.delivery_id,
+                        Leased {
+                            delivery: delivery.clone(),
+                            leased_until: Instant::now() + self.lease_duration,
+                        },
+                    );
+                    delivery
+                })
+            } {
+                return Ok(delivery);
+            }
+            tokio::select! { _ = self.effect_notify.notified() => {}, _ = tokio::time::sleep(self.lease_duration) => {} }
+        }
+    }
+
+    async fn ack_effect(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        let mut guard = self.state.lock();
+        if let Some(leased) = guard.effect_inflight.remove(&delivery_id) {
+            guard.effect_dedupe.remove(&leased.delivery.dedupe_key);
+            Ok(())
+        } else {
+            Err(BrokerError::UnknownDelivery(delivery_id))
+        }
+    }
+
+    async fn nack_effect(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        let mut guard = self.state.lock();
+        if let Some(leased) = guard.effect_inflight.remove(&delivery_id) {
+            guard
+                .effect_queue
+                .push_front(redeliver_effect(leased.delivery));
+            drop(guard);
+            self.effect_notify.notify_one();
+            Ok(())
+        } else {
+            Err(BrokerError::UnknownDelivery(delivery_id))
+        }
+    }
+
+    async fn publish_effect_result(&self, message: EffectResultMessage) -> Result<(), BrokerError> {
+        let mut guard = self.state.lock();
+        let dedupe = message.dedupe_key_or_hash();
+        if !guard.effect_result_dedupe.insert(dedupe.clone()) {
+            return Err(BrokerError::Duplicate(dedupe));
+        }
+        guard.effect_result_queue.push_back(message.into());
+        drop(guard);
+        self.effect_result_notify.notify_one();
+        Ok(())
+    }
+
+    async fn receive_effect_result(
+        &self,
+        _consumer: &str,
+    ) -> Result<EffectResultDelivery, BrokerError> {
+        loop {
+            if let Some(delivery) = {
+                let mut guard = self.state.lock();
+                guard.reclaim_expired_effect_results(Instant::now());
+                guard.effect_result_queue.pop_front().map(|delivery| {
+                    guard.effect_result_inflight.insert(
+                        delivery.delivery_id,
+                        Leased {
+                            delivery: delivery.clone(),
+                            leased_until: Instant::now() + self.lease_duration,
+                        },
+                    );
+                    delivery
+                })
+            } {
+                return Ok(delivery);
+            }
+            tokio::select! { _ = self.effect_result_notify.notified() => {}, _ = tokio::time::sleep(self.lease_duration) => {} }
+        }
+    }
+
+    async fn ack_effect_result(
+        &self,
+        _consumer: &str,
+        delivery_id: Uuid,
+    ) -> Result<(), BrokerError> {
+        let mut guard = self.state.lock();
+        if let Some(leased) = guard.effect_result_inflight.remove(&delivery_id) {
+            guard
+                .effect_result_dedupe
+                .remove(&leased.delivery.dedupe_key);
+            Ok(())
+        } else {
+            Err(BrokerError::UnknownDelivery(delivery_id))
+        }
+    }
+
+    async fn nack_effect_result(
+        &self,
+        _consumer: &str,
+        delivery_id: Uuid,
+    ) -> Result<(), BrokerError> {
+        let mut guard = self.state.lock();
+        if let Some(leased) = guard.effect_result_inflight.remove(&delivery_id) {
+            guard
+                .effect_result_queue
+                .push_front(redeliver_effect_result(leased.delivery));
+            drop(guard);
+            self.effect_result_notify.notify_one();
             Ok(())
         } else {
             Err(BrokerError::UnknownDelivery(delivery_id))
@@ -636,6 +780,24 @@ impl BrokerState {
         }
     }
 
+    fn reclaim_expired_effects(&mut self, now: Instant) {
+        for id in expired_ids(&self.effect_inflight, now) {
+            if let Some(leased) = self.effect_inflight.remove(&id) {
+                self.effect_queue
+                    .push_front(redeliver_effect(leased.delivery));
+            }
+        }
+    }
+
+    fn reclaim_expired_effect_results(&mut self, now: Instant) {
+        for id in expired_ids(&self.effect_result_inflight, now) {
+            if let Some(leased) = self.effect_result_inflight.remove(&id) {
+                self.effect_result_queue
+                    .push_front(redeliver_effect_result(leased.delivery));
+            }
+        }
+    }
+
     fn reclaim_expired_wakes(&mut self, now: Instant) {
         let expired = expired_ids(&self.wake_inflight, now);
         for id in expired {
@@ -686,6 +848,20 @@ fn redeliver_agent(delivery: AgentDelivery) -> AgentDelivery {
 
 fn redeliver_result(delivery: ResultDelivery) -> ResultDelivery {
     ResultDelivery {
+        delivery_id: Uuid::new_v4(),
+        ..delivery
+    }
+}
+
+fn redeliver_effect(delivery: EffectDelivery) -> EffectDelivery {
+    EffectDelivery {
+        delivery_id: Uuid::new_v4(),
+        ..delivery
+    }
+}
+
+fn redeliver_effect_result(delivery: EffectResultDelivery) -> EffectResultDelivery {
+    EffectResultDelivery {
         delivery_id: Uuid::new_v4(),
         ..delivery
     }

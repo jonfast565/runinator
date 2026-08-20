@@ -49,8 +49,12 @@ pub fn resume(
     mut continuation: WorkflowContinuation,
     result: Result<Value, String>,
 ) -> WorkflowVmStep {
-    if continuation.status != WorkflowContinuationStatus::Waiting
-        || continuation.awaiting_effect_id.is_none()
+    // Persisted effect settlement makes the row runnable so a scheduler can claim it, while the
+    // effect id remains available for the durable host to load its immutable receipt.
+    if !matches!(
+        continuation.status,
+        WorkflowContinuationStatus::Waiting | WorkflowContinuationStatus::Runnable
+    ) || continuation.awaiting_effect_id.is_none()
     {
         return fail(
             continuation,
