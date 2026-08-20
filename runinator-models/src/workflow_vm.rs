@@ -15,9 +15,86 @@ use crate::{value::Value, workflows::WorkflowStatus};
 
 /// The workflow bytecode version understood by this runtime.
 pub const WORKFLOW_VM_VERSION: u32 = 1;
+/// The serialized continuation version. It intentionally evolves independently of bytecode.
+pub const WORKFLOW_CONTINUATION_VERSION: u32 = 1;
+/// The source-map format version embedded in a workflow module.
+pub const WORKFLOW_SOURCE_MAP_VERSION: u32 = 1;
+/// The append-only journal entry format version.
+pub const WORKFLOW_JOURNAL_VERSION: u32 = 1;
 /// The effect broker envelope version. Kept separate so wire-only changes do not invalidate
 /// already-snapshotted workflow bytecode.
 pub const WORKFLOW_EFFECT_PROTOCOL_VERSION: u32 = 1;
+
+/// The record whose version a compatibility check rejected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkflowVmRecordKind {
+    Module,
+    Continuation,
+    SourceMap,
+    Effect,
+    Journal,
+}
+
+impl std::fmt::Display for WorkflowVmRecordKind {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Module => "module",
+            Self::Continuation => "continuation",
+            Self::SourceMap => "source map",
+            Self::Effect => "effect",
+            Self::Journal => "journal record",
+        })
+    }
+}
+
+/// A persisted or wire record was produced by a VM revision this process does not understand.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnsupportedWorkflowVmVersion {
+    pub record: WorkflowVmRecordKind,
+    pub expected: u32,
+    pub actual: u32,
+}
+
+impl std::fmt::Display for UnsupportedWorkflowVmVersion {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "unsupported workflow VM {} version {}; expected {}",
+            self.record, self.actual, self.expected
+        )
+    }
+}
+
+impl std::error::Error for UnsupportedWorkflowVmVersion {}
+
+fn ensure_vm_version(
+    record: WorkflowVmRecordKind,
+    expected: u32,
+    actual: u32,
+) -> Result<(), UnsupportedWorkflowVmVersion> {
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(UnsupportedWorkflowVmVersion {
+            record,
+            expected,
+            actual,
+        })
+    }
+}
+
+/// Reject an incompatible effect-protocol envelope before handling its payload.
+pub fn ensure_effect_protocol_version(actual: u32) -> Result<(), UnsupportedWorkflowVmVersion> {
+    if actual == WORKFLOW_EFFECT_PROTOCOL_VERSION {
+        Ok(())
+    } else {
+        Err(UnsupportedWorkflowVmVersion {
+            record: WorkflowVmRecordKind::Effect,
+            expected: WORKFLOW_EFFECT_PROTOCOL_VERSION,
+            actual,
+        })
+    }
+}
 
 /// An immutable compiled workflow snapshot attached to a run.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -42,6 +119,18 @@ impl WorkflowModule {
         self.version == WORKFLOW_VM_VERSION
     }
 
+    pub fn ensure_supported(&self) -> Result<(), UnsupportedWorkflowVmVersion> {
+        ensure_vm_version(
+            WorkflowVmRecordKind::Module,
+            WORKFLOW_VM_VERSION,
+            self.version,
+        )?;
+        for entry in &self.source_map {
+            entry.ensure_supported()?;
+        }
+        Ok(())
+    }
+
     /// Return the graph location containing an instruction pointer.
     pub fn graph_location(&self, ip: usize) -> Option<&WorkflowSourceMapEntry> {
         self.source_map
@@ -53,6 +142,7 @@ impl WorkflowModule {
 /// A source-map range used by graph cursors, breakpoints, and execution history.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkflowSourceMapEntry {
+    pub version: u32,
     pub instruction_start: usize,
     pub instruction_end: usize,
     pub node_id: String,
@@ -61,6 +151,31 @@ pub struct WorkflowSourceMapEntry {
     /// Optional authoring-language byte range. JSON-authored graphs legitimately omit it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_span: Option<WorkflowSourceSpan>,
+}
+
+impl WorkflowSourceMapEntry {
+    pub fn new(instruction_start: usize, instruction_end: usize, node_id: String) -> Self {
+        Self {
+            version: WORKFLOW_SOURCE_MAP_VERSION,
+            instruction_start,
+            instruction_end,
+            node_id,
+            edge_label: None,
+            source_span: None,
+        }
+    }
+
+    pub fn is_supported(&self) -> bool {
+        self.version == WORKFLOW_SOURCE_MAP_VERSION
+    }
+
+    pub fn ensure_supported(&self) -> Result<(), UnsupportedWorkflowVmVersion> {
+        ensure_vm_version(
+            WorkflowVmRecordKind::SourceMap,
+            WORKFLOW_SOURCE_MAP_VERSION,
+            self.version,
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -173,7 +288,7 @@ pub struct WorkflowContinuation {
 impl WorkflowContinuation {
     pub fn start(workflow_run_id: Uuid, module_version: u32) -> Self {
         Self {
-            version: WORKFLOW_VM_VERSION,
+            version: WORKFLOW_CONTINUATION_VERSION,
             id: Uuid::now_v7(),
             workflow_run_id,
             module_version,
@@ -187,6 +302,14 @@ impl WorkflowContinuation {
             status: WorkflowContinuationStatus::Runnable,
             revision: 0,
         }
+    }
+
+    pub fn ensure_supported(&self) -> Result<(), UnsupportedWorkflowVmVersion> {
+        ensure_vm_version(
+            WorkflowVmRecordKind::Continuation,
+            WORKFLOW_CONTINUATION_VERSION,
+            self.version,
+        )
     }
 }
 
@@ -299,11 +422,29 @@ impl WorkflowEffect {
     pub fn is_supported(&self) -> bool {
         self.version == WORKFLOW_EFFECT_PROTOCOL_VERSION
     }
+
+    pub fn ensure_supported(&self) -> Result<(), UnsupportedWorkflowVmVersion> {
+        ensure_effect_protocol_version(self.version)
+    }
 }
 
 impl WorkflowContinuation {
     pub fn is_supported(&self) -> bool {
-        self.version == WORKFLOW_VM_VERSION
+        self.version == WORKFLOW_CONTINUATION_VERSION
+    }
+}
+
+impl WorkflowJournalRecord {
+    pub fn is_supported(&self) -> bool {
+        self.version == WORKFLOW_JOURNAL_VERSION
+    }
+
+    pub fn ensure_supported(&self) -> Result<(), UnsupportedWorkflowVmVersion> {
+        ensure_vm_version(
+            WorkflowVmRecordKind::Journal,
+            WORKFLOW_JOURNAL_VERSION,
+            self.version,
+        )
     }
 }
 
@@ -380,6 +521,7 @@ mod tests {
     fn source_map_keeps_graph_cursor_identity() {
         let mut module = WorkflowModule::new(vec![WorkflowInstruction::Return]);
         module.source_map.push(WorkflowSourceMapEntry {
+            version: WORKFLOW_SOURCE_MAP_VERSION,
             instruction_start: 0,
             instruction_end: 1,
             node_id: "publish".into(),
@@ -414,6 +556,97 @@ mod tests {
         assert_eq!(
             effect.idempotency_key(),
             "workflow-effect:00000000-0000-0000-0000-000000000000:7:2"
+        );
+    }
+
+    #[test]
+    fn vm_records_have_pinned_json_shapes() {
+        let module = WorkflowModule {
+            version: WORKFLOW_VM_VERSION,
+            instructions: vec![WorkflowInstruction::Return],
+            source_map: vec![WorkflowSourceMapEntry::new(0, 1, "done".into())],
+        };
+        let continuation = WorkflowContinuation {
+            id: Uuid::nil(),
+            workflow_run_id: Uuid::nil(),
+            module_version: WORKFLOW_VM_VERSION,
+            ..WorkflowContinuation::start(Uuid::nil(), WORKFLOW_VM_VERSION)
+        };
+        let effect = WorkflowEffect {
+            version: WORKFLOW_EFFECT_PROTOCOL_VERSION,
+            id: Uuid::nil(),
+            workflow_run_id: Uuid::nil(),
+            continuation_id: Uuid::nil(),
+            sequence: 0,
+            attempt: 0,
+            request: WorkflowEffectRequest::Timer { due_at: 1 },
+            status: WorkflowEffectStatus::Requested,
+            result: None,
+            message: None,
+            created_at: 0,
+            updated_at: 0,
+            finished_at: None,
+        };
+        let journal = WorkflowJournalRecord {
+            version: WORKFLOW_JOURNAL_VERSION,
+            id: Uuid::nil(),
+            workflow_run_id: Uuid::nil(),
+            sequence: 0,
+            continuation_id: Some(Uuid::nil()),
+            effect_id: None,
+            entry: WorkflowJournalEntry::Entered {
+                continuation_id: Uuid::nil(),
+                instruction_pointer: 0,
+            },
+            created_at: 0,
+        };
+
+        assert_eq!(
+            serde_json::to_string(&module).unwrap(),
+            r#"{"version":1,"instructions":[{"op":"return"}],"source_map":[{"version":1,"instruction_start":0,"instruction_end":1,"node_id":"done"}]}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&continuation).unwrap(),
+            r#"{"version":1,"id":"00000000-0000-0000-0000-000000000000","workflow_run_id":"00000000-0000-0000-0000-000000000000","module_version":1,"instruction_pointer":0,"stack":[],"locals":{},"next_effect_sequence":0,"status":"runnable","revision":0}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&effect).unwrap(),
+            r#"{"version":1,"id":"00000000-0000-0000-0000-000000000000","workflow_run_id":"00000000-0000-0000-0000-000000000000","continuation_id":"00000000-0000-0000-0000-000000000000","sequence":0,"attempt":0,"request":{"type":"timer","due_at":1},"status":"requested","created_at":0,"updated_at":0}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&journal).unwrap(),
+            r#"{"version":1,"id":"00000000-0000-0000-0000-000000000000","workflow_run_id":"00000000-0000-0000-0000-000000000000","sequence":0,"continuation_id":"00000000-0000-0000-0000-000000000000","entry":{"type":"entered","continuation_id":"00000000-0000-0000-0000-000000000000","instruction_pointer":0},"created_at":0}"#
+        );
+    }
+
+    #[test]
+    fn incompatible_record_versions_are_explicit_errors() {
+        let module = WorkflowModule {
+            version: WORKFLOW_VM_VERSION + 1,
+            instructions: vec![],
+            source_map: vec![],
+        };
+        let source_map = WorkflowSourceMapEntry {
+            version: WORKFLOW_SOURCE_MAP_VERSION + 1,
+            instruction_start: 0,
+            instruction_end: 1,
+            node_id: "node".into(),
+            edge_label: None,
+            source_span: None,
+        };
+        assert_eq!(
+            module.ensure_supported().unwrap_err().record,
+            WorkflowVmRecordKind::Module
+        );
+        assert_eq!(
+            source_map.ensure_supported().unwrap_err().record,
+            WorkflowVmRecordKind::SourceMap
+        );
+        assert_eq!(
+            ensure_effect_protocol_version(WORKFLOW_EFFECT_PROTOCOL_VERSION + 1)
+                .unwrap_err()
+                .record,
+            WorkflowVmRecordKind::Effect
         );
     }
 }

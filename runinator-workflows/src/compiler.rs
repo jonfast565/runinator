@@ -104,6 +104,7 @@ pub fn compile_workflow_module(
             .into_iter()
             .map(
                 |(instruction_start, instruction_end, node_id)| WorkflowSourceMapEntry {
+                    version: runinator_models::workflow_vm::WORKFLOW_SOURCE_MAP_VERSION,
                     instruction_start,
                     instruction_end,
                     node_id,

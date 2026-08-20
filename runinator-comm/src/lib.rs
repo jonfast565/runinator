@@ -11,7 +11,10 @@ use runinator_models::{
     runs::{NewRunArtifact, NewRunChunk},
     value::Value,
     workflow_state::DebugMode,
-    workflow_vm::{WORKFLOW_EFFECT_PROTOCOL_VERSION, WorkflowEffectRequest, WorkflowEffectStatus},
+    workflow_vm::{
+        UnsupportedWorkflowVmVersion, WORKFLOW_EFFECT_PROTOCOL_VERSION, WorkflowEffectRequest,
+        WorkflowEffectStatus, ensure_effect_protocol_version,
+    },
     workflows::{WorkflowAction, WorkflowStatus},
 };
 use serde::{Deserialize, Serialize};
@@ -162,6 +165,10 @@ impl EffectCommand {
     pub fn is_supported(&self) -> bool {
         self.version == WORKFLOW_EFFECT_PROTOCOL_VERSION
     }
+
+    pub fn ensure_supported(&self) -> Result<(), UnsupportedWorkflowVmVersion> {
+        ensure_effect_protocol_version(self.version)
+    }
 }
 
 /// A worker or infrastructure host's terminal or streaming report for one VM effect.
@@ -182,6 +189,10 @@ pub struct EffectResult {
 impl EffectResult {
     pub fn is_supported(&self) -> bool {
         self.version == WORKFLOW_EFFECT_PROTOCOL_VERSION
+    }
+
+    pub fn ensure_supported(&self) -> Result<(), UnsupportedWorkflowVmVersion> {
+        ensure_effect_protocol_version(self.version)
     }
 }
 
@@ -270,6 +281,31 @@ mod effect_protocol_tests {
         );
         let command: EffectCommand = serde_json::from_str(&raw).unwrap();
         assert!(!command.is_supported());
+        assert_eq!(
+            command.ensure_supported().unwrap_err().actual,
+            WORKFLOW_EFFECT_PROTOCOL_VERSION + 1
+        );
+    }
+
+    #[test]
+    fn effect_command_has_a_pinned_json_shape() {
+        let command = EffectCommand {
+            version: WORKFLOW_EFFECT_PROTOCOL_VERSION,
+            command_id: Uuid::nil(),
+            effect_id: Uuid::nil(),
+            workflow_run_id: Uuid::nil(),
+            continuation_id: Uuid::nil(),
+            attempt: 0,
+            request: WorkflowEffectRequest::Timer { due_at: 1 },
+            target: ActionTarget::Any,
+            trace_id: Uuid::nil(),
+            trace_context: std::collections::HashMap::new(),
+            idempotency_key: "key".into(),
+        };
+        assert_eq!(
+            serde_json::to_string(&command).unwrap(),
+            r#"{"version":1,"command_id":"00000000-0000-0000-0000-000000000000","effect_id":"00000000-0000-0000-0000-000000000000","workflow_run_id":"00000000-0000-0000-0000-000000000000","continuation_id":"00000000-0000-0000-0000-000000000000","attempt":0,"request":{"type":"timer","due_at":1},"target":{"kind":"any"},"trace_id":"00000000-0000-0000-0000-000000000000","idempotency_key":"key"}"#
+        );
     }
 }
 

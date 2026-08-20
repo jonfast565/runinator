@@ -72,18 +72,11 @@ pub fn resume(
 
 /// Run a continuation until it reaches its next durable boundary.
 pub fn step(module: &WorkflowModule, mut continuation: WorkflowContinuation) -> WorkflowVmStep {
-    if !module.is_supported() {
-        return fail(
-            continuation,
-            format!("unsupported workflow module version {}", module.version),
-        );
+    if let Err(error) = module.ensure_supported() {
+        return fail(continuation, error.to_string());
     }
-    if !continuation.is_supported() {
-        let version = continuation.version;
-        return fail(
-            continuation,
-            format!("unsupported workflow continuation version {version}"),
-        );
+    if let Err(error) = continuation.ensure_supported() {
+        return fail(continuation, error.to_string());
     }
     if continuation.module_version != module.version {
         let continuation_version = continuation.module_version;
