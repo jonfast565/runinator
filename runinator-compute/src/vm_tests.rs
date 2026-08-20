@@ -553,6 +553,94 @@ fn a_closure_captures_its_lexical_environment_and_applies() {
 }
 
 #[test]
+fn higher_order_map_runs_a_closure_for_each_item() {
+    let module = InvocationModule::new(InvocationProgram::new(vec![
+        InvocationInstruction::Const {
+            value: Value::Array(vec![Value::from(1i64), Value::from(2i64)]),
+        },
+        InvocationInstruction::Closure {
+            params: vec!["x".to_string()],
+            body: InvocationProgram::new(vec![
+                InvocationInstruction::LoadLocal {
+                    name: "x".to_string(),
+                },
+                konst(2),
+                call("mul", 2),
+                InvocationInstruction::Return,
+            ]),
+        },
+        InvocationInstruction::HigherOrder {
+            name: "map".to_string(),
+            argc: 2,
+        },
+        InvocationInstruction::Return,
+    ]));
+    let context = Value::Null;
+    let catalog = catalog();
+    assert_eq!(
+        expect_value(start(&module, &VmEnv::pure(&context, &catalog))),
+        Value::Array(vec![Value::from(2i64), Value::from(4i64)])
+    );
+}
+
+#[test]
+fn higher_order_lambda_resumes_between_items() {
+    let module = InvocationModule::new(InvocationProgram::new(vec![
+        InvocationInstruction::Const {
+            value: Value::Array(vec![Value::from("a"), Value::from("b")]),
+        },
+        InvocationInstruction::Closure {
+            params: vec!["x".to_string()],
+            body: InvocationProgram::new(vec![
+                InvocationInstruction::LoadLocal {
+                    name: "x".to_string(),
+                },
+                provider_call("svc", "work", 1),
+                InvocationInstruction::Return,
+            ]),
+        },
+        InvocationInstruction::HigherOrder {
+            name: "map".to_string(),
+            argc: 2,
+        },
+        InvocationInstruction::Return,
+    ]));
+    let context = Value::Null;
+    let catalog = catalog();
+    let env = VmEnv::pure(&context, &catalog);
+    let InvocationStep::Yield {
+        effect: first,
+        continuation,
+    } = start(&module, &env)
+    else {
+        panic!("expected the first lambda call to yield");
+    };
+    assert_eq!(first.args, vec![Value::from("a")]);
+    let InvocationStep::Yield {
+        effect: second,
+        continuation,
+    } = resume(
+        &module,
+        *continuation,
+        InvocationEffectResult::ok(Value::from("A")),
+        &env,
+    )
+    else {
+        panic!("expected the second lambda call to yield");
+    };
+    assert_eq!(second.args, vec![Value::from("b")]);
+    assert_eq!(
+        expect_value(resume(
+            &module,
+            *continuation,
+            InvocationEffectResult::ok(Value::from("B")),
+            &env,
+        )),
+        Value::Array(vec![Value::from("A"), Value::from("B")])
+    );
+}
+
+#[test]
 fn applying_a_non_closure_is_an_error() {
     let step = run_entry(vec![
         konst(1),

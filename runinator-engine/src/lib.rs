@@ -1,7 +1,7 @@
 //! the durable orchestration engine shared by the web service and the standalone background worker.
 //!
 //! owns the persistence-orchestration layer ([`repository`]) and the background loops that drive the
-//! reducer, consume worker results, publish wakes/actions, and run maintenance backstops. the web
+//! graph runtime, consume worker results, publish wakes/actions, and run maintenance backstops. the web
 //! service embeds this in-process (behind a flag) and `runinator-background-worker` runs it as a
 //! separate, horizontally-scalable process; both call [`run_background_engine`].
 
@@ -9,7 +9,6 @@ pub mod artifact_storage;
 pub mod audit;
 pub mod errors;
 pub mod events;
-pub mod invocation_migration;
 pub mod notifications;
 pub mod repository;
 pub mod repository_runs;
@@ -23,9 +22,11 @@ mod loops;
 mod mutex_migration;
 mod result_consumer;
 
-// re-export the reducer under the `orchestration` path the repository layer references.
+// Re-export the graph-runtime surface for downstream compatibility.
 pub mod orchestration {
-    pub use runinator_reducer::{ReadyNodeDisposition, process_ready_node};
+    pub use runinator_runtime::{
+        DriveOutcome, ReadyNodeDisposition, WorkflowMachine, process_ready_node,
+    };
 }
 
 pub use engine::{EngineConfig, run_background_engine};

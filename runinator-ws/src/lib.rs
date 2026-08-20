@@ -20,7 +20,9 @@ mod metrics;
 mod openapi;
 mod provisioner_config;
 pub mod orchestration {
-    pub use runinator_reducer::{ReadyNodeDisposition, process_ready_node};
+    pub use runinator_runtime::{
+        DriveOutcome, ReadyNodeDisposition, WorkflowMachine, process_ready_node,
+    };
 }
 mod router;
 mod server;

@@ -1,7 +1,7 @@
 //! the composed persistence surface.
 //!
 //! the operations themselves live in [`crate::roles`], one trait per domain, plus
-//! [`crate::reducer_store::ReducerStore`] for the state machine's slice. this module only stitches
+//! [`crate::runtime_store::RuntimeStore`] for the state machine's slice. this module only stitches
 //! them together and keeps the historical `runinator_database::interfaces::*` import path working.
 
 use std::future::Future;
@@ -18,12 +18,12 @@ pub use crate::prelude::*;
 ///
 /// this stays the bound for callers that genuinely touch many domains — the engine and the web
 /// service both do. a caller that needs one slice should bound on that role instead, the way
-/// `runinator-reducer` bounds on `ReducerStore`.
+/// `runinator-runtime` bounds on `RuntimeStore`.
 ///
 /// because the roles are separate traits, calling methods from several of them means bringing each
 /// into scope; glob [`prelude`] when that list would be long and uninformative.
 pub trait DatabaseImpl:
-    ReducerStore
+    RuntimeStore
     + ArchiveStore
     + TaskRunStore
     + DefinitionStore

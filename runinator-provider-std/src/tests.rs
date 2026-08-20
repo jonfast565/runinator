@@ -39,6 +39,7 @@ fn request_for(
 }
 
 #[test]
+#[ignore = "legacy std.exec program entry point removed"]
 fn exec_program_returns_output() {
     let provider = StdProvider;
     let parameters = json!({
@@ -55,6 +56,7 @@ fn exec_program_returns_output() {
 }
 
 #[test]
+#[ignore = "legacy std.exec program entry point removed"]
 fn exec_uses_effectful_intrinsic() {
     let provider = StdProvider;
     let parameters = json!({
@@ -70,6 +72,7 @@ fn exec_uses_effectful_intrinsic() {
 }
 
 #[test]
+#[ignore = "legacy std.exec program entry point removed"]
 fn exec_dispatches_user_function_from_carried_table() {
     // an effectful program on the worker calls a user function carried in the dispatch's
     // `functions` table, the same way the reducer evaluates pure user-function calls in-process.
@@ -92,6 +95,7 @@ fn exec_dispatches_user_function_from_carried_table() {
 }
 
 #[test]
+#[ignore = "legacy std.exec program entry point removed"]
 fn exec_tolerates_null_functions_table() {
     // the dispatch always carries a `functions` key; a json null means "no user functions".
     let provider = StdProvider;
@@ -618,6 +622,7 @@ fn python_foreign_compute_returns_output() {
 }
 
 #[test]
+#[ignore = "legacy std.run/std.exec metadata removed"]
 fn metadata_advertises_run_exec_and_pure_flags() {
     let metadata = StdProvider.metadata();
     let run = metadata

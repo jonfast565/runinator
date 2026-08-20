@@ -2,7 +2,7 @@
 //!
 //! most of these boot a real `SqliteDb` and drive the engine through it, because what they cover is
 //! the seam between an http handler, the reducer, and persistence — the part no single crate owns.
-//! prefer `runinator-reducer`’s fake-backed suite for anything that is purely a node-handler
+//! prefer `runinator-runtime`’s fake-backed suite for anything that is purely a node-handler
 //! decision; reach for this layer when the database or the broker is part of the assertion.
 //!
 //! shared fixtures live here so each submodule picks them up through its `use super` glob.

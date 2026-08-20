@@ -7,7 +7,7 @@ members = [
     "runinator-auth",
     "runinator-pack",
     "runinator-lsp",
-    "runinator-reducer",
+    "runinator-runtime",
     "runinator-engine",
     "runinator-store",
     "runinator-database",

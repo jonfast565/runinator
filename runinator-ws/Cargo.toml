@@ -30,7 +30,7 @@ runinator-ws-identity = { path = "../runinator-ws-identity" }
 runinator-ws-authoring = { path = "../runinator-ws-authoring" }
 runinator-ws-runtime = { path = "../runinator-ws-runtime" }
 runinator-engine = { path = "../runinator-engine" }
-runinator-reducer = { path = "../runinator-reducer" }
+runinator-runtime = { path = "../runinator-runtime" }
 runinator-database = { path = "../runinator-database", default-features = false }
 runinator-db-cli = { path = "../runinator-db-cli", default-features = false }
 runinator-models = { path = "../runinator-models" }

@@ -24,7 +24,7 @@ impl DbSimulationEnv {
     /// load config from the settings store and, when `replay_run` is set, that run's recorded node
     /// outputs. Async because both come from the database; the trait methods are then pure reads.
     pub async fn load<T: DatabaseImpl>(db: &T, replay_run: Option<Uuid>) -> Self {
-        let config = runinator_reducer::config::config_tree(db).await;
+        let config = runinator_runtime::config::config_tree(db).await;
         let mut recorded = HashMap::new();
         if let Some(run_id) = replay_run
             && let Ok(node_runs) = db.fetch_workflow_node_runs(run_id).await

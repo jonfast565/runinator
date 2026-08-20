@@ -110,7 +110,7 @@ the shipped behavior.
 ### 7.1 Loop result accumulation — shipped 2026-08-13
 - **Shipped:** loop frames snapshot resolved items and accumulate one body result per lap;
   `LoopOutput.results` exposes the ordered array and a bound `node r <- for …` collects it.
-- **Owning crates:** `runinator-models`, `runinator-reducer`, `runinator-workflows`, `runinator-rexrap-codegen`.
+- **Owning crates:** `runinator-models`, `runinator-runtime`, `runinator-workflows`, `runinator-rexrap-codegen`.
 - **Problem:** a `for` loop cannot collect per-iteration results. `MapOutput` carries
   `outputs: Vec<Value>` (`runinator-models/src/workflow_outputs.rs`); `LoopOutput` carries only
   `last`. A bound loop (`node r <- for …`) does not collect either — `control_value_expr`
@@ -202,7 +202,7 @@ the shipped behavior.
 ### 7.7 Unify the two iteration bounds — shipped 2026-08-13
 - **Shipped:** `WorkflowNode::iteration_limit` is the shared runtime contract over the two legacy
   wire locations; both reducer paths use it, and generic reentry visits are now cursor-scoped.
-- **Owning crates:** `runinator-reducer`, `runinator-models`.
+- **Owning crates:** `runinator-runtime`, `runinator-models`.
 - **Problem:** `max_iterations` (loop-only, cursor-scoped) and `reentry.max_visits`
   (`runinator-models/src/workflows/nodes.rs`; generic, counted **run-wide** and including
   failed/canceled runs, exits via `on_exhausted`) are unrelated mechanisms for the same concern.
@@ -228,8 +228,8 @@ the shipped behavior.
   test (`prev_has_no_fields_after_control_flow`) that *asserts* this gap.
 - **Fixed 2026-08-13:** There is no `map` snippet in the completion `CONSTRUCTS` list, though `for`/`while`/`if`/`match`/
   `toggle`/`split`/`parallel`/`try` all have one.
-- **Fixed 2026-08-13:** `TryHandler` reads its body output through `latest_succeeded_output_excluding`
-  (`runinator-reducer/src/orchestration/control_flow.rs`), a run-wide reverse scan with the same
+- **Fixed 2026-08-13:** `TryOp` reads its body output through `latest_succeeded_output_excluding`
+  (`runinator-runtime/src/orchestration/control_flow.rs`), a run-wide reverse scan with the same
   fan-out defect the loop path was fixed for: a `try` region inside a `parallel` can pick up a
   sibling branch's output. Left alone in the loop pass to avoid altering `try` semantics
   unannounced; the loop path now uses a cursor-scoped lookup and `try` is the last caller.
@@ -301,7 +301,7 @@ Kept as a record of what the roadmap no longer covers. Item IDs stay stable, so 
 - **Shipped:** a `parallel` inside a loop body now runs correctly on every lap. This took three
   fixes, each independently necessary — reverting any one of them fails
   `a_parallel_inside_a_loop_body_keeps_the_loop_position`
-  (`runinator-reducer/src/orchestration/control_flow_tests.rs`) with a different symptom.
+  (`runinator-runtime/src/orchestration/control_flow_tests.rs`) with a different symptom.
   1. **Branch cursors inherit their parent's frames.** `RunCursor::forked_from` replaces
      `RunCursor::forked` on the fan-out path, and `WorkflowRunState::fork_cursor` now takes the
      parent cursor id. The fan-out happens *inside* whatever loop or try region the parent stood in,
@@ -363,7 +363,7 @@ Kept as a record of what the roadmap no longer covers. Item IDs stay stable, so 
 - **Where the cutoff is decided:** `runinator-engine/src/repository/node_runs.rs`, from the existing `REPLICA_STALE_SECONDS` (30s = three missed heartbeats at the worker's 10s interval), now `pub` in `repository/replicas.rs`. Liveness is a platform policy — a worker knows its own deadline but not how long *another* replica may go quiet — so deriving it server-side keeps one definition shared with replica listing and action routing, and keeps it off the claim's wire payload. **The HTTP contract is unchanged**; `WorkflowNodeRunExecutorClaimRequest` did not grow a field.
 - **Was:** `EXECUTOR_LEASE_GRACE_SECONDS = 60` (`runinator-worker/src/worker.rs:37`) made `timeout_seconds + 60s` the *only* path back to a crashed worker's node run. With long job timeouts a pod crash stranded that node for the full timeout window. The deadline arm is retained as the backstop for a holder that is still live but has lost the action.
 - **Tests:** `executor_lease_frees_when_the_holder_stops_heartbeating` (`sqlite_tests.rs`) covers all three: lease holds while the holder heartbeats even past a long deadline, frees once the heartbeat lapses, and frees on graceful offline with a fresh heartbeat. The existing mutual-exclusion test was kept on the deadline arm alone.
-- **Residual:** the `NOT EXISTS` correlates `replicas` from an `UPDATE` on `workflow_node_runs`. That is valid on all three dialects (the mysql target-table restriction applies to selecting *from* the updated table, not to correlating against it), but it is exercised only by the sqlite suite — the mysql/postgres tests are `#[ignore]`d without a live server. `runinator-reducer/src/orchestration/action.rs:21` still keeps its own private copy of `REPLICA_STALE_SECONDS`; the two agree at 30s but are not yet one constant.
+- **Residual:** the `NOT EXISTS` correlates `replicas` from an `UPDATE` on `workflow_node_runs`. That is valid on all three dialects (the mysql target-table restriction applies to selecting *from* the updated table, not to correlating against it), but it is exercised only by the sqlite suite — the mysql/postgres tests are `#[ignore]`d without a live server. `runinator-runtime/src/orchestration/action.rs:21` still keeps its own private copy of `REPLICA_STALE_SECONDS`; the two agree at 30s but are not yet one constant.
 
 ### 6.4 Declarative idempotency on action nodes — shipped 2026-08-04
 - **Shipped:** `.idempotent(key: <expr>)` on an action node (REXRAP modifier → `WorkflowAction.idempotency_key`, so it versions with the workflow). The reducer resolves the expression per dispatch against the same run context the action's arguments see, qualifies it as `workflow:<workflow_id>:<key>`, and stamps it on a new optional `ActionCommand.idempotency_key`. The worker reserves that key before invoking the provider, via new `claim`/`complete`/`release` operations over the previously manual `idempotency_keys` table (now carrying `owner_node_run_id` / `claimed_at` / `completed_at`, under the reserved `action` scope). The claim is a single upsert, so of two concurrent claimants exactly one acquires.

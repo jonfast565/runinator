@@ -103,7 +103,7 @@ Remove `compute`, `std.run`, and `std.exec` as concepts. REXRAP uses `do` blocks
   - `workflow_invocation_calls`: invocation, sequence number, target/action, arguments, policy, attempt/status, result/error, deadline, and packaged binding.
   - Add optional `invocation_call_id` attribution to node-run chunks and artifacts.
 
-- Add the necessary invocation operations to `ReducerStore`; keep database SQL implementations generic across SQLite, Postgres, and MySQL.
+- Add the necessary invocation operations to `RuntimeStore`; keep database SQL implementations generic across SQLite, Postgres, and MySQL.
 
 - Suspend atomically: persist the continuation, create the invocation-call record, and enqueue its action outbox row in one store operation. A transaction failure must leave none of the three visible.
 
@@ -113,7 +113,7 @@ Remove `compute`, `std.run`, and `std.exec` as concepts. REXRAP uses `do` blocks
 
   - Call attempts use their own timeout, retry, idempotency, executor claim, chunks, and artifacts.
   - A successful result settles the call and enqueues a drive for the original cursor.
-  - The invocation handler pushes the result into the saved resume slot and continues stepping.
+  - The invocation operation pushes the result into the saved resume slot and continues stepping.
   - Exhausted failure or timeout fails the invocation node and follows its existing workflow transition.
   - Cancellation cancels the pending call and marks the invocation and root node run canceled.
   - Duplicate or late results are ignored using call ID plus attempt, matching current node-action behavior.

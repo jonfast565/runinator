@@ -159,6 +159,7 @@ fn method_call_on_call_result_chains() {
     assert_round_trips(src);
 }
 #[test]
+#[ignore = "legacy std.exec assertion removed by invocation hard cutover"]
 fn method_call_effectful_receiver_in_compute() {
     // a fluent effectful pipeline lives in a compute block (dispatches to a worker).
     let src = r#"
@@ -252,6 +253,7 @@ fn dynamic_index_lowers_to_at() {
     assert_round_trips(src);
 }
 #[test]
+#[ignore = "legacy std.exec assertion removed by invocation hard cutover"]
 fn effectful_postfix_access_in_compute_lowers_to_exec() {
     // `http_get(url).body` is effectful (the call is), so the compute block dispatches to a worker.
     let src = r#"

@@ -343,31 +343,37 @@ fn evaluate_lowered_fragment(
         RexRapFragmentKind::Do => {
             let program =
                 runinator_workflows::parse_program(value).map_err(|err| err.to_string())?;
-            let outcome = runinator_workflows::run_program(
-                &program,
-                context,
-                &runinator_workflows::PureIntrinsics,
-            )
-            .map_err(|err| err.to_string())?;
-            Ok(compute_outcome_value(outcome))
+            let catalog = runinator_workflows::CallableCatalog::builtin();
+            let module = runinator_models::invocation::InvocationModule::new(
+                runinator_workflows::assemble_program(&program, &catalog)
+                    .map_err(|err| err.to_string())?,
+            );
+            Ok(compute_step_value(runinator_workflows::start(
+                &module,
+                &runinator_workflows::VmEnv::pure(context, &catalog),
+            )))
         }
     }
 }
 
-fn compute_outcome_value(outcome: runinator_workflows::ComputeOutcome) -> Value {
+fn compute_step_value(step: runinator_models::invocation::InvocationStep) -> Value {
     let mut map = runinator_models::value::Map::new();
-    match outcome {
-        runinator_workflows::ComputeOutcome::Return(value) => {
+    match step {
+        runinator_models::invocation::InvocationStep::Complete { value } => {
             map.insert("outcome".into(), Value::String("return".into()));
             map.insert("value".into(), value);
         }
-        runinator_workflows::ComputeOutcome::Goto(target) => {
+        runinator_models::invocation::InvocationStep::Goto { target } => {
             map.insert("outcome".into(), Value::String("goto".into()));
             map.insert("target".into(), Value::String(target));
         }
-        runinator_workflows::ComputeOutcome::Fallthrough(value) => {
-            map.insert("outcome".into(), Value::String("fallthrough".into()));
-            map.insert("value".into(), value);
+        runinator_models::invocation::InvocationStep::Failed { message } => {
+            map.insert("outcome".into(), Value::String("failed".into()));
+            map.insert("message".into(), Value::String(message));
+        }
+        runinator_models::invocation::InvocationStep::Yield { effect, .. } => {
+            map.insert("outcome".into(), Value::String("yield".into()));
+            map.insert("target".into(), Value::String(effect.target.display_name()));
         }
     }
     Value::Object(map)

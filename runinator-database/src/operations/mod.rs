@@ -1077,8 +1077,8 @@ where
 // `DatabaseImpl` is foreign (it lives in the sqlx-free `runinator-store`), so the orphan rule
 // forbids implementing it on a bare `B`. `SqlStore<B>` is local and forwards `SqlBackend`, which
 // keeps every body below generic over the driver exactly as before.
-// the subset the workflow state machine calls. split out so `runinator-reducer` can bound on
-// `ReducerStore` instead of the whole store; the bodies are unchanged and still generic over the
+// the subset the workflow state machine calls. split out so `runinator-runtime` can bound on
+// `RuntimeStore` instead of the whole store; the bodies are unchanged and still generic over the
 // driver. the where clause below is repeated verbatim from the `DatabaseImpl` impl: both need the
 // same sqlx encode/decode bounds, and spelling them out beats hiding them in a macro.
 
@@ -1096,9 +1096,9 @@ mod invocations;
 mod notifications;
 mod orgs;
 mod rbac;
-mod reducer;
 mod replicas;
 mod runs;
+mod runtime;
 mod schedules;
 mod settings;
 mod task_runs;

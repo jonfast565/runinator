@@ -38,15 +38,15 @@ pub use run_state::{
     race_winner_since,
 };
 pub use runinator_compute::{
-    ComputeOutcome, EFFECTFUL_INTRINSIC_NAMES, FunctionTable, HIGHER_ORDER_NAMES, IntrinsicLibrary,
-    PureIntrinsics, RuntimeFunction, STD_MODULES, STD_NAMESPACE, WorkflowTypeDiagnostic,
-    WorkflowValidationError, apply_input_defaults, call_pure, effectful_signatures,
-    evaluate_condition, evaluate_condition_with, evaluate_expression, evaluate_workflow_condition,
-    intrinsic_arity, intrinsic_catalog, intrinsic_module, intrinsic_result_type,
-    intrinsic_signature, is_higher_order, is_known_intrinsic, next_transition, parse_program,
-    qualified_intrinsic_name, resolve_std_path, resolve_value_refs, resolve_value_refs_pure,
-    resolve_value_refs_with_functions, run_program, run_program_with, validate_condition_value,
-    validate_expression,
+    CallableCatalog, EFFECTFUL_INTRINSIC_NAMES, FunctionTable, HIGHER_ORDER_NAMES,
+    IntrinsicLibrary, PureIntrinsics, RuntimeFunction, STD_MODULES, STD_NAMESPACE, VmEnv,
+    WorkflowTypeDiagnostic, WorkflowValidationError, apply_input_defaults, assemble_program,
+    call_pure, effectful_signatures, evaluate_condition, evaluate_condition_with,
+    evaluate_expression, evaluate_workflow_condition, intrinsic_arity, intrinsic_catalog,
+    intrinsic_module, intrinsic_result_type, intrinsic_signature, is_higher_order,
+    is_known_intrinsic, next_transition, parse_program, qualified_intrinsic_name, resolve_std_path,
+    resolve_value_refs, resolve_value_refs_pure, resolve_value_refs_with_functions, start,
+    validate_condition_value, validate_expression,
 };
 pub use runinator_models::workflow_ast::{
     ComputeProgram, ComputeStmt, WorkflowExpression, WorkflowPathSegment, WorkflowRefSource,

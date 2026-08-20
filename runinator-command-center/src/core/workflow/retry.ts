@@ -1,6 +1,6 @@
 //! the node retry policy, as the editor needs to show it.
 //!
-//! the delay schedule mirrors `retry_backoff_delay` in `runinator-reducer`'s `transitions.rs`:
+//! the delay schedule mirrors `retry_backoff_delay` in `runinator-runtime`'s `transitions.rs`:
 //! `clamp(base * 2^(attempt - 1), base, max)`, where `attempt` is the number of the attempt that
 //! just failed — so a node with `max_attempts: N` waits out N-1 delays computed from attempts
 //! 1..N-1. Exponential backoff with a cap is hard to hold in your head, which is the whole reason

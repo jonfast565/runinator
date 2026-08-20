@@ -48,6 +48,18 @@ pub struct RunCursor {
     #[serde(default = "Uuid::now_v7")]
     pub id: Uuid,
     node_id: String,
+    /// Stable identity for the current visit to `node_id`.
+    ///
+    /// Old persisted cursors omit it; the runtime assigns one before executing the node. Keeping
+    /// the identity on the durable cursor makes a repeated drive name the same logical step.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visit_id: Option<Uuid>,
+    /// The node-run record owned by the current visit, once one has been created.
+    ///
+    /// This is an optional compatibility bridge: historical cursors locate their run from the
+    /// node-run history, while newly driven cursors can address it without an ambiguous scan.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_run_id: Option<Uuid>,
     /// the loops this cursor is currently inside, outermost first.
     ///
     /// a keyed stack rather than one slot: an outer loop's frame has to survive its body's inner
@@ -108,6 +120,8 @@ impl RunCursor {
         Self {
             id: Uuid::now_v7(),
             node_id: node_id.into(),
+            visit_id: None,
+            node_run_id: None,
             loops: Vec::new(),
             try_frame: None,
             forked_by: None,
@@ -270,8 +284,20 @@ impl RunCursor {
         if node_id != self.node_id {
             self.handled.clear();
             self.suspended_seconds = 0;
+            self.visit_id = None;
+            self.node_run_id = None;
         }
         self.node_id = node_id;
+    }
+
+    /// Ensure the cursor has a stable identity for its current graph-node visit.
+    pub fn ensure_visit(&mut self) -> Uuid {
+        *self.visit_id.get_or_insert_with(Uuid::now_v7)
+    }
+
+    /// Associate the current visit with its observable node-run record.
+    pub fn attach_node_run(&mut self, node_run_id: Uuid) {
+        self.node_run_id = Some(node_run_id);
     }
 
     /// this loop's frame, if this cursor is inside it.

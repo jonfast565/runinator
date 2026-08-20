@@ -243,6 +243,13 @@ impl<'a> Assembler<'a> {
                 for arg in args {
                     self.expression(arg)?;
                 }
+                if crate::compute::is_higher_order(name) {
+                    self.emit(InvocationInstruction::HigherOrder {
+                        name: name.clone(),
+                        argc: args.len(),
+                    });
+                    return Ok(());
+                }
                 self.emit(InvocationInstruction::Call {
                     target: self.target_for(name),
                     argc: args.len(),
@@ -482,7 +489,3 @@ fn compare_intrinsic(op: CompareOp) -> &'static str {
         CompareOp::EndsWith => "ends_with",
     }
 }
-
-#[cfg(test)]
-#[path = "assemble_tests.rs"]
-mod tests;

@@ -3,13 +3,9 @@ use runinator_models::providers::{ActionMetadata, ParameterMetadata, ResultMetad
 use runinator_models::types::RuninatorType;
 use runinator_models::value::{Map, Value};
 
-use crate::conditions::evaluate_condition_node;
 use crate::errors::WorkflowValidationError;
-use crate::expressions::{evaluate_expression_with, parse_expression};
-use crate::functions::{EvalEnv, FunctionTable};
-use crate::keys::{
-    REF_LOCAL, STMT_ELSE, STMT_GOTO, STMT_IF, STMT_LET, STMT_RETURN, STMT_THEN, STMT_VALUE,
-};
+use crate::expressions::parse_expression;
+use crate::keys::{STMT_ELSE, STMT_GOTO, STMT_IF, STMT_LET, STMT_RETURN, STMT_THEN, STMT_VALUE};
 use runinator_models::workflow_ast::{ComputeProgram, ComputeStmt, ConditionNode};
 
 /// a namespaced, typed library of functions callable from a compute program. the reducer installs
@@ -21,17 +17,6 @@ pub trait IntrinsicLibrary {
     fn knows(&self, name: &str) -> bool;
     /// whether `name` is pure (reducer-evaluable).
     fn is_pure(&self, name: &str) -> bool;
-}
-
-/// the result of running a compute program.
-#[derive(Debug, Clone, PartialEq)]
-pub enum ComputeOutcome {
-    /// an explicit `return <value>`.
-    Return(Value),
-    /// an explicit `goto <target>` (pure programs only).
-    Goto(String),
-    /// the program ended without returning or jumping.
-    Fallthrough(Value),
 }
 
 /// parse a lowered compute program (a JSON array of statements).
@@ -88,90 +73,6 @@ fn parse_statement(value: &Value) -> Result<ComputeStmt, WorkflowValidationError
     }
     // anything else is a bare expression statement (e.g. a side-effecting call).
     Ok(ComputeStmt::Expr(parse_expression(value)?))
-}
-
-/// run a compute program against `context` using `lib` to resolve calls. `let` bindings layer
-/// locals into the `let` slot of a working copy of the context; `return`/`goto` short-circuit.
-pub fn run_program(
-    program: &ComputeProgram,
-    context: &Value,
-    lib: &dyn IntrinsicLibrary,
-) -> Result<ComputeOutcome, WorkflowValidationError> {
-    run_program_with(program, context, lib, None)
-}
-
-/// like `run_program`, but also resolving calls to the workflow's user-defined functions through
-/// `functions`. the reducer/worker pass the definition's function table here.
-pub fn run_program_with(
-    program: &ComputeProgram,
-    context: &Value,
-    lib: &dyn IntrinsicLibrary,
-    functions: Option<&FunctionTable>,
-) -> Result<ComputeOutcome, WorkflowValidationError> {
-    let mut working = context.clone();
-    ensure_local_slot(&mut working);
-    let env = EvalEnv::new(Some(lib), functions);
-    match run_block(&program.0, &mut working, env)? {
-        Some(outcome) => Ok(outcome),
-        None => Ok(ComputeOutcome::Fallthrough(Value::Null)),
-    }
-}
-
-/// run a sequence of compute statements against `context` at the given `env`. `let` bindings layer
-/// into the `let` slot; `return`/`goto` short-circuit with `Some(outcome)`, fallthrough yields
-/// `None`. user-function bodies reuse this so a block body evaluates exactly like a compute block.
-pub(crate) fn run_block(
-    statements: &[ComputeStmt],
-    context: &mut Value,
-    env: EvalEnv,
-) -> Result<Option<ComputeOutcome>, WorkflowValidationError> {
-    for statement in statements {
-        match statement {
-            ComputeStmt::Let { name, value } => {
-                let evaluated = evaluate_expression_with(value, context, env)?;
-                set_local(context, name, evaluated);
-            }
-            ComputeStmt::Return(expr) => {
-                let value = evaluate_expression_with(expr, context, env)?;
-                return Ok(Some(ComputeOutcome::Return(value)));
-            }
-            ComputeStmt::Goto(target) => {
-                return Ok(Some(ComputeOutcome::Goto(target.clone())));
-            }
-            ComputeStmt::Expr(expr) => {
-                evaluate_expression_with(expr, context, env)?;
-            }
-            ComputeStmt::If {
-                condition,
-                then_branch,
-                else_branch,
-            } => {
-                let branch = if evaluate_condition_node(condition, context, env)? {
-                    &then_branch.0
-                } else {
-                    &else_branch.0
-                };
-                if let Some(outcome) = run_block(branch, context, env)? {
-                    return Ok(Some(outcome));
-                }
-            }
-        }
-    }
-    Ok(None)
-}
-
-fn ensure_local_slot(context: &mut Value) {
-    if let Some(object) = context.as_object_mut()
-        && !object.get(REF_LOCAL).is_some_and(Value::is_object)
-    {
-        object.insert(REF_LOCAL.into(), Value::Object(Map::new()));
-    }
-}
-
-fn set_local(context: &mut Value, name: &str, value: Value) {
-    if let Some(locals) = context.get_mut(REF_LOCAL).and_then(Value::as_object_mut) {
-        locals.insert(name.to_string(), value);
-    }
 }
 
 /// the pure standard-library intrinsics, shared by the reducer, sema, and the `std` provider so

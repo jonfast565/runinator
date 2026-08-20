@@ -8,21 +8,24 @@
 //!
 //! - [`roles`] carries one trait per persistence domain (runs, schedules, auth, orgs, …).
 //!   [`DatabaseImpl`] composes all of them and stays the bound for callers that touch many domains.
-//! - [`ReducerStore`] is a *use-case* trait, cut to exactly what the workflow state machine calls.
+//! - [`RuntimeStore`] is a *use-case* trait, cut to exactly what the workflow state machine calls.
 //!   it deliberately spans several domains; keeping it small is what makes an in-memory fake
-//!   practical, and it is why `runinator-reducer` needs no database driver.
+//!   practical, and it is why `runinator-runtime` needs no database driver.
 //!
 //! `runinator-database` provides the concrete sqlite/postgres/mysql implementation and re-exports
 //! these modules at their historical paths.
 
 pub mod archive;
 pub mod interfaces;
-pub mod reducer_store;
 pub mod roles;
+pub mod runtime_store;
 pub mod workflow_mutex;
 
 pub use interfaces::DatabaseImpl;
-pub use reducer_store::ReducerStore;
+pub use runtime_store::RuntimeStore;
+/// Compatibility name for callers migrating to [`RuntimeStore`].
+#[deprecated(note = "renamed to RuntimeStore; use that name for the graph runtime")]
+pub use runtime_store::RuntimeStore as ReducerStore;
 
 /// every store trait in one import.
 ///
@@ -30,11 +33,13 @@ pub use reducer_store::ReducerStore;
 /// bring each trait into scope. glob this when that list would be long and uninformative; name the
 /// individual traits when a module genuinely only touches one or two.
 pub mod prelude {
+    #[allow(deprecated)]
+    pub use crate::ReducerStore;
     pub use crate::interfaces::DatabaseImpl;
-    pub use crate::reducer_store::ReducerStore;
     pub use crate::roles::{
         ArchiveStore, AuthStore, AutomationStore, ConsoleStore, DefinitionStore, DispatchStore,
         FunctionStore, InvocationStore, NotificationStore, OrgStore, QueueSnapshot, RbacStore,
         ReplicaStore, RunStore, ScheduleStore, SettingStore, TaskRunStore,
     };
+    pub use crate::runtime_store::RuntimeStore;
 }

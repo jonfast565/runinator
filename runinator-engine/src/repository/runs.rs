@@ -75,20 +75,22 @@ pub async fn complete_ready_node<T: DatabaseImpl>(
     next_ready: Option<(Uuid, String, chrono::DateTime<Utc>)>,
 ) -> Result<TaskResponse, SendableError> {
     let Some(ready_node) = db.fetch_ready_node(ready_node_id).await? else {
-        return Err(runinator_reducer::errors::READY_NODE_NOT_FOUND.error(ready_node_id));
+        return Err(runinator_runtime::errors::READY_NODE_NOT_FOUND.error(ready_node_id));
     };
     if ready_node.claimed_by.as_deref() != Some(scheduler_id.as_str()) {
-        return Err(runinator_reducer::errors::READY_NODE_NOT_CLAIMED.error(ready_node_id));
+        return Err(runinator_runtime::errors::READY_NODE_NOT_CLAIMED.error(ready_node_id));
     }
-    let disposition = crate::orchestration::process_ready_node(db, &ready_node).await?;
-    if disposition == crate::orchestration::ReadyNodeDisposition::KeepClaim {
+    let outcome = runinator_runtime::WorkflowMachine::new(db)
+        .drive_ready(&ready_node)
+        .await?;
+    if outcome == runinator_runtime::DriveOutcome::KeepClaim {
         return Ok(TaskResponse {
             success: true,
             message: "Ready node remains claimed until it is due".into(),
         });
     }
     if !db.complete_ready_node(ready_node_id, scheduler_id).await? {
-        return Err(runinator_reducer::errors::READY_NODE_NOT_CLAIMED.error(ready_node_id));
+        return Err(runinator_runtime::errors::READY_NODE_NOT_CLAIMED.error(ready_node_id));
     }
     if let Some((workflow_run_id, node_id, ready_at)) = next_ready {
         support::enqueue_node_ready(
@@ -109,7 +111,7 @@ pub async fn complete_ready_node<T: DatabaseImpl>(
 }
 
 /// drive a single ready node by id over the broker ingress path. the web service claims the row
-/// itself (the waker has no database), runs the reducer, then completes or releases it. returns the
+/// itself (the waker has no database), drives the graph runtime, then completes or releases it. returns the
 /// workflow run id on success so the caller can emit a ui event. a `None` means the row was already
 /// completed or claimed elsewhere and there was nothing to do.
 pub async fn drive_ready_node<T: DatabaseImpl>(
@@ -126,17 +128,20 @@ pub async fn drive_ready_node<T: DatabaseImpl>(
         return Ok(None);
     };
     let workflow_run_id = ready_node.workflow_run_id;
-    let disposition = match crate::orchestration::process_ready_node(db, &ready_node).await {
-        Ok(disposition) => disposition,
+    let outcome = match runinator_runtime::WorkflowMachine::new(db)
+        .drive_ready(&ready_node)
+        .await
+    {
+        Ok(outcome) => outcome,
         Err(err) => {
-            // a reducer hard-error would otherwise leave the row claimed and get re-driven every
+            // a runtime hard-error would otherwise leave the row claimed and get re-driven every
             // lease period (a poison pill). fail the run and settle the row so it stops looping.
             fail_driven_ready_node(db, &ready_node, driver_id, err.as_ref()).await?;
             let _ = super::console::settle_cell_for_run(db, workflow_run_id).await;
             return Ok(Some(workflow_run_id));
         }
     };
-    if disposition == crate::orchestration::ReadyNodeDisposition::KeepClaim {
+    if outcome == runinator_runtime::DriveOutcome::KeepClaim {
         // not yet settled; return it to the queue so a later wake re-drives it.
         db.release_ready_node(ready_node_id, driver_id).await?;
         return Ok(Some(workflow_run_id));
@@ -146,7 +151,7 @@ pub async fn drive_ready_node<T: DatabaseImpl>(
     Ok(Some(workflow_run_id))
 }
 
-/// release every mutex owned by a run settled outside the reducer and wake each fifo successor.
+/// release every mutex owned by a run settled outside the graph runtime and wake each fifo successor.
 pub async fn release_run_mutexes<T: DatabaseImpl>(
     db: &T,
     workflow_run_id: Uuid,

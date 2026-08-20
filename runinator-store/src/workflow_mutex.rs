@@ -1,4 +1,4 @@
-//! normalized workflow mutex persistence values exchanged with the reducer.
+//! normalized workflow mutex persistence values exchanged with the runtime.
 
 use uuid::Uuid;
 

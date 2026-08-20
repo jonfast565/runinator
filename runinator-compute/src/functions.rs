@@ -11,20 +11,18 @@ use std::collections::HashMap;
 
 use runinator_models::providers::{ActionMetadata, ParameterMetadata, ResultMetadata};
 use runinator_models::types::RuninatorType;
-use runinator_models::value::{Map, Value};
+use runinator_models::value::Value;
 
-use crate::compute::{
-    ComputeOutcome, IntrinsicLibrary, PureIntrinsics, effectful_signatures, parse_program,
-    run_block,
-};
+use crate::assemble::assemble_module;
+use crate::catalog::CallableCatalog;
+use crate::compute::{IntrinsicLibrary, PureIntrinsics, effectful_signatures, parse_program};
 use crate::errors::WorkflowValidationError;
-use crate::expressions::{evaluate_expression_with, parse_expression};
-use crate::keys::REF_LOCAL;
+use crate::expressions::parse_expression;
+use crate::vm::{VmEnv, start};
+use runinator_models::invocation::{
+    CallableTarget, InvocationInstruction, InvocationModule, InvocationProgram, InvocationStep,
+};
 use runinator_models::workflow_ast::{ComputeProgram, WorkflowExpression};
-
-/// a hard ceiling on nested user-function calls, independent of any per-function limit. guards
-/// against runaway recursion that slipped past the front end's annotation checks.
-pub(crate) const MAX_CALL_DEPTH: u32 = 1024;
 
 /// every intrinsic's typed signature, generated from the rust metadata. the rexrap front end consumes
 /// this as its callable catalog (the "prelude"), so names/arity/types stay in lockstep with the
@@ -180,14 +178,11 @@ fn param_name(value: &Value) -> Result<String, WorkflowValidationError> {
         })
 }
 
-/// the environment threaded through expression evaluation: the (optional) intrinsic library, the
-/// (optional) user-function table, and the current user-call nesting depth. `Copy` so it passes
-/// cheaply through the recursive evaluator; `deeper()` bumps the depth for a user-function body.
+/// the environment threaded through expression evaluation.
 #[derive(Clone, Copy)]
 pub(crate) struct EvalEnv<'a> {
     pub(crate) lib: Option<&'a dyn IntrinsicLibrary>,
     functions: Option<&'a FunctionTable>,
-    depth: u32,
 }
 
 impl<'a> EvalEnv<'a> {
@@ -196,11 +191,7 @@ impl<'a> EvalEnv<'a> {
         lib: Option<&'a dyn IntrinsicLibrary>,
         functions: Option<&'a FunctionTable>,
     ) -> Self {
-        Self {
-            lib,
-            functions,
-            depth: 0,
-        }
+        Self { lib, functions }
     }
 
     /// an environment with a library but no user functions (declarative/preview paths).
@@ -208,7 +199,6 @@ impl<'a> EvalEnv<'a> {
         Self {
             lib,
             functions: None,
-            depth: 0,
         }
     }
 
@@ -216,52 +206,93 @@ impl<'a> EvalEnv<'a> {
     pub(crate) fn lookup(&self, name: &str) -> Option<&'a RuntimeFunction> {
         self.functions.and_then(|table| table.get(name))
     }
-
-    /// the same environment one user-call deeper.
-    fn deeper(self) -> Self {
-        Self {
-            depth: self.depth + 1,
-            ..self
-        }
-    }
 }
 
 /// invoke a user function: bind `values` to its parameters in a fresh hermetic scope (only the
 /// params are visible) and evaluate its body, enforcing the recursion limits.
 pub(crate) fn invoke_user_function(
     name: &str,
-    function: &RuntimeFunction,
+    _function: &RuntimeFunction,
     values: &[Value],
     env: EvalEnv,
 ) -> Result<Value, WorkflowValidationError> {
-    if env.depth >= MAX_CALL_DEPTH {
-        return Err(WorkflowValidationError::InvalidValueRef(format!(
-            "maximum call depth exceeded calling '{name}'"
-        )));
+    let table = env.functions.ok_or_else(|| {
+        WorkflowValidationError::InvalidValueRef(format!("unknown function '{name}'"))
+    })?;
+    let module = table.module_for_call(name, values)?;
+    let catalog = table.catalog();
+    match start(&module, &VmEnv::pure(&Value::Null, &catalog)) {
+        InvocationStep::Complete { value } => Ok(value),
+        InvocationStep::Goto { .. } => Err(WorkflowValidationError::InvalidValueRef(format!(
+            "goto is not allowed in function '{name}'"
+        ))),
+        InvocationStep::Yield { effect, .. } => {
+            Err(WorkflowValidationError::InvalidValueRef(format!(
+                "'{}' cannot be called in a declarative function",
+                effect.target.display_name()
+            )))
+        }
+        InvocationStep::Failed { message } => {
+            Err(WorkflowValidationError::InvalidValueRef(message))
+        }
     }
-    if let Some(max) = function.max_depth
-        && env.depth >= max
-    {
-        return Err(WorkflowValidationError::InvalidValueRef(format!(
-            "recursion limit ({max}) exceeded for '{name}'"
-        )));
+}
+
+impl FunctionTable {
+    fn catalog(&self) -> CallableCatalog {
+        let mut catalog = CallableCatalog::builtin();
+        for (name, function) in &self.functions {
+            catalog.add_local(
+                name.clone(),
+                function.params.len(),
+                runinator_models::invocation::EffectClass::Pure,
+            );
+        }
+        catalog
     }
-    let mut locals = Map::new();
-    for (param, value) in function.params.iter().zip(values.iter()) {
-        locals.insert(param.clone(), value.clone());
-    }
-    let mut scope = Value::Object(Map::from_iter([(REF_LOCAL.into(), Value::Object(locals))]));
-    match &function.body {
-        FunctionBody::Expr(expr) => evaluate_expression_with(expr, &scope, env.deeper()),
-        // a block body runs like a compute block in the hermetic scope; a final `return` yields the
-        // value, falling off the end yields null (a void function). `goto` is rejected at compile.
-        FunctionBody::Program(program) => match run_block(&program.0, &mut scope, env.deeper())? {
-            Some(ComputeOutcome::Return(value)) => Ok(value),
-            Some(ComputeOutcome::Goto(_)) => Err(WorkflowValidationError::InvalidValueRef(
-                format!("goto is not allowed in function '{name}'"),
-            )),
-            Some(ComputeOutcome::Fallthrough(value)) => Ok(value),
-            None => Ok(Value::Null),
-        },
+
+    fn module_for_call(
+        &self,
+        name: &str,
+        values: &[Value],
+    ) -> Result<InvocationModule, WorkflowValidationError> {
+        let functions =
+            self.functions
+                .iter()
+                .map(|(name, function)| {
+                    let body = match &function.body {
+                        FunctionBody::Expr(expression) => ComputeProgram(vec![
+                            runinator_models::workflow_ast::ComputeStmt::Return(expression.clone()),
+                        ]),
+                        FunctionBody::Program(program) => program.clone(),
+                    };
+                    (
+                        name.clone(),
+                        function.params.clone(),
+                        body,
+                        function.max_depth,
+                    )
+                })
+                .collect::<Vec<_>>();
+        let entry = InvocationProgram::new(
+            values
+                .iter()
+                .cloned()
+                .map(|value| InvocationInstruction::Const { value })
+                .chain([
+                    InvocationInstruction::Call {
+                        target: CallableTarget::Local {
+                            name: name.to_string(),
+                        },
+                        argc: values.len(),
+                        names: Vec::new(),
+                        policy: None,
+                    },
+                    InvocationInstruction::Return,
+                ])
+                .collect(),
+        );
+        let module = assemble_module(&ComputeProgram::default(), &functions, &self.catalog())?;
+        Ok(InvocationModule { entry, ..module })
     }
 }

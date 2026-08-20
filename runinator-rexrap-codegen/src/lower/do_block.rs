@@ -6,7 +6,6 @@ use std::collections::HashSet;
 
 use runinator_models::value::{Map, Value};
 
-use runinator_rexrap_sema::purity::block_is_effectful;
 use runinator_rexrap_syntax::ast::*;
 use runinator_rexrap_syntax::errors::RexRapError;
 
@@ -42,41 +41,9 @@ impl Lowerer {
         collect_locals(&compute.body, &mut self.compute_locals.borrow_mut());
 
         let program = self.lower_program(&compute.body)?;
-        if self.emit_invocations {
-            let result = self.push_invocation_node(&program, compute, stmt, id, next);
-            self.compute_locals.replace(previous_locals);
-            return result;
-        }
-        let function = if block_is_effectful(&compute.body, &self.registry) {
-            "exec"
-        } else {
-            "run"
-        };
-
-        let mut config = Map::new();
-        config.insert("program".into(), Value::Array(program));
-        let mut action_obj = Map::new();
-        action_obj.insert("provider".into(), Value::String("std".into()));
-        action_obj.insert("function".into(), Value::String(function.into()));
-        action_obj.insert(
-            "timeout_seconds".into(),
-            Value::from(compute.modifiers.timeout_seconds.unwrap_or(60)),
-        );
-        action_obj.insert("configuration".into(), Value::Object(config));
-
-        let mut fields = vec![
-            ("action", Value::Object(action_obj)),
-            (
-                "transitions",
-                self.leaf_transitions(&stmt.transitions, "on_success", next)?,
-            ),
-        ];
-        self.apply_modifier_fields(&mut fields, &compute.modifiers);
-        self.apply_annotations(&mut fields, stmt);
-        self.push(super::node(id, "action", fields));
-
+        let result = self.push_invocation_node(&program, compute, stmt, id, next);
         self.compute_locals.replace(previous_locals);
-        Ok(())
+        result
     }
 
     /// emit an `invocation` node: the assembled module the vm runs, plus the statement tree the

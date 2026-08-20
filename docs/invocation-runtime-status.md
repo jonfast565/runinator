@@ -15,7 +15,7 @@ deliberately gated, and what the remaining cutover requires from an operator.
 | `workflow_invocations` / `workflow_invocation_calls` | `runinator-database/migrations/*/20260819000001_invocations.sql` | done, all three dialects |
 | `InvocationStore` | `runinator-store/src/roles/invocations.rs` | done |
 | `WorkflowNodeKind::Invocation` | `runinator-workflows/src/node_kinds/task/invocation.rs` | done |
-| Invocation node handler | `runinator-reducer/src/orchestration/invocation.rs` | done |
+| Invocation node operation | `runinator-runtime/src/orchestration/invocation.rs` | done |
 | `invocation_call_id` through the broker | `runinator-comm`, every backend | done |
 | Compiler backend | `CompileOptions::emit_invocations` | done, **off by default** |
 | `std` provider direct dispatch | `runinator-provider-std/src/provider.rs` | done |

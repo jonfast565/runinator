@@ -1,20 +1,16 @@
 use std::sync::Arc;
 
-use runinator_compute::{
-    ComputeOutcome, FunctionTable, PureIntrinsics, WorkflowValidationError, effectful_signatures,
-    parse_program, run_program_with,
-};
+use runinator_compute::{PureIntrinsics, WorkflowValidationError, effectful_signatures};
 use runinator_models::{
     errors::SendableError,
     providers::{ActionMetadata, ParameterMetadata, ProviderMetadata, ProviderRuntimeMetadata},
     runs::{ProviderExecutionRequest, TaskExecutionResult},
     types::RuninatorType,
-    value::Value,
 };
 use runinator_plugin::provider::{Provider, ProviderEventSink};
 
 use crate::code::{EXPECTED_OUTPUT_TYPE_KEY, execute_code};
-use crate::errors::{GOTO_NOT_ALLOWED, HTTP_ERROR, INTRINSIC_FAILED, INVALID_PROGRAM};
+use crate::errors::{HTTP_ERROR, INTRINSIC_FAILED};
 use crate::intrinsics::FullIntrinsics;
 
 // map an interpreter error to a SendableError, routing http failures to a dedicated code.
@@ -27,15 +23,10 @@ fn map_run_error(err: WorkflowValidationError) -> SendableError {
     }
 }
 
-const PROGRAM_KEY: &str = "program";
-const CONTEXT_KEY: &str = "context";
-const FUNCTIONS_KEY: &str = "functions";
 const LANGUAGE_KEY: &str = "language";
 const SOURCE_KEY: &str = "source";
 const RUNTIME_KEY: &str = "runtime";
-/// the two program entry points, kept as names so the intrinsic branch can exclude exactly them.
-const RUN_FUNCTION: &str = "run";
-const EXEC_FUNCTION: &str = "exec";
+const CONTEXT_KEY: &str = "context";
 const CODE_FUNCTION: &str = "code";
 
 #[derive(Clone)]
@@ -47,23 +38,7 @@ impl Provider for StdProvider {
     }
 
     fn metadata(&self) -> ProviderMetadata {
-        // the two program entry points plus the library functions; pure signatures come straight
-        // from PureIntrinsics so the worker's view cannot drift from the reducer's.
         let mut actions = vec![
-            ActionMetadata::new("run", "evaluate a pure compute program in the reducer")
-                .with_parameters(vec![ParameterMetadata::required(
-                    PROGRAM_KEY,
-                    RuninatorType::Any,
-                )])
-                .pure(),
-            ActionMetadata::new("exec", "execute an effectful compute program on the worker")
-                .with_parameters(vec![
-                    ParameterMetadata::required(PROGRAM_KEY, RuninatorType::Any),
-                    // the web service ships the run context alongside the program so the worker
-                    // interpreter can resolve refs/calls against it.
-                    ParameterMetadata::optional(CONTEXT_KEY, RuninatorType::Any),
-                    ParameterMetadata::optional(FUNCTIONS_KEY, RuninatorType::Any),
-                ]),
             ActionMetadata::new("code", "execute foreign compute code in a docker container")
                 .with_parameters(vec![
                     ParameterMetadata::required(LANGUAGE_KEY, RuninatorType::String),
@@ -98,55 +73,20 @@ impl Provider for StdProvider {
         // which one function it wants, so shipping a whole program plus the run context — which the
         // `run`/`exec` path below still does — would send everything the worker no longer needs in
         // order to decide anything.
-        if request.action_function != RUN_FUNCTION && request.action_function != EXEC_FUNCTION {
-            // the declared parameter names, in declared order. the reducer sends the call's
-            // arguments under exactly these — it has to, because the worker validates an action's
-            // parameters against this same metadata as a closed struct — so reading them back in
-            // this order is what recovers the positional list the library takes.
-            let declared = self
-                .metadata()
-                .actions
-                .iter()
-                .find(|action| action.function_name == request.action_function)
-                .map(|action| {
-                    action
-                        .parameters
-                        .iter()
-                        .map(|parameter| parameter.name.clone())
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-            return execute_intrinsic(&request, &declared, token);
-        }
-        let program_value = request
-            .parameters
-            .get(PROGRAM_KEY)
-            .ok_or_else(|| INVALID_PROGRAM.error("missing program"))?;
-        let context = request
-            .parameters
-            .get(CONTEXT_KEY)
-            .cloned()
-            .unwrap_or(Value::Null);
-        let program =
-            parse_program(program_value).map_err(|err| INVALID_PROGRAM.error(err.to_string()))?;
-        // the web service ships the workflow's user-function table alongside the program so the
-        // worker's interpreter can dispatch user-function calls the same way the reducer does.
-        let functions = FunctionTable::from_metadata(request.parameters.get(FUNCTIONS_KEY))
-            .map_err(|err| INVALID_PROGRAM.error(err.to_string()))?;
-        let library = FullIntrinsics::new(request.timeout_secs, token);
-        let outcome = run_program_with(&program, &context, &library, Some(&functions))
-            .map_err(map_run_error)?;
-        match outcome {
-            ComputeOutcome::Return(value) | ComputeOutcome::Fallthrough(value) => {
-                Ok(TaskExecutionResult {
-                    message: None,
-                    output_json: Some(value),
-                    chunks: Vec::new(),
-                    artifacts: Vec::new(),
-                })
-            }
-            ComputeOutcome::Goto(target) => Err(GOTO_NOT_ALLOWED.error(target)),
-        }
+        let declared = self
+            .metadata()
+            .actions
+            .iter()
+            .find(|action| action.function_name == request.action_function)
+            .map(|action| {
+                action
+                    .parameters
+                    .iter()
+                    .map(|parameter| parameter.name.clone())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        execute_intrinsic(&request, &declared, token)
     }
 }
 

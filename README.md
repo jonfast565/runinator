@@ -225,14 +225,15 @@ routing, such as an operator-managed primary/replica cluster fronted by
 PgBouncer. The checked-in `runinator-postgres` manifest is a single-primary
 development StatefulSet and should not be scaled out as-is.
 
-The state-machine reducer lives in `runinator-reducer`, while
-`runinator-engine` persists its transitions and drives workflows over the
-broker. The engine publishes scheduled work on the `wake` channel, and the
+The continuation-driven graph interpreter lives in `runinator-runtime`; its
+`WorkflowMachine` treats each durable cursor as a schedulable fiber and delegates
+bookkeeping to a `WorkflowHost`. `runinator-engine` drives it over the broker.
+The engine publishes scheduled work on the `wake` channel, and the
 `runinator-waker` (a small, broker-only timer/relay) sleeps until each ready
 node is due and then publishes a `drive` on the `ingress` channel for the
 engine to consume.
 
-The durable orchestration engine — the reducer plus the wake/trigger/action/
+The durable orchestration engine — the graph runtime plus the wake/trigger/action/
 ingress loops, the result consumer, and the replica/ready-node/usage maintenance
 backstops — lives in the `runinator-engine` library crate and can run in either
 of two topologies. By default `runinator-ws` embeds it in-process
@@ -510,7 +511,7 @@ POST /console/cells/{id}/run           # run it
 A cell is a fragment of the same REXRAP a workflow is written in, and it is answered one of two ways.
 A **pure** cell — an expression or a `compute` block — is evaluated in process and has already
 settled when the request returns. **Anything else** becomes a hidden scratch workflow and goes
-through the ordinary reducer path. Classification is conservative and the workflow fallback is
+through the ordinary graph-runtime path. Classification is conservative and the workflow fallback is
 unconditional: a cell wrongly treated as pure would run a provider action inside an HTTP handler,
 with no run to record it and no retry, timeout, or cancellation.
 
@@ -689,7 +690,7 @@ run detail until the run reaches a terminal state.
 
 `runinatorctl workflows test <path>` dry-runs a pack against `.rexrapt` test suites
 entirely client-side — no server or broker. It compiles the pack, then walks each
-workflow's state machine with the reducer's own condition/switch/toggle/percentage
+workflow's state machine with the graph runtime's own condition/switch/toggle/percentage
 evaluators, stubbing task nodes with mocked outputs, and asserts on the branch
 taken and final outputs. A `.rexrapt` file is JSON: `{ "tests": [ { "name", "input",
 "config", "mocks": { "<node>": { "output", "status" } }, "expect": { "status",
@@ -773,7 +774,7 @@ trigger cron "0 * * * *"
 trigger on_success workflow "Downstream Report"
 ```
 
-Chaining is event-driven from the reducer's terminal settle (not the best-effort
+Chaining is event-driven from the graph runtime's terminal settle (not the best-effort
 `events` channel), fired exactly once per (trigger, source-run) via a durable
 dedupe table, and cycle-bounded by a `chain_depth` cap. Only top-level runs fan out
 chains — subflow/map children do not. Chaining does **not** replace `subflow`: a
@@ -925,7 +926,7 @@ strictly newer.
 The control-flow runtime uses persisted cursors: linear runs retain one primary cursor, while
 `parallel` and `race` fork one cursor and ready-node drive per branch. The engine processes ingress
 with bounded concurrency (default 16 per instance), so independent branches and concurrent map
-children can reach workers without waiting for a serial reducer loop. `active_node_id` remains a
+children can reach workers without waiting for a serial interpreter loop. `active_node_id` remains a
 compatibility mirror of the primary cursor for run detail and older consumers. Branch/body/item
 nodes should transition back to their owning `join`, `try`, `map`, or `race` controller.
 
@@ -950,7 +951,7 @@ OTLP exporters for **traces, metrics, and logs** over OTLP HTTP/protobuf;
 `OTEL_RESOURCE_ATTRIBUTES`.
 
 Trace context propagates across hops using W3C `traceparent`: inbound HTTP requests
-to the web service continue the caller's trace, and the reducer stamps the active
+to the web service continue the caller's trace, and the graph runtime stamps the active
 context onto each `ActionCommand` so a worker's execution span links back to the
 dispatching trace. Prometheus `/metrics` remains available alongside OTLP metrics.
 

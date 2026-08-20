@@ -13,18 +13,14 @@ use crate::{CompileOptions, RexRapError, WorkflowSignature, compile_str, decompi
 
 /// compile options carrying the signatures the subflow fixture calls into.
 ///
-/// takes the kind because one of them needs a non-default option: `invocation` is what a `do { }`
-/// block compiles to when `emit_invocations` is on. the surface syntax is the same either way, so
-/// the kind belongs in `fixtures()` rather than in `NO_REXRAP_SURFACE` — it is not a kind an author
-/// cannot write, it is a kind a deployment has to opt into.
-fn options(kind: &WorkflowNodeKind) -> CompileOptions {
+/// The surface has one compute form: `do {}` always compiles to an invocation node.
+fn options(_kind: &WorkflowNodeKind) -> CompileOptions {
     CompileOptions {
         workflow_signatures: vec![WorkflowSignature {
             name: "Child".to_string(),
             input: RuninatorType::Any,
             output: RuninatorType::Any,
         }],
-        emit_invocations: *kind == WorkflowNodeKind::Invocation,
         ..CompileOptions::default()
     }
 }
@@ -62,8 +58,7 @@ fn fixtures() -> Vec<(WorkflowNodeKind, &'static str)> {
             WorkflowNodeKind::Wait,
             r#"workflow "Conf Wait" v1 { wait 30s }"#,
         ),
-        // the same `do { }` an author already writes; `emit_invocations` is what decides whether it
-        // compiles to bytecode or to a statement tree. see `options`.
+        // The same `do { }` an author already writes, compiled to bytecode.
         (
             WorkflowNodeKind::Invocation,
             r#"workflow "Conf Invocation" v1 { do { return { total: prev.a } } }"#,

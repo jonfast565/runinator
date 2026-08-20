@@ -12,9 +12,10 @@
 //! recursive evaluator like the one it replaces.
 
 use runinator_models::invocation::{
-    CallableTarget, ClosureCell, EffectClass, InvocationContinuation, InvocationEffect,
-    InvocationEffectResult, InvocationFrame, InvocationInstruction, InvocationModule,
-    InvocationProgram, InvocationStep, RecordedLocal, closure_handle, closure_handle_index,
+    CallableTarget, ClosureCell, EffectClass, HigherOrderState, InvocationContinuation,
+    InvocationEffect, InvocationEffectResult, InvocationFrame, InvocationInstruction,
+    InvocationModule, InvocationProgram, InvocationStep, RecordedLocal, closure_handle,
+    closure_handle_index,
 };
 use runinator_models::value::Value;
 use runinator_models::workflow_ast::WorkflowValueRef;
@@ -211,8 +212,9 @@ fn run(
             // falling off the end of a program returns null, which is what an author writing a
             // block with no `return` means.
             match pop_frame(&mut continuation, Value::Null) {
-                FrameExit::Completed(value) => return InvocationStep::Complete { value },
-                FrameExit::Returned => continue,
+                Err(message) => return failed(message),
+                Ok(FrameExit::Completed(value)) => return InvocationStep::Complete { value },
+                Ok(FrameExit::Returned) => continue,
             }
         };
 
@@ -245,16 +247,163 @@ enum FrameExit {
     Returned,
 }
 
-fn pop_frame(continuation: &mut InvocationContinuation, value: Value) -> FrameExit {
-    continuation.frames.pop();
+fn pop_frame(continuation: &mut InvocationContinuation, value: Value) -> Result<FrameExit, String> {
+    let completed = continuation
+        .frames
+        .pop()
+        .ok_or_else(|| "no active frame".to_string())?;
+    if let Some(state) = completed.higher_order {
+        return finish_higher_order(continuation, state, value);
+    }
     match continuation.frames.last_mut() {
         Some(caller) => {
             caller.stack.push(value);
             // the caller's `Call`/`Apply` instruction is finished, so control resumes after it.
             caller.ip += 1;
-            FrameExit::Returned
+            Ok(FrameExit::Returned)
         }
-        None => FrameExit::Completed(value),
+        None => Ok(FrameExit::Completed(value)),
+    }
+}
+
+/// Start a collection operation after its operands have been evaluated. Each lambda application is
+/// a real frame, so a durable call inside the body naturally yields with its loop state serialized
+/// on that frame.
+fn higher_order(
+    continuation: &mut InvocationContinuation,
+    name: &str,
+    argc: usize,
+) -> Result<Flow, String> {
+    let args = pop_n(continuation, argc)?;
+    let lambda_index = if name == "reduce" { 2 } else { 1 };
+    let collection = args
+        .first()
+        .ok_or_else(|| format!("'{name}' is missing an argument"))?;
+    let items = match collection {
+        Value::Array(items) => items.clone(),
+        other => return Err(format!("'{name}' requires an array, got {other}")),
+    };
+    let closure = args
+        .get(lambda_index)
+        .and_then(closure_handle_index)
+        .ok_or_else(|| format!("'{name}' requires a lambda argument"))?;
+    let state = HigherOrderState {
+        name: name.to_string(),
+        closure,
+        items,
+        index: 0,
+        output: Vec::new(),
+        accumulator: (name == "reduce").then(|| args.get(1).cloned()).flatten(),
+        keyed: Vec::new(),
+    };
+    match drive_higher_order(continuation, state)? {
+        HigherOrderDrive::Call => Ok(Flow::Jumped),
+        HigherOrderDrive::Complete(value) => {
+            push(continuation, value)?;
+            Ok(Flow::Next)
+        }
+    }
+}
+
+enum HigherOrderDrive {
+    Call,
+    Complete(Value),
+}
+
+fn finish_higher_order(
+    continuation: &mut InvocationContinuation,
+    mut state: HigherOrderState,
+    value: Value,
+) -> Result<FrameExit, String> {
+    let item = state
+        .items
+        .get(state.index)
+        .cloned()
+        .ok_or_else(|| "higher-order operation lost its active item".to_string())?;
+    match state.name.as_str() {
+        "map" => state.output.push(value),
+        "flat_map" => match value {
+            Value::Array(values) => state.output.extend(values),
+            value => state.output.push(value),
+        },
+        "filter" => {
+            if predicate(&state.name, value)? {
+                state.output.push(item);
+            }
+        }
+        "find" => {
+            if predicate(&state.name, value)? {
+                return finish_higher_order_value(continuation, item);
+            }
+        }
+        "any" => {
+            if predicate(&state.name, value)? {
+                return finish_higher_order_value(continuation, Value::Bool(true));
+            }
+        }
+        "all" => {
+            if !predicate(&state.name, value)? {
+                return finish_higher_order_value(continuation, Value::Bool(false));
+            }
+        }
+        "sort_by" => state.keyed.push((value, item)),
+        "reduce" => state.accumulator = Some(value),
+        _ => return Err(format!("unknown higher-order intrinsic '{}'", state.name)),
+    }
+    state.index += 1;
+    match drive_higher_order(continuation, state)? {
+        HigherOrderDrive::Call => Ok(FrameExit::Returned),
+        HigherOrderDrive::Complete(value) => finish_higher_order_value(continuation, value),
+    }
+}
+
+fn finish_higher_order_value(
+    continuation: &mut InvocationContinuation,
+    value: Value,
+) -> Result<FrameExit, String> {
+    let caller = frame_mut(continuation)?;
+    caller.stack.push(value);
+    caller.ip += 1;
+    Ok(FrameExit::Returned)
+}
+
+fn drive_higher_order(
+    continuation: &mut InvocationContinuation,
+    mut state: HigherOrderState,
+) -> Result<HigherOrderDrive, String> {
+    if state.index == state.items.len() {
+        let value = match state.name.as_str() {
+            "map" | "flat_map" | "filter" => Value::Array(state.output),
+            "find" => Value::Null,
+            "any" => Value::Bool(false),
+            "all" => Value::Bool(true),
+            "reduce" => state.accumulator.unwrap_or(Value::Null),
+            "sort_by" => {
+                state
+                    .keyed
+                    .sort_by(|(left, _), (right, _)| crate::compute::cmp_values(left, right));
+                Value::Array(state.keyed.into_iter().map(|(_, item)| item).collect())
+            }
+            _ => return Err(format!("unknown higher-order intrinsic '{}'", state.name)),
+        };
+        return Ok(HigherOrderDrive::Complete(value));
+    }
+    let item = state.items[state.index].clone();
+    let args = if state.name == "reduce" {
+        vec![state.accumulator.clone().unwrap_or(Value::Null), item]
+    } else {
+        vec![item]
+    };
+    enter_closure(continuation, state.closure, args, Some(state))?;
+    Ok(HigherOrderDrive::Call)
+}
+
+fn predicate(name: &str, value: Value) -> Result<bool, String> {
+    match value {
+        Value::Bool(value) => Ok(value),
+        other => Err(format!(
+            "'{name}' lambda must return a boolean, got {other}"
+        )),
     }
 }
 
@@ -334,7 +483,7 @@ fn execute(
         }
         InvocationInstruction::Return => {
             let value = pop(continuation)?;
-            match pop_frame(continuation, value) {
+            match pop_frame(continuation, value)? {
                 FrameExit::Completed(value) => Ok(Flow::Step(InvocationStep::Complete { value })),
                 FrameExit::Returned => Ok(Flow::Jumped),
             }
@@ -354,6 +503,9 @@ fn execute(
             Ok(Flow::Next)
         }
         InvocationInstruction::Apply { argc } => apply(continuation, *argc),
+        InvocationInstruction::HigherOrder { name, argc } => {
+            higher_order(continuation, name, *argc)
+        }
         InvocationInstruction::Call {
             target,
             argc,
@@ -535,6 +687,16 @@ fn apply(continuation: &mut InvocationContinuation, argc: usize) -> Result<Flow,
     let args = pop_n(continuation, argc)?;
     let callee = pop(continuation)?;
     let index = closure_handle_index(&callee).ok_or_else(|| "value is not callable".to_string())?;
+    enter_closure(continuation, index, args, None)?;
+    Ok(Flow::Jumped)
+}
+
+fn enter_closure(
+    continuation: &mut InvocationContinuation,
+    index: usize,
+    args: Vec<Value>,
+    higher_order: Option<HigherOrderState>,
+) -> Result<(), String> {
     let cell = continuation
         .closures
         .get(index)
@@ -554,10 +716,10 @@ fn apply(continuation: &mut InvocationContinuation, argc: usize) -> Result<Flow,
     }
     let mut locals = cell.captured;
     locals.extend(cell.params.into_iter().zip(args));
-    continuation
-        .frames
-        .push(InvocationFrame::for_closure(cell.body, locals));
-    Ok(Flow::Jumped)
+    let mut frame = InvocationFrame::for_closure(cell.body, locals);
+    frame.higher_order = higher_order;
+    continuation.frames.push(frame);
+    Ok(())
 }
 
 // --- small stack helpers -------------------------------------------------------------------

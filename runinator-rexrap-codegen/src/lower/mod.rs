@@ -77,8 +77,6 @@ struct Lowerer {
     // an `invocation` node can assemble them into its module.
     lowered_functions: Vec<Value>,
     // emit `invocation` nodes carrying compiled bytecode instead of `std.run`/`std.exec` action
-    // nodes carrying a statement tree. see `CompileOptions::emit_invocations`.
-    emit_invocations: bool,
     // base directory used for compile-time `file("...")` text includes.
     source_dir: Option<PathBuf>,
     // the callable registry (intrinsics + user functions), used to resolve keyword arguments.
@@ -119,7 +117,6 @@ fn lower_workflow(
     lowerer.provider_metadata = options.all_providers();
     lowerer.provider_actions = provider_actions(&lowerer.provider_metadata);
     lowerer.functions = options.functions.clone();
-    lowerer.emit_invocations = options.emit_invocations;
     // collect the header aliases so spreads can be expanded (graph) and recorded (sidecar) while
     // lowering, where node ids are available to key the recipes.
     lowerer.aliases = runinator_rexrap_sema::desugar::collect_aliases(&workflow.aliases)?;
@@ -390,7 +387,6 @@ impl Lowerer {
             compute_locals: std::cell::RefCell::new(HashSet::new()),
             named_types: std::collections::BTreeMap::new(),
             lowered_functions: Vec::new(),
-            emit_invocations: false,
             source_dir: None,
             registry: runinator_rexrap_sema::registry::FunctionRegistry::build(&[]),
             provider_actions: std::collections::HashMap::new(),

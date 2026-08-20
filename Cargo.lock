@@ -8019,8 +8019,8 @@ dependencies = [
  "runinator-console",
  "runinator-database",
  "runinator-models",
- "runinator-reducer",
  "runinator-rexrap",
+ "runinator-runtime",
  "runinator-utilities",
  "runinator-workflows",
  "serde",
@@ -8316,24 +8316,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "runinator-reducer"
-version = "0.2.367"
-dependencies = [
- "chrono",
- "runinator-comm",
- "runinator-compute",
- "runinator-models",
- "runinator-store",
- "runinator-utilities",
- "runinator-workflows",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
 name = "runinator-rexrap"
 version = "0.2.367"
 dependencies = [
@@ -8387,6 +8369,24 @@ dependencies = [
  "pest_meta",
  "runinator-models",
  "thiserror 2.0.20",
+]
+
+[[package]]
+name = "runinator-runtime"
+version = "0.2.367"
+dependencies = [
+ "chrono",
+ "runinator-comm",
+ "runinator-compute",
+ "runinator-models",
+ "runinator-store",
+ "runinator-utilities",
+ "runinator-workflows",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -8533,8 +8533,8 @@ dependencies = [
  "runinator-pack",
  "runinator-provider-catalog",
  "runinator-provisioner",
- "runinator-reducer",
  "runinator-rexrap",
+ "runinator-runtime",
  "runinator-utilities",
  "runinator-workflows",
  "runinator-ws-authoring",

@@ -6,16 +6,16 @@ Use this map to load the smallest useful part of the repo for a task. The root `
 
 1. `runinator-ws` owns HTTP/WebSocket transport and auth, and hosts `runinator-engine` by default.
 2. `runinator-engine` owns persistence orchestration and the loops for ingress/results, triggers, wakes, action dispatch, and reconciliation; `runinator-background-worker` can host the same engine out of process.
-3. `runinator-reducer` owns state-machine transitions and node-kind behavior.
+3. `runinator-runtime` owns the continuation-driven graph interpreter, cursor fibers, host boundary, transitions, and node-kind behavior.
 4. `runinator-waker` consumes `wake`, waits until due, then publishes `WsIngressCommand::Drive` on `ingress`.
 5. `runinator-worker` consumes `action`, executes providers/plugins, and publishes results on `result`; `runinator-desktop-agent` hosts that runtime as an exclusive desktop worker.
 6. `runinator-broker` provides backend-neutral channels and transports, and `runinator-database` owns concrete persistence.
 
 ## Task Routing
 
-- Change workflow reducer behavior: start in `runinator-reducer/src/orchestration/engine.rs`, then the node-specific file in `runinator-reducer/src/orchestration/`.
-- Change a node transition or retry/timeout rule: `runinator-reducer/src/orchestration/transitions.rs`.
-- Change runtime context or `$ref` inputs available to the reducer: `runinator-reducer/src/orchestration/context.rs`.
+- Change graph-runtime behavior: start in `runinator-runtime/src/machine.rs` and `host.rs`, then `orchestration/interpreter.rs` or the node-specific operation.
+- Change a node transition or retry/timeout rule: `runinator-runtime/src/orchestration/transitions.rs`.
+- Change runtime context or `$ref` inputs available to the interpreter: `runinator-runtime/src/orchestration/context.rs`.
 - Change workflow validation or graph invariants shared by JSON and REXRAP: `runinator-workflows/src/validation.rs` and nearby modules.
 - Add or change a node kind's authoring behavior (palette entry, graph role, parameter targets, output type): its file in `runinator-workflows/src/node_kinds/<category>/`, plus an arm in `spec_for`.
 - Change REXRAP syntax or compile/decompile behavior: `runinator-rexrap/src/rexrap.pest`, `parser.rs`, `lower/`, `decompile/`, `format.rs`, and the matching subject file in `tests/`.
@@ -57,5 +57,5 @@ When adding or renaming shared fields, inspect:
 
 - Start with the local `AGENTS.md` inside a crate before reading implementation files.
 - Prefer module facades (`mod.rs`, `lib.rs`, store `index.ts`) to learn the layout, then open only the behavior-specific file.
-- For reducer work, avoid loading all of `runinator-engine` or `runinator-ws`; load `runinator-reducer/src/orchestration/engine.rs`, the relevant node module, `transitions.rs`, and `context.rs`.
+- For graph-runtime work, avoid loading all of `runinator-engine` or `runinator-ws`; load `runinator-runtime/src/{machine,host}.rs`, `orchestration/interpreter.rs`, and only the relevant node operation.
 - For frontend workflow editing, load `core/services/workflows/index.ts` and its focused service modules, `core/workflow/` for graph/data transforms, and `ui/adapters/pinia/workflows/index.ts` for the presentation adapter.

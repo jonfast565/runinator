@@ -241,6 +241,25 @@ fn a_cursor_persisted_before_these_fields_still_parses() {
     assert!(!decoded.is_speculative());
     assert!(decoded.debug.is_none());
     assert!(decoded.last_output.is_none());
+    assert!(decoded.visit_id.is_none());
+    assert!(decoded.node_run_id.is_none());
+}
+
+#[test]
+fn visit_identity_is_stable_until_the_cursor_moves() {
+    let mut cursor = RunCursor::at("verify");
+    let visit_id = cursor.ensure_visit();
+    let node_run_id = Uuid::now_v7();
+    cursor.attach_node_run(node_run_id);
+
+    assert_eq!(cursor.ensure_visit(), visit_id);
+    assert_eq!(cursor.node_run_id, Some(node_run_id));
+
+    cursor.move_to("publish");
+
+    assert!(cursor.visit_id.is_none());
+    assert!(cursor.node_run_id.is_none());
+    assert_ne!(cursor.ensure_visit(), visit_id);
 }
 
 #[test]

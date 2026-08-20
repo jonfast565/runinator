@@ -1,7 +1,7 @@
 //! the role traits `DatabaseImpl` is composed from.
 //!
 //! the store's operations split by domain so a caller can bound on the slice it uses instead of
-//! the whole 200-plus-method surface. `ReducerStore` (one level up) is the exception: it is a
+//! the whole 200-plus-method surface. `RuntimeStore` (one level up) is the exception: it is a
 //! use-case trait cut to what the state machine calls, deliberately spanning several of these
 //! domains, because keeping it small is what makes an in-memory fake practical.
 

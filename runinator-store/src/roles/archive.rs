@@ -13,7 +13,7 @@ use runinator_models::errors::SendableError;
 use crate::archive::{ArchiveMark, ArchiveRow, ArchiveTable};
 // re-exported here so callers that reach for the contract at its historical path
 // (`runinator_database::interfaces::*`) can import both halves from one place.
-pub use crate::reducer_store::ReducerStore;
+pub use crate::runtime_store::RuntimeStore;
 
 /// Core persistence operations for Runinator.
 /// Aging rows out to cold storage: marking candidates, claiming marks under a lease, and moving or dropping the marked rows.

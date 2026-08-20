@@ -36,10 +36,10 @@ pub use catalog::{
     SECRET_URI_PREFIX, contains_secret_reference, intrinsic_effect,
 };
 pub use compute::{
-    ComputeOutcome, EFFECTFUL_INTRINSIC_NAMES, HIGHER_ORDER_NAMES, IntrinsicLibrary,
-    PureIntrinsics, STD_MODULES, STD_NAMESPACE, call_pure, effectful_signatures, intrinsic_arity,
-    intrinsic_module, intrinsic_signature, is_higher_order, is_known_intrinsic, parse_program,
-    qualified_intrinsic_name, resolve_std_path, run_program, run_program_with,
+    EFFECTFUL_INTRINSIC_NAMES, HIGHER_ORDER_NAMES, IntrinsicLibrary, PureIntrinsics, STD_MODULES,
+    STD_NAMESPACE, call_pure, effectful_signatures, intrinsic_arity, intrinsic_module,
+    intrinsic_signature, is_higher_order, is_known_intrinsic, parse_program,
+    qualified_intrinsic_name, resolve_std_path,
 };
 pub use conditions::{
     evaluate_condition, evaluate_condition_with, evaluate_workflow_condition, next_transition,
@@ -58,7 +58,5 @@ pub use vm::{
     MAX_FRAME_DEPTH, MAX_INSTRUCTIONS_PER_STEP, VmEnv, evaluate_pure, resume, start, step,
 };
 
-#[cfg(test)]
-mod compute_tests;
 #[cfg(test)]
 mod functions_tests;

@@ -18,7 +18,7 @@ utoipa = { version = "5", features = ["axum_extras", "uuid", "chrono"] }
 
 runinator-blob-core = { path = "../runinator-blob-core" }
 runinator-broker-core = { path = "../runinator-broker-core" }
-runinator-reducer = { path = "../runinator-reducer" }
+runinator-runtime = { path = "../runinator-runtime" }
 runinator-database = { path = "../runinator-database", default-features = false }
 runinator-compute = { path = "../runinator-compute" }
 runinator-models = { path = "../runinator-models" }

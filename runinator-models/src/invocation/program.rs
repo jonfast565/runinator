@@ -58,6 +58,9 @@ pub enum InvocationInstruction {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         policy: Option<CallPolicy>,
     },
+    /// Apply a closure across a collection. The VM keeps the iteration state in the continuation so
+    /// a lambda may itself suspend on a durable call.
+    HigherOrder { name: String, argc: usize },
     /// pop a callee value (a closure) and `argc` arguments, apply, push the result.
     Apply { argc: usize },
     /// push a closure capturing the current locals.
@@ -286,6 +289,9 @@ pub struct InvocationFrame {
     /// set when this frame is parked on a call; the result is pushed here on resume.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub awaiting: bool,
+    /// The higher-order operation this closure frame returns into, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub higher_order: Option<HigherOrderState>,
 }
 
 impl InvocationFrame {
@@ -298,6 +304,7 @@ impl InvocationFrame {
             stack: Vec::new(),
             locals: Vec::new(),
             awaiting: false,
+            higher_order: None,
         }
     }
 
@@ -310,6 +317,7 @@ impl InvocationFrame {
             stack: Vec::new(),
             locals,
             awaiting: false,
+            higher_order: None,
         }
     }
 
@@ -322,8 +330,24 @@ impl InvocationFrame {
             stack: Vec::new(),
             locals,
             awaiting: false,
+            higher_order: None,
         }
     }
+}
+
+/// Serializable state for a higher-order invocation while one of its lambda calls is running.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HigherOrderState {
+    pub name: String,
+    pub closure: usize,
+    pub items: Vec<Value>,
+    pub index: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub output: Vec<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accumulator: Option<Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub keyed: Vec<(Value, Value)>,
 }
 
 /// a `Local` call's observed value, kept so a resume or replay does not observe it again.

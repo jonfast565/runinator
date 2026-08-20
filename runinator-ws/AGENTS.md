@@ -4,7 +4,7 @@ Guidance for agents working in `runinator-ws`.
 
 ## Ownership
 
-`runinator-ws` owns HTTP/WebSocket transport, authentication/authorization, discovery, and API response mapping. Durable orchestration and background loops live in `runinator-engine`; state-machine transitions live in `runinator-reducer`. The web service hosts the engine by default but must not duplicate its implementation. It should not depend on worker, waker, provider, or plugin internals.
+`runinator-ws` owns HTTP/WebSocket transport, authentication/authorization, discovery, and API response mapping. Background orchestration loops live in `runinator-engine`; the continuation-driven graph interpreter and durable host boundary live in `runinator-runtime`. The web service hosts the engine by default but must not duplicate either implementation. It should not depend on worker, waker, provider, or plugin internals.
 
 This crate is the **assembly** layer. The surface itself lives in five sibling crates —
 `runinator-ws-core` (wire types, responses, events, openapi vocabulary), `runinator-ws-middleware`
@@ -19,7 +19,7 @@ crate a new endpoint belongs in.
   repository facade directly, and `src/lib.rs` re-exports them at `crate::handlers::<domain>` for the
   openapi `paths(...)` table and the test suite.
 - Engine startup/hosting: `src/server.rs`; shared engine implementation: `../runinator-engine/src/`.
-- Workflow reducer and node behavior: `../runinator-reducer/src/orchestration/`.
+- Graph interpreter and host boundary: `../runinator-runtime/src/{machine,host}.rs`; node behavior: `../runinator-runtime/src/orchestration/`.
 - The two source lints over the merged surface: `src/openapi/route_parity.rs` and
   `src/store_access_tests.rs`; both read `HANDLER_CRATES` in `src/lib.rs`.
 - Workflow definitions/import/export: `../runinator-engine/src/repository/definitions.rs`.
@@ -32,7 +32,7 @@ crate a new endpoint belongs in.
 - Keep SQL and backend-specific persistence in `runinator-database`.
 - Keep HTTP handlers thin: authorize, validate transport payloads, call `runinator-engine`, and map web responses.
 - Keep command payloads crossing broker boundaries in `runinator-comm`.
-- The reducer may enqueue `ActionCommand`s through the durable outbox, but the waker must never publish action commands.
+- The graph runtime may enqueue `ActionCommand`s through the durable outbox, but the waker must never publish action commands.
 - Do not add direct worker or waker calls from this crate; use broker channels or shared API/client contracts as appropriate.
 
 ## Verification
