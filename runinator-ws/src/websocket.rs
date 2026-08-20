@@ -618,8 +618,9 @@ impl StrandedConsumer {
 
 /// the policy allow-list and replica-ownership check for the desktop-worker relay, ahead of the
 /// generic dispatch every other transport uses. a desktop worker only ever legitimately needs
-/// `receive_for`/`ack`/`nack` (action channel), replica-targeted control, replica-targeted agent
-/// directives, `publish_result`, and payload-gated directive results on ingress.
+/// `receive_for`/`ack`/`nack` (action and provider-effect channels), replica-targeted control,
+/// replica-targeted agent directives, result publication, and payload-gated directive results on
+/// ingress.
 async fn handle_desktop_worker_request<T: DatabaseImpl>(
     db: &T,
     broker: &dyn Broker,
@@ -629,7 +630,7 @@ async fn handle_desktop_worker_request<T: DatabaseImpl>(
     use runinator_broker::tcp::types::TcpResponse;
 
     match &mut request {
-        TcpRequest::ReceiveFor { profile } => {
+        TcpRequest::ReceiveFor { profile } | TcpRequest::ReceiveEffectFor { profile } => {
             if !profile.exclusive {
                 return TcpResponse::Error {
                     message: crate::errors::RELAY_NOT_EXCLUSIVE.bare().to_string(),
@@ -660,7 +661,10 @@ async fn handle_desktop_worker_request<T: DatabaseImpl>(
         | TcpRequest::NackControl { .. }
         | TcpRequest::AckAgent { .. }
         | TcpRequest::NackAgent { .. }
-        | TcpRequest::PublishResult { .. } => {}
+        | TcpRequest::PublishResult { .. }
+        | TcpRequest::AckEffect { .. }
+        | TcpRequest::NackEffect { .. }
+        | TcpRequest::PublishEffectResult { .. } => {}
         TcpRequest::PublishIngress { message }
             if matches!(
                 message.command,

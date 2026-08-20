@@ -6,7 +6,7 @@ use runinator_models::interrupt::{InterruptSource, PendingInterrupt};
 use runinator_models::workflow_state::WorkflowExecutionState;
 use uuid::Uuid;
 
-use runinator_database::workflow_mutex::WorkflowMutexWake;
+use runinator_database::{roles::NewWorkflowVmRun, workflow_mutex::WorkflowMutexWake};
 
 pub async fn delete_workflow_run<T: DatabaseImpl>(
     db: &T,
@@ -44,18 +44,57 @@ pub async fn create_workflow_run<T: DatabaseImpl>(
         runinator_models::json!({ "control": { "pause_requested": false } })
     };
     let trimmed = support::normalized_run_name(name);
-    let run = db
-        .create_workflow_run(
-            workflow_id,
-            workflow_snapshot,
-            parameters,
-            state,
-            trimmed,
-            provenance,
-        )
-        .await?;
-    support::enqueue_start_ready_node(db, &run).await?;
-    Ok(run)
+    create_workflow_vm_run(
+        db,
+        workflow_id,
+        workflow_snapshot,
+        parameters,
+        state,
+        trimmed,
+        provenance,
+        None,
+        None,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn create_workflow_vm_run<T: DatabaseImpl>(
+    db: &T,
+    workflow_id: Uuid,
+    workflow_snapshot: WorkflowDefinition,
+    parameters: Value,
+    state: Value,
+    name: Option<String>,
+    provenance: runinator_models::replicas::WorkflowRunProvenance,
+    pipeline_run_id: Option<Uuid>,
+    start_node_id: Option<&str>,
+) -> Result<WorkflowRun, SendableError> {
+    let module = runinator_workflows::compile_workflow_module(&workflow_snapshot)
+        .map_err(|error| -> SendableError { Box::new(error) })?;
+    let instruction_pointer = if let Some(node_id) = start_node_id {
+        module
+            .source_map
+            .iter()
+            .find(|entry| entry.node_id == node_id)
+            .map(|entry| entry.instruction_start)
+            .ok_or_else(|| crate::errors::REPLAY_MISSING_STEP.error(node_id))?
+    } else {
+        0
+    };
+    db.create_workflow_vm_run(NewWorkflowVmRun {
+        workflow_id,
+        workflow_snapshot,
+        parameters,
+        state,
+        name,
+        provenance,
+        pipeline_run_id,
+        pipeline_member_attempt_id: None,
+        module,
+        instruction_pointer,
+    })
+    .await
 }
 
 pub async fn claim_ready_nodes<T: DatabaseImpl>(
@@ -393,6 +432,57 @@ pub async fn deliver_run_event<T: DatabaseImpl>(
     node_id: String,
     event: Value,
 ) -> Result<TaskResponse, SendableError> {
+    if let Some(module) = db.fetch_workflow_module(workflow_run_id).await? {
+        let effects = db.fetch_workflow_effects(workflow_run_id).await?;
+        for effect in effects.into_iter().rev() {
+            if effect.status.is_terminal()
+                || !matches!(
+                    effect.request,
+                    runinator_models::workflow_vm::WorkflowEffectRequest::EventWait { .. }
+                )
+            {
+                continue;
+            }
+            let Some(continuation) = db
+                .fetch_workflow_continuation(effect.continuation_id)
+                .await?
+            else {
+                continue;
+            };
+            let effect_ip = continuation.instruction_pointer.saturating_sub(1);
+            if module
+                .graph_location(effect_ip)
+                .map(|location| location.node_id.as_str())
+                != Some(node_id.as_str())
+            {
+                continue;
+            }
+            let applied = db
+                .settle_workflow_effect(
+                    effect.id,
+                    effect.attempt,
+                    runinator_models::workflow_vm::WorkflowEffectStatus::Succeeded,
+                    Some(event),
+                    Some("event_received".into()),
+                    Utc::now(),
+                )
+                .await?;
+            return Ok(TaskResponse {
+                success: applied,
+                message: if applied {
+                    format!("Event delivered to '{node_id}'")
+                } else {
+                    format!("Event for '{node_id}' was stale")
+                },
+            });
+        }
+        return Ok(TaskResponse {
+            success: false,
+            message: format!(
+                "No event effect for node '{node_id}' is waiting in run {workflow_run_id}"
+            ),
+        });
+    }
     let node_runs = db.fetch_workflow_node_runs(workflow_run_id).await?;
     let waiting = node_runs
         .iter()
@@ -574,6 +664,41 @@ pub async fn deliver_signal<T: DatabaseImpl>(
     name: String,
     payload: Value,
 ) -> Result<TaskResponse, SendableError> {
+    if db.fetch_workflow_module(workflow_run_id).await?.is_some() {
+        let effects = db.fetch_workflow_effects(workflow_run_id).await?;
+        let target = effects.into_iter().rev().find(|effect| {
+            !effect.status.is_terminal()
+                && matches!(&effect.request,
+                    runinator_models::workflow_vm::WorkflowEffectRequest::Signal { key, .. }
+                    if key == &name)
+        });
+        let Some(effect) = target else {
+            return Ok(TaskResponse {
+                success: false,
+                message: format!(
+                    "No effect is waiting for signal '{name}' in run {workflow_run_id}"
+                ),
+            });
+        };
+        let applied = db
+            .settle_workflow_effect(
+                effect.id,
+                effect.attempt,
+                runinator_models::workflow_vm::WorkflowEffectStatus::Succeeded,
+                Some(runinator_models::json!({ "signal": name, "payload": payload })),
+                Some("signal_received".into()),
+                Utc::now(),
+            )
+            .await?;
+        return Ok(TaskResponse {
+            success: applied,
+            message: if applied {
+                format!("Signal '{name}' delivered")
+            } else {
+                format!("Signal '{name}' was stale")
+            },
+        });
+    }
     let node_runs = db.fetch_workflow_node_runs(workflow_run_id).await?;
     let target = node_runs
         .iter()

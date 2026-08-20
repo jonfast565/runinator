@@ -26,7 +26,7 @@ pub use errors::BrokerError;
 pub use instrumented::instrument;
 pub use runinator_comm::{
     ActionTarget, AgentCommand, AgentDirectiveKind, AgentDirectiveResult, AgentDirectiveStatus,
-    ConsumerProfile, ControlCommand, UiEvent, WakeCommand, WsIngressCommand,
+    ConsumerProfile, ControlCommand, EffectExecutor, UiEvent, WakeCommand, WsIngressCommand,
 };
 pub use types::{
     AgentDelivery, BrokerDelivery, BrokerMessage, ConnectionState, ControlDelivery, EffectDelivery,
@@ -97,6 +97,23 @@ pub trait Broker: Send + Sync + 'static {
         }
     }
 
+    /// Receive an effect owned by the engine/web-service infrastructure host. This discriminator
+    /// prevents timers and interaction waits from being claimed by provider workers on a shared
+    /// competing-consumer channel.
+    async fn receive_infrastructure_effect(
+        &self,
+        consumer: &str,
+    ) -> Result<EffectDelivery, BrokerError> {
+        loop {
+            let delivery = self.receive_effect(consumer).await?;
+            if delivery.command.executor == EffectExecutor::Infrastructure {
+                return Ok(delivery);
+            }
+            self.nack_effect(consumer, delivery.delivery_id).await?;
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    }
+
     /// Acknowledge successful processing of a delivery.
     async fn ack(&self, consumer: &str, delivery_id: uuid::Uuid) -> Result<(), BrokerError>;
 
@@ -118,7 +135,9 @@ pub trait Broker: Send + Sync + 'static {
     ) -> Result<EffectDelivery, BrokerError> {
         loop {
             let delivery = self.receive_effect(&profile.id).await?;
-            if delivery.command.target.matches(profile) {
+            if delivery.command.executor == EffectExecutor::Provider
+                && delivery.command.target.matches(profile)
+            {
                 return Ok(delivery);
             }
             self.nack_effect(&profile.id, delivery.delivery_id).await?;

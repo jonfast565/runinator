@@ -278,6 +278,7 @@ async fn assert_workflow_vm_readback<T: DatabaseImpl + WorkflowVmStore>(
         continuation_id: continuation.id,
         attempt: 0,
         request,
+        executor: runinator_comm::EffectExecutor::Infrastructure,
         target: Default::default(),
         trace_id: Uuid::now_v7(),
         trace_context: Default::default(),
@@ -764,7 +765,18 @@ async fn assert_due_set_skips_disabled_workflow<T: DatabaseImpl>(
         "a trigger on a disabled workflow is not due"
     );
     let claimed = db
-        .claim_due_workflow_trigger_firings("parity".to_string(), now, 10)
+        .claim_due_workflow_trigger_firings(
+            "parity".to_string(),
+            now,
+            10,
+            std::collections::HashMap::from([(
+                workflow_id,
+                runinator_store::roles::ScheduledWorkflowVm {
+                    snapshot: workflow.clone(),
+                    module: WorkflowModule::new(vec![WorkflowInstruction::Return]),
+                },
+            )]),
+        )
         .await
         .unwrap();
     assert!(

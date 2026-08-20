@@ -9,11 +9,16 @@ use axum::{Extension, Json, extract::Path, http::StatusCode};
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::{
     auth::{AuthContext, Permission},
+    value::Value,
+    web::TaskResponse,
+    workflow_vm::WorkflowEffectStatus,
     workflow_vm::WorkflowVmCursor,
 };
+use serde::Deserialize;
 use uuid::Uuid;
 
 use runinator_ws_core::{
+    events::{EventSender, emit_workflow_run},
     models::ApiResponse,
     openapi::docs::{EndpointDoc, Example, endpoint},
     responses::{api_error, not_found},
@@ -101,6 +106,104 @@ pub async fn get_effect<T: DatabaseImpl>(
     }
 }
 
+pub async fn list_effect_output<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(effect_id): Path<Uuid>,
+) -> (StatusCode, Json<ApiResponse>) {
+    let effect = match db.fetch_workflow_effect(effect_id).await {
+        Ok(Some(effect)) => effect,
+        Ok(None) => return not_found(format!("workflow effect {effect_id} not found")),
+        Err(err) => return api_error(err.to_string()),
+    };
+    if let Err(reply) = authorize_run(db.as_ref(), &ctx, effect.workflow_run_id).await {
+        return reply;
+    }
+    match db.fetch_workflow_effect_output(effect_id).await {
+        Ok(records) => (
+            StatusCode::OK,
+            Json(ApiResponse::WorkflowEffectOutput(records)),
+        ),
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SettleEffectRequest {
+    pub status: WorkflowEffectStatus,
+    #[serde(default)]
+    pub output: Option<Value>,
+    #[serde(default)]
+    pub message: Option<String>,
+}
+
+/// Resolve an approval/input/signal/gate/event wait by its durable effect identity. Provider
+/// effects use the broker result path; accepting them here would bypass worker attempt ownership.
+pub async fn settle_effect<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(events): Extension<EventSender>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(effect_id): Path<Uuid>,
+    Json(request): Json<SettleEffectRequest>,
+) -> (StatusCode, Json<ApiResponse>) {
+    let effect = match db.fetch_workflow_effect(effect_id).await {
+        Ok(Some(effect)) => effect,
+        Ok(None) => return not_found(format!("workflow effect {effect_id} not found")),
+        Err(err) => return api_error(err.to_string()),
+    };
+    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
+        .require_run_workflow(effect.workflow_run_id, Permission::Run)
+        .await
+    {
+        return reply;
+    }
+    if matches!(
+        effect.request,
+        runinator_models::workflow_vm::WorkflowEffectRequest::Action { .. }
+    ) {
+        return runinator_ws_core::responses::bad_request(
+            "provider effects can only be settled by their assigned worker",
+        );
+    }
+    if !request.status.is_terminal() {
+        return runinator_ws_core::responses::bad_request(
+            "effect settlement status must be terminal",
+        );
+    }
+    match db
+        .settle_workflow_effect(
+            effect_id,
+            effect.attempt,
+            request.status,
+            request.output,
+            request.message,
+            chrono::Utc::now(),
+        )
+        .await
+    {
+        Ok(applied) => {
+            if applied {
+                let org_id =
+                    crate::repository::org_id_for_workflow_run(db.as_ref(), effect.workflow_run_id)
+                        .await;
+                emit_workflow_run(&events, effect.workflow_run_id, org_id);
+            }
+            (
+                StatusCode::OK,
+                Json(ApiResponse::TaskResponse(TaskResponse {
+                    success: applied,
+                    message: if applied {
+                        format!("Workflow effect {effect_id} settled")
+                    } else {
+                        format!("Workflow effect {effect_id} was already settled or stale")
+                    },
+                })),
+            )
+        }
+        Err(err) => api_error(err.to_string()),
+    }
+}
+
 pub async fn list_journal<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
@@ -138,10 +241,17 @@ pub async fn list_cursors<T: DatabaseImpl>(
             let cursors = continuations
                 .into_iter()
                 .map(|continuation| {
-                    let location = module.graph_location(continuation.instruction_pointer);
+                    // A suspended continuation has already advanced past the yielding opcode; the
+                    // operator-facing cursor still belongs to the node that produced the effect.
+                    let instruction_pointer = if continuation.awaiting_effect_id.is_some() {
+                        continuation.instruction_pointer.saturating_sub(1)
+                    } else {
+                        continuation.instruction_pointer
+                    };
+                    let location = module.graph_location(instruction_pointer);
                     WorkflowVmCursor {
                         continuation_id: continuation.id,
-                        instruction_pointer: continuation.instruction_pointer,
+                        instruction_pointer,
                         node_id: location.map(|entry| entry.node_id.clone()),
                         edge_label: location.and_then(|entry| entry.edge_label.clone()),
                         status: continuation.status,
@@ -158,7 +268,7 @@ pub async fn list_cursors<T: DatabaseImpl>(
 }
 
 pub fn routes<T: DatabaseImpl>(pool: Arc<T>) -> axum::Router {
-    use axum::routing::get;
+    use axum::routing::{get, post};
     axum::Router::new()
         .route(
             "/workflow_runs/{id}/continuations",
@@ -182,7 +292,15 @@ pub fn routes<T: DatabaseImpl>(pool: Arc<T>) -> axum::Router {
         )
         .route(
             "/workflow_effects/{id}",
-            get(get_effect::<T>).layer(Extension(pool)),
+            get(get_effect::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflow_effects/{id}/output",
+            get(list_effect_output::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
+            "/workflow_effects/{id}/settle",
+            post(settle_effect::<T>).layer(Extension(pool)),
         )
 }
 

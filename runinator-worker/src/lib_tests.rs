@@ -1,7 +1,7 @@
 use runinator_broker::{Broker, in_memory::InMemoryBroker};
 use runinator_comm::{
     ActionCommand, ActionTarget, AgentCommand, AgentDirectiveKind, AgentDirectiveStatus,
-    WorkflowResultEventKind, WsIngressCommand,
+    EffectCommand, EffectExecutor, EffectResultKind, WorkflowResultEventKind, WsIngressCommand,
 };
 use runinator_models::json;
 use runinator_models::workflows::{WorkflowAction, WorkflowStatus};
@@ -13,6 +13,72 @@ use uuid::Uuid;
 
 use crate::agent::outbox::NoopOutbox;
 use crate::{build_broker, config::Config, default_provider_factory, output_sink::RunOutputSink};
+
+#[tokio::test]
+async fn worker_executes_provider_effects_without_node_run_identity() {
+    let broker = std::sync::Arc::new(InMemoryBroker::new());
+    let shutdown = std::sync::Arc::new(tokio::sync::Notify::new());
+    let mut runtime = blocking_worker_runtime(
+        broker.clone(),
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        shutdown.clone(),
+    );
+    runtime.providers = std::sync::Arc::new(|| {
+        vec![Box::new(ImmediateProvider) as runinator_provider_catalog::StaticProvider]
+    });
+    let task = tokio::spawn(crate::worker::start_worker_loop(runtime));
+    let command = EffectCommand {
+        version: runinator_models::workflow_vm::WORKFLOW_EFFECT_PROTOCOL_VERSION,
+        command_id: Uuid::now_v7(),
+        effect_id: Uuid::now_v7(),
+        workflow_run_id: Uuid::now_v7(),
+        continuation_id: Uuid::now_v7(),
+        attempt: 0,
+        request: runinator_models::workflow_vm::WorkflowEffectRequest::Action {
+            provider: "immediate".into(),
+            function: "execute".into(),
+            input: json!({}),
+            timeout_seconds: Some(5),
+            retry: Default::default(),
+            tags: Vec::new(),
+            required_labels: Default::default(),
+            idempotency_key: None,
+            function_binding: None,
+        },
+        executor: EffectExecutor::Provider,
+        target: ActionTarget::Any,
+        trace_id: Uuid::now_v7(),
+        trace_context: Default::default(),
+        idempotency_key: "effect-once".into(),
+    };
+    broker
+        .publish_effect(runinator_broker::EffectMessage {
+            command: command.clone(),
+            dedupe_key: Some(command.idempotency_key.clone()),
+            enqueued_at: chrono::Utc::now(),
+        })
+        .await
+        .unwrap();
+
+    let delivery = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        broker.receive_effect_result("test-engine"),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(delivery.result.effect_id, command.effect_id);
+    assert!(matches!(
+        delivery.result.kind,
+        EffectResultKind::Status {
+            status: runinator_models::workflow_vm::WorkflowEffectStatus::Succeeded,
+            output: Some(ref output),
+            ..
+        } if output == &json!({"ok": true})
+    ));
+    shutdown.notify_waiters();
+    task.await.unwrap().unwrap();
+}
 
 #[tokio::test]
 async fn build_broker_rejects_kafka_without_result_topic() {
@@ -402,6 +468,36 @@ fn an_action_declaring_no_results_accepts_any_output() {
     };
     crate::executor::validate_execution_result(&action_metadata, &action, &result)
         .expect("undeclared output is unconstrained");
+}
+
+struct ImmediateProvider;
+
+impl runinator_plugin::provider::Provider for ImmediateProvider {
+    fn name(&self) -> String {
+        "immediate".into()
+    }
+
+    fn metadata(&self) -> runinator_models::providers::ProviderMetadata {
+        runinator_models::providers::ProviderMetadata {
+            name: "immediate".into(),
+            actions: vec![ActionMetadata::new("execute", "returns immediately")],
+            metadata: Default::default(),
+        }
+    }
+
+    fn execute_service(
+        &self,
+        _request: runinator_models::runs::ProviderExecutionRequest,
+        _sink: Option<std::sync::Arc<dyn runinator_plugin::provider::ProviderEventSink>>,
+        _token: runinator_plugin::cancel::CancellationToken,
+    ) -> Result<TaskExecutionResult, runinator_models::errors::SendableError> {
+        Ok(TaskExecutionResult {
+            message: Some("done".into()),
+            output_json: Some(json!({ "ok": true })),
+            chunks: Vec::new(),
+            artifacts: Vec::new(),
+        })
+    }
 }
 
 // a provider whose execution blocks until its cancellation token fires, flagging when it starts.

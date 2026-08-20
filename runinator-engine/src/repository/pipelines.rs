@@ -458,6 +458,22 @@ pub async fn fetch_pipeline_run<T: DatabaseImpl>(
     db.fetch_pipeline_run(pipeline_run_id).await
 }
 
+/// Apply pipeline graph consequences only after the VM has durably settled a member run. Keeping
+/// this dispatch in the engine prevents the pure VM host from depending on the legacy reducer
+/// persistence surface.
+pub async fn advance_pipeline_from_vm_terminal<T: DatabaseImpl>(
+    db: &T,
+    workflow_run_id: Uuid,
+) -> Result<(), SendableError> {
+    let Some(run) = db.fetch_workflow_run(workflow_run_id).await? else {
+        return Ok(());
+    };
+    if run.pipeline_run_id.is_some() {
+        runinator_runtime::settle_pipeline_member_run(db, &run).await?;
+    }
+    Ok(())
+}
+
 pub async fn fetch_recent_pipeline_runs<T: DatabaseImpl>(
     db: &T,
     limit: i64,

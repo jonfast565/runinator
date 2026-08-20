@@ -91,6 +91,12 @@ pub async fn run_background_engine<T: DatabaseImpl>(
     loops.spawn(run_effect_result_consumer(
         pool.clone(),
         broker.clone(),
+        publisher.clone(),
+        shutdown.clone(),
+    ));
+    loops.spawn(crate::run_infrastructure_effect_host(
+        pool.clone(),
+        broker.clone(),
         shutdown.clone(),
     ));
     loops.spawn(run_ingress_consumer(

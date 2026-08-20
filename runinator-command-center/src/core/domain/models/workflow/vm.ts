@@ -15,6 +15,7 @@ export interface WorkflowContinuation {
   fork_key?: string | null;
   awaiting_effect_id?: string | null;
   status: string;
+  operator_paused?: boolean;
   revision: number;
 }
 
@@ -32,6 +33,18 @@ export interface WorkflowEffect {
   created_at: number;
   updated_at: number;
   finished_at?: number | null;
+}
+
+export interface WorkflowEffectOutputEvent {
+  event_id: string;
+  effect_id: string;
+  workflow_run_id: string;
+  continuation_id: string;
+  attempt: number;
+  output:
+    | { type: "chunk"; stream: string; content: string }
+    | { type: "artifact"; artifact: JsonValue };
+  created_at: number;
 }
 
 export interface WorkflowJournalRecord {

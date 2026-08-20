@@ -1,7 +1,8 @@
 use crate::{
     tcp::types::{TcpRequest, TcpResponse},
     AgentCommand, AgentDelivery, Broker, BrokerDelivery, BrokerError, BrokerMessage,
-    ConsumerProfile, ControlCommand, ControlDelivery, EventDelivery, EventMessage, IngressDelivery,
+    ConsumerProfile, ControlCommand, ControlDelivery, EffectDelivery, EffectMessage,
+    EffectResultDelivery, EffectResultMessage, EventDelivery, EventMessage, IngressDelivery,
     IngressMessage, ResultDelivery, ResultMessage, WakeDelivery, WakeMessage,
 };
 use async_trait::async_trait;
@@ -89,6 +90,10 @@ impl TcpBroker {
 
 #[async_trait]
 impl Broker for TcpBroker {
+    fn supports_workflow_effect_channels(&self) -> bool {
+        true
+    }
+
     fn supports_workflow_result_channels(&self) -> bool {
         true
     }
@@ -306,6 +311,134 @@ impl Broker for TcpBroker {
             })
             .await?;
         Self::expect_ok(response)
+    }
+
+    async fn publish_effect(&self, message: EffectMessage) -> Result<(), BrokerError> {
+        Self::expect_ok(self.request(TcpRequest::PublishEffect { message }).await?)
+    }
+
+    async fn receive_effect(&self, consumer: &str) -> Result<EffectDelivery, BrokerError> {
+        match self
+            .receive_request(TcpRequest::ReceiveEffect {
+                consumer: consumer.to_string(),
+            })
+            .await?
+        {
+            TcpResponse::EffectDelivery { delivery } => Ok(delivery),
+            TcpResponse::Error { message } => Err(BrokerError::Internal(message)),
+            _ => Err(BrokerError::Internal(
+                "unexpected effect delivery response".into(),
+            )),
+        }
+    }
+
+    async fn receive_effect_for(
+        &self,
+        profile: &ConsumerProfile,
+    ) -> Result<EffectDelivery, BrokerError> {
+        match self
+            .receive_request(TcpRequest::ReceiveEffectFor {
+                profile: profile.clone(),
+            })
+            .await?
+        {
+            TcpResponse::EffectDelivery { delivery } => Ok(delivery),
+            TcpResponse::Error { message } => Err(BrokerError::Internal(message)),
+            _ => Err(BrokerError::Internal(
+                "unexpected effect delivery response".into(),
+            )),
+        }
+    }
+
+    async fn receive_infrastructure_effect(
+        &self,
+        consumer: &str,
+    ) -> Result<EffectDelivery, BrokerError> {
+        match self
+            .receive_request(TcpRequest::ReceiveInfrastructureEffect {
+                consumer: consumer.to_string(),
+            })
+            .await?
+        {
+            TcpResponse::EffectDelivery { delivery } => Ok(delivery),
+            TcpResponse::Error { message } => Err(BrokerError::Internal(message)),
+            _ => Err(BrokerError::Internal(
+                "unexpected infrastructure-effect delivery response".into(),
+            )),
+        }
+    }
+
+    async fn ack_effect(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        Self::expect_ok(
+            self.request(TcpRequest::AckEffect {
+                consumer: consumer.to_string(),
+                delivery_id,
+            })
+            .await?,
+        )
+    }
+
+    async fn nack_effect(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        Self::expect_ok(
+            self.request(TcpRequest::NackEffect {
+                consumer: consumer.to_string(),
+                delivery_id,
+            })
+            .await?,
+        )
+    }
+
+    async fn publish_effect_result(&self, message: EffectResultMessage) -> Result<(), BrokerError> {
+        Self::expect_ok(
+            self.request(TcpRequest::PublishEffectResult { message })
+                .await?,
+        )
+    }
+
+    async fn receive_effect_result(
+        &self,
+        consumer: &str,
+    ) -> Result<EffectResultDelivery, BrokerError> {
+        match self
+            .receive_request(TcpRequest::ReceiveEffectResult {
+                consumer: consumer.to_string(),
+            })
+            .await?
+        {
+            TcpResponse::EffectResultDelivery { delivery } => Ok(delivery),
+            TcpResponse::Error { message } => Err(BrokerError::Internal(message)),
+            _ => Err(BrokerError::Internal(
+                "unexpected effect-result delivery response".into(),
+            )),
+        }
+    }
+
+    async fn ack_effect_result(
+        &self,
+        consumer: &str,
+        delivery_id: Uuid,
+    ) -> Result<(), BrokerError> {
+        Self::expect_ok(
+            self.request(TcpRequest::AckEffectResult {
+                consumer: consumer.to_string(),
+                delivery_id,
+            })
+            .await?,
+        )
+    }
+
+    async fn nack_effect_result(
+        &self,
+        consumer: &str,
+        delivery_id: Uuid,
+    ) -> Result<(), BrokerError> {
+        Self::expect_ok(
+            self.request(TcpRequest::NackEffectResult {
+                consumer: consumer.to_string(),
+                delivery_id,
+            })
+            .await?,
+        )
     }
 
     async fn publish_wake(&self, message: WakeMessage) -> Result<(), BrokerError> {

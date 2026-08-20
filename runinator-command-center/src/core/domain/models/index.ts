@@ -86,6 +86,7 @@ export type { WorkflowDefinition } from "./workflow/definition";
 export type {
   WorkflowContinuation,
   WorkflowEffect,
+  WorkflowEffectOutputEvent,
   WorkflowJournalRecord,
   WorkflowVmCursor,
 } from "./workflow/vm";

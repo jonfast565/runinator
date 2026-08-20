@@ -30,6 +30,7 @@ use runinator_models::{
 use std::future::Future;
 use uuid::Uuid;
 
+use crate::roles::NewWorkflowVmRun;
 use crate::workflow_mutex::{WorkflowMutexClaim, WorkflowMutexClaimResult, WorkflowMutexWake};
 
 /// the persistence operations used by the graph runtime's store-backed host.
@@ -40,6 +41,20 @@ use crate::workflow_mutex::{WorkflowMutexClaim, WorkflowMutexClaimResult, Workfl
 pub trait RuntimeStore:
     crate::roles::InvocationStore + crate::roles::TaskRunStore + Send + Sync + 'static
 {
+    /// Transitional pipeline seam: atomically bootstrap a compiled member workflow. Pipeline
+    /// orchestration supplies the already-compiled module so persistence never depends on the
+    /// graph compiler. Removed together with `RuntimeStore` at the legacy-runtime cutover.
+    fn bootstrap_workflow_vm_run(
+        &self,
+        start: NewWorkflowVmRun,
+    ) -> impl Future<Output = Result<WorkflowRun, SendableError>> + Send;
+
+    /// Read the terminal value recorded by the VM for pipeline parameter propagation.
+    fn fetch_workflow_vm_result(
+        &self,
+        workflow_run_id: Uuid,
+    ) -> impl Future<Output = Result<Option<Value>, SendableError>> + Send;
+
     /// Fetch a workflow definition by its identifier.
     fn fetch_workflow(
         &self,

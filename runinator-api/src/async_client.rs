@@ -18,19 +18,20 @@ use runinator_models::{
         api_scheduler_action_dispatch_failed, api_scheduler_action_dispatch_published,
         api_scheduler_ready_node_process, api_scheduler_workflow_run_claim_release,
         api_scheduler_workflow_run_claim_renew, api_workflow, api_workflow_continuation,
-        api_workflow_duplicate, api_workflow_effect, api_workflow_node_run,
-        api_workflow_node_run_artifacts, api_workflow_node_run_chunks, api_workflow_node_run_claim,
-        api_workflow_node_run_release, api_workflow_node_transitions, api_workflow_revision,
-        api_workflow_revision_restore, api_workflow_revisions, api_workflow_run,
-        api_workflow_run_artifacts, api_workflow_run_command, api_workflow_run_continuations,
-        api_workflow_run_cursors, api_workflow_run_effects, api_workflow_run_journal,
-        api_workflow_run_nodes, api_workflow_run_rename, api_workflow_run_replay,
-        api_workflow_run_transitions, api_workflow_runs, api_workflow_trigger,
-        api_workflow_trigger_backfill, api_workflow_trigger_runs, api_workflow_triggers,
-        API_APPROVALS, API_ARTIFACTS_CONTENT, API_CREDENTIALS, API_FREEZE_WINDOWS, API_FUNCTIONS,
-        API_FUNCTIONS_CATALOG, API_FUNCTION_ARTIFACTS, API_FUNCTION_EXPORTS, API_IDEMPOTENCY_KEYS,
-        API_IDEMPOTENCY_KEYS_CLAIM, API_IDEMPOTENCY_KEYS_COMPLETE, API_IDEMPOTENCY_KEYS_RELEASE,
-        API_PACKS_IMPORT, API_PROVIDERS, API_REPLICAS, API_RUNS, API_SCHEDULER_ACTION_DISPATCHES,
+        api_workflow_duplicate, api_workflow_effect, api_workflow_effect_output,
+        api_workflow_node_run, api_workflow_node_run_artifacts, api_workflow_node_run_chunks,
+        api_workflow_node_run_claim, api_workflow_node_run_release, api_workflow_node_transitions,
+        api_workflow_revision, api_workflow_revision_restore, api_workflow_revisions,
+        api_workflow_run, api_workflow_run_artifacts, api_workflow_run_command,
+        api_workflow_run_continuations, api_workflow_run_cursors, api_workflow_run_effects,
+        api_workflow_run_journal, api_workflow_run_nodes, api_workflow_run_rename,
+        api_workflow_run_replay, api_workflow_run_transitions, api_workflow_runs,
+        api_workflow_trigger, api_workflow_trigger_backfill, api_workflow_trigger_runs,
+        api_workflow_triggers, API_APPROVALS, API_ARTIFACTS_CONTENT, API_CREDENTIALS,
+        API_FREEZE_WINDOWS, API_FUNCTIONS, API_FUNCTIONS_CATALOG, API_FUNCTION_ARTIFACTS,
+        API_FUNCTION_EXPORTS, API_IDEMPOTENCY_KEYS, API_IDEMPOTENCY_KEYS_CLAIM,
+        API_IDEMPOTENCY_KEYS_COMPLETE, API_IDEMPOTENCY_KEYS_RELEASE, API_PACKS_IMPORT,
+        API_PROVIDERS, API_REPLICAS, API_RUNS, API_SCHEDULER_ACTION_DISPATCHES,
         API_SCHEDULER_ACTION_DISPATCHES_CLAIM, API_SCHEDULER_ACTION_DISPATCHES_PENDING,
         API_SCHEDULER_READY_NODES_CLAIM, API_SCHEDULER_WORKFLOW_RUNS_CLAIM,
         API_SCHEDULER_WORKFLOW_TRIGGER_FIRINGS_CLAIM, API_SUPERVISOR_STATUS, API_WORKFLOWS,
@@ -66,7 +67,10 @@ use runinator_models::{
     schedules::{BackfillRequest, BackfillResponse, FreezeWindow, NewFreezeWindow},
     telemetry::ReplicaSampleSeries,
     web::TaskResponse,
-    workflow_vm::{WorkflowContinuation, WorkflowEffect, WorkflowJournalRecord, WorkflowVmCursor},
+    workflow_vm::{
+        WorkflowContinuation, WorkflowEffect, WorkflowEffectOutputEvent, WorkflowEffectStatus,
+        WorkflowJournalRecord, WorkflowVmCursor,
+    },
     workflows::{
         WorkflowBundle, WorkflowDefinition, WorkflowNodeRun, WorkflowNodeRunArtifact,
         WorkflowNodeRunChunk, WorkflowRun, WorkflowRunArtifact, WorkflowSimulateRequest,
@@ -1895,6 +1899,37 @@ where
         let response =
             Self::handle_response(url.clone(), self.http_get(url.clone()).send().await?).await?;
         Ok(response.json::<WorkflowEffect>().await?)
+    }
+
+    pub async fn fetch_workflow_effect_output(
+        &self,
+        effect_id: Uuid,
+    ) -> Result<Vec<WorkflowEffectOutputEvent>> {
+        let url = self
+            .build_url(&api_workflow_effect_output(effect_id))
+            .await?;
+        let response =
+            Self::handle_response(url.clone(), self.http_get(url.clone()).send().await?).await?;
+        Ok(response.json::<Vec<WorkflowEffectOutputEvent>>().await?)
+    }
+
+    pub async fn settle_workflow_effect(
+        &self,
+        effect_id: Uuid,
+        status: WorkflowEffectStatus,
+        output: Option<Value>,
+        message: Option<String>,
+    ) -> Result<TaskResponse> {
+        let url = self
+            .build_url(&format!("{}/settle", api_workflow_effect(effect_id)))
+            .await?;
+        let response = self
+            .http_post(url.clone())
+            .json(&json!({ "status": status, "output": output, "message": message }))
+            .send()
+            .await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.json::<TaskResponse>().await?)
     }
 
     pub async fn fetch_workflow_journal(

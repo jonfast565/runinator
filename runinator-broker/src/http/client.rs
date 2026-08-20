@@ -1,12 +1,14 @@
 use crate::{
     http::types::{
-        AckRequest, PublishAgentRequest, PublishControlRequest, PublishEventRequest,
-        PublishIngressRequest, PublishRequest, PublishWakeRequest, ReceiveAgentResponse,
-        ReceiveControlResponse, ReceiveEventResponse, ReceiveIngressResponse, ReceiveRequest,
+        AckRequest, PublishAgentRequest, PublishControlRequest, PublishEffectRequest,
+        PublishEffectResultRequest, PublishEventRequest, PublishIngressRequest, PublishRequest,
+        PublishWakeRequest, ReceiveAgentResponse, ReceiveControlResponse, ReceiveEffectResponse,
+        ReceiveEffectResultResponse, ReceiveEventResponse, ReceiveIngressResponse, ReceiveRequest,
         ReceiveResponse, ReceiveResultResponse, ReceiveWakeResponse,
     },
     AgentCommand, AgentDelivery, Broker, BrokerDelivery, BrokerError, BrokerMessage,
-    ConsumerProfile, ControlCommand, ControlDelivery, EventDelivery, EventMessage, IngressDelivery,
+    ConsumerProfile, ControlCommand, ControlDelivery, EffectDelivery, EffectMessage,
+    EffectResultDelivery, EffectResultMessage, EventDelivery, EventMessage, IngressDelivery,
     IngressMessage, ResultDelivery, ResultMessage, WakeDelivery, WakeMessage,
 };
 use async_trait::async_trait;
@@ -104,10 +106,42 @@ impl HttpBroker {
             ))),
         }
     }
+
+    async fn receive_effect_request(
+        &self,
+        path: &str,
+        consumer: &str,
+        profile: Option<ConsumerProfile>,
+    ) -> Result<EffectDelivery, BrokerError> {
+        let response = self
+            .client
+            .post(self.endpoint(path)?)
+            .json(&ReceiveRequest {
+                consumer: consumer.to_string(),
+                profile,
+            })
+            .send()
+            .await
+            .map_err(|error| BrokerError::Internal(error.to_string()))?;
+        match response.status() {
+            StatusCode::OK => response
+                .json::<ReceiveEffectResponse>()
+                .await
+                .map(|payload| payload.delivery)
+                .map_err(|error| BrokerError::Internal(error.to_string())),
+            status => Err(BrokerError::Internal(format!(
+                "unexpected effect receive status: {status}"
+            ))),
+        }
+    }
 }
 
 #[async_trait]
 impl Broker for HttpBroker {
+    fn supports_workflow_effect_channels(&self) -> bool {
+        true
+    }
+
     fn supports_workflow_result_channels(&self) -> bool {
         true
     }
@@ -371,6 +405,111 @@ impl Broker for HttpBroker {
 
     async fn nack_result(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
         self.post_ack("results/nack", consumer, delivery_id).await
+    }
+
+    async fn publish_effect(&self, message: EffectMessage) -> Result<(), BrokerError> {
+        let response = self
+            .client
+            .post(self.endpoint("effects/publish")?)
+            .json(&PublishEffectRequest { message })
+            .send()
+            .await
+            .map_err(|error| BrokerError::Internal(error.to_string()))?;
+        match response.status() {
+            StatusCode::OK | StatusCode::CREATED => Ok(()),
+            status => Err(BrokerError::Internal(format!(
+                "unexpected effect publish status: {status}"
+            ))),
+        }
+    }
+
+    async fn receive_effect(&self, consumer: &str) -> Result<EffectDelivery, BrokerError> {
+        self.receive_effect_request("effects/receive", consumer, None)
+            .await
+    }
+
+    async fn receive_effect_for(
+        &self,
+        profile: &ConsumerProfile,
+    ) -> Result<EffectDelivery, BrokerError> {
+        self.receive_effect_request("effects/receive", &profile.id, Some(profile.clone()))
+            .await
+    }
+
+    async fn receive_infrastructure_effect(
+        &self,
+        consumer: &str,
+    ) -> Result<EffectDelivery, BrokerError> {
+        self.receive_effect_request("effects/infrastructure/receive", consumer, None)
+            .await
+    }
+
+    async fn ack_effect(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        self.post_ack("effects/ack", consumer, delivery_id).await
+    }
+
+    async fn nack_effect(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        self.post_ack("effects/nack", consumer, delivery_id).await
+    }
+
+    async fn publish_effect_result(&self, message: EffectResultMessage) -> Result<(), BrokerError> {
+        let response = self
+            .client
+            .post(self.endpoint("effect-results/publish")?)
+            .json(&PublishEffectResultRequest { message })
+            .send()
+            .await
+            .map_err(|error| BrokerError::Internal(error.to_string()))?;
+        match response.status() {
+            StatusCode::OK | StatusCode::CREATED => Ok(()),
+            status => Err(BrokerError::Internal(format!(
+                "unexpected effect-result publish status: {status}"
+            ))),
+        }
+    }
+
+    async fn receive_effect_result(
+        &self,
+        consumer: &str,
+    ) -> Result<EffectResultDelivery, BrokerError> {
+        let response = self
+            .client
+            .post(self.endpoint("effect-results/receive")?)
+            .json(&ReceiveRequest {
+                consumer: consumer.to_string(),
+                profile: None,
+            })
+            .send()
+            .await
+            .map_err(|error| BrokerError::Internal(error.to_string()))?;
+        match response.status() {
+            StatusCode::OK => response
+                .json::<ReceiveEffectResultResponse>()
+                .await
+                .map(|payload| payload.delivery)
+                .map_err(|error| BrokerError::Internal(error.to_string())),
+            status => Err(BrokerError::Internal(format!(
+                "unexpected effect-result receive status: {status}"
+            ))),
+        }
+    }
+
+    async fn ack_effect_result(
+        &self,
+        consumer: &str,
+        delivery_id: Uuid,
+    ) -> Result<(), BrokerError> {
+        self.post_ack("effect-results/ack", consumer, delivery_id)
+            .await
+    }
+
+    async fn nack_effect_result(
+        &self,
+        consumer: &str,
+        delivery_id: Uuid,
+    ) -> Result<(), BrokerError> {
+        self.post_ack("effect-results/nack", consumer, delivery_id)
+            .await
     }
 
     async fn publish_wake(&self, message: WakeMessage) -> Result<(), BrokerError> {

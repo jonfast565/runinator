@@ -1,7 +1,8 @@
 use crate::{
     AgentCommand, AgentDelivery, BrokerDelivery, BrokerMessage, ConsumerProfile, ControlCommand,
-    ControlDelivery, EventDelivery, EventMessage, IngressDelivery, IngressMessage, ResultDelivery,
-    ResultMessage, WakeDelivery, WakeMessage,
+    ControlDelivery, EffectDelivery, EffectMessage, EffectResultDelivery, EffectResultMessage,
+    EventDelivery, EventMessage, IngressDelivery, IngressMessage, ResultDelivery, ResultMessage,
+    WakeDelivery, WakeMessage,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -53,6 +54,26 @@ pub struct PublishResultRequest {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ReceiveResultResponse {
     pub delivery: ResultDelivery,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PublishEffectRequest {
+    pub message: EffectMessage,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ReceiveEffectResponse {
+    pub delivery: EffectDelivery,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PublishEffectResultRequest {
+    pub message: EffectResultMessage,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ReceiveEffectResultResponse {
+    pub delivery: EffectResultDelivery,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

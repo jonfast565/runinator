@@ -5,8 +5,7 @@ import {
   continueWorkflowRun,
   createWorkflowRun,
   fetchGates,
-  fetchWorkflowNodeRunArtifacts,
-  fetchWorkflowNodeRunChunks,
+  fetchWorkflowEffectOutput,
   fetchWorkflowRun,
   fetchWorkflowRuns,
   openGate,
@@ -15,6 +14,7 @@ import {
   renameWorkflowRun as renameWorkflowRunApi,
   replayWorkflowRun as replayWorkflowRunApi,
   requestRunInterrupt,
+  settleWorkflowEffect,
   resumeWorkflowRun,
   rerunWorkflowNode,
   runToCursorWorkflowRun,
@@ -27,8 +27,6 @@ import {
 import type {
   GateRecord,
   JsonRecord,
-  RunArtifact,
-  RunChunk,
   RunSummary,
   WorkflowRunDetail,
 } from "../../domain/models";
@@ -908,7 +906,31 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     }
 
     const requestId = ++internal.nextWorkflowRunGateRequestId;
-    const gates = await fetchGates(runId).catch(() => null);
+    const vmGates = (activeDetail?.effects ?? []).flatMap((effect) => {
+      if (!isRecord(effect.request) || effect.request.type !== "gate") {
+        return [];
+      }
+
+      const node = activeDetail?.nodes.find((candidate) => candidate.id === effect.id);
+
+      if (!node) {
+        return [];
+      }
+
+      return [
+        {
+          id: effect.id,
+          workflow_run_id: runId,
+          node_id: node.node_id,
+          kind: typeof effect.request.kind === "string" ? effect.request.kind : "manual",
+          status: effect.status === "requested" ? "pending" : effect.status,
+          label: typeof effect.request.label === "string" ? effect.request.label : null,
+          condition: effect.request.condition,
+          metadata: isRecord(effect.request.metadata) ? effect.request.metadata : {},
+        },
+      ];
+    });
+    const gates = vmGates.length > 0 ? vmGates : await fetchGates(runId).catch(() => null);
 
     if (requestId !== internal.nextWorkflowRunGateRequestId) {
       return;
@@ -945,9 +967,20 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     }
 
     const trimmed = reason?.trim() ? reason.trim() : undefined;
+    const vmEffect = host.state.workflowRunDetail?.effects?.find((effect) => effect.id === gateId);
     const response = await host.ctx.runOperation(
       action === "open" ? "Opening gate" : "Closing gate",
-      () => (action === "open" ? openGate(gateId, trimmed) : closeGate(gateId, trimmed)),
+      () =>
+        vmEffect
+          ? settleWorkflowEffect(
+              gateId,
+              "succeeded",
+              { open: action === "open", reason: trimmed ?? null },
+              trimmed ?? `Gate ${action === "open" ? "opened" : "closed"}`,
+            )
+          : action === "open"
+            ? openGate(gateId, trimmed)
+            : closeGate(gateId, trimmed),
     );
     host.ctx.setStatus(response.message || `Gate ${action === "open" ? "opened" : "closed"}`);
     await Promise.all([fetchWorkflowRunDetail(runId, true), refreshWorkflowRunGates(runId, true)]);
@@ -1113,29 +1146,38 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     host.state.selectedWorkflowNodeRunId = null;
     host.state.workflowNodeDetailExtra = "";
     const nodeId = host.state.selectedWorkflowRunNodeId || host.state.selectedStepId;
-    const step = host.state.workflowRunDetail?.nodes.find((node) => node.node_id === nodeId);
+    const detail = host.state.workflowRunDetail;
+    const cursor = detail?.vm_cursors?.find((cursor) => cursor.node_id === nodeId);
+    const continuation = detail?.continuations?.find(
+      (candidate) => candidate.id === cursor?.continuation_id,
+    );
+    const effect = continuation?.awaiting_effect_id
+      ? detail?.effects?.find((candidate) => candidate.id === continuation.awaiting_effect_id)
+      : [...(detail?.effects ?? [])]
+          .reverse()
+          .find((candidate) => candidate.continuation_id === continuation?.id);
 
-    if (!step?.id) {
+    if (!effect) {
       return;
     }
 
-    host.state.selectedWorkflowNodeRunId = step.id;
-    const [nodeChunks, nodeArtifacts] = await Promise.all([
-      host.ctx
-        .runOperation("Loading node chunks", () => fetchWorkflowNodeRunChunks(step.id))
-        .catch(() => [] as RunChunk[]),
-      host.ctx
-        .runOperation("Loading node artifacts", () => fetchWorkflowNodeRunArtifacts(step.id))
-        .catch(() => [] as RunArtifact[]),
-    ]);
+    const output = await host.ctx
+      .runOperation("Loading effect output", () => fetchWorkflowEffectOutput(effect.id))
+      .catch(() => []);
+    const chunks = output.filter((event) => event.output.type === "chunk");
+    const artifacts = output.filter((event) => event.output.type === "artifact");
     host.state.workflowNodeDetailExtra = [
       "",
-      `Workflow node run ${step.id} chunks`,
-      ...nodeChunks.map((chunk) => `[${chunk.stream}] ${chunk.content}`),
+      `Workflow effect ${effect.id} chunks`,
+      ...chunks.map((event) =>
+        event.output.type === "chunk"
+          ? `[${event.output.stream}] ${event.output.content}`
+          : "",
+      ),
       "",
-      `Workflow node run ${step.id} artifacts`,
-      ...nodeArtifacts.map(
-        (artifact) => `${artifact.name} (${String(artifact.size_bytes)} bytes) ${artifact.uri}`,
+      `Workflow effect ${effect.id} artifacts`,
+      ...artifacts.map((event) =>
+        event.output.type === "artifact" ? JSON.stringify(event.output.artifact) : "",
       ),
     ].join("\n");
     host.notify();

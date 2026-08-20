@@ -422,6 +422,13 @@ pub async fn pause_workflow_run<T: DatabaseImpl>(
     db: &T,
     workflow_run_id: Uuid,
 ) -> Result<TaskResponse, SendableError> {
+    if db.fetch_workflow_module(workflow_run_id).await?.is_some() {
+        let changed = db.pause_workflow_vm_run(workflow_run_id).await?;
+        return Ok(TaskResponse {
+            success: true,
+            message: format!("Paused {changed} workflow continuation(s)"),
+        });
+    }
     let command = ControlCommand::new(workflow_run_id, ControlKind::Pause);
     pause_workflow_run_command(db, &command).await
 }
@@ -481,6 +488,13 @@ pub async fn resume_workflow_run<T: DatabaseImpl>(
     db: &T,
     workflow_run_id: Uuid,
 ) -> Result<TaskResponse, SendableError> {
+    if db.fetch_workflow_module(workflow_run_id).await?.is_some() {
+        let changed = db.resume_workflow_vm_run(workflow_run_id, false).await?;
+        return Ok(TaskResponse {
+            success: true,
+            message: format!("Resumed {changed} workflow continuation(s)"),
+        });
+    }
     let command = ControlCommand::new(workflow_run_id, ControlKind::Resume);
     resume_workflow_run_command(db, &command).await
 }
@@ -535,6 +549,25 @@ pub async fn cancel_workflow_run<T: DatabaseImpl>(
     broker: &dyn Broker,
     workflow_run_id: Uuid,
 ) -> Result<TaskResponse, SendableError> {
+    if db.fetch_workflow_module(workflow_run_id).await?.is_some() {
+        let effect_ids = db
+            .cancel_workflow_vm_run(workflow_run_id, "workflow run canceled".into())
+            .await?;
+        for effect_id in effect_ids {
+            if let Err(err) = publish_worker_control_command(
+                broker,
+                ControlCommand::for_effect(workflow_run_id, effect_id, ControlKind::Cancel),
+            )
+            .await
+            {
+                log::warn!("Failed to publish VM effect cancel {effect_id}: {err}");
+            }
+        }
+        return Ok(TaskResponse {
+            success: true,
+            message: format!("Workflow run {workflow_run_id} canceled"),
+        });
+    }
     let command = ControlCommand::new(workflow_run_id, ControlKind::Cancel);
     let response = cancel_workflow_run_command(db, &command).await?;
     // an invocation's in-flight calls are not node runs, so settling the run's node runs leaves
@@ -884,6 +917,55 @@ pub async fn step_debug_cursor<T: DatabaseImpl>(
     workflow_run_id: Uuid,
     cursor: Option<Uuid>,
 ) -> Result<TaskResponse, SendableError> {
+    if db.fetch_workflow_module(workflow_run_id).await?.is_some() {
+        if let Some(continuation_id) = cursor {
+            let Some(mut continuation) = db.fetch_workflow_continuation(continuation_id).await?
+            else {
+                return Err(crate::errors::RESUME_NOT_FOUND.error(continuation_id));
+            };
+            if continuation.workflow_run_id != workflow_run_id {
+                return Err(crate::errors::RESUME_NOT_FOUND.error(continuation_id));
+            }
+            if continuation.status
+                != runinator_models::workflow_vm::WorkflowContinuationStatus::Paused
+            {
+                return Err(crate::errors::RESUME_NOT_FOUND.error("continuation is not paused"));
+            }
+            continuation.status =
+                runinator_models::workflow_vm::WorkflowContinuationStatus::Runnable;
+            continuation.operator_paused = false;
+            if let Some(debug) =
+                continuation
+                    .frames
+                    .iter_mut()
+                    .rev()
+                    .find_map(|frame| match frame {
+                        runinator_models::workflow_vm::WorkflowFrame::Debug(debug) => Some(debug),
+                        _ => None,
+                    })
+            {
+                debug.paused = false;
+                debug.step_requested = true;
+            }
+            db.commit_workflow_continuation(
+                continuation.clone(),
+                runinator_models::workflow_vm::WorkflowJournalEntry::Transitioned {
+                    continuation_id,
+                    instruction_pointer: continuation.instruction_pointer,
+                },
+            )
+            .await?;
+            return Ok(TaskResponse {
+                success: true,
+                message: format!("Continuation {continuation_id} stepped"),
+            });
+        }
+        let changed = db.resume_workflow_vm_run(workflow_run_id, true).await?;
+        return Ok(TaskResponse {
+            success: true,
+            message: format!("Stepped {changed} workflow continuation(s)"),
+        });
+    }
     DebugSession::load(db, workflow_run_id)
         .await?
         .step_cursor(cursor)
@@ -896,6 +978,48 @@ pub async fn continue_debug_cursor<T: DatabaseImpl>(
     workflow_run_id: Uuid,
     cursor: Option<Uuid>,
 ) -> Result<TaskResponse, SendableError> {
+    if db.fetch_workflow_module(workflow_run_id).await?.is_some() {
+        if cursor.is_none() {
+            let changed = db.resume_workflow_vm_run(workflow_run_id, false).await?;
+            return Ok(TaskResponse {
+                success: true,
+                message: format!("Resumed {changed} workflow continuation(s)"),
+            });
+        }
+        let continuation_id = cursor.unwrap();
+        let Some(mut continuation) = db.fetch_workflow_continuation(continuation_id).await? else {
+            return Err(crate::errors::RESUME_NOT_FOUND.error(continuation_id));
+        };
+        if continuation.workflow_run_id != workflow_run_id {
+            return Err(crate::errors::RESUME_NOT_FOUND.error(continuation_id));
+        }
+        continuation.status = runinator_models::workflow_vm::WorkflowContinuationStatus::Runnable;
+        continuation.operator_paused = false;
+        if let Some(debug) = continuation
+            .frames
+            .iter_mut()
+            .rev()
+            .find_map(|frame| match frame {
+                runinator_models::workflow_vm::WorkflowFrame::Debug(debug) => Some(debug),
+                _ => None,
+            })
+        {
+            debug.paused = false;
+            debug.step_requested = false;
+        }
+        db.commit_workflow_continuation(
+            continuation.clone(),
+            runinator_models::workflow_vm::WorkflowJournalEntry::Transitioned {
+                continuation_id,
+                instruction_pointer: continuation.instruction_pointer,
+            },
+        )
+        .await?;
+        return Ok(TaskResponse {
+            success: true,
+            message: format!("Continuation {continuation_id} resumed"),
+        });
+    }
     DebugSession::load(db, workflow_run_id)
         .await?
         .continue_cursor(cursor)
@@ -1000,70 +1124,36 @@ pub async fn replay_workflow_run<T: DatabaseImpl>(
 
     // phase d: support resuming from a specific step.
     if let Some(target_node_id) = from_step_id.as_deref() {
-        let ancestor_ids = ancestors_in_snapshot(&snapshot, target_node_id)?;
+        // Validate the target against the frozen graph. Replay now starts directly at the compiled
+        // source-map boundary; it must never manufacture historical node-run rows.
+        ancestors_in_snapshot(&snapshot, target_node_id)?;
         if let Some(replay) = state.get_mut("replay").and_then(Value::as_object_mut) {
             replay.insert(
                 "from_step_id".to_string(),
                 Value::String(target_node_id.into()),
             );
         }
-        let new_run = db
-            .create_workflow_run(
-                source.workflow_id,
-                snapshot.clone(),
-                source.parameters.clone(),
-                state,
-                source.name.clone(),
-                runinator_models::replicas::WorkflowRunProvenance {
-                    source_kind: Some(runinator_models::replicas::TriggerSourceKind::Replay),
-                    actor_type: Some(runinator_models::replicas::TriggerActorType::System),
-                    actor_replica_id: None,
-                    actor_display_name: Some("replay".into()),
-                    request_host: None,
-                    request_ip: None,
-                    metadata: runinator_models::json!({ "source_run_id": source.id }),
-                },
-            )
-            .await?;
+        let new_run = super::runs::create_workflow_vm_run(
+            db,
+            source.workflow_id,
+            snapshot.clone(),
+            source.parameters.clone(),
+            state,
+            source.name.clone(),
+            runinator_models::replicas::WorkflowRunProvenance {
+                source_kind: Some(runinator_models::replicas::TriggerSourceKind::Replay),
+                actor_type: Some(runinator_models::replicas::TriggerActorType::System),
+                actor_replica_id: None,
+                actor_display_name: Some("replay".into()),
+                request_host: None,
+                request_ip: None,
+                metadata: runinator_models::json!({ "source_run_id": source.id }),
+            },
+            None,
+            Some(target_node_id),
+        )
+        .await?;
 
-        if !ancestor_ids.is_empty() {
-            let source_nodes = db.fetch_workflow_node_runs(source.id).await?;
-            for node_id in &ancestor_ids {
-                if let Some(source_node) = source_nodes
-                    .iter()
-                    .rev()
-                    .find(|node| node.node_id == *node_id && node.status.is_terminal())
-                {
-                    let new_node = db
-                        .create_workflow_node_run(
-                            new_run.id,
-                            node_id.clone(),
-                            source_node.parameters.clone(),
-                            None,
-                            // copied ancestor state, not a step any cursor took: the replay run
-                            // seeds its own cursor on its first drive.
-                            None,
-                        )
-                        .await?;
-                    let attempt = if source_node.attempt > 0 {
-                        Some(source_node.attempt)
-                    } else {
-                        Some(1)
-                    };
-                    db.update_workflow_node_run(
-                        new_node.id,
-                        source_node.status,
-                        attempt,
-                        None,
-                        source_node.output_json.clone(),
-                        Some(source_node.state.clone()),
-                        Some("replayed_from_source".into()),
-                        Some(format!("Replayed from run {} step {}", source.id, node_id)),
-                    )
-                    .await?;
-                }
-            }
-        }
         db.update_workflow_run_status(
             new_run.id,
             WorkflowStatus::Queued,
@@ -1075,16 +1165,6 @@ pub async fn replay_workflow_run<T: DatabaseImpl>(
             )),
         )
         .await?;
-        support::enqueue_node_ready(
-            db,
-            new_run.id,
-            target_node_id.to_string(),
-            "workflow_run_replay",
-            Utc::now(),
-            runinator_models::json!({ "node_id": target_node_id }),
-        )
-        .await?;
-
         let Some(refreshed) = db.fetch_workflow_run(new_run.id).await? else {
             return Err(crate::errors::REPLAY_NOT_FOUND
                 .error(format!("replay run {} disappeared", new_run.id)));
@@ -1092,26 +1172,26 @@ pub async fn replay_workflow_run<T: DatabaseImpl>(
         return Ok(refreshed);
     }
 
-    let run = db
-        .create_workflow_run(
-            source.workflow_id,
-            snapshot,
-            source.parameters,
-            state,
-            source.name,
-            runinator_models::replicas::WorkflowRunProvenance {
-                source_kind: Some(runinator_models::replicas::TriggerSourceKind::Replay),
-                actor_type: Some(runinator_models::replicas::TriggerActorType::System),
-                actor_replica_id: None,
-                actor_display_name: Some("replay".into()),
-                request_host: None,
-                request_ip: None,
-                metadata: runinator_models::json!({ "source_run_id": source.id }),
-            },
-        )
-        .await?;
-    support::enqueue_start_ready_node(db, &run).await?;
-    Ok(run)
+    super::runs::create_workflow_vm_run(
+        db,
+        source.workflow_id,
+        snapshot,
+        source.parameters,
+        state,
+        source.name,
+        runinator_models::replicas::WorkflowRunProvenance {
+            source_kind: Some(runinator_models::replicas::TriggerSourceKind::Replay),
+            actor_type: Some(runinator_models::replicas::TriggerActorType::System),
+            actor_replica_id: None,
+            actor_display_name: Some("replay".into()),
+            request_host: None,
+            request_ip: None,
+            metadata: runinator_models::json!({ "source_run_id": source.id }),
+        },
+        None,
+        None,
+    )
+    .await
 }
 
 /// BFS over reverse transitions from `target_node_id` to find all nodes that must

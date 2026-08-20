@@ -2,6 +2,12 @@ import type { JsonRecord } from "../../json";
 import type { RunSummary } from "../run/run-summary";
 import type { WorkflowDefinition } from "./definition";
 import type { WorkflowNodeRun } from "./node-run";
+import type {
+  WorkflowContinuation,
+  WorkflowEffect,
+  WorkflowJournalRecord,
+  WorkflowVmCursor,
+} from "./vm";
 import type { WorkflowRunState } from "../workflow-state";
 
 export interface WorkflowRunDetail {
@@ -11,6 +17,10 @@ export interface WorkflowRunDetail {
     message?: string | null;
   };
   nodes: WorkflowNodeRun[];
+  continuations?: WorkflowContinuation[];
+  effects?: WorkflowEffect[];
+  journal?: WorkflowJournalRecord[];
+  vm_cursors?: WorkflowVmCursor[];
   execution_state?: WorkflowRunState;
 }
 

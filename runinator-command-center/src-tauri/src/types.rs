@@ -2,6 +2,9 @@ use chrono::{DateTime, Utc};
 
 use runinator_models::settings::SettingKind;
 use runinator_models::value::Value;
+use runinator_models::workflow_vm::{
+    WorkflowContinuation, WorkflowEffect, WorkflowJournalRecord, WorkflowVmCursor,
+};
 use runinator_models::workflows::{WorkflowNodeRun, WorkflowRun};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -40,6 +43,14 @@ fn default_service_scheme() -> String {
 pub struct WorkflowRunDetail {
     pub run: WorkflowRun,
     pub nodes: Vec<WorkflowNodeRun>,
+    #[serde(default)]
+    pub continuations: Vec<WorkflowContinuation>,
+    #[serde(default)]
+    pub effects: Vec<WorkflowEffect>,
+    #[serde(default)]
+    pub journal: Vec<WorkflowJournalRecord>,
+    #[serde(default)]
+    pub vm_cursors: Vec<WorkflowVmCursor>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -31,6 +31,14 @@ pub async fn dispatch(broker: &dyn Broker, request: TcpRequest) -> TcpResponse {
             .publish_result(message)
             .await
             .map(|_| TcpResponse::Ok),
+        TcpRequest::PublishEffect { message } => broker
+            .publish_effect(message)
+            .await
+            .map(|_| TcpResponse::Ok),
+        TcpRequest::PublishEffectResult { message } => broker
+            .publish_effect_result(message)
+            .await
+            .map(|_| TcpResponse::Ok),
         TcpRequest::Receive { consumer } => broker
             .receive(&consumer)
             .await
@@ -59,6 +67,22 @@ pub async fn dispatch(broker: &dyn Broker, request: TcpRequest) -> TcpResponse {
             .receive_result(&consumer)
             .await
             .map(|delivery| TcpResponse::ResultDelivery { delivery }),
+        TcpRequest::ReceiveEffect { consumer } => broker
+            .receive_effect(&consumer)
+            .await
+            .map(|delivery| TcpResponse::EffectDelivery { delivery }),
+        TcpRequest::ReceiveEffectFor { profile } => broker
+            .receive_effect_for(&profile)
+            .await
+            .map(|delivery| TcpResponse::EffectDelivery { delivery }),
+        TcpRequest::ReceiveInfrastructureEffect { consumer } => broker
+            .receive_infrastructure_effect(&consumer)
+            .await
+            .map(|delivery| TcpResponse::EffectDelivery { delivery }),
+        TcpRequest::ReceiveEffectResult { consumer } => broker
+            .receive_effect_result(&consumer)
+            .await
+            .map(|delivery| TcpResponse::EffectResultDelivery { delivery }),
         TcpRequest::Ack {
             consumer,
             delivery_id,
@@ -87,6 +111,20 @@ pub async fn dispatch(broker: &dyn Broker, request: TcpRequest) -> TcpResponse {
             .ack_result(&consumer, delivery_id)
             .await
             .map(|_| TcpResponse::Ok),
+        TcpRequest::AckEffect {
+            consumer,
+            delivery_id,
+        } => broker
+            .ack_effect(&consumer, delivery_id)
+            .await
+            .map(|_| TcpResponse::Ok),
+        TcpRequest::AckEffectResult {
+            consumer,
+            delivery_id,
+        } => broker
+            .ack_effect_result(&consumer, delivery_id)
+            .await
+            .map(|_| TcpResponse::Ok),
         TcpRequest::Nack {
             consumer,
             delivery_id,
@@ -113,6 +151,20 @@ pub async fn dispatch(broker: &dyn Broker, request: TcpRequest) -> TcpResponse {
             delivery_id,
         } => broker
             .nack_result(&consumer, delivery_id)
+            .await
+            .map(|_| TcpResponse::Ok),
+        TcpRequest::NackEffect {
+            consumer,
+            delivery_id,
+        } => broker
+            .nack_effect(&consumer, delivery_id)
+            .await
+            .map(|_| TcpResponse::Ok),
+        TcpRequest::NackEffectResult {
+            consumer,
+            delivery_id,
+        } => broker
+            .nack_effect_result(&consumer, delivery_id)
             .await
             .map(|_| TcpResponse::Ok),
         TcpRequest::PublishWake { message } => {

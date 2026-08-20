@@ -3,6 +3,7 @@ import {
   deleteAutomationEvent,
   fetchResourceRecords,
   rejectApproval,
+  settleWorkflowEffect,
 } from "../api/commandCenterApi";
 import type { ResourceEndpoint } from "../navigation/app";
 import type { JsonRecord, WorkflowNodeRun } from "../domain/models";
@@ -194,6 +195,20 @@ export function createResourcesService(app: AppService) {
       nodeRun: WorkflowNodeRun,
       action: ApprovalAction,
     ) {
+      const effectId = nonEmptyString(nodeRun.state?.effect_id);
+
+      if (effectId) {
+        await operationContext().runOperation(`Resolving workflow effect ${effectId}`, () =>
+          settleWorkflowEffect(
+            effectId,
+            action === "approve" ? "succeeded" : "failed",
+            { decision: action === "approve" ? "approved" : "rejected" },
+            `Approval ${action}d`,
+          ),
+        );
+        return;
+      }
+
       const approvalId = await service.findWorkflowApprovalId(workflowRunId, nodeId, nodeRun);
 
       if (!approvalId) {

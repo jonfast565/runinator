@@ -14,7 +14,7 @@ pub use machine::{DriveOutcome, DriveRequest, Suspension, WorkflowMachine};
 pub use orchestration::{
     PipelineInquiryDecision, PipelineStartOutcome, ReadyNodeDisposition,
     create_and_start_pipeline_run, resolve_pipeline_run_inquiry, resume_pipeline_run,
-    retry_pipeline_member, start_pipeline_run,
+    retry_pipeline_member, settle_pipeline_member_run, start_pipeline_run,
 };
 pub use workflow_vm::{WorkflowVmStep, resume as resume_workflow_vm, step as step_workflow_vm};
 pub use workflow_vm_host::{WorkflowVmDriveOutcome, WorkflowVmHost};

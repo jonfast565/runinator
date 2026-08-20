@@ -9,8 +9,6 @@ import {
   fetchEnumCatalogs,
   fetchNodeKinds,
   fetchTriggerKinds,
-  fetchWorkflowNodeRunArtifacts,
-  fetchWorkflowNodeRunChunks,
   listTeamMembers,
   requestRunInterrupt,
   rotateApiKey,
@@ -48,35 +46,6 @@ describe("command center catalog metadata API", () => {
   it("requests enum catalogs", async () => {
     await fetchEnumCatalogs();
     expect(invoke).toHaveBeenCalledWith("fetch_enum_catalogs", undefined);
-  });
-});
-
-describe("command center workflow node run API", () => {
-  beforeEach(() => {
-    vi.mocked(invoke).mockResolvedValue([]);
-    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
-    setCommandRuntime({
-      isTauri: () => true,
-      invoke: (name, args) => invoke(name, args),
-      wsBaseUrl: () => "http://127.0.0.1:8080",
-      apiBaseUrl: () => "/api",
-    });
-  });
-
-  it("requests workflow node run chunks by node run id", async () => {
-    await fetchWorkflowNodeRunChunks("00000000-0000-0000-0000-000000000042");
-
-    expect(invoke).toHaveBeenCalledWith("fetch_workflow_node_run_chunks", {
-      nodeRunId: "00000000-0000-0000-0000-000000000042",
-    });
-  });
-
-  it("requests workflow node run artifacts by node run id", async () => {
-    await fetchWorkflowNodeRunArtifacts("00000000-0000-0000-0000-000000000042");
-
-    expect(invoke).toHaveBeenCalledWith("fetch_workflow_node_run_artifacts", {
-      nodeRunId: "00000000-0000-0000-0000-000000000042",
-    });
   });
 });
 

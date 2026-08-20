@@ -9,10 +9,13 @@ use runinator_models::{
     replicas::ReplicaListResponse,
     runs::{RunArtifact, RunChunk},
     web::TaskResponse,
-    workflow_vm::{WorkflowContinuation, WorkflowEffect, WorkflowJournalRecord, WorkflowVmCursor},
+    workflow_vm::{
+        WorkflowContinuation, WorkflowEffect, WorkflowEffectOutputEvent, WorkflowEffectStatus,
+        WorkflowJournalRecord, WorkflowVmCursor,
+    },
     workflows::{
-        WorkflowBundle, WorkflowDefinition, WorkflowNodeRunArtifact, WorkflowNodeRunChunk,
-        WorkflowRun, WorkflowRunArtifact, WorkflowSimulateRequest, WorkflowTrigger,
+        WorkflowBundle, WorkflowDefinition, WorkflowRun, WorkflowRunArtifact,
+        WorkflowSimulateRequest, WorkflowTrigger,
     },
 };
 use serde::{Deserialize, Serialize};

@@ -8,6 +8,12 @@ fn kafka_config_defaults_topics_and_client_id() {
     assert_eq!(config.action_topic, DEFAULT_ACTION_TOPIC);
     assert_eq!(config.control_topic, DEFAULT_CONTROL_TOPIC);
     assert_eq!(config.result_topic, DEFAULT_RESULT_TOPIC);
+    assert_eq!(config.effect_topic, DEFAULT_EFFECT_TOPIC);
+    assert_eq!(
+        config.infrastructure_effect_topic,
+        DEFAULT_INFRASTRUCTURE_EFFECT_TOPIC
+    );
+    assert_eq!(config.effect_result_topic, DEFAULT_EFFECT_RESULT_TOPIC);
     assert_eq!(config.client_id, DEFAULT_CLIENT_ID);
 }
 
@@ -28,4 +34,13 @@ fn kafka_config_detects_missing_result_topic() {
     let config = KafkaBrokerConfig::new("localhost:9092").with_topics("a", "c", " ");
 
     assert!(!config.has_workflow_result_topic());
+}
+
+#[test]
+fn kafka_config_requires_all_effect_topics() {
+    let config = KafkaBrokerConfig::new("localhost:9092").with_effect_topics("e", "i", "er");
+    assert!(config.has_workflow_effect_topics());
+
+    let config = config.with_effect_topics("e", " ", "er");
+    assert!(!config.has_workflow_effect_topics());
 }

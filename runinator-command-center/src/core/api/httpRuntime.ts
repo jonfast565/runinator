@@ -405,14 +405,6 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     method: "GET",
     path: (args) => `runs/${escape(arg(args, "runId"))}/artifacts`,
   },
-  fetch_workflow_node_run_chunks: {
-    method: "GET",
-    path: (args) => `workflow_node_runs/${escape(arg(args, "nodeRunId"))}/chunks?limit=500`,
-  },
-  fetch_workflow_node_run_artifacts: {
-    method: "GET",
-    path: (args) => `workflow_node_runs/${escape(arg(args, "nodeRunId"))}/artifacts`,
-  },
   fetch_workflow_run_artifacts: {
     method: "GET",
     path: (args) => `workflow_runs/${escape(arg(args, "workflowRunId"))}/artifacts`,
@@ -424,6 +416,19 @@ const REGISTRY: Record<string, HttpDescriptor> = {
   fetch_workflow_effects: {
     method: "GET",
     path: (args) => `workflow_runs/${escape(arg(args, "workflowRunId"))}/effects`,
+  },
+  fetch_workflow_effect_output: {
+    method: "GET",
+    path: (args) => `workflow_effects/${escape(arg(args, "effectId"))}/output`,
+  },
+  settle_workflow_effect: {
+    method: "POST",
+    path: (args) => `workflow_effects/${escape(arg(args, "effectId"))}/settle`,
+    body: (args) => ({
+      status: arg(args, "status"),
+      output: argOpt(args, "output") ?? null,
+      message: argOpt(args, "message") ?? null,
+    }),
   },
   fetch_workflow_journal: {
     method: "GET",
@@ -504,15 +509,6 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     path: (args) => `workflow_runs/${escape(arg(args, "workflowRunId"))}/debug/skip`,
     body: (args) => ({
       output_json: arg(args, "outputJson"),
-      message: argOpt(args, "message") ?? null,
-    }),
-  },
-  resolve_workflow_input: {
-    method: "POST",
-    path: (args) => `workflow_node_runs/${escape(arg(args, "nodeRunId"))}/input`,
-    body: (args) => ({
-      output_json: arg(args, "outputJson"),
-      resolved_by: argOpt(args, "resolvedBy") ?? null,
       message: argOpt(args, "message") ?? null,
     }),
   },

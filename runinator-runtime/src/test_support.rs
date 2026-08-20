@@ -302,6 +302,44 @@ impl FakeStore {
 }
 
 impl RuntimeStore for FakeStore {
+    async fn bootstrap_workflow_vm_run(
+        &self,
+        start: runinator_store::roles::NewWorkflowVmRun,
+    ) -> Result<WorkflowRun, SendableError> {
+        let pipeline_run_id = start.pipeline_run_id;
+        let pipeline_member_attempt_id = start.pipeline_member_attempt_id;
+        let run = self
+            .create_workflow_run(
+                start.workflow_id,
+                start.workflow_snapshot,
+                start.parameters,
+                start.state,
+                start.name,
+                start.provenance,
+            )
+            .await?;
+        if let Some(pipeline_run_id) = pipeline_run_id {
+            self.set_workflow_run_pipeline_run(run.id, pipeline_run_id)
+                .await?;
+            if let Some(attempt_id) = pipeline_member_attempt_id {
+                self.bind_pipeline_member_attempt_run(attempt_id, run.id)
+                    .await?;
+            }
+            return self
+                .fetch_workflow_run(run.id)
+                .await?
+                .ok_or_else(|| std::io::Error::other("bootstrapped run disappeared").into());
+        }
+        Ok(run)
+    }
+
+    async fn fetch_workflow_vm_result(
+        &self,
+        _workflow_run_id: Uuid,
+    ) -> Result<Option<Value>, SendableError> {
+        Ok(None)
+    }
+
     async fn fetch_workflow(
         &self,
         workflow_id: Uuid,

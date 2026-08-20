@@ -2,6 +2,21 @@
 //! decisions the claim transaction makes.
 
 use super::*;
+use runinator_models::workflow_vm::{WorkflowInstruction, WorkflowModule};
+
+async fn test_workflow_vm(db: &SqliteDb, workflow_id: Uuid) -> ScheduledWorkflowVm {
+    ScheduledWorkflowVm {
+        snapshot: db.fetch_workflow(workflow_id).await.unwrap().unwrap(),
+        module: WorkflowModule::new(vec![WorkflowInstruction::Return]),
+    }
+}
+
+async fn test_vm_modules(
+    db: &SqliteDb,
+    workflow_id: Uuid,
+) -> std::collections::HashMap<Uuid, ScheduledWorkflowVm> {
+    std::collections::HashMap::from([(workflow_id, test_workflow_vm(db, workflow_id).await)])
+}
 
 #[tokio::test]
 async fn due_trigger_firing_is_idempotent_and_advances_next_execution() {
@@ -40,14 +55,24 @@ async fn due_trigger_firing_is_idempotent_and_advances_next_execution() {
         .unwrap();
 
     let first = db
-        .claim_due_workflow_trigger_firings("scheduler-a".into(), Utc::now(), 10)
+        .claim_due_workflow_trigger_firings(
+            "scheduler-a".into(),
+            Utc::now(),
+            10,
+            test_vm_modules(&db, workflow_id).await,
+        )
         .await
         .unwrap();
     db.update_workflow_trigger_next_execution(trigger.id.unwrap(), Some(due_at))
         .await
         .unwrap();
     let duplicate = db
-        .claim_due_workflow_trigger_firings("scheduler-b".into(), Utc::now(), 10)
+        .claim_due_workflow_trigger_firings(
+            "scheduler-b".into(),
+            Utc::now(),
+            10,
+            test_vm_modules(&db, workflow_id).await,
+        )
         .await
         .unwrap();
     let refreshed = db
@@ -58,6 +83,32 @@ async fn due_trigger_firing_is_idempotent_and_advances_next_execution() {
 
     assert_eq!(first.len(), 1);
     assert_eq!(first.runs[0].parameters["source"], "cron");
+    assert!(
+        db.fetch_workflow_module(first.runs[0].id)
+            .await
+            .unwrap()
+            .is_some(),
+        "the firing transaction must freeze the VM module"
+    );
+    assert_eq!(
+        db.fetch_workflow_continuations(first.runs[0].id)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(
+        db.claim_ready_nodes(
+            "legacy".into(),
+            Utc::now(),
+            Utc::now() + Duration::seconds(30),
+            10,
+        )
+        .await
+        .unwrap()
+        .is_empty(),
+        "cron starts must not enqueue legacy ready nodes"
+    );
     assert!(duplicate.is_empty());
     assert!(refreshed.next_execution.is_some());
 
@@ -196,14 +247,24 @@ async fn concurrency_skip_burns_the_slot_and_advances_the_schedule() {
     // the first pass fills the single slot; the second is pointed at a *different* due slot, so it
     // is the concurrency cap and not the firing-row dedupe that declines it.
     let first = db
-        .claim_due_workflow_trigger_firings("scheduler-a".into(), Utc::now(), 10)
+        .claim_due_workflow_trigger_firings(
+            "scheduler-a".into(),
+            Utc::now(),
+            10,
+            test_vm_modules(&db, workflow_id).await,
+        )
         .await
         .unwrap();
     db.update_workflow_trigger_next_execution(trigger.id.unwrap(), Some(seconds_ago(30)))
         .await
         .unwrap();
     let second = db
-        .claim_due_workflow_trigger_firings("scheduler-a".into(), Utc::now(), 10)
+        .claim_due_workflow_trigger_firings(
+            "scheduler-a".into(),
+            Utc::now(),
+            10,
+            test_vm_modules(&db, workflow_id).await,
+        )
         .await
         .unwrap();
 
@@ -241,7 +302,12 @@ async fn concurrency_queue_holds_the_slot_due_instead_of_creating_a_parked_run()
         .unwrap();
 
     let first = db
-        .claim_due_workflow_trigger_firings("scheduler-a".into(), Utc::now(), 10)
+        .claim_due_workflow_trigger_firings(
+            "scheduler-a".into(),
+            Utc::now(),
+            10,
+            test_vm_modules(&db, workflow_id).await,
+        )
         .await
         .unwrap();
     let held = seconds_ago(30);
@@ -249,7 +315,12 @@ async fn concurrency_queue_holds_the_slot_due_instead_of_creating_a_parked_run()
         .await
         .unwrap();
     let blocked = db
-        .claim_due_workflow_trigger_firings("scheduler-a".into(), Utc::now(), 10)
+        .claim_due_workflow_trigger_firings(
+            "scheduler-a".into(),
+            Utc::now(),
+            10,
+            test_vm_modules(&db, workflow_id).await,
+        )
         .await
         .unwrap();
 
@@ -276,7 +347,12 @@ async fn concurrency_queue_holds_the_slot_due_instead_of_creating_a_parked_run()
     .await
     .unwrap();
     let released = db
-        .claim_due_workflow_trigger_firings("scheduler-a".into(), Utc::now(), 10)
+        .claim_due_workflow_trigger_firings(
+            "scheduler-a".into(),
+            Utc::now(),
+            10,
+            test_vm_modules(&db, workflow_id).await,
+        )
         .await
         .unwrap();
     assert_eq!(released.runs.len(), 1);
@@ -304,14 +380,24 @@ async fn concurrency_cancel_previous_settles_the_running_run_and_reports_it() {
         .unwrap();
 
     let first = db
-        .claim_due_workflow_trigger_firings("scheduler-a".into(), Utc::now(), 10)
+        .claim_due_workflow_trigger_firings(
+            "scheduler-a".into(),
+            Utc::now(),
+            10,
+            test_vm_modules(&db, workflow_id).await,
+        )
         .await
         .unwrap();
     db.update_workflow_trigger_next_execution(trigger.id.unwrap(), Some(seconds_ago(30)))
         .await
         .unwrap();
     let second = db
-        .claim_due_workflow_trigger_firings("scheduler-a".into(), Utc::now(), 10)
+        .claim_due_workflow_trigger_firings(
+            "scheduler-a".into(),
+            Utc::now(),
+            10,
+            test_vm_modules(&db, workflow_id).await,
+        )
         .await
         .unwrap();
 
@@ -355,7 +441,12 @@ async fn catchup_fire_all_replays_missed_slots_up_to_its_cap() {
     .unwrap();
 
     let batch = db
-        .claim_due_workflow_trigger_firings("scheduler-a".into(), Utc::now(), 10)
+        .claim_due_workflow_trigger_firings(
+            "scheduler-a".into(),
+            Utc::now(),
+            10,
+            test_vm_modules(&db, workflow_id).await,
+        )
         .await
         .unwrap();
     assert_eq!(batch.runs.len(), 3);
@@ -363,7 +454,12 @@ async fn catchup_fire_all_replays_missed_slots_up_to_its_cap() {
     // the cap bounds one pass, it does not discard the rest: the re-anchor lands on the first slot
     // the cap did not reach, so the next tick keeps draining the backlog.
     let drained = db
-        .claim_due_workflow_trigger_firings("scheduler-a".into(), Utc::now(), 10)
+        .claim_due_workflow_trigger_firings(
+            "scheduler-a".into(),
+            Utc::now(),
+            10,
+            test_vm_modules(&db, workflow_id).await,
+        )
         .await
         .unwrap();
     assert!(!drained.runs.is_empty());
@@ -394,7 +490,12 @@ async fn catchup_skip_abandons_slots_later_than_its_grace() {
         .unwrap();
 
     let batch = db
-        .claim_due_workflow_trigger_firings("scheduler-a".into(), Utc::now(), 10)
+        .claim_due_workflow_trigger_firings(
+            "scheduler-a".into(),
+            Utc::now(),
+            10,
+            test_vm_modules(&db, workflow_id).await,
+        )
         .await
         .unwrap();
     assert!(batch.runs.is_empty());
@@ -441,7 +542,12 @@ async fn an_active_freeze_window_keeps_a_due_trigger_out_of_the_claim() {
         .unwrap();
 
     let frozen = db
-        .claim_due_workflow_trigger_firings("scheduler-a".into(), Utc::now(), 10)
+        .claim_due_workflow_trigger_firings(
+            "scheduler-a".into(),
+            Utc::now(),
+            10,
+            test_vm_modules(&db, workflow_id).await,
+        )
         .await
         .unwrap();
     assert!(frozen.runs.is_empty());
@@ -455,7 +561,12 @@ async fn an_active_freeze_window_keeps_a_due_trigger_out_of_the_claim() {
 
     db.delete_freeze_window(window.id).await.unwrap();
     let thawed = db
-        .claim_due_workflow_trigger_firings("scheduler-a".into(), Utc::now(), 10)
+        .claim_due_workflow_trigger_firings(
+            "scheduler-a".into(),
+            Utc::now(),
+            10,
+            test_vm_modules(&db, workflow_id).await,
+        )
         .await
         .unwrap();
     assert_eq!(thawed.runs.len(), 1);
@@ -485,7 +596,12 @@ async fn a_disabled_workflow_keeps_its_due_trigger_out_of_the_claim() {
     db.upsert_workflow(&definition).await.unwrap();
 
     let disabled = db
-        .claim_due_workflow_trigger_firings("scheduler-a".into(), Utc::now(), 10)
+        .claim_due_workflow_trigger_firings(
+            "scheduler-a".into(),
+            Utc::now(),
+            10,
+            test_vm_modules(&db, workflow_id).await,
+        )
         .await
         .unwrap();
     assert!(disabled.runs.is_empty());
@@ -503,7 +619,12 @@ async fn a_disabled_workflow_keeps_its_due_trigger_out_of_the_claim() {
     definition.enabled = true;
     db.upsert_workflow(&definition).await.unwrap();
     let re_enabled = db
-        .claim_due_workflow_trigger_firings("scheduler-a".into(), Utc::now(), 10)
+        .claim_due_workflow_trigger_firings(
+            "scheduler-a".into(),
+            Utc::now(),
+            10,
+            test_vm_modules(&db, workflow_id).await,
+        )
         .await
         .unwrap();
     assert_eq!(re_enabled.runs.len(), 1);
@@ -531,7 +652,12 @@ async fn backfill_replays_a_range_without_re_running_slots_the_loop_already_fire
         .unwrap();
     // let the loop fire one slot first, so the backfill has an already-claimed slot to respect.
     let loop_batch = db
-        .claim_due_workflow_trigger_firings("scheduler-a".into(), Utc::now(), 10)
+        .claim_due_workflow_trigger_firings(
+            "scheduler-a".into(),
+            Utc::now(),
+            10,
+            test_vm_modules(&db, workflow_id).await,
+        )
         .await
         .unwrap();
     assert_eq!(loop_batch.runs.len(), 1);
@@ -543,7 +669,11 @@ async fn backfill_replays_a_range_without_re_running_slots_the_loop_already_fire
         dry_run: false,
     };
     let (response, runs) = db
-        .backfill_workflow_trigger(trigger.id.unwrap(), &request)
+        .backfill_workflow_trigger(
+            trigger.id.unwrap(),
+            &request,
+            test_workflow_vm(&db, workflow_id).await,
+        )
         .await
         .unwrap();
     assert_eq!(response.already_fired, 1);
@@ -556,7 +686,11 @@ async fn backfill_replays_a_range_without_re_running_slots_the_loop_already_fire
         ..request
     };
     let (preview, preview_runs) = db
-        .backfill_workflow_trigger(trigger.id.unwrap(), &dry)
+        .backfill_workflow_trigger(
+            trigger.id.unwrap(),
+            &dry,
+            test_workflow_vm(&db, workflow_id).await,
+        )
         .await
         .unwrap();
     assert!(preview.dry_run);

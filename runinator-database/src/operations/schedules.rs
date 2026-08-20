@@ -447,6 +447,7 @@ where
         scheduler_id: String,
         now: DateTime<Utc>,
         limit: i64,
+        modules: HashMap<Uuid, ScheduledWorkflowVm>,
     ) -> Result<TriggerFiringBatch<WorkflowRun>, SendableError> {
         let mut tx = self.pool().begin().await?;
         // frozen triggers, and triggers on a disabled workflow, are excluded in sql rather than
@@ -565,11 +566,17 @@ where
                 _ => (vec![due], next_execution_for_cron(&cron_schedule, now)?),
             };
 
-            let workflow_row = sqlx::query(&self.render("SELECT id, name, namespace, org_id, version, enabled, input_schema, definition, created_at, updated_at FROM workflows WHERE id = ?"))
-                .bind(trigger.workflow_id)
-                .fetch_one(&mut *tx)
-                .await?;
-            let workflow_snapshot = mappers::row_to_workflow(&workflow_row);
+            let Some(workflow_vm) = modules.get(&trigger.workflow_id) else {
+                // The repository snapshots modules before entering this transaction. A trigger
+                // that became due between that read and this claim remains due for the next pass.
+                continue;
+            };
+            if workflow_vm.snapshot.id != Some(trigger.workflow_id) {
+                return Err(crate::errors::WORKFLOW_VM_CORRUPT_STATE
+                    .error("scheduled module snapshot names a different workflow"));
+            }
+            let workflow_snapshot = &workflow_vm.snapshot;
+            let module = &workflow_vm.module;
             // the concurrency limit rides in the definition, so it versions with the workflow the
             // same way its triggers and alert policies do. the count is taken once per trigger and
             // then tracked locally as this pass creates runs.
@@ -635,10 +642,11 @@ where
                     .insert_trigger_run(
                         &mut tx,
                         &trigger,
-                        &workflow_snapshot,
+                        workflow_snapshot,
                         &scheduler_id,
                         slot,
                         now,
+                        module,
                     )
                     .await?;
                 active += 1;
@@ -670,6 +678,7 @@ where
         &self,
         trigger_id: Uuid,
         request: &BackfillRequest,
+        workflow_vm: ScheduledWorkflowVm,
     ) -> Result<(BackfillResponse, Vec<WorkflowRun>), SendableError> {
         let Some(trigger) = self.fetch_workflow_trigger(trigger_id).await? else {
             return Err(crate::errors::TRIGGER_NOT_FOUND.error(trigger_id));
@@ -707,11 +716,11 @@ where
 
         let now = Utc::now();
         let mut tx = self.pool().begin().await?;
-        let workflow_row = sqlx::query(&self.render("SELECT id, name, namespace, org_id, version, enabled, input_schema, definition, created_at, updated_at FROM workflows WHERE id = ?"))
-            .bind(trigger.workflow_id)
-            .fetch_one(&mut *tx)
-            .await?;
-        let workflow_snapshot = mappers::row_to_workflow(&workflow_row);
+        if workflow_vm.snapshot.id != Some(trigger.workflow_id) {
+            return Err(crate::errors::WORKFLOW_VM_CORRUPT_STATE
+                .error("backfill module snapshot names a different workflow"));
+        }
+        let workflow_snapshot = &workflow_vm.snapshot;
 
         let mut runs = Vec::new();
         for slot in &slots {
@@ -735,10 +744,11 @@ where
                 .insert_trigger_run(
                     &mut tx,
                     &trigger,
-                    &workflow_snapshot,
+                    workflow_snapshot,
                     "backfill",
                     *slot,
                     now,
+                    &workflow_vm.module,
                 )
                 .await?;
             response.fired += 1;

@@ -6,22 +6,21 @@ pub(super) async fn artifacts(
     json_output: bool,
 ) -> Result<()> {
     match command {
-        ArtifactCommands::List { node_run_id } => {
-            let artifacts = client
-                .fetch_workflow_node_run_artifacts(*node_run_id)
-                .await?;
+        ArtifactCommands::List { effect_id } => {
+            let artifacts = client.fetch_workflow_effect_output(*effect_id).await?;
             if json_output {
                 return output::json(&artifacts);
             }
             if artifacts.is_empty() {
-                println!("no artifacts for node run {node_run_id}");
+                println!("no artifacts for effect {effect_id}");
                 return Ok(());
             }
-            for artifact in artifacts {
-                println!(
-                    "{}\t{}\t{}\t{} bytes",
-                    artifact.id, artifact.name, artifact.mime_type, artifact.size_bytes
-                );
+            for event in artifacts {
+                if let runinator_models::workflow_vm::WorkflowEffectOutput::Artifact { artifact } =
+                    event.output
+                {
+                    println!("{}", serde_json::to_string(&artifact)?);
+                }
             }
         }
         ArtifactCommands::Download { id, out } => {

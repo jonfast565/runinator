@@ -221,8 +221,8 @@ fn an_object_argument_is_written_as_compact_json() {
 #[test]
 fn a_number_argument_becomes_its_text() {
     let built = line(
-        "runinator_runs_logs",
-        json!({ "node_run_id": "8f14e45f-ceea-467a-9a2c-8d1e4d1c9b21", "limit": 25 }),
+        "runinator_agents_logs",
+        json!({ "replica_id": "8f14e45f-ceea-467a-9a2c-8d1e4d1c9b21", "lines": 25 }),
     );
     assert!(built.contains(&"25".to_string()), "{built:?}");
     assert!(repl::parse(&built).is_ok(), "clap rejected {built:?}");
@@ -406,26 +406,13 @@ fn numbers_and_uuids_are_typed_as_what_clap_parses_them_into() {
         .expect("runs logs is a tool");
     assert_eq!(
         definition
-            .pointer("/inputSchema/properties/limit/type")
-            .and_then(Value::as_str),
-        Some("integer")
-    );
-    // a default typed as a string under an integer property is a schema that contradicts itself.
-    assert_eq!(
-        definition
-            .pointer("/inputSchema/properties/limit/default")
-            .and_then(Value::as_i64),
-        Some(100)
-    );
-    assert_eq!(
-        definition
-            .pointer("/inputSchema/properties/node_run_id/type")
+            .pointer("/inputSchema/properties/effect_id/type")
             .and_then(Value::as_str),
         Some("string")
     );
     assert_eq!(
         definition
-            .pointer("/inputSchema/properties/node_run_id/format")
+            .pointer("/inputSchema/properties/effect_id/format")
             .and_then(Value::as_str),
         Some("uuid")
     );
@@ -441,7 +428,7 @@ fn the_value_parser_is_read_for_every_scalar_it_knows() {
             .map(|argument| argument.scalar)
     };
     assert_eq!(
-        scalar("runinator_runs_logs", "limit"),
+        scalar("runinator_agents_logs", "lines"),
         Some(Scalar::Integer)
     );
     assert_eq!(
@@ -464,8 +451,8 @@ fn the_value_parser_is_read_for_every_scalar_it_knows() {
 #[test]
 fn an_integer_argument_round_trips_through_the_parser() {
     let built = line(
-        "runinator_runs_logs",
-        json!({ "node_run_id": "8f14e45f-ceea-467a-9a2c-8d1e4d1c9b21", "limit": 25, "cursor": 4 }),
+        "runinator_agents_logs",
+        json!({ "replica_id": "8f14e45f-ceea-467a-9a2c-8d1e4d1c9b21", "lines": 25 }),
     );
     assert!(repl::parse(&built).is_ok(), "clap rejected {built:?}");
 }

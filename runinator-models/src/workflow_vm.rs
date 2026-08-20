@@ -575,6 +575,10 @@ pub struct WorkflowContinuation {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub awaiting_effect_id: Option<Uuid>,
     pub status: WorkflowContinuationStatus,
+    /// Run/debug operator hold, independent of an effect wait. A result settling while this is set
+    /// leaves the continuation paused instead of making it runnable.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub operator_paused: bool,
     /// Compare-and-swap revision. Every durable transition increments this value.
     #[serde(default)]
     pub revision: u64,
@@ -609,6 +613,7 @@ impl WorkflowContinuation {
             fork_key: None,
             awaiting_effect_id: None,
             status: WorkflowContinuationStatus::Runnable,
+            operator_paused: false,
             revision: 0,
         }
     }
@@ -626,11 +631,34 @@ impl WorkflowContinuation {
 #[serde(rename_all = "snake_case")]
 pub enum WorkflowContinuationStatus {
     Runnable,
+    /// Parked by an operator/debugger. Unlike `Waiting`, this continuation is not awaiting an
+    /// effect result and can be made runnable again without changing effect state.
+    Paused,
     Waiting,
     Joined,
     Succeeded,
     Failed,
     Canceled,
+}
+
+/// A durable, deduplicated piece of output produced while an effect is executing. Output events
+/// are addressed by effect/continuation identity and never by a graph node-run.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WorkflowEffectOutputEvent {
+    pub event_id: Uuid,
+    pub effect_id: Uuid,
+    pub workflow_run_id: Uuid,
+    pub continuation_id: Uuid,
+    pub attempt: u32,
+    pub output: WorkflowEffectOutput,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum WorkflowEffectOutput {
+    Chunk { stream: String, content: String },
+    Artifact { artifact: Value },
 }
 
 impl WorkflowContinuationStatus {
@@ -1078,6 +1106,7 @@ mod tests {
             WorkflowFrame::Join(WorkflowJoinFrame {
                 join_key: "join".into(),
                 expected: 2,
+                mode: WorkflowBranchPolicy::All,
                 arrivals: vec![WorkflowIndexedValue {
                     index: 0,
                     value: Value::from("left"),
@@ -1086,6 +1115,7 @@ mod tests {
             WorkflowFrame::Race(WorkflowRaceFrame {
                 race_key: "race".into(),
                 expected: 2,
+                winner_policy: WorkflowBranchPolicy::first_success(),
                 winner: Some(Uuid::nil()),
                 winner_value: Some(Value::from("winner")),
             }),

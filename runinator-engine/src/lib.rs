@@ -19,6 +19,7 @@ pub mod stability;
 
 mod effect_consumer;
 mod engine;
+mod infrastructure_effect_host;
 mod loops;
 mod mutex_migration;
 mod result_consumer;
@@ -32,6 +33,7 @@ pub mod orchestration {
 
 pub use engine::{EngineConfig, run_background_engine};
 pub use events::{AppEvent, AppEventKind, EnginePublisher, EventSender};
+pub use infrastructure_effect_host::run_infrastructure_effect_host;
 
 // exposed so the web service can reuse the same result-consumer policy/loop in-process.
 pub use effect_consumer::run_effect_result_consumer;

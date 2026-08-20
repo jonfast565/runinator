@@ -56,8 +56,36 @@ pub async fn run_workflow_vm_driver<T: DatabaseImpl>(
     let host = runinator_runtime::WorkflowVmHost::new(db.as_ref());
     loop {
         match host.drive_runnable(instance.clone(), CLAIM_LIMIT).await {
-            Ok(_) => {}
+            Ok(outcomes) => {
+                for outcome in outcomes {
+                    let settled_run_id = match outcome {
+                        runinator_runtime::WorkflowVmDriveOutcome::Completed { settled_run_id }
+                        | runinator_runtime::WorkflowVmDriveOutcome::Failed { settled_run_id } => {
+                            settled_run_id
+                        }
+                        _ => None,
+                    };
+                    if let Some(run_id) = settled_run_id
+                        && let Err(err) =
+                            repository::advance_pipeline_from_vm_terminal(db.as_ref(), run_id).await
+                    {
+                        warn!(workflow_run_id = %run_id, error = %err, "VM pipeline advancement failed");
+                    }
+                }
+            }
             Err(err) => warn!(error = %err, "workflow VM drive failed"),
+        }
+        match db.fetch_unsettled_vm_pipeline_members(CLAIM_LIMIT).await {
+            Ok(run_ids) => {
+                for run_id in run_ids {
+                    if let Err(err) =
+                        repository::advance_pipeline_from_vm_terminal(db.as_ref(), run_id).await
+                    {
+                        warn!(workflow_run_id = %run_id, error = %err, "VM pipeline reconciliation failed");
+                    }
+                }
+            }
+            Err(err) => warn!(error = %err, "failed to reconcile VM pipeline members"),
         }
         tokio::select! {
             _ = shutdown.notified() => return,

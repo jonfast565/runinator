@@ -50,12 +50,12 @@ const SECRET_RETRY_BACKOFF: Duration = Duration::from_secs(5);
 // one in-flight action execution, tracked so a control command can cancel it. the owning run id is
 // retained so a run-wide cancel can fan out to every node run of that run.
 #[derive(Clone)]
-struct InFlightAction {
-    workflow_run_id: Uuid,
-    token: CancellationToken,
+pub(crate) struct InFlightAction {
+    pub(crate) workflow_run_id: Uuid,
+    pub(crate) token: CancellationToken,
     // set by the control loop before it cancels the token, so the result path can tell a genuine
     // (ws-requested) cancel from a shutdown preemption that should requeue the delivery instead.
-    canceled_by_control: Arc<AtomicBool>,
+    pub(crate) canceled_by_control: Arc<AtomicBool>,
 }
 
 /// everything the action loop needs to run. assembled by the binary (or an embedded host such as the
@@ -121,6 +121,33 @@ pub async fn start_worker_loop(runtime: WorkerRuntime) -> Result<(), SendableErr
             drain_forever(result_outbox.as_ref(), broker.as_ref(), shutdown.as_ref()).await
         })
     };
+    // Shared by legacy actions and VM provider effects. Keys are their execution identities
+    // (node-run id or effect id), allowing the same control channel to cancel either protocol.
+    let in_flight = Arc::new(Mutex::new(HashMap::<Uuid, InFlightAction>::new()));
+    let effect_task = broker.supports_workflow_effect_channels().then(|| {
+        let broker = broker.clone();
+        let profile = profile.clone();
+        let libraries = libraries.clone();
+        let api_client = api_client.clone();
+        let providers = providers.clone();
+        let shutdown = shutdown.clone();
+        let in_flight = in_flight.clone();
+        let result_outbox = result_outbox.clone();
+        tokio::spawn(async move {
+            crate::effect_worker::run_provider_effect_loop(
+                broker,
+                profile,
+                libraries,
+                api_client,
+                providers,
+                max_concurrent_actions,
+                in_flight,
+                result_outbox,
+                shutdown,
+            )
+            .await
+        })
+    });
 
     // the ack channels are keyed by the consumer id; the action and control channels route by
     // profile. the control profile is never exclusive: exclusivity keeps a desktop worker from
@@ -135,7 +162,6 @@ pub async fn start_worker_loop(runtime: WorkerRuntime) -> Result<(), SendableErr
     let semaphore = Arc::new(Semaphore::new(max_concurrent_actions));
     // keyed by node-run id so concurrent node runs of the same workflow run (parallel/race/map child
     // work) each get their own cancellation token; a targeted cancel reaches exactly one branch.
-    let in_flight = Arc::new(Mutex::new(HashMap::<Uuid, InFlightAction>::new()));
     let drained = Arc::new(AtomicBool::new(false));
     let restart_requested = Arc::new(AtomicBool::new(false));
     let directive_state_changed = Arc::new(Notify::new());
@@ -311,6 +337,15 @@ pub async fn start_worker_loop(runtime: WorkerRuntime) -> Result<(), SendableErr
         error!("agent directive task join error: {err}");
     }
 
+    if let Some(effect_task) = effect_task {
+        effect_task.abort();
+        if let Err(err) = effect_task.await
+            && !err.is_cancelled()
+        {
+            error!("worker provider-effect task join error: {err}");
+        }
+    }
+
     outbox_task.abort();
     if let Err(err) = outbox_task.await
         && !err.is_cancelled()
@@ -429,7 +464,11 @@ async fn handle_control_delivery(
             // fans out to every node run of the run held on this worker.
             let actions = {
                 let guard = in_flight.lock().await;
-                match delivery.command.workflow_node_run_id {
+                match delivery
+                    .command
+                    .effect_id
+                    .or(delivery.command.workflow_node_run_id)
+                {
                     Some(node_run_id) => guard
                         .get(&node_run_id)
                         .cloned()
@@ -446,6 +485,7 @@ async fn handle_control_delivery(
                 info!(
                     run_id = %delivery.command.workflow_run_id,
                     node_id = ?delivery.command.workflow_node_run_id,
+                    effect_id = ?delivery.command.effect_id,
                     "cancellation requested, but no matching local execution is active"
                 );
             } else {
@@ -458,6 +498,7 @@ async fn handle_control_delivery(
                 info!(
                     run_id = %delivery.command.workflow_run_id,
                     node_id = ?delivery.command.workflow_node_run_id,
+                    effect_id = ?delivery.command.effect_id,
                     canceled = actions.len(),
                     "cancellation requested; canceled local execution(s)"
                 );

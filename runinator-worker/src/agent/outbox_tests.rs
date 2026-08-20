@@ -1,8 +1,10 @@
 //! file outbox durability, bounds, and dead-letter behavior.
 
 use chrono::Utc;
-use runinator_comm::{WorkflowResultEvent, WorkflowResultEventKind};
-use runinator_models::workflows::WorkflowStatus;
+use runinator_comm::{
+    EffectResult, EffectResultKind, WorkflowResultEvent, WorkflowResultEventKind,
+};
+use runinator_models::{workflow_vm::WorkflowEffectStatus, workflows::WorkflowStatus};
 
 use super::*;
 
@@ -26,6 +28,29 @@ fn result_message() -> ResultMessage {
             notification_delivery_id: None,
             invocation_call_id: None,
             task_run_id: None,
+        },
+        dedupe_key: Some(event_id.to_string()),
+        enqueued_at: Utc::now(),
+    }
+}
+
+fn effect_result_message() -> EffectResultMessage {
+    let event_id = Uuid::now_v7();
+    EffectResultMessage {
+        result: EffectResult {
+            version: 1,
+            event_id,
+            effect_id: Uuid::now_v7(),
+            workflow_run_id: Uuid::now_v7(),
+            continuation_id: Uuid::now_v7(),
+            attempt: 0,
+            kind: EffectResultKind::Status {
+                status: WorkflowEffectStatus::Succeeded,
+                output: None,
+                message: None,
+            },
+            timestamp: Utc::now(),
+            trace_id: Uuid::new_v4(),
         },
         dedupe_key: Some(event_id.to_string()),
         enqueued_at: Utc::now(),
@@ -120,5 +145,34 @@ async fn startup_drain_preserves_recorded_order() {
             .event
             .event_id,
         second_id
+    );
+}
+
+#[tokio::test]
+async fn startup_drain_republishes_vm_effect_results() {
+    use runinator_broker::{Broker, in_memory::InMemoryBroker};
+
+    let directory = tempfile::tempdir().unwrap();
+    let outbox = FileOutbox::open(directory.path().join("results.jsonl")).unwrap();
+    let message = effect_result_message();
+    let event_id = message.result.event_id;
+    outbox.append_effect(message).unwrap();
+    let broker = InMemoryBroker::new();
+    let shutdown = tokio::sync::Notify::new();
+
+    assert!(
+        drain_before_work(&outbox, &broker, &shutdown)
+            .await
+            .unwrap()
+    );
+    assert_eq!(outbox.depth(), 0);
+    assert_eq!(
+        broker
+            .receive_effect_result("server")
+            .await
+            .unwrap()
+            .result
+            .event_id,
+        event_id
     );
 }

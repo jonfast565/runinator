@@ -344,7 +344,7 @@ fn pipeline_entry_members(pipeline: &Pipeline) -> Vec<&PipelineMember> {
         .collect()
 }
 
-/// start a single member workflow run tagged with the owning pipeline run and enqueue its start node.
+/// Start a single member as an atomically bootstrapped VM workflow run.
 async fn start_member_run<T: RuntimeStore>(
     db: &T,
     pipeline_run: &PipelineRun,
@@ -385,38 +385,29 @@ async fn start_member_run<T: RuntimeStore>(
         .await?;
         return Ok(true);
     }
-    let state = runinator_models::json!({ "control": { "pause_requested": false } });
-    let run = db
-        .create_workflow_run(
-            workflow_id,
-            snapshot.clone(),
-            parameters,
-            state,
-            None,
-            WorkflowRunProvenance {
-                source_kind: Some(TriggerSourceKind::Pipeline),
-                actor_type: Some(TriggerActorType::System),
-                actor_replica_id: None,
-                actor_display_name: Some("pipeline".into()),
-                request_host: None,
-                request_ip: None,
-                metadata: runinator_models::json!({ "pipeline_run_id": pipeline_run.id }),
-            },
-        )
-        .await?;
-    db.set_workflow_run_pipeline_run(run.id, pipeline_run.id)
-        .await?;
-    db.bind_pipeline_member_attempt_run(attempt.id, run.id)
-        .await?;
-    let (start, _) = runinator_workflows::parse_nodes(&snapshot)
-        .map_err(|err| -> SendableError { Box::new(err) })?;
-    let event = NewOrchestrationEvent::new(
-        run.id,
-        Some(start.clone()),
-        "workflow_run_created",
-        runinator_models::json!({ "workflow_id": workflow_id, "node_id": start }),
-    );
-    db.enqueue_ready_node(event, start, Utc::now()).await?;
+    let module = runinator_workflows::compile_workflow_module(&snapshot)
+        .map_err(|error| -> SendableError { Box::new(error) })?;
+    db.bootstrap_workflow_vm_run(runinator_store::roles::NewWorkflowVmRun {
+        workflow_id,
+        workflow_snapshot: snapshot,
+        parameters,
+        state: runinator_models::json!({ "control": { "pause_requested": false } }),
+        name: None,
+        provenance: WorkflowRunProvenance {
+            source_kind: Some(TriggerSourceKind::Pipeline),
+            actor_type: Some(TriggerActorType::System),
+            actor_replica_id: None,
+            actor_display_name: Some("pipeline".into()),
+            request_host: None,
+            request_ip: None,
+            metadata: runinator_models::json!({ "pipeline_run_id": pipeline_run.id }),
+        },
+        pipeline_run_id: Some(pipeline_run.id),
+        pipeline_member_attempt_id: Some(attempt.id),
+        module,
+        instruction_pointer: 0,
+    })
+    .await?;
     Ok(true)
 }
 
@@ -786,6 +777,11 @@ async fn member_result<T: RuntimeStore>(
                 );
             }
         }
+    }
+    if results.is_empty()
+        && let Some(value) = db.fetch_workflow_vm_result(run.id).await?
+    {
+        results.insert("vm".into(), value);
     }
     let result = if results.len() == 1 {
         results.values().next().cloned().unwrap_or(Value::Null)

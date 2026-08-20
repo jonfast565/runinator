@@ -19,7 +19,10 @@ use runinator_models::{
     settings::SettingKind,
     telemetry::ReplicaSampleSeries,
     web::TaskResponse,
-    workflow_vm::{WorkflowContinuation, WorkflowEffect, WorkflowJournalRecord, WorkflowVmCursor},
+    workflow_vm::{
+        WorkflowContinuation, WorkflowEffect, WorkflowEffectOutputEvent, WorkflowJournalRecord,
+        WorkflowVmCursor,
+    },
     workflows::{
         WorkflowBundle, WorkflowDefinition, WorkflowNodeRun, WorkflowNodeRunArtifact,
         WorkflowNodeRunChunk, WorkflowRun, WorkflowRunArtifact, WorkflowStatus, WorkflowTrigger,
@@ -125,6 +128,7 @@ pub enum ApiResponse {
     WorkflowContinuationList(Vec<WorkflowContinuation>),
     WorkflowEffect(WorkflowEffect),
     WorkflowEffectList(Vec<WorkflowEffect>),
+    WorkflowEffectOutput(Vec<WorkflowEffectOutputEvent>),
     WorkflowJournal(Vec<WorkflowJournalRecord>),
     WorkflowVmCursors(Vec<WorkflowVmCursor>),
     NodeTransitions(Vec<runinator_models::orchestration::NodeTransition>),

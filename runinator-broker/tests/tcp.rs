@@ -1,11 +1,11 @@
 use chrono::Utc;
 use runinator_broker::{
     tcp::{client::TcpBroker, server::serve},
-    Broker, BrokerMessage, ControlCommand, ResultMessage,
+    Broker, BrokerMessage, ControlCommand, EffectMessage, EffectResultMessage, ResultMessage,
 };
 use runinator_comm::{
     ActionCommand, ActionTarget, AgentCommand, AgentDirectiveKind, ConsumerProfile, ControlKind,
-    WorkflowResultEvent, WorkflowResultEventKind,
+    EffectCommand, EffectExecutor, WorkflowResultEvent, WorkflowResultEventKind,
 };
 use runinator_models::json;
 use runinator_models::workflows::WorkflowAction;
@@ -161,6 +161,19 @@ async fn tcp_broker_delivers_result_events() {
 }
 
 #[tokio::test]
+async fn tcp_broker_round_trips_executor_routed_effects() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(serve(
+        listener,
+        runinator_broker::in_memory::InMemoryBroker::new(),
+    ));
+    let broker = TcpBroker::new(addr.to_string());
+    assert_effect_round_trip(&broker).await;
+    server.abort();
+}
+
+#[tokio::test]
 async fn tcp_broker_times_out_publish_response() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -220,5 +233,76 @@ fn agent_command(replica_id: Uuid) -> AgentCommand {
         kind: AgentDirectiveKind::Diagnostics,
         issued_at: Utc::now(),
         expires_at: Utc::now() + chrono::Duration::minutes(5),
+    }
+}
+
+async fn assert_effect_round_trip(broker: &dyn Broker) {
+    let provider = effect_command(EffectExecutor::Provider);
+    let infrastructure = effect_command(EffectExecutor::Infrastructure);
+    for command in [provider.clone(), infrastructure.clone()] {
+        broker
+            .publish_effect(EffectMessage {
+                command,
+                dedupe_key: None,
+                enqueued_at: Utc::now(),
+            })
+            .await
+            .unwrap();
+    }
+    let provider_delivery = broker.receive_effect("provider").await.unwrap();
+    assert_eq!(provider_delivery.command.effect_id, provider.effect_id);
+    broker
+        .ack_effect("provider", provider_delivery.delivery_id)
+        .await
+        .unwrap();
+    let infrastructure_delivery = broker
+        .receive_infrastructure_effect("infrastructure")
+        .await
+        .unwrap();
+    assert_eq!(
+        infrastructure_delivery.command.effect_id,
+        infrastructure.effect_id
+    );
+    broker
+        .ack_effect("infrastructure", infrastructure_delivery.delivery_id)
+        .await
+        .unwrap();
+
+    let result = runinator_comm::EffectResult::status(
+        &provider,
+        runinator_models::workflow_vm::WorkflowEffectStatus::Succeeded,
+        None,
+        None,
+    );
+    broker
+        .publish_effect_result(EffectResultMessage {
+            result: result.clone(),
+            dedupe_key: None,
+            enqueued_at: Utc::now(),
+        })
+        .await
+        .unwrap();
+    let delivery = broker.receive_effect_result("engine").await.unwrap();
+    assert_eq!(delivery.result.event_id, result.event_id);
+    broker
+        .ack_effect_result("engine", delivery.delivery_id)
+        .await
+        .unwrap();
+}
+
+fn effect_command(executor: EffectExecutor) -> EffectCommand {
+    EffectCommand {
+        version: runinator_models::workflow_vm::WORKFLOW_EFFECT_PROTOCOL_VERSION,
+        command_id: Uuid::now_v7(),
+        effect_id: Uuid::now_v7(),
+        workflow_run_id: Uuid::now_v7(),
+        continuation_id: Uuid::now_v7(),
+        attempt: 0,
+        request: runinator_models::workflow_vm::WorkflowEffectRequest::Timer { due_at: 42 },
+        executor,
+        target: Default::default(),
+        trace_id: Uuid::now_v7(),
+        trace_context: Default::default(),
+        idempotency_key: Uuid::now_v7().to_string(),
     }
 }

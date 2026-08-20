@@ -18,8 +18,7 @@ fn every_addressable_shape_is_advertised() {
     assert!(uris.contains(&"runinator://workflows/{id}".to_string()));
     assert!(uris.contains(&"runinator://runs/{id}".to_string()));
     assert!(uris.contains(&"runinator://runs/{id}/artifacts".to_string()));
-    assert!(uris.contains(&"runinator://node_runs/{id}/chunks".to_string()));
-    assert!(uris.contains(&"runinator://node_runs/{id}/artifacts".to_string()));
+    assert!(uris.contains(&"runinator://effects/{id}/output".to_string()));
 }
 
 #[test]
@@ -48,9 +47,9 @@ fn a_uuid_is_read_out_of_the_uri_it_sits_in() {
     );
     assert_eq!(
         uuid_after(
-            &format!("{NODE_RUN_PREFIX}{id}/chunks"),
-            NODE_RUN_PREFIX,
-            "/chunks"
+            &format!("{EFFECT_PREFIX}{id}/output"),
+            EFFECT_PREFIX,
+            "/output"
         ),
         Some(id.parse().unwrap())
     );

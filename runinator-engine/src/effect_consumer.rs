@@ -5,6 +5,7 @@ use std::sync::Arc;
 use runinator_broker_core::Broker;
 use runinator_comm::EffectResultKind;
 use runinator_database::interfaces::DatabaseImpl;
+use runinator_models::workflow_vm::{WorkflowEffectOutput, WorkflowEffectOutputEvent};
 use tokio::sync::Notify;
 use tracing::{error, info, warn};
 
@@ -15,6 +16,7 @@ const EFFECT_RESULT_CONSUMER_ID: &str = "runinator-ws-effects";
 pub async fn run_effect_result_consumer<T: DatabaseImpl>(
     db: Arc<T>,
     broker: Arc<dyn Broker>,
+    publisher: crate::events::EnginePublisher,
     shutdown: Arc<Notify>,
 ) {
     info!("workflow VM effect result consumer started");
@@ -47,15 +49,47 @@ pub async fn run_effect_result_consumer<T: DatabaseImpl>(
                 )
                 .await
             }
-            // Streaming reports are retained for the Phase 13 history API. They must not resume
-            // a continuation, so acknowledge them here without treating them as a terminal result.
-            EffectResultKind::Chunk { .. } | EffectResultKind::Artifact { .. } => Ok(false),
+            EffectResultKind::Chunk { stream, content } => {
+                db.append_workflow_effect_output(WorkflowEffectOutputEvent {
+                    event_id: delivery.result.event_id,
+                    effect_id: delivery.result.effect_id,
+                    workflow_run_id: delivery.result.workflow_run_id,
+                    continuation_id: delivery.result.continuation_id,
+                    attempt: delivery.result.attempt,
+                    output: WorkflowEffectOutput::Chunk {
+                        stream: stream.clone(),
+                        content: content.clone(),
+                    },
+                    created_at: delivery.result.timestamp.timestamp(),
+                })
+                .await
+            }
+            EffectResultKind::Artifact { artifact } => {
+                db.append_workflow_effect_output(WorkflowEffectOutputEvent {
+                    event_id: delivery.result.event_id,
+                    effect_id: delivery.result.effect_id,
+                    workflow_run_id: delivery.result.workflow_run_id,
+                    continuation_id: delivery.result.continuation_id,
+                    attempt: delivery.result.attempt,
+                    output: WorkflowEffectOutput::Artifact {
+                        artifact: artifact.clone(),
+                    },
+                    created_at: delivery.result.timestamp.timestamp(),
+                })
+                .await
+            }
         };
 
         match settled {
             Ok(applied) => {
                 if applied {
                     info!(effect_id = %delivery.result.effect_id, "settled workflow VM effect");
+                    crate::events::emit_workflow_run_resolved(
+                        db.as_ref(),
+                        &publisher,
+                        delivery.result.workflow_run_id,
+                    )
+                    .await;
                 }
                 if let Err(err) = broker
                     .ack_effect_result(EFFECT_RESULT_CONSUMER_ID, delivery.delivery_id)

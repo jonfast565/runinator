@@ -4,7 +4,7 @@
 //! delivery itself remains an outbox concern.
 
 use chrono::{Duration, Utc};
-use runinator_comm::{ActionTarget, EffectCommand};
+use runinator_comm::{ActionTarget, EffectCommand, EffectExecutor};
 use runinator_models::{
     errors::SendableError,
     value::Value,
@@ -14,13 +14,12 @@ use runinator_models::{
     },
     workflows::WorkflowStatus,
 };
-use runinator_store::{RuntimeStore, roles::WorkflowVmStore};
+use runinator_store::roles::WorkflowVmStore;
 use uuid::Uuid;
 
 use crate::{
     WorkflowVmStep,
     errors::{WORKFLOW_VM_EFFECT_MISSING, WORKFLOW_VM_MODULE_MISSING},
-    orchestration::settle_pipeline_member_run,
     resume_workflow_vm, step_workflow_vm,
 };
 
@@ -29,16 +28,16 @@ pub enum WorkflowVmDriveOutcome {
     Yielded,
     Forked,
     Joined,
-    Completed,
-    Failed,
+    Completed { settled_run_id: Option<Uuid> },
+    Failed { settled_run_id: Option<Uuid> },
 }
 
 /// Drives continuations leased by a scheduler through their snapshotted workflow modules.
-pub struct WorkflowVmHost<'a, S: WorkflowVmStore + RuntimeStore> {
+pub struct WorkflowVmHost<'a, S: WorkflowVmStore> {
     store: &'a S,
 }
 
-impl<'a, S: WorkflowVmStore + RuntimeStore> WorkflowVmHost<'a, S> {
+impl<'a, S: WorkflowVmStore> WorkflowVmHost<'a, S> {
     pub fn new(store: &'a S) -> Self {
         Self { store }
     }
@@ -113,6 +112,23 @@ impl<'a, S: WorkflowVmStore + RuntimeStore> WorkflowVmHost<'a, S> {
                 request,
             } => {
                 let now = Utc::now().timestamp();
+                let target = match &request {
+                    runinator_models::workflow_vm::WorkflowEffectRequest::Action {
+                        required_labels,
+                        ..
+                    } if !required_labels.is_empty() => {
+                        ActionTarget::labels(required_labels.clone())
+                    }
+                    _ => ActionTarget::Any,
+                };
+                let executor = if matches!(
+                    &request,
+                    runinator_models::workflow_vm::WorkflowEffectRequest::Action { .. }
+                ) {
+                    EffectExecutor::Provider
+                } else {
+                    EffectExecutor::Infrastructure
+                };
                 let effect = WorkflowEffect {
                     version: WORKFLOW_EFFECT_PROTOCOL_VERSION,
                     id: effect_id,
@@ -136,7 +152,8 @@ impl<'a, S: WorkflowVmStore + RuntimeStore> WorkflowVmHost<'a, S> {
                     continuation_id: continuation.id,
                     attempt: 0,
                     request,
-                    target: ActionTarget::Any,
+                    executor,
+                    target,
                     trace_id: Uuid::now_v7(),
                     trace_context: Default::default(),
                     idempotency_key: effect.idempotency_key(),
@@ -180,8 +197,8 @@ impl<'a, S: WorkflowVmStore + RuntimeStore> WorkflowVmHost<'a, S> {
                         },
                     )
                     .await?;
-                self.settle_run_if_terminal(run_id).await?;
-                Ok(WorkflowVmDriveOutcome::Completed)
+                let settled_run_id = self.settle_run_if_terminal(run_id).await?.then_some(run_id);
+                Ok(WorkflowVmDriveOutcome::Completed { settled_run_id })
             }
             WorkflowVmStep::Failed {
                 continuation,
@@ -197,19 +214,19 @@ impl<'a, S: WorkflowVmStore + RuntimeStore> WorkflowVmHost<'a, S> {
                         },
                     )
                     .await?;
-                self.settle_run_if_terminal(run_id).await?;
-                Ok(WorkflowVmDriveOutcome::Failed)
+                let settled_run_id = self.settle_run_if_terminal(run_id).await?.then_some(run_id);
+                Ok(WorkflowVmDriveOutcome::Failed { settled_run_id })
             }
         }
     }
 
-    async fn settle_run_if_terminal(&self, workflow_run_id: Uuid) -> Result<(), SendableError> {
+    async fn settle_run_if_terminal(&self, workflow_run_id: Uuid) -> Result<bool, SendableError> {
         let continuations = self
             .store
             .fetch_workflow_continuations(workflow_run_id)
             .await?;
         if continuations.is_empty() || continuations.iter().any(|c| !c.status.is_terminal()) {
-            return Ok(());
+            return Ok(false);
         }
         let (status, message) = if continuations
             .iter()
@@ -228,11 +245,8 @@ impl<'a, S: WorkflowVmStore + RuntimeStore> WorkflowVmHost<'a, S> {
             (WorkflowStatus::Succeeded, None)
         };
         self.store
-            .update_workflow_run_status(workflow_run_id, status, None, None, message)
+            .settle_workflow_vm_run(workflow_run_id, status, message)
             .await?;
-        if let Some(run) = self.store.fetch_workflow_run(workflow_run_id).await? {
-            settle_pipeline_member_run(self.store, &run).await?;
-        }
-        Ok(())
+        Ok(true)
     }
 }

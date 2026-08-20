@@ -17,30 +17,6 @@ pub async fn fetch_run_artifacts(
 }
 
 #[tauri::command]
-pub async fn fetch_workflow_node_run_chunks(
-    state: State<'_, CommandCenterState>,
-    node_run_id: Uuid,
-) -> CommandResult<Vec<WorkflowNodeRunChunk>> {
-    get_json(
-        &state,
-        &format!("workflow_node_runs/{node_run_id}/chunks?limit=500"),
-    )
-    .await
-}
-
-#[tauri::command]
-pub async fn fetch_workflow_node_run_artifacts(
-    state: State<'_, CommandCenterState>,
-    node_run_id: Uuid,
-) -> CommandResult<Vec<WorkflowNodeRunArtifact>> {
-    get_json(
-        &state,
-        &format!("workflow_node_runs/{node_run_id}/artifacts"),
-    )
-    .await
-}
-
-#[tauri::command]
 pub async fn fetch_workflow_run_artifacts(
     state: State<'_, CommandCenterState>,
     workflow_run_id: Uuid,
@@ -70,6 +46,31 @@ pub async fn fetch_workflow_effects(
     workflow_run_id: Uuid,
 ) -> CommandResult<Vec<WorkflowEffect>> {
     get_json(&state, &format!("workflow_runs/{workflow_run_id}/effects")).await
+}
+
+#[tauri::command]
+pub async fn fetch_workflow_effect_output(
+    state: State<'_, CommandCenterState>,
+    effect_id: Uuid,
+) -> CommandResult<Vec<WorkflowEffectOutputEvent>> {
+    get_json(&state, &format!("workflow_effects/{effect_id}/output")).await
+}
+
+#[tauri::command]
+pub async fn settle_workflow_effect(
+    state: State<'_, CommandCenterState>,
+    effect_id: Uuid,
+    status: WorkflowEffectStatus,
+    output: Option<Value>,
+    message: Option<String>,
+) -> CommandResult<TaskResponse> {
+    let value = post_json(
+        &state,
+        &format!("workflow_effects/{effect_id}/settle"),
+        &json!({ "status": status, "output": output, "message": message }),
+    )
+    .await?;
+    serde_json::from_value(value).map_err(|error| CommandError::Unexpected(error.to_string()))
 }
 
 #[tauri::command]
@@ -399,31 +400,6 @@ pub async fn skip_workflow_node(
 }
 
 #[tauri::command]
-pub async fn resolve_workflow_input(
-    state: State<'_, CommandCenterState>,
-    node_run_id: Uuid,
-    output_json: Value,
-    resolved_by: Option<String>,
-    message: Option<String>,
-) -> CommandResult<TaskResponse> {
-    let url = build_state_url(&state, &format!("workflow_node_runs/{node_run_id}/input")).await?;
-    let response = state
-        .client
-        .read()
-        .await
-        .post(url.clone())
-        .json(&json!({
-            "output_json": output_json,
-            "resolved_by": resolved_by,
-            "message": message
-        }))
-        .send()
-        .await?;
-    let response = handle_response(url, response).await?;
-    Ok(response.json::<TaskResponse>().await?)
-}
-
-#[tauri::command]
 pub async fn rerun_workflow_node(
     state: State<'_, CommandCenterState>,
     workflow_run_id: Uuid,
@@ -530,7 +506,22 @@ pub async fn fetch_workflow_run(
     .map_err(|err| CommandError::Unexpected(err.to_string()))?;
     let nodes = serde_json::from_value(body.get("nodes").cloned().unwrap_or(Value::Array(vec![])))
         .map_err(|err| CommandError::Unexpected(err.to_string()))?;
-    Ok(WorkflowRunDetail { run, nodes })
+    let continuations = get_json(
+        &state,
+        &format!("workflow_runs/{workflow_run_id}/continuations"),
+    )
+    .await?;
+    let effects = get_json(&state, &format!("workflow_runs/{workflow_run_id}/effects")).await?;
+    let journal = get_json(&state, &format!("workflow_runs/{workflow_run_id}/journal")).await?;
+    let vm_cursors = get_json(&state, &format!("workflow_runs/{workflow_run_id}/cursors")).await?;
+    Ok(WorkflowRunDetail {
+        run,
+        nodes,
+        continuations,
+        effects,
+        journal,
+        vm_cursors,
+    })
 }
 
 #[tauri::command]

@@ -1,7 +1,10 @@
 #[cfg(feature = "rabbitmq")]
 use crate::{ActionTarget, ConsumerProfile};
 #[cfg(feature = "rabbitmq")]
-use crate::{AgentCommand, AgentDelivery};
+use crate::{
+    AgentCommand, AgentDelivery, EffectDelivery, EffectExecutor, EffectMessage,
+    EffectResultDelivery, EffectResultMessage,
+};
 use crate::{
     Broker, BrokerDelivery, BrokerError, BrokerMessage, ControlCommand, ControlDelivery,
     EventDelivery, EventMessage, IngressDelivery, IngressMessage, ResultDelivery, ResultMessage,
@@ -14,6 +17,9 @@ const DEFAULT_ACTION_QUEUE: &str = "runinator.actions";
 const DEFAULT_CONTROL_QUEUE: &str = "runinator.control";
 const DEFAULT_AGENT_QUEUE_PREFIX: &str = "runinator.agent";
 const DEFAULT_RESULT_QUEUE: &str = "runinator.results";
+const DEFAULT_EFFECT_QUEUE: &str = "runinator.effects";
+const DEFAULT_INFRASTRUCTURE_EFFECT_QUEUE: &str = "runinator.effects.infrastructure";
+const DEFAULT_EFFECT_RESULT_QUEUE: &str = "runinator.effect-results";
 const DEFAULT_WAKE_QUEUE: &str = "runinator.wake";
 const DEFAULT_INGRESS_QUEUE: &str = "runinator.ingress";
 const DEFAULT_EVENT_EXCHANGE: &str = "runinator.events";
@@ -35,6 +41,9 @@ pub struct RabbitMqBrokerConfig {
     pub control_queue: String,
     pub agent_queue_prefix: String,
     pub result_queue: String,
+    pub effect_queue: String,
+    pub infrastructure_effect_queue: String,
+    pub effect_result_queue: String,
     pub wake_queue: String,
     pub ingress_queue: String,
     // fan-out exchange for UI events; each subscriber binds its own exclusive queue.
@@ -54,6 +63,9 @@ impl RabbitMqBrokerConfig {
             control_queue: DEFAULT_CONTROL_QUEUE.into(),
             agent_queue_prefix: DEFAULT_AGENT_QUEUE_PREFIX.into(),
             result_queue: DEFAULT_RESULT_QUEUE.into(),
+            effect_queue: DEFAULT_EFFECT_QUEUE.into(),
+            infrastructure_effect_queue: DEFAULT_INFRASTRUCTURE_EFFECT_QUEUE.into(),
+            effect_result_queue: DEFAULT_EFFECT_RESULT_QUEUE.into(),
             wake_queue: DEFAULT_WAKE_QUEUE.into(),
             ingress_queue: DEFAULT_INGRESS_QUEUE.into(),
             event_exchange: DEFAULT_EVENT_EXCHANGE.into(),
@@ -108,6 +120,18 @@ impl RabbitMqBrokerConfig {
         self
     }
 
+    pub fn with_effect_queues(
+        mut self,
+        effect_queue: impl Into<String>,
+        infrastructure_effect_queue: impl Into<String>,
+        effect_result_queue: impl Into<String>,
+    ) -> Self {
+        self.effect_queue = effect_queue.into();
+        self.infrastructure_effect_queue = infrastructure_effect_queue.into();
+        self.effect_result_queue = effect_result_queue.into();
+        self
+    }
+
     pub fn with_client_id(mut self, client_id: impl Into<String>) -> Self {
         self.client_id = client_id.into();
         self
@@ -115,6 +139,12 @@ impl RabbitMqBrokerConfig {
 
     pub fn has_workflow_result_queue(&self) -> bool {
         !self.result_queue.trim().is_empty()
+    }
+
+    pub fn has_workflow_effect_queues(&self) -> bool {
+        !self.effect_queue.trim().is_empty()
+            && !self.infrastructure_effect_queue.trim().is_empty()
+            && !self.effect_result_queue.trim().is_empty()
     }
 }
 
@@ -166,6 +196,9 @@ struct RabbitMqBrokerInner {
     control_consumers: Mutex<HashMap<String, Arc<AsyncMutex<lapin::Consumer>>>>,
     agent_consumers: Mutex<HashMap<String, Arc<AsyncMutex<lapin::Consumer>>>>,
     result_consumers: Mutex<HashMap<String, Arc<AsyncMutex<lapin::Consumer>>>>,
+    effect_consumers: Mutex<HashMap<String, Arc<AsyncMutex<lapin::Consumer>>>>,
+    infrastructure_effect_consumers: Mutex<HashMap<String, Arc<AsyncMutex<lapin::Consumer>>>>,
+    effect_result_consumers: Mutex<HashMap<String, Arc<AsyncMutex<lapin::Consumer>>>>,
     wake_consumers: Mutex<HashMap<String, Arc<AsyncMutex<lapin::Consumer>>>>,
     ingress_consumers: Mutex<HashMap<String, Arc<AsyncMutex<lapin::Consumer>>>>,
     // each subscriber gets its own exclusive auto-delete queue bound to the fan-out exchange.
@@ -180,6 +213,9 @@ enum RabbitMqChannel {
     TargetedAction,
     Control,
     Result,
+    Effect,
+    InfrastructureEffect,
+    EffectResult,
     Wake,
     Ingress,
 }
@@ -210,6 +246,15 @@ impl RabbitMqBrokerInner {
             .declare_queue(&config.result_queue)
             .await?;
         RabbitChannel(&channel)
+            .declare_queue(&config.effect_queue)
+            .await?;
+        RabbitChannel(&channel)
+            .declare_queue(&config.infrastructure_effect_queue)
+            .await?;
+        RabbitChannel(&channel)
+            .declare_queue(&config.effect_result_queue)
+            .await?;
+        RabbitChannel(&channel)
             .declare_queue(&config.wake_queue)
             .await?;
         RabbitChannel(&channel)
@@ -227,6 +272,9 @@ impl RabbitMqBrokerInner {
             control_consumers: Mutex::new(HashMap::new()),
             agent_consumers: Mutex::new(HashMap::new()),
             result_consumers: Mutex::new(HashMap::new()),
+            effect_consumers: Mutex::new(HashMap::new()),
+            infrastructure_effect_consumers: Mutex::new(HashMap::new()),
+            effect_result_consumers: Mutex::new(HashMap::new()),
             wake_consumers: Mutex::new(HashMap::new()),
             ingress_consumers: Mutex::new(HashMap::new()),
             event_consumers: Mutex::new(HashMap::new()),
@@ -268,6 +316,15 @@ impl RabbitMqBrokerInner {
             .declare_queue(&config.result_queue)
             .await?;
         RabbitChannel(&new_channel)
+            .declare_queue(&config.effect_queue)
+            .await?;
+        RabbitChannel(&new_channel)
+            .declare_queue(&config.infrastructure_effect_queue)
+            .await?;
+        RabbitChannel(&new_channel)
+            .declare_queue(&config.effect_result_queue)
+            .await?;
+        RabbitChannel(&new_channel)
             .declare_queue(&config.wake_queue)
             .await?;
         RabbitChannel(&new_channel)
@@ -282,6 +339,9 @@ impl RabbitMqBrokerInner {
         self.control_consumers.lock().clear();
         self.agent_consumers.lock().clear();
         self.result_consumers.lock().clear();
+        self.effect_consumers.lock().clear();
+        self.infrastructure_effect_consumers.lock().clear();
+        self.effect_result_consumers.lock().clear();
         self.wake_consumers.lock().clear();
         self.ingress_consumers.lock().clear();
         self.event_consumers.lock().clear();
@@ -386,6 +446,9 @@ impl RabbitMqBrokerInner {
             RabbitMqChannel::TargetedAction => &self.targeted_action_consumers,
             RabbitMqChannel::Control => &self.control_consumers,
             RabbitMqChannel::Result => &self.result_consumers,
+            RabbitMqChannel::Effect => &self.effect_consumers,
+            RabbitMqChannel::InfrastructureEffect => &self.infrastructure_effect_consumers,
+            RabbitMqChannel::EffectResult => &self.effect_result_consumers,
             RabbitMqChannel::Wake => &self.wake_consumers,
             RabbitMqChannel::Ingress => &self.ingress_consumers,
         };
@@ -569,6 +632,9 @@ fn queue_for(config: &RabbitMqBrokerConfig, channel: RabbitMqChannel) -> &str {
         RabbitMqChannel::TargetedAction => &config.targeted_action_queue,
         RabbitMqChannel::Control => &config.control_queue,
         RabbitMqChannel::Result => &config.result_queue,
+        RabbitMqChannel::Effect => &config.effect_queue,
+        RabbitMqChannel::InfrastructureEffect => &config.infrastructure_effect_queue,
+        RabbitMqChannel::EffectResult => &config.effect_result_queue,
         RabbitMqChannel::Wake => &config.wake_queue,
         RabbitMqChannel::Ingress => &config.ingress_queue,
     }
@@ -609,6 +675,9 @@ fn channel_name(channel: RabbitMqChannel) -> &'static str {
         RabbitMqChannel::TargetedAction => "actions.targeted",
         RabbitMqChannel::Control => "control",
         RabbitMqChannel::Result => "results",
+        RabbitMqChannel::Effect => "effects",
+        RabbitMqChannel::InfrastructureEffect => "effects.infrastructure",
+        RabbitMqChannel::EffectResult => "effect-results",
         RabbitMqChannel::Wake => "wake",
         RabbitMqChannel::Ingress => "ingress",
     }
@@ -621,6 +690,33 @@ fn rabbitmq_error(context: &'static str) -> impl FnOnce(lapin::Error) -> BrokerE
 
 #[cfg(feature = "rabbitmq")]
 impl RabbitMqBroker {
+    async fn receive_effect_from(
+        &self,
+        channel: RabbitMqChannel,
+        consumer: &str,
+    ) -> Result<EffectDelivery, BrokerError> {
+        let result = receive_json::<EffectMessage>(self, channel, consumer).await;
+        if matches!(result, Err(BrokerError::ConsumerStreamEnded)) {
+            match channel {
+                RabbitMqChannel::Effect => {
+                    self.inner.effect_consumers.lock().remove(consumer);
+                }
+                RabbitMqChannel::InfrastructureEffect => {
+                    self.inner
+                        .infrastructure_effect_consumers
+                        .lock()
+                        .remove(consumer);
+                }
+                _ => {}
+            }
+        }
+        let (message, delivery) = result?;
+        let broker_delivery = EffectDelivery::from(message);
+        self.inner
+            .track_delivery(broker_delivery.delivery_id, delivery);
+        Ok(broker_delivery)
+    }
+
     /// receive the next delivery from the targeted-actions queue (`Labels`/`Replica` targets only).
     /// unlike `receive`, callers must re-validate the delivery's target against their own profile —
     /// this queue can carry cross-talk for other consumers' label groups.
@@ -647,6 +743,10 @@ impl Broker for RabbitMqBroker {
 
     fn supports_agent_channel(&self) -> bool {
         !self.config.agent_queue_prefix.trim().is_empty()
+    }
+
+    fn supports_workflow_effect_channels(&self) -> bool {
+        self.config.has_workflow_effect_queues()
     }
 
     async fn publish(&self, message: BrokerMessage) -> Result<(), BrokerError> {
@@ -819,6 +919,82 @@ impl Broker for RabbitMqBroker {
     }
 
     async fn nack_result(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        nack_delivery(self.inner.take_pending(delivery_id)?).await
+    }
+
+    async fn publish_effect(&self, message: EffectMessage) -> Result<(), BrokerError> {
+        let key = message.dedupe_key_or_hash();
+        let queue = match message.command.executor {
+            EffectExecutor::Provider => &self.config.effect_queue,
+            EffectExecutor::Infrastructure => &self.config.infrastructure_effect_queue,
+        };
+        let payload = serde_json::to_string(&message)
+            .map_err(|err| BrokerError::Internal(err.to_string()))?;
+        let ch = self.inner.ensure_connected(&self.config).await?;
+        RabbitChannel(&ch).publish(queue, &key, payload).await
+    }
+
+    async fn receive_effect(&self, consumer: &str) -> Result<EffectDelivery, BrokerError> {
+        self.receive_effect_from(RabbitMqChannel::Effect, consumer)
+            .await
+    }
+
+    async fn receive_infrastructure_effect(
+        &self,
+        consumer: &str,
+    ) -> Result<EffectDelivery, BrokerError> {
+        self.receive_effect_from(RabbitMqChannel::InfrastructureEffect, consumer)
+            .await
+    }
+
+    async fn ack_effect(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        ack_delivery(self.inner.take_pending(delivery_id)?).await
+    }
+
+    async fn nack_effect(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        nack_delivery(self.inner.take_pending(delivery_id)?).await
+    }
+
+    async fn publish_effect_result(&self, message: EffectResultMessage) -> Result<(), BrokerError> {
+        let key = message.dedupe_key_or_hash();
+        let payload = serde_json::to_string(&message)
+            .map_err(|err| BrokerError::Internal(err.to_string()))?;
+        let ch = self.inner.ensure_connected(&self.config).await?;
+        RabbitChannel(&ch)
+            .publish(&self.config.effect_result_queue, &key, payload)
+            .await
+    }
+
+    async fn receive_effect_result(
+        &self,
+        consumer: &str,
+    ) -> Result<EffectResultDelivery, BrokerError> {
+        let result =
+            receive_json::<EffectResultMessage>(self, RabbitMqChannel::EffectResult, consumer)
+                .await;
+        if matches!(result, Err(BrokerError::ConsumerStreamEnded)) {
+            self.inner.effect_result_consumers.lock().remove(consumer);
+        }
+        let (message, delivery) = result?;
+        let broker_delivery = EffectResultDelivery::from(message);
+        self.inner
+            .track_delivery(broker_delivery.delivery_id, delivery);
+        Ok(broker_delivery)
+    }
+
+    async fn ack_effect_result(
+        &self,
+        _consumer: &str,
+        delivery_id: Uuid,
+    ) -> Result<(), BrokerError> {
+        ack_delivery(self.inner.take_pending(delivery_id)?).await
+    }
+
+    async fn nack_effect_result(
+        &self,
+        _consumer: &str,
+        delivery_id: Uuid,
+    ) -> Result<(), BrokerError> {
         nack_delivery(self.inner.take_pending(delivery_id)?).await
     }
 

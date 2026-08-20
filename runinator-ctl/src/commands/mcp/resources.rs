@@ -14,10 +14,7 @@ use crate::commands::Client;
 const WORKFLOWS_URI: &str = "runinator://workflows";
 const WORKFLOW_PREFIX: &str = "runinator://workflows/";
 const RUN_PREFIX: &str = "runinator://runs/";
-const NODE_RUN_PREFIX: &str = "runinator://node_runs/";
-
-/// how many log chunks a node-run resource carries.
-const CHUNK_LIMIT: i64 = 500;
+const EFFECT_PREFIX: &str = "runinator://effects/";
 
 /// the addressable shapes, listed for a client that has no run in mind yet.
 pub(crate) fn templates() -> Vec<Value> {
@@ -37,7 +34,7 @@ pub(crate) fn templates() -> Vec<Value> {
         json!({
             "uri": format!("{RUN_PREFIX}{{id}}"),
             "name": "Workflow run",
-            "description": "One workflow run with its node runs.",
+            "description": "One workflow run with its VM continuations, effects, and journal.",
             "mimeType": "application/json",
         }),
         json!({
@@ -47,15 +44,9 @@ pub(crate) fn templates() -> Vec<Value> {
             "mimeType": "application/json",
         }),
         json!({
-            "uri": format!("{NODE_RUN_PREFIX}{{id}}/chunks"),
-            "name": "Node run logs",
-            "description": "The log chunks one node run wrote.",
-            "mimeType": "application/json",
-        }),
-        json!({
-            "uri": format!("{NODE_RUN_PREFIX}{{id}}/artifacts"),
-            "name": "Node run artifacts",
-            "description": "The artifacts one node run produced.",
+            "uri": format!("{EFFECT_PREFIX}{{id}}/output"),
+            "name": "Effect output",
+            "description": "The chunks and artifacts one workflow effect produced.",
             "mimeType": "application/json",
         }),
     ]
@@ -109,32 +100,61 @@ async fn fetch(client: &Client, uri: &str) -> Result<Value, String> {
         return to_value(&workflow);
     }
     if let Some(run_id) = uuid_after(uri, RUN_PREFIX, "/artifacts") {
-        let artifacts = client
-            .fetch_workflow_run_artifacts(run_id)
+        let effects = client
+            .fetch_workflow_effects(run_id)
             .await
             .map_err(|failure| failure.to_string())?;
+        let mut artifacts = Vec::new();
+        for effect in effects {
+            artifacts.extend(
+                client
+                    .fetch_workflow_effect_output(effect.id)
+                    .await
+                    .map_err(|failure| failure.to_string())?
+                    .into_iter()
+                    .filter(|event| {
+                        matches!(
+                            event.output,
+                            runinator_models::workflow_vm::WorkflowEffectOutput::Artifact { .. }
+                        )
+                    }),
+            );
+        }
         return to_value(&artifacts);
     }
     if let Some(run_id) = uuid_after(uri, RUN_PREFIX, "") {
-        let (run, nodes) = client
-            .fetch_workflow_run(run_id)
+        let run = client
+            .fetch_workflow_runs(None, None)
+            .await
+            .map_err(|failure| failure.to_string())?
+            .into_iter()
+            .find(|run| run.id == run_id)
+            .ok_or_else(|| format!("workflow run {run_id} not found"))?;
+        let continuations = client
+            .fetch_workflow_continuations(run_id)
             .await
             .map_err(|failure| failure.to_string())?;
-        return Ok(json!({ "run": run, "nodes": nodes }));
+        let effects = client
+            .fetch_workflow_effects(run_id)
+            .await
+            .map_err(|failure| failure.to_string())?;
+        let journal = client
+            .fetch_workflow_journal(run_id)
+            .await
+            .map_err(|failure| failure.to_string())?;
+        return Ok(json!({
+            "run": run,
+            "continuations": continuations,
+            "effects": effects,
+            "journal": journal,
+        }));
     }
-    if let Some(node_run_id) = uuid_after(uri, NODE_RUN_PREFIX, "/chunks") {
-        let chunks = client
-            .fetch_workflow_node_run_chunks(node_run_id, None, CHUNK_LIMIT)
+    if let Some(effect_id) = uuid_after(uri, EFFECT_PREFIX, "/output") {
+        let output = client
+            .fetch_workflow_effect_output(effect_id)
             .await
             .map_err(|failure| failure.to_string())?;
-        return to_value(&chunks);
-    }
-    if let Some(node_run_id) = uuid_after(uri, NODE_RUN_PREFIX, "/artifacts") {
-        let artifacts = client
-            .fetch_workflow_node_run_artifacts(node_run_id)
-            .await
-            .map_err(|failure| failure.to_string())?;
-        return to_value(&artifacts);
+        return to_value(&output);
     }
     Err(format!("unsupported resource uri '{uri}'"))
 }

@@ -163,6 +163,10 @@ pub fn api_workflow_effect(effect_id: Uuid) -> String {
     format!("{API_WORKFLOW_EFFECTS}/{effect_id}")
 }
 
+pub fn api_workflow_effect_output(effect_id: Uuid) -> String {
+    format!("{API_WORKFLOW_EFFECTS}/{effect_id}/output")
+}
+
 pub fn api_workflow_run_artifacts(workflow_run_id: Uuid) -> String {
     format!("{API_WORKFLOW_RUNS}/{workflow_run_id}/artifacts")
 }

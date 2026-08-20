@@ -2,10 +2,11 @@ use crate::{
     http::auth::{AuthIdentity, BrokerAuth},
     http::types::{
         AckRequest, PollRequest, PollResponse, PublishAgentRequest, PublishControlRequest,
-        PublishEventRequest, PublishIngressRequest, PublishRequest, PublishResultRequest,
-        PublishWakeRequest, ReceiveAgentResponse, ReceiveControlResponse, ReceiveEventResponse,
-        ReceiveIngressResponse, ReceiveRequest, ReceiveResponse, ReceiveResultResponse,
-        ReceiveWakeResponse,
+        PublishEffectRequest, PublishEffectResultRequest, PublishEventRequest,
+        PublishIngressRequest, PublishRequest, PublishResultRequest, PublishWakeRequest,
+        ReceiveAgentResponse, ReceiveControlResponse, ReceiveEffectResponse,
+        ReceiveEffectResultResponse, ReceiveEventResponse, ReceiveIngressResponse, ReceiveRequest,
+        ReceiveResponse, ReceiveResultResponse, ReceiveWakeResponse,
     },
     Broker, BrokerError, ConsumerProfile,
 };
@@ -78,6 +79,18 @@ where
         .route("/results/receive", post(receive_result::<B>))
         .route("/results/ack", post(ack_result::<B>))
         .route("/results/nack", post(nack_result::<B>))
+        .route("/effects/publish", post(publish_effect::<B>))
+        .route("/effects/receive", post(receive_effect::<B>))
+        .route(
+            "/effects/infrastructure/receive",
+            post(receive_infrastructure_effect::<B>),
+        )
+        .route("/effects/ack", post(ack_effect::<B>))
+        .route("/effects/nack", post(nack_effect::<B>))
+        .route("/effect-results/publish", post(publish_effect_result::<B>))
+        .route("/effect-results/receive", post(receive_effect_result::<B>))
+        .route("/effect-results/ack", post(ack_effect_result::<B>))
+        .route("/effect-results/nack", post(nack_effect_result::<B>))
         .route("/wake/publish", post(publish_wake::<B>))
         .route("/wake/receive", post(receive_wake::<B>))
         .route("/wake/ack", post(ack_wake::<B>))
@@ -345,6 +358,143 @@ where
         state
             .broker
             .nack_result(&request.consumer, request.delivery_id)
+            .await,
+        StatusCode::OK,
+    )
+}
+
+async fn publish_effect<B>(
+    State(state): State<AppState<B>>,
+    Json(request): Json<PublishEffectRequest>,
+) -> Response
+where
+    B: Broker,
+{
+    respond(
+        state.broker.publish_effect(request.message).await,
+        StatusCode::CREATED,
+    )
+}
+
+async fn receive_effect<B>(
+    State(state): State<AppState<B>>,
+    Json(request): Json<ReceiveRequest>,
+) -> Response
+where
+    B: Broker,
+{
+    let received = match &request.profile {
+        Some(profile) => state.broker.receive_effect_for(profile).await,
+        None => state.broker.receive_effect(&request.consumer).await,
+    };
+    match received {
+        Ok(delivery) => json_response(StatusCode::OK, ReceiveEffectResponse { delivery }),
+        Err(error) => error_response(error),
+    }
+}
+
+async fn receive_infrastructure_effect<B>(
+    State(state): State<AppState<B>>,
+    Json(request): Json<ReceiveRequest>,
+) -> Response
+where
+    B: Broker,
+{
+    match state
+        .broker
+        .receive_infrastructure_effect(&request.consumer)
+        .await
+    {
+        Ok(delivery) => json_response(StatusCode::OK, ReceiveEffectResponse { delivery }),
+        Err(error) => error_response(error),
+    }
+}
+
+async fn ack_effect<B>(
+    State(state): State<AppState<B>>,
+    Json(request): Json<AckRequest>,
+) -> Response
+where
+    B: Broker,
+{
+    respond(
+        state
+            .broker
+            .ack_effect(&request.consumer, request.delivery_id)
+            .await,
+        StatusCode::OK,
+    )
+}
+
+async fn nack_effect<B>(
+    State(state): State<AppState<B>>,
+    Json(request): Json<AckRequest>,
+) -> Response
+where
+    B: Broker,
+{
+    respond(
+        state
+            .broker
+            .nack_effect(&request.consumer, request.delivery_id)
+            .await,
+        StatusCode::OK,
+    )
+}
+
+async fn publish_effect_result<B>(
+    State(state): State<AppState<B>>,
+    Json(request): Json<PublishEffectResultRequest>,
+) -> Response
+where
+    B: Broker,
+{
+    respond(
+        state.broker.publish_effect_result(request.message).await,
+        StatusCode::CREATED,
+    )
+}
+
+async fn receive_effect_result<B>(
+    State(state): State<AppState<B>>,
+    Json(request): Json<ReceiveRequest>,
+) -> Response
+where
+    B: Broker,
+{
+    match state.broker.receive_effect_result(&request.consumer).await {
+        Ok(delivery) => json_response(StatusCode::OK, ReceiveEffectResultResponse { delivery }),
+        Err(error) => error_response(error),
+    }
+}
+
+async fn ack_effect_result<B>(
+    State(state): State<AppState<B>>,
+    Json(request): Json<AckRequest>,
+) -> Response
+where
+    B: Broker,
+{
+    respond(
+        state
+            .broker
+            .ack_effect_result(&request.consumer, request.delivery_id)
+            .await,
+        StatusCode::OK,
+    )
+}
+
+async fn nack_effect_result<B>(
+    State(state): State<AppState<B>>,
+    Json(request): Json<AckRequest>,
+) -> Response
+where
+    B: Broker,
+{
+    respond(
+        state
+            .broker
+            .nack_effect_result(&request.consumer, request.delivery_id)
             .await,
         StatusCode::OK,
     )

@@ -14,21 +14,51 @@ pub(super) async fn runs(client: &Client, command: &RunCommands, json_output: bo
             print_runs(&runs);
         }
         RunCommands::Show { id } => {
-            let (run, nodes) = client.fetch_workflow_run(*id).await?;
+            let run = client
+                .fetch_workflow_runs(None, None)
+                .await?
+                .into_iter()
+                .find(|run| run.id == *id)
+                .ok_or_else(|| format!("workflow run {id} not found"))?;
+            let continuations = client.fetch_workflow_continuations(*id).await?;
+            let effects = client.fetch_workflow_effects(*id).await?;
+            let journal = client.fetch_workflow_journal(*id).await?;
             if json_output {
-                return output::json(&json!({ "run": run, "nodes": nodes }));
+                return output::json(&json!({
+                    "run": run,
+                    "continuations": continuations,
+                    "effects": effects,
+                    "journal": journal,
+                }));
             }
-            print_run_detail(&run, &nodes);
+            print_run_summary(&run);
+            println!("continuations\t{}", continuations.len());
+            println!("effects\t{}", effects.len());
+            println!("journal entries\t{}", journal.len());
         }
         RunCommands::Watch {
             id,
             interval_seconds,
         } => loop {
-            let (run, nodes) = client.fetch_workflow_run(*id).await?;
+            let run = client
+                .fetch_workflow_runs(None, None)
+                .await?
+                .into_iter()
+                .find(|run| run.id == *id)
+                .ok_or_else(|| format!("workflow run {id} not found"))?;
+            let continuations = client.fetch_workflow_continuations(*id).await?;
+            let effects = client.fetch_workflow_effects(*id).await?;
             if json_output {
-                output::json(&json!({ "run": run, "nodes": nodes }))?;
+                output::json(
+                    &json!({ "run": run, "continuations": continuations, "effects": effects }),
+                )?;
             } else {
-                print_run_detail(&run, &nodes);
+                print_run_summary(&run);
+                println!(
+                    "continuations\t{}\teffects\t{}",
+                    continuations.len(),
+                    effects.len()
+                );
             }
             if run.status.is_terminal() {
                 break;
@@ -38,20 +68,19 @@ pub(super) async fn runs(client: &Client, command: &RunCommands, json_output: bo
                 println!();
             }
         },
-        RunCommands::Logs {
-            node_run_id,
-            cursor,
-            limit,
-        } => {
-            let chunks = client
-                .fetch_workflow_node_run_chunks(*node_run_id, *cursor, *limit)
-                .await?;
+        RunCommands::Logs { effect_id } => {
+            let chunks = client.fetch_workflow_effect_output(*effect_id).await?;
             if json_output {
                 return output::json(&chunks);
             }
-            for chunk in chunks {
-                print!("{}", chunk.content);
-                if !chunk.content.ends_with('\n') {
+            for event in chunks {
+                let runinator_models::workflow_vm::WorkflowEffectOutput::Chunk { content, .. } =
+                    event.output
+                else {
+                    continue;
+                };
+                print!("{content}");
+                if !content.ends_with('\n') {
                     println!();
                 }
             }
@@ -91,7 +120,22 @@ pub(super) async fn runs(client: &Client, command: &RunCommands, json_output: bo
             json_output,
         )?,
         RunCommands::Artifacts { id } => {
-            let artifacts = client.fetch_workflow_run_artifacts(*id).await?;
+            let effects = client.fetch_workflow_effects(*id).await?;
+            let mut artifacts = Vec::new();
+            for effect in effects {
+                artifacts.extend(
+                    client
+                        .fetch_workflow_effect_output(effect.id)
+                        .await?
+                        .into_iter()
+                        .filter(|event| {
+                            matches!(
+                                event.output,
+                                runinator_models::workflow_vm::WorkflowEffectOutput::Artifact { .. }
+                            )
+                        }),
+                );
+            }
             if json_output {
                 return output::json(&artifacts);
             }
@@ -99,15 +143,12 @@ pub(super) async fn runs(client: &Client, command: &RunCommands, json_output: bo
                 println!("no artifacts for run {id}");
                 return Ok(());
             }
-            for artifact in artifacts {
-                println!(
-                    "{}\t{}\t{}\t{} bytes\t{}",
-                    artifact.id,
-                    artifact.name,
-                    artifact.mime_type,
-                    artifact.size_bytes,
-                    artifact.uri
-                );
+            for event in artifacts {
+                if let runinator_models::workflow_vm::WorkflowEffectOutput::Artifact { artifact } =
+                    event.output
+                {
+                    println!("{}\t{}", event.effect_id, serde_json::to_string(&artifact)?);
+                }
             }
         }
     }

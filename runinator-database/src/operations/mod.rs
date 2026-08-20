@@ -14,6 +14,9 @@ use runinator_comm::{
 use runinator_models::cursor::RunCursor;
 use runinator_models::value::Value;
 use runinator_models::workflow_state::WorkflowExecutionState;
+use runinator_models::workflow_vm::{
+    WORKFLOW_JOURNAL_VERSION, WorkflowContinuation, WorkflowJournalEntry, WorkflowModule,
+};
 use runinator_models::{
     auth::{
         AgentEnrollmentToken, AgentEnrollmentTokenRecord, ApiKey, ApiKeyRecord, AuthContext,
@@ -235,6 +238,7 @@ trait ScheduleSqlExt: SqlBackend {
         scheduler_id: &str,
         slot: DateTime<Utc>,
         now: DateTime<Utc>,
+        module: &WorkflowModule,
     ) -> Result<WorkflowRun, SendableError>;
 }
 
@@ -344,13 +348,19 @@ where
         scheduler_id: &str,
         slot: DateTime<Utc>,
         now: DateTime<Utc>,
+        module: &WorkflowModule,
     ) -> Result<WorkflowRun, SendableError> {
         let Some(trigger_id) = trigger.id else {
             return Err(crate::errors::TRIGGER_MISSING_ID.bare());
         };
         let new_run_id = Uuid::now_v7();
         let snapshot_json = serde_json::to_string(snapshot)?;
-        let parameters = trigger.trigger_parameters().to_string();
+        if !module.is_supported() || module.instructions.is_empty() {
+            return Err(crate::errors::WORKFLOW_VM_CORRUPT_STATE
+                .error("cannot fire a trigger with an incompatible workflow module"));
+        }
+        let parameter_value = trigger.trigger_parameters();
+        let parameters = parameter_value.to_string();
         let state = WorkflowExecutionState::from_state(&trigger.trigger_state_for_slot(slot));
         let insert_sql = "INSERT INTO workflow_runs (id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, created_at, name, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_request_host, trigger_request_ip, trigger_metadata) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, NULL, ?, ?, NULL, ?, NULL, NULL, ?)";
         sqlx::query(&self.render(insert_sql))
@@ -368,6 +378,48 @@ where
             .execute(&mut *conn)
             .await?;
         execution_state_sql::write(self, conn, new_run_id, &state, false).await?;
+        let mut continuation = WorkflowContinuation::start(new_run_id, module.version);
+        continuation.locals.insert("input".into(), parameter_value);
+        sqlx::query(&self.render(
+            "INSERT INTO workflow_vm_modules (workflow_run_id, version, module_json, created_at) VALUES (?, ?, ?, ?)",
+        ))
+        .bind(new_run_id)
+        .bind(i64::from(module.version))
+        .bind(serde_json::to_string(module)?)
+        .bind(now.timestamp())
+        .execute(&mut *conn)
+        .await?;
+        sqlx::query(&self.render(
+            "INSERT INTO workflow_continuations (id, workflow_run_id, module_version, continuation_json, status, version, ready_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ))
+        .bind(continuation.id)
+        .bind(new_run_id)
+        .bind(i64::from(continuation.module_version))
+        .bind(serde_json::to_string(&continuation)?)
+        .bind("runnable")
+        .bind(continuation.revision as i64)
+        .bind(now.timestamp())
+        .bind(now.timestamp())
+        .bind(now.timestamp())
+        .execute(&mut *conn)
+        .await?;
+        let entry = WorkflowJournalEntry::Entered {
+            continuation_id: continuation.id,
+            instruction_pointer: 0,
+        };
+        sqlx::query(&self.render(
+            "INSERT INTO workflow_journal_entries (id, version, workflow_run_id, sequence, continuation_id, effect_id, entry_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        ))
+        .bind(Uuid::now_v7())
+        .bind(i64::from(WORKFLOW_JOURNAL_VERSION))
+        .bind(new_run_id)
+        .bind(0_i64)
+        .bind(Some(continuation.id))
+        .bind(Option::<Uuid>::None)
+        .bind(serde_json::to_string(&entry)?)
+        .bind(now.timestamp())
+        .execute(&mut *conn)
+        .await?;
         let run_row = sqlx::query(&self.render(&format!(
             "SELECT {WORKFLOW_RUN_COLUMNS} FROM workflow_runs WHERE id = ?"
         )))

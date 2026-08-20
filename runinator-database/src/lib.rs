@@ -26,7 +26,7 @@ mod migration_parity;
 // re-exports keep `runinator_database::interfaces::*` and `runinator_database::archive::*` working
 // for the callers that already use those paths.
 pub use runinator_store::workflow_mutex;
-pub use runinator_store::{archive, interfaces};
+pub use runinator_store::{archive, interfaces, roles};
 #[cfg(feature = "mysql")]
 pub mod mysql;
 mod operations;

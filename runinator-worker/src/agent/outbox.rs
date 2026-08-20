@@ -8,7 +8,7 @@ use std::{
     sync::Mutex,
 };
 
-use runinator_broker::{Broker, ResultMessage};
+use runinator_broker::{Broker, EffectResultMessage, ResultMessage};
 use runinator_models::errors::SendableError;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -20,11 +20,18 @@ pub const DEFAULT_MAX_ATTEMPTS: u32 = 20;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OutboxEntry {
     pub id: Uuid,
-    pub message: ResultMessage,
+    pub message: OutboxMessage,
     #[serde(default)]
     pub attempts: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum OutboxMessage {
+    Legacy(ResultMessage),
+    Effect(EffectResultMessage),
 }
 
 #[derive(Debug)]
@@ -57,6 +64,7 @@ impl From<io::Error> for OutboxError {
 pub trait ResultOutbox: Send + Sync {
     /// fsync a terminal status or artifact before its action delivery may be acknowledged.
     fn append(&self, message: ResultMessage) -> Result<(), OutboxError>;
+    fn append_effect(&self, message: EffectResultMessage) -> Result<(), OutboxError>;
     fn next(&self) -> Result<Option<OutboxEntry>, OutboxError>;
     fn acknowledge(&self, id: Uuid) -> Result<(), OutboxError>;
     fn record_failure(&self, id: Uuid, error: String) -> Result<(), OutboxError>;
@@ -69,6 +77,10 @@ pub struct NoopOutbox;
 
 impl ResultOutbox for NoopOutbox {
     fn append(&self, _message: ResultMessage) -> Result<(), OutboxError> {
+        Err(OutboxError::Disabled)
+    }
+
+    fn append_effect(&self, _message: EffectResultMessage) -> Result<(), OutboxError> {
         Err(OutboxError::Disabled)
     }
 
@@ -217,38 +229,11 @@ impl FileOutbox {
 
 impl ResultOutbox for FileOutbox {
     fn append(&self, message: ResultMessage) -> Result<(), OutboxError> {
-        let mut entry = OutboxEntry {
-            id: Uuid::now_v7(),
-            message,
-            attempts: 0,
-            last_error: None,
-        };
-        let encoded =
-            serde_json::to_vec(&entry).map_err(|err| OutboxError::InvalidData(err.to_string()))?;
-        let mut state = self.state.lock().expect("result outbox lock poisoned");
-        if state.entries.len() >= self.max_entries
-            || state.bytes.saturating_add(encoded.len() as u64 + 1) > self.max_bytes
-        {
-            // work already in flight must never be nacked and re-executed merely because older
-            // results filled the pending queue. durably dead-letter this overflow, leave the queue
-            // full (which puts the agent into draining), and acknowledge only after this fsync.
-            entry.attempts = self.max_attempts;
-            entry.last_error = Some("result outbox capacity exceeded".to_string());
-            self.append_dead_letter(&entry)?;
-            return Ok(());
-        }
-        let mut file = fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.path)?;
-        set_private_file_permissions(&self.path)?;
-        file.write_all(&encoded)?;
-        file.write_all(b"\n")?;
-        file.sync_all()?;
-        sync_directory(self.path.parent().unwrap_or_else(|| Path::new(".")))?;
-        state.bytes = state.bytes.saturating_add(encoded.len() as u64 + 1);
-        state.entries.push_back(entry);
-        Ok(())
+        self.append_message(OutboxMessage::Legacy(message))
+    }
+
+    fn append_effect(&self, message: EffectResultMessage) -> Result<(), OutboxError> {
+        self.append_message(OutboxMessage::Effect(message))
     }
 
     fn next(&self) -> Result<Option<OutboxEntry>, OutboxError> {
@@ -296,6 +281,43 @@ impl ResultOutbox for FileOutbox {
     fn is_full(&self) -> bool {
         let state = self.state.lock().expect("result outbox lock poisoned");
         state.entries.len() >= self.max_entries || state.bytes >= self.max_bytes
+    }
+}
+
+impl FileOutbox {
+    fn append_message(&self, message: OutboxMessage) -> Result<(), OutboxError> {
+        let mut entry = OutboxEntry {
+            id: Uuid::now_v7(),
+            message,
+            attempts: 0,
+            last_error: None,
+        };
+        let encoded =
+            serde_json::to_vec(&entry).map_err(|err| OutboxError::InvalidData(err.to_string()))?;
+        let mut state = self.state.lock().expect("result outbox lock poisoned");
+        if state.entries.len() >= self.max_entries
+            || state.bytes.saturating_add(encoded.len() as u64 + 1) > self.max_bytes
+        {
+            // work already in flight must never be nacked and re-executed merely because older
+            // results filled the pending queue. durably dead-letter this overflow, leave the queue
+            // full (which puts the agent into draining), and acknowledge only after this fsync.
+            entry.attempts = self.max_attempts;
+            entry.last_error = Some("result outbox capacity exceeded".to_string());
+            self.append_dead_letter(&entry)?;
+            return Ok(());
+        }
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)?;
+        set_private_file_permissions(&self.path)?;
+        file.write_all(&encoded)?;
+        file.write_all(b"\n")?;
+        file.sync_all()?;
+        sync_directory(self.path.parent().unwrap_or_else(|| Path::new(".")))?;
+        state.bytes = state.bytes.saturating_add(encoded.len() as u64 + 1);
+        state.entries.push_back(entry);
+        Ok(())
     }
 }
 
@@ -370,7 +392,11 @@ async fn drain_one(outbox: &dyn ResultOutbox, broker: &dyn Broker) -> Result<boo
     else {
         return Ok(true);
     };
-    match broker.publish_result(entry.message).await {
+    let published = match entry.message {
+        OutboxMessage::Legacy(message) => broker.publish_result(message).await,
+        OutboxMessage::Effect(message) => broker.publish_effect_result(message).await,
+    };
+    match published {
         Ok(()) => {
             crate::metrics::result_publish("replayed");
             outbox

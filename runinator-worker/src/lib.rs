@@ -6,6 +6,7 @@ pub mod agent;
 pub mod artifact_upload;
 pub mod broker;
 pub mod config;
+mod effect_worker;
 pub mod errors;
 pub mod events;
 pub mod executor;

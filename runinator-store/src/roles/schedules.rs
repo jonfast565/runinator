@@ -3,7 +3,7 @@
 //! one of the role traits `DatabaseImpl` composes. bound on this directly when a caller only
 //! needs this slice of the store.
 
-use std::future::Future;
+use std::{collections::HashMap, future::Future};
 
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
@@ -14,8 +14,17 @@ use runinator_models::{
     schedules::{
         BackfillRequest, BackfillResponse, FreezeWindow, NewFreezeWindow, TriggerFiringBatch,
     },
-    workflows::{WorkflowRun, WorkflowTrigger},
+    workflow_vm::WorkflowModule,
+    workflows::{WorkflowDefinition, WorkflowRun, WorkflowTrigger},
 };
+
+/// A definition snapshot and the bytecode compiled from exactly that snapshot. Schedule claims
+/// receive these together so an edit racing the claim cannot pair old bytecode with new JSON.
+#[derive(Debug, Clone)]
+pub struct ScheduledWorkflowVm {
+    pub snapshot: WorkflowDefinition,
+    pub module: WorkflowModule,
+}
 
 // re-exported here so callers that reach for the contract at its historical path
 // (`runinator_database::interfaces::*`) can import both halves from one place.
@@ -96,6 +105,7 @@ pub trait ScheduleStore: Send + Sync + 'static {
         scheduler_id: String,
         now: DateTime<Utc>,
         limit: i64,
+        modules: HashMap<Uuid, ScheduledWorkflowVm>,
     ) -> impl Future<Output = Result<TriggerFiringBatch<WorkflowRun>, SendableError>> + Send;
 
     /// Replay the cron slots of one trigger across a past time range. Slots that already have a
@@ -104,6 +114,7 @@ pub trait ScheduleStore: Send + Sync + 'static {
         &self,
         trigger_id: Uuid,
         request: &BackfillRequest,
+        workflow_vm: ScheduledWorkflowVm,
     ) -> impl Future<Output = Result<(BackfillResponse, Vec<WorkflowRun>), SendableError>> + Send;
 
     /// List freeze windows, optionally narrowed to one org's windows plus the platform-wide ones.

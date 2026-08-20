@@ -4,9 +4,9 @@ import {
   approveApproval,
   fetchAllArtifacts,
   fetchApprovals,
+  fetchWorkflowEffectOutput,
   fetchProviders,
   fetchSupervisorStatus,
-  fetchWorkflowNodeRunArtifacts,
   fetchWorkflowRuns,
   fetchWorkflows,
   rejectApproval,
@@ -160,12 +160,16 @@ export const operationCommands: ConsoleCommand[] = [
   },
   {
     path: ["artifacts", "list"],
-    usage: "artifacts list [--node-run ID]",
-    summary: "list artifacts, all of them or one node run's",
+    usage: "artifacts list [--effect ID]",
+    summary: "list artifacts, all of them or one workflow effect's",
     run: async ({ flags, json: raw, print }) => {
-      const nodeRun = flag(flags, "node-run");
-      const artifacts = nodeRun
-        ? await fetchWorkflowNodeRunArtifacts(nodeRun)
+      const effect = flag(flags, "effect");
+      const artifacts = effect
+        ? (await fetchWorkflowEffectOutput(effect))
+            .filter((event) => event.output.type === "artifact")
+            .map((event) =>
+              event.output.type === "artifact" ? (event.output.artifact as JsonRecord) : {},
+            )
         : await fetchAllArtifacts();
 
       if (raw) {

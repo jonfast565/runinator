@@ -1,5 +1,8 @@
 #[cfg(feature = "kafka")]
-use crate::{AgentCommand, AgentDelivery};
+use crate::{
+    AgentCommand, AgentDelivery, EffectDelivery, EffectExecutor, EffectMessage,
+    EffectResultDelivery, EffectResultMessage,
+};
 use crate::{
     Broker, BrokerDelivery, BrokerError, BrokerMessage, ControlCommand, ControlDelivery,
     EventDelivery, EventMessage, IngressDelivery, IngressMessage, ResultDelivery, ResultMessage,
@@ -12,6 +15,9 @@ const DEFAULT_ACTION_TOPIC: &str = "runinator.actions";
 const DEFAULT_CONTROL_TOPIC: &str = "runinator.control";
 const DEFAULT_AGENT_TOPIC: &str = "runinator.agent";
 const DEFAULT_RESULT_TOPIC: &str = "runinator.results";
+const DEFAULT_EFFECT_TOPIC: &str = "runinator.effects";
+const DEFAULT_INFRASTRUCTURE_EFFECT_TOPIC: &str = "runinator.effects.infrastructure";
+const DEFAULT_EFFECT_RESULT_TOPIC: &str = "runinator.effect-results";
 const DEFAULT_WAKE_TOPIC: &str = "runinator.wake";
 const DEFAULT_INGRESS_TOPIC: &str = "runinator.ingress";
 const DEFAULT_EVENT_TOPIC: &str = "runinator.events";
@@ -24,6 +30,9 @@ pub struct KafkaBrokerConfig {
     pub control_topic: String,
     pub agent_topic: String,
     pub result_topic: String,
+    pub effect_topic: String,
+    pub infrastructure_effect_topic: String,
+    pub effect_result_topic: String,
     pub wake_topic: String,
     pub ingress_topic: String,
     // fan-out: every subscriber uses a distinct group (keyed by consumer id) to read all events.
@@ -39,6 +48,9 @@ impl KafkaBrokerConfig {
             control_topic: DEFAULT_CONTROL_TOPIC.into(),
             agent_topic: DEFAULT_AGENT_TOPIC.into(),
             result_topic: DEFAULT_RESULT_TOPIC.into(),
+            effect_topic: DEFAULT_EFFECT_TOPIC.into(),
+            infrastructure_effect_topic: DEFAULT_INFRASTRUCTURE_EFFECT_TOPIC.into(),
+            effect_result_topic: DEFAULT_EFFECT_RESULT_TOPIC.into(),
             wake_topic: DEFAULT_WAKE_TOPIC.into(),
             ingress_topic: DEFAULT_INGRESS_TOPIC.into(),
             event_topic: DEFAULT_EVENT_TOPIC.into(),
@@ -80,6 +92,18 @@ impl KafkaBrokerConfig {
         self
     }
 
+    pub fn with_effect_topics(
+        mut self,
+        effect_topic: impl Into<String>,
+        infrastructure_effect_topic: impl Into<String>,
+        effect_result_topic: impl Into<String>,
+    ) -> Self {
+        self.effect_topic = effect_topic.into();
+        self.infrastructure_effect_topic = infrastructure_effect_topic.into();
+        self.effect_result_topic = effect_result_topic.into();
+        self
+    }
+
     pub fn with_client_id(mut self, client_id: impl Into<String>) -> Self {
         self.client_id = client_id.into();
         self
@@ -87,6 +111,12 @@ impl KafkaBrokerConfig {
 
     pub fn has_workflow_result_topic(&self) -> bool {
         !self.result_topic.trim().is_empty()
+    }
+
+    pub fn has_workflow_effect_topics(&self) -> bool {
+        !self.effect_topic.trim().is_empty()
+            && !self.infrastructure_effect_topic.trim().is_empty()
+            && !self.effect_result_topic.trim().is_empty()
     }
 }
 
@@ -124,6 +154,9 @@ struct KafkaBrokerInner {
     control_consumers: Mutex<HashMap<String, Arc<rdkafka::consumer::StreamConsumer>>>,
     agent_consumers: Mutex<HashMap<String, Arc<rdkafka::consumer::StreamConsumer>>>,
     result_consumers: Mutex<HashMap<String, Arc<rdkafka::consumer::StreamConsumer>>>,
+    effect_consumers: Mutex<HashMap<String, Arc<rdkafka::consumer::StreamConsumer>>>,
+    infrastructure_effect_consumers: Mutex<HashMap<String, Arc<rdkafka::consumer::StreamConsumer>>>,
+    effect_result_consumers: Mutex<HashMap<String, Arc<rdkafka::consumer::StreamConsumer>>>,
     wake_consumers: Mutex<HashMap<String, Arc<rdkafka::consumer::StreamConsumer>>>,
     ingress_consumers: Mutex<HashMap<String, Arc<rdkafka::consumer::StreamConsumer>>>,
     event_consumers: Mutex<HashMap<String, Arc<rdkafka::consumer::StreamConsumer>>>,
@@ -151,6 +184,9 @@ enum KafkaChannel {
     Control,
     Agent,
     Result,
+    Effect,
+    InfrastructureEffect,
+    EffectResult,
     Wake,
     Ingress,
     Event,
@@ -173,6 +209,9 @@ impl KafkaBrokerInner {
             control_consumers: Mutex::new(HashMap::new()),
             agent_consumers: Mutex::new(HashMap::new()),
             result_consumers: Mutex::new(HashMap::new()),
+            effect_consumers: Mutex::new(HashMap::new()),
+            infrastructure_effect_consumers: Mutex::new(HashMap::new()),
+            effect_result_consumers: Mutex::new(HashMap::new()),
             wake_consumers: Mutex::new(HashMap::new()),
             ingress_consumers: Mutex::new(HashMap::new()),
             event_consumers: Mutex::new(HashMap::new()),
@@ -191,6 +230,9 @@ impl KafkaBrokerInner {
             KafkaChannel::Control => &self.control_consumers,
             KafkaChannel::Agent => &self.agent_consumers,
             KafkaChannel::Result => &self.result_consumers,
+            KafkaChannel::Effect => &self.effect_consumers,
+            KafkaChannel::InfrastructureEffect => &self.infrastructure_effect_consumers,
+            KafkaChannel::EffectResult => &self.effect_result_consumers,
             KafkaChannel::Wake => &self.wake_consumers,
             KafkaChannel::Ingress => &self.ingress_consumers,
             KafkaChannel::Event => &self.event_consumers,
@@ -242,6 +284,9 @@ impl KafkaChannel {
             KafkaChannel::Control => &config.control_topic,
             KafkaChannel::Agent => &config.agent_topic,
             KafkaChannel::Result => &config.result_topic,
+            KafkaChannel::Effect => &config.effect_topic,
+            KafkaChannel::InfrastructureEffect => &config.infrastructure_effect_topic,
+            KafkaChannel::EffectResult => &config.effect_result_topic,
             KafkaChannel::Wake => &config.wake_topic,
             KafkaChannel::Ingress => &config.ingress_topic,
             KafkaChannel::Event => &config.event_topic,
@@ -254,6 +299,9 @@ impl KafkaChannel {
             KafkaChannel::Control => "control",
             KafkaChannel::Agent => "agent",
             KafkaChannel::Result => "results",
+            KafkaChannel::Effect => "effects",
+            KafkaChannel::InfrastructureEffect => "effects.infrastructure",
+            KafkaChannel::EffectResult => "effect-results",
             KafkaChannel::Wake => "wake",
             KafkaChannel::Ingress => "ingress",
             KafkaChannel::Event => "events",
@@ -405,6 +453,26 @@ fn kafka_error(context: &'static str) -> impl FnOnce(rdkafka::error::KafkaError)
     move |err| BrokerError::Internal(format!("kafka {context}: {err}"))
 }
 
+#[cfg(feature = "kafka")]
+impl KafkaBroker {
+    async fn receive_effect_from(
+        &self,
+        channel: KafkaChannel,
+        consumer: &str,
+    ) -> Result<EffectDelivery, BrokerError> {
+        let (message, pending) = receive_json::<EffectMessage>(self, channel, consumer).await?;
+        let delivery = EffectDelivery::from(message);
+        self.inner.track_delivery(
+            delivery.delivery_id,
+            pending.consumer,
+            pending.topic,
+            pending.partition,
+            pending.offset,
+        );
+        Ok(delivery)
+    }
+}
+
 #[async_trait]
 #[cfg(feature = "kafka")]
 impl Broker for KafkaBroker {
@@ -414,6 +482,10 @@ impl Broker for KafkaBroker {
 
     fn supports_agent_channel(&self) -> bool {
         !self.config.agent_topic.trim().is_empty()
+    }
+
+    fn supports_workflow_effect_channels(&self) -> bool {
+        self.config.has_workflow_effect_topics()
     }
 
     async fn publish(&self, message: BrokerMessage) -> Result<(), BrokerError> {
@@ -553,6 +625,84 @@ impl Broker for KafkaBroker {
     }
 
     async fn nack_result(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        nack_pending(self.inner.take_pending(delivery_id)?)
+    }
+
+    async fn publish_effect(&self, message: EffectMessage) -> Result<(), BrokerError> {
+        let key = message.dedupe_key_or_hash();
+        let topic = match message.command.executor {
+            EffectExecutor::Provider => &self.config.effect_topic,
+            EffectExecutor::Infrastructure => &self.config.infrastructure_effect_topic,
+        };
+        let payload = serde_json::to_string(&message)
+            .map_err(|err| BrokerError::Internal(err.to_string()))?;
+        publish_json(&self.inner.producer, topic, &key, payload).await
+    }
+
+    async fn receive_effect(&self, consumer: &str) -> Result<EffectDelivery, BrokerError> {
+        self.receive_effect_from(KafkaChannel::Effect, consumer)
+            .await
+    }
+
+    async fn receive_infrastructure_effect(
+        &self,
+        consumer: &str,
+    ) -> Result<EffectDelivery, BrokerError> {
+        self.receive_effect_from(KafkaChannel::InfrastructureEffect, consumer)
+            .await
+    }
+
+    async fn ack_effect(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        ack_pending(self.inner.take_pending(delivery_id)?)
+    }
+
+    async fn nack_effect(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+        nack_pending(self.inner.take_pending(delivery_id)?)
+    }
+
+    async fn publish_effect_result(&self, message: EffectResultMessage) -> Result<(), BrokerError> {
+        let key = message.dedupe_key_or_hash();
+        let payload = serde_json::to_string(&message)
+            .map_err(|err| BrokerError::Internal(err.to_string()))?;
+        publish_json(
+            &self.inner.producer,
+            &self.config.effect_result_topic,
+            &key,
+            payload,
+        )
+        .await
+    }
+
+    async fn receive_effect_result(
+        &self,
+        consumer: &str,
+    ) -> Result<EffectResultDelivery, BrokerError> {
+        let (message, pending) =
+            receive_json::<EffectResultMessage>(self, KafkaChannel::EffectResult, consumer).await?;
+        let delivery = EffectResultDelivery::from(message);
+        self.inner.track_delivery(
+            delivery.delivery_id,
+            pending.consumer,
+            pending.topic,
+            pending.partition,
+            pending.offset,
+        );
+        Ok(delivery)
+    }
+
+    async fn ack_effect_result(
+        &self,
+        _consumer: &str,
+        delivery_id: Uuid,
+    ) -> Result<(), BrokerError> {
+        ack_pending(self.inner.take_pending(delivery_id)?)
+    }
+
+    async fn nack_effect_result(
+        &self,
+        _consumer: &str,
+        delivery_id: Uuid,
+    ) -> Result<(), BrokerError> {
         nack_pending(self.inner.take_pending(delivery_id)?)
     }
 

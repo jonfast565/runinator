@@ -36,7 +36,29 @@ where
     for<'q> <B::Db as Database>::Arguments<'q>: IntoArguments<'q, B::Db>,
     for<'c> &'c mut <B::Db as Database>::Connection: Executor<'c, Database = B::Db>,
     <B::Db as Database>::QueryResult: RowsAffected,
+    SqlStore<B>: WorkflowVmStore,
 {
+    async fn bootstrap_workflow_vm_run(
+        &self,
+        start: NewWorkflowVmRun,
+    ) -> Result<WorkflowRun, SendableError> {
+        WorkflowVmStore::create_workflow_vm_run(self, start).await
+    }
+
+    async fn fetch_workflow_vm_result(
+        &self,
+        workflow_run_id: Uuid,
+    ) -> Result<Option<Value>, SendableError> {
+        let journal = WorkflowVmStore::fetch_workflow_journal(self, workflow_run_id).await?;
+        Ok(journal
+            .into_iter()
+            .rev()
+            .find_map(|record| match record.entry {
+                WorkflowJournalEntry::Completed { value, .. } => Some(value),
+                _ => None,
+            }))
+    }
+
     async fn fetch_workflow(
         &self,
         workflow_id: Uuid,

@@ -2,6 +2,7 @@ import { command, isTauriRuntime } from "./runtime";
 import { setHttpAuthToken } from "./httpRuntime";
 import type {
   JsonRecord,
+  JsonValue,
   ApiKey,
   AgentEnrollmentToken,
   AgentDirectiveKind,
@@ -62,8 +63,10 @@ import type {
   WorkflowRunCreated,
   WorkflowRunArtifact,
   WorkflowRunDetail,
+  WorkflowNodeRun,
   WorkflowContinuation,
   WorkflowEffect,
+  WorkflowEffectOutputEvent,
   WorkflowJournalRecord,
   WorkflowVmCursor,
   WorkflowSimulateRequest,
@@ -316,14 +319,6 @@ export async function fetchRunArtifacts(runId: string) {
   return command<RunArtifact[]>("fetch_run_artifacts", { runId });
 }
 
-export async function fetchWorkflowNodeRunChunks(nodeRunId: string) {
-  return command<RunChunk[]>("fetch_workflow_node_run_chunks", { nodeRunId });
-}
-
-export async function fetchWorkflowNodeRunArtifacts(nodeRunId: string) {
-  return command<RunArtifact[]>("fetch_workflow_node_run_artifacts", { nodeRunId });
-}
-
 export async function fetchWorkflowRunArtifacts(workflowRunId: string) {
   return command<WorkflowRunArtifact[]>("fetch_workflow_run_artifacts", { workflowRunId });
 }
@@ -334,6 +329,19 @@ export async function fetchWorkflowContinuations(workflowRunId: string) {
 
 export async function fetchWorkflowEffects(workflowRunId: string) {
   return command<WorkflowEffect[]>("fetch_workflow_effects", { workflowRunId });
+}
+
+export async function fetchWorkflowEffectOutput(effectId: string) {
+  return command<WorkflowEffectOutputEvent[]>("fetch_workflow_effect_output", { effectId });
+}
+
+export async function settleWorkflowEffect(
+  effectId: string,
+  status: "succeeded" | "failed" | "timed_out" | "canceled",
+  output: JsonValue | null = null,
+  message: string | null = null,
+) {
+  return command<TaskResponse>("settle_workflow_effect", { effectId, status, output, message });
 }
 
 export async function fetchWorkflowJournal(workflowRunId: string) {
@@ -585,8 +593,73 @@ export async function fetchWorkflowRuns(workflowId?: string) {
   return command<RunSummary[]>("fetch_workflow_runs", { workflowId });
 }
 
-export async function fetchWorkflowRun(workflowRunId: string) {
-  return command<WorkflowRunDetail>("fetch_workflow_run", { workflowRunId });
+export async function fetchWorkflowRun(workflowRunId: string): Promise<WorkflowRunDetail> {
+  const [detail, continuations, effects, journal, vmCursors] = await Promise.all([
+    command<WorkflowRunDetail>("fetch_workflow_run", { workflowRunId }),
+    fetchWorkflowContinuations(workflowRunId),
+    fetchWorkflowEffects(workflowRunId),
+    fetchWorkflowJournal(workflowRunId),
+    fetchWorkflowVmCursors(workflowRunId),
+  ]);
+  const cursorByContinuation = new Map(
+    vmCursors.map((cursor) => [cursor.continuation_id, cursor] as const),
+  );
+  const nodes: WorkflowNodeRun[] = effects.flatMap((effect) => {
+    const cursor = cursorByContinuation.get(effect.continuation_id);
+
+    if (!cursor?.node_id) {
+      return [];
+    }
+
+    const request =
+      typeof effect.request === "object" && effect.request !== null
+        ? (effect.request as JsonRecord)
+        : {};
+    const requestType = typeof request.type === "string" ? request.type : "";
+    const status =
+      effect.status === "requested" || effect.status === "running"
+        ? requestType === "approval"
+          ? "approval_required"
+          : ["input", "signal", "gate", "event_wait"].includes(requestType)
+            ? "waiting"
+            : effect.status
+        : effect.status;
+    return [{
+      id: effect.id,
+      workflow_run_id: effect.workflow_run_id,
+      node_id: cursor.node_id,
+      status,
+      attempt: effect.attempt,
+      parameters: request,
+      output_json: effect.result ?? null,
+      state: { effect_id: effect.id, ...request },
+      cursor_id: effect.continuation_id,
+      created_at: new Date(effect.created_at * 1000).toISOString(),
+      started_at: new Date(effect.created_at * 1000).toISOString(),
+      finished_at: effect.finished_at
+        ? new Date(effect.finished_at * 1000).toISOString()
+        : null,
+      message: effect.message ?? null,
+    }];
+  });
+  return {
+    ...detail,
+    // Temporary graph-view projection. These are derived entirely from VM records and do not
+    // fetch or mutate the legacy node-run resource.
+    nodes,
+    continuations,
+    effects,
+    journal,
+    vm_cursors: vmCursors,
+    execution_state: {
+      ...(detail.execution_state ?? {}),
+      cursors: vmCursors.map((cursor) => ({
+        id: cursor.continuation_id,
+        node_id: cursor.node_id ?? "",
+        debug: { paused: cursor.status === "paused" },
+      })).filter((cursor) => cursor.node_id.length > 0),
+    },
+  } satisfies WorkflowRunDetail;
 }
 
 export async function deleteWorkflowRun(workflowRunId: string) {
@@ -651,20 +724,6 @@ export async function skipWorkflowNode(
   message?: string,
 ) {
   return command<TaskResponse>("skip_workflow_node", { workflowRunId, outputJson, message });
-}
-
-export async function resolveWorkflowInput(
-  nodeRunId: string,
-  outputJson: unknown,
-  resolvedBy?: string,
-  message?: string,
-) {
-  return command<TaskResponse>("resolve_workflow_input", {
-    nodeRunId,
-    outputJson,
-    resolvedBy,
-    message,
-  });
 }
 
 export async function rerunWorkflowNode(workflowRunId: string, parameters: unknown) {

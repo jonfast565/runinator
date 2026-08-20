@@ -836,6 +836,19 @@ pub async fn get_workflow_run<T: DatabaseImpl>(
     {
         return reply;
     }
+    if matches!(db.fetch_workflow_module(workflow_run_id).await, Ok(Some(_))) {
+        return match db.fetch_workflow_run(workflow_run_id).await {
+            Ok(Some(run)) => (
+                StatusCode::OK,
+                Json(ApiResponse::WorkflowRun(models::WorkflowRunResponse::new(
+                    run,
+                    Vec::new(),
+                ))),
+            ),
+            Ok(None) => not_found(format!("Workflow run {workflow_run_id} not found")),
+            Err(err) => api_error(err.to_string()),
+        };
+    }
     match repository::fetch_workflow_run(db.as_ref(), workflow_run_id).await {
         Ok(Some((run, nodes))) => (
             StatusCode::OK,

@@ -8,6 +8,12 @@ fn rabbitmq_config_defaults_queues_and_client_id() {
     assert_eq!(config.action_queue, DEFAULT_ACTION_QUEUE);
     assert_eq!(config.control_queue, DEFAULT_CONTROL_QUEUE);
     assert_eq!(config.result_queue, DEFAULT_RESULT_QUEUE);
+    assert_eq!(config.effect_queue, DEFAULT_EFFECT_QUEUE);
+    assert_eq!(
+        config.infrastructure_effect_queue,
+        DEFAULT_INFRASTRUCTURE_EFFECT_QUEUE
+    );
+    assert_eq!(config.effect_result_queue, DEFAULT_EFFECT_RESULT_QUEUE);
     assert_eq!(config.client_id, DEFAULT_CLIENT_ID);
 }
 
@@ -41,4 +47,14 @@ fn rabbitmq_config_detects_missing_result_queue() {
     let config = RabbitMqBrokerConfig::new("amqp://127.0.0.1:5672/%2f").with_queues("a", "c", " ");
 
     assert!(!config.has_workflow_result_queue());
+}
+
+#[test]
+fn rabbitmq_config_requires_all_effect_queues() {
+    let config =
+        RabbitMqBrokerConfig::new("amqp://127.0.0.1:5672/%2f").with_effect_queues("e", "i", "er");
+    assert!(config.has_workflow_effect_queues());
+
+    let config = config.with_effect_queues("e", "i", " ");
+    assert!(!config.has_workflow_effect_queues());
 }

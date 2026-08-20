@@ -34,13 +34,21 @@ pub async fn claim_due_workflow_trigger_firings<T: DatabaseImpl>(
     scheduler_id: String,
     limit: i64,
 ) -> Result<TriggerFiringBatch<WorkflowRun>, SendableError> {
-    let batch = db
-        .claim_due_workflow_trigger_firings(scheduler_id, Utc::now(), limit)
-        .await?;
-    for run in &batch.runs {
-        support::enqueue_start_ready_node(db, run).await?;
+    let mut modules = std::collections::HashMap::new();
+    for trigger in db.fetch_due_workflow_triggers(Utc::now()).await? {
+        if modules.contains_key(&trigger.workflow_id) {
+            continue;
+        }
+        let snapshot = support::fetch_workflow_snapshot(db, trigger.workflow_id).await?;
+        let module = runinator_workflows::compile_workflow_module(&snapshot)
+            .map_err(|error| -> SendableError { Box::new(error) })?;
+        modules.insert(
+            trigger.workflow_id,
+            runinator_database::roles::ScheduledWorkflowVm { snapshot, module },
+        );
     }
-    Ok(batch)
+    db.claim_due_workflow_trigger_firings(scheduler_id, Utc::now(), limit, modules)
+        .await
 }
 
 /// replay a cron trigger's missed slots across a past range. slots the loop already fired keep
@@ -50,11 +58,19 @@ pub async fn backfill_workflow_trigger<T: DatabaseImpl>(
     trigger_id: Uuid,
     request: &BackfillRequest,
 ) -> Result<(BackfillResponse, Vec<WorkflowRun>), SendableError> {
-    let (response, runs) = db.backfill_workflow_trigger(trigger_id, request).await?;
-    for run in &runs {
-        support::enqueue_start_ready_node(db, run).await?;
-    }
-    Ok((response, runs))
+    let trigger = db
+        .fetch_workflow_trigger(trigger_id)
+        .await?
+        .ok_or_else(|| runinator_runtime::errors::WORKFLOW_TRIGGER_NOT_FOUND.error(trigger_id))?;
+    let snapshot = support::fetch_workflow_snapshot(db, trigger.workflow_id).await?;
+    let module = runinator_workflows::compile_workflow_module(&snapshot)
+        .map_err(|error| -> SendableError { Box::new(error) })?;
+    db.backfill_workflow_trigger(
+        trigger_id,
+        request,
+        runinator_database::roles::ScheduledWorkflowVm { snapshot, module },
+    )
+    .await
 }
 
 pub async fn fetch_freeze_windows<T: DatabaseImpl>(
@@ -166,26 +182,26 @@ pub async fn create_workflow_run_for_trigger<T: DatabaseImpl>(
             object.insert("debug".into(), debug_state);
         }
     }
-    let run = db
-        .create_workflow_run(
-            trigger.workflow_id,
-            workflow_snapshot,
-            parameters,
-            state,
-            None,
-            runinator_models::replicas::WorkflowRunProvenance {
-                source_kind: Some(runinator_models::replicas::TriggerSourceKind::Manual),
-                actor_type: Some(runinator_models::replicas::TriggerActorType::User),
-                actor_replica_id,
-                actor_display_name,
-                request_host: None,
-                request_ip: None,
-                metadata: trigger.metadata.clone(),
-            },
-        )
-        .await?;
-    support::enqueue_start_ready_node(db, &run).await?;
-    Ok(run)
+    super::runs::create_workflow_vm_run(
+        db,
+        trigger.workflow_id,
+        workflow_snapshot,
+        parameters,
+        state,
+        None,
+        runinator_models::replicas::WorkflowRunProvenance {
+            source_kind: Some(runinator_models::replicas::TriggerSourceKind::Manual),
+            actor_type: Some(runinator_models::replicas::TriggerActorType::User),
+            actor_replica_id,
+            actor_display_name,
+            request_host: None,
+            request_ip: None,
+            metadata: trigger.metadata.clone(),
+        },
+        None,
+        None,
+    )
+    .await
 }
 
 fn trigger_state(trigger: &WorkflowTrigger) -> Value {

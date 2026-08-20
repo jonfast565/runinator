@@ -404,8 +404,20 @@ async fn dev_run_workflow(
 
 async fn watch_run_until_terminal(client: &Client, run_id: Uuid, interval: Duration) -> Result<()> {
     loop {
-        let (run, nodes) = client.fetch_workflow_run(run_id).await?;
-        print_run_detail(&run, &nodes);
+        let run = client
+            .fetch_workflow_runs(None, None)
+            .await?
+            .into_iter()
+            .find(|run| run.id == run_id)
+            .ok_or_else(|| format!("workflow run {run_id} not found"))?;
+        let continuations = client.fetch_workflow_continuations(run_id).await?;
+        let effects = client.fetch_workflow_effects(run_id).await?;
+        print_run_summary(&run);
+        println!(
+            "continuations\t{}\teffects\t{}",
+            continuations.len(),
+            effects.len()
+        );
         if run.status.is_terminal() {
             return Ok(());
         }

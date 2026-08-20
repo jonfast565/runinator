@@ -1,21 +1,33 @@
 import {
   deliverSignal,
-  fetchWorkflowNodeRunArtifacts,
-  fetchWorkflowNodeRunChunks,
+  fetchWorkflowEffectOutput,
   fetchWorkflowRunArtifacts,
-  resolveWorkflowInput,
+  settleWorkflowEffect,
 } from "../api/commandCenterApi";
 import { getPlatformAdapter } from "../platform";
-import type { RunArtifact, WorkflowRunArtifact } from "../domain/models";
+import type { JsonValue, RunArtifact, WorkflowRunArtifact } from "../domain/models";
 import type { AppService } from "./app";
 
 export function createWorkflowRunExtrasService(app: AppService) {
   const artifacts = () => getPlatformAdapter().artifacts;
 
   return {
-    fetchNodeRunArtifacts(nodeRunId: string) {
+    fetchNodeRunArtifacts(effectId: string) {
       return app
-        .runOperation("Loading node run artifacts", () => fetchWorkflowNodeRunArtifacts(nodeRunId))
+        .runOperation("Loading workflow effect artifacts", async () =>
+          (await fetchWorkflowEffectOutput(effectId))
+            .filter((event) => event.output.type === "artifact")
+            .map((event) => {
+              const artifact = event.output.type === "artifact" ? event.output.artifact : {};
+              return {
+                ...(artifact as Record<string, unknown>),
+                id: event.event_id,
+                run_id: event.workflow_run_id,
+                workflow_node_run_id: null,
+                created_at: new Date(event.created_at * 1000).toISOString(),
+              } as RunArtifact;
+            }),
+        )
         .catch(() => [] as RunArtifact[]);
     },
     fetchRunArtifacts(runId: string) {
@@ -23,8 +35,19 @@ export function createWorkflowRunExtrasService(app: AppService) {
         .runOperation("Loading run artifacts", () => fetchWorkflowRunArtifacts(runId))
         .catch(() => [] as WorkflowRunArtifact[]);
     },
-    fetchNodeRunChunks(nodeRunId: string) {
-      return app.runOperation("Loading node run log", () => fetchWorkflowNodeRunChunks(nodeRunId));
+    fetchNodeRunChunks(effectId: string) {
+      return app.runOperation("Loading workflow effect log", async () =>
+        (await fetchWorkflowEffectOutput(effectId))
+          .filter((event) => event.output.type === "chunk")
+          .map((event) => ({
+            id: event.event_id,
+            run_id: event.workflow_run_id,
+            workflow_node_run_id: null,
+            stream: event.output.type === "chunk" ? event.output.stream : "log",
+            content: event.output.type === "chunk" ? event.output.content : "",
+            created_at: new Date(event.created_at * 1000).toISOString(),
+          })),
+      );
     },
     async downloadArtifact(artifactId: string, name: string) {
       await app.runOperation(`Downloading ${name}`, async () => {
@@ -42,13 +65,13 @@ export function createWorkflowRunExtrasService(app: AppService) {
       );
     },
     resolveInput(
-      nodeRunId: string,
+      effectId: string,
       outputJson: unknown,
       resolvedBy?: string,
       message?: string,
     ) {
       return app.runOperation("Resolving workflow input", () =>
-        resolveWorkflowInput(nodeRunId, outputJson, resolvedBy, message),
+        settleWorkflowEffect(effectId, "succeeded", outputJson as JsonValue, message ?? null),
       );
     },
   };

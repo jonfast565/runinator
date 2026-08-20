@@ -23,6 +23,7 @@ async fn in_memory_broker_round_trips_vm_effects_without_action_identity() {
         continuation_id: Uuid::now_v7(),
         attempt: 0,
         request: runinator_models::workflow_vm::WorkflowEffectRequest::Timer { due_at: 42 },
+        executor: runinator_comm::EffectExecutor::Infrastructure,
         target: Default::default(),
         trace_id: Uuid::now_v7(),
         trace_context: Default::default(),
@@ -36,10 +37,13 @@ async fn in_memory_broker_round_trips_vm_effects_without_action_identity() {
         })
         .await
         .unwrap();
-    let delivery = broker.receive_effect("worker").await.unwrap();
+    let delivery = broker
+        .receive_infrastructure_effect("engine-infrastructure")
+        .await
+        .unwrap();
     assert_eq!(delivery.command.effect_id, command.effect_id);
     broker
-        .ack_effect("worker", delivery.delivery_id)
+        .ack_effect("engine-infrastructure", delivery.delivery_id)
         .await
         .unwrap();
 

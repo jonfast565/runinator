@@ -667,7 +667,7 @@ pub enum RunCommands {
         #[arg(long)]
         open: bool,
     },
-    /// Show a workflow run and its node runs.
+    /// Show a workflow run and its VM execution records.
     Show { id: Uuid },
     /// Refresh a workflow run until interrupted or terminal.
     Watch {
@@ -676,16 +676,8 @@ pub enum RunCommands {
         #[arg(long, default_value_t = 2)]
         interval_seconds: u64,
     },
-    /// Print log chunks for a workflow node run.
-    Logs {
-        node_run_id: Uuid,
-        /// Resume from a chunk sequence returned by an earlier call.
-        #[arg(long)]
-        cursor: Option<i64>,
-        /// Cap on chunks returned.
-        #[arg(long, default_value_t = 100)]
-        limit: i64,
-    },
+    /// Print log chunks for a workflow effect.
+    Logs { effect_id: Uuid },
     /// Pause a workflow run.
     Pause { id: Uuid },
     /// Resume a workflow run.
@@ -709,11 +701,11 @@ pub enum RunCommands {
 
 #[derive(Debug, Subcommand)]
 pub enum ArtifactCommands {
-    /// List the artifacts a workflow node run produced.
+    /// List the artifacts a workflow effect produced.
     List {
-        /// The node run whose artifacts to list.
-        #[arg(long = "node-run")]
-        node_run_id: Uuid,
+        /// The effect whose artifacts to list.
+        #[arg(long = "effect")]
+        effect_id: Uuid,
     },
     /// Download an artifact by id to a file (defaults to its name in the cwd).
     Download {

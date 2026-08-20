@@ -306,6 +306,7 @@ pub fn step(module: &WorkflowModule, mut continuation: WorkflowContinuation) -> 
                 }
             }
             WorkflowInstruction::DebugBoundary { label } => {
+                let mut park_after_boundary = false;
                 if let Some(position) = continuation
                     .frames
                     .iter()
@@ -313,6 +314,11 @@ pub fn step(module: &WorkflowModule, mut continuation: WorkflowContinuation) -> 
                 {
                     if let WorkflowFrame::Debug(frame) = &mut continuation.frames[position] {
                         frame.breakpoint = label.clone();
+                        if frame.step_requested {
+                            frame.step_requested = false;
+                            frame.paused = true;
+                            park_after_boundary = true;
+                        }
                     }
                 } else {
                     continuation.frames.push(WorkflowFrame::Debug(
@@ -326,6 +332,15 @@ pub fn step(module: &WorkflowModule, mut continuation: WorkflowContinuation) -> 
                     ));
                 }
                 continuation.instruction_pointer += 1;
+                if park_after_boundary {
+                    continuation.status = WorkflowContinuationStatus::Paused;
+                    continuation.operator_paused = true;
+                    return WorkflowVmStep::Joined {
+                        continuation,
+                        join_key: "debug-step".into(),
+                        value: Value::Null,
+                    };
+                }
             }
             WorkflowInstruction::SetOutput {
                 event_type,
@@ -820,6 +835,10 @@ fn yield_effect(
     mut continuation: WorkflowContinuation,
     request: WorkflowEffectRequest,
 ) -> WorkflowVmStep {
+    let request = match resolve_effect_request(request, &continuation) {
+        Ok(request) => request,
+        Err(message) => return fail(continuation, message),
+    };
     let sequence = continuation.next_effect_sequence;
     continuation.next_effect_sequence += 1;
     let effect_id = stable_id(continuation.id, &format!("effect:{sequence}"));
@@ -832,6 +851,117 @@ fn yield_effect(
         sequence,
         request,
     }
+}
+
+/// Freeze every context-dependent value before the request crosses the durable effect boundary.
+/// A resumed delivery must never re-read mutable workflow inputs or carry authoring `$ref` objects
+/// to a provider/infrastructure host.
+fn resolve_effect_request(
+    request: WorkflowEffectRequest,
+    continuation: &WorkflowContinuation,
+) -> Result<WorkflowEffectRequest, String> {
+    let context = local_context(continuation);
+    let resolve = |value: Value| {
+        runinator_workflows::resolve_value_refs(&value, &context).map_err(|error| error.to_string())
+    };
+    Ok(match request {
+        WorkflowEffectRequest::Action {
+            provider,
+            function,
+            input,
+            timeout_seconds,
+            retry,
+            tags,
+            required_labels,
+            idempotency_key,
+            function_binding,
+        } => WorkflowEffectRequest::Action {
+            provider,
+            function,
+            input: resolve(input)?,
+            timeout_seconds,
+            retry,
+            tags,
+            required_labels,
+            idempotency_key: idempotency_key.map(resolve).transpose()?,
+            function_binding,
+        },
+        WorkflowEffectRequest::Approval { prompt, expires_at } => WorkflowEffectRequest::Approval {
+            prompt: resolve(prompt)?,
+            expires_at,
+        },
+        WorkflowEffectRequest::Gate {
+            kind,
+            condition,
+            poll_interval_seconds,
+            deadline_seconds,
+            continue_on_timeout,
+            label,
+            metadata,
+        } => WorkflowEffectRequest::Gate {
+            kind,
+            condition: runinator_models::workflows::WorkflowCondition::from_value(resolve(
+                condition.to_value(),
+            )?),
+            poll_interval_seconds,
+            deadline_seconds,
+            continue_on_timeout,
+            label,
+            metadata: resolve(metadata)?,
+        },
+        WorkflowEffectRequest::Signal { key, filter } => WorkflowEffectRequest::Signal {
+            key,
+            filter: filter.map(resolve).transpose()?,
+        },
+        WorkflowEffectRequest::Input { prompt, schema } => WorkflowEffectRequest::Input {
+            prompt,
+            schema: resolve(schema)?,
+        },
+        WorkflowEffectRequest::EventWait {
+            event_type,
+            filter,
+            max_events,
+        } => WorkflowEffectRequest::EventWait {
+            event_type,
+            filter: filter.map(resolve).transpose()?,
+            max_events,
+        },
+        WorkflowEffectRequest::ChildRun {
+            workflow_id,
+            workflow_name,
+            input,
+            wait,
+            reuse_open_run,
+            run_name,
+        } => WorkflowEffectRequest::ChildRun {
+            workflow_id,
+            workflow_name,
+            input: resolve(input)?,
+            wait,
+            reuse_open_run,
+            run_name: run_name.map(resolve).transpose()?,
+        },
+        WorkflowEffectRequest::AwaitRun {
+            workflow,
+            key,
+            run_id,
+            mode,
+        } => WorkflowEffectRequest::AwaitRun {
+            workflow,
+            key: key.map(resolve).transpose()?,
+            run_id: run_id.map(resolve).transpose()?,
+            mode,
+        },
+        WorkflowEffectRequest::Coordination { kind, input } => {
+            WorkflowEffectRequest::Coordination {
+                kind,
+                input: resolve(input)?,
+            }
+        }
+        request @ (WorkflowEffectRequest::Timer { .. }
+        | WorkflowEffectRequest::TimerDelay { .. }
+        | WorkflowEffectRequest::MutexAcquire { .. }) => request,
+    })
 }
 
 /// Route a failure through the nearest structured try frame, then through the durable
@@ -1005,6 +1135,50 @@ mod tests {
 
     fn continuation() -> WorkflowContinuation {
         WorkflowContinuation::start(Uuid::now_v7(), 1)
+    }
+
+    #[test]
+    fn freezes_action_references_before_yielding() {
+        let module = WorkflowModule::new(vec![WorkflowInstruction::Effect {
+            request: WorkflowEffectRequest::Action {
+                provider: "test".into(),
+                function: "run".into(),
+                input: runinator_models::json!({
+                    "customer": { "$ref": { "input": ["customer"] } }
+                }),
+                timeout_seconds: Some(10),
+                retry: Default::default(),
+                tags: Vec::new(),
+                required_labels: Default::default(),
+                idempotency_key: Some(runinator_models::json!({
+                    "$ref": { "input": ["request_id"] }
+                })),
+                function_binding: None,
+            },
+        }]);
+        let mut continuation = continuation();
+        continuation.locals.insert(
+            "input".into(),
+            runinator_models::json!({
+                "customer": "acme",
+                "request_id": "request-7"
+            }),
+        );
+
+        let result = step(&module, continuation);
+        let WorkflowVmStep::Yield { request, .. } = result else {
+            panic!("action must yield, got {result:?}");
+        };
+        let WorkflowEffectRequest::Action {
+            input,
+            idempotency_key,
+            ..
+        } = request
+        else {
+            panic!("expected action request");
+        };
+        assert_eq!(input, runinator_models::json!({ "customer": "acme" }));
+        assert_eq!(idempotency_key, Some(Value::String("request-7".into())));
     }
 
     #[test]

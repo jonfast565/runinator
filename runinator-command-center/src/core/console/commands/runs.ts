@@ -2,7 +2,7 @@
 
 import {
   cancelWorkflowRun,
-  fetchWorkflowNodeRunChunks,
+  fetchWorkflowEffectOutput,
   fetchWorkflowRun,
   fetchWorkflowRunArtifacts,
   fetchWorkflowRuns,
@@ -66,7 +66,7 @@ export const runCommands: ConsoleCommand[] = [
   {
     path: ["runs", "show"],
     usage: "runs show <run-id>",
-    summary: "show a workflow run and its node runs",
+    summary: "show a workflow run with its VM continuations and effects",
     run: async ({ args, json: raw, print }) => {
       const detail = await fetchWorkflowRun(requiredArg(args, 0, "run id"));
 
@@ -107,10 +107,11 @@ export const runCommands: ConsoleCommand[] = [
   },
   {
     path: ["runs", "logs"],
-    usage: "runs logs <node-run-id>",
-    summary: "print log chunks for a workflow node run",
+    usage: "runs logs <effect-id>",
+    summary: "print streamed chunks for a workflow effect",
     run: async ({ args, json: raw, print }) => {
-      const chunks = await fetchWorkflowNodeRunChunks(requiredArg(args, 0, "node run id"));
+      const output = await fetchWorkflowEffectOutput(requiredArg(args, 0, "effect id"));
+      const chunks = output.filter((event) => event.output.type === "chunk");
 
       if (raw) {
         print(json(chunks));
@@ -122,7 +123,13 @@ export const runCommands: ConsoleCommand[] = [
         return;
       }
 
-      print(text(chunks.map((chunk) => chunk.content).join("")));
+      print(
+        text(
+          chunks
+            .map((event) => (event.output.type === "chunk" ? event.output.content : ""))
+            .join(""),
+        ),
+      );
     },
   },
   {

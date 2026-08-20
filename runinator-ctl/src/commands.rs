@@ -18,10 +18,7 @@ use runinator_models::{
     revisions::WorkflowRevision,
     schedules::{BackfillRequest, FreezeWindow, NewFreezeWindow},
     settings::SettingKind,
-    workflows::{
-        WorkflowBundle, WorkflowDefinition, WorkflowNodeRun, WorkflowRun, WorkflowStatus,
-        WorkflowTrigger,
-    },
+    workflows::{WorkflowBundle, WorkflowDefinition, WorkflowRun, WorkflowStatus, WorkflowTrigger},
 };
 use tokio::time;
 
@@ -321,31 +318,6 @@ fn print_run_summary(run: &WorkflowRun) {
         run.status.as_str(),
         run.active_node_id.as_deref().unwrap_or("-")
     );
-}
-
-fn print_run_detail(run: &WorkflowRun, nodes: &[WorkflowNodeRun]) {
-    print_run_summary(run);
-    println!("created_at: {}", run.created_at.to_rfc3339());
-    println!("started_at: {}", output::time(run.started_at));
-    println!("finished_at: {}", output::time(run.finished_at));
-    if let Some(message) = &run.message {
-        println!("message: {message}");
-    }
-    println!();
-    println!(
-        "{:<6} {:<28} {:<18} {:>7} message",
-        "id", "node_id", "status", "attempt"
-    );
-    for node in nodes {
-        println!(
-            "{:<6} {:<28} {:<18} {:>7} {}",
-            node.id,
-            output::truncate(&node.node_id, 28),
-            node.status.as_str(),
-            node.attempt,
-            output::truncate(node.message.as_deref().unwrap_or(""), 48)
-        );
-    }
 }
 
 fn print_task_response<T: serde::Serialize>(

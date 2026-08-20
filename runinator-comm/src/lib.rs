@@ -152,6 +152,10 @@ pub struct EffectCommand {
     pub continuation_id: Uuid,
     pub attempt: u32,
     pub request: WorkflowEffectRequest,
+    /// Selects the class of host allowed to claim this command. Provider workers and the
+    /// infrastructure coordinator share the effect protocol, but must never compete for the same
+    /// request kind.
+    pub executor: EffectExecutor,
     #[serde(default)]
     pub target: ActionTarget,
     #[serde(default = "Uuid::now_v7")]
@@ -159,6 +163,13 @@ pub struct EffectCommand {
     #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
     pub trace_context: std::collections::HashMap<String, String>,
     pub idempotency_key: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EffectExecutor {
+    Provider,
+    Infrastructure,
 }
 
 /// One leased entry in the VM effect-delivery outbox.
@@ -278,6 +289,7 @@ mod effect_protocol_tests {
             continuation_id: Uuid::now_v7(),
             attempt: 3,
             request: WorkflowEffectRequest::Timer { due_at: 1 },
+            executor: EffectExecutor::Infrastructure,
             target: ActionTarget::Any,
             trace_id: Uuid::now_v7(),
             trace_context: std::collections::HashMap::new(),
@@ -299,7 +311,7 @@ mod effect_protocol_tests {
     #[test]
     fn incompatible_effect_protocol_is_rejected_before_handling() {
         let raw = format!(
-            r#"{{"version":{},"command_id":"00000000-0000-0000-0000-000000000000","effect_id":"00000000-0000-0000-0000-000000000000","workflow_run_id":"00000000-0000-0000-0000-000000000000","continuation_id":"00000000-0000-0000-0000-000000000000","attempt":0,"request":{{"type":"timer","due_at":1}},"idempotency_key":"x"}}"#,
+            r#"{{"version":{},"command_id":"00000000-0000-0000-0000-000000000000","effect_id":"00000000-0000-0000-0000-000000000000","workflow_run_id":"00000000-0000-0000-0000-000000000000","continuation_id":"00000000-0000-0000-0000-000000000000","attempt":0,"request":{{"type":"timer","due_at":1}},"executor":"infrastructure","idempotency_key":"x"}}"#,
             WORKFLOW_EFFECT_PROTOCOL_VERSION + 1
         );
         let command: EffectCommand = serde_json::from_str(&raw).unwrap();
@@ -320,6 +332,7 @@ mod effect_protocol_tests {
             continuation_id: Uuid::nil(),
             attempt: 0,
             request: WorkflowEffectRequest::Timer { due_at: 1 },
+            executor: EffectExecutor::Infrastructure,
             target: ActionTarget::Any,
             trace_id: Uuid::nil(),
             trace_context: std::collections::HashMap::new(),
@@ -327,7 +340,7 @@ mod effect_protocol_tests {
         };
         assert_eq!(
             serde_json::to_string(&command).unwrap(),
-            r#"{"version":1,"command_id":"00000000-0000-0000-0000-000000000000","effect_id":"00000000-0000-0000-0000-000000000000","workflow_run_id":"00000000-0000-0000-0000-000000000000","continuation_id":"00000000-0000-0000-0000-000000000000","attempt":0,"request":{"type":"timer","due_at":1},"target":{"kind":"any"},"trace_id":"00000000-0000-0000-0000-000000000000","idempotency_key":"key"}"#
+            r#"{"version":1,"command_id":"00000000-0000-0000-0000-000000000000","effect_id":"00000000-0000-0000-0000-000000000000","workflow_run_id":"00000000-0000-0000-0000-000000000000","continuation_id":"00000000-0000-0000-0000-000000000000","attempt":0,"request":{"type":"timer","due_at":1},"executor":"infrastructure","target":{"kind":"any"},"trace_id":"00000000-0000-0000-0000-000000000000","idempotency_key":"key"}"#
         );
     }
 }
@@ -349,6 +362,10 @@ pub struct ControlCommand {
     /// defaults to `None` for backward-compatible deserialization of run-wide commands.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workflow_node_run_id: Option<Uuid>,
+    /// VM execution target. Mutually exclusive with `workflow_node_run_id`; when present the
+    /// control reaches exactly the provider effect identified here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effect_id: Option<Uuid>,
     /// runtime routing key selecting which worker(s) should receive this control. the web service
     /// stamps the executing worker's replica (from the node run's executor claim) on cancels so
     /// they reach the holder instead of a random control consumer; `Any` (the default, and the
@@ -794,6 +811,7 @@ impl ControlCommand {
             workflow_run_id,
             kind,
             workflow_node_run_id: None,
+            effect_id: None,
             target: ActionTarget::Any,
         }
     }
@@ -808,6 +826,17 @@ impl ControlCommand {
             workflow_run_id,
             kind,
             workflow_node_run_id: Some(workflow_node_run_id),
+            effect_id: None,
+            target: ActionTarget::Any,
+        }
+    }
+
+    pub fn for_effect(workflow_run_id: Uuid, effect_id: Uuid, kind: ControlKind) -> Self {
+        Self {
+            workflow_run_id,
+            kind,
+            workflow_node_run_id: None,
+            effect_id: Some(effect_id),
             target: ActionTarget::Any,
         }
     }

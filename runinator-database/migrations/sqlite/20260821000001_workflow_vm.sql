@@ -47,6 +47,18 @@ CREATE INDEX IF NOT EXISTS idx_workflow_effects_pending
 CREATE INDEX IF NOT EXISTS idx_workflow_effects_run
     ON workflow_effects(workflow_run_id, created_at);
 
+CREATE TABLE IF NOT EXISTS workflow_effect_output_events (
+    event_id BLOB PRIMARY KEY,
+    effect_id BLOB NOT NULL REFERENCES workflow_effects(id) ON DELETE CASCADE,
+    workflow_run_id BLOB NOT NULL REFERENCES workflow_runs(id) ON DELETE CASCADE,
+    continuation_id BLOB NOT NULL REFERENCES workflow_continuations(id) ON DELETE CASCADE,
+    attempt INTEGER NOT NULL,
+    output_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_workflow_effect_output_effect
+    ON workflow_effect_output_events(effect_id, created_at, event_id);
+
 CREATE TABLE IF NOT EXISTS workflow_effect_dispatches (
     id BLOB PRIMARY KEY,
     effect_id BLOB NOT NULL REFERENCES workflow_effects(id) ON DELETE CASCADE,
