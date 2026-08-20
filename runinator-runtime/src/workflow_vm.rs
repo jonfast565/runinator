@@ -210,24 +210,149 @@ pub fn step(module: &WorkflowModule, mut continuation: WorkflowContinuation) -> 
                     Err(error) => return handle_failure(module, continuation, error.to_string()),
                 }
             }
-            // `Select` and `PureNode` are compiler-prototype opcodes. Keeping their records
-            // decodable allows deployment-disabled scaffolding to be inspected, but executing
-            // either would silently reintroduce reducer semantics. Phase 3/4 replaces them with
-            // the dedicated opcodes below.
-            // Phase 2 deliberately makes the eventual bytecode vocabulary visible before Phase 8
-            // teaches the pure VM its semantics. Treating one of these as a no-op would corrupt a
-            // persisted continuation; fail closed until its evaluator lands.
-            WorkflowInstruction::Select { .. }
-            | WorkflowInstruction::PureNode { .. }
-            | WorkflowInstruction::NextLoop { .. }
-            | WorkflowInstruction::CheckInterrupt { .. }
-            | WorkflowInstruction::ResumeInterrupt { .. }
-            | WorkflowInstruction::DebugBoundary { .. }
-            | WorkflowInstruction::SetOutput { .. } => {
-                return fail(
-                    continuation,
-                    format!("unsupported workflow VM opcode: {instruction:?}"),
-                );
+            WorkflowInstruction::Select {
+                kind,
+                configuration,
+                targets,
+                default,
+            } => match select_target(kind, configuration, targets, *default, &continuation) {
+                Ok(Some(target)) => continuation.instruction_pointer = target,
+                Ok(None) => {
+                    return handle_failure(
+                        module,
+                        continuation,
+                        "selector has no matching target".into(),
+                    );
+                }
+                Err(message) => return handle_failure(module, continuation, message),
+            },
+            // PureNode remains a compatibility opcode for modules compiled before dedicated
+            // instructions existed.  The only such graph operation is Resume; it becomes a
+            // no-op outside an interrupt handler and is otherwise handled by ResumeInterrupt.
+            WorkflowInstruction::PureNode { .. } => continuation.instruction_pointer += 1,
+            WorkflowInstruction::NextLoop { loop_key } => {
+                let Some(position) = continuation.frames.iter().rposition(|frame| {
+                    matches!(frame, WorkflowFrame::Loop(frame) if frame.loop_key == *loop_key)
+                }) else {
+                    return handle_failure(module, continuation, format!("next_loop '{loop_key}' has no frame"));
+                };
+                let mut frame = match continuation.frames.remove(position) {
+                    WorkflowFrame::Loop(frame) => frame,
+                    _ => unreachable!(),
+                };
+                if let Some(value) = continuation.stack.pop() {
+                    frame.results.push(value);
+                }
+                frame.index += 1;
+                if frame.index < frame.items.len() as u64
+                    && frame
+                        .max_iterations
+                        .map(|limit| frame.index < limit)
+                        .unwrap_or(true)
+                {
+                    continuation.locals.insert(
+                        format!("{loop_key}.item"),
+                        frame.items[frame.index as usize].clone(),
+                    );
+                    continuation
+                        .locals
+                        .insert(format!("{loop_key}.index"), Value::from(frame.index as i64));
+                    continuation.instruction_pointer = frame.body;
+                    continuation.frames.push(WorkflowFrame::Loop(frame));
+                } else {
+                    continuation.stack.push(Value::Array(frame.results));
+                    continuation.instruction_pointer = frame.exit;
+                }
+            }
+            // Interrupt delivery is a host operation: this safe point deliberately has no
+            // side effect until a host creates a handler continuation.  It is nevertheless an
+            // executable opcode, not an unsupported persisted state.
+            WorkflowInstruction::CheckInterrupt { .. } => continuation.instruction_pointer += 1,
+            WorkflowInstruction::ResumeInterrupt { mode } => {
+                let Some(position) = continuation
+                    .frames
+                    .iter()
+                    .rposition(|frame| matches!(frame, WorkflowFrame::Interrupt(_)))
+                else {
+                    return handle_failure(
+                        module,
+                        continuation,
+                        "resume_interrupt has no interrupt frame".into(),
+                    );
+                };
+                let frame = match continuation.frames.remove(position) {
+                    WorkflowFrame::Interrupt(frame) => frame,
+                    _ => unreachable!(),
+                };
+                match mode {
+                    runinator_models::interrupt::InterruptMode::Fail => {
+                        return handle_failure(
+                            module,
+                            continuation,
+                            "interrupt handler selected fail".into(),
+                        );
+                    }
+                    runinator_models::interrupt::InterruptMode::Resume
+                    | runinator_models::interrupt::InterruptMode::Restart => {
+                        continuation.instruction_pointer = frame.resume_instruction_pointer;
+                    }
+                    runinator_models::interrupt::InterruptMode::Continue => {
+                        continuation.instruction_pointer += 1
+                    }
+                }
+            }
+            WorkflowInstruction::DebugBoundary { label } => {
+                if let Some(position) = continuation
+                    .frames
+                    .iter()
+                    .rposition(|frame| matches!(frame, WorkflowFrame::Debug(_)))
+                {
+                    if let WorkflowFrame::Debug(frame) = &mut continuation.frames[position] {
+                        frame.breakpoint = label.clone();
+                    }
+                } else {
+                    continuation.frames.push(WorkflowFrame::Debug(
+                        runinator_models::workflow_vm::WorkflowDebugFrame {
+                            paused: false,
+                            step_requested: false,
+                            breakpoint: label.clone(),
+                            last_output: None,
+                            speculative: false,
+                        },
+                    ));
+                }
+                continuation.instruction_pointer += 1;
+            }
+            WorkflowInstruction::SetOutput {
+                event_type,
+                artifacts,
+            } => {
+                let context = local_context(&continuation);
+                let mut artifact_values = runinator_models::value::Map::new();
+                for artifact in artifacts {
+                    let value = match runinator_compute::evaluate_module_pure(
+                        &artifact.source,
+                        &context,
+                        &runinator_compute::CallableCatalog::builtin(),
+                    ) {
+                        Ok(value) => value,
+                        Err(error) => {
+                            return handle_failure(module, continuation, error.to_string());
+                        }
+                    };
+                    artifact_values.insert(artifact.name.clone(), value);
+                }
+                let data = continuation.stack.last().cloned().unwrap_or(Value::Null);
+                let mut output = runinator_models::value::Map::new();
+                output.insert("data".into(), data);
+                output.insert("artifacts".into(), Value::Object(artifact_values));
+                if let Some(event_type) = event_type {
+                    output.insert("event_type".into(), Value::String(event_type.clone()));
+                }
+                continuation
+                    .locals
+                    .insert("__workflow_vm_output".into(), Value::Object(output));
+                continuation.instruction_pointer += 1;
             }
             WorkflowInstruction::BeginLoop {
                 loop_key,
@@ -772,6 +897,85 @@ fn stable_id(namespace: uuid::Uuid, name: &str) -> uuid::Uuid {
     uuid::Uuid::new_v5(&namespace, name.as_bytes())
 }
 
+fn local_context(continuation: &WorkflowContinuation) -> Value {
+    Value::Object(
+        continuation
+            .locals
+            .iter()
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect(),
+    )
+}
+
+/// Evaluate selectors that were deliberately kept explicit in bytecode so their ordering and
+/// bucket calculation stay reproducible after authoring definitions have changed.
+fn select_target(
+    kind: &runinator_models::workflows::WorkflowNodeKind,
+    configuration: &Value,
+    targets: &[usize],
+    default: Option<usize>,
+    continuation: &WorkflowContinuation,
+) -> Result<Option<usize>, String> {
+    let parameters = configuration
+        .get("parameters")
+        .ok_or_else(|| "selector configuration has no parameters".to_string())?;
+    let context = local_context(continuation);
+    let resolve = |value: &Value| {
+        runinator_workflows::resolve_value_refs(value, &context).map_err(|error| error.to_string())
+    };
+    match kind {
+        runinator_models::workflows::WorkflowNodeKind::Toggle => {
+            let value = resolve(
+                parameters
+                    .get("value")
+                    .ok_or_else(|| "toggle.value is required".to_string())?,
+            )?;
+            match targets {
+                [on, off, ..] => Ok(Some(if truthy(&value) { *on } else { *off })),
+                _ => Err("toggle needs on and off targets".into()),
+            }
+        }
+        runinator_models::workflows::WorkflowNodeKind::Percentage => {
+            let key = resolve(
+                parameters
+                    .get("key")
+                    .ok_or_else(|| "percentage.key is required".to_string())?,
+            )?;
+            let buckets = parameters
+                .get("buckets")
+                .and_then(Value::as_array)
+                .ok_or_else(|| "percentage.buckets must be an array".to_string())?;
+            if buckets.len() != targets.len() {
+                return Err("percentage targets do not match buckets".into());
+            }
+            let total = buckets
+                .iter()
+                .map(|bucket| bucket.get("weight").and_then(Value::as_i64).unwrap_or(0))
+                .sum::<i64>();
+            if total <= 0 {
+                return Ok(default);
+            }
+            let encoded = serde_json::to_vec(&key).map_err(|error| error.to_string())?;
+            let bucket = encoded.iter().fold(0_u64, |hash, byte| {
+                hash.wrapping_mul(1099511628211).wrapping_add(*byte as u64)
+            }) % total as u64;
+            let mut edge = 0_u64;
+            for (index, entry) in buckets.iter().enumerate() {
+                edge += entry
+                    .get("weight")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(0)
+                    .max(0) as u64;
+                if bucket < edge {
+                    return Ok(Some(targets[index]));
+                }
+            }
+            Ok(default)
+        }
+        _ => Err(format!("select does not support node kind {kind:?}")),
+    }
+}
+
 fn truthy(value: &Value) -> bool {
     match value {
         Value::Null | Value::Bool(false) => false,
@@ -1305,6 +1509,66 @@ mod tests {
         };
         assert_eq!(value, Value::Null);
         assert_eq!(continuation.status, WorkflowContinuationStatus::Succeeded);
+    }
+
+    #[test]
+    fn toggle_selector_selects_a_boolean_target() {
+        let module = WorkflowModule::new(vec![
+            WorkflowInstruction::Select {
+                kind: WorkflowNodeKind::Toggle,
+                configuration: serde_json::json!({
+                    "parameters": { "value": true }
+                })
+                .into(),
+                targets: vec![1, 3],
+                default: None,
+            },
+            WorkflowInstruction::Const {
+                value: Value::String("on".into()),
+            },
+            WorkflowInstruction::Jump { target: 4 },
+            WorkflowInstruction::Const {
+                value: Value::String("off".into()),
+            },
+            WorkflowInstruction::Return,
+        ]);
+        let WorkflowVmStep::Complete { value, .. } = step(&module, continuation()) else {
+            panic!("toggle should select a branch");
+        };
+        assert_eq!(value, Value::String("on".into()));
+    }
+
+    #[test]
+    fn output_and_debug_opcodes_are_executable() {
+        let module = WorkflowModule::new(vec![
+            WorkflowInstruction::Const {
+                value: Value::String("result".into()),
+            },
+            WorkflowInstruction::SetOutput {
+                event_type: Some("finished".into()),
+                artifacts: vec![],
+            },
+            WorkflowInstruction::DebugBoundary {
+                label: Some("after-output".into()),
+            },
+            WorkflowInstruction::Return,
+        ]);
+        let WorkflowVmStep::Complete {
+            continuation,
+            value,
+        } = step(&module, continuation())
+        else {
+            panic!("output and debug instructions should not be unsupported");
+        };
+        assert_eq!(value, Value::String("result".into()));
+        assert_eq!(
+            continuation
+                .locals
+                .get("__workflow_vm_output")
+                .and_then(|value| value.get("event_type")),
+            Some(&Value::String("finished".into()))
+        );
+        assert!(continuation.frames.iter().any(|frame| matches!(frame, WorkflowFrame::Debug(frame) if frame.breakpoint.as_deref() == Some("after-output"))));
     }
 
     fn vm_node(id: &str, kind: WorkflowNodeKind, next: Option<&str>) -> WorkflowNode {
