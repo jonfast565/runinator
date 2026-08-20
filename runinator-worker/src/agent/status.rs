@@ -225,17 +225,17 @@ impl AgentMetrics {
     /// (a finish with no matching start after a restart) must never panic the event sink.
     pub fn apply(&mut self, event: &WorkerEvent) {
         match event {
-            WorkerEvent::ActionStarted { .. } => {
+            WorkerEvent::EffectStarted { .. } => {
                 self.in_flight = self.in_flight.saturating_add(1);
             }
-            WorkerEvent::ActionSkippedDuplicate { .. } => {
+            WorkerEvent::EffectSkippedDuplicate { .. } => {
                 self.skipped_duplicates = self.skipped_duplicates.saturating_add(1);
             }
-            WorkerEvent::ActionFinished {
+            WorkerEvent::EffectFinished {
                 workflow_run_id,
                 provider,
                 function,
-                node_id,
+                effect_id,
                 outcome,
                 duration_ms,
                 ..
@@ -249,7 +249,8 @@ impl AgentMetrics {
                 }
                 self.last_completed = Some(CompletedAction {
                     summary: format!(
-                        "{provider}.{function} ({node_id}, run {})",
+                        "{provider}.{function} (effect {}, run {})",
+                        short_id(effect_id),
                         short_id(workflow_run_id)
                     ),
                     outcome: *outcome,

@@ -11,16 +11,10 @@ pub mod errors;
 pub mod events;
 pub mod executor;
 pub mod function_cache;
-pub mod idempotency;
-mod lease;
 pub mod metrics;
-pub mod output_sink;
 pub mod provider_repository;
 pub mod secrets;
 pub mod worker;
-
-#[cfg(test)]
-mod lib_tests;
 
 pub use agent::{
     AgentConnection, AgentHandle, AgentMetrics, AgentObserver, AgentRuntime, AgentRuntimeConfig,

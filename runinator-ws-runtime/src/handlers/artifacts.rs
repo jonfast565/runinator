@@ -92,7 +92,6 @@ pub async fn upload_artifact<T: DatabaseImpl>(
         return reply;
     }
     let mut run_id: Option<Uuid> = None;
-    let mut node_run_id: Option<Uuid> = None;
     let mut name: Option<String> = None;
     let mut mime_type: Option<String> = None;
     let mut file_name: Option<String> = None;
@@ -112,10 +111,6 @@ pub async fn upload_artifact<T: DatabaseImpl>(
             "run_id" => {
                 let raw = field.text().await.unwrap_or_default();
                 run_id = raw.parse().ok();
-            }
-            "workflow_node_run_id" => {
-                let raw = field.text().await.unwrap_or_default();
-                node_run_id = raw.parse().ok();
             }
             "name" => {
                 name = Some(field.text().await.unwrap_or_default());
@@ -167,7 +162,6 @@ pub async fn upload_artifact<T: DatabaseImpl>(
         db.as_ref(),
         &blobs,
         run_id,
-        node_run_id,
         &resolved_name,
         &resolved_mime,
         &bytes,
@@ -175,18 +169,9 @@ pub async fn upload_artifact<T: DatabaseImpl>(
     .await
     {
         Ok(artifact) => {
-            let org_id = if let Some(node_run_id) = node_run_id {
-                match repository::fetch_workflow_node_run(db.as_ref(), node_run_id).await {
-                    Ok(Some(node_run)) => {
-                        repository::org_id_for_workflow_run(db.as_ref(), node_run.workflow_run_id)
-                            .await
-                            .or(ctx.org_id)
-                    }
-                    _ => ctx.org_id,
-                }
-            } else {
-                ctx.org_id
-            };
+            let org_id = repository::org_id_for_workflow_run(db.as_ref(), run_id)
+                .await
+                .or(ctx.org_id);
             emit(
                 &events,
                 AppEvent::new(
@@ -298,8 +283,6 @@ pub async fn download_artifact<T: DatabaseImpl>(
 pub struct ArtifactContentQuery {
     pub run_id: Uuid,
     #[serde(default)]
-    pub workflow_node_run_id: Option<Uuid>,
-    #[serde(default)]
     pub name: Option<String>,
     #[serde(default)]
     pub mime_type: Option<String>,
@@ -338,7 +321,6 @@ pub async fn upload_artifact_content(
     match runinator_engine::artifact_storage::put_artifact(
         &blobs,
         query.run_id,
-        query.workflow_node_run_id,
         &resolved_name,
         &resolved_mime,
         &bytes,

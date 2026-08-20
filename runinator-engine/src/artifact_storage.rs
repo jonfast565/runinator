@@ -27,20 +27,15 @@ pub struct ArtifactContent {
 
 /// store artifact bytes and return the uri to record on the row.
 ///
-/// the key keeps the run and node grouping so an operator can list one run's artifacts directly, and
-/// carries a uuid so two uploads of the same filename never collide.
+/// The key is run-scoped and carries a uuid so two uploads of the same filename never collide.
 pub async fn put_artifact(
     store: &Arc<dyn BlobStore>,
     run_id: Uuid,
-    workflow_node_run_id: Option<Uuid>,
     name: &str,
     mime_type: &str,
     bytes: &[u8],
 ) -> Result<String, SendableError> {
-    let scope = match workflow_node_run_id {
-        Some(node_run_id) => format!("runs/{run_id}/{node_run_id}"),
-        None => format!("runs/{run_id}"),
-    };
+    let scope = format!("runs/{run_id}");
     let key = ObjectKey::parse(&format!(
         "{scope}/{}-{}",
         Uuid::new_v4().simple(),

@@ -51,7 +51,6 @@ const DOC_SETS: &[&[EndpointDoc]] = &[
     handlers::functions::DOCS,
     handlers::function_invocations::DOCS,
     handlers::console::DOCS,
-    handlers::webhook::DOCS,
     handlers::auth::DOCS,
     handlers::authz::DOCS,
 ];

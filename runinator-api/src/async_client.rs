@@ -967,7 +967,6 @@ where
     pub async fn upload_artifact_content(
         &self,
         run_id: Uuid,
-        workflow_node_run_id: Option<Uuid>,
         name: &str,
         mime_type: &str,
         bytes: Vec<u8>,
@@ -976,9 +975,6 @@ where
         {
             let mut query = url.query_pairs_mut();
             query.append_pair("run_id", &run_id.to_string());
-            if let Some(node_run_id) = workflow_node_run_id {
-                query.append_pair("workflow_node_run_id", &node_run_id.to_string());
-            }
             query.append_pair("name", name);
             query.append_pair("mime_type", mime_type);
         }

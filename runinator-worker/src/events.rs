@@ -26,26 +26,24 @@ impl ActionOutcome {
     }
 }
 
-/// a notable moment in the worker's action/control loops, emitted as it happens.
+/// A notable moment in the worker's VM effect/control loops, emitted as it happens.
 #[derive(Debug, Clone)]
 pub enum WorkerEvent {
-    /// an action delivery passed the duplicate-lease check and is about to execute.
-    ActionStarted {
+    /// A provider effect is about to execute.
+    EffectStarted {
         workflow_run_id: Uuid,
-        node_id: String,
-        node_run_id: Uuid,
+        effect_id: Uuid,
         provider: String,
         function: String,
         attempt: i64,
     },
-    /// a redelivered duplicate was dropped because another executor holds the lease.
-    ActionSkippedDuplicate { node_run_id: Uuid },
-    /// an action reached a terminal outcome. `duration_ms` is 0 when it failed before execution
+    /// A duplicate delivery was absorbed because that effect is already executing locally.
+    EffectSkippedDuplicate { effect_id: Uuid },
+    /// A provider effect reached a terminal outcome. `duration_ms` is 0 when it failed before execution
     /// (e.g. secret resolution).
-    ActionFinished {
+    EffectFinished {
         workflow_run_id: Uuid,
-        node_id: String,
-        node_run_id: Uuid,
+        effect_id: Uuid,
         provider: String,
         function: String,
         outcome: ActionOutcome,

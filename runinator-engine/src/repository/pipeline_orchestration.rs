@@ -745,58 +745,31 @@ async fn member_result<T: DatabaseImpl>(
     run: &WorkflowRun,
     attempt: i64,
 ) -> Result<Value, SendableError> {
-    let node_runs = db.fetch_workflow_node_runs(run.id).await?;
-    let artifacts = db.fetch_promoted_workflow_run_artifacts(run.id).await?;
-    let output_ids: HashSet<&str> = run
-        .workflow_snapshot
-        .as_ref()
-        .map(|snapshot| {
-            snapshot
-                .definition
-                .nodes
-                .iter()
-                .filter(|node| node.kind == WorkflowNodeKind::Output)
-                .map(|node| node.id.as_str())
-                .collect()
-        })
-        .unwrap_or_default();
-    let mut outputs = Map::new();
-    let mut results = Map::new();
-    for node in node_runs
-        .iter()
-        .filter(|node| !node.speculative && node.status.is_terminal())
-    {
-        if let Some(output) = &node.output_json {
-            outputs.insert(node.node_id.clone(), output.clone());
-            if output_ids.contains(node.node_id.as_str())
-                && node.status == WorkflowStatus::Succeeded
+    let result = db.fetch_workflow_vm_result(run.id).await?.unwrap_or(Value::Null);
+    let mut artifacts = Vec::new();
+    for effect in db.fetch_workflow_effects(run.id).await? {
+        for output in db.fetch_workflow_effect_output(effect.id).await? {
+            if let runinator_models::workflow_vm::WorkflowEffectOutput::Artifact { artifact } = output.output
+                && let Ok(artifact) = artifact.decode::<runinator_models::runs::NewRunArtifact>()
             {
-                results.insert(
-                    node.node_id.clone(),
-                    output.get("data").cloned().unwrap_or(Value::Null),
-                );
+                artifacts.push(runinator_models::json!({
+                    "effect_id": effect.id,
+                    "name": artifact.name,
+                    "mime_type": artifact.mime_type,
+                    "size_bytes": artifact.size_bytes,
+                    "uri": artifact.uri,
+                    "metadata": artifact.metadata,
+                }));
             }
         }
     }
-    if results.is_empty()
-        && let Some(value) = db.fetch_workflow_vm_result(run.id).await?
-    {
-        results.insert("vm".into(), value);
-    }
-    let result = if results.len() == 1 {
-        results.values().next().cloned().unwrap_or(Value::Null)
-    } else if results.is_empty() {
-        Value::Null
-    } else {
-        Value::Object(results)
-    };
     let duration_ms = run
         .started_at
         .zip(run.finished_at)
         .map(|(started, finished)| (finished - started).num_milliseconds());
     Ok(runinator_models::json!({
         "run_id": run.id, "workflow_id": run.workflow_id, "status": run.status.as_str(), "attempt": attempt,
-        "result": result, "outputs": Value::Object(outputs), "artifacts": artifacts,
+        "result": result, "outputs": Value::Object(Map::new()), "artifacts": artifacts,
         "created_at": run.created_at, "started_at": run.started_at, "finished_at": run.finished_at,
         "duration_ms": duration_ms
     }))
@@ -1134,8 +1107,6 @@ async fn workflow_run_name<T: DatabaseImpl>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::FakeStore;
-    use runinator_models::workflows::{WorkflowDefinition, WorkflowRunArtifact};
 
     fn attempt(key: &str, result: Value) -> PipelineMemberAttempt {
         PipelineMemberAttempt {
@@ -1208,59 +1179,4 @@ mod tests {
         ));
     }
 
-    #[tokio::test]
-    async fn member_envelope_aggregates_output_data_and_promoted_artifacts() {
-        let store = FakeStore::new();
-        let workflow_id = Uuid::now_v7();
-        let run_id = Uuid::now_v7();
-        let workflow: WorkflowDefinition = serde_json::from_value(serde_json::json!({
-            "id": workflow_id, "name": "Build", "version": "1.0.0", "enabled": true,
-            "definition": { "start": "start", "nodes": [
-                { "id": "start", "kind": "start", "transitions": { "next": { "$node": "publish" } } },
-                { "id": "publish", "kind": "output", "parameters": {}, "transitions": { "next": { "$node": "end" } } },
-                { "id": "end", "kind": "end" }
-            ] }
-        })).expect("workflow");
-        let run: WorkflowRun = serde_json::from_value(serde_json::json!({
-            "id": run_id, "workflow_id": workflow_id, "workflow_snapshot": workflow,
-            "status": "succeeded", "active_node_id": "end", "parameters": {}, "state": {},
-            "created_at": Utc::now(), "started_at": Utc::now(), "finished_at": Utc::now(), "message": null
-        })).expect("run");
-        let node: WorkflowNodeRun = serde_json::from_value(serde_json::json!({
-            "id": Uuid::now_v7(), "workflow_run_id": run_id, "node_id": "publish",
-            "status": "succeeded", "attempt": 1, "parameters": {},
-            "output_json": { "data": { "artifact": "app.tgz" } }, "state": null,
-            "transition_reason": null, "created_at": Utc::now(), "started_at": Utc::now(),
-            "finished_at": Utc::now(), "message": null, "speculative": false, "cursor_id": null
-        }))
-        .expect("node run");
-        store.insert_node_run(node);
-        store.insert_run_artifact(WorkflowRunArtifact {
-            id: Uuid::now_v7(),
-            workflow_run_id: run_id,
-            node_id: "publish".into(),
-            artifact_id: Uuid::now_v7(),
-            name: "app.tgz".into(),
-            mime_type: "application/gzip".into(),
-            size_bytes: 42,
-            uri: "blob://app.tgz".into(),
-            metadata: Value::Null,
-            created_at: Utc::now(),
-        });
-        let envelope = member_result(&store, &run, 2).await.expect("envelope");
-        assert_eq!(
-            envelope.pointer("/result/artifact").and_then(Value::as_str),
-            Some("app.tgz")
-        );
-        assert_eq!(
-            envelope.pointer("/attempt").and_then(Value::as_i64),
-            Some(2)
-        );
-        assert_eq!(
-            envelope
-                .pointer("/artifacts/0/name")
-                .and_then(Value::as_str),
-            Some("app.tgz")
-        );
-    }
 }

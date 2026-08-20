@@ -13,5 +13,4 @@ pub mod runs;
 pub mod schedules;
 pub mod supervisor;
 pub mod triggers;
-pub mod webhook;
 pub mod workflow_vm;

@@ -362,9 +362,8 @@ enum Toast {
 /// processing rather than only that the loop started.
 fn describe_worker_event(event: &WorkerEvent) -> String {
     match event {
-        WorkerEvent::ActionStarted {
+        WorkerEvent::EffectStarted {
             workflow_run_id,
-            node_id,
             provider,
             function,
             attempt,
@@ -376,17 +375,16 @@ fn describe_worker_event(event: &WorkerEvent) -> String {
                 String::new()
             };
             format!(
-                "Executing {provider}.{function} (node '{node_id}', run {}{attempt_suffix})...",
+                "Executing {provider}.{function} (run {}{attempt_suffix})...",
                 short_id(workflow_run_id)
             )
         }
-        WorkerEvent::ActionSkippedDuplicate { node_run_id } => format!(
-            "Skipped duplicate delivery for node run {}: another worker holds it.",
-            short_id(node_run_id)
+        WorkerEvent::EffectSkippedDuplicate { effect_id } => format!(
+            "Skipped duplicate delivery for effect {}: it is already executing here.",
+            short_id(effect_id)
         ),
-        WorkerEvent::ActionFinished {
+        WorkerEvent::EffectFinished {
             workflow_run_id,
-            node_id,
             provider,
             function,
             outcome,
@@ -394,10 +392,7 @@ fn describe_worker_event(event: &WorkerEvent) -> String {
             message,
             ..
         } => {
-            let subject = format!(
-                "{provider}.{function} (node '{node_id}', run {})",
-                short_id(workflow_run_id)
-            );
+            let subject = format!("{provider}.{function} (run {})", short_id(workflow_run_id));
             match outcome {
                 ActionOutcome::Succeeded => {
                     format!("Completed {subject} in {duration_ms} ms.")

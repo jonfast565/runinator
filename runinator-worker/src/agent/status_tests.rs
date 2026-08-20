@@ -5,10 +5,9 @@ use super::*;
 use uuid::Uuid;
 
 fn started() -> WorkerEvent {
-    WorkerEvent::ActionStarted {
+    WorkerEvent::EffectStarted {
         workflow_run_id: Uuid::nil(),
-        node_id: "step".to_string(),
-        node_run_id: Uuid::nil(),
+        effect_id: Uuid::nil(),
         provider: "console".to_string(),
         function: "run".to_string(),
         attempt: 1,
@@ -16,10 +15,9 @@ fn started() -> WorkerEvent {
 }
 
 fn finished(outcome: ActionOutcome) -> WorkerEvent {
-    WorkerEvent::ActionFinished {
+    WorkerEvent::EffectFinished {
         workflow_run_id: Uuid::nil(),
-        node_id: "step".to_string(),
-        node_run_id: Uuid::nil(),
+        effect_id: Uuid::nil(),
         provider: "console".to_string(),
         function: "run".to_string(),
         outcome,
@@ -118,8 +116,8 @@ fn every_connection_state_has_a_distinct_label() {
 #[test]
 fn a_duplicate_delivery_only_moves_its_own_counter() {
     let mut metrics = AgentMetrics::default();
-    metrics.apply(&WorkerEvent::ActionSkippedDuplicate {
-        node_run_id: Uuid::nil(),
+    metrics.apply(&WorkerEvent::EffectSkippedDuplicate {
+        effect_id: Uuid::nil(),
     });
     assert_eq!(metrics.skipped_duplicates, 1);
     assert_eq!(metrics.in_flight, 0);

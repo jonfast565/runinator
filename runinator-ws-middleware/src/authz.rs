@@ -515,7 +515,7 @@ impl<'a, T: DatabaseImpl> AuthzChecker<'a, T> {
             return Ok(());
         }
         match crate::repository::fetch_workflow_run(self.db, workflow_run_id).await {
-            Ok(Some((run, _))) => self.require_workflow(run.workflow_id, needed).await,
+            Ok(Some(run)) => self.require_workflow(run.workflow_id, needed).await,
             _ => Err(not_found()),
         }
     }

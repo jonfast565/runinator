@@ -44,9 +44,12 @@ pub(crate) async fn run_provider_effect_loop(
     api_client: AsyncApiClient<StaticLocator>,
     providers: ProviderFactory,
     max_concurrent_effects: usize,
+    shutdown_grace: Duration,
     in_flight: Arc<Mutex<HashMap<Uuid, crate::worker::InFlightAction>>>,
     result_outbox: Arc<dyn crate::agent::outbox::ResultOutbox>,
     shutdown: Arc<Notify>,
+    events: Arc<dyn crate::events::WorkerEventSink>,
+    drained: Arc<AtomicBool>,
 ) -> Result<(), SendableError> {
     let consumer = profile.id.clone();
     let permits = Arc::new(tokio::sync::Semaphore::new(max_concurrent_effects.max(1)));
@@ -55,6 +58,12 @@ pub(crate) async fn run_provider_effect_loop(
     info!("worker VM provider-effect loop started");
 
     loop {
+        if drained.load(Ordering::Acquire) {
+            tokio::select! {
+                _ = shutdown.notified() => break,
+                _ = tokio::time::sleep(Duration::from_secs(1)) => continue,
+            }
+        }
         let permit = tokio::select! {
             _ = shutdown.notified() => break,
             Some(result) = tasks.join_next(), if !tasks.is_empty() => {
@@ -94,6 +103,7 @@ pub(crate) async fn run_provider_effect_loop(
         let cache = cache.clone();
         let in_flight = in_flight.clone();
         let result_outbox = result_outbox.clone();
+        let events = events.clone();
         tasks.spawn(async move {
             let _permit = permit;
             if let Err(error) = process_provider_effect(
@@ -105,6 +115,7 @@ pub(crate) async fn run_provider_effect_loop(
                 cache,
                 in_flight,
                 result_outbox,
+                events,
                 delivery,
             )
             .await
@@ -113,9 +124,25 @@ pub(crate) async fn run_provider_effect_loop(
             }
         });
     }
-    while let Some(result) = tasks.join_next().await {
-        if let Err(error) = result {
-            error!(%error, "provider-effect task join failed during shutdown");
+    let drain = async {
+        while let Some(result) = tasks.join_next().await {
+            if let Err(error) = result {
+                error!(%error, "provider-effect task join failed during shutdown");
+            }
+        }
+    };
+    if tokio::time::timeout(shutdown_grace, drain).await.is_err() {
+        warn!(
+            shutdown_grace_secs = shutdown_grace.as_secs(),
+            "provider effects exceeded shutdown grace; aborting them"
+        );
+        tasks.abort_all();
+        while let Some(result) = tasks.join_next().await {
+            if let Err(error) = result
+                && !error.is_cancelled()
+            {
+                error!(%error, "provider-effect task join failed after abort");
+            }
         }
     }
     Ok(())
@@ -131,6 +158,7 @@ async fn process_provider_effect(
     cache: Arc<FunctionCache>,
     in_flight: Arc<Mutex<HashMap<Uuid, crate::worker::InFlightAction>>>,
     result_outbox: Arc<dyn crate::agent::outbox::ResultOutbox>,
+    events: Arc<dyn crate::events::WorkerEventSink>,
     delivery: EffectDelivery,
 ) -> Result<(), SendableError> {
     let command = delivery.command;
@@ -181,6 +209,7 @@ async fn process_provider_effect(
             return Ok(());
         }
         Err(error) => {
+            crate::metrics::secret_resolution_failure();
             publish_terminal(
                 broker.as_ref(),
                 result_outbox.as_ref(),
@@ -234,6 +263,8 @@ async fn process_provider_effect(
         idempotency_key: idempotency_key.clone(),
         function_binding,
     };
+    let provider_name = action.provider.clone();
+    let function_name = action.function.clone();
     match api_client
         .claim_idempotency_key(
             &command.idempotency_key,
@@ -279,6 +310,7 @@ async fn process_provider_effect(
         }
     }
     let provider_key = idempotency_key.as_ref().map(value_key);
+    crate::metrics::effect_received();
     let token = CancellationToken::new();
     let canceled_by_control = Arc::new(AtomicBool::new(false));
     {
@@ -299,6 +331,14 @@ async fn process_provider_effect(
             },
         );
     }
+    events.handle(crate::events::WorkerEvent::EffectStarted {
+        workflow_run_id: command.workflow_run_id,
+        effect_id: command.effect_id,
+        provider: provider_name.clone(),
+        function: function_name.clone(),
+        attempt: i64::from(command.attempt),
+    });
+    let _in_flight_metric = crate::metrics::in_flight_guard();
     let output_sink = Arc::new(EffectOutputSink::new(
         command.clone(),
         broker.clone(),
@@ -358,6 +398,12 @@ async fn process_provider_effect(
         RunStatus::Canceled => WorkflowEffectStatus::Canceled,
         _ => WorkflowEffectStatus::Failed,
     };
+    let event_outcome = match status {
+        WorkflowEffectStatus::Succeeded => crate::events::ActionOutcome::Succeeded,
+        WorkflowEffectStatus::TimedOut => crate::events::ActionOutcome::TimedOut,
+        WorkflowEffectStatus::Canceled => crate::events::ActionOutcome::Canceled,
+        _ => crate::events::ActionOutcome::Failed,
+    };
     let output = outcome
         .execution_result
         .as_ref()
@@ -384,9 +430,22 @@ async fn process_provider_effect(
         &command,
         status,
         output,
-        outcome.task_result.message,
+        outcome.task_result.message.clone(),
     )
     .await?;
+    events.handle(crate::events::WorkerEvent::EffectFinished {
+        workflow_run_id: command.workflow_run_id,
+        effect_id: command.effect_id,
+        provider: provider_name,
+        function: function_name,
+        outcome: event_outcome,
+        duration_ms: outcome.task_result.duration_ms(),
+        message: outcome.task_result.message.clone(),
+    });
+    crate::metrics::effect_completed(
+        event_outcome.as_str(),
+        outcome.task_result.duration_ms() as f64,
+    );
     broker
         .ack_effect(consumer, delivery.delivery_id)
         .await

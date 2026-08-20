@@ -39,7 +39,7 @@ pub(crate) mod handlers {
     pub(crate) use runinator_ws_runtime::handlers::{
         agents, artifacts, automation, catalog_metadata, debug, function_invocations, health,
         notifications, observability, provisioning,
-        replicas, runs, schedules, supervisor, triggers, webhook, workflow_vm,
+        replicas, runs, schedules, supervisor, triggers, workflow_vm,
     };
 }
 
@@ -48,15 +48,6 @@ pub(crate) mod handlers {
 pub(crate) use runinator_ws_core::responses;
 pub(crate) use runinator_ws_core::{events, models};
 pub(crate) use runinator_ws_middleware::{auth, overload, rate_limit};
-
-// the result-consumer loop is re-exported at the engine root; the in-process engine drives it, so
-// only the tests reach for it directly under the module path they already use.
-#[cfg(test)]
-pub(crate) mod result_consumer {
-    pub use runinator_engine::{
-        ResultConsumerPolicy, run_result_consumer, run_result_consumer_with_policy,
-    };
-}
 
 pub use router::build_router;
 pub use runinator_ws_core::{AppEvent, AppEventKind, EventSender};

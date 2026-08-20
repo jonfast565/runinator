@@ -524,7 +524,7 @@ async fn filter_records<T: DatabaseImpl>(
         else {
             continue;
         };
-        let Some((run, _)) = repository::fetch_workflow_run(db, workflow_run_id)
+        let Some(run) = repository::fetch_workflow_run(db, workflow_run_id)
             .await
             .map_err(|err| api_error(err.to_string()))?
         else {

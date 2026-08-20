@@ -66,35 +66,18 @@ pub(crate) async fn send_run_chunks<T: DatabaseImpl>(
     Ok(())
 }
 
-pub(crate) async fn send_workflow_node_run_chunks<T: DatabaseImpl>(
-    db: &T,
-    tx: &mut futures::stream::SplitSink<axum::extract::ws::WebSocket, Message>,
-    node_run_id: Uuid,
-    cursor: &mut Option<i64>,
-    limit: i64,
-) -> Result<(), ()> {
-    let chunks = repository::fetch_workflow_node_run_chunks(db, node_run_id, *cursor, limit)
-        .await
-        .map_err(|_| ())?;
-    for chunk in &chunks {
-        send_json(tx, chunk).await?;
-        *cursor = Some(chunk.sequence);
-    }
-    Ok(())
-}
-
 pub(crate) async fn send_workflow_run<T: DatabaseImpl>(
     db: &T,
     tx: &mut futures::stream::SplitSink<axum::extract::ws::WebSocket, Message>,
     run_id: Uuid,
 ) -> Result<(), ()> {
-    let Some((run, nodes)) = repository::fetch_workflow_run(db, run_id)
+    let Some(run) = repository::fetch_workflow_run(db, run_id)
         .await
         .map_err(|_| ())?
     else {
         return Err(());
     };
-    send_json(tx, &models::WorkflowRunResponse::new(run, nodes)).await?;
+    send_json(tx, &models::WorkflowRunResponse::new(run, Vec::new())).await?;
     Ok(())
 }
 
@@ -233,72 +216,6 @@ pub(crate) async fn ws_workflow_run<T: DatabaseImpl>(
             "WebSocket connection closed for /ws/workflow-runs/{}",
             run_id
         );
-    })
-}
-
-pub(crate) async fn ws_workflow_node_run_stream<T: DatabaseImpl>(
-    Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
-    Extension(ctx): Extension<AuthContext>,
-    Path(node_run_id): Path<Uuid>,
-    ws: WebSocketUpgrade,
-) -> Response {
-    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
-        .require_node_run_workflow(node_run_id, Permission::View)
-        .await
-    {
-        return reply.into_response();
-    }
-    log::info!(
-        "WebSocket upgrade request for /ws/workflow-node-runs/{}/stream",
-        node_run_id
-    );
-    ws.on_upgrade(move |socket| async move {
-        let _connection = crate::metrics::websocket_connected("node_run_stream");
-        log::info!("WebSocket connection established for /ws/workflow-node-runs/{}/stream", node_run_id);
-        let (mut tx, mut rx_ws) = socket.split();
-        let mut cursor: Option<i64> = None;
-        if send_workflow_node_run_chunks(db.as_ref(), &mut tx, node_run_id, &mut cursor, 500)
-            .await
-            .is_err()
-        {
-            return;
-        }
-        let mut event_rx = events.subscribe();
-        let mut poll_interval = tokio::time::interval(Duration::from_millis(500));
-        loop {
-            tokio::select! {
-                event = event_rx.recv() => {
-                    match event {
-                        Ok(event) => {
-                            if matches!(&event.kind, AppEventKind::WorkflowRunChanged { .. })
-                                && event_scope_visible(&ctx, event.org_id)
-                                && send_workflow_node_run_chunks(db.as_ref(), &mut tx, node_run_id, &mut cursor, 100).await.is_err() {
-                                    break;
-                                }
-                        }
-                        Err(broadcast::error::RecvError::Lagged(_)) => {
-                            if send_workflow_node_run_chunks(db.as_ref(), &mut tx, node_run_id, &mut cursor, 500).await.is_err() {
-                                break;
-                            }
-                        }
-                        Err(broadcast::error::RecvError::Closed) => break,
-                    }
-                }
-                _ = poll_interval.tick() => {
-                    if send_workflow_node_run_chunks(db.as_ref(), &mut tx, node_run_id, &mut cursor, 100).await.is_err() {
-                        break;
-                    }
-                }
-                msg = rx_ws.next() => {
-                    match msg {
-                        Some(Ok(Message::Close(_))) | None => break,
-                        _ => {}
-                    }
-                }
-            }
-        }
-        log::info!("WebSocket connection closed for /ws/workflow-node-runs/{}/stream", node_run_id);
     })
 }
 
@@ -724,10 +641,6 @@ pub(crate) fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
             get(ws_run_stream::<T>).layer(Extension(pool.clone())),
         )
         .route(
-            "/ws/workflow-node-runs/{id}/stream",
-            get(ws_workflow_node_run_stream::<T>).layer(Extension(pool.clone())),
-        )
-        .route(
             "/ws/desktop-worker",
             get(ws_desktop_worker::<T>).layer(Extension(pool.clone())),
         )
@@ -767,19 +680,6 @@ pub(crate) const DOCS: &[EndpointDoc] = &[
         "WebSockets",
         "Subscribe to task run output",
         "Upgrades to a websocket stream for chunks emitted by one low-level task run.",
-        EndpointPolicy::ResourceAction(ResourceType::Workflow, Action::View),
-        None,
-        &[],
-        101,
-        "websocket upgrade accepted",
-        Example::None,
-    ),
-    endpoint_with_policy(
-        "get",
-        "/ws/workflow-node-runs/{id}/stream",
-        "WebSockets",
-        "Subscribe to node-run output",
-        "Upgrades to a websocket stream for chunks emitted by one workflow node run.",
         EndpointPolicy::ResourceAction(ResourceType::Workflow, Action::View),
         None,
         &[],

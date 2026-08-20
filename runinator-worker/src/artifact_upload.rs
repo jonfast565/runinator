@@ -13,7 +13,6 @@ use std::path::Path;
 use std::sync::Arc;
 
 use runinator_api::{AsyncApiClient, StaticLocator};
-use runinator_comm::ActionCommand;
 use runinator_comm::EffectCommand;
 use runinator_models::runs::NewRunArtifact;
 use tracing::{debug, warn};
@@ -33,28 +32,15 @@ impl ArtifactUploader {
         Arc::new(Self { client })
     }
 
-    /// rewrite an artifact's `uri` to a durable one, or leave it alone if that is not possible.
-    pub async fn relocate(&self, command: &ActionCommand, artifact: &mut NewRunArtifact) {
-        self.relocate_for_execution(
-            command.workflow_run_id,
-            Some(command.workflow_node_run_id),
-            command.workflow_node_run_id,
-            artifact,
-        )
-        .await;
-    }
-
-    /// VM effect counterpart to [`Self::relocate`]. The blob upload is attributed to the effect;
-    /// no node-run row is created or required.
+    /// The blob upload is attributed to the effect; no node-run row is created or required.
     pub async fn relocate_effect(&self, command: &EffectCommand, artifact: &mut NewRunArtifact) {
-        self.relocate_for_execution(command.workflow_run_id, None, command.effect_id, artifact)
+        self.relocate_for_execution(command.workflow_run_id, command.effect_id, artifact)
             .await;
     }
 
     async fn relocate_for_execution(
         &self,
         workflow_run_id: uuid::Uuid,
-        workflow_node_run_id: Option<uuid::Uuid>,
         execution_id: uuid::Uuid,
         artifact: &mut NewRunArtifact,
     ) {
@@ -91,7 +77,6 @@ impl ArtifactUploader {
             .client
             .upload_artifact_content(
                 workflow_run_id,
-                workflow_node_run_id,
                 &artifact.name,
                 &artifact.mime_type,
                 bytes,
@@ -116,7 +101,3 @@ impl ArtifactUploader {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "artifact_upload_tests.rs"]
-mod tests;

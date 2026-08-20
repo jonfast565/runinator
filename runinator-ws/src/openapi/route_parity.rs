@@ -89,10 +89,6 @@ const ROUTER_SOURCES: &[(&str, &str)] = &[
         include_str!("../../../runinator-ws-authoring/src/handlers/workflows.rs"),
     ),
     (
-        "runinator-ws-runtime/handlers/action_dispatches",
-        include_str!("../../../runinator-ws-runtime/src/handlers/action_dispatches.rs"),
-    ),
-    (
         "runinator-ws-runtime/handlers/agents",
         include_str!("../../../runinator-ws-runtime/src/handlers/agents.rs"),
     ),
@@ -119,10 +115,6 @@ const ROUTER_SOURCES: &[(&str, &str)] = &[
     (
         "runinator-ws-runtime/handlers/health",
         include_str!("../../../runinator-ws-runtime/src/handlers/health.rs"),
-    ),
-    (
-        "runinator-ws-runtime/handlers/node_runs",
-        include_str!("../../../runinator-ws-runtime/src/handlers/node_runs.rs"),
     ),
     (
         "runinator-ws-runtime/handlers/notifications",
@@ -155,10 +147,6 @@ const ROUTER_SOURCES: &[(&str, &str)] = &[
     (
         "runinator-ws-runtime/handlers/triggers",
         include_str!("../../../runinator-ws-runtime/src/handlers/triggers.rs"),
-    ),
-    (
-        "runinator-ws-runtime/handlers/webhook",
-        include_str!("../../../runinator-ws-runtime/src/handlers/webhook.rs"),
     ),
     (
         "runinator-ws-runtime/handlers/workflow_vm",

@@ -518,16 +518,3 @@ pub struct CredentialPutRequest {
     #[serde(default)]
     pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
 }
-
-#[derive(Debug, Deserialize)]
-pub struct WebhookWakeRequest {
-    pub workflow_run_id: Uuid,
-    #[serde(default)]
-    pub node_id: Option<String>,
-    #[serde(default)]
-    pub status: Option<String>,
-    #[serde(default)]
-    pub state: Value,
-    #[serde(default)]
-    pub message: Option<String>,
-}

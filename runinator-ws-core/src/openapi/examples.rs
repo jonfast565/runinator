@@ -83,7 +83,6 @@ pub enum Example {
     AgentDirectiveList,
     Grant,
     Team,
-    WebhookWake,
     WebhookSignal,
     EventDelivery,
     InterruptRequest,
@@ -324,9 +323,6 @@ pub fn example_value(example: Example) -> Option<Value> {
             json!({ "principal_type": "user", "principal_id": UUID_EXAMPLE, "permission": "view" })
         }
         Example::Team => json!({ "name": "platform", "user_id": UUID_EXAMPLE }),
-        Example::WebhookWake => {
-            json!({ "workflow_run_id": UUID_EXAMPLE, "node_id": "wait_for_ticket", "status": "succeeded", "state": {}, "message": "ticket closed" })
-        }
         Example::WebhookSignal => {
             json!({ "name": "ticket.closed", "correlation_key": "PROJ-123", "payload": { "status": "done" } })
         }

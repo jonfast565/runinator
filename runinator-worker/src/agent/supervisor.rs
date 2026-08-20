@@ -158,7 +158,6 @@ pub async fn run_supervised(
             profile: inputs.profile.clone(),
             libraries: Arc::clone(&inputs.libraries),
             api_client: inputs.api_client.clone(),
-            replica_id: Some(inputs.replica_id),
             providers: Arc::clone(&inputs.providers),
             max_concurrent_actions: inputs.max_concurrent_actions,
             shutdown_grace: inputs.shutdown_grace,

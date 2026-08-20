@@ -8,7 +8,7 @@ use std::{
     sync::Mutex,
 };
 
-use runinator_broker::{Broker, EffectResultMessage, ResultMessage};
+use runinator_broker::{Broker, EffectResultMessage};
 use runinator_models::errors::SendableError;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -28,11 +28,7 @@ pub struct OutboxEntry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum OutboxMessage {
-    Legacy(ResultMessage),
-    Effect(EffectResultMessage),
-}
+pub struct OutboxMessage(pub EffectResultMessage);
 
 #[derive(Debug)]
 pub enum OutboxError {
@@ -62,8 +58,7 @@ impl From<io::Error> for OutboxError {
 }
 
 pub trait ResultOutbox: Send + Sync {
-    /// fsync a terminal status or artifact before its action delivery may be acknowledged.
-    fn append(&self, message: ResultMessage) -> Result<(), OutboxError>;
+    /// Fsync a terminal status or artifact before its effect delivery may be acknowledged.
     fn append_effect(&self, message: EffectResultMessage) -> Result<(), OutboxError>;
     fn next(&self) -> Result<Option<OutboxEntry>, OutboxError>;
     fn acknowledge(&self, id: Uuid) -> Result<(), OutboxError>;
@@ -76,10 +71,6 @@ pub trait ResultOutbox: Send + Sync {
 pub struct NoopOutbox;
 
 impl ResultOutbox for NoopOutbox {
-    fn append(&self, _message: ResultMessage) -> Result<(), OutboxError> {
-        Err(OutboxError::Disabled)
-    }
-
     fn append_effect(&self, _message: EffectResultMessage) -> Result<(), OutboxError> {
         Err(OutboxError::Disabled)
     }
@@ -228,12 +219,8 @@ impl FileOutbox {
 }
 
 impl ResultOutbox for FileOutbox {
-    fn append(&self, message: ResultMessage) -> Result<(), OutboxError> {
-        self.append_message(OutboxMessage::Legacy(message))
-    }
-
     fn append_effect(&self, message: EffectResultMessage) -> Result<(), OutboxError> {
-        self.append_message(OutboxMessage::Effect(message))
+        self.append_message(OutboxMessage(message))
     }
 
     fn next(&self) -> Result<Option<OutboxEntry>, OutboxError> {
@@ -392,10 +379,7 @@ async fn drain_one(outbox: &dyn ResultOutbox, broker: &dyn Broker) -> Result<boo
     else {
         return Ok(true);
     };
-    let published = match entry.message {
-        OutboxMessage::Legacy(message) => broker.publish_result(message).await,
-        OutboxMessage::Effect(message) => broker.publish_effect_result(message).await,
-    };
+    let published = broker.publish_effect_result(entry.message.0).await;
     match published {
         Ok(()) => {
             crate::metrics::result_publish("replayed");

@@ -94,7 +94,7 @@ pub async fn simulate_workflow<T: DatabaseImpl>(
     }
     if let Some(run_id) = request.replay_run {
         match repository::fetch_workflow_run(db.as_ref(), run_id).await {
-            Ok(Some((run, _))) => {
+            Ok(Some(run)) => {
                 if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
                     .require_workflow(run.workflow_id, Permission::Run)
                     .await

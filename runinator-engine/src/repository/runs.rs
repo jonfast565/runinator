@@ -148,8 +148,8 @@ pub async fn fetch_workflow_runs_for_workflow<T: DatabaseImpl>(
     db.fetch_workflow_runs_for_workflow(workflow_id).await
 }
 
-/// Fetch one VM-backed workflow run. Execution detail is read separately through continuations,
-/// effects, and the journal; this intentionally has no node-run companion payload.
+/// Fetch a VM-backed workflow run. Continuations, effects, and journal entries are read through
+/// their dedicated resources; node-run history is intentionally not reconstructed here.
 pub async fn fetch_workflow_run<T: DatabaseImpl>(
     db: &T,
     workflow_run_id: Uuid,

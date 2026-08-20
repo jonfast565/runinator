@@ -247,7 +247,7 @@ async fn settle_or_accept<T: DatabaseImpl>(
         }
         tokio::time::sleep(SYNC_POLL).await;
         match repository::fetch_workflow_run(db, run.id).await {
-            Ok(Some((current, _))) if current.status.is_terminal() => {
+            Ok(Some(current)) if current.status.is_terminal() => {
                 return replay(db, current.id).await;
             }
             Ok(_) => continue,
@@ -269,9 +269,9 @@ fn accepted(run: WorkflowRun) -> (StatusCode, Json<ApiResponse>) {
     )
 }
 
-// read a run back with its node runs, which is what carries the output.
+// Read the VM-backed run. Effects and journal entries have their own resources.
 async fn replay<T: DatabaseImpl>(db: &T, run_id: Uuid) -> (StatusCode, Json<ApiResponse>) {
-    let (run, nodes) = match repository::fetch_workflow_run(db, run_id).await {
+    let run = match repository::fetch_workflow_run(db, run_id).await {
         Ok(Some(found)) => found,
         Ok(None) => return not_found(format!("invocation {run_id} not found")),
         Err(err) => return api_error(err.to_string()),
@@ -284,7 +284,8 @@ async fn replay<T: DatabaseImpl>(db: &T, run_id: Uuid) -> (StatusCode, Json<ApiR
     (
         status,
         Json(ApiResponse::WorkflowRun(models::WorkflowRunResponse::new(
-            run, nodes,
+            run,
+            Vec::new(),
         ))),
     )
 }
@@ -295,7 +296,7 @@ async fn require_run_access<T: DatabaseImpl>(
     run_id: Uuid,
     permission: Permission,
 ) -> Result<(), (StatusCode, Json<ApiResponse>)> {
-    let (run, _) = match repository::fetch_workflow_run(db, run_id).await {
+    let run = match repository::fetch_workflow_run(db, run_id).await {
         Ok(Some(found)) => found,
         Ok(None) => return Err(not_found(format!("invocation {run_id} not found"))),
         Err(err) => return Err(api_error(err.to_string())),

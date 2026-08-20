@@ -1,4 +1,4 @@
-// opentelemetry metrics for the action loop. bound lazily to the global meter so they export over
+// OpenTelemetry metrics for the VM provider-effect loop. Bound lazily to the global meter so they export over
 // otlp when otel is configured and are cheap no-ops otherwise. names are stable public contracts.
 
 use std::sync::OnceLock;
@@ -9,18 +9,14 @@ use opentelemetry::metrics::{Counter, Gauge, Histogram, UpDownCounter};
 const METER_NAME: &str = "runinator-worker";
 
 struct WorkerMetrics {
-    actions_received: Counter<u64>,
-    actions_completed: Counter<u64>,
-    actions_duplicate: Counter<u64>,
-    actions_replayed: Counter<u64>,
-    action_duration_ms: Histogram<f64>,
-    actions_in_flight: UpDownCounter<i64>,
+    effects_received: Counter<u64>,
+    effects_completed: Counter<u64>,
+    effect_duration_ms: Histogram<f64>,
+    effects_in_flight: UpDownCounter<i64>,
     control_commands: Counter<u64>,
     secret_resolution_failures: Counter<u64>,
     capacity: Gauge<u64>,
-    action_queue_wait_ms: Histogram<f64>,
     result_publish: Counter<u64>,
-    lease_contention: Counter<u64>,
 }
 
 static METRICS: OnceLock<WorkerMetrics> = OnceLock::new();
@@ -29,24 +25,18 @@ fn metrics() -> &'static WorkerMetrics {
     METRICS.get_or_init(|| {
         let meter = opentelemetry::global::meter(METER_NAME);
         WorkerMetrics {
-            actions_received: meter
-                .u64_counter("runinator_worker_actions_received_total")
+            effects_received: meter
+                .u64_counter("runinator_worker_effects_received_total")
                 .build(),
-            actions_completed: meter
-                .u64_counter("runinator_worker_actions_completed_total")
+            effects_completed: meter
+                .u64_counter("runinator_worker_effects_completed_total")
                 .build(),
-            actions_duplicate: meter
-                .u64_counter("runinator_worker_actions_duplicate_total")
-                .build(),
-            actions_replayed: meter
-                .u64_counter("runinator_worker_actions_replayed_total")
-                .build(),
-            action_duration_ms: meter
-                .f64_histogram("runinator_worker_action_duration_ms")
+            effect_duration_ms: meter
+                .f64_histogram("runinator_worker_effect_duration_ms")
                 .with_unit("ms")
                 .build(),
-            actions_in_flight: meter
-                .i64_up_down_counter("runinator_worker_actions_in_flight")
+            effects_in_flight: meter
+                .i64_up_down_counter("runinator_worker_effects_in_flight")
                 .build(),
             control_commands: meter
                 .u64_counter("runinator_worker_control_commands_total")
@@ -55,33 +45,20 @@ fn metrics() -> &'static WorkerMetrics {
                 .u64_counter("runinator_worker_secret_resolution_failures_total")
                 .build(),
             capacity: meter.u64_gauge("runinator_worker_capacity").build(),
-            action_queue_wait_ms: meter
-                .f64_histogram("runinator_worker_action_queue_wait_ms")
-                .with_unit("ms")
-                .build(),
             result_publish: meter
                 .u64_counter("runinator_worker_result_publish_total")
-                .build(),
-            lease_contention: meter
-                .u64_counter("runinator_worker_lease_contention_total")
                 .build(),
         }
     })
 }
 
-/// an action delivery was accepted for processing (before lease/dedupe checks).
-pub(crate) fn action_received() {
-    metrics().actions_received.add(1, &[]);
+/// A VM provider effect was accepted for processing.
+pub(crate) fn effect_received() {
+    metrics().effects_received.add(1, &[]);
 }
 
 pub(crate) fn capacity(value: usize) {
     metrics().capacity.record(value as u64, &[]);
-}
-
-pub(crate) fn action_queue_wait(duration_ms: f64) {
-    metrics()
-        .action_queue_wait_ms
-        .record(duration_ms.max(0.0), &[]);
 }
 
 pub(crate) fn result_publish(outcome: &'static str) {
@@ -90,30 +67,15 @@ pub(crate) fn result_publish(outcome: &'static str) {
         .add(1, &[KeyValue::new("outcome", outcome)]);
 }
 
-pub(crate) fn lease_contention() {
-    metrics().lease_contention.add(1, &[]);
-}
-
-/// a delivery was dropped as a duplicate because its executor lease is held elsewhere.
-pub(crate) fn action_duplicate() {
-    metrics().actions_duplicate.add(1, &[]);
-}
-
-/// a delivery settled from a result already recorded under its idempotency key, so the provider was
-/// not invoked. a rising count means redeliveries are being absorbed rather than re-executed.
-pub(crate) fn action_replayed() {
-    metrics().actions_replayed.add(1, &[]);
-}
-
-/// an action finished executing. `outcome` is one of succeeded/failed/timed_out/canceled; the same
+/// A provider effect finished executing. `outcome` is one of succeeded/failed/timed_out/canceled; the same
 /// label is applied to the duration histogram so latency can be split by result.
-pub(crate) fn action_completed(outcome: &'static str, duration_ms: f64) {
+pub(crate) fn effect_completed(outcome: &'static str, duration_ms: f64) {
     let attrs = [KeyValue::new("outcome", outcome)];
-    metrics().actions_completed.add(1, &attrs);
-    metrics().action_duration_ms.record(duration_ms, &attrs);
+    metrics().effects_completed.add(1, &attrs);
+    metrics().effect_duration_ms.record(duration_ms, &attrs);
 }
 
-/// resolving `secret://` references for an action failed, so it was reported failed without running.
+/// Resolving `secret://` references for an effect failed, so it was reported failed without running.
 pub(crate) fn secret_resolution_failure() {
     metrics().secret_resolution_failures.add(1, &[]);
 }
@@ -125,10 +87,10 @@ pub(crate) fn control_command(kind: &'static str) {
         .add(1, &[KeyValue::new("kind", kind)]);
 }
 
-/// raise the in-flight gauge for the lifetime of one executing action, lowering it on drop so every
+/// Raise the in-flight gauge for the lifetime of one executing effect, lowering it on drop so every
 /// exit path (including error returns) is accounted for.
 pub(crate) fn in_flight_guard() -> InFlightGuard {
-    metrics().actions_in_flight.add(1, &[]);
+    metrics().effects_in_flight.add(1, &[]);
     InFlightGuard
 }
 
@@ -136,6 +98,6 @@ pub(crate) struct InFlightGuard;
 
 impl Drop for InFlightGuard {
     fn drop(&mut self) {
-        metrics().actions_in_flight.add(-1, &[]);
+        metrics().effects_in_flight.add(-1, &[]);
     }
 }

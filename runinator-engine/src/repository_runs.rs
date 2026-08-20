@@ -97,7 +97,6 @@ pub async fn persist_artifact_file<T: DatabaseImpl>(
     db: &T,
     blobs: &Arc<dyn BlobStore>,
     run_id: Uuid,
-    workflow_node_run_id: Option<Uuid>,
     name: &str,
     mime_type: &str,
     bytes: &[u8],
@@ -105,7 +104,6 @@ pub async fn persist_artifact_file<T: DatabaseImpl>(
     let uri = crate::artifact_storage::put_artifact(
         blobs,
         run_id,
-        workflow_node_run_id,
         name,
         mime_type,
         bytes,
@@ -118,16 +116,10 @@ pub async fn persist_artifact_file<T: DatabaseImpl>(
         uri: uri.clone(),
         metadata: runinator_models::json!({
             "source": "upload",
-            "workflow_node_run_id": workflow_node_run_id
+            "source": "upload"
         }),
     };
     let artifact = db.add_run_artifact(run_id, &new_artifact).await?;
-
-    if let Some(node_run_id) = workflow_node_run_id {
-        let _ = db
-            .add_workflow_node_run_artifact(node_run_id, &new_artifact)
-            .await;
-    }
 
     Ok(artifact)
 }

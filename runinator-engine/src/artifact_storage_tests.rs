@@ -37,11 +37,9 @@ async fn read_all(mut content: ArtifactContent) -> Vec<u8> {
 async fn round_trips_through_the_object_store() {
     let fixture = fixture().await;
     let run_id = Uuid::now_v7();
-    let node_run_id = Uuid::now_v7();
     let uri = put_artifact(
         &fixture.store,
         run_id,
-        Some(node_run_id),
         "report.txt",
         "text/plain",
         b"artifact body",
@@ -49,9 +47,9 @@ async fn round_trips_through_the_object_store() {
     .await
     .unwrap();
 
-    // the key keeps the run/node grouping, so one run's artifacts list together.
+    // The key is run-scoped, so one run's artifacts list together.
     assert!(uri.starts_with(&format!(
-        "blob://{RUN_ARTIFACT_BUCKET}/runs/{run_id}/{node_run_id}/"
+        "blob://{RUN_ARTIFACT_BUCKET}/runs/{run_id}/"
     )));
     assert!(uri.ends_with("-report.txt"));
 
@@ -66,7 +64,6 @@ async fn reads_a_byte_range() {
     let uri = put_artifact(
         &fixture.store,
         Uuid::now_v7(),
-        None,
         "data.bin",
         "application/octet-stream",
         b"0123456789",
@@ -93,7 +90,6 @@ async fn a_hostile_filename_cannot_escape_its_run_prefix() {
     let uri = put_artifact(
         &fixture.store,
         run_id,
-        None,
         "../../etc/passwd",
         "text/plain",
         b"x",
@@ -139,7 +135,6 @@ async fn deleting_is_idempotent_in_both_shapes() {
     let uri = put_artifact(
         &fixture.store,
         Uuid::now_v7(),
-        None,
         "gone.txt",
         "text/plain",
         b"x",
