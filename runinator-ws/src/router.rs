@@ -19,9 +19,9 @@ use tower_http::cors::{Any, CorsLayer};
 use crate::auth::{AuthConfig, AuthState, auth_middleware};
 use crate::events::EventSender;
 use crate::handlers::{
-    action_dispatches, agents, artifacts, auth, authz, automation, billing, catalog,
+    agents, artifacts, auth, authz, automation, billing, catalog,
     catalog_metadata, console, credentials, debug, function_invocations, functions, health,
-    node_runs, notifications, observability, orgs, packs, pipelines, providers, provisioning,
+    notifications, observability, orgs, packs, pipelines, providers, provisioning,
     replicas, rexrap, runs, schedules, supervisor, triggers, webhook, workflow_vm, workflows,
 };
 use crate::models::{ApiError, ApiResponse};
@@ -64,10 +64,8 @@ pub fn build_router<T: DatabaseImpl>(
         .merge(artifacts::routes(pool.clone()))
         .merge(notifications::routes(pool.clone()))
         .merge(schedules::routes(pool.clone()))
-        .merge(action_dispatches::routes(pool.clone()))
         .merge(debug::routes(pool.clone()))
         .merge(supervisor::routes())
-        .merge(node_runs::routes(pool.clone()))
         .merge(workflow_vm::routes(pool.clone()))
         .merge(catalog::routes(pool.clone()))
         .merge(automation::routes(pool.clone()))

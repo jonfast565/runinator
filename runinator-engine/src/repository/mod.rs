@@ -32,16 +32,15 @@ pub use crate::repository_runs::{
 };
 use crate::repository_state::latest_node_run_for;
 
-pub use action_dispatches::*;
 pub use agents::*;
 pub use catalog::*;
 pub use debug::*;
 pub use definitions::*;
-pub use node_runs::*;
 pub use notification_policies::*;
 pub use notifications::*;
 pub use org_scope::{org_id_for_pipeline_run, org_id_for_workflow_run};
 pub use pipelines::*;
+pub(crate) use pipeline_orchestration::maybe_start_chained_pipelines;
 pub use provider_meta::{
     provider_catalog_item, provider_catalog_uri, provider_metadata_from_item,
     provider_metadata_from_items,
@@ -50,12 +49,10 @@ pub use replicas::*;
 pub use runs::*;
 pub use triggers::*;
 
-mod action_dispatches;
 mod agents;
 mod catalog;
 mod debug;
 mod definitions;
-mod node_runs;
 mod notification_policies;
 mod notifications;
 mod org_scope;
@@ -65,6 +62,7 @@ pub mod console;
 pub mod function_adapters;
 pub mod functions;
 mod pipelines;
+mod pipeline_orchestration;
 mod provider_meta;
 mod replicas;
 mod runs;

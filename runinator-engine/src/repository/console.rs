@@ -178,22 +178,24 @@ pub async fn settle_cell_for_run<T: DatabaseImpl>(
     if cell.status.is_terminal() {
         return Ok(Some(cell));
     }
-    let Some((run, node_runs)) = super::node_runs::fetch_workflow_run(db, workflow_run_id).await?
-    else {
+    let Some(run) = db.fetch_workflow_run(workflow_run_id).await? else {
         return Ok(Some(cell));
     };
     if !run.status.is_terminal() {
         return Ok(Some(cell));
     }
 
-    // terminal nodes carry no value. select the latest completed value-producing node; generated
-    // console and function workflows end in an explicit `yield`, so this resolves that node rather
-    // than the later `end` bookkeeping row.
-    let output = node_runs
-        .iter()
-        .filter(|node_run| node_run.output_json.is_some() && !node_run.speculative)
-        .max_by_key(|node_run| (node_run.finished_at, node_run.created_at))
-        .and_then(|node_run| node_run.output_json.clone())
+    let output = db
+        .fetch_workflow_journal(workflow_run_id)
+        .await?
+        .into_iter()
+        .rev()
+        .find_map(|entry| match entry.entry {
+            runinator_models::workflow_vm::WorkflowJournalEntry::Completed { value, .. } => {
+                Some(value)
+            }
+            _ => None,
+        })
         .unwrap_or(Value::Null);
 
     if run.status == runinator_models::workflows::WorkflowStatus::Succeeded {

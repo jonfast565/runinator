@@ -2,7 +2,6 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use runinator_broker_core::Broker;
-use runinator_database::interfaces::DatabaseImpl;
 use runinator_engine::EnginePublisher;
 use runinator_models::runs::RunStatus;
 use tokio::sync::broadcast;
@@ -64,15 +63,6 @@ pub fn nudge_agent_directive_publisher(events: &EventSender) {
 
 pub fn emit_task_run(events: &EventSender, run_id: Uuid, status: RunStatus, org_id: Option<Uuid>) {
     runinator_engine::events::emit_task_run(&events.publisher, run_id, status, org_id);
-}
-
-pub async fn emit_workflow_node_run<T: DatabaseImpl>(
-    db: &T,
-    events: &EventSender,
-    workflow_node_run_id: Uuid,
-) {
-    runinator_engine::events::emit_workflow_node_run(db, &events.publisher, workflow_node_run_id)
-        .await;
 }
 
 pub fn emit_workflows_changed(events: &EventSender, org_id: Option<Uuid>) {

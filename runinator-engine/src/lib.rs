@@ -21,22 +21,9 @@ mod effect_consumer;
 mod engine;
 mod infrastructure_effect_host;
 mod loops;
-mod mutex_migration;
-mod result_consumer;
-
-// Re-export the graph-runtime surface for downstream compatibility.
-pub mod orchestration {
-    pub use runinator_runtime::{
-        DriveOutcome, ReadyNodeDisposition, WorkflowMachine, process_ready_node,
-    };
-}
 
 pub use engine::{EngineConfig, run_background_engine};
 pub use events::{AppEvent, AppEventKind, EnginePublisher, EventSender};
 pub use infrastructure_effect_host::run_infrastructure_effect_host;
 
-// exposed so the web service can reuse the same result-consumer policy/loop in-process.
 pub use effect_consumer::run_effect_result_consumer;
-pub use result_consumer::{
-    ResultConsumerPolicy, run_result_consumer, run_result_consumer_with_policy,
-};

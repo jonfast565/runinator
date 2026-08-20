@@ -97,242 +97,6 @@ pub(crate) async fn create_workflow_vm_run<T: DatabaseImpl>(
     .await
 }
 
-pub async fn claim_ready_nodes<T: DatabaseImpl>(
-    db: &T,
-    scheduler_id: String,
-    lease_until: chrono::DateTime<Utc>,
-    limit: i64,
-) -> Result<Vec<ReadyNodeRecord>, SendableError> {
-    db.claim_ready_nodes(scheduler_id, Utc::now(), lease_until, limit)
-        .await
-}
-
-pub async fn complete_ready_node<T: DatabaseImpl>(
-    db: &T,
-    ready_node_id: Uuid,
-    scheduler_id: String,
-    next_ready: Option<(Uuid, String, chrono::DateTime<Utc>)>,
-) -> Result<TaskResponse, SendableError> {
-    let Some(ready_node) = db.fetch_ready_node(ready_node_id).await? else {
-        return Err(runinator_runtime::errors::READY_NODE_NOT_FOUND.error(ready_node_id));
-    };
-    if ready_node.claimed_by.as_deref() != Some(scheduler_id.as_str()) {
-        return Err(runinator_runtime::errors::READY_NODE_NOT_CLAIMED.error(ready_node_id));
-    }
-    let outcome = runinator_runtime::WorkflowMachine::new(db)
-        .drive_ready(&ready_node)
-        .await?;
-    if outcome == runinator_runtime::DriveOutcome::KeepClaim {
-        return Ok(TaskResponse {
-            success: true,
-            message: "Ready node remains claimed until it is due".into(),
-        });
-    }
-    if !db.complete_ready_node(ready_node_id, scheduler_id).await? {
-        return Err(runinator_runtime::errors::READY_NODE_NOT_CLAIMED.error(ready_node_id));
-    }
-    if let Some((workflow_run_id, node_id, ready_at)) = next_ready {
-        support::enqueue_node_ready(
-            db,
-            workflow_run_id,
-            node_id.clone(),
-            "node_waiting",
-            ready_at,
-            runinator_models::json!({ "node_id": node_id }),
-        )
-        .await?;
-    }
-    let _ = super::console::settle_cell_for_run(db, ready_node.workflow_run_id).await;
-    Ok(TaskResponse {
-        success: true,
-        message: "Ready node processed".into(),
-    })
-}
-
-/// drive a single ready node by id over the broker ingress path. the web service claims the row
-/// itself (the waker has no database), drives the graph runtime, then completes or releases it. returns the
-/// workflow run id on success so the caller can emit a ui event. a `None` means the row was already
-/// completed or claimed elsewhere and there was nothing to do.
-pub async fn drive_ready_node<T: DatabaseImpl>(
-    db: &T,
-    ready_node_id: Uuid,
-    driver_id: String,
-) -> Result<Option<Uuid>, SendableError> {
-    let now = Utc::now();
-    let lease_until = now + Duration::seconds(READY_NODE_DRIVE_LEASE_SECONDS);
-    let Some(ready_node) = db
-        .claim_ready_node(ready_node_id, driver_id.clone(), now, lease_until)
-        .await?
-    else {
-        return Ok(None);
-    };
-    let workflow_run_id = ready_node.workflow_run_id;
-    let outcome = match runinator_runtime::WorkflowMachine::new(db)
-        .drive_ready(&ready_node)
-        .await
-    {
-        Ok(outcome) => outcome,
-        Err(err) => {
-            // a runtime hard-error would otherwise leave the row claimed and get re-driven every
-            // lease period (a poison pill). fail the run and settle the row so it stops looping.
-            fail_driven_ready_node(db, &ready_node, driver_id, err.as_ref()).await?;
-            let _ = super::console::settle_cell_for_run(db, workflow_run_id).await;
-            return Ok(Some(workflow_run_id));
-        }
-    };
-    if outcome == runinator_runtime::DriveOutcome::KeepClaim {
-        // not yet settled; return it to the queue so a later wake re-drives it.
-        db.release_ready_node(ready_node_id, driver_id).await?;
-        return Ok(Some(workflow_run_id));
-    }
-    db.complete_ready_node(ready_node_id, driver_id).await?;
-    let _ = super::console::settle_cell_for_run(db, workflow_run_id).await;
-    Ok(Some(workflow_run_id))
-}
-
-/// release every mutex owned by a run settled outside the graph runtime and wake each fifo successor.
-pub async fn release_run_mutexes<T: DatabaseImpl>(
-    db: &T,
-    workflow_run_id: Uuid,
-) -> Result<(), SendableError> {
-    let wakes = db
-        .release_workflow_mutexes(workflow_run_id, Utc::now().timestamp())
-        .await?;
-    for wake in wakes {
-        enqueue_mutex_wake(db, wake).await?;
-    }
-    Ok(())
-}
-
-async fn enqueue_mutex_wake<T: DatabaseImpl>(
-    db: &T,
-    wake: WorkflowMutexWake,
-) -> Result<(), SendableError> {
-    let mut event = NewOrchestrationEvent::new(
-        wake.workflow_run_id,
-        Some(wake.node_id.clone()),
-        "mutex_released",
-        runinator_models::json!({
-            "node_id": wake.node_id,
-            "workflow_node_run_id": wake.workflow_node_run_id,
-        }),
-    )
-    .for_cursor(wake.cursor_id);
-    event.workflow_node_run_id = Some(wake.workflow_node_run_id);
-    db.enqueue_ready_node(event, wake.node_id, Utc::now())
-        .await?;
-    Ok(())
-}
-
-/// settle a ready node whose reducer hard-errored: mark the run failed and complete the row so the
-/// drive loop does not re-claim and re-run it every lease period.
-async fn fail_driven_ready_node<T: DatabaseImpl>(
-    db: &T,
-    ready_node: &ReadyNodeRecord,
-    driver_id: String,
-    err: &(dyn std::error::Error + Send + Sync + 'static),
-) -> Result<(), SendableError> {
-    log::error!(
-        "Reducer failed for ready node {} (workflow run {}, node {}) [{}]: {}",
-        ready_node.id,
-        ready_node.workflow_run_id,
-        ready_node.node_id,
-        runinator_models::errors::error_code_or_unknown(err),
-        err
-    );
-    db.update_workflow_run_status(
-        ready_node.workflow_run_id,
-        WorkflowStatus::Failed,
-        Some(ready_node.node_id.clone()),
-        None,
-        Some(format!(
-            "Reducer error driving node {}: {}",
-            ready_node.node_id, err
-        )),
-    )
-    .await?;
-    release_run_mutexes(db, ready_node.workflow_run_id).await?;
-    db.complete_ready_node(ready_node.id, driver_id).await?;
-    Ok(())
-}
-
-const READY_NODE_DRIVE_LEASE_SECONDS: i64 = 60;
-
-// how long a wake announcement stays leased in the database. a pending ready node is announced at
-// most once per window, so backends without broker-side dedupe (rabbitmq, kafka) do not accumulate
-// duplicate wakes; a wake lost in flight is re-announced once the lease lapses after its due time.
-const WAKE_ANNOUNCE_LEASE_SECONDS: i64 = 30;
-
-/// announce pending ready nodes for drive. due nodes (`ready_at <= now`) publish a Drive straight
-/// onto the ingress channel so queue→running (and node→node) is not gated on a waker broker hop;
-/// future-dated nodes still publish a Wake for the waker to sleep until due. doubles as the durable
-/// backstop via the announce lease; the broker dedupes wakes/drives already in flight.
-pub async fn publish_pending_wakes<T: DatabaseImpl>(
-    db: &T,
-    broker: &dyn Broker,
-    limit: i64,
-) -> Result<(), SendableError> {
-    let now = Utc::now();
-    let pending = db
-        .claim_ready_nodes_for_announce(now, WAKE_ANNOUNCE_LEASE_SECONDS, limit)
-        .await?;
-    for node in pending {
-        let trace_id = Uuid::now_v7();
-        if node.ready_at <= now {
-            // already due: skip wake→waker→ingress and drive immediately.
-            let command =
-                WsIngressCommand::drive(node.id, node.workflow_run_id, node.node_id, trace_id);
-            let message = IngressMessage {
-                command,
-                dedupe_key: None,
-                enqueued_at: Utc::now(),
-            };
-            match broker.publish_ingress(message).await {
-                Ok(()) | Err(BrokerError::Duplicate(_)) => {}
-                Err(err) => {
-                    log::warn!(
-                        "Failed to publish drive for due ready node {}: {}",
-                        node.id,
-                        err
-                    );
-                }
-            }
-            continue;
-        }
-
-        let command = runinator_comm::WakeCommand::new(
-            node.id,
-            node.workflow_run_id,
-            node.node_id,
-            node.ready_at,
-            node.source_event_id,
-            trace_id,
-        );
-        let message = runinator_broker_core::WakeMessage {
-            command,
-            dedupe_key: None,
-            enqueued_at: Utc::now(),
-        };
-        match broker.publish_wake(message).await {
-            Ok(()) | Err(BrokerError::Duplicate(_)) => {}
-            Err(err) => {
-                log::warn!("Failed to publish wake for ready node {}: {}", node.id, err);
-            }
-        }
-    }
-    Ok(())
-}
-
-/// safety backstop: settle uncompleted ready nodes whose run is already terminal, in bounded
-/// batches. the reducer settles these inline on the terminal transition; this catches any orphaned
-/// by a crash mid-transition so the wake publisher stops rescanning dead runs. returns rows settled.
-pub async fn settle_terminal_run_ready_nodes<T: DatabaseImpl>(
-    db: &T,
-    limit: i64,
-) -> Result<u64, SendableError> {
-    db.settle_terminal_run_ready_nodes(limit).await
-}
-
 pub async fn fetch_workflow_runs_by_status<T: DatabaseImpl>(
     db: &T,
     status: WorkflowStatus,
@@ -384,6 +148,15 @@ pub async fn fetch_workflow_runs_for_workflow<T: DatabaseImpl>(
     db.fetch_workflow_runs_for_workflow(workflow_id).await
 }
 
+/// Fetch one VM-backed workflow run. Execution detail is read separately through continuations,
+/// effects, and the journal; this intentionally has no node-run companion payload.
+pub async fn fetch_workflow_run<T: DatabaseImpl>(
+    db: &T,
+    workflow_run_id: Uuid,
+) -> Result<Option<WorkflowRun>, SendableError> {
+    db.fetch_workflow_run(workflow_run_id).await
+}
+
 pub async fn fetch_workflow_runs_by_name<T: DatabaseImpl>(
     db: &T,
     name: String,
@@ -405,9 +178,6 @@ pub async fn update_workflow_run_status<T: DatabaseImpl>(
 ) -> Result<TaskResponse, SendableError> {
     db.update_workflow_run_status(workflow_run_id, status, active_node_id, state, message)
         .await?;
-    if status.is_terminal() {
-        release_run_mutexes(db, workflow_run_id).await?;
-    }
     Ok(TaskResponse {
         success: true,
         message: "Workflow run updated".into(),

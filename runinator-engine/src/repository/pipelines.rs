@@ -386,7 +386,7 @@ pub async fn create_manual_pipeline_run<T: DatabaseImpl>(
     let pipeline = db
         .fetch_pipeline(pipeline_id)
         .await?
-        .ok_or_else(|| runinator_runtime::errors::PIPELINE_NOT_FOUND.error(pipeline_id))?;
+        .ok_or_else(|| crate::errors::PIPELINE_NOT_FOUND.error(pipeline_id))?;
     let provenance = WorkflowRunProvenance {
         source_kind: Some(TriggerSourceKind::Manual),
         actor_type: Some(TriggerActorType::User),
@@ -396,7 +396,8 @@ pub async fn create_manual_pipeline_run<T: DatabaseImpl>(
         request_ip: None,
         metadata: Value::Object(Default::default()),
     };
-    runinator_runtime::create_and_start_pipeline_run(db, &pipeline, parameters, provenance).await
+    pipeline_orchestration::create_and_start_pipeline_run(db, &pipeline, parameters, provenance)
+        .await
 }
 
 /// start a pipeline run from a manual/cron pipeline trigger id.
@@ -410,7 +411,7 @@ pub async fn create_pipeline_run_for_trigger<T: DatabaseImpl>(
     let trigger = db
         .fetch_pipeline_trigger(trigger_id)
         .await?
-        .ok_or_else(|| runinator_runtime::errors::PIPELINE_TRIGGER_NOT_FOUND.error(trigger_id))?;
+        .ok_or_else(|| crate::errors::PIPELINE_TRIGGER_NOT_FOUND.error(trigger_id))?;
     let effective =
         if parameters.is_null() || matches!(&parameters, Value::Object(map) if map.is_empty()) {
             trigger
@@ -443,8 +444,8 @@ pub async fn claim_due_pipeline_trigger_firings<T: DatabaseImpl>(
         .await?;
     let mut admitted = Vec::with_capacity(runs.len());
     for run in runs {
-        let outcome = runinator_runtime::start_pipeline_run(db, &run).await?;
-        if outcome != runinator_runtime::PipelineStartOutcome::Skipped {
+        let outcome = pipeline_orchestration::start_pipeline_run(db, &run).await?;
+        if outcome != pipeline_orchestration::PipelineStartOutcome::Skipped {
             admitted.push(run);
         }
     }
@@ -469,7 +470,7 @@ pub async fn advance_pipeline_from_vm_terminal<T: DatabaseImpl>(
         return Ok(());
     };
     if run.pipeline_run_id.is_some() {
-        runinator_runtime::settle_pipeline_member_run(db, &run).await?;
+        pipeline_orchestration::settle_pipeline_member_run(db, &run).await?;
     }
     Ok(())
 }
@@ -666,7 +667,7 @@ pub async fn resume_pipeline_run<T: DatabaseImpl>(
             super::resume_workflow_run(db, member.id).await?;
         }
     }
-    runinator_runtime::resume_pipeline_run(db, pipeline_run_id).await?;
+    pipeline_orchestration::resume_pipeline_run(db, pipeline_run_id).await?;
     Ok(TaskResponse {
         success: true,
         message: format!("Pipeline run {pipeline_run_id} resumed"),
@@ -684,11 +685,11 @@ pub async fn resolve_pipeline_run_inquiry<T: DatabaseImpl>(
     message: Option<String>,
 ) -> Result<PipelineRun, SendableError> {
     let decision = if continue_pipeline {
-        runinator_runtime::PipelineInquiryDecision::Continue
+        pipeline_orchestration::PipelineInquiryDecision::Continue
     } else {
-        runinator_runtime::PipelineInquiryDecision::Abort
+        pipeline_orchestration::PipelineInquiryDecision::Abort
     };
-    runinator_runtime::resolve_pipeline_run_inquiry(
+    pipeline_orchestration::resolve_pipeline_run_inquiry(
         db,
         pipeline_run_id,
         decision,
@@ -704,6 +705,6 @@ pub async fn retry_pipeline_run_member<T: DatabaseImpl>(
     member_key: String,
     parameter_override: Value,
 ) -> Result<runinator_models::pipelines::PipelineMemberAttempt, SendableError> {
-    runinator_runtime::retry_pipeline_member(db, pipeline_run_id, &member_key, parameter_override)
+    pipeline_orchestration::retry_pipeline_member(db, pipeline_run_id, &member_key, parameter_override)
         .await
 }

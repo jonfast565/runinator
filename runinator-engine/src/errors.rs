@@ -101,6 +101,38 @@ pub const PIPELINE_RESUME_NOT_FOUND: ErrorDescriptor = ErrorDescriptor::new(
     "pipeline.resume.not_found",
     "Pipeline run not found",
 );
+pub const PIPELINE_NOT_FOUND: ErrorDescriptor =
+    ErrorDescriptor::new("RUNI180", "pipeline.not_found", "Pipeline not found");
+pub const PIPELINE_TRIGGER_NOT_FOUND: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI181",
+    "pipeline.trigger.not_found",
+    "Pipeline trigger not found",
+);
+pub const PIPELINE_NO_ENTRY_MEMBERS: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI182",
+    "pipeline.run.no_entry_members",
+    "Pipeline has no entry members to start",
+);
+pub const PIPELINE_NO_PENDING_INQUIRY: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI183",
+    "pipeline.run.no_pending_inquiry",
+    "Pipeline run has no pending inquiry to resolve",
+);
+pub const PIPELINE_INQUIRY_MEMBER_MISSING: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI184",
+    "pipeline.run.inquiry_member_missing",
+    "The pipeline member run behind the pending inquiry no longer exists",
+);
+pub const PIPELINE_CONCURRENCY_REJECTED: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI185",
+    "pipeline.run.concurrency_rejected",
+    "Pipeline run rejected by its concurrency policy",
+);
+pub const PIPELINE_MEMBER_NOT_RETRYABLE: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI186",
+    "pipeline.run.member_not_retryable",
+    "Pipeline member is not on the retry frontier",
+);
 pub const REPLAY_NOT_FOUND: ErrorDescriptor = ErrorDescriptor::new(
     "RUNI139",
     "workflow.replay.not_found",
@@ -232,6 +264,15 @@ pub const DICTIONARY: &[ErrorDescriptor] = &[
     RESUME_NOT_FOUND,
     CANCEL_NOT_FOUND,
     CONTROL_PUBLISH,
+    PIPELINE_PAUSE_NOT_FOUND,
+    PIPELINE_RESUME_NOT_FOUND,
+    PIPELINE_NOT_FOUND,
+    PIPELINE_TRIGGER_NOT_FOUND,
+    PIPELINE_NO_ENTRY_MEMBERS,
+    PIPELINE_NO_PENDING_INQUIRY,
+    PIPELINE_INQUIRY_MEMBER_MISSING,
+    PIPELINE_CONCURRENCY_REJECTED,
+    PIPELINE_MEMBER_NOT_RETRYABLE,
     REPLAY_NOT_FOUND,
     REPLAY_MISSING_STEP,
     REPLAY_CONTROL_FLOW,

@@ -74,13 +74,16 @@ with that path in Gate E.
 
 ### Gate E: remove legacy runtime
 
-Status: not started by this cutover change.
+Status: in progress. The engine starts only VM continuation/effect loops; the reducer interpreter,
+ready-node API, node-run API, and legacy action-dispatch API have been removed. Pipeline
+orchestration now lives with the engine and creates member runs through the VM bootstrap. Legacy
+store contracts, models, worker compatibility code, and their obsolete test suite still need the
+final removal audit before Phase E can be declared complete.
 
-- Stop reducer/result/wake/action-dispatch/reaper loops and remove their implementations.
-- Remove `RuntimeStore`, `WorkflowMachine`, `RunCursor`, node-run/invocation/action protocol models,
-  repository operations, compatibility aliases, and obsolete tests.
-- Only then add the three-dialect destructive migration dropping legacy execution tables.
-- Run a repository audit that permits legacy names only in historical migration files and cutover
+- The destructive migration is `20260822000001_destructive_vm_cutover` on every supported
+  dialect. It removes legacy execution tables only after all components have been deployed to the
+  VM protocol.
+- Complete the removal audit, permitting legacy names only in historical migrations and cutover
   documentation.
 
 ## Verification gate

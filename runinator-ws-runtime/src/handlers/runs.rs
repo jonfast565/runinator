@@ -8,7 +8,6 @@ use axum::{
 };
 use runinator_broker_core::Broker;
 use runinator_database::interfaces::DatabaseImpl;
-use runinator_models::orchestration::{ReadyNodeClaimRequest, ReadyNodeProcessRequest};
 use runinator_models::replicas::{TriggerActorType, TriggerSourceKind, WorkflowRunProvenance};
 use runinator_models::runs::NewRunChunk;
 use serde::Deserialize;
@@ -190,70 +189,6 @@ pub async fn claim_workflow_runs_for_scheduler<T: DatabaseImpl>(
     .await
     {
         Ok(runs) => (StatusCode::OK, Json(ApiResponse::WorkflowRunList(runs))),
-        Err(err) => api_error(err.to_string()),
-    }
-}
-
-pub async fn claim_ready_nodes<T: DatabaseImpl>(
-    Extension(db): Extension<Arc<T>>,
-    Extension(ctx): Extension<runinator_models::auth::AuthContext>,
-    Json(request): Json<ReadyNodeClaimRequest>,
-) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_system_role(&[
-        runinator_models::rbac::SystemRole::Engine,
-        runinator_models::rbac::SystemRole::Worker,
-        runinator_models::rbac::SystemRole::Agent,
-    ]) {
-        return reply;
-    }
-    match repository::claim_ready_nodes(
-        db.as_ref(),
-        request.scheduler_id,
-        request.lease_until,
-        request.limit.unwrap_or(50),
-    )
-    .await
-    {
-        Ok(nodes) => (
-            StatusCode::OK,
-            Json(ApiResponse::JsonValue(runinator_models::json!(nodes))),
-        ),
-        Err(err) => api_error(err.to_string()),
-    }
-}
-
-pub async fn process_ready_node<T: DatabaseImpl>(
-    Extension(db): Extension<Arc<T>>,
-    Extension(ctx): Extension<runinator_models::auth::AuthContext>,
-    Path(ready_node_id): Path<Uuid>,
-    Json(request): Json<ReadyNodeProcessRequest>,
-) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_system_role(&[
-        runinator_models::rbac::SystemRole::Engine,
-        runinator_models::rbac::SystemRole::Worker,
-        runinator_models::rbac::SystemRole::Agent,
-    ]) {
-        return reply;
-    }
-    let next_ready = match (
-        request.workflow_run_id,
-        request.node_id,
-        request.next_ready_at,
-    ) {
-        (Some(workflow_run_id), Some(node_id), Some(next_ready_at)) => {
-            Some((workflow_run_id, node_id, next_ready_at))
-        }
-        _ => None,
-    };
-    match repository::complete_ready_node(
-        db.as_ref(),
-        ready_node_id,
-        request.scheduler_id,
-        next_ready,
-    )
-    .await
-    {
-        Ok(response) => (StatusCode::OK, Json(ApiResponse::TaskResponse(response))),
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -913,12 +848,7 @@ pub fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
         .route(
             runinator_models::api_routes::API_SCHEDULER_WORKFLOW_RUNS_CLAIM,
             post(claim_workflow_runs_for_scheduler::<T>).layer(Extension(pool.clone())),
-        )
-        .route(
-            runinator_models::api_routes::API_SCHEDULER_READY_NODES_CLAIM,
-            post(claim_ready_nodes::<T>).layer(Extension(pool.clone())),
-        )
-        .route(
+        )        .route(
             runinator_models::api_routes::API_RUNS,
             get(get_runs::<T>).layer(Extension(pool.clone())),
         )
@@ -950,12 +880,7 @@ pub fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
         .route(
             "/scheduler/workflow_runs/{id}/claim/release",
             post(release_workflow_run_claim::<T>).layer(Extension(pool.clone())),
-        )
-        .route(
-            "/scheduler/ready_nodes/{id}/process",
-            post(process_ready_node::<T>).layer(Extension(pool.clone())),
-        )
-        .route(
+        )        .route(
             "/workflow_runs/{id}/cancel",
             post(cancel_workflow_run::<T>).layer(Extension(pool.clone())),
         )
@@ -1031,22 +956,6 @@ pub const DOCS: &[EndpointDoc] = &[
         &[],
         200,
         "claimed workflow runs",
-        Example::WorkflowRunList,
-    ),
-    endpoint(
-        "post",
-        "/scheduler/ready_nodes/claim",
-        "Control Plane",
-        "Claim ready nodes",
-        "Service-control endpoint used by scheduler loops to claim ready workflow nodes before dispatching wakes or actions.",
-        false,
-        json_body(
-            "Scheduler id, lease deadline, and limit.",
-            Example::SchedulerReadyNodeClaim,
-        ),
-        &[],
-        200,
-        "claimed ready nodes",
         Example::WorkflowRunList,
     ),
     endpoint(
@@ -1170,19 +1079,6 @@ pub const DOCS: &[EndpointDoc] = &[
         &[],
         200,
         "workflow-run claim released",
-        Example::TaskResponse,
-    ),
-    endpoint(
-        "post",
-        "/scheduler/ready_nodes/{id}/process",
-        "Control Plane",
-        "Complete a ready-node claim",
-        "Marks a ready node processed and optionally records the next wake that should be scheduled.",
-        false,
-        json_body("Ready-node completion payload.", Example::ReadyNodeProcess),
-        &[],
-        200,
-        "ready node processed",
         Example::TaskResponse,
     ),
     endpoint(

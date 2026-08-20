@@ -19,11 +19,6 @@ mod event_consumer;
 mod metrics;
 mod openapi;
 mod provisioner_config;
-pub mod orchestration {
-    pub use runinator_runtime::{
-        DriveOutcome, ReadyNodeDisposition, WorkflowMachine, process_ready_node,
-    };
-}
 mod router;
 mod server;
 mod websocket;
@@ -42,8 +37,8 @@ pub(crate) mod handlers {
     };
     pub(crate) use runinator_ws_identity::handlers::{auth, authz, billing, orgs};
     pub(crate) use runinator_ws_runtime::handlers::{
-        action_dispatches, agents, artifacts, automation, catalog_metadata, debug,
-        function_invocations, health, node_runs, notifications, observability, provisioning,
+        agents, artifacts, automation, catalog_metadata, debug, function_invocations, health,
+        notifications, observability, provisioning,
         replicas, runs, schedules, supervisor, triggers, webhook, workflow_vm,
     };
 }

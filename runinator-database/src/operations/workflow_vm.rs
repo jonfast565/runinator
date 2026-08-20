@@ -968,7 +968,7 @@ where
         let acquired = holder.is_none() || holder == Some(workflow_run_id);
         if acquired {
             sqlx::query(&self.render(
-                "UPDATE workflow_mutexes SET holder_run_id = ?, holder_cursor_id = ?, acquired_at = COALESCE(acquired_at, ?), updated_at = ? WHERE name = ?",
+                "UPDATE workflow_mutexes SET holder_run_id = ?, holder_continuation_id = ?, acquired_at = COALESCE(acquired_at, ?), updated_at = ? WHERE name = ?",
             ))
             .bind(workflow_run_id)
             .bind(continuation_id)

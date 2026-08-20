@@ -137,17 +137,6 @@ pub async fn emit_pipeline_run_resolved<T: DatabaseImpl>(
     emit_pipeline_run(events, run_id, org_id);
 }
 
-pub async fn emit_workflow_node_run<T: DatabaseImpl>(
-    db: &T,
-    events: &EventSender,
-    workflow_node_run_id: Uuid,
-) {
-    if let Ok(Some(node_run)) = repository::fetch_workflow_node_run(db, workflow_node_run_id).await
-    {
-        emit_workflow_run_resolved(db, events, node_run.workflow_run_id).await;
-    }
-}
-
 /// emit a coarse workflows-changed tip scoped to `org_id` (active/resource org). unscoped when None.
 pub fn emit_workflows_changed(events: &EventSender, org_id: Option<Uuid>) {
     emit(events, AppEvent::new(org_id, UiEventKind::WorkflowsChanged));

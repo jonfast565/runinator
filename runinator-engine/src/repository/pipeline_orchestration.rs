@@ -8,6 +8,9 @@ use runinator_models::pipelines::{
 };
 use runinator_models::replicas::{TriggerActorType, TriggerSourceKind, WorkflowRunProvenance};
 use runinator_models::schedules::ConcurrencyPolicy;
+use runinator_models::value::Map;
+use runinator_database::roles::NewWorkflowVmRun;
+use uuid::Uuid;
 
 // max hops in a chain of pipeline-to-pipeline triggers before we stop, bounding accidental cycles.
 const MAX_PIPELINE_CHAIN_DEPTH: i64 = 32;
@@ -15,7 +18,7 @@ const MAX_PIPELINE_CHAIN_DEPTH: i64 = 32;
 /// create a pipeline run for `pipeline` and start its entry members. used by manual/api starts and by
 /// chained-to-pipeline firing. returns the created run (already advanced to `running`, or settled
 /// `failed` when the pipeline has no entry members).
-pub async fn create_and_start_pipeline_run<T: RuntimeStore>(
+pub async fn create_and_start_pipeline_run<T: DatabaseImpl>(
     db: &T,
     pipeline: &Pipeline,
     parameters: Value,
@@ -91,7 +94,7 @@ pub async fn create_and_start_pipeline_run<T: RuntimeStore>(
     Ok(run)
 }
 
-async fn cancel_open_member_attempts<T: RuntimeStore>(
+async fn cancel_open_member_attempts<T: DatabaseImpl>(
     db: &T,
     pipeline_run_id: Uuid,
 ) -> Result<(), SendableError> {
@@ -119,7 +122,7 @@ pub enum PipelineStartOutcome {
 /// start a pipeline run's entry members. the pipeline_runs row already exists (queued). computes the
 /// entry members (members with no in-pipeline inbound link), starts each as a tagged workflow run, and
 /// flips the pipeline run to `running`; settles `failed` when there are no entry members to start.
-pub async fn start_pipeline_run<T: RuntimeStore>(
+pub async fn start_pipeline_run<T: DatabaseImpl>(
     db: &T,
     run: &PipelineRun,
 ) -> Result<PipelineStartOutcome, SendableError> {
@@ -211,7 +214,7 @@ pub async fn start_pipeline_run<T: RuntimeStore>(
 }
 
 /// Retry a failed/timed-out frontier member inside the same pipeline run.
-pub async fn retry_pipeline_member<T: RuntimeStore>(
+pub async fn retry_pipeline_member<T: DatabaseImpl>(
     db: &T,
     pipeline_run_id: Uuid,
     member_key: &str,
@@ -290,7 +293,7 @@ pub async fn retry_pipeline_member<T: RuntimeStore>(
 }
 
 /// Resume a manually paused pipeline and advance any newly-unblocked frontier members.
-pub async fn resume_pipeline_run<T: RuntimeStore>(
+pub async fn resume_pipeline_run<T: DatabaseImpl>(
     db: &T,
     pipeline_run_id: Uuid,
 ) -> Result<PipelineRun, SendableError> {
@@ -345,7 +348,7 @@ fn pipeline_entry_members(pipeline: &Pipeline) -> Vec<&PipelineMember> {
 }
 
 /// Start a single member as an atomically bootstrapped VM workflow run.
-async fn start_member_run<T: RuntimeStore>(
+async fn start_member_run<T: DatabaseImpl>(
     db: &T,
     pipeline_run: &PipelineRun,
     member: &PipelineMember,
@@ -387,7 +390,7 @@ async fn start_member_run<T: RuntimeStore>(
     }
     let module = runinator_workflows::compile_workflow_module(&snapshot)
         .map_err(|error| -> SendableError { Box::new(error) })?;
-    db.bootstrap_workflow_vm_run(runinator_store::roles::NewWorkflowVmRun {
+    db.create_workflow_vm_run(NewWorkflowVmRun {
         workflow_id,
         workflow_snapshot: snapshot,
         parameters,
@@ -432,7 +435,7 @@ fn member_failure_mode(
 
 /// the pipeline snapshot to classify failure modes against: the run's own snapshot when present
 /// (fixing the ruleset to what was true when the pipeline run started), else a fresh fetch.
-async fn pipeline_for_run<T: RuntimeStore>(
+async fn pipeline_for_run<T: DatabaseImpl>(
     db: &T,
     pipeline_run: &PipelineRun,
 ) -> Result<Option<Pipeline>, SendableError> {
@@ -444,7 +447,7 @@ async fn pipeline_for_run<T: RuntimeStore>(
 
 /// pause a pipeline run (`approval_required`) and record which member's failure raised the inquiry,
 /// so the ws inquiry-resolution endpoint and the command center can find it on `state.pending_inquiry`.
-async fn pause_pipeline_run_for_inquiry<T: RuntimeStore>(
+async fn pause_pipeline_run_for_inquiry<T: DatabaseImpl>(
     db: &T,
     pipeline_run: &PipelineRun,
     member_run: &WorkflowRun,
@@ -481,7 +484,7 @@ pub enum PipelineInquiryDecision {
 
 /// resolve a pipeline run's pending inquiry. errors if the run has no pending inquiry recorded
 /// (already resolved, or the run was never paused).
-pub async fn resolve_pipeline_run_inquiry<T: RuntimeStore>(
+pub async fn resolve_pipeline_run_inquiry<T: DatabaseImpl>(
     db: &T,
     pipeline_run_id: Uuid,
     decision: PipelineInquiryDecision,
@@ -543,12 +546,11 @@ pub async fn resolve_pipeline_run_inquiry<T: RuntimeStore>(
                 None,
             )
             .await?;
-            let run_ctx = super::execution::WorkflowRunContext::new(db, &member_run);
             settle_member_attempt(db, &member_run).await?;
             if let Some(pipeline) = pipeline_for_run(db, &pipeline_run).await? {
                 advance_pipeline_graph(db, &pipeline_run, &pipeline).await?;
             }
-            maybe_settle_pipeline_run(&run_ctx).await?;
+            maybe_settle_pipeline_run(db, &member_run).await?;
         }
     }
 
@@ -560,14 +562,14 @@ pub async fn resolve_pipeline_run_inquiry<T: RuntimeStore>(
 /// when a member workflow run reaches terminal, settle its owning pipeline run if the whole reachable
 /// member graph is now terminal. no-op for runs not tagged with a pipeline run, already-settled runs,
 /// or a run currently paused on a pending inquiry.
-pub(super) async fn maybe_settle_pipeline_run<T: RuntimeStore>(
-    ctx: &super::execution::WorkflowRunContext<'_, T>,
+pub(super) async fn maybe_settle_pipeline_run<T: DatabaseImpl>(
+    db: &T,
+    member_run: &WorkflowRun,
 ) -> Result<(), SendableError> {
-    let member_run = ctx.workflow_run;
     let Some(pipeline_run_id) = member_run.pipeline_run_id else {
         return Ok(());
     };
-    let Some(pipeline_run) = ctx.db.fetch_pipeline_run(pipeline_run_id).await? else {
+    let Some(pipeline_run) = db.fetch_pipeline_run(pipeline_run_id).await? else {
         return Ok(());
     };
     if pipeline_run.status.is_terminal() {
@@ -577,12 +579,11 @@ pub(super) async fn maybe_settle_pipeline_run<T: RuntimeStore>(
     if pipeline_run.status == WorkflowStatus::ApprovalRequired {
         return Ok(());
     }
-    let Some(pipeline) = pipeline_for_run(ctx.db, &pipeline_run).await? else {
+    let Some(pipeline) = pipeline_for_run(db, &pipeline_run).await? else {
         return Ok(());
     };
     let mode = member_failure_mode(Some(&pipeline), member_run.workflow_id);
-    let already_recorded = ctx
-        .db
+    let already_recorded = db
         .fetch_pipeline_member_attempts(pipeline_run_id)
         .await?
         .iter()
@@ -595,24 +596,23 @@ pub(super) async fn maybe_settle_pipeline_run<T: RuntimeStore>(
     ) && mode == PipelineMemberFailureMode::Inquire
         && !already_recorded
     {
-        pause_pipeline_run_for_inquiry(ctx.db, &pipeline_run, member_run).await?;
+        pause_pipeline_run_for_inquiry(db, &pipeline_run, member_run).await?;
         return Ok(());
     }
-    settle_member_attempt(ctx.db, member_run).await?;
-    advance_pipeline_graph(ctx.db, &pipeline_run, &pipeline).await?;
-    settle_pipeline_run_if_complete(ctx.db, &pipeline_run, &pipeline).await
+    settle_member_attempt(db, member_run).await?;
+    advance_pipeline_graph(db, &pipeline_run, &pipeline).await?;
+    settle_pipeline_run_if_complete(db, &pipeline_run, &pipeline).await
 }
 
 /// Apply the pipeline-side consequences of a terminal member workflow run.
-pub async fn settle_pipeline_member_run<T: RuntimeStore>(
+pub async fn settle_pipeline_member_run<T: DatabaseImpl>(
     db: &T,
     member_run: &WorkflowRun,
 ) -> Result<(), SendableError> {
-    let ctx = super::execution::WorkflowRunContext::new(db, member_run);
-    maybe_settle_pipeline_run(&ctx).await
+    maybe_settle_pipeline_run(db, member_run).await
 }
 
-async fn settle_pipeline_run_if_complete<T: RuntimeStore>(
+async fn settle_pipeline_run_if_complete<T: DatabaseImpl>(
     db: &T,
     pipeline_run: &PipelineRun,
     pipeline: &Pipeline,
@@ -673,7 +673,7 @@ async fn settle_pipeline_run_if_complete<T: RuntimeStore>(
     Ok(())
 }
 
-async fn start_next_queued_pipeline_run<T: RuntimeStore>(
+async fn start_next_queued_pipeline_run<T: DatabaseImpl>(
     db: &T,
     pipeline: &Pipeline,
 ) -> Result<(), SendableError> {
@@ -698,7 +698,7 @@ async fn start_next_queued_pipeline_run<T: RuntimeStore>(
     Ok(())
 }
 
-async fn settle_member_attempt<T: RuntimeStore>(
+async fn settle_member_attempt<T: DatabaseImpl>(
     db: &T,
     run: &WorkflowRun,
 ) -> Result<(), SendableError> {
@@ -740,7 +740,7 @@ fn attempt_status(status: WorkflowStatus) -> PipelineMemberAttemptStatus {
     }
 }
 
-async fn member_result<T: RuntimeStore>(
+async fn member_result<T: DatabaseImpl>(
     db: &T,
     run: &WorkflowRun,
     attempt: i64,
@@ -802,7 +802,7 @@ async fn member_result<T: RuntimeStore>(
     }))
 }
 
-async fn advance_pipeline_graph<T: RuntimeStore>(
+async fn advance_pipeline_graph<T: DatabaseImpl>(
     db: &T,
     pipeline_run: &PipelineRun,
     pipeline: &Pipeline,
@@ -993,21 +993,15 @@ fn resolve_member_parameters(
 
 /// start any pipelines chained to a terminal workflow run via an enabled `chained` pipeline trigger
 /// whose `configuration.source_workflow` matches. deduped per (trigger, source run).
-pub(super) async fn maybe_start_chained_pipelines<T: RuntimeStore>(
-    ctx: &super::execution::WorkflowRunContext<'_, T>,
+pub(crate) async fn maybe_start_chained_pipelines<T: DatabaseImpl>(
+    db: &T,
+    source_run: &WorkflowRun,
 ) -> Result<(), SendableError> {
-    let source_run = ctx.workflow_run;
     if !source_run.status.is_terminal() {
         return Ok(());
     }
-    // subflow/map children never fan out further chains.
-    if source_run.execution_state.subflow_parent.is_some()
-        || source_run.execution_state.map_child.is_some()
-    {
-        return Ok(());
-    }
-    let source_name = workflow_run_name(ctx.db, source_run).await?;
-    let triggers = ctx.db.fetch_enabled_chained_pipeline_triggers().await?;
+    let source_name = workflow_run_name(db, source_run).await?;
+    let triggers = db.fetch_enabled_chained_pipeline_triggers().await?;
     for trigger in triggers {
         let matches_source = trigger
             .configuration
@@ -1017,14 +1011,14 @@ pub(super) async fn maybe_start_chained_pipelines<T: RuntimeStore>(
         if !matches_source {
             continue;
         }
-        start_chained_pipeline(ctx.db, &trigger, source_run.status, source_run.id, 0).await?;
+        start_chained_pipeline(db, &trigger, source_run.status, source_run.id, 0).await?;
     }
     Ok(())
 }
 
 /// start any pipelines chained to a terminal pipeline run via a `chained` pipeline trigger whose
 /// `configuration.source_pipeline` matches. bounds cycles with a chain-depth guard.
-async fn maybe_start_chained_pipelines_from_pipeline<T: RuntimeStore>(
+async fn maybe_start_chained_pipelines_from_pipeline<T: DatabaseImpl>(
     db: &T,
     source_run: &PipelineRun,
 ) -> Result<(), SendableError> {
@@ -1060,7 +1054,7 @@ async fn maybe_start_chained_pipelines_from_pipeline<T: RuntimeStore>(
 
 /// shared chained-pipeline start: match the `on` selector, dedupe per (trigger, source run), then
 /// create and start a pipeline run for the trigger's pipeline.
-async fn start_chained_pipeline<T: RuntimeStore>(
+async fn start_chained_pipeline<T: DatabaseImpl>(
     db: &T,
     trigger: &PipelineTrigger,
     source_status: WorkflowStatus,
@@ -1123,7 +1117,7 @@ fn pipeline_chain_status_matches(trigger: &PipelineTrigger, status: WorkflowStat
 }
 
 /// the display name of a workflow run's workflow, from its snapshot or a fetch.
-async fn workflow_run_name<T: RuntimeStore>(
+async fn workflow_run_name<T: DatabaseImpl>(
     db: &T,
     run: &WorkflowRun,
 ) -> Result<String, SendableError> {

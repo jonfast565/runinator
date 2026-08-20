@@ -7,14 +7,11 @@ use tokio::sync::Notify;
 use tokio::task::JoinSet;
 use tracing::{error, info};
 
-use crate::effect_consumer::run_effect_result_consumer;
 use crate::events::EnginePublisher;
 use crate::loops::{
-    run_action_dispatch_publisher, run_agent_directive_publisher, run_ingress_consumer,
-    run_operational_metrics_sampler, run_ready_node_reaper, run_replica_reaper, run_trigger_loop,
-    run_usage_sampler, run_wake_publisher, run_workflow_effect_dispatcher, run_workflow_vm_driver,
+    run_agent_directive_publisher, run_operational_metrics_sampler, run_replica_reaper,
+    run_trigger_loop, run_usage_sampler, run_workflow_effect_dispatcher, run_workflow_vm_driver,
 };
-use crate::result_consumer::run_result_consumer;
 
 /// Runtime limits for one durable engine instance.
 ///
@@ -60,10 +57,12 @@ mod tests {
     }
 }
 
-/// run the durable orchestration engine: the ingress/reducer, result, wake, trigger, action-dispatch
-/// loops plus the replica/ready-node/usage maintenance backstops. all loops share `shutdown`, and any
-/// loop exiting on its own (panic or early return) fails the whole process so it restarts and resumes
-/// from durable state rather than running on with a silently dead loop.
+/// Run the durable VM orchestration engine.
+///
+/// Continuation and effect outboxes are the only workflow execution queues.  In particular, this
+/// deliberately does not start the reducer ingress, legacy result, wake, ready-node reaper, or
+/// action-dispatch loops: starting either execution engine alongside the VM would make the
+/// cutover's exactly-once ownership guarantees meaningless.
 ///
 /// the engine is safe to run N-up: the broker consumers compete on shared consumer ids, the trigger
 /// and action-dispatch loops claim disjoint rows per `instance_id`, wakes are broker-deduped, and the
@@ -76,19 +75,11 @@ pub async fn run_background_engine<T: DatabaseImpl>(
     config: EngineConfig,
     shutdown: Arc<Notify>,
 ) -> Result<(), SendableError> {
-    pool.migrate_workflow_execution_states().await?;
-    crate::mutex_migration::reconcile_legacy_mutexes(pool.as_ref()).await?;
     crate::stability::init_metrics();
-    let config = config.normalized();
+    let _config = config.normalized();
 
     let mut loops: JoinSet<()> = JoinSet::new();
-    loops.spawn(run_result_consumer(
-        pool.clone(),
-        broker.clone(),
-        publisher.clone(),
-        shutdown.clone(),
-    ));
-    loops.spawn(run_effect_result_consumer(
+    loops.spawn(crate::effect_consumer::run_effect_result_consumer(
         pool.clone(),
         broker.clone(),
         publisher.clone(),
@@ -99,32 +90,11 @@ pub async fn run_background_engine<T: DatabaseImpl>(
         broker.clone(),
         shutdown.clone(),
     ));
-    loops.spawn(run_ingress_consumer(
-        pool.clone(),
-        broker.clone(),
-        publisher.clone(),
-        instance.clone(),
-        config.max_concurrent_ingress,
-        shutdown.clone(),
-    ));
-    loops.spawn(run_wake_publisher(
-        pool.clone(),
-        broker.clone(),
-        publisher.wake_nudge(),
-        shutdown.clone(),
-    ));
     loops.spawn(run_trigger_loop(
         pool.clone(),
         broker.clone(),
         publisher.clone(),
         instance.clone(),
-        shutdown.clone(),
-    ));
-    loops.spawn(run_action_dispatch_publisher(
-        pool.clone(),
-        broker.clone(),
-        instance.clone(),
-        publisher.action_nudge(),
         shutdown.clone(),
     ));
     loops.spawn(run_agent_directive_publisher(
@@ -146,7 +116,6 @@ pub async fn run_background_engine<T: DatabaseImpl>(
         shutdown.clone(),
     ));
     loops.spawn(run_replica_reaper(pool.clone(), shutdown.clone()));
-    loops.spawn(run_ready_node_reaper(pool.clone(), shutdown.clone()));
     loops.spawn(run_usage_sampler(pool.clone(), shutdown.clone()));
     loops.spawn(run_operational_metrics_sampler(
         pool.clone(),
