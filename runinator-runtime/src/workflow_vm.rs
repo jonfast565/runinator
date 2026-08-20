@@ -280,7 +280,14 @@ fn truthy(value: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use runinator_models::workflow_vm::{WorkflowEffectRequest, WorkflowInstruction};
+    use runinator_models::{
+        workflow_vm::{WorkflowEffectRequest, WorkflowInstruction},
+        workflows::{
+            WorkflowDefinition, WorkflowGraph, WorkflowNode, WorkflowNodeKind, WorkflowNodeRef,
+            WorkflowTransitions,
+        },
+    };
+    use runinator_workflows::compile_workflow_module;
     use uuid::Uuid;
 
     fn continuation() -> WorkflowContinuation {
@@ -425,5 +432,63 @@ mod tests {
             first.iter().map(|child| child.id).collect::<Vec<_>>(),
             second.iter().map(|child| child.id).collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn compiled_linear_graph_reaches_the_same_terminal_result() {
+        let module = compile_workflow_module(&WorkflowDefinition {
+            id: None,
+            name: "linear".into(),
+            namespace: None,
+            org_id: None,
+            version: Default::default(),
+            enabled: true,
+            input_type: Default::default(),
+            definition: WorkflowGraph {
+                start: Some("start".into()),
+                nodes: vec![
+                    vm_node("start", WorkflowNodeKind::Start, Some("end")),
+                    vm_node("end", WorkflowNodeKind::End, None),
+                ],
+                ..Default::default()
+            },
+            created_at: None,
+            updated_at: None,
+        })
+        .unwrap();
+
+        let WorkflowVmStep::Complete {
+            value,
+            continuation,
+        } = step(&module, continuation())
+        else {
+            panic!("expected the compiled linear graph to complete");
+        };
+        assert_eq!(value, Value::Null);
+        assert_eq!(continuation.status, WorkflowContinuationStatus::Succeeded);
+    }
+
+    fn vm_node(id: &str, kind: WorkflowNodeKind, next: Option<&str>) -> WorkflowNode {
+        WorkflowNode {
+            id: id.into(),
+            kind,
+            skipped: false,
+            locked: false,
+            action: None,
+            parameters: Default::default(),
+            wait: Default::default(),
+            condition: Default::default(),
+            transitions: WorkflowTransitions {
+                next: next.map(WorkflowNodeRef::new),
+                ..Default::default()
+            },
+            retry: Default::default(),
+            timeout_seconds: None,
+            max_iterations: None,
+            subflow_id: None,
+            subflow: Default::default(),
+            reentry: Default::default(),
+            compensation: None,
+        }
     }
 }
