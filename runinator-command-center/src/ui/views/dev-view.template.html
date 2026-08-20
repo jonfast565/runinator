@@ -36,7 +36,7 @@
             <input
               v-model="packPath"
               list="dev-pack-paths"
-              placeholder="packs/sdlc/sdlc.wdlm"
+              placeholder="packs/sdlc/sdlc.rexrapm"
               @keydown.enter.prevent="inspectPackNow"
             />
             <datalist id="dev-pack-paths">
@@ -180,11 +180,11 @@
           </div>
         </div>
 
-        <WdlEditor
-          v-if="selectedIsWdl"
+        <RexRapEditor
+          v-if="selectedIsRexRap"
           v-model="sourceText"
-          class="dev-wdl-editor"
-          title="WDL"
+          class="dev-rexrap-editor"
+          title="REXRAP"
           :providers="providers.providers"
           :settings="secrets.secrets"
           :source-path="selectedFilePath"

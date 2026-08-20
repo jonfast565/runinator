@@ -1,4 +1,4 @@
-import { compileWdl, decompileToWdl } from "../../api/commandCenterApi";
+import { compileRexRap, decompileToRexRap } from "../../api/commandCenterApi";
 import type {
   JsonRecord,
   WorkflowDefinition,
@@ -51,7 +51,7 @@ import {
 } from "../../workflow/editor-defaults";
 import type { WorkflowServiceHost } from "./host";
 
-const WORKFLOW_WDL_SYNC_DELAY_MS = 1500;
+const WORKFLOW_REXRAP_SYNC_DELAY_MS = 1500;
 
 export interface WorkflowCatalogPeer {
   saveSelectedWorkflowBundle: () => Promise<void>;
@@ -315,7 +315,7 @@ export function createWorkflowEditorService(
 
       // a compensation is an action call in its own right, so hold it to the same bar. left half
       // configured it lowers to a `compensate .()` the compiler rejects, and the failure would
-      // surface on save as a wdl parse error pointing at nothing the author recognises.
+      // surface on save as a rexrap parse error pointing at nothing the author recognises.
       const compensation = next.compensation;
 
       if (compensation !== undefined) {
@@ -671,19 +671,19 @@ export function createWorkflowEditorService(
     void syncWorkflowJson();
   }
 
-  function scheduleWorkflowWdlSync() {
-    if (internal.workflowWdlSyncTimer) {
-      clearTimeout(internal.workflowWdlSyncTimer);
+  function scheduleWorkflowRexRapSync() {
+    if (internal.workflowRexRapSyncTimer) {
+      clearTimeout(internal.workflowRexRapSyncTimer);
     }
 
-    internal.workflowWdlSyncTimer = setTimeout(() => {
-      internal.workflowWdlSyncTimer = null;
-      void syncWorkflowWdl();
-    }, WORKFLOW_WDL_SYNC_DELAY_MS);
+    internal.workflowRexRapSyncTimer = setTimeout(() => {
+      internal.workflowRexRapSyncTimer = null;
+      void syncWorkflowRexRap();
+    }, WORKFLOW_REXRAP_SYNC_DELAY_MS);
   }
 
-  function scheduleWorkflowWdlRefresh() {
-    void refreshWorkflowWdl();
+  function scheduleWorkflowRexRapRefresh() {
+    void refreshWorkflowRexRap();
   }
 
   function setWorkflowJsonSilently(next: string) {
@@ -700,17 +700,17 @@ export function createWorkflowEditorService(
     }, 0);
   }
 
-  function setWorkflowWdlSilently(next: string) {
-    if (internal.workflowWdlWriteReleaseTimer) {
-      clearTimeout(internal.workflowWdlWriteReleaseTimer);
+  function setWorkflowRexRapSilently(next: string) {
+    if (internal.workflowRexRapWriteReleaseTimer) {
+      clearTimeout(internal.workflowRexRapWriteReleaseTimer);
     }
 
-    internal.workflowWdlWriteGuard = true;
-    host.state.workflowWdl = next;
+    internal.workflowRexRapWriteGuard = true;
+    host.state.workflowRexRap = next;
     host.notify();
-    internal.workflowWdlWriteReleaseTimer = setTimeout(() => {
-      internal.workflowWdlWriteGuard = false;
-      internal.workflowWdlWriteReleaseTimer = null;
+    internal.workflowRexRapWriteReleaseTimer = setTimeout(() => {
+      internal.workflowRexRapWriteGuard = false;
+      internal.workflowRexRapWriteReleaseTimer = null;
     }, 0);
   }
 
@@ -737,12 +737,12 @@ export function createWorkflowEditorService(
     );
     setWorkflowJsonSilently(pretty(host.state.workflowDraft.definition));
     host.state.isDirty = true;
-    scheduleWorkflowWdlRefresh();
+    scheduleWorkflowRexRapRefresh();
     return true;
   }
 
   function syncWorkflowDraftToJson() {
-    // a graph edit is now the source of truth, so save should serialize the draft, not recompile wdl.
+    // a graph edit is now the source of truth, so save should serialize the draft, not recompile rexrap.
     host.state.workflowEditorMode = "graph";
     Object.assign(
       host.state.workflowDraft,
@@ -750,13 +750,13 @@ export function createWorkflowEditorService(
     );
     setWorkflowJsonSilently(pretty(host.state.workflowDraft.definition));
     host.state.isDirty = true;
-    scheduleWorkflowWdlRefresh();
+    scheduleWorkflowRexRapRefresh();
   }
 
-  async function syncWorkflowWdl(): Promise<boolean> {
-    if (internal.workflowWdlSyncTimer) {
-      clearTimeout(internal.workflowWdlSyncTimer);
-      internal.workflowWdlSyncTimer = null;
+  async function syncWorkflowRexRap(): Promise<boolean> {
+    if (internal.workflowRexRapSyncTimer) {
+      clearTimeout(internal.workflowRexRapSyncTimer);
+      internal.workflowRexRapSyncTimer = null;
     }
 
     let compiled: WorkflowDefinition;
@@ -765,9 +765,9 @@ export function createWorkflowEditorService(
       : null;
 
     try {
-      compiled = await compileWdl(host.state.workflowWdl, host.state.workflowDraft.enabled);
+      compiled = await compileRexRap(host.state.workflowRexRap, host.state.workflowDraft.enabled);
     } catch (err) {
-      host.ctx.setError(`WDL compile error: ${errorMessage(err)}`);
+      host.ctx.setError(`REXRAP compile error: ${errorMessage(err)}`);
       return false;
     }
 
@@ -790,13 +790,13 @@ export function createWorkflowEditorService(
     return true;
   }
 
-  async function refreshWorkflowWdl(): Promise<void> {
+  async function refreshWorkflowRexRap(): Promise<void> {
     try {
-      setWorkflowWdlSilently(await decompileToWdl(cloneJson(host.state.workflowDraft)));
-      host.state.workflowWdlError = "";
+      setWorkflowRexRapSilently(await decompileToRexRap(cloneJson(host.state.workflowDraft)));
+      host.state.workflowRexRapError = "";
     } catch (err) {
-      setWorkflowWdlSilently("");
-      host.state.workflowWdlError = errorMessage(err);
+      setWorkflowRexRapSilently("");
+      host.state.workflowRexRapError = errorMessage(err);
     }
 
     host.notify();
@@ -813,7 +813,7 @@ export function createWorkflowEditorService(
   /**
    * re-read the header working copy after the definition was replaced wholesale.
    *
-   * the json and wdl panes both swap `definition` out from under the header panel, so without this
+   * the json and rexrap panes both swap `definition` out from under the header panel, so without this
    * the panel would keep editing -- and then write back -- the header of a definition that no longer
    * exists. reads through the pure helper rather than the header service so this stays a leaf call.
    */
@@ -1074,14 +1074,14 @@ export function createWorkflowEditorService(
     removeWorkflowEdgeById,
     autoArrangeWorkflowNodes,
     scheduleWorkflowJsonSync,
-    scheduleWorkflowWdlSync,
-    scheduleWorkflowWdlRefresh,
+    scheduleWorkflowRexRapSync,
+    scheduleWorkflowRexRapRefresh,
     setWorkflowJsonSilently,
-    setWorkflowWdlSilently,
+    setWorkflowRexRapSilently,
     syncWorkflowJson,
     syncWorkflowDraftToJson,
-    syncWorkflowWdl,
-    refreshWorkflowWdl,
+    syncWorkflowRexRap,
+    refreshWorkflowRexRap,
     ensureWorkflowNodes,
     refreshHeaderDraft,
     stripNewNodeConnections,

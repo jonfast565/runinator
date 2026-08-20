@@ -93,7 +93,7 @@ async fn chained_trigger_kind_round_trips_and_firing_dedupes() {
             next_execution: None,
             blackout_start: None,
             blackout_end: None,
-            metadata: runinator_models::json!({ "managed_by": "wdl" }),
+            metadata: runinator_models::json!({ "managed_by": "rexrap" }),
             created_at: None,
             updated_at: None,
         })

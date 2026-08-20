@@ -7,7 +7,7 @@ use runinator_models::provisioning::ProvisionBackend;
 use runinator_models::replicas::{ReplicaKind, ReplicaStatus};
 use runinator_models::semver::SemVerBump;
 use runinator_models::settings::SettingKind;
-use runinator_wdl::TypePolicy;
+use runinator_rexrap::TypePolicy;
 
 /// cli-facing semantic-version bump level, mapped to the shared `SemVerBump`.
 #[derive(Debug, Clone, Copy, Default, ValueEnum)]
@@ -45,7 +45,7 @@ impl From<CliSettingKind> for SettingKind {
     }
 }
 
-/// cli-facing WDL typing policy.
+/// cli-facing REXRAP typing policy.
 #[derive(Debug, Clone, Copy, Default, ValueEnum)]
 pub enum CliTyping {
     #[default]
@@ -177,7 +177,7 @@ pub enum Commands {
         #[command(subcommand)]
         command: FunctionCommands,
     },
-    /// Inspect and run pipelines. Pipeline *shape* is pack-managed (`.wdlp`, applied by
+    /// Inspect and run pipelines. Pipeline *shape* is pack-managed (`.rexrapp`, applied by
     /// `workflows apply`); these verbs read and drive what a pack defined.
     Pipelines {
         #[command(subcommand)]
@@ -196,7 +196,7 @@ pub enum Commands {
         #[arg(long, default_value_t = 300)]
         timeout: u64,
     },
-    /// Open a durable, multiline WDL execution console.
+    /// Open a durable, multiline REXRAP execution console.
     Console {
         /// Resume a session by UUID or name.
         #[arg(long)]
@@ -207,7 +207,7 @@ pub enum Commands {
         /// Execute one cell and exit.
         #[arg(short = 'e', long)]
         execute: Option<String>,
-        /// Execute a WDL cell read from a file and exit.
+        /// Execute a REXRAP cell read from a file and exit.
         #[arg(short, long)]
         file: Option<PathBuf>,
         /// Return as soon as an effectful cell has started.
@@ -227,10 +227,10 @@ pub enum Commands {
         #[command(subcommand)]
         command: ArtifactCommands,
     },
-    /// Compile, decompile, format, and check the wdl workflow language.
-    Wdl {
+    /// Compile, decompile, format, and check the rexrap workflow language.
+    RexRap {
         #[command(subcommand)]
-        command: WdlCommands,
+        command: RexRapCommands,
     },
     /// Manage the unified settings store: secrets and config.
     Settings {
@@ -491,7 +491,7 @@ pub enum SettingsCommands {
         #[arg(long)]
         schema: Option<String>,
     },
-    /// Import settings from a `.wdls` secrets file (`secret|config <scope>.<name> = <literal>`
+    /// Import settings from a `.rexraps` secrets file (`secret|config <scope>.<name> = <literal>`
     /// declarations). JSON is not accepted.
     Import { file: PathBuf },
     /// Delete a setting.
@@ -505,21 +505,21 @@ pub enum SettingsCommands {
 }
 
 #[derive(Debug, Subcommand)]
-pub enum WdlCommands {
-    /// Compile a .wdl file into a workflow definition JSON.
+pub enum RexRapCommands {
+    /// Compile a .rexrap file into a workflow definition JSON.
     Compile {
         file: PathBuf,
         /// Write the JSON here instead of to stdout.
         #[arg(short, long)]
         output: Option<PathBuf>,
-        /// WDL type checking policy. Use permissive only for legacy investigation.
+        /// REXRAP type checking policy. Use permissive only for legacy investigation.
         #[arg(long, value_enum, default_value_t = CliTyping::Strict)]
         typing: CliTyping,
     },
-    /// Decompile a workflow definition JSON file back into .wdl source.
+    /// Decompile a workflow definition JSON file back into .rexrap source.
     Decompile {
         file: PathBuf,
-        /// Write the .wdl here instead of to stdout.
+        /// Write the .rexrap here instead of to stdout.
         #[arg(short, long)]
         output: Option<PathBuf>,
         /// Emit the canonical fully-explicit form: start edge, ids and arrows on every node,
@@ -527,7 +527,7 @@ pub enum WdlCommands {
         #[arg(long)]
         explicit: bool,
     },
-    /// Format a .wdl file.
+    /// Format a .rexrap file.
     Format {
         file: PathBuf,
         /// Write the formatted source here instead of over the file.
@@ -537,10 +537,10 @@ pub enum WdlCommands {
         #[arg(long)]
         check: bool,
     },
-    /// Parse, lower, and validate a .wdl file, printing any diagnostics.
+    /// Parse, lower, and validate a .rexrap file, printing any diagnostics.
     Check {
         file: PathBuf,
-        /// WDL type checking policy. Use permissive only for legacy investigation.
+        /// REXRAP type checking policy. Use permissive only for legacy investigation.
         #[arg(long, value_enum, default_value_t = CliTyping::Strict)]
         typing: CliTyping,
     },
@@ -554,18 +554,18 @@ pub enum WorkflowCommands {
     Show { workflow: String },
     /// Validate a workflow definition JSON file.
     Validate { file: PathBuf },
-    /// Import a workflow pack (.wdl, .wdlm, or a directory of .wdl files), or save a workflow
+    /// Import a workflow pack (.rexrap, .rexrapm, or a directory of .rexrap files), or save a workflow
     /// definition / import a workflow bundle from a JSON file. For a pack, an adjacent settings
-    /// bundle (a `.wdlm` "settings" entry or a sibling settings.wdls/settings.json) is always
+    /// bundle (a `.rexrapm` "settings" entry or a sibling settings.rexraps/settings.json) is always
     /// imported too to seed config/secret slots. When no path is given, falls back to the
     /// `~/.runinator/workflows` folder if it exists.
     Apply { file: Option<PathBuf> },
-    /// Dry-run a workflow pack against .wdlt test suites: simulate the state machine offline with
+    /// Dry-run a workflow pack against .rexrapt test suites: simulate the state machine offline with
     /// mocked task outputs and assert on the branch taken and final outputs. No server required.
     Test {
-        /// Workflow pack source (.wdl, .wdlm, or a directory of .wdl files).
+        /// Workflow pack source (.rexrap, .rexrapm, or a directory of .rexrap files).
         file: PathBuf,
-        /// One or more .wdlt test-suite files (JSON). When omitted, sibling *.wdlt files are used.
+        /// One or more .rexrapt test-suite files (JSON). When omitted, sibling *.rexrapt files are used.
         #[arg(long = "tests", value_name = "PATH")]
         tests: Vec<PathBuf>,
         /// Only run cases whose name contains this substring.

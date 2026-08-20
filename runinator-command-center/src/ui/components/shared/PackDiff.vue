@@ -269,7 +269,7 @@ function sortKeys(value: unknown): unknown {
   return value;
 }
 
-// pull cron expressions a pack workflow declares via its wdl header (definition.metadata.triggers).
+// pull cron expressions a pack workflow declares via its rexrap header (definition.metadata.triggers).
 function cronExpressionsFor(workflow: WorkflowDefinition): string[] {
   const triggers = (workflow.definition.metadata as Record<string, unknown> | undefined)?.triggers;
 

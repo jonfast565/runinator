@@ -24,15 +24,15 @@ describe("tokenize", () => {
   });
 
   it("keeps backslashes inside single quotes", () => {
-    expect(tokenize(String.raw`wdl check 'C:\packs\a.wdl'`)).toEqual([
-      "wdl",
+    expect(tokenize(String.raw`rexrap check 'C:\packs\a.rexrap'`)).toEqual([
+      "rexrap",
       "check",
-      String.raw`C:\packs\a.wdl`,
+      String.raw`C:\packs\a.rexrap`,
     ]);
   });
 
   it("escapes a space outside quotes", () => {
-    expect(tokenize(String.raw`wdl check my\ pack.wdl`)).toEqual(["wdl", "check", "my pack.wdl"]);
+    expect(tokenize(String.raw`rexrap check my\ pack.rexrap`)).toEqual(["rexrap", "check", "my pack.rexrap"]);
   });
 
   it("rejects an unterminated quote", () => {

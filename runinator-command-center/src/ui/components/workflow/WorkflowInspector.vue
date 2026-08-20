@@ -1,5 +1,5 @@
 <template>
-  <!-- the step/interrupts/header/wdl views are each their own promoted split tab now, instead of one
+  <!-- the step/interrupts/header/rexrap views are each their own promoted split tab now, instead of one
        "Inspector" tab hiding all four -- but exactly one is ever open. the other three always sit
        together in a fixed-order rail beside it, rather than nested splits that would scatter folded
        tabs on both sides of whichever one is open. -->
@@ -17,22 +17,22 @@
           <StepEditor v-if="activeId === 'step'" />
           <WorkflowInterruptsPanel v-else-if="activeId === 'interrupts'" />
           <WorkflowHeaderPanel v-else-if="activeId === 'header'" />
-          <div v-else class="workflow-wdl-pane">
-            <div v-if="workflows.workflowWdlError" class="workflow-wdl-error">
-              <Icon name="alert" :size="14" class="workflow-wdl-error-icon" />
-              <div class="workflow-wdl-error-body">
-                <strong>WDL view paused — the graph isn't well-formed yet.</strong>
-                <span>{{ workflows.workflowWdlError }}</span>
-                <span class="workflow-wdl-error-hint">
-                  Fix the issues in the Diagnostics panel on the canvas; the WDL editor re-enables
+          <div v-else class="workflow-rexrap-pane">
+            <div v-if="workflows.workflowRexRapError" class="workflow-rexrap-error">
+              <Icon name="alert" :size="14" class="workflow-rexrap-error-icon" />
+              <div class="workflow-rexrap-error-body">
+                <strong>REXRAP view paused — the graph isn't well-formed yet.</strong>
+                <span>{{ workflows.workflowRexRapError }}</span>
+                <span class="workflow-rexrap-error-hint">
+                  Fix the issues in the Diagnostics panel on the canvas; the REXRAP editor re-enables
                   automatically once the graph compiles.
                 </span>
               </div>
             </div>
-            <WdlEditor
-              v-model="workflows.workflowWdl"
-              class="workflow-wdl-editor"
-              :readonly="Boolean(workflows.workflowWdlError)"
+            <RexRapEditor
+              v-model="workflows.workflowRexRap"
+              class="workflow-rexrap-editor"
+              :readonly="Boolean(workflows.workflowRexRapError)"
               :providers="providersStore.providers"
               :settings="secretsStore.secrets"
             />
@@ -67,7 +67,7 @@ import { useProvidersStore } from "../../adapters/pinia/providers";
 import { useSecretsStore } from "../../adapters/pinia/secrets";
 import Icon, { type IconName } from "../shared/Icon.vue";
 import SplitPane from "../shared/SplitPane.vue";
-import WdlEditor from "../shared/WdlEditor.vue";
+import RexRapEditor from "../shared/RexRapEditor.vue";
 import StepEditor from "./StepEditor.vue";
 import WorkflowHeaderPanel from "./WorkflowHeaderPanel.vue";
 import WorkflowInterruptsPanel from "./WorkflowInterruptsPanel.vue";
@@ -76,7 +76,7 @@ const workflows = useWorkflowsStore();
 const providersStore = useProvidersStore();
 const secretsStore = useSecretsStore();
 
-type InspectorTabId = "step" | "interrupts" | "header" | "wdl";
+type InspectorTabId = "step" | "interrupts" | "header" | "rexrap";
 
 interface InspectorTab {
   id: InspectorTabId;
@@ -102,7 +102,7 @@ const tabs = computed<InspectorTab[]>(() => [
     title: "Watch guards, concurrency, and the correlation key",
     badge: workflows.declarationIssueCount || undefined,
   },
-  { id: "wdl", label: "WDL", icon: "file", title: "The workflow's wdl source" },
+  { id: "rexrap", label: "REXRAP", icon: "file", title: "The workflow's rexrap source" },
 ]);
 
 // the mode lives in service state because other actions set it too: clicking a canvas node opens
@@ -121,8 +121,8 @@ function openPane(id: InspectorTabId) {
     return;
   }
 
-  if (id === "wdl") {
-    workflows.openWorkflowWdl();
+  if (id === "rexrap") {
+    workflows.openWorkflowRexRap();
     return;
   }
 

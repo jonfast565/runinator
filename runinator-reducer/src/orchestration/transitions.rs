@@ -290,6 +290,11 @@ pub(super) async fn maybe_wake_awaiters<T: ReducerStore>(
         if state.workflow_id != run.workflow_id {
             continue;
         }
+        if let Some(exact) = state.exact_run_id
+            && run.id != exact
+        {
+            continue;
+        }
         if let Some(since) = state.since_unix
             && run.created_at.timestamp() < since
         {

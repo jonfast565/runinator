@@ -5,17 +5,17 @@ import { useWorkflowsStore } from "../workflows";
 vi.mock("../../../../core/api/commandCenterApi", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../../../core/api/commandCenterApi")>()),
   closeGate: vi.fn(),
-  compileWdl: vi.fn(),
+  compileRexRap: vi.fn(),
   fetchGates: vi.fn(),
   fetchWorkflows: vi.fn(),
   fetchWorkflowRun: vi.fn(),
   openGate: vi.fn(),
   patchWorkflowRunDebug: vi.fn(),
-  saveWorkflowWdl: vi.fn(),
-  decompileToWdl: vi.fn(),
+  saveWorkflowRexRap: vi.fn(),
+  decompileToRexRap: vi.fn(),
 }));
 
-import { decompileToWdl, fetchGates } from "../../../../core/api/commandCenterApi";
+import { decompileToRexRap, fetchGates } from "../../../../core/api/commandCenterApi";
 import { setWorkflowCatalogs } from "../../../../core/workflow/catalog-registry";
 import { testNodeKindCatalog } from "../../../../core/workflow/__tests__/catalog-fixtures";
 import { registerWorkflowAuthoringTests } from "./workflows-authoring.cases";
@@ -36,7 +36,7 @@ describe("workflow store adapter", () => {
     });
     vi.clearAllMocks();
     vi.mocked(fetchGates).mockResolvedValue([]);
-    vi.mocked(decompileToWdl).mockResolvedValue("workflow stub { start -> end }");
+    vi.mocked(decompileToRexRap).mockResolvedValue("workflow stub { start -> end }");
   });
 
   afterEach(() => {

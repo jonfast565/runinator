@@ -1,9 +1,0 @@
-[package]
-name = "runinator-wdl-sema"
-version.workspace = true
-edition = "2024"
-
-[dependencies]
-runinator-models = { path = "../runinator-models" }
-runinator-compute = { path = "../runinator-compute" }
-runinator-wdl-syntax = { path = "../runinator-wdl-syntax" }

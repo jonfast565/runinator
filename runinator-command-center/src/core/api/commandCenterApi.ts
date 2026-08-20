@@ -51,11 +51,11 @@ import type {
   TaskResponse,
   Team,
   User,
-  WdlCompletionRequest,
-  WdlCompletionResponse,
-  WdlDiagnostic,
-  WdlHoverRequest,
-  WdlHoverResponse,
+  RexRapCompletionRequest,
+  RexRapCompletionResponse,
+  RexRapDiagnostic,
+  RexRapHoverRequest,
+  RexRapHoverResponse,
   WorkflowBundle,
   WorkflowDefinition,
   WorkflowRevision,
@@ -72,7 +72,7 @@ import type {
   PipelineTrigger,
 } from "../domain/models";
 
-export interface WorkflowWdlSaveRequest {
+export interface WorkflowRexRapSaveRequest {
   source: string;
   enabled: boolean;
   workflow_id?: string | null;
@@ -118,6 +118,18 @@ export async function refreshSession(refreshToken: string) {
 
 export async function logout(refreshToken: string) {
   return command<TaskResponse>("logout", { refreshToken });
+}
+
+export interface AuthSettings {
+  max_refreshes: number;
+}
+
+export async function fetchAuthSettings() {
+  return command<AuthSettings>("fetch_auth_settings");
+}
+
+export async function saveAuthSettings(maxRefreshes: number) {
+  return command<AuthSettings>("save_auth_settings", { maxRefreshes });
 }
 
 // push the access token to both runtimes: the web fetch layer and (on desktop) the tauri client.
@@ -338,32 +350,32 @@ export async function simulateWorkflow(request: WorkflowSimulateRequest) {
   return command<SimulationRun>("simulate_workflow", { request });
 }
 
-export async function saveWorkflowWdl(request: WorkflowWdlSaveRequest) {
-  return command<WorkflowBundle>("save_workflow_wdl", { request });
+export async function saveWorkflowRexRap(request: WorkflowRexRapSaveRequest) {
+  return command<WorkflowBundle>("save_workflow_rexrap", { request });
 }
 
-export async function compileWdl(source: string, enabled: boolean) {
-  return command<WorkflowDefinition>("compile_wdl", { source, enabled });
+export async function compileRexRap(source: string, enabled: boolean) {
+  return command<WorkflowDefinition>("compile_rexrap", { source, enabled });
 }
 
-export async function analyzeWdl(source: string, sourcePath?: string | null) {
-  return command<WdlDiagnostic[]>("analyze_wdl", { source, sourcePath: sourcePath ?? null });
+export async function analyzeRexRap(source: string, sourcePath?: string | null) {
+  return command<RexRapDiagnostic[]>("analyze_rexrap", { source, sourcePath: sourcePath ?? null });
 }
 
-export async function completeWdl(request: WdlCompletionRequest) {
-  return command<WdlCompletionResponse>("complete_wdl", { request });
+export async function completeRexRap(request: RexRapCompletionRequest) {
+  return command<RexRapCompletionResponse>("complete_rexrap", { request });
 }
 
-export async function hoverWdl(request: WdlHoverRequest) {
-  return command<WdlHoverResponse | null>("hover_wdl", { request });
+export async function hoverRexRap(request: RexRapHoverRequest) {
+  return command<RexRapHoverResponse | null>("hover_rexrap", { request });
 }
 
-export async function formatWdl(source: string) {
-  return command<string>("format_wdl", { source });
+export async function formatRexRap(source: string) {
+  return command<string>("format_rexrap", { source });
 }
 
-export async function decompileToWdl(workflow: WorkflowDefinition) {
-  return command<string>("decompile_to_wdl", { workflow });
+export async function decompileToRexRap(workflow: WorkflowDefinition) {
+  return command<string>("decompile_to_rexrap", { workflow });
 }
 
 export async function evaluateExpression(expression: unknown, context: unknown) {
@@ -1240,7 +1252,7 @@ export async function invokeFunction(
   });
 }
 
-// ---- the wdl console ----
+// ---- the rexrap console ----
 
 export async function fetchConsoleSessions() {
   return command<ConsoleSession[]>("list_console_sessions", {});

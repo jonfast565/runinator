@@ -15,13 +15,13 @@ pub fn workflows_test(
     }
 
     let suite_files = if tests.is_empty() {
-        discover_wdlt_suites(file)?
+        discover_rexrapt_suites(file)?
     } else {
         tests.to_vec()
     };
     if suite_files.is_empty() {
         return Err(err(
-            "no .wdlt test suites found; pass one or more with --tests <path>",
+            "no .rexrapt test suites found; pass one or more with --tests <path>",
         ));
     }
 
@@ -109,19 +109,19 @@ fn select_test_workflow<'a>(
     }
 }
 
-// find .wdlt suites next to the pack source: every *.wdlt in a directory source, or the sibling
-// <stem>.wdlt for a single-file source.
-fn discover_wdlt_suites(file: &Path) -> Result<Vec<PathBuf>> {
+// find .rexrapt suites next to the pack source: every *.rexrapt in a directory source, or the sibling
+// <stem>.rexrapt for a single-file source.
+fn discover_rexrapt_suites(file: &Path) -> Result<Vec<PathBuf>> {
     let mut suites = Vec::new();
     if file.is_dir() {
         for entry in fs::read_dir(file).map_err(|e| err(e.to_string()))? {
             let path = entry.map_err(|e| err(e.to_string()))?.path();
-            if path.extension().and_then(|ext| ext.to_str()) == Some("wdlt") {
+            if path.extension().and_then(|ext| ext.to_str()) == Some("rexrapt") {
                 suites.push(path);
             }
         }
     } else if let Some(stem) = file.file_stem() {
-        let sibling = file.with_file_name(format!("{}.wdlt", stem.to_string_lossy()));
+        let sibling = file.with_file_name(format!("{}.rexrapt", stem.to_string_lossy()));
         if sibling.exists() {
             suites.push(sibling);
         }

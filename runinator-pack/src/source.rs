@@ -9,7 +9,7 @@ use runinator_models::providers::ProviderMetadata;
 use runinator_models::semver::SemVer;
 use runinator_models::value::Value;
 use runinator_models::workflows::{WorkflowBundle, WorkflowDefinition, WorkflowTrigger};
-use runinator_wdl::WorkflowSignature;
+use runinator_rexrap::WorkflowSignature;
 
 use crate::errors::{PackError, Result};
 
@@ -25,7 +25,8 @@ fn file_modified(path: &Path) -> Option<DateTime<Utc>> {
         .map(DateTime::<Utc>::from)
 }
 
-// returns true when the path is a wdl pack source (a directory, a .wdl, or a .wdlm manifest)
+// Returns true when the path is a RexRap pack source: a `.rexrap` workflow, a `.rexrapm` manifest,
+// or a directory pack.
 // rather than a raw workflow/bundle json file.
 pub fn is_pack_source(path: &Path) -> bool {
     if path.is_dir() {
@@ -33,7 +34,7 @@ pub fn is_pack_source(path: &Path) -> bool {
     }
     matches!(
         path.extension().and_then(|ext| ext.to_str()),
-        Some("wdl") | Some("wdlm")
+        Some("rexrap") | Some("rexrapm")
     )
 }
 
@@ -42,8 +43,8 @@ pub fn pack_source_files(path: &Path) -> Result<Vec<PathBuf>> {
     let mut files = Vec::new();
 
     if path.is_dir() {
-        files.extend(wdl_directory_paths(path)?);
-        extend_wdl_includes(&mut files);
+        files.extend(rexrap_directory_paths(path)?);
+        extend_rexrap_includes(&mut files);
         if let Some(settings_path) = pack_settings_path(path)? {
             files.push(settings_path);
         }
@@ -54,18 +55,18 @@ pub fn pack_source_files(path: &Path) -> Result<Vec<PathBuf>> {
     }
 
     match path.extension().and_then(|ext| ext.to_str()) {
-        Some("wdlm") => {
+        Some("rexrapm") => {
             files.push(path.to_path_buf());
-            files.extend(wdl_pack_manifest_paths(path)?);
-            extend_wdl_includes(&mut files);
+            files.extend(rexrap_pack_manifest_paths(path)?);
+            extend_rexrap_includes(&mut files);
             if let Some(settings_path) = pack_settings_path(path)? {
                 files.push(settings_path);
             }
             files.extend(pack_pipeline_paths(path)?);
         }
-        Some("wdl") => {
+        Some("rexrap") => {
             files.push(path.to_path_buf());
-            extend_wdl_includes(&mut files);
+            extend_rexrap_includes(&mut files);
         }
         _ => files.push(path.to_path_buf()),
     }
@@ -75,28 +76,28 @@ pub fn pack_source_files(path: &Path) -> Result<Vec<PathBuf>> {
     Ok(files)
 }
 
-fn extend_wdl_includes(files: &mut Vec<PathBuf>) {
-    let wdl_files = files
+fn extend_rexrap_includes(files: &mut Vec<PathBuf>) {
+    let rexrap_files = files
         .iter()
-        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("wdl"))
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("rexrap"))
         .cloned()
         .collect::<Vec<_>>();
-    for path in wdl_files {
+    for path in rexrap_files {
         let Ok(data) = fs::read_to_string(&path) else {
             continue;
         };
         let source_dir = path.parent().unwrap_or_else(|| Path::new("."));
-        let Ok(included) = runinator_wdl::included_file_paths(&data, source_dir) else {
+        let Ok(included) = runinator_rexrap::included_file_paths(&data, source_dir) else {
             continue;
         };
         files.extend(included);
     }
 }
 
-// load a settings bundle that ships alongside a pack source: a `.wdlm` manifest's optional
-// "settings" path entry, or a sibling `settings.wdls`/`settings.json` next to a directory pack. a
-// `.wdls` settings file is parsed with the wdl secrets front end; `.json` is read directly. a
-// single .wdl or a pack without a settings file yields None.
+// load a settings bundle that ships alongside a pack source: a `.rexrapm` manifest's optional
+// "settings" path entry, or a sibling `settings.rexraps`/`settings.json` next to a directory pack. a
+// `.rexraps` settings file is parsed with the rexrap secrets front end; `.json` is read directly. a
+// single .rexrap or a pack without a settings file yields None.
 pub fn load_pack_settings(path: &Path) -> Result<Option<SecretBundle>> {
     let Some(settings_path) = pack_settings_path(path)? else {
         return Ok(None);
@@ -104,11 +105,11 @@ pub fn load_pack_settings(path: &Path) -> Result<Option<SecretBundle>> {
     parse_settings_file(&settings_path).map(Some)
 }
 
-// parse a settings file, choosing the `.wdls` secrets front end or json by extension.
+// parse a settings file, choosing the `.rexraps` secrets front end or json by extension.
 fn parse_settings_file(path: &Path) -> Result<SecretBundle> {
     let data = fs::read_to_string(path)?;
     let mut bundle: SecretBundle = match path.extension().and_then(|ext| ext.to_str()) {
-        Some("wdls") => runinator_wdl::parse_secrets_str(&data).map_err(|e| {
+        Some("rexraps") => runinator_rexrap::parse_secrets_str(&data).map_err(|e| {
             PackError::compile(format!(
                 "failed to parse {}:\n{}",
                 path.display(),
@@ -126,9 +127,9 @@ fn parse_settings_file(path: &Path) -> Result<SecretBundle> {
     Ok(bundle)
 }
 
-// load pipeline declarations that ship with a pack: a `.wdlm` manifest's optional "pipelines" array
-// of relative `.wdlp` paths, or any `*.wdlp` files next to a directory pack. each is parsed with the
-// wdl pipeline front end and merged into one bundle. a single `.wdl` or a pack without pipeline files
+// load pipeline declarations that ship with a pack: a `.rexrapm` manifest's optional "pipelines" array
+// of relative `.rexrapp` paths, or any `*.rexrapp` files next to a directory pack. each is parsed with the
+// rexrap pipeline front end and merged into one bundle. a single `.rexrap` or a pack without pipeline files
 // yields None.
 pub fn load_pack_pipelines(path: &Path) -> Result<Option<PipelineBundle>> {
     let paths = pack_pipeline_paths(path)?;
@@ -138,7 +139,7 @@ pub fn load_pack_pipelines(path: &Path) -> Result<Option<PipelineBundle>> {
     let mut pipelines = Vec::new();
     for pipeline_path in paths {
         let data = fs::read_to_string(&pipeline_path)?;
-        let bundle = runinator_wdl::parse_pipeline_str(&data).map_err(|e| {
+        let bundle = runinator_rexrap::parse_pipeline_str(&data).map_err(|e| {
             PackError::compile(format!(
                 "failed to parse {}:\n{}",
                 pipeline_path.display(),
@@ -150,21 +151,21 @@ pub fn load_pack_pipelines(path: &Path) -> Result<Option<PipelineBundle>> {
     Ok(Some(PipelineBundle { pipelines }))
 }
 
-// resolve the pipeline file paths for a pack source: a directory pack's `*.wdlp` files, or a `.wdlm`
+// resolve the pipeline file paths for a pack source: a directory pack's `*.rexrapp` files, or a `.rexrapm`
 // manifest's optional "pipelines" array of relative paths. anything else yields an empty list.
 fn pack_pipeline_paths(path: &Path) -> Result<Vec<PathBuf>> {
     if path.is_dir() {
         let mut paths = Vec::new();
         for entry in fs::read_dir(path)? {
             let entry_path = entry?.path();
-            if entry_path.extension().and_then(|ext| ext.to_str()) == Some("wdlp") {
+            if entry_path.extension().and_then(|ext| ext.to_str()) == Some("rexrapp") {
                 paths.push(entry_path);
             }
         }
         paths.sort();
         return Ok(paths);
     }
-    if path.extension().and_then(|ext| ext.to_str()) != Some("wdlm") {
+    if path.extension().and_then(|ext| ext.to_str()) != Some("rexrapm") {
         return Ok(Vec::new());
     }
     let data = fs::read_to_string(path)?;
@@ -189,10 +190,10 @@ fn pack_pipeline_paths(path: &Path) -> Result<Vec<PathBuf>> {
 }
 
 // resolve the settings file path for a pack source, if one exists. a directory pack prefers a
-// `settings.wdls` over a `settings.json`.
+// `settings.rexraps` over a `settings.json`.
 fn pack_settings_path(path: &Path) -> Result<Option<PathBuf>> {
     if path.is_dir() {
-        for name in ["settings.wdls", "settings.json"] {
+        for name in ["settings.rexraps", "settings.json"] {
             let candidate = path.join(name);
             if candidate.is_file() {
                 return Ok(Some(candidate));
@@ -200,7 +201,7 @@ fn pack_settings_path(path: &Path) -> Result<Option<PathBuf>> {
         }
         return Ok(None);
     }
-    if path.extension().and_then(|ext| ext.to_str()) != Some("wdlm") {
+    if path.extension().and_then(|ext| ext.to_str()) != Some("rexrapm") {
         return Ok(None);
     }
     let data = fs::read_to_string(path)?;
@@ -212,8 +213,8 @@ fn pack_settings_path(path: &Path) -> Result<Option<PathBuf>> {
         .map(|rel| base_dir.join(rel)))
 }
 
-// compile a wdl pack source into a workflow bundle: a single .wdl, a .wdlm manifest, or a
-// directory of .wdl files.
+// compile a rexrap pack source into a workflow bundle: a single .rexrap, a .rexrapm manifest, or a
+// directory of .rexrap files.
 /// what a pack is compiled against: provider metadata plus published packaged-function exports.
 ///
 /// one struct rather than two parameters because the two travel together everywhere and a compile
@@ -237,7 +238,7 @@ pub fn load_workflow_bundle(path: &Path) -> Result<WorkflowBundle> {
     load_workflow_bundle_with_catalog(path, &PackCatalog::default())
 }
 
-// compile a wdl pack source with supplemental provider metadata. built-in provider metadata is
+// compile a rexrap pack source with supplemental provider metadata. built-in provider metadata is
 // always included so local/offline pack compilation matches the worker's built-in action catalog.
 pub fn load_workflow_bundle_with_providers(
     path: &Path,
@@ -252,15 +253,15 @@ pub fn load_workflow_bundle_with_catalog(
     catalog: &PackCatalog,
 ) -> Result<WorkflowBundle> {
     if path.is_dir() {
-        return load_wdl_directory(path, catalog);
+        return load_rexrap_directory(path, catalog);
     }
 
     match path.extension().and_then(|ext| ext.to_str()) {
-        Some("wdlm") => load_wdl_pack_manifest(path, catalog),
-        Some("wdl") => {
+        Some("rexrapm") => load_rexrap_pack_manifest(path, catalog),
+        Some("rexrap") => {
             let data = fs::read_to_string(path)?;
             Ok(WorkflowBundle {
-                workflows: compile_wdl_all_with_signatures(
+                workflows: compile_rexrap_all_with_signatures(
                     path,
                     &data,
                     SemVer::default(),
@@ -277,19 +278,19 @@ pub fn load_workflow_bundle_with_catalog(
     }
 }
 
-// format and compile one .wdl source into a definition.
+// format and compile one .rexrap source into a definition.
 // imported workflows are enabled so a pack is live as soon as it lands.
-pub fn compile_wdl(path: &Path, data: &str, default_version: SemVer) -> Result<WorkflowDefinition> {
-    compile_wdl_with_providers(path, data, default_version, &[])
+pub fn compile_rexrap(path: &Path, data: &str, default_version: SemVer) -> Result<WorkflowDefinition> {
+    compile_rexrap_with_providers(path, data, default_version, &[])
 }
 
-pub fn compile_wdl_with_providers(
+pub fn compile_rexrap_with_providers(
     path: &Path,
     data: &str,
     default_version: SemVer,
     providers: &[ProviderMetadata],
 ) -> Result<WorkflowDefinition> {
-    compile_wdl_with_signatures(
+    compile_rexrap_with_signatures(
         path,
         data,
         default_version,
@@ -298,13 +299,13 @@ pub fn compile_wdl_with_providers(
     )
 }
 
-pub fn compile_wdl_all_with_providers(
+pub fn compile_rexrap_all_with_providers(
     path: &Path,
     data: &str,
     default_version: SemVer,
     providers: &[ProviderMetadata],
 ) -> Result<Vec<WorkflowDefinition>> {
-    compile_wdl_all_with_signatures(
+    compile_rexrap_all_with_signatures(
         path,
         data,
         default_version,
@@ -313,30 +314,30 @@ pub fn compile_wdl_all_with_providers(
     )
 }
 
-fn compile_wdl_with_signatures(
+fn compile_rexrap_with_signatures(
     path: &Path,
     data: &str,
     default_version: SemVer,
     catalog: &PackCatalog,
     workflow_signatures: &[WorkflowSignature],
 ) -> Result<WorkflowDefinition> {
-    let options = runinator_wdl::CompileOptions {
+    let options = runinator_rexrap::CompileOptions {
         enabled: true,
         default_version,
         source_dir: path.parent().map(Path::to_path_buf),
         providers: compile_providers(&catalog.providers),
         functions: catalog.functions.clone(),
         workflow_signatures: workflow_signatures.to_vec(),
-        ..runinator_wdl::CompileOptions::default()
+        ..runinator_rexrap::CompileOptions::default()
     };
-    let formatted = runinator_wdl::format_str(data).map_err(|e| {
+    let formatted = runinator_rexrap::format_str(data).map_err(|e| {
         PackError::compile(format!(
             "failed to format {} before import:\n{}",
             path.display(),
             e.render(data)
         ))
     })?;
-    let mut definition = runinator_wdl::compile_str(&formatted, &options).map_err(|e| {
+    let mut definition = runinator_rexrap::compile_str(&formatted, &options).map_err(|e| {
         PackError::compile(format!(
             "failed to compile {}:\n{}",
             path.display(),
@@ -348,30 +349,30 @@ fn compile_wdl_with_signatures(
     Ok(definition)
 }
 
-fn compile_wdl_all_with_signatures(
+fn compile_rexrap_all_with_signatures(
     path: &Path,
     data: &str,
     default_version: SemVer,
     catalog: &PackCatalog,
     workflow_signatures: &[WorkflowSignature],
 ) -> Result<Vec<WorkflowDefinition>> {
-    let options = runinator_wdl::CompileOptions {
+    let options = runinator_rexrap::CompileOptions {
         enabled: true,
         default_version,
         source_dir: path.parent().map(Path::to_path_buf),
         providers: compile_providers(&catalog.providers),
         functions: catalog.functions.clone(),
         workflow_signatures: workflow_signatures.to_vec(),
-        ..runinator_wdl::CompileOptions::default()
+        ..runinator_rexrap::CompileOptions::default()
     };
-    let formatted = runinator_wdl::format_str(data).map_err(|e| {
+    let formatted = runinator_rexrap::format_str(data).map_err(|e| {
         PackError::compile(format!(
             "failed to format {} before import:\n{}",
             path.display(),
             e.render(data)
         ))
     })?;
-    let mut definitions = runinator_wdl::compile_all_str(&formatted, &options).map_err(|e| {
+    let mut definitions = runinator_rexrap::compile_all_str(&formatted, &options).map_err(|e| {
         PackError::compile(format!(
             "failed to compile {}:\n{}",
             path.display(),
@@ -409,7 +410,7 @@ fn collect_workflow_signatures_with_current(
             &data
         };
         let mut source_signatures =
-            runinator_wdl::workflow_signature_from_source(source).map_err(|e| {
+            runinator_rexrap::workflow_signature_from_source(source).map_err(|e| {
                 PackError::compile(format!(
                     "failed to read workflow signature from {}:\n{}",
                     path.display(),
@@ -421,17 +422,17 @@ fn collect_workflow_signatures_with_current(
     Ok(signatures)
 }
 
-/// collect sibling workflow signatures for strict single-file wdl tooling.
-pub fn wdl_context_workflow_signatures(
+/// collect sibling workflow signatures for strict single-file rexrap tooling.
+pub fn rexrap_context_workflow_signatures(
     path: &Path,
     current_source: Option<&str>,
 ) -> Result<Vec<WorkflowSignature>> {
-    if path.extension().and_then(|ext| ext.to_str()) != Some("wdl") {
+    if path.extension().and_then(|ext| ext.to_str()) != Some("rexrap") {
         return Ok(Vec::new());
     }
 
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
-    let mut paths = wdl_directory_paths(dir)?;
+    let mut paths = rexrap_directory_paths(dir)?;
     if !paths.iter().any(|candidate| candidate == path) {
         paths.push(path.to_path_buf());
         paths.sort();
@@ -450,22 +451,22 @@ fn compile_providers(providers: &[ProviderMetadata]) -> Vec<ProviderMetadata> {
     merged.into_values().collect()
 }
 
-// compile every *.wdl in a directory (sorted for deterministic ids) into one bundle.
-fn load_wdl_directory(dir: &Path, catalog: &PackCatalog) -> Result<WorkflowBundle> {
-    let wdl_paths = wdl_directory_paths(dir)?;
-    if wdl_paths.is_empty() {
+// compile every *.rexrap in a directory (sorted for deterministic ids) into one bundle.
+fn load_rexrap_directory(dir: &Path, catalog: &PackCatalog) -> Result<WorkflowBundle> {
+    let rexrap_paths = rexrap_directory_paths(dir)?;
+    if rexrap_paths.is_empty() {
         return Err(PackError::source(format!(
-            "no .wdl files found in {}",
+            "no .rexrap files found in {}",
             dir.display()
         )));
     }
 
-    let workflow_signatures = collect_workflow_signatures(&wdl_paths)?;
-    let mut workflows = Vec::with_capacity(wdl_paths.len());
-    for wdl_path in &wdl_paths {
-        let data = fs::read_to_string(wdl_path)?;
-        workflows.extend(compile_wdl_all_with_signatures(
-            wdl_path,
+    let workflow_signatures = collect_workflow_signatures(&rexrap_paths)?;
+    let mut workflows = Vec::with_capacity(rexrap_paths.len());
+    for rexrap_path in &rexrap_paths {
+        let data = fs::read_to_string(rexrap_path)?;
+        workflows.extend(compile_rexrap_all_with_signatures(
+            rexrap_path,
             &data,
             SemVer::default(),
             catalog,
@@ -478,21 +479,21 @@ fn load_wdl_directory(dir: &Path, catalog: &PackCatalog) -> Result<WorkflowBundl
     })
 }
 
-fn wdl_directory_paths(dir: &Path) -> Result<Vec<PathBuf>> {
-    let mut wdl_paths = Vec::new();
+fn rexrap_directory_paths(dir: &Path) -> Result<Vec<PathBuf>> {
+    let mut rexrap_paths = Vec::new();
     for entry in fs::read_dir(dir)? {
         let entry_path = entry?.path();
-        if entry_path.extension().and_then(|ext| ext.to_str()) == Some("wdl") {
-            wdl_paths.push(entry_path);
+        if entry_path.extension().and_then(|ext| ext.to_str()) == Some("rexrap") {
+            rexrap_paths.push(entry_path);
         }
     }
-    wdl_paths.sort();
-    Ok(wdl_paths)
+    rexrap_paths.sort();
+    Ok(rexrap_paths)
 }
 
-// resolve a .wdlm manifest: compile each referenced .wdl (relative to the manifest) and
+// resolve a .rexrapm manifest: compile each referenced .rexrap (relative to the manifest) and
 // pass through any declared triggers.
-fn load_wdl_pack_manifest(path: &Path, catalog: &PackCatalog) -> Result<WorkflowBundle> {
+fn load_rexrap_pack_manifest(path: &Path, catalog: &PackCatalog) -> Result<WorkflowBundle> {
     let data = fs::read_to_string(path)?;
     let manifest: Value = serde_json::from_str(&data)?;
     let version = manifest
@@ -507,14 +508,14 @@ fn load_wdl_pack_manifest(path: &Path, catalog: &PackCatalog) -> Result<Workflow
         })
         .unwrap_or_default();
 
-    let entries = wdl_pack_manifest_paths_from_value(path, &manifest)?;
+    let entries = rexrap_pack_manifest_paths_from_value(path, &manifest)?;
 
     let workflow_signatures = collect_workflow_signatures(&entries)?;
     let mut workflows = Vec::with_capacity(entries.len());
-    for wdl_path in entries {
-        let source = fs::read_to_string(&wdl_path)?;
-        workflows.extend(compile_wdl_all_with_signatures(
-            &wdl_path,
+    for rexrap_path in entries {
+        let source = fs::read_to_string(&rexrap_path)?;
+        workflows.extend(compile_rexrap_all_with_signatures(
+            &rexrap_path,
             &source,
             version,
             catalog,
@@ -535,18 +536,18 @@ fn load_wdl_pack_manifest(path: &Path, catalog: &PackCatalog) -> Result<Workflow
     })
 }
 
-fn wdl_pack_manifest_paths(path: &Path) -> Result<Vec<PathBuf>> {
+fn rexrap_pack_manifest_paths(path: &Path) -> Result<Vec<PathBuf>> {
     let data = fs::read_to_string(path)?;
     let manifest: Value = serde_json::from_str(&data)?;
-    wdl_pack_manifest_paths_from_value(path, &manifest)
+    rexrap_pack_manifest_paths_from_value(path, &manifest)
 }
 
-fn wdl_pack_manifest_paths_from_value(path: &Path, manifest: &Value) -> Result<Vec<PathBuf>> {
+fn rexrap_pack_manifest_paths_from_value(path: &Path, manifest: &Value) -> Result<Vec<PathBuf>> {
     let base_dir = path.parent().unwrap_or_else(|| Path::new("."));
     let entries = manifest
         .get("workflows")
         .and_then(Value::as_array)
-        .ok_or_else(|| PackError::source("wdl pack manifest missing 'workflows' array"))?;
+        .ok_or_else(|| PackError::source("rexrap pack manifest missing 'workflows' array"))?;
 
     let mut paths = Vec::with_capacity(entries.len());
     for entry in entries {

@@ -54,7 +54,7 @@ impl SimulationEnv for MockEnv {
     }
 }
 
-/// a `.wdlt` test suite: a set of cases run against one compiled workflow (or, for multi-workflow
+/// a `.rexrapt` test suite: a set of cases run against one compiled workflow (or, for multi-workflow
 /// packs, the workflow each case names).
 #[derive(Debug, Clone, Deserialize)]
 pub struct WorkflowTestSuite {

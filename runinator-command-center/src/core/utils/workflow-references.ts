@@ -19,7 +19,7 @@ export interface WorkflowExpressionEditorContext {
   sampleContext?: JsonRecord | null;
 }
 
-// a single insertable reference: what to show, the WDL text to splice in, and its declared type.
+// a single insertable reference: what to show, the REXRAP text to splice in, and its declared type.
 export interface WorkflowReference {
   label: string;
   insert: string;

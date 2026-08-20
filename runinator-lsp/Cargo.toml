@@ -12,8 +12,8 @@ runinator-api = { path = "../runinator-api" }
 runinator-models = { path = "../runinator-models" }
 runinator-pack = { path = "../runinator-pack" }
 runinator-provider-catalog = { path = "../runinator-provider-catalog" }
-runinator-wdl = { path = "../runinator-wdl" }
-runinator-wdl-ide = { path = "../runinator-wdl-ide" }
+runinator-rexrap = { path = "../runinator-rexrap" }
+runinator-rexrap-ide = { path = "../runinator-rexrap-ide" }
 serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "time"] }
 tower-lsp = "0.20"

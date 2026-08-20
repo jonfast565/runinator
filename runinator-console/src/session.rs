@@ -6,7 +6,7 @@ use uuid::Uuid;
 /// what an author writes to reach an earlier cell's result: `params.load.rows`.
 ///
 /// `params` rather than a console-only root like `cells`, and the reason is decisive: a bare dotted
-/// path in a wdl expression means *node output*, so `cells.load` lowers to a reference to a node
+/// path in a rexrap expression means *node output*, so `cells.load` lowers to a reference to a node
 /// called `cells`. a genuinely new root would have to be taught to the lowerer, the type checker,
 /// the ide, and the decompiler. `params` is already the root for "the values this run was given",
 /// which is exactly what a console scope is.

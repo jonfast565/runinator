@@ -3,8 +3,8 @@
 Two hourly workflows that copy the operator's **local** Claude Code and AWS logins into the
 Kubernetes Secrets the worker pods mount, so cloud workers act as the logged-in identity.
 
-- `wdl/update-claude-auth.wdl` — syncs the Claude Code login into the `claude-credentials` Secret.
-- `wdl/update-aws-auth.wdl` — refreshes the AWS SSO cache and syncs it into the `aws-sso-cache` Secret.
+- `rexrap/update-claude-auth.rexrap` — syncs the Claude Code login into the `claude-credentials` Secret.
+- `rexrap/update-aws-auth.rexrap` — refreshes the AWS SSO cache and syncs it into the `aws-sso-cache` Secret.
 
 Both delegate to the existing `scripts/sync-secrets.sh` engine (see
 `tools/runinator-secret-sync`), scoped per credential via `secret-sync.claude.json` /

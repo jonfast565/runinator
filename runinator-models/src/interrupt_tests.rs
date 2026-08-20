@@ -31,7 +31,7 @@ fn source_and_mode_names_round_trip() {
     assert!("abort".parse::<InterruptMode>().is_err());
 }
 
-/// the serde names are a wire contract shared with the wdl front end and the command center, so
+/// the serde names are a wire contract shared with the rexrap front end and the command center, so
 /// pin them against literals rather than against a round trip that would agree with itself.
 #[test]
 fn source_and_mode_serialize_to_their_author_facing_names() {
@@ -45,7 +45,7 @@ fn source_and_mode_serialize_to_their_author_facing_names() {
     );
 }
 
-/// `ALL` drives source matching, the wdl keyword list, and the docs. a variant missing from it is
+/// `ALL` drives source matching, the rexrap keyword list, and the docs. a variant missing from it is
 /// simply never raised, which is silent — so pin the count and the serde names together.
 #[test]
 fn every_source_is_listed_exactly_once_with_its_wire_name() {

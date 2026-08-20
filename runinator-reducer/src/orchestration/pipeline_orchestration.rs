@@ -963,7 +963,7 @@ fn resolve_member_parameters(
         .iter()
         .map(|(key, attempt)| ((*key).to_string(), attempt.result.clone()))
         .collect::<Map>();
-    // Pipeline mappings reuse the compute evaluator. WDL lowers `source.*` and `members[...]` as
+    // Pipeline mappings reuse the compute evaluator. REXRAP lowers `source.*` and `members[...]` as
     // node-output refs, so expose those two pipeline-only roots through the evaluator's `steps`
     // slot while `params.*` continues to resolve through `input`.
     let context = runinator_models::json!({

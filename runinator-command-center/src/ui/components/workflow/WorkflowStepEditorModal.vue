@@ -139,10 +139,10 @@
           empty-label="No action parameters configured."
           :expression-context="expressionContext"
         />
-        <AdvancedWdlParameters
+        <AdvancedRexRapParameters
           v-model="actionConfigurationJson"
           :context="expressionContext"
-          title="Raw WDL parameters"
+          title="Raw REXRAP parameters"
         />
       </section>
 
@@ -219,7 +219,7 @@ import { pretty } from "../../../core/utils/format";
 import type { JsonRecord, NodeFieldMetadata, NodeEdgeSlot } from "../../../core/domain/models";
 import { workflowInputType } from "../../../core/domain/models";
 import { parseObject } from "../../../core/utils/json";
-import AdvancedWdlParameters from "../shared/AdvancedWdlParameters.vue";
+import AdvancedRexRapParameters from "../shared/AdvancedRexRapParameters.vue";
 import KeyValueObjectEditor from "../shared/KeyValueObjectEditor.vue";
 import ReferenceChips from "../shared/ReferenceChips.vue";
 import { buildSampleContext, workflowReferenceGroups } from "../../../core/utils/workflow-references";
@@ -315,7 +315,7 @@ const compensation = computed<JsonRecord | null>({
     if (value === null) {
       // drop the key rather than nulling it: the node model skips serializing an absent
       // compensation, so a lingering `"compensation": null` would show up as noise in the json and
-      // wdl panes for a step that has none.
+      // rexrap panes for a step that has none.
       Reflect.deleteProperty(draft, "compensation");
     } else {
       draft.compensation = value;
@@ -425,7 +425,7 @@ const actionConfiguration = computed({
   },
 });
 
-// raw json string escape hatch for AdvancedWdlParameters.
+// raw json string escape hatch for AdvancedRexRapParameters.
 const actionConfigurationJson = computed({
   get: () => pretty(actionConfiguration.value),
   set: (text: string) => {

@@ -61,7 +61,7 @@ pub struct ApprovalRequest {
 }
 
 /// how a gate is resolved: `manual` (opened/closed from the ui), `condition` (the reducer
-/// auto-evaluates a wdl boolean), or `external` (status set via the api by an outside system).
+/// auto-evaluates a rexrap boolean), or `external` (status set via the api by an outside system).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GateKind {

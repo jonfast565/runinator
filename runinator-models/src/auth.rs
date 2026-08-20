@@ -208,6 +208,8 @@ pub struct AuthSession {
     pub refresh_token_hash: String,
     pub expires_at: DateTime<Utc>,
     pub revoked: bool,
+    /// Number of successful refresh rotations consumed by this login session.
+    pub refresh_count: i64,
 }
 
 /// jwt access-token claims.

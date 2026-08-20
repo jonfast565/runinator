@@ -31,10 +31,10 @@ use crate::{
         WorkflowRunCreated, WorkflowRunDetail,
     },
 };
-use runinator_wdl::{CompileOptions, Severity};
+use runinator_rexrap::{CompileOptions, Severity};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkflowWdlSaveRequest {
+pub struct WorkflowRexRapSaveRequest {
     pub source: String,
     pub enabled: bool,
     #[serde(default)]

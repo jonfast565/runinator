@@ -22,8 +22,8 @@ export interface WorkflowServicesState {
   selectedWorkflowId: string | null;
   workflowDraft: WorkflowDefinition;
   workflowJson: string;
-  workflowWdl: string;
-  workflowWdlError: string;
+  workflowRexRap: string;
+  workflowRexRapError: string;
   workflowSettingsOpen: boolean;
   runInputOpen: boolean;
   runInputDraft: JsonRecord;
@@ -34,9 +34,9 @@ export interface WorkflowServicesState {
   triggerEditorError: string;
   triggerDraft: WorkflowTrigger;
   triggerJson: { configuration: string; metadata: string };
-  workflowEditorMode: "graph" | "json" | "wdl";
+  workflowEditorMode: "graph" | "json" | "rexrap";
   workflowLayoutDirection: WorkflowLayoutDirection;
-  workflowInspectorMode: "step" | "header" | "interrupts" | "wdl";
+  workflowInspectorMode: "step" | "header" | "interrupts" | "rexrap";
   /** working copy of the four workflow-level header declarations; applied back on every commit. */
   headerDraft: WorkflowHeader;
   stepEditorOpen: boolean;
@@ -76,12 +76,12 @@ export interface WorkflowServicesInternal {
   nextWorkflowRunGateRequestId: number;
   nextBreakpointMutationId: number;
   pendingBreakpointPatch: { runId: string; breakpoints: string[]; mutationId: number } | null;
-  workflowWdlSyncTimer: ReturnType<typeof setTimeout> | null;
+  workflowRexRapSyncTimer: ReturnType<typeof setTimeout> | null;
   workflowJsonWriteReleaseTimer: ReturnType<typeof setTimeout> | null;
-  workflowWdlWriteReleaseTimer: ReturnType<typeof setTimeout> | null;
+  workflowRexRapWriteReleaseTimer: ReturnType<typeof setTimeout> | null;
   stepEditorApplyTimer: ReturnType<typeof setTimeout> | null;
   workflowJsonWriteGuard: boolean;
-  workflowWdlWriteGuard: boolean;
+  workflowRexRapWriteGuard: boolean;
   stepEditorHydrating: boolean;
   stepEditorBaselineDefinition: JsonRecord | null;
 }
@@ -96,12 +96,12 @@ export function createWorkflowServicesInternal(): WorkflowServicesInternal {
     nextWorkflowRunGateRequestId: 0,
     nextBreakpointMutationId: 0,
     pendingBreakpointPatch: null,
-    workflowWdlSyncTimer: null,
+    workflowRexRapSyncTimer: null,
     workflowJsonWriteReleaseTimer: null,
-    workflowWdlWriteReleaseTimer: null,
+    workflowRexRapWriteReleaseTimer: null,
     stepEditorApplyTimer: null,
     workflowJsonWriteGuard: false,
-    workflowWdlWriteGuard: false,
+    workflowRexRapWriteGuard: false,
     stepEditorHydrating: false,
     stepEditorBaselineDefinition: null,
   };
@@ -113,8 +113,8 @@ export function createWorkflowServicesState(): WorkflowServicesState {
     selectedWorkflowId: null,
     workflowDraft: newWorkflowDraft(),
     workflowJson: "{}",
-    workflowWdl: "",
-    workflowWdlError: "",
+    workflowRexRap: "",
+    workflowRexRapError: "",
     workflowSettingsOpen: false,
     runInputOpen: false,
     runInputDraft: {},

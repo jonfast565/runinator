@@ -1,4 +1,4 @@
-//! row mappers for the wdl console.
+//! row mappers for the rexrap console.
 
 use super::*;
 

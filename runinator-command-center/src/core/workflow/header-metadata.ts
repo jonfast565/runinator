@@ -1,7 +1,7 @@
 // the workflow *header*: the four declarations that belong to a workflow rather than to any one
 // node -- interrupt handlers, watch guards, the concurrency policy, and the correlation key.
 //
-// they live under `definition.metadata`, written there by the wdl lowerer and read back by the
+// they live under `definition.metadata`, written there by the rexrap lowerer and read back by the
 // decompiler on every save, so this module is the one place that knows their wire shape. read into
 // a `WorkflowHeader`, edit that, apply it back. the `on` <-> `source` rename for interrupts lives
 // here and nowhere else.
@@ -109,9 +109,9 @@ function readConcurrency(metadata: JsonRecord): ConcurrencyHeader | null {
  * write a header back into a definition's `metadata`, in place.
  *
  * an empty section **deletes** its key rather than writing `[]` or `{}`, mirroring the lowerer's
- * `if !x.is_empty()` guards -- a definition that came from wdl never carries an empty one, and
+ * `if !x.is_empty()` guards -- a definition that came from rexrap never carries an empty one, and
  * writing one would make every save produce a diff against its own decompiled output. keys this
- * module does not own (`wdl`, `triggers`, `notifications`, `functions`) are left untouched.
+ * module does not own (`rexrap`, `triggers`, `notifications`, `functions`) are left untouched.
  */
 export function applyWorkflowHeader(definition: JsonRecord, header: WorkflowHeader): void {
   const owned: JsonRecord = {

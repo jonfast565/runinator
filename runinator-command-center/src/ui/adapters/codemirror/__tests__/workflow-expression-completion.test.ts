@@ -7,7 +7,7 @@ import {
 } from "../workflow-expression-completion";
 
 describe("workflow expression detection", () => {
-  it("recognizes every expression operator emitted by WDL/runtime expressions", () => {
+  it("recognizes every expression operator emitted by REXRAP/runtime expressions", () => {
     for (const key of [
       "$ref",
       "$concat",
@@ -23,7 +23,7 @@ describe("workflow expression detection", () => {
     }
   });
 
-  it("does not treat plain WDL object literals as whole-value expressions", () => {
+  it("does not treat plain REXRAP object literals as whole-value expressions", () => {
     expect(
       isWorkflowExpressionValue({ value: { $ref: { params: ["name"] } }, equals: "prod" }),
     ).toBe(false);

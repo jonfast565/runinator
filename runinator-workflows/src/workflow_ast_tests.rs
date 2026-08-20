@@ -1,6 +1,6 @@
 // round-trip guard for the program ast relocated into `runinator_models::workflow_ast`. the field
 // typing in later phases relies on `Value -> WorkflowExpression -> Value` being identity for the
-// canonical forms the wdl lowerer emits, so these tests pin exactly that. non-canonical spellings
+// canonical forms the rexrap lowerer emits, so these tests pin exactly that. non-canonical spellings
 // (the `input` ref alias, an explicit `$literal`) intentionally normalize; a separate test documents
 // that so the behavior change is deliberate, not accidental.
 
@@ -8,7 +8,7 @@ use runinator_models::json;
 use runinator_models::value::Value;
 use runinator_models::workflow_ast::{ConditionNode, WorkflowExpression};
 
-// the canonical expression forms the lowerer produces (see runinator-wdl/src/lower/expr.rs). every
+// the canonical expression forms the lowerer produces (see runinator-rexrap/src/lower/expr.rs). every
 // entry must satisfy `static(parse(v)) == v`.
 fn canonical_expressions() -> Vec<Value> {
     vec![
@@ -94,7 +94,7 @@ fn canonical_compute_program_round_trips() {
     );
 }
 
-// the canonical condition forms the lowerer produces (see runinator-wdl/src/lower/expr.rs
+// the canonical condition forms the lowerer produces (see runinator-rexrap/src/lower/expr.rs
 // `lower_cond`). every entry must satisfy `Value::from(ConditionNode::from(v)) == v`.
 fn canonical_conditions() -> Vec<Value> {
     vec![

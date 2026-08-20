@@ -1,7 +1,7 @@
 //! deciding whether a cell can be answered in process or needs a run.
 
 use runinator_models::value::Value;
-use runinator_wdl::{CompileOptions, WdlFragmentKind};
+use runinator_rexrap::{CompileOptions, RexRapFragmentKind};
 
 use crate::errors::{ConsoleError, Result};
 
@@ -23,7 +23,7 @@ pub struct Classification {
     pub kind: CellKind,
     /// the lowered fragment, for a pure cell. `None` for a workflow cell.
     pub lowered: Option<Value>,
-    /// the wdl source to compile, for a workflow cell. `None` for a pure cell.
+    /// the rexrap source to compile, for a workflow cell. `None` for a pure cell.
     pub workflow_source: Option<String>,
 }
 
@@ -34,10 +34,10 @@ impl Classification {
     }
 
     /// the fragment kind a pure cell evaluates as.
-    pub fn fragment_kind(&self) -> Option<WdlFragmentKind> {
+    pub fn fragment_kind(&self) -> Option<RexRapFragmentKind> {
         match self.kind {
-            CellKind::Expression => Some(WdlFragmentKind::Expression),
-            CellKind::Do => Some(WdlFragmentKind::Do),
+            CellKind::Expression => Some(RexRapFragmentKind::Expression),
+            CellKind::Do => Some(RexRapFragmentKind::Do),
             CellKind::Workflow => None,
         }
     }
@@ -62,7 +62,7 @@ pub fn classify(source: &str, options: &CompileOptions) -> Result<Classification
     }
 
     if let Ok(lowered) =
-        runinator_wdl::validate_fragment(source, WdlFragmentKind::Expression, options)
+        runinator_rexrap::validate_fragment(source, RexRapFragmentKind::Expression, options)
     {
         return Ok(Classification {
             kind: CellKind::Expression,
@@ -70,7 +70,7 @@ pub fn classify(source: &str, options: &CompileOptions) -> Result<Classification
             workflow_source: None,
         });
     }
-    if let Ok(lowered) = runinator_wdl::validate_fragment(source, WdlFragmentKind::Do, options) {
+    if let Ok(lowered) = runinator_rexrap::validate_fragment(source, RexRapFragmentKind::Do, options) {
         return Ok(Classification {
             kind: CellKind::Do,
             lowered: Some(lowered),

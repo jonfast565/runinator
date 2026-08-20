@@ -13,7 +13,7 @@ import RunInputForm from "../components/shared/RunInputForm.vue";
 import RunNodeActions, { type RunNodeActionType } from "../components/shared/RunNodeActions.vue";
 import RunTimeline from "../components/shared/RunTimeline.vue";
 import StatusBadge from "../components/shared/StatusBadge.vue";
-import WdlEditor from "../components/shared/WdlEditor.vue";
+import RexRapEditor from "../components/shared/RexRapEditor.vue";
 import { useProvidersStore } from "../../ui/adapters/pinia/providers";
 import { useSecretsStore } from "../../ui/adapters/pinia/secrets";
 import { useWorkflowsStore } from "../../ui/adapters/pinia/workflows";
@@ -30,7 +30,7 @@ import {
   relativePackPath,
 } from "./dev-view-files";
 
-const DEFAULT_PACK_PATH = "packs/sdlc/sdlc.wdlm";
+const DEFAULT_PACK_PATH = "packs/sdlc/sdlc.rexrapm";
 const TERMINAL_STATUSES = new Set(["succeeded", "failed", "canceled", "timed_out"]);
 
 const workflows = useWorkflowsStore();
@@ -80,7 +80,7 @@ let lastFingerprint = "";
 
 const watchedFiles = computed(() => inspectResult.value?.files ?? []);
 const availableWorkflows = computed(() => inspectResult.value?.workflows ?? workflows.workflows);
-const selectedIsWdl = computed(() => selectedFilePath.value.endsWith(".wdl"));
+const selectedIsRexRap = computed(() => selectedFilePath.value.endsWith(".rexrap"));
 const selectedIsJson = computed(() => selectedFilePath.value.endsWith(".json"));
 const runWorkflowInputType = computed((): RuninatorType => {
   const workflow = resolveRunWorkflow();
@@ -88,7 +88,7 @@ const runWorkflowInputType = computed((): RuninatorType => {
 });
 const runWorkflowKey = computed(() => runWorkflowRef.value || "none");
 const canSaveSource = computed(
-  () => (selectedIsWdl.value || selectedIsJson.value) && sourceText.value !== savedSourceText.value,
+  () => (selectedIsRexRap.value || selectedIsJson.value) && sourceText.value !== savedSourceText.value,
 );
 const canRun = computed(
   () => Boolean(runWorkflowRef.value) && !busy.value && !startingRun.value,
@@ -169,7 +169,7 @@ watch(selectedFilePath, (value) => {
   window.localStorage.setItem("runinator.devPack.file", value);
 });
 
-// auto-save the edited wdl to disk (debounced) so the watch/apply loop sees in-app edits.
+// auto-save the edited rexrap to disk (debounced) so the watch/apply loop sees in-app edits.
 let autoSaveTimer = 0;
 watch(sourceText, () => {
   if (!autoSave.value) {
@@ -298,8 +298,8 @@ async function inspectPack(options: { quiet?: boolean; applyOnChange?: boolean }
       !selectedFilePath.value ||
       !result.files.some((file) => file.path === selectedFilePath.value)
     ) {
-      const firstWdl = result.files.find((file) => file.kind === "workflow") ?? result.files[0];
-      await selectFile(firstWdl.path);
+      const firstRexRap = result.files.find((file) => file.kind === "workflow") ?? result.files[0];
+      await selectFile(firstRexRap.path);
     } else if (previousFingerprint && previousFingerprint !== lastFingerprint) {
       await reloadSelectedSource();
     }

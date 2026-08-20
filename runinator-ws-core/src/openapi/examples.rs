@@ -34,13 +34,13 @@ pub enum Example {
     RunStatus,
     RunChunk,
     Artifact,
-    WdlSource,
-    WdlCompile,
-    WdlCompletion,
-    WdlHover,
-    WdlDiagnostics,
-    WdlDecompile,
-    WdlEvaluate,
+    RexRapSource,
+    RexRapCompile,
+    RexRapCompletion,
+    RexRapHover,
+    RexRapDiagnostics,
+    RexRapDecompile,
+    RexRapEvaluate,
     Trigger,
     TriggerList,
     TriggerClaim,
@@ -141,23 +141,23 @@ pub fn example_value(example: Example) -> Option<Value> {
         Example::Artifact => {
             json!({ "id": UUID_EXAMPLE, "name": "report.json", "content_type": "application/json", "size": 42 })
         }
-        Example::WdlSource => {
+        Example::RexRapSource => {
             json!({ "source": "workflow hello {\n  task echo uses std.echo\n}\n", "fragment": "expression" })
         }
-        Example::WdlCompile => {
+        Example::RexRapCompile => {
             json!({ "source": "workflow hello {\n  task echo uses std.echo\n}\n", "enabled": true })
         }
-        Example::WdlCompletion => {
+        Example::RexRapCompletion => {
             json!({ "source": "workflow hello {\n  ", "cursor_byte": 19, "providers": [], "settings": [] })
         }
-        Example::WdlHover => {
+        Example::RexRapHover => {
             json!({ "range_start_byte": 18, "range_end_byte": 24, "title": "params", "kind": "parameter root", "detail": "{ name: string }", "documentation": "Workflow input parameters." })
         }
-        Example::WdlDiagnostics => {
+        Example::RexRapDiagnostics => {
             json!([{ "start": 0, "end": 4, "line": 1, "column": 1, "severity": "warning", "message": "example diagnostic" }])
         }
-        Example::WdlDecompile => json!({ "workflow": workflow_example() }),
-        Example::WdlEvaluate => {
+        Example::RexRapDecompile => json!({ "workflow": workflow_example() }),
+        Example::RexRapEvaluate => {
             json!({ "source": "inputs.environment == \"prod\"", "kind": "condition", "context": { "inputs": { "environment": "dev" } } })
         }
         Example::Trigger => trigger_example(),

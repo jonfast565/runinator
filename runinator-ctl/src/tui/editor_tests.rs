@@ -126,7 +126,7 @@ fn tab_completes_a_lone_candidate_and_lists_several() {
 }
 
 #[test]
-fn tab_offers_nothing_on_a_wdl_line() {
+fn tab_offers_nothing_on_a_rexrap_line() {
     let mut editor = PromptEditor::default();
     type_line(&mut editor, "1 + ");
     editor.handle(key(KeyCode::Tab));

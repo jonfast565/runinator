@@ -24,7 +24,7 @@ export function activate(context: ExtensionContext) {
   };
 
   const clientOptions: LanguageClientOptions = {
-    documentSelector: [{ scheme: "file", language: "wdl" }],
+    documentSelector: [{ scheme: "file", language: "rexrap" }],
     // apply-on-save settings are read by the server from initializationOptions.
     initializationOptions: {
       runinator: { autoApply, serviceUrl },
@@ -35,8 +35,8 @@ export function activate(context: ExtensionContext) {
   };
 
   client = new LanguageClient(
-    "runinatorWdl",
-    "Runinator WDL",
+    "runinatorRexRap",
+    "Runinator REXRAP",
     serverOptions,
     clientOptions
   );

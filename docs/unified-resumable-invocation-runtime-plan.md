@@ -4,9 +4,9 @@
 
 Replace the partially unified `WorkflowExpression + ComputeProgram + EvalEnv` stack with one versioned invocation IR and resumable VM.
 
-The VM handles pure intrinsics, WDL `fn`, closures, provider actions, and packaged functions uniformly. Pure calls complete in-process; effectful calls yield a durable request to orchestration, which dispatches it through the existing broker/worker lifecycle and later resumes the persisted continuation.
+The VM handles pure intrinsics, REXRAP `fn`, closures, provider actions, and packaged functions uniformly. Pure calls complete in-process; effectful calls yield a durable request to orchestration, which dispatches it through the existing broker/worker lifecycle and later resumes the persisted continuation.
 
-Remove `compute`, `std.run`, and `std.exec` as concepts. WDL uses `do` blocks for multi-statement evaluation, while ordinary provider-call statements compile as single-call invocation nodes.
+Remove `compute`, `std.run`, and `std.exec` as concepts. REXRAP uses `do` blocks for multi-statement evaluation, while ordinary provider-call statements compile as single-call invocation nodes.
 
 ## Core Model and Public Interfaces
 
@@ -26,15 +26,15 @@ Remove `compute`, `std.run`, and `std.exec` as concepts. WDL uses `do` blocks fo
   - `Durable`: may yield a provider/package effect.
   - `Unknown`: first-class function parameters whose effect depends on the runtime closure; reject these in declarative pure-only positions.
 
-- Replace the ad hoc callable registries with one `CallableCatalog` assembled from intrinsic metadata, top-level WDL functions, provider metadata, and packaged-function catalog entries. It owns name resolution, argument binding, signatures, effect classification, and packaged-version pinning.
+- Replace the ad hoc callable registries with one `CallableCatalog` assembled from intrinsic metadata, top-level REXRAP functions, provider metadata, and packaged-function catalog entries. It owns name resolution, argument binding, signatures, effect classification, and packaged-version pinning.
 
-- Preserve lexical closure behavior: lambdas capture only their visible local environment, and both closures and recursive WDL functions use the same VM call frames. Retain the global and annotated recursion limits.
+- Preserve lexical closure behavior: lambdas capture only their visible local environment, and both closures and recursive REXRAP functions use the same VM call frames. Retain the global and annotated recursion limits.
 
-## Compiler and WDL Changes
+## Compiler and REXRAP Changes
 
 - Replace:
 
-  ```wdl
+  ```rexrap
   node result <- compute {
       let x = ...
       return ...
@@ -43,7 +43,7 @@ Remove `compute`, `std.run`, and `std.exec` as concepts. WDL uses `do` blocks fo
 
   with:
 
-  ```wdl
+  ```rexrap
   node result <- do {
       let x = ...
       return ...
@@ -56,7 +56,7 @@ Remove `compute`, `std.run`, and `std.exec` as concepts. WDL uses `do` blocks fo
 
 - Add an unambiguous policy postfix for calls inside expressions:
 
-  ```wdl
+  ```rexrap
   provider.call(...)
       with {
           timeout: 30s,
@@ -70,7 +70,7 @@ Remove `compute`, `std.run`, and `std.exec` as concepts. WDL uses `do` blocks fo
 
 - Represent foreign code as the existing `std.code` callable using fenced inline source, for example:
 
-  ````wdl
+  ````rexrap
   node result <- std.code(
       language: "python",
       source: inline("python", ```
@@ -80,7 +80,7 @@ Remove `compute`, `std.run`, and `std.exec` as concepts. WDL uses `do` blocks fo
   )
   ````
 
-- Compile top-level WDL functions into `InvocationModule.functions`; stop storing executable function bodies in `metadata.functions`. Keep render-only source metadata only where required for decompilation.
+- Compile top-level REXRAP functions into `InvocationModule.functions`; stop storing executable function bodies in `metadata.functions`. Keep render-only source metadata only where required for decompilation.
 
 - Lower `transform` through the pure invocation compiler so it uses the same expression evaluator. Conditions, defaults, and parameter resolution use a pure-completion VM entrypoint that rejects any yielded effect.
 
@@ -142,13 +142,13 @@ Remove `compute`, `std.run`, and `std.exec` as concepts. WDL uses `do` blocks fo
   - `std.code` becomes a one-call invocation.
   - `metadata.functions` becomes module function definitions.
   - Transform expressions are compiled through the invocation IR.
-  - Definitions containing `$goto` are rejected for manual WDL control-flow replacement.
+  - Definitions containing `$goto` are rejected for manual REXRAP control-flow replacement.
 
 - Preserve historical workflow-revision bytes. Restoring a legacy revision runs the same converter and saves the result as a new current revision; legacy definitions are never executed directly.
 
 - Update checked-in packs from `compute` to `do`. The decompiler emits only the new syntax.
 
-- After the migration marker is committed, remove legacy runtime execution paths and reject newly submitted legacy compiled JSON with a clear “recompile with the current WDL compiler” error.
+- After the migration marker is committed, remove legacy runtime execution paths and reject newly submitted legacy compiled JSON with a clear “recompile with the current REXRAP compiler” error.
 
 ## Test Plan
 
@@ -164,7 +164,7 @@ Remove `compute`, `std.run`, and `std.exec` as concepts. WDL uses `do` blocks fo
 
   - `do` parse/format/lower/decompile idempotence.
   - Unified name and named-argument resolution across all callable targets.
-  - Provider and package calls inside WDL functions and lambdas.
+  - Provider and package calls inside REXRAP functions and lambdas.
   - Call-site policy inheritance and overrides.
   - Packaged bindings remain pinned after alias movement.
   - `compute` and `goto` receive migration-oriented diagnostics.
@@ -199,5 +199,5 @@ Remove `compute`, `std.run`, and `std.exec` as concepts. WDL uses `do` blocks fo
 - This is a breaking, coordinated runtime/compiler migration with maintenance downtime.
 - Pure calls are not individually persisted; “each call durable” applies to calls classified as effects.
 - A failed yielded call fails its enclosing invocation after its own retry policy is exhausted; workflow-level `try` and failure transitions remain the recovery mechanism.
-- Provider/package implementations do not themselves suspend into nested workflow effects; unification applies at the WDL invocation boundary.
+- Provider/package implementations do not themselves suspend into nested workflow effects; unification applies at the REXRAP invocation boundary.
 - No compatibility executor for legacy `std.run/std.exec` definitions remains after migration.

@@ -227,7 +227,7 @@ impl Prompt {
         }
     }
 
-    // the input pane holds four rows at most, so a long WDL cell scrolls inside it.
+    // the input pane holds four rows at most, so a long REXRAP cell scrolls inside it.
     fn scroll_input(&mut self, rows: i16) {
         let buffer = self.editor.buffer();
         let lines = buffer.split('\n').count() as i32;

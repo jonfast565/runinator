@@ -31,17 +31,17 @@ const CORE_UTILS = [
   "status",
   "url-sync",
   "values",
-  "wdl-expression",
+  "rexrap-expression",
   "websocket",
   "workflow-references",
   "zip",
 ];
 
 const CODEMIRROR_UTILS = [
-  "codemirror-lang-wdl",
+  "codemirror-lang-rexrap",
   "codemirror-theme",
-  "wdl-completion",
-  "wdl-hover",
+  "rexrap-completion",
+  "rexrap-hover",
   "json-completion",
   "workflow-expression-completion",
   "expression-insert-target",

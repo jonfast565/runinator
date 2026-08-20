@@ -1,7 +1,7 @@
 <template>
   <div ref="scroller" class="flex-1 overflow-auto px-3 py-2 font-mono text-[12px] leading-6">
     <p class="m-0 text-fg-inverse-faint">
-      runinator console — a bare line is WDL, a `:` line is a runinatorctl command. `:help` lists
+      runinator console — a bare line is REXRAP, a `:` line is a runinatorctl command. `:help` lists
       both, Tab completes.
     </p>
 

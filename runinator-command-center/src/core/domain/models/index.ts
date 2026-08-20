@@ -156,14 +156,14 @@ export { DURATION_NOTIFICATION_EVENTS } from "./notification";
 export type { BackfillRequest, BackfillResponse, FreezeWindow, NewFreezeWindow } from "./schedule";
 
 export type {
-  WdlCompletionItem,
-  WdlCompletionRequest,
-  WdlCompletionResponse,
-  WdlDiagnostic,
-  WdlHoverRequest,
-  WdlHoverResponse,
-  WdlSettingRef,
-} from "./wdl/wdl";
+  RexRapCompletionItem,
+  RexRapCompletionRequest,
+  RexRapCompletionResponse,
+  RexRapDiagnostic,
+  RexRapHoverRequest,
+  RexRapHoverResponse,
+  RexRapSettingRef,
+} from "./rexrap/rexrap";
 
 export type { SettingKind } from "./setting";
 export type { CredentialDetail, CredentialSummary } from "./credential";

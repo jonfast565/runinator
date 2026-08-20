@@ -20,6 +20,7 @@ use runinator_models::auth::{
     UpdateUserRequest, User,
 };
 use runinator_models::rbac::{Action, PlatformRole, Role, ScopeKind, ScopeRef, SystemRole};
+use runinator_models::settings::SettingKind;
 use runinator_models::value::Value;
 use runinator_utilities::secret_cipher::SecretCipher;
 use serde::Serialize;
@@ -38,6 +39,42 @@ use runinator_ws_middleware::auth::{
 use runinator_ws_middleware::authz::AuthContextExt;
 
 type Reply = (StatusCode, Json<ApiResponse>);
+
+const AUTH_POLICY_SCOPE: &str = "auth";
+const MAX_REFRESHES_NAME: &str = "max_refreshes";
+const DEFAULT_MAX_REFRESHES: i64 = 100;
+const MAX_ALLOWED_REFRESHES: i64 = 100_000;
+
+#[derive(serde::Deserialize)]
+pub struct AuthSettingsRequest {
+    pub max_refreshes: i64,
+}
+
+async fn max_refreshes<T: DatabaseImpl>(db: &T) -> Result<i64, Reply> {
+    let Some(record) = db
+        .fetch_setting(
+            SettingKind::Config,
+            AUTH_POLICY_SCOPE.into(),
+            MAX_REFRESHES_NAME.into(),
+        )
+        .await
+        .map_err(|err| api_error(err.to_string()))?
+    else {
+        return Ok(DEFAULT_MAX_REFRESHES);
+    };
+    let cipher = SecretCipher::from_env();
+    let bytes = cipher
+        .try_decrypt(&record.value)
+        .ok_or_else(|| api_error("stored auth policy could not be decrypted"))?;
+    let value: i64 = serde_json::from_slice(&bytes)
+        .map_err(|_| api_error("stored max refreshes policy is invalid"))?;
+    if !(1..=MAX_ALLOWED_REFRESHES).contains(&value) {
+        return Err(api_error(
+            "stored max refreshes policy is outside the allowed range",
+        ));
+    }
+    Ok(value)
+}
 
 fn unauthorized(message: &str) -> Reply {
     (
@@ -152,6 +189,7 @@ async fn issue_session<T: DatabaseImpl>(
     db: &T,
     config: &AuthConfig,
     user: User,
+    refresh_count: i64,
 ) -> Result<LoginResponse, Reply> {
     let user_id = user.id.ok_or_else(|| api_error("user is missing an id"))?;
     let (refresh_token, refresh_hash) = new_refresh_token();
@@ -161,6 +199,7 @@ async fn issue_session<T: DatabaseImpl>(
         refresh_token_hash: refresh_hash,
         expires_at: Utc::now() + Duration::seconds(config.refresh_ttl_secs),
         revoked: false,
+        refresh_count,
     };
     db.create_session(session.clone())
         .await
@@ -268,7 +307,7 @@ pub async fn login<T: DatabaseImpl>(
         return unauthorized("invalid username or password");
     }
     let user_id = credential.user.id;
-    match issue_session(db.as_ref(), &config, credential.user).await {
+    match issue_session(db.as_ref(), &config, credential.user, 0).await {
         Ok(response) => {
             crate::audit::record_audit(
                 db.as_ref(),
@@ -346,18 +385,98 @@ pub async fn refresh<T: DatabaseImpl>(
     if session.expires_at < Utc::now() {
         return unauthorized("refresh token expired");
     }
+    let max_refreshes = match max_refreshes(db.as_ref()).await {
+        Ok(value) => value,
+        Err(reply) => return reply,
+    };
+    if session.refresh_count >= max_refreshes {
+        let _ = db.revoke_session(session.id).await;
+        return unauthorized("refresh session exhausted");
+    }
     let user = match db.fetch_user(session.user_id).await {
         Ok(Some(user)) if !user.disabled => user,
         Ok(_) => return unauthorized("user unavailable"),
         Err(err) => return api_error(err.to_string()),
     };
-    // rotate: revoke the presented session and mint a fresh one.
-    if let Err(err) = db.revoke_session(session.id).await {
-        return api_error(err.to_string());
+    // Claim the refresh atomically before minting the replacement. This prevents two concurrent
+    // requests presenting the same token from both consuming the session budget.
+    match db.consume_session_refresh(session.id, max_refreshes).await {
+        Ok(true) => {}
+        Ok(false) => return unauthorized("refresh session exhausted or already used"),
+        Err(err) => return api_error(err.to_string()),
     }
-    match issue_session(db.as_ref(), &config, user).await {
+    match issue_session(db.as_ref(), &config, user, session.refresh_count + 1).await {
         Ok(response) => ok_value(&response),
         Err(reply) => reply,
+    }
+}
+
+#[utoipa::path(
+    get,
+    path = "/auth/settings",
+    tag = "Auth",
+    responses((status = 200, description = "refresh policy", body = serde_json::Value)),
+)]
+pub async fn auth_settings<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+) -> Reply {
+    if ctx.platform_role != Some(PlatformRole::Admin) {
+        return forbidden("only a platform admin may manage refresh policy");
+    }
+    match max_refreshes(db.as_ref()).await {
+        Ok(value) => (
+            StatusCode::OK,
+            Json(ApiResponse::JsonValue(runinator_models::json!({
+                "max_refreshes": value,
+            }))),
+        ),
+        Err(reply) => reply,
+    }
+}
+
+#[utoipa::path(
+    put,
+    path = "/auth/settings",
+    tag = "Auth",
+    request_body = serde_json::Value,
+    responses((status = 200, description = "refresh policy saved", body = serde_json::Value)),
+)]
+pub async fn update_auth_settings<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(ctx): Extension<AuthContext>,
+    Json(request): Json<AuthSettingsRequest>,
+) -> Reply {
+    if ctx.platform_role != Some(PlatformRole::Admin) {
+        return forbidden("only a platform admin may manage refresh policy");
+    }
+    if !(1..=MAX_ALLOWED_REFRESHES).contains(&request.max_refreshes) {
+        return bad_request(&format!(
+            "max_refreshes must be between 1 and {MAX_ALLOWED_REFRESHES}"
+        ));
+    }
+    let bytes = match serde_json::to_vec(&request.max_refreshes) {
+        Ok(bytes) => bytes,
+        Err(err) => return api_error(err.to_string()),
+    };
+    let value = SecretCipher::from_env().encrypt(&bytes);
+    match db
+        .upsert_setting(
+            SettingKind::Config,
+            AUTH_POLICY_SCOPE.into(),
+            MAX_REFRESHES_NAME.into(),
+            value,
+            Utc::now().timestamp(),
+        )
+        .await
+    {
+        Ok(()) => (
+            StatusCode::OK,
+            Json(ApiResponse::JsonValue(runinator_models::json!({
+                "max_refreshes": request.max_refreshes,
+            }))),
+        ),
+        Err(err) => api_error(err.to_string()),
     }
 }
 
@@ -1170,6 +1289,13 @@ pub fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
     use axum::routing::{delete, get, patch, post};
     axum::Router::new()
         .route("/auth/config", get(auth_config))
+        .route(
+            "/auth/settings",
+            get(auth_settings::<T>)
+                .put(update_auth_settings::<T>)
+                .post(update_auth_settings::<T>)
+                .layer(Extension(pool.clone())),
+        )
         .route(
             "/auth/login",
             post(login::<T>).layer(Extension(pool.clone())),

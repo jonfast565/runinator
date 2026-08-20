@@ -25,7 +25,7 @@ mod revisions;
 mod runs;
 mod users;
 mod validation;
-mod wdl;
+mod rexrap;
 
 use std::{
     collections::HashSet,
@@ -61,7 +61,7 @@ use runinator_models::{
         WorkflowNodeRun, WorkflowStatus, WorkflowTrigger, WorkflowTriggerKind,
     },
 };
-use runinator_wdl::WdlFragmentKind;
+use runinator_rexrap::RexRapFragmentKind;
 use runinator_workflows::{WorkflowTypeDiagnostic, WorkflowValidationError};
 use runinator_ws_middleware::authz::{AuthContextExt, AuthzChecker};
 use tokio::sync::Notify;

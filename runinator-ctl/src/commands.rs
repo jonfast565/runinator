@@ -31,7 +31,7 @@ use crate::{
     cli::{
         AgentCommands, ApprovalCommands, ArtifactCommands, Cli, CliTyping, Commands,
         FreezeCommands, NodeCommands, OrgCommands, ProviderCommands, RunCommands, SettingsCommands,
-        TriggerCommands, WdlCommands, WorkflowCommands,
+        TriggerCommands, RexRapCommands, WorkflowCommands,
     },
     output, params,
 };
@@ -127,7 +127,7 @@ pub async fn run_command(
             .await
         }
         Commands::Artifacts { command } => artifacts::artifacts(client, command, json_output).await,
-        Commands::Wdl { command } => workflows::wdl(command, json_output),
+        Commands::RexRap { command } => workflows::rexrap(command, json_output),
         Commands::Settings { command } => settings::settings(client, command, json_output).await,
         Commands::Nodes { command } => nodes::nodes(client, command, json_output).await,
         Commands::Orgs { command } => orgs::orgs(client, command, json_output).await,

@@ -1,4 +1,4 @@
-// the wdl console: a notebook of cells sharing one scope.
+// the rexrap console: a notebook of cells sharing one scope.
 // mirrors runinator-models/src/console.rs; the wire names are the contract.
 
 import type { JsonValue } from "../../json";
@@ -58,7 +58,7 @@ export interface NewConsoleCell {
 
 // what an author writes to reach an earlier cell's result: `params.<name>`.
 //
-// `params` rather than a console-only root because a bare dotted path in wdl already means *node
+// `params` rather than a console-only root because a bare dotted path in rexrap already means *node
 // output* — `cells.load` would be a reference to a node called `cells`. kept here so the ui's hints
 // and the backend's scope cannot describe different things.
 export const CELL_SCOPE = "params";

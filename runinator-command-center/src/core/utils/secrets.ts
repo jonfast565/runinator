@@ -10,7 +10,7 @@ export function secretRef(scope: string, name: string): string {
   return `${SECRET_REF_PREFIX}${encodeURIComponent(scope)}/${encodeURIComponent(name)}`;
 }
 
-// wdl-style reference for a setting, e.g. `secret.github.token` or `config.api.url`.
+// rexrap-style reference for a setting, e.g. `secret.github.token` or `config.api.url`.
 export function settingRef(
   kind: "secret" | "config" | undefined,
   scope: string,

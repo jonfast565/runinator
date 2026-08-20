@@ -10,7 +10,7 @@ fn values(line: &str) -> Vec<String> {
 }
 
 #[test]
-fn offers_nothing_for_a_wdl_line() {
+fn offers_nothing_for_a_rexrap_line() {
     assert!(values("1 + ").is_empty());
     assert!(values("action jira.create").is_empty());
 }

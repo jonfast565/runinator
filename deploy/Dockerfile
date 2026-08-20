@@ -156,7 +156,7 @@ ENTRYPOINT ["/usr/local/bin/runinator-blob"]
 # ---- ctl: short-lived pack importer ----
 FROM runtime-base AS ctl
 COPY --from=builder --chown=root:root --chmod=755 /out/runinatorctl /usr/local/bin/runinatorctl
-# bake every pack in, each keeping its own subdirectory so the shared `wdl/` and `settings.wdls`
+# bake every pack in, each keeping its own subdirectory so the shared `rexrap/` and `settings.rexraps`
 # names never collide across packs; the import job applies them all.
 COPY --chown=runinator:runinator packs /home/runinator/.runinator/workflows/packs
 ENV RUNINATOR_API_BASE_URL=http://127.0.0.1:8080/
@@ -165,7 +165,7 @@ USER runinator
 # final argument to import a different pack, or pass other runinatorctl subcommands. the k8s
 # pack-import job overrides this to loop over every baked-in pack.
 ENTRYPOINT ["/usr/local/bin/runinatorctl"]
-CMD ["workflows", "apply", "/home/runinator/.runinator/workflows/packs/sdlc/sdlc.wdlm"]
+CMD ["workflows", "apply", "/home/runinator/.runinator/workflows/packs/sdlc/sdlc.rexrapm"]
 
 # ---- bootstrap ----
 FROM runtime-base AS bootstrap

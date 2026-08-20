@@ -55,11 +55,11 @@ members = [
     "runinator-provisioner",
     "runinator-compute",
     "runinator-workflows",
-    "runinator-wdl",
-    "runinator-wdl-syntax",
-    "runinator-wdl-sema",
-    "runinator-wdl-codegen",
-    "runinator-wdl-ide",
+    "runinator-rexrap",
+    "runinator-rexrap-syntax",
+    "runinator-rexrap-sema",
+    "runinator-rexrap-codegen",
+    "runinator-rexrap-ide",
     "runinator-e2e",
     "xtask"
 ]

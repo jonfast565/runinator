@@ -61,11 +61,11 @@ pub async fn save_workflow_bundle(
 }
 
 #[tauri::command]
-pub async fn save_workflow_wdl(
+pub async fn save_workflow_rexrap(
     state: State<'_, CommandCenterState>,
-    request: WorkflowWdlSaveRequest,
+    request: WorkflowRexRapSaveRequest,
 ) -> CommandResult<WorkflowBundle> {
-    let url = build_state_url(&state, "wdl/import").await?;
+    let url = build_state_url(&state, "rexrap/import").await?;
     let response = state
         .client
         .read()
@@ -83,18 +83,18 @@ pub async fn save_workflow_wdl(
 }
 
 #[tauri::command]
-pub fn compile_wdl(source: String, enabled: bool) -> CommandResult<WorkflowDefinition> {
+pub fn compile_rexrap(source: String, enabled: bool) -> CommandResult<WorkflowDefinition> {
     let options = CompileOptions {
         enabled,
         providers: runinator_provider_catalog::metadata(),
         ..CompileOptions::default()
     };
-    runinator_wdl::compile_str(&source, &options)
+    runinator_rexrap::compile_str(&source, &options)
         .map_err(|err| CommandError::Unexpected(err.to_string()))
 }
 
 #[tauri::command]
-pub fn analyze_wdl(
+pub fn analyze_rexrap(
     source: String,
     source_path: Option<String>,
 ) -> CommandResult<Vec<DiagnosticSummary>> {
@@ -102,18 +102,18 @@ pub fn analyze_wdl(
     let workflow_signatures = source_path
         .as_deref()
         .map(std::path::Path::new)
-        .map(|path| crate::pack_dev::wdl_context_workflow_signatures(path, Some(&source)))
+        .map(|path| crate::pack_dev::rexrap_context_workflow_signatures(path, Some(&source)))
         .transpose()?
         .unwrap_or_default();
     // a parse failure is itself a finding, so surface it as a diagnostic instead of an error.
-    let diagnostics = match runinator_wdl::analyze_source_with_options(
+    let diagnostics = match runinator_rexrap::analyze_source_with_options(
         &source,
         &providers,
-        runinator_wdl::TypePolicy::Strict,
+        runinator_rexrap::TypePolicy::Strict,
         &workflow_signatures,
     ) {
         Ok(diagnostics) => diagnostics,
-        Err(err) => return Ok(vec![wdl_error_to_summary(err, &source)]),
+        Err(err) => return Ok(vec![rexrap_error_to_summary(err, &source)]),
     };
     let summaries = diagnostics
         .into_iter()
@@ -137,25 +137,25 @@ pub fn analyze_wdl(
 }
 
 #[tauri::command]
-pub fn complete_wdl(
-    request: runinator_wdl_ide::WdlCompletionRequest,
-) -> CommandResult<runinator_wdl_ide::WdlCompletionResponse> {
-    Ok(runinator_wdl_ide::complete_source(request))
+pub fn complete_rexrap(
+    request: runinator_rexrap_ide::RexRapCompletionRequest,
+) -> CommandResult<runinator_rexrap_ide::RexRapCompletionResponse> {
+    Ok(runinator_rexrap_ide::complete_source(request))
 }
 
 #[tauri::command]
-pub fn hover_wdl(
-    request: runinator_wdl_ide::WdlHoverRequest,
-) -> CommandResult<Option<runinator_wdl_ide::WdlHoverResponse>> {
-    Ok(runinator_wdl_ide::hover_source(request))
+pub fn hover_rexrap(
+    request: runinator_rexrap_ide::RexRapHoverRequest,
+) -> CommandResult<Option<runinator_rexrap_ide::RexRapHoverResponse>> {
+    Ok(runinator_rexrap_ide::hover_source(request))
 }
 
 #[tauri::command]
-pub fn format_wdl(source: String) -> CommandResult<String> {
-    runinator_wdl::format_str(&source).map_err(|err| CommandError::Unexpected(err.to_string()))
+pub fn format_rexrap(source: String) -> CommandResult<String> {
+    runinator_rexrap::format_str(&source).map_err(|err| CommandError::Unexpected(err.to_string()))
 }
 
-/// resolve a lowered WDL expression against a sample context (e.g. a prior run's data) so the editor
+/// resolve a lowered REXRAP expression against a sample context (e.g. a prior run's data) so the editor
 /// can preview the value a reference/transform/compute expression produces. evaluates the pure
 /// compute tier (stdlib + higher-order intrinsics) but not effectful ops, so a preview never runs
 /// side effects; an unresolvable reference or effectful call surfaces as a command error.
@@ -168,11 +168,11 @@ pub fn evaluate_expression(expression: Value, context: Value) -> CommandResult<V
     serde_json::to_value(&resolved).map_err(|err| CommandError::Unexpected(err.to_string()))
 }
 
-/// flatten a `WdlError` into a single error diagnostic anchored to its span when it has one.
-fn wdl_error_to_summary(err: runinator_wdl::WdlError, source: &str) -> DiagnosticSummary {
-    use runinator_wdl::WdlError;
+/// flatten a `RexRapError` into a single error diagnostic anchored to its span when it has one.
+fn rexrap_error_to_summary(err: runinator_rexrap::RexRapError, source: &str) -> DiagnosticSummary {
+    use runinator_rexrap::RexRapError;
     let span = match &err {
-        WdlError::Syntax { span, .. } | WdlError::Semantic { span, .. } => Some(*span),
+        RexRapError::Syntax { span, .. } | RexRapError::Semantic { span, .. } => Some(*span),
         _ => None,
     };
     let (start, end, line, column) = match span {
@@ -193,8 +193,8 @@ fn wdl_error_to_summary(err: runinator_wdl::WdlError, source: &str) -> Diagnosti
 }
 
 #[tauri::command]
-pub fn decompile_to_wdl(workflow: WorkflowDefinition) -> CommandResult<String> {
-    runinator_wdl::decompile(&workflow).map_err(|err| CommandError::Unexpected(err.to_string()))
+pub fn decompile_to_rexrap(workflow: WorkflowDefinition) -> CommandResult<String> {
+    runinator_rexrap::decompile(&workflow).map_err(|err| CommandError::Unexpected(err.to_string()))
 }
 
 #[tauri::command]

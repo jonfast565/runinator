@@ -155,7 +155,7 @@ pub struct PipelineJoinSpec {
     pub parameters: Value,
 }
 
-/// a portable, id-free pipeline declaration compiled from a `.wdlp` file. members and links are by
+/// a portable, id-free pipeline declaration compiled from a `.rexrapp` file. members and links are by
 /// workflow name; the web service resolves names to ids and persists one atomic graph.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PipelineSpec {
@@ -172,13 +172,13 @@ pub struct PipelineSpec {
     pub joins: Vec<PipelineJoinSpec>,
     #[serde(default)]
     pub concurrency: WorkflowConcurrency,
-    /// pipeline-level triggers (cron / manual / chained) declared in the `.wdlp` header. materialized
+    /// pipeline-level triggers (cron / manual / chained) declared in the `.rexrapp` header. materialized
     /// on import as managed `pipeline_triggers` reconciled by pipeline id.
     #[serde(default)]
     pub triggers: Vec<PipelineTriggerSpec>,
 }
 
-/// a member workflow declared in a `.wdlp` pipeline, by name. `failure_mode` is `None` when the
+/// a member workflow declared in a `.rexrapp` pipeline, by name. `failure_mode` is `None` when the
 /// member declares no `on_failure` of its own, meaning it takes the pipeline's
 /// [`PipelineDefaults::default_failure_mode`] at import.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -207,7 +207,7 @@ impl From<String> for PipelineMemberSpec {
     }
 }
 
-/// a portable, id-free pipeline trigger declaration compiled from a `.wdlp` header. `configuration`
+/// a portable, id-free pipeline trigger declaration compiled from a `.rexrapp` header. `configuration`
 /// carries kind-specific data (cron: `{cron, parameters}`; chained: `{on, source_workflow |
 /// source_pipeline, parameters}`); manual triggers carry no schedule.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

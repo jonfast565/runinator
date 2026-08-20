@@ -1,0 +1,10 @@
+{
+  "item_type": "rexrap_pack",
+  "name": "Worker Credential Sync Pack",
+  "version": 1,
+  "workflows": [
+    "rexrap/update-claude-auth.rexrap",
+    "rexrap/update-aws-auth.rexrap"
+  ],
+  "triggers": []
+}

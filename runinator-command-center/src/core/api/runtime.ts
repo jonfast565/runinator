@@ -6,6 +6,7 @@ export interface CommandRuntime {
 }
 
 let activeRuntime: CommandRuntime | null = null;
+let unauthorizedHandler: (() => Promise<boolean>) | null = null;
 
 export function setCommandRuntime(runtime: CommandRuntime) {
   activeRuntime = runtime;
@@ -25,12 +26,32 @@ export function getCommandRuntime(): CommandRuntime {
   return activeRuntime;
 }
 
+export function setUnauthorizedHandler(handler: (() => Promise<boolean>) | null) {
+  unauthorizedHandler = handler;
+}
+
 export function isTauriRuntime() {
   return getCommandRuntimeOptional()?.isTauri() ?? false;
 }
 
-function command<T>(name: string, args?: Record<string, unknown>) {
-  return getCommandRuntime().invoke<T>(name, args);
+async function command<T>(name: string, args?: Record<string, unknown>) {
+  try {
+    return await getCommandRuntime().invoke<T>(name, args);
+  } catch (error) {
+    if (
+      unauthorizedHandler &&
+      name !== "login" &&
+      name !== "refresh_session" &&
+      name !== "logout" &&
+      /(?:401|unauthorized|unauthenticated)/i.test(String(error))
+    ) {
+      const recovered = await unauthorizedHandler();
+      if (recovered) {
+        return getCommandRuntime().invoke<T>(name, args);
+      }
+    }
+    throw error;
+  }
 }
 
 export { command };

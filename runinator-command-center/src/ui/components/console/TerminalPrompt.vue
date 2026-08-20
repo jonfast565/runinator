@@ -62,7 +62,7 @@ const rows = computed(() => Math.min(12, buffer.value.split("\n").length));
 // the sigil says which of the two languages the line is in before it is submitted.
 const sigil = computed(() => (buffer.value.trimStart().startsWith(":") ? ":" : "›"));
 const placeholder = computed(() =>
-  props.busy ? "running… (Ctrl+C stops)" : "WDL, or :help for commands",
+  props.busy ? "running… (Ctrl+C stops)" : "REXRAP, or :help for commands",
 );
 
 // typing invalidates the menu, the way it does in a shell. the watcher is synchronous so that

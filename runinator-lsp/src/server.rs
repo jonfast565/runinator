@@ -1,5 +1,5 @@
 //! the `tower-lsp` backend: wires document sync, diagnostics, completion, hover, formatting, and
-//! apply-on-save onto the reusable wdl/api building blocks.
+//! apply-on-save onto the reusable rexrap/api building blocks.
 
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
@@ -46,7 +46,7 @@ impl Backend {
             .unwrap_or_default()
     }
 
-    // recompute and publish diagnostics for an open document. non-workflow files (.wdlm/.wdls) get
+    // recompute and publish diagnostics for an open document. non-workflow files (.rexrapm/.rexraps) get
     // their diagnostics cleared instead of analyzed with the workflow grammar.
     async fn publish(&self, uri: Url, check_lowering: bool) {
         let Some(text) = self.documents.get(&uri) else {
@@ -205,7 +205,7 @@ impl LanguageServer for Backend {
         let Some(text) = self.documents.get(&uri) else {
             return Ok(None);
         };
-        match runinator_wdl::format_str(&text) {
+        match runinator_rexrap::format_str(&text) {
             Ok(formatted) if formatted != text => Ok(Some(vec![TextEdit {
                 range: whole_document_range(&text),
                 new_text: formatted,
@@ -217,14 +217,14 @@ impl LanguageServer for Backend {
     }
 }
 
-// true when the uri names a `.wdl` workflow source (or a non-file uri we optimistically treat as
-// one); `.wdlm`/`.wdls` are not analyzed with the workflow grammar.
+// true when the uri names a `.rexrap` workflow source (or a non-file uri we optimistically treat as
+// one); `.rexrapm`/`.rexraps` are not analyzed with the workflow grammar.
 fn is_workflow_uri(uri: &Url) -> bool {
     match uri.to_file_path() {
         Ok(path) => path
             .extension()
             .and_then(|ext| ext.to_str())
-            .map(|ext| ext.eq_ignore_ascii_case("wdl"))
+            .map(|ext| ext.eq_ignore_ascii_case("rexrap"))
             .unwrap_or(false),
         Err(_) => true,
     }

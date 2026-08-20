@@ -66,6 +66,10 @@ pub struct CooldownOutput {
 pub struct AwaitWorkflowState {
     pub workflow_id: Uuid,
     pub workflow_name: String,
+    /// When awaiting a RexRap task handle, join exactly this child run rather than every run of
+    /// the workflow. Optional for backward-compatible persisted await state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exact_run_id: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub correlation_value: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

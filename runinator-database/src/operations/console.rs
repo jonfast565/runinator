@@ -1,4 +1,4 @@
-//! the wdl console: sessions, cells, and the scope they share.
+//! the rexrap console: sessions, cells, and the scope they share.
 //!
 //! the `ConsoleStore` half of the generic sql implementation. bodies are written once, over any
 //! `SqlBackend`; see `super` for the shared helpers they call.

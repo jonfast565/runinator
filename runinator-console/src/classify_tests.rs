@@ -76,7 +76,7 @@ fn a_pure_cell_carries_its_lowered_form_and_a_workflow_cell_its_source() {
     assert!(expression.workflow_source.is_none());
     assert_eq!(
         expression.fragment_kind(),
-        Some(runinator_wdl::WdlFragmentKind::Expression)
+        Some(runinator_rexrap::RexRapFragmentKind::Expression)
     );
 
     let workflow = classify("console.run(command: \"go\")", &options()).unwrap();

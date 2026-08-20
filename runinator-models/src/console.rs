@@ -1,6 +1,6 @@
-//! the wdl console: a notebook of cells evaluated against a shared, persisted scope.
+//! the rexrap console: a notebook of cells evaluated against a shared, persisted scope.
 //!
-//! the console is not a second language or a second runtime. a cell is a fragment of the same WDL a
+//! the console is not a second language or a second runtime. a cell is a fragment of the same REXRAP a
 //! workflow is written in, and it is answered one of two ways: a pure fragment is evaluated in
 //! process, and anything else becomes a scratch workflow run. that split is the whole design — see
 //! `runinator-console` for the decision and `repository/console.rs` for what it does with it.

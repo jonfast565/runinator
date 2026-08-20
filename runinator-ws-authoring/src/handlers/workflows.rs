@@ -606,7 +606,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "/workflows/import",
         "Packs",
         "Import a raw workflow bundle",
-        "Legacy JSON bundle import. This is intentionally guarded because raw JSON can bypass WDL well-formedness constraints.",
+        "Legacy JSON bundle import. This is intentionally guarded because raw JSON can bypass REXRAP well-formedness constraints.",
         false,
         json_body("Raw workflow bundle JSON.", Example::WorkflowBundle),
         WORKFLOW_IMPORT_HEADERS,

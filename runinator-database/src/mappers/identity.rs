@@ -93,6 +93,7 @@ row_mapper!(row_to_auth_session(row) -> AuthSession {
         expires_at: DateTime::<Utc>::from_timestamp(row.get::<i64, _>("expires_at"), 0)
             .unwrap_or_else(Utc::now),
         revoked: row.get::<bool, _>("revoked"),
+        refresh_count: row.get::<i64, _>("refresh_count"),
     }
 });
 

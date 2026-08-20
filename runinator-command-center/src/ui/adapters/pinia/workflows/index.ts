@@ -16,7 +16,7 @@ export {
   newWorkflowTriggerDraft,
 } from "../../../../core/workflow/editor-defaults";
 
-const WORKFLOW_WDL_SYNC_DELAY_MS = 1500;
+const WORKFLOW_REXRAP_SYNC_DELAY_MS = 1500;
 
 function providerCatalog(): ProviderMetadata[] {
   return useProvidersStore().providers;
@@ -76,17 +76,17 @@ export const useWorkflowsStore = defineStore("workflows", () => {
     reinstalling = false;
   });
 
-  let workflowWdlSyncTimer: ReturnType<typeof setTimeout> | null = null;
+  let workflowRexRapSyncTimer: ReturnType<typeof setTimeout> | null = null;
 
-  function scheduleWorkflowWdlSync() {
-    if (workflowWdlSyncTimer) {
-      clearTimeout(workflowWdlSyncTimer);
+  function scheduleWorkflowRexRapSync() {
+    if (workflowRexRapSyncTimer) {
+      clearTimeout(workflowRexRapSyncTimer);
     }
 
-    workflowWdlSyncTimer = setTimeout(() => {
-      workflowWdlSyncTimer = null;
-      void services.editor.syncWorkflowWdl();
-    }, WORKFLOW_WDL_SYNC_DELAY_MS);
+    workflowRexRapSyncTimer = setTimeout(() => {
+      workflowRexRapSyncTimer = null;
+      void services.editor.syncWorkflowRexRap();
+    }, WORKFLOW_REXRAP_SYNC_DELAY_MS);
   }
 
   watch(
@@ -101,14 +101,14 @@ export const useWorkflowsStore = defineStore("workflows", () => {
   );
 
   watch(
-    () => state.value.workflowWdl,
+    () => state.value.workflowRexRap,
     () => {
-      if (services.internal.workflowWdlWriteGuard || state.value.workflowWdlError) {
+      if (services.internal.workflowRexRapWriteGuard || state.value.workflowRexRapError) {
         return;
       }
 
-      services.setState((current) => ({ ...current, workflowEditorMode: "wdl" }));
-      scheduleWorkflowWdlSync();
+      services.setState((current) => ({ ...current, workflowEditorMode: "rexrap" }));
+      scheduleWorkflowRexRapSync();
     },
   );
 

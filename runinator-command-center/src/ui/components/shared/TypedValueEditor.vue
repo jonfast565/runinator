@@ -62,7 +62,7 @@
         v-else
         :model-value="jsonText"
         :context="expressionContext"
-        title="WDL Value"
+        title="REXRAP Value"
         @update:model-value="setJsonValue"
       />
     </div>
@@ -200,7 +200,7 @@
       v-else
       :model-value="jsonText"
       :context="expressionContext"
-      title="WDL Value"
+      title="REXRAP Value"
       @update:model-value="setJsonValue"
     />
   </div>
@@ -369,7 +369,7 @@ function emitValue(value: unknown) {
   emit("update:modelValue", value);
 }
 
-// render the current value as wdl, including plain literals, so editing in
+// render the current value as rexrap, including plain literals, so editing in
 // expression mode never clobbers the value back to the default expression.
 function expressionTextFor(value: unknown): string {
   return pretty(value === undefined ? defaultExpressionForType(props.ty) : value);

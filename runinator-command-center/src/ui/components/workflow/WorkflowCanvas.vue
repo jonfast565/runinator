@@ -130,7 +130,7 @@ const showCommandBar = computed(() =>
 );
 
 // group validation issues by node so misconfigured nodes can be listed under the graph.
-// flatten validation issues into table rows, errors first, mirroring the wdl editor diagnostics.
+// flatten validation issues into table rows, errors first, mirroring the rexrap editor diagnostics.
 const issueRows = computed(() => {
   const titles = new Map(
     workflows.graphNodes.map((node) => [

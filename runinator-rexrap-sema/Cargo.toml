@@ -1,0 +1,9 @@
+[package]
+name = "runinator-rexrap-sema"
+version.workspace = true
+edition = "2024"
+
+[dependencies]
+runinator-models = { path = "../runinator-models" }
+runinator-compute = { path = "../runinator-compute" }
+runinator-rexrap-syntax = { path = "../runinator-rexrap-syntax" }

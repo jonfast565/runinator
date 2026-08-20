@@ -124,11 +124,11 @@ pub async fn run_cell<T: DatabaseImpl>(
     let Some(cell) = db.fetch_console_cell(cell_id).await? else {
         return Err(CONSOLE_CELL_NOT_FOUND.error(format!("cell {cell_id} not found")));
     };
-    let options = runinator_wdl::CompileOptions {
+    let options = runinator_rexrap::CompileOptions {
         enabled: true,
         providers,
         functions,
-        ..runinator_wdl::CompileOptions::default()
+        ..runinator_rexrap::CompileOptions::default()
     };
 
     let classification = match runinator_console::classify(&cell.source, &options) {
@@ -146,10 +146,10 @@ pub async fn run_cell<T: DatabaseImpl>(
             let Some(fragment_kind) = classification.fragment_kind() else {
                 return settle_failed(db, &cell, Some(kind), "cell has no evaluable form").await;
             };
-            // evaluated through the same fragment evaluator `/wdl/evaluate` uses. no second
+            // evaluated through the same fragment evaluator `/rexrap/evaluate` uses. no second
             // evaluator: a console that computed `1 + 2` differently from an expression editor
             // would be a second language wearing the same syntax.
-            match runinator_wdl::evaluate_fragment(
+            match runinator_rexrap::evaluate_fragment(
                 &cell.source,
                 fragment_kind,
                 &context.as_value(),
@@ -220,12 +220,12 @@ pub async fn settle_cell_for_run<T: DatabaseImpl>(
 async fn run_scratch_workflow<T: DatabaseImpl>(
     db: &T,
     cell: &ConsoleCell,
-    options: &runinator_wdl::CompileOptions,
+    options: &runinator_rexrap::CompileOptions,
     context: &ConsoleContext,
 ) -> Result<CellOutcome, SendableError> {
     let name = scratch_workflow_name(cell.session_id, cell.id);
     let source = runinator_console::workflow_source(&cell.source, &name);
-    let mut definition = match runinator_wdl::compile_str(&source, options) {
+    let mut definition = match runinator_rexrap::compile_str(&source, options) {
         Ok(definition) => definition,
         Err(err) => {
             return settle_failed(db, cell, Some(ConsoleCellKind::Workflow), &err.to_string())

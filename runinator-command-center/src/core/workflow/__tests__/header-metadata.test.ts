@@ -14,7 +14,7 @@ function definition(): JsonRecord {
     start: "start",
     nodes: [{ id: "start", kind: "start" }],
     metadata: {
-      wdl: { types: [] },
+      rexrap: { types: [] },
       triggers: [{ kind: "cron", configuration: { cron: "0 * * * *" } }],
       interrupts: [{ on: "wake", handler: "refresh" }],
       watches: [{ condition: { value: { $ref: "input.abort" } }, handler: "cleanup" }],
@@ -92,7 +92,7 @@ describe("applyWorkflowHeader", () => {
     applyWorkflowHeader(target, emptyWorkflowHeader());
 
     const metadata = target.metadata as JsonRecord;
-    expect(Object.keys(metadata).sort()).toEqual(["triggers", "wdl"]);
+    expect(Object.keys(metadata).sort()).toEqual(["rexrap", "triggers"]);
   });
 
   it("leaves metadata keys it does not own alone", () => {
@@ -101,7 +101,7 @@ describe("applyWorkflowHeader", () => {
     applyWorkflowHeader(target, { ...emptyWorkflowHeader(), correlation: "batch-1" });
 
     const metadata = target.metadata as JsonRecord;
-    expect(metadata.wdl).toEqual({ types: [] });
+    expect(metadata.rexrap).toEqual({ types: [] });
     expect(metadata.triggers).toHaveLength(1);
     expect(metadata.correlation).toBe("batch-1");
   });

@@ -238,7 +238,7 @@ fn validate_attachments(value: &Value) -> Result<(), SendableError> {
 }
 
 // metadata schema mirroring SlackAttachment; open (additional Any) so extra Slack
-// fields remain valid while the known ones are typed for the WDL/command-center.
+// fields remain valid while the known ones are typed for the REXRAP/command-center.
 fn attachment_type() -> RuninatorType {
     RuninatorType::open_typed_structure(
         [

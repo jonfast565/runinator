@@ -1,5 +1,5 @@
-//! runinator-lsp: an editor-agnostic language server for the wdl workflow language. it reuses the
-//! pure analyzer/completer/formatter in `runinator-wdl` and the api client in `runinator-api`, so
+//! runinator-lsp: an editor-agnostic language server for the rexrap workflow language. it reuses the
+//! pure analyzer/completer/formatter in `runinator-rexrap` and the api client in `runinator-api`, so
 //! any lsp-capable editor gets diagnostics, completion, hover, formatting, and apply-on-save.
 
 mod apply;

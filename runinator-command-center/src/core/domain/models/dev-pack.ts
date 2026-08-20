@@ -2,7 +2,7 @@ import type { JsonValue } from "../json";
 import type { WorkflowBundle } from "./workflow/bundle";
 import type { WorkflowDefinition } from "./workflow/definition";
 import type { WorkflowTrigger } from "./workflow/trigger";
-import type { WdlSettingRef } from "./wdl/wdl";
+import type { RexRapSettingRef } from "./rexrap/rexrap";
 
 export interface DevPackFile {
   path: string;
@@ -17,7 +17,7 @@ export interface DevPackInspectResult {
   workflows: WorkflowDefinition[];
   triggers: WorkflowTrigger[];
   settings_count: number;
-  settings: WdlSettingRef[];
+  settings: RexRapSettingRef[];
 }
 
 export interface DevPackTextFile {

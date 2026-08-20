@@ -7868,9 +7868,9 @@ dependencies = [
  "reqwest",
  "runinator-models",
  "runinator-provider-catalog",
+ "runinator-rexrap",
+ "runinator-rexrap-ide",
  "runinator-utilities",
- "runinator-wdl",
- "runinator-wdl-ide",
  "runinator-workflows",
  "serde",
  "serde_json",
@@ -7903,7 +7903,7 @@ name = "runinator-console"
 version = "0.2.367"
 dependencies = [
  "runinator-models",
- "runinator-wdl",
+ "runinator-rexrap",
  "uuid",
 ]
 
@@ -7921,8 +7921,8 @@ dependencies = [
  "runinator-models",
  "runinator-pack",
  "runinator-provider-catalog",
+ "runinator-rexrap",
  "runinator-utilities",
- "runinator-wdl",
  "runinator-workflows",
  "serde",
  "serde_json",
@@ -8019,8 +8019,8 @@ dependencies = [
  "runinator-database",
  "runinator-models",
  "runinator-reducer",
+ "runinator-rexrap",
  "runinator-utilities",
- "runinator-wdl",
  "runinator-workflows",
  "serde",
  "serde_json",
@@ -8038,8 +8038,8 @@ dependencies = [
  "runinator-models",
  "runinator-pack",
  "runinator-provider-catalog",
- "runinator-wdl",
- "runinator-wdl-ide",
+ "runinator-rexrap",
+ "runinator-rexrap-ide",
  "serde_json",
  "tokio",
  "tower-lsp",
@@ -8062,7 +8062,7 @@ dependencies = [
  "chrono",
  "runinator-models",
  "runinator-provider-catalog",
- "runinator-wdl",
+ "runinator-rexrap",
  "runinator-workflows",
  "serde",
  "serde_json",
@@ -8333,6 +8333,62 @@ dependencies = [
 ]
 
 [[package]]
+name = "runinator-rexrap"
+version = "0.2.367"
+dependencies = [
+ "runinator-models",
+ "runinator-provider-catalog",
+ "runinator-rexrap-codegen",
+ "runinator-rexrap-sema",
+ "runinator-rexrap-syntax",
+ "runinator-workflows",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
+name = "runinator-rexrap-codegen"
+version = "0.2.367"
+dependencies = [
+ "runinator-compute",
+ "runinator-models",
+ "runinator-rexrap-sema",
+ "runinator-rexrap-syntax",
+ "serde_json",
+]
+
+[[package]]
+name = "runinator-rexrap-ide"
+version = "0.2.367"
+dependencies = [
+ "runinator-compute",
+ "runinator-models",
+ "runinator-rexrap",
+ "serde",
+]
+
+[[package]]
+name = "runinator-rexrap-sema"
+version = "0.2.367"
+dependencies = [
+ "runinator-compute",
+ "runinator-models",
+ "runinator-rexrap-syntax",
+]
+
+[[package]]
+name = "runinator-rexrap-syntax"
+version = "0.2.367"
+dependencies = [
+ "pest",
+ "pest_derive",
+ "pest_meta",
+ "runinator-models",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "runinator-sandbox"
 version = "0.2.367"
 dependencies = [
@@ -8411,62 +8467,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "runinator-wdl"
-version = "0.2.367"
-dependencies = [
- "runinator-models",
- "runinator-provider-catalog",
- "runinator-wdl-codegen",
- "runinator-wdl-sema",
- "runinator-wdl-syntax",
- "runinator-workflows",
- "serde",
- "serde_json",
- "uuid",
-]
-
-[[package]]
-name = "runinator-wdl-codegen"
-version = "0.2.367"
-dependencies = [
- "runinator-compute",
- "runinator-models",
- "runinator-wdl-sema",
- "runinator-wdl-syntax",
- "serde_json",
-]
-
-[[package]]
-name = "runinator-wdl-ide"
-version = "0.2.367"
-dependencies = [
- "runinator-compute",
- "runinator-models",
- "runinator-wdl",
- "serde",
-]
-
-[[package]]
-name = "runinator-wdl-sema"
-version = "0.2.367"
-dependencies = [
- "runinator-compute",
- "runinator-models",
- "runinator-wdl-syntax",
-]
-
-[[package]]
-name = "runinator-wdl-syntax"
-version = "0.2.367"
-dependencies = [
- "pest",
- "pest_derive",
- "pest_meta",
- "runinator-models",
- "thiserror 2.0.20",
-]
-
-[[package]]
 name = "runinator-worker"
 version = "0.2.367"
 dependencies = [
@@ -8533,8 +8533,8 @@ dependencies = [
  "runinator-provider-catalog",
  "runinator-provisioner",
  "runinator-reducer",
+ "runinator-rexrap",
  "runinator-utilities",
- "runinator-wdl",
  "runinator-workflows",
  "runinator-ws-authoring",
  "runinator-ws-core",
@@ -8563,9 +8563,9 @@ dependencies = [
  "runinator-engine",
  "runinator-models",
  "runinator-provider-catalog",
+ "runinator-rexrap",
+ "runinator-rexrap-ide",
  "runinator-utilities",
- "runinator-wdl",
- "runinator-wdl-ide",
  "runinator-workflows",
  "runinator-ws-core",
  "runinator-ws-middleware",

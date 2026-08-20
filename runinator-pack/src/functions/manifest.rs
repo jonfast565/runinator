@@ -15,7 +15,7 @@ use crate::errors::{PackError, Result};
 ///
 /// json rather than toml so the pack crate keeps its dependency set and so schemas deserialize
 /// straight into [`runinator_models::providers::ParameterMetadata`] — the same shape every other
-/// manifest in the repo uses (`.wdlm` is json too).
+/// manifest in the repo uses (`.rexrapm` is json too).
 pub const MANIFEST_FILE: &str = "runinator-function.json";
 
 /// a package's declared identity, runtime, exports, and what to archive.

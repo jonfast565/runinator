@@ -140,7 +140,7 @@
         responsive="cards"
         empty-icon="bell"
         empty-title="No alert policies"
-        empty-description="Without a policy, a failed run raises no alert. Add one here, or declare a notify line in the workflow's WDL."
+        empty-description="Without a policy, a failed run raises no alert. Add one here, or declare a notify line in the workflow's REXRAP."
       >
         <template #cell-event="{ row }">{{ eventLabel(row.event) }}</template>
         <template #cell-workflow_id="{ row }">{{ row.workflow_id ? "scoped" : "global" }}</template>
@@ -152,11 +152,11 @@
         <template #cell-actions="{ row }">
           <span class="text-right">
             <!-- pack-managed rows are reconciled on the next import, so editing them here would be
-                 silently reverted; point the operator at the .wdl instead. -->
+                 silently reverted; point the operator at the .rexrap instead. -->
             <button
               class="btn btn-icon btn-ghost"
               :disabled="Boolean(row.managed_by)"
-              :title="row.managed_by ? 'Managed by the pack — edit the .wdl' : 'Edit'"
+              :title="row.managed_by ? 'Managed by the pack — edit the .rexrap' : 'Edit'"
               @click.stop="startEdit(row)"
             >
               <Icon name="edit" />

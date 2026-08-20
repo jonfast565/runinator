@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use super::{
     load_pack_pipelines, load_pack_settings, load_workflow_bundle, pack_source_files,
-    wdl_context_workflow_signatures,
+    rexrap_context_workflow_signatures,
 };
 
 fn repo_root() -> &'static Path {
@@ -33,7 +33,7 @@ fn loads_hello_world_smoke_pack_manifest() {
     let manifest = repo_root()
         .join("packs")
         .join("hello-world")
-        .join("hello-world.wdlm");
+        .join("hello-world.rexrapm");
 
     let bundle = load_workflow_bundle(&manifest).expect("hello-world pack should load");
 
@@ -50,12 +50,12 @@ fn loads_hello_world_smoke_pack_manifest() {
 fn checked_in_packs_all_compile_and_settings_parse() {
     let packs_dir = repo_root().join("packs");
     let mut manifests = Vec::new();
-    collect_files_with_extension(&packs_dir, "wdlm", &mut manifests);
+    collect_files_with_extension(&packs_dir, "rexrapm", &mut manifests);
     manifests.sort();
 
     assert!(
         !manifests.is_empty(),
-        "expected checked-in .wdlm manifests under {}",
+        "expected checked-in .rexrapm manifests under {}",
         packs_dir.display()
     );
 
@@ -92,18 +92,18 @@ fn checked_in_packs_all_compile_and_settings_parse() {
     manifest_sources.sort();
     manifest_sources.dedup();
 
-    let mut wdl_files = Vec::new();
-    collect_files_with_extension(&packs_dir, "wdl", &mut wdl_files);
-    wdl_files.sort();
+    let mut rexrap_files = Vec::new();
+    collect_files_with_extension(&packs_dir, "rexrap", &mut rexrap_files);
+    rexrap_files.sort();
 
-    for wdl_path in wdl_files {
-        if manifest_sources.contains(&wdl_path) {
+    for rexrap_path in rexrap_files {
+        if manifest_sources.contains(&rexrap_path) {
             continue;
         }
-        let bundle = load_workflow_bundle(&wdl_path).unwrap_or_else(|err| {
+        let bundle = load_workflow_bundle(&rexrap_path).unwrap_or_else(|err| {
             panic!(
-                "standalone WDL {} failed to compile: {err}",
-                wdl_path.display()
+                "standalone REXRAP {} failed to compile: {err}",
+                rexrap_path.display()
             )
         });
         for workflow in &bundle.workflows {
@@ -111,14 +111,14 @@ fn checked_in_packs_all_compile_and_settings_parse() {
                 panic!(
                     "workflow '{}' from {} failed validation: {err}",
                     workflow.name,
-                    wdl_path.display()
+                    rexrap_path.display()
                 )
             });
         }
     }
 
     let mut settings_files = Vec::new();
-    collect_files_with_extension(&packs_dir, "wdls", &mut settings_files);
+    collect_files_with_extension(&packs_dir, "rexraps", &mut settings_files);
     settings_files.sort();
 
     for settings_path in settings_files {
@@ -136,7 +136,7 @@ fn checked_in_packs_all_compile_and_settings_parse() {
 
 #[test]
 fn sdlc_manifest_settings_entry_loads_bundle() {
-    let manifest = repo_root().join("packs").join("sdlc").join("sdlc.wdlm");
+    let manifest = repo_root().join("packs").join("sdlc").join("sdlc.rexrapm");
 
     let settings = load_pack_settings(&manifest)
         .expect("sdlc settings should load")
@@ -150,7 +150,7 @@ fn sdlc_manifest_settings_entry_loads_bundle() {
 
 #[test]
 fn sdlc_manifest_loads_core_pipeline() {
-    let manifest = repo_root().join("packs").join("sdlc").join("sdlc.wdlm");
+    let manifest = repo_root().join("packs").join("sdlc").join("sdlc.rexrapm");
 
     let pipelines = load_pack_pipelines(&manifest)
         .expect("sdlc pipelines should load")
@@ -170,29 +170,29 @@ fn sdlc_manifest_loads_core_pipeline() {
 }
 
 #[test]
-fn directory_pack_loads_wdls_settings() {
+fn directory_pack_loads_rexraps_settings() {
     use std::fs;
 
-    let dir = std::env::temp_dir().join(format!("runinator_wdls_pack_{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("runinator_rexraps_pack_{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).expect("temp pack dir");
     fs::write(
-        dir.join("flow.wdl"),
+        dir.join("flow.rexrap"),
         "workflow \"Temp\" v1 {\n  node go <- console.run(command: \"hi\")\n}\n",
     )
-    .expect("write wdl");
+    .expect("write rexrap");
     fs::write(
-        dir.join("settings.wdls"),
+        dir.join("settings.rexraps"),
         "secret app.token = \"abc\"\nconfig app.url = \"https://example.test\"\n",
     )
-    .expect("write wdls");
+    .expect("write rexraps");
 
     let bundle = load_workflow_bundle(&dir).expect("directory pack should load");
     assert_eq!(bundle.workflows.len(), 1);
 
     let settings = load_pack_settings(&dir)
         .expect("settings should load")
-        .expect("settings.wdls should be picked up");
+        .expect("settings.rexraps should be picked up");
     assert_eq!(settings.secrets.len(), 2);
     assert_eq!(settings.secrets[0].scope, "app");
     assert_eq!(settings.secrets[0].name, "token");
@@ -211,7 +211,7 @@ fn directory_pack_types_pack_local_subflows() {
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).expect("temp pack dir");
     fs::write(
-        dir.join("child.wdl"),
+        dir.join("child.rexrap"),
         r#"workflow "Child" v1 returns { url: string } {
   params { id: string }
   console.run(command: params.id)
@@ -220,7 +220,7 @@ fn directory_pack_types_pack_local_subflows() {
     )
     .expect("write child");
     fs::write(
-        dir.join("parent.wdl"),
+        dir.join("parent.rexrap"),
         r#"workflow "Parent" v1 {
   node child <- subflow("Child", params: { id: "RUNI-1" })
   console.run(command: child.state.url)
@@ -236,17 +236,17 @@ fn directory_pack_types_pack_local_subflows() {
 }
 
 #[test]
-fn wdl_context_signatures_include_sibling_workflows() {
+fn rexrap_context_signatures_include_sibling_workflows() {
     use std::fs;
 
     let dir = std::env::temp_dir().join(format!(
-        "runinator_wdl_context_signatures_{}",
+        "runinator_rexrap_context_signatures_{}",
         std::process::id()
     ));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).expect("temp pack dir");
     fs::write(
-        dir.join("child.wdl"),
+        dir.join("child.rexrap"),
         r#"workflow "Child" v1 {
   params { id: string }
   console.run(command: params.id)
@@ -255,13 +255,13 @@ fn wdl_context_signatures_include_sibling_workflows() {
     )
     .expect("write child");
 
-    let parent_path = dir.join("parent.wdl");
+    let parent_path = dir.join("parent.rexrap");
     let parent = r#"workflow "Parent" v1 {
   node child <- subflow("Child", params: { id: "RUNI-1" })
 }
 "#;
     let signatures =
-        wdl_context_workflow_signatures(&parent_path, Some(parent)).expect("context signatures");
+        rexrap_context_workflow_signatures(&parent_path, Some(parent)).expect("context signatures");
 
     assert!(signatures.iter().any(|signature| signature.name == "Child"));
     assert!(
@@ -278,7 +278,7 @@ fn manifest_without_settings_entry_yields_none() {
     let manifest = repo_root()
         .join("packs")
         .join("hello-world")
-        .join("hello-world.wdlm");
+        .join("hello-world.rexrapm");
 
     let settings = load_pack_settings(&manifest).expect("loader should not error");
 

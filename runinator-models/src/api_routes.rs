@@ -17,14 +17,14 @@ pub const API_PACKS_IMPORT: &str = "/packs/import";
 pub const WORKFLOW_JSON_IMPORT_RISK_HEADER: &str = "x-runinator-json-workflow-risk";
 /// header value acknowledging that raw json workflow imports can break the system.
 pub const WORKFLOW_JSON_IMPORT_RISK_ACK: &str = "system-breakage-possible";
-pub const API_WDL_COMPLETE: &str = "/wdl/complete";
-pub const API_WDL_HOVER: &str = "/wdl/hover";
-pub const API_WDL_COMPILE: &str = "/wdl/compile";
-pub const API_WDL_ANALYZE: &str = "/wdl/analyze";
-pub const API_WDL_FORMAT: &str = "/wdl/format";
-pub const API_WDL_DECOMPILE: &str = "/wdl/decompile";
-pub const API_WDL_EVALUATE: &str = "/wdl/evaluate";
-pub const API_WDL_IMPORT: &str = "/wdl/import";
+pub const API_REXRAP_COMPLETE: &str = "/rexrap/complete";
+pub const API_REXRAP_HOVER: &str = "/rexrap/hover";
+pub const API_REXRAP_COMPILE: &str = "/rexrap/compile";
+pub const API_REXRAP_ANALYZE: &str = "/rexrap/analyze";
+pub const API_REXRAP_FORMAT: &str = "/rexrap/format";
+pub const API_REXRAP_DECOMPILE: &str = "/rexrap/decompile";
+pub const API_REXRAP_EVALUATE: &str = "/rexrap/evaluate";
+pub const API_REXRAP_IMPORT: &str = "/rexrap/import";
 pub const API_WORKFLOW_TRIGGERS_DUE: &str = "/workflow_triggers/due";
 pub const API_SCHEDULER_WORKFLOW_TRIGGER_FIRINGS_CLAIM: &str =
     "/scheduler/workflow_trigger_firings/claim";

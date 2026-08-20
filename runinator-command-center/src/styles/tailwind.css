@@ -591,42 +591,42 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .wdl-diagnostics {
+  .rexrap-diagnostics {
     @apply max-h-[180px] min-h-[104px] flex-[0_0_136px] overflow-auto border-t border-border-subtle
       bg-surface-subtle;
   }
 
-  .wdl-diagnostics table {
+  .rexrap-diagnostics table {
     @apply w-full border-collapse text-xs;
   }
 
-  .wdl-diagnostics th,
-  .wdl-diagnostics td {
+  .rexrap-diagnostics th,
+  .rexrap-diagnostics td {
     @apply border-b border-border-subtle px-2 py-1.5 text-left align-top;
   }
 
-  .wdl-diagnostics th {
+  .rexrap-diagnostics th {
     @apply sticky top-0 bg-surface-sunken font-bold text-fg-subtle;
   }
 
-  .wdl-diagnostics tbody tr {
+  .rexrap-diagnostics tbody tr {
     @apply cursor-pointer hover:bg-surface-hover;
   }
 
-  .wdl-diagnostics tbody tr.error {
+  .rexrap-diagnostics tbody tr.error {
     box-shadow: inset 3px 0 var(--danger-solid);
   }
 
-  .wdl-diagnostics tbody tr.warning {
+  .rexrap-diagnostics tbody tr.warning {
     box-shadow: inset 3px 0 var(--warn-solid);
   }
 
-  .wdl-diagnostics td:nth-child(2) {
+  .rexrap-diagnostics td:nth-child(2) {
     @apply min-w-[220px];
   }
 
-  .wdl-diagnostics td:nth-child(3),
-  .wdl-diagnostics td:nth-child(4) {
+  .rexrap-diagnostics td:nth-child(3),
+  .rexrap-diagnostics td:nth-child(4) {
     @apply w-14 text-fg-subtle tabular-nums;
   }
 
@@ -1968,7 +1968,7 @@
     flex-direction: column;
   }
   
-  .dev-wdl-editor {
+  .dev-rexrap-editor {
     min-height: 0;
   }
   
@@ -2885,12 +2885,12 @@
 
 /* codemirror hosts — keep outside @layer so height rules apply to mounted editors. */
 .editor-shell-container .cm-editor,
-.wdl-editor-container .cm-editor {
+.rexrap-editor-container .cm-editor {
   height: 100%;
   min-height: 0;
 }
 
 .editor-shell-container .cm-scroller,
-.wdl-editor-container .cm-scroller {
+.rexrap-editor-container .cm-scroller {
   overflow: auto;
 }

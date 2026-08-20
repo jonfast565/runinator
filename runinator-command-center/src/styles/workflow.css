@@ -150,7 +150,7 @@
 }
 
 .workflow-graph-pane,
-.workflow-wdl-pane {
+.workflow-rexrap-pane {
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
@@ -163,7 +163,7 @@
   border-top: 1px solid var(--border-subtle);
 }
 
-.workflow-wdl-pane {
+.workflow-rexrap-pane {
   gap: 8px;
   padding: 12px;
   background: var(--workflow-canvas-bg);
@@ -420,7 +420,7 @@
   max-height: 190px;
 }
 
-.workflow-wdl-editor {
+.workflow-rexrap-editor {
   --workflow-editor-diagnostics-height: 136px;
   display: flex;
   flex: 1 1 0;
@@ -428,15 +428,15 @@
   max-height: 100%;
 }
 
-.workflow-wdl-editor .wdl-editor-container {
+.workflow-rexrap-editor .rexrap-editor-container {
   flex: 1 1 0;
 }
 
-.workflow-wdl-editor .wdl-diagnostics {
+.workflow-rexrap-editor .rexrap-diagnostics {
   flex-basis: var(--workflow-editor-diagnostics-height);
 }
 
-.workflow-wdl-error {
+.workflow-rexrap-error {
   display: flex;
   align-items: flex-start;
   gap: 8px;
@@ -449,17 +449,17 @@
   font-size: 12px;
 }
 
-.workflow-wdl-error-icon {
+.workflow-rexrap-error-icon {
   flex: 0 0 auto;
   margin-top: 1px;
 }
 
-.workflow-wdl-error-body {
+.workflow-rexrap-error-body {
   display: grid;
   gap: 3px;
 }
 
-.workflow-wdl-error-hint {
+.workflow-rexrap-error-hint {
   opacity: 0.85;
 }
 

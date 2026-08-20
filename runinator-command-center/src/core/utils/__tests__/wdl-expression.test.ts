@@ -1,42 +1,42 @@
 import { describe, expect, it } from "vitest";
-import { expressionJsonToWdl, parseWdlExpression } from "../wdl-expression";
+import { expressionJsonToRexRap, parseRexRapExpression } from "../rexrap-expression";
 
-describe("WDL expression conversion", () => {
-  it("renders lowered references and operators as WDL surface expressions", () => {
-    expect(expressionJsonToWdl({ $ref: { params: ["ticket_id"] } })).toBe("params.ticket_id");
-    expect(expressionJsonToWdl({ $ref: { input: ["ticket_id"] } })).toBe(
+describe("REXRAP expression conversion", () => {
+  it("renders lowered references and operators as REXRAP surface expressions", () => {
+    expect(expressionJsonToRexRap({ $ref: { params: ["ticket_id"] } })).toBe("params.ticket_id");
+    expect(expressionJsonToRexRap({ $ref: { input: ["ticket_id"] } })).toBe(
       '{ input: ["ticket_id"] }',
     );
-    expect(expressionJsonToWdl({ $ref: { workflow: ["attempt"] } })).toBe("run.attempt");
-    expect(expressionJsonToWdl({ $ref: { node: "create_ticket", output: ["id"] } })).toBe(
+    expect(expressionJsonToRexRap({ $ref: { workflow: ["attempt"] } })).toBe("run.attempt");
+    expect(expressionJsonToRexRap({ $ref: { node: "create_ticket", output: ["id"] } })).toBe(
       "create_ticket.id",
     );
-    expect(expressionJsonToWdl({ $concat: ["ticket ", { $ref: { params: ["ticket_id"] } }] })).toBe(
+    expect(expressionJsonToRexRap({ $concat: ["ticket ", { $ref: { params: ["ticket_id"] } }] })).toBe(
       '"ticket " ++ params.ticket_id',
     );
-    expect(expressionJsonToWdl({ $coalesce: [{ $ref: { prev: ["name"] } }, "unknown"] })).toBe(
+    expect(expressionJsonToRexRap({ $coalesce: [{ $ref: { prev: ["name"] } }, "unknown"] })).toBe(
       'prev.name ?? "unknown"',
     );
-    expect(expressionJsonToWdl({ $to_string: { $ref: { prev: ["count"] } } })).toBe(
+    expect(expressionJsonToRexRap({ $to_string: { $ref: { prev: ["count"] } } })).toBe(
       "string(prev.count)",
     );
   });
 
-  it("parses WDL surface expressions back into lowered JSON values", () => {
-    expect(parseWdlExpression("params.ticket_id")).toEqual({ $ref: { params: ["ticket_id"] } });
-    expect(parseWdlExpression('"ticket " ++ params.ticket_id')).toEqual({
+  it("parses REXRAP surface expressions back into lowered JSON values", () => {
+    expect(parseRexRapExpression("params.ticket_id")).toEqual({ $ref: { params: ["ticket_id"] } });
+    expect(parseRexRapExpression('"ticket " ++ params.ticket_id')).toEqual({
       $concat: ["ticket ", { $ref: { params: ["ticket_id"] } }],
     });
-    expect(parseWdlExpression("input.ticket_id")).toEqual({
+    expect(parseRexRapExpression("input.ticket_id")).toEqual({
       $ref: { node: "input", output: ["ticket_id"] },
     });
-    expect(parseWdlExpression('prev.name ?? "unknown"')).toEqual({
+    expect(parseRexRapExpression('prev.name ?? "unknown"')).toEqual({
       $coalesce: [{ $ref: { prev: ["name"] } }, "unknown"],
     });
-    expect(parseWdlExpression("string(prev.count)")).toEqual({
+    expect(parseRexRapExpression("string(prev.count)")).toEqual({
       $to_string: { $ref: { prev: ["count"] } },
     });
-    expect(parseWdlExpression("{ message: string(prev.count), tags: [params.tag] }")).toEqual({
+    expect(parseRexRapExpression("{ message: string(prev.count), tags: [params.tag] }")).toEqual({
       message: { $to_string: { $ref: { prev: ["count"] } } },
       tags: [{ $ref: { params: ["tag"] } }],
     });

@@ -54,7 +54,7 @@ pub fn is_function_source(path: &Path) -> bool {
 
 /// find the function packages a pack carries.
 ///
-/// a pack directory may hold function packages beside its `.wdl` files — each is a subdirectory with
+/// a pack directory may hold function packages beside its `.rexrap` files — each is a subdirectory with
 /// its own manifest. searched one level deep only: a package's *own* subdirectories are its code,
 /// and recursing into them would treat a vendored dependency that happened to carry a manifest as a
 /// second package to publish.

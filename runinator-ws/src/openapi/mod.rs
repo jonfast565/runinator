@@ -33,7 +33,7 @@ const DOC_SETS: &[&[EndpointDoc]] = &[
     DOCS,
     websocket::DOCS,
     handlers::workflows::DOCS,
-    handlers::wdl::DOCS,
+    handlers::rexrap::DOCS,
     handlers::packs::DOCS,
     handlers::triggers::DOCS,
     handlers::runs::DOCS,
@@ -383,7 +383,7 @@ fn endpoint_docs() -> impl Iterator<Item = &'static EndpointDoc> {
     info(
         title = "Runinator Web Service API",
         description = "HTTP API for the Runinator orchestrator. The public surface manages \
-                       workflows, WDL authoring, workflow runs, triggers, providers, credentials, \
+                       workflows, REXRAP authoring, workflow runs, triggers, providers, credentials, \
                        automation records, auth, replicas, and runtime control-plane operations. \
                        The OpenAPI document is enriched after utoipa generation so every route has \
                        route text and request examples even when a handler does not yet expose a \
@@ -406,12 +406,12 @@ fn endpoint_docs() -> impl Iterator<Item = &'static EndpointDoc> {
         (name = "Notifications", description = "User notification records."),
         (name = "Providers", description = "Registered task providers."),
         (name = "Functions", description = "Packaged functions: publishing, promotion, and artifacts."),
-        (name = "Console", description = "The WDL console: notebook sessions and their cells."),
+        (name = "Console", description = "The REXRAP console: notebook sessions and their cells."),
         (name = "Replicas", description = "Service replica registry."),
         (name = "Runs", description = "Low-level task run records."),
         (name = "Supervisor", description = "Local supervisor status."),
         (name = "Webhooks", description = "External webhook ingress."),
-        (name = "WDL", description = "WDL language tooling."),
+        (name = "REXRAP", description = "REXRAP language tooling."),
         (name = "WebSockets", description = "Streaming API endpoints."),
     ),
     paths(

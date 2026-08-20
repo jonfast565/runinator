@@ -109,10 +109,10 @@ fn a_pane_that_dropped_lines_says_how_many() {
 }
 
 #[test]
-fn a_wdl_line_and_a_command_line_carry_different_sigils() {
+fn a_rexrap_line_and_a_command_line_carry_different_sigils() {
     let empty = Transcript::default();
-    let wdl = rendered(&view("1 + 2", &empty.view(4), &[]));
-    assert!(wdl.iter().any(|line| line.contains("› 1 + 2")));
+    let rexrap = rendered(&view("1 + 2", &empty.view(4), &[]));
+    assert!(rexrap.iter().any(|line| line.contains("› 1 + 2")));
 
     let command = rendered(&view(":workflows list", &empty.view(4), &[]));
     assert!(

@@ -36,18 +36,18 @@ async function readZip(blob: Blob): Promise<Map<string, string>> {
 describe("createZip", () => {
   it("round-trips entry names and contents", async () => {
     const blob = createZip([
-      { name: "pack.wdlm", content: '{"version":1}' },
-      { name: "hello.wdl", content: "workflow Hello {}\n" },
+      { name: "pack.rexrapm", content: '{"version":1}' },
+      { name: "hello.rexrap", content: "workflow Hello {}\n" },
     ]);
     const entries = await readZip(blob);
-    expect(entries.get("pack.wdlm")).toBe('{"version":1}');
-    expect(entries.get("hello.wdl")).toBe("workflow Hello {}\n");
+    expect(entries.get("pack.rexrapm")).toBe('{"version":1}');
+    expect(entries.get("hello.rexrap")).toBe("workflow Hello {}\n");
   });
 
   it("preserves unicode content", async () => {
-    const blob = createZip([{ name: "u.wdl", content: "héllo → wörld" }]);
+    const blob = createZip([{ name: "u.rexrap", content: "héllo → wörld" }]);
     const entries = await readZip(blob);
-    expect(entries.get("u.wdl")).toBe("héllo → wörld");
+    expect(entries.get("u.rexrap")).toBe("héllo → wörld");
   });
 });
 

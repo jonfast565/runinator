@@ -433,7 +433,7 @@ fn typed_validation_exposes_the_whole_loop_output() {
         .expect("every LoopOutput field must be referenceable");
 }
 
-// `runinator-wdl-sema`'s `check_iterable` widens an unknown collection to unknown elements, but the
+// `runinator-rexrap-sema`'s `check_iterable` widens an unknown collection to unknown elements, but the
 // graph checker used a bare `matches!(Array(_))` and rejected `any`. a workflow whose items come
 // from an untyped upstream output therefore compiled clean and failed at import.
 #[test]

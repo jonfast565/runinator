@@ -1,7 +1,7 @@
 //! covers the generated adapter workflow: that it compiles at all, that it is marked generated, and
 //! that its shape is the one the invocation path depends on.
 //!
-//! generating it by compiling WDL rather than assembling graph json is the reason these are cheap —
+//! generating it by compiling REXRAP rather than assembling graph json is the reason these are cheap —
 //! if the source is wrong the compiler says so here, rather than a malformed graph reaching the
 //! reducer at invocation time.
 
@@ -123,7 +123,7 @@ fn an_export_with_no_inputs_still_compiles() {
     let mut export = export();
     export.input = Vec::new();
 
-    // an empty `params { }` block is not valid wdl, so the generator has to omit it entirely —
+    // an empty `params { }` block is not valid rexrap, so the generator has to omit it entirely —
     // easy to get wrong, and it would take down publishing for any zero-argument export.
     let definition = build_adapter_workflow(&entry, &export).expect("adapter compiles");
     assert!(

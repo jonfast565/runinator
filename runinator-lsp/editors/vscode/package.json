@@ -1,7 +1,7 @@
 {
-  "name": "runinator-wdl",
-  "displayName": "Runinator WDL",
-  "description": "Diagnostics, completion, hover, formatting, and apply-on-save for Runinator WDL workflows.",
+  "name": "runinator-rexrap",
+  "displayName": "Runinator REXRAP",
+  "description": "Diagnostics, completion, hover, formatting, and apply-on-save for Runinator REXRAP workflows.",
   "version": "0.2.367",
   "publisher": "runinator",
   "engines": {
@@ -11,40 +11,40 @@
     "Programming Languages"
   ],
   "activationEvents": [
-    "onLanguage:wdl"
+    "onLanguage:rexrap"
   ],
   "main": "./out/extension.js",
   "contributes": {
     "languages": [
       {
-        "id": "wdl",
+        "id": "rexrap",
         "aliases": [
-          "Runinator WDL",
-          "wdl"
+          "Runinator REXRAP",
+          "rexrap"
         ],
         "extensions": [
-          ".wdl",
-          ".wdlp",
-          ".wdls"
+          ".rexrap",
+          ".rexrapp",
+          ".rexraps"
         ],
         "configuration": "./language-configuration.json"
       }
     ],
     "grammars": [
       {
-        "language": "wdl",
-        "scopeName": "source.wdl",
-        "path": "./syntaxes/wdl.tmLanguage.json"
+        "language": "rexrap",
+        "scopeName": "source.rexrap",
+        "path": "./syntaxes/rexrap.tmLanguage.json"
       }
     ],
     "snippets": [
       {
-        "language": "wdl",
-        "path": "./snippets/wdl.json"
+        "language": "rexrap",
+        "path": "./snippets/rexrap.json"
       }
     ],
     "configuration": {
-      "title": "Runinator WDL",
+      "title": "Runinator REXRAP",
       "properties": {
         "runinator.serverPath": {
           "type": "string",

@@ -270,7 +270,7 @@ async fn reentered_try_catch_output_stays_in_its_parallel_branch_and_visit() {
 /// body once. two items each therefore produced two leaf runs instead of four.
 ///
 /// nothing nested a `for` inside a `for` in the test suite, and the one place the codebase does it
-/// (`packs/sdlc/wdl/sdlc-deploy.wdl`) puts the inner loop inside a `parallel`, which forks a fresh
+/// (`packs/sdlc/rexrap/sdlc-deploy.rexrap`) puts the inner loop inside a `parallel`, which forks a fresh
 /// cursor per outer lap and hid the bug.
 #[tokio::test]
 async fn a_nested_loop_runs_its_body_on_every_outer_lap() {
@@ -498,7 +498,7 @@ async fn a_loop_whose_items_are_not_an_array_blocks() {
 /// loop at index 0 and the loop never terminated. `speculative_from` had always cloned frames for
 /// exactly this reason — a fork explores from where its parent stands.
 ///
-/// `packs/sdlc/wdl/sdlc-deploy.wdl` nests its inner `for` inside a `parallel` branch, so this is
+/// `packs/sdlc/rexrap/sdlc-deploy.rexrap` nests its inner `for` inside a `parallel` branch, so this is
 /// the shape real packs use.
 #[tokio::test]
 async fn a_parallel_inside_a_loop_body_keeps_the_loop_position() {

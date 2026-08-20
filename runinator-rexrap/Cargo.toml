@@ -1,0 +1,17 @@
+[package]
+name = "runinator-rexrap"
+version.workspace = true
+edition = "2024"
+
+[dependencies]
+runinator-models = { path = "../runinator-models" }
+runinator-workflows = { path = "../runinator-workflows" }
+runinator-rexrap-syntax = { path = "../runinator-rexrap-syntax" }
+runinator-rexrap-sema = { path = "../runinator-rexrap-sema" }
+runinator-rexrap-codegen = { path = "../runinator-rexrap-codegen" }
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+uuid = { version = "1", features = ["v4"] }
+serde_json = "1"
+runinator-provider-catalog = { path = "../runinator-provider-catalog" }

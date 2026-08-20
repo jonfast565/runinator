@@ -1,6 +1,6 @@
 // user-defined functions and the generated intrinsic catalog.
 //
-// the catalog is generated from the rust intrinsic metadata (`compute.rs`) so the wdl front end's
+// the catalog is generated from the rust intrinsic metadata (`compute.rs`) so the rexrap front end's
 // view of the callable signatures cannot drift from what the runtime actually dispatches. user
 // functions are carried in the workflow definition (`metadata.functions`) and evaluated by the
 // expression engine: their bodies are hermetic single expressions over their parameters, applied by
@@ -26,7 +26,7 @@ use runinator_models::workflow_ast::{ComputeProgram, WorkflowExpression};
 /// against runaway recursion that slipped past the front end's annotation checks.
 pub(crate) const MAX_CALL_DEPTH: u32 = 1024;
 
-/// every intrinsic's typed signature, generated from the rust metadata. the wdl front end consumes
+/// every intrinsic's typed signature, generated from the rust metadata. the rexrap front end consumes
 /// this as its callable catalog (the "prelude"), so names/arity/types stay in lockstep with the
 /// runtime dispatch.
 pub fn intrinsic_catalog() -> Vec<ActionMetadata> {

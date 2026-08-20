@@ -2,11 +2,11 @@ import { expect, it, vi } from "vitest";
 import { nextTick, watch } from "vue";
 import { useWorkflowsStore } from "../workflows";
 import { useProvidersStore } from "../providers";
-import { decompileToWdl, fetchWorkflows, saveWorkflowWdl } from "../../../../core/api/commandCenterApi";
+import { decompileToRexRap, fetchWorkflows, saveWorkflowRexRap } from "../../../../core/api/commandCenterApi";
 import { WORKFLOW_ID, TRIGGER_ID, workflowDefinition, graphCentroid, workflowTrigger, nestedWorkflowInputProvider, untypedActionProvider } from "./workflows-fixtures";
 
 export function registerWorkflowAuthoringTests() {
-  it("saves workflow edits as wdl and reloads workflow triggers", async () => {
+  it("saves workflow edits as rexrap and reloads workflow triggers", async () => {
     const workflows = useWorkflowsStore();
     const draft = workflowDefinition(WORKFLOW_ID, "bundle draft");
     draft.definition.ui = {
@@ -16,8 +16,8 @@ export function registerWorkflowAuthoringTests() {
     Object.assign(workflows.workflowDraft, draft);
     workflows.workflowJson = JSON.stringify(draft.definition);
     workflows.workflowTriggers = [workflowTrigger(TRIGGER_ID, WORKFLOW_ID, "0 * * * *")];
-    vi.mocked(decompileToWdl).mockResolvedValue("workflow bundle_draft { start -> end }");
-    vi.mocked(saveWorkflowWdl).mockResolvedValue({
+    vi.mocked(decompileToRexRap).mockResolvedValue("workflow bundle_draft { start -> end }");
+    vi.mocked(saveWorkflowRexRap).mockResolvedValue({
       workflows: [workflowDefinition(WORKFLOW_ID, "bundle saved")],
       triggers: [workflowTrigger(TRIGGER_ID, WORKFLOW_ID, "30 * * * *")],
     });
@@ -25,10 +25,10 @@ export function registerWorkflowAuthoringTests() {
 
     await workflows.saveSelectedWorkflow();
 
-    expect(decompileToWdl).toHaveBeenCalledWith(
+    expect(decompileToRexRap).toHaveBeenCalledWith(
       expect.objectContaining({ id: WORKFLOW_ID, name: "bundle draft" }),
     );
-    expect(saveWorkflowWdl).toHaveBeenCalledWith({
+    expect(saveWorkflowRexRap).toHaveBeenCalledWith({
       source: "workflow bundle_draft { start -> end }",
       enabled: true,
       workflow_id: WORKFLOW_ID,
@@ -106,7 +106,7 @@ export function registerWorkflowAuthoringTests() {
     });
   });
 
-  it("applies untyped action parameter objects and WDL expressions into action configuration", async () => {
+  it("applies untyped action parameter objects and REXRAP expressions into action configuration", async () => {
     const workflows = useWorkflowsStore();
     const providers = useProvidersStore();
     providers.providers = [untypedActionProvider()];
@@ -291,7 +291,7 @@ export function registerWorkflowAuthoringTests() {
     });
   });
 
-  it("keeps WDL-lowered output payload expressions valid", () => {
+  it("keeps REXRAP-lowered output payload expressions valid", () => {
     const workflows = useWorkflowsStore();
     Object.assign(workflows.workflowDraft, workflowDefinition(WORKFLOW_ID, "output expression"));
     (workflows.workflowDraft.definition as any).nodes.splice(1, 0, {
@@ -313,7 +313,7 @@ export function registerWorkflowAuthoringTests() {
     ).toEqual({ $ref: { params: ["message"] } });
   });
 
-  it("applies config node WDL fields without validation errors", () => {
+  it("applies config node REXRAP fields without validation errors", () => {
     const workflows = useWorkflowsStore();
     Object.assign(workflows.workflowDraft, workflowDefinition(WORKFLOW_ID, "config editor"));
     (workflows.workflowDraft.definition as any).nodes.splice(1, 0, {
@@ -350,7 +350,7 @@ export function registerWorkflowAuthoringTests() {
   });
 
   // production symptom: the form only ever showed `max_attempts`, and applying a step rebuilt the
-  // whole `retry` object from it — so opening any wdl-authored step and pressing Apply silently
+  // whole `retry` object from it — so opening any rexrap-authored step and pressing Apply silently
   // reverted its backoff, jitter, and retry class to the defaults.
   it("keeps the rest of the retry policy when a step is applied", () => {
     const workflows = useWorkflowsStore();

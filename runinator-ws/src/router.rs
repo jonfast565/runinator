@@ -22,7 +22,7 @@ use crate::handlers::{
     action_dispatches, agents, artifacts, auth, authz, automation, billing, catalog,
     catalog_metadata, console, credentials, debug, function_invocations, functions, health,
     node_runs, notifications, observability, orgs, packs, pipelines, providers, provisioning,
-    replicas, runs, schedules, supervisor, triggers, wdl, webhook, workflows,
+    replicas, runs, schedules, supervisor, triggers, rexrap, webhook, workflows,
 };
 use crate::models::{ApiError, ApiResponse};
 use crate::overload::{OverloadConfig, apply_overload_protection};
@@ -53,7 +53,7 @@ pub fn build_router<T: DatabaseImpl>(
         .merge(openapi::routes())
         .merge(websocket::routes(pool.clone()))
         .merge(workflows::routes(pool.clone()))
-        .merge(wdl::routes(pool.clone()))
+        .merge(rexrap::routes(pool.clone()))
         .merge(packs::routes(pool.clone()))
         .merge(triggers::routes(pool.clone()))
         .merge(runs::routes(pool.clone()))

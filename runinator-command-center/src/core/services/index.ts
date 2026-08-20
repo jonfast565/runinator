@@ -16,7 +16,7 @@ import { createAdminSettingsService } from "./admin-settings";
 import { createDisplayPreferencesService } from "./display-preferences";
 import { createPermissionsService } from "./permissions";
 import { createWorkflowServices } from "./workflows";
-import { createWdlLanguageService } from "./wdl-language";
+import { createRexRapLanguageService } from "./rexrap-language";
 import { createExpressionService } from "./expression";
 import { createAuditLogService } from "./audit-log";
 import { createDeadLettersService } from "./dead-letters";
@@ -62,7 +62,7 @@ export const workflowServices = createWorkflowServices({
 export const workflowCatalogService = workflowServices.catalog;
 export const workflowEditorService = workflowServices.editor;
 export const workflowRunService = workflowServices.runs;
-export const wdlLanguageService = createWdlLanguageService(appService);
+export const rexrapLanguageService = createRexRapLanguageService(appService);
 export const expressionService = createExpressionService(appService);
 export const auditLogService = createAuditLogService(appService);
 export const deadLettersService = createDeadLettersService(appService);
@@ -100,7 +100,7 @@ export type { NodePoolsService, NodeBackendInfo, ProvisionedGroup, ScaleNodesReq
 export type { SupervisorService, SupervisorStatus } from "./supervisor";
 export type { AgentEnrollmentService } from "./agent-enrollment";
 export type { AgentDirectivesService } from "./agent-directives";
-export type { WdlLanguageService } from "./wdl-language";
+export type { RexRapLanguageService } from "./rexrap-language";
 export type { ExpressionService } from "./expression";
 export type { AuditLogService } from "./audit-log";
 export type { DeadLettersService } from "./dead-letters";

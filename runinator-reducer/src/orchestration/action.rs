@@ -392,8 +392,8 @@ async fn build_node_parameters<T: ReducerStore>(
                 .workflow
                 .definition
                 .metadata
-                .get("wdl")
-                .and_then(|wdl| wdl.get("type_hints"))
+                .get("rexrap")
+                .and_then(|rexrap| rexrap.get("type_hints"))
                 .and_then(|types| types.get(&ctx.node.id))
                 .cloned()
             {

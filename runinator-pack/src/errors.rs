@@ -14,12 +14,12 @@ pub enum PackError {
     #[error("PACK002 - json error: {0}")]
     Json(#[from] serde_json::Error),
 
-    /// formatting, compiling, or parsing a wdl/wdls source failed (carries the rendered diagnostic).
+    /// formatting, compiling, or parsing a rexrap/rexraps source failed (carries the rendered diagnostic).
     #[error("PACK003 - compile error: {0}")]
     Compile(String),
 
     /// the pack source was structurally invalid (unsupported extension, empty directory, or a
-    /// malformed `.wdlm` manifest).
+    /// malformed `.rexrapm` manifest).
     #[error("PACK004 - pack source error: {0}")]
     Source(String),
 }

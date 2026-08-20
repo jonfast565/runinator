@@ -1,10 +1,10 @@
-//! hover shows WDL symbol docs/type information. when the document does not parse, it falls back to
+//! hover shows REXRAP symbol docs/type information. when the document does not parse, it falls back to
 //! the diagnostic under the cursor.
 
 use std::path::Path;
 
-use runinator_wdl::errors::DICTIONARY;
-use runinator_wdl::{Diagnostic as WdlDiagnostic, WdlError, analyze_source_with_options};
+use runinator_rexrap::errors::DICTIONARY;
+use runinator_rexrap::{Diagnostic as RexRapDiagnostic, RexRapError, analyze_source_with_options};
 use tower_lsp::lsp_types::{Hover, HoverContents, MarkupContent, MarkupKind, Position, Range};
 
 use crate::position::{position_to_byte, span_to_range};
@@ -12,7 +12,7 @@ use crate::position::{position_to_byte, span_to_range};
 pub fn hover(text: &str, path: Option<&Path>, position: Position) -> Option<Hover> {
     let offset = position_to_byte(text, position);
     let providers = runinator_provider_catalog::metadata();
-    if let Some(hover) = runinator_wdl_ide::hover_source(runinator_wdl_ide::WdlHoverRequest {
+    if let Some(hover) = runinator_rexrap_ide::hover_source(runinator_rexrap_ide::RexRapHoverRequest {
         source: text.to_string(),
         cursor_byte: offset,
         providers: providers.clone(),
@@ -20,7 +20,7 @@ pub fn hover(text: &str, path: Option<&Path>, position: Position) -> Option<Hove
     }) {
         let range = span_to_range(
             text,
-            runinator_wdl::Span {
+            runinator_rexrap::Span {
                 start: hover.range_start_byte,
                 end: hover.range_end_byte,
             },
@@ -29,18 +29,18 @@ pub fn hover(text: &str, path: Option<&Path>, position: Position) -> Option<Hove
     }
     let workflow_signatures = path
         .and_then(|path| {
-            runinator_pack::source::wdl_context_workflow_signatures(path, Some(text)).ok()
+            runinator_pack::source::rexrap_context_workflow_signatures(path, Some(text)).ok()
         })
         .unwrap_or_default();
     let (code, message) = match analyze_source_with_options(
         text,
         &providers,
-        runinator_wdl::TypePolicy::Strict,
+        runinator_rexrap::TypePolicy::Strict,
         &workflow_signatures,
     ) {
         Ok(diagnostics) => {
             let diagnostic = tightest(&diagnostics, offset)?;
-            ("WDL003", diagnostic.message.clone())
+            ("REXRAP003", diagnostic.message.clone())
         }
         Err(error) => error_at(&error, offset)?,
     };
@@ -48,7 +48,7 @@ pub fn hover(text: &str, path: Option<&Path>, position: Position) -> Option<Hove
 }
 
 // the smallest-width diagnostic whose span contains `offset`.
-fn tightest(diagnostics: &[WdlDiagnostic], offset: usize) -> Option<&WdlDiagnostic> {
+fn tightest(diagnostics: &[RexRapDiagnostic], offset: usize) -> Option<&RexRapDiagnostic> {
     diagnostics
         .iter()
         .filter(|d| d.span.start <= offset && offset < d.span.end)
@@ -56,13 +56,13 @@ fn tightest(diagnostics: &[WdlDiagnostic], offset: usize) -> Option<&WdlDiagnost
 }
 
 // the dictionary code + message for a span-carrying error covering `offset`.
-fn error_at(error: &WdlError, offset: usize) -> Option<(&'static str, String)> {
+fn error_at(error: &RexRapError, offset: usize) -> Option<(&'static str, String)> {
     match error {
-        WdlError::Syntax { span, message } if span.start <= offset && offset < span.end => {
-            Some(("WDL002", message.clone()))
+        RexRapError::Syntax { span, message } if span.start <= offset && offset < span.end => {
+            Some(("REXRAP002", message.clone()))
         }
-        WdlError::Semantic { span, message } if span.start <= offset && offset < span.end => {
-            Some(("WDL003", message.clone()))
+        RexRapError::Semantic { span, message } if span.start <= offset && offset < span.end => {
+            Some(("REXRAP003", message.clone()))
         }
         _ => None,
     }
@@ -77,10 +77,10 @@ fn markdown_diagnostic(code: &str, message: &str) -> Hover {
     markdown_hover(format!("**{code} - {summary}**\n\n{message}"), None)
 }
 
-fn hover_markdown(hover: &runinator_wdl_ide::WdlHoverResponse) -> String {
+fn hover_markdown(hover: &runinator_rexrap_ide::RexRapHoverResponse) -> String {
     let mut out = format!("**{}**\n\n_{}_", hover.title, hover.kind);
     if let Some(detail) = &hover.detail {
-        out.push_str("\n\n```wdl\n");
+        out.push_str("\n\n```rexrap\n");
         out.push_str(detail);
         out.push_str("\n```");
     }

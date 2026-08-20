@@ -89,12 +89,12 @@ export const settingsCommands: ConsoleCommand[] = [
   },
   {
     path: ["settings", "import"],
-    usage: "settings import <file.wdls>",
-    summary: "import a .wdls secrets file (runinatorctl only)",
+    usage: "settings import <file.rexraps>",
+    summary: "import a .rexraps secrets file (runinatorctl only)",
     run: () => {
       throw new UnavailableCommandError(
         "settings import",
-        "it reads a .wdls file from disk; run it with runinatorctl",
+        "it reads a .rexraps file from disk; run it with runinatorctl",
       );
     },
   },

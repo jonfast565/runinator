@@ -1,9 +1,9 @@
-# Packaged Functions and WDL Console Implementation Plan
+# Packaged Functions and REXRAP Console Implementation Plan
 
 ## Objective
 
-Add immutable packaged code that can be invoked through an API, called naturally from WDL, and
-executed interactively through a durable WDL Console in the command center.
+Add immutable packaged code that can be invoked through an API, called naturally from REXRAP, and
+executed interactively through a durable REXRAP Console in the command center.
 
 The implementation should use one execution architecture:
 
@@ -19,7 +19,7 @@ This avoids creating a second function-specific orchestration engine.
 
 1. A packaged function remains an `action` node; do not add a function node kind.
 2. One package may export multiple typed functions.
-3. WDL calls use a qualified surface such as `functions.image_tools.resize(...)`.
+3. REXRAP calls use a qualified surface such as `functions.image_tools.resize(...)`.
 4. Workflow revisions pin exact function versions during compilation or import.
 5. Direct API invocation runs a hidden generated adapter workflow.
 6. Effectful console submissions run hidden, retention-managed scratch workflows.
@@ -191,7 +191,7 @@ Initial sandbox requirements:
 A packaged Python function can be executed by a worker, canceled, timed out, and have its result and
 logs persisted through the existing result-event path.
 
-## Phase 4: Catalog and WDL Integration
+## Phase 4: Catalog and REXRAP Integration
 
 Synthesize provider metadata from published exports:
 
@@ -217,7 +217,7 @@ struct FunctionBinding {
 
 For example:
 
-```wdl
+```rexrap
 node image <- functions.image_tools.resize(
     source: input.source,
     width: 320
@@ -250,7 +250,7 @@ conceptually lowers to:
 The backend must validate the binding during import so hand-authored JSON cannot reference another
 tenant's function.
 
-Place cross-stage format, type, compile, lower, and decompile tests in `runinator-wdl`. Cover:
+Place cross-stage format, type, compile, lower, and decompile tests in `runinator-rexrap`. Cover:
 
 - completion and hover;
 - parameter checking;
@@ -307,7 +307,7 @@ Do not create a separate invocation engine or duplicate node-run records.
 
 ### Acceptance Gate
 
-Invoking through HTTP and invoking from WDL produce equivalent outputs, logs, artifacts, timeout
+Invoking through HTTP and invoking from REXRAP produce equivalent outputs, logs, artifacts, timeout
 behavior, cancellation behavior, and tracing.
 
 ## Phase 6: Function Management UI
@@ -324,7 +324,7 @@ Add a Functions area to the command center with:
 - invocation history;
 - test invocation form;
 - logs and artifacts; and
-- an **Open in WDL Console** action.
+- an **Open in REXRAP Console** action.
 
 Keep services under `core/services`, wire models under `core/domain/models`, and Vue presentation
 under `ui/`.
@@ -375,7 +375,7 @@ Route submissions as follows:
 | Action or function fragment | Generate a hidden scratch workflow. |
 | Single `subflow(...)` | Start the referenced workflow directly. |
 | Pipeline command | Start the existing pipeline run directly. |
-| Full WDL document | Persist a hidden revision and run its selected entrypoint. |
+| Full REXRAP document | Persist a hidden revision and run its selected entrypoint. |
 
 Add APIs:
 
@@ -407,15 +407,15 @@ Reject schedules and durable triggers in scratch documents.
 A user can submit a function call, disconnect the browser, reconnect, and recover the live run with
 its source, status, logs, and results intact.
 
-## Phase 8: WDL Console UI
+## Phase 8: REXRAP Console UI
 
 Implement a notebook-style console with:
 
-- CodeMirror WDL editing;
+- CodeMirror REXRAP editing;
 - completion, hover, formatting, and diagnostics;
 - input JSON editor;
 - separate **Analyze** and **Run** actions;
-- result, logs, artifacts, timeline, and generated-WDL views;
+- result, logs, artifacts, timeline, and generated-REXRAP views;
 - running-cell cancellation;
 - replay;
 - open-in-debugger;
@@ -425,7 +425,7 @@ Implement a notebook-style console with:
 
 Start without mutable cross-cell variables. Add explicit named result bindings afterward:
 
-```wdl
+```rexrap
 session.thumbnail.uri
 ```
 
@@ -504,13 +504,13 @@ Before broad deployment, add:
 4. Runtime trait and Docker executor.
 5. Worker artifact cache and packaged execution.
 6. Durable synthetic catalog metadata.
-7. WDL lowering, typing, IDE support, and round-trip coverage.
+7. REXRAP lowering, typing, IDE support, and round-trip coverage.
 8. Generated adapter workflows.
 9. Direct invocation API.
 10. Function management UI.
 11. Console session and cell persistence.
 12. Console classifier and scratch execution.
-13. WDL Console UI.
+13. REXRAP Console UI.
 14. Pack integration.
 15. Quotas, metering, retention, and security hardening.
 
@@ -521,7 +521,7 @@ The first complete release should prove this scenario:
 1. Publish `image-tools` with `resize` and `inspect` exports.
 2. Assign version 3 to the `production` alias.
 3. Invoke `resize` through HTTP.
-4. Invoke it from a saved WDL workflow.
+4. Invoke it from a saved REXRAP workflow.
 5. Invoke it from a console action fragment.
 6. Run a free-form console workflow containing both exports.
 7. Launch an existing workflow and pipeline from the console.
@@ -531,5 +531,5 @@ The first complete release should prove this scenario:
 11. Confirm cancellation, retry, logs, artifacts, authorization, and tracing behave identically
     across every entry path.
 
-At that point, packaged functions and the WDL Console are native Runinator concepts rather than
+At that point, packaged functions and the REXRAP Console are native Runinator concepts rather than
 adjacent execution features.

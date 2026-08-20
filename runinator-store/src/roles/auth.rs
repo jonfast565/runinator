@@ -173,6 +173,15 @@ pub trait AuthStore: Send + Sync + 'static {
         refresh_token_hash: String,
     ) -> impl Future<Output = Result<Option<AuthSession>, SendableError>> + Send;
 
+    /// Atomically consume one refresh from a live session, revoking it so a concurrent refresh
+    /// cannot reuse the same refresh token. Returns false when the session is already revoked or
+    /// has reached the configured refresh budget.
+    fn consume_session_refresh(
+        &self,
+        id: Uuid,
+        max_refreshes: i64,
+    ) -> impl Future<Output = Result<bool, SendableError>> + Send;
+
     fn fetch_session(
         &self,
         id: Uuid,

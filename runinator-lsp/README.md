@@ -1,14 +1,14 @@
 # runinator-lsp
 
 An editor-agnostic [Language Server](https://microsoft.github.io/language-server-protocol/)
-for the Runinator WDL workflow language. It reuses the pure analyzer, completer, and formatter in
-`runinator-wdl` plus the API client in `runinator-api`, so any LSP-capable editor gets:
+for the Runinator REXRAP workflow language. It reuses the pure analyzer, completer, and formatter in
+`runinator-rexrap` plus the API client in `runinator-api`, so any LSP-capable editor gets:
 
-- **Diagnostics** — live parse/semantic errors as you type (`WDL001`–`WDL006`), with a full
+- **Diagnostics** — live parse/semantic errors as you type (`REXRAP001`–`REXRAP006`), with a full
   lowering/validation pass on save.
 - **Completion** — provider names, action functions, action parameters, and `config.`/`secret.`
   paths, driven by **live** provider/setting metadata fetched from a running web service.
-- **Hover** — the WDL error code + summary for the diagnostic under the cursor.
+- **Hover** — the REXRAP error code + summary for the diagnostic under the cursor.
 - **Formatting** — `format_str` on the whole document (format-on-save).
 - **Apply-on-save** — optionally compile the saved pack client-side and import it into a running
   web service (`POST /packs/import?overwrite=true`), the editor-native equivalent of
@@ -63,8 +63,8 @@ if not configs.runinator then
   configs.runinator = {
     default_config = {
       cmd = { "runinator-lsp" },
-      filetypes = { "wdl" },
-      root_dir = lspconfig.util.root_pattern(".git", "*.wdlm"),
+      filetypes = { "rexrap" },
+      root_dir = lspconfig.util.root_pattern(".git", "*.rexrapm"),
       cmd_env = { RUNINATOR_API_BASE_URL = "http://127.0.0.1:8080/" },
       init_options = { runinator = { autoApply = true, serviceUrl = "http://127.0.0.1:8080/" } },
     },
@@ -72,16 +72,16 @@ if not configs.runinator then
 end
 
 lspconfig.runinator.setup({})
-vim.filetype.add({ extension = { wdl = "wdl", wdlp = "wdl", wdls = "wdl" } })
+vim.filetype.add({ extension = { rexrap = "rexrap", rexrapp = "rexrap", rexraps = "rexrap" } })
 ```
 
 ### Zed
 
 Add a custom language server pointing `command` at the `runinator-lsp` binary with
-`RUNINATOR_API_BASE_URL` in its environment, scoped to the `wdl` language.
+`RUNINATOR_API_BASE_URL` in its environment, scoped to the `rexrap` language.
 
 ## Note on file kinds
 
-Only `.wdl` (the workflow language) is analyzed and completed. `.wdlm` (JSON pack manifest) and
-`.wdls` (secrets) are recognized for apply-on-save packaging but are not run through the workflow
+Only `.rexrap` (the workflow language) is analyzed and completed. `.rexrapm` (JSON pack manifest) and
+`.rexraps` (secrets) are recognized for apply-on-save packaging but are not run through the workflow
 grammar.

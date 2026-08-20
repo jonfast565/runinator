@@ -38,7 +38,7 @@ runinator-comm = { path = "../runinator-comm" }
 runinator-utilities = { path = "../runinator-utilities" }
 runinator-workflows = { path = "../runinator-workflows" }
 runinator-provisioner = { path = "../runinator-provisioner" }
-runinator-wdl = { path = "../runinator-wdl" }
+runinator-rexrap = { path = "../runinator-rexrap" }
 
 [dev-dependencies]
 async-trait = "0.1"

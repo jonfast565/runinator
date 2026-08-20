@@ -21,9 +21,9 @@ The guiding constraint from `AGENTS.md`: keep dependency direction services→sh
 | 6.5 | Cross-run analytics | **P2** | database, ws, command-center |
 | 6.9 | Shareable run forms | **P2** | ws, command-center |
 | 5.6 | AI cost & token accounting | **P3** | provider-ai, comm/models, database |
-| 5.2 | AI-assisted WDL authoring | **P3** | command-center, provider-ai |
+| 5.2 | AI-assisted REXRAP authoring | **P3** | command-center, provider-ai |
 | 5.7 | Pack environments + promotion | **P3** | ctl, ws, settings store |
-| 7.1–7.8 | Loop / iteration semantics | **shipped 2026-08-13** | models, reducer, workflows, WDL, command-center |
+| 7.1–7.8 | Loop / iteration semantics | **shipped 2026-08-13** | models, reducer, workflows, REXRAP, command-center |
 | 6.6 | Action priority / fairness | **P4** | comm, broker (all backends), engine, worker |
 | 6.7 | Retention & redaction policy | **P4** | archiver, database, models |
 | 1.2 / 2.2 / 2.3 / 2.1 | Continuous quality track | parallel | varies |
@@ -45,8 +45,8 @@ The guiding constraint from `AGENTS.md`: keep dependency direction services→sh
 ### 5.3 Inbound webhook *triggers* (start a run)
 - **Owning crates:** `runinator-ws` (`handlers/webhook.rs`, trigger materialization), `runinator-models` (triggers).
 - **Verified 2026-08-04:** still open. `WorkflowTriggerKind` remains exactly three variants — `Cron`, `Manual`, `Chained` (`runinator-models/src/workflows.rs:196-229`). `handlers/webhook.rs` only *wakes/signals an already-parked run*; there is no way to **start** one from an inbound event.
-- **Approach:** Add a `trigger webhook "..."` header declaration that mints a signed inbound URL to start a new run, with a payload-mapping expression into workflow inputs. Reuse the existing pack-managed-trigger materialization path (`metadata.managed_by = "wdl"`).
-- **Boundary note:** a new trigger kind is a shared-contract change — thread through `runinator-models` triggers, ctl WDL compile, mappers, and the command-center trigger catalog.
+- **Approach:** Add a `trigger webhook "..."` header declaration that mints a signed inbound URL to start a new run, with a payload-mapping expression into workflow inputs. Reuse the existing pack-managed-trigger materialization path (`metadata.managed_by = "rexrap"`).
+- **Boundary note:** a new trigger kind is a shared-contract change — thread through `runinator-models` triggers, ctl REXRAP compile, mappers, and the command-center trigger catalog.
 - **Ranking note:** the highest-reach item for *new* work. The shipped per-workflow concurrency policy (**6.2**, Appendix B) makes it meaningfully safer — an unthrottled inbound webhook is precisely the source that makes such a policy mandatory.
 
 ### 6.5 Cross-run analytics
@@ -72,10 +72,10 @@ The guiding constraint from `AGENTS.md`: keep dependency direction services→sh
 - **Boundary note:** adding usage to the result event is a `runinator-comm`/`runinator-models` contract change — thread through every broker backend, `mappers.rs`, and both DB backends.
 - **Note:** lands more cleanly now that rate cards exist in `billing.rs`, and it pairs naturally with 6.5's aggregate query layer.
 
-### 5.2 AI-assisted WDL authoring in the command center
+### 5.2 AI-assisted REXRAP authoring in the command center
 - **Owning crates:** `runinator-command-center`, `runinator-provider-ai`.
-- **Problem:** Authoring WDL/graphs is manual; new users face a blank canvas.
-- **Approach:** Natural-language → WDL draft, generated against the live backend-driven node/edge/trigger **catalog metadata**. "Add a Slack notify after the approval fails" edits the draft graph in place. The catalog gives the model a constrained, validated tool surface so it emits well-formed graphs rather than free text. Draft stays the source of truth.
+- **Problem:** Authoring REXRAP/graphs is manual; new users face a blank canvas.
+- **Approach:** Natural-language → REXRAP draft, generated against the live backend-driven node/edge/trigger **catalog metadata**. "Add a Slack notify after the approval fails" edits the draft graph in place. The catalog gives the model a constrained, validated tool surface so it emits well-formed graphs rather than free text. Draft stays the source of truth.
 - **Unblocked:** the shipped `POST /workflows/simulate` (5.1) gives generated drafts a validation loop, which is what makes this tractable now.
 
 ### 5.7 Pack environments + promotion
@@ -110,11 +110,11 @@ the shipped behavior.
 ### 7.1 Loop result accumulation — shipped 2026-08-13
 - **Shipped:** loop frames snapshot resolved items and accumulate one body result per lap;
   `LoopOutput.results` exposes the ordered array and a bound `node r <- for …` collects it.
-- **Owning crates:** `runinator-models`, `runinator-reducer`, `runinator-workflows`, `runinator-wdl-codegen`.
+- **Owning crates:** `runinator-models`, `runinator-reducer`, `runinator-workflows`, `runinator-rexrap-codegen`.
 - **Problem:** a `for` loop cannot collect per-iteration results. `MapOutput` carries
   `outputs: Vec<Value>` (`runinator-models/src/workflow_outputs.rs`); `LoopOutput` carries only
   `last`. A bound loop (`node r <- for …`) does not collect either — `control_value_expr`
-  (`runinator-wdl-codegen/src/lower/mod.rs`) returns `path_expr(["prev"])` for everything but
+  (`runinator-rexrap-codegen/src/lower/mod.rs`) returns `path_expr(["prev"])` for everything but
   `parallel`, so the synthetic collector node just re-emits the last body node's output.
 - **Approach:** a `results: Vec<Value>` accumulator on `LoopFrame`, exposed as
   `steps.<loop>.output.results` typed `T[]`, with `node r <- for …` binding it.
@@ -125,28 +125,28 @@ the shipped behavior.
   which point resolving once on entry becomes the cheaper option too.
 
 ### 7.2 Round-trippable loop variable names — shipped 2026-08-13
-- **Shipped:** loop and map binding names are preserved in `metadata.wdl.control_vars` and restored
+- **Shipped:** loop and map binding names are preserved in `metadata.rexrap.control_vars` and restored
   by decompile, including nested shadowing.
-- **Owning crates:** `runinator-wdl-codegen`.
+- **Owning crates:** `runinator-rexrap-codegen`.
 - **Problem:** `emit_loop` calls `self.fresh_var()` (`decompile/mod.rs`), which always yields
   `item`/`item2`/`item3`. The author's identifier only ever existed as a lowering scope key
-  (`lower/blocks.rs`), so any graph-editor save — which regenerates the WDL pane via decompile —
+  (`lower/blocks.rs`), so any graph-editor save — which regenerates the REXRAP pane via decompile —
   rewrites `for ticket in …` to `for item in …`. This is the single largest legibility loss in the
-  loop surface: after one canvas round trip, `packs/sdlc/wdl/sdlc-deploy.wdl` reads
+  loop surface: after one canvas round trip, `packs/sdlc/rexrap/sdlc-deploy.rexrap` reads
   `for item in tickets.issues { … item.key … }`.
-- **Approach:** record the name in the existing `metadata.wdl` sidecar, exactly as `control_ids` and
+- **Approach:** record the name in the existing `metadata.rexrap` sidecar, exactly as `control_ids` and
   `type_hints` already are (written in `lower/mod.rs`, read back via `MetadataReader`,
   `decompile/metadata.rs`), and prefer it over `fresh_var()`. Same fix applies to `emit_map`.
 
-### 7.3 WDL surface for loop position — shipped 2026-08-13
+### 7.3 REXRAP surface for loop position — shipped 2026-08-13
 - **Shipped:** `for ticket, i in …` binds the zero-based runtime index; it formats, type-checks,
   lowers to `LoopOutput.index`, and round-trips through graph metadata.
-- **Owning crates:** `runinator-wdl-syntax`, `runinator-wdl-sema`, `runinator-wdl-codegen`.
+- **Owning crates:** `runinator-rexrap-syntax`, `runinator-rexrap-sema`, `runinator-rexrap-codegen`.
 - **Problem:** the loop variable binds only to `["item"]`. `index`, `count`, `has_next`, and `last`
   are emitted by the runtime and — since the type-contract fix — now type-check, but they have no
   surface syntax: a ref to them decompiles to a raw node id (`decompile/expr.rs` falls through to
   `self.dotted(node_id, output)`), and the id is generated (`"for_loop"`), so it is not nameable.
-- **Approach:** an index binding (`for ticket, i in …`, grammar `for_stmt` in `wdl.pest`) and/or a
+- **Approach:** an index binding (`for ticket, i in …`, grammar `for_stmt` in `rexrap.pest`) and/or a
   position accessor.
 
 ### 7.4 Loop-aware reference picker in the command center — shipped 2026-08-13
@@ -164,7 +164,7 @@ the shipped behavior.
 - **Approach:** derive loop-body scope with the `interrupt-regions.ts` walk pattern (`nodeTargets`
   plus the `nodes.has(id)` cycle guard, already back-edge safe), build reverse adjacency for
   upstream-only filtering, and source non-action output types from the backend catalog.
-- **Boundary note:** `runinator-wdl-ide/src/completion.rs` already does correct loop-scope
+- **Boundary note:** `runinator-rexrap-ide/src/completion.rs` already does correct loop-scope
   element-type inference for the *text* editor, including the shadowing rule. The canvas should
   reach parity with it, not reimplement it.
 - **Also here:** `interrupt` is missing from `STATIC_ROOTS` despite being a real lowered root;
@@ -186,7 +186,7 @@ the shipped behavior.
 - **Shipped:** completion shows local types and uses union element inference, `for x: T in …`
   provides an explicit fallback, strict action results are closed, strictness controls iterable
   diagnostics, nested blocks retain `prev`, and completion includes a map snippet.
-- **Owning crates:** `runinator-wdl-ide`, `runinator-wdl-syntax`, `runinator-wdl-sema`.
+- **Owning crates:** `runinator-rexrap-ide`, `runinator-rexrap-syntax`, `runinator-rexrap-sema`.
 - **Problem:** three parity gaps. (a) completion offers the loop var with `detail: "local"` and no
   type at all (`completion.rs`), so `tic<tab>` inside a loop offers `ticket` labelled only "local".
   (b) completion's loop inference uses `element_type()` without the `union_element_type()` fallback
@@ -196,7 +196,7 @@ the shipped behavior.
   retyping the *source* node.
 - **Related:** action `results_type()` builds an **open** struct (`runinator-models/src/providers.rs`),
   so a typo'd field types as `Any`, the loop over it never errors, and the whole body loses
-  checking. `TypePolicy::Strict` (`runinator-wdl-sema/src/options.rs`) gates action config, subflow,
+  checking. `TypePolicy::Strict` (`runinator-rexrap-sema/src/options.rs`) gates action config, subflow,
   and array-literal homogeneity checks, but is **not** consulted in `check_iterable`.
 
 ### 7.7 Unify the two iteration bounds — shipped 2026-08-13
@@ -218,13 +218,13 @@ the shipped behavior.
   interesting behavior is inside a loop cannot be dry-run at all, which blunts **5.1**.
 
 ### Smaller loop-adjacent defects (fold into 7.x as convenient)
-- **Fixed 2026-08-13:** `while c limit none` is grammatically legal (`for_limit` in `wdl.pest` accepts `"none"`) but
+- **Fixed 2026-08-13:** `while c limit none` is grammatically legal (`for_limit` in `rexrap.pest` accepts `"none"`) but
   `parse_while` does `first_inner(inner)?` and the inline `"none"` literal produces no child pair,
-  so it fails with the opaque `WdlError::lower("expected child node")`. The `for` path is fine
+  so it fails with the opaque `RexRapError::lower("expected child node")`. The `for` path is fine
   because `limit_none` is a named atomic rule.
 - `while`/`until` bind no iteration variable and expose no state.
-- **Fixed 2026-08-13:** `prev` resets to `Any` at every block boundary (`runinator-wdl-sema/src/sema/types.rs`), so
-  `for x in prev.items` inside a nested block is untyped. `runinator-wdl-ide/src/lib_tests.rs` has a
+- **Fixed 2026-08-13:** `prev` resets to `Any` at every block boundary (`runinator-rexrap-sema/src/sema/types.rs`), so
+  `for x in prev.items` inside a nested block is untyped. `runinator-rexrap-ide/src/lib_tests.rs` has a
   test (`prev_has_no_fields_after_control_flow`) that *asserts* this gap.
 - **Fixed 2026-08-13:** There is no `map` snippet in the completion `CONSTRUCTS` list, though `for`/`while`/`if`/`match`/
   `toggle`/`split`/`parallel`/`try` all have one.
@@ -247,7 +247,7 @@ These are unbounded-effort quality work rather than discrete features. None bloc
 - **Verified 2026-08-04:** **0 test files across 21 components** in `runinator-command-center/src/ui/components/workflow/` (canvas, node, step editor — the most complex, highest-LOC components). Core utilities and Pinia adapters remain well covered; presentation components are not.
 
 ### 2.3 / 3.3 Panic hardening — narrowed
-- **Verified 2026-08-04:** `runinator-wdl/src/parser.rs` is now **clean (0 `expect(` calls)** — that half is done. The remaining cluster is `runinator-ws/src/openapi.rs` (11 calls, e.g. `:114`, `:2407-2572`). These are document-generation paths over structures the file itself just built, so the residual risk is low — convert opportunistically per the error-dictionary convention rather than as a project.
+- **Verified 2026-08-04:** `runinator-rexrap/src/parser.rs` is now **clean (0 `expect(` calls)** — that half is done. The remaining cluster is `runinator-ws/src/openapi.rs` (11 calls, e.g. `:114`, `:2407-2572`). These are document-generation paths over structures the file itself just built, so the residual risk is low — convert opportunistically per the error-dictionary convention rather than as a project.
 
 ### 2.1 Remaining backend test gaps
 - **Verified 2026-08-04, partially closed:** `runinator-waker` now has tests (`src/tests.rs`, 5 cases, including the head-of-line `due_wake_is_not_blocked_by_a_not_yet_due_wake` regression) and metrics (`runinator_waker_wakes_received/driven/requeued_total`, `runinator_waker_drive_failures_total`, `runinator_waker_wake_lead_ms`). `runinator-supervisor` has one test file. Still at zero: `runinator-bootstrap` and `runinator-provider-aws`.
@@ -318,7 +318,7 @@ Kept as a record of what the roadmap no longer covers. Item IDs stay stable, so 
      run across laps pins the bound to a fixed id, so the previous lap leaks back in from the third
      lap onward. Reverting it: branches over-run (4 runs across 3 laps).
 - **Was:** the combination wedged. Before the loop-frame redesign a `parallel` in a loop spun
-  against the inline step limit and reported a `Blocked` run; `packs/sdlc/wdl/sdlc-deploy.wdl` nests
+  against the inline step limit and reported a `Blocked` run; `packs/sdlc/rexrap/sdlc-deploy.rexrap` nests
   its inner `for` inside a `parallel` branch, so it is on exactly this path.
 
 ### 6.3 Workflow revision history + diff + rollback — shipped 2026-08-05
@@ -329,7 +329,7 @@ Kept as a record of what the roadmap no longer covers. Item IDs stay stable, so 
 - **Unchanged saves record nothing:** the store compares the incoming name/version/definition/input-schema against the head revision and returns `None` on a match, so a pack applied on a cron does not bury real edits under identical rows. Recording is best-effort like the audit trail — failing a legitimate save because its history could not be written would be the worse outcome.
 - **Was:** `workflows` was one mutable row per workflow with no history at all. In-flight runs were already insulated by `workflow_runs.workflow_snapshot`, but there was no way to see what changed, who changed it, or get back — and since `runinatorctl workflows apply` overwrites definitions wholesale, a bad apply was unrecoverable.
 - **Tests:** 4 in `runinator-database/src/sqlite_tests/revisions.rs` (sequence assignment, dedupe including the rename-with-unchanged-graph case, lookup by number, removal with the workflow), a parity block in `mysql_tests.rs` covering the head read-back that is most likely to differ off sqlite, and 6 in `runinator-ws/src/tests/revisions.rs` (recording, pack attribution, unchanged re-apply, rollback-writes-forward, owner/enabled preservation, missing revision). 5 frontend tests in `workflow-revisions.test.ts`. Workspace: 95 test binaries green; command center 247 tests, build and lint clean.
-- **Residual:** History is unbounded: there is no per-workflow cap and `workflow_revisions` is deliberately **not** registered with the archiver, since aging out the rollback target would defeat the feature. `RevisionSource::Ui` vs `Api` is inferred from principal kind (user token vs service key), which is a proxy — a human with a user token and curl records as `ui`; the distinction that matters, pack versus hand edit, is stamped by the import path itself. `workflow_runs` still has no `workflow_revision_id`, so "which revision did this run execute" is answerable only by comparing against `workflow_snapshot`. The command center diffs the JSON definition; diffing the decompiled WDL through the existing `POST /wdl/decompile` would read closer to how workflows are actually authored.
+- **Residual:** History is unbounded: there is no per-workflow cap and `workflow_revisions` is deliberately **not** registered with the archiver, since aging out the rollback target would defeat the feature. `RevisionSource::Ui` vs `Api` is inferred from principal kind (user token vs service key), which is a proxy — a human with a user token and curl records as `ui`; the distinction that matters, pack versus hand edit, is stamped by the import path itself. `workflow_runs` still has no `workflow_revision_id`, so "which revision did this run execute" is answerable only by comparing against `workflow_snapshot`. The command center diffs the JSON definition; diffing the decompiled REXRAP through the existing `POST /rexrap/decompile` would read closer to how workflows are actually authored.
 
 ### 3.4 DB migration parity tests — shipped 2026-08-05
 - **Shipped:** one shared lifecycle body (`runinator-database/src/dialect_parity.rs`) that all three backends run — workflow upsert by insert/id/name, revision sequencing and dedupe, trigger upsert, the scheduler claim and its lease, result-event replay, idempotency keys, the action-dispatch outbox, notifications, settings, catalog, and automation records. `sqlite_lifecycle` runs it unconditionally; `postgres_full_lifecycle` and `mariadb_full_lifecycle` run the identical body against a live engine when `RUNINATOR_TEST_POSTGRES_URL` / `RUNINATOR_TEST_MYSQL_URL` are set, each provisioning and dropping its own throwaway database. `runinator-database/tests/docker-compose.yml` brings both engines up on ports that collide with neither a local install nor `runinator-provider-db`'s compose. Separately, `migration_parity_tests.rs` asserts the three migration directories carry the same version set with no database at all, so a migration written for one dialect and forgotten for another fails in a plain `cargo test` rather than on someone's first deploy.
@@ -338,12 +338,12 @@ Kept as a record of what the roadmap no longer covers. Item IDs stay stable, so 
 - **Residual:** neither suite runs in CI — `.github/workflows/` has only `release-builds.yml`, so the live-engine runs still depend on a developer bringing docker up. The parity body covers the operations the dialects actually branch on, not all ~200 `DatabaseImpl` methods; a dialect-specific bug in an uncovered method still escapes. And `migration_parity_tests.rs` compares version *sets*, not the schemas the migrations produce — three files sharing a version number but declaring different columns would pass.
 
 ### 6.1 Failure alerting + SLA — shipped 2026-08-04
-- **Shipped:** `notification_policies` + `notification_deliveries`, engine emission at the terminal transition plus a scanner for the duration events, the `notify on failure|retry_exhausted|sla|parked -> slack|email|app "<target>"` WDL header (pack-managed like triggers), a `notifications:manage` capability with CRUD endpoints, and the command-center Alert policies panel. Delivery reuses the action outbox via a new optional `ActionCommand.notification_delivery_id`, so alerts go out through the normal provider path and the engine holds no vendor client.
+- **Shipped:** `notification_policies` + `notification_deliveries`, engine emission at the terminal transition plus a scanner for the duration events, the `notify on failure|retry_exhausted|sla|parked -> slack|email|app "<target>"` REXRAP header (pack-managed like triggers), a `notifications:manage` capability with CRUD endpoints, and the command-center Alert policies panel. Delivery reuses the action outbox via a new optional `ActionCommand.notification_delivery_id`, so alerts go out through the normal provider path and the engine holds no vendor client.
 - **Was:** the `notifications` table, model, UI view, and API all existed, but the only writer was the inbound `POST` — a 3am cron failure stayed silent until somebody opened the Runs view, and there was no SLA concept in the models at all.
 - **Residual:** slack/email delivery needs a `secret://slack/bot_token` (or an overriding `with { ... }`) in the settings store; a missing credential surfaces as a failed delivery row rather than a failed run.
 
 ### 6.2 Per-workflow concurrency & misfire policy (absorbed 5.4) — shipped 2026-08-04
-- **Shipped:** `concurrency <n> on_conflict skip|queue|cancel_previous|allow` (WDL header → `definition.metadata.concurrency`, so it versions with the workflow) and `trigger cron "..." catchup fire_once|fire_all|skip [grace <d>] [max <n>]` (→ the trigger's own `configuration.catchup`). Both are evaluated inside the claim transaction in `claim_due_workflow_trigger_firings`, which now returns a `TriggerFiringBatch` carrying the created runs, the runs a `cancel_previous` settled (the loop publishes their worker cancels), and per-policy declined counters. `queue` deliberately leaves the slot due instead of creating a run that parks — the schedule *is* the queue, which is the shape that avoids the 2026-07-13 wake flood. Firing rows gained an `outcome` column so a slot that produced no run is explainable after the fact.
+- **Shipped:** `concurrency <n> on_conflict skip|queue|cancel_previous|allow` (REXRAP header → `definition.metadata.concurrency`, so it versions with the workflow) and `trigger cron "..." catchup fire_once|fire_all|skip [grace <d>] [max <n>]` (→ the trigger's own `configuration.catchup`). Both are evaluated inside the claim transaction in `claim_due_workflow_trigger_firings`, which now returns a `TriggerFiringBatch` carrying the created runs, the runs a `cancel_previous` settled (the loop publishes their worker cancels), and per-policy declined counters. `queue` deliberately leaves the slot due instead of creating a run that parks — the schedule *is* the queue, which is the shape that avoids the 2026-07-13 wake flood. Firing rows gained an `outcome` column so a slot that produced no run is explainable after the fact.
 - **5.4 shipped with it:** a `freeze_windows` table (workflow-, org-, or platform-scoped) excluded from the claim in SQL — frozen triggers keep their due slot, so catch-up decides what replays when the window lifts — plus `POST /workflow_triggers/{id}/backfill` (idempotent against already-fired slots via the same firing row, with a dry run and a hard cap), `runinatorctl freeze` / `runinatorctl triggers backfill`, and a command-center **Schedules** tab. Both surfaces are gated on the new `schedules:manage` capability.
 - **Was:** `run_trigger_loop` unconditionally claimed and started a run for every due firing — no `singleton`, no `max_concurrent_runs`, no catch-up policy. The workaround was a `mutex` node *inside* the workflow, which **starts** the run and parks it: exactly the shape that produced the 2026-07-13 wake flood (thousands of parked creds-sync runs, a 9k-message wake queue, head-of-line blocking in the waker).
 - **Residual:** concurrency is enforced per *workflow*, counted inside the claim transaction. Two triggers of the same workflow claimed concurrently on two replicas can each pass the count, so the cap is best-effort under that specific race; the firing row remains the exact gate against double-firing one slot. Pipeline cron triggers honor freeze windows but have no concurrency policy of their own — their member workflows do. On mysql, a locking read also locks rows scanned in subqueries, so the freeze-window `NOT EXISTS` can make a concurrent replica `SKIP LOCKED` past a trigger; the effect is a one-tick (1s) delay, never a lost slot.
@@ -366,7 +366,7 @@ Kept as a record of what the roadmap no longer covers. Item IDs stay stable, so 
 - **Residual:** the `NOT EXISTS` correlates `replicas` from an `UPDATE` on `workflow_node_runs`. That is valid on all three dialects (the mysql target-table restriction applies to selecting *from* the updated table, not to correlating against it), but it is exercised only by the sqlite suite — the mysql/postgres tests are `#[ignore]`d without a live server. `runinator-reducer/src/orchestration/action.rs:21` still keeps its own private copy of `REPLICA_STALE_SECONDS`; the two agree at 30s but are not yet one constant.
 
 ### 6.4 Declarative idempotency on action nodes — shipped 2026-08-04
-- **Shipped:** `.idempotent(key: <expr>)` on an action node (WDL modifier → `WorkflowAction.idempotency_key`, so it versions with the workflow). The reducer resolves the expression per dispatch against the same run context the action's arguments see, qualifies it as `workflow:<workflow_id>:<key>`, and stamps it on a new optional `ActionCommand.idempotency_key`. The worker reserves that key before invoking the provider, via new `claim`/`complete`/`release` operations over the previously manual `idempotency_keys` table (now carrying `owner_node_run_id` / `claimed_at` / `completed_at`, under the reserved `action` scope). The claim is a single upsert, so of two concurrent claimants exactly one acquires.
+- **Shipped:** `.idempotent(key: <expr>)` on an action node (REXRAP modifier → `WorkflowAction.idempotency_key`, so it versions with the workflow). The reducer resolves the expression per dispatch against the same run context the action's arguments see, qualifies it as `workflow:<workflow_id>:<key>`, and stamps it on a new optional `ActionCommand.idempotency_key`. The worker reserves that key before invoking the provider, via new `claim`/`complete`/`release` operations over the previously manual `idempotency_keys` table (now carrying `owner_node_run_id` / `claimed_at` / `completed_at`, under the reserved `action` scope). The claim is a single upsert, so of two concurrent claimants exactly one acquires.
 - **The guarantee, precisely:** once an execution *succeeds* under a key, any later delivery carrying it replays the recorded result instead of re-invoking. The result is recorded **before** the status publish, which is what fixes **A.7** — a failed publish/flush nacks the delivery, and the redelivery now replays rather than re-running the side effect. A concurrent claimant on a live reservation is dropped as a duplicate, the same way the executor lease drops one.
 - **What it deliberately does not claim:** when a worker dies mid-invocation nothing can know whether the side effect landed, so the resolved key is also passed to the provider as `ProviderExecutionRequest.idempotency_key` for providers with native (stripe-style) idempotency. That is the honest boundary between what the platform can enforce and what **A.1** still asks of provider authors.
 - **Failure semantics:** a failed attempt records nothing and *releases* the reservation, so the node's own `.retry(...)` — and every later run — is not blocked behind a reservation that no longer describes anything. A reservation whose holder died is takeable once it ages past the claimant's own action deadline. A key resolving to null or empty is treated as absent rather than as a shared empty key, since collapsing every run onto one key would silently skip real work.
@@ -378,18 +378,18 @@ Kept as a record of what the roadmap no longer covers. Item IDs stay stable, so 
 - **Operational hardening** (former Tiers 1–2): tracing + `trace_id`, `/metrics`, DLQ/audit, retry backoff + jitter, rate limiting, `/health` + `/ready`, graceful shutdown, executor lease, per-node cancellation.
 - **Runtime/language completeness:** poll/while, race-branch cancellation, plugin FFI cancellation, authorization phase 2.
 - **1.1 Dark mode** — ✅ shipped. `:root[data-theme="dark"]` token set in `styles/base.css:101`, driven by the `displayPreferences` store through `ui/adapters/browser/theme.ts`, with a `system` mode that follows `prefers-color-scheme` live.
-- **1.3 Live expression preview** — ✅ shipped. Backed by a server-side `POST /wdl/evaluate` (`API_WDL_EVALUATE`) called through `core/services/expression.ts`; `ExpressionJsonEditor.vue` renders a debounced preview pane distinguishing a resolved result, an evaluation error, and a reference that is unresolved only because it is absent from the sample.
-- **5.1 Workflow test harness + dry-run simulation** — ✅ shipped. `SimulationEnv` in `runinator-workflows/simulate.rs` with a `MockEnv` (`testkit.rs`, `.wdlt`-driven) and a `DbSimulationEnv` in `runinator-engine/simulate.rs`. `simulate_workflow` reuses the reducer's own `next_transition` / `evaluate_switch` / `evaluate_toggle` / `evaluate_percentage` / condition evaluators and publishes no `ActionCommand`s. `runinatorctl workflows test <pack>` runs suites offline; `POST /workflows/simulate` backs the command center's **Dry run** modal. Fan-out kinds (loop/parallel/join/map/race/try/subflow) report as unsupported rather than simulating incorrectly.
+- **1.3 Live expression preview** — ✅ shipped. Backed by a server-side `POST /rexrap/evaluate` (`API_REXRAP_EVALUATE`) called through `core/services/expression.ts`; `ExpressionJsonEditor.vue` renders a debounced preview pane distinguishing a resolved result, an evaluation error, and a reference that is unresolved only because it is absent from the sample.
+- **5.1 Workflow test harness + dry-run simulation** — ✅ shipped. `SimulationEnv` in `runinator-workflows/simulate.rs` with a `MockEnv` (`testkit.rs`, `.rexrapt`-driven) and a `DbSimulationEnv` in `runinator-engine/simulate.rs`. `simulate_workflow` reuses the reducer's own `next_transition` / `evaluate_switch` / `evaluate_toggle` / `evaluate_percentage` / condition evaluators and publishes no `ActionCommand`s. `runinatorctl workflows test <pack>` runs suites offline; `POST /workflows/simulate` backs the command center's **Dry run** modal. Fan-out kinds (loop/parallel/join/map/race/try/subflow) report as unsupported rather than simulating incorrectly.
 - **5.5 Run timeline / Gantt visualization** — ✅ shipped. `core/workflow/run-gantt.ts` (`buildGanttLayout`, unit-tested) + `ui/components/shared/RunGantt.vue`: proportional bars on a shared axis, dashed queued/parked segments, retry (`attempt`) badges, critical-path highlight, live count-up. No backend change.
 - **Waker had zero tests** (former 3.1, the survey's "highest residual risk") — ✅ largely closed; see the continuous-track entry 2.1 for what remains.
-- **`runinator-wdl/src/parser.rs` panic cluster** (half of 2.3/3.3) — ✅ clean, 0 `expect(` calls.
+- **`runinator-rexrap/src/parser.rs` panic cluster** (half of 2.3/3.3) — ✅ clean, 0 `expect(` calls.
 
 ---
 
 ## Verification (per area, when implemented)
 
 - **Backend:** `cargo fmt --all --check`, `cargo test -p <crate>`, then `cargo test --workspace` for shared-contract changes. Confirm the local stack still runs: `cargo run -p runinator-supervisor -- start|status|stop`.
-- **WDL changes:** round-trip a `.wdl` through compile→decompile→format and confirm idempotency.
+- **REXRAP changes:** round-trip a `.rexrap` through compile→decompile→format and confirm idempotency.
 - **Frontend:** `npm test`, `npm run build`, `npm run lint` in `runinator-command-center`, plus the Tauri build path; verify keyboard/focus behavior and both themes manually.
 
 ---

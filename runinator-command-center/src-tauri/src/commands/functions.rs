@@ -1,4 +1,4 @@
-//! packaged functions and the wdl console, for the desktop client.
+//! packaged functions and the rexrap console, for the desktop client.
 //!
 //! these mirror the web build's http registry entry for entry. the desktop app talks to the same web
 //! service, so every command here is a thin proxy — the shapes and the reasoning live on the
@@ -145,7 +145,7 @@ pub async fn invoke_function(
     post_json(&state, &path, &input).await
 }
 
-// ---- the wdl console ----
+// ---- the rexrap console ----
 
 #[tauri::command]
 pub async fn list_console_sessions(state: State<'_, CommandCenterState>) -> CommandResult<Value> {

@@ -50,7 +50,7 @@ fn node_kind_catalog_default_templates_deserialize_to_nodes() {
 #[test]
 fn loop_and_map_items_field_is_typed_array() {
     // the iterable of a loop/map advertises Array<Any> (not the bare Any it used to be) so the
-    // editor and wdl completion can flow the element type into the loop-body variable.
+    // editor and rexrap completion can flow the element type into the loop-body variable.
     let catalog = node_kind_catalog();
     for kind in [WorkflowNodeKind::Loop, WorkflowNodeKind::Map] {
         let entry = catalog

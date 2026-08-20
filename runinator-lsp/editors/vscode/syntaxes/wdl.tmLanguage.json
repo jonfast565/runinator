@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
-  "name": "Runinator WDL",
-  "scopeName": "source.wdl",
+  "name": "Runinator REXRAP",
+  "scopeName": "source.rexrap",
   "patterns": [
     { "include": "#comments" },
     { "include": "#annotations" },
@@ -23,29 +23,29 @@
   "repository": {
     "comments": {
       "patterns": [
-        { "name": "comment.line.double-slash.wdl", "match": "//.*$" },
-        { "name": "comment.block.wdl", "begin": "/\\*", "end": "\\*/" }
+        { "name": "comment.line.double-slash.rexrap", "match": "//.*$" },
+        { "name": "comment.block.rexrap", "begin": "/\\*", "end": "\\*/" }
       ]
     },
     "annotations": {
-      "name": "entity.name.tag.annotation.wdl",
+      "name": "entity.name.tag.annotation.rexrap",
       "match": "@(id|skip|lock|timeout)\\b"
     },
     "strings": {
-      "name": "string.quoted.double.wdl",
+      "name": "string.quoted.double.rexrap",
       "begin": "\"",
       "end": "\"",
       "patterns": [
-        { "name": "constant.character.escape.wdl", "match": "\\\\." },
+        { "name": "constant.character.escape.rexrap", "match": "\\\\." },
         {
-          "name": "meta.interpolation.wdl",
+          "name": "meta.interpolation.rexrap",
           "begin": "\\$\\{",
           "end": "\\}",
           "beginCaptures": {
-            "0": { "name": "punctuation.section.interpolation.begin.wdl" }
+            "0": { "name": "punctuation.section.interpolation.begin.rexrap" }
           },
           "endCaptures": {
-            "0": { "name": "punctuation.section.interpolation.end.wdl" }
+            "0": { "name": "punctuation.section.interpolation.end.rexrap" }
           },
           "patterns": [
             { "include": "#action-call" },
@@ -63,33 +63,33 @@
       "comment": "the name introduced by a `type Foo` / `type Ids = ...` declaration.",
       "match": "\\b(type)\\s+([A-Za-z_][A-Za-z0-9_]*)",
       "captures": {
-        "1": { "name": "keyword.declaration.wdl" },
-        "2": { "name": "entity.name.type.wdl" }
+        "1": { "name": "keyword.declaration.rexrap" },
+        "2": { "name": "entity.name.type.rexrap" }
       }
     },
     "declaration-keywords": {
-      "name": "keyword.declaration.wdl",
+      "name": "keyword.declaration.rexrap",
       "match": "\\b(workflow|params|input|trigger|cron|alias|start|let|type|set|secret|config|namespace|import|fn)\\b"
     },
     "control-keywords": {
-      "name": "keyword.control.wdl",
+      "name": "keyword.control.rexrap",
       "match": "\\b(if|else|for|while|until|match|when|parallel|branch|join|race|winner|try|catch|finally|map|wait|emit|yield|approve|fail|subflow|do|return|goto)\\b"
     },
     "modifier-keywords": {
-      "name": "storage.modifier.wdl",
+      "name": "storage.modifier.rexrap",
       "match": "\\b(with|as|initial|limit|concurrency|detached|reuse|disabled|blackout|to|name|meta|returns|every|timeout|key|priority|max_depth)\\b"
     },
     "operator-keywords": {
-      "name": "keyword.operator.word.wdl",
+      "name": "keyword.operator.word.rexrap",
       "match": "\\b(exists|contains|in|starts_with|ends_with)\\b"
     },
     "constants": {
       "patterns": [
-        { "name": "constant.language.boolean.wdl", "match": "\\b(true|false)\\b" },
-        { "name": "constant.language.null.wdl", "match": "\\bnull\\b" },
-        { "name": "constant.language.none.wdl", "match": "\\bnone\\b" },
+        { "name": "constant.language.boolean.rexrap", "match": "\\b(true|false)\\b" },
+        { "name": "constant.language.null.rexrap", "match": "\\bnull\\b" },
+        { "name": "constant.language.none.rexrap", "match": "\\bnone\\b" },
         {
-          "name": "support.function.builtin.wdl",
+          "name": "support.function.builtin.rexrap",
           "match": "\\b(string|json)\\b(?=\\s*\\()"
         }
       ]
@@ -97,13 +97,13 @@
     "transitions": {
       "patterns": [
         {
-          "name": "keyword.control.flow.outcome.wdl",
+          "name": "keyword.control.flow.outcome.rexrap",
           "match": "\\b(ok|next|fail|timeout|reject)\\b(?=\\s*->)"
         },
-        { "name": "constant.language.target.wdl", "match": "\\b(done)\\b" },
-        { "name": "keyword.operator.arrow.wdl", "match": "->" },
+        { "name": "constant.language.target.rexrap", "match": "\\b(done)\\b" },
+        { "name": "keyword.operator.arrow.rexrap", "match": "->" },
         {
-          "name": "support.constant.policy.wdl",
+          "name": "support.constant.policy.rexrap",
           "match": "\\b(all|any|first_success)\\b"
         }
       ]
@@ -111,33 +111,33 @@
     "action-call": {
       "match": "([A-Za-z_][A-Za-z0-9_-]*)\\s*(\\.)\\s*([A-Za-z_][A-Za-z0-9_-]*)\\s*(?=\\()",
       "captures": {
-        "1": { "name": "support.class.provider.wdl" },
-        "2": { "name": "punctuation.accessor.wdl" },
-        "3": { "name": "entity.name.function.action.wdl" }
+        "1": { "name": "support.class.provider.rexrap" },
+        "2": { "name": "punctuation.accessor.rexrap" },
+        "3": { "name": "entity.name.function.action.rexrap" }
       }
     },
     "numbers": {
       "patterns": [
-        { "name": "constant.numeric.duration.wdl", "match": "\\b\\d+(s|m|h|d)\\b" },
-        { "name": "constant.numeric.wdl", "match": "-?\\b\\d+(\\.\\d+)?\\b" }
+        { "name": "constant.numeric.duration.rexrap", "match": "\\b\\d+(s|m|h|d)\\b" },
+        { "name": "constant.numeric.rexrap", "match": "-?\\b\\d+(\\.\\d+)?\\b" }
       ]
     },
     "reference-roots": {
       "comment": "a reference root immediately followed by a dot (params.x, config.flag) — distinct from declaration keywords.",
-      "name": "variable.language.reference.wdl",
+      "name": "variable.language.reference.rexrap",
       "match": "\\b(params|config|secret|run|workflow|loop)\\b(?=\\s*\\.)"
     },
     "references": {
-      "name": "variable.language.reference.wdl",
+      "name": "variable.language.reference.rexrap",
       "match": "\\b(params|config|secret|run|workflow|loop|state|item)\\b"
     },
     "properties": {
       "comment": "a path member following a dot (params.foo.bar) — colored after reference-roots/action-call.",
-      "name": "variable.other.property.wdl",
+      "name": "variable.other.property.rexrap",
       "match": "(?<=\\.)[A-Za-z_][A-Za-z0-9_]*"
     },
     "operators": {
-      "name": "keyword.operator.wdl",
+      "name": "keyword.operator.rexrap",
       "match": "(\\|\\||&&|==|!=|>=|<=|>|<|\\?\\?|\\+\\+|!|=)"
     }
   }

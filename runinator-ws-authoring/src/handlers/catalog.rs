@@ -52,8 +52,8 @@ pub async fn upsert_catalog_item<T: DatabaseImpl>(
 }
 
 pub async fn seed_builtin_catalog<T: DatabaseImpl>(db: &T) -> Result<(), SendableError> {
-    for raw in [include_str!("../../../packs/sdlc/sdlc.wdlm")] {
-        let item = wdl_pack_catalog_item(raw)?;
+    for raw in [include_str!("../../../packs/sdlc/sdlc.rexrapm")] {
+        let item = rexrap_pack_catalog_item(raw)?;
         db.upsert_catalog_item(item).await?;
     }
     for provider in runinator_provider_catalog::metadata() {
@@ -63,7 +63,7 @@ pub async fn seed_builtin_catalog<T: DatabaseImpl>(db: &T) -> Result<(), Sendabl
     Ok(())
 }
 
-fn wdl_pack_catalog_item(raw: &str) -> Result<Value, SendableError> {
+fn rexrap_pack_catalog_item(raw: &str) -> Result<Value, SendableError> {
     let manifest: Value = serde_json::from_str(raw)?;
     let version = manifest
         .get("version")
@@ -76,7 +76,7 @@ fn wdl_pack_catalog_item(raw: &str) -> Result<Value, SendableError> {
         .unwrap_or_else(|| "1".to_string());
     Ok(json!({
         "uri": "runinator://packs/sdlc",
-        "item_type": "wdl_pack",
+        "item_type": "rexrap_pack",
         "name": manifest.get("name").and_then(Value::as_str).unwrap_or("SDLC Automation Pack"),
         "version": version,
         "document": {

@@ -10,34 +10,34 @@ import type {
   TextEditorHostCreateOptions,
   TextEditorHostFactory,
 } from "../../../core/platform/text-editor";
-import { wdlLanguageService } from "../../../core/services";
+import { rexrapLanguageService } from "../../../core/services";
 import type {
   CredentialSummary,
   ProviderMetadata,
-  WdlDiagnostic,
-  WdlSettingRef,
+  RexRapDiagnostic,
+  RexRapSettingRef,
 } from "../../../core/domain/models";
 import { osCodeMirrorTheme } from "./codemirror-theme";
-import { wdl } from "./codemirror-lang-wdl";
+import { rexrap } from "./codemirror-lang-rexrap";
 import { jsonCompletionSource, shouldStartJsonCompletion } from "./json-completion";
-import { wdlProviderCompletionSource } from "./wdl-completion";
-import { wdlHoverTooltip } from "./wdl-hover";
+import { rexrapProviderCompletionSource } from "./rexrap-completion";
+import { rexrapHoverTooltip } from "./rexrap-hover";
 import { createCodeEditorHost } from "./code-editor-host";
 
-const WDL_LINT_DELAY_MS = 1500;
+const REXRAP_LINT_DELAY_MS = 1500;
 
-interface WdlHostContext {
+interface RexRapHostContext {
   providers: () => ProviderMetadata[];
-  settings: () => WdlSettingRef[];
+  settings: () => RexRapSettingRef[];
   sourcePath?: string | null;
 }
 
 interface CodeMirrorHostOptions extends TextEditorHostCreateOptions {
-  wdlContext?: WdlHostContext;
+  rexrapContext?: RexRapHostContext;
   jsonKeyHints?: () => string[];
 }
 
-function toTextDiagnostics(diagnostics: WdlDiagnostic[]): TextEditorDiagnostic[] {
+function toTextDiagnostics(diagnostics: RexRapDiagnostic[]): TextEditorDiagnostic[] {
   return diagnostics.map((diagnostic) => ({
     severity: diagnostic.severity,
     message: diagnostic.message,
@@ -46,8 +46,8 @@ function toTextDiagnostics(diagnostics: WdlDiagnostic[]): TextEditorDiagnostic[]
   }));
 }
 
-function createWdlHost(options: CodeMirrorHostOptions): TextEditorHost {
-  const wdlContext = options.wdlContext ?? {
+function createRexRapHost(options: CodeMirrorHostOptions): TextEditorHost {
+  const rexrapContext = options.rexrapContext ?? {
     providers: () => [],
     settings: () => [],
     sourcePath: options.sourcePath,
@@ -55,17 +55,17 @@ function createWdlHost(options: CodeMirrorHostOptions): TextEditorHost {
   const editableCompartment = new Compartment();
   let view: EditorView | null = null;
   let disposeEditorTheme: (() => void) | null = null;
-  let diagnostics: WdlDiagnostic[] = [];
+  let diagnostics: RexRapDiagnostic[] = [];
   let diagnosticsRequest = 0;
   let silentUpdate = false;
 
-  async function refreshDiagnostics(source: string): Promise<WdlDiagnostic[]> {
+  async function refreshDiagnostics(source: string): Promise<RexRapDiagnostic[]> {
     const request = ++diagnosticsRequest;
 
     try {
-      const nextDiagnostics = await wdlLanguageService.analyzeSilent(
+      const nextDiagnostics = await rexrapLanguageService.analyzeSilent(
         source,
-        wdlContext.sourcePath ?? options.sourcePath,
+        rexrapContext.sourcePath ?? options.sourcePath,
       );
 
       if (request === diagnosticsRequest) {
@@ -79,11 +79,11 @@ function createWdlHost(options: CodeMirrorHostOptions): TextEditorHost {
     }
   }
 
-  const wdlLinter = linter(
+  const rexrapLinter = linter(
     async (linterView): Promise<Diagnostic[]> => {
       const source = linterView.state.doc.toString();
       const docLength = linterView.state.doc.length;
-      let nextDiagnostics: WdlDiagnostic[];
+      let nextDiagnostics: RexRapDiagnostic[];
 
       try {
         nextDiagnostics = await refreshDiagnostics(source);
@@ -107,10 +107,10 @@ function createWdlHost(options: CodeMirrorHostOptions): TextEditorHost {
         };
       });
     },
-    { delay: WDL_LINT_DELAY_MS },
+    { delay: REXRAP_LINT_DELAY_MS },
   );
 
-  function settingRefsFromCredentials(settings: CredentialSummary[]): WdlSettingRef[] {
+  function settingRefsFromCredentials(settings: CredentialSummary[]): RexRapSettingRef[] {
     return settings.map((setting) => ({
       scope: setting.scope,
       name: setting.name,
@@ -119,11 +119,11 @@ function createWdlHost(options: CodeMirrorHostOptions): TextEditorHost {
   }
 
   function providers() {
-    return wdlContext.providers();
+    return rexrapContext.providers();
   }
 
   function settings() {
-    const raw = wdlContext.settings();
+    const raw = rexrapContext.settings();
 
     if (raw.length && "scope" in raw[0]) {
       return raw;
@@ -156,16 +156,16 @@ function createWdlHost(options: CodeMirrorHostOptions): TextEditorHost {
               },
             ]),
           ),
-          wdl(wdlProviderCompletionSource(providers, settings)),
-          wdlHoverTooltip(providers, settings),
-          wdlLinter,
+          rexrap(rexrapProviderCompletionSource(providers, settings)),
+          rexrapHoverTooltip(providers, settings),
+          rexrapLinter,
           editableCompartment.of(EditorView.editable.of(!options.readonly)),
           EditorView.updateListener.of((update) => {
             if (update.docChanged && !silentUpdate) {
               options.onChange(update.state.doc.toString());
             }
 
-            if (!options.readonly && shouldStartWdlCompletion(update)) {
+            if (!options.readonly && shouldStartRexRapCompletion(update)) {
               startCompletion(update.view);
             }
           }),
@@ -177,7 +177,7 @@ function createWdlHost(options: CodeMirrorHostOptions): TextEditorHost {
               borderRadius: "6px",
               boxShadow: "var(--workflow-menu-shadow)",
             },
-            ".wdl-hover": {
+            ".rexrap-hover": {
               maxWidth: "420px",
               padding: "8px 10px",
               fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
@@ -185,17 +185,17 @@ function createWdlHost(options: CodeMirrorHostOptions): TextEditorHost {
               lineHeight: "1.35",
               color: "var(--text)",
             },
-            ".wdl-hover-title": {
+            ".rexrap-hover-title": {
               fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
               fontWeight: "700",
               color: "var(--text)",
             },
-            ".wdl-hover-meta": {
+            ".rexrap-hover-meta": {
               marginTop: "3px",
               fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
               color: "var(--text-muted)",
             },
-            ".wdl-hover-docs": {
+            ".rexrap-hover-docs": {
               marginTop: "7px",
               color: "var(--text-subtle)",
               whiteSpace: "pre-line",
@@ -264,7 +264,7 @@ function createWdlHost(options: CodeMirrorHostOptions): TextEditorHost {
       }
 
       const source = view.state.doc.toString();
-      const formatted = await wdlLanguageService.formatSilent(source);
+      const formatted = await rexrapLanguageService.formatSilent(source);
       host.setValue(formatted);
       options.onChange(formatted);
       await refreshDiagnostics(formatted);
@@ -377,7 +377,7 @@ function lineColumnToOffset(source: string, line: number, column: number): numbe
   return offset + Math.max(0, column - 1);
 }
 
-function shouldStartWdlCompletion(update: ViewUpdate): boolean {
+function shouldStartRexRapCompletion(update: ViewUpdate): boolean {
   if (!update.docChanged) {
     return false;
   }
@@ -401,8 +401,8 @@ export function createCodeMirrorTextEditorHostFactory(): TextEditorHostFactory {
     create(options: TextEditorHostCreateOptions): TextEditorHost {
       const hostOptions = options as CodeMirrorHostOptions;
 
-      if (options.language === "wdl" || options.language === "expression") {
-        return createWdlHost(hostOptions);
+      if (options.language === "rexrap" || options.language === "expression") {
+        return createRexRapHost(hostOptions);
       }
 
       if (options.language !== "json") {
@@ -414,4 +414,4 @@ export function createCodeMirrorTextEditorHostFactory(): TextEditorHostFactory {
   };
 }
 
-export type { WdlHostContext, CodeMirrorHostOptions };
+export type { RexRapHostContext, CodeMirrorHostOptions };

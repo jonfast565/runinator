@@ -13,7 +13,7 @@ import { runCommands } from "./commands/runs";
 import { sessionCommands } from "./commands/session";
 import { settingsCommands } from "./commands/settings";
 import { freezeCommands, triggerCommands } from "./commands/triggers";
-import { wdlCommands } from "./commands/wdl";
+import { rexrapCommands } from "./commands/rexrap";
 import { workflowCommands } from "./commands/workflows";
 import type { ConsoleCommand } from "./types";
 
@@ -40,7 +40,7 @@ const helpCommand: ConsoleCommand = {
       return;
     }
 
-    print(text("a bare line is WDL; a `:` line is a command. `:help <command>` for arguments."));
+    print(text("a bare line is REXRAP; a `:` line is a command. `:help <command>` for arguments."));
     print(
       table(
         ["command", "what it does"],
@@ -72,7 +72,7 @@ export const COMMANDS: ConsoleCommand[] = [
   ...freezeCommands,
   ...functionCommands,
   ...settingsCommands,
-  ...wdlCommands,
+  ...rexrapCommands,
   ...nodeCommands,
   ...orgCommands,
   ...replicaCommands,

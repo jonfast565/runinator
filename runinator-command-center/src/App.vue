@@ -203,6 +203,10 @@ watch(
   (authenticated) => {
     if (authenticated && app.serviceUrl) {
       void refreshBackendState(true);
+    } else if (!authenticated && auth.required) {
+      // A failed refresh or a 401 recovery clears auth state. Remove data that was loaded under
+      // the expired principal before the login screen is shown.
+      clearBackendState();
     }
   },
 );

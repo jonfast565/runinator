@@ -31,7 +31,7 @@ describe("TypedParameterEditor", () => {
     expect(html).not.toContain('value="public static class Foreign {}"');
   });
 
-  it("renders a direct WDL-lowered expression value as an expression editor", async () => {
+  it("renders a direct REXRAP-lowered expression value as an expression editor", async () => {
     const app = createSSRApp({
       render: () =>
         h(TypedValueEditor, {
@@ -73,7 +73,7 @@ describe("TypedParameterEditor", () => {
     expect(html).not.toContain("json-editor-shell");
   });
 
-  it("surfaces an existing WDL-lowered expression as an expression editor on first render", async () => {
+  it("surfaces an existing REXRAP-lowered expression as an expression editor on first render", async () => {
     const modelValue = {
       summary: { $concat: ["ticket ", { $ref: { params: ["ticket_id"] } }] },
     };
@@ -119,7 +119,7 @@ describe("TypedParameterEditor", () => {
     expect(html).not.toContain("json-editor-shell");
   });
 
-  it("uses the expression-aware value editor for generic WDL object literals", async () => {
+  it("uses the expression-aware value editor for generic REXRAP object literals", async () => {
     const app = createSSRApp({
       render: () =>
         h(TypedParameterEditor, {

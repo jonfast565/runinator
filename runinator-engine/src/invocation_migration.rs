@@ -115,7 +115,7 @@ pub fn convert_definition(
     if let Value::Object(object) = &mut graph {
         object.insert("nodes".into(), Value::Array(converted));
         // the executable function bodies move into each invocation's module. the render-only
-        // signature hints under `metadata.wdl.functions` stay: decompile reads those, and they were
+        // signature hints under `metadata.rexrap.functions` stay: decompile reads those, and they were
         // never what the engine called.
         if let Some(Value::Object(metadata)) = object.get_mut("metadata") {
             metadata.remove("functions");
@@ -167,7 +167,7 @@ fn convert_node(
     let mut parameters = Map::new();
     parameters.insert("module".into(), serde_json::to_value(&module)?.into());
     // the statement tree is retained exactly as the compiler would have retained it, so a converted
-    // definition decompiles to the same wdl a freshly compiled one does.
+    // definition decompiles to the same rexrap a freshly compiled one does.
     parameters.insert("source".into(), Value::Array(program.clone()));
     if let Some(timeout) = action.get("timeout_seconds").and_then(Value::as_i64) {
         parameters.insert("timeout_seconds".into(), Value::from(timeout));

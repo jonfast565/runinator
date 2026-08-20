@@ -33,6 +33,11 @@ impl NodeKindSpec for AwaitRun {
                     Some("expression"),
                 ),
                 field(
+                    opt("run_id", RuninatorType::Any),
+                    FieldLocation::parameters(&["run_id"]),
+                    Some("expression"),
+                ),
+                field(
                     opt("mode", enum_ty(&["all", "any"])),
                     FieldLocation::parameters(&["mode"]),
                     None,

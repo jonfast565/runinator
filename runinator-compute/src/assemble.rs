@@ -1,12 +1,12 @@
 //! assemble a `ComputeProgram` into an [`InvocationProgram`].
 //!
-//! this is the bridge between the two program forms: the statement/expression tree the wdl compiler
-//! already emits, and the flat instruction stream the vm runs. it lives here rather than in the wdl
+//! this is the bridge between the two program forms: the statement/expression tree the rexrap compiler
+//! already emits, and the flat instruction stream the vm runs. it lives here rather than in the rexrap
 //! crates because it has two callers with nothing else in common — the compiler, which assembles
 //! what it just lowered, and the migration, which assembles definitions that were compiled years
-//! ago and have no wdl source to re-lower.
+//! ago and have no rexrap source to re-lower.
 //!
-//! assembling from the *lowered* tree rather than from the wdl ast is deliberate. it means the
+//! assembling from the *lowered* tree rather than from the rexrap ast is deliberate. it means the
 //! expression surface has exactly one lowering (`$ref`, `$concat`, `$call`, `$lambda`, …), so a new
 //! surface form cannot reach the vm without going through the same json the evaluator sees; and it
 //! is what lets a stored definition be converted without the compiler that produced it.

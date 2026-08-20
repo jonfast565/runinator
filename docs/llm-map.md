@@ -16,10 +16,10 @@ Use this map to load the smallest useful part of the repo for a task. The root `
 - Change workflow reducer behavior: start in `runinator-reducer/src/orchestration/engine.rs`, then the node-specific file in `runinator-reducer/src/orchestration/`.
 - Change a node transition or retry/timeout rule: `runinator-reducer/src/orchestration/transitions.rs`.
 - Change runtime context or `$ref` inputs available to the reducer: `runinator-reducer/src/orchestration/context.rs`.
-- Change workflow validation or graph invariants shared by JSON and WDL: `runinator-workflows/src/validation.rs` and nearby modules.
+- Change workflow validation or graph invariants shared by JSON and REXRAP: `runinator-workflows/src/validation.rs` and nearby modules.
 - Add or change a node kind's authoring behavior (palette entry, graph role, parameter targets, output type): its file in `runinator-workflows/src/node_kinds/<category>/`, plus an arm in `spec_for`.
-- Change WDL syntax or compile/decompile behavior: `runinator-wdl/src/wdl.pest`, `parser.rs`, `lower/`, `decompile/`, `format.rs`, and the matching subject file in `tests/`.
-- Change editor completion or hover: `runinator-wdl-ide/src/`; if it needs something new from the language core, add it to `runinator-wdl/src/analysis.rs`.
+- Change REXRAP syntax or compile/decompile behavior: `runinator-rexrap/src/rexrap.pest`, `parser.rs`, `lower/`, `decompile/`, `format.rs`, and the matching subject file in `tests/`.
+- Change editor completion or hover: `runinator-rexrap-ide/src/`; if it needs something new from the language core, add it to `runinator-rexrap/src/analysis.rs`.
 - Change persistence behavior: add to the owning role trait in `runinator-store/src/roles/`, then the matching file in `runinator-database/src/operations/`.
 - Change durable orchestration/repository behavior: `runinator-engine/src/repository/` and its background loops.
 - Change web API behavior: the handler's file in `runinator-ws-identity/`, `runinator-ws-authoring/`, or `runinator-ws-runtime/`'s `src/handlers/` (authoring = what can run, runtime = what is running, identity = who may do either); `runinator-ws/src/router.rs` only merges them. Shared wire types and the response envelope are in `runinator-ws-core`; auth/authz/rate-limit/overload are in `runinator-ws-middleware`. A handler reaches persistence through `runinator-engine/src/repository/`; only the allowlist in `runinator-ws/src/store_access_tests.rs` calls the store directly.
@@ -28,7 +28,7 @@ Use this map to load the smallest useful part of the repo for a task. The root `
 - Change worker execution/provider resolution: `runinator-worker/src/` and provider crates; do not put provider behavior in core runtime crates.
 - Change desktop-agent lifecycle, tray UI, sandbox, or desktop routing: `runinator-desktop-agent/src/`; keep reusable worker-loop behavior in `runinator-worker` and never add it to the command center.
 - Add a provider: create a new `runinator-provider-<name>` crate and expose metadata through `Provider::metadata()`.
-- Change command-line import or pack behavior: `runinator-ctl/src/`, plus WDL and docs if syntax changes.
+- Change command-line import or pack behavior: `runinator-ctl/src/`, plus REXRAP and docs if syntax changes.
 - Change desktop UI workflow editing: `runinator-command-center/src/core/services/workflows/`, `src/core/workflow/`, `src/ui/adapters/pinia/workflows/`, and `src/ui/components/workflow/`.
 - Change supervisor/local stack behavior: `runinator-supervisor/src/`, `runinator-supervisor.json`, `scripts/run-local.sh`, and README examples.
 
@@ -48,7 +48,7 @@ When adding or renaming shared fields, inspect:
 
 - Web service only: `cargo check -p runinator-ws`.
 - Database behavior: `cargo test -p runinator-database`.
-- WDL behavior: `cargo test -p runinator-wdl`; editor completion/hover: `cargo test -p runinator-wdl-ide`.
+- REXRAP behavior: `cargo test -p runinator-rexrap`; editor completion/hover: `cargo test -p runinator-rexrap-ide`.
 - Broker behavior: `cargo test -p runinator-broker`.
 - Command center: `pnpm --dir runinator-command-center test -- --run` and `pnpm --dir runinator-command-center build`.
 - Shared contracts: prefer `cargo test --workspace` after narrow checks.

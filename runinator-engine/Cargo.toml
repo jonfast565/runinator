@@ -25,7 +25,7 @@ runinator-models = { path = "../runinator-models" }
 runinator-comm = { path = "../runinator-comm" }
 runinator-utilities = { path = "../runinator-utilities" }
 runinator-console = { path = "../runinator-console" }
-runinator-wdl = { path = "../runinator-wdl" }
+runinator-rexrap = { path = "../runinator-rexrap" }
 runinator-workflows = { path = "../runinator-workflows" }
 
 [features]

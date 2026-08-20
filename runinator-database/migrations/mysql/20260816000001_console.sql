@@ -1,4 +1,4 @@
--- the wdl console: a notebook of cells evaluated against a shared, persisted scope.
+-- the rexrap console: a notebook of cells evaluated against a shared, persisted scope.
 --
 -- the same three mysql shapes as the functions migration, all forced rather than chosen: indexed
 -- strings are VARCHAR (mysql cannot index TEXT without a prefix), and foreign keys are table-level

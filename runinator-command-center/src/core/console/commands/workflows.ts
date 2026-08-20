@@ -145,7 +145,7 @@ export const workflowCommands: ConsoleCommand[] = [
   ...localOnly([
     ["apply", "workflows apply [path]", "import a pack from disk"],
     ["validate", "workflows validate <file>", "validate a workflow definition json file"],
-    ["test", "workflows test <file> [--tests PATH]", "dry-run a pack against .wdlt suites"],
+    ["test", "workflows test <file> [--tests PATH]", "dry-run a pack against .rexrapt suites"],
     ["dev", "workflows dev [path] [--run WORKFLOW]", "watch a pack and re-apply it on change"],
   ]),
 ];

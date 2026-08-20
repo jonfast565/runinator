@@ -10,7 +10,7 @@ import {
   paramsReferences,
   type WorkflowExpressionEditorContext,
 } from "../../../core/utils/workflow-references";
-export { isWorkflowExpressionValue } from "../../../core/utils/wdl-expression";
+export { isWorkflowExpressionValue } from "../../../core/utils/rexrap-expression";
 export type { WorkflowExpressionEditorContext } from "../../../core/utils/workflow-references";
 
 export function workflowExpressionCompletionSource(

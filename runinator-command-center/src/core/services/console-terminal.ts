@@ -1,6 +1,6 @@
 // the console tab's terminal: a transcript, a line of input, and what each line turned into.
 //
-// the split is the same one the console itself makes. a bare line is WDL and becomes a durable
+// the split is the same one the console itself makes. a bare line is REXRAP and becomes a durable
 // cell, evaluated in process when it is pure and run as a workflow when it is not; a `:` line is a
 // command, which is answered here and now and leaves nothing behind. only the first kind is part of
 // the session's history, which is why a command never appears in `:history`.
@@ -137,7 +137,7 @@ export function createConsoleTerminalService(consoleService: ConsoleService) {
     }
   }
 
-  // a WDL line becomes a durable cell. the run itself is followed by the console service, which the
+  // a REXRAP line becomes a durable cell. the run itself is followed by the console service, which the
   // view reads through `cellId` — so a cell that takes a minute keeps updating in place.
   async function runCell(entry: TranscriptEntry, source: string) {
     if (!consoleService.getState().activeSession) {
@@ -157,7 +157,7 @@ export function createConsoleTerminalService(consoleService: ConsoleService) {
 
   const service = {
     ...store,
-    /// submit one line: WDL, or a `:` command.
+    /// submit one line: REXRAP, or a `:` command.
     async submit(line: string) {
       const trimmed = line.trim();
 

@@ -45,7 +45,7 @@ export interface NotificationPolicy {
   target?: string | null;
   threshold_seconds?: number | null;
   enabled: boolean;
-  // "wdl" for pack-managed policies, which are reconciled on import and should not be hand-edited.
+  // "rexrap" for pack-managed policies, which are reconciled on import and should not be hand-edited.
   managed_by?: string | null;
   configuration?: JsonRecord | null;
   created_at: string;

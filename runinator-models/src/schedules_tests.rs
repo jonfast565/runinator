@@ -1,4 +1,4 @@
-//! covers the scheduling-policy vocabulary shared by the trigger loop, the wdl header, and the ui
+//! covers the scheduling-policy vocabulary shared by the trigger loop, the rexrap header, and the ui
 //! catalog.
 
 use super::*;
@@ -19,7 +19,7 @@ fn every_concurrency_policy_is_listed_exactly_once_with_its_wire_name() {
         assert_eq!(
             serde_json::to_value(policy).unwrap(),
             serde_json::Value::String(policy.as_str().into()),
-            "the serde name is the author-facing name the wdl header spells"
+            "the serde name is the author-facing name the rexrap header spells"
         );
     }
     assert_eq!(ConcurrencyPolicy::from_str_opt("cancel"), None);

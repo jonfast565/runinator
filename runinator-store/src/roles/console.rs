@@ -1,4 +1,4 @@
-//! the wdl console: sessions, their cells, and the scope those cells share.
+//! the rexrap console: sessions, their cells, and the scope those cells share.
 //!
 //! one of the role traits `DatabaseImpl` composes. bound on this directly when a caller only needs
 //! this slice of the store.
@@ -20,7 +20,7 @@ use runinator_models::{
     value::Value,
 };
 
-/// Persistence for the wdl console.
+/// Persistence for the rexrap console.
 pub trait ConsoleStore: Send + Sync + 'static {
     /// Create a session.
     fn create_console_session(

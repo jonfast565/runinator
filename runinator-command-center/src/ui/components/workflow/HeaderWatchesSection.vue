@@ -56,7 +56,7 @@ const providersStore = useProvidersStore();
 
 const watches = computed(() => workflows.headerDraft.watches);
 
-// `end` and `fail` are always legal targets: wdl spells them `done` and `fail`.
+// `end` and `fail` are always legal targets: rexrap spells them `done` and `fail`.
 const targets = computed(() => {
   void workflows.workflowLayoutVersion;
   const ids = asArray(workflows.workflowDraft.definition.nodes)
@@ -85,7 +85,7 @@ function setCondition(index: number, value: string) {
   const parsed = parseRequiredObject(value);
 
   // an unparseable draft is the editor's own inline error; do not write it into the definition,
-  // where it would break decompile and take the wdl pane down with it.
+  // where it would break decompile and take the rexrap pane down with it.
   if (!parsed) {
     return;
   }

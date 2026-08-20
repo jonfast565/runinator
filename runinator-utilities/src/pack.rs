@@ -1,5 +1,5 @@
 // shared layout for the compiled workflow pack uploaded to the web service. the client compiles a
-// pack (`.wdl`/`.wdls`/`.wdlm`) and zips the resulting json artifacts; the web service unzips and
+// pack (`.rexrap`/`.rexraps`/`.rexrapm`) and zips the resulting json artifacts; the web service unzips and
 // imports them. compilation stays on the client — the backend only reads the compiled json here.
 
 use std::collections::BTreeMap;

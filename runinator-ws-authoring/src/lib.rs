@@ -1,4 +1,4 @@
-//! the authoring http surface: workflow definitions and revisions, the WDL language endpoints,
+//! the authoring http surface: workflow definitions and revisions, the REXRAP language endpoints,
 //! compiled pack import, pipelines, the settings/secrets store, the authoring catalog, and provider
 //! registration.
 //!

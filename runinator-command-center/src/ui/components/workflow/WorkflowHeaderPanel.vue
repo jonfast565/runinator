@@ -7,7 +7,7 @@
       </div>
       <p class="step-headline">
         Declarations that belong to the workflow rather than to any one node. These compile into the
-        WDL header, so they survive a save. Interrupt handlers have their own panel.
+        REXRAP header, so they survive a save. Interrupt handlers have their own panel.
       </p>
     </header>
 

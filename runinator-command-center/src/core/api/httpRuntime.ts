@@ -9,7 +9,7 @@
 
 import { displayValue } from "../utils/values";
 
-type Method = "GET" | "POST" | "PATCH" | "DELETE";
+type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 type CommandArgs = Record<string, unknown> | undefined;
 
@@ -90,6 +90,12 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     method: "POST",
     path: () => "auth/logout",
     body: (args) => ({ refresh_token: arg(args, "refreshToken") }),
+  },
+  fetch_auth_settings: { method: "GET", path: () => "auth/settings" },
+  save_auth_settings: {
+    method: "PUT",
+    path: () => "auth/settings",
+    body: (args) => ({ max_refreshes: arg(args, "maxRefreshes") }),
   },
   list_resource_grants: {
     method: "GET",
@@ -254,9 +260,9 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     body: (args) => arg(args, "request"),
     headers: () => ({ [WORKFLOW_JSON_IMPORT_RISK_HEADER]: WORKFLOW_JSON_IMPORT_RISK_ACK }),
   },
-  save_workflow_wdl: {
+  save_workflow_rexrap: {
     method: "POST",
-    path: () => "wdl/import",
+    path: () => "rexrap/import",
     body: (args) => arg(args, "request"),
   },
   delete_workflow: {
@@ -584,7 +590,7 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     body: (args) => arg(args, "input"),
   },
 
-  // the wdl console.
+  // the rexrap console.
   list_console_sessions: { method: "GET", path: () => "console/sessions" },
   create_console_session: {
     method: "POST",
@@ -647,42 +653,42 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     method: "GET",
     path: (args) => String(arg(args, "endpoint")),
   },
-  complete_wdl: {
+  complete_rexrap: {
     method: "POST",
-    path: () => "wdl/complete",
+    path: () => "rexrap/complete",
     body: (args) => arg(args, "request"),
   },
-  hover_wdl: {
+  hover_rexrap: {
     method: "POST",
-    path: () => "wdl/hover",
+    path: () => "rexrap/hover",
     body: (args) => arg(args, "request"),
   },
-  compile_wdl: {
+  compile_rexrap: {
     method: "POST",
-    path: () => "wdl/compile",
+    path: () => "rexrap/compile",
     body: (args) => ({ source: arg(args, "source"), enabled: arg(args, "enabled") }),
   },
-  analyze_wdl: {
+  analyze_rexrap: {
     method: "POST",
-    path: () => "wdl/analyze",
+    path: () => "rexrap/analyze",
     body: (args) => ({
       source: arg(args, "source"),
       source_path: argOpt(args, "sourcePath") ?? null,
     }),
   },
-  format_wdl: {
+  format_rexrap: {
     method: "POST",
-    path: () => "wdl/format",
+    path: () => "rexrap/format",
     body: (args) => ({ source: arg(args, "source") }),
   },
-  decompile_to_wdl: {
+  decompile_to_rexrap: {
     method: "POST",
-    path: () => "wdl/decompile",
+    path: () => "rexrap/decompile",
     body: (args) => ({ workflow: arg(args, "workflow") }),
   },
   evaluate_expression: {
     method: "POST",
-    path: () => "wdl/evaluate",
+    path: () => "rexrap/evaluate",
     body: (args) => ({ expression: arg(args, "expression"), context: arg(args, "context") }),
   },
   fetch_providers: { method: "GET", path: () => "providers" },
@@ -1062,7 +1068,7 @@ export async function invokeViaHttp<T>(name: string, args?: Record<string, unkno
 
   // workflow imports: after import, re-export the first saved workflow to
   // hydrate the bundle with server-assigned ids — mirrors the Tauri command.
-  if (name === "save_workflow_bundle" || name === "save_workflow_wdl") {
+  if (name === "save_workflow_bundle" || name === "save_workflow_rexrap") {
     const saved = raw as { workflows?: { id?: string | null }[] };
     const id = saved.workflows?.[0]?.id;
 

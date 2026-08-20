@@ -3,7 +3,7 @@
 
 use super::*;
 
-/// build a `managed_by: wdl` chained trigger for `source_id` targeting `target_name` on `on`.
+/// build a `managed_by: rexrap` chained trigger for `source_id` targeting `target_name` on `on`.
 fn chained_trigger(source_id: Uuid, target_name: &str, on: &str) -> WorkflowTrigger {
     WorkflowTrigger {
         id: None,
@@ -14,7 +14,7 @@ fn chained_trigger(source_id: Uuid, target_name: &str, on: &str) -> WorkflowTrig
         next_execution: None,
         blackout_start: None,
         blackout_end: None,
-        metadata: json!({ "managed_by": "wdl" }),
+        metadata: json!({ "managed_by": "rexrap" }),
         created_at: None,
         updated_at: None,
     }

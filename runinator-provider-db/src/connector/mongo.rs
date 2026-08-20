@@ -76,7 +76,7 @@ fn to_document(value: &Value, field: &str) -> Result<Document, SendableError> {
 }
 
 /// bson → json using relaxed extended json, which keeps object ids and dates readable while
-/// staying valid json for downstream wdl expressions.
+/// staying valid json for downstream rexrap expressions.
 fn to_json_object(document: Document) -> Map<String, Value> {
     match Bson::Document(document).into_relaxed_extjson() {
         Value::Object(map) => map,

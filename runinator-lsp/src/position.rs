@@ -1,8 +1,8 @@
-//! mapping between lsp positions (0-based, utf-16) and wdl byte offsets / spans.
-//! the wdl crate works in byte offsets; lsp speaks utf-16 code units, so every boundary that
+//! mapping between lsp positions (0-based, utf-16) and rexrap byte offsets / spans.
+//! the rexrap crate works in byte offsets; lsp speaks utf-16 code units, so every boundary that
 //! crosses between them goes through here.
 
-use runinator_wdl::Span;
+use runinator_rexrap::Span;
 use tower_lsp::lsp_types::{Position, Range};
 
 /// resolve a 0-based utf-16 `Position` to a byte offset into `text`, clamped to a char boundary.
@@ -53,7 +53,7 @@ pub fn byte_to_position(text: &str, offset: usize) -> Position {
     Position { line, character }
 }
 
-/// convert a wdl `Span` (byte offsets) to an lsp `Range`.
+/// convert a rexrap `Span` (byte offsets) to an lsp `Range`.
 pub fn span_to_range(text: &str, span: Span) -> Range {
     Range {
         start: byte_to_position(text, span.start),

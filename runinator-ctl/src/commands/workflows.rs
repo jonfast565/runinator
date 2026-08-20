@@ -202,7 +202,7 @@ async fn apply_workflow_source(
     file: &Path,
     json_output: bool,
 ) -> Result<WorkflowApplySummary> {
-    // a .wdl/.wdlm/directory is compiled client-side, zipped, and uploaded as one compiled pack;
+    // a .rexrap/.rexrapm/directory is compiled client-side, zipped, and uploaded as one compiled pack;
     // json is handled below.
     if pack::is_pack_source(file) {
         // both halves of the catalog: provider metadata types ordinary actions, and the published
@@ -217,9 +217,9 @@ async fn apply_workflow_source(
         // the source tree rather than declared in the manifest: the manifest lists what to compile,
         // and a package directory is already self-identifying by its own manifest file.
         let function_sources = runinator_pack::functions::discover_function_sources(file)?;
-        // any settings (`settings.wdls`/`.json`) always ride in the same compiled pack zip.
+        // any settings (`settings.rexraps`/`.json`) always ride in the same compiled pack zip.
         let settings = pack::load_pack_settings(file)?;
-        // any pipelines (`.wdlp` files) ride along too; the backend upserts them and materializes
+        // any pipelines (`.rexrapp` files) ride along too; the backend upserts them and materializes
         // their managed chained triggers after the workflows land.
         let pipelines = pack::load_pack_pipelines(file)?;
         // `workflows apply` is an explicit re-apply: update existing items in place.
@@ -299,7 +299,7 @@ fn print_apply_summary(summary: &WorkflowApplySummary) {
     println!("{}", summary.message);
 }
 
-// dry-run a compiled pack against .wdlt suites entirely client-side; no server or broker involved.
+// dry-run a compiled pack against .rexrapt suites entirely client-side; no server or broker involved.
 #[allow(clippy::too_many_arguments)]
 async fn workflow_dev(
     client: &Client,
@@ -441,5 +441,5 @@ fn source_snapshot(file: &Path, json_file: Option<&Path>) -> SourceSnapshot {
 
 mod workflow_tests;
 pub use workflow_tests::workflows_test;
-mod wdl;
-pub(super) use wdl::wdl;
+mod rexrap;
+pub(super) use rexrap::rexrap;

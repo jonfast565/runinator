@@ -17,7 +17,7 @@ mod validation;
 pub use catalog::{enum_catalogs, node_kind_catalog, node_metadata, trigger_kind_catalog};
 // the expression/compute language lives in `runinator-compute`; re-exported here at its historical
 // `runinator_workflows::…` paths so graph-layer consumers need not name both crates. a consumer
-// that only evaluates values (a provider, the wdl front end) should depend on `runinator-compute`
+// that only evaluates values (a provider, the rexrap front end) should depend on `runinator-compute`
 // directly rather than pulling the graph layer in for these.
 pub use node_kinds::{
     ActionCatalog, GraphRole, NodeKindSpec, TargetRule, TargetSlot, graph_role, spec_for,

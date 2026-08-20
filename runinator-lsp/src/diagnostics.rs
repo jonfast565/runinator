@@ -1,10 +1,10 @@
-//! compute lsp diagnostics for a wdl document by reusing the wdl crate's analyzer and compiler.
+//! compute lsp diagnostics for a rexrap document by reusing the rexrap crate's analyzer and compiler.
 
 use std::path::Path;
 
 use runinator_models::semver::SemVer;
-use runinator_wdl::{
-    CompileOptions, Diagnostic as WdlDiagnostic, Severity, WdlError, analyze_source_with_options,
+use runinator_rexrap::{
+    CompileOptions, Diagnostic as RexRapDiagnostic, Severity, RexRapError, analyze_source_with_options,
     compile_str_with_diagnostics,
 };
 use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, NumberOrString};
@@ -17,17 +17,17 @@ pub fn compute(text: &str, path: Option<&Path>, check_lowering: bool) -> Vec<Dia
     let providers = runinator_provider_catalog::metadata();
     let workflow_signatures = path
         .and_then(|path| {
-            runinator_pack::source::wdl_context_workflow_signatures(path, Some(text)).ok()
+            runinator_pack::source::rexrap_context_workflow_signatures(path, Some(text)).ok()
         })
         .unwrap_or_default();
     match analyze_source_with_options(
         text,
         &providers,
-        runinator_wdl::TypePolicy::Strict,
+        runinator_rexrap::TypePolicy::Strict,
         &workflow_signatures,
     ) {
         Ok(diagnostics) => {
-            let mut out: Vec<Diagnostic> = diagnostics.iter().map(|d| from_wdl(text, d)).collect();
+            let mut out: Vec<Diagnostic> = diagnostics.iter().map(|d| from_rexrap(text, d)).collect();
             if check_lowering {
                 let options = CompileOptions {
                     enabled: true,
@@ -47,33 +47,33 @@ pub fn compute(text: &str, path: Option<&Path>, check_lowering: bool) -> Vec<Dia
     }
 }
 
-fn from_wdl(text: &str, diagnostic: &WdlDiagnostic) -> Diagnostic {
+fn from_rexrap(text: &str, diagnostic: &RexRapDiagnostic) -> Diagnostic {
     Diagnostic {
         range: span_to_range(text, diagnostic.span),
         severity: Some(match diagnostic.severity {
             Severity::Error => DiagnosticSeverity::ERROR,
             Severity::Warning => DiagnosticSeverity::WARNING,
         }),
-        source: Some("wdl".to_string()),
+        source: Some("rexrap".to_string()),
         message: diagnostic.message.clone(),
         ..Default::default()
     }
 }
 
-fn from_error(text: &str, error: &WdlError) -> Diagnostic {
+fn from_error(text: &str, error: &RexRapError) -> Diagnostic {
     let (range, code) = match error {
-        WdlError::Syntax { span, .. } => (span_to_range(text, *span), "WDL002"),
-        WdlError::Semantic { span, .. } => (span_to_range(text, *span), "WDL003"),
-        WdlError::Parse(_) => (whole_document_range(text), "WDL001"),
-        WdlError::Lower(_) => (whole_document_range(text), "WDL004"),
-        WdlError::Validation(_) => (whole_document_range(text), "WDL005"),
-        WdlError::Decompile(_) => (whole_document_range(text), "WDL006"),
+        RexRapError::Syntax { span, .. } => (span_to_range(text, *span), "REXRAP002"),
+        RexRapError::Semantic { span, .. } => (span_to_range(text, *span), "REXRAP003"),
+        RexRapError::Parse(_) => (whole_document_range(text), "REXRAP001"),
+        RexRapError::Lower(_) => (whole_document_range(text), "REXRAP004"),
+        RexRapError::Validation(_) => (whole_document_range(text), "REXRAP005"),
+        RexRapError::Decompile(_) => (whole_document_range(text), "REXRAP006"),
     };
     Diagnostic {
         range,
         severity: Some(DiagnosticSeverity::ERROR),
         code: Some(NumberOrString::String(code.to_string())),
-        source: Some("wdl".to_string()),
+        source: Some("rexrap".to_string()),
         message: error.to_string(),
         ..Default::default()
     }

@@ -14,7 +14,7 @@ use runinator_models::workflow_ast::{
 /// resolve refs/arithmetic plus pure `$call` intrinsics against `context`. this is the eager
 /// reducer path: declarative expressions fold here with the pure standard library, so pure calls
 /// (and higher-order `map`/`filter`/...) work outside compute blocks. effectful intrinsics are not
-/// in this library and error; the wdl front end already rejects them in declarative positions.
+/// in this library and error; the rexrap front end already rejects them in declarative positions.
 pub fn resolve_value_refs(
     value: &Value,
     context: &Value,

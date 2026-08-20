@@ -14,7 +14,7 @@ use crate::keys::{
 
 /// evaluate a condition in the eager reducer path: operands fold with the pure standard library, so
 /// pure `$call` intrinsics work in declarative conditions. effectful intrinsics are not available
-/// (the wdl front end rejects them outside compute blocks).
+/// (the rexrap front end rejects them outside compute blocks).
 pub fn evaluate_condition(
     condition: &Value,
     context: &Value,

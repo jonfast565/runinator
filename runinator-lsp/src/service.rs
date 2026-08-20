@@ -1,4 +1,4 @@
-/// process-level facade for the WDL language-server protocol host.
+/// process-level facade for the REXRAP language-server protocol host.
 #[derive(Default)]
 pub struct LanguageServerService;
 

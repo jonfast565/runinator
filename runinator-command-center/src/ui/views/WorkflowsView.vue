@@ -48,7 +48,7 @@
             compact
             icon="workflow"
             title="No workflows yet"
-            description="Workflows orchestrate tasks as a state machine. Create one to start editing on the graph and WDL canvas."
+            description="Workflows orchestrate tasks as a state machine. Create one to start editing on the graph and REXRAP canvas."
           >
             <button class="btn btn-primary" @click="workflows.addWorkflow">
               <Icon name="plus" />

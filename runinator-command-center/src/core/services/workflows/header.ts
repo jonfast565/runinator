@@ -2,9 +2,9 @@
 // correlation key.
 //
 // these are the declarations that belong to the workflow rather than to any node, and until now
-// they could only be written by typing wdl. every mutator here follows the same contract as a node
+// they could only be written by typing rexrap. every mutator here follows the same contract as a node
 // edit -- change `state.headerDraft`, write it into the definition, then `syncWorkflowDraftToJson()`
-// -- which is what keeps the json pane, the wdl pane, the diagnostics table, and the dirty flag in
+// -- which is what keeps the json pane, the rexrap pane, the diagnostics table, and the dirty flag in
 // step. components never touch `definition.metadata` themselves.
 
 import type { JsonRecord, JsonValue, WorkflowValidationIssue } from "../../domain/models";
@@ -62,8 +62,8 @@ export function createWorkflowHeaderService(host: WorkflowServiceHost, editor: W
     host.notify();
   }
 
-  function openWorkflowWdl() {
-    host.state.workflowInspectorMode = "wdl";
+  function openWorkflowRexRap() {
+    host.state.workflowInspectorMode = "rexrap";
     host.notify();
   }
 
@@ -72,7 +72,7 @@ export function createWorkflowHeaderService(host: WorkflowServiceHost, editor: W
     host.notify();
   }
 
-  /** the single write point: draft -> definition -> json/wdl panes. */
+  /** the single write point: draft -> definition -> json/rexrap panes. */
   function applyWorkflowHeader() {
     writeWorkflowHeader(definition(), host.state.headerDraft);
     editor.syncWorkflowDraftToJson();
@@ -110,7 +110,7 @@ export function createWorkflowHeaderService(host: WorkflowServiceHost, editor: W
   /**
    * delete a handler region after confirmation.
    *
-   * metadata owns the link, but an unlinked region cannot be represented in wdl. disabling is the
+   * metadata owns the link, but an unlinked region cannot be represented in rexrap. disabling is the
    * non-destructive option; deletion removes the link and its bounded graph region together.
    */
   function removeHeaderInterrupt(index: number) {
@@ -343,7 +343,7 @@ export function createWorkflowHeaderService(host: WorkflowServiceHost, editor: W
     populateWorkflowHeader,
     openWorkflowHeader,
     openWorkflowInterrupts,
-    openWorkflowWdl,
+    openWorkflowRexRap,
     closeWorkflowHeader,
     applyWorkflowHeader,
     setHeaderInterruptSource,

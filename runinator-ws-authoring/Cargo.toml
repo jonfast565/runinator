@@ -19,8 +19,8 @@ runinator-engine = { path = "../runinator-engine" }
 runinator-models = { path = "../runinator-models" }
 runinator-provider-catalog = { path = "../runinator-provider-catalog", default-features = false }
 runinator-utilities = { path = "../runinator-utilities" }
-runinator-wdl = { path = "../runinator-wdl" }
-runinator-wdl-ide = { path = "../runinator-wdl-ide" }
+runinator-rexrap = { path = "../runinator-rexrap" }
+runinator-rexrap-ide = { path = "../runinator-rexrap-ide" }
 runinator-workflows = { path = "../runinator-workflows" }
 runinator-ws-core = { path = "../runinator-ws-core" }
 runinator-ws-middleware = { path = "../runinator-ws-middleware" }

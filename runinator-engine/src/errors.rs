@@ -201,7 +201,7 @@ pub const FUNCTION_ARTIFACT_STORAGE: ErrorDescriptor = ErrorDescriptor::new(
 pub const FUNCTION_NOT_FOUND: ErrorDescriptor =
     ErrorDescriptor::new("RUNI164", "function.not_found", "Function not found");
 
-// the wdl console.
+// the rexrap console.
 /// a console session was not found.
 pub const CONSOLE_SESSION_NOT_FOUND: ErrorDescriptor = ErrorDescriptor::new(
     "RUNI170",

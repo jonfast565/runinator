@@ -214,9 +214,9 @@ describe("watch guards", () => {
     );
   });
 
-  it("rejects a condition wdl cannot express", () => {
+  it("rejects a condition rexrap cannot express", () => {
     expect(messages(watch({ condition: { weird: 1 }, handler: "end" }))).toContainEqual(
-      expect.stringContaining("not a shape wdl can express"),
+      expect.stringContaining("not a shape rexrap can express"),
     );
   });
 });

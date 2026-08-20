@@ -4,7 +4,7 @@ use super::*;
 
 #[test]
 fn multiline_validator_tracks_delimiters_and_quotes() {
-    let validator = WdlValidator;
+    let validator = RexRapValidator;
     assert!(matches!(
         validator.validate("workflow \"x\" {"),
         ValidationResult::Incomplete

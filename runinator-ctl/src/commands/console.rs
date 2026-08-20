@@ -1,4 +1,4 @@
-//! durable WDL console for the terminal.
+//! durable REXRAP console for the terminal.
 
 use super::*;
 
@@ -15,9 +15,9 @@ use crate::tui;
 use super::repl;
 use super::repl_completer::ReplCompleter;
 
-struct WdlValidator;
+struct RexRapValidator;
 
-impl Validator for WdlValidator {
+impl Validator for RexRapValidator {
     fn validate(&self, line: &str) -> ValidationResult {
         let mut stack = Vec::new();
         let mut quote = None;
@@ -140,7 +140,7 @@ fn greet(session: &ConsoleSession, scrollable: bool) {
     println!();
     println!("session {} ({})", session.name, session.id);
     println!(
-        "a bare line is WDL; a `:` line is a runinatorctl command. :help lists both, Tab completes,"
+        "a bare line is REXRAP; a `:` line is a runinatorctl command. :help lists both, Tab completes,"
     );
     println!("Ctrl+D exits and Ctrl+C clears the prompt.");
     if scrollable {
@@ -279,7 +279,7 @@ async fn tui_console(
     Ok(())
 }
 
-// run one WDL cell from the terminal ui, in the two steps the interrupt story needs: start it, then
+// run one REXRAP cell from the terminal ui, in the two steps the interrupt story needs: start it, then
 // wait for it. the note it returns is what the prompt shows under the input.
 async fn cell_line(
     client: &Client,
@@ -353,7 +353,7 @@ fn write_history(history: &[String]) {
     let _ = fs::write(path, body);
 }
 
-// the line editor: multiline WDL, tab completion over the command surface, and history that
+// the line editor: multiline REXRAP, tab completion over the command surface, and history that
 // outlives the session so a command typed yesterday is still one arrow-up away.
 fn line_editor() -> Reedline {
     let mut keybindings = default_emacs_keybindings();
@@ -367,7 +367,7 @@ fn line_editor() -> Reedline {
     );
 
     let editor = Reedline::create()
-        .with_validator(Box::new(WdlValidator))
+        .with_validator(Box::new(RexRapValidator))
         .with_completer(Box::new(ReplCompleter))
         .with_menu(ReedlineMenu::EngineCompleter(Box::new(
             ColumnarMenu::default().with_name("completion_menu"),

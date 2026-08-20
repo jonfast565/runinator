@@ -1,4 +1,4 @@
--- the wdl console: a notebook of cells evaluated against a shared, persisted scope.
+-- the rexrap console: a notebook of cells evaluated against a shared, persisted scope.
 --
 -- the scope lives in the database rather than in a replica's memory on purpose. a console session
 -- outlives any one request, and a scope accumulated in process would give different answers

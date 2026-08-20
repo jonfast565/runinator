@@ -7,10 +7,10 @@ import type { WorkflowDefinition, WorkflowNodeKindMetadata } from "../../../../c
 
 vi.mock("../../../../core/api/commandCenterApi", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../../../core/api/commandCenterApi")>()),
-  decompileToWdl: vi.fn(),
+  decompileToRexRap: vi.fn(),
 }));
 
-import { decompileToWdl } from "../../../../core/api/commandCenterApi";
+import { decompileToRexRap } from "../../../../core/api/commandCenterApi";
 
 const WORKFLOW_ID = "00000000-0000-0000-0000-000000000099";
 
@@ -119,7 +119,7 @@ describe("catalog-driven step editor round trips", () => {
       triggerKinds: [],
       enums: [],
     });
-    vi.mocked(decompileToWdl).mockResolvedValue("workflow Catalog {}");
+    vi.mocked(decompileToRexRap).mockResolvedValue("workflow Catalog {}");
   });
 
   afterEach(() => {

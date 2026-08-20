@@ -549,7 +549,7 @@ async fn an_http_invocation_starts_a_run_of_the_adapter_workflow() {
         ApiResponse::WorkflowRun(run) => run,
         _ => panic!("unexpected response"),
     };
-    // the run is of the *adapter*, which is what makes http and wdl invocation the same machinery.
+    // the run is of the *adapter*, which is what makes http and rexrap invocation the same machinery.
     assert_eq!(Some(run.run.workflow_id), adapters.get("resize").copied());
     assert_eq!(
         run.run.parameters.get("source").and_then(Value::as_str),

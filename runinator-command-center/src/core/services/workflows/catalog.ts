@@ -1,14 +1,14 @@
 import {
-  decompileToWdl,
+  decompileToRexRap,
   deleteWorkflow,
   deleteWorkflowTrigger,
   duplicateWorkflow,
   fetchWorkflowTriggers,
   fetchWorkflows,
   saveWorkflow,
-  saveWorkflowWdl,
+  saveWorkflowRexRap,
   saveWorkflowTrigger,
-  type WorkflowWdlSaveRequest,
+  type WorkflowRexRapSaveRequest,
 } from "../../api/commandCenterApi";
 import type {
   JsonRecord,
@@ -39,11 +39,11 @@ import type { WorkflowServiceHost } from "./host";
 export interface WorkflowEditorPeer {
   refreshHeaderDraft: () => void;
   setWorkflowJsonSilently: (next: string) => void;
-  setWorkflowWdlSilently: (next: string) => void;
-  refreshWorkflowWdl: () => Promise<void>;
+  setWorkflowRexRapSilently: (next: string) => void;
+  refreshWorkflowRexRap: () => Promise<void>;
   syncWorkflowJson: () => boolean;
-  syncWorkflowWdl: () => Promise<boolean>;
-  scheduleWorkflowWdlRefresh: () => void;
+  syncWorkflowRexRap: () => Promise<boolean>;
+  scheduleWorkflowRexRapRefresh: () => void;
 }
 
 export interface WorkflowRunsPeer {
@@ -113,8 +113,8 @@ export function createWorkflowCatalogService(
     host.state.selectedWorkflowId = null;
     Object.assign(host.state.workflowDraft, newWorkflowDraft());
     editor.setWorkflowJsonSilently(pretty(host.state.workflowDraft.definition));
-    editor.setWorkflowWdlSilently("");
-    host.state.workflowWdlError = "";
+    editor.setWorkflowRexRapSilently("");
+    host.state.workflowRexRapError = "";
     host.state.selectedStepId = "";
     host.state.stepEditorOpen = false;
     host.notify();
@@ -136,9 +136,9 @@ export function createWorkflowCatalogService(
     host.state.workflowEditorMode = "graph";
     host.state.isDirty = false;
     host.notify();
-    // the graph derives from the draft; the wdl pane is decompiled, so refresh it for the newly
+    // the graph derives from the draft; the rexrap pane is decompiled, so refresh it for the newly
     // selected workflow since both panes are visible at once.
-    return editor.refreshWorkflowWdl();
+    return editor.refreshWorkflowRexRap();
   }
 
   function addWorkflow() {
@@ -152,15 +152,15 @@ export function createWorkflowCatalogService(
     return host.state.workflows.find((workflow) => workflow.id === run.workflow_id)?.name ?? "";
   }
 
-  async function exportWorkflowWdl(): Promise<void> {
+  async function exportWorkflowRexRap(): Promise<void> {
     try {
-      const source = await decompileToWdl(cloneJson(host.state.workflowDraft));
+      const source = await decompileToRexRap(cloneJson(host.state.workflowDraft));
       const name = host.state.workflowDraft.name.trim() || "workflow";
-      const fileName = `${name.replace(/[^a-z0-9._-]+/gi, "_")}.wdl`;
+      const fileName = `${name.replace(/[^a-z0-9._-]+/gi, "_")}.rexrap`;
       host.deps.downloadTextFile(fileName, source, "text/plain");
       host.ctx.setStatus(`Exported ${fileName}`);
     } catch (err) {
-      host.ctx.setError(`Could not export this workflow as WDL (${errorMessage(err)}).`);
+      host.ctx.setError(`Could not export this workflow as REXRAP (${errorMessage(err)}).`);
     }
 
     host.notify();
@@ -187,7 +187,7 @@ export function createWorkflowCatalogService(
         let source: string;
 
         try {
-          source = await decompileToWdl(cloneJson(workflow));
+          source = await decompileToRexRap(cloneJson(workflow));
         } catch {
           skipped.push(workflow.name || `workflow ${workflow.id}`);
           continue;
@@ -203,21 +203,21 @@ export function createWorkflowCatalogService(
         }
 
         usedNames.add(slug);
-        const fileName = `${slug}.wdl`;
+        const fileName = `${slug}.rexrap`;
         entries.push({ name: fileName, content: source });
         manifestWorkflows.push(fileName);
         triggers.push(...(await fetchWorkflowTriggers(workflow.id).catch(() => [])));
       }
 
       if (entries.length === 0) {
-        throw new Error("no workflows could be decompiled to WDL");
+        throw new Error("no workflows could be decompiled to REXRAP");
       }
 
       const manifest = { version: 1, workflows: manifestWorkflows, triggers };
-      entries.unshift({ name: "pack.wdlm", content: pretty(manifest) });
+      entries.unshift({ name: "pack.rexrapm", content: pretty(manifest) });
       host.deps.downloadBlob("runinator-pack.zip", createZip(entries));
       const note = skipped.length
-        ? ` (skipped ${String(skipped.length)} non-WDL: ${skipped.join(", ")})`
+        ? ` (skipped ${String(skipped.length)} non-REXRAP: ${skipped.join(", ")})`
         : "";
       host.ctx.setStatus(
         `Exported ${String(entries.length - 1)} workflow(s) to runinator-pack.zip${note}`,
@@ -415,12 +415,12 @@ export function createWorkflowCatalogService(
       .map((trigger) => cloneJson(trigger));
   }
 
-  async function workflowWdlSaveRequest(): Promise<WorkflowWdlSaveRequest> {
+  async function workflowRexRapSaveRequest(): Promise<WorkflowRexRapSaveRequest> {
     const workflow = cloneJson(host.state.workflowDraft);
     const workflowId = workflow.id ?? null;
-    const source = await decompileToWdl(workflow);
+    const source = await decompileToRexRap(workflow);
     const triggers = workflowId === null ? [] : workflowSaveTriggers(workflowId);
-    const request: WorkflowWdlSaveRequest = {
+    const request: WorkflowRexRapSaveRequest = {
       source,
       enabled: workflow.enabled,
       workflow_id: workflowId,
@@ -436,8 +436,8 @@ export function createWorkflowCatalogService(
 
   async function saveSelectedWorkflowBundle() {
     const synced =
-      host.state.workflowEditorMode === "wdl"
-        ? await editor.syncWorkflowWdl()
+      host.state.workflowEditorMode === "rexrap"
+        ? await editor.syncWorkflowRexRap()
         : editor.syncWorkflowJson();
 
     if (!synced) {
@@ -449,7 +449,7 @@ export function createWorkflowCatalogService(
       normalizeWorkflowDefinition(cloneJson(host.state.workflowDraft)),
     );
     const saved = await host.ctx.runOperation("Saving workflow", async () =>
-      saveWorkflowWdl(await workflowWdlSaveRequest()),
+      saveWorkflowRexRap(await workflowRexRapSaveRequest()),
     );
     const savedWorkflow = saved.workflows.at(0);
 
@@ -466,7 +466,7 @@ export function createWorkflowCatalogService(
       ),
     }));
     editor.setWorkflowJsonSilently(pretty(host.state.workflowDraft.definition));
-    editor.scheduleWorkflowWdlRefresh();
+    editor.scheduleWorkflowRexRapRefresh();
     host.ctx.setStatus(`Workflow saved: ${savedWorkflow.name}`);
     host.state.isDirty = false;
     host.state.selectedWorkflowId = savedWorkflow.id;
@@ -510,8 +510,8 @@ export function createWorkflowCatalogService(
     } else {
       Object.assign(host.state.workflowDraft, newWorkflowDraft());
       editor.setWorkflowJsonSilently(pretty(host.state.workflowDraft.definition));
-      editor.setWorkflowWdlSilently("");
-      host.state.workflowWdlError = "";
+      editor.setWorkflowRexRapSilently("");
+      host.state.workflowRexRapError = "";
       host.state.workflowRuns = [];
       host.state.workflowRunDetail = null;
       host.state.selectedWorkflowRunId = null;
@@ -678,7 +678,7 @@ export function createWorkflowCatalogService(
     selectWorkflow,
     addWorkflow,
     workflowNameForRun,
-    exportWorkflowWdl,
+    exportWorkflowRexRap,
     exportWorkflowPack,
     moveWorkflowSelection,
     openWorkflowSettings,
@@ -694,7 +694,7 @@ export function createWorkflowCatalogService(
     triggerCronSummary,
     triggerDateForInput,
     workflowSaveTriggers,
-    workflowWdlSaveRequest,
+    workflowRexRapSaveRequest,
     saveSelectedWorkflowBundle,
     deleteSelectedWorkflow,
     duplicateSelectedWorkflow,

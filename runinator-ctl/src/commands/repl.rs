@@ -296,7 +296,7 @@ pub(super) fn help(topic: Option<&str>) -> Result<String> {
             .map(|(entry, name)| vec![name, output::truncate(&entry.summary, summary_width(width))])
             .collect();
         let mut text = String::from(
-            "a bare line is WDL; a `:` line is a command. `:help <command>` for arguments.\n\
+            "a bare line is REXRAP; a `:` line is a command. `:help <command>` for arguments.\n\
              every command also takes `--json` to print the raw payload.\n\n",
         );
         text.push_str(&output::table(&["command", "what it does"], &rows));
@@ -354,7 +354,7 @@ fn summary_width(first: usize) -> usize {
 
 /// true when Enter should submit the buffer rather than open another line.
 ///
-/// a `:` command is always one line. WDL is not: an open brace, bracket, paren, or quote means the
+/// a `:` command is always one line. REXRAP is not: an open brace, bracket, paren, or quote means the
 /// author is mid-construct, and submitting there would send a fragment that cannot compile.
 pub(crate) fn is_submittable(source: &str) -> bool {
     let trimmed = source.trim();
@@ -421,7 +421,7 @@ pub(crate) struct Completion {
 
 /// complete the last word of `line`.
 ///
-/// only `:` lines complete. a bare line is WDL, and offering `settings` to someone typing an
+/// only `:` lines complete. a bare line is REXRAP, and offering `settings` to someone typing an
 /// expression would be worse than offering nothing.
 pub(crate) fn complete(line: &str) -> Completion {
     let trimmed = line.trim_start();

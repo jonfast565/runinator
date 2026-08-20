@@ -50,10 +50,10 @@ import {
   clearExpressionInsertTarget,
   setExpressionInsertTarget,
 } from "../../../ui/adapters/codemirror/expression-insert-target";
-import { wdl } from "../../../ui/adapters/codemirror/codemirror-lang-wdl";
+import { rexrap } from "../../../ui/adapters/codemirror/codemirror-lang-rexrap";
 import { osCodeMirrorTheme } from "../../../ui/adapters/codemirror/codemirror-theme";
 import { pretty } from "../../../core/utils/format";
-import { expressionJsonToWdl, parseWdlExpression } from "../../../core/utils/wdl-expression";
+import { expressionJsonToRexRap, parseRexRapExpression } from "../../../core/utils/rexrap-expression";
 import { expressionService } from "../../../core/services";
 import ReferencePicker from "./ReferencePicker.vue";
 
@@ -81,9 +81,9 @@ let disposeEditorTheme: (() => void) | null = null;
 let previewTimer: ReturnType<typeof setTimeout> | null = null;
 let previewToken = 0;
 // the last value this editor emitted; used to ignore the parent echoing it straight back, so an
-// edit in progress is not reformatted by the json<->wdl round-trip moving the cursor.
+// edit in progress is not reformatted by the json<->rexrap round-trip moving the cursor.
 let lastEmitted: string | null = null;
-const title = computed(() => props.title ?? "WDL Expression");
+const title = computed(() => props.title ?? "REXRAP Expression");
 const loweredJson = computed(() => props.modelValue);
 const referenceGroups = computed(() => workflowReferenceGroups(props.context));
 // a preview is only meaningful when a prior run's data is available to resolve against.
@@ -192,11 +192,11 @@ onMounted(() => {
   const editorTheme = osCodeMirrorTheme();
 
   const startState = EditorState.create({
-    doc: wdlFromLoweredJson(props.modelValue),
+    doc: rexrapFromLoweredJson(props.modelValue),
     extensions: [
       basicSetup,
       editorTheme.extension,
-      wdl(workflowExpressionCompletionSource(() => props.context)),
+      rexrap(workflowExpressionCompletionSource(() => props.context)),
       Prec.high(
         keymap.of([
           ...completionKeymap,
@@ -251,7 +251,7 @@ onMounted(() => {
 watch(
   () => props.modelValue,
   (newValue) => {
-    // ignore the parent echoing back exactly what we just emitted; re-deriving the wdl text would
+    // ignore the parent echoing back exactly what we just emitted; re-deriving the rexrap text would
     // reformat the doc and jump the cursor mid-edit.
     if (newValue === lastEmitted) {
       lastEmitted = null;
@@ -259,11 +259,11 @@ watch(
       return;
     }
 
-    const nextWdl = wdlFromLoweredJson(newValue);
+    const nextRexRap = rexrapFromLoweredJson(newValue);
 
-    if (view && nextWdl !== view.state.doc.toString()) {
+    if (view && nextRexRap !== view.state.doc.toString()) {
       view.dispatch({
-        changes: { from: 0, to: view.state.doc.length, insert: nextWdl },
+        changes: { from: 0, to: view.state.doc.length, insert: nextRexRap },
       });
     }
 
@@ -308,9 +308,9 @@ function isUnresolvedReferenceError(message: string): boolean {
   return /WORKFLOW0?17\b/i.test(message);
 }
 
-function wdlFromLoweredJson(value: string): string {
+function rexrapFromLoweredJson(value: string): string {
   try {
-    return expressionJsonToWdl(JSON.parse(value || "null"));
+    return expressionJsonToRexRap(JSON.parse(value || "null"));
   } catch {
     return "null";
   }
@@ -318,7 +318,7 @@ function wdlFromLoweredJson(value: string): string {
 
 function updateLoweredJson(source: string) {
   try {
-    const lowered = parseWdlExpression(source);
+    const lowered = parseRexRapExpression(source);
     parseError.value = "";
     const next = pretty(lowered);
     lastEmitted = next;

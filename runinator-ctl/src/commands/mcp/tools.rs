@@ -22,7 +22,7 @@ pub(crate) const INSTRUCTIONS: &str = "Runinator schedules and runs workflows ac
      runtime. This server is the `runinatorctl` control surface: there is one tool per command, \
      named `runinator_<command>_<subcommand>`, covering workflow packs and their authoring, runs \
      and their logs and artifacts, triggers and freeze windows, approvals, settings and secrets, \
-     packaged functions, providers, replicas, and orgs. Workflows are authored in WDL and applied \
+     packaged functions, providers, replicas, and orgs. Workflows are authored in REXRAP and applied \
      as packs with `runinator_workflows_apply`; compilation happens here, not on the server. Use \
      `runinator_help` to find a command, and `runinator_exec` to run a raw command line when a \
      tool's schema does not fit.";
@@ -30,7 +30,7 @@ pub(crate) const INSTRUCTIONS: &str = "Runinator schedules and runs workflows ac
 /// how the exec tool describes the surface it reaches, so a first call needs no round trip.
 const TOP_LEVEL: &str = "workflows, pipelines, runs, nodes, triggers, freeze, approvals, \
                          artifacts, settings, functions, providers, replicas, agents, orgs, \
-                         wdl, status";
+                         rexrap, status";
 
 pub(crate) const HELP_TOOL: &str = "runinator_help";
 pub(crate) const EXEC_TOOL: &str = "runinator_exec";

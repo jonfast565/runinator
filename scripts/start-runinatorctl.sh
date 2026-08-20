@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Open the runinatorctl console (the durable WDL repl), or serve the Model Context Protocol on
+# Open the runinatorctl console (the durable REXRAP repl), or serve the Model Context Protocol on
 # stdin/stdout with --mcp, against the runinator-ws reached through scripts/port-forward-ws.sh.
 # The forward is started here when the port is not already serving, and is torn down when the
 # console (or the MCP server) exits. When the service enforces auth, the session signs in as

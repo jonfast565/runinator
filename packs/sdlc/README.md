@@ -19,14 +19,14 @@ over several scanner passes — the long parks of the old monolith (24h review g
 
 ## Files
 
-- `sdlc.wdlm` — the pack manifest (JSON): lists the four `wdl/*.wdl` workflows, the `pipeline/*.wdlp`
-  pipeline file, and the `settings.wdls` bundle. This is what `runinatorctl workflows apply` loads.
-- `wdl/sdlc-development.wdl`, `wdl/sdlc-review.wdl`, `wdl/sdlc-deploy.wdl`, `wdl/sdlc-qa.wdl` — the
+- `sdlc.rexrapm` — the pack manifest (JSON): lists the four `rexrap/*.rexrap` workflows, the `pipeline/*.rexrapp`
+  pipeline file, and the `settings.rexraps` bundle. This is what `runinatorctl workflows apply` loads.
+- `rexrap/sdlc-development.rexrap`, `rexrap/sdlc-review.rexrap`, `rexrap/sdlc-deploy.rexrap`, `rexrap/sdlc-qa.rexrap` — the
   four phase scanners.
-- `pipeline/core-sdlc.wdlp` — the **Core SDLC** pipeline: declares the four member workflows and the
+- `pipeline/core-sdlc.rexrapp` — the **Core SDLC** pipeline: declares the four member workflows and the
   `Development -> Review -> Deploy -> QA` links. On import the web service upserts the pipeline and
   materializes each link as a managed `chained` trigger stamped with the pipeline id.
-- `settings.wdls` — seeds every `config.*` value and `secret.*` token the workflows reference. Every
+- `settings.rexraps` — seeds every `config.*` value and `secret.*` token the workflows reference. Every
   slot ships as a `<<insert here>>` placeholder; replace each with a real value for your org.
 
 ## How the phases share state
@@ -65,13 +65,13 @@ freely interpolatable) and `secret.*` for the three tokens (`secret.jira.token`,
 late at the worker). Import the whole pack — workflows, settings, and pipeline — in one step:
 
 ```bash
-runinatorctl workflows apply ./packs/sdlc/sdlc.wdlm   # workflows + settings + Core SDLC pipeline
+runinatorctl workflows apply ./packs/sdlc/sdlc.rexrapm   # workflows + settings + Core SDLC pipeline
 runinatorctl settings list                            # config + secret slots, no values
 runinatorctl settings set jira token <api-token> --kind secret   # fill real token values
 ```
 
-`workflows apply` also accepts a directory of `.wdl` files (with any sibling `settings.wdls` and
-`*.wdlp` pipeline files) as a pack.
+`workflows apply` also accepts a directory of `.rexrap` files (with any sibling `settings.rexraps` and
+`*.rexrapp` pipeline files) as a pack.
 
 ## Retry policy
 

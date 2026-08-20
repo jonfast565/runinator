@@ -201,7 +201,7 @@ impl TryFrom<&str> for NotificationChannel {
 
 /// a declarative rule mapping a runtime failure condition to a severity and a delivery channel.
 /// `workflow_id = None` makes the policy global (every workflow); pack-managed policies carry
-/// `managed_by = "wdl"` and are reconciled wholesale on import, the same way triggers are.
+/// `managed_by = "rexrap"` and are reconciled wholesale on import, the same way triggers are.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NotificationPolicy {
     pub id: Uuid,

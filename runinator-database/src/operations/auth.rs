@@ -609,13 +609,14 @@ where
 
     async fn create_session(&self, session: AuthSession) -> Result<(), SendableError> {
         sqlx::query(&self.render(
-            "INSERT INTO auth_sessions (id, user_id, refresh_token_hash, expires_at, revoked, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO auth_sessions (id, user_id, refresh_token_hash, expires_at, revoked, refresh_count, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
         ))
         .bind(session.id)
         .bind(session.user_id)
         .bind(&session.refresh_token_hash)
         .bind(session.expires_at.timestamp())
         .bind(session.revoked)
+        .bind(session.refresh_count)
         .bind(Utc::now().timestamp())
         .execute(self.pool())
         .await?;
@@ -627,7 +628,7 @@ where
         refresh_token_hash: String,
     ) -> Result<Option<AuthSession>, SendableError> {
         let row = sqlx::query(&self.render(
-            "SELECT id, user_id, refresh_token_hash, expires_at, revoked FROM auth_sessions WHERE refresh_token_hash = ? AND revoked = ?",
+            "SELECT id, user_id, refresh_token_hash, expires_at, revoked, refresh_count FROM auth_sessions WHERE refresh_token_hash = ? AND revoked = ?",
         ))
         .bind(refresh_token_hash)
         .bind(false)
@@ -636,9 +637,26 @@ where
         Ok(row.map(|row| mappers::row_to_auth_session(&row)))
     }
 
+    async fn consume_session_refresh(
+        &self,
+        id: Uuid,
+        max_refreshes: i64,
+    ) -> Result<bool, SendableError> {
+        let result = sqlx::query(&self.render(
+            "UPDATE auth_sessions SET revoked = ?, refresh_count = refresh_count + 1 WHERE id = ? AND revoked = ? AND refresh_count < ?",
+        ))
+        .bind(true)
+        .bind(id)
+        .bind(false)
+        .bind(max_refreshes)
+        .execute(self.pool())
+        .await?;
+        Ok(result.affected() == 1)
+    }
+
     async fn fetch_session(&self, id: Uuid) -> Result<Option<AuthSession>, SendableError> {
         let row = sqlx::query(&self.render(
-            "SELECT id, user_id, refresh_token_hash, expires_at, revoked FROM auth_sessions WHERE id = ?",
+            "SELECT id, user_id, refresh_token_hash, expires_at, revoked, refresh_count FROM auth_sessions WHERE id = ?",
         ))
         .bind(id)
         .fetch_optional(self.pool())

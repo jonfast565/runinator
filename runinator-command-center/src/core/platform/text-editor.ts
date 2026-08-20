@@ -1,5 +1,5 @@
 export type TextEditorLanguage =
-  | "wdl"
+  | "rexrap"
   | "json"
   | "expression"
   | "python"

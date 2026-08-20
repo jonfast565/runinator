@@ -23,7 +23,7 @@ impl NodeKindSpec for Loop {
     }
 
     // no target slots: a loop's body is `transitions.next` and its exit is `transitions.on_success`.
-    // the reducer never reads a `parameters.target`, and the wdl lowering never emits one.
+    // the reducer never reads a `parameters.target`, and the rexrap lowering never emits one.
 
     fn check_parameters(&self, node: &WorkflowNode) -> Result<(), WorkflowValidationError> {
         // presence only. an authored `items` is normally a `$ref` expression, so its arrayness is

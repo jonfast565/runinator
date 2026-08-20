@@ -144,7 +144,7 @@ fn type_schema(input: &RuninatorType) -> Value {
         RuninatorType::Boolean => json!({ "type": "boolean" }),
         RuninatorType::Integer => json!({ "type": "integer" }),
         RuninatorType::Number => json!({ "type": "number" }),
-        // a duration is written the way WDL writes it, so the format is the useful part.
+        // a duration is written the way REXRAP writes it, so the format is the useful part.
         RuninatorType::Duration => {
             json!({ "type": "string", "description": "a duration, e.g. \"30s\", \"5m\", \"2h\"" })
         }

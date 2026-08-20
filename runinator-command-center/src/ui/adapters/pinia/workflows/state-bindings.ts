@@ -22,11 +22,11 @@ export function createWorkflowStateBindings(
       get: () => state.value.workflowJson,
       set: (workflowJson) => { services.setState((current) => ({ ...current, workflowJson })); },
     }),
-    workflowWdl: computed({
-      get: () => state.value.workflowWdl,
-      set: (workflowWdl) => { services.setState((current) => ({ ...current, workflowWdl })); },
+    workflowRexRap: computed({
+      get: () => state.value.workflowRexRap,
+      set: (workflowRexRap) => { services.setState((current) => ({ ...current, workflowRexRap })); },
     }),
-    workflowWdlError: computed(() => state.value.workflowWdlError),
+    workflowRexRapError: computed(() => state.value.workflowRexRapError),
     headerDraft: computed(() => state.value.headerDraft),
     workflowSettingsOpen: computed({
       get: () => state.value.workflowSettingsOpen,

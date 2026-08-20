@@ -50,6 +50,24 @@ pub async fn logout(
     .await
 }
 
+#[tauri::command]
+pub async fn fetch_auth_settings(state: State<'_, CommandCenterState>) -> CommandResult<Value> {
+    get_json(&state, "auth/settings").await
+}
+
+#[tauri::command]
+pub async fn save_auth_settings(
+    state: State<'_, CommandCenterState>,
+    max_refreshes: i64,
+) -> CommandResult<Value> {
+    post_json(
+        &state,
+        "auth/settings",
+        &json!({ "max_refreshes": max_refreshes }),
+    )
+    .await
+}
+
 /// store the access token so subsequent requests carry it.
 #[tauri::command]
 pub async fn set_access_token(

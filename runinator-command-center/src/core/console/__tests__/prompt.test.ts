@@ -32,7 +32,7 @@ describe("isSubmittable", () => {
 });
 
 describe("complete", () => {
-  it("offers nothing for a wdl line", () => {
+  it("offers nothing for a rexrap line", () => {
     expect(complete("1 + ").options).toEqual([]);
     expect(complete("action jira.create").options).toEqual([]);
   });

@@ -10,6 +10,7 @@ import {
 import { type Action, type JsonRecord } from "../domain/models";
 import { getPlatformAdapterOptional } from "../platform";
 import type { AuthStorage } from "../platform/types";
+import { setUnauthorizedHandler } from "../api/runtime";
 import { createStore } from "./event-bus";
 
 const ACCESS_KEY = "runinator.auth.access";
@@ -75,6 +76,8 @@ function safeGet(key: string): string | null {
 
 export function createAuthService() {
   let refreshToken: string | null = null;
+  let refreshPromise: Promise<boolean> | null = null;
+  let refreshTimer: ReturnType<typeof setTimeout> | null = null;
   const store = createStore<AuthState>({
     required: false,
     authenticated: false,
@@ -119,9 +122,34 @@ export function createAuthService() {
       effectiveActions: result.effective_actions.filter(isAction),
       authenticated: true,
     }));
+    if (Number.isFinite(result.expires_in) && result.expires_in > 0) {
+      if (refreshTimer !== null) clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => void refreshCurrentSession(), Math.max(5000, result.expires_in * 750));
+    }
+  }
+
+  function scheduleAccessTokenRefresh(access: string) {
+    try {
+      const payload = access.split(".")[1];
+      const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
+      const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
+      const decoded = JSON.parse(atob(padded)) as { exp?: number };
+      if (typeof decoded.exp === "number") {
+        const delay = Math.max(5000, Math.floor((decoded.exp * 1000 - Date.now()) * 0.75));
+        if (refreshTimer !== null) clearTimeout(refreshTimer);
+        refreshTimer = setTimeout(() => void refreshCurrentSession(), delay);
+      }
+    } catch {
+      // Opaque/API-key credentials do not carry a client-readable expiry; 401 recovery remains the
+      // fallback for those credentials.
+    }
   }
 
   async function clear() {
+    if (refreshTimer !== null) {
+      clearTimeout(refreshTimer);
+      refreshTimer = null;
+    }
     persist(null, null);
     await publishAccessToken(null);
     store.setState((state) => ({
@@ -142,9 +170,25 @@ export function createAuthService() {
     }
   }
 
+  async function refreshCurrentSession(): Promise<boolean> {
+    if (refreshPromise) return refreshPromise;
+    const token = refreshToken;
+    if (!token || !store.getState().required) return false;
+    refreshPromise = tryRefresh(token).finally(() => { refreshPromise = null; });
+    return refreshPromise;
+  }
+
+  setUnauthorizedHandler(async () => {
+    if (!store.getState().authenticated) return false;
+    return refreshCurrentSession();
+  });
+
   return {
     ...store,
     resetForTests() {
+      if (refreshTimer !== null) clearTimeout(refreshTimer);
+      refreshTimer = null;
+      setUnauthorizedHandler(null);
       refreshToken = null;
       store.setState(() => ({
         required: false,
@@ -177,6 +221,7 @@ export function createAuthService() {
       if (access) {
         refreshToken = refresh;
         await publishAccessToken(access);
+        scheduleAccessTokenRefresh(access);
 
         try {
           const user = await fetchAuthMe();
@@ -219,6 +264,7 @@ export function createAuthService() {
 
       await clear();
     },
+    refresh: refreshCurrentSession,
     async applyAccessToken(access: string) {
       persist(access, refreshToken);
       await publishAccessToken(access);

@@ -1,7 +1,7 @@
 // client-side validation for the four workflow header declarations.
 //
 // two things make this load-bearing rather than cosmetic. saving round-trips the definition through
-// wdl -- decompile to text, recompile on the server -- so a header the decompiler cannot render is
+// rexrap -- decompile to text, recompile on the server -- so a header the decompiler cannot render is
 // either rejected at save or, worse, silently rewritten into something else. and the backend
 // validates interrupts only: watches, concurrency, and correlation are read fail-open, so a broken
 // one is simply a declaration that never does anything.
@@ -49,8 +49,8 @@ const CONDITION_COMPARISONS = new Set([
   "ends_with",
 ]);
 
-/** the wdl `ident` production, which is what a `watch -> target` has to be spelled as. */
-const WDL_IDENT = /^[A-Za-z_][A-Za-z0-9_]*$/;
+/** the rexrap `ident` production, which is what a `watch -> target` has to be spelled as. */
+const REXRAP_IDENT = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 function asRecord(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {};
@@ -123,7 +123,7 @@ export function declarationIssues(definition: JsonRecord): WorkflowValidationIss
     const { maxConcurrentRuns, onConflict } = header.concurrency;
 
     if (maxConcurrentRuns < 1) {
-      // wdl refuses `concurrency 0`, and the decompiler drops the whole header -- policy included --
+      // rexrap refuses `concurrency 0`, and the decompiler drops the whole header -- policy included --
       // rather than emitting it, so the save would quietly discard what was set here.
       issues.push(
         error(
@@ -255,7 +255,7 @@ function pushInterruptIssues(
     for (const id of converging) {
       issues.push(
         warning(
-          `${label}: '${id}' is reached by more than one path inside the region, which cannot be written as wdl`,
+          `${label}: '${id}' is reached by more than one path inside the region, which cannot be written as rexrap`,
           id,
         ),
       );
@@ -297,20 +297,20 @@ function pushWatchIssues(
 ): void {
   const label = `Watch guard -> '${watch.handler}'`;
 
-  // `end`/`fail` are spelled `done`/`fail` in wdl and always exist as targets.
+  // `end`/`fail` are spelled `done`/`fail` in rexrap and always exist as targets.
   if (watch.handler !== "end" && watch.handler !== "fail") {
     if (!byId.has(watch.handler)) {
       issues.push(error(`${label}: handler node does not exist`));
-    } else if (!WDL_IDENT.test(watch.handler)) {
+    } else if (!REXRAP_IDENT.test(watch.handler)) {
       issues.push(
-        error(`${label}: handler id is not a legal wdl identifier, so the workflow will not compile`),
+        error(`${label}: handler id is not a legal rexrap identifier, so the workflow will not compile`),
       );
     }
   }
 
   if (!isRenderableCondition(watch.condition)) {
     issues.push(
-      error(`${label}: condition is not a shape wdl can express, so it would be lost on save`),
+      error(`${label}: condition is not a shape rexrap can express, so it would be lost on save`),
     );
   }
 }
@@ -319,7 +319,7 @@ function pushWatchIssues(
  * can `Decompiler::cond` render this condition?
  *
  * a direct transcription of that function's branches. anything it rejects is a hard decompile
- * failure, which takes down the wdl pane and the save with it.
+ * failure, which takes down the rexrap pane and the save with it.
  */
 export function isRenderableCondition(value: JsonValue): boolean {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {

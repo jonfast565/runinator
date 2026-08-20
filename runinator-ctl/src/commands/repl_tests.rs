@@ -37,16 +37,16 @@ fn keeps_an_empty_quoted_argument() {
 #[test]
 fn single_quotes_keep_backslashes() {
     assert_eq!(
-        tokens(r"wdl check 'C:\packs\a.wdl'"),
-        vec!["wdl", "check", r"C:\packs\a.wdl"]
+        tokens(r"rexrap check 'C:\packs\a.rexrap'"),
+        vec!["rexrap", "check", r"C:\packs\a.rexrap"]
     );
 }
 
 #[test]
 fn escapes_a_space_outside_quotes() {
     assert_eq!(
-        tokens(r"wdl check my\ pack.wdl"),
-        vec!["wdl", "check", "my pack.wdl"]
+        tokens(r"rexrap check my\ pack.rexrap"),
+        vec!["rexrap", "check", "my pack.rexrap"]
     );
 }
 

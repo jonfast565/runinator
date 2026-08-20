@@ -96,7 +96,7 @@ fn declared_node_output_types(
     let Some(entries) = workflow
         .definition
         .metadata
-        .pointer("/wdl/type_hints")
+        .pointer("/rexrap/type_hints")
         .and_then(Value::as_object)
     else {
         return Ok(HashMap::new());
@@ -106,7 +106,7 @@ fn declared_node_output_types(
     for (node_id, value) in entries {
         let ty = value.decode::<WorkflowType>().map_err(|err| {
             WorkflowValidationError::TypeError(format!(
-                "workflow metadata.wdl.type_hints['{}'] is invalid: {}",
+                "workflow metadata.rexrap.type_hints['{}'] is invalid: {}",
                 node_id, err
             ))
         })?;
@@ -228,7 +228,7 @@ impl TypeContext {
             // both iterables go through `collection_item_type`, which tolerates `any` and a union
             // of arrays and rejects everything else. a bare `matches!(Array(_))` rejected `any`
             // too, so a loop over an untyped upstream output — the common case — passed
-            // `runinator-wdl-sema`'s `check_iterable` and then failed here at import.
+            // `runinator-rexrap-sema`'s `check_iterable` and then failed here at import.
             WorkflowNodeKind::Loop => {
                 let Some(items) = node.parameters.get("items") else {
                     return Err(WorkflowValidationError::InvalidNodeParameters {

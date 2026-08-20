@@ -1,4 +1,4 @@
-//! the wdl console's http surface.
+//! the rexrap console's http surface.
 //!
 //! sessions and cells are ordinary crud; the one endpoint that does anything is `POST
 //! /console/cells/{id}/run`, and even that mostly delegates — the classifier decides what the cell
@@ -413,7 +413,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "/console/sessions",
         "Console",
         "List console sessions",
-        "Lists the WDL console sessions visible to the caller.",
+        "Lists the REXRAP console sessions visible to the caller.",
         false,
         None,
         &[],
@@ -426,7 +426,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "/console/sessions",
         "Console",
         "Create a console session",
-        "Creates a WDL console session: a notebook of cells sharing one scope.",
+        "Creates a REXRAP console session: a notebook of cells sharing one scope.",
         false,
         json_body("Optional session name.", Example::None),
         &[],

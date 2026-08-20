@@ -25,6 +25,15 @@
           </button>
         </div>
 
+        <button
+          class="flex w-full cursor-pointer items-center rounded-md border-0 bg-transparent px-2 py-2 text-left font-semibold text-fg hover:bg-surface-muted"
+          type="button"
+          :class="activeSection === 'security' ? 'bg-surface-muted text-fg' : ''"
+          @click="selectSection('security')"
+        >
+          <span>Authentication</span>
+        </button>
+
         <div class="flex flex-col gap-0.5">
           <button
             class="flex w-full cursor-pointer items-center gap-1.5 rounded-md border-0 bg-transparent px-2 py-2 text-left font-semibold text-fg hover:bg-surface-muted"
@@ -129,6 +138,27 @@
           </div>
         </template>
 
+        <template v-else-if="activeSection === 'security'">
+          <header>
+            <h2 class="m-0 text-base font-semibold text-fg">Authentication</h2>
+            <p class="mt-1 mb-0 text-fg-muted">Platform-wide authentication policies.</p>
+          </header>
+          <form class="grid max-w-xl gap-3.5 rounded-lg border border-border p-4" @submit.prevent="settings.saveAuthSettings">
+            <label class="grid gap-1.5">
+              <span class="text-[0.84rem] font-semibold text-fg-muted">Maximum refreshes per login session</span>
+              <span class="text-[0.82rem] text-fg-muted">A new login starts a new budget. Existing sessions use the updated cap.</span>
+              <input
+                type="number"
+                min="1"
+                max="100000"
+                :value="settings.maxRefreshes"
+                @input="settings.updateMaxRefreshes(Number(($event.target as HTMLInputElement).value))"
+              />
+            </label>
+            <button class="btn btn-primary justify-self-start" type="submit">Save policy</button>
+          </form>
+        </template>
+
         <!-- language runtime panel -->
         <template v-else-if="activeSection === 'languages'">
           <header
@@ -214,7 +244,7 @@ import {
 const settings = useAdminSettingsStore();
 const prefs = useDisplayPreferencesStore();
 
-type ActiveSection = "display" | "languages";
+type ActiveSection = "display" | "security" | "languages";
 const activeSection = ref<ActiveSection>("display");
 const languagesOpen = ref(true);
 const selected = ref<string>(settings.languages[0].language);
@@ -236,6 +266,9 @@ const activeLanguage = computed(() =>
 function selectSection(section: ActiveSection) {
   activeSection.value = section;
   selected.value = "";
+  if (section === "security") {
+    void settings.refreshAuthSettings();
+  }
 }
 
 function selectLanguage(language: string) {
@@ -253,4 +286,3 @@ onMounted(() => {
   }
 });
 </script>
-

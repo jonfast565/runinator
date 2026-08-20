@@ -170,7 +170,7 @@ fn validate_pipeline(pipeline: &Pipeline) -> Result<(), SendableError> {
 /// import a compiled pipeline bundle from a pack. for each pipeline: resolve member workflow names to
 /// ids, upsert the pipeline (reusing an existing id with the same name + org so re-import updates in
 /// place), and atomically replace its first-class graph. pack-managed pipelines carry
-/// `metadata.managed_by = "wdl"`; only pipeline start triggers are materialized separately.
+/// `metadata.managed_by = "rexrap"`; only pipeline start triggers are materialized separately.
 pub async fn import_pipeline_bundle_with<T: DatabaseImpl>(
     db: &T,
     bundle: &PipelineBundle,
@@ -259,7 +259,7 @@ async fn import_pipeline_spec<T: DatabaseImpl>(
         },
         concurrency: spec.concurrency,
         defaults: spec.defaults.clone(),
-        metadata: runinator_models::json!({ "managed_by": "wdl", "requires_reimport": false }),
+        metadata: runinator_models::json!({ "managed_by": "rexrap", "requires_reimport": false }),
         created_at: None,
         updated_at: None,
     };
@@ -274,7 +274,7 @@ async fn import_pipeline_spec<T: DatabaseImpl>(
 
 // realize a pipeline's header triggers as managed `pipeline_triggers`. reconciles idempotently: drop
 // this pipeline's prior managed triggers, then insert the current specs. manually-created pipeline
-// triggers (no `managed_by == "wdl"`) are left untouched.
+// triggers (no `managed_by == "rexrap"`) are left untouched.
 async fn materialize_pipeline_triggers<T: DatabaseImpl>(
     db: &T,
     spec: &PipelineSpec,
@@ -285,7 +285,7 @@ async fn materialize_pipeline_triggers<T: DatabaseImpl>(
             .metadata
             .pointer("/managed_by")
             .and_then(Value::as_str)
-            == Some("wdl");
+            == Some("rexrap");
         if let (true, Some(trigger_id)) = (managed, existing.id) {
             db.delete_pipeline_trigger(trigger_id).await?;
         }
@@ -300,7 +300,7 @@ async fn materialize_pipeline_triggers<T: DatabaseImpl>(
             next_execution: None,
             blackout_start: None,
             blackout_end: None,
-            metadata: runinator_models::json!({ "managed_by": "wdl" }),
+            metadata: runinator_models::json!({ "managed_by": "rexrap" }),
             created_at: None,
             updated_at: None,
         };

@@ -158,7 +158,7 @@ async fn foreign_compute_dispatch_carries_its_declared_output_type() {
                 { "id": "done", "kind": "end" }
             ],
             "metadata": {
-                "wdl": { "type_hints": { "code": { "type": "integer" } } }
+                "rexrap": { "type_hints": { "code": { "type": "integer" } } }
             }
         }
     }))

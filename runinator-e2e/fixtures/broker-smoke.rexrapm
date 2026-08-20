@@ -1,0 +1,9 @@
+{
+  "item_type": "rexrap_pack",
+  "name": "Brokered Result Path Smoke Pack",
+  "version": 1,
+  "workflows": [
+    "rexrap/broker-smoke.rexrap"
+  ],
+  "triggers": []
+}

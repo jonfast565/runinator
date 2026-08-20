@@ -32,8 +32,8 @@ async fn brokered_result_path_smoke() -> E2eResult<()> {
     let harness = StackHarness::start(&workspace, ports).await?;
     let api = harness.api_client()?;
 
-    // import the workflow through the wdlm pack path, the same way the real stack ships workflows.
-    harness.import_workflows(&workspace.join("runinator-e2e/fixtures/broker-smoke.wdlm"))?;
+    // import the workflow through the rexrapm pack path, the same way the real stack ships workflows.
+    harness.import_workflows(&workspace.join("runinator-e2e/fixtures/broker-smoke.rexrapm"))?;
     let workflow = api
         .fetch_workflow_by_name("Brokered Result Path Smoke")
         .await?;
@@ -86,7 +86,7 @@ async fn durable_agent_result_outbox_smoke() -> E2eResult<()> {
         "workflow \"Durable Agent Result Outbox\" v1 {{\n    node write_once <- console.run(command: \"sleep 3; printf x >> {}\").timeout(15s)\n}}\n",
         side_effect.display()
     );
-    let workflow_file = harness.run_dir.join("durable-outbox.wdl");
+    let workflow_file = harness.run_dir.join("durable-outbox.rexrap");
     fs::write(&workflow_file, source)?;
     harness.import_workflows(&workflow_file)?;
     let workflow = api
@@ -324,7 +324,7 @@ impl StackHarness {
     }
 
     /// run `runinatorctl workflows apply` once against the given workflows file (a .json bundle,
-    /// .wdl file, .wdlm pack, or directory of .wdl files).
+    /// .rexrap file, .rexrapm pack, or directory of .rexrap files).
     fn import_workflows(&self, workflows_file: &Path) -> E2eResult<()> {
         let status = Command::new(
             self.workspace

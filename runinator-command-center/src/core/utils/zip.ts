@@ -1,7 +1,7 @@
 // a dependency-free zip writer and a single-entry reader.
 //
 // the writer stores (no compression) and is enough to bundle a few small text files — an exported
-// `.wdlm` pack and its `.wdl` sources — into one downloadable archive.
+// `.rexrapm` pack and its `.rexrap` sources — into one downloadable archive.
 //
 // the reader exists for one thing: pulling `runinator-function.json` out of a package archive the
 // operator picked, so publishing does not also ask them to hand over the manifest separately. it

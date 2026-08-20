@@ -1,22 +1,22 @@
 import { describe, expect, it } from "vitest";
 import { CompletionContext, type CompletionSource } from "@codemirror/autocomplete";
 import { EditorState } from "@codemirror/state";
-import { wdl, wdlCompletion, wdlStaticCompletionLabels } from "../codemirror-lang-wdl";
+import { rexrap, rexrapCompletion, rexrapStaticCompletionLabels } from "../codemirror-lang-rexrap";
 import {
-  buildWdlCompletionRequest,
+  buildRexRapCompletionRequest,
   completionResponseToCodeMirror,
   utf16OffsetToUtf8ByteOffset,
   utf8ByteOffsetToUtf16Offset,
-} from "../wdl-completion";
-import type { ProviderMetadata, WdlCompletionResponse } from "../../../../core/domain/models";
+} from "../rexrap-completion";
+import type { ProviderMetadata, RexRapCompletionResponse } from "../../../../core/domain/models";
 
-describe("wdl completion adapter", () => {
+describe("rexrap completion adapter", () => {
   it("builds a compiler request with provider metadata and utf-8 cursor bytes", () => {
     const source = 'workflow "Snowman" v1 {\n  ☃.run\n}';
     const cursor = source.indexOf(".run");
     const providers = [provider()];
 
-    const request = buildWdlCompletionRequest(source, cursor, providers);
+    const request = buildRexRapCompletionRequest(source, cursor, providers);
 
     expect(request.source).toBe(source);
     expect(request.providers).toBe(providers);
@@ -27,7 +27,7 @@ describe("wdl completion adapter", () => {
   it("maps byte replacement ranges back to codemirror offsets", () => {
     const source = 'workflow "Snowman" v1 {\n  ☃.ru\n}';
     const replaceStart = source.indexOf("ru");
-    const response: WdlCompletionResponse = {
+    const response: RexRapCompletionResponse = {
       replace_start_byte: utf16OffsetToUtf8ByteOffset(source, replaceStart),
       replace_end_byte: utf16OffsetToUtf8ByteOffset(source, replaceStart + 2),
       items: [
@@ -55,7 +55,7 @@ describe("wdl completion adapter", () => {
   });
 
   it("converts snippet responses into codemirror apply functions", () => {
-    const response: WdlCompletionResponse = {
+    const response: RexRapCompletionResponse = {
       replace_start_byte: 0,
       replace_end_byte: 0,
       items: [
@@ -76,8 +76,8 @@ describe("wdl completion adapter", () => {
     expect(typeof result.options[0].apply).toBe("function");
   });
 
-  it("maps semantic wdl kinds to distinct codemirror completion icon types", () => {
-    const response: WdlCompletionResponse = {
+  it("maps semantic rexrap kinds to distinct codemirror completion icon types", () => {
+    const response: RexRapCompletionResponse = {
       replace_start_byte: 0,
       replace_end_byte: 0,
       items: [
@@ -127,9 +127,9 @@ describe("wdl completion adapter", () => {
   });
 });
 
-describe("wdl language completions", () => {
+describe("rexrap language completions", () => {
   it("includes recent workflow language surfaces in the static vocabulary", () => {
-    expect(wdlStaticCompletionLabels).toEqual(
+    expect(rexrapStaticCompletionLabels).toEqual(
       expect.arrayContaining([
         "fn",
         "import std",
@@ -189,7 +189,7 @@ describe("wdl language completions", () => {
     });
     const state = EditorState.create({
       doc: source,
-      extensions: [wdl(providerSource)],
+      extensions: [rexrap(providerSource)],
     });
     const sources = state.languageDataAt("autocomplete", source.length) as CompletionSource[];
 
@@ -205,7 +205,7 @@ async function completeLabels(source: string, explicit = true): Promise<string[]
   const cursor = source.indexOf("<>");
   const doc = cursor >= 0 ? source.replace("<>", "") : source;
   const state = EditorState.create({ doc });
-  const result = await wdlCompletion(
+  const result = await rexrapCompletion(
     new CompletionContext(state, cursor >= 0 ? cursor : doc.length, explicit),
   );
   return result?.options.map((option) => option.label) ?? [];

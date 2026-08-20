@@ -7,11 +7,11 @@ vi.mock("../../../../core/api/commandCenterApi", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../../../core/api/commandCenterApi")>()),
   fetchWorkflowRun: vi.fn(),
   requestRunInterrupt: vi.fn(),
-  decompileToWdl: vi.fn(),
+  decompileToRexRap: vi.fn(),
 }));
 
 import {
-  decompileToWdl,
+  decompileToRexRap,
   fetchWorkflowRun,
   requestRunInterrupt,
 } from "../../../../core/api/commandCenterApi";
@@ -61,7 +61,7 @@ beforeEach(() => {
     },
   });
   vi.clearAllMocks();
-  vi.mocked(decompileToWdl).mockResolvedValue("workflow stub { start -> end }");
+  vi.mocked(decompileToRexRap).mockResolvedValue("workflow stub { start -> end }");
   vi.mocked(requestRunInterrupt).mockResolvedValue({ success: true, message: "recorded" });
 });
 

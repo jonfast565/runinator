@@ -145,19 +145,19 @@
             type="button"
             role="menuitem"
             class="btn btn-ghost"
-            title="Export this workflow as a .wdl file"
-            @click="exportWdl"
+            title="Export this workflow as a .rexrap file"
+            @click="exportRexRap"
           >
-            This workflow (.wdl)
+            This workflow (.rexrap)
           </button>
           <button
             type="button"
             role="menuitem"
             class="btn btn-ghost"
-            title="Export all workflows as a .wdlm pack zip"
+            title="Export all workflows as a .rexrapm pack zip"
             @click="exportPack"
           >
-            All workflows (.wdlm pack)
+            All workflows (.rexrapm pack)
           </button>
         </div>
       </div>
@@ -278,9 +278,9 @@ function toggleMenu(menu: "nodes" | "arrange" | "export") {
   openMenu.value = openMenu.value === menu ? null : menu;
 }
 
-function exportWdl() {
+function exportRexRap() {
   closeMenu();
-  void workflows.exportWorkflowWdl();
+  void workflows.exportWorkflowRexRap();
 }
 
 function exportPack() {

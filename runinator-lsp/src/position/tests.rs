@@ -1,5 +1,5 @@
 use super::*;
-use runinator_wdl::Span;
+use runinator_rexrap::Span;
 use tower_lsp::lsp_types::Position;
 
 fn pos(line: u32, character: u32) -> Position {

@@ -1,4 +1,4 @@
-//! the expression and compute language shared by the workflow graph layer, the reducer, the wdl
+//! the expression and compute language shared by the workflow graph layer, the reducer, the rexrap
 //! front end, and `runinator-provider-std`.
 //!
 //! this crate is everything a caller needs to *evaluate* a value: `$ref`/`$template` resolution,
@@ -8,8 +8,8 @@
 //! exactly that.
 //!
 //! the `WORKFLOW` error dictionary is defined here rather than in `runinator-workflows` because
-//! both crates emit the same `WorkflowValidationError`; this mirrors how the `WDL` dictionary is
-//! single-sourced in `runinator-wdl-syntax` for the four wdl crates.
+//! both crates emit the same `WorkflowValidationError`; this mirrors how the `REXRAP` dictionary is
+//! single-sourced in `runinator-rexrap-syntax` for the four rexrap crates.
 
 mod assemble;
 mod catalog;

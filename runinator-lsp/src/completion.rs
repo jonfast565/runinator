@@ -1,7 +1,7 @@
 //! turn `complete_source` results into lsp completion items. provider/action/setting metadata is
-//! supplied from the cache; with an empty cache the wdl completer still returns language items.
+//! supplied from the cache; with an empty cache the rexrap completer still returns language items.
 
-use runinator_wdl_ide::{WdlCompletionItem, WdlCompletionRequest, complete_source};
+use runinator_rexrap_ide::{RexRapCompletionItem, RexRapCompletionRequest, complete_source};
 use tower_lsp::lsp_types::{
     CompletionItem, CompletionItemKind, CompletionList, CompletionResponse, CompletionTextEdit,
     Documentation, InsertTextFormat, Position, Range, TextEdit,
@@ -11,7 +11,7 @@ use crate::metadata::MetadataSnapshot;
 use crate::position::{bytes_to_range, position_to_byte};
 
 pub fn complete(text: &str, position: Position, metadata: &MetadataSnapshot) -> CompletionResponse {
-    let request = WdlCompletionRequest {
+    let request = RexRapCompletionRequest {
         source: text.to_string(),
         cursor_byte: position_to_byte(text, position),
         providers: metadata.providers.clone(),
@@ -30,7 +30,7 @@ pub fn complete(text: &str, position: Position, metadata: &MetadataSnapshot) -> 
     })
 }
 
-fn to_item(range: Range, item: &WdlCompletionItem) -> CompletionItem {
+fn to_item(range: Range, item: &RexRapCompletionItem) -> CompletionItem {
     CompletionItem {
         label: item.label.clone(),
         kind: Some(map_kind(&item.kind)),

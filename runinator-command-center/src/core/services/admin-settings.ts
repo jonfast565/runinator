@@ -1,7 +1,9 @@
 import {
   fetchCredentials,
   fetchForeignLanguageRuntime,
+  fetchAuthSettings,
   saveForeignLanguageRuntime,
+  saveAuthSettings,
 } from "../api/commandCenterApi";
 import { createStore } from "./event-bus";
 import type { AppService } from "./app";
@@ -64,12 +66,14 @@ export function createLanguageSettings(): ForeignLanguageSetting[] {
 export interface AdminSettingsState {
   loaded: boolean;
   languages: ForeignLanguageSetting[];
+  maxRefreshes: number;
 }
 
 export function createAdminSettingsService(app: AppService) {
   const store = createStore<AdminSettingsState>({
     loaded: false,
     languages: createLanguageSettings(),
+    maxRefreshes: 100,
   });
 
   const service = {
@@ -114,7 +118,25 @@ export function createAdminSettingsService(app: AppService) {
         }
       }
 
-      store.setState(() => ({ loaded: true, languages }));
+      store.setState((state) => ({ ...state, loaded: true, languages }));
+    },
+    async refreshAuthSettings() {
+      const settings = await app.runOperation("Loading authentication settings", fetchAuthSettings);
+      store.setState((state) => ({ ...state, maxRefreshes: settings.max_refreshes }));
+    },
+    updateMaxRefreshes(value: number) {
+      if (!Number.isInteger(value) || value < 1 || value > 100000) {
+        app.setError("Maximum refreshes must be an integer between 1 and 100000");
+        return;
+      }
+      store.setState((state) => ({ ...state, maxRefreshes: value }));
+    },
+    async saveAuthSettings() {
+      const saved = await app.runOperation("Saving authentication settings", () =>
+        saveAuthSettings(store.getState().maxRefreshes),
+      );
+      store.setState((state) => ({ ...state, maxRefreshes: saved.max_refreshes }));
+      app.setStatus("Authentication settings saved");
     },
     async saveLanguage(language: string) {
       const runtime = store.getState().languages.find((entry) => entry.language === language);
@@ -150,6 +172,7 @@ export function createAdminSettingsService(app: AppService) {
       store.setState(() => ({
         loaded: false,
         languages: createLanguageSettings(),
+        maxRefreshes: 100,
       }));
     },
   };

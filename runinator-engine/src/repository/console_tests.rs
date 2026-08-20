@@ -2,7 +2,7 @@
 //! what it does not, and what a later cell can see.
 //!
 //! execution itself is covered where it belongs — the classifier in `runinator-console`, the
-//! evaluator in `runinator-wdl`, and the run path by the ws behavior suite against a real database.
+//! evaluator in `runinator-rexrap`, and the run path by the ws behavior suite against a real database.
 
 use super::*;
 
@@ -52,11 +52,11 @@ fn an_unlabelled_cell_binds_by_position() {
 fn a_console_scratch_workflow_is_recognisable_as_managed() {
     // built through the compiler rather than hand-assembled, so the marker is checked against a
     // definition of the shape the scratch path actually produces.
-    let mut definition = runinator_wdl::compile_str(
+    let mut definition = runinator_rexrap::compile_str(
         "workflow \"console.abc.def\" v1 {\n    console.run(command: \"go\")\n}\n",
-        &runinator_wdl::CompileOptions {
+        &runinator_rexrap::CompileOptions {
             enabled: true,
-            ..runinator_wdl::CompileOptions::default()
+            ..runinator_rexrap::CompileOptions::default()
         },
     )
     .expect("scratch workflow compiles");

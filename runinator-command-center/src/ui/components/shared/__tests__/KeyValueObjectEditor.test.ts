@@ -11,7 +11,7 @@ import {
 } from "../../../../core/utils/key-value-object";
 
 describe("KeyValueObjectEditor", () => {
-  it("renders scalar, object, and WDL expression values as editable rows", async () => {
+  it("renders scalar, object, and REXRAP expression values as editable rows", async () => {
     const app = createSSRApp({
       render: () =>
         h(KeyValueObjectEditor, {

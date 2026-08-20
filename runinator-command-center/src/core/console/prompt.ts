@@ -10,7 +10,7 @@ import { usageShape } from "./usage";
 
 /// true when Enter should submit rather than open a new line.
 ///
-/// a `:` command is always one line. WDL is not: an open brace, bracket, paren, or quote means the
+/// a `:` command is always one line. REXRAP is not: an open brace, bracket, paren, or quote means the
 /// author is mid-construct, and submitting there would send a fragment that cannot compile.
 export function isSubmittable(source: string): boolean {
   const trimmed = source.trim();
@@ -82,7 +82,7 @@ export interface Completion {
 
 /// what Tab offers at the end of a buffer.
 ///
-/// only `:` lines complete. a bare line is WDL, and offering `settings` to someone typing an
+/// only `:` lines complete. a bare line is REXRAP, and offering `settings` to someone typing an
 /// expression would be worse than offering nothing.
 export function complete(buffer: string): Completion {
   const trimmed = buffer.trimStart();

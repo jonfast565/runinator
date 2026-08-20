@@ -31,7 +31,7 @@ pub struct DbProvider;
 /// the engine selector shared by every action.
 fn engine_parameter() -> ParameterMetadata {
     // mongodb is only advertised when this build actually carries the driver, so a pack that
-    // names it fails wdl type-checking rather than at run time.
+    // names it fails rexrap type-checking rather than at run time.
     let mut engines = Vec::new();
     #[cfg(feature = "sqlite")]
     engines.push(json!("sqlite").into());

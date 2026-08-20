@@ -135,7 +135,7 @@ pub async fn validate_workflow_definition_with_catalog<T: DatabaseImpl>(
 /// every packaged-function binding in a definition must name a version that still exists, in an
 /// org the workflow may reach.
 ///
-/// placed here rather than in a handler so the ui save, `import_wdl`, a pack import, and a revision
+/// placed here rather than in a handler so the ui save, `import_rexrap`, a pack import, and a revision
 /// rollback are all covered by the same check — a rollback in particular can restore a definition
 /// whose package was deleted since, and a run that discovers that at dispatch time is far worse
 /// than a save that refuses it.
@@ -466,7 +466,7 @@ async fn validate_chained_targets<T: DatabaseImpl>(
     Ok(())
 }
 
-/// replace a workflow's `managed_by: wdl` notification policies with the ones declared in its
+/// replace a workflow's `managed_by: rexrap` notification policies with the ones declared in its
 /// `definition.metadata.notifications`. hand-authored policies on the same workflow are left
 /// untouched, and re-import is idempotent, mirroring how managed triggers reconcile.
 async fn materialize_workflow_notifications<T: DatabaseImpl>(
@@ -513,17 +513,17 @@ async fn materialize_workflow_notifications<T: DatabaseImpl>(
                 .map(str::to_string),
             threshold_seconds: spec.get("threshold_seconds").and_then(Value::as_i64),
             enabled: spec.get("enabled").and_then(Value::as_bool).unwrap_or(true),
-            managed_by: Some("wdl".into()),
+            managed_by: Some("rexrap".into()),
             configuration: spec.get("configuration").cloned().unwrap_or(Value::Null),
         });
     }
     // always call through, even with an empty list: removing the last `notify` line from a pack must
     // delete the policy it previously materialized.
-    db.replace_managed_notification_policies(workflow_id, "wdl".into(), policies)
+    db.replace_managed_notification_policies(workflow_id, "rexrap".into(), policies)
         .await
 }
 
-/// replace a workflow's `managed_by: wdl` triggers with the ones declared in its
+/// replace a workflow's `managed_by: rexrap` triggers with the ones declared in its
 /// `definition.metadata.triggers`. manually-added triggers are left untouched; re-import is
 /// idempotent (delete the pack-managed set, then insert the current declarations). each spec's
 /// `kind` selects the trigger kind (absent ⇒ `cron` for back-compat with older packs).
@@ -542,14 +542,14 @@ async fn materialize_workflow_triggers<T: DatabaseImpl>(
         .cloned()
         .unwrap_or_default();
     // drop the previous pack-managed header triggers for this workflow. pipeline-link triggers are
-    // also managed_by=wdl but owned by a pipeline (keyed by configuration.pipeline_id); leave those
+    // also managed_by=rexrap but owned by a pipeline (keyed by configuration.pipeline_id); leave those
     // to pipeline reconciliation so materializing a workflow does not clobber its pipeline links.
     for existing in db.fetch_workflow_triggers(workflow_id).await? {
         let managed = existing
             .metadata
             .pointer("/managed_by")
             .and_then(Value::as_str)
-            == Some("wdl");
+            == Some("rexrap");
         let pipeline_owned = existing.configuration.pointer("/pipeline_id").is_some();
         if let (true, false, Some(trigger_id)) = (managed, pipeline_owned, existing.id) {
             db.delete_workflow_trigger(trigger_id).await?;
@@ -586,7 +586,7 @@ async fn materialize_workflow_triggers<T: DatabaseImpl>(
                     next_execution: None,
                     blackout_start: None,
                     blackout_end: None,
-                    metadata: runinator_models::json!({ "managed_by": "wdl" }),
+                    metadata: runinator_models::json!({ "managed_by": "rexrap" }),
                     created_at: None,
                     updated_at: None,
                 }
@@ -628,7 +628,7 @@ async fn materialize_workflow_triggers<T: DatabaseImpl>(
                     next_execution: None,
                     blackout_start,
                     blackout_end,
-                    metadata: runinator_models::json!({ "managed_by": "wdl" }),
+                    metadata: runinator_models::json!({ "managed_by": "rexrap" }),
                     created_at: None,
                     updated_at: None,
                 }

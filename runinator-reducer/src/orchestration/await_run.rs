@@ -8,6 +8,7 @@ use uuid::Uuid;
 struct AwaitParams {
     workflow_name: Option<String>,
     workflow_id: Option<Uuid>,
+    run_id_expr: Option<Value>,
     key_expr: Option<Value>,
     mode: String,
 }
@@ -35,9 +36,14 @@ fn parse_await_params(node: &WorkflowNode) -> AwaitParams {
         .and_then(Value::as_str)
         .and_then(|raw| raw.parse::<Uuid>().ok());
     let key_expr = params.get("key").cloned().filter(|value| !value.is_null());
+    let run_id_expr = params
+        .get("run_id")
+        .cloned()
+        .filter(|value| !value.is_null());
     AwaitParams {
         workflow_name,
         workflow_id,
+        run_id_expr,
         key_expr,
         mode: parse_await_mode(&params),
     }
@@ -82,6 +88,23 @@ async fn resolve_key<T: ReducerStore>(
     coerce_scalar_string(&resolved)
 }
 
+async fn resolve_run_id<T: ReducerStore>(
+    ctx: &super::handler::NodeHandlerContext<'_, T>,
+    expression: Option<&Value>,
+) -> Result<Option<Uuid>, SendableError> {
+    let Some(expression) = expression else {
+        return Ok(None);
+    };
+    let context = runtime_context(ctx).await;
+    let resolved = runinator_workflows::resolve_value_refs(expression, &context)
+        .map_err(|err| -> SendableError { Box::new(err) })?;
+    let raw = coerce_scalar_string(&resolved)
+        .ok_or_else(|| "await task run_id must resolve to a UUID".to_string())?;
+    raw.parse::<Uuid>()
+        .map(Some)
+        .map_err(|_| format!("await task run_id '{raw}' is not a UUID").into())
+}
+
 struct MatchSet {
     matched_run_ids: Vec<Uuid>,
     statuses: Vec<String>,
@@ -109,6 +132,7 @@ async fn evaluate_matches<T: ReducerStore>(
     ctx: &super::handler::NodeHandlerContext<'_, T>,
     target_id: Uuid,
     correlation: Option<&str>,
+    exact_run_id: Option<Uuid>,
     since_unix: Option<i64>,
     mode: &str,
 ) -> Result<MatchSet, SendableError> {
@@ -119,6 +143,11 @@ async fn evaluate_matches<T: ReducerStore>(
     let mut all_terminal = true;
     for run in runs {
         if run.id == ctx.workflow_run.id {
+            continue;
+        }
+        if let Some(exact) = exact_run_id
+            && run.id != exact
+        {
             continue;
         }
         if let Some(since) = since_unix
@@ -195,6 +224,7 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for AwaitRunHandler {
                 ctx,
                 state.workflow_id,
                 state.correlation_value.as_deref(),
+                state.exact_run_id,
                 state.since_unix,
                 &state.mode,
             )
@@ -207,7 +237,22 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for AwaitRunHandler {
         }
 
         // first visit: resolve the target + correlation, check immediately, else park.
-        let (target_id, target_name) = resolve_target(ctx, &params).await?;
+        let exact_run_id = resolve_run_id(ctx, params.run_id_expr.as_ref()).await?;
+        let (target_id, target_name) = if let Some(run_id) = exact_run_id {
+            let run = ctx
+                .db
+                .fetch_workflow_run(run_id)
+                .await?
+                .ok_or_else(|| format!("await task run {run_id} does not exist"))?;
+            let workflow = ctx
+                .db
+                .fetch_workflow(run.workflow_id)
+                .await?
+                .ok_or_else(|| crate::errors::AWAIT_WORKFLOW_UNKNOWN.error(run.workflow_id))?;
+            (run.workflow_id, workflow.name)
+        } else {
+            resolve_target(ctx, &params).await?
+        };
         let correlation = resolve_key(ctx, params.key_expr.as_ref()).await;
         let since_unix = Some(
             ctx.workflow_run
@@ -229,6 +274,7 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for AwaitRunHandler {
             ctx,
             target_id,
             correlation.as_deref(),
+            exact_run_id,
             since_unix,
             &params.mode,
         )
@@ -241,6 +287,7 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for AwaitRunHandler {
             workflow_id: target_id,
             workflow_name: target_name,
             correlation_value: correlation.clone(),
+            exact_run_id,
             since_unix,
             mode: params.mode.clone(),
             deadline_unix: ctx.node.timeout_seconds.map(|t| Utc::now().timestamp() + t),
@@ -273,6 +320,7 @@ impl<T: ReducerStore> super::handler::NodeHandler<T> for AwaitRunHandler {
             ctx,
             target_id,
             correlation.as_deref(),
+            exact_run_id,
             since_unix,
             &params.mode,
         )

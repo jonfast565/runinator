@@ -61,15 +61,15 @@ pub(super) async fn settings(
             println!("stored {} {scope}/{name}", kind.as_str());
         }
         SettingsCommands::Import { file } => {
-            // settings import requires a `.wdls` secrets file; json is not accepted.
-            if file.extension().and_then(|ext| ext.to_str()) != Some("wdls") {
+            // settings import requires a `.rexraps` secrets file; json is not accepted.
+            if file.extension().and_then(|ext| ext.to_str()) != Some("rexraps") {
                 return Err(err(format!(
-                    "settings import requires a .wdls file, got {}",
+                    "settings import requires a .rexraps file, got {}",
                     file.display()
                 )));
             }
             let data = fs::read_to_string(file)?;
-            let bundle = runinator_wdl::parse_secrets_str(&data).map_err(|e| {
+            let bundle = runinator_rexrap::parse_secrets_str(&data).map_err(|e| {
                 err(format!(
                     "failed to parse {}:\n{}",
                     file.display(),

@@ -1,17 +1,17 @@
 import { expect, it, vi } from "vitest";
 import { useWorkflowsStore } from "../workflows";
-import { compileWdl, decompileToWdl } from "../../../../core/api/commandCenterApi";
+import { compileRexRap, decompileToRexRap } from "../../../../core/api/commandCenterApi";
 import { catalogMetadataService } from "../../../../core/services";
 import { setWorkflowCatalogs } from "../../../../core/workflow/catalog-registry";
 import { testNodeKindCatalog } from "../../../../core/workflow/__tests__/catalog-fixtures";
 import { WORKFLOW_ID, workflowDefinition, flushWorkflowSync, graphCentroid } from "./workflows-fixtures";
 
 export function registerWorkflowSyncTests() {
-  it("syncs json edits into the draft and wdl view", async () => {
+  it("syncs json edits into the draft and rexrap view", async () => {
     const workflows = useWorkflowsStore();
     Object.assign(workflows.workflowDraft, workflowDefinition(WORKFLOW_ID, "json sync"));
     workflows.workflowEditorMode = "json";
-    vi.mocked(decompileToWdl).mockResolvedValue("workflow json_sync { start -> output }");
+    vi.mocked(decompileToRexRap).mockResolvedValue("workflow json_sync { start -> output }");
 
     workflows.workflowJson = JSON.stringify(
       {
@@ -38,16 +38,16 @@ export function registerWorkflowSyncTests() {
     expect(
       (workflows.workflowDraft.definition as any).nodes.some((node: any) => node.id === "output-1"),
     ).toBe(true);
-    expect(workflows.workflowWdl).toBe("workflow json_sync { start -> output }");
+    expect(workflows.workflowRexRap).toBe("workflow json_sync { start -> output }");
   });
 
-  it("syncs wdl edits into the draft and json view", async () => {
+  it("syncs rexrap edits into the draft and json view", async () => {
     const workflows = useWorkflowsStore();
-    Object.assign(workflows.workflowDraft, workflowDefinition(WORKFLOW_ID, "wdl sync"));
-    workflows.workflowEditorMode = "wdl";
-    vi.mocked(compileWdl).mockResolvedValue({
+    Object.assign(workflows.workflowDraft, workflowDefinition(WORKFLOW_ID, "rexrap sync"));
+    workflows.workflowEditorMode = "rexrap";
+    vi.mocked(compileRexRap).mockResolvedValue({
       id: WORKFLOW_ID,
-      name: "wdl sync",
+      name: "rexrap sync",
       version: "1.0.0",
       enabled: true,
       input_type: { type: "struct", fields: {} },
@@ -67,9 +67,9 @@ export function registerWorkflowSyncTests() {
       },
     });
 
-    workflows.workflowWdl = "workflow wdl_sync { start -> output-1 }";
+    workflows.workflowRexRap = "workflow rexrap_sync { start -> output-1 }";
 
-    expect(await workflows.syncWorkflowWdl()).toBe(true);
+    expect(await workflows.syncWorkflowRexRap()).toBe(true);
 
     expect(
       (workflows.workflowDraft.definition as any).nodes.some((node: any) => node.id === "output-1"),
