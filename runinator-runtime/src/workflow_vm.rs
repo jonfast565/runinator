@@ -168,32 +168,33 @@ pub fn step(module: &WorkflowModule, mut continuation: WorkflowContinuation) -> 
                     None => return fail(continuation, "branch has no matching target".into()),
                 }
             }
-            WorkflowInstruction::Select {
-                kind,
-                configuration,
-                targets,
-                default,
-            } => {
-                // The complete per-kind evaluators are introduced with the corresponding VM frame
-                // semantics. Until then, validated single-target selectors are deterministic and
-                // multi-target selectors fail closed instead of guessing a graph transition.
-                let target = match (targets.as_slice(), default) {
-                    ([target], _) => Some(*target),
-                    ([], Some(target)) => Some(*target),
-                    _ => None,
-                };
-                let Some(target) = target else {
-                    return fail(
-                        continuation,
-                        format!(
-                            "selector {kind:?} requires its dedicated VM evaluator: {configuration}"
-                        ),
-                    );
-                };
-                continuation.instruction_pointer = target;
-            }
-            WorkflowInstruction::PureNode { .. } => {
-                continuation.instruction_pointer += 1;
+            // `Select` and `PureNode` are compiler-prototype opcodes. Keeping their records
+            // decodable allows deployment-disabled scaffolding to be inspected, but executing
+            // either would silently reintroduce reducer semantics. Phase 3/4 replaces them with
+            // the dedicated opcodes below.
+            // Phase 2 deliberately makes the eventual bytecode vocabulary visible before Phase 8
+            // teaches the pure VM its semantics. Treating one of these as a no-op would corrupt a
+            // persisted continuation; fail closed until its evaluator lands.
+            WorkflowInstruction::Select { .. }
+            | WorkflowInstruction::PureNode { .. }
+            | WorkflowInstruction::Evaluate { .. }
+            | WorkflowInstruction::BeginLoop { .. }
+            | WorkflowInstruction::NextLoop { .. }
+            | WorkflowInstruction::Reenter { .. }
+            | WorkflowInstruction::BeginTry { .. }
+            | WorkflowInstruction::EndTry { .. }
+            | WorkflowInstruction::RegisterCompensation { .. }
+            | WorkflowInstruction::BeginCompensation { .. }
+            | WorkflowInstruction::Race { .. }
+            | WorkflowInstruction::BeginMap { .. }
+            | WorkflowInstruction::CheckInterrupt { .. }
+            | WorkflowInstruction::ResumeInterrupt { .. }
+            | WorkflowInstruction::DebugBoundary { .. }
+            | WorkflowInstruction::SetOutput => {
+                return fail(
+                    continuation,
+                    format!("unsupported workflow VM opcode: {instruction:?}"),
+                );
             }
             WorkflowInstruction::Effect { request } => {
                 let sequence = continuation.next_effect_sequence;
@@ -360,6 +361,20 @@ mod tests {
             resume(&module, continuation, Ok(Value::Null)),
             WorkflowVmStep::Failed { .. }
         ));
+    }
+
+    #[test]
+    fn rejects_a_finalized_opcode_until_its_phase_is_implemented() {
+        let module = WorkflowModule::new(vec![WorkflowInstruction::BeginLoop {
+            loop_key: "items".into(),
+            body: 0,
+            exit: 0,
+            max_iterations: None,
+        }]);
+        let WorkflowVmStep::Failed { message, .. } = step(&module, continuation()) else {
+            panic!("expected an unsupported-opcode failure");
+        };
+        assert!(message.contains("unsupported workflow VM opcode"));
     }
 
     #[test]

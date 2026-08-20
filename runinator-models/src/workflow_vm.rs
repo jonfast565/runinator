@@ -10,6 +10,8 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::interrupt::{InterruptMode, InterruptSource};
+use crate::invocation::InvocationModule;
 use crate::workflows::{WorkflowCondition, WorkflowNodeKind};
 use crate::{value::Value, workflows::WorkflowStatus};
 
@@ -210,6 +212,11 @@ pub enum WorkflowInstruction {
     JumpIfFalse {
         target: usize,
     },
+    /// Evaluate compiled compute code and push its result. The invocation continuation, when the
+    /// program yields, lives in [`WorkflowFrame::Invocation`], never in node-run state.
+    Evaluate {
+        module: InvocationModule,
+    },
     /// Evaluate authoring conditions in declaration order and jump to the first match.
     Branch {
         branches: Vec<WorkflowVmBranch>,
@@ -231,6 +238,51 @@ pub enum WorkflowInstruction {
         kind: WorkflowNodeKind,
         configuration: Value,
     },
+    /// Allocate a durable loop frame from a frozen item collection. `body` is entered for each
+    /// item; `exit` is entered after the final item or the iteration limit.
+    BeginLoop {
+        loop_key: String,
+        body: usize,
+        exit: usize,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_iterations: Option<u64>,
+    },
+    /// Advance the loop identified by `loop_key`, recording the stack's top value as the current
+    /// item result when present.
+    NextLoop {
+        loop_key: String,
+    },
+    /// Guard a graph re-entry point. The visit count is persisted in a re-entry frame, not
+    /// inferred from historic node runs.
+    Reenter {
+        reentry_key: String,
+        target: usize,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        exhausted: Option<usize>,
+        max_visits: u64,
+    },
+    /// Enter a structured try region. `catch` and `finally` are explicit control-flow targets so
+    /// failure does not depend on host-side graph traversal.
+    BeginTry {
+        try_key: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        catch: Option<usize>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        finally: Option<usize>,
+    },
+    EndTry {
+        try_key: String,
+    },
+    /// Register an already-successful effect's compensator. The compensator itself is emitted as
+    /// a normal effect while [`WorkflowFrame::Compensation`] tracks the unwind.
+    RegisterCompensation {
+        compensation_key: String,
+        request: WorkflowEffectRequest,
+    },
+    BeginCompensation {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        resume: Option<usize>,
+    },
     /// Suspend this continuation until the named effect receives a terminal result.
     Effect {
         request: WorkflowEffectRequest,
@@ -244,6 +296,37 @@ pub enum WorkflowInstruction {
     Join {
         join_key: String,
     },
+    /// Fork a race. The first terminal arrival wins; the persisted race frame records the winner
+    /// and makes loser cancellation deterministic after restart.
+    Race {
+        targets: Vec<usize>,
+        race_key: String,
+    },
+    /// Start a bounded map. Parent scheduling and each child item's binding are continuation
+    /// frames, which permits a map to resume without child-run records.
+    BeginMap {
+        map_key: String,
+        body: usize,
+        exit: usize,
+        concurrency: u64,
+    },
+    /// An interrupt safe-point. The host may create a handler continuation from the supplied
+    /// target and freeze the interrupted continuation in an interrupt frame.
+    CheckInterrupt {
+        handlers: Vec<WorkflowVmInterruptHandler>,
+    },
+    /// Complete an interrupt handler and apply its declared disposition to the frozen branch.
+    ResumeInterrupt {
+        mode: InterruptMode,
+    },
+    /// A debugger boundary independent of `EnterNode`; this lets breakpoints target source-map
+    /// locations inside a compiled node.
+    DebugBoundary {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        label: Option<String>,
+    },
+    /// Set the workflow's terminal output without ending the current continuation.
+    SetOutput,
     Return,
     Fail {
         message: String,
@@ -254,6 +337,170 @@ pub enum WorkflowInstruction {
 pub struct WorkflowVmBranch {
     pub condition: WorkflowCondition,
     pub target: usize,
+}
+
+/// One compiled interrupt handler target. The source is part of bytecode rather than a lookup in
+/// mutable workflow metadata, so a run remains reproducible after its definition changes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkflowVmInterruptHandler {
+    pub source: InterruptSource,
+    pub target: usize,
+}
+
+/// Durable state scoped to one continuation. Frames replace the graph reducer's cursor, node-run,
+/// and invocation-call bookkeeping; every value needed to resume a branch is serializable here.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum WorkflowFrame {
+    Loop(WorkflowLoopFrame),
+    Reentry(WorkflowReentryFrame),
+    Try(WorkflowTryFrame),
+    Map(WorkflowMapFrame),
+    Fork(WorkflowForkFrame),
+    Join(WorkflowJoinFrame),
+    Race(WorkflowRaceFrame),
+    Interrupt(WorkflowInterruptFrame),
+    Compensation(WorkflowCompensationFrame),
+    Invocation(WorkflowInvocationFrame),
+    Debug(WorkflowDebugFrame),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WorkflowLoopFrame {
+    pub loop_key: String,
+    pub body: usize,
+    pub exit: usize,
+    #[serde(default)]
+    pub index: u64,
+    #[serde(default)]
+    pub items: Vec<Value>,
+    #[serde(default)]
+    pub results: Vec<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_iterations: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkflowReentryFrame {
+    pub reentry_key: String,
+    #[serde(default)]
+    pub visits: u64,
+    pub max_visits: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowTryPhase {
+    Body,
+    Catch,
+    Finally,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WorkflowTryFrame {
+    pub try_key: String,
+    pub phase: WorkflowTryPhase,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catch: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finally: Option<usize>,
+    /// Captured before `finally` runs, then re-applied after it completes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_failure: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WorkflowMapFrame {
+    pub map_key: String,
+    pub body: usize,
+    pub exit: usize,
+    pub concurrency: u64,
+    #[serde(default)]
+    pub next_index: u64,
+    #[serde(default)]
+    pub items: Vec<Value>,
+    #[serde(default)]
+    pub results: Vec<WorkflowIndexedValue>,
+    /// The item carried by a child continuation. Its index is enough to order the parent result.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub item: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub item_index: Option<u64>,
+}
+
+/// A result labelled with a fork or map index. A vector is intentional: JSON object keys are
+/// strings, while this representation preserves a numeric index and a deterministic order.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WorkflowIndexedValue {
+    pub index: u64,
+    pub value: Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkflowForkFrame {
+    pub fork_key: String,
+    pub parent_id: Uuid,
+    pub branch_index: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WorkflowJoinFrame {
+    pub join_key: String,
+    pub expected: u64,
+    #[serde(default)]
+    pub arrivals: Vec<WorkflowIndexedValue>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WorkflowRaceFrame {
+    pub race_key: String,
+    pub expected: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub winner: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub winner_value: Option<Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WorkflowInterruptFrame {
+    pub source: InterruptSource,
+    pub interrupted_continuation_id: Uuid,
+    pub resume_instruction_pointer: usize,
+    #[serde(default, skip_serializing_if = "Value::is_null")]
+    pub payload: Value,
+    #[serde(default)]
+    pub handled_at_instruction_pointers: Vec<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WorkflowCompensationFrame {
+    #[serde(default)]
+    pub pending: Vec<WorkflowEffectRequest>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active: Option<WorkflowEffectRequest>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WorkflowInvocationFrame {
+    pub module: InvocationModule,
+    pub continuation: crate::invocation::InvocationContinuation,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WorkflowDebugFrame {
+    #[serde(default)]
+    pub paused: bool,
+    #[serde(default)]
+    pub step_requested: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub breakpoint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_output: Option<Value>,
+    /// Speculative continuations cannot settle durable effects unless explicitly armed.
+    #[serde(default)]
+    pub speculative: bool,
 }
 
 /// Frozen workflow-machine state. One record represents one independently schedulable branch.
@@ -269,6 +516,10 @@ pub struct WorkflowContinuation {
     pub stack: Vec<Value>,
     #[serde(default)]
     pub locals: BTreeMap<String, Value>,
+    /// Structured execution state for nested control flow, invocation calls, compensation, and
+    /// debugging. This deliberately has no graph cursor or node-run identity.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub frames: Vec<WorkflowFrame>,
     /// Increments only after an effect is successfully requested; it is part of the idempotency
     /// identity for the next effect this branch emits.
     #[serde(default)]
@@ -295,6 +546,7 @@ impl WorkflowContinuation {
             instruction_pointer: 0,
             stack: Vec::new(),
             locals: BTreeMap::new(),
+            frames: Vec::new(),
             next_effect_sequence: 0,
             parent_id: None,
             fork_key: None,
@@ -648,5 +900,102 @@ mod tests {
                 .record,
             WorkflowVmRecordKind::Effect
         );
+    }
+
+    #[test]
+    fn unknown_opcodes_are_decode_errors() {
+        let error =
+            serde_json::from_str::<WorkflowInstruction>(r#"{"op":"from_future"}"#).unwrap_err();
+        assert!(error.to_string().contains("from_future"));
+    }
+
+    #[test]
+    fn continuation_frames_capture_every_structured_runtime_state() {
+        let mut continuation = WorkflowContinuation::start(Uuid::nil(), WORKFLOW_VM_VERSION);
+        continuation.frames = vec![
+            WorkflowFrame::Loop(WorkflowLoopFrame {
+                loop_key: "loop".into(),
+                body: 1,
+                exit: 2,
+                index: 1,
+                items: vec![Value::from("item")],
+                results: vec![Value::from("result")],
+                max_iterations: Some(3),
+            }),
+            WorkflowFrame::Reentry(WorkflowReentryFrame {
+                reentry_key: "retry".into(),
+                visits: 2,
+                max_visits: 3,
+            }),
+            WorkflowFrame::Try(WorkflowTryFrame {
+                try_key: "try".into(),
+                phase: WorkflowTryPhase::Finally,
+                catch: Some(3),
+                finally: Some(4),
+                pending_failure: Some("original failure".into()),
+            }),
+            WorkflowFrame::Map(WorkflowMapFrame {
+                map_key: "map".into(),
+                body: 5,
+                exit: 6,
+                concurrency: 2,
+                next_index: 1,
+                items: vec![Value::from("item")],
+                results: vec![WorkflowIndexedValue {
+                    index: 0,
+                    value: Value::from("result"),
+                }],
+                item: Some(Value::from("item")),
+                item_index: Some(0),
+            }),
+            WorkflowFrame::Fork(WorkflowForkFrame {
+                fork_key: "fork".into(),
+                parent_id: Uuid::nil(),
+                branch_index: 0,
+            }),
+            WorkflowFrame::Join(WorkflowJoinFrame {
+                join_key: "join".into(),
+                expected: 2,
+                arrivals: vec![WorkflowIndexedValue {
+                    index: 0,
+                    value: Value::from("left"),
+                }],
+            }),
+            WorkflowFrame::Race(WorkflowRaceFrame {
+                race_key: "race".into(),
+                expected: 2,
+                winner: Some(Uuid::nil()),
+                winner_value: Some(Value::from("winner")),
+            }),
+            WorkflowFrame::Interrupt(WorkflowInterruptFrame {
+                source: InterruptSource::External,
+                interrupted_continuation_id: Uuid::nil(),
+                resume_instruction_pointer: 7,
+                payload: Value::from("payload"),
+                handled_at_instruction_pointers: vec![7],
+            }),
+            WorkflowFrame::Compensation(WorkflowCompensationFrame {
+                pending: vec![WorkflowEffectRequest::Timer { due_at: 1 }],
+                active: None,
+                resume: Some(8),
+            }),
+            WorkflowFrame::Invocation(WorkflowInvocationFrame {
+                module: InvocationModule::new(Default::default()),
+                continuation: crate::invocation::InvocationContinuation::start(),
+            }),
+            WorkflowFrame::Debug(WorkflowDebugFrame {
+                paused: true,
+                step_requested: true,
+                breakpoint: Some("node:publish".into()),
+                last_output: Some(Value::from("output")),
+                speculative: true,
+            }),
+        ];
+
+        let encoded = serde_json::to_string(&continuation).unwrap();
+        let decoded: WorkflowContinuation = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(decoded, continuation);
+        assert!(!encoded.contains("RunCursor"));
+        assert!(!encoded.contains("node_run"));
     }
 }
