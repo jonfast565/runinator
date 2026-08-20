@@ -6,8 +6,10 @@
 use runinator_models::{
     value::Value,
     workflow_vm::{
-        WorkflowContinuation, WorkflowContinuationStatus, WorkflowEffectRequest,
-        WorkflowInstruction, WorkflowModule,
+        WorkflowCompensationFrame, WorkflowContinuation, WorkflowContinuationStatus,
+        WorkflowEffectRequest, WorkflowForkFrame, WorkflowFrame, WorkflowInstruction,
+        WorkflowLoopFrame, WorkflowMapFrame, WorkflowModule, WorkflowRaceFrame, WorkflowTryFrame,
+        WorkflowTryPhase,
     },
 };
 
@@ -57,15 +59,33 @@ pub fn resume(
     }
     continuation.awaiting_effect_id = None;
     continuation.status = WorkflowContinuationStatus::Runnable;
+    // Compensation is best-effort: both a successful and a failed undo settle the active entry,
+    // then the next undo is issued. The original failure remains the terminal outcome once the
+    // LIFO stack drains, regardless of which graph block happens to follow the failing node in
+    // bytecode layout.
+    if let Some(position) = continuation.frames.iter().position(
+        |frame| matches!(frame, WorkflowFrame::Compensation(frame) if frame.active.is_some()),
+    ) {
+        let frame = match &mut continuation.frames[position] {
+            WorkflowFrame::Compensation(frame) => frame,
+            _ => unreachable!("compensation frame position was checked"),
+        };
+        frame.active = None;
+        if let Some(request) = frame.pending.pop() {
+            frame.active = Some(request.clone());
+            return yield_effect(continuation, request);
+        }
+        continuation.frames.remove(position);
+        if let Some(Value::String(message)) = continuation
+            .locals
+            .remove("__workflow_vm_compensation_failure")
+        {
+            return fail(continuation, message);
+        }
+    }
     match result {
         Ok(value) => continuation.stack.push(value),
-        Err(message) => {
-            continuation.status = WorkflowContinuationStatus::Failed;
-            return WorkflowVmStep::Failed {
-                continuation,
-                message,
-            };
-        }
+        Err(message) => return handle_failure(module, continuation, message),
     }
     step(module, continuation)
 }
@@ -168,6 +188,28 @@ pub fn step(module: &WorkflowModule, mut continuation: WorkflowContinuation) -> 
                     None => return fail(continuation, "branch has no matching target".into()),
                 }
             }
+            WorkflowInstruction::Evaluate {
+                module: invocation_module,
+            } => {
+                let context = Value::Object(
+                    continuation
+                        .locals
+                        .iter()
+                        .map(|(key, value)| (key.clone(), value.clone()))
+                        .collect(),
+                );
+                match runinator_compute::evaluate_module_pure(
+                    invocation_module,
+                    &context,
+                    &runinator_compute::CallableCatalog::builtin(),
+                ) {
+                    Ok(value) => {
+                        continuation.stack.push(value);
+                        continuation.instruction_pointer += 1;
+                    }
+                    Err(error) => return handle_failure(module, continuation, error.to_string()),
+                }
+            }
             // `Select` and `PureNode` are compiler-prototype opcodes. Keeping their records
             // decodable allows deployment-disabled scaffolding to be inspected, but executing
             // either would silently reintroduce reducer semantics. Phase 3/4 replaces them with
@@ -177,16 +219,7 @@ pub fn step(module: &WorkflowModule, mut continuation: WorkflowContinuation) -> 
             // persisted continuation; fail closed until its evaluator lands.
             WorkflowInstruction::Select { .. }
             | WorkflowInstruction::PureNode { .. }
-            | WorkflowInstruction::Evaluate { .. }
-            | WorkflowInstruction::BeginLoop { .. }
             | WorkflowInstruction::NextLoop { .. }
-            | WorkflowInstruction::Reenter { .. }
-            | WorkflowInstruction::BeginTry { .. }
-            | WorkflowInstruction::EndTry { .. }
-            | WorkflowInstruction::RegisterCompensation { .. }
-            | WorkflowInstruction::BeginCompensation { .. }
-            | WorkflowInstruction::Race { .. }
-            | WorkflowInstruction::BeginMap { .. }
             | WorkflowInstruction::CheckInterrupt { .. }
             | WorkflowInstruction::ResumeInterrupt { .. }
             | WorkflowInstruction::DebugBoundary { .. }
@@ -196,45 +229,353 @@ pub fn step(module: &WorkflowModule, mut continuation: WorkflowContinuation) -> 
                     format!("unsupported workflow VM opcode: {instruction:?}"),
                 );
             }
-            WorkflowInstruction::Effect { request } => {
-                let sequence = continuation.next_effect_sequence;
-                continuation.next_effect_sequence += 1;
-                let effect_id = stable_id(continuation.id, &format!("effect:{sequence}"));
-                continuation.instruction_pointer += 1;
-                continuation.awaiting_effect_id = Some(effect_id);
-                continuation.status = WorkflowContinuationStatus::Waiting;
-                return WorkflowVmStep::Yield {
-                    continuation,
-                    effect_id,
-                    sequence,
-                    request: request.clone(),
+            WorkflowInstruction::BeginLoop {
+                loop_key,
+                body,
+                exit,
+                max_iterations,
+            } => {
+                let existing = continuation.frames.iter().position(|frame| {
+                    matches!(frame, WorkflowFrame::Loop(frame) if frame.loop_key == *loop_key)
+                });
+                let frame = if let Some(position) = existing {
+                    // The compiler evaluates `items` on every graph re-entry. Discard that
+                    // stable expression result, then retain the body result beneath it.
+                    let _items = continuation.stack.pop();
+                    let mut frame = match continuation.frames.remove(position) {
+                        WorkflowFrame::Loop(frame) => frame,
+                        _ => unreachable!("loop frame position was checked"),
+                    };
+                    if let Some(result) = continuation.stack.pop() {
+                        frame.results.push(result);
+                    }
+                    frame.index += 1;
+                    frame
+                } else {
+                    let Some(Value::Array(items)) = continuation.stack.pop() else {
+                        return handle_failure(
+                            module,
+                            continuation,
+                            format!("loop '{loop_key}' needs an array value"),
+                        );
+                    };
+                    WorkflowLoopFrame {
+                        loop_key: loop_key.clone(),
+                        body: *body,
+                        exit: *exit,
+                        index: 0,
+                        items,
+                        results: Vec::new(),
+                        max_iterations: *max_iterations,
+                    }
                 };
+                let has_next = frame.index < frame.items.len() as u64
+                    && frame
+                        .max_iterations
+                        .map(|limit| frame.index < limit)
+                        .unwrap_or(true);
+                if has_next {
+                    continuation.locals.insert(
+                        format!("{loop_key}.item"),
+                        frame.items[frame.index as usize].clone(),
+                    );
+                    continuation
+                        .locals
+                        .insert(format!("{loop_key}.index"), Value::from(frame.index as i64));
+                    continuation.frames.push(WorkflowFrame::Loop(frame.clone()));
+                    continuation.instruction_pointer = frame.body;
+                } else {
+                    continuation.stack.push(Value::Array(frame.results));
+                    continuation.instruction_pointer = frame.exit;
+                }
+            }
+            WorkflowInstruction::Reenter {
+                reentry_key,
+                target,
+                exhausted,
+                max_visits,
+            } => {
+                let position = continuation.frames.iter().position(|frame| {
+                    matches!(frame, WorkflowFrame::Reentry(frame) if frame.reentry_key == *reentry_key)
+                });
+                let visits = match position {
+                    Some(position) => match &mut continuation.frames[position] {
+                        WorkflowFrame::Reentry(frame) => {
+                            frame.visits += 1;
+                            frame.visits
+                        }
+                        _ => unreachable!("reentry frame position was checked"),
+                    },
+                    None => {
+                        continuation.frames.push(WorkflowFrame::Reentry(
+                            runinator_models::workflow_vm::WorkflowReentryFrame {
+                                reentry_key: reentry_key.clone(),
+                                visits: 1,
+                                max_visits: *max_visits,
+                            },
+                        ));
+                        1
+                    }
+                };
+                if visits > *max_visits {
+                    match exhausted {
+                        Some(target) => continuation.instruction_pointer = *target,
+                        None => {
+                            return handle_failure(
+                                module,
+                                continuation,
+                                format!(
+                                    "reentry '{reentry_key}' exhausted after {max_visits} visits"
+                                ),
+                            );
+                        }
+                    }
+                } else {
+                    continuation.instruction_pointer = *target;
+                }
+            }
+            WorkflowInstruction::BeginTry {
+                try_key,
+                catch,
+                finally,
+            } => {
+                let position = continuation.frames.iter().rposition(
+                    |frame| matches!(frame, WorkflowFrame::Try(frame) if frame.try_key == *try_key),
+                );
+                if let Some(position) = position {
+                    let frame = match continuation.frames.remove(position) {
+                        WorkflowFrame::Try(frame) => frame,
+                        _ => unreachable!("try frame position was checked"),
+                    };
+                    match frame.phase {
+                        WorkflowTryPhase::Body | WorkflowTryPhase::Catch
+                            if frame.finally.is_some() =>
+                        {
+                            let finally = frame.finally.expect("checked");
+                            continuation
+                                .frames
+                                .push(WorkflowFrame::Try(WorkflowTryFrame {
+                                    phase: WorkflowTryPhase::Finally,
+                                    ..frame
+                                }));
+                            continuation.instruction_pointer = finally;
+                        }
+                        WorkflowTryPhase::Finally if frame.pending_failure.is_some() => {
+                            return handle_failure(
+                                module,
+                                continuation,
+                                frame.pending_failure.expect("checked"),
+                            );
+                        }
+                        _ => continuation.instruction_pointer += 2,
+                    }
+                } else {
+                    continuation
+                        .frames
+                        .push(WorkflowFrame::Try(WorkflowTryFrame {
+                            try_key: try_key.clone(),
+                            phase: WorkflowTryPhase::Body,
+                            catch: *catch,
+                            finally: *finally,
+                            pending_failure: None,
+                        }));
+                    continuation.instruction_pointer += 1;
+                }
+            }
+            WorkflowInstruction::EndTry { try_key } => {
+                let Some(position) = continuation.frames.iter().rposition(
+                    |frame| matches!(frame, WorkflowFrame::Try(frame) if frame.try_key == *try_key),
+                ) else {
+                    return handle_failure(
+                        module,
+                        continuation,
+                        format!("end_try '{try_key}' has no frame"),
+                    );
+                };
+                let frame = match continuation.frames.remove(position) {
+                    WorkflowFrame::Try(frame) => frame,
+                    _ => unreachable!(),
+                };
+                if let Some(finally) = frame.finally {
+                    continuation
+                        .frames
+                        .push(WorkflowFrame::Try(WorkflowTryFrame {
+                            phase: WorkflowTryPhase::Finally,
+                            ..frame
+                        }));
+                    continuation.instruction_pointer = finally;
+                } else if let Some(message) = frame.pending_failure {
+                    return handle_failure(module, continuation, message);
+                } else {
+                    continuation.instruction_pointer += 1;
+                }
+            }
+            WorkflowInstruction::RegisterCompensation {
+                compensation_key: _,
+                request,
+            } => {
+                let position = continuation
+                    .frames
+                    .iter()
+                    .position(|frame| matches!(frame, WorkflowFrame::Compensation(_)));
+                if let Some(position) = position {
+                    if let WorkflowFrame::Compensation(frame) = &mut continuation.frames[position] {
+                        frame.pending.push(request.clone());
+                    }
+                } else {
+                    continuation.frames.push(WorkflowFrame::Compensation(
+                        WorkflowCompensationFrame {
+                            pending: vec![request.clone()],
+                            active: None,
+                            resume: None,
+                        },
+                    ));
+                }
+                continuation.instruction_pointer += 1;
+            }
+            WorkflowInstruction::BeginCompensation { resume } => {
+                let Some(position) = continuation
+                    .frames
+                    .iter()
+                    .position(|frame| matches!(frame, WorkflowFrame::Compensation(_)))
+                else {
+                    continuation.instruction_pointer =
+                        resume.unwrap_or(continuation.instruction_pointer + 1);
+                    continue;
+                };
+                let frame = match &mut continuation.frames[position] {
+                    WorkflowFrame::Compensation(frame) => frame,
+                    _ => unreachable!(),
+                };
+                frame.active = None;
+                frame.resume = *resume;
+                if let Some(request) = frame.pending.pop() {
+                    frame.active = Some(request.clone());
+                    return yield_effect(continuation, request);
+                }
+                let resume = frame.resume.unwrap_or(continuation.instruction_pointer + 1);
+                continuation.frames.remove(position);
+                let message = continuation
+                    .locals
+                    .remove("__workflow_vm_compensation_failure");
+                if let Some(Value::String(message)) = message {
+                    return fail(continuation, message);
+                }
+                continuation.instruction_pointer = resume;
+            }
+            WorkflowInstruction::Effect { request } => {
+                return yield_effect(continuation, request.clone());
             }
             WorkflowInstruction::Fork { targets, join_key } => {
+                return fork(continuation, targets, join_key, None);
+            }
+            WorkflowInstruction::Race {
+                targets,
+                race_key,
+                winner,
+            } => {
                 if targets.is_empty() {
-                    return fail(continuation, "fork needs at least one target".into());
+                    return fail(continuation, "race needs at least one target".into());
                 }
-                let mut children = Vec::with_capacity(targets.len());
-                for (branch, target) in targets.iter().enumerate() {
-                    let mut child = continuation.clone();
-                    child.id = stable_id(continuation.id, &format!("fork:{join_key}:{branch}"));
-                    child.parent_id = Some(continuation.id);
-                    child.fork_key = Some(join_key.clone());
-                    child.instruction_pointer = *target;
-                    child.awaiting_effect_id = None;
-                    child.status = WorkflowContinuationStatus::Runnable;
-                    children.push(child);
+                continuation
+                    .frames
+                    .push(WorkflowFrame::Race(WorkflowRaceFrame {
+                        race_key: race_key.clone(),
+                        expected: targets.len() as u64,
+                        winner_policy: *winner,
+                        winner: None,
+                        winner_value: None,
+                    }));
+                let WorkflowVmStep::Fork {
+                    parent,
+                    mut children,
+                    join_key,
+                } = fork(continuation, targets, race_key, Some("race"))
+                else {
+                    unreachable!("non-empty race targets always fork")
+                };
+                // The race coordinator belongs only to the parked parent. A contender retains
+                // its fork provenance, but cannot independently nominate or overwrite a winner.
+                for child in &mut children {
+                    child
+                        .frames
+                        .retain(|frame| !matches!(frame, WorkflowFrame::Race(_)));
                 }
-                continuation.instruction_pointer += 1;
-                continuation.status = WorkflowContinuationStatus::Joined;
                 return WorkflowVmStep::Fork {
-                    parent: continuation,
+                    parent,
                     children,
-                    join_key: join_key.clone(),
+                    join_key,
                 };
             }
-            WorkflowInstruction::Join { join_key } => {
+            WorkflowInstruction::BeginMap {
+                map_key,
+                body,
+                exit,
+                concurrency,
+            } => {
+                if *concurrency == 0 {
+                    return fail(
+                        continuation,
+                        "map concurrency must be greater than zero".into(),
+                    );
+                }
+                if continuation.frames.iter().any(|frame| {
+                    matches!(frame, WorkflowFrame::Map(frame) if frame.map_key == *map_key && frame.item_index.is_some())
+                }) {
+                    // A map body returns to its map node through the normal graph edge. The
+                    // compiler evaluates `items` again on that entry; discard that stable
+                    // expression value and report the body's result beneath it.
+                    let _items = continuation.stack.pop();
+                    let value = continuation.stack.pop().unwrap_or(Value::Null);
+                    continuation.status = WorkflowContinuationStatus::Joined;
+                    return WorkflowVmStep::Joined {
+                        continuation,
+                        join_key: map_key.clone(),
+                        value,
+                    };
+                }
+                let Some(Value::Array(items)) = continuation.stack.pop() else {
+                    return fail(
+                        continuation,
+                        format!("map '{map_key}' needs an array value"),
+                    );
+                };
+                if items.is_empty() {
+                    continuation.stack.push(Value::Array(Vec::new()));
+                    continuation.instruction_pointer = *exit;
+                    continue;
+                }
+                let count = (*concurrency as usize).min(items.len());
+                continuation
+                    .frames
+                    .push(WorkflowFrame::Map(WorkflowMapFrame {
+                        map_key: map_key.clone(),
+                        body: *body,
+                        exit: *exit,
+                        concurrency: *concurrency,
+                        next_index: count as u64,
+                        items: items.clone(),
+                        results: Vec::new(),
+                        item: None,
+                        item_index: None,
+                    }));
+                let targets = std::iter::repeat_n(*body, count).collect::<Vec<_>>();
+                return fork_map(continuation, &targets, map_key, &items[..count]);
+            }
+            WorkflowInstruction::Join {
+                join_key,
+                expected,
+                mode,
+            } => {
                 let value = continuation.stack.pop().unwrap_or(Value::Null);
+                continuation.frames.push(WorkflowFrame::Join(
+                    runinator_models::workflow_vm::WorkflowJoinFrame {
+                        join_key: join_key.clone(),
+                        expected: *expected,
+                        mode: *mode,
+                        arrivals: Vec::new(),
+                    },
+                ));
                 continuation.status = WorkflowContinuationStatus::Joined;
                 return WorkflowVmStep::Joined {
                     continuation,
@@ -250,10 +591,92 @@ pub fn step(module: &WorkflowModule, mut continuation: WorkflowContinuation) -> 
                     value,
                 };
             }
-            WorkflowInstruction::Fail { message } => return fail(continuation, message.clone()),
+            WorkflowInstruction::Fail { message } => {
+                return handle_failure(module, continuation, message.clone());
+            }
         }
     }
     fail(continuation, "workflow instruction budget exhausted".into())
+}
+
+fn fork(
+    mut parent: WorkflowContinuation,
+    targets: &[usize],
+    key: &str,
+    kind: Option<&str>,
+) -> WorkflowVmStep {
+    if targets.is_empty() {
+        return fail(parent, "fork needs at least one target".into());
+    }
+    let mut children = Vec::with_capacity(targets.len());
+    for (branch, target) in targets.iter().enumerate() {
+        let mut child = parent.clone();
+        child.id = stable_id(
+            parent.id,
+            &format!("{}:{key}:{branch}", kind.unwrap_or("fork")),
+        );
+        child.parent_id = Some(parent.id);
+        child.fork_key = Some(key.to_owned());
+        child.instruction_pointer = *target;
+        child.awaiting_effect_id = None;
+        child.status = WorkflowContinuationStatus::Runnable;
+        child.frames.push(WorkflowFrame::Fork(WorkflowForkFrame {
+            fork_key: key.to_owned(),
+            parent_id: parent.id,
+            branch_index: branch as u64,
+        }));
+        children.push(child);
+    }
+    parent.instruction_pointer += 1;
+    parent.status = WorkflowContinuationStatus::Joined;
+    WorkflowVmStep::Fork {
+        parent,
+        children,
+        join_key: key.to_owned(),
+    }
+}
+
+fn fork_map(
+    parent: WorkflowContinuation,
+    targets: &[usize],
+    map_key: &str,
+    items: &[Value],
+) -> WorkflowVmStep {
+    let WorkflowVmStep::Fork {
+        parent,
+        mut children,
+        join_key,
+    } = fork(parent, targets, map_key, Some("map"))
+    else {
+        unreachable!("non-empty map targets always fork")
+    };
+    for (index, child) in children.iter_mut().enumerate() {
+        child.frames.retain(|frame| {
+            !matches!(frame, WorkflowFrame::Map(frame) if frame.map_key == map_key && frame.item_index.is_none())
+        });
+        child
+            .locals
+            .insert(format!("{map_key}.item"), items[index].clone());
+        child
+            .locals
+            .insert(format!("{map_key}.index"), Value::from(index as i64));
+        child.frames.push(WorkflowFrame::Map(WorkflowMapFrame {
+            map_key: map_key.to_owned(),
+            body: child.instruction_pointer,
+            exit: 0,
+            concurrency: 0,
+            next_index: 0,
+            items: Vec::new(),
+            results: Vec::new(),
+            item: Some(items[index].clone()),
+            item_index: Some(index as u64),
+        }));
+    }
+    WorkflowVmStep::Fork {
+        parent,
+        children,
+        join_key,
+    }
 }
 
 fn fail(mut continuation: WorkflowContinuation, message: String) -> WorkflowVmStep {
@@ -262,6 +685,87 @@ fn fail(mut continuation: WorkflowContinuation, message: String) -> WorkflowVmSt
         continuation,
         message,
     }
+}
+
+fn yield_effect(
+    mut continuation: WorkflowContinuation,
+    request: WorkflowEffectRequest,
+) -> WorkflowVmStep {
+    let sequence = continuation.next_effect_sequence;
+    continuation.next_effect_sequence += 1;
+    let effect_id = stable_id(continuation.id, &format!("effect:{sequence}"));
+    continuation.instruction_pointer += 1;
+    continuation.awaiting_effect_id = Some(effect_id);
+    continuation.status = WorkflowContinuationStatus::Waiting;
+    WorkflowVmStep::Yield {
+        continuation,
+        effect_id,
+        sequence,
+        request,
+    }
+}
+
+/// Route a failure through the nearest structured try frame, then through the durable
+/// compensation stack. This keeps the decision entirely inside the continuation; a host never
+/// needs to rediscover graph ancestry from node-run history.
+fn handle_failure(
+    module: &WorkflowModule,
+    mut continuation: WorkflowContinuation,
+    message: String,
+) -> WorkflowVmStep {
+    if let Some(position) = continuation
+        .frames
+        .iter()
+        .rposition(|frame| matches!(frame, WorkflowFrame::Try(_)))
+    {
+        let frame = match continuation.frames.remove(position) {
+            WorkflowFrame::Try(frame) => frame,
+            _ => unreachable!("try frame position was checked"),
+        };
+        if frame.phase == WorkflowTryPhase::Body {
+            if let Some(catch) = frame.catch {
+                continuation
+                    .frames
+                    .push(WorkflowFrame::Try(WorkflowTryFrame {
+                        phase: WorkflowTryPhase::Catch,
+                        ..frame
+                    }));
+                continuation.instruction_pointer = catch;
+                return step(module, continuation);
+            }
+        }
+        if let Some(finally) = frame.finally {
+            continuation
+                .frames
+                .push(WorkflowFrame::Try(WorkflowTryFrame {
+                    phase: WorkflowTryPhase::Finally,
+                    pending_failure: Some(message),
+                    ..frame
+                }));
+            continuation.instruction_pointer = finally;
+            return step(module, continuation);
+        }
+    }
+
+    if let Some(position) = continuation
+        .frames
+        .iter()
+        .position(|frame| matches!(frame, WorkflowFrame::Compensation(_)))
+    {
+        continuation.locals.insert(
+            "__workflow_vm_compensation_failure".into(),
+            Value::String(message.clone()),
+        );
+        let frame = match &mut continuation.frames[position] {
+            WorkflowFrame::Compensation(frame) => frame,
+            _ => unreachable!("compensation frame position was checked"),
+        };
+        if let Some(request) = frame.pending.pop() {
+            frame.active = Some(request.clone());
+            return yield_effect(continuation, request);
+        }
+    }
+    fail(continuation, message)
 }
 
 fn stable_id(namespace: uuid::Uuid, name: &str) -> uuid::Uuid {
@@ -372,7 +876,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_a_finalized_opcode_until_its_phase_is_implemented() {
+    fn loop_opcode_rejects_a_non_array_initial_value() {
         let module = WorkflowModule::new(vec![WorkflowInstruction::BeginLoop {
             loop_key: "items".into(),
             body: 0,
@@ -382,7 +886,7 @@ mod tests {
         let WorkflowVmStep::Failed { message, .. } = step(&module, continuation()) else {
             panic!("expected an unsupported-opcode failure");
         };
-        assert!(message.contains("unsupported workflow VM opcode"));
+        assert!(message.contains("needs an array value"));
     }
 
     #[test]
@@ -528,6 +1032,244 @@ mod tests {
         assert_eq!(
             first.iter().map(|child| child.id).collect::<Vec<_>>(),
             second.iter().map(|child| child.id).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn race_forks_deterministically_and_keeps_winner_state_only_on_the_parent() {
+        let module = WorkflowModule::new(vec![WorkflowInstruction::Race {
+            targets: vec![1, 2],
+            race_key: "fastest".into(),
+            winner: runinator_models::workflow_vm::WorkflowBranchPolicy::FirstSuccess,
+        }]);
+        let WorkflowVmStep::Fork {
+            parent,
+            children,
+            join_key,
+        } = step(&module, continuation())
+        else {
+            panic!("race should fork contenders");
+        };
+        assert_eq!(join_key, "fastest");
+        assert!(parent.frames.iter().any(|frame| matches!(
+            frame,
+            WorkflowFrame::Race(frame)
+                if frame.expected == 2
+                    && frame.winner_policy == runinator_models::workflow_vm::WorkflowBranchPolicy::FirstSuccess
+                    && frame.winner.is_none()
+        )));
+        assert!(children.iter().all(|child| {
+            child.fork_key.as_deref() == Some("fastest")
+                && child
+                    .frames
+                    .iter()
+                    .any(|frame| matches!(frame, WorkflowFrame::Fork(_)))
+                && !child
+                    .frames
+                    .iter()
+                    .any(|frame| matches!(frame, WorkflowFrame::Race(_)))
+        }));
+    }
+
+    #[test]
+    fn map_forks_only_its_concurrency_window_with_stable_item_bindings() {
+        let module = WorkflowModule::new(vec![
+            WorkflowInstruction::Const {
+                value: Value::Array(vec![1.into(), 2.into(), 3.into()]),
+            },
+            WorkflowInstruction::BeginMap {
+                map_key: "fanout".into(),
+                body: 3,
+                exit: 4,
+                concurrency: 2,
+            },
+        ]);
+        let WorkflowVmStep::Fork {
+            parent,
+            children,
+            join_key,
+        } = step(&module, continuation())
+        else {
+            panic!("map should fork its initial window");
+        };
+        assert_eq!(join_key, "fanout");
+        assert_eq!(children.len(), 2);
+        assert_eq!(children[0].locals.get("fanout.item"), Some(&Value::from(1)));
+        assert_eq!(
+            children[1].locals.get("fanout.index"),
+            Some(&Value::from(1))
+        );
+        assert!(parent.frames.iter().any(|frame| matches!(
+            frame, WorkflowFrame::Map(frame)
+                if frame.next_index == 2 && frame.items.len() == 3 && frame.results.is_empty()
+        )));
+        assert!(
+            children
+                .iter()
+                .all(|child| child.frames.iter().any(|frame| matches!(
+                    frame, WorkflowFrame::Map(frame) if frame.item_index.is_some()
+                )))
+        );
+    }
+
+    #[test]
+    fn map_child_arrival_reports_its_body_result_not_the_re_evaluated_items() {
+        let module = WorkflowModule::new(vec![
+            WorkflowInstruction::Const {
+                value: Value::Array(vec![1.into()]),
+            },
+            WorkflowInstruction::BeginMap {
+                map_key: "fanout".into(),
+                body: 2,
+                exit: 5,
+                concurrency: 1,
+            },
+            WorkflowInstruction::Const {
+                value: Value::String("body output".into()),
+            },
+            WorkflowInstruction::Const {
+                value: Value::Array(vec![1.into()]),
+            },
+            WorkflowInstruction::Jump { target: 1 },
+            WorkflowInstruction::Return,
+        ]);
+        let WorkflowVmStep::Fork { children, .. } = step(&module, continuation()) else {
+            panic!("map should fork its item");
+        };
+        let WorkflowVmStep::Joined {
+            join_key, value, ..
+        } = step(&module, children.into_iter().next().unwrap())
+        else {
+            panic!("map child should arrive at the map coordinator");
+        };
+        assert_eq!(join_key, "fanout");
+        assert_eq!(value, Value::String("body output".into()));
+    }
+
+    #[test]
+    fn loop_frame_survives_reentry_and_collects_results_in_order() {
+        let module = WorkflowModule::new(vec![
+            WorkflowInstruction::Const {
+                value: Value::Array(vec![Value::from(1), Value::from(2)]),
+            },
+            WorkflowInstruction::BeginLoop {
+                loop_key: "items".into(),
+                body: 5,
+                exit: 4,
+                max_iterations: None,
+            },
+            WorkflowInstruction::Fail {
+                message: "unreachable".into(),
+            },
+            WorkflowInstruction::Fail {
+                message: "unreachable".into(),
+            },
+            WorkflowInstruction::Return,
+            WorkflowInstruction::Const {
+                value: Value::String("item".into()),
+            },
+            // This mirrors the compiler's item expression on a graph re-entry. BeginLoop
+            // discards it while retaining the body result below it.
+            WorkflowInstruction::Const {
+                value: Value::Array(vec![Value::from(1), Value::from(2)]),
+            },
+            WorkflowInstruction::Jump { target: 1 },
+        ]);
+        let WorkflowVmStep::Complete {
+            value,
+            continuation,
+        } = step(&module, continuation())
+        else {
+            panic!("loop should finish");
+        };
+        assert_eq!(
+            value,
+            Value::Array(vec![
+                Value::String("item".into()),
+                Value::String("item".into())
+            ])
+        );
+        assert!(
+            continuation
+                .frames
+                .iter()
+                .all(|frame| !matches!(frame, WorkflowFrame::Loop(_)))
+        );
+    }
+
+    #[test]
+    fn failure_unwinds_compensation_before_the_terminal_failure() {
+        let action = WorkflowEffectRequest::Timer { due_at: 1 };
+        let compensation = WorkflowEffectRequest::Timer { due_at: 2 };
+        let module = WorkflowModule::new(vec![
+            WorkflowInstruction::Effect { request: action },
+            WorkflowInstruction::RegisterCompensation {
+                compensation_key: "charge".into(),
+                request: compensation.clone(),
+            },
+            WorkflowInstruction::Fail {
+                message: "charge failed".into(),
+            },
+            WorkflowInstruction::BeginCompensation { resume: None },
+        ]);
+        let WorkflowVmStep::Yield { continuation, .. } = step(&module, continuation()) else {
+            panic!("main action should yield")
+        };
+        let WorkflowVmStep::Yield {
+            continuation,
+            request,
+            ..
+        } = resume(&module, continuation, Ok(Value::Null))
+        else {
+            panic!("compensation should yield")
+        };
+        assert_eq!(request, compensation);
+        let WorkflowVmStep::Failed {
+            message,
+            continuation,
+        } = resume(&module, continuation, Ok(Value::Null))
+        else {
+            panic!("failure should survive compensation")
+        };
+        assert_eq!(message, "charge failed");
+        assert_eq!(continuation.status, WorkflowContinuationStatus::Failed);
+    }
+
+    #[test]
+    fn try_catch_finally_unwinds_through_the_same_continuation() {
+        let module = WorkflowModule::new(vec![
+            WorkflowInstruction::BeginTry {
+                try_key: "guard".into(),
+                catch: Some(4),
+                finally: Some(6),
+            },
+            WorkflowInstruction::Jump { target: 3 },
+            WorkflowInstruction::Return,
+            WorkflowInstruction::Fail {
+                message: "body failed".into(),
+            },
+            WorkflowInstruction::Const {
+                value: Value::String("caught".into()),
+            },
+            WorkflowInstruction::Jump { target: 0 },
+            WorkflowInstruction::Const {
+                value: Value::String("finally".into()),
+            },
+            WorkflowInstruction::Jump { target: 0 },
+        ]);
+        let WorkflowVmStep::Complete {
+            value,
+            continuation,
+        } = step(&module, continuation())
+        else {
+            panic!("catch/finally should complete")
+        };
+        assert_eq!(value, Value::String("finally".into()));
+        assert!(
+            continuation
+                .frames
+                .iter()
+                .all(|frame| !matches!(frame, WorkflowFrame::Try(_)))
         );
     }
 

@@ -297,12 +297,19 @@ pub enum WorkflowInstruction {
     /// Park this branch at a join until the host has all expected branch results.
     Join {
         join_key: String,
+        /// Number of branch arrivals that belong to this join visit. This is compiled from the
+        /// immutable graph rather than inferred from live cursor rows.
+        expected: u64,
+        #[serde(default)]
+        mode: WorkflowBranchPolicy,
     },
     /// Fork a race. The first terminal arrival wins; the persisted race frame records the winner
     /// and makes loser cancellation deterministic after restart.
     Race {
         targets: Vec<usize>,
         race_key: String,
+        #[serde(default = "WorkflowBranchPolicy::first_success")]
+        winner: WorkflowBranchPolicy,
     },
     /// Start a bounded map. Parent scheduling and each child item's binding are continuation
     /// frames, which permits a map to resume without child-run records.
@@ -339,6 +346,24 @@ pub enum WorkflowInstruction {
     Fail {
         message: String,
     },
+}
+
+/// The deterministic completion policy shared by joins and races.  It deliberately lives in the
+/// VM record crate instead of the graph parser: persisted continuations must remain interpretable
+/// after the authoring definition is no longer available.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowBranchPolicy {
+    #[default]
+    All,
+    Any,
+    FirstSuccess,
+}
+
+impl WorkflowBranchPolicy {
+    pub const fn first_success() -> Self {
+        Self::FirstSuccess
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -463,6 +488,8 @@ pub struct WorkflowJoinFrame {
     pub join_key: String,
     pub expected: u64,
     #[serde(default)]
+    pub mode: WorkflowBranchPolicy,
+    #[serde(default)]
     pub arrivals: Vec<WorkflowIndexedValue>,
 }
 
@@ -470,6 +497,8 @@ pub struct WorkflowJoinFrame {
 pub struct WorkflowRaceFrame {
     pub race_key: String,
     pub expected: u64,
+    #[serde(default = "WorkflowBranchPolicy::first_success")]
+    pub winner_policy: WorkflowBranchPolicy,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub winner: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -10,8 +10,8 @@ use runinator_models::{
     value::Value,
     workflow_ast::{ComputeProgram, ComputeStmt},
     workflow_vm::{
-        WorkflowEffectRequest, WorkflowInstruction, WorkflowModule, WorkflowOutputArtifact,
-        WorkflowSourceMapEntry, WorkflowVmBranch,
+        WorkflowBranchPolicy, WorkflowEffectRequest, WorkflowInstruction, WorkflowModule,
+        WorkflowOutputArtifact, WorkflowSourceMapEntry, WorkflowVmBranch,
     },
     workflows::{
         WorkflowDefinition, WorkflowNode, WorkflowNodeKind, WorkflowNodeRef, WorkflowSubflowType,
@@ -19,9 +19,10 @@ use runinator_models::{
 };
 
 use crate::{
-    parse_approval_parameters, parse_gate_parameters, parse_input_parameters,
-    parse_signal_parameters, parse_switch_parameters, parse_wait_parameters, target_slots,
-    validate_workflow,
+    BranchPolicy, parse_approval_parameters, parse_gate_parameters, parse_input_parameters,
+    parse_join_parameters, parse_map_parameters, parse_parallel_parameters, parse_race_parameters,
+    parse_signal_parameters, parse_switch_parameters, parse_try_parameters, parse_wait_parameters,
+    target_slots, validate_workflow,
 };
 
 /// A symbolic basic-block address.  Keeping these until the final layout pass means graph
@@ -45,6 +46,34 @@ enum PendingInstruction {
     ),
     Select(WorkflowNodeKind, Value, Vec<Label>, Option<Label>),
     Fork(Vec<Label>, String),
+    BeginLoop {
+        loop_key: String,
+        body: Label,
+        exit: Label,
+        max_iterations: Option<u64>,
+    },
+    BeginTry {
+        try_key: String,
+        catch: Option<Label>,
+        finally: Option<Label>,
+    },
+    Race {
+        targets: Vec<Label>,
+        race_key: String,
+        winner: WorkflowBranchPolicy,
+    },
+    BeginMap {
+        map_key: String,
+        body: Label,
+        exit: Label,
+        concurrency: u64,
+    },
+    Reenter {
+        reentry_key: String,
+        target: Label,
+        exhausted: Option<Label>,
+        max_visits: u64,
+    },
 }
 
 /// A node-owned basic block.  The block boundary is also the unit recorded in the module's
@@ -75,6 +104,26 @@ pub fn compile_workflow_module(
                 node_id: node.id.clone(),
             },
         )];
+        if node.reentry.enabled {
+            let max_visits = u64::try_from(node.reentry.max_visits).map_err(|_| {
+                WorkflowValidationError::InvalidReentry(format!(
+                    "node '{}' has a negative max_visits",
+                    node.id
+                ))
+            })?;
+            instructions.push(PendingInstruction::Reenter {
+                reentry_key: node.id.clone(),
+                // Re-entering a graph node must continue at its first real operation, after the
+                // source-map entry marker and the guard itself.
+                target: Label::node(&node.id),
+                exhausted: node
+                    .reentry
+                    .on_exhausted
+                    .as_ref()
+                    .map(|target| Label::node(target.as_str())),
+                max_visits,
+            });
+        }
         lower_node(node, &mut instructions)?;
         blocks.push(BasicBlock {
             label: Label::node(&node.id),
@@ -141,6 +190,65 @@ pub fn compile_workflow_module(
                     .collect::<Result<Vec<_>, _>>()?,
                 join_key,
             },
+            PendingInstruction::BeginLoop {
+                loop_key,
+                body,
+                exit,
+                max_iterations,
+            } => WorkflowInstruction::BeginLoop {
+                loop_key,
+                body: resolve(&body)?,
+                exit: resolve(&exit)?,
+                max_iterations,
+            },
+            PendingInstruction::BeginTry {
+                try_key,
+                catch,
+                finally,
+            } => WorkflowInstruction::BeginTry {
+                try_key,
+                catch: catch.as_ref().map(resolve).transpose()?,
+                finally: finally.as_ref().map(resolve).transpose()?,
+            },
+            PendingInstruction::Race {
+                targets,
+                race_key,
+                winner,
+            } => WorkflowInstruction::Race {
+                targets: targets
+                    .iter()
+                    .map(|target| resolve(target))
+                    .collect::<Result<Vec<_>, _>>()?,
+                race_key,
+                winner,
+            },
+            PendingInstruction::BeginMap {
+                map_key,
+                body,
+                exit,
+                concurrency,
+            } => WorkflowInstruction::BeginMap {
+                map_key,
+                body: resolve(&body)?,
+                exit: resolve(&exit)?,
+                concurrency,
+            },
+            PendingInstruction::Reenter {
+                reentry_key,
+                target,
+                exhausted,
+                max_visits,
+            } => {
+                WorkflowInstruction::Reenter {
+                    reentry_key,
+                    // The instruction itself treats this target as the continuation point after
+                    // the guard. The symbolic label preserves graph validation and source-map
+                    // ownership even though the offset is finalized by the VM.
+                    target: resolve(&target)? + 2,
+                    exhausted: exhausted.as_ref().map(resolve).transpose()?,
+                    max_visits,
+                }
+            }
         });
     }
     Ok(WorkflowModule {
@@ -231,6 +339,26 @@ fn lower_node(
                     },
                 },
             ));
+            if let Some(compensation) = &node.compensation {
+                output.push(PendingInstruction::Instruction(
+                    WorkflowInstruction::RegisterCompensation {
+                        compensation_key: node.id.clone(),
+                        request: WorkflowEffectRequest::Action {
+                            provider: compensation.provider.clone(),
+                            function: compensation.function.clone(),
+                            input: serde_json::to_value(&compensation.configuration)
+                                .map(Value::from)
+                                .unwrap_or(Value::Null),
+                            timeout_seconds: Some(compensation.timeout_seconds),
+                            retry: node.retry.clone(),
+                            tags: compensation.tags.clone(),
+                            required_labels: compensation.required_labels.clone(),
+                            idempotency_key: compensation.idempotency_key.clone(),
+                            function_binding: compensation.function_binding.clone(),
+                        },
+                    },
+                ));
+            }
             jump_next(output);
         }
         WorkflowNodeKind::Wait => {
@@ -481,11 +609,62 @@ fn lower_node(
                     .or_else(|| next().map(|target| Label::node(&target))),
             ));
         }
-        WorkflowNodeKind::Toggle
-        | WorkflowNodeKind::Percentage
-        | WorkflowNodeKind::Loop
-        | WorkflowNodeKind::Try
-        | WorkflowNodeKind::Map => {
+        WorkflowNodeKind::Loop => {
+            let items = node.parameters.get("items").cloned().ok_or_else(|| {
+                WorkflowValidationError::InvalidNodeParameters {
+                    node: node.id.clone(),
+                    message: "loop.items is required".into(),
+                }
+            })?;
+            output.push(PendingInstruction::Instruction(
+                WorkflowInstruction::Evaluate {
+                    module: expression_module(items)?,
+                },
+            ));
+            let body = node.transitions.next.as_ref().ok_or_else(|| {
+                WorkflowValidationError::MissingTransition {
+                    node: node.id.clone(),
+                    target: "next".into(),
+                }
+            })?;
+            let exit = node
+                .transitions
+                .on_success
+                .as_ref()
+                .or(node.transitions.next.as_ref())
+                .unwrap();
+            output.push(PendingInstruction::BeginLoop {
+                loop_key: node.id.clone(),
+                body: Label::node(body.as_str()),
+                exit: Label::node(exit.as_str()),
+                max_iterations: node
+                    .max_iterations
+                    .and_then(|value| u64::try_from(value).ok()),
+            });
+        }
+        WorkflowNodeKind::Try => {
+            let params = parse_try_parameters(node)?;
+            output.push(PendingInstruction::BeginTry {
+                try_key: node.id.clone(),
+                catch: params
+                    .catch
+                    .as_ref()
+                    .map(|target| Label::node(target.as_str())),
+                finally: params
+                    .finally
+                    .as_ref()
+                    .map(|target| Label::node(target.as_str())),
+            });
+            output.push(PendingInstruction::Jump(Label::node(params.body.as_str())));
+            // A body/catch/finally returns to this node. On that second entry BeginTry consumes
+            // the frame and routes here instead of starting a new protected region.
+            if let Some(target) = next() {
+                output.push(PendingInstruction::Jump(Label::node(&target)));
+            } else {
+                output.push(PendingInstruction::Instruction(WorkflowInstruction::Return));
+            }
+        }
+        WorkflowNodeKind::Toggle | WorkflowNodeKind::Percentage => {
             let targets = target_slots(node)?
                 .into_iter()
                 .map(|slot| Label::node(slot.target.as_str()))
@@ -497,17 +676,63 @@ fn lower_node(
                 next().map(|target| Label::node(&target)),
             ));
         }
-        WorkflowNodeKind::Parallel | WorkflowNodeKind::Race => {
-            let targets = target_slots(node)?
-                .into_iter()
-                .map(|slot| Label::node(slot.target.as_str()))
-                .collect();
-            output.push(PendingInstruction::Fork(targets, node.id.clone()));
+        WorkflowNodeKind::Parallel => {
+            let parallel = parse_parallel_parameters(node)?;
+            output.push(PendingInstruction::Fork(
+                parallel
+                    .branches
+                    .iter()
+                    .map(|target| Label::node(target.as_str()))
+                    .collect(),
+                node.id.clone(),
+            ));
         }
         WorkflowNodeKind::Join => {
+            let join = parse_join_parameters(node)?;
             output.push(PendingInstruction::Instruction(WorkflowInstruction::Join {
                 join_key: node.id.clone(),
+                expected: join.wait_for.len() as u64,
+                mode: branch_policy(join.mode),
             }))
+        }
+        WorkflowNodeKind::Race => {
+            let race = parse_race_parameters(node)?;
+            // `Race` is distinct from a regular fork even though both create children: the
+            // parent persists a race frame, which gives the later store transaction a durable
+            // winner and a deterministic loser set to cancel.
+            output.push(PendingInstruction::Race {
+                targets: race
+                    .branches
+                    .iter()
+                    .map(|target| Label::node(target.as_str()))
+                    .collect(),
+                race_key: node.id.clone(),
+                winner: branch_policy(race.winner),
+            });
+        }
+        WorkflowNodeKind::Map => {
+            let map = parse_map_parameters(node)?;
+            let items = node.parameters.get("items").cloned().ok_or_else(|| {
+                WorkflowValidationError::InvalidNodeParameters {
+                    node: node.id.clone(),
+                    message: "map.items is required".into(),
+                }
+            })?;
+            output.push(PendingInstruction::Instruction(
+                WorkflowInstruction::Evaluate {
+                    module: expression_module(items)?,
+                },
+            ));
+            let exit = next().ok_or_else(|| WorkflowValidationError::MissingTransition {
+                node: node.id.clone(),
+                target: "on_success".into(),
+            })?;
+            output.push(PendingInstruction::BeginMap {
+                map_key: node.id.clone(),
+                body: Label::node(map.target.as_str()),
+                exit: Label::node(&exit),
+                concurrency: map.concurrency.unwrap_or(1) as u64,
+            });
         }
     }
     Ok(())
@@ -526,6 +751,14 @@ fn expression_module(
         &[],
         &CallableCatalog::builtin(),
     )
+}
+
+fn branch_policy(policy: BranchPolicy) -> WorkflowBranchPolicy {
+    match policy {
+        BranchPolicy::All => WorkflowBranchPolicy::All,
+        BranchPolicy::Any => WorkflowBranchPolicy::Any,
+        BranchPolicy::FirstSuccess => WorkflowBranchPolicy::FirstSuccess,
+    }
 }
 
 fn apply_invocation_timeout(module: &mut InvocationModule, timeout_seconds: Option<i64>) {
@@ -1073,6 +1306,163 @@ mod tests {
                 "{kind:?} lowered to the wrong parking request"
             );
         }
+    }
+
+    #[test]
+    fn structured_control_nodes_lower_to_frames_not_selector_payloads() {
+        let mut loop_node = node("loop", WorkflowNodeKind::Loop, Some("body"));
+        loop_node.parameters =
+            serde_json::from_value(serde_json::json!({"items": [1, 2]})).unwrap();
+        loop_node.transitions.on_success = Some(WorkflowNodeRef::new("done"));
+        loop_node.max_iterations = Some(5);
+        let mut instructions = Vec::new();
+        lower_node(&loop_node, &mut instructions).unwrap();
+        assert!(matches!(instructions.as_slice(), [
+            PendingInstruction::Instruction(WorkflowInstruction::Evaluate { .. }),
+            PendingInstruction::BeginLoop { loop_key, max_iterations: Some(5), .. },
+        ] if loop_key == "loop"));
+
+        let mut try_node = node("guard", WorkflowNodeKind::Try, Some("done"));
+        try_node.parameters = serde_json::from_value(serde_json::json!({
+            "body": {"$node": "body"}, "catch": {"$node": "catch"}, "finally": {"$node": "finally"}
+        }))
+        .unwrap();
+        let mut instructions = Vec::new();
+        lower_node(&try_node, &mut instructions).unwrap();
+        assert!(
+            matches!(instructions.first(), Some(PendingInstruction::BeginTry { try_key, .. }) if try_key == "guard")
+        );
+        assert!(matches!(
+            instructions.get(1),
+            Some(PendingInstruction::Jump(_))
+        ));
+        assert!(
+            !instructions
+                .iter()
+                .any(|instruction| matches!(instruction, PendingInstruction::Select(..)))
+        );
+
+        let mut action_node = node("charge", WorkflowNodeKind::Action, None);
+        action_node.action = Some(WorkflowAction {
+            provider: "billing".into(),
+            function: "charge".into(),
+            timeout_seconds: 10,
+            configuration: Default::default(),
+            mcp_enabled: false,
+            tags: Vec::new(),
+            required_labels: BTreeMap::new(),
+            idempotency_key: None,
+            function_binding: None,
+        });
+        action_node.compensation = Some(WorkflowAction {
+            provider: "billing".into(),
+            function: "refund".into(),
+            timeout_seconds: 10,
+            configuration: Default::default(),
+            mcp_enabled: false,
+            tags: Vec::new(),
+            required_labels: BTreeMap::new(),
+            idempotency_key: None,
+            function_binding: None,
+        });
+        let mut instructions = Vec::new();
+        lower_node(&action_node, &mut instructions).unwrap();
+        assert!(
+            matches!(instructions.get(1), Some(PendingInstruction::Instruction(
+            WorkflowInstruction::RegisterCompensation { compensation_key, .. }
+        )) if compensation_key == "charge")
+        );
+    }
+
+    #[test]
+    fn reentry_guard_targets_the_first_real_node_instruction() {
+        let mut start = node("start", WorkflowNodeKind::Start, Some("end"));
+        start.reentry.enabled = true;
+        start.reentry.max_visits = 2;
+        let definition = WorkflowDefinition {
+            id: None,
+            name: "reentry".into(),
+            namespace: None,
+            org_id: None,
+            version: Default::default(),
+            enabled: true,
+            input_type: Default::default(),
+            definition: WorkflowGraph {
+                start: Some("start".into()),
+                nodes: vec![start, node("end", WorkflowNodeKind::End, None)],
+                ..Default::default()
+            },
+            created_at: None,
+            updated_at: None,
+        };
+        let module = compile_workflow_module(&definition).unwrap();
+        assert!(matches!(
+            module.instructions.get(1),
+            Some(WorkflowInstruction::Reenter {
+                target: 2,
+                max_visits: 2,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn concurrency_nodes_lower_to_explicit_vm_coordination_instructions() {
+        let mut parallel = node("parallel", WorkflowNodeKind::Parallel, None);
+        parallel.parameters =
+            runinator_models::workflows::WorkflowObject::from_value(runinator_models::json!({
+                "branches": [{ "$node": "left" }, { "$node": "right" }]
+            }))
+            .unwrap();
+        let mut join = node("join", WorkflowNodeKind::Join, None);
+        join.parameters =
+            runinator_models::workflows::WorkflowObject::from_value(runinator_models::json!({
+                "wait_for": [{ "$node": "left" }, { "$node": "right" }], "mode": "any"
+            }))
+            .unwrap();
+        let mut race = node("race", WorkflowNodeKind::Race, None);
+        race.parameters =
+            runinator_models::workflows::WorkflowObject::from_value(runinator_models::json!({
+                "branches": [{ "$node": "left" }, { "$node": "right" }], "winner": "all"
+            }))
+            .unwrap();
+        let mut map = node("map", WorkflowNodeKind::Map, Some("done"));
+        map.parameters =
+            runinator_models::workflows::WorkflowObject::from_value(runinator_models::json!({
+                "items": [1, 2], "target": { "$node": "work" }, "concurrency": 2
+            }))
+            .unwrap();
+
+        let mut instructions = Vec::new();
+        lower_node(&parallel, &mut instructions).unwrap();
+        assert!(
+            matches!(instructions.as_slice(), [PendingInstruction::Fork(_, key)] if key == "parallel")
+        );
+        instructions.clear();
+        lower_node(&join, &mut instructions).unwrap();
+        assert!(matches!(
+            instructions.as_slice(),
+            [PendingInstruction::Instruction(WorkflowInstruction::Join {
+                expected: 2,
+                mode: WorkflowBranchPolicy::Any,
+                ..
+            })]
+        ));
+        instructions.clear();
+        lower_node(&race, &mut instructions).unwrap();
+        assert!(matches!(
+            instructions.as_slice(),
+            [PendingInstruction::Race {
+                winner: WorkflowBranchPolicy::All,
+                ..
+            }]
+        ));
+        instructions.clear();
+        lower_node(&map, &mut instructions).unwrap();
+        assert!(matches!(
+            instructions.get(1),
+            Some(PendingInstruction::BeginMap { concurrency: 2, .. })
+        ));
     }
 
     fn node(id: &str, kind: WorkflowNodeKind, next: Option<&str>) -> WorkflowNode {
