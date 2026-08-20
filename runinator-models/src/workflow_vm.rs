@@ -10,9 +10,11 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::functions::FunctionBinding;
 use crate::interrupt::{InterruptMode, InterruptSource};
 use crate::invocation::InvocationModule;
-use crate::workflows::{WorkflowCondition, WorkflowNodeKind};
+use crate::orchestration::GateKind;
+use crate::workflows::{WorkflowCondition, WorkflowNodeKind, WorkflowRetry};
 use crate::{value::Value, workflows::WorkflowStatus};
 
 /// The workflow bytecode version understood by this runtime.
@@ -325,8 +327,14 @@ pub enum WorkflowInstruction {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         label: Option<String>,
     },
-    /// Set the workflow's terminal output without ending the current continuation.
-    SetOutput,
+    /// Set the workflow's terminal output without ending the current continuation. The artifact
+    /// sources are compiled programs so the VM never has to rediscover expressions in node JSON.
+    SetOutput {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        event_type: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        artifacts: Vec<WorkflowOutputArtifact>,
+    },
     Return,
     Fail {
         message: String,
@@ -337,6 +345,13 @@ pub enum WorkflowInstruction {
 pub struct WorkflowVmBranch {
     pub condition: WorkflowCondition,
     pub target: usize,
+}
+
+/// One run-level artifact declaration attached to an output instruction.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WorkflowOutputArtifact {
+    pub name: String,
+    pub source: InvocationModule,
 }
 
 /// One compiled interrupt handler target. The source is part of bytecode rather than a lookup in
@@ -592,6 +607,24 @@ pub enum WorkflowEffectRequest {
         input: Value,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         timeout_seconds: Option<i64>,
+        /// The node retry contract is part of the immutable request.  It must not be recovered
+        /// from a mutable workflow definition when a delivery is retried after a deploy.
+        #[serde(default)]
+        retry: WorkflowRetry,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        tags: Vec<String>,
+        /// Worker-routing constraints frozen with the request rather than looked up from the
+        /// authoring graph by a dispatcher.
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        required_labels: BTreeMap<String, String>,
+        /// A still-unresolved key expression. The VM host evaluates and records it before the
+        /// effect is delivered, so redelivery cannot observe a changed workflow definition.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        idempotency_key: Option<Value>,
+        /// Packaged functions are addressed by their immutable binding, not by a provider catalog
+        /// lookup that may have changed between compile and delivery.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        function_binding: Option<FunctionBinding>,
     },
     Timer {
         due_at: i64,
@@ -603,16 +636,59 @@ pub enum WorkflowEffectRequest {
         prompt: Value,
         expires_at: Option<i64>,
     },
+    Gate {
+        kind: GateKind,
+        condition: WorkflowCondition,
+        poll_interval_seconds: i64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        deadline_seconds: Option<i64>,
+        #[serde(default)]
+        continue_on_timeout: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        label: Option<String>,
+        #[serde(default, skip_serializing_if = "Value::is_null")]
+        metadata: Value,
+    },
     Signal {
         key: String,
         filter: Option<Value>,
     },
     Input {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        prompt: Option<String>,
         schema: Value,
     },
+    /// Suspend until an event matching this frozen subscription arrives.  This is intentionally
+    /// an effect rather than a polling instruction: the coordination host owns the subscription.
+    EventWait {
+        event_type: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        filter: Option<Value>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_events: Option<u64>,
+    },
     ChildRun {
-        workflow_id: Uuid,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        workflow_id: Option<Uuid>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        workflow_name: Option<String>,
         input: Value,
+        #[serde(default)]
+        wait: bool,
+        #[serde(default)]
+        reuse_open_run: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        run_name: Option<Value>,
+    },
+    /// Wait for existing child or peer workflow runs without creating another one.
+    AwaitRun {
+        workflow: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        key: Option<Value>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        run_id: Option<Value>,
+        #[serde(default = "default_await_run_mode")]
+        mode: String,
     },
     MutexAcquire {
         key: String,
@@ -623,6 +699,10 @@ pub enum WorkflowEffectRequest {
         kind: String,
         input: Value,
     },
+}
+
+fn default_await_run_mode() -> String {
+    "all".to_string()
 }
 
 /// The canonical durable receipt for a yielded effect.

@@ -190,7 +190,7 @@ pub fn step(module: &WorkflowModule, mut continuation: WorkflowContinuation) -> 
             | WorkflowInstruction::CheckInterrupt { .. }
             | WorkflowInstruction::ResumeInterrupt { .. }
             | WorkflowInstruction::DebugBoundary { .. }
-            | WorkflowInstruction::SetOutput => {
+            | WorkflowInstruction::SetOutput { .. } => {
                 return fail(
                     continuation,
                     format!("unsupported workflow VM opcode: {instruction:?}"),
@@ -281,6 +281,7 @@ fn truthy(value: &Value) -> bool {
 mod tests {
     use super::*;
     use runinator_models::{
+        orchestration::GateKind,
         workflow_vm::{WorkflowEffectRequest, WorkflowInstruction},
         workflows::{
             WorkflowDefinition, WorkflowGraph, WorkflowNode, WorkflowNodeKind, WorkflowNodeRef,
@@ -407,6 +408,102 @@ mod tests {
             panic!("expected yield");
         };
         assert_eq!((first_id, first_sequence), (second_id, second_sequence));
+    }
+
+    #[test]
+    fn parking_effects_yield_resume_and_restart_stably() {
+        // Each parking request has exactly the same host-free lifecycle: stepping yields one
+        // durable effect, replaying the unmodified continuation yields that same receipt, and a
+        // settled typed value resumes into the next instruction. The coordination host never
+        // needs a node-specific polling loop to make progress.
+        let requests = vec![
+            WorkflowEffectRequest::TimerDelay { seconds: 30 },
+            WorkflowEffectRequest::Approval {
+                prompt: Value::String("approve deployment".into()),
+                expires_at: None,
+            },
+            WorkflowEffectRequest::Gate {
+                kind: GateKind::Manual,
+                condition: Default::default(),
+                poll_interval_seconds: 30,
+                deadline_seconds: Some(300),
+                continue_on_timeout: false,
+                label: Some("production".into()),
+                metadata: Value::Null,
+            },
+            WorkflowEffectRequest::Signal {
+                key: "release-ready".into(),
+                filter: Some(Value::String("release-42".into())),
+            },
+            WorkflowEffectRequest::Input {
+                prompt: Some("version".into()),
+                schema: Value::Null,
+            },
+            WorkflowEffectRequest::EventWait {
+                event_type: "build.finished".into(),
+                filter: None,
+                max_events: Some(1),
+            },
+            WorkflowEffectRequest::ChildRun {
+                workflow_id: Some(Uuid::nil()),
+                workflow_name: None,
+                input: Value::Null,
+                wait: true,
+                reuse_open_run: false,
+                run_name: None,
+            },
+            WorkflowEffectRequest::AwaitRun {
+                workflow: "child".into(),
+                key: None,
+                run_id: None,
+                mode: "all".into(),
+            },
+        ];
+
+        for request in requests {
+            let module = WorkflowModule::new(vec![
+                WorkflowInstruction::Effect {
+                    request: request.clone(),
+                },
+                WorkflowInstruction::Return,
+            ]);
+            let start = continuation();
+            let WorkflowVmStep::Yield {
+                continuation: waiting,
+                effect_id,
+                sequence,
+                request: yielded,
+            } = step(&module, start.clone())
+            else {
+                panic!("parking request must yield");
+            };
+            assert_eq!(yielded, request);
+
+            let restarted: WorkflowContinuation =
+                serde_json::from_str(&serde_json::to_string(&start).unwrap()).unwrap();
+            let WorkflowVmStep::Yield {
+                effect_id: replayed_id,
+                sequence: replayed_sequence,
+                request: replayed_request,
+                ..
+            } = step(&module, restarted)
+            else {
+                panic!("restarted parking request must yield");
+            };
+            assert_eq!(
+                (replayed_id, replayed_sequence, replayed_request),
+                (effect_id, sequence, request)
+            );
+
+            let value = Value::String("settled".into());
+            let WorkflowVmStep::Complete {
+                value: completed, ..
+            } = resume(&module, waiting, Ok(value.clone()))
+            else {
+                panic!("settled parking request must resume");
+            };
+            assert_eq!(completed, value);
+        }
     }
 
     #[test]
