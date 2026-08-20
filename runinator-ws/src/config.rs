@@ -169,4 +169,8 @@ pub(crate) struct CliArgs {
     /// engine and this replica serves HTTP/WebSocket only.
     #[arg(long, env = "RUNINATOR_WS_RUN_ENGINE", default_value_t = true)]
     pub run_engine: bool,
+
+    /// Maximum ingress deliveries the embedded orchestration engine processes concurrently.
+    #[arg(long, env = "RUNINATOR_MAX_CONCURRENT_INGRESS", default_value_t = 16)]
+    pub max_concurrent_ingress: usize,
 }

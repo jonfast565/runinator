@@ -34,3 +34,8 @@ runinator-workflows = { path = "../runinator-workflows" }
 # exposes in-crate test hooks (forced-failure injection, small test helpers) to downstream crates
 # so their integration tests can drive engine behavior. enabled only via dev-dependencies.
 test-support = []
+
+[dev-dependencies]
+# Several engine integration tests exercise the durable paths against SQLite. Keep the production
+# dependency transport-neutral while enabling that concrete backend only for this crate's tests.
+runinator-database = { path = "../runinator-database", default-features = false, features = ["sqlite"] }

@@ -27,7 +27,7 @@ use runinator_broker::{
 };
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_db_cli::{DatabaseBackend, dispatch_database};
-use runinator_engine::{EnginePublisher, run_background_engine};
+use runinator_engine::{EngineConfig, EnginePublisher, run_background_engine};
 use runinator_models::auth::AuthContext;
 use runinator_models::errors::SendableError;
 use runinator_models::replicas::{
@@ -82,6 +82,7 @@ async fn run_process() -> Result<(), SendableError> {
         broker_result_topic,
         broker_client_id,
         instance_id,
+        max_concurrent_ingress,
     } = args;
     let _ = (&sqlite_path, &database_url);
 
@@ -151,6 +152,7 @@ async fn run_process() -> Result<(), SendableError> {
                 broker.clone(),
                 instance.clone(),
                 attributes.clone(),
+                max_concurrent_ingress,
                 notify.clone(),
             )
             .await?;
@@ -167,6 +169,7 @@ async fn run_engine_with_replica<T: DatabaseImpl>(
     broker: Arc<dyn Broker>,
     instance: String,
     attributes: Value,
+    max_concurrent_ingress: usize,
     shutdown: Arc<Notify>,
 ) -> Result<(), SendableError> {
     let runtime_id = Uuid::new_v4().to_string();
@@ -236,7 +239,17 @@ async fn run_engine_with_replica<T: DatabaseImpl>(
     });
 
     let publisher = EnginePublisher::new(broker.clone());
-    let result = run_background_engine(db, broker, publisher, instance, shutdown).await;
+    let result = run_background_engine(
+        db,
+        broker,
+        publisher,
+        instance,
+        EngineConfig {
+            max_concurrent_ingress,
+        },
+        shutdown,
+    )
+    .await;
     heartbeat.abort();
     result
 }

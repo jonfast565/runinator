@@ -62,4 +62,8 @@ pub(crate) struct CliArgs {
     /// should be the pod name; otherwise a random per-process id is generated.
     #[arg(long, env = "RUNINATOR_INSTANCE_ID")]
     pub instance_id: Option<String>,
+
+    /// Maximum ingress deliveries the durable engine processes concurrently.
+    #[arg(long, env = "RUNINATOR_MAX_CONCURRENT_INGRESS", default_value_t = 16)]
+    pub max_concurrent_ingress: usize,
 }

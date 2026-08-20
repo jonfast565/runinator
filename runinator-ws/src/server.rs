@@ -18,7 +18,7 @@ use tokio::{
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
-use runinator_engine::{EnginePublisher, run_background_engine};
+use runinator_engine::{EngineConfig, EnginePublisher, run_background_engine};
 
 use crate::event_consumer::{instance_id, run_event_consumer};
 use crate::events::{AppEvent, EventBus};
@@ -45,6 +45,7 @@ pub async fn run_webserver<T: DatabaseImpl>(
     rate_limit: crate::rate_limit::RateLimitConfig,
     overload: crate::overload::OverloadConfig,
     run_engine: bool,
+    max_concurrent_ingress: usize,
 ) -> Result<(), SendableError> {
     crate::stability::init_metrics();
     // artifact bytes live in the object store, which every replica must reach. without a configured
@@ -173,6 +174,9 @@ pub async fn run_webserver<T: DatabaseImpl>(
                 engine_broker,
                 engine_publisher,
                 engine_instance,
+                EngineConfig {
+                    max_concurrent_ingress,
+                },
                 engine_shutdown,
             )
             .await

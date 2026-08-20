@@ -92,6 +92,7 @@ async fn run_process() -> Result<(), SendableError> {
         max_concurrent_requests,
         request_timeout_seconds,
         run_engine,
+        max_concurrent_ingress,
     } = args;
     // A single-backend build compiles the other dispatch arms out. Keep their CLI fields accepted
     // (so the command surface stays stable) without warning when that happens.
@@ -223,9 +224,10 @@ async fn run_process() -> Result<(), SendableError> {
                 advertisement.clone(),
                 auth_options.clone(),
                 rate_limit_options,
-                overload_options,
-                run_engine,
-            )
+            overload_options,
+            run_engine,
+            max_concurrent_ingress,
+        )
             .await?;
         }
     );

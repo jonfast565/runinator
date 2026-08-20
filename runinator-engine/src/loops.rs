@@ -6,7 +6,10 @@ use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::errors::error_code_or_unknown;
 use runinator_models::replicas::{ReplicaKind, ReplicaStatus};
 use runinator_models::workflows::WorkflowStatus;
-use tokio::sync::Notify;
+use tokio::{
+    sync::{Mutex, Notify, Semaphore},
+    task::JoinSet,
+};
 use tracing::{Instrument, error, info, warn};
 use uuid::Uuid;
 
@@ -584,22 +587,50 @@ pub async fn run_ingress_consumer<T: DatabaseImpl>(
     broker: Arc<dyn Broker>,
     events: EventSender,
     instance_id: String,
+    max_concurrent_ingress: usize,
     shutdown: Arc<Notify>,
 ) {
-    info!("ingress consumer started");
-    let mut attempts = HashMap::<String, u32>::new();
+    let max_concurrent_ingress = max_concurrent_ingress.max(1);
+    info!(max_concurrent_ingress, "ingress consumer started");
+    let attempts = Arc::new(Mutex::new(HashMap::<String, u32>::new()));
+    let permits = Arc::new(Semaphore::new(max_concurrent_ingress));
+    let mut deliveries = JoinSet::new();
     let mut health_tick = tokio::time::interval(std::time::Duration::from_secs(15));
     health_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
+        // Take capacity before receiving so a slow reducer never lets this consumer claim an
+        // unbounded number of broker deliveries. The permit lives in the delivery task until its
+        // ack/nack/dead-letter path has completed.
+        let permit = tokio::select! {
+            _ = shutdown.notified() => break,
+            Some(result) = deliveries.join_next(), if !deliveries.is_empty() => {
+                if let Err(err) = result {
+                    error!("ingress delivery task join error: {err}");
+                }
+                continue;
+            }
+            _ = health_tick.tick() => {
+                stability::loop_iteration("ingress", true, std::time::Duration::ZERO);
+                continue;
+            }
+            permit = permits.clone().acquire_owned() => match permit {
+                Ok(permit) => permit,
+                Err(err) => {
+                    error!("ingress concurrency semaphore closed: {err}");
+                    break;
+                }
+            },
+        };
         let delivery = tokio::select! {
             _ = shutdown.notified() => {
-                info!("ingress consumer shutting down");
-                return;
+                drop(permit);
+                break;
             }
             received = broker.receive_ingress(INGRESS_CONSUMER_ID) => {
                 match received {
                     Ok(delivery) => delivery,
                     Err(err) => {
+                        drop(permit);
                         error!(
                             error_code = error_code_or_unknown(&err),
                             "failed to receive ingress message: {}", err
@@ -607,18 +638,13 @@ pub async fn run_ingress_consumer<T: DatabaseImpl>(
                         // back off so an unreachable broker does not spin this loop hot.
                         tokio::select! {
                             _ = shutdown.notified() => {
-                                info!("ingress consumer shutting down");
-                                return;
+                                break;
                             }
                             _ = tokio::time::sleep(INGRESS_RETRY_BACKOFF) => {}
                         }
                         continue;
                     }
                 }
-            }
-            _ = health_tick.tick() => {
-                stability::loop_iteration("ingress", true, std::time::Duration::ZERO);
-                continue;
             }
         };
 
@@ -643,91 +669,127 @@ pub async fn run_ingress_consumer<T: DatabaseImpl>(
                 tracing::info_span!("ingress_agent_directive_result", directive_id = %result.directive_id)
             }
         };
-        let started = std::time::Instant::now();
+        let db = db.clone();
+        let broker = broker.clone();
+        let events = events.clone();
+        let instance_id = instance_id.clone();
+        let attempts = attempts.clone();
+        deliveries.spawn(async move {
+            let _permit = permit;
+            process_ingress_delivery(db, broker, events, instance_id, attempts, delivery)
+                .instrument(span)
+                .await;
+        });
+    }
 
-        async {
-            let key = delivery.dedupe_key.clone();
-            match apply_ingress(
-                db.as_ref(),
-                broker.as_ref(),
-                &events,
-                &instance_id,
-                &delivery.command,
-            )
-            .await
-            {
-                Ok(()) => {
-                    stability::ingress_applied();
-                    attempts.remove(&key);
-                    if let Err(err) = broker
-                        .ack_ingress(INGRESS_CONSUMER_ID, delivery.delivery_id)
-                        .await
-                    {
-                        error!(
-                            error_code = error_code_or_unknown(&err),
-                            "failed to ack ingress message: {}", err
-                        );
-                    }
-                    stability::queue_snapshot("ingress_retry", attempts.len() as u64, 0, 0);
-                    stability::loop_iteration("ingress", true, started.elapsed());
-                }
-                Err(err) => {
-                    let count = {
-                        let entry = attempts.entry(key.clone()).or_insert(0);
-                        *entry += 1;
-                        *entry
-                    };
-                    error!(
-                        attempt = count,
-                        error_code = error_code_or_unknown(err.as_ref()),
-                        "failed to apply ingress message: {}",
-                        err
-                    );
-                    if count >= MAX_INGRESS_ATTEMPTS {
-                        stability::ingress_dead_lettered();
-                        attempts.remove(&key);
-                        warn!(attempts = count, "dead-lettering ingress message");
-                        crate::audit::persist_dead_letter(
-                            db.as_ref(),
-                            "ingress",
-                            None,
-                            Some(delivery.dedupe_key.clone()),
-                            count,
-                            &err.to_string(),
-                            serde_json::to_value(&delivery.command).unwrap_or_default(),
-                        )
-                        .await;
-                        if let Err(err) = broker
-                            .ack_ingress(INGRESS_CONSUMER_ID, delivery.delivery_id)
-                            .await
-                        {
-                            error!(
-                                error_code = error_code_or_unknown(&err),
-                                "failed to ack dead-lettered ingress message: {}", err
-                            );
-                        }
-                        stability::queue_snapshot("ingress_retry", attempts.len() as u64, 0, 0);
-                        stability::loop_iteration("ingress", false, started.elapsed());
-                        return;
-                    }
-                    stability::ingress_retried();
-                    tokio::time::sleep(INGRESS_RETRY_BACKOFF).await;
-                    if let Err(err) = broker
-                        .nack_ingress(INGRESS_CONSUMER_ID, delivery.delivery_id)
-                        .await
-                    {
-                        error!(
-                            error_code = error_code_or_unknown(&err),
-                            "failed to nack ingress message: {}", err
-                        );
-                    }
-                    stability::queue_snapshot("ingress_retry", attempts.len() as u64, 0, 0);
-                    stability::loop_iteration("ingress", false, started.elapsed());
-                }
-            }
+    info!(
+        in_flight = deliveries.len(),
+        "ingress consumer draining accepted deliveries"
+    );
+    while let Some(result) = deliveries.join_next().await {
+        if let Err(err) = result {
+            error!("ingress delivery task join error while draining: {err}");
         }
-        .instrument(span)
-        .await;
+    }
+    info!("ingress consumer shut down");
+}
+
+async fn process_ingress_delivery<T: DatabaseImpl>(
+    db: Arc<T>,
+    broker: Arc<dyn Broker>,
+    events: EventSender,
+    instance_id: String,
+    attempts: Arc<Mutex<HashMap<String, u32>>>,
+    delivery: runinator_broker_core::IngressDelivery,
+) {
+    let started = std::time::Instant::now();
+    let key = delivery.dedupe_key.clone();
+    match apply_ingress(
+        db.as_ref(),
+        broker.as_ref(),
+        &events,
+        &instance_id,
+        &delivery.command,
+    )
+    .await
+    {
+        Ok(()) => {
+            stability::ingress_applied();
+            let retry_depth = {
+                let mut guard = attempts.lock().await;
+                guard.remove(&key);
+                guard.len() as u64
+            };
+            if let Err(err) = broker
+                .ack_ingress(INGRESS_CONSUMER_ID, delivery.delivery_id)
+                .await
+            {
+                error!(
+                    error_code = error_code_or_unknown(&err),
+                    "failed to ack ingress message: {}", err
+                );
+            }
+            stability::queue_snapshot("ingress_retry", retry_depth, 0, 0);
+            stability::loop_iteration("ingress", true, started.elapsed());
+        }
+        Err(err) => {
+            let (count, retry_depth) = {
+                let mut guard = attempts.lock().await;
+                let entry = guard.entry(key.clone()).or_insert(0);
+                *entry += 1;
+                (*entry, guard.len() as u64)
+            };
+            error!(
+                attempt = count,
+                error_code = error_code_or_unknown(err.as_ref()),
+                "failed to apply ingress message: {}",
+                err
+            );
+            if count >= MAX_INGRESS_ATTEMPTS {
+                stability::ingress_dead_lettered();
+                let retry_depth = {
+                    let mut guard = attempts.lock().await;
+                    guard.remove(&key);
+                    guard.len() as u64
+                };
+                warn!(attempts = count, "dead-lettering ingress message");
+                crate::audit::persist_dead_letter(
+                    db.as_ref(),
+                    "ingress",
+                    None,
+                    Some(delivery.dedupe_key.clone()),
+                    count,
+                    &err.to_string(),
+                    serde_json::to_value(&delivery.command).unwrap_or_default(),
+                )
+                .await;
+                if let Err(err) = broker
+                    .ack_ingress(INGRESS_CONSUMER_ID, delivery.delivery_id)
+                    .await
+                {
+                    error!(
+                        error_code = error_code_or_unknown(&err),
+                        "failed to ack dead-lettered ingress message: {}", err
+                    );
+                }
+                stability::queue_snapshot("ingress_retry", retry_depth, 0, 0);
+                stability::loop_iteration("ingress", false, started.elapsed());
+                return;
+            }
+            stability::ingress_retried();
+            tokio::time::sleep(INGRESS_RETRY_BACKOFF).await;
+            if let Err(err) = broker
+                .nack_ingress(INGRESS_CONSUMER_ID, delivery.delivery_id)
+                .await
+            {
+                error!(
+                    error_code = error_code_or_unknown(&err),
+                    "failed to nack ingress message: {}", err
+                );
+            }
+            stability::queue_snapshot("ingress_retry", retry_depth, 0, 0);
+            stability::loop_iteration("ingress", false, started.elapsed());
+        }
     }
 }
 

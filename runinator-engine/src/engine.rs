@@ -15,6 +15,50 @@ use crate::loops::{
 };
 use crate::result_consumer::run_result_consumer;
 
+/// Runtime limits for one durable engine instance.
+///
+/// The ingress limit bounds reducer drives, control commands, and agent directive results that may
+/// be processed concurrently. Durable ready-node claims and run-state compare-and-swap writes
+/// remain the authority for conflicting work.
+#[derive(Debug, Clone, Copy)]
+pub struct EngineConfig {
+    pub max_concurrent_ingress: usize,
+}
+
+impl Default for EngineConfig {
+    fn default() -> Self {
+        Self {
+            max_concurrent_ingress: 16,
+        }
+    }
+}
+
+impl EngineConfig {
+    pub fn normalized(self) -> Self {
+        Self {
+            max_concurrent_ingress: self.max_concurrent_ingress.max(1),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::EngineConfig;
+
+    #[test]
+    fn ingress_concurrency_defaults_to_a_bounded_parallel_limit() {
+        assert_eq!(EngineConfig::default().max_concurrent_ingress, 16);
+        assert_eq!(
+            EngineConfig {
+                max_concurrent_ingress: 0,
+            }
+            .normalized()
+            .max_concurrent_ingress,
+            1
+        );
+    }
+}
+
 /// run the durable orchestration engine: the ingress/reducer, result, wake, trigger, action-dispatch
 /// loops plus the replica/ready-node/usage maintenance backstops. all loops share `shutdown`, and any
 /// loop exiting on its own (panic or early return) fails the whole process so it restarts and resumes
@@ -28,11 +72,13 @@ pub async fn run_background_engine<T: DatabaseImpl>(
     broker: Arc<dyn Broker>,
     publisher: EnginePublisher,
     instance: String,
+    config: EngineConfig,
     shutdown: Arc<Notify>,
 ) -> Result<(), SendableError> {
     pool.migrate_workflow_execution_states().await?;
     crate::mutex_migration::reconcile_legacy_mutexes(pool.as_ref()).await?;
     crate::stability::init_metrics();
+    let config = config.normalized();
 
     let mut loops: JoinSet<()> = JoinSet::new();
     loops.spawn(run_result_consumer(
@@ -46,6 +92,7 @@ pub async fn run_background_engine<T: DatabaseImpl>(
         broker.clone(),
         publisher.clone(),
         instance.clone(),
+        config.max_concurrent_ingress,
         shutdown.clone(),
     ));
     loops.spawn(run_wake_publisher(

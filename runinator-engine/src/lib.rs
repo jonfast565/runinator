@@ -28,7 +28,7 @@ pub mod orchestration {
     pub use runinator_reducer::{ReadyNodeDisposition, process_ready_node};
 }
 
-pub use engine::run_background_engine;
+pub use engine::{EngineConfig, run_background_engine};
 pub use events::{AppEvent, AppEventKind, EnginePublisher, EventSender};
 
 // exposed so the web service can reuse the same result-consumer policy/loop in-process.

@@ -922,9 +922,11 @@ The import file is a `{ "secrets": [...] }` document; each entry carries
 `schema`. Existing entries are only overwritten when an incoming `updated_at` is
 strictly newer.
 
-The v1 control-flow runtime is controller-driven and still uses one `active_node_id`.
-`parallel` and `race` advance branch roots sequentially through persisted workflow state,
-and `map.concurrency` is reserved for a future multi-active-node runtime. Branch/body/item
+The control-flow runtime uses persisted cursors: linear runs retain one primary cursor, while
+`parallel` and `race` fork one cursor and ready-node drive per branch. The engine processes ingress
+with bounded concurrency (default 16 per instance), so independent branches and concurrent map
+children can reach workers without waiting for a serial reducer loop. `active_node_id` remains a
+compatibility mirror of the primary cursor for run detail and older consumers. Branch/body/item
 nodes should transition back to their owning `join`, `try`, `map`, or `race` controller.
 
 ## Observability
