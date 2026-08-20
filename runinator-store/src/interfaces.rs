@@ -40,6 +40,7 @@ pub trait DatabaseImpl:
     + AuthStore
     + RbacStore
     + OrgStore
+    + WorkflowVmStore
 {
     /// Execute initialization scripts for the database.
     ///

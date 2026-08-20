@@ -17,7 +17,7 @@ use std::future::Future;
 use chrono::{Duration, Utc};
 use runinator_comm::{
     ActionCommand, AgentDirectiveKind, AgentDirectiveResult, AgentDirectiveState,
-    AgentDirectiveStatus, WorkflowResultEvent, WorkflowResultEventKind,
+    AgentDirectiveStatus, EffectCommand, WorkflowResultEvent, WorkflowResultEventKind,
 };
 use runinator_models::{
     auth::{AgentEnrollmentToken, AgentEnrollmentTokenRecord, ApiKey, ApiKeyRecord, PrincipalKind},
@@ -30,6 +30,10 @@ use runinator_models::{
     types::RuninatorType,
     value::Value,
     workflow_state::WorkflowExecutionState,
+    workflow_vm::{
+        WORKFLOW_EFFECT_PROTOCOL_VERSION, WorkflowContinuation, WorkflowEffect,
+        WorkflowEffectRequest, WorkflowEffectStatus, WorkflowInstruction, WorkflowModule,
+    },
     workflows::{
         WorkflowAction, WorkflowDefinition, WorkflowGraph, WorkflowObject, WorkflowStatus,
         WorkflowTrigger, WorkflowTriggerKind,
@@ -43,9 +47,10 @@ use uuid::Uuid;
 use crate::backend::{SqlBackend, SqlStore};
 use crate::interfaces::DatabaseImpl;
 use runinator_models::errors::SendableError;
+use runinator_store::roles::WorkflowVmStore;
 use sqlx::{Database, Encode, Executor, IntoArguments, Type};
 
-pub(crate) trait ExecutionStateParityDb: DatabaseImpl {
+pub(crate) trait ExecutionStateParityDb: DatabaseImpl + WorkflowVmStore {
     fn stage_legacy_execution_state(
         &self,
         workflow_run_id: Uuid,
@@ -56,7 +61,7 @@ pub(crate) trait ExecutionStateParityDb: DatabaseImpl {
 impl<B> ExecutionStateParityDb for SqlStore<B>
 where
     B: SqlBackend,
-    SqlStore<B>: DatabaseImpl,
+    SqlStore<B>: DatabaseImpl + WorkflowVmStore,
     for<'q> &'q str: Encode<'q, B::Db> + Type<B::Db>,
     for<'q> String: Encode<'q, B::Db> + Type<B::Db>,
     for<'q> Uuid: Encode<'q, B::Db> + Type<B::Db>,
@@ -179,6 +184,7 @@ pub(crate) async fn assert_dialect_parity<T: ExecutionStateParityDb>(db: &T) {
     assert_function_lifecycle(db, id).await;
     assert_console_lifecycle(db).await;
     assert_invocation_lifecycle(db, run_id, node_id).await;
+    assert_workflow_vm_readback(db, &after).await;
     assert_unreferenced_artifacts(db).await;
 
     // the legacy run mapper reads a column named `trigger`, which is reserved in mysql and has to
@@ -189,6 +195,109 @@ pub(crate) async fn assert_dialect_parity<T: ExecutionStateParityDb>(db: &T) {
             .unwrap()
             .is_empty()
     );
+}
+
+async fn assert_workflow_vm_readback<T: DatabaseImpl + WorkflowVmStore>(
+    db: &T,
+    workflow: &WorkflowDefinition,
+) {
+    let snapshot = db
+        .fetch_workflow(workflow.id.expect("workflow id"))
+        .await
+        .unwrap()
+        .expect("workflow snapshot");
+    let run = db
+        .create_workflow_run(
+            snapshot.id.expect("workflow id"),
+            snapshot,
+            Value::Null,
+            Value::Null,
+            None,
+            Default::default(),
+        )
+        .await
+        .unwrap();
+    let module = WorkflowModule::new(vec![
+        WorkflowInstruction::Effect {
+            request: WorkflowEffectRequest::TimerDelay { seconds: 1 },
+        },
+        WorkflowInstruction::Return,
+    ]);
+    let root = WorkflowContinuation::start(run.id, module.version);
+    db.create_workflow_vm(module.clone(), root.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        db.fetch_workflow_module(run.id).await.unwrap(),
+        Some(module.clone())
+    );
+    assert_eq!(
+        db.fetch_workflow_continuations(run.id).await.unwrap(),
+        vec![root.clone()]
+    );
+
+    let claimed = db
+        .claim_runnable_workflow_continuations(
+            "parity-scheduler".into(),
+            Utc::now(),
+            Utc::now() + Duration::seconds(30),
+            1,
+        )
+        .await
+        .unwrap();
+    let runinator_runtime::WorkflowVmStep::Yield {
+        continuation,
+        effect_id,
+        sequence,
+        request,
+    } = runinator_runtime::step_workflow_vm(&module, claimed.into_iter().next().unwrap())
+    else {
+        panic!("expected an effect yield");
+    };
+    let now = Utc::now().timestamp();
+    let effect = WorkflowEffect {
+        version: WORKFLOW_EFFECT_PROTOCOL_VERSION,
+        id: effect_id,
+        workflow_run_id: run.id,
+        continuation_id: continuation.id,
+        sequence,
+        attempt: 0,
+        request: request.clone(),
+        status: WorkflowEffectStatus::Requested,
+        result: None,
+        message: None,
+        created_at: now,
+        updated_at: now,
+        finished_at: None,
+    };
+    let command = EffectCommand {
+        version: WORKFLOW_EFFECT_PROTOCOL_VERSION,
+        command_id: Uuid::now_v7(),
+        effect_id,
+        workflow_run_id: run.id,
+        continuation_id: continuation.id,
+        attempt: 0,
+        request,
+        target: Default::default(),
+        trace_id: Uuid::now_v7(),
+        trace_context: Default::default(),
+        idempotency_key: effect.idempotency_key(),
+    };
+    db.suspend_on_effect(continuation, effect.clone(), command)
+        .await
+        .unwrap();
+    assert_eq!(
+        db.fetch_workflow_effect(effect_id).await.unwrap(),
+        Some(effect.clone())
+    );
+    assert_eq!(
+        db.fetch_workflow_effects(run.id).await.unwrap(),
+        vec![effect]
+    );
+    let journal = db.fetch_workflow_journal(run.id).await.unwrap();
+    assert_eq!(journal.len(), 2);
+    assert_eq!(journal[0].sequence, 0);
+    assert_eq!(journal[1].sequence, 1);
 }
 
 async fn assert_workflow_mutex_claim<T: DatabaseImpl>(db: &T, workflow: &WorkflowDefinition) {

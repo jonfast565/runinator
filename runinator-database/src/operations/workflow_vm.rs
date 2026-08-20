@@ -1,9 +1,9 @@
 //! Transactional persistence for compiled workflow modules, continuations, and durable effects.
 
 use super::*;
-use runinator_comm::EffectCommand;
+use runinator_comm::{EffectCommand, EffectDispatchRecord};
 use runinator_models::workflow_vm::{
-    WORKFLOW_EFFECT_PROTOCOL_VERSION, WorkflowContinuation, WorkflowEffect, WorkflowEffectStatus,
+    WORKFLOW_JOURNAL_VERSION, WorkflowContinuation, WorkflowEffect, WorkflowEffectStatus,
     WorkflowJournalEntry, WorkflowJournalRecord, WorkflowModule,
 };
 
@@ -57,16 +57,9 @@ where
         .bind(workflow_run_id)
         .fetch_optional(self.pool())
         .await?;
-        let Some(row) = row else { return Ok(None) };
-        let module: WorkflowModule =
-            serde_json::from_str(&row.try_get::<String, _>("module_json")?)
-                .map_err(|error| crate::errors::WORKFLOW_VM_CORRUPT_STATE.error(error))?;
-        let version = row.try_get::<i64, _>("version")? as u32;
-        if module.version != version || !module.is_supported() {
-            return Err(crate::errors::WORKFLOW_VM_CORRUPT_STATE
-                .error("workflow module row version does not match a supported payload"));
-        }
-        Ok(Some(module))
+        row.as_ref()
+            .map(mappers::row_to_workflow_module)
+            .transpose()
     }
 
     async fn fetch_workflow_continuation(
@@ -84,6 +77,21 @@ where
             .transpose()
     }
 
+    async fn fetch_workflow_continuations(
+        &self,
+        workflow_run_id: Uuid,
+    ) -> Result<Vec<WorkflowContinuation>, SendableError> {
+        let rows = sqlx::query(&self.render(&format!(
+            "SELECT {CONTINUATION_COLUMNS} FROM workflow_continuations WHERE workflow_run_id = ? ORDER BY created_at, id"
+        )))
+        .bind(workflow_run_id)
+        .fetch_all(self.pool())
+        .await?;
+        rows.iter()
+            .map(mappers::row_to_workflow_continuation)
+            .collect()
+    }
+
     async fn fetch_workflow_effect(
         &self,
         effect_id: Uuid,
@@ -97,6 +105,19 @@ where
         row.as_ref()
             .map(mappers::row_to_workflow_effect)
             .transpose()
+    }
+
+    async fn fetch_workflow_effects(
+        &self,
+        workflow_run_id: Uuid,
+    ) -> Result<Vec<WorkflowEffect>, SendableError> {
+        let rows = sqlx::query(&self.render(&format!(
+            "SELECT {EFFECT_COLUMNS} FROM workflow_effects WHERE workflow_run_id = ? ORDER BY created_at, id"
+        )))
+        .bind(workflow_run_id)
+        .fetch_all(self.pool())
+        .await?;
+        rows.iter().map(mappers::row_to_workflow_effect).collect()
     }
 
     async fn fetch_workflow_journal(
@@ -159,7 +180,7 @@ where
             "INSERT INTO workflow_journal_entries (id, version, workflow_run_id, sequence, continuation_id, effect_id, entry_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         ))
         .bind(Uuid::now_v7())
-        .bind(i64::from(WORKFLOW_EFFECT_PROTOCOL_VERSION))
+        .bind(i64::from(WORKFLOW_JOURNAL_VERSION))
         .bind(continuation.workflow_run_id)
         .bind(0_i64)
         .bind(Some(continuation.id))
@@ -259,7 +280,7 @@ where
             "INSERT INTO workflow_journal_entries (id, version, workflow_run_id, sequence, continuation_id, effect_id, entry_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         ))
         .bind(Uuid::now_v7())
-        .bind(i64::from(WORKFLOW_EFFECT_PROTOCOL_VERSION))
+        .bind(i64::from(WORKFLOW_JOURNAL_VERSION))
         .bind(effect.workflow_run_id)
         .bind(sequence)
         .bind(Some(effect.continuation_id))
@@ -347,12 +368,78 @@ where
             "INSERT INTO workflow_journal_entries (id, version, workflow_run_id, sequence, continuation_id, effect_id, entry_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         ))
         .bind(Uuid::now_v7())
-        .bind(i64::from(WORKFLOW_EFFECT_PROTOCOL_VERSION))
+        .bind(i64::from(WORKFLOW_JOURNAL_VERSION))
         .bind(parent.workflow_run_id)
         .bind(sequence)
         .bind(Some(parent.id))
         .bind(Option::<Uuid>::None)
         .bind(serde_json::to_string(&entry)?)
+        .bind(now)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn commit_workflow_continuation(
+        &self,
+        mut continuation: WorkflowContinuation,
+        journal: WorkflowJournalEntry,
+    ) -> Result<(), SendableError> {
+        if !continuation.is_supported() {
+            return Err(crate::errors::WORKFLOW_VM_CORRUPT_STATE
+                .error("cannot commit an unsupported workflow continuation"));
+        }
+        let now = Utc::now().timestamp();
+        let expected = continuation.revision;
+        continuation.revision += 1;
+        let mut tx = self.pool().begin().await?;
+        let updated = sqlx::query(&self.render(
+            "UPDATE workflow_continuations SET continuation_json = ?, status = ?, version = ?, ready_at = CASE WHEN ? = 'runnable' THEN ? ELSE NULL END, claimed_by = NULL, claimed_until = NULL, updated_at = ? WHERE id = ? AND version = ?",
+        ))
+        .bind(serde_json::to_string(&continuation)?)
+        .bind(wire_name(&continuation.status)?)
+        .bind(continuation.revision as i64)
+        .bind(wire_name(&continuation.status)?)
+        .bind(now)
+        .bind(now)
+        .bind(continuation.id)
+        .bind(expected as i64)
+        .execute(&mut *tx)
+        .await?;
+        if updated.affected() == 0 {
+            tx.rollback().await?;
+            return Err(cas_error());
+        }
+        let lock = match self.dialect() {
+            SqlDialect::Sqlite => "",
+            SqlDialect::Postgres | SqlDialect::MySql => " FOR UPDATE",
+        };
+        sqlx::query(&self.render(&format!("SELECT id FROM workflow_runs WHERE id = ?{lock}")))
+            .bind(continuation.workflow_run_id)
+            .fetch_one(&mut *tx)
+            .await?;
+        let sequence: i64 = sqlx::query_scalar(&self.render(
+            "SELECT COALESCE(MAX(sequence), -1) + 1 FROM workflow_journal_entries WHERE workflow_run_id = ?",
+        ))
+        .bind(continuation.workflow_run_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        let effect_id = match &journal {
+            WorkflowJournalEntry::EffectRequested { effect_id }
+            | WorkflowJournalEntry::EffectSettled { effect_id, .. } => Some(*effect_id),
+            _ => None,
+        };
+        sqlx::query(&self.render(
+            "INSERT INTO workflow_journal_entries (id, version, workflow_run_id, sequence, continuation_id, effect_id, entry_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        ))
+        .bind(Uuid::now_v7())
+        .bind(i64::from(WORKFLOW_JOURNAL_VERSION))
+        .bind(continuation.workflow_run_id)
+        .bind(sequence)
+        .bind(Some(continuation.id))
+        .bind(effect_id)
+        .bind(serde_json::to_string(&journal)?)
         .bind(now)
         .execute(&mut *tx)
         .await?;
@@ -389,6 +476,18 @@ where
             tx.commit().await?;
             return Ok(false);
         }
+        let continuation_row = sqlx::query(&self.render(&format!(
+            "SELECT {CONTINUATION_COLUMNS} FROM workflow_continuations WHERE id = ?"
+        )))
+        .bind(effect.continuation_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        let mut continuation = mappers::row_to_workflow_continuation(&continuation_row)?;
+        if continuation.status != runinator_models::workflow_vm::WorkflowContinuationStatus::Waiting
+        {
+            tx.commit().await?;
+            return Ok(false);
+        }
         let now = settled_at.timestamp();
         let updated = sqlx::query(&self.render(
             "UPDATE workflow_effects SET status = ?, result_json = ?, message = ?, updated_at = ?, finished_at = ? WHERE id = ? AND attempt = ? AND status IN ('requested', 'running')",
@@ -406,14 +505,25 @@ where
             tx.commit().await?;
             return Ok(false);
         }
-        sqlx::query(&self.render(
-            "UPDATE workflow_continuations SET status = 'runnable', ready_at = ?, claimed_by = NULL, claimed_until = NULL, updated_at = ? WHERE id = ? AND status = 'waiting'",
+        let expected_revision = continuation.revision;
+        continuation.status = runinator_models::workflow_vm::WorkflowContinuationStatus::Runnable;
+        continuation.revision += 1;
+        let resumed = sqlx::query(&self.render(
+            "UPDATE workflow_continuations SET continuation_json = ?, status = ?, version = ?, ready_at = ?, claimed_by = NULL, claimed_until = NULL, updated_at = ? WHERE id = ? AND status = 'waiting' AND version = ?",
         ))
+        .bind(serde_json::to_string(&continuation)?)
+        .bind(wire_name(&continuation.status)?)
+        .bind(continuation.revision as i64)
         .bind(now)
         .bind(now)
         .bind(effect.continuation_id)
+        .bind(expected_revision as i64)
         .execute(&mut *tx)
         .await?;
+        if resumed.affected() == 0 {
+            tx.rollback().await?;
+            return Err(cas_error());
+        }
         let lock = match self.dialect() {
             SqlDialect::Sqlite => "",
             SqlDialect::Postgres | SqlDialect::MySql => " FOR UPDATE",
@@ -433,7 +543,7 @@ where
             "INSERT INTO workflow_journal_entries (id, version, workflow_run_id, sequence, continuation_id, effect_id, entry_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         ))
         .bind(Uuid::now_v7())
-        .bind(i64::from(WORKFLOW_EFFECT_PROTOCOL_VERSION))
+        .bind(i64::from(WORKFLOW_JOURNAL_VERSION))
         .bind(effect.workflow_run_id)
         .bind(sequence)
         .bind(Some(effect.continuation_id))
@@ -487,5 +597,87 @@ where
         }
         tx.commit().await?;
         Ok(claimed)
+    }
+
+    async fn claim_pending_workflow_effect_dispatches(
+        &self,
+        publisher_id: String,
+        now: DateTime<Utc>,
+        lease_until: DateTime<Utc>,
+        limit: i64,
+    ) -> Result<Vec<EffectDispatchRecord>, SendableError> {
+        const COLUMNS: &str = "id, effect_id, dedupe_key, command_json, attempts, published_at, created_at, updated_at, last_error, claimed_by, claimed_until";
+        let mut tx = self.pool().begin().await?;
+        let ids = sqlx::query(&self.render(&format!(
+            "SELECT id FROM workflow_effect_dispatches WHERE published_at IS NULL AND (claimed_until IS NULL OR claimed_until <= ? OR claimed_by = ?) ORDER BY created_at, id LIMIT ?{}",
+            self.dialect().skip_locked()
+        )))
+        .bind(now.timestamp())
+        .bind(publisher_id.as_str())
+        .bind(limit.max(1))
+        .fetch_all(&mut *tx)
+        .await?
+        .iter()
+        .map(|row| row.try_get::<Uuid, _>("id"))
+        .collect::<Result<Vec<_>, _>>()?;
+        let mut claimed = Vec::with_capacity(ids.len());
+        for id in ids {
+            let changed = sqlx::query(&self.render(
+                "UPDATE workflow_effect_dispatches SET claimed_by = ?, claimed_until = ?, updated_at = ? WHERE id = ? AND published_at IS NULL AND (claimed_until IS NULL OR claimed_until <= ? OR claimed_by = ?)",
+            ))
+            .bind(publisher_id.as_str())
+            .bind(lease_until.timestamp())
+            .bind(now.timestamp())
+            .bind(id)
+            .bind(now.timestamp())
+            .bind(publisher_id.as_str())
+            .execute(&mut *tx)
+            .await?;
+            if changed.affected() == 0 {
+                continue;
+            }
+            let row = sqlx::query(&self.render(&format!(
+                "SELECT {COLUMNS} FROM workflow_effect_dispatches WHERE id = ?"
+            )))
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await?;
+            claimed.push(mappers::row_to_workflow_effect_dispatch(&row)?);
+        }
+        tx.commit().await?;
+        Ok(claimed)
+    }
+
+    async fn mark_workflow_effect_dispatch_published(
+        &self,
+        dispatch_id: Uuid,
+    ) -> Result<(), SendableError> {
+        let now = Utc::now().timestamp();
+        sqlx::query(&self.render(
+            "UPDATE workflow_effect_dispatches SET published_at = ?, updated_at = ?, last_error = NULL, claimed_by = NULL, claimed_until = NULL WHERE id = ? AND published_at IS NULL",
+        ))
+        .bind(now)
+        .bind(now)
+        .bind(dispatch_id)
+        .execute(self.pool())
+        .await?;
+        Ok(())
+    }
+
+    async fn mark_workflow_effect_dispatch_failed(
+        &self,
+        dispatch_id: Uuid,
+        error: String,
+    ) -> Result<(), SendableError> {
+        let now = Utc::now().timestamp();
+        sqlx::query(&self.render(
+            "UPDATE workflow_effect_dispatches SET attempts = attempts + 1, updated_at = ?, last_error = ?, claimed_by = NULL, claimed_until = NULL WHERE id = ? AND published_at IS NULL",
+        ))
+        .bind(now)
+        .bind(error)
+        .bind(dispatch_id)
+        .execute(self.pool())
+        .await?;
+        Ok(())
     }
 }

@@ -7,13 +7,13 @@
 use std::future::Future;
 
 use chrono::{DateTime, Utc};
-use runinator_comm::EffectCommand;
+use runinator_comm::{EffectCommand, EffectDispatchRecord};
 use runinator_models::{
     errors::SendableError,
     value::Value,
     workflow_vm::{
-        WorkflowContinuation, WorkflowEffect, WorkflowEffectStatus, WorkflowJournalRecord,
-        WorkflowModule,
+        WorkflowContinuation, WorkflowEffect, WorkflowEffectStatus, WorkflowJournalEntry,
+        WorkflowJournalRecord, WorkflowModule,
     },
 };
 use uuid::Uuid;
@@ -30,10 +30,22 @@ pub trait WorkflowVmStore: Send + Sync + 'static {
         continuation_id: Uuid,
     ) -> impl Future<Output = Result<Option<WorkflowContinuation>, SendableError>> + Send;
 
+    /// All durable branches of one workflow run, in their creation order.
+    fn fetch_workflow_continuations(
+        &self,
+        workflow_run_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<WorkflowContinuation>, SendableError>> + Send;
+
     fn fetch_workflow_effect(
         &self,
         effect_id: Uuid,
     ) -> impl Future<Output = Result<Option<WorkflowEffect>, SendableError>> + Send;
+
+    /// Durable effect receipts for one workflow run, ordered by creation and identity.
+    fn fetch_workflow_effects(
+        &self,
+        workflow_run_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<WorkflowEffect>, SendableError>> + Send;
 
     fn fetch_workflow_journal(
         &self,
@@ -65,6 +77,15 @@ pub trait WorkflowVmStore: Send + Sync + 'static {
         join_key: String,
     ) -> impl Future<Output = Result<(), SendableError>> + Send;
 
+    /// Compare-and-swap a continuation transition and append its history boundary in the same
+    /// transaction. This is the common write for join arrival, race resolution, cancellation,
+    /// and terminal VM outcomes; callers supply the transition computed from the frozen module.
+    fn commit_workflow_continuation(
+        &self,
+        continuation: WorkflowContinuation,
+        journal: WorkflowJournalEntry,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
+
     /// Settle one effect exactly once. Returns false for stale attempts and already-terminal
     /// effects; a successful settlement must enqueue the addressed continuation for a drive.
     fn settle_workflow_effect(
@@ -85,4 +106,27 @@ pub trait WorkflowVmStore: Send + Sync + 'static {
         lease_until: DateTime<Utc>,
         limit: i64,
     ) -> impl Future<Output = Result<Vec<WorkflowContinuation>, SendableError>> + Send;
+
+    /// Lease unpublished effect commands for one broker publisher. A lease expiry makes an
+    /// unacknowledged command available again, preserving at-least-once delivery after a crash.
+    fn claim_pending_workflow_effect_dispatches(
+        &self,
+        publisher_id: String,
+        now: DateTime<Utc>,
+        lease_until: DateTime<Utc>,
+        limit: i64,
+    ) -> impl Future<Output = Result<Vec<EffectDispatchRecord>, SendableError>> + Send;
+
+    /// Acknowledge publication of a claimed VM effect command.
+    fn mark_workflow_effect_dispatch_published(
+        &self,
+        dispatch_id: Uuid,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
+
+    /// Release a VM effect command after a failed broker publication so it can be retried.
+    fn mark_workflow_effect_dispatch_failed(
+        &self,
+        dispatch_id: Uuid,
+        error: String,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
 }
