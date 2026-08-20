@@ -26,7 +26,6 @@ fn workflow_namespace_and_qualified_subflow_round_trip() {
     assert_round_trips(src);
 }
 #[test]
-#[ignore = "legacy action-node assertion removed by invocation hard cutover"]
 fn import_std_brings_intrinsics_into_bare_scope() {
     // `import std` opens the whole standard library so prefix calls need no qualification; the
     // decompiler still canonicalizes to the qualified form, so the round trip is stable.
@@ -41,18 +40,18 @@ fn import_std_brings_intrinsics_into_bare_scope() {
     "#;
     let definition = compile(src);
     let graph = graph_value(&definition);
-    let program = graph["nodes"]
+    let module = graph["nodes"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|n| n["kind"] == "action")
-        .unwrap()["action"]["configuration"]["program"]
+        .find(|n| n["kind"] == "invocation")
+        .unwrap()["parameters"]["module"]
         .to_string();
-    // the compiled program holds bare runtime leaves, never the std prefix.
-    assert!(program.contains("\"add\""), "program: {program}");
+    // The module holds bare runtime leaves, never the std prefix.
+    assert!(module.contains("\"add\""), "module: {module}");
     assert!(
-        !program.contains("std.math"),
-        "program leaked namespace: {program}"
+        !module.contains("std.math"),
+        "module leaked namespace: {module}"
     );
     assert_round_trips(src);
 }

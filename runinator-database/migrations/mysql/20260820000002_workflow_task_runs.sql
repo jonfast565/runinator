@@ -28,3 +28,7 @@ CREATE TABLE IF NOT EXISTS workflow_task_runs (
 CREATE INDEX idx_workflow_task_runs_run ON workflow_task_runs(workflow_run_id);
 CREATE INDEX idx_workflow_task_runs_launch ON workflow_task_runs(launch_node_run_id);
 CREATE INDEX idx_workflow_task_runs_status ON workflow_task_runs(status);
+CREATE INDEX idx_workflow_task_runs_current_executor
+    ON workflow_task_runs(current_executor_replica_id);
+CREATE INDEX idx_workflow_task_runs_last_executor
+    ON workflow_task_runs(last_executor_replica_id);

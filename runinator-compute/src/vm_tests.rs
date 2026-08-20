@@ -100,7 +100,7 @@ fn a_pure_intrinsic_folds_in_process() {
 
 #[test]
 fn an_unknown_local_reads_as_null() {
-    // matching the tree evaluator, which resolves `let.x` through the same missing-path rule every
+    // matching declarative reference semantics, which resolve `let.x` through the same missing-path rule every
     // other reference uses. reachable whenever a binding sits on a branch that did not run.
     let step = run_entry(vec![
         InvocationInstruction::LoadLocal {
@@ -138,7 +138,7 @@ fn jump_if_false_takes_the_branch_on_a_falsy_value() {
 
 #[test]
 fn truthiness_matches_the_condition_evaluator() {
-    // javascript-like, because that is the rule the tree evaluator already applied to a `{value: x}`
+    // javascript-like, because that is the rule declarative conditions apply to a `{value: x}`
     // condition and to a conditional expression. an earlier version of this test asserted the
     // opposite — that only null and `false` are falsy — which is the rule behind the `not`/`and`/`or`
     // intrinsics, a different surface. adopting it here inverted branches on `0` and on empty

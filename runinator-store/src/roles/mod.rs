@@ -32,6 +32,7 @@ pub mod runs;
 pub mod schedules;
 pub mod settings;
 pub mod task_runs;
+pub mod workflow_vm;
 
 pub use archive::ArchiveStore;
 pub use auth::AuthStore;
@@ -49,3 +50,4 @@ pub use runs::RunStore;
 pub use schedules::ScheduleStore;
 pub use settings::SettingStore;
 pub use task_runs::TaskRunStore;
+pub use workflow_vm::WorkflowVmStore;

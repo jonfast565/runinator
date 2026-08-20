@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use runinator_models::value::{Map, Value};
 
 mod catalog;
+mod compiler;
 mod node_kinds;
 mod normalize;
 mod parameters;
@@ -15,6 +16,7 @@ mod typing;
 mod validation;
 
 pub use catalog::{enum_catalogs, node_kind_catalog, node_metadata, trigger_kind_catalog};
+pub use compiler::compile_workflow_module;
 // the expression/compute language lives in `runinator-compute`; re-exported here at its historical
 // `runinator_workflows::…` paths so graph-layer consumers need not name both crates. a consumer
 // that only evaluates values (a provider, the rexrap front end) should depend on `runinator-compute`
@@ -25,12 +27,12 @@ pub use node_kinds::{
 };
 pub use normalize::{normalize_definition, normalize_workflow};
 pub use parameters::{
-    evaluate_percentage, evaluate_switch, evaluate_toggle, parse_approval_parameters,
-    parse_gate_parameters, parse_input_parameters, parse_invocation_parameters,
-    parse_join_parameters, parse_loop_parameters, parse_map_parameters, parse_output_parameters,
-    parse_parallel_parameters, parse_percentage_parameters, parse_race_parameters,
-    parse_signal_parameters, parse_switch_parameters, parse_toggle_parameters,
-    parse_try_parameters, parse_wait_parameters,
+    evaluate_assertions, evaluate_percentage, evaluate_switch, evaluate_toggle,
+    parse_approval_parameters, parse_gate_parameters, parse_input_parameters,
+    parse_invocation_parameters, parse_join_parameters, parse_loop_parameters,
+    parse_map_parameters, parse_output_parameters, parse_parallel_parameters,
+    parse_percentage_parameters, parse_race_parameters, parse_signal_parameters,
+    parse_switch_parameters, parse_toggle_parameters, parse_try_parameters, parse_wait_parameters,
 };
 pub use refs::expand_workflow_refs;
 pub use run_state::{
@@ -41,12 +43,12 @@ pub use runinator_compute::{
     CallableCatalog, EFFECTFUL_INTRINSIC_NAMES, FunctionTable, HIGHER_ORDER_NAMES,
     IntrinsicLibrary, PureIntrinsics, RuntimeFunction, STD_MODULES, STD_NAMESPACE, VmEnv,
     WorkflowTypeDiagnostic, WorkflowValidationError, apply_input_defaults, assemble_program,
-    call_pure, effectful_signatures, evaluate_condition, evaluate_condition_with,
-    evaluate_expression, evaluate_workflow_condition, intrinsic_arity, intrinsic_catalog,
-    intrinsic_module, intrinsic_result_type, intrinsic_signature, is_higher_order,
-    is_known_intrinsic, next_transition, parse_program, qualified_intrinsic_name, resolve_std_path,
-    resolve_value_refs, resolve_value_refs_pure, resolve_value_refs_with_functions, start,
-    validate_condition_value, validate_expression,
+    call_pure, effectful_signatures, evaluate_condition, evaluate_expression,
+    evaluate_workflow_condition, intrinsic_arity, intrinsic_catalog, intrinsic_module,
+    intrinsic_result_type, intrinsic_signature, is_higher_order, is_known_intrinsic,
+    next_transition, parse_program, qualified_intrinsic_name, resolve_std_path, resolve_value_refs,
+    resolve_value_refs_pure, resolve_value_refs_with_functions, start, validate_condition_value,
+    validate_expression,
 };
 pub use runinator_models::workflow_ast::{
     ComputeProgram, ComputeStmt, WorkflowExpression, WorkflowPathSegment, WorkflowRefSource,

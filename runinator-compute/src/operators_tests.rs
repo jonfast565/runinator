@@ -10,7 +10,7 @@ use crate::expressions::evaluate_expression;
 use runinator_models::json;
 use runinator_models::workflow_ast::WorkflowExpression;
 
-/// evaluate `expr` on the tree evaluator with an empty context.
+/// evaluate `expr` through the VM-backed declarative API with an empty context.
 fn evaluated(expr: &Value) -> Result<Value, WorkflowValidationError> {
     let parsed = WorkflowExpression::try_from(expr.clone())
         .map_err(|err| WorkflowValidationError::InvalidValueRef(format!("{err:?}")))?;

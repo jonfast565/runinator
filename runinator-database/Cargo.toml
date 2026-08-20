@@ -28,3 +28,4 @@ mysql = ["sqlx/mysql"]
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt", "time"] }
+runinator-runtime = { path = "../runinator-runtime" }

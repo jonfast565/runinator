@@ -147,7 +147,6 @@ fn sample_action(workflow_run_id: Uuid, workflow_node_run_id: Uuid) -> ActionCom
         notification_delivery_id: None,
         invocation_call_id: None,
         task_run_id: None,
-        task_run_id: None,
         idempotency_key: None,
     }
 }
@@ -1013,6 +1012,7 @@ async fn assert_run_claim_and_results<T: DatabaseImpl>(
         trace_id: Uuid::nil(),
         notification_delivery_id: None,
         invocation_call_id: None,
+        task_run_id: None,
     };
     assert!(
         db.apply_workflow_result_event(&event).await.unwrap(),

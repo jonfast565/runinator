@@ -4,7 +4,6 @@
 use super::*;
 
 #[test]
-#[ignore = "legacy action-node assertion removed by invocation hard cutover"]
 fn function_defaults_and_lambdas_lower_into_metadata() {
     let src = r#"
         fn fold_values(xs: integer[], seed: integer = 0) -> integer = std.collections.reduce(xs, seed, (acc, x) => std.math.add(acc, x))
@@ -53,23 +52,14 @@ fn function_defaults_and_lambdas_lower_into_metadata() {
         .as_array()
         .expect("nodes")
         .iter()
-        .find(|n| n["kind"] == "action")
-        .expect("compute action node");
-    assert_eq!(node["action"]["provider"], "std");
-    assert_eq!(node["action"]["function"], "run");
+        .find(|n| n["kind"] == "invocation")
+        .expect("compute invocation node");
     assert_eq!(
-        node["action"]["configuration"]["program"][0]["value"],
-        serde_json::json!({
-            "$call": "fold_values",
-            "args": [
-                { "$ref": { "params": ["xs"] } },
-                0
-            ]
-        })
+        node["parameters"]["module"]["functions"][0]["name"],
+        "fold_values"
     );
 }
 #[test]
-#[ignore = "legacy action-node assertion removed by invocation hard cutover"]
 fn pure_block_body_function_lowers_to_program_and_round_trips() {
     let src = r#"
         fn build(a: integer, b: integer) -> integer = {
@@ -98,19 +88,21 @@ fn pure_block_body_function_lowers_to_program_and_round_trips() {
         graph["metadata"]["rexrap"]["functions"]["build"],
         "(a: integer, b: integer) -> integer"
     );
-    // the caller is pure, so the compute block stays in-process (`std.run`).
+    // The caller and its function compile together into one invocation module.
     let node = graph["nodes"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|n| n["kind"] == "action")
-        .expect("compute action node");
-    assert_eq!(node["action"]["function"], "run");
+        .find(|n| n["kind"] == "invocation")
+        .expect("compute invocation node");
+    assert_eq!(
+        node["parameters"]["module"]["functions"][0]["name"],
+        "build"
+    );
     assert_round_trips(src);
 }
 #[test]
-#[ignore = "legacy std.exec assertion removed by invocation hard cutover"]
-fn effectful_block_body_function_forces_caller_to_exec_and_round_trips() {
+fn effectful_block_body_function_compiles_into_an_invocation_and_round_trips() {
     let src = r#"
         fn fetch(url: string) -> object = {
             let resp = std.exec.http_get(url)
@@ -130,14 +122,18 @@ fn effectful_block_body_function_forces_caller_to_exec_and_round_trips() {
         .as_array()
         .expect("functions metadata");
     assert!(functions[0]["program"].is_array(), "expected program body");
-    // calling an effectful function makes the enclosing compute block dispatch to the worker.
+    // Calling an effectful function leaves a durable call in the enclosing invocation module.
     let node = graph["nodes"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|n| n["kind"] == "action")
-        .expect("compute action node");
-    assert_eq!(node["action"]["function"], "exec");
+        .find(|n| n["kind"] == "invocation")
+        .expect("compute invocation node");
+    assert!(
+        node["parameters"]["module"]
+            .to_string()
+            .contains("http_get")
+    );
     assert_round_trips(src);
 }
 #[test]

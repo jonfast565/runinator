@@ -19,6 +19,7 @@ mod schedules;
 mod schema;
 mod settings;
 mod transitions;
+mod workflow_vm;
 
 use super::*;
 use crate::archive::ArchiveTable;

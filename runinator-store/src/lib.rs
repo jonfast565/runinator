@@ -39,7 +39,7 @@ pub mod prelude {
     pub use crate::roles::{
         ArchiveStore, AuthStore, AutomationStore, ConsoleStore, DefinitionStore, DispatchStore,
         FunctionStore, InvocationStore, NotificationStore, OrgStore, QueueSnapshot, RbacStore,
-        ReplicaStore, RunStore, ScheduleStore, SettingStore, TaskRunStore,
+        ReplicaStore, RunStore, ScheduleStore, SettingStore, TaskRunStore, WorkflowVmStore,
     };
     pub use crate::runtime_store::RuntimeStore;
 }

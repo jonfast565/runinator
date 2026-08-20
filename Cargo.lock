@@ -7943,6 +7943,7 @@ dependencies = [
  "runinator-auth",
  "runinator-comm",
  "runinator-models",
+ "runinator-runtime",
  "runinator-store",
  "runinator-utilities",
  "serde",

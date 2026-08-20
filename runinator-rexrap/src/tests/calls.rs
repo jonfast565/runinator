@@ -159,9 +159,8 @@ fn method_call_on_call_result_chains() {
     assert_round_trips(src);
 }
 #[test]
-#[ignore = "legacy std.exec assertion removed by invocation hard cutover"]
-fn method_call_effectful_receiver_in_compute() {
-    // a fluent effectful pipeline lives in a compute block (dispatches to a worker).
+fn method_call_effectful_receiver_compiles_to_an_invocation() {
+    // A fluent durable call stays in the invocation module rather than becoming an action node.
     let src = r#"
         workflow "Fetch" v1 {
             do {
@@ -170,14 +169,12 @@ fn method_call_effectful_receiver_in_compute() {
             }
         }
     "#;
-    let node = serde_json::to_value(&compile(src).definition).unwrap()["nodes"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|n| n["kind"] == "action")
-        .cloned()
-        .unwrap();
-    assert_eq!(node["action"]["function"], "exec");
+    let node = super::do_block::invocation_node(&super::do_block::compile_as_invocation(src));
+    assert!(
+        node["parameters"]["module"]
+            .to_string()
+            .contains("http_get")
+    );
     assert_round_trips(src);
 }
 #[test]
@@ -253,9 +250,8 @@ fn dynamic_index_lowers_to_at() {
     assert_round_trips(src);
 }
 #[test]
-#[ignore = "legacy std.exec assertion removed by invocation hard cutover"]
-fn effectful_postfix_access_in_compute_lowers_to_exec() {
-    // `http_get(url).body` is effectful (the call is), so the compute block dispatches to a worker.
+fn effectful_postfix_access_compiles_to_an_invocation() {
+    // `http_get(url).body` is one invocation module with a durable call and VM field access.
     let src = r#"
         workflow "Fetch" v1 {
             do {
@@ -264,19 +260,10 @@ fn effectful_postfix_access_in_compute_lowers_to_exec() {
             }
         }
     "#;
-    let value = serde_json::to_value(&compile(src).definition).unwrap();
-    let node = value["nodes"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|n| n["kind"] == "action")
-        .unwrap();
-    assert_eq!(node["action"]["function"], "exec");
-    assert!(
-        node["action"]["configuration"]
-            .to_string()
-            .contains("\"at\"")
-    );
+    let node = super::do_block::invocation_node(&super::do_block::compile_as_invocation(src));
+    let module = node["parameters"]["module"].to_string();
+    assert!(module.contains("http_get"));
+    assert!(module.contains("at"));
     assert_round_trips(src);
 }
 #[test]

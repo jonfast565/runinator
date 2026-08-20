@@ -165,3 +165,24 @@ fn recursion_fails_past_max_depth() {
         "unexpected error: {err}"
     );
 }
+
+#[test]
+fn named_functions_are_hermetic_to_the_run_context() {
+    let functions = table(json!([
+        {
+            "name": "leak",
+            "params": [],
+            "body": { "$ref": { "input": ["secret"] } }
+        }
+    ]));
+    let error = resolve_value_refs_with_functions(
+        &json!({ "$call": "leak" }),
+        &json!({ "input": { "secret": "not-visible" } }),
+        &functions,
+    )
+    .expect_err("functions must not inherit entry references");
+    assert!(matches!(
+        error,
+        crate::WorkflowValidationError::InvalidValueRef(_)
+    ));
+}

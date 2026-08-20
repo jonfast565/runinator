@@ -42,8 +42,8 @@ pub use compute::{
     qualified_intrinsic_name, resolve_std_path,
 };
 pub use conditions::{
-    evaluate_condition, evaluate_condition_with, evaluate_workflow_condition, next_transition,
-    validate_condition, validate_condition_value,
+    evaluate_condition, evaluate_workflow_condition, next_transition, validate_condition,
+    validate_condition_value,
 };
 pub use errors::{WorkflowTypeDiagnostic, WorkflowValidationError};
 pub use expressions::{
@@ -55,7 +55,8 @@ pub use functions::{FunctionTable, RuntimeFunction, intrinsic_catalog};
 pub use intrinsic_typing::intrinsic_result_type;
 pub use operators::{call_operator, is_operator_intrinsic};
 pub use vm::{
-    MAX_FRAME_DEPTH, MAX_INSTRUCTIONS_PER_STEP, VmEnv, evaluate_pure, resume, start, step,
+    MAX_FRAME_DEPTH, MAX_INSTRUCTIONS_PER_STEP, VmEnv, evaluate_module_pure, evaluate_pure, resume,
+    start, step,
 };
 
 #[cfg(test)]

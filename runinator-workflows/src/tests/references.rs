@@ -218,3 +218,20 @@ fn evaluates_truthy_value_conditions() {
     assert!(!evaluate_condition(&falsy, &context).unwrap());
     assert!(evaluate_condition(&boolean, &context).unwrap());
 }
+
+#[test]
+fn assertion_evaluation_uses_vm_backed_conditions_and_stable_defaults() {
+    let params = runinator_models::json!({
+        "assertions": [
+            { "name": "passes", "condition": { "value": true } },
+            { "name": "fails", "condition": { "value": false }, "message": "expected true" },
+            { "condition": "malformed" }
+        ]
+    });
+    let violations = evaluate_assertions(&params, &runinator_models::json!({}));
+    assert_eq!(violations.len(), 2);
+    assert_eq!(violations[0].name, "fails");
+    assert_eq!(violations[0].message, "expected true");
+    assert_eq!(violations[1].name, "unnamed");
+    assert_eq!(violations[1].message, "Assertion failed");
+}

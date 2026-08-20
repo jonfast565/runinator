@@ -18,10 +18,6 @@ const ASYNC_PYTHON_RETURN_SOURCE: &str = r#"async def main(context):
     return {"answer": context["input"]["value"] + 1}
 "#;
 
-fn request(parameters: runinator_models::value::Value) -> ProviderExecutionRequest {
-    request_for("exec", parameters)
-}
-
 fn request_for(
     action_function: &str,
     parameters: runinator_models::value::Value,
@@ -36,78 +32,6 @@ fn request_for(
         events_jsonl_path: String::new(),
         idempotency_key: None,
     }
-}
-
-#[test]
-#[ignore = "legacy std.exec program entry point removed"]
-fn exec_program_returns_output() {
-    let provider = StdProvider;
-    let parameters = json!({
-        "program": [
-            { "$let": "n", "value": { "$add": [{ "$ref": { "input": ["a"] } }, 1] } },
-            { "$return": { "n": { "$ref": { "let": ["n"] } } } }
-        ],
-        "context": { "input": { "a": 41 } }
-    });
-    let result = provider
-        .execute_service(request(parameters), None, CancellationToken::new())
-        .unwrap();
-    assert_eq!(result.output_json, Some(json!({ "n": 42 })));
-}
-
-#[test]
-#[ignore = "legacy std.exec program entry point removed"]
-fn exec_uses_effectful_intrinsic() {
-    let provider = StdProvider;
-    let parameters = json!({
-        "program": [ { "$return": { "$call": "uuid", "args": [] } } ],
-        "context": {}
-    });
-    let result = provider
-        .execute_service(request(parameters), None, CancellationToken::new())
-        .unwrap();
-    // a uuid string of canonical length is produced by the effectful library.
-    let value = result.output_json.unwrap();
-    assert_eq!(value.as_str().map(str::len), Some(36));
-}
-
-#[test]
-#[ignore = "legacy std.exec program entry point removed"]
-fn exec_dispatches_user_function_from_carried_table() {
-    // an effectful program on the worker calls a user function carried in the dispatch's
-    // `functions` table, the same way the reducer evaluates pure user-function calls in-process.
-    let provider = StdProvider;
-    let parameters = json!({
-        "program": [ { "$return": { "$call": "double", "args": [{ "$ref": { "input": ["a"] } }] } } ],
-        "context": { "input": { "a": 21 } },
-        "functions": [
-            {
-                "name": "double",
-                "params": [ { "name": "x" } ],
-                "body": { "$mul": [{ "$ref": { "let": ["x"] } }, 2] }
-            }
-        ]
-    });
-    let result = provider
-        .execute_service(request(parameters), None, CancellationToken::new())
-        .unwrap();
-    assert_eq!(result.output_json, Some(json!(42)));
-}
-
-#[test]
-#[ignore = "legacy std.exec program entry point removed"]
-fn exec_tolerates_null_functions_table() {
-    // the dispatch always carries a `functions` key; a json null means "no user functions".
-    let provider = StdProvider;
-    let parameters = json!({
-        "program": [ { "$return": { "$ref": { "input": ["a"] } } } ],
-        "context": { "input": { "a": 7 } },
-        "functions": null
-    });
-    let result = provider
-        .execute_service(request(parameters), None, CancellationToken::new())
-        .unwrap();
-    assert_eq!(result.output_json, Some(json!(7)));
 }
 
 #[test]
@@ -622,21 +546,8 @@ fn python_foreign_compute_returns_output() {
 }
 
 #[test]
-#[ignore = "legacy std.run/std.exec metadata removed"]
-fn metadata_advertises_run_exec_and_pure_flags() {
+fn metadata_advertises_code() {
     let metadata = StdProvider.metadata();
-    let run = metadata
-        .actions
-        .iter()
-        .find(|action| action.function_name == "run")
-        .unwrap();
-    assert!(run.pure);
-    let exec = metadata
-        .actions
-        .iter()
-        .find(|action| action.function_name == "exec")
-        .unwrap();
-    assert!(!exec.pure);
     let code = metadata
         .actions
         .iter()
@@ -653,16 +564,4 @@ fn metadata_advertises_run_exec_and_pure_flags() {
             .iter()
             .any(|parameter| parameter.name == "runtime" && !parameter.required)
     );
-    let add = metadata
-        .actions
-        .iter()
-        .find(|action| action.function_name == "add")
-        .unwrap();
-    assert!(add.pure);
-    let http = metadata
-        .actions
-        .iter()
-        .find(|action| action.function_name == "http_get")
-        .unwrap();
-    assert!(!http.pure);
 }

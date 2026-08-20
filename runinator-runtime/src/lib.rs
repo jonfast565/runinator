@@ -2,6 +2,7 @@ pub mod config;
 pub mod errors;
 pub mod machine;
 pub mod orchestration;
+pub mod workflow_vm;
 
 // an in-memory `RuntimeStore` for driving node operations in a test. behind a feature so normal builds
 // never compile it, mirroring `runinator-engine`'s `test-support`.
@@ -14,6 +15,7 @@ pub use orchestration::{
     create_and_start_pipeline_run, resolve_pipeline_run_inquiry, resume_pipeline_run,
     retry_pipeline_member, start_pipeline_run,
 };
+pub use workflow_vm::{WorkflowVmStep, resume as resume_workflow_vm, step as step_workflow_vm};
 
 use runinator_models::{errors::SendableError, orchestration::ReadyNodeRecord};
 use runinator_store::RuntimeStore;

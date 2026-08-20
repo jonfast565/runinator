@@ -13,15 +13,12 @@ use runinator_models::providers::{ActionMetadata, ParameterMetadata, ResultMetad
 use runinator_models::types::RuninatorType;
 use runinator_models::value::Value;
 
-use crate::assemble::assemble_module;
+use crate::assemble::{assemble_expression, assemble_module};
 use crate::catalog::CallableCatalog;
-use crate::compute::{IntrinsicLibrary, PureIntrinsics, effectful_signatures, parse_program};
+use crate::compute::{PureIntrinsics, effectful_signatures, parse_program};
 use crate::errors::WorkflowValidationError;
 use crate::expressions::parse_expression;
-use crate::vm::{VmEnv, start};
-use runinator_models::invocation::{
-    CallableTarget, InvocationInstruction, InvocationModule, InvocationProgram, InvocationStep,
-};
+use runinator_models::invocation::InvocationModule;
 use runinator_models::workflow_ast::{ComputeProgram, WorkflowExpression};
 
 /// every intrinsic's typed signature, generated from the rust metadata. the rexrap front end consumes
@@ -105,8 +102,8 @@ impl FunctionTable {
         let Some(value) = value else {
             return Ok(Self::default());
         };
-        // a json `null` is the wire sentinel for "no functions section" (the std.exec dispatch
-        // always carries a `functions` key), so treat it the same as an absent value.
+        // A json `null` is the wire sentinel for "no functions section", so treat it the same as
+        // an absent value.
         if value.is_null() {
             return Ok(Self::default());
         }
@@ -178,68 +175,8 @@ fn param_name(value: &Value) -> Result<String, WorkflowValidationError> {
         })
 }
 
-/// the environment threaded through expression evaluation.
-#[derive(Clone, Copy)]
-pub(crate) struct EvalEnv<'a> {
-    pub(crate) lib: Option<&'a dyn IntrinsicLibrary>,
-    functions: Option<&'a FunctionTable>,
-}
-
-impl<'a> EvalEnv<'a> {
-    /// an environment with a library and a function table.
-    pub(crate) fn new(
-        lib: Option<&'a dyn IntrinsicLibrary>,
-        functions: Option<&'a FunctionTable>,
-    ) -> Self {
-        Self { lib, functions }
-    }
-
-    /// an environment with a library but no user functions (declarative/preview paths).
-    pub(crate) fn lib_only(lib: Option<&'a dyn IntrinsicLibrary>) -> Self {
-        Self {
-            lib,
-            functions: None,
-        }
-    }
-
-    /// resolve a user function by name, if a table is present.
-    pub(crate) fn lookup(&self, name: &str) -> Option<&'a RuntimeFunction> {
-        self.functions.and_then(|table| table.get(name))
-    }
-}
-
-/// invoke a user function: bind `values` to its parameters in a fresh hermetic scope (only the
-/// params are visible) and evaluate its body, enforcing the recursion limits.
-pub(crate) fn invoke_user_function(
-    name: &str,
-    _function: &RuntimeFunction,
-    values: &[Value],
-    env: EvalEnv,
-) -> Result<Value, WorkflowValidationError> {
-    let table = env.functions.ok_or_else(|| {
-        WorkflowValidationError::InvalidValueRef(format!("unknown function '{name}'"))
-    })?;
-    let module = table.module_for_call(name, values)?;
-    let catalog = table.catalog();
-    match start(&module, &VmEnv::pure(&Value::Null, &catalog)) {
-        InvocationStep::Complete { value } => Ok(value),
-        InvocationStep::Goto { .. } => Err(WorkflowValidationError::InvalidValueRef(format!(
-            "goto is not allowed in function '{name}'"
-        ))),
-        InvocationStep::Yield { effect, .. } => {
-            Err(WorkflowValidationError::InvalidValueRef(format!(
-                "'{}' cannot be called in a declarative function",
-                effect.target.display_name()
-            )))
-        }
-        InvocationStep::Failed { message } => {
-            Err(WorkflowValidationError::InvalidValueRef(message))
-        }
-    }
-}
-
 impl FunctionTable {
-    fn catalog(&self) -> CallableCatalog {
+    pub(crate) fn catalog(&self) -> CallableCatalog {
         let mut catalog = CallableCatalog::builtin();
         for (name, function) in &self.functions {
             catalog.add_local(
@@ -251,10 +188,11 @@ impl FunctionTable {
         catalog
     }
 
-    fn module_for_call(
+    /// Assemble a declarative expression and every user function into one VM module. Local calls
+    /// enter hermetic named-function frames; the entry expression keeps its normal run context.
+    pub(crate) fn module_for_expression(
         &self,
-        name: &str,
-        values: &[Value],
+        expression: &WorkflowExpression,
     ) -> Result<InvocationModule, WorkflowValidationError> {
         let functions =
             self.functions
@@ -274,25 +212,10 @@ impl FunctionTable {
                     )
                 })
                 .collect::<Vec<_>>();
-        let entry = InvocationProgram::new(
-            values
-                .iter()
-                .cloned()
-                .map(|value| InvocationInstruction::Const { value })
-                .chain([
-                    InvocationInstruction::Call {
-                        target: CallableTarget::Local {
-                            name: name.to_string(),
-                        },
-                        argc: values.len(),
-                        names: Vec::new(),
-                        policy: None,
-                    },
-                    InvocationInstruction::Return,
-                ])
-                .collect(),
-        );
         let module = assemble_module(&ComputeProgram::default(), &functions, &self.catalog())?;
-        Ok(InvocationModule { entry, ..module })
+        Ok(InvocationModule {
+            entry: assemble_expression(expression, &self.catalog())?,
+            ..module
+        })
     }
 }

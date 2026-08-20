@@ -4,7 +4,6 @@ use super::action::{
     replica_labels_match, resolve_idempotency_key, target_for, target_for_labels,
     unavailable_target_description,
 };
-use super::assert::evaluate_assertions;
 use super::await_run::{await_satisfied, parse_await_mode};
 use super::barrier::arrivals_complete;
 use super::circuit_breaker::is_circuit_open;
@@ -23,6 +22,7 @@ use runinator_models::{
     value::Value,
     workflows::{WorkflowNode, WorkflowNodeRun},
 };
+use runinator_workflows::evaluate_assertions;
 use uuid::Uuid;
 
 fn reentry_node(max_visits: i64, on_exhausted: bool) -> WorkflowNode {

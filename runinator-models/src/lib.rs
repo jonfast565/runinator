@@ -35,6 +35,7 @@ pub mod workflow_node_states;
 pub mod workflow_outputs;
 pub mod workflow_runs;
 pub mod workflow_state;
+pub mod workflow_vm;
 pub mod workflows;
 
 // re-exported so the `json!` macro can reference serde_json from any calling crate.

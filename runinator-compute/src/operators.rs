@@ -2,8 +2,7 @@
 //!
 //! `a ++ b`, `string(x)`, `json(x)`, unary `-`, and the truthiness/existence tests a declarative
 //! condition performs are all things the language has and `std` does not: an author writes `++`,
-//! never `concat(...)`. the tree evaluator implements them inline in its own match arms; the vm has
-//! no such arms, because in the ir *everything* is a call.
+//! never `concat(...)`. The VM represents them as intrinsic calls rather than dedicated opcodes.
 //!
 //! so they are calls here, under `$`-prefixed names that cannot collide with a library function or
 //! a user `fn`. the implementations are transcribed from the evaluator's arms rather than reimagined
@@ -103,7 +102,7 @@ fn neg(value: &Value) -> Result<Value, WorkflowValidationError> {
     }
 }
 
-/// the declarative-condition truthiness rule, shared with the tree evaluator.
+/// the declarative-condition truthiness rule, shared by conditional-expression bytecode.
 ///
 /// deliberately not restated here. a `{value: x}` condition decides which branch a workflow takes,
 /// and a second definition of "truthy" is how that decision quietly stops matching the one the

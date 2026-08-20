@@ -11,6 +11,7 @@ use runinator_models::{
     runs::{NewRunArtifact, NewRunChunk},
     value::Value,
     workflow_state::DebugMode,
+    workflow_vm::{WORKFLOW_EFFECT_PROTOCOL_VERSION, WorkflowEffectRequest, WorkflowEffectStatus},
     workflows::{WorkflowAction, WorkflowStatus},
 };
 use serde::{Deserialize, Serialize};
@@ -132,6 +133,144 @@ pub struct ActionDispatchRecord {
     pub claimed_by: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claimed_until: Option<DateTime<Utc>>,
+}
+
+/// Generic durable work published by the workflow VM host.
+///
+/// Unlike [`ActionCommand`], this is not coupled to a node-run record. The effect id identifies
+/// the one persisted receipt that a result may settle, and the continuation id identifies exactly
+/// which suspended VM branch becomes runnable afterwards.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EffectCommand {
+    pub version: u32,
+    pub command_id: Uuid,
+    pub effect_id: Uuid,
+    pub workflow_run_id: Uuid,
+    pub continuation_id: Uuid,
+    pub attempt: u32,
+    pub request: WorkflowEffectRequest,
+    #[serde(default)]
+    pub target: ActionTarget,
+    #[serde(default = "Uuid::now_v7")]
+    pub trace_id: Uuid,
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub trace_context: std::collections::HashMap<String, String>,
+    pub idempotency_key: String,
+}
+
+impl EffectCommand {
+    pub fn is_supported(&self) -> bool {
+        self.version == WORKFLOW_EFFECT_PROTOCOL_VERSION
+    }
+}
+
+/// A worker or infrastructure host's terminal or streaming report for one VM effect.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EffectResult {
+    pub version: u32,
+    pub event_id: Uuid,
+    pub effect_id: Uuid,
+    pub workflow_run_id: Uuid,
+    pub continuation_id: Uuid,
+    pub attempt: u32,
+    pub kind: EffectResultKind,
+    pub timestamp: DateTime<Utc>,
+    #[serde(default = "Uuid::now_v7")]
+    pub trace_id: Uuid,
+}
+
+impl EffectResult {
+    pub fn is_supported(&self) -> bool {
+        self.version == WORKFLOW_EFFECT_PROTOCOL_VERSION
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum EffectResultKind {
+    Status {
+        status: WorkflowEffectStatus,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        output: Option<Value>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    },
+    Chunk {
+        stream: String,
+        content: String,
+    },
+    Artifact {
+        artifact: Value,
+    },
+}
+
+impl EffectResult {
+    pub fn status(
+        command: &EffectCommand,
+        status: WorkflowEffectStatus,
+        output: Option<Value>,
+        message: Option<String>,
+    ) -> Self {
+        Self {
+            version: WORKFLOW_EFFECT_PROTOCOL_VERSION,
+            event_id: Uuid::now_v7(),
+            effect_id: command.effect_id,
+            workflow_run_id: command.workflow_run_id,
+            continuation_id: command.continuation_id,
+            attempt: command.attempt,
+            kind: EffectResultKind::Status {
+                status,
+                output,
+                message,
+            },
+            timestamp: Utc::now(),
+            trace_id: command.trace_id,
+        }
+    }
+}
+
+#[cfg(test)]
+mod effect_protocol_tests {
+    use super::*;
+    use runinator_models::workflow_vm::WorkflowEffectRequest;
+
+    #[test]
+    fn status_result_preserves_effect_and_continuation_correlation() {
+        let command = EffectCommand {
+            version: WORKFLOW_EFFECT_PROTOCOL_VERSION,
+            command_id: Uuid::now_v7(),
+            effect_id: Uuid::now_v7(),
+            workflow_run_id: Uuid::now_v7(),
+            continuation_id: Uuid::now_v7(),
+            attempt: 3,
+            request: WorkflowEffectRequest::Timer { due_at: 1 },
+            target: ActionTarget::Any,
+            trace_id: Uuid::now_v7(),
+            trace_context: std::collections::HashMap::new(),
+            idempotency_key: "effect-key".into(),
+        };
+        let result = EffectResult::status(
+            &command,
+            WorkflowEffectStatus::Succeeded,
+            Some(Value::String("ok".into())),
+            None,
+        );
+        assert_eq!(result.effect_id, command.effect_id);
+        assert_eq!(result.continuation_id, command.continuation_id);
+        assert_eq!(result.attempt, command.attempt);
+        assert!(command.is_supported());
+        assert!(result.is_supported());
+    }
+
+    #[test]
+    fn incompatible_effect_protocol_is_rejected_before_handling() {
+        let raw = format!(
+            r#"{{"version":{},"command_id":"00000000-0000-0000-0000-000000000000","effect_id":"00000000-0000-0000-0000-000000000000","workflow_run_id":"00000000-0000-0000-0000-000000000000","continuation_id":"00000000-0000-0000-0000-000000000000","attempt":0,"request":{{"type":"timer","due_at":1}},"idempotency_key":"x"}}"#,
+            WORKFLOW_EFFECT_PROTOCOL_VERSION + 1
+        );
+        let command: EffectCommand = serde_json::from_str(&raw).unwrap();
+        assert!(!command.is_supported());
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

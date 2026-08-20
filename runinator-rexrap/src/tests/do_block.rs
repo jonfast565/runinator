@@ -1,11 +1,9 @@
-//! `do` blocks: lowering pure bodies to `std.run` and effectful ones to `std.exec`, and the
-//! type checking over both.
+//! `do` blocks: lowering every ordinary body to invocation modules, plus type checking.
 
 use super::*;
 
 #[test]
-#[ignore = "legacy std.run assertion removed by invocation hard cutover"]
-fn compute_pure_lowers_to_std_run() {
+fn compute_pure_lowers_to_an_invocation_module() {
     let src = r#"
         workflow "Compute" v1 {
             do {
@@ -15,17 +13,8 @@ fn compute_pure_lowers_to_std_run() {
             }
         }
     "#;
-    let definition = compile(src);
-    let value = serde_json::to_value(&definition.definition).unwrap();
-    let node = value["nodes"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|n| n["kind"] == "action")
-        .expect("compute action node");
-    assert_eq!(node["action"]["provider"], "std");
-    assert_eq!(node["action"]["function"], "run");
-    assert!(node["action"]["configuration"]["program"].is_array());
+    let node = invocation_node(&compile_as_invocation(src));
+    assert!(node["parameters"]["module"]["entry"]["instructions"].is_array());
     assert_round_trips(src);
 }
 #[test]
@@ -98,7 +87,6 @@ console.log(JSON.stringify({ total: 42 }))
     assert_eq!(graph_value(&definition), graph_value(&second));
 }
 #[test]
-#[ignore = "legacy action-node assertion removed by invocation hard cutover"]
 fn compute_lambda_map_lowers_and_round_trips() {
     let src = r#"
         workflow "Map" v1 {
@@ -108,19 +96,9 @@ fn compute_lambda_map_lowers_and_round_trips() {
             }
         }
     "#;
-    let definition = compile(src);
-    let value = serde_json::to_value(&definition.definition).unwrap();
-    let node = value["nodes"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|n| n["kind"] == "action")
-        .expect("compute action node");
-    // a higher-order call with a pure body stays pure (`std.run`).
-    assert_eq!(node["action"]["function"], "run");
-    let program = node["action"]["configuration"]["program"].to_string();
-    assert!(program.contains("$lambda"), "program: {program}");
-    assert!(program.contains("\"map\""), "program: {program}");
+    let node = invocation_node(&compile_as_invocation(src));
+    let module = node["parameters"]["module"].to_string();
+    assert!(module.contains("higher_order"), "module: {module}");
     assert_round_trips(src);
 }
 #[test]
@@ -138,8 +116,7 @@ fn compute_lambda_filter_reduce_round_trip() {
     assert_round_trips(src);
 }
 #[test]
-#[ignore = "legacy std.exec assertion removed by invocation hard cutover"]
-fn compute_effectful_lowers_to_std_exec() {
+fn compute_effectful_lowers_to_an_invocation_module() {
     let src = r#"
         workflow "Fetch" v1 {
             do {
@@ -148,15 +125,12 @@ fn compute_effectful_lowers_to_std_exec() {
             }
         }
     "#;
-    let definition = compile(src);
-    let value = serde_json::to_value(&definition.definition).unwrap();
-    let node = value["nodes"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|n| n["kind"] == "action")
-        .expect("compute action node");
-    assert_eq!(node["action"]["function"], "exec");
+    let node = invocation_node(&compile_as_invocation(src));
+    assert!(
+        node["parameters"]["module"]
+            .to_string()
+            .contains("http_get")
+    );
     assert_round_trips(src);
 }
 #[test]
@@ -462,28 +436,18 @@ fn compute_accepts_well_typed_program() {
     assert_round_trips(src);
 }
 #[test]
-#[ignore = "legacy std.exec assertion removed by invocation hard cutover"]
-fn compute_secret_reference_forces_exec() {
+fn compute_secret_reference_is_retained_in_the_invocation_module() {
     let src = r#"
         workflow "Sec" v1 {
             do { return secret.api.key }
         }
     "#;
-    let definition = compile(src);
-    let value = serde_json::to_value(&definition.definition).unwrap();
-    let node = value["nodes"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|n| n["kind"] == "action")
-        .unwrap();
-    // a secret reference can only resolve at the worker, so the block must be exec.
-    assert_eq!(node["action"]["function"], "exec");
+    let node = invocation_node(&compile_as_invocation(src));
+    assert!(node["parameters"]["source"].to_string().contains("secret"));
 }
 #[test]
-#[ignore = "legacy action-node assertion removed by invocation hard cutover"]
 fn compute_condition_allows_arithmetic_and_calls() {
-    // arithmetic in a pure condition, and a call (which makes the block exec).
+    // Arithmetic and durable calls both assemble into one invocation module.
     let pure_src = r#"
         workflow "PureCond" v1 {
             do {
@@ -505,15 +469,12 @@ fn compute_condition_allows_arithmetic_and_calls() {
             }
         }
     "#;
-    let definition = compile(call_src);
-    let value = serde_json::to_value(&definition.definition).unwrap();
-    let node = value["nodes"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|n| n["kind"] == "action")
-        .unwrap();
-    assert_eq!(node["action"]["function"], "exec");
+    let node = invocation_node(&compile_as_invocation(call_src));
+    assert!(
+        node["parameters"]["module"]
+            .to_string()
+            .contains("http_get")
+    );
     assert_round_trips(call_src);
 }
 #[test]
@@ -534,14 +495,14 @@ fn compute_arithmetic_round_trips() {
 //
 // Every `do { }` block compiles to an invocation node carrying assembled bytecode.
 
-fn compile_as_invocation(src: &str) -> runinator_models::workflows::WorkflowDefinition {
+pub(super) fn compile_as_invocation(src: &str) -> runinator_models::workflows::WorkflowDefinition {
     let options = CompileOptions {
         ..default_test_options()
     };
     compile_str(src, &options).expect("compile with invocations")
 }
 
-fn invocation_node(
+pub(super) fn invocation_node(
     definition: &runinator_models::workflows::WorkflowDefinition,
 ) -> serde_json::Value {
     let value = serde_json::to_value(&definition.definition).unwrap();
@@ -643,10 +604,7 @@ fn user_functions_are_compiled_into_the_module() {
 }
 
 #[test]
-#[ignore = "legacy default assertion removed by invocation hard cutover"]
-fn the_default_still_emits_a_std_run_node() {
-    // the flip is opt-in. a default compile must keep producing what every stored definition and
-    // every running replica already understands.
+fn the_default_emits_an_invocation_node() {
     let src = r#"
         workflow "Compute" v1 {
             do { return 1 }
@@ -659,6 +617,6 @@ fn the_default_still_emits_a_std_run_node() {
         .iter()
         .map(|node| node["kind"].as_str().unwrap_or_default().to_string())
         .collect();
-    assert!(kinds.contains(&"action".to_string()));
-    assert!(!kinds.contains(&"invocation".to_string()));
+    assert!(kinds.contains(&"invocation".to_string()));
+    assert!(!kinds.contains(&"action".to_string()));
 }

@@ -89,6 +89,24 @@ macro_rules! row_mapper {
     };
 }
 
+macro_rules! fallible_row_mapper {
+    ($name:ident($row:ident) -> $ret:ty $body:block) => {
+        pub fn $name<R>($row: &R) -> Result<$ret, SendableError>
+        where
+            R: Row,
+            for<'c> &'c str: ColumnIndex<R>,
+            for<'d> i64: Decode<'d, R::Database> + Type<R::Database>,
+            for<'d> String: Decode<'d, R::Database> + Type<R::Database>,
+            for<'d> bool: Decode<'d, R::Database> + Type<R::Database>,
+            for<'d> Uuid: Decode<'d, R::Database> + Type<R::Database>,
+            for<'d> Option<i64>: Decode<'d, R::Database> + Type<R::Database>,
+            for<'d> Option<String>: Decode<'d, R::Database> + Type<R::Database>,
+            for<'d> Option<Uuid>: Decode<'d, R::Database> + Type<R::Database>,
+            for<'d> Vec<u8>: Decode<'d, R::Database> + Type<R::Database>,
+        $body
+    };
+}
+
 mod core;
 pub use core::*;
 mod console;
@@ -97,6 +115,8 @@ mod functions;
 pub use functions::*;
 mod invocations;
 pub use invocations::*;
+mod workflow_vm;
+pub use workflow_vm::*;
 mod identity;
 pub use identity::*;
 mod workflows;

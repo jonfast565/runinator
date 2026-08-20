@@ -381,12 +381,9 @@ fn evaluate_node(
             Outcome::new(WorkflowStatus::Succeeded, Some(output), "transform_applied")
         }
         WorkflowNodeKind::Assert => {
-            let violations = evaluate_assertions(&node.parameters.clone().into(), context);
+            let violations = crate::evaluate_assertions(&node.parameters.clone().into(), context);
             let passed = violations.is_empty();
-            let output = runinator_models::json!({
-                "passed": passed,
-                "violations": violations,
-            });
+            let output = runinator_models::json!({ "passed": passed, "violations": violations });
             let (status, reason) = if passed {
                 (WorkflowStatus::Succeeded, "assert_passed")
             } else {
@@ -544,34 +541,6 @@ fn resolve_action_config(node: &WorkflowNode, context: &Value) -> Value {
         .map(|action| action.configuration.clone().into())
         .unwrap_or(Value::Null);
     resolve_value_refs(&raw, context).unwrap_or(raw)
-}
-
-// evaluate an assert node's assertions, mirroring the reducer's `evaluate_assertions`.
-fn evaluate_assertions(params: &Value, context: &Value) -> Vec<Value> {
-    let assertions = params
-        .get("assertions")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let mut violations = Vec::new();
-    for assertion in &assertions {
-        let name = assertion
-            .get("name")
-            .and_then(Value::as_str)
-            .unwrap_or("unnamed")
-            .to_string();
-        let condition = assertion.get("condition").cloned().unwrap_or(Value::Null);
-        let passed = crate::evaluate_condition(&condition, context).unwrap_or(false);
-        if !passed {
-            let message = assertion
-                .get("message")
-                .and_then(Value::as_str)
-                .unwrap_or("Assertion failed")
-                .to_string();
-            violations.push(runinator_models::json!({ "name": name, "message": message }));
-        }
-    }
-    violations
 }
 
 // pick the outgoing edge for a settled node, mirroring `next_transition`'s branch/next/failure rules.

@@ -1,226 +1,63 @@
 use runinator_models::value::Value;
-use runinator_models::workflow_ast::{CompareOp, ConditionNode};
+use runinator_models::workflow_ast::ConditionNode;
 use runinator_models::workflows::{WorkflowCondition, WorkflowNode, WorkflowStatus};
 
-use crate::compute::IntrinsicLibrary;
+use crate::assemble::assemble_condition;
+use crate::catalog::CallableCatalog;
 use crate::errors::WorkflowValidationError;
-use crate::expressions::{evaluate_expression_with, resolve_value_refs_with};
-use crate::functions::EvalEnv;
-use crate::keys::{
-    COND_ALL, COND_ANY, COND_CONTAINS, COND_ENDS_WITH, COND_EQUALS, COND_EXISTS, COND_GREATER_THAN,
-    COND_GREATER_THAN_OR_EQUAL, COND_IN, COND_LEFT, COND_LESS_THAN, COND_LESS_THAN_OR_EQUAL,
-    COND_NOT, COND_NOT_EQUALS, COND_STARTS_WITH, COND_VALUE,
-};
+use crate::vm::evaluate_module_pure;
 
-/// evaluate a condition in the eager reducer path: operands fold with the pure standard library, so
-/// pure `$call` intrinsics work in declarative conditions. effectful intrinsics are not available
-/// (the rexrap front end rejects them outside compute blocks).
+/// Evaluate a declarative condition through a synchronous VM module.
 pub fn evaluate_condition(
     condition: &Value,
     context: &Value,
 ) -> Result<bool, WorkflowValidationError> {
-    evaluate_condition_inner(
-        condition,
-        context,
-        EvalEnv::lib_only(Some(&crate::compute::PureIntrinsics)),
-    )
+    if condition.is_null() {
+        return Ok(true);
+    }
+    if !condition.is_object() {
+        return Err(WorkflowValidationError::InvalidCondition(
+            "condition must be an object".into(),
+        ));
+    }
+    evaluate_node(&ConditionNode::from(condition), context)
 }
 
-/// evaluate a typed node/branch condition in the eager reducer path. `None` (the null condition) is
-/// unconditionally true; otherwise the typed tree is walked directly, without re-parsing a `Value`.
+/// Evaluate the typed condition carried by a workflow edge.
 pub fn evaluate_workflow_condition(
     condition: &WorkflowCondition,
     context: &Value,
 ) -> Result<bool, WorkflowValidationError> {
     match condition.node() {
         None => Ok(true),
-        Some(node) => evaluate_condition_node(
-            node,
-            context,
-            EvalEnv::lib_only(Some(&crate::compute::PureIntrinsics)),
-        ),
+        Some(node) => evaluate_node(node, context),
     }
 }
 
-/// walk a typed `ConditionNode`, resolving leaf operands as expressions against `context`. this is
-/// the typed twin of `evaluate_condition_inner`; both fold operands with the same helpers so their
-/// results cannot drift on the canonical shapes the lowerer emits.
-pub(crate) fn evaluate_condition_node(
-    node: &ConditionNode,
-    context: &Value,
-    env: EvalEnv,
-) -> Result<bool, WorkflowValidationError> {
-    match node {
-        ConditionNode::All(items) => {
-            for item in items {
-                if !evaluate_condition_node(item, context, env)? {
-                    return Ok(false);
-                }
-            }
-            Ok(true)
-        }
-        ConditionNode::Any(items) => {
-            for item in items {
-                if evaluate_condition_node(item, context, env)? {
-                    return Ok(true);
-                }
-            }
-            Ok(false)
-        }
-        ConditionNode::Not(inner) => Ok(!evaluate_condition_node(inner, context, env)?),
-        ConditionNode::Compare { left, op, right } => {
-            let left = evaluate_expression_with(left, context, env)?;
-            let right = evaluate_expression_with(right, context, env)?;
-            apply_compare(*op, &left, &right)
-        }
-        ConditionNode::Exists { left, expected } => {
-            let left = evaluate_expression_with(left, context, env)?;
-            Ok(*expected != left.is_null())
-        }
-        ConditionNode::Truthy { left } => {
-            let left = evaluate_expression_with(left, context, env)?;
-            Ok(is_truthy(&left))
-        }
-        // an unrecognized shape; the value evaluator errors on these too.
-        ConditionNode::Other(_) => Err(WorkflowValidationError::InvalidCondition(
-            "condition object is not a recognized shape".into(),
-        )),
+fn evaluate_node(node: &ConditionNode, context: &Value) -> Result<bool, WorkflowValidationError> {
+    let catalog = CallableCatalog::builtin();
+    let program = assemble_condition(node, &catalog).map_err(as_condition_error)?;
+    let value = evaluate_module_pure(
+        &runinator_models::invocation::InvocationModule::new(program),
+        context,
+        &catalog,
+    )
+    .map_err(as_condition_error)?;
+    value.as_bool().ok_or_else(|| {
+        WorkflowValidationError::InvalidCondition(
+            "condition program did not return a boolean".into(),
+        )
+    })
+}
+
+fn as_condition_error(error: WorkflowValidationError) -> WorkflowValidationError {
+    match error {
+        WorkflowValidationError::InvalidCondition(_) => error,
+        other => WorkflowValidationError::InvalidCondition(other.to_string()),
     }
 }
 
-// apply a comparator to two already-resolved operands, mirroring the `evaluate_condition_inner` arms.
-fn apply_compare(
-    op: CompareOp,
-    left: &Value,
-    right: &Value,
-) -> Result<bool, WorkflowValidationError> {
-    match op {
-        CompareOp::Equals => Ok(left == right),
-        CompareOp::NotEquals => Ok(left != right),
-        CompareOp::Contains => contains_value(left, right),
-        CompareOp::In => Ok(right
-            .as_array()
-            .is_some_and(|items| items.iter().any(|item| item == left))),
-        CompareOp::StartsWith => string_match(left, right, |left, right| left.starts_with(right)),
-        CompareOp::EndsWith => string_match(left, right, |left, right| left.ends_with(right)),
-        CompareOp::GreaterThan => compare_value(left, right, |ordering| ordering.is_gt()),
-        CompareOp::GreaterThanOrEqual => compare_value(left, right, |ordering| ordering.is_ge()),
-        CompareOp::LessThan => compare_value(left, right, |ordering| ordering.is_lt()),
-        CompareOp::LessThanOrEqual => compare_value(left, right, |ordering| ordering.is_le()),
-    }
-}
-
-/// evaluate a condition whose operands may include `$call` intrinsics, resolved through `lib`.
-pub fn evaluate_condition_with(
-    condition: &Value,
-    context: &Value,
-    lib: &dyn IntrinsicLibrary,
-) -> Result<bool, WorkflowValidationError> {
-    evaluate_condition_inner(condition, context, EvalEnv::lib_only(Some(lib)))
-}
-
-fn evaluate_condition_inner(
-    condition: &Value,
-    context: &Value,
-    env: EvalEnv,
-) -> Result<bool, WorkflowValidationError> {
-    if condition.is_null() {
-        return Ok(true);
-    }
-    let Some(object) = condition.as_object() else {
-        return Err(WorkflowValidationError::InvalidCondition(
-            "condition must be an object".into(),
-        ));
-    };
-    let resolve = |value: &Value| resolve_value_refs_with(value, context, env);
-    if let Some(all) = object.get(COND_ALL) {
-        let Some(items) = all.as_array() else {
-            return Err(WorkflowValidationError::InvalidCondition(
-                "all must be an array".into(),
-            ));
-        };
-        for item in items {
-            if !evaluate_condition_inner(item, context, env)? {
-                return Ok(false);
-            }
-        }
-        return Ok(true);
-    }
-    if let Some(any) = object.get(COND_ANY) {
-        let Some(items) = any.as_array() else {
-            return Err(WorkflowValidationError::InvalidCondition(
-                "any must be an array".into(),
-            ));
-        };
-        for item in items {
-            if evaluate_condition_inner(item, context, env)? {
-                return Ok(true);
-            }
-        }
-        return Ok(false);
-    }
-    if let Some(not) = object.get(COND_NOT) {
-        return Ok(!evaluate_condition_inner(not, context, env)?);
-    }
-
-    let left = object
-        .get(COND_VALUE)
-        .or_else(|| object.get(COND_LEFT))
-        .ok_or_else(|| WorkflowValidationError::InvalidCondition("missing value".into()))?;
-    let left = resolve(left)?;
-    if let Some(expected) = object.get(COND_EQUALS) {
-        return Ok(left == resolve(expected)?);
-    }
-    if let Some(expected) = object.get(COND_NOT_EQUALS) {
-        return Ok(left != resolve(expected)?);
-    }
-    if let Some(expected) = object.get(COND_CONTAINS) {
-        return contains_value(&left, &resolve(expected)?);
-    }
-    if let Some(expected) = object.get(COND_IN) {
-        return Ok(resolve(expected)?
-            .as_array()
-            .is_some_and(|items| items.iter().any(|item| item == &left)));
-    }
-    if let Some(expected) = object.get(COND_STARTS_WITH) {
-        return string_match(&left, &resolve(expected)?, |left, right| {
-            left.starts_with(right)
-        });
-    }
-    if let Some(expected) = object.get(COND_ENDS_WITH) {
-        return string_match(&left, &resolve(expected)?, |left, right| {
-            left.ends_with(right)
-        });
-    }
-    if let Some(expected) = object.get(COND_GREATER_THAN) {
-        return compare_value(&left, &resolve(expected)?, |ordering| ordering.is_gt());
-    }
-    if let Some(expected) = object.get(COND_GREATER_THAN_OR_EQUAL) {
-        return compare_value(&left, &resolve(expected)?, |ordering| ordering.is_ge());
-    }
-    if let Some(expected) = object.get(COND_LESS_THAN) {
-        return compare_value(&left, &resolve(expected)?, |ordering| ordering.is_lt());
-    }
-    if let Some(expected) = object.get(COND_LESS_THAN_OR_EQUAL) {
-        return compare_value(&left, &resolve(expected)?, |ordering| ordering.is_le());
-    }
-    if let Some(expected) = object.get(COND_EXISTS) {
-        return Ok(expected.as_bool().unwrap_or(true) != left.is_null());
-    }
-    if object.len() == 1 && object.contains_key(COND_VALUE) {
-        return Ok(is_truthy(&left));
-    }
-    Err(WorkflowValidationError::InvalidCondition(
-        "expected equals, not_equals, contains, in, starts_with, ends_with, greater_than, greater_than_or_equal, less_than, less_than_or_equal, exists, all, any, or not".into(),
-    ))
-}
-
-/// truthiness for a declarative condition and for a conditional expression.
-///
-/// javascript-like: null, `false`, zero, the empty string and empty collections are falsy. this is
-/// the rule the language already had in two identical copies (here and in `expressions.rs`), and it
-/// is *not* the rule behind the `not`/`and`/`or` intrinsics, which treat only null and `false` as
-/// falsy. those are a separate author-facing surface; do not merge them.
+/// Shared truthiness used by condition bytecode and conditional expressions.
 pub(crate) fn is_truthy(value: &Value) -> bool {
     match value {
         Value::Null => false,
@@ -244,67 +81,11 @@ pub(crate) fn is_truthy(value: &Value) -> bool {
     }
 }
 
-fn contains_value(left: &Value, expected: &Value) -> Result<bool, WorkflowValidationError> {
-    if let (Some(text), Some(needle)) = (left.as_str(), expected.as_str()) {
-        return Ok(text.contains(needle));
-    }
-    if let Some(items) = left.as_array() {
-        return Ok(items.iter().any(|item| item == expected));
-    }
-    if let (Some(object), Some(key)) = (left.as_object(), expected.as_str()) {
-        return Ok(object.contains_key(key));
-    }
-    Err(WorkflowValidationError::InvalidCondition(
-        "contains requires a string, array, or object value".into(),
-    ))
-}
-
-fn string_match(
-    left: &Value,
-    expected: &Value,
-    predicate: impl FnOnce(&str, &str) -> bool,
-) -> Result<bool, WorkflowValidationError> {
-    let Some(text) = left.as_str() else {
-        return Err(WorkflowValidationError::InvalidCondition(
-            "string comparison requires a string value".into(),
-        ));
-    };
-    let Some(expected) = expected.as_str() else {
-        return Err(WorkflowValidationError::InvalidCondition(
-            "string comparison requires a string operand".into(),
-        ));
-    };
-    Ok(predicate(text, expected))
-}
-
-fn compare_value(
-    left: &Value,
-    expected: &Value,
-    predicate: impl FnOnce(std::cmp::Ordering) -> bool,
-) -> Result<bool, WorkflowValidationError> {
-    if let (Some(left), Some(expected)) = (left.as_f64(), expected.as_f64()) {
-        let Some(ordering) = left.partial_cmp(&expected) else {
-            return Err(WorkflowValidationError::InvalidCondition(
-                "numeric comparison is undefined".into(),
-            ));
-        };
-        return Ok(predicate(ordering));
-    }
-    if let (Some(left), Some(expected)) = (left.as_str(), expected.as_str()) {
-        return Ok(predicate(left.cmp(expected)));
-    }
-    Err(WorkflowValidationError::InvalidCondition(
-        "ordering comparison requires both values to be numbers or strings".into(),
-    ))
-}
-
 pub fn next_transition(
     node: &WorkflowNode,
     status: WorkflowStatus,
     context: &Value,
 ) -> Result<Option<String>, WorkflowValidationError> {
-    // predicate edges are evaluated in ascending priority order; unset priorities sort last and a
-    // stable sort preserves declaration order within a priority (and for all-unset branches).
     let mut ordered: Vec<&_> = node.transitions.branches.iter().collect();
     ordered.sort_by_key(|branch| branch.priority.unwrap_or(i64::MAX));
     for branch in ordered {

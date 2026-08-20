@@ -39,6 +39,10 @@ impl InvocationProgram {
 pub enum InvocationInstruction {
     /// push a constant.
     Const { value: Value },
+    /// Pop `len` values and build an array in source order.
+    Array { len: usize },
+    /// Pop one value for each key and build an object in source order.
+    Object { keys: Vec<String> },
     /// resolve a reference against the context and push it.
     LoadRef { reference: Value },
     /// push a local binding's current value.
@@ -292,6 +296,10 @@ pub struct InvocationFrame {
     /// The higher-order operation this closure frame returns into, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub higher_order: Option<HigherOrderState>,
+    /// Named functions are hermetic: references outside their frame locals do not see the caller's
+    /// run context. Closures remain lexical continuations of their caller and are not isolated.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hermetic: bool,
 }
 
 impl InvocationFrame {
@@ -305,6 +313,7 @@ impl InvocationFrame {
             locals: Vec::new(),
             awaiting: false,
             higher_order: None,
+            hermetic: false,
         }
     }
 
@@ -318,6 +327,7 @@ impl InvocationFrame {
             locals,
             awaiting: false,
             higher_order: None,
+            hermetic: true,
         }
     }
 
@@ -331,6 +341,7 @@ impl InvocationFrame {
             locals,
             awaiting: false,
             higher_order: None,
+            hermetic: false,
         }
     }
 }

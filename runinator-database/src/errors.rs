@@ -61,6 +61,11 @@ pub const FUNCTION_ADAPTER_MISSING: ErrorDescriptor = ErrorDescriptor::new(
     "database.function.adapter_missing",
     "Function adapter workflow not found",
 );
+pub const WORKFLOW_VM_CORRUPT_STATE: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI512",
+    "database.workflow_vm.corrupt_state",
+    "Stored workflow VM state is invalid or incompatible",
+);
 
 pub const DICTIONARY: &[ErrorDescriptor] = &[
     ACTION_DISPATCH_INVALID_JSON,
@@ -74,6 +79,7 @@ pub const DICTIONARY: &[ErrorDescriptor] = &[
     FUNCTION_VERSION_MISSING,
     FUNCTION_ALIAS_MISSING,
     FUNCTION_ADAPTER_MISSING,
+    WORKFLOW_VM_CORRUPT_STATE,
 ];
 
 /// database engine error dictionary.

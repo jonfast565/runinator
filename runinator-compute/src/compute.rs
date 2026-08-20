@@ -526,8 +526,8 @@ impl IntrinsicLibrary for PureIntrinsics {
     }
 }
 
-/// the names of the effectful (`std.exec`-only) intrinsics. this is the shared vocabulary the std
-/// provider implements and sema validates against, so neither can drift.
+/// the names of intrinsics that yield durable invocation effects. This is the shared vocabulary
+/// sema validates against, so callable classification cannot drift.
 pub const EFFECTFUL_INTRINSIC_NAMES: &[&str] = &["http_get", "http_post", "now", "uuid", "env"];
 
 /// typed signatures for the effectful intrinsics. the std provider builds its metadata from these

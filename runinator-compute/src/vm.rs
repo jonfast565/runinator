@@ -17,7 +17,7 @@ use runinator_models::invocation::{
     InvocationModule, InvocationProgram, InvocationStep, RecordedLocal, closure_handle,
     closure_handle_index,
 };
-use runinator_models::value::Value;
+use runinator_models::value::{Map, Value};
 use runinator_models::workflow_ast::WorkflowValueRef;
 
 use crate::catalog::CallableCatalog;
@@ -146,9 +146,18 @@ pub fn evaluate_pure(
     context: &Value,
     catalog: &CallableCatalog,
 ) -> Result<Value, WorkflowValidationError> {
-    let module = InvocationModule::new(program.clone());
+    evaluate_module_pure(&InvocationModule::new(program.clone()), context, catalog)
+}
+
+/// Run a complete module synchronously. This is the declarative reducer bridge: it permits local
+/// module functions and closures, but rejects any path that would leave the VM.
+pub fn evaluate_module_pure(
+    module: &InvocationModule,
+    context: &Value,
+    catalog: &CallableCatalog,
+) -> Result<Value, WorkflowValidationError> {
     let env = VmEnv::pure(context, catalog);
-    match start(&module, &env) {
+    match start(module, &env) {
         InvocationStep::Complete { value } => Ok(value),
         InvocationStep::Failed { message } => {
             Err(WorkflowValidationError::InvalidComputeProgram(message))
@@ -435,15 +444,31 @@ fn execute(
             push(continuation, value.clone())?;
             Ok(Flow::Next)
         }
+        InvocationInstruction::Array { len } => {
+            let values = pop_n(continuation, *len)?;
+            push(continuation, Value::Array(values))?;
+            Ok(Flow::Next)
+        }
+        InvocationInstruction::Object { keys } => {
+            let values = pop_n(continuation, keys.len())?;
+            let object = keys.iter().cloned().zip(values).collect::<Map>();
+            push(continuation, Value::Object(object))?;
+            Ok(Flow::Next)
+        }
         InvocationInstruction::LoadRef { reference } => {
             let parsed = WorkflowValueRef::try_from(reference)
                 .map_err(|err| format!("invalid reference: {err}"))?;
-            let value = resolve_value_ref(&parsed, env.context).map_err(|err| err.to_string())?;
+            let context = if frame(continuation)?.hermetic {
+                &Value::Null
+            } else {
+                env.context
+            };
+            let value = resolve_value_ref(&parsed, context).map_err(|err| err.to_string())?;
             push(continuation, value)?;
             Ok(Flow::Next)
         }
         InvocationInstruction::LoadLocal { name } => {
-            // an unbound local reads as null, not as an error. this matches the tree evaluator,
+            // an unbound local reads as null, not as an error. this matches declarative reference semantics,
             // which resolves `let.x` through the same missing-path rule every other reference uses.
             // it is reachable: `collect_locals` gathers bindings from nested branches too, so
             // `if c { let x = 1 }` followed by a read of `x` compiles to a load that may never have
@@ -768,7 +793,7 @@ fn failed(message: impl Into<String>) -> InvocationStep {
 }
 
 // `JumpIfFalse` is the only instruction that tests a raw value, and it must use the same rule the
-// tree evaluator uses for a conditional — javascript-like, so `0`, `""` and `[]` are falsy.
+// declarative conditions use for a conditional — javascript-like, so `0`, `""` and `[]` are falsy.
 //
 // an earlier version used "only null and false are falsy" on the theory that unifying the language's
 // three rules was an improvement. it is not: two of those three are the same rule, and it is this

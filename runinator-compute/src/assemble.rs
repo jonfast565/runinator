@@ -37,6 +37,28 @@ pub fn assemble_program(
     Ok(InvocationProgram::new(out.instructions))
 }
 
+/// Assemble one declarative expression into a program that returns its value.
+pub(crate) fn assemble_expression(
+    expression: &WorkflowExpression,
+    catalog: &CallableCatalog,
+) -> Result<InvocationProgram, WorkflowValidationError> {
+    let mut out = Assembler::new(catalog);
+    out.expression(expression)?;
+    out.emit(InvocationInstruction::Return);
+    Ok(InvocationProgram::new(out.instructions))
+}
+
+/// Assemble one declarative condition into a program that returns its boolean result.
+pub(crate) fn assemble_condition(
+    condition: &ConditionNode,
+    catalog: &CallableCatalog,
+) -> Result<InvocationProgram, WorkflowValidationError> {
+    let mut out = Assembler::new(catalog);
+    out.condition(condition)?;
+    out.emit(InvocationInstruction::Return);
+    Ok(InvocationProgram::new(out.instructions))
+}
+
 /// assemble a program plus the user functions it may call into a complete module.
 pub fn assemble_module(
     program: &ComputeProgram,
@@ -233,11 +255,7 @@ impl<'a> Assembler<'a> {
         expression: &WorkflowExpression,
     ) -> Result<(), WorkflowValidationError> {
         match expression {
-            WorkflowExpression::Literal(value) => {
-                self.emit(InvocationInstruction::Const {
-                    value: value.clone(),
-                });
-            }
+            WorkflowExpression::Literal(value) => self.literal(value)?,
             WorkflowExpression::Ref(reference) => self.reference(reference)?,
             WorkflowExpression::Call { name, args } => {
                 for arg in args {
@@ -310,6 +328,40 @@ impl<'a> Assembler<'a> {
         Ok(())
     }
 
+    /// Literal containers are declarative expression containers, not opaque JSON. Their children
+    /// still resolve references and calls, so construct them on the VM stack rather than pushing a
+    /// single constant.
+    fn literal(&mut self, value: &Value) -> Result<(), WorkflowValidationError> {
+        match value {
+            Value::Array(items) => {
+                for item in items {
+                    self.expression(
+                        &WorkflowExpression::try_from(item)
+                            .map_err(|err| WorkflowValidationError::InvalidValueRef(err.0))?,
+                    )?;
+                }
+                self.emit(InvocationInstruction::Array { len: items.len() });
+            }
+            Value::Object(map) => {
+                for value in map.values() {
+                    self.expression(
+                        &WorkflowExpression::try_from(value)
+                            .map_err(|err| WorkflowValidationError::InvalidValueRef(err.0))?,
+                    )?;
+                }
+                self.emit(InvocationInstruction::Object {
+                    keys: map.keys().cloned().collect(),
+                });
+            }
+            _ => {
+                self.emit(InvocationInstruction::Const {
+                    value: value.clone(),
+                });
+            }
+        }
+        Ok(())
+    }
+
     /// fold an n-ary arithmetic operator into left-associated binary calls.
     ///
     /// `a + b + c` is `add(add(a, b), c)`. the library's `add` is binary and the evaluator folds
@@ -337,8 +389,7 @@ impl<'a> Assembler<'a> {
     /// compile a `$ref`.
     ///
     /// every root resolves through `LoadRef` against the run context — except `let`, which does not
-    /// live there. the tree evaluator keeps compute locals in a `let` slot *inside* the context; the
-    /// vm keeps them in the frame, which is what makes them survive a continuation round trip
+    /// live there. the VM keeps compute locals in the frame, which is what makes them survive a continuation round trip
     /// without being carried in (and rewritten back out of) the run context on every yield. so a
     /// local reference is rewritten here into the instruction that reads a frame local, and any
     /// path beyond the binding name becomes ordinary indexing.

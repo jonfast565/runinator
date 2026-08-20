@@ -18,6 +18,7 @@ use runinator_compute::{evaluate_expression, parse_expression, parse_value_ref};
 use runinator_models::invocation::InvocationModule;
 use runinator_models::orchestration::GateKind;
 use runinator_models::workflow_ast::{WorkflowExpression, WorkflowValueRef};
+use runinator_models::workflow_coordination::AssertViolation;
 
 pub fn parse_switch_parameters(
     node: &WorkflowNode,
@@ -507,6 +508,34 @@ pub fn evaluate_percentage(
         }
     }
     Ok(default())
+}
+
+/// Evaluate assert-node parameters using the VM-backed condition evaluator. Both the durable
+/// runtime and simulator consume this exact result so their failure details cannot drift.
+pub fn evaluate_assertions(params: &Value, context: &Value) -> Vec<AssertViolation> {
+    let assertions = params
+        .get("assertions")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mut violations = Vec::new();
+    for assertion in assertions {
+        let name = assertion
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("unnamed")
+            .to_string();
+        let condition = assertion.get("condition").cloned().unwrap_or(Value::Null);
+        if !runinator_compute::evaluate_condition(&condition, context).unwrap_or(false) {
+            let message = assertion
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("Assertion failed")
+                .to_string();
+            violations.push(AssertViolation { name, message });
+        }
+    }
+    violations
 }
 
 pub(crate) fn parameter_object(node: &WorkflowNode) -> Result<&Map, WorkflowValidationError> {
