@@ -12,12 +12,14 @@ use crate::position::{position_to_byte, span_to_range};
 pub fn hover(text: &str, path: Option<&Path>, position: Position) -> Option<Hover> {
     let offset = position_to_byte(text, position);
     let providers = runinator_provider_catalog::metadata();
-    if let Some(hover) = runinator_rexrap_ide::hover_source(runinator_rexrap_ide::RexRapHoverRequest {
-        source: text.to_string(),
-        cursor_byte: offset,
-        providers: providers.clone(),
-        settings: Vec::new(),
-    }) {
+    if let Some(hover) =
+        runinator_rexrap_ide::hover_source(runinator_rexrap_ide::RexRapHoverRequest {
+            source: text.to_string(),
+            cursor_byte: offset,
+            providers: providers.clone(),
+            settings: Vec::new(),
+        })
+    {
         let range = span_to_range(
             text,
             runinator_rexrap::Span {

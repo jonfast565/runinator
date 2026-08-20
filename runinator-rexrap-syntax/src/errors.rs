@@ -90,10 +90,12 @@ pub enum RexRapError {
 
 // numbered error dictionary for the rexrap surface language.
 pub const PARSE: ErrorDescriptor = ErrorDescriptor::new("REXRAP001", "rexrap.parse", "Parse error");
-pub const SYNTAX: ErrorDescriptor = ErrorDescriptor::new("REXRAP002", "rexrap.syntax", "Syntax error");
+pub const SYNTAX: ErrorDescriptor =
+    ErrorDescriptor::new("REXRAP002", "rexrap.syntax", "Syntax error");
 pub const SEMANTIC: ErrorDescriptor =
     ErrorDescriptor::new("REXRAP003", "rexrap.semantic", "Semantic error");
-pub const LOWER: ErrorDescriptor = ErrorDescriptor::new("REXRAP004", "rexrap.lower", "Lowering error");
+pub const LOWER: ErrorDescriptor =
+    ErrorDescriptor::new("REXRAP004", "rexrap.lower", "Lowering error");
 pub const VALIDATION: ErrorDescriptor =
     ErrorDescriptor::new("REXRAP005", "rexrap.validation", "Validation error");
 pub const DECOMPILE: ErrorDescriptor =

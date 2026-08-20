@@ -70,7 +70,11 @@ fn collect_block(
     Ok(())
 }
 
-fn collect_stmt(stmt: &Stmt, source_dir: &Path, paths: &mut Vec<PathBuf>) -> Result<(), RexRapError> {
+fn collect_stmt(
+    stmt: &Stmt,
+    source_dir: &Path,
+    paths: &mut Vec<PathBuf>,
+) -> Result<(), RexRapError> {
     match &stmt.kind {
         StmtKind::Action(action) => collect_entries(&action.args, source_dir, paths)?,
         StmtKind::Do(compute) => collect_do_lines(&compute.body, source_dir, paths)?,
@@ -257,7 +261,11 @@ fn collect_do_lines(
     Ok(())
 }
 
-fn collect_cond(cond: &Cond, source_dir: &Path, paths: &mut Vec<PathBuf>) -> Result<(), RexRapError> {
+fn collect_cond(
+    cond: &Cond,
+    source_dir: &Path,
+    paths: &mut Vec<PathBuf>,
+) -> Result<(), RexRapError> {
     match &cond.kind {
         CondKind::All(conds) | CondKind::Any(conds) => {
             for cond in conds {
@@ -286,12 +294,19 @@ fn collect_entries(
     Ok(())
 }
 
-fn collect_expr(expr: &Expr, source_dir: &Path, paths: &mut Vec<PathBuf>) -> Result<(), RexRapError> {
+fn collect_expr(
+    expr: &Expr,
+    source_dir: &Path,
+    paths: &mut Vec<PathBuf>,
+) -> Result<(), RexRapError> {
     match &expr.kind {
         ExprKind::FileInclude { path } => {
             let relative = Path::new(path);
             if relative.as_os_str().is_empty() {
-                return Err(RexRapError::semantic(expr.span, "file() path cannot be empty"));
+                return Err(RexRapError::semantic(
+                    expr.span,
+                    "file() path cannot be empty",
+                ));
             }
             if !is_safe_relative_path(relative) {
                 return Err(RexRapError::semantic(
@@ -308,7 +323,10 @@ fn collect_expr(expr: &Expr, source_dir: &Path, paths: &mut Vec<PathBuf>) -> Res
         } => {
             let relative = Path::new(path);
             if relative.as_os_str().is_empty() {
-                return Err(RexRapError::semantic(expr.span, "dir() path cannot be empty"));
+                return Err(RexRapError::semantic(
+                    expr.span,
+                    "dir() path cannot be empty",
+                ));
             }
             if !is_safe_relative_path(relative) {
                 return Err(RexRapError::semantic(

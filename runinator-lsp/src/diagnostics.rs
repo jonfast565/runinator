@@ -4,8 +4,8 @@ use std::path::Path;
 
 use runinator_models::semver::SemVer;
 use runinator_rexrap::{
-    CompileOptions, Diagnostic as RexRapDiagnostic, Severity, RexRapError, analyze_source_with_options,
-    compile_str_with_diagnostics,
+    CompileOptions, Diagnostic as RexRapDiagnostic, RexRapError, Severity,
+    analyze_source_with_options, compile_str_with_diagnostics,
 };
 use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, NumberOrString};
 
@@ -27,7 +27,8 @@ pub fn compute(text: &str, path: Option<&Path>, check_lowering: bool) -> Vec<Dia
         &workflow_signatures,
     ) {
         Ok(diagnostics) => {
-            let mut out: Vec<Diagnostic> = diagnostics.iter().map(|d| from_rexrap(text, d)).collect();
+            let mut out: Vec<Diagnostic> =
+                diagnostics.iter().map(|d| from_rexrap(text, d)).collect();
             if check_lowering {
                 let options = CompileOptions {
                     enabled: true,

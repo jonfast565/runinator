@@ -9,7 +9,9 @@ use runinator_models::{
     value::Value,
     workflows::{WorkflowBundle, WorkflowDefinition, WorkflowTrigger},
 };
-use runinator_rexrap::{CompileOptions, Severity, RexRapError, RexRapFragmentKind, WorkflowSignature};
+use runinator_rexrap::{
+    CompileOptions, RexRapError, RexRapFragmentKind, Severity, WorkflowSignature,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::handlers::providers::provider_metadata_from_items;
@@ -403,7 +405,10 @@ pub fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
             runinator_models::api_routes::API_REXRAP_COMPLETE,
             post(complete_rexrap),
         )
-        .route(runinator_models::api_routes::API_REXRAP_HOVER, post(hover_rexrap))
+        .route(
+            runinator_models::api_routes::API_REXRAP_HOVER,
+            post(hover_rexrap),
+        )
         .route(
             runinator_models::api_routes::API_REXRAP_COMPILE,
             post(compile_rexrap::<T>).layer(Extension(pool.clone())),
@@ -471,7 +476,10 @@ pub const DOCS: &[EndpointDoc] = &[
         "Compile REXRAP source",
         "Compiles REXRAP into a workflow definition using registered provider metadata for validation.",
         false,
-        json_body("REXRAP source and initial enabled flag.", Example::RexRapCompile),
+        json_body(
+            "REXRAP source and initial enabled flag.",
+            Example::RexRapCompile,
+        ),
         &[],
         200,
         "compiled workflow definition",

@@ -18,7 +18,7 @@ use std::collections::{HashMap, HashSet};
 use runinator_compute::{STD_MODULES, STD_NAMESPACE, intrinsic_module, is_known_intrinsic};
 
 use runinator_rexrap_syntax::ast::*;
-use runinator_rexrap_syntax::errors::{Span, RexRapError};
+use runinator_rexrap_syntax::errors::{RexRapError, Span};
 
 /// reserved roots that may not be shadowed by an import alias.
 const RESERVED_ROOTS: &[&str] = &[

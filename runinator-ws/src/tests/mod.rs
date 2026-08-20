@@ -22,10 +22,10 @@ mod packs;
 mod reducer;
 mod result_consumer;
 mod revisions;
+mod rexrap;
 mod runs;
 mod users;
 mod validation;
-mod rexrap;
 
 use std::{
     collections::HashSet,

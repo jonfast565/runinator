@@ -70,7 +70,9 @@ pub fn classify(source: &str, options: &CompileOptions) -> Result<Classification
             workflow_source: None,
         });
     }
-    if let Ok(lowered) = runinator_rexrap::validate_fragment(source, RexRapFragmentKind::Do, options) {
+    if let Ok(lowered) =
+        runinator_rexrap::validate_fragment(source, RexRapFragmentKind::Do, options)
+    {
         return Ok(Classification {
             kind: CellKind::Do,
             lowered: Some(lowered),

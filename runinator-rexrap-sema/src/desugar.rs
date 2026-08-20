@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 
 use runinator_rexrap_syntax::ast::*;
-use runinator_rexrap_syntax::errors::{Span, RexRapError};
+use runinator_rexrap_syntax::errors::{RexRapError, Span};
 
 pub type AliasTable = HashMap<String, Vec<(String, Expr)>>;
 
@@ -350,7 +350,10 @@ fn expand_expr(expr: &mut Expr, aliases: &AliasTable) -> Result<(), RexRapError>
 
 // rebuild an entry list in source order, splicing each spread's resolved entries in place and
 // letting later entries override earlier ones of the same key (positional last-wins).
-fn expand_entries(entries: &mut Vec<(String, Expr)>, aliases: &AliasTable) -> Result<(), RexRapError> {
+fn expand_entries(
+    entries: &mut Vec<(String, Expr)>,
+    aliases: &AliasTable,
+) -> Result<(), RexRapError> {
     let mut out: Vec<(String, Expr)> = Vec::new();
     for (key, mut value) in entries.drain(..) {
         if let ExprKind::Spread(name) = &value.kind {

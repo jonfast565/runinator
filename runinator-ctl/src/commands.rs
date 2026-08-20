@@ -30,8 +30,8 @@ use runinator_pack::source as pack;
 use crate::{
     cli::{
         AgentCommands, ApprovalCommands, ArtifactCommands, Cli, CliTyping, Commands,
-        FreezeCommands, NodeCommands, OrgCommands, ProviderCommands, RunCommands, SettingsCommands,
-        TriggerCommands, RexRapCommands, WorkflowCommands,
+        FreezeCommands, NodeCommands, OrgCommands, ProviderCommands, RexRapCommands, RunCommands,
+        SettingsCommands, TriggerCommands, WorkflowCommands,
     },
     output, params,
 };

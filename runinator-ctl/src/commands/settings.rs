@@ -68,8 +68,8 @@ pub(super) async fn settings(
                 )));
             }
             let data = fs::read_to_string(file)?;
-            let blocks = runinator_rexrap::parse_rrx_blocks(&data)
-                .map_err(|e| err(e.render(&data)))?;
+            let blocks =
+                runinator_rexrap::parse_rrx_blocks(&data).map_err(|e| err(e.render(&data)))?;
             let source = blocks.settings.join("\n");
             let bundle = runinator_rexrap::parse_secrets_str(&source).map_err(|e| {
                 err(format!(

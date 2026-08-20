@@ -608,14 +608,18 @@ fn construct_completion_items() -> Vec<RexRapCompletionItem> {
             },
         )
         .collect::<Vec<_>>();
-    items.extend(STATEMENT_KEYWORDS.iter().map(|keyword| RexRapCompletionItem {
-        label: (*keyword).into(),
-        kind: "keyword".into(),
-        detail: Some("REXRAP statement".into()),
-        documentation: None,
-        insert_text: (*keyword).into(),
-        is_snippet: false,
-    }));
+    items.extend(
+        STATEMENT_KEYWORDS
+            .iter()
+            .map(|keyword| RexRapCompletionItem {
+                label: (*keyword).into(),
+                kind: "keyword".into(),
+                detail: Some("REXRAP statement".into()),
+                documentation: None,
+                insert_text: (*keyword).into(),
+                is_snippet: false,
+            }),
+    );
     items
 }
 
@@ -696,7 +700,10 @@ fn complete_action_args(
 }
 
 // complete a `config.scope.name` / `secret.scope.name` reference from the known settings.
-fn complete_setting_path(settings: &[SettingSummary], path: PathContext) -> RexRapCompletionResponse {
+fn complete_setting_path(
+    settings: &[SettingSummary],
+    path: PathContext,
+) -> RexRapCompletionResponse {
     let kind = if path.head == "secret" {
         SettingKind::Secret
     } else {
@@ -857,7 +864,10 @@ fn module_leaf_items(module: &str) -> Vec<RexRapCompletionItem> {
         .collect()
 }
 
-fn complete_path(path: PathContext, context: &CompletionContext) -> Option<RexRapCompletionResponse> {
+fn complete_path(
+    path: PathContext,
+    context: &CompletionContext,
+) -> Option<RexRapCompletionResponse> {
     let base = root_type(&path.head, context)?;
     let ty = navigate_type(base, &path.completed)?;
     let fields = type_fields(&ty)?;
@@ -1311,7 +1321,9 @@ fn infer_expr_type(expr: &Expr, context: &CompletionContext) -> Option<Runinator
                     .iter()
                     .map(|arg| infer_expr_type(arg, context).unwrap_or(RuninatorType::Any))
                     .collect::<Vec<_>>();
-                let literal_keys = args.get(1).and_then(runinator_rexrap::ast::static_string_keys);
+                let literal_keys = args
+                    .get(1)
+                    .and_then(runinator_rexrap::ast::static_string_keys);
                 Some(
                     runinator_compute::intrinsic_result_type(
                         name,

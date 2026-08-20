@@ -22,7 +22,7 @@ use crate::handlers::{
     action_dispatches, agents, artifacts, auth, authz, automation, billing, catalog,
     catalog_metadata, console, credentials, debug, function_invocations, functions, health,
     node_runs, notifications, observability, orgs, packs, pipelines, providers, provisioning,
-    replicas, runs, schedules, supervisor, triggers, rexrap, webhook, workflows,
+    replicas, rexrap, runs, schedules, supervisor, triggers, webhook, workflows,
 };
 use crate::models::{ApiError, ApiResponse};
 use crate::overload::{OverloadConfig, apply_overload_protection};

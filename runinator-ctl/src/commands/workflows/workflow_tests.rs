@@ -29,8 +29,13 @@ pub fn workflows_test(
     for suite_path in &suite_files {
         let data = fs::read_to_string(suite_path)
             .map_err(|e| err(format!("read {}: {e}", suite_path.display())))?;
-        let blocks = runinator_rexrap::parse_rrx_blocks(&data)
-            .map_err(|e| err(format!("parse {}: {}", suite_path.display(), e.render(&data))))?;
+        let blocks = runinator_rexrap::parse_rrx_blocks(&data).map_err(|e| {
+            err(format!(
+                "parse {}: {}",
+                suite_path.display(),
+                e.render(&data)
+            ))
+        })?;
         for test_source in blocks.tests {
             let suite: runinator_workflows::WorkflowTestSuite = serde_json::from_str(&test_source)
                 .map_err(|e| err(format!("parse tests in {}: {e}", suite_path.display())))?;

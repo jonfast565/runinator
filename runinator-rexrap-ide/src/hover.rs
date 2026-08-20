@@ -186,7 +186,11 @@ fn std_path_hover(path: HoverPath<'_>, index: usize) -> Option<RexRapHoverRespon
     }
 }
 
-fn alias_path_hover(path: HoverPath<'_>, index: usize, module: &str) -> Option<RexRapHoverResponse> {
+fn alias_path_hover(
+    path: HoverPath<'_>,
+    index: usize,
+    module: &str,
+) -> Option<RexRapHoverResponse> {
     if index == 0 {
         return Some(RexRapHoverResponse {
             range_start_byte: path.ranges[0].0,
@@ -495,7 +499,11 @@ fn intrinsic_response(name: &str, range: (usize, usize)) -> Option<RexRapHoverRe
     })
 }
 
-fn field_response(name: &str, field: &RuninatorField, range: (usize, usize)) -> RexRapHoverResponse {
+fn field_response(
+    name: &str,
+    field: &RuninatorField,
+    range: (usize, usize),
+) -> RexRapHoverResponse {
     let required = if field.required {
         "required"
     } else {

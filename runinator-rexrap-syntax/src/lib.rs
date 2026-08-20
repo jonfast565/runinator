@@ -14,7 +14,7 @@ pub mod includes;
 pub mod parser;
 pub mod vocabulary;
 
-pub use errors::{Span, RexRapError};
+pub use errors::{RexRapError, Span};
 pub use format::format_document;
 pub use includes::included_file_paths;
 pub use parser::{

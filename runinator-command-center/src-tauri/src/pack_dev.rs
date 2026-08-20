@@ -271,8 +271,7 @@ fn pack_settings_path(path: &Path) -> CommandResult<Option<PathBuf>> {
 }
 
 fn load_workflow_bundle(path: &Path) -> CommandResult<WorkflowBundle> {
-    runinator_pack::source::load_workflow_bundle(path)
-        .map_err(|err| command_error(err.to_string()))
+    runinator_pack::source::load_workflow_bundle(path).map_err(|err| command_error(err.to_string()))
 }
 
 fn compile_rexrap_all(
@@ -304,13 +303,14 @@ fn compile_rexrap_all_with_signatures(
             err.render(data)
         ))
     })?;
-    let mut definitions = runinator_rexrap::compile_all_str(&formatted, &options).map_err(|err| {
-        command_error(format!(
-            "failed to compile {}:\n{}",
-            path.display(),
-            err.render(&formatted)
-        ))
-    })?;
+    let mut definitions =
+        runinator_rexrap::compile_all_str(&formatted, &options).map_err(|err| {
+            command_error(format!(
+                "failed to compile {}:\n{}",
+                path.display(),
+                err.render(&formatted)
+            ))
+        })?;
     let updated_at = file_modified(path);
     for definition in &mut definitions {
         definition.updated_at = updated_at;
@@ -344,8 +344,8 @@ fn collect_workflow_signatures_with_current(
                 .map_err(|err| CommandError::Unexpected(err.to_string()))?;
             &data
         };
-        let mut source_signatures =
-            runinator_rexrap::workflow_signature_from_source(source).map_err(|err| {
+        let mut source_signatures = runinator_rexrap::workflow_signature_from_source(source)
+            .map_err(|err| {
                 command_error(format!(
                     "failed to read workflow signature from {}:\n{}",
                     path.display(),
