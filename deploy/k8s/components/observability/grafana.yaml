@@ -620,6 +620,92 @@ data:
             { "refId": "A", "expr": "sum(rate({__name__=~\"runinator_worker_actions_received.*\"}[5m]))", "legendFormat": "received" },
             { "refId": "B", "expr": "sum(rate({__name__=~\"runinator_worker_actions_completed.*\"}[5m]))", "legendFormat": "completed" }
           ]
+        },
+        {
+          "id": 45,
+          "type": "timeseries",
+          "title": "VM continuation outcomes / sec",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 172 },
+          "targets": [
+            { "refId": "A", "expr": "sum by (outcome) (rate({__name__=~\"runinator_vm_continuations_driven.*\"}[5m]))", "legendFormat": "{{outcome}}" }
+          ]
+        },
+        {
+          "id": 46,
+          "type": "timeseries",
+          "title": "VM drive p95 and failures / sec",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 172 },
+          "targets": [
+            { "refId": "A", "expr": "histogram_quantile(0.95, sum by (le) (rate({__name__=~\"runinator_vm_drive_duration_ms.*_bucket\"}[5m])))", "legendFormat": "drive p95 (ms)" },
+            { "refId": "B", "expr": "sum(rate({__name__=~\"runinator_vm_driver_failures.*\"}[5m]))", "legendFormat": "failures / sec" }
+          ]
+        },
+        {
+          "id": 47,
+          "type": "timeseries",
+          "title": "Runtime service CPU (%)",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 180 },
+          "targets": [
+            { "refId": "A", "expr": "sum by (service) ({__name__=~\"runinator_resource_host_cpu_percent.*\", service=~\"Runinator (Worker|Waker|Background Worker|Archiver)\"})", "legendFormat": "{{service}} host" },
+            { "refId": "B", "expr": "sum by (service) ({__name__=~\"runinator_resource_process_cpu_percent.*\", service=~\"Runinator (Worker|Waker|Background Worker|Archiver)\"})", "legendFormat": "{{service}} process" }
+          ]
+        },
+        {
+          "id": 48,
+          "type": "timeseries",
+          "title": "Runtime service memory (bytes)",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 180 },
+          "targets": [
+            { "refId": "A", "expr": "sum by (service) ({__name__=~\"runinator_resource_host_memory_used_bytes.*\", service=~\"Runinator (Worker|Waker|Background Worker|Archiver)\"})", "legendFormat": "{{service}} host" },
+            { "refId": "B", "expr": "sum by (service) ({__name__=~\"runinator_resource_process_memory_used_bytes.*\", service=~\"Runinator (Worker|Waker|Background Worker|Archiver)\"})", "legendFormat": "{{service}} process" }
+          ]
+        },
+        {
+          "id": 49,
+          "type": "timeseries",
+          "title": "Runtime memory pressure and load",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 188 },
+          "targets": [
+            { "refId": "A", "expr": "max by (service) ({__name__=~\"runinator_resource_host_memory_percent.*\", service=~\"Runinator (Worker|Waker|Background Worker|Archiver)\"})", "legendFormat": "{{service}} memory %" },
+            { "refId": "B", "expr": "max by (service) ({__name__=~\"runinator_resource_load_(1|5|15).*\", service=~\"Runinator (Worker|Waker|Background Worker|Archiver)\"})", "legendFormat": "{{service}} {{__name__}}" }
+          ]
+        },
+        {
+          "id": 50,
+          "type": "timeseries",
+          "title": "Runtime network throughput (bytes/sec)",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 188 },
+          "targets": [
+            { "refId": "A", "expr": "sum by (service) ({__name__=~\"runinator_resource_network_(receive|transmit)_bytes_per_second.*\", service=~\"Runinator (Worker|Waker|Background Worker|Archiver)\"})", "legendFormat": "{{service}} {{__name__}}" }
+          ]
+        },
+        {
+          "id": 51,
+          "type": "timeseries",
+          "title": "Runtime disk capacity and I/O",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 196 },
+          "targets": [
+            { "refId": "A", "expr": "max by (service, mount_point) ({__name__=~\"runinator_resource_disk_(total|available)_bytes.*\", service=~\"Runinator (Worker|Waker|Background Worker|Archiver)\"})", "legendFormat": "{{service}} {{mount_point}} {{__name__}}" },
+            { "refId": "B", "expr": "sum by (service, mount_point) ({__name__=~\"runinator_resource_disk_(read|written)_bytes_per_second.*\", service=~\"Runinator (Worker|Waker|Background Worker|Archiver)\"})", "legendFormat": "{{service}} {{mount_point}} {{__name__}}" }
+          ]
+        },
+        {
+          "id": 52,
+          "type": "timeseries",
+          "title": "Runtime GPU utilization and memory",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 196 },
+          "targets": [
+            { "refId": "A", "expr": "max by (service, gpu) ({__name__=~\"runinator_resource_gpu_utilization_percent.*\", service=~\"Runinator (Worker|Waker|Background Worker|Archiver)\"})", "legendFormat": "{{service}} {{gpu}} utilization" },
+            { "refId": "B", "expr": "max by (service, gpu) ({__name__=~\"runinator_resource_gpu_memory_(used|total)_bytes.*\", service=~\"Runinator (Worker|Waker|Background Worker|Archiver)\"})", "legendFormat": "{{service}} {{gpu}} {{__name__}}" }
+          ]
         }
       ]
     }

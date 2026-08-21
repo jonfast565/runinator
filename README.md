@@ -969,6 +969,10 @@ service, also on Prometheus `/metrics`):
 - **Waker** (`runinator_waker_*`): `wakes_{received,driven,requeued}_total`,
   `drive_failures_total`, and the `wake_lead_ms` histogram (scheduling lead/lag at
   receipt).
+- **VM** (`runinator_vm_*`): `continuations_driven_total` split by the bounded
+  `outcome` label (`yielded`, `forked`, `joined`, `completed`, `failed`), the
+  `drive_duration_ms` histogram for claim-and-advance batches, and
+  `driver_failures_total`.
 - **Broker** (`runinator_broker_*`, emitted by every service): `operations_total` and
   the `operation_duration_ms` histogram, tagged with `backend` (in-memory/http/tcp/
   kafka/rabbitmq), `channel`, `op`, and (for the counter) `outcome`.

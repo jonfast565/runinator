@@ -42,9 +42,18 @@ pub async fn run_workflow_vm_driver<T: DatabaseImpl>(
     info!("workflow VM driver started");
     let host = runinator_runtime::WorkflowVmHost::new(db.as_ref());
     loop {
+        let started = std::time::Instant::now();
+        let mut succeeded = true;
         match host.drive_runnable(instance.clone(), CLAIM_LIMIT).await {
             Ok(outcomes) => {
                 for outcome in outcomes {
+                    stability::vm_continuation_driven(match outcome {
+                        runinator_runtime::WorkflowVmDriveOutcome::Yielded => "yielded",
+                        runinator_runtime::WorkflowVmDriveOutcome::Forked => "forked",
+                        runinator_runtime::WorkflowVmDriveOutcome::Joined => "joined",
+                        runinator_runtime::WorkflowVmDriveOutcome::Completed { .. } => "completed",
+                        runinator_runtime::WorkflowVmDriveOutcome::Failed { .. } => "failed",
+                    });
                     let settled_run_id = match outcome {
                         runinator_runtime::WorkflowVmDriveOutcome::Completed { settled_run_id }
                         | runinator_runtime::WorkflowVmDriveOutcome::Failed { settled_run_id } => {
@@ -52,8 +61,7 @@ pub async fn run_workflow_vm_driver<T: DatabaseImpl>(
                         }
                         _ => None,
                     };
-                    if let Some(run_id) = settled_run_id
-                    {
+                    if let Some(run_id) = settled_run_id {
                         if let Err(err) =
                             repository::advance_pipeline_from_vm_terminal(db.as_ref(), run_id).await
                         {
@@ -62,18 +70,25 @@ pub async fn run_workflow_vm_driver<T: DatabaseImpl>(
                         match db.fetch_workflow_run(run_id).await {
                             Ok(Some(run)) => {
                                 if let Err(err) =
-                                    repository::maybe_start_chained_pipelines(db.as_ref(), &run).await
+                                    repository::maybe_start_chained_pipelines(db.as_ref(), &run)
+                                        .await
                                 {
                                     warn!(workflow_run_id = %run_id, error = %err, "VM chained pipeline advancement failed");
                                 }
                             }
                             Ok(None) => {}
-                            Err(err) => warn!(workflow_run_id = %run_id, error = %err, "failed to load terminal VM run for pipeline chaining"),
+                            Err(err) => {
+                                warn!(workflow_run_id = %run_id, error = %err, "failed to load terminal VM run for pipeline chaining")
+                            }
                         }
                     }
                 }
             }
-            Err(err) => warn!(error = %err, "workflow VM drive failed"),
+            Err(err) => {
+                succeeded = false;
+                stability::vm_driver_failure();
+                warn!(error = %err, "workflow VM drive failed");
+            }
         }
         match db.fetch_unsettled_vm_pipeline_members(CLAIM_LIMIT).await {
             Ok(run_ids) => {
@@ -85,8 +100,13 @@ pub async fn run_workflow_vm_driver<T: DatabaseImpl>(
                     }
                 }
             }
-            Err(err) => warn!(error = %err, "failed to reconcile VM pipeline members"),
+            Err(err) => {
+                succeeded = false;
+                warn!(error = %err, "failed to reconcile VM pipeline members");
+            }
         }
+        stability::record_vm_drive_duration_ms(started.elapsed().as_secs_f64() * 1000.0);
+        stability::loop_iteration("workflow_vm_driver", succeeded, started.elapsed());
         tokio::select! {
             _ = shutdown.notified() => return,
             _ = tokio::time::sleep(WORKFLOW_VM_DRIVE_INTERVAL) => {}

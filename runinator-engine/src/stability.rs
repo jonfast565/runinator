@@ -26,6 +26,9 @@ const METRIC_INGRESS_RETRIED: &str = "runinator_ws_ingress_retried_total";
 const METRIC_INGRESS_DEAD_LETTERED: &str = "runinator_ws_ingress_dead_lettered_total";
 const METRIC_TRIGGERS_FIRED: &str = "runinator_ws_triggers_fired_total";
 const METRIC_REDUCER_DRIVE_MS: &str = "runinator_ws_reducer_drive_ms";
+const METRIC_VM_CONTINUATIONS_DRIVEN: &str = "runinator_vm_continuations_driven_total";
+const METRIC_VM_DRIVE_DURATION_MS: &str = "runinator_vm_drive_duration_ms";
+const METRIC_VM_DRIVER_FAILURES: &str = "runinator_vm_driver_failures_total";
 const METRIC_LOOP_ITERATIONS: &str = "runinator_engine_loop_iterations_total";
 const METRIC_LOOP_DURATION_MS: &str = "runinator_engine_loop_duration_ms";
 const METRIC_LOOP_LAST_SUCCESS: &str = "runinator_engine_loop_last_success_unixtime";
@@ -56,6 +59,9 @@ struct OtelCounters {
     ingress_dead_lettered: Counter<u64>,
     triggers_fired: Counter<u64>,
     reducer_drive_ms: Histogram<f64>,
+    vm_continuations_driven: Counter<u64>,
+    vm_drive_duration_ms: Histogram<f64>,
+    vm_driver_failures: Counter<u64>,
     loop_iterations: Counter<u64>,
     loop_duration_ms: Histogram<f64>,
     loop_last_success: Gauge<u64>,
@@ -90,6 +96,12 @@ fn otel_counters() -> &'static OtelCounters {
                 .f64_histogram(METRIC_REDUCER_DRIVE_MS)
                 .with_unit("ms")
                 .build(),
+            vm_continuations_driven: meter.u64_counter(METRIC_VM_CONTINUATIONS_DRIVEN).build(),
+            vm_drive_duration_ms: meter
+                .f64_histogram(METRIC_VM_DRIVE_DURATION_MS)
+                .with_unit("ms")
+                .build(),
+            vm_driver_failures: meter.u64_counter(METRIC_VM_DRIVER_FAILURES).build(),
             loop_iterations: meter.u64_counter(METRIC_LOOP_ITERATIONS).build(),
             loop_duration_ms: meter
                 .f64_histogram(METRIC_LOOP_DURATION_MS)
@@ -224,6 +236,30 @@ pub fn triggers_fired(count: u64) {
 pub fn record_reducer_drive_ms(millis: f64) {
     metrics::histogram!(METRIC_REDUCER_DRIVE_MS).record(millis);
     otel_counters().reducer_drive_ms.record(millis, &[]);
+}
+
+/// Record one continuation the durable VM drove. `outcome` is a fixed VM result, never a
+/// workflow, cursor, or provider identifier, so dashboard cardinality remains bounded.
+pub fn vm_continuation_driven(outcome: &'static str) {
+    metrics::counter!(METRIC_VM_CONTINUATIONS_DRIVEN, "outcome" => outcome).increment(1);
+    otel_counters()
+        .vm_continuations_driven
+        .add(1, &[KeyValue::new("outcome", outcome)]);
+}
+
+/// Record the time spent claiming and advancing a batch of runnable VM continuations, excluding
+/// the driver's polling sleep. This makes scheduler and store latency visible separately from
+/// worker effect execution.
+pub fn record_vm_drive_duration_ms(millis: f64) {
+    metrics::histogram!(METRIC_VM_DRIVE_DURATION_MS).record(millis);
+    otel_counters().vm_drive_duration_ms.record(millis, &[]);
+}
+
+/// A VM drive batch could not be claimed or advanced. Pipeline reconciliation failures are
+/// intentionally excluded: they are follow-up orchestration, not interpreter failures.
+pub fn vm_driver_failure() {
+    metrics::counter!(METRIC_VM_DRIVER_FAILURES).increment(1);
+    otel_counters().vm_driver_failures.add(1, &[]);
 }
 
 /// Record one bounded background-loop iteration. Callers pass only constants declared beside the

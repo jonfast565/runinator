@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::env;
+use std::sync::Arc;
 
 use opentelemetry::metrics::ObservableGauge;
 use opentelemetry::propagation::{Extractor, Injector};
@@ -10,6 +11,9 @@ use opentelemetry_sdk::metrics::SdkMeterProvider;
 use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::trace::{SdkTracer, SdkTracerProvider};
 use runinator_models::errors::SendableError;
+use runinator_models::telemetry::ResourceTelemetry;
+
+use crate::resource_telemetry::{TelemetryCollector, host_metadata};
 
 // the tracer name used for the per-binary tracing-opentelemetry bridge.
 const TRACER_NAME: &str = "runinator";
@@ -25,6 +29,12 @@ pub struct TelemetryGuard {
     // Retaining the asynchronous instrument keeps its callback registered for the provider's
     // lifetime. It deliberately lives in the guard beside that provider.
     uptime: Option<ObservableGauge<u64>>,
+    resource_host_cpu: Option<ObservableGauge<f64>>,
+    resource_host_memory: Option<ObservableGauge<u64>>,
+    resource_process_cpu: Option<ObservableGauge<f64>>,
+    resource_process_memory: Option<ObservableGauge<u64>>,
+    resource_f64_gauges: Vec<ObservableGauge<f64>>,
+    resource_u64_gauges: Vec<ObservableGauge<u64>>,
 }
 
 impl TelemetryGuard {
@@ -46,6 +56,12 @@ impl TelemetryGuard {
             let _ = provider.shutdown();
         }
         self.uptime.take();
+        self.resource_host_cpu.take();
+        self.resource_host_memory.take();
+        self.resource_process_cpu.take();
+        self.resource_process_memory.take();
+        self.resource_f64_gauges.clear();
+        self.resource_u64_gauges.clear();
         if let Some(provider) = self.meter_provider.take() {
             let _ = provider.shutdown();
         }
@@ -108,9 +124,10 @@ pub fn init(service_name: &str) -> Result<TelemetryLayers, SendableError> {
         .with_resource(resource.clone())
         .build();
     opentelemetry::global::set_meter_provider(meter_provider.clone());
+    let meter = opentelemetry::global::meter("runinator-process");
     let started = std::time::Instant::now();
     let service = service_name.to_string();
-    let uptime = opentelemetry::global::meter("runinator-process")
+    let uptime = meter
         .u64_observable_gauge("runinator_process_uptime_seconds")
         .with_unit("s")
         .with_callback(move |observer| {
@@ -120,6 +137,17 @@ pub fn init(service_name: &str) -> Result<TelemetryLayers, SendableError> {
             );
         })
         .build();
+    // Resource telemetry already powers replica heartbeats. Export its scalar host/process values
+    // as gauges as well, so Prometheus-backed Grafana dashboards can show them for every binary.
+    // Each instrument retains the collector through its callback for the provider's lifetime.
+    let collector = Arc::new(TelemetryCollector::new());
+    let resource_host_cpu = resource_host_cpu_gauge(&meter, collector.clone(), service_name);
+    let resource_host_memory = resource_host_memory_gauge(&meter, collector.clone(), service_name);
+    let resource_process_cpu = resource_process_cpu_gauge(&meter, collector.clone(), service_name);
+    let resource_process_memory =
+        resource_process_memory_gauge(&meter, collector.clone(), service_name);
+    let (resource_f64_gauges, resource_u64_gauges) =
+        additional_resource_gauges(&meter, collector, service_name);
 
     let log_exporter = opentelemetry_otlp::LogExporter::builder()
         .with_http()
@@ -136,10 +164,490 @@ pub fn init(service_name: &str) -> Result<TelemetryLayers, SendableError> {
             meter_provider: Some(meter_provider),
             logger_provider: Some(logger_provider.clone()),
             uptime: Some(uptime),
+            resource_host_cpu: Some(resource_host_cpu),
+            resource_host_memory: Some(resource_host_memory),
+            resource_process_cpu: Some(resource_process_cpu),
+            resource_process_memory: Some(resource_process_memory),
+            resource_f64_gauges,
+            resource_u64_gauges,
         },
         tracer: Some(tracer),
         logger_provider: Some(logger_provider),
     })
+}
+
+fn resource_host_cpu_gauge(
+    meter: &opentelemetry::metrics::Meter,
+    collector: Arc<TelemetryCollector>,
+    service_name: &str,
+) -> ObservableGauge<f64> {
+    let service = service_name.to_string();
+    meter
+        .f64_observable_gauge("runinator_resource_host_cpu_percent")
+        .with_unit("%")
+        .with_callback(move |observer| {
+            observer.observe(
+                collector.sample().cpu_percent as f64,
+                &[opentelemetry::KeyValue::new("service", service.clone())],
+            );
+        })
+        .build()
+}
+
+fn resource_host_memory_gauge(
+    meter: &opentelemetry::metrics::Meter,
+    collector: Arc<TelemetryCollector>,
+    service_name: &str,
+) -> ObservableGauge<u64> {
+    let service = service_name.to_string();
+    meter
+        .u64_observable_gauge("runinator_resource_host_memory_used_bytes")
+        .with_unit("By")
+        .with_callback(move |observer| {
+            observer.observe(
+                collector.sample().mem_used_bytes,
+                &[opentelemetry::KeyValue::new("service", service.clone())],
+            );
+        })
+        .build()
+}
+
+fn resource_process_cpu_gauge(
+    meter: &opentelemetry::metrics::Meter,
+    collector: Arc<TelemetryCollector>,
+    service_name: &str,
+) -> ObservableGauge<f64> {
+    let service = service_name.to_string();
+    meter
+        .f64_observable_gauge("runinator_resource_process_cpu_percent")
+        .with_unit("%")
+        .with_callback(move |observer| {
+            observer.observe(
+                collector.sample().process.cpu_percent as f64,
+                &[opentelemetry::KeyValue::new("service", service.clone())],
+            );
+        })
+        .build()
+}
+
+fn resource_process_memory_gauge(
+    meter: &opentelemetry::metrics::Meter,
+    collector: Arc<TelemetryCollector>,
+    service_name: &str,
+) -> ObservableGauge<u64> {
+    let service = service_name.to_string();
+    meter
+        .u64_observable_gauge("runinator_resource_process_memory_used_bytes")
+        .with_unit("By")
+        .with_callback(move |observer| {
+            observer.observe(
+                collector.sample().process.mem_used_bytes,
+                &[opentelemetry::KeyValue::new("service", service.clone())],
+            );
+        })
+        .build()
+}
+
+fn additional_resource_gauges(
+    meter: &opentelemetry::metrics::Meter,
+    collector: Arc<TelemetryCollector>,
+    service_name: &str,
+) -> (Vec<ObservableGauge<f64>>, Vec<ObservableGauge<u64>>) {
+    let f64_gauges = vec![
+        resource_f64_gauge(
+            meter,
+            "runinator_resource_host_memory_percent",
+            "%",
+            collector.clone(),
+            service_name,
+            |s| s.mem_percent as f64,
+        ),
+        resource_optional_f64_gauge(
+            meter,
+            "runinator_resource_load_1",
+            collector.clone(),
+            service_name,
+            |s| s.load_average.as_ref().map(|v| v.one),
+        ),
+        resource_optional_f64_gauge(
+            meter,
+            "runinator_resource_load_5",
+            collector.clone(),
+            service_name,
+            |s| s.load_average.as_ref().map(|v| v.five),
+        ),
+        resource_optional_f64_gauge(
+            meter,
+            "runinator_resource_load_15",
+            collector.clone(),
+            service_name,
+            |s| s.load_average.as_ref().map(|v| v.fifteen),
+        ),
+        resource_f64_gauge(
+            meter,
+            "runinator_resource_network_receive_bytes_per_second",
+            "By/s",
+            collector.clone(),
+            service_name,
+            |s| s.network.rx_bytes_per_sec,
+        ),
+        resource_f64_gauge(
+            meter,
+            "runinator_resource_network_transmit_bytes_per_second",
+            "By/s",
+            collector.clone(),
+            service_name,
+            |s| s.network.tx_bytes_per_sec,
+        ),
+        resource_disk_f64_gauge(
+            meter,
+            "runinator_resource_disk_read_bytes_per_second",
+            collector.clone(),
+            service_name,
+            |d| d.read_bytes_per_sec,
+        ),
+        resource_disk_f64_gauge(
+            meter,
+            "runinator_resource_disk_written_bytes_per_second",
+            collector.clone(),
+            service_name,
+            |d| d.written_bytes_per_sec,
+        ),
+        resource_gpu_f64_gauge(
+            meter,
+            "runinator_resource_gpu_utilization_percent",
+            collector.clone(),
+            service_name,
+            |g| g.utilization_percent.map(f64::from),
+        ),
+    ];
+    let u64_gauges = vec![
+        resource_u64_gauge(
+            meter,
+            "runinator_resource_host_memory_total_bytes",
+            collector.clone(),
+            service_name,
+            |s| s.mem_total_bytes,
+        ),
+        resource_u64_gauge(
+            meter,
+            "runinator_resource_swap_used_bytes",
+            collector.clone(),
+            service_name,
+            |s| s.swap_used_bytes,
+        ),
+        resource_u64_gauge(
+            meter,
+            "runinator_resource_swap_total_bytes",
+            collector.clone(),
+            service_name,
+            |s| s.swap_total_bytes,
+        ),
+        resource_u64_gauge(
+            meter,
+            "runinator_resource_network_receive_total_bytes",
+            collector.clone(),
+            service_name,
+            |s| s.network.rx_total_bytes,
+        ),
+        resource_u64_gauge(
+            meter,
+            "runinator_resource_network_transmit_total_bytes",
+            collector.clone(),
+            service_name,
+            |s| s.network.tx_total_bytes,
+        ),
+        resource_disk_u64_gauge(
+            meter,
+            "runinator_resource_disk_total_bytes",
+            collector.clone(),
+            service_name,
+            |d| d.total_bytes,
+        ),
+        resource_disk_u64_gauge(
+            meter,
+            "runinator_resource_disk_available_bytes",
+            collector.clone(),
+            service_name,
+            |d| d.available_bytes,
+        ),
+        resource_gpu_u64_gauge(
+            meter,
+            "runinator_resource_gpu_memory_used_bytes",
+            collector.clone(),
+            service_name,
+            |g| g.mem_used_bytes,
+        ),
+        resource_gpu_u64_gauge(
+            meter,
+            "runinator_resource_gpu_memory_total_bytes",
+            collector,
+            service_name,
+            |g| g.mem_total_bytes,
+        ),
+        static_u64_gauge(
+            meter,
+            "runinator_resource_host_logical_cores",
+            "1",
+            host_metadata().logical_cores as u64,
+            service_name,
+        ),
+        static_u64_gauge(
+            meter,
+            "runinator_resource_host_boot_time_seconds",
+            "s",
+            host_metadata().boot_time_unix,
+            service_name,
+        ),
+        host_info_gauge(meter, service_name),
+    ];
+    (f64_gauges, u64_gauges)
+}
+
+fn static_u64_gauge(
+    meter: &opentelemetry::metrics::Meter,
+    name: &'static str,
+    unit: &'static str,
+    value: u64,
+    service_name: &str,
+) -> ObservableGauge<u64> {
+    let service = service_name.to_string();
+    meter
+        .u64_observable_gauge(name)
+        .with_unit(unit)
+        .with_callback(move |o| {
+            o.observe(
+                value,
+                &[opentelemetry::KeyValue::new("service", service.clone())],
+            )
+        })
+        .build()
+}
+
+fn host_info_gauge(
+    meter: &opentelemetry::metrics::Meter,
+    service_name: &str,
+) -> ObservableGauge<u64> {
+    let host = host_metadata();
+    let attributes = vec![
+        opentelemetry::KeyValue::new("service", service_name.to_string()),
+        opentelemetry::KeyValue::new(
+            "host_name",
+            host.host_name.unwrap_or_else(|| "unknown".to_string()),
+        ),
+        opentelemetry::KeyValue::new("os", host.os.unwrap_or_else(|| "unknown".to_string())),
+        opentelemetry::KeyValue::new(
+            "os_version",
+            host.os_version.unwrap_or_else(|| "unknown".to_string()),
+        ),
+        opentelemetry::KeyValue::new(
+            "kernel_version",
+            host.kernel_version.unwrap_or_else(|| "unknown".to_string()),
+        ),
+        opentelemetry::KeyValue::new("cpu_arch", host.cpu_arch),
+        opentelemetry::KeyValue::new(
+            "cpu_brand",
+            host.cpu_brand.unwrap_or_else(|| "unknown".to_string()),
+        ),
+        opentelemetry::KeyValue::new(
+            "physical_cores",
+            host.physical_cores.unwrap_or_default() as i64,
+        ),
+    ];
+    meter
+        .u64_observable_gauge("runinator_resource_host_info")
+        .with_callback(move |o| o.observe(1, &attributes))
+        .build()
+}
+
+fn resource_f64_gauge<F>(
+    meter: &opentelemetry::metrics::Meter,
+    name: &'static str,
+    unit: &'static str,
+    collector: Arc<TelemetryCollector>,
+    service_name: &str,
+    value: F,
+) -> ObservableGauge<f64>
+where
+    F: Fn(&ResourceTelemetry) -> f64 + Send + Sync + 'static,
+{
+    let service = service_name.to_string();
+    meter
+        .f64_observable_gauge(name)
+        .with_unit(unit)
+        .with_callback(move |o| {
+            let sample = collector.sample();
+            o.observe(
+                value(&sample),
+                &[opentelemetry::KeyValue::new("service", service.clone())],
+            );
+        })
+        .build()
+}
+
+fn resource_optional_f64_gauge<F>(
+    meter: &opentelemetry::metrics::Meter,
+    name: &'static str,
+    collector: Arc<TelemetryCollector>,
+    service_name: &str,
+    value: F,
+) -> ObservableGauge<f64>
+where
+    F: Fn(&ResourceTelemetry) -> Option<f64> + Send + Sync + 'static,
+{
+    let service = service_name.to_string();
+    meter
+        .f64_observable_gauge(name)
+        .with_callback(move |o| {
+            let sample = collector.sample();
+            if let Some(value) = value(&sample) {
+                o.observe(
+                    value,
+                    &[opentelemetry::KeyValue::new("service", service.clone())],
+                );
+            }
+        })
+        .build()
+}
+
+fn resource_u64_gauge<F>(
+    meter: &opentelemetry::metrics::Meter,
+    name: &'static str,
+    collector: Arc<TelemetryCollector>,
+    service_name: &str,
+    value: F,
+) -> ObservableGauge<u64>
+where
+    F: Fn(&ResourceTelemetry) -> u64 + Send + Sync + 'static,
+{
+    let service = service_name.to_string();
+    meter
+        .u64_observable_gauge(name)
+        .with_unit("By")
+        .with_callback(move |o| {
+            let sample = collector.sample();
+            o.observe(
+                value(&sample),
+                &[opentelemetry::KeyValue::new("service", service.clone())],
+            );
+        })
+        .build()
+}
+
+fn resource_disk_f64_gauge<F>(
+    meter: &opentelemetry::metrics::Meter,
+    name: &'static str,
+    collector: Arc<TelemetryCollector>,
+    service_name: &str,
+    value: F,
+) -> ObservableGauge<f64>
+where
+    F: Fn(&runinator_models::telemetry::DiskTelemetry) -> f64 + Send + Sync + 'static,
+{
+    let service = service_name.to_string();
+    meter
+        .f64_observable_gauge(name)
+        .with_unit("By/s")
+        .with_callback(move |o| {
+            for disk in collector.sample().disks {
+                o.observe(
+                    value(&disk),
+                    &[
+                        opentelemetry::KeyValue::new("service", service.clone()),
+                        opentelemetry::KeyValue::new("mount_point", disk.mount_point),
+                    ],
+                );
+            }
+        })
+        .build()
+}
+
+fn resource_disk_u64_gauge<F>(
+    meter: &opentelemetry::metrics::Meter,
+    name: &'static str,
+    collector: Arc<TelemetryCollector>,
+    service_name: &str,
+    value: F,
+) -> ObservableGauge<u64>
+where
+    F: Fn(&runinator_models::telemetry::DiskTelemetry) -> u64 + Send + Sync + 'static,
+{
+    let service = service_name.to_string();
+    meter
+        .u64_observable_gauge(name)
+        .with_unit("By")
+        .with_callback(move |o| {
+            for disk in collector.sample().disks {
+                o.observe(
+                    value(&disk),
+                    &[
+                        opentelemetry::KeyValue::new("service", service.clone()),
+                        opentelemetry::KeyValue::new("mount_point", disk.mount_point),
+                    ],
+                );
+            }
+        })
+        .build()
+}
+
+fn resource_gpu_f64_gauge<F>(
+    meter: &opentelemetry::metrics::Meter,
+    name: &'static str,
+    collector: Arc<TelemetryCollector>,
+    service_name: &str,
+    value: F,
+) -> ObservableGauge<f64>
+where
+    F: Fn(&runinator_models::telemetry::GpuTelemetry) -> Option<f64> + Send + Sync + 'static,
+{
+    let service = service_name.to_string();
+    meter
+        .f64_observable_gauge(name)
+        .with_unit("%")
+        .with_callback(move |o| {
+            for gpu in collector.sample().gpus {
+                if let Some(value) = value(&gpu) {
+                    o.observe(
+                        value,
+                        &[
+                            opentelemetry::KeyValue::new("service", service.clone()),
+                            opentelemetry::KeyValue::new("gpu", gpu.name),
+                        ],
+                    );
+                }
+            }
+        })
+        .build()
+}
+
+fn resource_gpu_u64_gauge<F>(
+    meter: &opentelemetry::metrics::Meter,
+    name: &'static str,
+    collector: Arc<TelemetryCollector>,
+    service_name: &str,
+    value: F,
+) -> ObservableGauge<u64>
+where
+    F: Fn(&runinator_models::telemetry::GpuTelemetry) -> Option<u64> + Send + Sync + 'static,
+{
+    let service = service_name.to_string();
+    meter
+        .u64_observable_gauge(name)
+        .with_unit("By")
+        .with_callback(move |o| {
+            for gpu in collector.sample().gpus {
+                if let Some(value) = value(&gpu) {
+                    o.observe(
+                        value,
+                        &[
+                            opentelemetry::KeyValue::new("service", service.clone()),
+                            opentelemetry::KeyValue::new("gpu", gpu.name),
+                        ],
+                    );
+                }
+            }
+        })
+        .build()
 }
 
 /// otel is on when an otlp endpoint is configured and the sdk is not explicitly disabled. this
