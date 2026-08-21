@@ -809,7 +809,7 @@ function replicaKindLabel(kind: ReplicaKind): string {
     case "waker":
       return "Waker";
     case "background":
-      return "Background Worker";
+      return "Engine Worker";
     case "postgres":
       return "Postgres";
     case "archiver":

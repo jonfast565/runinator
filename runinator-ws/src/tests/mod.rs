@@ -143,4 +143,29 @@ fn trigger(id: Option<Uuid>, workflow_id: Uuid) -> WorkflowTrigger {
     }
 }
 
-async fn drain_ready_nodes(_db: &SqliteDb) {}
+/// Drive the durable VM the same way the engine loop does in production.  Pipeline graph
+/// advancement deliberately lives above the VM host, so terminal member runs must be handed back
+/// to the engine repository before the next downstream member is created.
+async fn drain_ready_nodes(db: &SqliteDb) {
+    let host = runinator_runtime::WorkflowVmHost::new(db);
+    for _ in 0..16 {
+        let outcomes = host.drive_runnable("test-vm".into(), 100).await.unwrap();
+        if outcomes.is_empty() {
+            break;
+        }
+        for outcome in outcomes {
+            let settled_run_id = match outcome {
+                runinator_runtime::WorkflowVmDriveOutcome::Completed { settled_run_id }
+                | runinator_runtime::WorkflowVmDriveOutcome::Failed { settled_run_id } => {
+                    settled_run_id
+                }
+                _ => None,
+            };
+            if let Some(run_id) = settled_run_id {
+                crate::repository::advance_pipeline_from_vm_terminal(db, run_id)
+                    .await
+                    .unwrap();
+            }
+        }
+    }
+}

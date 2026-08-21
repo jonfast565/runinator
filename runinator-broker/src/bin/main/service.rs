@@ -7,7 +7,7 @@ impl BrokerService {
         Self
     }
 
-    pub async fn run(self) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn run(self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         super::run_process().await
     }
 }

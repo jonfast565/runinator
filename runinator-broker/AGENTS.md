@@ -4,13 +4,15 @@ Guidance for agents working in `runinator-broker`.
 
 ## Ownership
 
-`runinator-broker` owns broker traits, message/delivery wrappers, in-memory transport, HTTP/TCP broker transports, and optional direct adapters such as Kafka and RabbitMQ. Broker messages must remain serializable and backend-neutral.
+`runinator-broker` owns concrete broker transports (HTTP/TCP/WS), direct adapters (Kafka and
+RabbitMQ), and backend construction. The backend-neutral broker contract, delivery wrappers,
+capabilities, errors, and in-memory backend belong to `runinator-broker-core`; this crate
+re-exports that surface for binaries that construct a backend.
 
 ## Where To Start
 
-- Broker trait and message types: `src/lib.rs`, `src/types.rs`.
-- Capabilities and errors: `src/capabilities.rs`, `src/errors.rs`.
-- In-memory backend: `src/in_memory.rs`.
+- Re-exported public surface and backend factory: `src/lib.rs`, `src/factory.rs`.
+- Broker contract, message types, capabilities, errors, and in-memory backend: `../runinator-broker-core/src/`.
 - HTTP transport: `src/http/`.
 - TCP transport: `src/tcp/`.
 - Optional adapters: `src/adapters/`.
@@ -19,9 +21,9 @@ Guidance for agents working in `runinator-broker`.
 
 ## Boundaries
 
-- Channels are `action`, `control`, `result`, `wake`, and `ingress`; adding a channel requires every backend and wire transport to be updated together.
+- Channels are `action`, `control`, `agent`, `result`, `wake`, `ingress`, and fan-out `events`; adding a channel requires every backend and wire transport to be updated together.
 - Shared command payloads crossing worker/waker/ws boundaries belong in `runinator-comm`, not broker-local copies.
-- The broker should not know about concrete providers, database schema, web handlers, or workflow reducer logic.
+- The broker should not know about concrete providers, database schema, web handlers, or workflow VM logic.
 - Preserve delivery acknowledgement semantics: consumers acknowledge only after processing is complete at the service layer.
 - Keep backend behavior aligned across in-memory, HTTP, TCP, Kafka, and RabbitMQ where the feature applies.
 

@@ -5,7 +5,7 @@ Use this map to load the smallest useful part of the repo for a task. The root `
 ## Runtime Flow
 
 1. `runinator-ws` owns HTTP/WebSocket transport and auth, and hosts `runinator-engine` by default.
-2. `runinator-engine` owns persistence orchestration and the loops for ingress/results, triggers, wakes, action dispatch, and reconciliation; `runinator-background-worker` can host the same engine out of process.
+2. `runinator-engine` owns persistence orchestration: the workflow VM/effect loops, effect-result handling, triggers, agent directives, and maintenance. `runinator-ws` hosts it by default; `runinator-engine-worker` is the optional out-of-process host for independently scaled engine replicas. It does not execute providers or run the removed legacy reducer/ingress loops.
 3. `runinator-runtime` owns the continuation-driven graph interpreter, cursor fibers, host boundary, transitions, and node-kind behavior.
 4. `runinator-waker` consumes `wake`, waits until due, then publishes `WsIngressCommand::Drive` on `ingress`.
 5. `runinator-worker` consumes `action`, executes providers/plugins, and publishes results on `result`; `runinator-desktop-agent` hosts that runtime as an exclusive desktop worker.
@@ -18,10 +18,10 @@ Use this map to load the smallest useful part of the repo for a task. The root `
 - Change runtime context or `$ref` inputs available to the interpreter: `runinator-runtime/src/orchestration/context.rs`.
 - Change workflow validation or graph invariants shared by JSON and REXRAP: `runinator-workflows/src/validation.rs` and nearby modules.
 - Add or change a node kind's authoring behavior (palette entry, graph role, parameter targets, output type): its file in `runinator-workflows/src/node_kinds/<category>/`, plus an arm in `spec_for`.
-- Change REXRAP syntax or compile/decompile behavior: `runinator-rexrap/src/rexrap.pest`, `parser.rs`, `lower/`, `decompile/`, `format.rs`, and the matching subject file in `tests/`.
+- Change REXRAP syntax or compile/decompile behavior: start in `runinator-rexrap-syntax` (`rexrap.pest`, parser, formatter), then the relevant `runinator-rexrap-sema` or `runinator-rexrap-codegen` module; use the facade crate's cross-stage tests.
 - Change editor completion or hover: `runinator-rexrap-ide/src/`; if it needs something new from the language core, add it to `runinator-rexrap/src/analysis.rs`.
 - Change persistence behavior: add to the owning role trait in `runinator-store/src/roles/`, then the matching file in `runinator-database/src/operations/`.
-- Change durable orchestration/repository behavior: `runinator-engine/src/repository/` and its background loops.
+- Change durable orchestration/repository behavior: `runinator-engine/src/repository/`, the VM/effect loops, and their focused tests.
 - Change web API behavior: the handler's file in `runinator-ws-identity/`, `runinator-ws-authoring/`, or `runinator-ws-runtime/`'s `src/handlers/` (authoring = what can run, runtime = what is running, identity = who may do either); `runinator-ws/src/router.rs` only merges them. Shared wire types and the response envelope are in `runinator-ws-core`; auth/authz/rate-limit/overload are in `runinator-ws-middleware`. A handler reaches persistence through `runinator-engine/src/repository/`; only the allowlist in `runinator-ws/src/store_access_tests.rs` calls the store directly.
 - Change API client behavior: `runinator-api/src/`.
 - Change broker channel payloads: update `runinator-comm` contracts first, then every relevant broker transport/backend and service consumer.

@@ -52,7 +52,7 @@ impl RateCard {
                     ReplicaKind::Waker => 5,
                     ReplicaKind::Webservice => 10,
                     ReplicaKind::Postgres => 20,
-                    // the archiver and background worker are not provisioned/billed nodes; they only
+                    // the archiver and engine worker are not provisioned/billed nodes; they only
                     // register for visibility.
                     ReplicaKind::Archiver | ReplicaKind::Background => 0,
                 };

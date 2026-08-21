@@ -17,7 +17,10 @@ pub mod http;
 pub mod tcp;
 pub mod ws;
 
-pub use factory::{build_kafka_broker, build_rabbitmq_broker};
+pub use factory::{
+    build_broker_client, build_kafka_broker, build_rabbitmq_broker, BrokerBuildError,
+    BrokerClientConfig, BrokerConsumerProfile,
+};
 
 // the contract and its backend-independent pieces, re-exported at their historical paths.
 pub use runinator_broker_core::{

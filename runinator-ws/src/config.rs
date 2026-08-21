@@ -165,7 +165,7 @@ pub(crate) struct CliArgs {
 
     /// Run the durable orchestration engine (reducer, wake/trigger/action/ingress loops, result
     /// consumer, maintenance backstops) in-process. On by default so the single-process local/dev
-    /// stack runs unchanged; set to false when a standalone `runinator-background-worker` owns the
+    /// stack runs unchanged; set to false when a standalone `runinator-engine-worker` owns the
     /// engine and this replica serves HTTP/WebSocket only.
     #[arg(long, env = "RUNINATOR_WS_RUN_ENGINE", default_value_t = true)]
     pub run_engine: bool,

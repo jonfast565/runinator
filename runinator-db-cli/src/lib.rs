@@ -1,5 +1,7 @@
 //! shared CLI-side helpers for selecting and constructing a runinator database backend.
 
+use std::path::PathBuf;
+
 use clap::ValueEnum;
 
 #[cfg(feature = "mysql")]
@@ -17,6 +19,34 @@ pub enum DatabaseBackend {
     /// MySQL or MariaDB.
     #[value(alias = "mariadb")]
     Mysql,
+}
+
+impl DatabaseBackend {
+    /// Stable backend label for logs and replica metadata.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Sqlite => "sqlite",
+            Self::Postgres => "postgres",
+            Self::Mysql => "mysql",
+        }
+    }
+}
+
+/// Resolve the non-SQLite URL, returning the same user-facing error for every executable.
+pub fn required_database_url(
+    database_url: Option<String>,
+) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    database_url.ok_or_else(|| {
+        "--database-url must be provided when --database=postgres/mysql/mariadb".into()
+    })
+}
+
+/// Ensure the parent directory of a SQLite path exists and return the connection string.
+pub async fn prepare_sqlite_path(path: PathBuf) -> Result<String, std::io::Error> {
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    Ok(path.to_string_lossy().into_owned())
 }
 
 /// construct the concrete database for `$backend`, bind it to `$db`, and run `$body`.
@@ -55,4 +85,25 @@ macro_rules! dispatch_database {
             }
         }
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DatabaseBackend, required_database_url};
+
+    #[test]
+    fn database_backend_labels_are_stable() {
+        assert_eq!(DatabaseBackend::Sqlite.label(), "sqlite");
+        assert_eq!(DatabaseBackend::Postgres.label(), "postgres");
+        assert_eq!(DatabaseBackend::Mysql.label(), "mysql");
+    }
+
+    #[test]
+    fn required_url_accepts_and_rejects_expected_inputs() {
+        assert_eq!(
+            required_database_url(Some("postgres://db".into())).unwrap(),
+            "postgres://db"
+        );
+        assert!(required_database_url(None).is_err());
+    }
 }

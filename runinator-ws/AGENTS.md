@@ -23,16 +23,16 @@ crate a new endpoint belongs in.
 - The two source lints over the merged surface: `src/openapi/route_parity.rs` and
   `src/store_access_tests.rs`; both read `HANDLER_CRATES` in `src/lib.rs`.
 - Workflow definitions/import/export: `../runinator-engine/src/repository/definitions.rs`.
-- Ready-node driving, action dispatch publishing, wake publishing, and run queries: `../runinator-engine/src/repository/runs.rs` plus `../runinator-engine/src/loops.rs`.
+- VM driving, effect dispatch, wake publishing, and run queries: `../runinator-engine/src/` (start from `engine.rs`, `effect_consumer.rs`, and `repository_runs.rs`).
 - Debug and pause/resume/cancel behavior: `../runinator-engine/src/repository/debug.rs`.
-- Broker result application and node-run artifacts/logs: `../runinator-engine/src/result_consumer.rs` and `../runinator-engine/src/repository/node_runs.rs`.
+- Broker result application and effect artifacts/logs: `../runinator-engine/src/effect_consumer.rs` and `../runinator-engine/src/repository/`.
 
 ## Boundaries
 
 - Keep SQL and backend-specific persistence in `runinator-database`.
 - Keep HTTP handlers thin: authorize, validate transport payloads, call `runinator-engine`, and map web responses.
 - Keep command payloads crossing broker boundaries in `runinator-comm`.
-- The graph runtime may enqueue `ActionCommand`s through the durable outbox, but the waker must never publish action commands.
+- The graph runtime yields durable effect requests through the engine; the waker only relays due wakes to ingress and must never execute providers.
 - Do not add direct worker or waker calls from this crate; use broker channels or shared API/client contracts as appropriate.
 
 ## Verification

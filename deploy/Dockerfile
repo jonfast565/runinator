@@ -5,7 +5,7 @@
 # image. each service has its own thin final stage; select it with `--target <service>`:
 #
 #   docker build -f deploy/Dockerfile --target ws         -t runinator-ws:dev         .
-#   docker build -f deploy/Dockerfile --target background -t runinator-background:dev .
+#   docker build -f deploy/Dockerfile --target engine-worker -t runinator-engine-worker:dev .
 #   docker build -f deploy/Dockerfile --target waker      -t runinator-waker:dev      .
 #   docker build -f deploy/Dockerfile --target worker     -t runinator-worker:dev     .
 #   docker build -f deploy/Dockerfile --target archiver   -t runinator-archiver:dev   .
@@ -50,21 +50,21 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,target=/workspace/target,id=runinator-target-${TARGETARCH},sharing=locked \
     case "$RUNINATOR_K8S_DATABASE_BACKEND" in \
-      sqlite) database_features='runinator-ws/sqlite,runinator-background-worker/sqlite,runinator-worker/db-sqlite,runinator-archiver/sqlite,runinator-bootstrap/sqlite,runinator-ctl/db-sqlite' ;; \
-      postgres) database_features='runinator-ws/postgres,runinator-background-worker/postgres,runinator-worker/db-postgres,runinator-archiver/postgres,runinator-bootstrap/postgres,runinator-ctl/db-postgres' ;; \
-      mysql|mariadb) database_features='runinator-ws/mysql,runinator-background-worker/mysql,runinator-worker/db-mysql,runinator-archiver/mysql,runinator-bootstrap/mysql,runinator-ctl/db-mysql' ;; \
+      sqlite) database_features='runinator-ws/sqlite,runinator-engine-worker/sqlite,runinator-worker/db-sqlite,runinator-archiver/sqlite,runinator-bootstrap/sqlite,runinator-ctl/db-sqlite' ;; \
+      postgres) database_features='runinator-ws/postgres,runinator-engine-worker/postgres,runinator-worker/db-postgres,runinator-archiver/postgres,runinator-bootstrap/postgres,runinator-ctl/db-postgres' ;; \
+      mysql|mariadb) database_features='runinator-ws/mysql,runinator-engine-worker/mysql,runinator-worker/db-mysql,runinator-archiver/mysql,runinator-bootstrap/mysql,runinator-ctl/db-mysql' ;; \
       *) echo "unsupported RUNINATOR_K8S_DATABASE_BACKEND: $RUNINATOR_K8S_DATABASE_BACKEND (expected sqlite, postgres, mysql, or mariadb)" >&2; exit 2 ;; \
     esac \
     && case "$RUNINATOR_K8S_BROKER_BACKEND" in \
-      http) broker_features='runinator-ws/http,runinator-background-worker/http,runinator-worker/http,runinator-waker/http' ;; \
-      tcp) broker_features='runinator-ws/tcp,runinator-background-worker/tcp,runinator-worker/tcp,runinator-waker/tcp' ;; \
-      kafka) broker_features='runinator-ws/kafka,runinator-background-worker/kafka,runinator-worker/kafka,runinator-waker/kafka' ;; \
-      rabbitmq) broker_features='runinator-ws/rabbitmq,runinator-background-worker/rabbitmq,runinator-worker/rabbitmq,runinator-waker/rabbitmq' ;; \
+      http) broker_features='runinator-ws/http,runinator-engine-worker/http,runinator-worker/http,runinator-waker/http' ;; \
+      tcp) broker_features='runinator-ws/tcp,runinator-engine-worker/tcp,runinator-worker/tcp,runinator-waker/tcp' ;; \
+      kafka) broker_features='runinator-ws/kafka,runinator-engine-worker/kafka,runinator-worker/kafka,runinator-waker/kafka' ;; \
+      rabbitmq) broker_features='runinator-ws/rabbitmq,runinator-engine-worker/rabbitmq,runinator-worker/rabbitmq,runinator-waker/rabbitmq' ;; \
       *) echo "unsupported RUNINATOR_K8S_BROKER_BACKEND: $RUNINATOR_K8S_BROKER_BACKEND (expected http, tcp, kafka, or rabbitmq)" >&2; exit 2 ;; \
     esac \
     && cargo build --release --locked --no-default-features \
         -p runinator-ws \
-        -p runinator-background-worker \
+        -p runinator-engine-worker \
         -p runinator-worker \
         -p runinator-archiver \
         -p runinator-waker \
@@ -75,7 +75,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
         --features "$database_features,$broker_features,runinator-ws/kubernetes,runinator-broker/tcp,runinator-blob/server" \
     && mkdir -p /out \
     && cp target/release/runinator-ws \
-          target/release/runinator-background-worker \
+          target/release/runinator-engine-worker \
           target/release/runinator-worker \
           target/release/runinator-archiver \
           target/release/runinator-waker \
@@ -105,12 +105,12 @@ EXPOSE 8080
 USER runinator
 ENTRYPOINT ["/usr/local/bin/runinator-ws"]
 
-# ---- background: standalone durable orchestration engine (ws with RUNINATOR_WS_RUN_ENGINE=false
+# ---- engine-worker: standalone durable orchestration engine (ws with RUNINATOR_WS_RUN_ENGINE=false
 #      offloads its engine here so HTTP replicas and engine replicas scale independently) ----
-FROM runtime-base AS background
-COPY --from=builder --chown=root:root --chmod=755 /out/runinator-background-worker /usr/local/bin/runinator-background-worker
+FROM runtime-base AS engine-worker
+COPY --from=builder --chown=root:root --chmod=755 /out/runinator-engine-worker /usr/local/bin/runinator-engine-worker
 USER runinator
-ENTRYPOINT ["/usr/local/bin/runinator-background-worker"]
+ENTRYPOINT ["/usr/local/bin/runinator-engine-worker"]
 
 # ---- waker ----
 FROM runtime-base AS waker

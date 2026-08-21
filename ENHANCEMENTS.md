@@ -132,7 +132,7 @@ the shipped behavior.
   `item`/`item2`/`item3`. The author's identifier only ever existed as a lowering scope key
   (`lower/blocks.rs`), so any graph-editor save — which regenerates the REXRAP pane via decompile —
   rewrites `for ticket in …` to `for item in …`. This is the single largest legibility loss in the
-  loop surface: after one canvas round trip, `packs/sdlc/rexrap/sdlc-deploy.rexrap` reads
+  loop surface: after one canvas round trip, `packs/sdlc/rexrap/sdlc-deploy.rrx` reads
   `for item in tickets.issues { … item.key … }`.
 - **Approach:** record the name in the existing `metadata.rexrap` sidecar, exactly as `control_ids` and
   `type_hints` already are (written in `lower/mod.rs`, read back via `MetadataReader`,
@@ -318,7 +318,7 @@ Kept as a record of what the roadmap no longer covers. Item IDs stay stable, so 
      run across laps pins the bound to a fixed id, so the previous lap leaks back in from the third
      lap onward. Reverting it: branches over-run (4 runs across 3 laps).
 - **Was:** the combination wedged. Before the loop-frame redesign a `parallel` in a loop spun
-  against the inline step limit and reported a `Blocked` run; `packs/sdlc/rexrap/sdlc-deploy.rexrap` nests
+  against the inline step limit and reported a `Blocked` run; `packs/sdlc/rexrap/sdlc-deploy.rrx` nests
   its inner `for` inside a `parallel` branch, so it is on exactly this path.
 
 ### 6.3 Workflow revision history + diff + rollback — shipped 2026-08-05
@@ -379,7 +379,7 @@ Kept as a record of what the roadmap no longer covers. Item IDs stay stable, so 
 - **Runtime/language completeness:** poll/while, race-branch cancellation, plugin FFI cancellation, authorization phase 2.
 - **1.1 Dark mode** — ✅ shipped. `:root[data-theme="dark"]` token set in `styles/base.css:101`, driven by the `displayPreferences` store through `ui/adapters/browser/theme.ts`, with a `system` mode that follows `prefers-color-scheme` live.
 - **1.3 Live expression preview** — ✅ shipped. Backed by a server-side `POST /rexrap/evaluate` (`API_REXRAP_EVALUATE`) called through `core/services/expression.ts`; `ExpressionJsonEditor.vue` renders a debounced preview pane distinguishing a resolved result, an evaluation error, and a reference that is unresolved only because it is absent from the sample.
-- **5.1 Workflow test harness + dry-run simulation** — ✅ shipped. `SimulationEnv` in `runinator-workflows/simulate.rs` with a `MockEnv` (`testkit.rs`, `.rexrapt`-driven) and a `DbSimulationEnv` in `runinator-engine/simulate.rs`. `simulate_workflow` reuses the reducer's own `next_transition` / `evaluate_switch` / `evaluate_toggle` / `evaluate_percentage` / condition evaluators and publishes no `ActionCommand`s. `runinatorctl workflows test <pack>` runs suites offline; `POST /workflows/simulate` backs the command center's **Dry run** modal. Fan-out kinds (loop/parallel/join/map/race/try/subflow) report as unsupported rather than simulating incorrectly.
+- **5.1 Workflow test harness + dry-run simulation** — ✅ shipped. `SimulationEnv` in `runinator-workflows` with a `MockEnv` (`testkit.rs`, driven by `tests` blocks in `.rrx` sources) and a `DbSimulationEnv` in `runinator-engine`. `simulate_workflow` reuses the graph transition evaluators and publishes no effects. `runinatorctl workflows test <pack>` runs suites offline; `POST /workflows/simulate` backs the command center's **Dry run** modal. Fan-out kinds (loop/parallel/join/map/race/try/subflow) report as unsupported rather than simulating incorrectly.
 - **5.5 Run timeline / Gantt visualization** — ✅ shipped. `core/workflow/run-gantt.ts` (`buildGanttLayout`, unit-tested) + `ui/components/shared/RunGantt.vue`: proportional bars on a shared axis, dashed queued/parked segments, retry (`attempt`) badges, critical-path highlight, live count-up. No backend change.
 - **Waker had zero tests** (former 3.1, the survey's "highest residual risk") — ✅ largely closed; see the continuous-track entry 2.1 for what remains.
 - **`runinator-rexrap/src/parser.rs` panic cluster** (half of 2.3/3.3) — ✅ clean, 0 `expect(` calls.
@@ -389,7 +389,7 @@ Kept as a record of what the roadmap no longer covers. Item IDs stay stable, so 
 ## Verification (per area, when implemented)
 
 - **Backend:** `cargo fmt --all --check`, `cargo test -p <crate>`, then `cargo test --workspace` for shared-contract changes. Confirm the local stack still runs: `cargo run -p runinator-supervisor -- start|status|stop`.
-- **REXRAP changes:** round-trip a `.rexrap` through compile→decompile→format and confirm idempotency.
+- **REXRAP changes:** round-trip an `.rrx` source through compile→decompile→format and confirm idempotency.
 - **Frontend:** `npm test`, `npm run build`, `npm run lint` in `runinator-command-center`, plus the Tauri build path; verify keyboard/focus behavior and both themes manually.
 
 ---

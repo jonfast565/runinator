@@ -24,7 +24,7 @@ mod server;
 mod websocket;
 
 // the durable orchestration engine (persistence layer, background loops, result consumer) lives in
-// runinator-engine and is shared with the standalone background worker. these aliases keep the
+// runinator-engine and is shared with the standalone engine worker. these aliases keep the
 // in-crate `crate::repository`/`crate::stability`/… paths pointing at the engine after the extraction.
 pub(crate) use runinator_engine::{repository, stability};
 
@@ -38,8 +38,8 @@ pub(crate) mod handlers {
     pub(crate) use runinator_ws_identity::handlers::{auth, authz, billing, orgs};
     pub(crate) use runinator_ws_runtime::handlers::{
         agents, artifacts, automation, catalog_metadata, debug, function_invocations, health,
-        notifications, observability, provisioning,
-        replicas, runs, schedules, supervisor, triggers, workflow_vm,
+        notifications, observability, provisioning, replicas, runs, schedules, supervisor,
+        triggers, workflow_vm,
     };
 }
 

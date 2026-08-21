@@ -49,6 +49,10 @@ const DIRECT_STORE_ACCESS: &[(&str, &str)] = &[
         "runinator-ws-runtime/health.rs",
         "readiness probe: reads one row to test connectivity, ignores its content",
     ),
+    (
+        "runinator-ws-runtime/workflow_vm.rs",
+        "operator VM reads and effect settlement use durable VM rows, not legacy orchestration records",
+    ),
 ];
 
 /// `db.foo(` and `db.as_ref().foo(` are store calls; `db.as_ref()` and `db.clone()` on their own are

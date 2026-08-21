@@ -276,7 +276,7 @@ pub fn deploy_kubernetes_stack(options: DeployOptions) -> Result<()> {
     }
     for (name, fallback_kind) in [
         ("runinator-ws", "Deployment"),
-        ("runinator-background", "Deployment"),
+        ("runinator-engine-worker", "Deployment"),
         ("runinator-archiver", "Deployment"),
         ("runinator-waker", "Deployment"),
         ("runinator-worker", "StatefulSet"),

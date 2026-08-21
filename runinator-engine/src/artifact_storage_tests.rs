@@ -48,9 +48,7 @@ async fn round_trips_through_the_object_store() {
     .unwrap();
 
     // The key is run-scoped, so one run's artifacts list together.
-    assert!(uri.starts_with(&format!(
-        "blob://{RUN_ARTIFACT_BUCKET}/runs/{run_id}/"
-    )));
+    assert!(uri.starts_with(&format!("blob://{RUN_ARTIFACT_BUCKET}/runs/{run_id}/")));
     assert!(uri.ends_with("-report.txt"));
 
     let content = open_artifact(&fixture.store, &uri, None).await.unwrap();

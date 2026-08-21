@@ -836,7 +836,8 @@ pub fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
         .route(
             runinator_models::api_routes::API_SCHEDULER_WORKFLOW_RUNS_CLAIM,
             post(claim_workflow_runs_for_scheduler::<T>).layer(Extension(pool.clone())),
-        )        .route(
+        )
+        .route(
             runinator_models::api_routes::API_RUNS,
             get(get_runs::<T>).layer(Extension(pool.clone())),
         )
@@ -868,7 +869,8 @@ pub fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
         .route(
             "/scheduler/workflow_runs/{id}/claim/release",
             post(release_workflow_run_claim::<T>).layer(Extension(pool.clone())),
-        )        .route(
+        )
+        .route(
             "/workflow_runs/{id}/cancel",
             post(cancel_workflow_run::<T>).layer(Extension(pool.clone())),
         )

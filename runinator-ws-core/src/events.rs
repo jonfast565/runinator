@@ -14,7 +14,7 @@ pub use runinator_comm::{UiEvent as AppEvent, UiEventKind as AppEventKind};
 /// owns the only writer to that broadcast) and delegates every emit to the shared
 /// [`EnginePublisher`], so ws handlers and the background engine publish onto the broker `events`
 /// channel through one code path. this keeps every ws replica's clients in sync regardless of which
-/// replica (or a standalone background worker) did the work.
+/// replica (or a standalone engine worker) did the work.
 #[derive(Clone)]
 pub struct EventBus {
     local: broadcast::Sender<AppEvent>,

@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use super::*;
+use runinator_database::roles::NewWorkflowVmRun;
 use runinator_models::pipelines::{
     Pipeline, PipelineJoinMode, PipelineLink, PipelineLinkSelector, PipelineMember,
     PipelineMemberAttempt, PipelineMemberAttemptStatus, PipelineMemberFailureMode, PipelineRun,
@@ -9,7 +10,6 @@ use runinator_models::pipelines::{
 use runinator_models::replicas::{TriggerActorType, TriggerSourceKind, WorkflowRunProvenance};
 use runinator_models::schedules::ConcurrencyPolicy;
 use runinator_models::value::Map;
-use runinator_database::roles::NewWorkflowVmRun;
 use uuid::Uuid;
 
 // max hops in a chain of pipeline-to-pipeline triggers before we stop, bounding accidental cycles.
@@ -745,11 +745,15 @@ async fn member_result<T: DatabaseImpl>(
     run: &WorkflowRun,
     attempt: i64,
 ) -> Result<Value, SendableError> {
-    let result = db.fetch_workflow_vm_result(run.id).await?.unwrap_or(Value::Null);
+    let result = db
+        .fetch_workflow_vm_result(run.id)
+        .await?
+        .unwrap_or(Value::Null);
     let mut artifacts = Vec::new();
     for effect in db.fetch_workflow_effects(run.id).await? {
         for output in db.fetch_workflow_effect_output(effect.id).await? {
-            if let runinator_models::workflow_vm::WorkflowEffectOutput::Artifact { artifact } = output.output
+            if let runinator_models::workflow_vm::WorkflowEffectOutput::Artifact { artifact } =
+                output.output
                 && let Ok(artifact) = artifact.decode::<runinator_models::runs::NewRunArtifact>()
             {
                 artifacts.push(runinator_models::json!({
@@ -1178,5 +1182,4 @@ mod tests {
             PipelineMemberFailureMode::Continue
         ));
     }
-
 }

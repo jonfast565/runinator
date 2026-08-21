@@ -1,8 +1,9 @@
-# Workflow VM Phase 14 Readiness
+# Workflow VM Phase 14 Cutover Record
 
-Phase 14 is not safe to start from the current tree. The VM interpreter and SQL records exist, but
-the generic effect path is not yet a complete replacement for the reducer path. Applying the
-destructive migration before the gates below pass would remove tables still used by live code.
+Phase 14 is complete. The destructive VM cutover migration is in place on every supported dialect,
+and live execution uses continuation/effect records rather than the removed reducer, ready-node,
+node-run, invocation-call, and legacy action-dispatch paths. This document records the gates that
+made the cutover safe; it is not a rollout checklist for a fresh deployment.
 
 ## Gaps found
 
@@ -19,8 +20,8 @@ destructive migration before the gates below pass would remove tables still used
 4. VM cancellation, pause/resume/step, replay-from-step, interaction settlement, chunks, artifacts,
    ctl/MCP resources, and command-center run views now use continuation/effect identities. VM
    changes publish coarse workflow-run WebSocket events instead of node-run events.
-5. The engine starts both reducer loops and VM loops. Operational metrics, archiving, CLI/MCP
-   resources, worker leases, and several web handlers still query legacy tables.
+5. The engine starts only VM continuation/effect loops. Operational metrics, archiving, CLI/MCP
+   resources, worker leases, and web handlers use the replacement records.
 
 ## Required implementation order
 
@@ -74,11 +75,11 @@ with that path in Gate E.
 
 ### Gate E: remove legacy runtime
 
-Status: in progress. The engine starts only VM continuation/effect loops; the reducer interpreter,
+Status: complete. The engine starts only VM continuation/effect loops; the reducer interpreter,
 ready-node API, node-run API, and legacy action-dispatch API have been removed. Pipeline
-orchestration now lives with the engine and creates member runs through the VM bootstrap. Legacy
-store contracts, models, worker compatibility code, and their obsolete test suite still need the
-final removal audit before Phase E can be declared complete.
+orchestration lives with the engine and creates member runs through the VM bootstrap. The final
+removal audit completed with legacy names retained only in historical migrations and cutover
+documentation.
 
 - The destructive migration is `20260822000001_destructive_vm_cutover` on every supported
   dialect. It removes legacy execution tables only after all components have been deployed to the
@@ -88,7 +89,7 @@ final removal audit before Phase E can be declared complete.
 
 ## Verification gate
 
-Phase 14 is ready only when a workflow exercising provider actions, timers, an external
+The verification gate was a workflow exercising provider actions, timers, an external
 interaction, child runs, concurrency, pipeline linkage, cancellation, restart/redelivery, chunks,
 and artifacts completes without creating or reading a node-run, ready-node, invocation-call, action
 dispatch, or legacy result row on every supported broker/database combination.

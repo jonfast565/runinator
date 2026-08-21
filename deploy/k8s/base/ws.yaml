@@ -82,9 +82,9 @@ spec:
               value: "512"
             - name: RUNINATOR_REQUEST_TIMEOUT_SECONDS
               value: "30"
-            # the runinator-background Deployment owns the durable orchestration engine, so these
+            # the runinator-engine-worker Deployment owns the durable orchestration engine, so these
             # replicas serve HTTP/WebSocket only. set to "true" to fold the engine back in-process
-            # and scale ws down to zero background pods.
+            # and scale ws down to zero engine-worker pods.
             - name: RUNINATOR_WS_RUN_ENGINE
               value: "false"
             # on-demand node provisioning via the kubernetes backend. requires the ws image built
@@ -102,7 +102,7 @@ spec:
             # Other node kinds are opt-in via RUNINATOR_PROVISIONER_K8S_<KIND>_DEPLOYMENT; until set
             # they show as non-manageable rows in the Node Pools panel.
             # - name: RUNINATOR_PROVISIONER_K8S_BACKGROUND_DEPLOYMENT
-            #   value: "runinator-background"
+            #   value: "runinator-engine-worker"
             # - name: RUNINATOR_PROVISIONER_K8S_ARCHIVER_DEPLOYMENT
             #   value: "runinator-archiver"
             # Optional only for replication-aware Postgres clusters with safe connection routing

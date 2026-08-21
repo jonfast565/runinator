@@ -705,6 +705,11 @@ pub async fn retry_pipeline_run_member<T: DatabaseImpl>(
     member_key: String,
     parameter_override: Value,
 ) -> Result<runinator_models::pipelines::PipelineMemberAttempt, SendableError> {
-    pipeline_orchestration::retry_pipeline_member(db, pipeline_run_id, &member_key, parameter_override)
-        .await
+    pipeline_orchestration::retry_pipeline_member(
+        db,
+        pipeline_run_id,
+        &member_key,
+        parameter_override,
+    )
+    .await
 }

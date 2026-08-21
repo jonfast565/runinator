@@ -36,8 +36,6 @@ fn annotated_paths_are_present() {
         "/workflow_runs/{id}/rename",
         "/rexrap/compile",
         "/credentials",
-        "/webhooks/signal",
-        "/scheduler/action_dispatches/claim",
         "/dead_letters",
         "/audit_log",
     ] {

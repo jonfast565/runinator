@@ -15,10 +15,10 @@
 # Manual local images use the overlay's default dev tag. All rust services share
 # deploy/Dockerfile and are selected with --target; BuildKit caches the common
 # builder stage so the cargo compile runs once for the whole set:
-#   for t in ws background waker worker archiver ctl bootstrap; do
+#   for t in ws engine-worker waker worker archiver ctl bootstrap; do
 #     docker build -f deploy/Dockerfile --target "$t" -t "runinator-$t:dev" .
 #   done
-# (`ctl` produces runinator-ctl:dev; `background` produces runinator-background:dev.)
+# (`ctl` produces runinator-ctl:dev; `engine-worker` produces runinator-engine-worker:dev.)
 
 set -euo pipefail
 

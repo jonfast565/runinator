@@ -82,7 +82,7 @@ landed. The resolved key is therefore also passed to the provider (`ProviderExec
 .idempotency_key`) so providers with native idempotency can dedupe on it upstream.
 
 `.runner("<type>")` requires the action to run on a worker advertising the `runner=<type>` label
-(`RUNINATOR_WORKER_LABELS`). The reducer dispatches it to a live matching worker and parks the node
+(`RUNINATOR_WORKER_LABELS`). The engine dispatches it to a live matching worker and parks the effect
 until one connects, so pair it with `.timeout(...)` to fail the run when no such worker is available.
 Lowers to the action's `required_labels` (`{ "runner": "<type>" }`).
 
@@ -147,8 +147,8 @@ canonical qualified form.
 
 One expression grammar serves every position — action arguments, conditions, `${…}`
 interpolation, and `compute` lines — so a call or lambda is legal anywhere an expression is.
-**Purity, not the grammar, decides where work runs:** a pure expression folds eagerly in the
-reducer, while an *effectful* call (`http_get`, `http_post`, `now`, `uuid`, `env`) is a semantic
+**Purity, not the grammar, decides where work runs:** a pure expression completes in the VM, while an
+*effectful* call (`http_get`, `http_post`, `now`, `uuid`, `env`) is a semantic
 error outside a `compute` block, since it must dispatch to a worker. A `compute { }` block is the
 only place effectful calls and multi-statement programs (`let` / `return` / `goto` / `if`) live;
 it lowers to `std.run` when pure and `std.exec` when effectful.
@@ -252,7 +252,7 @@ builtin intrinsic must be qualified or imported (a bare prefix intrinsic call is
 that names the module to use). The decompiler always emits the canonical `std.<module>.<leaf>` form.
 
 **Source text includes**: `file("scripts/job.py")` reads a UTF-8 text file at compile time,
-relative to the `.rexrap` file's directory, and lowers to a normal string value. Paths must be
+relative to the `.rrx` file's directory, and lowers to a normal string value. Paths must be
 relative and cannot contain `..`, so pack compilation stays deterministic and local to the source
 tree.
 
@@ -321,11 +321,11 @@ The cron expression must be a string literal; the optional `with { … }` object
 Triggers belong to their workflow, so they are carried inside the compiled definition
 (`definition.metadata.triggers`) and **materialized at import**: the web service replaces that
 workflow's pack-managed (`managed_by: rexrap`) cron triggers with the declared set (idempotent on
-re-apply; manually-added triggers are left alone). This works for directory packs, not just `.rexrapm`
-manifests, and they round-trip through decompile.
+re-apply; manually-added triggers are left alone). This works for a single source or a directory
+pack, and they round-trip through decompile.
 
 **Watch guards**: a header `watch <cond> -> <target>` declares a workflow-level cancellation guard.
-The reducer re-evaluates every guard on each drive — *including while the run is parked* on a
+The VM re-evaluates every guard on each drive — *including while the run is parked* on a
 gate/signal/poll — and, the first time a condition holds, jumps the run to the handler node (fires at
 most once per run). This replaces copy-pasted "poll, then bail if state changed" checkpoints with one
 declaration that also catches the change mid-park. Guards lower to `definition.metadata.watches`
@@ -488,22 +488,22 @@ rich rendering).
 ## CLI
 
 ```
-runinatorctl rexrap compile  workflow.rexrap [-o out.json] [--typing strict|permissive]
-runinatorctl rexrap decompile workflow.json [-o out.rexrap] [--explicit]
-runinatorctl rexrap format   workflow.rexrap [-o out.rexrap] [--check]
-runinatorctl rexrap check    workflow.rexrap [--typing strict|permissive]
+runinatorctl rexrap compile  workflow.rrx [-o out.json] [--typing strict|permissive]
+runinatorctl rexrap decompile workflow.json [-o out.rrx] [--explicit]
+runinatorctl rexrap format   workflow.rrx [-o out.rrx] [--check]
+runinatorctl rexrap check    workflow.rrx [--typing strict|permissive]
 ```
 
 REXRAP commands default to `--typing strict`. `--typing permissive` exists only for legacy
 investigation; pack import paths keep strict typing.
 
-`runinatorctl workflows apply` also accepts `.rexrap` files, `.rexrapm` manifests, and
-directories of `.rexrap` files directly alongside JSON packs. The ctl compiles the pack
+`runinatorctl workflows apply` accepts a unified `.rrx` source or a directory of `.rrx`
+sources directly alongside JSON packs. The ctl compiles the pack
 client-side, zips the compiled artifacts (`workflows.json` + optional `secrets.json`), and
 uploads a single `application/zip` to the web service's `/packs/import` endpoint — compilation
 never happens on the backend. With no path argument, `workflows apply` falls back to the
 `~/.runinator/workflows` folder (honoring `RUNINATOR_HOME`) if it exists.
-Directory and `.rexrapm` pack compilation runs in two passes: first it reads every workflow signature,
+Directory pack compilation runs in two passes: first it reads every workflow signature,
 then it compiles each workflow with the full pack-local signature table so subflow calls are typed
 before upload.
 
@@ -513,9 +513,9 @@ unedited one — without clobbering a workflow a user has since edited in the UI
 timestamp is newer). A subflow that targets a workflow neither in the pack nor already stored is
 rejected at apply time.
 
-## Secrets (`.rexraps`)
+## Settings blocks
 
-A `.rexraps` file is the secrets/config companion to `.rexrap`: a flat list of `secret`/`config`
+A unified `.rrx` source can contain a `settings` block with `secret`/`config`
 declarations addressing a dotted `scope.name`, mirroring REXRAP's `secret.*` / `config.*` reference
 surface. Values are pure JSON literals (no references or `${...}` interpolation):
 
@@ -528,13 +528,11 @@ config app.flags     = { beta: true, region: "us" }
 
 A dotted name with more than two segments joins the tail with `/` (so `secret jira.api.key` is the
 secret `key` under scope `jira` named `api/key`). `secret` entries are stored as redacted secrets;
-`config` entries are eagerly-resolvable config values. `parse_secrets_str` lowers `.rexraps` to a
-`SecretBundle`; `secrets_to_rexraps` renders one back. A pack ships secrets as a sibling
-`settings.rexraps` (or `settings.json`) next to a directory pack, or via a `.rexrapm` manifest's
-`settings` path; the ctl folds them into the same compiled pack zip.
+`config` entries are eagerly-resolvable config values. The pack compiler lowers the block to a
+`SecretBundle` and folds it into the same compiled pack zip as workflows and pipelines.
 
-Standalone secret/config import requires a `.rexraps` file (JSON is not accepted):
-`runinatorctl settings import secrets.rexraps`. The MCP `runinator_import_workflow_bundle` tool
+Standalone secret/config import requires an `.rrx` source containing a settings block (JSON is not accepted):
+`runinatorctl settings import secrets.rrx`. The MCP `runinator_import_workflow_bundle` tool
 likewise takes REXRAP `source` text, compiled client-side, rather than a JSON bundle.
 
 ## Decompiler scope

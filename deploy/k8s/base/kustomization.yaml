@@ -15,7 +15,7 @@ resources:
   - rabbitmq.yaml
   - ws-rbac.yaml
   - ws.yaml
-  - background.yaml
+  - engine-worker.yaml
   - archiver.yaml
   - blob.yaml
   - waker.yaml
@@ -28,7 +28,7 @@ resources:
 images:
   - name: runinator-ws
     newTag: dev
-  - name: runinator-background
+  - name: runinator-engine-worker
     newTag: dev
   - name: runinator-waker
     newTag: dev

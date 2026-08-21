@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use clap::Parser;
 use runinator_db_cli::DatabaseBackend;
 
-/// command-line configuration for the standalone background orchestration worker. it mirrors the
+/// command-line configuration for the standalone engine worker. it mirrors the
 /// web service's database and broker options so the same durable engine runs against the same
 /// backends, only without the HTTP surface.
 #[derive(Debug, Parser)]
@@ -55,7 +55,7 @@ pub(crate) struct CliArgs {
     pub broker_result_topic: String,
 
     /// Kafka/RabbitMQ client id used by direct broker backends
-    #[arg(long, default_value = "runinator-background-worker")]
+    #[arg(long, default_value = "runinator-engine-worker")]
     pub broker_client_id: String,
 
     /// Stable instance id used when this worker claims trigger/action-dispatch rows. In k8s this

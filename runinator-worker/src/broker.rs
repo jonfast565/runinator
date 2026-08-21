@@ -1,15 +1,8 @@
 use std::sync::Arc;
 
-#[cfg(feature = "http")]
-use runinator_broker::http::client::HttpBroker;
-#[cfg(feature = "tcp")]
-use runinator_broker::tcp::client::TcpBroker;
-#[cfg(feature = "ws")]
-use runinator_broker::ws::client::WsBroker;
 use runinator_broker::{
-    Broker, BrokerError,
-    adapters::{kafka::KafkaBrokerConfig, rabbitmq::RabbitMqBrokerConfig},
-    in_memory::InMemoryBroker,
+    Broker, BrokerBuildError, BrokerClientConfig, BrokerConsumerProfile, BrokerError,
+    build_broker_client,
 };
 use runinator_models::errors::{RuntimeError, SendableError};
 
@@ -52,78 +45,48 @@ impl config::Config {
 }
 
 pub async fn build_broker(config: &BrokerConfig) -> Result<Arc<dyn Broker>, SendableError> {
-    runinator_broker::ensure_named_workflow_result_channel(
-        &config.broker_backend,
-        &config.broker_result_topic,
+    build_broker_client(
+        &BrokerClientConfig {
+            backend: config.broker_backend.clone(),
+            endpoint: config.broker_endpoint.clone(),
+            action_topic: config.broker_action_topic.clone(),
+            control_topic: config.broker_control_topic.clone(),
+            agent_topic: Some(config.broker_agent_topic.clone()),
+            result_topic: config.broker_result_topic.clone(),
+            client_id: config.broker_client_id.clone(),
+            relay_credential: config.api_key.clone(),
+            wake_topic: None,
+            ingress_topic: None,
+        },
+        BrokerConsumerProfile::Worker,
     )
-    .map_err(|err| broker_error("workflow_results", err))?;
+    .await
+    .map_err(map_build_error)
+}
 
-    let broker: Arc<dyn Broker> = match config.broker_backend.as_str() {
-        #[cfg(feature = "http")]
-        "http" => {
-            let url = reqwest::Url::parse(&config.broker_endpoint)
-                .map_err(|err| crate::errors::BROKER_INVALID_ENDPOINT.error(err))?;
-
-            let client = reqwest::Client::builder()
-                .build()
-                .map_err(|err| crate::errors::BROKER_CLIENT.error(err))?;
-
-            Arc::new(HttpBroker::new(url, client))
+fn map_build_error(err: BrokerBuildError) -> SendableError {
+    match &err {
+        BrokerBuildError::InvalidEndpoint { message, .. } => {
+            crate::errors::BROKER_INVALID_ENDPOINT.error(message)
         }
-        #[cfg(feature = "ws")]
-        "ws" => Arc::new(WsBroker::connect(
-            config.broker_endpoint.clone(),
-            config.api_key.clone(),
-        )),
-        // without the feature WsBroker is a stub whose every operation errors; fail at startup
-        // with a clear message instead of letting the capability check report a misleading one.
-        #[cfg(not(feature = "ws"))]
-        "ws" => {
-            return Err(crate::errors::BROKER_FEATURE_DISABLED
-                .error("'ws' requires building runinator-worker with the `ws` feature"));
+        BrokerBuildError::UnknownBackend(backend) => {
+            crate::errors::BROKER_UNKNOWN_BACKEND.error(backend)
         }
-        "in-memory" => Arc::new(InMemoryBroker::new()),
-        #[cfg(feature = "tcp")]
-        "tcp" => Arc::new(TcpBroker::new(config.broker_endpoint.clone())),
-        "kafka" => runinator_broker::build_kafka_broker(
-            KafkaBrokerConfig::new(config.broker_endpoint.clone())
-                .with_topics(
-                    config.broker_action_topic.clone(),
-                    config.broker_control_topic.clone(),
-                    config.broker_result_topic.clone(),
-                )
-                .with_agent_topic(config.broker_agent_topic.clone())
-                .with_client_id(config.broker_client_id.clone()),
-        )
-        .map_err(|err| crate::errors::BROKER_KAFKA.error(err))?,
-        "rabbitmq" => runinator_broker::build_rabbitmq_broker(
-            RabbitMqBrokerConfig::new(config.broker_endpoint.clone())
-                .with_queues(
-                    config.broker_action_topic.clone(),
-                    config.broker_control_topic.clone(),
-                    config.broker_result_topic.clone(),
-                )
-                .with_agent_queue_prefix(config.broker_agent_topic.clone())
-                .with_client_id(config.broker_client_id.clone()),
-        )
-        .await
-        .map_err(|err| crate::errors::BROKER_RABBITMQ.error(err))?,
-        other => {
-            return Err(crate::errors::BROKER_UNKNOWN_BACKEND.error(format!("'{other}'")));
+        BrokerBuildError::Backend { backend, message } if backend == "kafka" => {
+            crate::errors::BROKER_KAFKA.error(message)
         }
-    };
-
-    runinator_broker::ensure_workflow_result_channels_supported(
-        &config.broker_backend,
-        broker.as_ref(),
-    )
-    .map_err(|err| broker_error("workflow_results", err))?;
-
-    // wrap the concrete backend so every broker operation emits otel metrics tagged with the backend.
-    Ok(runinator_broker::instrument(
-        broker,
-        config.broker_backend.clone(),
-    ))
+        BrokerBuildError::Backend { backend, message } if backend == "rabbitmq" => {
+            crate::errors::BROKER_RABBITMQ.error(message)
+        }
+        BrokerBuildError::Backend { message, .. } if message.contains("feature is not enabled") => {
+            crate::errors::BROKER_FEATURE_DISABLED.error(message)
+        }
+        BrokerBuildError::Capability { message, .. } => broker_error(
+            "workflow_results",
+            BrokerError::WorkflowResultsUnsupported(message.clone()),
+        ),
+        _ => Box::new(err),
+    }
 }
 
 pub(crate) fn broker_error(context: &'static str, err: BrokerError) -> SendableError {

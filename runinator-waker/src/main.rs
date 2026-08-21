@@ -1,29 +1,16 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-#[cfg(feature = "http")]
-use reqwest::Url;
 use runinator_api::{AsyncApiClient, ReplicaClient, ReplicaServiceConfig, StaticLocator};
-#[cfg(feature = "http")]
-use runinator_broker::http::client::HttpBroker;
-#[cfg(feature = "tcp")]
-use runinator_broker::tcp::client::TcpBroker;
-use runinator_broker::{
-    Broker,
-    adapters::{kafka::KafkaBrokerConfig, rabbitmq::RabbitMqBrokerConfig},
-    in_memory::InMemoryBroker,
-};
 use runinator_models::errors::SendableError;
 use runinator_models::replicas::ReplicaKind;
+use runinator_service_bootstrap::{
+    ApiClientConfig, BrokerClientConfig, BrokerConsumerProfile, ServerResources,
+};
 use runinator_utilities::resource_telemetry::{TelemetryCollector, attributes_with_host_metadata};
-use tokio::sync::Notify;
 use tracing::{error, info};
 
-use runinator_utilities::startup;
-use runinator_waker::{
-    config::{Config, parse_config},
-    waker_loop,
-};
+use runinator_waker::{config::parse_config, waker_loop};
 
 mod service;
 use service::WakerService;
@@ -34,20 +21,36 @@ async fn main() -> Result<(), SendableError> {
 }
 
 async fn run_process() -> Result<(), SendableError> {
-    // held for the process lifetime so otel signals flush on shutdown.
-    let _telemetry = startup::startup("Runinator Waker")?;
-
     info!("parsing waker config");
     let config = parse_config()?;
     info!(waker_id = %config.waker_id, "waker starting");
 
-    let broker = build_broker(&config).await?;
-    let notify = Arc::new(Notify::new());
-    let api_client = AsyncApiClient::with_credentials(
-        StaticLocator::new(config.api_base_url.clone()),
-        config.api_key.clone(),
-    )
-    .map_err(|err| runinator_waker::errors::BROKER_CLIENT.error(err))?;
+    let resources = ServerResources::builder("Runinator Waker")
+        .broker(
+            BrokerClientConfig {
+                backend: config.broker_backend.clone(),
+                endpoint: config.broker_endpoint.clone(),
+                action_topic: config.broker_action_topic.clone(),
+                control_topic: config.broker_control_topic.clone(),
+                agent_topic: None,
+                result_topic: config.broker_result_topic.clone(),
+                client_id: config.broker_client_id.clone(),
+                relay_credential: None,
+                wake_topic: Some(config.broker_wake_topic.clone()),
+                ingress_topic: Some(config.broker_ingress_topic.clone()),
+            },
+            BrokerConsumerProfile::Waker,
+        )
+        .api(ApiClientConfig {
+            base_url: config.api_base_url.clone(),
+            api_key: config.api_key.clone(),
+        })
+        .build()
+        .await?;
+    let shutdown = resources.process().shutdown();
+    let notify = shutdown.notifier();
+    let broker = resources.broker().expect("waker requested broker").clone();
+    let api_client = resources.api().expect("waker requested api client");
     let service_config = ReplicaServiceConfig {
         replica_type: ReplicaKind::Waker,
         instance_id: config.waker_id.clone(),
@@ -68,8 +71,7 @@ async fn run_process() -> Result<(), SendableError> {
     // interruptible so ctrl_c during a retry window still shuts the process down cleanly.
     let replica_client = tokio::select! {
         result = register_waker_replica_with_retry(&api_client, &service_config) => result?,
-        signal = tokio::signal::ctrl_c() => {
-            signal.map_err(|err| runinator_waker::errors::SIGNAL_CTRL_C.error(err))?;
+        _ = shutdown.cancelled() => {
             info!("shutdown signal received before waker registration completed, shutting down");
             return Ok(());
         }
@@ -86,9 +88,7 @@ async fn run_process() -> Result<(), SendableError> {
         waker_loop(loop_broker, loop_notify, &loop_config).await;
     });
 
-    tokio::signal::ctrl_c()
-        .await
-        .map_err(|err| runinator_waker::errors::SIGNAL_CTRL_C.error(err))?;
+    shutdown.cancelled().await;
     info!("received shutdown signal, shutting down");
     notify.notify_waiters();
     if let Err(err) = handle.await {
@@ -160,57 +160,4 @@ async fn register_waker_replica_with_retry(
 fn advertise_host(value: &str) -> Option<String> {
     let trimmed = value.trim();
     (!trimmed.is_empty()).then(|| trimmed.to_string())
-}
-
-async fn build_broker(config: &Config) -> Result<Arc<dyn Broker>, SendableError> {
-    let broker: Arc<dyn Broker> = match config.broker_backend.as_str() {
-        #[cfg(feature = "http")]
-        "http" => {
-            let url = Url::parse(&config.broker_endpoint)
-                .map_err(|err| runinator_waker::errors::BROKER_INVALID_ENDPOINT.error(err))?;
-            let client = reqwest::Client::builder()
-                .build()
-                .map_err(|err| runinator_waker::errors::BROKER_CLIENT.error(err))?;
-            Ok(Arc::new(HttpBroker::new(url, client)) as Arc<dyn Broker>)
-        }
-        "in-memory" => Ok(Arc::new(InMemoryBroker::new()) as Arc<dyn Broker>),
-        #[cfg(feature = "tcp")]
-        "tcp" => Ok(Arc::new(TcpBroker::new(config.broker_endpoint.clone())) as Arc<dyn Broker>),
-        "kafka" => runinator_broker::build_kafka_broker(
-            KafkaBrokerConfig::new(config.broker_endpoint.clone())
-                .with_topics(
-                    config.broker_action_topic.clone(),
-                    config.broker_control_topic.clone(),
-                    config.broker_result_topic.clone(),
-                )
-                .with_orchestration_topics(
-                    config.broker_wake_topic.clone(),
-                    config.broker_ingress_topic.clone(),
-                )
-                .with_client_id(config.broker_client_id.clone()),
-        )
-        .map_err(|err| runinator_waker::errors::BROKER_KAFKA.error(err)),
-        "rabbitmq" => runinator_broker::build_rabbitmq_broker(
-            RabbitMqBrokerConfig::new(config.broker_endpoint.clone())
-                .with_queues(
-                    config.broker_action_topic.clone(),
-                    config.broker_control_topic.clone(),
-                    config.broker_result_topic.clone(),
-                )
-                .with_orchestration_queues(
-                    config.broker_wake_topic.clone(),
-                    config.broker_ingress_topic.clone(),
-                )
-                .with_client_id(config.broker_client_id.clone()),
-        )
-        .await
-        .map_err(|err| runinator_waker::errors::BROKER_RABBITMQ.error(err)),
-        other => Err(runinator_waker::errors::BROKER_UNKNOWN_BACKEND.error(format!("'{other}'"))),
-    }?;
-
-    // wrap the concrete backend so every broker operation emits otel metrics tagged with the backend.
-    Ok(runinator_broker::instrument(
-        broker,
-        config.broker_backend.clone(),
-    ))
 }

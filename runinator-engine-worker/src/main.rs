@@ -1,9 +1,9 @@
-//! standalone durable orchestration engine.
+//! standalone durable orchestration engine worker.
 //!
 //! runs the same `runinator_engine::run_background_engine` the web service can embed in-process,
 //! but as a separately deployable, horizontally-scalable process: it opens its own database pool and
-//! broker connection, registers as a `background` replica, and drives the reducer, wake/trigger/
-//! action/ingress loops, result consumer, and maintenance backstops. deploy it alongside
+//! broker connection, registers as a `background` replica, and drives the workflow VM/effect
+//! loops, trigger and agent-directive publishers, and maintenance backstops. deploy it alongside
 //! `runinator-ws` started with `RUNINATOR_WS_RUN_ENGINE=false` so HTTP and engine tiers scale
 //! independently; multiple instances run active/active via the engine's durable claim/lease
 //! coordination.
@@ -16,17 +16,8 @@ use std::time::Duration;
 
 use clap::Parser;
 use log::info;
-#[cfg(feature = "http")]
-use runinator_broker::http::client::HttpBroker;
-#[cfg(feature = "tcp")]
-use runinator_broker::tcp::client::TcpBroker;
-use runinator_broker::{
-    Broker,
-    adapters::{kafka::KafkaBrokerConfig, rabbitmq::RabbitMqBrokerConfig},
-    in_memory::InMemoryBroker,
-};
+use runinator_broker::Broker;
 use runinator_database::interfaces::DatabaseImpl;
-use runinator_db_cli::{DatabaseBackend, dispatch_database};
 use runinator_engine::{EngineConfig, EnginePublisher, run_background_engine};
 use runinator_models::auth::AuthContext;
 use runinator_models::errors::SendableError;
@@ -34,18 +25,20 @@ use runinator_models::replicas::{
     ReplicaHeartbeatRequest, ReplicaKind, ReplicaRegistrationRequest,
 };
 use runinator_models::value::Value;
+use runinator_service_bootstrap::{
+    BrokerClientConfig, BrokerConsumerProfile, DatabaseRequest, ServerResources,
+    dispatch_server_database,
+};
 use tokio::sync::Notify;
 use uuid::Uuid;
 
 use crate::config::CliArgs;
-#[cfg(feature = "sqlite")]
-use runinator_utilities::app_data;
-use runinator_utilities::{resource_telemetry, startup};
-use service::BackgroundWorkerService;
+use runinator_utilities::resource_telemetry;
+use service::EngineWorkerService;
 
 #[tokio::main]
 async fn main() -> Result<(), SendableError> {
-    BackgroundWorkerService::new().run().await
+    EngineWorkerService::new().run().await
 }
 
 async fn run_process() -> Result<(), SendableError> {
@@ -54,21 +47,7 @@ async fn run_process() -> Result<(), SendableError> {
     // installed, which is fine.
     let _ = rustls::crypto::ring::default_provider().install_default();
 
-    // held for the process lifetime so otel signals flush on shutdown.
-    let _telemetry = startup::startup("Runinator Background Worker")?;
-
     let args = CliArgs::parse();
-
-    let notify = Arc::new(Notify::new());
-    let shutdown_listener = notify.clone();
-    tokio::spawn(async move {
-        if let Err(err) = tokio::signal::ctrl_c().await {
-            log::error!("Failed to listen for shutdown signal: {}", err);
-            return;
-        }
-        info!("Shutdown signal received, stopping background worker...");
-        shutdown_listener.notify_waiters();
-    });
 
     let CliArgs {
         database,
@@ -84,7 +63,6 @@ async fn run_process() -> Result<(), SendableError> {
         instance_id,
         max_concurrent_ingress,
     } = args;
-    let _ = (&sqlite_path, &database_url);
 
     // a stable per-process id used when claiming trigger/action-dispatch rows; k8s passes the pod name.
     let instance = instance_id
@@ -92,72 +70,62 @@ async fn run_process() -> Result<(), SendableError> {
             let trimmed = value.trim();
             (!trimmed.is_empty()).then(|| trimmed.to_string())
         })
-        .unwrap_or_else(|| format!("runinator-background-worker-{}", Uuid::new_v4()));
+        .unwrap_or_else(|| format!("runinator-engine-worker-{}", Uuid::new_v4()));
 
     // kept for the advertised attributes since the broker configs consume the original below.
     let broker_client_id_display = broker_client_id.clone();
 
-    let broker = build_broker(
-        &broker_backend,
-        &broker_endpoint,
-        KafkaBrokerConfig::new(broker_endpoint.clone())
-            .with_topics(
-                broker_action_topic.clone(),
-                broker_control_topic.clone(),
-                broker_result_topic.clone(),
-            )
-            .with_agent_topic(broker_agent_topic.clone())
-            .with_client_id(broker_client_id.clone()),
-        RabbitMqBrokerConfig::new(broker_endpoint.clone())
-            .with_queues(
-                broker_action_topic,
-                broker_control_topic,
-                broker_result_topic,
-            )
-            .with_agent_queue_prefix(broker_agent_topic)
-            .with_client_id(broker_client_id),
-    )
-    .await?;
+    let resources = ServerResources::builder("Runinator Engine Worker")
+        .broker(
+            BrokerClientConfig {
+                backend: broker_backend.clone(),
+                endpoint: broker_endpoint,
+                action_topic: broker_action_topic,
+                control_topic: broker_control_topic,
+                agent_topic: Some(broker_agent_topic),
+                result_topic: broker_result_topic,
+                client_id: broker_client_id,
+                relay_credential: None,
+                wake_topic: None,
+                ingress_topic: None,
+            },
+            BrokerConsumerProfile::WorkflowRuntime,
+        )
+        .database(DatabaseRequest {
+            backend: database,
+            sqlite_path,
+            database_url,
+        })
+        .build()
+        .await?;
+    let notify = resources.process().shutdown().notifier();
+    let broker = resources
+        .broker()
+        .expect("engine worker requested broker")
+        .clone();
+    let database = resources
+        .database()
+        .expect("engine worker requested database");
 
-    let database_backend = match &database {
-        DatabaseBackend::Sqlite => "sqlite",
-        DatabaseBackend::Postgres => "postgres",
-        DatabaseBackend::Mysql => "mysql",
-    };
+    let database_backend = database.backend().label();
     // advertised so this worker's replica record has backend parity with ws/worker/waker.
     let attributes = runinator_models::json!({
         "broker_backend": broker_backend,
         "broker_client_id": broker_client_id_display,
         "database_backend": database_backend,
     });
-    info!("Starting Runinator background worker with {database_backend} database as {instance}");
-    dispatch_database!(
-        database,
-        sqlite: {
-            let sqlite_path = sqlite_path.unwrap_or(app_data::default_sqlite_path()?);
-            if let Some(parent) = sqlite_path.parent() {
-                tokio::fs::create_dir_all(parent).await?;
-            }
-            info!("SQLite database file at {}", sqlite_path.display());
-            sqlite_path.to_string_lossy().into_owned()
-        },
-        url: database_url
-            .clone()
-            .ok_or_else(|| -> SendableError {
-                "--database-url must be provided when --database=postgres/mysql/mariadb".into()
-            })?,
-        |db| {
-            run_engine_with_replica(
-                db,
-                broker.clone(),
-                instance.clone(),
-                attributes.clone(),
-                max_concurrent_ingress,
-                notify.clone(),
-            )
-            .await?;
-        }
-    );
+    info!("Starting Runinator engine worker with {database_backend} database as {instance}");
+    dispatch_server_database!(database, |db| {
+        run_engine_with_replica(
+            db,
+            broker.clone(),
+            instance.clone(),
+            attributes.clone(),
+            max_concurrent_ingress,
+            notify.clone(),
+        )
+        .await?;
+    });
 
     Ok(())
 }
@@ -252,50 +220,4 @@ async fn run_engine_with_replica<T: DatabaseImpl>(
     .await;
     heartbeat.abort();
     result
-}
-
-async fn build_broker(
-    backend: &str,
-    endpoint: &str,
-    kafka_config: KafkaBrokerConfig,
-    rabbitmq_config: RabbitMqBrokerConfig,
-) -> Result<Arc<dyn Broker>, SendableError> {
-    let _ = endpoint;
-    let result_channel = match backend {
-        "kafka" => kafka_config.result_topic.as_str(),
-        "rabbitmq" => rabbitmq_config.result_queue.as_str(),
-        _ => "",
-    };
-    runinator_broker::ensure_named_workflow_result_channel(backend, result_channel)
-        .map_err(|err| -> SendableError { err.into() })?;
-
-    let broker: Arc<dyn Broker> = match backend {
-        #[cfg(feature = "http")]
-        "http" => {
-            let url = reqwest::Url::parse(endpoint).map_err(|err| -> SendableError {
-                format!("invalid broker endpoint '{endpoint}': {err}").into()
-            })?;
-            let client = reqwest::Client::builder()
-                .build()
-                .map_err(|err| -> SendableError { err.to_string().into() })?;
-            Arc::new(HttpBroker::new(url, client))
-        }
-        "in-memory" => Arc::new(InMemoryBroker::new()),
-        #[cfg(feature = "tcp")]
-        "tcp" => Arc::new(TcpBroker::new(endpoint.to_string())),
-        "kafka" => runinator_broker::build_kafka_broker(kafka_config)
-            .map_err(|err| -> SendableError { err.into() })?,
-        "rabbitmq" => runinator_broker::build_rabbitmq_broker(rabbitmq_config)
-            .await
-            .map_err(|err| -> SendableError { err.into() })?,
-        other => {
-            return Err(format!("unknown broker backend '{other}'").into());
-        }
-    };
-
-    runinator_broker::ensure_workflow_result_channels_supported(backend, broker.as_ref())
-        .map_err(|err| -> SendableError { err.into() })?;
-
-    // wrap the concrete backend so every broker operation emits otel metrics tagged with the backend.
-    Ok(runinator_broker::instrument(broker, backend.to_string()))
 }

@@ -99,8 +99,8 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 40 },
       "targets": [
-        { "refId": "A", "expr": "sum by (service) ({__name__=~\"runinator_resource_host_cpu_percent.*\", service=~\"Runinator (Worker|Waker|Background Worker|Archiver)\"})", "legendFormat": "{{service}} host" },
-        { "refId": "B", "expr": "sum by (service) ({__name__=~\"runinator_resource_process_cpu_percent.*\", service=~\"Runinator (Worker|Waker|Background Worker|Archiver)\"})", "legendFormat": "{{service}} process" }
+        { "refId": "A", "expr": "sum by (service) ({__name__=~\"runinator_resource_host_cpu_percent.*\", service=~\"Runinator (Worker|Waker|Engine Worker|Archiver)\"})", "legendFormat": "{{service}} host" },
+        { "refId": "B", "expr": "sum by (service) ({__name__=~\"runinator_resource_process_cpu_percent.*\", service=~\"Runinator (Worker|Waker|Engine Worker|Archiver)\"})", "legendFormat": "{{service}} process" }
       ]
     },
     {
@@ -110,8 +110,8 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 40 },
       "targets": [
-        { "refId": "A", "expr": "sum by (service) ({__name__=~\"runinator_resource_host_memory_used_bytes.*\", service=~\"Runinator (Worker|Waker|Background Worker|Archiver)\"})", "legendFormat": "{{service}} host" },
-        { "refId": "B", "expr": "sum by (service) ({__name__=~\"runinator_resource_process_memory_used_bytes.*\", service=~\"Runinator (Worker|Waker|Background Worker|Archiver)\"})", "legendFormat": "{{service}} process" }
+        { "refId": "A", "expr": "sum by (service) ({__name__=~\"runinator_resource_host_memory_used_bytes.*\", service=~\"Runinator (Worker|Waker|Engine Worker|Archiver)\"})", "legendFormat": "{{service}} host" },
+        { "refId": "B", "expr": "sum by (service) ({__name__=~\"runinator_resource_process_memory_used_bytes.*\", service=~\"Runinator (Worker|Waker|Engine Worker|Archiver)\"})", "legendFormat": "{{service}} process" }
       ]
     },
     {
@@ -121,8 +121,8 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 48 },
       "targets": [
-        { "refId": "A", "expr": "max by (service) ({__name__=~\"runinator_resource_host_memory_percent.*\", service=~\"Runinator (Worker|Waker|Background Worker|Archiver)\"})", "legendFormat": "{{service}} memory %" },
-        { "refId": "B", "expr": "max by (service) ({__name__=~\"runinator_resource_load_(1|5|15).*\", service=~\"Runinator (Worker|Waker|Background Worker|Archiver)\"})", "legendFormat": "{{service}} {{__name__}}" }
+        { "refId": "A", "expr": "max by (service) ({__name__=~\"runinator_resource_host_memory_percent.*\", service=~\"Runinator (Worker|Waker|Engine Worker|Archiver)\"})", "legendFormat": "{{service}} memory %" },
+        { "refId": "B", "expr": "max by (service) ({__name__=~\"runinator_resource_load_(1|5|15).*\", service=~\"Runinator (Worker|Waker|Engine Worker|Archiver)\"})", "legendFormat": "{{service}} {{__name__}}" }
       ]
     },
     {
@@ -132,7 +132,7 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 48 },
       "targets": [
-        { "refId": "A", "expr": "sum by (service) ({__name__=~\"runinator_resource_network_(receive|transmit)_bytes_per_second.*\", service=~\"Runinator (Worker|Waker|Background Worker|Archiver)\"})", "legendFormat": "{{service}} {{__name__}}" }
+        { "refId": "A", "expr": "sum by (service) ({__name__=~\"runinator_resource_network_(receive|transmit)_bytes_per_second.*\", service=~\"Runinator (Worker|Waker|Engine Worker|Archiver)\"})", "legendFormat": "{{service}} {{__name__}}" }
       ]
     },
     {
@@ -142,8 +142,8 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 56 },
       "targets": [
-        { "refId": "A", "expr": "max by (service, mount_point) ({__name__=~\"runinator_resource_disk_(total|available)_bytes.*\", service=~\"Runinator (Worker|Waker|Background Worker|Archiver)\"})", "legendFormat": "{{service}} {{mount_point}} {{__name__}}" },
-        { "refId": "B", "expr": "sum by (service, mount_point) ({__name__=~\"runinator_resource_disk_(read|written)_bytes_per_second.*\", service=~\"Runinator (Worker|Waker|Background Worker|Archiver)\"})", "legendFormat": "{{service}} {{mount_point}} {{__name__}}" }
+        { "refId": "A", "expr": "max by (service, mount_point) ({__name__=~\"runinator_resource_disk_(total|available)_bytes.*\", service=~\"Runinator (Worker|Waker|Engine Worker|Archiver)\"})", "legendFormat": "{{service}} {{mount_point}} {{__name__}}" },
+        { "refId": "B", "expr": "sum by (service, mount_point) ({__name__=~\"runinator_resource_disk_(read|written)_bytes_per_second.*\", service=~\"Runinator (Worker|Waker|Engine Worker|Archiver)\"})", "legendFormat": "{{service}} {{mount_point}} {{__name__}}" }
       ]
     },
     {
@@ -153,8 +153,8 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 56 },
       "targets": [
-        { "refId": "A", "expr": "max by (service, gpu) ({__name__=~\"runinator_resource_gpu_utilization_percent.*\", service=~\"Runinator (Worker|Waker|Background Worker|Archiver)\"})", "legendFormat": "{{service}} {{gpu}} utilization" },
-        { "refId": "B", "expr": "max by (service, gpu) ({__name__=~\"runinator_resource_gpu_memory_(used|total)_bytes.*\", service=~\"Runinator (Worker|Waker|Background Worker|Archiver)\"})", "legendFormat": "{{service}} {{gpu}} {{__name__}}" }
+        { "refId": "A", "expr": "max by (service, gpu) ({__name__=~\"runinator_resource_gpu_utilization_percent.*\", service=~\"Runinator (Worker|Waker|Engine Worker|Archiver)\"})", "legendFormat": "{{service}} {{gpu}} utilization" },
+        { "refId": "B", "expr": "max by (service, gpu) ({__name__=~\"runinator_resource_gpu_memory_(used|total)_bytes.*\", service=~\"Runinator (Worker|Waker|Engine Worker|Archiver)\"})", "legendFormat": "{{service}} {{gpu}} {{__name__}}" }
       ]
     }
   ]

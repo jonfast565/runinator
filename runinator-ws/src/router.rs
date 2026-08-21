@@ -19,10 +19,10 @@ use tower_http::cors::{Any, CorsLayer};
 use crate::auth::{AuthConfig, AuthState, auth_middleware};
 use crate::events::EventSender;
 use crate::handlers::{
-    agents, artifacts, auth, authz, automation, billing, catalog,
-    catalog_metadata, console, credentials, debug, function_invocations, functions, health,
-    notifications, observability, orgs, packs, pipelines, providers, provisioning,
-    replicas, rexrap, runs, schedules, supervisor, triggers, workflow_vm, workflows,
+    agents, artifacts, auth, authz, automation, billing, catalog, catalog_metadata, console,
+    credentials, debug, function_invocations, functions, health, notifications, observability,
+    orgs, packs, pipelines, providers, provisioning, replicas, rexrap, runs, schedules, supervisor,
+    triggers, workflow_vm, workflows,
 };
 use crate::models::{ApiError, ApiResponse};
 use crate::overload::{OverloadConfig, apply_overload_protection};

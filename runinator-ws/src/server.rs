@@ -40,6 +40,7 @@ pub async fn run_webserver<T: DatabaseImpl>(
     notify: Arc<Notify>,
     port: u16,
     broker: Arc<dyn Broker>,
+    blobs: Arc<dyn runinator_blob::BlobStore>,
     advertisement: ReplicaAdvertisement,
     auth: crate::auth::AuthOptions,
     rate_limit: crate::rate_limit::RateLimitConfig,
@@ -48,11 +49,6 @@ pub async fn run_webserver<T: DatabaseImpl>(
     max_concurrent_ingress: usize,
 ) -> Result<(), SendableError> {
     crate::stability::init_metrics();
-    // artifact bytes live in the object store, which every replica must reach. without a configured
-    // endpoint this falls back to a local directory — fine for one node, and the reason a
-    // multi-replica deployment must set `RUNINATOR_BLOB_ENDPOINT`.
-    let blobs = runinator_blob::from_env().await?;
-    runinator_blob::ensure_buckets(&blobs).await?;
     info!("artifact storage backend: {}", blobs.backend());
     seed_builtin_catalog(pool.as_ref()).await?;
     let jwt_secret = load_jwt_secret(pool.as_ref()).await?;
@@ -150,14 +146,14 @@ pub async fn run_webserver<T: DatabaseImpl>(
     let engine_publisher = EnginePublisher::new(broker.clone());
     let bus = EventBus::from_publisher(events_tx.clone(), engine_publisher.clone());
     // every replica consumes the broker fan-out events channel so its WebSocket clients see events
-    // emitted by any replica or a standalone background worker, regardless of who did the work.
+    // emitted by any replica or a standalone engine worker, regardless of who did the work.
     background.spawn(run_event_consumer(
         broker.clone(),
         events_tx.clone(),
         instance.clone(),
         notify.clone(),
     ));
-    // run the durable orchestration engine in-process unless a standalone background worker owns it.
+    // run the durable orchestration engine in-process unless a standalone engine worker owns it.
     // the engine publishes UI events onto the broker; this replica's event consumer above fans them
     // out to WebSocket clients either way.
     if run_engine {
@@ -187,7 +183,7 @@ pub async fn run_webserver<T: DatabaseImpl>(
     } else {
         info!(
             "background orchestration engine is DISABLED in-process; a standalone \
-             runinator-background-worker must run it"
+             runinator-engine-worker must run it"
         );
     }
     if rate_limit.enabled {

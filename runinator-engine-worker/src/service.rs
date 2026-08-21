@@ -2,9 +2,9 @@ use runinator_models::errors::SendableError;
 
 /// process-level facade for the standalone durable orchestration engine.
 #[derive(Default)]
-pub struct BackgroundWorkerService;
+pub struct EngineWorkerService;
 
-impl BackgroundWorkerService {
+impl EngineWorkerService {
     pub fn new() -> Self {
         Self
     }

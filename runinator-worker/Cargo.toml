@@ -27,6 +27,7 @@ runinator-utilities = { path = "../runinator-utilities" }
 opentelemetry = "0.32"
 runinator-api = { path = "../runinator-api" }
 runinator-broker = { path = "../runinator-broker", default-features = false }
+runinator-service-bootstrap = { path = "../runinator-service-bootstrap", default-features = false }
 runinator-provider-catalog = { path = "../runinator-provider-catalog", default-features = false }
 
 [features]

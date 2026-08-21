@@ -1,6 +1,6 @@
 # runinator
 
-Runinator is a Rust workspace for scheduling and executing tasks across a small local/distributed runtime. The local development path uses `runinator-supervisor` to run the broker, web service, waker, and worker, plus a one-shot `runinatorctl` pack import.
+Runinator is a Rust workspace for scheduling and executing tasks across a small local/distributed runtime. The local development path uses `runinator-supervisor` to run the broker, web service (which embeds the engine), waker, and worker, plus a one-shot `runinatorctl` pack import.
 
 ## Prerequisites
 
@@ -84,7 +84,7 @@ bash scripts/run-local.sh stop
 bash scripts/run-local.sh restart
 ```
 
-The supervisor runs `runinatorctl workflows apply` once per pack configured in `runinator-supervisor.json`, so those workflow packs are pushed into the API after the web service starts. The checked-in local config imports all three packs under `packs/` — `packs/sdlc/sdlc.rexrapm`, `packs/hello-world/hello-world.rexrapm`, and the `packs/creds-sync` directory — compiling the referenced `.rexrap` files before sending each bundle to the API. The `creds-sync` workflows require a `runner=creds-sync` worker, so on the local stack their scheduled runs park then fail unless you start such a worker (see `packs/creds-sync/README.md`). It also advertises `127.0.0.1` for the web service, waker, and worker, and gives the waker and worker stable local instance ids so the replicas list shows host/IP/version data instead of blank fields on restart. Built-in provider metadata is seeded by the web service from the provider catalog on startup. If the stack is already running and you want another sync, run:
+The supervisor runs `runinatorctl workflows apply` once per pack configured in `runinator-supervisor.json`, so those workflow packs are pushed into the API after the web service starts. The checked-in local config imports all three packs under `packs/` — `packs/sdlc/sdlc.rrx`, `packs/hello-world/hello-world.rrx`, and the `packs/creds-sync` directory — compiling the referenced `.rrx` files before sending each bundle to the API. The `creds-sync` workflows require a `runner=creds-sync` worker, so on the local stack their scheduled runs park then fail unless you start such a worker (see `packs/creds-sync/README.md`). It also advertises `127.0.0.1` for the web service, waker, and worker, and gives the waker and worker stable local instance ids so the replicas list shows host/IP/version data instead of blank fields on restart. Built-in provider metadata is seeded by the web service from the provider catalog on startup. If the stack is already running and you want another sync, run:
 
 ```bash
 bash scripts/run-local.sh sync
@@ -187,7 +187,7 @@ workflow action pickup.
 
 ### On-demand nodes
 
-Nodes of every kind can be spun up and scaled down on demand through the web
+Provisionable node kinds can be spun up and scaled down on demand through the web
 service's pluggable provisioner. Two backends are available: `supervisor` (adds
 dynamic local processes through the running `runinator-supervisor` control queue)
 and `kubernetes` (scales the backing Deployments via kube-rs; the ws image
@@ -195,13 +195,13 @@ must be built with `--features kubernetes` and the `runinator-ws-provisioner`
 RBAC role applied). Enable a backend with `RUNINATOR_PROVISIONER_SUPERVISOR_ENABLED`
 or `RUNINATOR_PROVISIONER_K8S_ENABLED`.
 
-Each backend is configured per node kind, and the Node Pools panel lists **every**
-kind (`worker`, `waker`, `webservice`, `background`, `archiver`, `postgres`);
+Each backend is configured per node kind, and the Node Pools panel lists the
+provisionable kinds (`worker`, `waker`, `webservice`, and `postgres`);
 kinds without a template/deployment on a backend show as non-manageable rows so a
 newly added kind is always visible and becomes scalable the moment it is wired up.
 The supervisor backend reads a spawn template per kind from
 `RUNINATOR_PROVISIONER_SUPERVISOR_<KIND>` (e.g. `..._WORKER`, `..._WAKER`,
-`..._BACKGROUND`; JSON `{ "command", "args", "env", "cwd" }`). The kubernetes
+JSON `{ "command", "args", "env", "cwd" }`). The kubernetes
 backend reads a deployment name per kind from
 `RUNINATOR_PROVISIONER_K8S_<KIND>_DEPLOYMENT` (`worker`/`waker`/`ws` default to
 `runinator-worker`/`-waker`/`-ws`, other kinds are opt-in).
@@ -233,23 +233,26 @@ The engine publishes scheduled work on the `wake` channel, and the
 node is due and then publishes a `drive` on the `ingress` channel for the
 engine to consume.
 
-The durable orchestration engine — the graph runtime plus the wake/trigger/action/
-ingress loops, the result consumer, and the replica/ready-node/usage maintenance
-backstops — lives in the `runinator-engine` library crate and can run in either
+The durable orchestration engine — the workflow VM driver and effect dispatcher,
+the effect-result consumer and infrastructure-effect host, trigger and agent-directive
+publishers, plus replica/usage/metrics/notification maintenance — lives in the
+`runinator-engine` library crate. `runinator-engine-worker` is only an
+optional host for that engine; it does not execute provider actions and it no
+longer runs the removed legacy reducer/ingress loops. The engine can run in either
 of two topologies. By default `runinator-ws` embeds it in-process
 (`RUNINATOR_WS_RUN_ENGINE=true`), so the single-process local/dev/supervisor
-stack runs everything as-is. Setting `RUNINATOR_WS_RUN_ENGINE=false` makes ws
-serve HTTP/WebSocket only and offloads the engine to one or more standalone
-`runinator-background-worker` processes that talk to the same database and broker
+stack needs no engine-worker process. Setting `RUNINATOR_WS_RUN_ENGINE=false`
+makes ws serve HTTP/WebSocket only and offloads the engine to one or more standalone
+`runinator-engine-worker` processes that talk to the same database and broker
 directly (not the ws HTTP API), so HTTP replicas and engine replicas scale
 independently. The engine is multi-replica safe: durable claims/leases
 (`FOR UPDATE SKIP LOCKED`), shared-group result/ingress consumers, broker-deduped
 wakes, and an idempotent per-window usage sampler let any number of
-`runinator-background-worker` (and/or engine-embedding ws) replicas run
-active/active. Background workers register as `background` replicas and appear in
+`runinator-engine-worker` (and/or engine-embedding ws) replicas run
+active/active. Engine workers register as `background` replicas and appear in
 the fleet/replica view. The Kubernetes base (`deploy/k8s/base`) and
 `deploy/docker-compose.yml` ship the split topology; flip ws back to
-`RUNINATOR_WS_RUN_ENGINE=true` and drop the background Deployment to fold it back
+`RUNINATOR_WS_RUN_ENGINE=true` and drop the engine-worker Deployment to fold it back
 in-process. The waker holds no state and reaches the engine only over the
 broker, so multiple waker replicas can run active/active. SQLite remains
 the default for simple local development and single-process stacks. MariaDB and
@@ -263,7 +266,7 @@ broker can also serve the same broker contract over HTTP by setting
 `RUNINATOR_BROKER_TRANSPORT=http`; HTTP clients must use an endpoint like
 `http://127.0.0.1:7070/`, while TCP clients use `127.0.0.1:7070`.
 Kafka and RabbitMQ are available as feature-gated direct backends for the
-waker, worker, web service, and background worker. Build those binaries with `--features kafka`
+waker, worker, web service, and engine worker. Build those binaries with `--features kafka`
 or `--features rabbitmq`, set `--broker-backend kafka|rabbitmq`, use
 `--broker-endpoint` for Kafka bootstrap servers or the RabbitMQ AMQP URI, and
 override `--broker-action-topic`, `--broker-control-topic`,
@@ -271,7 +274,7 @@ override `--broker-action-topic`, `--broker-control-topic`,
 not using the default `runinator.*` topics/queues.
 Do not scale the built-in `runinator-broker` process horizontally: each instance
 has its own in-memory queue. For multi-broker high availability, run Kafka or
-RabbitMQ and point every web-service/background-engine, waker, and worker instance at the same
+RabbitMQ and point every web-service/engine-worker, waker, and worker instance at the same
 shared broker topics or queues.
 
 Worker-originated control requests travel to the engine over the broker
@@ -285,7 +288,7 @@ holds config and secrets in the `settings` table, with each value encrypted at r
 `RUNINATOR_CREDENTIAL_KEY`), application logs under `~/.runinator/logs/`, and
 supervisor state under `~/.runinator/supervisor/`.
 The local supervisor runs `runinatorctl workflows apply` against the pack at
-`packs/sdlc/sdlc.rexrapm`.
+`packs/sdlc/sdlc.rrx`.
 Child process stdout and stderr are collected under
 `~/.runinator/supervisor/logs/` with one file per process start:
 
@@ -360,9 +363,8 @@ package and then invoked like any other action. A package directory holds a
 }
 ```
 
-`packs/image-tools` is a working example. The manifest is JSON rather than TOML for the same
-reason `.rexrapm` is: schemas deserialize straight into the provider `ParameterMetadata` shape, and
-the repo has one manifest format rather than two.
+`packs/image-tools` is a working example. The function manifest is JSON rather than TOML because
+its schemas deserialize directly into the provider `ParameterMetadata` shape.
 
 ```bash
 runinatorctl functions validate packs/image-tools   # offline: archive, check, print the digest
@@ -451,7 +453,7 @@ history. Moving an alias is the one mutable act available there — publishing h
 
 ### Functions in a pack
 
-A pack directory may hold function packages beside its `.rexrap` files — each is a subdirectory with
+A pack directory may hold function packages beside its `.rrx` files — each is a subdirectory with
 its own `runinator-function.json`. `runinatorctl workflows apply` discovers them, publishes them as
 part of the same apply, and imports them **before** the workflows, for the same reason secrets go
 first: a workflow in the pack may bind to one, and binding validation would reject it against a
@@ -651,24 +653,23 @@ subcommand, so `scripts/start-runinatorctl.sh --mcp --workflow-tools` works as e
 ## Workflow Import
 
 `runinatorctl workflows apply <path>` imports a workflow pack in one shot. The
-path can be a `.rexrap` file, a `.rexrapm` manifest (which lists the `.rexrap` files that
-make up the pack, resolved relative to the manifest), a directory of `.rexrap`
-files, or a workflow/bundle JSON file. The local supervisor config applies
-`./packs/sdlc/sdlc.rexrapm`. To load local credentials and config, import a settings
-bundle with `runinatorctl settings import <file>`. Each entry carries a `kind`
+path can be a `.rrx` source file or directory (each source is a unified REXRAP
+container with workflow, pipeline, settings, package-manifest, and test blocks),
+or a workflow/bundle JSON file. The local supervisor config applies
+`./packs/sdlc/sdlc.rrx`. To load local credentials and config, import an `.rrx`
+source containing a `settings` block with `runinatorctl settings import <file>`. Each entry carries a `kind`
 (`secret` — the default — or `config`) and a `value`; secret values stay
 encrypted and resolve late at the worker, while config values are arbitrary JSON
-read by the web service. You can seed the app-data
-workflow manifest from the repository sample pack if needed:
+read by the web service. You can seed the app-data workflow pack from the
+repository sample if needed:
 
 ```bash
 mkdir -p ~/.runinator/workflows
-cp packs/sdlc/sdlc.rexrapm ~/.runinator/workflows/sdlc.rexrapm
-cp -R packs/sdlc/rexrap ~/.runinator/workflows/rexrap
+cp -R packs/sdlc ~/.runinator/workflows/sdlc
 ```
 
-Compiled JSON workflow packs are no longer checked in. Use `sdlc.rexrapm` plus the
-referenced `.rexrap` sources for imports.
+Compiled JSON workflow packs are no longer checked in. Use the unified `sdlc.rrx`
+source and its referenced `.rrx` sources for imports.
 
 Because `workflows apply` overwrites stored definitions wholesale, every accepted
 definition is also captured as an immutable revision. `runinatorctl workflows
@@ -683,19 +684,20 @@ dialog, with a diff between any two revisions. An unchanged re-apply records
 nothing, so a pack imported on a schedule does not bury real edits.
 
 `runinatorctl workflows dev <path>` runs the same client-side pack compile and
-compiled zip upload in a watch loop. It watches the pack manifest, referenced
-`.rexrap` files, adjacent settings, and an optional `--json-file`. When `--run` is
+compiled zip upload in a watch loop. It watches the selected `.rrx` source or
+directory, adjacent sources, and an optional `--json-file`. When `--run` is
 provided, it starts that workflow after each successful import and refreshes the
 run detail until the run reaches a terminal state.
 
-`runinatorctl workflows test <path>` dry-runs a pack against `.rexrapt` test suites
+`runinatorctl workflows test <path>` dry-runs a pack against `tests { ... }`
+blocks in `.rrx` sources
 entirely client-side — no server or broker. It compiles the pack, then walks each
 workflow's state machine with the graph runtime's own condition/switch/toggle/percentage
 evaluators, stubbing task nodes with mocked outputs, and asserts on the branch
-taken and final outputs. A `.rexrapt` file is JSON: `{ "tests": [ { "name", "input",
-"config", "mocks": { "<node>": { "output", "status" } }, "expect": { "status",
-"reached", "not_reached", "branches", "output", "output_contains" } } ] }`. Sibling
-`*.rexrapt` files are picked up automatically, or pass them with `--tests`. The command
+taken and final outputs. Test cases live in an RRX `tests` block and provide a name,
+input, config, mocked task outputs, and assertions on status, reached nodes, branches,
+and final output. Every `.rrx` source in the pack is considered automatically, or pass
+additional sources with `--tests`. The command
 exits non-zero when any case fails, so it drops straight into CI.
 
 The same walker also backs a server-side dry-run: `POST /workflows/simulate`
@@ -713,14 +715,14 @@ service key when talking to `http://127.0.0.1:8080/` and no explicit
 `RUNINATOR_API_KEY` is already set. Pointing those helpers at another stack
 still requires that stack's own credentials.
 
-For a minimal smoke import, use `./packs/hello-world/hello-world.rexrapm`. It
+For a minimal smoke import, use `./packs/hello-world/hello-world.rrx`. It
 contains one REXRAP workflow that runs a single built-in console action and is wired
 into `bash scripts/run-local.sh smoke-sync` for an import-and-run check against
 an already running local stack.
 
 ### Editor integration (language server)
 
-`runinator-lsp` is an editor-agnostic Language Server for `.rexrap` files: live diagnostics,
+`runinator-lsp` is an editor-agnostic Language Server for `.rrx` files: live diagnostics,
 provider/action completion (from live service metadata), hover, formatting, and an optional
 apply-on-save that imports the pack into a running web service — the editor-native counterpart of
 `runinatorctl workflows dev`. Build it with `cargo build -p runinator-lsp --release` and point your
@@ -924,15 +926,15 @@ The import file is a `{ "secrets": [...] }` document; each entry carries
 strictly newer.
 
 The control-flow runtime uses persisted cursors: linear runs retain one primary cursor, while
-`parallel` and `race` fork one cursor and ready-node drive per branch. The engine processes ingress
-with bounded concurrency (default 16 per instance), so independent branches and concurrent map
-children can reach workers without waiting for a serial interpreter loop. `active_node_id` remains a
-compatibility mirror of the primary cursor for run detail and older consumers. Branch/body/item
+`parallel` and `race` fork one cursor per branch. The engine claims and drives runnable
+continuations with bounded concurrency (default 16 per instance), so independent branches and
+concurrent map children can reach workers without waiting for a serial interpreter loop.
+`active_node_id` remains a compatibility mirror of the primary cursor for run detail and older consumers. Branch/body/item
 nodes should transition back to their owning `join`, `try`, `map`, or `race` controller.
 
 ## Observability
 
-Every service binary (`ws`, `worker`, `waker`) emits structured logs to stdout and
+Every service binary (`ws`, `engine-worker`, `worker`, `waker`) emits structured logs to stdout and
 a log file via `tracing`, filtered by `RUNINATOR_LOG` (an `EnvFilter` directive,
 default `info`). The web service additionally exposes Prometheus metrics at
 `/metrics`.
@@ -958,10 +960,9 @@ dispatching trace. Prometheus `/metrics` remains available alongside OTLP metric
 Each service and the broker emit runtime metrics over OTLP (and, for the web
 service, also on Prometheus `/metrics`):
 
-- **Web service** (`runinator_ws_*`): `result_events_{applied,duplicate,retried,dead_lettered}_total`,
-  `result_receive_errors_total`, `handler_panics_total`, `background_loop_failures_total`,
-  `ingress_{applied,retried,dead_lettered}_total`, `triggers_fired_total`, and the
-  `reducer_drive_ms` histogram (reducer time per drive).
+- **Engine** (`runinator_engine_*`, emitted by `ws` when embedded or by `engine-worker`):
+  effect/result processing, trigger, maintenance, and VM-drive metrics. The VM's
+  `runinator_vm_drive_duration_ms` histogram measures continuation claim-and-advance batches.
 - **Worker** (`runinator_worker_*`): `actions_received_total`, `actions_completed_total`
   and the `action_duration_ms` histogram (both split by `outcome`),
   `actions_duplicate_total`, `actions_in_flight` (gauge), `control_commands_total`
@@ -1070,7 +1071,7 @@ built-in tcp transport.
 
 `runinator-blob` is an S3-compatible object store that keeps function-package
 artifacts and workflow run artifacts. It is deployed as its own service because
-artifact bytes must be readable by every ws and background replica: a path on
+artifact bytes must be readable by every ws and engine replica: a path on
 one replica's filesystem is invisible to the others, so a download routed to a
 different pod would 404.
 
@@ -1083,7 +1084,7 @@ filesystem, backed by a PVC.
 
 | Variable | Meaning |
 | --- | --- |
-| `RUNINATOR_BLOB_ENDPOINT` | Where clients (ws, background) find the store. **Unset means "use a local directory"**, which is right for a workstation and wrong for a multi-replica deployment. |
+| `RUNINATOR_BLOB_ENDPOINT` | Where clients (ws and engine-worker) find the store. **Unset means "use a local directory"**, which is right for a workstation and wrong for a multi-replica deployment. |
 | `RUNINATOR_BLOB_ADDR` | Listen address for the service itself (default `0.0.0.0:9000`). |
 | `RUNINATOR_BLOB_DATA_DIR` | Where the service stores objects (default `/var/lib/runinator/blobs`). |
 | `RUNINATOR_BLOB_ACCESS_KEY_ID` / `RUNINATOR_BLOB_SECRET_ACCESS_KEY` | The key pair. The service verifies signatures against it and clients sign with it, so the two must match or every artifact call is a 403. |
@@ -1123,7 +1124,7 @@ Every rust service is one `--target` of the shared `deploy/Dockerfile`, so the
 whole dependency graph compiles once for the entire set:
 
 ```bash
-for t in ws background waker worker archiver blob ctl bootstrap broker; do
+for t in ws engine-worker waker worker archiver blob ctl bootstrap broker; do
   docker build -f deploy/Dockerfile --target "$t" -t "runinator-$t:dev" .
 done
 ```
@@ -1477,8 +1478,8 @@ worker, desktop agent, the control CLI (`runinatorctl`), and supervisor under
 For workflow pack import changes, run:
 
 ```bash
-jq empty packs/sdlc/sdlc.rexrapm
-jq empty packs/hello-world/hello-world.rexrapm
+runinatorctl rexrap check packs/sdlc/sdlc.rrx
+runinatorctl rexrap check packs/hello-world/hello-world.rrx
 cargo test -p runinator-ctl
 ```
 

@@ -122,7 +122,7 @@ fn workflow_status_terminal_and_active() {
 
     assert!(!WorkflowStatus::Blocked.is_terminal());
     assert!(!WorkflowStatus::Paused.is_active());
-    assert!(!WorkflowStatus::Blocked.is_active());
+    assert!(WorkflowStatus::Blocked.is_active());
 }
 
 #[test]

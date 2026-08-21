@@ -9,34 +9,34 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: runinator-background
+  name: runinator-engine-worker
   namespace: runinator
 spec:
   clusterIP: None
   publishNotReadyAddresses: true
   selector:
-    app: runinator-background
+    app: runinator-engine-worker
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: runinator-background
+  name: runinator-engine-worker
   namespace: runinator
 spec:
   replicas: 2
   selector:
     matchLabels:
-      app: runinator-background
+      app: runinator-engine-worker
   template:
     metadata:
       labels:
-        app: runinator-background
+        app: runinator-engine-worker
     spec:
       containers:
-        - name: background
-          image: runinator-background:dev
+        - name: engine-worker
+          image: runinator-engine-worker:dev
           imagePullPolicy: IfNotPresent
-          command: ["runinator-background-worker"]
+          command: ["runinator-engine-worker"]
           args:
             - "--database"
             - "postgres"
@@ -49,7 +49,7 @@ spec:
             - "--broker-endpoint"
             - "amqp://$(RABBIT_USER):$(RABBIT_PASS)@$(RABBITMQ_HOST):$(RABBITMQ_PORT)/%2f"
             - "--broker-client-id"
-            - "runinator-background-$(POD_NAME)"
+            - "runinator-engine-worker-$(POD_NAME)"
           env:
             - name: POD_NAME
               valueFrom:

@@ -15,7 +15,7 @@ const EVENT_CONSUMER_RETRY_BACKOFF: Duration = Duration::from_millis(250);
 /// consume the broker fan-out events channel and re-broadcast every event to this replica's local
 /// WebSocket clients. each replica subscribes with its own per-replica `instance_id`, so every
 /// replica receives every UI event regardless of which replica emitted it (including events from a
-/// standalone background worker).
+/// standalone engine worker).
 pub(crate) async fn run_event_consumer(
     broker: Arc<dyn Broker>,
     local: broadcast::Sender<AppEvent>,

@@ -15,11 +15,12 @@ runinator-models = { path = "../runinator-models" }
 runinator-utilities = { path = "../runinator-utilities" }
 opentelemetry = "0.32"
 runinator-broker = { path = "../runinator-broker", default-features = false }
+runinator-service-bootstrap = { path = "../runinator-service-bootstrap", default-features = false }
 runinator-api = { path = "../runinator-api" }
 
 [features]
 default = ["http", "tcp"]
-http = ["runinator-broker/http"]
-tcp = ["runinator-broker/tcp"]
-kafka = ["runinator-broker/kafka"]
-rabbitmq = ["runinator-broker/rabbitmq"]
+http = ["runinator-broker/http", "runinator-service-bootstrap/http"]
+tcp = ["runinator-broker/tcp", "runinator-service-bootstrap/tcp"]
+kafka = ["runinator-broker/kafka", "runinator-service-bootstrap/kafka"]
+rabbitmq = ["runinator-broker/rabbitmq", "runinator-service-bootstrap/rabbitmq"]

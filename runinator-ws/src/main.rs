@@ -1,21 +1,12 @@
 mod config;
 mod service;
-use std::sync::Arc;
-
 use clap::Parser;
 use log::info;
-#[cfg(feature = "http")]
-use runinator_broker::http::client::HttpBroker;
-#[cfg(feature = "tcp")]
-use runinator_broker::tcp::client::TcpBroker;
-use runinator_broker::{
-    Broker,
-    adapters::{kafka::KafkaBrokerConfig, rabbitmq::RabbitMqBrokerConfig},
-    in_memory::InMemoryBroker,
-};
-use runinator_db_cli::{DatabaseBackend, dispatch_database};
 use runinator_models::errors::SendableError;
-use tokio::sync::Notify;
+use runinator_service_bootstrap::{
+    BlobRequest, BrokerClientConfig, BrokerConsumerProfile, DatabaseRequest, ServerBootstrapError,
+    ServerResources, dispatch_server_database,
+};
 use uuid::Uuid;
 
 use runinator_ws::{
@@ -24,9 +15,6 @@ use runinator_ws::{
 
 use crate::config::CliArgs;
 use runinator_comm::discovery::{WebServiceAdvertiserConfig, spawn_web_service_advertiser};
-#[cfg(feature = "sqlite")]
-use runinator_utilities::app_data;
-use runinator_utilities::startup;
 use service::WebService;
 
 #[tokio::main]
@@ -41,21 +29,7 @@ async fn run_process() -> Result<(), SendableError> {
     // an Err means a provider is already installed, which is fine.
     let _ = rustls::crypto::ring::default_provider().install_default();
 
-    // held for the process lifetime so otel signals flush on shutdown.
-    let _telemetry = startup::startup("Runinator Web Service")?;
-
     let args = CliArgs::parse();
-
-    let notify = Arc::new(Notify::new());
-    let shutdown_listener = notify.clone();
-    tokio::spawn(async move {
-        if let Err(err) = tokio::signal::ctrl_c().await {
-            log::error!("Failed to listen for shutdown signal: {}", err);
-            return;
-        }
-        info!("Shutdown signal received, stopping web server...");
-        shutdown_listener.notify_waiters();
-    });
 
     let CliArgs {
         port,
@@ -96,7 +70,6 @@ async fn run_process() -> Result<(), SendableError> {
     } = args;
     // A single-backend build compiles the other dispatch arms out. Keep their CLI fields accepted
     // (so the command surface stays stable) without warning when that happens.
-    let _ = (&sqlite_path, &database_url);
     if !matches!(announce_scheme.as_str(), "http" | "https") {
         return Err(
             format!("--announce-scheme must be http or https, got '{announce_scheme}'").into(),
@@ -123,11 +96,7 @@ async fn run_process() -> Result<(), SendableError> {
         (!trimmed.is_empty()).then(|| trimmed.to_string())
     };
     // advertise the backends this replica runs on so the replica list has parity with worker/waker.
-    let database_backend = match &database {
-        DatabaseBackend::Sqlite => "sqlite",
-        DatabaseBackend::Postgres => "postgres",
-        DatabaseBackend::Mysql => "mysql",
-    };
+    let database_backend = database.label();
     let advertisement = ReplicaAdvertisement {
         host: advertise_host,
         instance_id: instance_id.and_then(|value| {
@@ -140,27 +109,45 @@ async fn run_process() -> Result<(), SendableError> {
             "database_backend": database_backend,
         }),
     };
-    let broker = build_broker(
-        &broker_backend,
-        &broker_endpoint,
-        KafkaBrokerConfig::new(broker_endpoint.clone())
-            .with_topics(
-                broker_action_topic.clone(),
-                broker_control_topic.clone(),
-                broker_result_topic.clone(),
-            )
-            .with_agent_topic(broker_agent_topic.clone())
-            .with_client_id(broker_client_id.clone()),
-        RabbitMqBrokerConfig::new(broker_endpoint.clone())
-            .with_queues(
-                broker_action_topic,
-                broker_control_topic,
-                broker_result_topic,
-            )
-            .with_agent_queue_prefix(broker_agent_topic)
-            .with_client_id(broker_client_id),
-    )
-    .await?;
+    let resources = ServerResources::builder("Runinator Web Service")
+        .broker(
+            BrokerClientConfig {
+                backend: broker_backend.clone(),
+                endpoint: broker_endpoint,
+                action_topic: broker_action_topic,
+                control_topic: broker_control_topic,
+                agent_topic: Some(broker_agent_topic),
+                result_topic: broker_result_topic,
+                client_id: broker_client_id,
+                relay_credential: None,
+                wake_topic: None,
+                ingress_topic: None,
+            },
+            BrokerConsumerProfile::WorkflowRuntime,
+        )
+        .blobs(BlobRequest {
+            ensure_buckets: true,
+        })
+        .database(DatabaseRequest {
+            backend: database,
+            sqlite_path,
+            database_url,
+        })
+        .build()
+        .await
+        .map_err(map_bootstrap_error)?;
+    let notify = resources.process().shutdown().notifier();
+    let broker = resources
+        .broker()
+        .expect("web service requested broker")
+        .clone();
+    let blobs = resources
+        .blobs()
+        .expect("web service requested blob store")
+        .clone();
+    let database = resources
+        .database()
+        .expect("web service requested database");
 
     let service_id = Uuid::new_v4();
     let advertised_service_url = format!(
@@ -200,37 +187,22 @@ async fn run_process() -> Result<(), SendableError> {
     }
 
     info!("Starting Runinator webservice with {database_backend} database");
-    dispatch_database!(
-        database,
-        sqlite: {
-            let sqlite_path = sqlite_path.unwrap_or(app_data::default_sqlite_path()?);
-            if let Some(parent) = sqlite_path.parent() {
-                tokio::fs::create_dir_all(parent).await?;
-            }
-            info!("SQLite database file at {}", sqlite_path.display());
-            sqlite_path.to_string_lossy().into_owned()
-        },
-        url: database_url
-            .clone()
-            .ok_or_else(|| -> SendableError {
-                "--database-url must be provided when --database=postgres/mysql/mariadb".into()
-            })?,
-        |db| {
-            run_webserver(
-                db,
-                notify.clone(),
-                port,
-                broker,
-                advertisement.clone(),
-                auth_options.clone(),
-                rate_limit_options,
+    dispatch_server_database!(database, |db| {
+        run_webserver(
+            db,
+            notify.clone(),
+            port,
+            broker.clone(),
+            blobs.clone(),
+            advertisement.clone(),
+            auth_options.clone(),
+            rate_limit_options,
             overload_options,
             run_engine,
             max_concurrent_ingress,
         )
-            .await?;
-        }
-    );
+        .await?;
+    });
 
     Ok(())
 }
@@ -239,51 +211,6 @@ fn should_spawn_gossip_advertiser(disable_gossip: bool) -> bool {
     !disable_gossip
 }
 
-async fn build_broker(
-    backend: &str,
-    endpoint: &str,
-    kafka_config: KafkaBrokerConfig,
-    rabbitmq_config: RabbitMqBrokerConfig,
-) -> Result<Arc<dyn Broker>, SendableError> {
-    let _ = endpoint;
-    let result_channel = match backend {
-        "kafka" => kafka_config.result_topic.as_str(),
-        "rabbitmq" => rabbitmq_config.result_queue.as_str(),
-        _ => "",
-    };
-    runinator_broker::ensure_named_workflow_result_channel(backend, result_channel)
-        .map_err(|err| runinator_ws::errors::BROKER_WORKFLOW_RESULTS.error(err))?;
-
-    let broker: Arc<dyn Broker> = match backend {
-        #[cfg(feature = "http")]
-        "http" => {
-            let url = reqwest::Url::parse(endpoint)
-                .map_err(|err| runinator_ws::errors::BROKER_INVALID_ENDPOINT.error(err))?;
-            let client = reqwest::Client::builder()
-                .build()
-                .map_err(|err| runinator_ws::errors::BROKER_CLIENT.error(err))?;
-            Arc::new(HttpBroker::new(url, client))
-        }
-        "in-memory" => Arc::new(InMemoryBroker::new()),
-        #[cfg(feature = "tcp")]
-        "tcp" => Arc::new(TcpBroker::new(endpoint.to_string())),
-        "kafka" => runinator_broker::build_kafka_broker(kafka_config)
-            .map_err(|err| runinator_ws::errors::BROKER_KAFKA.error(err))?,
-        "rabbitmq" => runinator_broker::build_rabbitmq_broker(rabbitmq_config)
-            .await
-            .map_err(|err| runinator_ws::errors::BROKER_RABBITMQ.error(err))?,
-        other => {
-            return Err(runinator_ws::errors::BROKER_UNKNOWN_BACKEND.error(format!("'{other}'")));
-        }
-    };
-
-    runinator_broker::ensure_workflow_result_channels_supported(backend, broker.as_ref())
-        .map_err(|err| runinator_ws::errors::BROKER_WORKFLOW_RESULTS.error(err))?;
-
-    // wrap the concrete backend so every broker operation emits otel metrics tagged with the backend.
-    Ok(runinator_broker::instrument(broker, backend.to_string()))
+fn map_bootstrap_error(err: ServerBootstrapError) -> SendableError {
+    Box::new(err)
 }
-
-#[cfg(test)]
-#[path = "startup_tests.rs"]
-mod startup_tests;

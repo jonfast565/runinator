@@ -75,12 +75,7 @@ impl ArtifactUploader {
         let size_bytes = bytes.len() as i64;
         match self
             .client
-            .upload_artifact_content(
-                workflow_run_id,
-                &artifact.name,
-                &artifact.mime_type,
-                bytes,
-            )
+            .upload_artifact_content(workflow_run_id, &artifact.name, &artifact.mime_type, bytes)
             .await
         {
             Ok(stored) => {

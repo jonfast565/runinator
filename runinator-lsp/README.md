@@ -63,8 +63,8 @@ if not configs.runinator then
   configs.runinator = {
     default_config = {
       cmd = { "runinator-lsp" },
-      filetypes = { "rexrap" },
-      root_dir = lspconfig.util.root_pattern(".git", "*.rexrapm"),
+      filetypes = { "rrx" },
+      root_dir = lspconfig.util.root_pattern(".git", "*.rrx"),
       cmd_env = { RUNINATOR_API_BASE_URL = "http://127.0.0.1:8080/" },
       init_options = { runinator = { autoApply = true, serviceUrl = "http://127.0.0.1:8080/" } },
     },
@@ -72,16 +72,16 @@ if not configs.runinator then
 end
 
 lspconfig.runinator.setup({})
-vim.filetype.add({ extension = { rexrap = "rexrap", rexrapp = "rexrap", rexraps = "rexrap" } })
+vim.filetype.add({ extension = { rrx = "rrx" } })
 ```
 
 ### Zed
 
 Add a custom language server pointing `command` at the `runinator-lsp` binary with
-`RUNINATOR_API_BASE_URL` in its environment, scoped to the `rexrap` language.
+`RUNINATOR_API_BASE_URL` in its environment, scoped to the `rrx` language.
 
 ## Note on file kinds
 
-Only `.rexrap` (the workflow language) is analyzed and completed. `.rexrapm` (JSON pack manifest) and
-`.rexraps` (secrets) are recognized for apply-on-save packaging but are not run through the workflow
-grammar.
+`.rrx` is the only authored pack-file extension. Its unified container may include workflow,
+pipeline, settings, package-manifest, and test blocks; the language server analyzes workflow
+blocks and preserves the rest for pack compilation.

@@ -80,8 +80,8 @@ images:
   - name: runinator-ws
     newName: runinator-ws
     newTag: dev
-  - name: runinator-background
-    newName: runinator-background
+  - name: runinator-engine-worker
+    newName: runinator-engine-worker
     newTag: dev
   - name: runinator-waker
     newName: runinator-waker

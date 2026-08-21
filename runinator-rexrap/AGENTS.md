@@ -11,7 +11,7 @@ The REXRAP family owns the author-time workflow language: grammar, parser, seman
 The language core is split by compile stage, layered so nothing depends back up:
 
 ```
-runinator-rexrap                     public api, `.rexrapp`/`.rexraps` front ends,
+runinator-rexrap                     public API and unified `.rrx` container front end,
                                   `analysis` seam, the test suite
   ├── runinator-rexrap-codegen       lower/  (ast -> json model)
   │                               decompile/ (json model -> text)
@@ -62,7 +62,7 @@ The **error dictionary is not per-crate here**. All four crates emit the same `R
 
 - Public compile/decompile facade: `src/lib.rs`.
 - Editor seam: `src/analysis.rs` — the only items `runinator-rexrap-ide` may reach into `runinator-rexrap-sema` for. Add to it deliberately rather than reaching into a core crate.
-- `.rexrapp` pipelines and `.rexraps` secrets: `src/pipeline.rs`, `src/secrets.rs`.
+- Unified-container pipeline and settings blocks: `src/pipeline.rs`, `src/secrets.rs`.
 - Regression coverage: `src/tests/`, one file per subject; shared round-trip helpers in `tests/mod.rs`.
 
 ## Boundaries

@@ -276,7 +276,7 @@ where
 
     async fn insert_usage_sample(&self, sample: UsageSample) -> Result<(), SendableError> {
         // idempotent per (org, backend, kind, sampled_at): the sampler buckets sampled_at to the
-        // interval boundary, so any number of ws replicas / background workers sampling the same
+        // interval boundary, so any number of ws replicas / engine workers sampling the same
         // window converge to one row instead of over-counting node-hours by the instance count.
         let conflict = self
             .dialect()

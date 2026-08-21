@@ -1,7 +1,7 @@
 use std::{env, ffi::OsString, sync::Arc, time::Duration};
 
 use runinator_models::errors::SendableError;
-use runinator_utilities::startup;
+use runinator_utilities::startup::{ProcessResources, Shutdown};
 use tracing::{error, info};
 
 use runinator_worker::{AgentRuntime, Config, NoopObserver, errors, parse_config};
@@ -17,19 +17,19 @@ fn main() -> Result<(), SendableError> {
 }
 
 fn run_process() -> Result<(), SendableError> {
-    // held for the process lifetime so otel signals flush on shutdown.
-    let _telemetry = startup::startup("Runinator Worker")?;
-
-    let config = parse_config()?;
-    configure_provider_service_url(&config);
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .map_err(|err| errors::RUNTIME_BUILD.error(err))?;
-    runtime.block_on(run(config))
+    runtime.block_on(async move {
+        let process = ProcessResources::start("Runinator Worker")?;
+        let config = parse_config()?;
+        configure_provider_service_url(&config);
+        run(config, process.shutdown().clone()).await
+    })
 }
 
-async fn run(config: Config) -> Result<(), SendableError> {
+async fn run(config: Config, shutdown: Shutdown) -> Result<(), SendableError> {
     // log the advertised routing labels: a label-targeted action (e.g. a `.runner("creds-sync")`
     // node) only lands here when these satisfy its selector, so surfacing them makes "which worker
     // did this go to" answerable from the worker's own log.
@@ -47,9 +47,7 @@ async fn run(config: Config) -> Result<(), SendableError> {
     let mut agent = AgentRuntime::start(runtime_config, Arc::new(NoopObserver))?;
 
     tokio::select! {
-        signal = tokio::signal::ctrl_c() => {
-            signal.map_err(|err| errors::SIGNAL_CTRL_C.error(err))?;
-        }
+        _ = shutdown.cancelled() => {}
         // the lifecycle only returns on its own when it could not be brought up at all; propagate
         // that so the process exits non-zero and its orchestrator restarts it.
         result = agent.wait() => {

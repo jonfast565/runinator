@@ -177,7 +177,7 @@ pub enum Commands {
         #[command(subcommand)]
         command: FunctionCommands,
     },
-    /// Inspect and run pipelines. Pipeline *shape* is pack-managed (`.rexrapp`, applied by
+    /// Inspect and run pipelines. Pipeline *shape* is pack-managed (an `.rrx` pipeline block, applied by
     /// `workflows apply`); these verbs read and drive what a pack defined.
     Pipelines {
         #[command(subcommand)]
@@ -228,6 +228,7 @@ pub enum Commands {
         command: ArtifactCommands,
     },
     /// Compile, decompile, format, and check the rexrap workflow language.
+    #[command(name = "rexrap")]
     RexRap {
         #[command(subcommand)]
         command: RexRapCommands,
@@ -491,8 +492,7 @@ pub enum SettingsCommands {
         #[arg(long)]
         schema: Option<String>,
     },
-    /// Import settings from a `.rexraps` secrets file (`secret|config <scope>.<name> = <literal>`
-    /// declarations). JSON is not accepted.
+    /// Import settings from an `.rrx` source containing a `settings` block. JSON is not accepted.
     Import { file: PathBuf },
     /// Delete a setting.
     Delete {
@@ -506,7 +506,7 @@ pub enum SettingsCommands {
 
 #[derive(Debug, Subcommand)]
 pub enum RexRapCommands {
-    /// Compile a .rexrap file into a workflow definition JSON.
+    /// Compile a workflow block from an .rrx source into a workflow definition JSON.
     Compile {
         file: PathBuf,
         /// Write the JSON here instead of to stdout.
@@ -516,10 +516,10 @@ pub enum RexRapCommands {
         #[arg(long, value_enum, default_value_t = CliTyping::Strict)]
         typing: CliTyping,
     },
-    /// Decompile a workflow definition JSON file back into .rexrap source.
+    /// Decompile a workflow definition JSON file back into .rrx source.
     Decompile {
         file: PathBuf,
-        /// Write the .rexrap here instead of to stdout.
+        /// Write the .rrx source here instead of to stdout.
         #[arg(short, long)]
         output: Option<PathBuf>,
         /// Emit the canonical fully-explicit form: start edge, ids and arrows on every node,
@@ -527,7 +527,7 @@ pub enum RexRapCommands {
         #[arg(long)]
         explicit: bool,
     },
-    /// Format a .rexrap file.
+    /// Format an .rrx source.
     Format {
         file: PathBuf,
         /// Write the formatted source here instead of over the file.
@@ -537,7 +537,7 @@ pub enum RexRapCommands {
         #[arg(long)]
         check: bool,
     },
-    /// Parse, lower, and validate a .rexrap file, printing any diagnostics.
+    /// Parse, lower, and validate an .rrx source, printing any diagnostics.
     Check {
         file: PathBuf,
         /// REXRAP type checking policy. Use permissive only for legacy investigation.
@@ -554,18 +554,17 @@ pub enum WorkflowCommands {
     Show { workflow: String },
     /// Validate a workflow definition JSON file.
     Validate { file: PathBuf },
-    /// Import a workflow pack (.rexrap, .rexrapm, or a directory of .rexrap files), or save a workflow
-    /// definition / import a workflow bundle from a JSON file. For a pack, an adjacent settings
-    /// bundle (a `.rexrapm` "settings" entry or a sibling settings.rexraps/settings.json) is always
-    /// imported too to seed config/secret slots. When no path is given, falls back to the
+    /// Import a workflow pack (an .rrx source or directory of .rrx sources), or save a workflow
+    /// definition / import a workflow bundle from a JSON file. A source's `settings` blocks are
+    /// imported with the pack to seed config/secret slots. When no path is given, falls back to the
     /// `~/.runinator/workflows` folder if it exists.
     Apply { file: Option<PathBuf> },
-    /// Dry-run a workflow pack against .rexrapt test suites: simulate the state machine offline with
+    /// Dry-run a workflow pack against `tests` blocks in .rrx sources: simulate the state machine offline with
     /// mocked task outputs and assert on the branch taken and final outputs. No server required.
     Test {
-        /// Workflow pack source (.rexrap, .rexrapm, or a directory of .rexrap files).
+        /// Workflow pack source (.rrx or a directory of .rrx sources).
         file: PathBuf,
-        /// One or more .rexrapt test-suite files (JSON). When omitted, sibling *.rexrapt files are used.
+        /// Additional .rrx sources containing `tests` blocks. When omitted, pack sources are used.
         #[arg(long = "tests", value_name = "PATH")]
         tests: Vec<PathBuf>,
         /// Only run cases whose name contains this substring.

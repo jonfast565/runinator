@@ -101,14 +101,7 @@ pub async fn persist_artifact_file<T: DatabaseImpl>(
     mime_type: &str,
     bytes: &[u8],
 ) -> Result<RunArtifact, SendableError> {
-    let uri = crate::artifact_storage::put_artifact(
-        blobs,
-        run_id,
-        name,
-        mime_type,
-        bytes,
-    )
-    .await?;
+    let uri = crate::artifact_storage::put_artifact(blobs, run_id, name, mime_type, bytes).await?;
     let new_artifact = NewRunArtifact {
         name: name.to_string(),
         mime_type: mime_type.to_string(),

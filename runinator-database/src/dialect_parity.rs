@@ -32,9 +32,7 @@ use runinator_models::{
         WORKFLOW_EFFECT_PROTOCOL_VERSION, WorkflowContinuation, WorkflowEffect,
         WorkflowEffectRequest, WorkflowEffectStatus, WorkflowInstruction, WorkflowModule,
     },
-    workflows::{
-        WorkflowDefinition, WorkflowGraph, WorkflowTrigger, WorkflowTriggerKind,
-    },
+    workflows::{WorkflowDefinition, WorkflowGraph, WorkflowTrigger, WorkflowTriggerKind},
 };
 use uuid::Uuid;
 
@@ -122,7 +120,6 @@ fn sample_trigger(workflow_id: Uuid) -> WorkflowTrigger {
         updated_at: None,
     }
 }
-
 
 /// run the full cross-dialect lifecycle against an already-migrated, empty store.
 ///
@@ -262,7 +259,6 @@ async fn assert_workflow_vm_readback<T: DatabaseImpl + WorkflowVmStore>(
     assert_eq!(journal[0].sequence, 0);
     assert_eq!(journal[1].sequence, 1);
 }
-
 
 async fn assert_agent_directive_lifecycle<T: DatabaseImpl>(db: &T) {
     let replica = db
@@ -778,8 +774,6 @@ async fn assert_normalized_execution_state_lifecycle<T: ExecutionStateParityDb>(
     );
 }
 
-
-
 // the cooldown gate admits exactly one caller per window, decided by an UPDATE's affected-row
 // count and settled on first use by insert-or-ignore.
 //
@@ -878,8 +872,6 @@ async fn assert_idempotency_keys<T: DatabaseImpl>(db: &T) {
         "first writer wins"
     );
 }
-
-
 
 async fn assert_notifications<T: DatabaseImpl>(db: &T) {
     let note = db.create_notification(&Default::default()).await.unwrap();

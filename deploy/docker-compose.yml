@@ -85,9 +85,9 @@ services:
       - "8080:8080"
     environment:
       RUNINATOR_AUTH_ENABLED: "true"
-      # the standalone background service below owns the durable orchestration engine; this replica
+      # the standalone engine-worker service below owns the durable orchestration engine; this replica
       # serves HTTP/WebSocket only. set to "true" (the default) to fold the engine back in-process
-      # and drop the background service.
+      # and drop the engine-worker service.
       RUNINATOR_WS_RUN_ENGINE: "false"
       RUNINATOR_BLOB_ENDPOINT: "http://blob:9000/"
       RUNINATOR_BLOB_ACCESS_KEY_ID: "localdev"
@@ -107,14 +107,14 @@ services:
       - "--broker-endpoint"
       - "broker:7070"
 
-  # durable orchestration engine (reducer, wake/trigger/action/ingress loops, result consumer,
+  # durable orchestration engine (VM/effect loops, result consumer,
   # maintenance backstops), split out of ws so HTTP and engine scale independently. it talks to the
   # same postgres + broker directly, not through the ws HTTP API.
-  background:
+  engine-worker:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
-      target: background
+      target: engine-worker
     depends_on:
       postgres:
         condition: service_healthy

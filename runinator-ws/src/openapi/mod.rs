@@ -230,18 +230,8 @@ pub(crate) const MINIMAL_ENDPOINTS: &[(&str, &str, docs::EndpointPolicy)] = &[
         docs::EndpointPolicy::Authenticated,
     ),
     (
-        "get",
-        "/workflow_runs/{id}/transitions",
-        docs::EndpointPolicy::Authenticated,
-    ),
-    (
         "delete",
         "/workflow_runs/{id}",
-        docs::EndpointPolicy::Authenticated,
-    ),
-    (
-        "get",
-        "/workflows/{id}/nodes/{node_id}/transitions",
         docs::EndpointPolicy::Authenticated,
     ),
     (

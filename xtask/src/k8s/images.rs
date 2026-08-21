@@ -49,9 +49,9 @@ const IMAGES: &[ImageSpec] = &[
         context: ".",
     },
     ImageSpec {
-        name: "runinator-background",
+        name: "runinator-engine-worker",
         dockerfile: "deploy/Dockerfile",
-        target: Some("background"),
+        target: Some("engine-worker"),
         context: ".",
     },
     ImageSpec {
