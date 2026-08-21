@@ -235,10 +235,6 @@ pub fn api_workflow_node_run_release(node_run_id: Uuid) -> String {
     format!("{API_WORKFLOW_NODE_RUNS}/{node_run_id}/release")
 }
 
-pub fn api_approval_command(approval_id: Uuid, command: &str) -> String {
-    format!("{API_APPROVALS}/{approval_id}/{command}")
-}
-
 pub fn api_replica(replica_id: Uuid) -> String {
     format!("{API_REPLICAS}/{replica_id}")
 }

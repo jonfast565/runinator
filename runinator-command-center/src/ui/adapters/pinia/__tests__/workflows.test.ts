@@ -10,7 +10,6 @@ vi.mock("../../../../core/api/commandCenterApi", async (importOriginal) => ({
   fetchWorkflows: vi.fn(),
   fetchWorkflowRun: vi.fn(),
   openGate: vi.fn(),
-  patchWorkflowRunDebug: vi.fn(),
   saveWorkflowRexRap: vi.fn(),
   decompileToRexRap: vi.fn(),
 }));

@@ -225,6 +225,7 @@ async fn workflow_vm_effect_suspend_is_atomic_and_deduplicated() {
         trace_id: Uuid::now_v7(),
         trace_context: Default::default(),
         idempotency_key: effect.idempotency_key(),
+        notification_delivery_id: None,
     };
     let first = db
         .suspend_on_effect(continuation.clone(), effect.clone(), command.clone())

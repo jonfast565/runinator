@@ -27,8 +27,7 @@ fn annotated_paths_are_present() {
         "/packs/import",
         "/workflows",
         "/workflows/import",
-        "/gates/{id}/open",
-        "/gates/{id}/close",
+        "/workflow_effects/{id}/settle",
         "/workflow_runs/{id}/cancel",
         "/workflow_runs/{id}/pause",
         "/workflow_runs/{id}/resume",
@@ -79,11 +78,6 @@ fn auth_and_control_routes_expose_expected_schemas() {
         json["paths"]["/auth/logout"]["post"]["requestBody"]["content"]["application/json"]["schema"]
             ["$ref"],
         "#/components/schemas/RefreshRequestSchema"
-    );
-    assert_eq!(
-        json["paths"]["/gates/{id}/open"]["post"]["requestBody"]["content"]["application/json"]["schema"]
-            ["$ref"],
-        "#/components/schemas/GateResolutionRequest"
     );
     assert_eq!(
         json["paths"]["/workflow_runs/{id}/rename"]["post"]["requestBody"]["content"]["application/json"]

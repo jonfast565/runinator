@@ -1,4 +1,7 @@
-# Unified Resumable Invocation Runtime
+# Historical Unified Resumable Invocation Runtime Plan
+
+> Historical design record. The workflow VM/effect cutover superseded the reducer-era terminology
+> below; use the current runtime documentation for implementation work.
 
 ## Summary
 

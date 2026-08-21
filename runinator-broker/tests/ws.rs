@@ -417,5 +417,6 @@ fn effect_command(executor: EffectExecutor) -> EffectCommand {
         trace_id: Uuid::now_v7(),
         trace_context: Default::default(),
         idempotency_key: Uuid::now_v7().to_string(),
+        notification_delivery_id: None,
     }
 }

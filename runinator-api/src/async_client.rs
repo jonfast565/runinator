@@ -13,8 +13,8 @@ use runinator_models::pipelines::{Pipeline, PipelineBundle, PipelineRun, Pipelin
 use runinator_models::value::Value;
 use runinator_models::{
     api_routes::{
-        api_approval_command, api_artifact_download, api_freeze_window, api_replica_heartbeat,
-        api_replica_offline, api_replica_providers, api_run, api_run_artifacts, api_run_chunks,
+        api_artifact_download, api_freeze_window, api_replica_heartbeat, api_replica_offline,
+        api_replica_providers, api_run, api_run_artifacts, api_run_chunks,
         api_scheduler_action_dispatch_failed, api_scheduler_action_dispatch_published,
         api_scheduler_ready_node_process, api_scheduler_workflow_run_claim_release,
         api_scheduler_workflow_run_claim_renew, api_workflow, api_workflow_continuation,
@@ -36,8 +36,8 @@ use runinator_models::{
         API_SCHEDULER_READY_NODES_CLAIM, API_SCHEDULER_WORKFLOW_RUNS_CLAIM,
         API_SCHEDULER_WORKFLOW_TRIGGER_FIRINGS_CLAIM, API_SUPERVISOR_STATUS, API_WORKFLOWS,
         API_WORKFLOWS_EXPORT, API_WORKFLOWS_IMPORT, API_WORKFLOWS_SIMULATE, API_WORKFLOWS_VALIDATE,
-        API_WORKFLOW_RUNS, API_WORKFLOW_TRIGGERS_DUE, WORKFLOW_JSON_IMPORT_RISK_ACK,
-        WORKFLOW_JSON_IMPORT_RISK_HEADER,
+        API_WORKFLOW_EFFECTS, API_WORKFLOW_RUNS, API_WORKFLOW_TRIGGERS_DUE,
+        WORKFLOW_JSON_IMPORT_RISK_ACK, WORKFLOW_JSON_IMPORT_RISK_HEADER,
     },
     auth::{
         AgentEnrollmentToken, CreateAgentEnrollmentTokenRequest,
@@ -2020,46 +2020,23 @@ where
         Ok(response.json::<Vec<Value>>().await?)
     }
 
-    pub async fn approve_request(
+    pub async fn settle_approval_effect(
         &self,
-        approval_id: Uuid,
-        resolved_by: Option<String>,
-        message: Option<String>,
-        output_json: Option<Value>,
-    ) -> Result<Value> {
-        self.resolve_approval(approval_id, true, resolved_by, message, output_json)
-            .await
-    }
-
-    pub async fn reject_request(
-        &self,
-        approval_id: Uuid,
-        resolved_by: Option<String>,
-        message: Option<String>,
-        output_json: Option<Value>,
-    ) -> Result<Value> {
-        self.resolve_approval(approval_id, false, resolved_by, message, output_json)
-            .await
-    }
-
-    async fn resolve_approval(
-        &self,
-        approval_id: Uuid,
+        effect_id: Uuid,
         approved: bool,
-        resolved_by: Option<String>,
+        _resolved_by: Option<String>,
         message: Option<String>,
         output_json: Option<Value>,
     ) -> Result<Value> {
-        let command = if approved { "approve" } else { "reject" };
         let url = self
-            .build_url(&api_approval_command(approval_id, command))
+            .build_url(&format!("{API_WORKFLOW_EFFECTS}/{effect_id}/settle"))
             .await?;
         let response = self
             .http_post(url.clone())
             .json(&json!({
-                "resolved_by": resolved_by,
+                "status": if approved { "succeeded" } else { "failed" },
                 "message": message,
-                "output_json": output_json
+                "output": output_json
             }))
             .send()
             .await?;

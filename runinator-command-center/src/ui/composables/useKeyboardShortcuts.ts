@@ -27,49 +27,9 @@ export function useKeyboardShortcuts() {
     }
 
     if (event.key === "F10") {
-      event.preventDefault();
-
-      if (event.ctrlKey) {
-        const nodeId = workflows.selectedWorkflowRunNodeId;
-
-        if (nodeId) {
-          void workflows.runToCursor(nodeId);
-        }
-      } else {
-        void workflows.stepSelectedWorkflowRun();
-      }
-
-      return;
-    }
-
-    // cycle which thread of control the debugger keys act on. F5/F10 are unchanged: they always
-    // drive the *selected* cursor, so a forked session needs a way to change the selection without
-    // reaching for the rail.
-    if (event.ctrlKey && (event.key === "]" || event.key === "[")) {
-      const markers = workflows.cursorMarkers;
-
-      if (markers.length > 1) {
         event.preventDefault();
-        const current = markers.findIndex((marker) => marker.selected);
-        const step = event.key === "]" ? 1 : -1;
-        const next = (current + step + markers.length) % markers.length;
-        const target = markers.at(next);
 
-        if (target) {
-          workflows.selectCursor(target.id);
-        }
-      }
-
-      return;
-    }
-
-    if (event.key === "F9") {
-      event.preventDefault();
-      const nodeId = workflows.selectedWorkflowRunNodeId;
-
-      if (nodeId) {
-        void workflows.toggleBreakpoint(nodeId);
-      }
+      void workflows.stepSelectedWorkflowRun();
 
       return;
     }

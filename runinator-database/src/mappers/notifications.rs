@@ -79,6 +79,24 @@ row_mapper!(row_to_notification_delivery(row) -> NotificationDelivery {
     notification_delivery_from_row!(row)
 });
 
+fallible_row_mapper!(row_to_notification_effect_dispatch(row) -> runinator_comm::NotificationEffectDispatchRecord {
+    let command: runinator_comm::EffectCommand = serde_json::from_str(&row.get::<String, _>("command_json"))
+        .map_err(|error| crate::errors::WORKFLOW_VM_CORRUPT_STATE.error(error))?;
+    command.ensure_supported().map_err(|error| crate::errors::WORKFLOW_VM_CORRUPT_STATE.error(error))?;
+    Ok(runinator_comm::NotificationEffectDispatchRecord {
+        delivery_id: row.get("id"),
+        dedupe_key: row.get("dedupe_key"),
+        command,
+        attempts: row.get("attempts"),
+        created_at: DateTime::<Utc>::from_timestamp(row.get("created_at"), 0).unwrap_or_else(Utc::now),
+        updated_at: DateTime::<Utc>::from_timestamp(row.get("updated_at"), 0).unwrap_or_else(Utc::now),
+        published_at: row.get::<Option<i64>, _>("published_at").and_then(|value| DateTime::<Utc>::from_timestamp(value, 0)),
+        last_error: row.get("last_error"),
+        claimed_by: row.get("claimed_by"),
+        claimed_until: row.get::<Option<i64>, _>("claimed_until").and_then(|value| DateTime::<Utc>::from_timestamp(value, 0)),
+    })
+});
+
 macro_rules! freeze_window_from_row {
     ($row:expr) => {{
         FreezeWindow {

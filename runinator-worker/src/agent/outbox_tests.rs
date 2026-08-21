@@ -23,6 +23,7 @@ fn effect_result_message() -> EffectResultMessage {
             },
             timestamp: Utc::now(),
             trace_id: Uuid::new_v4(),
+            notification_delivery_id: None,
         },
         dedupe_key: Some(event_id.to_string()),
         enqueued_at: Utc::now(),

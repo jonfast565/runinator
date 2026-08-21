@@ -10,8 +10,8 @@ use runinator_workflows::{
 use uuid::Uuid;
 
 /// the database-backed implementation of `SimulationEnv`: config comes from the live settings store,
-/// and task/park outcomes replay a prior run's recorded node outputs. Nodes with no recorded output
-/// default to success, so a dry-run of a never-executed workflow still walks its control flow.
+/// and task/park outcomes replay a prior run's durable VM effect receipts. Nodes with no recorded
+/// output default to success, so a dry-run of a never-executed workflow still walks its control flow.
 ///
 /// This is the production counterpart to the mock env used by `runinatorctl workflows test`: the same
 /// walker drives both, so a dry-run against real config/history and an offline unit test agree.
@@ -21,25 +21,38 @@ pub struct DbSimulationEnv {
 }
 
 impl DbSimulationEnv {
-    /// load config from the settings store and, when `replay_run` is set, that run's recorded node
-    /// outputs. Async because both come from the database; the trait methods are then pure reads.
+    /// load config from the settings store and, when `replay_run` is set, that run's recorded
+    /// effect outcomes. Async because both come from the database; the trait methods are then pure
+    /// reads.
     pub async fn load<T: DatabaseImpl>(db: &T, replay_run: Option<Uuid>) -> Self {
         let config = runinator_runtime::config::config_tree(db).await;
         let mut recorded = HashMap::new();
         if let Some(run_id) = replay_run
-            && let Ok(node_runs) = db.fetch_workflow_node_runs(run_id).await
+            && let (Ok(Some(module)), Ok(effects)) = (
+                db.fetch_workflow_module(run_id).await,
+                db.fetch_workflow_effects(run_id).await,
+            )
         {
-            for run in node_runs {
-                if let Some(output) = run.output_json {
-                    // later visits (e.g. loop iterations) overwrite earlier ones; the last output wins.
-                    recorded.insert(
-                        run.node_id,
-                        NodeOutcome {
-                            status: run.status,
-                            output,
-                        },
-                    );
-                }
+            for effect in effects {
+                let Ok(Some(continuation)) =
+                    db.fetch_workflow_continuation(effect.continuation_id).await
+                else {
+                    continue;
+                };
+                let Some(location) =
+                    module.graph_location(continuation.instruction_pointer.saturating_sub(1))
+                else {
+                    continue;
+                };
+                // Later visits (for example loop iterations) overwrite earlier ones; the latest
+                // durable effect receipt is the replay outcome for that source node.
+                recorded.insert(
+                    location.node_id.clone(),
+                    NodeOutcome {
+                        status: effect.status.workflow_status(),
+                        output: effect.result.unwrap_or(Value::Null),
+                    },
+                );
             }
         }
         Self { config, recorded }
@@ -67,8 +80,8 @@ impl SimulationEnv for DbSimulationEnv {
     }
 }
 
-/// dry-run `workflow` against live config (and optionally a prior run's outputs) with the reducer's
-/// evaluators, publishing no `ActionCommand`s. Used for server-side branch preview and live editing.
+/// dry-run `workflow` against live config (and optionally a prior run's outputs) without publishing
+/// effects. Used for server-side branch preview and live editing.
 pub async fn simulate_run<T: DatabaseImpl>(
     db: &T,
     workflow: &WorkflowDefinition,

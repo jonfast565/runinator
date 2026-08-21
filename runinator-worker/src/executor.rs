@@ -39,7 +39,7 @@ pub async fn execute_task(
     providers: &ProviderFactory,
     libraries: Arc<HashMap<String, Plugin>>,
     action: WorkflowAction,
-    workflow_node_run_id: Uuid,
+    execution_id: Uuid,
     parameters: Value,
     idempotency_key: Option<String>,
     sink: Option<Arc<dyn ProviderEventSink>>,
@@ -47,8 +47,7 @@ pub async fn execute_task(
 ) -> ExecutionOutcome {
     let started_at = Utc::now();
     let timeout = action.timeout_seconds.max(1) as u64;
-    let request =
-        build_provider_request(&action, workflow_node_run_id, parameters, idempotency_key);
+    let request = build_provider_request(&action, execution_id, parameters, idempotency_key);
 
     if token.is_cancelled() {
         return canceled_outcome(started_at);
@@ -265,22 +264,22 @@ pub(crate) fn validate_execution_result(
 
 fn build_provider_request(
     action: &WorkflowAction,
-    workflow_node_run_id: Uuid,
+    execution_id: Uuid,
     parameters: Value,
     idempotency_key: Option<String>,
 ) -> ProviderExecutionRequest {
-    let base_dir = run_work_dir(Some(workflow_node_run_id));
+    let base_dir = run_work_dir(Some(execution_id));
     let artifact_dir = base_dir.join("artifacts");
     if let Err(err) = fs::create_dir_all(&artifact_dir) {
         warn!(
-            node_id = %workflow_node_run_id,
+            execution_id = %execution_id,
             artifact_dir = %artifact_dir.display(),
             "failed to create artifact directory: {}",
             err
         );
     }
     ProviderExecutionRequest {
-        run_id: Some(workflow_node_run_id),
+        run_id: Some(execution_id),
         action_name: action.provider.clone(),
         action_function: action.function.clone(),
         parameters,

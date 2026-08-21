@@ -388,6 +388,7 @@ async fn process_provider_effect(
                 },
                 timestamp: chrono::Utc::now(),
                 trace_id: command.trace_id,
+                notification_delivery_id: command.notification_delivery_id,
             };
             publish_result(broker.as_ref(), result_outbox.as_ref(), &mut event, true).await?;
         }
@@ -573,6 +574,7 @@ impl ProviderEventSink for EffectOutputSink {
                         kind: EffectResultKind::Chunk { stream, content },
                         timestamp: chrono::Utc::now(),
                         trace_id: command.trace_id,
+                        notification_delivery_id: command.notification_delivery_id,
                     };
                     publish_result(broker.as_ref(), outbox.as_ref(), &mut result, false).await
                 });
@@ -609,6 +611,7 @@ impl ProviderEventSink for EffectOutputSink {
                         },
                         timestamp: chrono::Utc::now(),
                         trace_id: command.trace_id,
+                        notification_delivery_id: command.notification_delivery_id,
                     };
                     publish_result(broker.as_ref(), outbox.as_ref(), &mut result, true).await
                 });

@@ -16,7 +16,7 @@ every request, so revocation and demotion take effect immediately.
 
 Top-level shareable resources—workflows, pipelines, function packages, and console sessions—have an
 authoritative ownership row and generic grants using `View < Run < Edit < Own` (`Edit` includes
-`Run`). Runs, node runs, triggers, artifacts, invocations, cells, gates, approvals, and automation
+`Run`). Runs, workflow effects, continuations, triggers, artifacts, invocations, cells, gates, approvals, and automation
 records inherit through their stored parent. Organization and team roles do not expose user-owned
 resources without an explicit grant.
 

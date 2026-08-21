@@ -242,6 +242,7 @@ async fn assert_workflow_vm_readback<T: DatabaseImpl + WorkflowVmStore>(
         trace_id: Uuid::now_v7(),
         trace_context: Default::default(),
         idempotency_key: effect.idempotency_key(),
+        notification_delivery_id: None,
     };
     db.suspend_on_effect(continuation, effect.clone(), command)
         .await

@@ -105,7 +105,7 @@ const PIPELINE_RUN_COLUMNS: &str = "id, pipeline_id, pipeline_snapshot, status, 
 const PIPELINE_MEMBER_ATTEMPT_COLUMNS: &str = "id, pipeline_run_id, member_key, workflow_id, attempt, workflow_run_id, status, parameters, result, message, created_at, started_at, finished_at";
 
 const NOTIFICATION_POLICY_COLUMNS: &str = "id, workflow_id, name, event, severity, channel, target, threshold_seconds, enabled, managed_by, configuration, created_at, updated_at";
-const NOTIFICATION_DELIVERY_COLUMNS: &str = "id, notification_id, policy_id, channel, target, status, attempts, last_error, created_at, updated_at";
+const NOTIFICATION_DELIVERY_COLUMNS: &str = "id, notification_id, policy_id, channel, target, status, attempts, last_error, command_json, published_at, claimed_by, claimed_until, created_at, updated_at";
 
 /// true when an insert lost a unique-constraint race rather than failing for a reason worth
 /// surfacing. lets a caller that assigns its own sequence number recompute and retry.

@@ -7,7 +7,7 @@ use axum::{
     http::StatusCode,
 };
 use runinator_database::interfaces::DatabaseImpl;
-use runinator_models::auth::{AuthContext, Permission, PrincipalKind};
+use runinator_models::auth::{AuthContext, Permission};
 use runinator_models::orchestration::{
     IdempotencyClaimRequest, IdempotencyCompleteRequest, IdempotencyReleaseRequest,
 };
@@ -16,8 +16,7 @@ use runinator_models::web::TaskResponse;
 
 use crate::repository;
 use runinator_ws_core::models::{
-    ApiResponse, ApprovalResolutionRequest, AutomationRecordQuery, GateQuery,
-    GateResolutionRequest, IdempotencyRequest,
+    ApiResponse, AutomationRecordQuery, GateQuery, IdempotencyRequest,
 };
 use runinator_ws_core::openapi::docs::{
     AUTOMATION_FILTERS, EndpointDoc, Example, GATE_FILTERS, IDEMPOTENCY_QUERY, endpoint, json_body,
@@ -133,82 +132,6 @@ pub async fn create_gate<T: DatabaseImpl>(
     }
 }
 
-#[utoipa::path(
-    post,
-    path = "/gates/{id}/open",
-    tag = "Automation",
-    params(("id" = Uuid, Path, description = "Gate identifier.")),
-    request_body = runinator_ws_core::models::GateResolutionRequest,
-    responses(
-        (status = 200, description = "gate opened", body = serde_json::Value),
-        (status = 401, description = "request is missing or has an invalid credential", body = runinator_ws_core::models::ApiError),
-        (status = 404, description = "gate was not found", body = runinator_ws_core::models::ApiError),
-    ),
-)]
-pub async fn open_gate<T: DatabaseImpl>(
-    Extension(db): Extension<Arc<T>>,
-    Extension(ctx): Extension<AuthContext>,
-    Path(gate_id): Path<Uuid>,
-    Json(request): Json<GateResolutionRequest>,
-) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
-        .require_gate_workflow(gate_id, Permission::Run)
-        .await
-    {
-        return reply;
-    }
-    match repository::resolve_gate(
-        db.as_ref(),
-        gate_id,
-        true,
-        request.reason,
-        request.resolved_by,
-    )
-    .await
-    {
-        Ok(record) => (StatusCode::OK, Json(ApiResponse::JsonValue(record))),
-        Err(err) => api_error(err.to_string()),
-    }
-}
-
-#[utoipa::path(
-    post,
-    path = "/gates/{id}/close",
-    tag = "Automation",
-    params(("id" = Uuid, Path, description = "Gate identifier.")),
-    request_body = runinator_ws_core::models::GateResolutionRequest,
-    responses(
-        (status = 200, description = "gate closed", body = serde_json::Value),
-        (status = 401, description = "request is missing or has an invalid credential", body = runinator_ws_core::models::ApiError),
-        (status = 404, description = "gate was not found", body = runinator_ws_core::models::ApiError),
-    ),
-)]
-pub async fn close_gate<T: DatabaseImpl>(
-    Extension(db): Extension<Arc<T>>,
-    Extension(ctx): Extension<AuthContext>,
-    Path(gate_id): Path<Uuid>,
-    Json(request): Json<GateResolutionRequest>,
-) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
-        .require_gate_workflow(gate_id, Permission::Run)
-        .await
-    {
-        return reply;
-    }
-    match repository::resolve_gate(
-        db.as_ref(),
-        gate_id,
-        false,
-        request.reason,
-        request.resolved_by,
-    )
-    .await
-    {
-        Ok(record) => (StatusCode::OK, Json(ApiResponse::JsonValue(record))),
-        Err(err) => api_error(err.to_string()),
-    }
-}
-
 pub async fn delete_gate<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
@@ -275,84 +198,6 @@ pub async fn create_approval<T: DatabaseImpl>(
     json: Json<Value>,
 ) -> (StatusCode, Json<ApiResponse>) {
     create_record(ext, &ctx, "approval_requests", json).await
-}
-
-pub async fn approve_request<T: DatabaseImpl>(
-    Extension(db): Extension<Arc<T>>,
-    Extension(ctx): Extension<AuthContext>,
-    Path(approval_id): Path<Uuid>,
-    Json(request): Json<ApprovalResolutionRequest>,
-) -> (StatusCode, Json<ApiResponse>) {
-    resolve_approval_audited(db.as_ref(), &ctx, approval_id, true, request).await
-}
-
-pub async fn reject_request<T: DatabaseImpl>(
-    Extension(db): Extension<Arc<T>>,
-    Extension(ctx): Extension<AuthContext>,
-    Path(approval_id): Path<Uuid>,
-    Json(request): Json<ApprovalResolutionRequest>,
-) -> (StatusCode, Json<ApiResponse>) {
-    resolve_approval_audited(db.as_ref(), &ctx, approval_id, false, request).await
-}
-
-/// shared approve/reject path: gate on the parent workflow, resolve with the authenticated identity
-/// as `resolved_by`, then write an audit-log entry naming who resolved what.
-async fn resolve_approval_audited<T: DatabaseImpl>(
-    db: &T,
-    ctx: &AuthContext,
-    approval_id: Uuid,
-    approved: bool,
-    request: ApprovalResolutionRequest,
-) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = AuthzChecker::new(db, ctx)
-        .require_automation_record_workflow("approval_requests", approval_id, Permission::Run)
-        .await
-    {
-        return reply;
-    }
-    // prefer the authenticated principal as the resolver of record; fall back to any caller-supplied
-    // value for back-compat with service callers that pass an explicit name.
-    let resolved_by = ctx
-        .principal_id
-        .map(|id| id.to_string())
-        .or(request.resolved_by);
-    match repository::resolve_approval(
-        db,
-        approval_id,
-        approved,
-        resolved_by,
-        request.message,
-        request.output_json,
-    )
-    .await
-    {
-        Ok(record) => {
-            let actor_kind = match ctx.kind {
-                PrincipalKind::User => "user",
-                PrincipalKind::Service => "service",
-            };
-            let workflow_run_id = runinator_ws_middleware::authz::record_workflow_run_id(&record);
-            crate::audit::record_audit(
-                db,
-                ctx.principal_id,
-                actor_kind,
-                if approved {
-                    "approval.approved"
-                } else {
-                    "approval.rejected"
-                },
-                crate::audit::AuditOutcome::Success,
-                Some("approval_request"),
-                Some(approval_id),
-                workflow_run_id
-                    .map(|id| format!("workflow_run={id}"))
-                    .as_deref(),
-            )
-            .await;
-            (StatusCode::OK, Json(ApiResponse::JsonValue(record)))
-        }
-        Err(err) => api_error(err.to_string()),
-    }
 }
 
 pub async fn get_idempotency_key<T: DatabaseImpl>(
@@ -561,14 +406,6 @@ pub fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
                 .layer(Extension(pool.clone())),
         )
         .route(
-            "/gates/{id}/open",
-            post(open_gate::<T>).layer(Extension(pool.clone())),
-        )
-        .route(
-            "/gates/{id}/close",
-            post(close_gate::<T>).layer(Extension(pool.clone())),
-        )
-        .route(
             "/automation_events",
             get(get_automation_events::<T>)
                 .post(create_automation_event::<T>)
@@ -583,14 +420,6 @@ pub fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
             get(get_approvals::<T>)
                 .post(create_approval::<T>)
                 .layer(Extension(pool.clone())),
-        )
-        .route(
-            "/approvals/{id}/approve",
-            post(approve_request::<T>).layer(Extension(pool.clone())),
-        )
-        .route(
-            "/approvals/{id}/reject",
-            post(reject_request::<T>).layer(Extension(pool.clone())),
         )
         .route(
             "/idempotency_keys",
@@ -680,32 +509,6 @@ pub const DOCS: &[EndpointDoc] = &[
         Example::AutomationRecord,
     ),
     endpoint(
-        "post",
-        "/gates/{id}/open",
-        "Automation",
-        "Open a gate",
-        "Resolves a gate as open and unblocks any reducer path waiting on it.",
-        false,
-        json_body("Gate resolution metadata.", Example::GateResolution),
-        &[],
-        200,
-        "gate opened",
-        Example::AutomationRecord,
-    ),
-    endpoint(
-        "post",
-        "/gates/{id}/close",
-        "Automation",
-        "Close a gate",
-        "Resolves a gate as closed and unblocks any reducer path waiting on it.",
-        false,
-        json_body("Gate resolution metadata.", Example::GateResolution),
-        &[],
-        200,
-        "gate closed",
-        Example::AutomationRecord,
-    ),
-    endpoint(
         "get",
         "/automation_events",
         "Automation",
@@ -755,32 +558,6 @@ pub const DOCS: &[EndpointDoc] = &[
         &[],
         202,
         "approval request created",
-        Example::AutomationRecord,
-    ),
-    endpoint(
-        "post",
-        "/approvals/{id}/approve",
-        "Automation",
-        "Approve a request",
-        "Resolves an approval request as approved and stores optional output.",
-        false,
-        json_body("Approval resolution payload.", Example::ApprovalResolution),
-        &[],
-        200,
-        "approval request approved",
-        Example::AutomationRecord,
-    ),
-    endpoint(
-        "post",
-        "/approvals/{id}/reject",
-        "Automation",
-        "Reject a request",
-        "Resolves an approval request as rejected and stores optional output.",
-        false,
-        json_body("Approval resolution payload.", Example::ApprovalResolution),
-        &[],
-        200,
-        "approval request rejected",
         Example::AutomationRecord,
     ),
     endpoint(

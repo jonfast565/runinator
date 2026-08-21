@@ -265,7 +265,6 @@ export function createWorkflowSelectors(deps: WorkflowSelectorDependencies) {
     canResumeWorkflowRun,
     canCancelWorkflowRun,
     currentBreakpoints,
-    isBreakpointed: (nodeId: string) => services.runs.isBreakpointed(nodeId),
     selectedStepKindLocked,
     canRemoveSelectedStep,
     filteredWorkflows,

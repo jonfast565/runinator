@@ -166,6 +166,63 @@ pub async fn run_workflow_effect_dispatcher<T: DatabaseImpl>(
     }
 }
 
+/// Drain the notification-owned provider-effect outbox. Notification records deliberately share
+/// worker provider execution with VM effects while retaining their own persistence receipt and
+/// settlement path.
+pub async fn run_notification_effect_dispatcher<T: DatabaseImpl>(
+    db: Arc<T>,
+    broker: Arc<dyn Broker>,
+    instance: String,
+    shutdown: Arc<Notify>,
+) {
+    info!("notification effect dispatcher started");
+    loop {
+        let now = chrono::Utc::now();
+        match db
+            .claim_pending_notification_effect_dispatches(
+                instance.clone(),
+                now,
+                now + chrono::Duration::seconds(ACTION_DISPATCH_LEASE_SECONDS),
+                CLAIM_LIMIT,
+            )
+            .await
+        {
+            Ok(dispatches) => {
+                for dispatch in dispatches {
+                    match broker
+                        .publish_effect(runinator_broker_core::EffectMessage {
+                            dedupe_key: Some(dispatch.dedupe_key.clone()),
+                            command: dispatch.command,
+                            enqueued_at: now,
+                        })
+                        .await
+                    {
+                        Ok(()) | Err(runinator_broker_core::BrokerError::Duplicate(_)) => {
+                            if let Err(err) = db
+                                .mark_notification_effect_dispatch_published(dispatch.delivery_id)
+                                .await
+                            {
+                                warn!(error = %err, delivery_id = %dispatch.delivery_id, "failed to acknowledge notification effect publication");
+                            }
+                        }
+                        Err(err) => {
+                            warn!(error = %err, delivery_id = %dispatch.delivery_id, "failed to publish notification effect");
+                            let _ = db
+                                .mark_notification_effect_dispatch_failed(
+                                    dispatch.delivery_id,
+                                    err.to_string(),
+                                )
+                                .await;
+                        }
+                    }
+                }
+            }
+            Err(err) => warn!(error = %err, "failed to claim notification effect dispatches"),
+        }
+        tokio::select! { _ = shutdown.notified() => return, _ = tokio::time::sleep(WORKFLOW_EFFECT_DISPATCH_INTERVAL) => {} }
+    }
+}
+
 /// Periodically samples durable operational state so an idle deployment still has useful gauges.
 /// This deliberately queries only aggregate queue/fleet state and never emits record identities.
 pub async fn run_operational_metrics_sampler<T: DatabaseImpl>(db: Arc<T>, shutdown: Arc<Notify>) {

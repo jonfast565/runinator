@@ -58,7 +58,7 @@ them have been rewritten, which is the only point at which the answer "all but o
   configuration and buy nothing.
 - **`goto` stays**, per the operator's decision, as a fourth `InvocationStep` outcome.
 - **Secrets force the whole invocation worker-side.** `secret.a.b` lowers to the literal string
-  `secret://a/b` and only the worker substitutes it, so a reducer-side `upper(secret.x)` would
+  `secret://a/b` and only the worker substitutes it, so an in-process `upper(secret.x)` would
   uppercase the placeholder and return garbage. The VM yields unconditionally on any call whose
   arguments contain a secret placeholder.
 - **The legacy execution paths are still present.** The plan deletes them as the last commit of the

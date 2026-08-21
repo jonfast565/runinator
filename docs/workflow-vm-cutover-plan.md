@@ -1,4 +1,7 @@
-# Complete Workflow VM Cutover
+# Historical Workflow VM Cutover Plan (Implemented)
+
+> Historical design record. The destructive VM cutover described here is complete; current runtime
+> behavior is recorded in [Phase 14 readiness](workflow-vm-phase14-readiness.md).
 
 ## Summary
 

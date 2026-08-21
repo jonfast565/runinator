@@ -417,8 +417,6 @@ fn endpoint_docs() -> impl Iterator<Item = &'static EndpointDoc> {
         crate::handlers::workflows::get_workflow_revision,
         crate::handlers::workflows::restore_workflow_revision,
         crate::handlers::workflows::import_workflow_bundle,
-        crate::handlers::automation::open_gate,
-        crate::handlers::automation::close_gate,
         crate::handlers::runs::cancel_workflow_run,
         crate::handlers::runs::pause_workflow_run,
         crate::handlers::runs::resume_workflow_run,

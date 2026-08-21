@@ -98,7 +98,6 @@ export function createWorkflowCatalogService(
     host.state.workflowRunDetail = null;
     host.state.openRunIds = [];
     internal.runDetailById.clear();
-    internal.pendingBreakpointPatch = null;
     host.state.workflowNodeDetailExtra = "";
     host.state.selectedWorkflowRunId = null;
     host.state.selectedWorkflowRunNodeId = "";

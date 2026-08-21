@@ -6,6 +6,8 @@
 use std::future::Future;
 
 use super::QueueSnapshot;
+use chrono::{DateTime, Utc};
+use runinator_comm::{EffectCommand, NotificationEffectDispatchRecord};
 use uuid::Uuid;
 
 use runinator_models::{
@@ -117,11 +119,34 @@ pub trait NotificationStore: Send + Sync + 'static {
     /// Record an external-channel delivery attributed to a notification.
     fn create_notification_delivery(
         &self,
+        delivery_id: Uuid,
         notification_id: Uuid,
         policy_id: Option<Uuid>,
         channel: NotificationChannel,
         target: Option<String>,
+        command: EffectCommand,
     ) -> impl Future<Output = Result<NotificationDelivery, SendableError>> + Send;
+
+    /// Lease frozen notification provider effects for publication. Notification delivery has an
+    /// independent durable outbox and never reuses the removed workflow action-dispatch table.
+    fn claim_pending_notification_effect_dispatches(
+        &self,
+        publisher_id: String,
+        now: DateTime<Utc>,
+        lease_until: DateTime<Utc>,
+        limit: i64,
+    ) -> impl Future<Output = Result<Vec<NotificationEffectDispatchRecord>, SendableError>> + Send;
+
+    fn mark_notification_effect_dispatch_published(
+        &self,
+        delivery_id: Uuid,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
+
+    fn mark_notification_effect_dispatch_failed(
+        &self,
+        delivery_id: Uuid,
+        error: String,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
 
     /// Settle a delivery after the worker reported back.
     fn mark_notification_delivery(

@@ -157,6 +157,7 @@ impl<'a, S: WorkflowVmStore> WorkflowVmHost<'a, S> {
                     trace_id: Uuid::now_v7(),
                     trace_context: Default::default(),
                     idempotency_key: effect.idempotency_key(),
+                    notification_delivery_id: None,
                 };
                 self.store
                     .suspend_on_effect(continuation, effect, command)

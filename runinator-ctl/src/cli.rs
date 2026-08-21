@@ -728,8 +728,9 @@ pub enum ApprovalCommands {
     },
     /// Approve an approval request.
     Approve {
+        /// Durable approval effect id.
         id: Uuid,
-        /// Who is deciding, recorded on the approval.
+        /// Who is deciding, retained for command compatibility.
         #[arg(long)]
         by: Option<String>,
         /// Note recorded with the decision.
@@ -741,8 +742,9 @@ pub enum ApprovalCommands {
     },
     /// Reject an approval request.
     Reject {
+        /// Durable approval effect id.
         id: Uuid,
-        /// Who is deciding, recorded on the approval.
+        /// Who is deciding, retained for command compatibility.
         #[arg(long)]
         by: Option<String>,
         /// Note recorded with the decision.

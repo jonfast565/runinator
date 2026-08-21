@@ -6,6 +6,9 @@ use runinator_broker_core::Broker;
 use runinator_comm::EffectResultKind;
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::workflow_vm::{WorkflowEffectOutput, WorkflowEffectOutputEvent};
+use runinator_models::{
+    notifications::NotificationDeliveryStatus, workflow_vm::WorkflowEffectStatus,
+};
 use tokio::sync::Notify;
 use tracing::{error, info, warn};
 
@@ -32,6 +35,48 @@ pub async fn run_effect_result_consumer<T: DatabaseImpl>(
                 }
             }
         };
+
+        // Notification commands use the same provider-effect transport but are not VM effects:
+        // their durable owner is the notification delivery row, so never attempt a continuation
+        // settlement for them.
+        if let Some(notification_delivery_id) = delivery.result.notification_delivery_id {
+            let result = match &delivery.result.kind {
+                EffectResultKind::Status {
+                    status, message, ..
+                } => {
+                    let status = if *status == WorkflowEffectStatus::Succeeded {
+                        NotificationDeliveryStatus::Delivered
+                    } else {
+                        NotificationDeliveryStatus::Failed
+                    };
+                    db.mark_notification_delivery(notification_delivery_id, status, message.clone())
+                        .await
+                }
+                // Notification sends have no stream/artifact contract; acknowledge stray payloads
+                // so an old/misbehaving provider cannot wedge the result channel.
+                EffectResultKind::Chunk { .. } | EffectResultKind::Artifact { .. } => Ok(()),
+            };
+            match result {
+                Ok(()) => {
+                    if let Err(err) = broker
+                        .ack_effect_result(EFFECT_RESULT_CONSUMER_ID, delivery.delivery_id)
+                        .await
+                    {
+                        warn!(error = %err, "failed to ack notification effect result");
+                    }
+                }
+                Err(err) => {
+                    error!(error = %err, notification_delivery_id = %notification_delivery_id, "failed to settle notification delivery");
+                    if let Err(err) = broker
+                        .nack_effect_result(EFFECT_RESULT_CONSUMER_ID, delivery.delivery_id)
+                        .await
+                    {
+                        warn!(error = %err, "failed to requeue notification effect result");
+                    }
+                }
+            }
+            continue;
+        }
 
         let settled = match &delivery.result.kind {
             EffectResultKind::Status {

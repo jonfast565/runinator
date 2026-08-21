@@ -74,8 +74,6 @@ export interface WorkflowServicesInternal {
   nextWorkflowRunDetailVersion: number;
   nextWorkflowRunHttpRequestId: number;
   nextWorkflowRunGateRequestId: number;
-  nextBreakpointMutationId: number;
-  pendingBreakpointPatch: { runId: string; breakpoints: string[]; mutationId: number } | null;
   workflowRexRapSyncTimer: ReturnType<typeof setTimeout> | null;
   workflowJsonWriteReleaseTimer: ReturnType<typeof setTimeout> | null;
   workflowRexRapWriteReleaseTimer: ReturnType<typeof setTimeout> | null;
@@ -94,8 +92,6 @@ export function createWorkflowServicesInternal(): WorkflowServicesInternal {
     nextWorkflowRunDetailVersion: 0,
     nextWorkflowRunHttpRequestId: 0,
     nextWorkflowRunGateRequestId: 0,
-    nextBreakpointMutationId: 0,
-    pendingBreakpointPatch: null,
     workflowRexRapSyncTimer: null,
     workflowJsonWriteReleaseTimer: null,
     workflowRexRapWriteReleaseTimer: null,

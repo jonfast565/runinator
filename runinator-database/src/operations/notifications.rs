@@ -40,7 +40,7 @@ where
     async fn notification_delivery_queue_snapshot(&self) -> Result<QueueSnapshot, SendableError> {
         let row = sqlx::query(&self.render(
             "SELECT COUNT(*) AS depth, MIN(created_at) AS oldest
-             FROM notification_deliveries WHERE status IN ('pending', 'retrying')",
+             FROM notification_deliveries WHERE published_at IS NULL AND command_json IS NOT NULL",
         ))
         .fetch_one(self.pool())
         .await?;
@@ -425,16 +425,18 @@ where
 
     async fn create_notification_delivery(
         &self,
+        delivery_id: Uuid,
         notification_id: Uuid,
         policy_id: Option<Uuid>,
         channel: NotificationChannel,
         target: Option<String>,
+        command: runinator_comm::EffectCommand,
     ) -> Result<NotificationDelivery, SendableError> {
-        let id = Uuid::now_v7();
+        let id = delivery_id;
         let now = Utc::now().timestamp();
         sqlx::query(&self.render(
-            "INSERT INTO notification_deliveries (id, notification_id, policy_id, channel, target, status, attempts, last_error, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, 0, NULL, ?, ?)",
+            "INSERT INTO notification_deliveries (id, notification_id, policy_id, channel, target, status, attempts, last_error, dedupe_key, command_json, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, 0, NULL, ?, ?, ?, ?)",
         ))
         .bind(id)
         .bind(notification_id)
@@ -442,6 +444,8 @@ where
         .bind(channel.as_str())
         .bind(target)
         .bind(NotificationDeliveryStatus::Pending.as_str())
+        .bind(format!("notification:{id}"))
+        .bind(serde_json::to_string(&command)?)
         .bind(now)
         .bind(now)
         .execute(self.pool())
@@ -454,6 +458,86 @@ where
         .fetch_one(self.pool())
         .await?;
         Ok(mappers::row_to_notification_delivery(&row))
+    }
+
+    async fn claim_pending_notification_effect_dispatches(
+        &self,
+        publisher_id: String,
+        now: DateTime<Utc>,
+        lease_until: DateTime<Utc>,
+        limit: i64,
+    ) -> Result<Vec<runinator_comm::NotificationEffectDispatchRecord>, SendableError> {
+        let columns = "id, dedupe_key, command_json, attempts, created_at, updated_at, published_at, last_error, claimed_by, claimed_until";
+        let select = format!(
+            "SELECT id FROM notification_deliveries WHERE published_at IS NULL AND command_json IS NOT NULL AND (claimed_until IS NULL OR claimed_until <= ? OR claimed_by = ?) ORDER BY created_at, id LIMIT ?{}",
+            self.dialect().skip_locked(),
+        );
+        let ids = sqlx::query(&self.render(&select))
+            .bind(now.timestamp())
+            .bind(publisher_id.as_str())
+            .bind(limit.max(1))
+            .fetch_all(self.pool())
+            .await?;
+        let mut claimed = Vec::with_capacity(ids.len());
+        for row in ids {
+            let id: Uuid = row.get("id");
+            let updated = sqlx::query(&self.render(
+                "UPDATE notification_deliveries SET claimed_by = ?, claimed_until = ?, updated_at = ? WHERE id = ? AND published_at IS NULL AND command_json IS NOT NULL AND (claimed_until IS NULL OR claimed_until <= ? OR claimed_by = ?)",
+            ))
+            .bind(publisher_id.as_str())
+            .bind(lease_until.timestamp())
+            .bind(now.timestamp())
+            .bind(id)
+            .bind(now.timestamp())
+            .bind(publisher_id.as_str())
+            .execute(self.pool())
+            .await?;
+            if updated.affected() == 0 {
+                continue;
+            }
+            let row = sqlx::query(&self.render(&format!(
+                "SELECT {columns} FROM notification_deliveries WHERE id = ?"
+            )))
+            .bind(id)
+            .fetch_one(self.pool())
+            .await?;
+            claimed.push(mappers::row_to_notification_effect_dispatch(&row)?);
+        }
+        Ok(claimed)
+    }
+
+    async fn mark_notification_effect_dispatch_published(
+        &self,
+        delivery_id: Uuid,
+    ) -> Result<(), SendableError> {
+        let now = Utc::now().timestamp();
+        sqlx::query(&self.render(
+            "UPDATE notification_deliveries SET status = ?, published_at = ?, updated_at = ?, last_error = NULL, claimed_by = NULL, claimed_until = NULL WHERE id = ? AND published_at IS NULL",
+        ))
+        .bind(NotificationDeliveryStatus::Dispatched.as_str())
+        .bind(now)
+        .bind(now)
+        .bind(delivery_id)
+        .execute(self.pool())
+        .await?;
+        Ok(())
+    }
+
+    async fn mark_notification_effect_dispatch_failed(
+        &self,
+        delivery_id: Uuid,
+        error: String,
+    ) -> Result<(), SendableError> {
+        let now = Utc::now().timestamp();
+        sqlx::query(&self.render(
+            "UPDATE notification_deliveries SET attempts = attempts + 1, updated_at = ?, last_error = ?, claimed_by = NULL, claimed_until = NULL WHERE id = ? AND published_at IS NULL",
+        ))
+        .bind(now)
+        .bind(error)
+        .bind(delivery_id)
+        .execute(self.pool())
+        .await?;
+        Ok(())
     }
 
     async fn mark_notification_delivery(

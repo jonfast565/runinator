@@ -16,15 +16,14 @@ pub use runinator_comm::{UiEvent as AppEvent, UiEventKind as AppEventKind};
 /// consumer re-broadcasts each event to that replica's WebSocket clients, so an out-of-process engine
 /// can emit events and every ws replica's clients still see them.
 ///
-/// also owns the in-process wake and action-dispatch nudges: HTTP create handlers and engine loops
-/// share one [`EnginePublisher`] so newly enqueued ready nodes / outbox rows can wake those publishers
-/// without waiting for their poll intervals. when the engine runs in another process the remote
-/// publishers still poll as a durable backstop.
+/// also owns the in-process wake nudge. HTTP create handlers and engine loops share one
+/// [`EnginePublisher`] so newly enqueued work can wake its publisher without waiting for the poll
+/// interval. when the engine runs in another process the remote publisher still polls as a durable
+/// backstop.
 #[derive(Clone)]
 pub struct EnginePublisher {
     broker: Arc<dyn Broker>,
     wake_nudge: Arc<Notify>,
-    action_nudge: Arc<Notify>,
     agent_nudge: Arc<Notify>,
 }
 
@@ -33,7 +32,6 @@ impl EnginePublisher {
         Self {
             broker,
             wake_nudge: Arc::new(Notify::new()),
-            action_nudge: Arc::new(Notify::new()),
             agent_nudge: Arc::new(Notify::new()),
         }
     }
@@ -46,11 +44,6 @@ impl EnginePublisher {
     pub fn nudge_wake_publisher(&self) {
         // notify_one stores a permit when nobody is waiting, so a nudge during publish is not lost.
         self.wake_nudge.notify_one();
-    }
-
-    /// wake the in-process action-dispatch publisher so outbox rows reach workers promptly.
-    pub fn nudge_action_dispatch_publisher(&self) {
-        self.action_nudge.notify_one();
     }
 
     /// wake the durable agent-directive publisher.

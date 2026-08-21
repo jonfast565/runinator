@@ -65,14 +65,6 @@ function escape(part: unknown): string {
 
 // who resolved an approval and what they said. every field is optional, so a ui that only clicks
 // "approve" sends the same body it always did.
-function approvalResolution(args: CommandArgs) {
-  return {
-    resolved_by: argOpt(args, "by") ?? null,
-    message: argOpt(args, "message") ?? null,
-    output_json: argOpt(args, "output") ?? null,
-  };
-}
-
 const REGISTRY: Record<string, HttpDescriptor> = {
   auth_config: { method: "GET", path: () => "auth/config" },
   auth_me: { method: "GET", path: () => "auth/me" },
@@ -479,44 +471,6 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     path: (args) => `workflow_runs/${escape(arg(args, "workflowRunId"))}/signals`,
     body: (args) => ({ name: arg(args, "name"), payload: argOpt(args, "payload") ?? {} }),
   },
-  fork_workflow_run_cursor: {
-    method: "POST",
-    path: (args) => `workflow_runs/${escape(arg(args, "workflowRunId"))}/debug/fork`,
-    body: (args) => ({
-      from_cursor: argOpt(args, "fromCursor") ?? null,
-      at_node: argOpt(args, "atNode") ?? null,
-      label: argOpt(args, "label") ?? null,
-      context_patch: argOpt(args, "contextPatch") ?? null,
-    }),
-  },
-  debug_command: {
-    method: "POST",
-    path: (args) => `workflow_runs/${escape(arg(args, "workflowRunId"))}/debug/command`,
-    body: (args) => argOpt(args, "verb") ?? {},
-  },
-  patch_workflow_run_debug: {
-    method: "PATCH",
-    path: (args) => `workflow_runs/${escape(arg(args, "workflowRunId"))}/debug`,
-    body: (args) => arg(args, "patch"),
-  },
-  run_to_cursor_workflow_run: {
-    method: "POST",
-    path: (args) => `workflow_runs/${escape(arg(args, "workflowRunId"))}/debug/run_to_cursor`,
-    body: (args) => ({ node_id: arg(args, "nodeId") }),
-  },
-  skip_workflow_node: {
-    method: "POST",
-    path: (args) => `workflow_runs/${escape(arg(args, "workflowRunId"))}/debug/skip`,
-    body: (args) => ({
-      output_json: arg(args, "outputJson"),
-      message: argOpt(args, "message") ?? null,
-    }),
-  },
-  rerun_workflow_node: {
-    method: "POST",
-    path: (args) => `workflow_runs/${escape(arg(args, "workflowRunId"))}/debug/rerun_node`,
-    body: (args) => ({ parameters: arg(args, "parameters") }),
-  },
   fetch_supervisor_status: {
     method: "GET",
     path: () => "supervisor/status",
@@ -756,16 +710,6 @@ const REGISTRY: Record<string, HttpDescriptor> = {
         ? "approvals"
         : `approvals?workflow_run_id=${escape(workflowRunId)}`;
     },
-  },
-  approve_approval: {
-    method: "POST",
-    path: (args) => `approvals/${escape(arg(args, "approvalId"))}/approve`,
-    body: approvalResolution,
-  },
-  reject_approval: {
-    method: "POST",
-    path: (args) => `approvals/${escape(arg(args, "approvalId"))}/reject`,
-    body: approvalResolution,
   },
   fetch_all_artifacts: { method: "GET", path: () => "artifacts" },
   fetch_notifications: {

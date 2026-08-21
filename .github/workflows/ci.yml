@@ -200,7 +200,7 @@ jobs:
   # the kafka and rabbitmq suites are the only backend tests that need a live broker, so they are
   # `#[ignore]`d and no job ran them. worse than unrun: their helpers return early when the env var
   # is absent, so the tests report "ok" while asserting nothing — which is how both files came to
-  # sit with stale `ActionCommand` literals unnoticed. the guard on the final step is what makes
+  # sit with stale broker payload literals unnoticed. the guard on the final step is what makes
   # this job mean something; without it a wrong env var name would leave 11 green tests that never
   # touched a broker.
   broker-backends:
@@ -261,7 +261,7 @@ jobs:
           fi
 
           # the suite names fixed topics and does not create them itself.
-          for topic in runinator.actions runinator.control runinator.agent runinator.results; do
+          for topic in runinator.actions runinator.control runinator.agent runinator.results runinator.effects runinator.effects.infrastructure runinator.effect-results; do
             docker exec ci-kafka /opt/kafka/bin/kafka-topics.sh \
               --bootstrap-server 127.0.0.1:9092 \
               --create --if-not-exists --topic "$topic" --partitions 1 --replication-factor 1
@@ -302,7 +302,7 @@ jobs:
   # every job above builds default features, which leaves the opt-in broker backends and the
   # kubernetes provisioner compiled by nobody — including the exact feature set deploy/Dockerfile
   # ships. that gap is not theoretical: the kafka and rabbitmq backends' test files sat with stale
-  # `ActionCommand` literals (missing `notification_delivery_id`/`idempotency_key`) because no job
+  # payload literals because no job
   # ever built them. `--all-targets` is load-bearing here for that reason — it is what compiles the
   # per-backend integration tests, not just the library.
   #
@@ -343,7 +343,7 @@ jobs:
         run: |
           cargo check --locked --no-default-features \
             -p runinator-ws \
-            -p runinator-background-worker \
+            -p runinator-engine-worker \
             -p runinator-worker \
             -p runinator-archiver \
             -p runinator-waker \
@@ -351,7 +351,7 @@ jobs:
             -p runinator-bootstrap \
             -p runinator-broker \
             -p runinator-blob \
-            --features runinator-ws/postgres,runinator-ws/rabbitmq,runinator-ws/kubernetes,runinator-background-worker/postgres,runinator-background-worker/rabbitmq,runinator-worker/rabbitmq,runinator-worker/db-postgres,runinator-waker/rabbitmq,runinator-archiver/postgres,runinator-bootstrap/postgres,runinator-ctl/db-postgres,runinator-broker/tcp,runinator-blob/server
+            --features runinator-ws/postgres,runinator-ws/rabbitmq,runinator-ws/kubernetes,runinator-engine-worker/postgres,runinator-engine-worker/rabbitmq,runinator-worker/rabbitmq,runinator-worker/db-postgres,runinator-waker/rabbitmq,runinator-archiver/postgres,runinator-bootstrap/postgres,runinator-ctl/db-postgres,runinator-broker/tcp,runinator-blob/server
 
       - name: Check kafka backend
         run: |
@@ -360,8 +360,8 @@ jobs:
             -p runinator-ws \
             -p runinator-worker \
             -p runinator-waker \
-            -p runinator-background-worker \
-            --features runinator-broker/kafka,runinator-ws/kafka,runinator-worker/kafka,runinator-waker/kafka,runinator-background-worker/kafka
+            -p runinator-engine-worker \
+            --features runinator-broker/kafka,runinator-ws/kafka,runinator-worker/kafka,runinator-waker/kafka,runinator-engine-worker/kafka
 
       - name: Check ws relay backend
         run: |
@@ -377,11 +377,6 @@ jobs:
       # never reaches these, so they have to be run here or they are not run at all.
       - name: Test ws relay backend
         run: cargo test --locked -p runinator-broker --features ws
-
-      # the reducer's in-memory FakeStore is the documented way to test node handlers without a
-      # database, and nothing in the workspace turns its feature on.
-      - name: Check reducer test-support
-        run: cargo check --locked --all-targets -p runinator-reducer --features test-support
 
       # mongo ships as a default feature, so the opt-out path is the one that goes unbuilt.
       - name: Check provider-db without mongo

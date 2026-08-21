@@ -3,11 +3,11 @@
 use chrono::Utc;
 use runinator_broker::{
     adapters::kafka::{KafkaBroker, KafkaBrokerConfig},
-    Broker, BrokerMessage, ControlCommand, ResultMessage,
+    Broker, BrokerMessage, ControlCommand, EffectMessage, EffectResultMessage, ResultMessage,
 };
 use runinator_comm::{
     ActionCommand, ActionTarget, AgentCommand, AgentDirectiveKind, ConsumerProfile, ControlKind,
-    WorkflowResultEvent,
+    EffectCommand, EffectExecutor, EffectResult, EffectResultKind, WorkflowResultEvent,
 };
 use runinator_models::json;
 use runinator_models::{runs::NewRunChunk, workflows::WorkflowAction};
@@ -30,12 +30,23 @@ fn kafka_broker() -> Option<KafkaBroker> {
         .unwrap_or_else(|_| "runinator.results".into());
     let agent_topic =
         std::env::var("RUNINATOR_KAFKA_AGENT_TOPIC").unwrap_or_else(|_| "runinator.agent".into());
+    let effect_topic = std::env::var("RUNINATOR_KAFKA_EFFECT_TOPIC")
+        .unwrap_or_else(|_| "runinator.effects".into());
+    let infrastructure_effect_topic = std::env::var("RUNINATOR_KAFKA_INFRASTRUCTURE_EFFECT_TOPIC")
+        .unwrap_or_else(|_| "runinator.effects.infrastructure".into());
+    let effect_result_topic = std::env::var("RUNINATOR_KAFKA_EFFECT_RESULT_TOPIC")
+        .unwrap_or_else(|_| "runinator.effect-results".into());
 
     Some(
         KafkaBroker::new(
             KafkaBrokerConfig::new(bootstrap)
                 .with_topics(action_topic, control_topic, result_topic)
                 .with_agent_topic(agent_topic)
+                .with_effect_topics(
+                    effect_topic,
+                    infrastructure_effect_topic,
+                    effect_result_topic,
+                )
                 .with_client_id(format!("runinator-test-{}", Uuid::new_v4())),
         )
         .unwrap(),
@@ -210,6 +221,132 @@ async fn kafka_broker_nack_redelivers_messages() {
         .unwrap();
     assert_eq!(redelivery.command.command_id, command_id);
     broker.ack(&consumer, redelivery.delivery_id).await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires a reachable Kafka broker and pre-created topics"]
+async fn kafka_broker_round_trips_executor_routed_effects() {
+    let Some(broker) = kafka_broker() else {
+        return;
+    };
+    assert_effect_round_trip(&broker).await;
+}
+
+async fn assert_effect_round_trip(broker: &dyn Broker) {
+    let provider = effect_command(EffectExecutor::Provider);
+    let infrastructure = effect_command(EffectExecutor::Infrastructure);
+    for command in [&provider, &infrastructure] {
+        broker
+            .publish_effect(EffectMessage {
+                command: command.clone(),
+                dedupe_key: Some(command.effect_id.to_string()),
+                enqueued_at: Utc::now(),
+            })
+            .await
+            .unwrap();
+    }
+
+    let provider_profile = ConsumerProfile::shared(format!("effects-provider-{}", Uuid::new_v4()));
+    let provider_delivery = timeout(
+        Duration::from_secs(10),
+        broker.receive_effect_for(&provider_profile),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(provider_delivery.command.effect_id, provider.effect_id);
+    broker
+        .nack_effect(&provider_profile.id, provider_delivery.delivery_id)
+        .await
+        .unwrap();
+    let provider_redelivery = timeout(
+        Duration::from_secs(10),
+        broker.receive_effect_for(&provider_profile),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(provider_redelivery.command.effect_id, provider.effect_id);
+    broker
+        .ack_effect(&provider_profile.id, provider_redelivery.delivery_id)
+        .await
+        .unwrap();
+
+    let infrastructure_consumer = format!("effects-infrastructure-{}", Uuid::new_v4());
+    let infrastructure_delivery = timeout(
+        Duration::from_secs(10),
+        broker.receive_infrastructure_effect(&infrastructure_consumer),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        infrastructure_delivery.command.effect_id,
+        infrastructure.effect_id
+    );
+    broker
+        .ack_effect(
+            &infrastructure_consumer,
+            infrastructure_delivery.delivery_id,
+        )
+        .await
+        .unwrap();
+
+    let result = EffectResult {
+        version: runinator_models::workflow_vm::WORKFLOW_EFFECT_PROTOCOL_VERSION,
+        event_id: Uuid::now_v7(),
+        effect_id: provider.effect_id,
+        workflow_run_id: provider.workflow_run_id,
+        continuation_id: provider.continuation_id,
+        attempt: provider.attempt,
+        kind: EffectResultKind::Status {
+            status: runinator_models::workflow_vm::WorkflowEffectStatus::Succeeded,
+            output: None,
+            message: None,
+        },
+        timestamp: Utc::now(),
+        trace_id: Uuid::now_v7(),
+        notification_delivery_id: None,
+    };
+    broker
+        .publish_effect_result(EffectResultMessage {
+            result: result.clone(),
+            dedupe_key: Some(result.event_id.to_string()),
+            enqueued_at: Utc::now(),
+        })
+        .await
+        .unwrap();
+    let consumer = format!("effect-results-{}", Uuid::new_v4());
+    let delivery = timeout(
+        Duration::from_secs(10),
+        broker.receive_effect_result(&consumer),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(delivery.result.event_id, result.event_id);
+    broker
+        .ack_effect_result(&consumer, delivery.delivery_id)
+        .await
+        .unwrap();
+}
+
+fn effect_command(executor: EffectExecutor) -> EffectCommand {
+    EffectCommand {
+        version: runinator_models::workflow_vm::WORKFLOW_EFFECT_PROTOCOL_VERSION,
+        command_id: Uuid::now_v7(),
+        effect_id: Uuid::now_v7(),
+        workflow_run_id: Uuid::now_v7(),
+        continuation_id: Uuid::now_v7(),
+        attempt: 0,
+        request: runinator_models::workflow_vm::WorkflowEffectRequest::Timer { due_at: 42 },
+        executor,
+        target: Default::default(),
+        trace_id: Uuid::now_v7(),
+        trace_context: Default::default(),
+        idempotency_key: Uuid::now_v7().to_string(),
+        notification_delivery_id: None,
+    }
 }
 
 fn action_command() -> ActionCommand {

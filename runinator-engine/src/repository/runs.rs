@@ -182,8 +182,6 @@ pub async fn update_workflow_run_status<T: DatabaseImpl>(
     })
 }
 
-/// deliver a named signal to a run: find the latest node parked on that signal, stamp it
-/// `Succeeded` with the payload, and wake the reducer so it follows the success edge.
 /// how many times a losing state writer rebuilds its change before giving up. a conflict means the
 /// reducer wrote first, and is resolved by re-reading rather than waiting.
 const MAX_EVENT_DELIVERY_ATTEMPTS: usize = 8;
@@ -200,107 +198,60 @@ pub async fn deliver_run_event<T: DatabaseImpl>(
     node_id: String,
     event: Value,
 ) -> Result<TaskResponse, SendableError> {
-    if let Some(module) = db.fetch_workflow_module(workflow_run_id).await? {
-        let effects = db.fetch_workflow_effects(workflow_run_id).await?;
-        for effect in effects.into_iter().rev() {
-            if effect.status.is_terminal()
-                || !matches!(
-                    effect.request,
-                    runinator_models::workflow_vm::WorkflowEffectRequest::EventWait { .. }
-                )
-            {
-                continue;
-            }
-            let Some(continuation) = db
-                .fetch_workflow_continuation(effect.continuation_id)
-                .await?
-            else {
-                continue;
-            };
-            let effect_ip = continuation.instruction_pointer.saturating_sub(1);
-            if module
-                .graph_location(effect_ip)
-                .map(|location| location.node_id.as_str())
-                != Some(node_id.as_str())
-            {
-                continue;
-            }
-            let applied = db
-                .settle_workflow_effect(
-                    effect.id,
-                    effect.attempt,
-                    runinator_models::workflow_vm::WorkflowEffectStatus::Succeeded,
-                    Some(event),
-                    Some("event_received".into()),
-                    Utc::now(),
-                )
-                .await?;
-            return Ok(TaskResponse {
-                success: applied,
-                message: if applied {
-                    format!("Event delivered to '{node_id}'")
-                } else {
-                    format!("Event for '{node_id}' was stale")
-                },
-            });
-        }
+    let Some(module) = db.fetch_workflow_module(workflow_run_id).await? else {
         return Ok(TaskResponse {
             success: false,
-            message: format!(
-                "No event effect for node '{node_id}' is waiting in run {workflow_run_id}"
-            ),
+            message: format!("Workflow run {workflow_run_id} has no VM module"),
         });
-    }
-    let node_runs = db.fetch_workflow_node_runs(workflow_run_id).await?;
-    let waiting = node_runs
-        .iter()
-        .any(|run| run.node_id == node_id && run.status == WorkflowStatus::Waiting);
-    if !waiting {
-        return Ok(TaskResponse {
-            success: false,
-            message: format!(
-                "No event_source node '{node_id}' is waiting in run {workflow_run_id}"
-            ),
-        });
-    }
-
-    let mut delivered = false;
-    for _ in 0..MAX_EVENT_DELIVERY_ATTEMPTS {
-        let Some(run) = db.fetch_workflow_run(workflow_run_id).await? else {
-            return Ok(TaskResponse {
-                success: false,
-                message: format!("Workflow run {workflow_run_id} not found"),
-            });
-        };
-        let mut state = run.execution_state.clone();
-        state.deliver_event(&node_id, event.clone());
-        if db
-            .update_workflow_run_execution_state_cas(workflow_run_id, run.state_version, state)
-            .await?
+    };
+    let effects = db.fetch_workflow_effects(workflow_run_id).await?;
+    for effect in effects.into_iter().rev() {
+        if effect.status.is_terminal()
+            || !matches!(
+                effect.request,
+                runinator_models::workflow_vm::WorkflowEffectRequest::EventWait { .. }
+            )
         {
-            delivered = true;
-            break;
+            continue;
         }
-    }
-    if !delivered {
+        let Some(continuation) = db
+            .fetch_workflow_continuation(effect.continuation_id)
+            .await?
+        else {
+            continue;
+        };
+        let effect_ip = continuation.instruction_pointer.saturating_sub(1);
+        if module
+            .graph_location(effect_ip)
+            .map(|location| location.node_id.as_str())
+            != Some(node_id.as_str())
+        {
+            continue;
+        }
+        let applied = db
+            .settle_workflow_effect(
+                effect.id,
+                effect.attempt,
+                runinator_models::workflow_vm::WorkflowEffectStatus::Succeeded,
+                Some(event),
+                Some("event_received".into()),
+                Utc::now(),
+            )
+            .await?;
         return Ok(TaskResponse {
-            success: false,
-            message: format!("Run {workflow_run_id} state kept changing; event not delivered"),
+            success: applied,
+            message: if applied {
+                format!("Event delivered to '{node_id}'")
+            } else {
+                format!("Event for '{node_id}' was stale")
+            },
         });
     }
-
-    support::enqueue_node_ready(
-        db,
-        workflow_run_id,
-        node_id.clone(),
-        "event_delivered",
-        Utc::now(),
-        runinator_models::json!({ "node_id": node_id }),
-    )
-    .await?;
     Ok(TaskResponse {
-        success: true,
-        message: format!("Event delivered to '{node_id}'"),
+        success: false,
+        message: format!(
+            "No event effect for node '{node_id}' is waiting in run {workflow_run_id}"
+        ),
     })
 }
 
@@ -432,57 +383,20 @@ pub async fn deliver_signal<T: DatabaseImpl>(
     name: String,
     payload: Value,
 ) -> Result<TaskResponse, SendableError> {
-    if db.fetch_workflow_module(workflow_run_id).await?.is_some() {
-        let effects = db.fetch_workflow_effects(workflow_run_id).await?;
-        let target = effects.into_iter().rev().find(|effect| {
-            !effect.status.is_terminal()
-                && matches!(&effect.request,
-                    runinator_models::workflow_vm::WorkflowEffectRequest::Signal { key, .. }
-                    if key == &name)
-        });
-        let Some(effect) = target else {
-            return Ok(TaskResponse {
-                success: false,
-                message: format!(
-                    "No effect is waiting for signal '{name}' in run {workflow_run_id}"
-                ),
-            });
-        };
-        let applied = db
-            .settle_workflow_effect(
-                effect.id,
-                effect.attempt,
-                runinator_models::workflow_vm::WorkflowEffectStatus::Succeeded,
-                Some(runinator_models::json!({ "signal": name, "payload": payload })),
-                Some("signal_received".into()),
-                Utc::now(),
-            )
-            .await?;
+    if db.fetch_workflow_module(workflow_run_id).await?.is_none() {
         return Ok(TaskResponse {
-            success: applied,
-            message: if applied {
-                format!("Signal '{name}' delivered")
-            } else {
-                format!("Signal '{name}' was stale")
-            },
+            success: false,
+            message: format!("Workflow run {workflow_run_id} has no VM module"),
         });
     }
-    let node_runs = db.fetch_workflow_node_runs(workflow_run_id).await?;
-    let target = node_runs
-        .iter()
-        .filter(|run| run.status == WorkflowStatus::Waiting)
-        .filter(|run| {
-            serde_json::from_value::<runinator_models::workflow_state::SignalState>(
-                run.state.clone().into(),
-            )
-            .map(|state| state.name == name)
-            .unwrap_or(false)
-        })
-        .max_by_key(|run| run.created_at);
-    let Some(node_run) = target else {
-        // nothing is parked on this signal. a run that declared an `orphan_signal` handler wants to
-        // hear about that; every other run keeps the old behaviour of reporting it back, so a
-        // misrouted webhook stays visible rather than being quietly absorbed.
+    let effects = db.fetch_workflow_effects(workflow_run_id).await?;
+    let target = effects.into_iter().rev().find(|effect| {
+        !effect.status.is_terminal()
+            && matches!(&effect.request,
+                runinator_models::workflow_vm::WorkflowEffectRequest::Signal { key, .. }
+                if key == &name)
+    });
+    let Some(effect) = target else {
         if declares_interrupt(db, workflow_run_id, InterruptSource::OrphanSignal).await? {
             return request_run_interrupt(
                 db,
@@ -495,112 +409,26 @@ pub async fn deliver_signal<T: DatabaseImpl>(
         }
         return Ok(TaskResponse {
             success: false,
-            message: format!("No node is waiting for signal '{name}' in run {workflow_run_id}"),
+            message: format!("No effect is waiting for signal '{name}' in run {workflow_run_id}"),
         });
     };
-    db.update_workflow_node_run(
-        node_run.id,
-        WorkflowStatus::Succeeded,
-        None,
-        None,
-        Some(runinator_models::json!({ "signal": name, "payload": payload })),
-        None,
-        Some("signal_received".into()),
-        None,
-    )
-    .await?;
-    db.update_workflow_run_status(
-        workflow_run_id,
-        WorkflowStatus::Running,
-        Some(node_run.node_id.clone()),
-        None,
-        None,
-    )
-    .await?;
-    support::enqueue_node_ready(
-        db,
-        workflow_run_id,
-        node_run.node_id.clone(),
-        "signal_received",
-        Utc::now(),
-        runinator_models::json!({ "signal": name }),
-    )
-    .await?;
-    Ok(TaskResponse {
-        success: true,
-        message: format!("Signal '{name}' delivered"),
-    })
-}
-
-/// route an inbound signal to a parked node by `(name, correlation_key)` across every run, so an
-/// external webhook (github/jira/ci) can resolve the right run without knowing its id. resolves the
-/// most recently parked match the same way as `deliver_signal`.
-pub async fn deliver_signal_by_correlation<T: DatabaseImpl>(
-    db: &T,
-    name: String,
-    correlation_key: String,
-    payload: Value,
-) -> Result<TaskResponse, SendableError> {
-    let waiting = db
-        .fetch_workflow_node_runs_by_status(WorkflowStatus::Waiting)
+    let applied = db
+        .settle_workflow_effect(
+            effect.id,
+            effect.attempt,
+            runinator_models::workflow_vm::WorkflowEffectStatus::Succeeded,
+            Some(runinator_models::json!({ "signal": name, "payload": payload })),
+            Some("signal_received".into()),
+            Utc::now(),
+        )
         .await?;
-    let target = waiting
-        .iter()
-        .filter(|run| {
-            serde_json::from_value::<runinator_models::workflow_state::SignalState>(
-                run.state.clone().into(),
-            )
-            .map(|state| {
-                state.name == name
-                    && state.correlation_key.as_deref() == Some(correlation_key.as_str())
-            })
-            .unwrap_or(false)
-        })
-        .max_by_key(|run| run.created_at);
-    let Some(node_run) = target else {
-        return Ok(TaskResponse {
-            success: false,
-            message: format!(
-                "No node is waiting for signal '{name}' with correlation key '{correlation_key}'"
-            ),
-        });
-    };
-    let workflow_run_id = node_run.workflow_run_id;
-    db.update_workflow_node_run(
-        node_run.id,
-        WorkflowStatus::Succeeded,
-        None,
-        None,
-        Some(runinator_models::json!({
-            "signal": name,
-            "correlation_key": correlation_key,
-            "payload": payload,
-        })),
-        None,
-        Some("signal_received".into()),
-        None,
-    )
-    .await?;
-    db.update_workflow_run_status(
-        workflow_run_id,
-        WorkflowStatus::Running,
-        Some(node_run.node_id.clone()),
-        None,
-        None,
-    )
-    .await?;
-    support::enqueue_node_ready(
-        db,
-        workflow_run_id,
-        node_run.node_id.clone(),
-        "signal_received",
-        Utc::now(),
-        runinator_models::json!({ "signal": name, "correlation_key": correlation_key }),
-    )
-    .await?;
     Ok(TaskResponse {
-        success: true,
-        message: format!("Signal '{name}' delivered to run {workflow_run_id}"),
+        success: applied,
+        message: if applied {
+            format!("Signal '{name}' delivered")
+        } else {
+            format!("Signal '{name}' was stale")
+        },
     })
 }
 

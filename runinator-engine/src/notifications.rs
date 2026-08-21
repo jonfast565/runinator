@@ -5,19 +5,20 @@
 //! the terminal-state transition and the durable side effects that follow it.
 //!
 //! delivery never speaks a vendor protocol from this process. an in-app policy writes the
-//! notifications row directly; every other channel is enqueued on the existing action-dispatch
-//! outbox so a worker executes the normal slack/email provider, exactly like any other action.
+//! notifications row directly; every other channel is frozen into the notification-effect outbox
+//! and executed by a provider worker without synthesizing workflow node state.
 
 use std::sync::Arc;
 
-use runinator_comm::ActionCommand;
+use runinator_comm::{EffectCommand, EffectExecutor};
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::errors::{SendableError, error_code_or_unknown};
 use runinator_models::notifications::{
     NewNotification, NotificationChannel, NotificationEvent, NotificationPolicy,
 };
 use runinator_models::value::Value;
-use runinator_models::workflows::{WorkflowAction, WorkflowRun, WorkflowStatus};
+use runinator_models::workflow_vm::{WORKFLOW_EFFECT_PROTOCOL_VERSION, WorkflowEffectRequest};
+use runinator_models::workflows::{WorkflowRun, WorkflowStatus};
 use runinator_models::{settings::SettingKind, settings::SettingRecord};
 use runinator_utilities::secret_cipher::SecretCipher;
 use runinator_utilities::stored_secret::secret_expiry_occurrence;
@@ -36,8 +37,6 @@ const SCAN_LIMIT: i64 = 500;
 const DEFAULT_SECRET_EXPIRY_WARNING_SECONDS: i64 = 30 * 24 * 60 * 60;
 /// timeout for a delivery action; a notify send that hangs must not pin a worker permit.
 const DELIVERY_TIMEOUT_SECONDS: i64 = 30;
-/// synthetic node id delivery actions carry, so worker logs identify them at a glance.
-const DELIVERY_NODE_ID: &str = "__notification__";
 
 /// the facts a fired policy renders its message from.
 struct EmissionContext {
@@ -369,13 +368,12 @@ impl<T: DatabaseImpl> NotificationDispatcher<'_, T> {
                 "failed to enqueue notification delivery: {}",
                 err
             );
-        } else {
-            self.events.nudge_action_dispatch_publisher();
         }
     }
 
-    /// hand an external-channel notification to the action outbox so a worker delivers it through
-    /// the normal provider path.
+    /// Freeze an external-channel delivery in its own outbox. It reuses the provider-effect
+    /// executor and broker transport, but not a workflow receipt, continuation, node run, or the
+    /// removed action-dispatch table.
     async fn enqueue_delivery(
         &self,
         policy: &NotificationPolicy,
@@ -389,49 +387,46 @@ impl<T: DatabaseImpl> NotificationDispatcher<'_, T> {
             return Err(crate::errors::NOTIFY_MISSING_TARGET.error(policy.id));
         };
 
-        let delivery = self
-            .db
-            .create_notification_delivery(
-                *notification_id,
-                Some(policy.id),
-                policy.channel,
-                Some(target.clone()),
-            )
-            .await?;
-
+        let delivery_id = Uuid::now_v7();
         let configuration = delivery_configuration(policy, &target, context);
-        let command = ActionCommand {
+        let command = EffectCommand {
+            version: WORKFLOW_EFFECT_PROTOCOL_VERSION,
             command_id: Uuid::now_v7(),
-            // deliveries are not node work: the run id correlates the alert with its cause, and the
-            // node run id is a fresh identifier the result path routes by delivery id instead.
+            // A notification can be caused by a workflow run, but is never owned by its VM
+            // continuation. Global policy deliveries use nil only as a correlation placeholder.
+            effect_id: delivery_id,
             workflow_run_id: context.workflow_run_id.unwrap_or_else(Uuid::nil),
-            workflow_node_run_id: Uuid::now_v7(),
-            node_id: DELIVERY_NODE_ID.to_string(),
-            action: WorkflowAction {
+            continuation_id: Uuid::nil(),
+            attempt: 0,
+            request: WorkflowEffectRequest::Action {
                 provider: provider.to_string(),
                 function: function.to_string(),
-                timeout_seconds: DELIVERY_TIMEOUT_SECONDS,
-                configuration,
-                mcp_enabled: false,
+                input: configuration.into(),
+                timeout_seconds: Some(DELIVERY_TIMEOUT_SECONDS),
+                retry: Default::default(),
                 tags: Vec::new(),
                 required_labels: Default::default(),
                 idempotency_key: None,
                 function_binding: None,
             },
-            attempt: 0,
-            parameters: Value::Null,
+            executor: EffectExecutor::Provider,
             target: Default::default(),
             trace_id: Uuid::now_v7(),
             trace_context: Default::default(),
-            notification_delivery_id: Some(delivery.id),
-            invocation_call_id: None,
-            task_run_id: None,
-            // the delivery row is already the dedupe record for an alert, and its id keys the
-            // outbox entry, so a delivery needs no second idempotency reservation.
-            idempotency_key: None,
+            // The delivery id is also the immutable effect id and idempotency key. This allows a
+            // redelivery to reuse worker provider protections without becoming workflow work.
+            idempotency_key: format!("notification:{delivery_id}"),
+            notification_delivery_id: Some(delivery_id),
         };
         self.db
-            .enqueue_action_dispatch(format!("notification:{}", delivery.id), command)
+            .create_notification_delivery(
+                delivery_id,
+                *notification_id,
+                Some(policy.id),
+                policy.channel,
+                Some(target),
+                command,
+            )
             .await?;
         Ok(())
     }
@@ -515,28 +510,41 @@ impl<T: DatabaseImpl> EmissionContextBuilder<'_, T> {
     /// one.
     async fn retry_exhausted(&self) -> Option<EmissionContext> {
         let run = self.run;
-        let node_runs = self.db.fetch_workflow_node_runs(run.id).await.ok()?;
-        // attempt is zero-based, so a retried node is any failed node past its first attempt.
-        let exhausted = node_runs
-            .iter()
-            .filter(|node_run| {
-                matches!(
-                    node_run.status,
-                    WorkflowStatus::Failed | WorkflowStatus::TimedOut
-                ) && node_run.attempt > 0
+        let module = self.db.fetch_workflow_module(run.id).await.ok()??;
+        let exhausted = self
+            .db
+            .fetch_workflow_effects(run.id)
+            .await
+            .ok()?
+            .into_iter()
+            // An action retry is an effect retry. The receipt's request, attempt, and frozen
+            // continuation are the durable replacement for a node-run attempt row.
+            .filter(|effect| {
+                effect.status == runinator_models::workflow_vm::WorkflowEffectStatus::Failed
+                    && effect.attempt > 0
+                    && matches!(
+                        effect.request,
+                        runinator_models::workflow_vm::WorkflowEffectRequest::Action { .. }
+                    )
             })
-            .max_by_key(|node_run| node_run.attempt)?;
+            .max_by_key(|effect| effect.attempt)?;
+        let continuation = self
+            .db
+            .fetch_workflow_continuation(exhausted.continuation_id)
+            .await
+            .ok()??;
+        let node_id = module
+            .graph_location(continuation.instruction_pointer.saturating_sub(1))?
+            .node_id
+            .clone();
         let workflow_name = self.workflow_name().await;
         Some(EmissionContext {
             workflow_run_id: Some(run.id),
-            node_id: Some(exhausted.node_id.clone()),
-            title: format!(
-                "{} exhausted retries on '{}'",
-                workflow_name, exhausted.node_id
-            ),
+            node_id: Some(node_id.clone()),
+            title: format!("{} exhausted retries on '{}'", workflow_name, node_id),
             body: format!(
                 "Node '{}' in run {} failed after {} attempt(s).\n{}",
-                exhausted.node_id,
+                node_id,
                 run.id,
                 exhausted.attempt + 1,
                 exhausted
@@ -548,10 +556,10 @@ impl<T: DatabaseImpl> EmissionContextBuilder<'_, T> {
                 "event": NotificationEvent::NodeRetryExhausted.as_str(),
                 "workflow_id": run.workflow_id,
                 "workflow_run_id": run.id,
-                "node_id": exhausted.node_id,
+                "node_id": node_id,
                 "attempts": exhausted.attempt + 1,
             }),
-            occurrence: format!("retry_exhausted:{}:{}", run.id, exhausted.node_id),
+            occurrence: format!("retry_exhausted:{}:{node_id}", run.id),
         })
     }
 

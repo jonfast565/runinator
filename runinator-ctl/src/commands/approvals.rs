@@ -27,7 +27,7 @@ pub(super) async fn approvals(
         } => {
             let output_json = optional_json(json_file)?;
             let approval = client
-                .approve_request(*id, by.clone(), message.clone(), output_json)
+                .settle_approval_effect(*id, true, by.clone(), message.clone(), output_json)
                 .await?;
             if json_output {
                 return output::json(&approval);
@@ -42,7 +42,7 @@ pub(super) async fn approvals(
         } => {
             let output_json = optional_json(json_file)?;
             let approval = client
-                .reject_request(*id, by.clone(), message.clone(), output_json)
+                .settle_approval_effect(*id, false, by.clone(), message.clone(), output_json)
                 .await?;
             if json_output {
                 return output::json(&approval);

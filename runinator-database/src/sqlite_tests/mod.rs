@@ -8,6 +8,7 @@ mod archive;
 mod audit;
 mod auth;
 mod definitions;
+mod notifications;
 mod parity;
 mod revisions;
 mod schema;

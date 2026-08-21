@@ -28,6 +28,7 @@ async fn in_memory_broker_round_trips_vm_effects_without_action_identity() {
         trace_id: Uuid::now_v7(),
         trace_context: Default::default(),
         idempotency_key: "timer:42".into(),
+        notification_delivery_id: None,
     };
     broker
         .publish_effect(EffectMessage {

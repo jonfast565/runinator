@@ -1,7 +1,7 @@
 import { expect, it, vi } from "vitest";
 import { useWorkflowsStore } from "../workflows";
 import type { WorkflowRunDetail } from "../../../../core/domain/models";
-import { closeGate, fetchGates, fetchWorkflowRun, openGate, patchWorkflowRunDebug } from "../../../../core/api/commandCenterApi";
+import { closeGate, fetchGates, fetchWorkflowRun, openGate } from "../../../../core/api/commandCenterApi";
 import { RUN_ID, flushWorkflowSync, workflowDetail, waitingGateWorkflowDetail } from "./workflows-fixtures";
 
 export function registerWorkflowRunStateTests() {
@@ -23,31 +23,6 @@ export function registerWorkflowRunStateTests() {
 
     expect(workflows.workflowRunDetail?.run.status).toBe("running");
     expect(workflows.workflowRunDetail?.run.message).toBe("ws");
-  });
-
-  it("keeps an optimistic breakpoint through stale pushes until the server confirms it", async () => {
-    const workflows = useWorkflowsStore();
-    workflows.setWorkflowRunDetail(workflowDetail(RUN_ID, "debug_paused", "initial", []));
-    vi.mocked(patchWorkflowRunDebug).mockResolvedValue({ success: true, message: "ok" });
-    vi.mocked(fetchWorkflowRun).mockResolvedValue(
-      workflowDetail(RUN_ID, "debug_paused", "stale http", []),
-    );
-
-    await workflows.toggleBreakpoint("task-1");
-
-    expect(workflows.currentBreakpoints).toEqual(["task-1"]);
-
-    workflows.setWorkflowRunDetail(workflowDetail(RUN_ID, "running", "stale ws", []));
-
-    expect(workflows.workflowRunDetail?.run.status).toBe("running");
-    expect(workflows.workflowRunDetail?.run.message).toBe("stale ws");
-    expect(workflows.currentBreakpoints).toEqual(["task-1"]);
-
-    workflows.setWorkflowRunDetail(workflowDetail(RUN_ID, "running", "confirmed ws", ["task-1"]));
-    workflows.setWorkflowRunDetail(workflowDetail(RUN_ID, "running", "next ws", []));
-
-    expect(workflows.workflowRunDetail?.run.message).toBe("next ws");
-    expect(workflows.currentBreakpoints).toEqual([]);
   });
 
   it("loads run gates for waiting gate nodes and refreshes after resolving them", async () => {

@@ -1,4 +1,7 @@
-# Packaged Functions and REXRAP Console Implementation Plan
+# Historical Packaged Functions and REXRAP Console Implementation Plan
+
+> Historical design record. References to the reducer/action outbox describe the architecture at
+> planning time; packaged functions now execute through provider effects.
 
 ## Objective
 

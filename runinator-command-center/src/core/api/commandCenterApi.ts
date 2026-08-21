@@ -674,24 +674,6 @@ export async function continueWorkflowRun(workflowRunId: string, cursor?: string
   return command<TaskResponse>("continue_workflow_run", { workflowRunId, cursor });
 }
 
-/** fork a speculative "what if" branch beside the run's real threads of control. */
-export async function forkWorkflowRunCursor(
-  workflowRunId: string,
-  options: {
-    fromCursor?: string | null;
-    atNode?: string | null;
-    label?: string | null;
-    contextPatch?: unknown;
-  } = {},
-) {
-  return command<TaskResponse>("fork_workflow_run_cursor", { workflowRunId, ...options });
-}
-
-/** send any DebugVerb; the verbs without a route of their own ride this. */
-export async function sendDebugCommand(workflowRunId: string, verb: Record<string, unknown>) {
-  return command<TaskResponse>("debug_command", { workflowRunId, verb });
-}
-
 export async function cancelWorkflowRun(workflowRunId: string) {
   return command<TaskResponse>("cancel_workflow_run", { workflowRunId });
 }
@@ -702,32 +684,6 @@ export async function pauseWorkflowRun(workflowRunId: string) {
 
 export async function resumeWorkflowRun(workflowRunId: string) {
   return command<TaskResponse>("resume_workflow_run", { workflowRunId });
-}
-
-export interface WorkflowDebugPatch {
-  breakpoints?: string[];
-  mode?: "step_all" | "breakpoints";
-  one_shot_breakpoint?: string | null;
-}
-
-export async function patchWorkflowRunDebug(workflowRunId: string, patch: WorkflowDebugPatch) {
-  return command<TaskResponse>("patch_workflow_run_debug", { workflowRunId, patch });
-}
-
-export async function runToCursorWorkflowRun(workflowRunId: string, nodeId: string) {
-  return command<TaskResponse>("run_to_cursor_workflow_run", { workflowRunId, nodeId });
-}
-
-export async function skipWorkflowNode(
-  workflowRunId: string,
-  outputJson: unknown,
-  message?: string,
-) {
-  return command<TaskResponse>("skip_workflow_node", { workflowRunId, outputJson, message });
-}
-
-export async function rerunWorkflowNode(workflowRunId: string, parameters: unknown) {
-  return command<TaskResponse>("rerun_workflow_node", { workflowRunId, parameters });
 }
 
 export async function replayWorkflowRun(
@@ -1187,11 +1143,21 @@ export interface ApprovalResolution {
 }
 
 export async function approveApproval(approvalId: string, resolution: ApprovalResolution = {}) {
-  return command<TaskResponse>("approve_approval", { approvalId, ...resolution });
+  return settleWorkflowEffect(
+    approvalId,
+    "succeeded",
+    (resolution.output ?? { decision: "approved" }) as JsonValue,
+    resolution.message ?? null,
+  );
 }
 
 export async function rejectApproval(approvalId: string, resolution: ApprovalResolution = {}) {
-  return command<TaskResponse>("reject_approval", { approvalId, ...resolution });
+  return settleWorkflowEffect(
+    approvalId,
+    "failed",
+    (resolution.output ?? { decision: "rejected" }) as JsonValue,
+    resolution.message ?? null,
+  );
 }
 
 export async function fetchGates(workflowRunId?: string, status?: string) {
@@ -1210,11 +1176,11 @@ export async function fetchGates(workflowRunId?: string, status?: string) {
 }
 
 export async function openGate(gateId: string, reason?: string) {
-  return command<TaskResponse>("open_gate", { gateId, reason: reason ?? null });
+  return settleWorkflowEffect(gateId, "succeeded", { open: true, reason: reason ?? null }, reason);
 }
 
 export async function closeGate(gateId: string, reason?: string) {
-  return command<TaskResponse>("close_gate", { gateId, reason: reason ?? null });
+  return settleWorkflowEffect(gateId, "succeeded", { open: false, reason: reason ?? null }, reason);
 }
 
 export async function deliverSignal(workflowRunId: string, name: string, payload: unknown = {}) {

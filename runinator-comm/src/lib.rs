@@ -10,7 +10,6 @@ use chrono::{DateTime, Utc};
 use runinator_models::{
     runs::{NewRunArtifact, NewRunChunk},
     value::Value,
-    workflow_state::DebugMode,
     workflow_vm::{
         UnsupportedWorkflowVmVersion, WORKFLOW_EFFECT_PROTOCOL_VERSION, WorkflowEffectRequest,
         WorkflowEffectStatus, ensure_effect_protocol_version,
@@ -163,6 +162,11 @@ pub struct EffectCommand {
     #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
     pub trace_context: std::collections::HashMap<String, String>,
     pub idempotency_key: String,
+    /// Set for an engine-owned notification delivery. Such a command shares the provider-effect
+    /// transport and worker executor, but is settled against `notification_deliveries`, never a
+    /// workflow effect receipt or continuation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notification_delivery_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -180,6 +184,27 @@ pub enum EffectExecutor {
 pub struct EffectDispatchRecord {
     pub id: Uuid,
     pub effect_id: Uuid,
+    pub dedupe_key: String,
+    pub command: EffectCommand,
+    pub attempts: i64,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub published_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claimed_by: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claimed_until: Option<DateTime<Utc>>,
+}
+
+/// One leased external notification delivery. It deliberately uses the provider-effect envelope so
+/// workers share the same provider runtime, while its receipt and settlement remain outside the
+/// workflow VM's continuation/effect tables.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NotificationEffectDispatchRecord {
+    pub delivery_id: Uuid,
     pub dedupe_key: String,
     pub command: EffectCommand,
     pub attempts: i64,
@@ -218,6 +243,10 @@ pub struct EffectResult {
     pub timestamp: DateTime<Utc>,
     #[serde(default = "Uuid::now_v7")]
     pub trace_id: Uuid,
+    /// Copied from the originating command when this result settles a durable notification
+    /// delivery instead of a workflow-owned effect receipt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notification_delivery_id: Option<Uuid>,
 }
 
 impl EffectResult {
@@ -270,6 +299,7 @@ impl EffectResult {
             },
             timestamp: Utc::now(),
             trace_id: command.trace_id,
+            notification_delivery_id: command.notification_delivery_id,
         }
     }
 }
@@ -294,6 +324,7 @@ mod effect_protocol_tests {
             trace_id: Uuid::now_v7(),
             trace_context: std::collections::HashMap::new(),
             idempotency_key: "effect-key".into(),
+            notification_delivery_id: None,
         };
         let result = EffectResult::status(
             &command,
@@ -337,6 +368,7 @@ mod effect_protocol_tests {
             trace_id: Uuid::nil(),
             trace_context: std::collections::HashMap::new(),
             idempotency_key: "key".into(),
+            notification_delivery_id: None,
         };
         assert_eq!(
             serde_json::to_string(&command).unwrap(),
@@ -583,10 +615,8 @@ impl WsIngressCommand {
     }
 }
 
-/// the canonical set of debugger operations against a run. one tagged contract replaces the prior
-/// per-endpoint shapes so every layer (frontend, web service, future broker paths) names debug
-/// operations identically. payload-carrying verbs (skip/rerun/set_*) live here rather than on the
-/// unit-variant [`ControlKind`].
+/// The canonical VM debugger operations against a run. One tagged contract keeps the frontend,
+/// web service, and future broker paths aligned.
 /// which thread of control a debug verb addresses.
 ///
 /// `None` means "the one the operator is looking at" — the first parked cursor, else the primary.
@@ -598,76 +628,15 @@ pub type CursorTarget = Option<Uuid>;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "verb", rename_all = "snake_case")]
 pub enum DebugVerb {
-    /// advance exactly one node, then pause again.
+    /// Advance exactly one VM boundary, then pause again.
     Step {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cursor: CursorTarget,
     },
-    /// resume normal execution (still honoring breakpoints).
+    /// resume normal execution.
     Continue {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cursor: CursorTarget,
-    },
-    /// run until `node_id` is reached, pausing there once.
-    RunToCursor {
-        /// the node to stop at. named `cursor` on the wire before threads of control had ids; the
-        /// alias keeps every existing client working.
-        #[serde(alias = "cursor")]
-        node_id: String,
-        /// which thread of control to run; omit for the one the operator is looking at. renamed on
-        /// the wire (not plain `cursor`) because `node_id`'s back-compat alias already claims that
-        /// key — a plain `cursor` field here would silently never deserialize.
-        #[serde(
-            default,
-            rename = "run_cursor",
-            skip_serializing_if = "Option::is_none"
-        )]
-        cursor: CursorTarget,
-    },
-    /// mark the active node succeeded with a synthetic `output` and advance.
-    Skip {
-        #[serde(default)]
-        output: Value,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        message: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        cursor: CursorTarget,
-    },
-    /// supersede the active node's latest attempt and re-execute it with `parameters`.
-    Rerun {
-        #[serde(default)]
-        parameters: Value,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        cursor: CursorTarget,
-    },
-    /// replace the configured breakpoint set.
-    ///
-    /// run-scoped on purpose: a breakpoint is a property of the graph as authored, so every thread
-    /// of control honors the same set. only the one-shot stop is per-cursor.
-    SetBreakpoints { breakpoints: Vec<String> },
-    /// set the step granularity.
-    SetMode { mode: DebugMode },
-    /// fork a speculative "what if" branch that walks beside the real ones.
-    Fork {
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        from_cursor: CursorTarget,
-        /// where the fork enters; defaults to wherever its parent is standing.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        at_node: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        label: Option<String>,
-        /// merge-patch overlaid on the fork's context, for "what if this value were different".
-        #[serde(default)]
-        context_patch: Value,
-    },
-    /// abandon a speculative branch.
-    RetireCursor { cursor: Uuid },
-    /// let a speculative cursor dispatch one node for real instead of shadowing it.
-    ArmForReal {
-        cursor: Uuid,
-        node_id: String,
-        #[serde(default)]
-        armed: bool,
     },
 }
 

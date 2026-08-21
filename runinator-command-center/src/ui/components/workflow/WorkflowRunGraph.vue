@@ -56,13 +56,6 @@ function onNodeClick(event: NodeMouseEvent) {
     return;
   }
 
-  const native = event.event as MouseEvent | undefined;
-
-  if (native?.shiftKey && workflows.isDebugRun) {
-    void workflows.toggleBreakpoint(nodeId);
-    return;
-  }
-
   workflows.selectWorkflowRunNode(nodeId);
 }
 

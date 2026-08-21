@@ -17,7 +17,6 @@
         class="cursor-row"
         :class="{
           'cursor-row-selected': marker.selected,
-          'cursor-row-speculative': marker.speculative,
         }"
         @click="select(marker.id)"
       >
@@ -45,76 +44,16 @@
           >
             Continue
           </button>
-          <button
-            v-if="marker.speculative"
-            class="btn btn-2xs"
-            :class="{ 'is-armed': marker.armed }"
-            :title="
-              marker.armed
-                ? `Disarm ${marker.nodeId}: shadow it again instead of dispatching for real`
-                : `Arm ${marker.nodeId}: let this branch dispatch it for real, once`
-            "
-            @click.stop="toggleArm(marker)"
-          >
-            {{ marker.armed ? "Armed" : "Arm" }}
-          </button>
-          <button
-            v-if="marker.speculative"
-            class="btn btn-2xs btn-danger"
-            title="Abandon this speculative branch"
-            @click.stop="retire(marker.id)"
-          >
-            Retire
-          </button>
         </span>
       </li>
     </ul>
-
-    <div class="mt-1 flex items-center gap-1">
-      <button class="btn btn-2xs" title="Fork a speculative branch here" @click="openFork">
-        Fork here
-      </button>
-      <button
-        v-if="markers.length > 1"
-        class="btn btn-2xs"
-        :title="compareWith ? 'Stop comparing' : 'Compare two branches'"
-        @click="toggleCompare"
-      >
-        {{ compareWith ? "Stop compare" : "Compare" }}
-      </button>
-      <span class="text-2xs text-muted">
-        A forked branch shadows external effects unless a node is explicitly armed.
-      </span>
-    </div>
-
-    <!-- two branches side by side: the same diff the debugger already uses for input vs output,
-         pointed at two threads of control instead of two moments of one. -->
-    <JsonDiff
-      v-if="comparison"
-      :before="comparison.before"
-      :after="comparison.after"
-      :title="comparison.title"
-      open
-    />
-
-    <DebugJsonModal
-      v-if="forkOpen"
-      title="Fork a speculative branch"
-      hint="Optional context patch, merged over this branch's context."
-      :initial-value="{}"
-      submit-label="Fork"
-      @close="forkOpen = false"
-      @submit="confirmFork"
-    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from "vue";
-import { cursorColor, type CursorMarker } from "../../../core/domain/models";
+import { computed } from "vue";
+import { cursorColor } from "../../../core/domain/models";
 import { useWorkflowsStore } from "../../adapters/pinia/workflows";
-import DebugJsonModal from "./DebugJsonModal.vue";
-import JsonDiff from "./JsonDiff.vue";
 
 const workflows = useWorkflowsStore();
 
@@ -129,44 +68,6 @@ const followCursor = computed({
 });
 
 const markers = computed(() => workflows.cursorMarkers);
-const forkOpen = ref(false);
-/** the branch being compared *against* the selected one, if the operator asked for a comparison. */
-const compareWith = ref<string>("");
-
-/** pick the next branch that is not the selected one, so one click gives a useful pair. */
-function toggleCompare() {
-  if (compareWith.value) {
-    compareWith.value = "";
-    return;
-  }
-
-  const other = markers.value.find((marker) => !marker.selected);
-
-  compareWith.value = other?.id ?? "";
-}
-
-const comparison = computed(() => {
-  if (!compareWith.value) {
-    return null;
-  }
-
-  const cursors = workflows.cursors;
-  const selectedId = workflows.selectedCursorId;
-  const left = cursors.find((cursor) => cursor.id === selectedId);
-  const right = cursors.find((cursor) => cursor.id === compareWith.value);
-
-  if (!left || !right) {
-    return null;
-  }
-
-  const name = (id: string) => markers.value.find((marker) => marker.id === id)?.label ?? id;
-
-  return {
-    before: left.debug?.last_output_json ?? left.last_output ?? null,
-    after: right.debug?.last_output_json ?? right.last_output ?? null,
-    title: `${name(left.id)} vs ${name(right.id)}`,
-  };
-});
 
 function select(cursorId: string) {
   workflows.selectCursor(cursorId);
@@ -182,26 +83,6 @@ function continueOne(cursorId: string) {
   void workflows.continueSelectedWorkflowRun();
 }
 
-function retire(cursorId: string) {
-  void workflows.retireCursor(cursorId);
-}
-
-/**
- * arm or disarm the node this speculative branch is standing on. arming is per node, so the rail
- * offers it only for the branch's current position -- the one node it is about to execute.
- */
-function toggleArm(marker: CursorMarker) {
-  void workflows.armNodeForReal(marker.id, marker.nodeId, !marker.armed);
-}
-
-function openFork() {
-  forkOpen.value = true;
-}
-
-function confirmFork(value: unknown) {
-  forkOpen.value = false;
-  void workflows.forkCursor({ contextPatch: value ?? null });
-}
 </script>
 
 <style scoped>
@@ -225,9 +106,6 @@ function confirmFork(value: unknown) {
   background: var(--surface-hover, rgba(127, 127, 127, 0.14));
 }
 
-.cursor-row-speculative {
-  border-style: dashed;
-}
 
 .cursor-swatch {
   width: 0.5rem;

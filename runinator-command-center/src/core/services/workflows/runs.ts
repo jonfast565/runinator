@@ -9,20 +9,13 @@ import {
   fetchWorkflowRun,
   fetchWorkflowRuns,
   openGate,
-  patchWorkflowRunDebug,
   pauseWorkflowRun,
   renameWorkflowRun as renameWorkflowRunApi,
   replayWorkflowRun as replayWorkflowRunApi,
   requestRunInterrupt,
   settleWorkflowEffect,
   resumeWorkflowRun,
-  rerunWorkflowNode,
-  runToCursorWorkflowRun,
-  forkWorkflowRunCursor,
-  sendDebugCommand,
-  skipWorkflowNode,
   stepWorkflowRun,
-  type WorkflowDebugPatch,
 } from "../../api/commandCenterApi";
 import type {
   GateRecord,
@@ -57,10 +50,6 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
   const asRecord = asJsonRecord;
   const isRecord = isJsonRecord;
   const asArray = jsonRecordArray;
-
-  function isBreakpointed(nodeId: string): boolean {
-    return host.getCurrentBreakpoints().includes(nodeId);
-  }
 
   function getTransition(key: string): string {
     const transitions = asRecord(host.state.stepEditor.nodeDraft.transitions);
@@ -191,87 +180,6 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
   function selectCursor(cursorId: string) {
     host.state.selectedCursorId = cursorId;
     host.notify();
-  }
-
-  /** fork a speculative "what if" branch from the selected cursor. */
-  async function forkCursor(
-    options: { atNode?: string; label?: string; contextPatch?: unknown } = {},
-  ) {
-    if (!host.state.workflowRunDetail) {
-      return;
-    }
-
-    const runId = host.state.workflowRunDetail.run.id;
-    const response = await host.ctx.runOperation(`Forking a branch of run ${runId}`, () =>
-      forkWorkflowRunCursor(runId, {
-        fromCursor: selectedCursorId(),
-        atNode: options.atNode ?? null,
-        label: options.label ?? null,
-        contextPatch: options.contextPatch ?? null,
-      }),
-    );
-
-    if (!response.success) {
-      host.ctx.setError(response.message || "Failed to fork a speculative branch");
-      return;
-    }
-
-    // the fork's id comes back as the response message; follow it, since forking is an act of
-    // deciding to look at the new branch.
-    if (response.message) {
-      selectCursor(response.message);
-    }
-
-    await fetchWorkflowRunDetail(runId, true);
-  }
-
-  /** abandon a speculative branch. */
-  async function retireCursor(cursorId: string) {
-    if (!host.state.workflowRunDetail) {
-      return;
-    }
-
-    const runId = host.state.workflowRunDetail.run.id;
-    const response = await host.ctx.runOperation(`Retiring branch ${cursorId}`, () =>
-      sendDebugCommand(runId, { verb: "retire_cursor", cursor: cursorId }),
-    );
-
-    if (!response.success) {
-      host.ctx.setError(response.message || "Failed to retire the branch");
-      return;
-    }
-
-    if (host.state.selectedCursorId === cursorId) {
-      selectCursor("");
-    }
-
-    await fetchWorkflowRunDetail(runId, true);
-  }
-
-  /** let a speculative branch dispatch one node for real instead of shadowing it. */
-  async function armNodeForReal(cursorId: string, nodeId: string, armed: boolean) {
-    if (!host.state.workflowRunDetail) {
-      return;
-    }
-
-    const runId = host.state.workflowRunDetail.run.id;
-    const response = await host.ctx.runOperation(
-      `${armed ? "Arming" : "Disarming"} ${nodeId}`,
-      () =>
-        sendDebugCommand(runId, {
-          verb: "arm_for_real",
-          cursor: cursorId,
-          node_id: nodeId,
-          armed,
-        }),
-    );
-
-    if (!response.success) {
-      host.ctx.setError(response.message || "Failed to change arming");
-      return;
-    }
-
-    await fetchWorkflowRunDetail(runId, true);
   }
 
   async function continueSelectedWorkflowRun() {
@@ -428,124 +336,6 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     }
 
     host.ctx.setStatus(response.message || `Workflow run ${runId} resumed`);
-    await fetchWorkflowRunDetail(runId, true);
-    host.notify();
-  }
-
-  async function patchSelectedWorkflowRunDebug(patch: WorkflowDebugPatch) {
-    if (!host.state.workflowRunDetail || !host.isDebugRun()) {
-      return;
-    }
-
-    const runId = host.state.workflowRunDetail.run.id;
-    const response = await host.ctx.runOperation(`Updating debug settings for run ${runId}`, () =>
-      patchWorkflowRunDebug(runId, patch),
-    );
-
-    if (!response.success) {
-      host.ctx.setError(response.message || "Failed to update debug settings");
-      return;
-    }
-
-    await fetchWorkflowRunDetail(runId, true);
-    host.notify();
-  }
-
-  async function toggleBreakpoint(nodeId: string) {
-    if (!host.state.workflowRunDetail || !host.isDebugRun()) {
-      return;
-    }
-
-    const runId = host.state.workflowRunDetail.run.id;
-    const current = host.getCurrentBreakpoints();
-    const next = current.includes(nodeId)
-      ? current.filter((id) => id !== nodeId)
-      : [...current, nodeId];
-    const mutationId = ++internal.nextBreakpointMutationId;
-    internal.pendingBreakpointPatch = { runId, breakpoints: next, mutationId };
-    applyBreakpointPatch(host.state.workflowRunDetail, next);
-
-    try {
-      const response = await host.ctx.runOperation(`Updating debug settings for run ${runId}`, () =>
-        patchWorkflowRunDebug(runId, { breakpoints: next }),
-      );
-
-      if (!response.success) {
-        host.ctx.setError(response.message || "Failed to update debug settings");
-
-        if (clearPendingBreakpointPatch(runId, mutationId)) {
-          applyBreakpointPatch(host.state.workflowRunDetail, current);
-        }
-
-        return;
-      }
-
-      await fetchWorkflowRunDetail(runId, true);
-    } catch {
-      if (clearPendingBreakpointPatch(runId, mutationId)) {
-        applyBreakpointPatch(host.state.workflowRunDetail, current);
-      }
-    }
-
-    host.notify();
-  }
-
-  async function runToCursor(nodeId: string) {
-    if (!host.state.workflowRunDetail || !host.isDebugRun()) {
-      return;
-    }
-
-    const runId = host.state.workflowRunDetail.run.id;
-    const response = await host.ctx.runOperation(`Running to cursor ${nodeId}`, () =>
-      runToCursorWorkflowRun(runId, nodeId),
-    );
-
-    if (!response.success) {
-      host.ctx.setError(response.message || "Failed to run to cursor");
-      return;
-    }
-
-    host.ctx.setStatus(response.message || `Running to ${nodeId}`);
-    await fetchWorkflowRunDetail(runId, true);
-    host.notify();
-  }
-
-  async function skipCurrentNode(outputJson: unknown, message?: string) {
-    if (!host.state.workflowRunDetail || !host.canStepWorkflowRun()) {
-      return;
-    }
-
-    const runId = host.state.workflowRunDetail.run.id;
-    const response = await host.ctx.runOperation(`Skipping current node`, () =>
-      skipWorkflowNode(runId, outputJson, message),
-    );
-
-    if (!response.success) {
-      host.ctx.setError(response.message || "Failed to skip node");
-      return;
-    }
-
-    host.ctx.setStatus(response.message || `Node skipped`);
-    await fetchWorkflowRunDetail(runId, true);
-    host.notify();
-  }
-
-  async function rerunCurrentNode(parameters: unknown) {
-    if (!host.state.workflowRunDetail || !host.canStepWorkflowRun()) {
-      return;
-    }
-
-    const runId = host.state.workflowRunDetail.run.id;
-    const response = await host.ctx.runOperation(`Re-running current node`, () =>
-      rerunWorkflowNode(runId, parameters),
-    );
-
-    if (!response.success) {
-      host.ctx.setError(response.message || "Failed to re-run node");
-      return;
-    }
-
-    host.ctx.setStatus(response.message || `Node re-running`);
     await fetchWorkflowRunDetail(runId, true);
     host.notify();
   }
@@ -1032,10 +822,6 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     }
 
     if (detail) {
-      confirmPendingBreakpointPatch(detail);
-    }
-
-    if (detail) {
       internal.runDetailById.set(detail.run.id, detail);
       syncRunSummaryRow(detail.run);
 
@@ -1050,7 +836,6 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
 
     if (isActiveRun) {
       host.state.workflowRunDetail = detail;
-      reapplyPendingBreakpointPatch();
       host.state.workflowNodeDetailExtra = "";
 
       if (!detail?.nodes.some((node) => node.node_id === host.state.selectedWorkflowRunNodeId)) {
@@ -1075,71 +860,6 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     }
 
     host.notify();
-  }
-
-  function reapplyPendingBreakpointPatch() {
-    if (!host.state.workflowRunDetail || !internal.pendingBreakpointPatch) {
-      return;
-    }
-
-    if (host.state.workflowRunDetail.run.id !== internal.pendingBreakpointPatch.runId) {
-      return;
-    }
-
-    applyBreakpointPatch(host.state.workflowRunDetail, internal.pendingBreakpointPatch.breakpoints);
-    host.notify();
-  }
-
-  function confirmPendingBreakpointPatch(detail: WorkflowRunDetail) {
-    const pending = internal.pendingBreakpointPatch;
-
-    if (pending?.runId !== detail.run.id) {
-      return;
-    }
-
-    if (sameBreakpoints(readBreakpoints(detail), pending.breakpoints)) {
-      internal.pendingBreakpointPatch = null;
-    }
-  }
-
-  function clearPendingBreakpointPatch(runId: string, mutationId: number) {
-    if (
-      internal.pendingBreakpointPatch?.runId === runId &&
-      internal.pendingBreakpointPatch.mutationId === mutationId
-    ) {
-      internal.pendingBreakpointPatch = null;
-      return true;
-    }
-
-    return false;
-  }
-
-  function applyBreakpointPatch(
-    detail: WorkflowRunDetail | null,
-    breakpoints: string[],
-  ) {
-    if (!detail) {
-      return;
-    }
-
-    detail.execution_state ??= {};
-    const debug = coerceDebugFrame(detail.execution_state.debug) ?? {};
-    detail.execution_state.debug = { ...debug, breakpoints: [...breakpoints] };
-  }
-
-  function readBreakpoints(detail: WorkflowRunDetail): string[] {
-    return coerceDebugFrame(detail.execution_state?.debug)?.breakpoints ?? [];
-  }
-
-  function sameBreakpoints(left: string[], right: string[]) {
-    const normalizedLeft = [...new Set(left)].sort();
-    const normalizedRight = [...new Set(right)].sort();
-
-    if (normalizedLeft.length !== normalizedRight.length) {
-      return false;
-    }
-
-    return normalizedLeft.every((id, index) => id === normalizedRight[index]);
   }
 
   async function updateSelectedWorkflowNodeDetail() {
@@ -1271,7 +991,6 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
 
   return {
     ...watchService,
-    isBreakpointed,
     getTransition,
     setTransition,
     runSelectedWorkflow,
@@ -1282,20 +1001,12 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     stepSelectedWorkflowRun,
     continueSelectedWorkflowRun,
     selectCursor,
-    forkCursor,
-    retireCursor,
-    armNodeForReal,
     cancelSelectedWorkflowRun,
     deleteSelectedWorkflowRun,
     deleteWorkflowRunById,
     requestSelectedRunInterrupt,
     pauseSelectedWorkflowRun,
     resumeSelectedWorkflowRun,
-    patchSelectedWorkflowRunDebug,
-    toggleBreakpoint,
-    runToCursor,
-    skipCurrentNode,
-    rerunCurrentNode,
     replaySelectedWorkflowRun,
     renameSelectedWorkflowRun,
     cancelWorkflowRuns,
@@ -1318,12 +1029,6 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     syncWorkflowRunGatesForDetail,
     resolveWorkflowRunGate,
     applyWorkflowRunDetail,
-    reapplyPendingBreakpointPatch,
-    confirmPendingBreakpointPatch,
-    clearPendingBreakpointPatch,
-    applyBreakpointPatch,
-    readBreakpoints,
-    sameBreakpoints,
     updateSelectedWorkflowNodeDetail,
   };
 }

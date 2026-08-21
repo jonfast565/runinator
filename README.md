@@ -737,7 +737,7 @@ Workflow syntax now includes richer declarative control-flow nodes:
 - `join` waits for named upstream nodes using `all`, `any`, or `first_success`.
 - `try` runs a body, optional catch, and optional finally node; those nodes transition back to the `try` controller.
 - `map` runs one target node for each resolved item and exposes the current item under `workflow.state.map`.
-- `race` starts branch roots until one satisfies the winner policy, then cancels the still-running losing branches (their latest non-terminal node run is marked `Canceled`).
+- `race` starts branch roots until one satisfies the winner policy, then cancels the still-running losing continuations and effects.
 - `emit` records structured node output without calling a provider.
 - `reentry` allows explicit bounded cycles back to a node and can route to `on_exhausted`.
 
