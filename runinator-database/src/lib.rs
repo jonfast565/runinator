@@ -14,7 +14,7 @@ pub mod backend;
 #[cfg(test)]
 mod backend_tests;
 mod common;
-#[cfg(test)]
+#[cfg(all(test, any(feature = "sqlite", feature = "postgres", feature = "mysql")))]
 mod dialect_parity;
 pub mod errors;
 mod mappers;

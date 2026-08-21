@@ -8,7 +8,7 @@ use runinator_models::pipelines::PipelineBundle;
 use runinator_models::providers::ProviderMetadata;
 use runinator_models::semver::SemVer;
 use runinator_models::value::Value;
-use runinator_models::workflows::{WorkflowBundle, WorkflowDefinition, WorkflowTrigger};
+use runinator_models::workflows::{WorkflowBundle, WorkflowDefinition};
 use runinator_rexrap::WorkflowSignature;
 
 use crate::errors::{PackError, Result};
@@ -118,28 +118,6 @@ pub fn load_pack_settings(path: &Path) -> Result<Option<SecretBundle>> {
         }
     }
     Ok((!secrets.is_empty()).then_some(SecretBundle { secrets }))
-}
-
-// parse a settings file, choosing the `.rexraps` secrets front end or json by extension.
-fn parse_settings_file(path: &Path) -> Result<SecretBundle> {
-    let data = fs::read_to_string(path)?;
-    let mut bundle: SecretBundle = match path.extension().and_then(|ext| ext.to_str()) {
-        Some("rexraps") => runinator_rexrap::parse_secrets_str(&data).map_err(|e| {
-            PackError::compile(format!(
-                "failed to parse {}:\n{}",
-                path.display(),
-                e.render(&data)
-            ))
-        })?,
-        _ => serde_json::from_str(&data)?,
-    };
-    // stamp entries that did not declare their own time, so re-import reconciles by file mtime.
-    if let Some(modified) = file_modified(path) {
-        for entry in &mut bundle.secrets {
-            entry.updated_at.get_or_insert(modified);
-        }
-    }
-    Ok(bundle)
 }
 
 // load pipeline declarations that ship with a pack: a `.rexrapm` manifest's optional "pipelines" array
@@ -546,78 +524,4 @@ fn rexrap_directory_paths(dir: &Path) -> Result<Vec<PathBuf>> {
     }
     rexrap_paths.sort();
     Ok(rexrap_paths)
-}
-
-// resolve a .rexrapm manifest: compile each referenced .rexrap (relative to the manifest) and
-// pass through any declared triggers.
-fn load_rexrap_pack_manifest(path: &Path, catalog: &PackCatalog) -> Result<WorkflowBundle> {
-    let data = fs::read_to_string(path)?;
-    let manifest: Value = serde_json::from_str(&data)?;
-    let version = manifest
-        .get("version")
-        .and_then(|v| {
-            v.as_str()
-                .and_then(|s| s.parse::<SemVer>().ok())
-                .or_else(|| {
-                    v.as_i64()
-                        .map(|major| SemVer::new(major.max(0) as u64, 0, 0))
-                })
-        })
-        .unwrap_or_default();
-
-    let entries = rexrap_pack_manifest_paths_from_value(path, &manifest)?;
-
-    let workflow_signatures = collect_workflow_signatures(&entries)?;
-    let mut workflows = Vec::with_capacity(entries.len());
-    for rexrap_path in entries {
-        let source = fs::read_to_string(&rexrap_path)?;
-        workflows.extend(compile_rexrap_all_with_signatures(
-            &rexrap_path,
-            &source,
-            version,
-            catalog,
-            &workflow_signatures,
-        )?);
-    }
-
-    let triggers = match manifest.get("triggers").cloned() {
-        Some(value) if !value.is_null() => {
-            serde_json::from_value::<Vec<WorkflowTrigger>>(value.into())?
-        }
-        _ => Vec::new(),
-    };
-
-    Ok(WorkflowBundle {
-        workflows,
-        triggers,
-    })
-}
-
-fn rexrap_pack_manifest_paths(path: &Path) -> Result<Vec<PathBuf>> {
-    let data = fs::read_to_string(path)?;
-    let manifest: Value = serde_json::from_str(&data)?;
-    rexrap_pack_manifest_paths_from_value(path, &manifest)
-}
-
-fn rexrap_pack_manifest_paths_from_value(path: &Path, manifest: &Value) -> Result<Vec<PathBuf>> {
-    let base_dir = path.parent().unwrap_or_else(|| Path::new("."));
-    let entries = manifest
-        .get("workflows")
-        .and_then(Value::as_array)
-        .ok_or_else(|| PackError::source("rexrap pack manifest missing 'workflows' array"))?;
-
-    let mut paths = Vec::with_capacity(entries.len());
-    for entry in entries {
-        let rel = entry
-            .as_str()
-            .or_else(|| entry.get("path").and_then(Value::as_str))
-            .ok_or_else(|| {
-                PackError::source(
-                    "each manifest workflow entry must be a path string or have a 'path'",
-                )
-            })?;
-        paths.push(base_dir.join(rel));
-    }
-    paths.sort();
-    Ok(paths)
 }

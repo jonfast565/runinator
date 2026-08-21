@@ -38,17 +38,6 @@ impl EnginePublisher {
         }
     }
 
-    /// handle shared with [`crate::loops::run_wake_publisher`] so create/drive paths can interrupt
-    /// the poll sleep.
-    pub(crate) fn wake_nudge(&self) -> Arc<Notify> {
-        self.wake_nudge.clone()
-    }
-
-    /// handle shared with [`crate::loops::run_action_dispatch_publisher`].
-    pub(crate) fn action_nudge(&self) -> Arc<Notify> {
-        self.action_nudge.clone()
-    }
-
     pub(crate) fn agent_nudge(&self) -> Arc<Notify> {
         self.agent_nudge.clone()
     }

@@ -4,7 +4,6 @@ use runinator_broker_core::Broker;
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::errors::error_code_or_unknown;
 use runinator_models::replicas::{ReplicaKind, ReplicaStatus};
-use runinator_models::workflows::WorkflowStatus;
 use tokio::sync::Notify;
 use tracing::{error, info, warn};
 
@@ -401,7 +400,6 @@ pub async fn run_usage_sampler<T: DatabaseImpl>(db: Arc<T>, shutdown: Arc<Notify
 /// periodically turn due workflow triggers into runs (formerly a waker loop, now in-process).
 pub async fn run_trigger_loop<T: DatabaseImpl>(
     db: Arc<T>,
-    broker: Arc<dyn Broker>,
     events: EventSender,
     instance_id: String,
     shutdown: Arc<Notify>,

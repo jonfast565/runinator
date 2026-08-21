@@ -3,6 +3,7 @@
 //! fast error instead of an unbounded wait that ties up an http worker. both are env-tunable so the
 //! defaults stay sane for the local stack while production can raise them to match the database.
 
+#[cfg(any(feature = "sqlite", feature = "postgres", feature = "mysql"))]
 use std::time::Duration;
 
 /// default maximum pooled connections. sqlx's built-in default is 10; 20 gives the web service and
@@ -12,6 +13,7 @@ const DEFAULT_MAX_CONNECTIONS: u32 = 20;
 
 /// default acquire timeout. long enough to ride out a brief burst, short enough that a genuinely
 /// saturated pool fails fast rather than parking the caller indefinitely (sqlx's default is 30s).
+#[cfg(any(feature = "sqlite", feature = "postgres", feature = "mysql"))]
 const DEFAULT_ACQUIRE_TIMEOUT_SECONDS: u64 = 30;
 
 /// maximum pooled connections, overridable via `RUNINATOR_DB_MAX_CONNECTIONS`. a missing, unparseable,
@@ -27,6 +29,7 @@ pub(crate) fn pool_max_connections() -> u32 {
 
 /// pool acquisition timeout, overridable via `RUNINATOR_DB_ACQUIRE_TIMEOUT_SECONDS`. a missing,
 /// unparseable, or zero value falls back to the default.
+#[cfg(any(feature = "sqlite", feature = "postgres", feature = "mysql"))]
 pub(crate) fn pool_acquire_timeout() -> Duration {
     let seconds = std::env::var("RUNINATOR_DB_ACQUIRE_TIMEOUT_SECONDS")
         .ok()

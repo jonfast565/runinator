@@ -92,7 +92,6 @@ pub async fn run_background_engine<T: DatabaseImpl>(
     ));
     loops.spawn(run_trigger_loop(
         pool.clone(),
-        broker.clone(),
         publisher.clone(),
         instance.clone(),
         shutdown.clone(),
