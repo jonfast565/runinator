@@ -18,6 +18,10 @@
             title="Workflows"
             description="Browse definitions, select one to edit, or create a new workflow."
           >
+            <button class="btn" @click="importOpen = true">
+              <Icon name="upload" />
+              <span>Import</span>
+            </button>
             <button class="btn btn-primary" @click="newWorkflow">
               <Icon name="plus" />
               <span>New</span>
@@ -133,6 +137,7 @@
     </SplitPane>
     <WorkflowStepEditorModal v-if="workflows.stepEditorOpen" />
     <WorkflowRunInputModal v-if="workflows.runInputOpen" />
+    <ImportPackDialog v-if="importOpen" @close="importOpen = false" />
   </section>
 </template>
 
@@ -142,6 +147,7 @@ import WorkflowCanvas from "../components/workflow/WorkflowCanvas.vue";
 import WorkflowInspector from "../components/workflow/WorkflowInspector.vue";
 import WorkflowStepEditorModal from "../components/workflow/WorkflowStepEditorModal.vue";
 import WorkflowRunInputModal from "../components/workflow/WorkflowRunInputModal.vue";
+import ImportPackDialog from "../components/workflow/ImportPackDialog.vue";
 import BulkActionBar, { type BulkAction } from "../components/shared/BulkActionBar.vue";
 import DataTable from "../components/shared/DataTable.vue";
 import EmptyState from "../components/shared/EmptyState.vue";
@@ -165,6 +171,7 @@ const { isLoading: loadingWorkflows, loadingMessage: loadingWorkflowsMessage } =
   useOperationLoading("Refreshing workflows");
 const scopeFilter = ref<"all" | "org" | "global">("all");
 const mobileView = ref<"list" | "editor">("list");
+const importOpen = ref(false);
 
 const scopedWorkflows = computed(() => {
   const list = workflows.filteredWorkflows;

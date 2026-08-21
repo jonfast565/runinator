@@ -48,6 +48,7 @@ pub fn run() {
             crate::pack_dev::read_dev_pack_file,
             crate::pack_dev::write_dev_pack_file,
             crate::pack_dev::apply_dev_pack,
+            crate::pack_dev::import_pack_archive,
             crate::commands::delete_workflow,
             crate::commands::duplicate_workflow,
             crate::commands::fetch_run_chunks,

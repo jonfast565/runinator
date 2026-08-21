@@ -854,6 +854,15 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     method: "DELETE",
     path: (args) => `automation_events/${escape(arg(args, "eventId"))}`,
   },
+  import_pack_archive: {
+    method: "POST",
+    path: (args) =>
+      `packs/import?overwrite=${argOpt(args, "overwrite") === true ? "true" : "false"}`,
+    rawBody: (args) => ({
+      body: arg(args, "bytes") as ArrayBuffer,
+      contentType: "application/zip",
+    }),
+  },
   // packaged function archives: bytes under their own digest, stored only if absent.
   upload_function_artifact: {
     method: "POST",

@@ -156,8 +156,8 @@ ENTRYPOINT ["/usr/local/bin/runinator-blob"]
 # ---- ctl: short-lived pack importer ----
 FROM runtime-base AS ctl
 COPY --from=builder --chown=root:root --chmod=755 /out/runinatorctl /usr/local/bin/runinatorctl
-# bake every pack in, each keeping its own subdirectory so the shared `rexrap/` and `settings.rexraps`
-# names never collide across packs; the import job applies them all.
+# bake every pack in, each keeping its own subdirectory so `.rrx` source names never collide
+# across packs; the import job applies each workflow-containing directory.
 COPY --chown=runinator:runinator packs /home/runinator/.runinator/workflows/packs
 ENV RUNINATOR_API_BASE_URL=http://127.0.0.1:8080/
 USER runinator

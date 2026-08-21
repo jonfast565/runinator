@@ -7,7 +7,7 @@ console action, and persist the worker result.
 Import only:
 
 ```bash
-runinatorctl workflows apply ./packs/hello-world/hello-world.rexrapm
+runinatorctl workflows apply ./packs/hello-world
 ```
 
 Import and execute against a running local stack:

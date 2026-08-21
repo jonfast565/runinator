@@ -9,6 +9,7 @@ import {
   fetchEnumCatalogs,
   fetchNodeKinds,
   fetchTriggerKinds,
+  importPackArchive,
   listTeamMembers,
   requestRunInterrupt,
   rotateApiKey,
@@ -87,6 +88,21 @@ describe("command center permissions API in web mode", () => {
           email: "ada@example.com",
           platform_role: "admin",
         }),
+      }),
+    );
+  });
+
+  it("uploads a compiled pack archive with its overwrite choice", async () => {
+    const bytes = new Uint8Array([0x50, 0x4b, 0x03, 0x04]).buffer;
+
+    await importPackArchive(bytes, true);
+
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/packs/import?overwrite=true",
+      expect.objectContaining({
+        method: "POST",
+        body: bytes,
+        headers: expect.objectContaining({ "content-type": "application/zip" }),
       }),
     );
   });

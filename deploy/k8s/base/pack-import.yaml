@@ -31,7 +31,7 @@ spec:
             - >
               set -e;
               for pack in /home/runinator/.runinator/workflows/packs/*; do
-                if [ -d "$pack" ]; then
+                if [ -d "$pack" ] && find "$pack" -type f -name '*.rrx' -print -quit | grep -q .; then
                   echo "applying $pack";
                   runinatorctl --api-base-url "$WS_API_BASE_URL" workflows apply "$pack";
                 fi;

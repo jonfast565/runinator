@@ -18,6 +18,7 @@ export function createWorkflowActions(services: WorkflowServices) {
     deleteWorkflows: services.catalog.deleteWorkflows,
     exportWorkflowRexRap: services.catalog.exportWorkflowRexRap,
     exportWorkflowPack: services.catalog.exportWorkflowPack,
+    importWorkflowPack: services.catalog.importWorkflowPack,
     moveWorkflowSelection: services.catalog.moveWorkflowSelection,
     openWorkflowSettings: services.catalog.openWorkflowSettings,
     closeWorkflowSettings: services.catalog.closeWorkflowSettings,

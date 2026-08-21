@@ -321,6 +321,12 @@ impl TypeContext {
                 }
                 Ok(())
             }
+            // An invocation's `module` is compiled bytecode, not an authored value literal. Its
+            // instruction stream necessarily mixes instruction shapes (`const`, `call`,
+            // `higher_order`, ...), so recursing through it as JSON would incorrectly reject the
+            // heterogeneous `instructions` array. Structural validation has already decoded the
+            // module and checked its IR version in `parse_invocation_parameters`.
+            WorkflowNodeKind::Invocation => Ok(()),
             _ => {
                 self.infer_value_type(&node.parameters)?;
                 Ok(())

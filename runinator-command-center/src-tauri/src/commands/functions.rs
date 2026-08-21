@@ -64,7 +64,7 @@ pub async fn restore_function_package(
 
 // standard base64, decoded by hand: one call site does not earn a dependency, and the alphabet has
 // not moved since 1987.
-fn decode_base64(text: &str) -> CommandResult<Vec<u8>> {
+pub(crate) fn decode_base64(text: &str) -> CommandResult<Vec<u8>> {
     const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut bytes = Vec::with_capacity(text.len() / 4 * 3);
     let mut accumulator: u32 = 0;

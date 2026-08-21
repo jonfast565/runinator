@@ -78,9 +78,9 @@ When `state_dir` is omitted, supervisor state defaults to
 
 The repository's local supervisor config runs `runinatorctl workflows apply`
 once per pack on startup to import the workflow packs. The checked-in supervisor
-config imports all three packs under `packs/` — `packs/sdlc/sdlc.rexrapm`,
-`packs/hello-world/hello-world.rexrapm`, and the `packs/creds-sync` directory —
-compiling the referenced `.rexrap` files during import. The `creds-sync` runs park
+config imports all three pack directories under `packs/` — `packs/sdlc`,
+`packs/hello-world`, and `packs/creds-sync` — compiling their unified `.rrx`
+sources during import. The `creds-sync` runs park
 then fail locally without a `runner=creds-sync` worker. It also passes `--advertise-host 127.0.0.1` to the web service,
 waker, and worker, plus stable local instance ids for the waker and worker, so
 the replicas view shows host/IP/version data instead of blank fields after a

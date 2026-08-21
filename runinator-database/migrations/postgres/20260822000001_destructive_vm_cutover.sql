@@ -2,14 +2,17 @@
 -- and all nonterminal legacy runs have been cancelled. Continuations, effects, and journal
 -- entries are now the sole workflow execution history.
 DROP TABLE IF EXISTS workflow_task_runs;
+-- These tables reference workflow_invocation_calls, so they must be removed before
+-- the invocation history they belong to.
+DROP TABLE IF EXISTS workflow_run_artifacts;
+DROP TABLE IF EXISTS workflow_node_chunks;
+DROP TABLE IF EXISTS workflow_node_artifacts;
 DROP TABLE IF EXISTS workflow_invocation_calls;
 DROP TABLE IF EXISTS workflow_invocations;
 DROP TABLE IF EXISTS workflow_mutex_waiters;
-DROP TABLE IF EXISTS workflow_node_chunks;
-DROP TABLE IF EXISTS workflow_node_artifacts;
+DROP TABLE IF EXISTS workflow_ready_nodes;
 DROP TABLE IF EXISTS workflow_result_events;
 DROP TABLE IF EXISTS workflow_orchestration_events;
-DROP TABLE IF EXISTS workflow_ready_nodes;
 DROP TABLE IF EXISTS workflow_action_dispatches;
 DROP TABLE IF EXISTS workflow_node_runs;
 

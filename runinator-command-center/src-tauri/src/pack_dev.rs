@@ -55,6 +55,21 @@ pub struct DevPackTextFile {
     pub modified_at: Option<DateTime<Utc>>,
 }
 
+/// Upload a pack which has already been compiled into the shared pack ZIP wire format.
+/// Compilation intentionally remains on the client (the desktop dev panel and runinatorctl do it
+/// from local source); this command only proxies bytes selected in the Command Center UI.
+#[tauri::command]
+pub async fn import_pack_archive(
+    state: State<'_, CommandCenterState>,
+    base64: String,
+    overwrite: Option<bool>,
+) -> CommandResult<PackImportResult> {
+    let bytes = crate::commands::decode_base64(&base64)?;
+    let path = format!("{API_PACKS_IMPORT}?overwrite={}", overwrite.unwrap_or(false));
+    let value = crate::client::post_bytes(&state, &path, "application/zip", bytes).await?;
+    serde_json::from_value(value).map_err(|err| CommandError::Unexpected(err.to_string()))
+}
+
 #[tauri::command]
 pub fn inspect_dev_pack(
     path: String,

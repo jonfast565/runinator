@@ -5,6 +5,7 @@ import {
   duplicateWorkflow,
   fetchWorkflowTriggers,
   fetchWorkflows,
+  importPackArchive,
   saveWorkflow,
   saveWorkflowRexRap,
   saveWorkflowTrigger,
@@ -223,6 +224,18 @@ export function createWorkflowCatalogService(
         `Exported ${String(entries.length - 1)} workflow(s) to runinator-pack.zip${note}`,
       );
     });
+    host.notify();
+  }
+
+  async function importWorkflowPack(bytes: ArrayBuffer, overwrite = false): Promise<void> {
+    const result = await host.ctx.runOperation("Importing workflow pack", () =>
+      importPackArchive(bytes, overwrite),
+    );
+    await refreshWorkflows();
+    host.deps.refreshResources();
+    host.ctx.setStatus(
+      `Imported ${String(result.workflows.workflows.length)} workflow(s), ${String(result.pipelines.length)} pipeline(s), and ${String(result.secrets.secrets.length)} setting(s).`,
+    );
     host.notify();
   }
 
@@ -680,6 +693,7 @@ export function createWorkflowCatalogService(
     workflowNameForRun,
     exportWorkflowRexRap,
     exportWorkflowPack,
+    importWorkflowPack,
     moveWorkflowSelection,
     openWorkflowSettings,
     closeWorkflowSettings,

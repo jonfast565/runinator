@@ -1241,6 +1241,20 @@ export async function requestRunInterrupt(
   });
 }
 
+export interface PackImportResult {
+  workflows: WorkflowBundle;
+  secrets: { secrets: unknown[] };
+  pipelines: Pipeline[];
+}
+
+/** Upload a compiled pack ZIP. Source packs are compiled locally before reaching this endpoint. */
+export async function importPackArchive(bytes: ArrayBuffer, overwrite = false) {
+  return command<PackImportResult>(
+    "import_pack_archive",
+    isTauriRuntime() ? { base64: base64Encode(bytes), overwrite } : { bytes, overwrite },
+  );
+}
+
 // ---- packaged functions ----
 
 export async function fetchFunctionPackages() {
