@@ -49,18 +49,6 @@ async fn vm_run_start_freezes_run_module_root_and_journal_together() {
     assert_eq!(roots.len(), 1);
     assert_eq!(roots[0].locals.get("input"), Some(&parameters));
     assert_eq!(db.fetch_workflow_journal(run.id).await.unwrap().len(), 1);
-    assert!(
-        db.claim_ready_nodes(
-            "legacy-scheduler".into(),
-            Utc::now(),
-            Utc::now() + Duration::seconds(30),
-            10,
-        )
-        .await
-        .unwrap()
-        .is_empty(),
-        "VM starts must not enqueue a legacy ready-node row"
-    );
 }
 
 #[tokio::test]

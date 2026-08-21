@@ -18,3 +18,8 @@ DROP TABLE IF EXISTS workflow_node_runs;
 
 -- The mutex itself remains a VM coordination primitive; only its legacy cursor spelling changes.
 ALTER TABLE workflow_mutexes RENAME COLUMN holder_cursor_id TO holder_continuation_id;
+
+CREATE INDEX IF NOT EXISTS idx_workflow_effect_output_run
+    ON workflow_effect_output_events(workflow_run_id);
+CREATE INDEX IF NOT EXISTS idx_workflow_effect_output_continuation
+    ON workflow_effect_output_events(continuation_id);

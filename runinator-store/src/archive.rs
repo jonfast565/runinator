@@ -34,20 +34,11 @@ pub enum ArchiveTable {
 }
 
 impl ArchiveTable {
-    pub const ALL: [ArchiveTable; 25] = [
+    pub const ALL: [ArchiveTable; 16] = [
         ArchiveTable::RunArtifacts,
         ArchiveTable::RunChunks,
         ArchiveTable::Runs,
-        ArchiveTable::WorkflowNodeArtifacts,
-        ArchiveTable::WorkflowNodeChunks,
-        ArchiveTable::WorkflowRunArtifacts,
-        ArchiveTable::WorkflowReadyNodes,
-        ArchiveTable::WorkflowOrchestrationEvents,
-        ArchiveTable::WorkflowResultEvents,
         ArchiveTable::WorkflowTriggerFirings,
-        ArchiveTable::WorkflowNodeRuns,
-        ArchiveTable::WorkflowRuns,
-        ArchiveTable::WorkflowActionDispatches,
         ArchiveTable::PipelineTriggerFirings,
         ArchiveTable::PipelineRuns,
         ArchiveTable::NotificationDeliveries,
@@ -116,17 +107,8 @@ impl FromStr for ArchiveTable {
         match value {
             "runs" => Ok(ArchiveTable::Runs),
             "run_artifacts" => Ok(ArchiveTable::RunArtifacts),
-            "workflow_runs" => Ok(ArchiveTable::WorkflowRuns),
-            "workflow_node_runs" => Ok(ArchiveTable::WorkflowNodeRuns),
-            "workflow_node_chunks" => Ok(ArchiveTable::WorkflowNodeChunks),
-            "workflow_node_artifacts" => Ok(ArchiveTable::WorkflowNodeArtifacts),
-            "workflow_run_artifacts" => Ok(ArchiveTable::WorkflowRunArtifacts),
-            "workflow_ready_nodes" => Ok(ArchiveTable::WorkflowReadyNodes),
-            "workflow_orchestration_events" => Ok(ArchiveTable::WorkflowOrchestrationEvents),
-            "workflow_result_events" => Ok(ArchiveTable::WorkflowResultEvents),
             "workflow_trigger_firings" => Ok(ArchiveTable::WorkflowTriggerFirings),
             "run_chunks" => Ok(ArchiveTable::RunChunks),
-            "workflow_action_dispatches" => Ok(ArchiveTable::WorkflowActionDispatches),
             "pipeline_runs" => Ok(ArchiveTable::PipelineRuns),
             "pipeline_trigger_firings" => Ok(ArchiveTable::PipelineTriggerFirings),
             "notifications" => Ok(ArchiveTable::Notifications),

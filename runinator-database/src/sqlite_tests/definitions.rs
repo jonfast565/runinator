@@ -242,16 +242,6 @@ async fn pipeline_round_trip_create_update_delete() {
     db.bind_pipeline_member_attempt_run(member_attempt.id, member_run.id)
         .await
         .unwrap();
-    db.create_workflow_node_run(
-        member_run.id,
-        "member-node".into(),
-        runinator_models::json!({}),
-        None,
-        None,
-    )
-    .await
-    .unwrap();
-
     db.delete_pipeline(id).await.unwrap();
     assert!(db.fetch_pipeline(id).await.unwrap().is_none());
     assert!(db.fetch_pipelines().await.unwrap().is_empty());

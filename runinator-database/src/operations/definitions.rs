@@ -215,26 +215,21 @@ where
     }
 
     async fn delete_workflow(&self, workflow_id: Uuid) -> Result<(), SendableError> {
-        // cascade-delete the workflow's runs and every execution record before the workflow row, since
-        // workflow_runs.workflow_id is a restrict foreign key. ordered child-to-parent so each delete
-        // clears the rows that reference the next table; triggers and their firings cascade with the
-        // workflow row itself.
+        // Cascade-delete the workflow's VM execution history before the workflow row, since
+        // workflow_runs.workflow_id is a restrict foreign key.  SQLite can run with foreign-key
+        // enforcement disabled, so the explicit child-to-parent order is still required there.
         let run_filter = "workflow_run_id IN (SELECT id FROM workflow_runs WHERE workflow_id = ?)";
-        let node_run_filter = "workflow_node_run_id IN (SELECT id FROM workflow_node_runs \
-             WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE workflow_id = ?))";
 
         retry_delete(|| async {
             let mut tx = self.pool().begin().await?;
             for sql in [
-                format!("DELETE FROM workflow_ready_nodes WHERE {run_filter}"),
-                format!("DELETE FROM workflow_orchestration_events WHERE {run_filter}"),
-                format!("DELETE FROM workflow_node_chunks WHERE {node_run_filter}"),
-                format!("DELETE FROM workflow_node_artifacts WHERE {node_run_filter}"),
-                format!("DELETE FROM workflow_result_events WHERE {run_filter}"),
+                format!("DELETE FROM workflow_effect_output_events WHERE {run_filter}"),
+                format!("DELETE FROM workflow_effect_dispatches WHERE effect_id IN (SELECT id FROM workflow_effects WHERE {run_filter})"),
+                format!("DELETE FROM workflow_journal_entries WHERE {run_filter}"),
+                format!("DELETE FROM workflow_effects WHERE {run_filter}"),
+                format!("DELETE FROM workflow_continuations WHERE {run_filter}"),
+                format!("DELETE FROM workflow_vm_modules WHERE {run_filter}"),
                 format!("DELETE FROM workflow_trigger_firings WHERE {run_filter}"),
-                "DELETE FROM workflow_node_runs WHERE workflow_run_id IN \
-                     (SELECT id FROM workflow_runs WHERE workflow_id = ?)"
-                    .to_string(),
                 "DELETE FROM workflow_runs WHERE workflow_id = ?".to_string(),
                 // deleted explicitly rather than left to the declared cascade: sqlite only enforces
                 // foreign keys when the pragma is on, so the history would otherwise outlive its workflow.
@@ -447,20 +442,19 @@ where
             let mut tx = self.pool().begin().await?;
             let pipeline_runs = "pipeline_run_id IN (SELECT id FROM pipeline_runs WHERE pipeline_id = ?)";
             let workflow_runs = "workflow_run_id IN (SELECT id FROM workflow_runs WHERE pipeline_run_id IN (SELECT id FROM pipeline_runs WHERE pipeline_id = ?))";
-            let workflow_node_runs = "workflow_node_run_id IN (SELECT id FROM workflow_node_runs WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE pipeline_run_id IN (SELECT id FROM pipeline_runs WHERE pipeline_id = ?)))";
 
             // Pipeline and member workflow runs use restrict-mode foreign keys, so remove their
             // execution history child-to-parent before deleting the definitions.
             for sql in [
                 format!("DELETE FROM pipeline_trigger_firings WHERE {pipeline_runs}"),
                 format!("DELETE FROM pipeline_member_attempts WHERE {pipeline_runs}"),
-                format!("DELETE FROM workflow_ready_nodes WHERE {workflow_runs}"),
-                format!("DELETE FROM workflow_orchestration_events WHERE {workflow_runs}"),
-                format!("DELETE FROM workflow_node_chunks WHERE {workflow_node_runs}"),
-                format!("DELETE FROM workflow_node_artifacts WHERE {workflow_node_runs}"),
-                format!("DELETE FROM workflow_result_events WHERE {workflow_runs}"),
+                format!("DELETE FROM workflow_effect_output_events WHERE {workflow_runs}"),
+                format!("DELETE FROM workflow_effect_dispatches WHERE effect_id IN (SELECT id FROM workflow_effects WHERE {workflow_runs})"),
+                format!("DELETE FROM workflow_journal_entries WHERE {workflow_runs}"),
+                format!("DELETE FROM workflow_effects WHERE {workflow_runs}"),
+                format!("DELETE FROM workflow_continuations WHERE {workflow_runs}"),
+                format!("DELETE FROM workflow_vm_modules WHERE {workflow_runs}"),
                 format!("DELETE FROM workflow_trigger_firings WHERE {workflow_runs}"),
-                format!("DELETE FROM workflow_node_runs WHERE {workflow_runs}"),
                 "DELETE FROM workflow_runs WHERE pipeline_run_id IN (SELECT id FROM pipeline_runs WHERE pipeline_id = ?)".to_string(),
                 "DELETE FROM pipeline_runs WHERE pipeline_id = ?".to_string(),
                 "DELETE FROM pipelines WHERE id = ?".to_string(),
@@ -534,12 +528,12 @@ where
             for sql in [
                 "DELETE FROM pipeline_trigger_firings WHERE pipeline_run_id = ?",
                 "DELETE FROM pipeline_member_attempts WHERE pipeline_run_id = ?",
-                "DELETE FROM workflow_ready_nodes WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE pipeline_run_id = ?)",
-                "DELETE FROM workflow_orchestration_events WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE pipeline_run_id = ?)",
-                "DELETE FROM workflow_node_chunks WHERE workflow_node_run_id IN (SELECT id FROM workflow_node_runs WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE pipeline_run_id = ?))",
-                "DELETE FROM workflow_node_artifacts WHERE workflow_node_run_id IN (SELECT id FROM workflow_node_runs WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE pipeline_run_id = ?))",
-                "DELETE FROM workflow_result_events WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE pipeline_run_id = ?)",
-                "DELETE FROM workflow_node_runs WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE pipeline_run_id = ?)",
+                "DELETE FROM workflow_effect_output_events WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE pipeline_run_id = ?)",
+                "DELETE FROM workflow_effect_dispatches WHERE effect_id IN (SELECT id FROM workflow_effects WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE pipeline_run_id = ?))",
+                "DELETE FROM workflow_journal_entries WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE pipeline_run_id = ?)",
+                "DELETE FROM workflow_effects WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE pipeline_run_id = ?)",
+                "DELETE FROM workflow_continuations WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE pipeline_run_id = ?)",
+                "DELETE FROM workflow_vm_modules WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE pipeline_run_id = ?)",
                 "DELETE FROM workflow_runs WHERE pipeline_run_id = ?",
                 "DELETE FROM pipeline_runs WHERE id = ?",
             ] {

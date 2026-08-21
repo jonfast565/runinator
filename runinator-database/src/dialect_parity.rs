@@ -167,23 +167,17 @@ pub(crate) async fn assert_dialect_parity<T: ExecutionStateParityDb>(db: &T) {
 
     assert_revision_history(db, &after).await;
     assert_trigger_upsert(db, id).await;
-    let (run_id, node_id) = assert_run_claim_and_results(db, &after).await;
     assert_idempotency_keys(db).await;
-    assert_action_dispatch(db, run_id, node_id).await;
     assert_notifications(db).await;
     assert_settings(db).await;
     assert_catalog_upsert(db).await;
-    assert_automation_records(db, run_id).await;
-    assert_run_state_cas(db, run_id).await;
+    assert_automation_records(db, Uuid::now_v7()).await;
     assert_normalized_execution_state_lifecycle(db, &after).await;
-    assert_cursor_scoped_ready_nodes(db, run_id).await;
     assert_cooldown_claim(db).await;
-    assert_workflow_mutex_claim(db, &after).await;
     assert_agent_enrollment_lifecycle(db).await;
     assert_agent_directive_lifecycle(db).await;
     assert_function_lifecycle(db, id).await;
     assert_console_lifecycle(db).await;
-    assert_invocation_lifecycle(db, run_id, node_id).await;
     assert_workflow_vm_readback(db, &after).await;
     assert_unreferenced_artifacts(db).await;
 

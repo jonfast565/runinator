@@ -63,15 +63,21 @@ ALTER TABLE teams ADD COLUMN scope_kind VARCHAR(32) NOT NULL DEFAULT 'platform';
 ALTER TABLE teams ADD COLUMN scope_id BINARY(16) NULL;
 ALTER TABLE team_members ADD COLUMN role VARCHAR(32) NOT NULL DEFAULT 'member';
 
-WITH candidates AS (
-    SELECT tm.team_id, om.org_id
-    FROM team_members tm JOIN org_memberships om ON om.user_id = tm.user_id
-    GROUP BY tm.team_id, om.org_id
-    HAVING COUNT(DISTINCT tm.user_id) = (SELECT COUNT(*) FROM team_members all_tm WHERE all_tm.team_id = tm.team_id)
-), unambiguous AS (
-    SELECT team_id, MIN(org_id) AS org_id FROM candidates GROUP BY team_id HAVING COUNT(*) = 1
-)
-UPDATE teams JOIN unambiguous ON teams.id = unambiguous.team_id
+-- MariaDB does not permit a CTE before UPDATE.  The derived-table form works on both MariaDB and
+-- MySQL while keeping the candidate and unambiguous-owner checks in one statement.
+UPDATE teams JOIN (
+    SELECT candidates.team_id, MIN(candidates.org_id) AS org_id
+    FROM (
+        SELECT tm.team_id, om.org_id
+        FROM team_members tm JOIN org_memberships om ON om.user_id = tm.user_id
+        GROUP BY tm.team_id, om.org_id
+        HAVING COUNT(DISTINCT tm.user_id) = (
+            SELECT COUNT(*) FROM team_members all_tm WHERE all_tm.team_id = tm.team_id
+        )
+    ) AS candidates
+    GROUP BY candidates.team_id
+    HAVING COUNT(*) = 1
+) AS unambiguous ON teams.id = unambiguous.team_id
 SET teams.scope_kind = 'organization', teams.scope_id = unambiguous.org_id;
 
 INSERT INTO role_assignments
