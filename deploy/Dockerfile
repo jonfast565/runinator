@@ -161,11 +161,12 @@ COPY --from=builder --chown=root:root --chmod=755 /out/runinatorctl /usr/local/b
 COPY --chown=runinator:runinator packs /home/runinator/.runinator/workflows/packs
 ENV RUNINATOR_API_BASE_URL=http://127.0.0.1:8080/
 USER runinator
-# short-lived: compile and import a workflow pack, then exit. the default applies sdlc; override the
-# final argument to import a different pack, or pass other runinatorctl subcommands. the k8s
-# pack-import job overrides this to loop over every baked-in pack.
+# short-lived: compile and import a workflow pack, then exit. the default applies the SDLC pack
+# directory; the `.rrx` compiler discovers its nested sources. override the final argument to
+# import a different pack, or pass other runinatorctl subcommands. the k8s pack-import job
+# overrides this to loop over every baked-in pack.
 ENTRYPOINT ["/usr/local/bin/runinatorctl"]
-CMD ["workflows", "apply", "/home/runinator/.runinator/workflows/packs/sdlc/sdlc.rexrapm"]
+CMD ["workflows", "apply", "/home/runinator/.runinator/workflows/packs/sdlc"]
 
 # ---- bootstrap ----
 FROM runtime-base AS bootstrap
