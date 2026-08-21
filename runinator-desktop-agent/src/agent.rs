@@ -713,6 +713,43 @@ pub fn cancel_start(rt: &tokio::runtime::Handle, shared: SharedHandle) {
     });
 }
 
+/// Stop every lifecycle the desktop process owns before its Tokio runtime is dropped.
+///
+/// `AgentHandle` intentionally detaches its task when dropped, which is useful to hosts that keep
+/// running.  It is the wrong default while this host itself is exiting: dropping the GUI runtime
+/// while its asynchronously spawned drain is still pending can leave the worker lifecycle alive
+/// after eframe has already closed.  Exit therefore aborts any incomplete startup, then drains the
+/// published lifecycle synchronously on the GUI thread.
+pub fn shutdown_for_process_exit(rt: &tokio::runtime::Runtime, shared: &SharedHandle) {
+    let start_task = {
+        let mut guard = shared.lock().expect("desktop agent state lock poisoned");
+        // Prevent a startup task that wins a race with this shutdown from publishing a new handle.
+        guard.start_generation = guard.start_generation.wrapping_add(1);
+        guard.starting = false;
+        guard.busy = true;
+        guard.start_task.take()
+    };
+
+    if let Some(task) = start_task {
+        task.abort();
+        rt.block_on(async {
+            let _ = task.await;
+        });
+    }
+
+    // Take this only after the startup task has finished, so a just-completed startup cannot leave
+    // its lifecycle in shared state after the process begins exiting.
+    let handle = {
+        let mut guard = shared.lock().expect("desktop agent state lock poisoned");
+        guard.handle.take()
+    };
+    rt.block_on(drain_and_settle(
+        shared,
+        handle,
+        "Desktop agent stopped for process exit.",
+    ));
+}
+
 /// drain a live lifecycle and return the shared state to its stopped shape. shared by stop and
 /// cancel, so a canceled startup settles exactly the way a stop does.
 async fn drain_and_settle(shared: &SharedHandle, handle: Option<AgentHandle>, settled: &str) {

@@ -1,7 +1,7 @@
 //! the desktop agent's control surface: a small window to configure the sandbox folder, start the
 //! worker loop — or cancel a start still coming up — stop it, and watch its status. the window's
-//! close button hides it behind the tray icon (see [`crate::tray`]), so "Exit" from the tray menu is
-//! the one real quit path. deliberately minimal — this is a status console for the agent process, not a workflow editor.
+//! close button asks whether to hide it behind the tray icon or quit. deliberately minimal — this
+//! is a status console for the agent process, not a workflow editor.
 
 use std::time::Duration;
 
@@ -10,7 +10,7 @@ use eframe::egui;
 use crate::agent::{
     self, AgentConfig, AgentMetrics, AgentStatus, ConnectionState, Control, SharedHandle,
 };
-use crate::config::{self, LogLevel};
+use crate::config::{self, LogLevel, WindowCloseAction};
 use crate::logging;
 use crate::tray::{AgentTray, TrayAction, TrayColor};
 use runinator_worker::ActionOutcome;
@@ -176,6 +176,10 @@ pub struct DesktopAgentApp {
     log_filter: String,
     // set once "Exit" is chosen, so the window's own close-intercept doesn't cancel our own Close cmd.
     quitting: bool,
+    // shown after a title-bar close request, so closing the control window never silently changes
+    // whether this machine continues accepting desktop work.
+    exit_dialog: bool,
+    exit_dont_ask_again: bool,
 }
 
 impl DesktopAgentApp {
@@ -208,6 +212,8 @@ impl DesktopAgentApp {
             last_tray_signature: None,
             log_filter: String::new(),
             quitting: false,
+            exit_dialog: false,
+            exit_dont_ask_again: false,
         }
     }
 
@@ -225,23 +231,6 @@ impl DesktopAgentApp {
         }
     }
 
-    // the "stop whatever is happening" path, for callers that aren't rendering a phase-specific
-    // button: a lifecycle that is up is stopped, one still coming up is canceled. a plain stop would
-    // be a no-op during a startup, since the start holds the transition latch.
-    fn stop_or_cancel(&self) {
-        let control = {
-            let guard = self
-                .shared
-                .lock()
-                .expect("desktop agent state lock poisoned");
-            agent::control_state(&guard)
-        };
-        match control {
-            Control::Starting => agent::cancel_start(self.rt.handle(), self.shared.clone()),
-            _ => agent::stop(self.rt.handle(), self.shared.clone()),
-        }
-    }
-
     // handle pending tray clicks/menu choices; called once per frame.
     fn handle_tray(&mut self, ctx: &egui::Context) {
         let Some(tray) = &self.tray else {
@@ -255,7 +244,6 @@ impl DesktopAgentApp {
             Some(TrayAction::OpenUi) => self.open_command_center(),
             Some(TrayAction::Exit) => {
                 self.quitting = true;
-                self.stop_or_cancel();
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
             None => {}
@@ -277,17 +265,84 @@ impl DesktopAgentApp {
         }
     }
 
-    // a tray icon means the window's close button should hide it, not end the process; without a
-    // tray there is no other way back in, so let the close button behave normally.
-    fn handle_close_request(&self, ctx: &egui::Context) {
-        if self.quitting || self.tray.is_none() {
+    // Always ask before closing the main window: with a tray the agent may keep running unseen;
+    // without one, the only available choice is a normal process exit.
+    fn handle_close_request(&mut self, ctx: &egui::Context) {
+        if self.quitting {
             return;
         }
         let close_requested =
             ctx.input(|i| i.viewport().events.contains(&egui::ViewportEvent::Close));
         if close_requested {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            match self.draft.window_close_action {
+                Some(WindowCloseAction::HideToTray) if self.tray.is_some() => {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+                }
+                Some(WindowCloseAction::Exit) => {
+                    self.quitting = true;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+                _ => {
+                    self.exit_dont_ask_again = false;
+                    self.exit_dialog = true;
+                }
+            }
+        }
+    }
+
+    fn show_exit_dialog(&mut self, ctx: &egui::Context) {
+        if !self.exit_dialog {
+            return;
+        }
+
+        let can_hide = self.tray.is_some();
+        let mut open = self.exit_dialog;
+        let mut exit = false;
+        let mut hide = false;
+        egui::Window::new("Close Runinator Desktop Agent?")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .open(&mut open)
+            .show(ctx, |ui| {
+                if can_hide {
+                    ui.label(
+                        "The agent can keep running in the menu bar and continue accepting work.",
+                    );
+                } else {
+                    ui.label("No system tray is available, so closing exits the agent.");
+                }
+                ui.add_space(10.0);
+                ui.checkbox(&mut self.exit_dont_ask_again, "Don't ask again");
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    if can_hide && ui.button("Keep running in tray").clicked() {
+                        hide = true;
+                    }
+                    if ui.button("Exit agent").clicked() {
+                        exit = true;
+                    }
+                });
+            });
+
+        if hide {
+            if self.exit_dont_ask_again {
+                self.draft.window_close_action = Some(WindowCloseAction::HideToTray);
+                config::save(&self.draft);
+            }
+            self.exit_dialog = false;
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        } else if exit {
+            if self.exit_dont_ask_again {
+                self.draft.window_close_action = Some(WindowCloseAction::Exit);
+                config::save(&self.draft);
+            }
+            self.exit_dialog = false;
+            self.quitting = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        } else {
+            self.exit_dialog = open;
         }
     }
 
@@ -542,6 +597,7 @@ impl eframe::App for DesktopAgentApp {
 
         self.handle_tray(ctx);
         self.handle_close_request(ctx);
+        self.show_exit_dialog(ctx);
 
         let Snapshot {
             status,
@@ -886,6 +942,13 @@ impl eframe::App for DesktopAgentApp {
                 }
             }
         });
+    }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        // Do this before `DesktopAgentApp` drops its runtime. `AgentHandle` detaches on drop, so
+        // merely asking the agent to stop from the tray handler can otherwise leave Cargo waiting
+        // on work that outlived the eframe window.
+        agent::shutdown_for_process_exit(&self.rt, &self.shared);
     }
 }
 

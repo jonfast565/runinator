@@ -85,6 +85,15 @@ impl LogLevel {
     }
 }
 
+/// The action to take when the operator closes the main window after opting out of the exit
+/// confirmation. `None` means continue asking.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WindowCloseAction {
+    HideToTray,
+    Exit,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentConfig {
     /// also used to derive the ws broker relay URL in `BrokerMode::Relay` (scheme swapped,
@@ -164,6 +173,9 @@ pub struct AgentConfig {
     /// live (`RUST_LOG`, if set, still wins at process startup).
     #[serde(default)]
     pub log_level: LogLevel,
+    /// remembered response to the main-window close prompt. `None` leaves the prompt enabled.
+    #[serde(default)]
+    pub window_close_action: Option<WindowCloseAction>,
 }
 
 fn default_direct_broker_backend() -> String {
@@ -214,6 +226,7 @@ impl Default for AgentConfig {
             reconnect_max_attempts: default_reconnect_max_attempts(),
             liveness_file: String::new(),
             log_level: LogLevel::default(),
+            window_close_action: None,
         }
     }
 }

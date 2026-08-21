@@ -1,6 +1,6 @@
 -- make usage sampling idempotent per (org, backend, kind, window). the sampler now buckets
 -- sampled_at to the interval boundary and inserts ON CONFLICT DO NOTHING, so any number of ws
--- replicas / engine workers sampling the same window converge to one row instead of
+-- replicas / background workers sampling the same window converge to one row instead of
 -- over-counting node-hours by the instance count. existing rows carry distinct (unbucketed)
 -- sampled_at values, so the unique index builds cleanly on current data.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_org_usage_unique
