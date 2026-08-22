@@ -77,7 +77,7 @@ struct LocalUpArgs {
     /// sqlite file path (only used when --database sqlite). defaults to ~/.runinator/runinator.db.
     #[arg(long)]
     database_path: Option<PathBuf>,
-    /// connection url (required for --database postgres/mysql/mariadb).
+    /// connection URL (required for --database postgres/mysql/mariadb).
     #[arg(long)]
     database_url: Option<String>,
 }

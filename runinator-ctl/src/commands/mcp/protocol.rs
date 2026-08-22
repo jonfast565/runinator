@@ -1,4 +1,4 @@
-//! the json-rpc envelope and the shape of a tool result.
+//! the JSON-RPC envelope and the shape of a tool result.
 //!
 //! pure: nothing here contacts the web service or reads a descriptor, which is what lets the framing
 //! rules be asserted without a server on the other end of the pipe.
@@ -9,11 +9,11 @@ use runinator_models::value::Value;
 /// the protocol revision this server implements.
 pub(crate) const PROTOCOL_VERSION: &str = "2025-06-18";
 
-/// json-rpc's own "the server broke" code, used for every tool-level failure that is not a framing
-/// error.
+/// JSON-RPC's "the server broke" code. Use it for tool failures that are not framing or transport
+/// failures.
 const INTERNAL_ERROR: i64 = -32603;
 
-/// json-rpc's parse error, for a line that is not json at all.
+/// JSON-RPC parse error for a line that is not JSON.
 pub(crate) const PARSE_ERROR: i64 = -32700;
 
 /// a successful response carrying `result`.
@@ -35,12 +35,10 @@ pub(crate) fn internal_error(id: Value, message: impl Into<String>) -> Value {
     failure(id, INTERNAL_ERROR, message)
 }
 
-/// a tool result carrying text.
+/// A tool result carrying text.
 ///
-/// a failed tool call is reported as `isError` on an ordinary result rather than as a json-rpc
-/// error: the distinction the protocol draws is that a transport error is the client's problem and
-/// a tool error is the model's to read and act on, and "the workflow did not compile" is squarely
-/// the second.
+/// Report a failed tool call as `isError` on an ordinary result. This lets the model see the command
+/// output and failure together.
 pub(crate) fn text_result(text: impl Into<String>, is_error: bool) -> Value {
     json!({
         "content": [{ "type": "text", "text": text.into() }],

@@ -139,7 +139,7 @@ pub struct ConsoleBinding {
     pub updated_at: DateTime<Utc>,
 }
 
-/// a session with everything under it, as the api and ui read it.
+/// a session with everything under it, as the API and UI read it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ConsoleSessionDetail {
     #[serde(flatten)]

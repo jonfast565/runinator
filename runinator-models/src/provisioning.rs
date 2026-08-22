@@ -65,8 +65,8 @@ pub struct ProvisionedGroup {
     pub available: u32,
     /// false when the backend can observe but not change this group.
     pub manageable: bool,
-    /// the smallest desired count the ui should allow (a floor of one for control-plane kinds).
-    /// backend-provided so a new protected kind needs no ui change.
+    /// the smallest desired count the UI should allow (a floor of one for control-plane kinds).
+    /// backend-provided so a new protected kind needs no UI change.
     #[serde(default)]
     pub min_desired: u32,
 }

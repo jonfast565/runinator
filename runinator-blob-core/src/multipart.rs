@@ -7,7 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 
-/// s3's part-number bounds.
+/// S3's part-number bounds.
 pub const MIN_PART_NUMBER: u32 = 1;
 pub const MAX_PART_NUMBER: u32 = 10_000;
 

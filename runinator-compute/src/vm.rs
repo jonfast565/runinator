@@ -44,7 +44,7 @@ pub struct VmEnv<'a> {
     pub context: &'a Value,
     /// what is callable, and how far each call's result can travel.
     pub catalog: &'a CallableCatalog,
-    /// the library backing `Local` intrinsics (`now`/`uuid`/`env`).
+    /// the library backing `Local` intrinsics (`now`/`UUID`/`env`).
     ///
     /// `None` in a pure-only setting, which makes a local call an error rather than a silent
     /// observation of the host.

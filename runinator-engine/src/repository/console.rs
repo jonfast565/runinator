@@ -393,7 +393,7 @@ fn stamp_managed(definition: &mut runinator_models::workflows::WorkflowDefinitio
     definition.definition.metadata = Value::Object(metadata);
 }
 
-/// the bindings of one session, for the api.
+/// the bindings of one session, for the API.
 pub async fn fetch_bindings<T: DatabaseImpl>(
     db: &T,
     session_id: Uuid,

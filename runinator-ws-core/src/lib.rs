@@ -1,5 +1,5 @@
 //! the foundation every http handler crate writes against: wire payloads, the json error/response
-//! envelope, the ui event bus, the openapi documentation vocabulary, and small json helpers.
+//! envelope, the UI event bus, the openapi documentation vocabulary, and small json helpers.
 //!
 //! it holds no routes and no middleware. `runinator-ws-middleware` layers request gating on top of
 //! it, the `runinator-ws-{identity,authoring,runtime}` crates build handlers on both, and

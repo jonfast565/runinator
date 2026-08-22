@@ -33,7 +33,7 @@ export interface TextEditorHostCreateOptions {
   onDiagnosticsChange?(diagnostics: TextEditorDiagnostic[]): void;
 }
 
-/** Framework-neutral editor surface; CodeMirror implements this in ui/adapters/codemirror/. */
+/** Framework-neutral editor surface. CodeMirror implements it in UI/adapters/codemirror/. */
 export interface TextEditorHost {
   mount(container: HTMLElement): void;
   destroy(): void;

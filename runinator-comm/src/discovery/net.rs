@@ -16,8 +16,8 @@ const BUFFER_SIZE: usize = 65_536;
 
 type SocketFuture<'a, T> = Pin<Box<dyn Future<Output = std::io::Result<T>> + Send + 'a>>;
 
-/// udp seam used by discovery. the production implementation is Tokio's socket; [`VirtualNet`]
-/// provides deterministic broadcast tests without binding a host port.
+/// UDP socket interface used by discovery. Production uses a Tokio socket.
+/// [`VirtualNet`] provides deterministic broadcast tests without binding a host port.
 pub trait UdpSocketLike: Send + Sync {
     fn recv_from<'a>(&'a self, buffer: &'a mut [u8]) -> SocketFuture<'a, (usize, SocketAddr)>;
     fn send_to<'a>(&'a self, payload: &'a [u8], target: &'a str) -> SocketFuture<'a, usize>;
@@ -35,7 +35,7 @@ impl UdpSocketLike for UdpSocket {
 
 type Datagram = (Vec<u8>, SocketAddr);
 
-/// in-memory UDP network with port-scoped IPv4 broadcast semantics.
+/// in-memory user datagram protocol (UDP) network with port-scoped IPv4 broadcast semantics.
 #[derive(Clone, Default)]
 pub struct VirtualNet {
     sockets: Arc<Mutex<HashMap<SocketAddr, tokio::sync::mpsc::UnboundedSender<Datagram>>>>,
@@ -114,7 +114,7 @@ impl UdpSocketLike for VirtualUdpSocket {
     }
 }
 
-/// Bind a UDP socket for gossip traffic and enable broadcast.
+/// Bind a user datagram protocol (UDP) socket for gossip traffic and enable broadcast.
 pub async fn bind_gossip_socket(bind_addr: &str, port: u16) -> std::io::Result<Arc<UdpSocket>> {
     let socket = Arc::new(UdpSocket::bind((bind_addr, port)).await?);
     socket.set_broadcast(true)?;

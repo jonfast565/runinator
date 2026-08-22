@@ -106,7 +106,7 @@ const canScale = computed(() => can("nodes:operate"));
 
 // the scale-to-zero floor is backend-provided: control-plane kinds (webservice/postgres) report a
 // min_desired of one so they cannot be scaled to zero from here, and any future protected kind is
-// honored without a ui change.
+// honored without changing the UI.
 function minDesired(group: ProvisionedGroup): number {
   return group.min_desired ?? 0;
 }

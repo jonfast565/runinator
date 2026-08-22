@@ -67,7 +67,7 @@ export const nodeCommands: ConsoleCommand[] = [
       const backend = requiredFlag(flags, "backend");
       const kind = requiredFlag(flags, "kind");
       const count = numberFlag(flags, "count") ?? 1;
-      // the api sets an absolute desired count, so "add N" is read-then-set — the same thing
+      // The API sets an absolute count. "Add N" therefore reads the current count and then sets it;
       // runinatorctl does, and the same race it accepts.
       const groups = await fetchNodes();
       const current =
@@ -436,7 +436,7 @@ export const agentCommands: ConsoleCommand[] = [
         ttl_seconds: parseTtl(flag(flags, "ttl") ?? "15m"),
         org_id: flag(flags, "org") ?? null,
         labels: labels(flags),
-        // the token embeds the url the agent will call back on, which is the service this console
+        // The token contains the URL the agent calls back on. That is the service this console
         // is already talking to unless the operator names another.
         service_url: flag(flags, "service-url") ?? getCommandRuntime().apiBaseUrl(),
         cluster_id: flag(flags, "cluster-id") ?? null,

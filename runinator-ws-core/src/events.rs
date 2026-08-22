@@ -12,8 +12,8 @@ pub use runinator_comm::{UiEvent as AppEvent, UiEventKind as AppEventKind};
 /// fan-out bus for UI events. it keeps the local broadcast that feeds this replica's WebSocket
 /// clients (via [`EventBus::subscribe`], written solely by the web service's event consumer, which
 /// owns the only writer to that broadcast) and delegates every emit to the shared
-/// [`EnginePublisher`], so ws handlers and the background engine publish onto the broker `events`
-/// channel through one code path. this keeps every ws replica's clients in sync regardless of which
+/// [`EnginePublisher`], so WS handlers and the background engine publish onto the broker `events`
+/// channel through one code path. this keeps every WS replica's clients in sync regardless of which
 /// replica (or a standalone engine worker) did the work.
 #[derive(Clone)]
 pub struct EventBus {

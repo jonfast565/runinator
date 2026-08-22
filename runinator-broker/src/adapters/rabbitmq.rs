@@ -87,7 +87,7 @@ impl RabbitMqBrokerConfig {
         self
     }
 
-    /// override the orchestration queues (wake = ws -> waker, ingress = waker/worker -> ws).
+    /// override the orchestration queues (wake = WS -> waker, ingress = waker/worker -> WS).
     pub fn with_orchestration_queues(
         mut self,
         wake_queue: impl Into<String>,

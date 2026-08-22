@@ -85,7 +85,7 @@ codesign_keychain_export() {
 }
 
 # build the Swift Keychain helper (macOS only), but only when the config actually
-# invokes it. skipping this for configs that don't need it (e.g. the aws-sso job)
+# invokes it. Skip this for configs that do not need it, such as the AWS SSO job.
 # avoids contending with a concurrent run's SwiftPM lock on tools/keychain-export/.build.
 if [[ "$(uname -s)" == "Darwin" ]] && grep -q "keychain-export" "$config"; then
   if [[ $build -eq 1 ]]; then

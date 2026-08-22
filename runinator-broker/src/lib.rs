@@ -2,7 +2,7 @@
 //!
 //! the [`Broker`] contract, the message/delivery types, and the in-memory backend live in
 //! `runinator-broker-core`; this crate adds the backends that need a wire or an external system:
-//! the http, tcp, and ws transports, the kafka and rabbitmq adapters, and the [`factory`] that
+//! the http, TCP, and WS transports, the kafka and rabbitmq adapters, and the [`factory`] that
 //! builds one from configuration. it re-exports the core surface at its historical
 //! `runinator_broker::…` paths, so a binary that builds a backend needs only this crate.
 //!

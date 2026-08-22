@@ -87,8 +87,8 @@ impl ReplicaSession {
     }
 }
 
-/// an api client paired with the replica session it registered, so heartbeat and provider calls
-/// no longer need to thread both through separately.
+/// An API client paired with the replica session it registered.
+/// Heartbeats and provider calls use the same session.
 #[derive(Clone)]
 pub struct ReplicaClient<L> {
     pub api: AsyncApiClient<L>,
@@ -99,7 +99,7 @@ impl<L> ReplicaClient<L>
 where
     L: ServiceLocator,
 {
-    /// register a new replica session against `api` and pair them.
+    /// Register a new replica session with `api` and pair them.
     pub async fn register(api: AsyncApiClient<L>, config: ReplicaServiceConfig) -> Result<Self> {
         let runtime_id = Uuid::new_v4().to_string();
         let replica = api

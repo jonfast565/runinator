@@ -13,7 +13,7 @@ pub struct FunctionArtifact {
     /// `sha256:<hex>` of the archive.
     pub digest: String,
     pub size_bytes: i64,
-    /// where the bytes live, a `blob://` uri.
+    /// where the bytes live, a `blob://` URI.
     pub uri: String,
     pub media_type: String,
     pub created_at: DateTime<Utc>,

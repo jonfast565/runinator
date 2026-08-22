@@ -75,7 +75,7 @@ const store = useArtifactsStore();
 const app = useAppStore();
 const loading = ref(false);
 
-// filter artifacts by the global search box (matches name, run id, mime type, or uri).
+// Filter artifacts by name, run ID, MIME type, or URI.
 const filteredArtifacts = computed(() => {
   const query = app.normalizedSearch;
 

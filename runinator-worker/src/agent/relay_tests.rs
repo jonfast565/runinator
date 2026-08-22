@@ -1,4 +1,4 @@
-//! covers relay url derivation: scheme swap, path-prefix preservation, and rejected schemes.
+//! covers relay URL derivation: scheme swap, path-prefix preservation, and rejected schemes.
 
 use super::*;
 
@@ -24,7 +24,7 @@ fn a_service_url_without_a_trailing_slash_still_resolves() {
 
 // a remote agent typically reaches the service through an ingress that mounts it under a path
 // prefix. joining (rather than replacing the path) keeps the relay under that same prefix, which is
-// what the api client does for every other endpoint.
+// This matches what the API client does for every other endpoint.
 #[test]
 fn a_path_prefixed_service_keeps_its_prefix() {
     assert_eq!(

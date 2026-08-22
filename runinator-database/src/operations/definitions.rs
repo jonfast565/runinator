@@ -43,7 +43,7 @@ where
     ) -> Result<WorkflowDefinition, SendableError> {
         let now = Utc::now().timestamp();
         // resolve an existing row by explicit id or by its (namespace, name) identity, else mint a
-        // fresh uuid. the namespace branch keeps same-named workflows in different namespaces apart.
+        // Generate a UUID. The namespace keeps same-named workflows separate.
         let existing_id = match workflow.id {
             Some(id) => Some(id),
             None => {
@@ -546,8 +546,8 @@ where
 
     async fn upsert_catalog_item(&self, item: Value) -> Result<Value, SendableError> {
         let now = Utc::now().timestamp();
-        // catalog_items.id is a uuid primary key with no db default; generate one for the insert
-        // path. on a uri conflict the update set never touches id, so existing rows keep theirs.
+        // catalog_items.id is a UUID primary key with no database default. Generate it on insert.
+        // On a URI conflict, the update does not touch id, so existing rows keep theirs.
         let id = Uuid::new_v4();
         let columns =
             "id, uri, item_type, name, version, document, metadata, created_at, updated_at";

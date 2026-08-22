@@ -5,7 +5,7 @@ use std::sync::RwLock;
 
 use tower_lsp::lsp_types::Url;
 
-/// thread-safe map of document uri to its current full text.
+/// thread-safe map of document URI to its current full text.
 #[derive(Default)]
 pub struct DocumentStore {
     docs: RwLock<HashMap<Url, String>>,

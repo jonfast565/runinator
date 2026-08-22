@@ -9,11 +9,10 @@
 //! <root>/<bucket>/.tmp/                 partial writes awaiting rename
 //! ```
 //!
-//! keys are mirrored rather than hashed so `list` is a directory walk. two divergences from s3
-//! follow from that and are accepted deliberately: a case-insensitive filesystem (a macos dev box)
-//! collapses keys differing only in case, and a key cannot be both an object and a prefix of another
-//! object (`a` and `a/b`), which the filesystem refuses. both are reported as errors rather than
-//! silently resolved.
+//! Keys are mirrored rather than hashed, so `list` can walk the directory.
+//! This creates two differences from S3. A case-insensitive filesystem can merge keys that differ
+//! only by case, and a key cannot be both an object and another object's prefix (`a` and `a/b`).
+//! Report both cases as errors instead of resolving them silently.
 
 use std::path::{Path, PathBuf};
 

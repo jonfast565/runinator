@@ -242,7 +242,7 @@ pub async fn delete_console_cell<T: DatabaseImpl>(
 ///
 /// the response is the cell, not a run: a pure cell has already settled by the time this returns,
 /// and an effectful one carries its `workflow_run_id` for the caller to follow. one shape either
-/// way, so the ui does not branch on how the cell happened to be written.
+/// way, so the UI does not branch on how the cell happened to be written.
 pub async fn run_console_cell<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,

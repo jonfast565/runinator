@@ -17,7 +17,7 @@ pub struct MetadataSnapshot {
     pub settings: Vec<SettingSummary>,
 }
 
-/// holds the api client used for metadata and the latest fetched snapshot.
+/// holds the API client used for metadata and the latest fetched snapshot.
 pub struct MetadataCache {
     client: AsyncApiClient<StaticLocator>,
     snapshot: RwLock<MetadataSnapshot>,

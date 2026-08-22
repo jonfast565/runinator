@@ -167,13 +167,13 @@ const VERBS: &[&str] = &["get", "post", "put", "patch", "delete"];
 
 /// routes that are intentionally undocumented, each with the reason.
 ///
-/// these are infrastructure surfaces rather than api endpoints: they serve the docs themselves, or
+/// these are infrastructure surfaces rather than API endpoints: they serve the docs themselves, or
 /// speak a non-http protocol that openapi cannot describe.
-/// note how short this is: the spec already documents the websocket upgrades and its own
+/// note how short this is: the spec already documents the WS upgrades and its own
 /// `/openapi.json` and `/docs`, so an upgrade endpoint is not automatically excusable here.
 const UNDOCUMENTED: &[(&str, &str)] = &[];
 
-/// `pub const NAME: &str = "value";` declarations from the shared api-route constants.
+/// `pub const NAME: &str = "value";` declarations from the shared API-route constants.
 ///
 /// parsed rather than hand-mirrored so the map cannot itself drift.
 fn route_constants() -> BTreeMap<String, String> {

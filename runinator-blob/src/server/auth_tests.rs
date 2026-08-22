@@ -35,7 +35,7 @@ fn reads_the_payload_descriptor() {
         PayloadDescriptor::UnsignedChunked
     );
     // an absent header is treated as unsigned rather than as an error, since a plain `GET` from a
-    // presigned url sends none.
+    // A presigned URL sends none.
     assert_eq!(
         payload_descriptor(&HeaderMap::new()).unwrap(),
         PayloadDescriptor::Unsigned

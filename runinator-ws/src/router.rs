@@ -1,7 +1,7 @@
 //! the http surface: assembles every domain's routes and wraps them in the middleware stack.
 //!
 //! route registration itself lives next to the handlers it serves — each `crate::handlers::<domain>`
-//! module (plus `websocket` and `openapi`) exposes a `routes()` fn returning its own `Router`, and
+//! module (plus `WS` and `openapi`) exposes a `routes()` fn returning its own `Router`, and
 //! this file merges them. `Router::merge` panics on a duplicate method+path, so the split cannot
 //! silently shadow a route; `openapi::route_parity` lints the merged set against the documented one.
 

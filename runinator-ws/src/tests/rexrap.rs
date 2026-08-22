@@ -1,5 +1,5 @@
 //! the author-time endpoints: rexrap evaluate/analyze over source fragments, and the node/trigger/enum
-//! catalogs the ui builds its palette from.
+//! catalogs the UI builds its palette from.
 
 use super::*;
 
@@ -70,7 +70,7 @@ async fn get_enum_catalogs_returns_catalog_json() {
     let crate::models::ApiResponse::JsonValue(value) = response else {
         panic!("enum catalog response must be json");
     };
-    // assert the names rather than a bare count: the ui looks each one up by name, so a rename is
+    // Assert the names rather than a count. The UI looks each one up by name, so a rename is
     // the failure that matters and a count alone would not say which entry moved.
     let names: Vec<&str> = value
         .as_array()

@@ -1,4 +1,4 @@
-//! the identity and tenancy http surface: login/tokens/users/api keys/teams, orgs and memberships,
+//! the identity and tenancy http surface: login/tokens/users/API keys/teams, orgs and memberships,
 //! and billing plans and invoices.
 //!
 //! these are the endpoints `AGENTS.md` exempts from the engine-repository rule — thin crud over rows

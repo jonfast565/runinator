@@ -1,9 +1,6 @@
-//! the three migration directories are hand-maintained siblings, and nothing but this test makes
-//! them stay siblings. a schema change written for sqlite and forgotten for mysql compiles, passes
-//! the whole sqlite suite, and fails at runtime on the first deployment that uses the other engine
-//! — with no test able to catch it, because the dialect suites skip themselves without a live url.
-//!
-//! so this asserts the version sets match, which needs no database and always runs.
+//! The three migration directories are maintained separately.
+//! A change added to SQLite but not MySQL can pass local tests and fail in production.
+//! This test compares their version sets without needing a database.
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;

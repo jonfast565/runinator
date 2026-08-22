@@ -42,7 +42,7 @@ impl OrgRole {
     }
 }
 
-/// a tenant. `slug` is the stable, url/label-safe identifier used for routing labels (`org=<slug>`).
+/// a tenant. `slug` is the stable, URL/label-safe identifier used for routing labels (`org=<slug>`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Organization {
     pub id: Option<Uuid>,
@@ -113,7 +113,7 @@ pub struct OrgContextResponse {
     pub role: OrgRole,
 }
 
-/// derive a url/label-safe slug from a display name: lowercase, non-alphanumerics to hyphens,
+/// derive a URL/label-safe slug from a display name: lowercase, non-alphanumerics to hyphens,
 /// collapsed and trimmed. empty input yields an empty string (callers should reject that).
 pub fn slugify(name: &str) -> String {
     let mut out = String::with_capacity(name.len());

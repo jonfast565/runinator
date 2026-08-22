@@ -301,7 +301,7 @@ impl PromptEditor {
         let buffer = self.buffer();
         let completion = repl::complete(&buffer);
         if completion.options.is_empty() {
-            // nothing to insert, but the catalog may still know what belongs here — a uuid, a
+            // Nothing to insert, but the catalog may still know what belongs here — a UUID, a
             // workflow name, a closed set the argument did not declare — and saying so is more use
             // than a silent Tab.
             self.menu.clear();

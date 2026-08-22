@@ -13,7 +13,7 @@ export function activate(context: ExtensionContext) {
   const serverPath = config.get<string>("serverPath", "runinator-lsp");
   const apiBaseUrl = config.get<string>("apiBaseUrl", "http://127.0.0.1:8080/");
   const autoApply = config.get<boolean>("autoApply", false);
-  // apply-on-save target defaults to the metadata base url when serviceUrl is unset.
+  // The apply-on-save target uses the metadata base URL when serviceUrl is unset.
   const serviceUrl = config.get<string>("serviceUrl", "") || apiBaseUrl;
 
   // metadata completion reads RUNINATOR_API_BASE_URL from the server's environment.

@@ -2,7 +2,7 @@ use super::*;
 use runinator_models::notifications::{NewNotification, Notification};
 use uuid::Uuid;
 
-/// a created notification together with the org that should see the ui event for it.
+/// a created notification together with the org that should see the UI event for it.
 pub struct CreatedNotification {
     pub notification: Notification,
     pub org_id: Option<Uuid>,
@@ -16,7 +16,7 @@ pub async fn fetch_notifications<T: DatabaseImpl>(
     db.fetch_notifications(unread_only, limit).await
 }
 
-/// persist a notification and resolve the org that owns it, so the caller emits the ui event to the
+/// persist a notification and resolve the org that owns it, so the caller emits the UI event to the
 /// right audience rather than globally.
 pub async fn create_notification<T: DatabaseImpl>(
     db: &T,

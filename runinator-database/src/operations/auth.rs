@@ -1,4 +1,4 @@
-//! users, api keys, sessions, teams, and grants.
+//! users, API keys, sessions, teams, and grants.
 //!
 //! the `AuthStore` half of the generic sql implementation. bodies are written once, over any
 //! `SqlBackend`; see `super` for the shared helpers they call.

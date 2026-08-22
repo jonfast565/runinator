@@ -1,5 +1,5 @@
-//! first-boot provisioning: the local admin credentials and service api key seeding creates (and
-//! refuses to overwrite), plus the jwt secret the database is bootstrapped with.
+//! first-boot provisioning: the local admin credentials and service API key seeding creates (and
+//! refuses to overwrite), plus the JWT secret the database is bootstrapped with.
 
 use super::*;
 

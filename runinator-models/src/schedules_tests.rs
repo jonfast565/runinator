@@ -1,10 +1,10 @@
-//! covers the scheduling-policy vocabulary shared by the trigger loop, the rexrap header, and the ui
+//! covers the scheduling-policy vocabulary shared by the trigger loop, the rexrap header, and the UI
 //! catalog.
 
 use super::*;
 use crate::json;
 
-/// `ALL` is what the ui catalog offers. a variant missing from it is a policy an operator cannot
+/// `ALL` is what the UI catalog offers. a variant missing from it is a policy an operator cannot
 /// pick even though the trigger loop honors it, which is silent — so pin the list and its wire
 /// names together.
 #[test]

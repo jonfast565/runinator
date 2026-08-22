@@ -130,7 +130,7 @@ export function useEventStream() {
     }
   }
 
-  // reconnect on any input that changes whether/how we should be connected: the service url, auth
+  // Reconnect when an input changes whether or how we should connect: service URL, auth
   // gating (required/authenticated), and the token revision (so a refreshed token is picked up).
   watch(
     [

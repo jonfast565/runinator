@@ -38,7 +38,7 @@ impl From<serde_json::Error> for WireError {
 /// serialize/deserialize typed structs to wire forms. blanket-implemented for every
 /// `Serialize + DeserializeOwned` type, so domain structs gain it for free.
 ///
-/// use `to_wire`/`from_wire` for transport (broker/api strings) and `to_wire_value`/
+/// use `to_wire`/`from_wire` for transport (broker/API strings) and `to_wire_value`/
 /// `from_wire_value` when embedding into or reading out of a dynamic `Value` carrier field.
 pub trait WireCodec: Serialize + DeserializeOwned + Sized {
     /// serialize to a transport string.

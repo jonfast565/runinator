@@ -1,4 +1,4 @@
-// exponential backoff with jitter for websocket reconnects.
+// Use increasing retry delays with jitter when reconnecting over WS.
 //
 // a fixed reconnect delay means every client that drops at the same moment (a
 // server restart, a rate-limit blip that closes sockets) reconnects in lockstep,

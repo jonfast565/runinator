@@ -1,4 +1,4 @@
-//! identity rows: users, grants, teams, orgs and memberships, and the api-key lifecycle.
+//! Test identity rows, memberships, and the API key lifecycle.
 
 use super::*;
 

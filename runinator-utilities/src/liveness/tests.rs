@@ -11,7 +11,7 @@ fn temp_path(name: &str) -> std::path::PathBuf {
     path
 }
 
-// small unique suffix without pulling in the uuid crate for tests.
+// Use a small unique suffix without pulling in the UUID crate for tests.
 fn uuid_like() -> u128 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()

@@ -106,7 +106,7 @@ pub fn authenticate(
         canonical_headers.push((name.clone(), value));
     }
 
-    // a presigned url signs every query parameter except the signature itself.
+    // A presigned URL signs every query parameter except the signature itself.
     let signing_query: Vec<(String, String)> = query
         .iter()
         .filter(|(name, _)| !name.eq_ignore_ascii_case("X-Amz-Signature"))
@@ -216,7 +216,7 @@ fn parse_authorization(value: &str, headers: &HeaderMap) -> Result<PresentedSign
     })
 }
 
-/// split `AKID/20130524/us-east-1/s3/aws4_request` into the key id and the scope.
+/// split `AKID/20130524/us-east-1/S3/aws4_request` into the key id and the scope.
 fn split_credential(value: &str) -> Result<(String, String), BlobError> {
     value
         .split_once('/')
@@ -239,7 +239,7 @@ pub fn decode_query(query: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-/// percent-decode, treating `+` literally. s3 does not form-encode its query strings, so decoding
+/// percent-decode, treating `+` literally. S3 does not form-encode its query strings, so decoding
 /// `+` as a space would corrupt any key containing one.
 fn percent_decode(value: &str) -> String {
     let bytes = value.as_bytes();

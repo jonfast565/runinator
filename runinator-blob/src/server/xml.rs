@@ -1,4 +1,4 @@
-//! the handful of s3 xml documents this service speaks.
+//! The small set of S3 XML documents used by this service.
 //!
 //! hand-rolled rather than pulled from an xml crate: the surface is six fixed documents with no
 //! namespaces, no attributes, and no mixed content, and a parser dependency would be a larger
@@ -34,7 +34,7 @@ fn timestamp(value: DateTime<Utc>) -> String {
     value.to_rfc3339_opts(SecondsFormat::Millis, true)
 }
 
-/// an s3 `<Error>` document.
+/// An S3 `<Error>` document.
 pub fn error(code: &str, message: &str, resource: &str, request_id: &str) -> String {
     format!(
         "{DECLARATION}<Error><Code>{}</Code><Message>{}</Message><Resource>{}</Resource><RequestId>{}</RequestId></Error>",

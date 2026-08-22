@@ -46,8 +46,8 @@ pub const API_WORKFLOW_EFFECTS: &str = "/workflow_effects";
 pub const API_SCHEDULER_WORKFLOW_RUNS_CLAIM: &str = "/scheduler/workflow_runs/claim";
 pub const API_RUNS: &str = "/runs";
 pub const API_ARTIFACTS: &str = "/artifacts";
-/// store artifact bytes and get back the uri to record against them. records no row: the caller's
-/// artifact is already accounted for by whatever recorded it.
+/// Store artifact bytes and return the URI to record.
+/// This creates no row; the caller already accounted for the artifact.
 pub const API_ARTIFACTS_CONTENT: &str = "/artifacts/content";
 pub const API_SUPERVISOR_STATUS: &str = "/supervisor/status";
 pub const API_APPROVALS: &str = "/approvals";

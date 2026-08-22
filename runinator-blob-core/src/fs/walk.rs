@@ -79,7 +79,7 @@ pub(super) fn page(
         if after.is_some_and(|token| key.as_str() <= token) {
             continue;
         }
-        // a rolled-up prefix consumes one slot of the page budget, exactly as it does in s3.
+        // A rolled-up prefix uses one page slot, matching S3.
         if let Some(rolled) = roll_up(key, prefix, request.delimiter.as_deref()) {
             if common_prefixes.contains(&rolled) {
                 last_seen = Some(key.clone());

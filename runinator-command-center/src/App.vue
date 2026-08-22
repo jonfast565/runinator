@@ -129,7 +129,7 @@ onMounted(async () => {
     const baseUrl = discovery.webServiceUrl();
 
     if (baseUrl) {
-      // publish the auth token before advertising the service url: the event stream connects the
+      // Publish the auth token before advertising the service URL. The event stream connects the
       // moment serviceUrl is set, and a browser WebSocket can only present its token via ?token=.
       // initializing auth first means that first connect already carries the token instead of 401ing
       // and flapping into fallback.

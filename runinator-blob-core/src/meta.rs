@@ -10,15 +10,14 @@ use sha2::{Digest, Sha256};
 
 use crate::range::ResolvedRange;
 
-/// the default content type for an object stored without one, matching s3.
+/// Default content type for an object that has none, matching S3.
 pub const DEFAULT_CONTENT_TYPE: &str = "binary/octet-stream";
 
 /// an object's descriptor: everything a `HEAD` answers.
 ///
-/// note `etag` is a quoted sha-256 hex digest, not the md5 real s3 returns for a single-part upload.
-/// nothing in runinator compares an etag against a locally computed md5, and every content-addressed
-/// caller already thinks in sha-256, so a second digest would be pure cost. a client that needs md5
-/// semantics must not assume them here.
+/// `etag` is a quoted SHA-256 digest, not the MD5 value that real S3 returns for a single-part
+/// upload. Runinator uses SHA-256 for content-addressed data, so callers must not assume MD5
+/// semantics here.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ObjectMeta {
     pub key: String,
@@ -81,10 +80,10 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 
 /// the `x-amz-checksum-sha256` wire form of a hex digest.
 ///
-/// s3 sends this header base64-encoded, and an aws sdk decodes it and compares against the digest it
-/// computed itself — so emitting hex here makes every sdk download fail its integrity check even
-/// though the bytes are correct. runinator stores and talks about digests in hex everywhere else,
-/// so the conversion lives at the wire boundary rather than in the model.
+/// S3 sends this header as base64. An AWS SDK decodes it and checks the digest. Emitting hex here
+/// would make SDK downloads fail their integrity checks even when the bytes were correct. Runinator
+/// stores and displays digests as hex elsewhere, so the conversion lives at the wire boundary
+/// rather than in the model.
 pub fn sha256_hex_to_base64(hex_digest: &str) -> Option<String> {
     let bytes = hex::decode(hex_digest).ok()?;
     if bytes.len() != 32 {

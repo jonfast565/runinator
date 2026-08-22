@@ -3,9 +3,8 @@ use std::path::PathBuf;
 use clap::Parser;
 use runinator_db_cli::DatabaseBackend;
 
-/// command-line configuration for the standalone engine worker. it mirrors the
-/// web service's database and broker options so the same durable engine runs against the same
-/// backends, only without the HTTP surface.
+/// Command-line configuration for the standalone engine worker.
+/// It mirrors the web service's database and broker options, without the HTTP surface.
 #[derive(Debug, Parser)]
 #[command(author, version, about, long_about = None)]
 pub(crate) struct CliArgs {
@@ -72,7 +71,7 @@ pub(crate) struct CliArgs {
     #[arg(long, default_value = "runinator-engine-worker")]
     pub broker_client_id: String,
 
-    /// Stable instance id used when this worker claims trigger/action-dispatch rows. In k8s this
+    /// Stable instance id used when this worker claims trigger/action-dispatch rows. In Kubernetes this
     /// should be the pod name; otherwise a random per-process id is generated.
     #[arg(long, env = "RUNINATOR_INSTANCE_ID")]
     pub instance_id: Option<String>,

@@ -7,7 +7,7 @@
 import { isJsonRecord } from "../domain/json";
 import type { WorkflowDirectTransitionKey } from "../domain/models";
 
-/** the universal status transitions, in the order the ui offers them. */
+/** Universal status transitions in the order shown by the UI. */
 export const directTransitionKeys: WorkflowDirectTransitionKey[] = [
   "next",
   "on_success",

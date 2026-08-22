@@ -1,7 +1,6 @@
-// a backend-neutral instrumentation decorator that records opentelemetry metrics for every broker
-// operation, tagged with the concrete `backend` so per-broker throughput and latency can be broken
-// out (in-memory/http/tcp/kafka/rabbitmq). it delegates all behavior to the wrapped broker and is a
-// no-op unless otel is configured, so it can wrap any backend unconditionally.
+// Records OpenTelemetry metrics for each broker operation.
+// The `backend` tag separates throughput and latency for each backend. Without OpenTelemetry
+// configuration, this wrapper does nothing.
 
 use std::sync::Arc;
 use std::time::Instant;

@@ -3,7 +3,7 @@
 //! per-module suites that pair with one source file keep living beside it as `<module>_tests.rs`
 //! (`compute_tests`, `functions_tests`, …). what lands here is the cross-module behaviour that has
 //! no single owning file: validating a whole definition, typing expressions against provider
-//! metadata, and the catalog the ui is driven from.
+//! metadata, and the catalog the UI is driven from.
 //!
 //! shared setup lives in this file so a submodule's `use super::*` picks it up along with the crate
 //! surface, exactly as the single-file suite did.

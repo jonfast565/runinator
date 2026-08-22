@@ -1,9 +1,7 @@
-//! wire envelope for the `ws` transport: unlike `tcp` (fresh connection per RPC) and `http` (one POST
-//! per RPC), a websocket connection is persistent and bidirectional, so concurrent calls sharing one
-//! connection need a way to match a response back to its request. `WsFrame` adds just that — a
-//! `request_id` — around the existing [`crate::tcp::types::TcpRequest`]/[`crate::tcp::types::TcpResponse`]
-//! payloads, rather than duplicating a parallel enum: the tcp and ws transports then stay provably in
-//! lockstep (a new channel only ever needs one enum updated, not two).
+//! Wire envelope for the `WS` transport. TCP opens a connection for each RPC, while HTTP sends one
+//! request at a time. WS keeps one two-way connection, so each response needs a request ID.
+//! `WsFrame` adds that ID around the existing TCP request and response payloads. Both transports
+//! then use the same message enums.
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;

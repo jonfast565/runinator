@@ -19,9 +19,9 @@ use crate::spec::{ContainerOutput, ContainerSpec};
 /// how often the run loop checks the deadline and the cancel signal.
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
 
-/// runs containers through the local `docker` cli.
+/// runs containers through the local `docker` CLI.
 ///
-/// the cli rather than the daemon api on purpose: it is what is already present wherever runinator
+/// the CLI rather than the daemon API on purpose: it is what is already present wherever runinator
 /// runs a container today, it needs no socket permissions beyond what the operator already granted,
 /// and the flags it takes are the documented surface rather than a library's rendering of them.
 pub struct DockerRunner {
@@ -181,7 +181,7 @@ impl DockerRunner {
         }
     }
 
-    // killing the cli client does not stop the container it asked for, so the removal is what
+    // Killing the CLI client does not stop the container it started, so the removal is what
     // actually ends the run; without it an aborted execution keeps consuming the limits it was
     // given until it finishes on its own.
     fn abort(&self, child: &mut Child, container_name: &str) {

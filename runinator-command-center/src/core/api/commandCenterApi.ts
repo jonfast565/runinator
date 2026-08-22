@@ -1379,7 +1379,7 @@ export async function createConsoleCell(sessionId: string, source: string, label
   });
 }
 
-// re-reading a cell is how the ui follows one waiting on a scratch run: the backend settles it from
+// Re-read a cell to follow a scratch run. The backend settles the cell from
 // the run before answering, so a poll never shows `running` forever.
 export async function fetchConsoleCell(cellId: string) {
   return command<ConsoleCell>("fetch_console_cell", { cellId });

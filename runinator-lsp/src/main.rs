@@ -1,5 +1,5 @@
 //! runinator-lsp: an editor-agnostic language server for the rexrap workflow language. it reuses the
-//! pure analyzer/completer/formatter in `runinator-rexrap` and the api client in `runinator-api`, so
+//! pure analyzer/completer/formatter in `runinator-rexrap` and the API client in `runinator-api`, so
 //! any lsp-capable editor gets diagnostics, completion, hover, formatting, and apply-on-save.
 
 mod apply;
@@ -28,8 +28,8 @@ async fn main() {
 }
 
 async fn run_process() {
-    // metadata completion targets the process-level base url; apply-on-save targets the per-editor
-    // configured service url instead.
+    // Metadata completion uses the process-level base URL. Apply-on-save uses the editor's
+    // configured service URL instead.
     let base_url = std::env::var("RUNINATOR_API_BASE_URL")
         .unwrap_or_else(|_| "http://127.0.0.1:8080/".to_string());
 

@@ -2,7 +2,7 @@
 //!
 //! one function is the whole seam between "this deployment runs a blob service" and "this deployment
 //! keeps blobs on a local disk". a caller receives `Arc<dyn BlobStore>` either way and never branches
-//! on which it got — the ws artifact handlers, the engine's function-artifact helper, and the
+//! on which it got — the WS artifact handlers, the engine's function-artifact helper, and the
 //! desktop agent all read the same trait.
 
 use std::sync::Arc;

@@ -1,4 +1,4 @@
-// turning api payloads into the blocks a terminal shows.
+// Turn API payloads into blocks for the terminal.
 
 import type { JsonValue } from "../domain/json";
 import type { ConsoleOutput } from "./types";

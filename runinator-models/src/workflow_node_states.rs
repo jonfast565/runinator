@@ -26,7 +26,7 @@ pub struct OutputPayload {
     pub artifacts: Vec<Value>,
 }
 
-/// input node state while it waits for a user response in the ui.
+/// input node state while it waits for a user response in the UI.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InputState {
     pub input: Value,

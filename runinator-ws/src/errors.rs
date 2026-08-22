@@ -2,7 +2,7 @@ use runinator_models::errors::{EngineErrors, ErrorDescriptor};
 
 // numbered error dictionary for the web service HTTP surface (RUNI17x). the pack-import, debug,
 // control, and replay descriptors (RUNI12x-14x) moved to runinator-engine with the repository code
-// that emits them; this dictionary keeps only the HTTP/broker-wiring codes ws owns.
+// That crate emits them; this dictionary keeps only the HTTP and broker-wiring codes WS owns.
 
 // broker wiring.
 pub const BROKER_WORKFLOW_RESULTS: ErrorDescriptor = ErrorDescriptor::new(

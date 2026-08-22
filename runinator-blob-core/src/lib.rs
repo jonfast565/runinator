@@ -5,9 +5,8 @@
 //! share, and the local filesystem backend. it deliberately excludes the http server and client —
 //! those live in `runinator-blob`, which depends on this crate.
 //!
-//! a caller that only reads and writes through an `Arc<dyn BlobStore>` (the engine, the ws handler
-//! crates) should depend on this crate. only the binaries that *build* a concrete store need
-//! `runinator-blob`.
+//! Code that only reads and writes through an `Arc<dyn BlobStore>` should depend on this crate.
+//! Only binaries that build a concrete store need `runinator-blob`.
 
 pub mod errors;
 pub mod fs;
@@ -38,17 +37,17 @@ pub const FUNCTION_ARTIFACT_BUCKET: &str = "runinator-function-artifacts";
 /// the bucket runinator stores workflow run artifacts in.
 pub const RUN_ARTIFACT_BUCKET: &str = "runinator-run-artifacts";
 
-/// the uri scheme recorded on an artifact row whose bytes live in a blob store, distinguishing it
-/// from the pre-blob rows that carry a local filesystem path.
+/// URI scheme stored for an artifact whose bytes are in a blob store.
+/// Older rows contain a local filesystem path instead.
 pub const BLOB_URI_SCHEME: &str = "blob";
 
-/// build the canonical `blob://<bucket>/<key>` uri for an object.
+/// build the canonical `blob://<bucket>/<key>` URI for an object.
 pub fn blob_uri(bucket: &str, key: &ObjectKey) -> String {
     format!("{BLOB_URI_SCHEME}://{bucket}/{key}")
 }
 
-/// split a `blob://<bucket>/<key>` uri back into its parts. returns `None` for any other shape,
-/// which is how a caller distinguishes a blob-backed artifact from a legacy local path.
+/// Split a `blob://<bucket>/<key>` URI into its parts.
+/// Return `None` for other shapes, including legacy local paths.
 pub fn parse_blob_uri(uri: &str) -> Option<(String, ObjectKey)> {
     let rest = uri.strip_prefix(&format!("{BLOB_URI_SCHEME}://"))?;
     let (bucket, key) = rest.split_once('/')?;

@@ -624,7 +624,7 @@ async fn refuse_unowned_replica<T: DatabaseImpl>(
     }
 }
 
-/// the websocket upgrade endpoints.
+/// the WS upgrade endpoints.
 pub(crate) fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
     use axum::Extension;
     use axum::routing::get;

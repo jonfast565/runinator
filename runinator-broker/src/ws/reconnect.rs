@@ -1,4 +1,4 @@
-//! exponential backoff with jitter for the ws client's reconnect loop. deliberately minimal: no
+//! exponential backoff with jitter for the WS client's reconnect loop. deliberately minimal: no
 //! external `rand` dependency (jitter is mixed from the current time, which is random enough for
 //! "don't thundering-herd reconnect after a server restart" — no cryptographic property needed here).
 

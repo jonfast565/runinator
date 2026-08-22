@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use crate::rbac::{Action, PlatformRole, RoleAssignment, SystemRole};
 
-/// the local-password identity provider tag. future SSO providers use `"oidc:<issuer>"`.
+/// the local-password identity provider tag. future SSO providers use `"OpenID Connect (OIDC):<issuer>"`.
 pub const PROVIDER_LOCAL: &str = "local";
 
 // ---- resource-based authorization ----
@@ -170,7 +170,7 @@ pub struct LocalCredential {
     pub password_hash: String,
 }
 
-/// api-key metadata in wire form. never carries the secret or its hash.
+/// API key metadata in wire form. never carries the secret or its hash.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiKey {
     pub id: Option<Uuid>,
@@ -193,7 +193,7 @@ pub struct ApiKey {
     pub created_at: DateTime<Utc>,
 }
 
-/// persistence-facing api-key record: metadata plus the secret hash used to verify a presented key.
+/// persistence-facing API key record: metadata plus the secret hash used to verify a presented key.
 #[derive(Debug, Clone)]
 pub struct ApiKeyRecord {
     pub key: ApiKey,
@@ -212,7 +212,7 @@ pub struct AuthSession {
     pub refresh_count: i64,
 }
 
-/// jwt access-token claims.
+/// JWT access-token claims.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Claims {
     /// subject: the user id.

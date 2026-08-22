@@ -97,7 +97,7 @@ impl KubernetesProvisioner {
         }
     }
 
-    // a non-manageable placeholder for a kind this backend has no workload mapped for, so the ui
+    // Create a non-manageable placeholder when this backend has no workload for the kind, so the UI
     // can still list every kind and show what is unconfigured.
     fn ghost(&self, kind: ReplicaKind) -> ProvisionedGroup {
         ProvisionedGroup {
@@ -213,7 +213,7 @@ impl Provisioner for KubernetesProvisioner {
             let has_deployment = self.deployments.contains_key(kind.as_str());
             let has_stateful_set = self.stateful_sets.contains_key(kind.as_str());
             if !has_deployment && !has_stateful_set {
-                // unconfigured on this backend: ghost row so the ui still lists the kind.
+                // This backend is not configured for the kind. Add a placeholder so the UI still lists it.
                 groups.push(self.ghost(kind));
                 continue;
             }

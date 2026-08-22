@@ -5,7 +5,7 @@
 //
 // the language core is split by compile stage — `runinator-rexrap-syntax` (text <-> ast),
 // `runinator-rexrap-sema` (ast -> diagnostics), `runinator-rexrap-codegen` (ast <-> json model) —
-// and this crate assembles them. it owns the public api every consumer links against, the
+// This crate assembles them. It owns the public API every consumer links against, the
 // `.rexrapp`/`.rexraps` front ends, the `analysis` seam published for the editor crate, and the
 // test suite, which is the first place parse, lower, decompile, and format are all visible at
 // once (round-trip and format-idempotence are exactly those cross-stage contracts).

@@ -19,7 +19,7 @@ async fn main() -> commands::Result<()> {
 
 async fn run_process() -> commands::Result<()> {
     let cli = Cli::parse();
-    // skip the banner in json mode to keep machine-readable output clean; for the mcp server,
+    // Skip the banner in JSON mode to keep machine-readable output clean. For the MCP server,
     // whose caller is a protocol client rather than a terminal; and for the console, which prints
     // it itself once its interface is up so that it lands at the top of the output pane instead of
     // on the screen the console is about to take over.
@@ -42,7 +42,7 @@ async fn run_process() -> commands::Result<()> {
         Commands::Functions {
             command: FunctionCommands::Validate { path },
         } => commands::functions_validate(path, cli.json),
-        // the mcp server outlives a web service that is not up yet; see `build_client_or_offline`.
+        // The MCP server can start before the web service; see `build_client_or_offline`.
         Commands::Mcp { .. } => {
             let client = auth::build_client_or_offline(&cli).await?;
             commands::run(&client, &cli).await

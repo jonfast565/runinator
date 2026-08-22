@@ -38,8 +38,8 @@ fn direct_mode_passes_the_backend_through_untouched() {
     assert_eq!(description, "direct tcp @ 10.0.0.4:7070");
 }
 
-// a direct-mode agent must not be blocked by an unusable service url: it never derives a relay url,
-// so the url only has to be good enough for the api client.
+// A direct-mode agent must not be blocked by an unusable service URL. It never derives a relay URL,
+// so the URL only has to be good enough for the API client.
 #[test]
 fn direct_mode_does_not_validate_the_service_url() {
     let mut selection = selection(BrokerMode::Direct);

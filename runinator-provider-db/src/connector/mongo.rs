@@ -28,7 +28,7 @@ impl MongoConnector {
             return Err(CONNECTION_FAILED.error("'connection' must not be empty"));
         }
 
-        // the database has to come from the uri: every operation below is scoped to one database,
+        // The database must come from the URI. Every operation below is scoped to one database,
         // and mongo has no notion of a "current" database on a bare connection.
         let options = runtime
             .block_on(async { ClientOptions::parse(connection).await })

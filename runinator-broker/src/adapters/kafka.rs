@@ -67,7 +67,7 @@ impl KafkaBrokerConfig {
         self
     }
 
-    /// override the orchestration topics (wake = ws -> waker, ingress = waker/worker -> ws).
+    /// override the orchestration topics (wake = WS -> waker, ingress = waker/worker -> WS).
     pub fn with_orchestration_topics(
         mut self,
         wake_topic: impl Into<String>,

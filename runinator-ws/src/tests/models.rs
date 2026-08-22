@@ -1,4 +1,4 @@
-//! request/response shapes the api promises: run-stream framing and the defaults a run request
+//! request/response shapes the API promises: run-stream framing and the defaults a run request
 //! falls back to when a field is omitted.
 
 use super::*;

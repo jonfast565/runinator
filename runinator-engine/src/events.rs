@@ -14,7 +14,7 @@ pub use runinator_comm::{UiEvent as AppEvent, UiEventKind as AppEventKind};
 
 /// publishes UI events onto the broker fan-out `events` channel. the web service's per-replica event
 /// consumer re-broadcasts each event to that replica's WebSocket clients, so an out-of-process engine
-/// can emit events and every ws replica's clients still see them.
+/// can emit events and every WS replica's clients still see them.
 ///
 /// also owns the in-process wake nudge. HTTP create handlers and engine loops share one
 /// [`EnginePublisher`] so newly enqueued work can wake its publisher without waiting for the poll
@@ -56,7 +56,7 @@ impl EnginePublisher {
 pub type EventSender = EnginePublisher;
 
 pub fn emit(events: &EventSender, event: AppEvent) {
-    // publish to the broker; the per-replica ws consumer re-broadcasts to every replica's clients.
+    // Publish to the broker. Each replica's WS consumer forwards the event to its clients.
     let broker = events.broker.clone();
     tokio::spawn(async move {
         if let Err(err) = broker.publish_event(EventMessage::new(event)).await {

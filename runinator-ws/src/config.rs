@@ -31,7 +31,7 @@ pub(crate) struct CliArgs {
     #[arg(long, default_value = "0.0.0.0")]
     pub gossip_bind: String,
 
-    /// Gossip UDP port
+    /// UDP port used for service discovery gossip.
     #[arg(long, default_value_t = 5000)]
     pub gossip_port: u16,
 
@@ -55,7 +55,7 @@ pub(crate) struct CliArgs {
     #[arg(long, env = "RUNINATOR_ANNOUNCE_SCHEME", default_value = "http")]
     pub announce_scheme: String,
 
-    /// websocket relay path advertised to agents.
+    /// WS relay path advertised to agents.
     #[arg(
         long,
         env = "RUNINATOR_ANNOUNCE_RELAY_PATH",
@@ -118,12 +118,12 @@ pub(crate) struct CliArgs {
     #[arg(long, default_value = "runinator-ws")]
     pub broker_client_id: String,
 
-    /// Stable address advertised to the replica list; in k8s this is the pod's headless-service DNS
+    /// Stable address advertised to the replica list; in Kubernetes this is the pod's headless-service DNS
     /// name so it stays resolvable across IP churn.
     #[arg(long, default_value = "")]
     pub advertise_host: String,
 
-    /// Stable instance id advertised to the replica list. In k8s this should be the pod name.
+    /// Stable instance id advertised to the replica list. In Kubernetes this should be the pod name.
     #[arg(long, env = "RUNINATOR_INSTANCE_ID")]
     pub instance_id: Option<String>,
 

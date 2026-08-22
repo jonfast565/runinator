@@ -224,7 +224,7 @@ impl Provisioner for SupervisorProvisioner {
     }
 }
 
-// the cli flag a node binary uses to receive its generated id.
+// The CLI flag a node binary uses to receive its generated ID.
 fn id_flag(kind: ReplicaKind) -> &'static str {
     match kind {
         ReplicaKind::Worker => "--worker-id",

@@ -586,7 +586,7 @@ impl BrokerState {
     /// drop queued controls that have gone stale: a control targeted at a replica that never
     /// returns has no consumer that can ever match it, and controls are immediate signals, so
     /// retaining one past the ttl only grows the queue (this broker also backs the long-lived
-    /// http/tcp servers).
+    /// http/TCP servers).
     fn drop_stale_control(&mut self, now: chrono::DateTime<chrono::Utc>) {
         self.control_queue.retain(|delivery| {
             (now - delivery.enqueued_at).num_seconds() < crate::STALE_CONTROL_TTL_SECONDS

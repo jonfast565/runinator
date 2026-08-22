@@ -5,7 +5,7 @@ use std::time::Duration;
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
-/// default interval between liveness-file touches; matches the k8s exec probe cadence.
+/// Default interval for touching the liveness file. It matches the Kubernetes exec probe cadence.
 pub const DEFAULT_LIVENESS_INTERVAL: Duration = Duration::from_secs(30);
 
 /// writes an empty file at path to signal the process is alive.

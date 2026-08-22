@@ -1,4 +1,4 @@
-//! the backend-driven catalog the ui reads: every kind present, default templates that deserialize,
+//! the backend-driven catalog the UI reads: every kind present, default templates that deserialize,
 //! and field/edge locations that actually exist in those templates.
 
 use super::*;
@@ -152,7 +152,7 @@ fn enum_catalog_covers_expected_enums() {
     );
 
     // the three runtime-derived catalogs are asserted against their canonical lists rather than
-    // literals: the point of deriving them is that a new variant reaches the ui on its own, and a
+    // These literals are derived so a new variant reaches the UI automatically, and a
     // literal here would be the copy that goes stale instead.
     assert_eq!(
         values("interrupt_source"),

@@ -4,7 +4,7 @@ import type {
   EnumCatalogMetadata,
 } from "../domain/models";
 
-// session cache of the backend ui catalogs. populated when catalogMetadataService.fetchCatalogs
+// Session cache for backend UI catalogs. Populate it with catalogMetadataService.fetchCatalogs.
 // succeeds so pure workflow helpers (create, edge options, summaries) can read metadata without
 // threading the catalog through every call site.
 

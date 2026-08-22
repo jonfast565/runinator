@@ -1,4 +1,4 @@
-//! ui-facing metadata catalogs for workflow node kinds, edges, and triggers.
+//! UI-facing metadata catalogs for workflow node kinds, edges, and triggers.
 //!
 //! the command center renders the node palette, the step editor, the read-only detail view,
 //! the edge palette, and trigger forms generically from these descriptors instead of
@@ -152,7 +152,7 @@ pub struct NodeEdgeSlot {
     pub orderable: bool,
 }
 
-/// full ui descriptor for one workflow node kind.
+/// full UI descriptor for one workflow node kind.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WorkflowNodeKindMetadata {
     pub kind: WorkflowNodeKind,
@@ -202,7 +202,7 @@ pub struct WorkflowNodeKindMetadata {
     pub default_template: Value,
 }
 
-/// full ui descriptor for one workflow trigger kind. trigger config lives in the untyped
+/// full UI descriptor for one workflow trigger kind. trigger config lives in the untyped
 /// `configuration` blob, so fields are plain `UiField`s (no `FieldLocation`).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WorkflowTriggerKindMetadata {

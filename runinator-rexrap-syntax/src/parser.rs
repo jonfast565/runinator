@@ -1894,7 +1894,7 @@ fn parse_spread_entry(pair: Pair<Rule>) -> Result<(String, Expr), RexRapError> {
     Ok((String::new(), Expr::new(ExprKind::Spread(name), span)))
 }
 
-/// apply one execution attribute (`@timeout`, `@retry`, `@tags`, `@mcp`, `@runner`,
+/// apply one execution attribute (`@timeout`, `@retry`, `@tags`, `@MCP`, `@runner`,
 /// `@idempotent`, `@reentry`) to a statement's modifiers.
 fn apply_step_attribute(
     modifiers: &mut Modifiers,

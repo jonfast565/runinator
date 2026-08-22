@@ -1,8 +1,8 @@
 //! the local filesystem backend.
 //!
-//! this is what the blob service runs on top of (its container filesystem) and what a single-node or
-//! desktop deployment uses directly, with no service in between. see [`paths`] for the on-disk
-//! layout and the two divergences from s3 that mirroring keys onto a filesystem forces.
+//! The blob service can use this backend on its container filesystem.
+//! Single-node and desktop deployments can use it directly. See [`paths`] for the disk layout and
+//! the two ways a filesystem backend differs from S3.
 
 mod paths;
 mod walk;
@@ -236,7 +236,7 @@ impl BlobStore for FsBlobStore {
 
     async fn delete(&self, bucket: &str, key: &ObjectKey) -> Result<()> {
         let paths = self.bucket(bucket).await?;
-        // s3 deletes are idempotent, so a missing object is a success rather than a 404.
+        // S3 deletes are idempotent, so a missing object is a success rather than a 404.
         let _ = fs::remove_file(paths.data(key)).await;
         let _ = fs::remove_file(paths.meta(key)).await;
         Ok(())
@@ -330,9 +330,8 @@ impl BlobStore for FsBlobStore {
             )));
         }
 
-        // parts are concatenated in the order the completion request lists them, not the order they
-        // arrived; s3 requires ascending part numbers, so reject anything else rather than assemble
-        // an object the client did not describe.
+        // Parts must be listed in ascending order. Reject any other order instead of assembling an
+        // Reject an object the client did not describe.
         let mut body = Vec::new();
         let mut previous = 0;
         for part in parts {

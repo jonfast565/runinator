@@ -3,7 +3,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-/// the default page size when a caller sends no `max-keys`, matching s3.
+/// the default page size when a caller sends no `max-keys`, matching S3.
 pub const DEFAULT_MAX_KEYS: usize = 1000;
 
 /// a listing query.
@@ -26,7 +26,7 @@ impl ListRequest {
         }
     }
 
-    /// the effective page size, clamped to the s3 maximum.
+    /// the effective page size, clamped to the S3 maximum.
     pub fn effective_max_keys(&self) -> usize {
         self.max_keys
             .unwrap_or(DEFAULT_MAX_KEYS)

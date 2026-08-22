@@ -46,7 +46,7 @@ fn read_file(
         .first_or_octet_stream()
         .to_string();
 
-    // capture a copy in the run's artifact dir so the file is preserved as a run artifact. the uri
+    // Capture a copy in the run's artifact directory so the file is preserved as a run artifact. The URI
     // is a path on this machine, so the artifact is tagged `local`: it is only retrievable while
     // this desktop worker is connected, unlike a cloud-stored artifact the web service can stream.
     let file_name = target

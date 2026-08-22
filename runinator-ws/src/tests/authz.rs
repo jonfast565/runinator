@@ -199,7 +199,7 @@ async fn workflow_listing_is_isolated_by_org() {
     let _ = std::fs::remove_file(path);
 }
 
-// pull workflow names out of a WorkflowList api response for assertions.
+// Pull workflow names out of a WorkflowList API response for assertions.
 fn workflow_list_names(body: &Json<crate::models::ApiResponse>) -> Vec<String> {
     match &body.0 {
         crate::models::ApiResponse::WorkflowList(list) => {

@@ -271,7 +271,7 @@ fn print_workflow_revisions(revisions: &[WorkflowRevision]) {
     }
 }
 
-// an unattributed write shows its kind rather than a bare uuid-shaped blank.
+// An unattributed write shows its kind rather than a blank shaped like a UUID.
 fn revision_author_label(revision: &WorkflowRevision) -> String {
     match revision.actor_id {
         Some(id) => format!("{} {id}", revision.actor_kind),

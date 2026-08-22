@@ -1,10 +1,9 @@
 //! where artifact bytes live.
 //!
-//! artifacts predate the object store, so a `run_artifacts.uri` is one of two things: a `blob://`
-//! uri (everything written since) or an absolute path on whichever replica happened to serve the
-//! upload (everything written before). the older form is why a download could 404 from a second ws
-//! replica — the file was real, just not on that pod. both forms are readable here; only the first
-//! is ever written.
+//! Artifacts predate the object store, so `run_artifacts.uri` has two forms:
+//! a `blob://` URI for new rows, or an absolute path from the replica that handled an old upload.
+//! The old form could return 404 from another WS replica. Both forms are readable here; only the
+//! first is written.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -25,9 +24,9 @@ pub struct ArtifactContent {
     pub body: Box<dyn AsyncRead + Send + Unpin>,
 }
 
-/// store artifact bytes and return the uri to record on the row.
+/// store artifact bytes and return the URI to record on the row.
 ///
-/// The key is run-scoped and carries a uuid so two uploads of the same filename never collide.
+/// The key is run-scoped and carries a UUID so two uploads of the same filename never collide.
 pub async fn put_artifact(
     store: &Arc<dyn BlobStore>,
     run_id: Uuid,

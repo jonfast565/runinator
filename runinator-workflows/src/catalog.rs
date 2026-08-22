@@ -1,4 +1,4 @@
-//! ui metadata catalogs for workflow node kinds, edges, and triggers.
+//! UI metadata catalogs for workflow node kinds, edges, and triggers.
 //!
 //! this is the single source of truth the command center renders from (palette, generic step
 //! editor, read-only detail view, edge palette, trigger forms). the node-kind half is assembled
@@ -21,7 +21,7 @@ use crate::node_kinds::{ActionCatalog, spec_for};
 
 // -- the node catalog --------------------------------------------------------------------------
 
-/// ordered ui metadata for every workflow node kind.
+/// ordered UI metadata for every workflow node kind.
 pub fn node_kind_catalog() -> Vec<WorkflowNodeKindMetadata> {
     WorkflowNodeKind::ALL.iter().map(node_metadata).collect()
 }
@@ -45,7 +45,7 @@ pub fn node_metadata(kind: &WorkflowNodeKind) -> WorkflowNodeKindMetadata {
 
 // -- trigger catalog ---------------------------------------------------------------------------
 
-/// ordered ui metadata for every workflow trigger kind.
+/// ordered UI metadata for every workflow trigger kind.
 pub fn trigger_kind_catalog() -> Vec<WorkflowTriggerKindMetadata> {
     WorkflowTriggerKind::ALL
         .iter()
@@ -153,7 +153,7 @@ pub fn enum_catalogs() -> Vec<EnumCatalogMetadata> {
 
 /// what may raise an interrupt, for the header editor's source picker.
 ///
-/// derived from [`InterruptSource::ALL`] rather than listed again, so a new source reaches the ui
+/// derived from [`InterruptSource::ALL`] rather than listed again, so a new source reaches the UI
 /// with the rest of the runtime. the match is exhaustive, which is what makes that automatic.
 fn interrupt_source_options() -> Vec<EnumOptionMetadata> {
     InterruptSource::ALL

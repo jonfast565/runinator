@@ -20,7 +20,7 @@ fn json_response(
     }
 }
 
-/// ui metadata for every workflow node kind (palette, generic editor, detail view, edge slots).
+/// UI metadata for every workflow node kind (palette, generic editor, detail view, edge slots).
 #[utoipa::path(
     get,
     path = "/node-kinds",
@@ -31,7 +31,7 @@ pub async fn get_node_kinds() -> (StatusCode, Json<ApiResponse>) {
     json_response(serde_json::to_value(node_kind_catalog()))
 }
 
-/// ui metadata for every workflow trigger kind (config forms).
+/// UI metadata for every workflow trigger kind (config forms).
 #[utoipa::path(
     get,
     path = "/trigger-kinds",

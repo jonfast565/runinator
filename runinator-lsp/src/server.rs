@@ -1,5 +1,5 @@
 //! the `tower-lsp` backend: wires document sync, diagnostics, completion, hover, formatting, and
-//! apply-on-save onto the reusable rexrap/api building blocks.
+//! apply-on-save onto the reusable rexrap/API building blocks.
 
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
@@ -217,7 +217,7 @@ impl LanguageServer for Backend {
     }
 }
 
-// true when the uri names a `.rexrap` workflow source (or a non-file uri we optimistically treat as
+// Return true when the URI names a `.rexrap` workflow source (or a non-file URI we optimistically treat as
 // one); `.rexrapm`/`.rexraps` are not analyzed with the workflow grammar.
 fn is_workflow_uri(uri: &Url) -> bool {
     match uri.to_file_path() {

@@ -20,7 +20,7 @@ pub enum ReplicaKind {
 impl ReplicaKind {
     /// every replica kind, in canonical node-pools display order. this is the single source of
     /// truth for enumerating kinds: adding a variant here surfaces it everywhere that iterates
-    /// kinds (provisioner config, supported-kinds, and the node-pools ui) without further edits.
+    /// kinds (provisioner config, supported-kinds, and the node-pools UI) without further edits.
     pub const ALL: &'static [ReplicaKind] = &[
         Self::Webservice,
         Self::Worker,
@@ -41,13 +41,13 @@ impl ReplicaKind {
         }
     }
 
-    /// control-plane kinds back the api or database; scaling one to zero would take the stack down,
-    /// so the node-pools ui keeps a floor of one replica for them.
+    /// control-plane kinds back the API or database; scaling one to zero would take the stack down,
+    /// so the node-pools UI keeps a floor of one replica for them.
     pub fn is_control_plane(self) -> bool {
         matches!(self, Self::Webservice | Self::Postgres)
     }
 
-    /// the smallest desired count the node-pools ui should allow scaling this kind to.
+    /// the smallest desired count the node-pools UI should allow scaling this kind to.
     pub fn min_desired(self) -> u32 {
         if self.is_control_plane() { 1 } else { 0 }
     }
@@ -233,7 +233,7 @@ pub struct ReplicaRecord {
     pub offline_at: Option<DateTime<Utc>>,
     /// the identity that registered this replica, captured once at insert and never reassigned by
     /// later heartbeats/upserts. lets a lower-trust external caller (e.g. a desktop-agent connecting
-    /// through the ws broker relay) be checked against the replica_id/labels it presents.
+    /// through the WS broker relay) be checked against the replica_id/labels it presents.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registered_by_principal_id: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

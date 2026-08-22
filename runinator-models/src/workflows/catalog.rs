@@ -137,7 +137,7 @@ pub enum WorkflowNodeKind {
     Transform,
     /// append a tamper-evident audit record to the workflow audit log.
     Audit,
-    /// snapshot run state at a named point; enables rollback via the control-plane api.
+    /// snapshot run state at a named point; enables rollback via the control-plane API.
     Checkpoint,
     /// acquire a named distributed mutex; parks until the lock is available.
     Mutex,
@@ -175,7 +175,7 @@ pub enum WorkflowNodeKind {
 }
 
 impl WorkflowNodeKind {
-    /// every node kind in a stable, ui-facing order. used to build the metadata catalog; the
+    /// every node kind in a stable, UI-facing order. used to build the metadata catalog; the
     /// catalog's per-kind `match` is what guarantees exhaustiveness at compile time.
     pub const ALL: [WorkflowNodeKind; 38] = [
         WorkflowNodeKind::Start,

@@ -55,7 +55,7 @@ pub(crate) enum Scalar {
     Text,
     Integer,
     Number,
-    /// a uuid, which is a string with a format worth naming.
+    /// a UUID, which is a string with a format worth naming.
     Uuid,
 }
 
@@ -70,9 +70,8 @@ impl Scalar {
 
     /// what clap's value parser says the argument is.
     ///
-    /// read off the parser's rendering, which is where a derived `Uuid` or `i64` field shows up as
-    /// `ValueParser::other(uuid::Uuid)`; everything unrecognised stays a string, which is what the
-    /// command line carries anyway.
+    /// Read the parser's rendering. A derived `Uuid` or `i64` field appears there by type;
+    /// everything else stays a string, matching command-line input.
     fn of(argument: &Arg) -> Self {
         let parser = format!("{:?}", argument.get_value_parser());
         if parser.contains("uuid") {
@@ -118,7 +117,7 @@ pub(crate) struct CommandTool {
     pub arguments: Vec<ToolArgument>,
 }
 
-/// every command that can be called over mcp, as a tool.
+/// every command that can be called over MCP, as a tool.
 ///
 /// built once: the clap tree is walked for each command's arguments, which is not free, and
 /// `tools/list` asks for the whole set.
@@ -128,7 +127,7 @@ pub(crate) fn command_tools() -> &'static [CommandTool] {
         catalog::catalog()
             .iter()
             .filter(|entry| !entry.console_local)
-            // a verb that cannot be run over mcp is not advertised as something that can be. the
+            // Do not advertise a verb that cannot run over MCP. The
             // list is exec's, so the two answers cannot disagree.
             .filter(|entry| exec::blocked_for(&entry.path).is_none())
             .filter_map(build)
@@ -141,7 +140,7 @@ pub(crate) fn find(name: &str) -> Option<&'static CommandTool> {
     command_tools().iter().find(|tool| tool.name == name)
 }
 
-/// the mcp tool definitions, one per command.
+/// the MCP tool definitions, one per command.
 pub(crate) fn definitions() -> Vec<Value> {
     command_tools().iter().map(definition).collect()
 }

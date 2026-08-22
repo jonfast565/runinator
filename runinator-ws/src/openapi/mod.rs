@@ -471,7 +471,7 @@ pub(crate) fn openapi_document() -> Value {
     document
 }
 
-/// an interactive api reference (Scalar) that loads `/openapi.json`.
+/// an interactive API reference (Scalar) that loads `/openapi.json`.
 pub(crate) async fn openapi_docs() -> Html<&'static str> {
     Html(SCALAR_HTML)
 }
@@ -729,7 +729,7 @@ fn compact_json(value: Value) -> String {
     serde_json::to_string(&value).expect("example serializes")
 }
 
-/// the self-describing api surface: the raw document and the reference ui.
+/// the self-describing API surface: the raw document and the reference UI.
 pub(crate) fn routes() -> axum::Router {
     use axum::routing::get;
     axum::Router::new()

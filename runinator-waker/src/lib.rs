@@ -17,8 +17,8 @@ use crate::config::Config;
 // backoff before retrying a failed wake receive, so a broker outage does not hot-loop the waker.
 const RECEIVE_RETRY_BACKOFF: Duration = Duration::from_millis(250);
 
-/// touches the configured liveness file on an interval until shutdown; used by the k8s exec probe.
-/// returns none when no liveness file is configured.
+/// Touch the configured liveness file until shutdown for the Kubernetes exec probe.
+/// Returns `None` when no file is configured.
 pub fn spawn_liveness(
     config: &Config,
     shutdown: Arc<Notify>,

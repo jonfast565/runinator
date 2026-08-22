@@ -1,8 +1,8 @@
-//! global overload protection for the http api: a hard cap on concurrently in-flight requests plus a
+//! global overload protection for the http API: a hard cap on concurrently in-flight requests plus a
 //! per-request timeout. the concurrency limit sheds excess load with `503` (via load-shed) instead of
 //! queueing it without bound, and the timeout aborts a slow or stuck handler with `408`. both are
 //! process-local, so each replica protects itself independently — the intended behavior for a
-//! horizontally scaled api, and the natural complement to the per-principal rate limiter.
+//! horizontally scaled API, and the natural complement to the per-principal rate limiter.
 
 use std::time::Duration;
 

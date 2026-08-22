@@ -134,7 +134,7 @@ pub struct ProviderExecutionRequest {
     pub artifact_dir: String,
     pub events_jsonl_path: String,
     /// the node's resolved `.idempotent(key: ...)` value, when it declared one. providers with native
-    /// idempotency (stripe-style request keys) should pass it to the upstream api so a redelivery the
+    /// idempotency (stripe-style request keys) should pass it to the upstream API so a redelivery the
     /// platform cannot absorb still lands once. `None` for non-idempotent actions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub idempotency_key: Option<String>,

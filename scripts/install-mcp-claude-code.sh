@@ -14,7 +14,7 @@
 #   --k8s                target the kubernetes service through the port-forward launcher
 #   --name <name>        MCP server name (default runinator)
 #   --scope <scope>      local | project | user (default project)
-#   --url <url>          web service base url for --local (default http://127.0.0.1:8080)
+#   --url <url>          web service base URL for --local (default http://127.0.0.1:8080)
 #   --port <n>           forwarded local port for --k8s (default 8081)
 #   --namespace <ns>     kubernetes namespace for --k8s (default runinator)
 #   --release            use the release binary instead of the debug one

@@ -32,7 +32,7 @@ use crate::config::AgentConfig;
 
 fn main() -> ExitCode {
     let args = CliArgs::parse();
-    // precedence is cli > env > persisted json > defaults; see `cli::CliArgs::apply`.
+    // Precedence is CLI > env > saved JSON > defaults; see `CliArgs::apply`.
     let config = args.apply(config::load());
 
     // ensure only one agent runs at a time: two copies would both register the exclusive `desktop`

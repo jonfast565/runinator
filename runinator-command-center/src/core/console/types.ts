@@ -1,7 +1,7 @@
 // what a console command is, and what it may say back.
 //
 // a command never writes to the dom and never touches a pinia store: it reads its arguments, calls
-// the api, and prints. that is what keeps the whole command surface testable without mounting the
+// It calls the API and prints the result. This keeps the command surface testable without mounting the
 // terminal.
 
 import type { JsonValue } from "../domain/json";

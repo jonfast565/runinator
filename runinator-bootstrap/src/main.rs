@@ -47,11 +47,11 @@ struct Cli {
     )]
     auth_bootstrap_admin_force: bool,
 
-    /// raw service api key (`<prefix>.<secret>`) seeded for non-interactive local/dev clients.
+    /// raw service API key (`<prefix>.<secret>`) seeded for non-interactive local/dev clients.
     #[arg(long, env = "RUNINATOR_AUTH_BOOTSTRAP_SERVICE_API_KEY")]
     auth_bootstrap_service_api_key: Option<String>,
 
-    /// display name attached to the seeded bootstrap service api key.
+    /// display name attached to the seeded bootstrap service API key.
     #[arg(
         long,
         env = "RUNINATOR_AUTH_BOOTSTRAP_SERVICE_API_KEY_NAME",
@@ -66,7 +66,7 @@ async fn main() -> ExitCode {
 }
 
 async fn run_process() -> ExitCode {
-    // shares the same RUNINATOR_LOG-driven tracing pipeline as ws/worker/waker/archiver. the guard is
+    // Use the same RUNINATOR_LOG tracing pipeline as the other services. The guard is
     // dropped immediately after startup since this is a one-shot job with no otel signals to flush.
     if let Err(err) = runinator_utilities::startup::startup("Runinator Bootstrap") {
         eprintln!("Bootstrap startup failed: {err}");

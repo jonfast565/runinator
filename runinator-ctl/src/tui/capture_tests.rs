@@ -73,7 +73,7 @@ fn printing_lands_in_the_transcript() {
 }
 
 // the pane can only show output if the interface is not writing into it. this is the whole reason
-// `install` hands back a separate handle rather than letting the ui use `io::stdout()`.
+// `install` hands back a separate handle rather than letting the UI use `io::stdout()`.
 #[test]
 fn the_interface_does_not_draw_into_its_own_log() {
     let _guard = exclusive();
@@ -129,7 +129,7 @@ fn the_streams_come_back_well_enough_to_capture_again() {
 }
 
 // the same claim as `the_interface_does_not_draw_into_its_own_log`, but as identity rather than
-// behaviour: on unix the handle the ui draws on is the very file stdout started as. windows reaches
+// On Unix, the UI draws on the same file stdout used at startup. Windows reaches
 // the console by name (`CONOUT$`) instead, where there is no such thing to compare.
 #[cfg(unix)]
 #[test]

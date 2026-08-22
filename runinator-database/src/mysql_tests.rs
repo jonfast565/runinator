@@ -17,7 +17,7 @@ fn base_url(variable: &str) -> Option<String> {
         .filter(|url| !url.trim().is_empty())
 }
 
-// split a `.../dbname` url into (server-url-without-db, dbname).
+// Split a `.../dbname` URL into the server URL and database name.
 fn split_url(url: &str) -> (String, String) {
     let (server, db) = url
         .rsplit_once('/')

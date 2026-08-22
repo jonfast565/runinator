@@ -17,7 +17,7 @@ fn base_url() -> Option<String> {
         .filter(|url| !url.trim().is_empty())
 }
 
-// split a `.../dbname` url into (server-url-without-db, dbname). unlike mysql, postgres has no
+// Split a `.../dbname` URL into the server URL and database name. Unlike MySQL, PostgreSQL has no
 // "no database selected" connection, so the original database is kept as the maintenance one to
 // issue CREATE/DROP from.
 fn split_url(url: &str) -> (String, String) {

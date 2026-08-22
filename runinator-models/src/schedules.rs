@@ -23,7 +23,7 @@ pub enum ConcurrencyPolicy {
 }
 
 impl ConcurrencyPolicy {
-    /// every policy, default first. the ui catalog reads this so the option list cannot drift from
+    /// every policy, default first. the UI catalog reads this so the option list cannot drift from
     /// the variants the trigger loop actually honors.
     pub const ALL: [Self; 4] = [Self::Allow, Self::Skip, Self::Queue, Self::CancelPrevious];
 

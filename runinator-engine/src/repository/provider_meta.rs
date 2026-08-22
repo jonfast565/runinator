@@ -17,7 +17,7 @@ pub fn provider_catalog_item(provider: &ProviderMetadata) -> Value {
     })
 }
 
-/// the catalog uri a provider name is stored under.
+/// the catalog URI a provider name is stored under.
 pub fn provider_catalog_uri(name: &str) -> String {
     format!("runinator://providers/{name}")
 }

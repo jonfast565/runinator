@@ -160,7 +160,7 @@ impl Value {
         }
     }
 
-    /// resolve a `/`-separated json pointer (rfc 6901 subset), mirroring `serde_json::Value::pointer`.
+    /// resolve a `/`-separated json pointer (RFC 6901 subset), mirroring `serde_json::Value::pointer`.
     pub fn pointer(&self, pointer: &str) -> Option<&Value> {
         if pointer.is_empty() {
             return Some(self);
@@ -265,7 +265,7 @@ impl Number {
     }
 }
 
-// object map api, mirroring the subset of `serde_json::Map` used across the workspace.
+// Object-map API, mirroring the subset of `serde_json::Map` used across the workspace.
 
 impl Map {
     pub fn new() -> Self {

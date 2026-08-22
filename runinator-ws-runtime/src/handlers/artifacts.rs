@@ -288,7 +288,7 @@ pub struct ArtifactContentQuery {
     pub mime_type: Option<String>,
 }
 
-/// `POST /artifacts/content` — store artifact bytes and return the uri to record against them.
+/// `POST /artifacts/content` — store artifact bytes and return the URI to record against them.
 ///
 /// deliberately writes no database row. a worker-produced artifact already gets its row from the
 /// result-event path, so an endpoint that also inserted one would produce two rows for one artifact;

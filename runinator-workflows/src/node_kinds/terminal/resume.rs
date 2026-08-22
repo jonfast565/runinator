@@ -12,7 +12,7 @@ use crate::node_kinds::{GraphRole, NodeKindSpec};
 
 pub(in crate::node_kinds) struct Resume;
 
-/// the author-facing mode names, in the order the ui should offer them. read off
+/// the author-facing mode names, in the order the UI should offer them. read off
 /// [`InterruptMode::ALL`] so this field, the catalog's `resume_mode` enum, and the runtime cannot
 /// disagree about which modes exist.
 fn modes() -> Vec<&'static str> {

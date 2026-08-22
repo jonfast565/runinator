@@ -53,7 +53,7 @@ async function main() {
     throw new Error("input must be an object");
   }
 
-  // resolved against the package root and imported as a file url, so the module graph is the
+  // Resolve it against the package root and import it as a file URL, so the module graph is the
   // package's own and nothing outside the mount is reachable by a relative specifier.
   const resolved = await importFirst(packagePath, modulePath);
   const fn = resolved[exportName];

@@ -1,7 +1,7 @@
 //! taking the process's own stdout and stderr away from the protocol channel.
 //!
-//! the mcp server answers on stdout, and every command module prints with plain `println!` — so a
-//! single `workflows list` would write a table into the middle of a json-rpc frame and desynchronise
+//! The MCP server answers on stdout, while command modules use `println!`.
+//! Without capture, `workflows list` would write a table into a JSON-RPC frame and break the stream.
 //! the client. the redirection is therefore installed *under* the command modules, at the standard
 //! stream itself, and `install` hands back a duplicate of the original stdout for the protocol to
 //! answer on. this is the same arrangement the console uses, for the same reason.

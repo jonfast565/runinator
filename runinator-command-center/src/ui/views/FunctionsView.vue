@@ -244,7 +244,7 @@ const functions = useFunctionsStore();
 const orgs = useOrgsStore();
 const app = useAppStore();
 const { isLoading: loading, loadingMessage } = useOperationLoading("Refreshing functions");
-// the backend enforces this; disabling the controls only keeps the ui from offering an action that
+// The backend enforces this. Disabling the controls only prevents the UI from offering an action that
 // would be refused.
 const { can } = useCan();
 const canManage = computed(() => can("functions:manage"));

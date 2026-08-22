@@ -1,6 +1,6 @@
 //! configuration for the shared agent lifecycle. deliberately host-agnostic: the standalone worker
-//! binary builds one of these from its cli, the desktop agent builds one from its persisted json
-//! plus cli/env overrides, and neither can express a runtime behavior the other cannot.
+//! binary builds one of these from its CLI, the desktop agent builds one from its persisted json
+//! plus CLI/env overrides, and neither can express a runtime behavior the other cannot.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -18,7 +18,7 @@ use crate::provider_repository::ProviderFactory;
 /// straight to a backend.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BrokerMode {
-    /// relay through the web service's `/ws/desktop-worker` endpoint, derived from the service url.
+    /// relay through the web service's `/ws/desktop-worker` endpoint, derived from the service URL.
     /// the safe default for a machine that cannot (or should not) reach the broker directly.
     #[default]
     Relay,
@@ -27,7 +27,7 @@ pub enum BrokerMode {
 }
 
 impl BrokerMode {
-    /// the lowercase name, both the serde form and the cli value.
+    /// the lowercase name, both the serde form and the CLI value.
     pub fn as_str(self) -> &'static str {
         match self {
             BrokerMode::Relay => "relay",
@@ -35,7 +35,7 @@ impl BrokerMode {
         }
     }
 
-    /// parse a cli/env spelling; `None` when unrecognized so a caller can fall back rather than fail.
+    /// parse a CLI/env spelling; `None` when unrecognized so a caller can fall back rather than fail.
     pub fn parse(raw: &str) -> Option<Self> {
         match raw.trim().to_ascii_lowercase().as_str() {
             "relay" => Some(BrokerMode::Relay),
@@ -60,9 +60,9 @@ pub enum LocatorMode {
 #[derive(Debug, Clone)]
 pub struct BrokerSelection {
     pub mode: BrokerMode,
-    /// used to derive the relay url in [`BrokerMode::Relay`]; ignored in `Direct`.
+    /// used to derive the relay URL in [`BrokerMode::Relay`]; ignored in `Direct`.
     pub service_url: String,
-    /// backend name (`tcp`/`http`/`rabbitmq`/`kafka`/`in-memory`), only used in `Direct`.
+    /// Backend name (`tcp`/`http`/`rabbitmq`/`kafka`/`in-memory`), used only in `Direct`.
     pub direct_backend: String,
     /// backend endpoint, only used in `Direct`.
     pub direct_endpoint: String,
@@ -116,7 +116,7 @@ impl BrokerSelection {
 /// everything the shared lifecycle needs. built by a host, consumed by
 /// [`crate::agent::AgentRuntime::start`].
 pub struct AgentRuntimeConfig {
-    /// web service base url; the api client and (in relay mode) the broker endpoint come from it.
+    /// web service base URL; the API client and (in relay mode) the broker endpoint come from it.
     pub service_url: String,
     pub locator_mode: LocatorMode,
     pub gossip_bind: String,

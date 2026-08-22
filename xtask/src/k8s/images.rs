@@ -126,7 +126,7 @@ pub fn build_container_images(
         bail!("no container images were selected for build");
     }
 
-    // the command center stamps this into its ui version readout; its build context carries no .git.
+    // The command center stamps this into its UI version readout; its build context has no .git.
     let build_id = current_commit(workspace_root);
 
     let mut built = HashMap::new();

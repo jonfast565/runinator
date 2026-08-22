@@ -40,8 +40,7 @@ pub mod sqlite;
 #[derive(Debug, Clone, Default)]
 pub struct BootstrapOptions {
     pub auth_jwt_secret: Option<String>,
-    /// previous jwt signing secret accepted on verify during a rotation overlap window. an empty/None
-    /// value clears any persisted previous secret, retiring the old key.
+    /// Previous JWT signing secret accepted during key rotation. Empty or `None` retires the old key.
     pub auth_jwt_secret_previous: Option<String>,
     pub auth_bootstrap_admin: Option<String>,
     /// reconcile (reset) the bootstrap admin password even when users already exist.
@@ -84,7 +83,7 @@ const DEFAULT_BOOTSTRAP_SERVICE_API_KEY_NAME: &str = "bootstrap-service";
 
 // the cipher protecting persisted auth secrets at rest, keyed from the environment
 // (`RUNINATOR_CREDENTIAL_KEY` plus rotation-overlap keys). it is the same cipher the web service
-// uses for user settings, so the jwt signing secret is protected exactly like every other secret.
+// It uses the same store as user settings, so the JWT signing secret is protected like every other secret.
 fn auth_cipher() -> SecretCipher {
     SecretCipher::from_env()
 }
@@ -166,8 +165,8 @@ pub async fn load_jwt_secret<T: DatabaseImpl>(db: &T) -> Result<Vec<u8>, Sendabl
     open_auth_secret(&auth_cipher(), record.value)
 }
 
-/// persist or clear the previous jwt signing secret. an explicit non-empty value is upserted; an
-/// empty/None value deletes the slot, which retires the old key after the rotation window closes.
+/// Save or clear the previous JWT signing secret. A non-empty value replaces it.
+/// Empty or `None` deletes it and retires the old key.
 pub async fn ensure_jwt_secret_previous<T: DatabaseImpl>(
     db: &T,
     explicit: Option<String>,
@@ -194,7 +193,7 @@ pub async fn ensure_jwt_secret_previous<T: DatabaseImpl>(
     }
 }
 
-/// load the optional previous jwt signing secret accepted during a rotation overlap window.
+/// Load the optional previous JWT signing secret used during key rotation.
 pub async fn load_jwt_secret_previous<T: DatabaseImpl>(
     db: &T,
 ) -> Result<Option<Vec<u8>>, SendableError> {

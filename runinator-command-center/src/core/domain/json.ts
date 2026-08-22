@@ -1,4 +1,4 @@
-// json value algebra mirroring runinator-models::Value. use at api/persistence
+// JSON value types matching runinator-models::Value. Use them at API and persistence boundaries.
 // boundaries; narrow into domain structs (workflow state, gate rows, etc.) at read time.
 
 export type JsonArray = JsonValue[];
@@ -10,7 +10,7 @@ export interface JsonObject { [key: string]: JsonValue }
 
 /**
  * mutable editor/wire object map. intentionally loose so graph editors, vue reactivity,
- * and api boundaries can round-trip extra keys without fighting recursive json types.
+ * API boundaries can preserve extra keys without fighting recursive JSON types.
  */
 export type JsonRecord = Record<string, unknown>;
 

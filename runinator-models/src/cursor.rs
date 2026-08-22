@@ -1,7 +1,7 @@
 // a run's position in its workflow graph, and the frames scoped to that position.
 //
 // a run is a track and a cursor is a place on it. the run carries its cursors in
-// `WorkflowRunState`; `workflow_runs.active_node_id` mirrors the primary one so the wire and ui
+// `WorkflowRunState`; `workflow_runs.active_node_id` mirrors the primary one so the wire and UI
 // contract is unchanged.
 //
 // frames that belong to one thread of control (a loop iteration, a try phase) live on the cursor

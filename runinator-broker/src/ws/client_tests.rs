@@ -1,11 +1,11 @@
-//! covers the `wss://` capability of the ws client's connect path: that tls is actually compiled in,
+//! covers the `wss://` capability of the WS client's connect path: that TLS is actually compiled in,
 //! and that a process-default rustls `CryptoProvider` exists before the first upgrade.
 //!
-//! these deliberately do not stand up a real tls server — no certificate chain is needed to reach
-//! either failure. but they do need a *live* listener: `tokio-tungstenite` connects the tcp socket
-//! first and only then wraps it, so the tls gate sits behind a successful connect and a dead port
+//! these deliberately do not stand up a real TLS server — no certificate chain is needed to reach
+//! either failure. but they do need a *live* listener: `tokio-tungstenite` connects the TCP socket
+//! first and only then wraps it, so the TLS gate sits behind a successful connect and a dead port
 //! would never reach it. binding a plaintext listener and pointing `wss://` at it gets us past the
-//! connect and straight to the tls step, which is the only part under test.
+//! connect and straight to the TLS step, which is the only part under test.
 
 use super::*;
 use tokio_tungstenite::tungstenite::error::{Error as WsError, UrlError};
@@ -27,11 +27,11 @@ async fn wss_urls_are_supported() {
     )
     .await;
 
-    // the regression this exists for: `tokio-tungstenite`'s default features do not include tls, and
-    // without it every `wss://` url — i.e. every deployment behind an ingress — is refused the moment
+    // This guards against a regression: `tokio-tungstenite`'s default features do not include TLS.
+    // Without TLS, every `wss://` URL is refused as soon as it is opened through an ingress.
     // the socket is wrapped, leaving the agent to reconnect-loop forever against a reachable cluster.
     // that refusal is immediate and local, so it can only land in the `Ok(Err(..))` arm; timing out
-    // means we got as far as actually speaking tls, which is the thing being asserted.
+    // This means the client reached the TLS step, which is what the test checks.
     let Ok(result) = outcome else {
         return;
     };
@@ -46,7 +46,7 @@ async fn wss_urls_are_supported() {
 
 #[tokio::test]
 async fn a_default_crypto_provider_is_installed() {
-    // building a default rustls client config is what `connect_async` does for a `wss://` url, and it
+    // Building a default rustls client config is what `connect_async` does for a `wss://` URL, and it
     // panics rather than erroring when both `ring` and `aws-lc-rs` are linked with neither installed
     // as the process default. this test fails as a panic if `install_crypto_provider` stops running.
     imp::install_crypto_provider();

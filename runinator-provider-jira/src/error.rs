@@ -48,8 +48,8 @@ impl ProviderErrors for JiraProvider {
 }
 
 // reqwest's display for a request error is terse (e.g. just "builder error").
-// walk the std::error source chain so the real cause (an invalid url from a bad
-// config value, a tls failure, etc.) reaches the worker logs and run output.
+// Walk the std::error source chain so the real cause (an invalid URL from a bad
+// config value or a TLS failure) reaches the worker logs and run output.
 pub(crate) fn http_error(context: &str, err: reqwest::Error) -> SendableError {
     let mut detail = err.to_string();
     let mut source = std::error::Error::source(&err);
@@ -70,7 +70,7 @@ pub(crate) fn http_error(context: &str, err: reqwest::Error) -> SendableError {
     descriptor.error(format!("{context}: {detail}"))
 }
 
-// validates a configured base url and returns an error naming the offending
+// Validate the configured base URL and return an error naming the offending
 // value, so a placeholder or empty config setting is obvious from the message.
 pub(crate) fn validate_base_url(base_url: &str) -> Result<(), SendableError> {
     let trimmed = base_url.trim();

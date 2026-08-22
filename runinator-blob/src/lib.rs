@@ -1,20 +1,19 @@
 //! the blob service and its client.
 //!
-//! this crate holds the concrete transports over [`runinator_blob_core`]: an s3-compatible http
-//! server, an http client that implements the same [`BlobStore`] trait, and the factory that picks
-//! one from configuration. it re-exports the core surface, so a binary that *builds* a store needs
+//! This crate holds the concrete transports over [`runinator_blob_core`]: an S3-compatible HTTP
+//! server, an HTTP client that implements the same [`BlobStore`] trait, and a configuration factory.
+//! It re-exports the core surface, so a binary that *builds* a store needs
 //! only this crate.
 //!
 //! a crate that merely reads and writes through an `Arc<dyn BlobStore>` should depend on
 //! `runinator-blob-core` instead — that is what keeps the axum and reqwest dependency surface
 //! confined to the binaries that actually assemble a store.
 //!
-//! ## what "minimally s3 compatible" means here
+//! ## what "minimally S3 compatible" means here
 //!
-//! path-style addressing, aws signature v4 (header and presigned-query), object put/get/head/delete
-//! with ranged reads, bucket create/head/delete/list, `ListObjectsV2`, and multipart upload. that is
-//! enough for the aws cli and the aws sdks to drive it, which is the point: the same code paths work
-//! against real s3 or minio later with only configuration changing.
+//! It supports path-style addressing, AWS Signature V4 headers and presigned queries, object
+//! operations with ranged reads, bucket operations, `ListObjectsV2`, and multipart uploads. AWS
+//! CLI and SDK clients can use it. Switching to real S3 or MinIO only needs configuration changes.
 //!
 //! deliberately absent: virtual-host addressing, versioning, lifecycle, acls, cors, tagging,
 //! server-side encryption, and `STREAMING-AWS4-HMAC-SHA256-PAYLOAD` chunk signing. an etag here is a

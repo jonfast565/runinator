@@ -44,7 +44,7 @@ async fn main() -> ExitCode {
 
 async fn run_process() -> ExitCode {
     // held for the process lifetime so otel signals flush on shutdown. shares the same
-    // runinator_log-driven tracing/file/otel pipeline as ws/worker/waker.
+    // Use the same RUNINATOR_LOG tracing, file, and OpenTelemetry pipeline as the other services.
     let _telemetry = match runinator_utilities::startup::startup("Runinator Archiver") {
         Ok(guard) => guard,
         Err(err) => {
@@ -81,8 +81,8 @@ async fn run_loop<T: ArchiveStore>(db: Arc<T>, config: Config) -> Result<(), Sen
     info!(archiver_id = %archiver_id, "archiver started");
     let shutdown = Arc::new(Notify::new());
     spawn_liveness(&config, shutdown.clone());
-    // registration is optional: only when a web service url is configured does the archiver appear in
-    // the replica list and heartbeat. held for the loop lifetime so the heartbeat keeps running.
+    // Registration is optional. With a service URL, the archiver appears in the replica list,
+    // sends heartbeats, and keeps the registration handle alive.
     let _heartbeat = match register_replica(&config, &archiver_id, shutdown.clone()).await? {
         Registration::Heartbeat(handle) => Some(handle),
         Registration::Disabled => None,
@@ -109,7 +109,7 @@ async fn run_loop<T: ArchiveStore>(db: Arc<T>, config: Config) -> Result<(), Sen
     }
 }
 
-// touches the configured liveness file on an interval until shutdown; used by the k8s exec probe.
+// Touch the liveness file until shutdown for the Kubernetes exec probe.
 fn spawn_liveness(config: &Config, shutdown: Arc<Notify>) -> Option<tokio::task::JoinHandle<()>> {
     runinator_utilities::liveness::spawn_liveness(
         &config.liveness_file,
@@ -122,14 +122,14 @@ fn spawn_liveness(config: &Config, shutdown: Arc<Notify>) -> Option<tokio::task:
 enum Registration {
     // registration succeeded; the heartbeat task keeps the replica live.
     Heartbeat(tokio::task::JoinHandle<()>),
-    // no web service url configured; the archiver runs database-only.
+    // No web service URL is configured, so the archiver runs against the database only.
     Disabled,
     // ctrl_c arrived during registration; the caller should exit cleanly.
     Shutdown,
 }
 
-// register the archiver in the replica list when a web service url is configured, retrying with
-// backoff and staying interruptible so ctrl_c during startup still shuts the process down.
+// Register the archiver when a service URL is configured. Retry with backoff, but let Ctrl-C
+// Interrupt startup when Ctrl-C arrives.
 async fn register_replica(
     config: &Config,
     archiver_id: &str,

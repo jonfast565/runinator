@@ -1,4 +1,4 @@
-//! what a run left behind, addressable by uri.
+//! what a run left behind, addressable by URI.
 //!
 //! a tool call is the model asking runinator to do something; a resource is the model reading what
 //! already happened. everything here is reachable through `runinator_exec` too — the point of the
@@ -71,7 +71,7 @@ pub(crate) async fn list(client: &Client) -> Vec<Value> {
     resources
 }
 
-/// read one resource, as the json its uri names.
+/// Read one resource and return the JSON named by its URI.
 pub(crate) async fn read(client: &Client, uri: &str) -> Result<Value, String> {
     let body = fetch(client, uri).await?;
     let text = serde_json::to_string_pretty(&body).map_err(|failure| failure.to_string())?;
@@ -165,7 +165,7 @@ fn to_value<T: serde::Serialize>(value: &T) -> Result<Value, String> {
         .map_err(|failure| failure.to_string())
 }
 
-/// the uuid between `prefix` and `suffix`, when the uri is exactly that shape.
+/// Return the UUID between `prefix` and `suffix` when the URI has exactly that shape.
 fn uuid_after(uri: &str, prefix: &str, suffix: &str) -> Option<Uuid> {
     uri.strip_prefix(prefix)?
         .strip_suffix(suffix)

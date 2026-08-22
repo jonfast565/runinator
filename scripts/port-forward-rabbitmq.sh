@@ -58,7 +58,7 @@ if ! kubectl ${ctx_args[@]+"${ctx_args[@]}"} -n "$namespace" get svc "$service" 
   exit 1
 fi
 
-# best-effort: show the credentials so the amqp uri can be pasted straight out.
+# Best effort: show the credentials so the AMQP URI can be pasted directly.
 user="<user>"
 pass="<pass>"
 if secret=$(kubectl ${ctx_args[@]+"${ctx_args[@]}"} -n "$namespace" get secret runinator-rabbitmq-secret -o json 2>/dev/null); then
@@ -70,7 +70,7 @@ echo "Admin UI:  http://localhost:${management_port}  (login ${user} / ${pass})"
 echo "AMQP URI:  amqp://${user}:${pass}@127.0.0.1:${local_port}/%2f"
 echo "Forwarding ${management_port}:${remote_management_port} (management) and ${local_port}:${remote_port} (amqp) -> ${namespace}/svc/${service}. Ctrl+C to stop."
 
-# open the admin ui once the forward is actually accepting connections.
+# Open the admin UI once the forward accepts connections.
 if [[ "$open_ui" -eq 1 ]]; then
   opener=""
   command -v open >/dev/null 2>&1 && opener="open"

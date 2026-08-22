@@ -4,7 +4,7 @@
 //!   - `email.send`: SMTP delivery via lettre, with credentials read from
 //!     the `target_url` (RUNINATOR_HOME-relative is not used; SMTP config
 //!     comes via parameters or env: SMTP_HOST/SMTP_PORT/SMTP_USER/SMTP_PASSWORD).
-//!   - `notification.send`: Posts a row to `/notifications` on the ws service.
+//!   - `notification.send`: Posts a row to `/notifications` on the WS service.
 //!     Use this for in-app notifications visible in the Command Center.
 //!
 //! Both actions persist a `notifications` row when a service URL is reachable

@@ -110,7 +110,7 @@ impl WorkflowExecutionState {
     }
 
     /// the cursor mirrored into `workflow_runs.active_node_id`, and the one single-threaded
-    /// consumers (the debugger, the run detail ui) follow.
+    /// consumers (the debugger, the run detail UI) follow.
     pub fn primary_cursor(&self) -> Option<&RunCursor> {
         self.cursors.first()
     }

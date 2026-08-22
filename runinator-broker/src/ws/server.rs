@@ -1,15 +1,10 @@
-//! a standalone `ws` broker server, mirroring `tcp::server`'s shape: bind, accept, and for each
-//! connection dispatch every incoming request against a shared `Broker`. unlike `tcp` (one request
-//! per connection) this is long-lived and multiplexed — each request is dispatched on its own spawned
-//! task so a slow `receive_for` never blocks a concurrent `ack` arriving moments later on the same
-//! connection.
+//! A standalone `WS` broker server. It binds, accepts connections, and dispatches each request to a
+//! shared `Broker`. Unlike TCP, the connection is long-lived and multiplexed. Each request gets its
+//! own task, so a slow `receive_for` does not block a later `ack` on the same connection.
 //!
-//! this is what `runinator-broker/tests/ws.rs` connects a [`crate::ws::WsBroker`] client against.
-//! `runinator-ws`'s real relay endpoint hosts the same wire protocol directly on its own axum router
-//! (to inherit its auth middleware and `Extension<Arc<dyn Broker>>`) rather than embedding this
-//! server, since axum's `WebSocket` and this module's raw `tokio-tungstenite` socket are different
-//! types — but both decode/encode the exact same [`crate::ws::types::WsFrame`] and call the exact
-//! same [`crate::dispatch::dispatch`], so the two hosts can never drift on wire format or semantics.
+//! The WS transport tests connect a [`crate::ws::WsBroker`] client to this server.
+//! The real `runinator-ws` relay uses its own Axum router for authentication, but it uses the same
+//! frame types and dispatch function. The two hosts therefore share the same wire format.
 
 use std::{net::SocketAddr, sync::Arc};
 

@@ -243,7 +243,7 @@ async fn issue_session<T: DatabaseImpl>(
     })
 }
 
-/// public probe so clients can tell whether the api requires authentication.
+/// public probe so clients can tell whether the API requires authentication.
 #[utoipa::path(
     get,
     path = "/auth/config",

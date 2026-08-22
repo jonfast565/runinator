@@ -437,7 +437,7 @@ where
 
     /// Construct a client that presents `token` as `Authorization: Bearer …` on every request. A
     /// `None`/empty token yields an unauthenticated client (for stacks with auth disabled). Both
-    /// JWTs and api keys are accepted as bearer tokens by the web service.
+    /// JWTs and API keys are accepted as bearer tokens by the web service.
     pub fn with_credentials(locator: L, token: Option<String>) -> reqwest::Result<Self> {
         let mut builder = timed_client_builder();
         if let Some(token) = token.filter(|t| !t.is_empty()) {
@@ -947,7 +947,7 @@ where
         Ok(response.json::<PackImportResult>().await?)
     }
 
-    /// upload artifact bytes and get back the uri to record against them.
+    /// upload artifact bytes and get back the URI to record against them.
     ///
     /// stores bytes only. the artifact row is created by whoever already accounts for the artifact —
     /// for a worker-produced one, the result-event path — so this must not create a second.

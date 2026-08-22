@@ -1,9 +1,8 @@
-//! the object-level s3 operations.
+//! the object-level S3 operations.
 //!
-//! s3 multiplexes several operations onto one method plus query parameters (`?uploads`,
-//! `?uploadId=`, `?partNumber=`), so each method handler dispatches on the query before doing any
-//! work. the dispatch is written out rather than table-driven because there are five cases and the
-//! table would be longer than the matches.
+//! S3 puts several operations behind one method and query parameters such as `?uploads`,
+//! `?uploadId=`, and `?partNumber=`. Each handler checks the query before doing work.
+//! The dispatch is written out because five cases are shorter than a table.
 
 use axum::body::{Body, Bytes};
 use axum::extract::{Path, State};

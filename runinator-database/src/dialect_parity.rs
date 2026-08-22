@@ -8,7 +8,7 @@
 //!
 //! so this body is the parity contract: `sqlite_lifecycle` runs it unconditionally, and
 //! `mariadb_full_lifecycle` / `postgres_full_lifecycle` run the identical body against a live
-//! engine when their url is set. running it on sqlite is what keeps it from rotting in a workspace
+//! engine when their URL is set. Running it on SQLite keeps it from rotting in a workspace
 //! where nobody has docker up.
 
 use std::collections::BTreeMap;

@@ -1,9 +1,7 @@
 //! command-line and environment overrides for the persisted agent config.
 //!
-//! precedence is **cli > env > json file > defaults**. clap gives the first two (every override is
-//! an `Option` with an `env` fallback); [`CliArgs::apply`] gives the third by leaving a `None`
-//! override alone, so an operator can pin one setting on the command line without having to restate
-//! the rest of a config someone already filled in through the gui.
+//! Precedence is **CLI > env > JSON file > defaults**. Each override is optional, so an operator
+//! can set one command-line value without repeating the rest of the saved configuration.
 
 use clap::Parser;
 
@@ -12,12 +10,12 @@ use crate::config::{AgentConfig, BrokerMode, LogLevel};
 #[derive(Parser, Debug, Default)]
 #[command(author, version, about = "Runinator Desktop Agent", long_about = None)]
 pub struct CliArgs {
-    /// run without the tray/window ui. for a machine that should join the cluster on boot and be
-    /// managed remotely — the same lifecycle the gui drives, with no desktop session required.
+    /// Run without the tray or window UI. Use this when the machine joins the cluster at boot and
+    /// is managed remotely.
     #[arg(long, env = "RUNINATOR_AGENT_HEADLESS")]
     pub headless: bool,
 
-    /// web service url this agent registers with, and (in relay mode) tunnels the broker through.
+    /// web service URL this agent registers with, and (in relay mode) tunnels the broker through.
     #[arg(long, env = "RUNINATOR_SERVICE_URL")]
     pub service_url: Option<String>,
 
@@ -31,7 +29,7 @@ pub struct CliArgs {
     #[arg(long, env = "RUNINATOR_GOSSIP_PORT")]
     pub gossip_port: Option<u16>,
 
-    /// service api key presented to the web service.
+    /// service API key presented to the web service.
     #[arg(long, env = "RUNINATOR_API_KEY")]
     pub api_key: Option<String>,
 

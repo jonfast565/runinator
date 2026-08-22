@@ -1,20 +1,14 @@
-//! the `ws` transport client: unlike `TcpBroker` (fresh connection per RPC) or `HttpBroker` (one POST
-//! per RPC), a websocket connection is persistent and bidirectional, so this multiplexes every
-//! concurrent `Broker` call over one connection using a `request_id`-correlated pending map.
+//! The `WS` transport client keeps one persistent, two-way connection.
+//! It multiplexes concurrent `Broker` calls by matching each response to a `request_id`.
 //!
-//! connection ownership: a background connector task holds the only live connection and installs a
-//! [`ConnectionHandle`] (a writer sender + that connection's pending map) into a shared slot once
-//! connected; it clears the slot and reconnects (with backoff+jitter, reset on success) whenever the
-//! connection drops. every public method takes a snapshot of the current handle, sends its request,
-//! and awaits a oneshot reply — so a long-blocking `receive_for` sitting in the pending map never
-//! blocks a concurrent `ack` on the same connection; the reader task's dispatch is an O(1) hashmap
-//! lookup independent of arrival order.
+//! A background task owns the live connection and stores a [`ConnectionHandle`] after connecting.
+//! It clears the handle and reconnects with backoff when the connection drops.
+//! Public methods snapshot the handle, send a request, and await a one-shot reply. A blocked
+//! `receive_for` therefore does not block a concurrent `ack`.
 //!
-//! `receive_for`/`receive_control` retry indefinitely across transient reconnects (per
-//! [`crate::Broker::receive_for`]'s "wait for and retrieve the next delivery" contract), while a
-//! rejected credential is returned immediately as [`BrokerError::Unauthorized`]. One-shot ops
-//! (`publish`, `ack`, `nack`, ...) retry for a few seconds (long enough to ride out the client's
-//! initial connect or a brief reconnect) but likewise return a rejected credential immediately.
+//! `receive_for` and `receive_control` retry across temporary reconnects, as required by
+//! [`crate::Broker::receive_for`]. A rejected credential returns immediately as
+//! [`BrokerError::Unauthorized`]. One-shot operations retry briefly during startup or reconnect.
 
 use async_trait::async_trait;
 use uuid::Uuid;
@@ -62,7 +56,7 @@ mod imp {
     }
 
     impl WsBroker {
-        /// connect (in the background) to `url` (a `ws://`/`wss://` endpoint), presenting `api_key`
+        /// Connect in the background to `url` (a `ws://` or `wss://` endpoint), presenting `api_key`
         /// as a bearer token on the upgrade request. returns immediately; the first request made
         /// before the initial connection completes simply waits, same as any later reconnect.
         pub fn connect(url: String, api_key: Option<String>) -> Self {
@@ -237,9 +231,9 @@ mod imp {
 
     /// install a process-default rustls `CryptoProvider`, once, before the first `wss://` upgrade.
     ///
-    /// every binary that builds a ws broker also links rustls with both `ring` (via jsonwebtoken) and
+    /// every binary that builds a WS broker also links rustls with both `ring` (via jsonwebtoken) and
     /// `aws-lc-rs` (via the aws sdk), so rustls has no unambiguous default and the default-config path
-    /// `connect_async` takes for a `wss://` url panics rather than erroring. `ring` matches what
+    /// `connect_async` takes for a `wss://` URL panics rather than erroring. `ring` matches what
     /// `runinator-ws` installs for the same reason. an `Err` means a provider is already installed —
     /// a binary that stated its own preference wins, which is why this never overrides.
     pub(super) fn install_crypto_provider() {

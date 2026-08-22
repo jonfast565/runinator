@@ -2,7 +2,7 @@
 //! what it does not, and what a later cell can see.
 //!
 //! execution itself is covered where it belongs — the classifier in `runinator-console`, the
-//! evaluator in `runinator-rexrap`, and the run path by the ws behavior suite against a real database.
+//! evaluator in `runinator-rexrap`, and the run path by the WS behavior suite against a real database.
 
 use super::*;
 

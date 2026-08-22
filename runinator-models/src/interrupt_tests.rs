@@ -74,7 +74,7 @@ fn every_source_is_listed_exactly_once_with_its_wire_name() {
 }
 
 /// the mode list is what the catalog offers and what the `resume` node validates against, so a
-/// variant missing from it is a mode the ui cannot pick and the node rejects.
+/// variant missing from it is a mode the UI cannot pick and the node rejects.
 #[test]
 fn every_resume_mode_is_listed_exactly_once_with_its_wire_name() {
     let names: Vec<&str> = InterruptMode::ALL.iter().map(|m| m.as_str()).collect();

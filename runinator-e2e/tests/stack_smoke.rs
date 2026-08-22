@@ -197,7 +197,7 @@ async fn poll_effect_chunks(api: &ApiClient, effect_id: Uuid) -> E2eResult<Strin
 }
 
 /// The streamed output the worker published must be durable, not just observable over HTTP: this
-/// is what proves the effect-result consumer wrote it rather than the api synthesising it.
+/// is what proves the effect-result consumer wrote it rather than the API synthesising it.
 async fn assert_effect_output_persisted(
     sqlite_path: &Path,
     workflow_run_id: Uuid,

@@ -270,7 +270,7 @@ async fn moving_an_alias_leaves_earlier_versions_where_they_are() {
 
 #[tokio::test]
 async fn publishing_requires_the_functions_capability() {
-    // the gate is a capability rather than a bare admin check, so the backend and the ui reference
+    // The gate is a capability rather than a bare admin check, so the backend and UI reference
     // one dictionary; a plain member holds none of it.
     let member = AuthContext {
         principal_id: Some(Uuid::new_v4()),

@@ -1,17 +1,13 @@
 //! this machine's worker lifecycle, hosted on the shared runtime in `runinator_worker::agent`.
 //!
-//! everything about *being* a worker — registering the replica, publishing providers, heartbeating,
-//! and supervising the action loop with reconnect — lives in `runinator-worker` and is byte-for-byte
-//! the same code the headless `runinator-worker` binary runs. what this module adds is the desktop
-//! part: the sandbox/console environment the local-files and console providers read, the
-//! `pool=desktop` exclusivity, and an [`AgentObserver`] that renders lifecycle activity into the
-//! in-app console, status header, and native toasts.
+//! `runinator-worker` owns the worker lifecycle: replica registration, provider publishing,
+//! heartbeats, reconnects, and the action loop. The headless worker uses the same code.
+//! This module adds the desktop sandbox and console, `pool=desktop` exclusivity, and an
+//! [`AgentObserver`] for the in-app console, status header, and native toasts.
 //!
-//! the agent stays `exclusive`: it never picks up unlabeled general-pool `Any` work, only actions
-//! explicitly pinned to its replica id (local-files) or targeted at a label it advertises. beyond the
-//! always-on `pool=desktop`, the operator can advertise arbitrary extra labels (e.g.
-//! `runner=creds-sync`) so a workflow that needs a desktop instance just needs a matching
-//! `.runner("...")` — no new agent code per label.
+//! The agent stays `exclusive`. It takes only work pinned to its replica ID or matching one of its
+//! labels. Besides `pool=desktop`, operators can add labels such as `runner=creds-sync` and use
+//! a matching `.runner("...")` in a workflow.
 //!
 //! how it reaches the broker ([`crate::config::BrokerMode`]) is orthogonal to being a desktop worker:
 //! by default it relays through `runinator-ws` (safe when this machine shouldn't reach the broker
@@ -67,7 +63,7 @@ pub struct AgentStatus {
     pub running: bool,
     pub replica_id: Option<Uuid>,
     pub root: Option<String>,
-    /// e.g. "relay via wss://.../ws/desktop-worker" or "direct tcp @ host:port".
+    /// e.g. "relay via wss://.../ws/desktop-worker" or "direct TCP @ host:port".
     pub broker_connection: Option<String>,
 }
 
@@ -809,7 +805,7 @@ fn spawn_telemetry_sampler(
 }
 
 /// one-shot connectivity check for the GUI's "Test connection" button: builds a throwaway client
-/// from the given url/key and lists worker replicas, logging the outcome. never touches the running
+/// from the given URL/key and lists worker replicas, logging the outcome. never touches the running
 /// agent, so it is safe to run whether started or stopped.
 pub fn test_connection(
     rt: &tokio::runtime::Handle,

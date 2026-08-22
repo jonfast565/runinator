@@ -10,7 +10,7 @@ use crate::errors::BlobError;
 /// one, and a mismatch between client and server is a signature failure, so it is pinned.
 pub const DEFAULT_REGION: &str = "us-east-1";
 
-/// the service token in the credential scope. `s3` so an unmodified aws sdk signs correctly.
+/// the service token in the credential scope. `S3` so an unmodified aws sdk signs correctly.
 pub const SERVICE: &str = "s3";
 
 /// one access key pair.

@@ -52,7 +52,7 @@ struct CliArgs {
 
     /// how to reach the broker: `direct` (the default — connect to `--broker-backend` at
     /// `--broker-endpoint`) or `relay` (tunnel through the web service's `/ws/desktop-worker`
-    /// endpoint, derived from the service url). use `relay` for a worker outside the cluster's
+    /// endpoint, derived from the service URL). use `relay` for a worker outside the cluster's
     /// trusted network, which only needs outbound access to the web service.
     #[arg(long, env = "RUNINATOR_BROKER_MODE", default_value = "direct")]
     broker_mode: String,
@@ -105,7 +105,7 @@ struct CliArgs {
     #[arg(long, default_value = "http://127.0.0.1:8080/")]
     api_base_url: String,
 
-    /// the web service url, spelled the same way the desktop agent spells it. an alias for
+    /// the web service URL, spelled the same way the desktop agent spells it. an alias for
     /// `--api-base-url`; when both are given this one wins.
     #[arg(long, env = "RUNINATOR_SERVICE_URL")]
     service_url: Option<String>,
@@ -121,7 +121,7 @@ struct CliArgs {
     #[arg(long, env = "RUNINATOR_GOSSIP_PORT", default_value_t = 5000)]
     gossip_port: u16,
 
-    /// Service api key presented to the web service when auth is enabled.
+    /// Service API key presented to the web service when auth is enabled.
     #[arg(long, env = "RUNINATOR_API_KEY")]
     api_key: Option<String>,
 
@@ -132,13 +132,13 @@ struct CliArgs {
     #[arg(long)]
     worker_id: Option<String>,
 
-    // stable address other components display for this worker; in k8s this is the headless-service
-    // dns name so it survives pod ip churn.
+    // Stable address shown to other components. In Kubernetes, this is the headless-service DNS name,
+    // This survives pod IP changes.
     #[arg(long)]
     advertise_host: Option<String>,
 
-    /// path to a file that is touched every 30 seconds to signal liveness; used with k8s exec
-    /// probes when the worker has no http server. set to empty to disable.
+    /// File touched every 30 seconds for the Kubernetes exec probe.
+    /// The worker has no HTTP server. Leave this empty to disable the file.
     #[arg(long, default_value = "/tmp/runinator-worker-liveness")]
     liveness_file: String,
 
@@ -150,8 +150,8 @@ struct CliArgs {
 
 pub fn parse_config() -> Result<Config, SendableError> {
     let args = CliArgs::parse();
-    // a non-uuid identity (e.g. a stable k8s pod name) is folded into a deterministic uuid so the
-    // same pod keeps the same replica identity across restarts; a fresh uuid is minted only when no
+    // A non-UUID identity, such as a stable Kubernetes pod name, is folded into a deterministic UUID.
+    // The same pod keeps the same replica identity across restarts; a fresh UUID is minted only when no
     // identity is supplied.
     let worker_id = match args.worker_id {
         Some(ref value) if !value.is_empty() => Uuid::parse_str(value)
@@ -211,7 +211,7 @@ pub fn parse_config() -> Result<Config, SendableError> {
 }
 
 impl Config {
-    /// map this worker's cli config onto the shared agent lifecycle.
+    /// map this worker's CLI config onto the shared agent lifecycle.
     ///
     /// the worker is a general-pool, non-exclusive replica: it takes untargeted work, keeps the
     /// explicitly configured broker consumer id (kafka's shared group depends on it), and does not

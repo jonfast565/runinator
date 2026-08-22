@@ -1,14 +1,11 @@
 //! the broker contract and its backend-independent pieces.
 //!
-//! this crate holds what every participant in the runtime needs to *talk about* a broker: the
-//! [`Broker`] trait, the per-channel message/delivery types, [`BrokerError`], the channel-capability
-//! checks, the otel wrapper, and the in-memory backend. it deliberately excludes the concrete
-//! transports and external adapters (http, tcp, ws, kafka, rabbitmq) — those live in
-//! `runinator-broker`, which depends on this crate.
+//! This crate holds the backend-independent broker contract: the [`Broker`] trait, channel message
+//! and delivery types, [`BrokerError`], capability checks, instrumentation, and the in-memory
+//! backend. Concrete transports and adapters live in `runinator-broker`.
 //!
-//! a caller that only publishes and consumes through a `dyn Broker` (the web-service handler crates,
-//! `runinator-engine`) should depend on this crate. only the binaries that *build* a concrete
-//! backend need `runinator-broker`.
+//! Code that only publishes and consumes through `dyn Broker` should depend on this crate.
+//! Only binaries that build a concrete backend need `runinator-broker`.
 
 mod capabilities;
 mod errors;
@@ -57,7 +54,7 @@ pub trait Broker: Send + Sync + 'static {
     /// Observe this backend's connection to its broker, if it owns one it re-establishes itself.
     ///
     /// `None` for every backend whose connectivity is either not a thing (in-memory) or handled per
-    /// request (tcp/http dial each call), so there is no steady state to watch. The `ws` relay
+    /// request (TCP/http dial each call), so there is no steady state to watch. The `WS` relay
     /// overrides it: it holds one long-lived connection across reconnects, which makes "connected"
     /// a real, observable property a host wants to display rather than infer from log lines.
     fn connection_state(&self) -> Option<tokio::sync::watch::Receiver<ConnectionState>> {

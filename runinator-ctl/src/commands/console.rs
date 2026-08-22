@@ -102,13 +102,12 @@ pub(super) async fn console(
         };
     }
 
-    // the terminal ui needs a real terminal, and it needs to be able to take stdout so its output
-    // pane has something to scroll. a pipe answers neither, so that case takes the plain prompt
-    // rather than failing.
+    // The terminal UI needs a real terminal and control of stdout so its output pane can scroll.
+    // A pipe provides neither, so use the plain prompt instead.
     if !plain && std::io::stdout().is_terminal() {
         match tui::Prompt::new(session.name.clone(), api_base_url.to_string()) {
             Ok(prompt) => {
-                // printed after the ui is up, so the greeting is the first thing in its output pane.
+                // Print after the UI starts, so the greeting is the first line in its output pane.
                 greet(&session, true);
                 return tui_console(
                     client,
@@ -151,7 +150,7 @@ fn greet(session: &ConsoleSession, scrollable: bool) {
     }
 }
 
-// the plain prompt: one reedline line at a time, for a terminal that cannot host the ui or an
+// The plain prompt reads one reedline line at a time. Use it when the terminal cannot host the UI or an
 // operator who asked for it with `--plain`.
 async fn plain_console(
     client: &Client,
@@ -212,7 +211,7 @@ async fn plain_console(
     Ok(())
 }
 
-// the terminal-ui console: the same loop as the plain one, with the ui drawn throughout. a command's
+// The terminal-UI console uses the same loop as the plain prompt and draws the UI throughout. A command's
 // output arrives in the scrollable pane rather than on the terminal, so nothing is suspended around
 // it and a long run can be read while it is still going.
 //
@@ -279,7 +278,7 @@ async fn tui_console(
     Ok(())
 }
 
-// run one REXRAP cell from the terminal ui, in the two steps the interrupt story needs: start it, then
+// Run one REXRAP cell from the terminal UI. Start it first, then
 // wait for it. the note it returns is what the prompt shows under the input.
 async fn cell_line(
     client: &Client,
@@ -637,7 +636,7 @@ async fn meta_command(
     Ok(CommandOutcome::Continue(None))
 }
 
-// `:cancel` and `:replay` both act on a cell: the one named by uuid, else the last one this session
+// `:cancel` and `:replay` act on a cell by UUID. Without one, they use the last cell in this session.
 // started, which is what makes a bare `:cancel` mean "the thing i just ran".
 fn cell_reference(
     arguments: &repl::Arguments,

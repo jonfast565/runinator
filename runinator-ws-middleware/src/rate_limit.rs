@@ -1,8 +1,8 @@
-//! per-principal / per-ip token-bucket rate limiting for the http api.
+//! per-principal / per-ip token-bucket rate limiting for the http API.
 //!
 //! the limiter runs after the auth middleware so it can key by the resolved principal when present
 //! and fall back to the connection ip for anonymous/public requests. buckets live in process memory;
-//! each replica limits independently, which is the intended behavior for a horizontally scaled api.
+//! each replica limits independently, which is the intended behavior for a horizontally scaled API.
 
 use std::{
     collections::HashMap,
@@ -70,7 +70,7 @@ impl RateLimiter {
         let now = Instant::now();
         let mut buckets = match self.buckets.lock() {
             Ok(guard) => guard,
-            // a poisoned lock should not take the api down; fail open.
+            // A poisoned lock should not take the API down; fail open.
             Err(poisoned) => poisoned.into_inner(),
         };
         if buckets.len() > PRUNE_THRESHOLD {

@@ -10,8 +10,8 @@ const TOKEN_PREFIX: &str = "runi1";
 const TOKEN_ID_BYTES: usize = 8;
 const TOKEN_SECRET_BYTES: usize = 32;
 
-/// decoded enrollment token. the service url is authenticated by the secret-bearing token and
-/// tells a new agent where to redeem it without a separate configuration step.
+/// A decoded enrollment token. It authenticates the service URL and tells a new agent where to
+/// redeem the token.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnrollToken {
     pub token_id: String,

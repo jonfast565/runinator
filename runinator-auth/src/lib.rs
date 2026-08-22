@@ -1,7 +1,7 @@
-//! authentication primitives shared by the web service and tooling: password hashing, api-key and
-//! refresh-token generation/hashing, and jwt access tokens. this crate is transport- and
-//! storage-agnostic (no axum, no database); the request-gating middleware lives in `runinator-ws`
-//! and persistence bootstrap lives in `runinator-database`.
+//! Shared authentication helpers for the web service and tools. They cover password hashing,
+//! API keys, refresh tokens, and JWT access tokens. This crate does not depend on a transport or
+//! a database. Request gating lives in `runinator-ws`; persistence setup lives in
+//! `runinator-database`.
 
 use argon2::Argon2;
 use argon2::password_hash::rand_core::OsRng;
@@ -41,7 +41,7 @@ pub struct AuthConfig {
     pub refresh_ttl_secs: i64,
 }
 
-/// a freshly generated api key: `secret` is shown to the caller once; `key_hash` is stored.
+/// A new API key. Show `secret` to the caller once and store `key_hash`.
 pub struct NewApiKey {
     pub prefix: String,
     pub secret: String,
@@ -80,7 +80,7 @@ pub fn dummy_verify(password: &str) {
     let _ = verify_password(password, hash);
 }
 
-// ---- random bytes / tokens / api keys ----
+// ---- random bytes / tokens / API keys ----
 
 /// cryptographically random bytes (e.g. for the signing secret).
 pub fn random_secret(len: usize) -> Vec<u8> {
@@ -89,7 +89,7 @@ pub fn random_secret(len: usize) -> Vec<u8> {
     buf
 }
 
-/// sha256 of a secret, base64url-encoded. used to store api keys and refresh tokens at rest.
+/// SHA-256 of a secret, encoded with base64url. Store this for API keys and refresh tokens.
 pub fn hash_secret(secret: &str) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
@@ -97,8 +97,8 @@ pub fn hash_secret(secret: &str) -> String {
     URL_SAFE_NO_PAD.encode(hasher.finalize())
 }
 
-/// mint an api key. wire form is `<prefix>.<secret>`; we store the prefix (for lookup) and the
-/// sha256 of the whole presented string.
+/// Create an API key. Its wire form is `<prefix>.<secret>`.
+/// Store the prefix for lookup and the SHA-256 hash for verification.
 pub fn new_api_key() -> NewApiKey {
     let prefix = URL_SAFE_NO_PAD.encode(random_secret(6));
     let body = URL_SAFE_NO_PAD.encode(random_secret(32));
@@ -118,7 +118,7 @@ pub fn new_refresh_token() -> (String, String) {
     (token, hash)
 }
 
-// ---- jwt access tokens ----
+// ---- JWT access tokens ----
 
 /// Issue an access token carrying identity and selected context only. Roles resolve live.
 pub fn issue_access_token(
@@ -217,8 +217,8 @@ fn verify_with_secret(secret: &[u8], token: &str) -> Option<Claims> {
 
 // ---- credential resolution (db-agnostic via a trait) ----
 
-/// the persistence the auth layer needs to verify api keys. implemented in the web service over the
-/// database, so this crate can host the resolution logic without depending on a concrete database.
+/// Persistence needed to verify API keys. The web service implements this with a database,
+/// while this crate keeps the resolution logic independent of a concrete database.
 pub trait CredentialStore {
     fn api_key_by_prefix(
         &self,
@@ -243,8 +243,8 @@ pub trait CredentialStore {
     ) -> impl Future<Output = Option<Vec<RoleAssignment>>> + Send;
 }
 
-/// resolve a presented credential to a principal: try it as a jwt first, then as a
-/// `<prefix>.<secret>` api key looked up through the [`CredentialStore`].
+/// Resolve a credential to a principal. Try a JWT first, then look up a
+/// `<prefix>.<secret>` API key through [`CredentialStore`].
 pub async fn resolve_credential<S: CredentialStore>(
     config: &AuthConfig,
     store: &S,

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Open the runinatorctl console (the durable REXRAP repl), or serve the Model Context Protocol on
+# Open the runinatorctl console (the durable REXRAP repl), or serve the MCP on
 # stdin/stdout with --mcp, against the runinator-ws reached through scripts/port-forward-ws.sh.
 # The forward is started here when the port is not already serving, and is torn down when the
 # console (or the MCP server) exits. When the service enforces auth, the session signs in as
@@ -7,10 +7,10 @@
 #
 # Usage:
 #   scripts/start-runinatorctl.sh [options] [--] [console args...]
-#   scripts/start-runinatorctl.sh --mcp [options] [--] [mcp args...]
+#   scripts/start-runinatorctl.sh --mcp [options] [--] [MCP args...]
 #
 # Options:
-#   --mcp              serve `runinatorctl mcp` instead of the console. it speaks json-rpc on
+#   --mcp              serve `runinatorctl mcp` instead of the console. it speaks JSON-RPC on
 #                      stdout, so every message this script prints moves to stderr
 #   --port <n>         local forwarded port (default 8081, matching port-forward-ws.sh)
 #   --namespace <ns>   kubernetes namespace (default runinator)
@@ -20,7 +20,7 @@
 #   --timeout <sec>    how long to wait for the forward to answer (default 30)
 #   --username <name>  login username (default $RUNINATOR_USERNAME, else admin)
 #   --password <pass>  login password (default $RUNINATOR_PASSWORD, else admin)
-#   --no-login         never log in; use whatever session/api key is already present
+#   --no-login         never log in; use whatever session/API key is already present
 #
 # Remaining arguments go to `runinatorctl console` (or `runinatorctl mcp` under --mcp), e.g.:
 #   scripts/start-runinatorctl.sh --session my-session
@@ -65,7 +65,7 @@ done
 
 base_url="http://127.0.0.1:${local_port}/"
 
-# the mcp server owns stdout for json-rpc, so a progress line printed there would desynchronise
+# The MCP server owns stdout for JSON-RPC, so a progress line printed there would desynchronise
 # the client. everything this script says goes to stderr in that mode.
 note() {
   if [[ "$subcommand" == "mcp" ]]; then
@@ -150,7 +150,7 @@ fi
 note ""
 
 # prefer an already-built binary so opening the console does not pay for a cargo rebuild, and so
-# an mcp client is not left waiting on a build before the first json-rpc frame. the command runs
+# An MCP client is not left waiting on a build before the first JSON-RPC frame. The command runs
 # in the foreground rather than via exec, so the cleanup trap still tears the forward down when
 # it exits.
 ctl_bin="${ROOT_DIR}/target/${profile}/runinatorctl"

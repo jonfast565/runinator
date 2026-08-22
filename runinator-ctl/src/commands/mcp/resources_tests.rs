@@ -1,4 +1,4 @@
-//! covers the resource uri shapes and the templates advertised for them. reading one needs a web
+//! Covers resource URI shapes and their advertised templates. Reading one needs a web
 //! service, so what is asserted here is the addressing.
 
 use super::*;
@@ -56,7 +56,7 @@ fn a_uuid_is_read_out_of_the_uri_it_sits_in() {
 }
 
 // `runs/{id}` and `runs/{id}/artifacts` are different resources, and the suffix is what tells them
-// apart — a prefix match alone would read the artifacts uri as a malformed run id.
+// A prefix match alone would read the artifacts URI as a malformed run ID.
 #[test]
 fn a_suffixed_uri_does_not_match_the_bare_shape() {
     let id = "8f14e45f-ceea-467a-9a2c-8d1e4d1c9b21";

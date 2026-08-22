@@ -55,17 +55,17 @@ pub struct Config {
     #[arg(long, default_value = "http://127.0.0.1:8080/")]
     pub api_base_url: String,
 
-    /// service api key presented to the web service when auth is enabled.
+    /// service API key presented to the web service when auth is enabled.
     #[arg(long, env = "RUNINATOR_API_KEY")]
     pub api_key: Option<String>,
 
-    /// stable address advertised to the replica list; in k8s this is the pod's headless-service dns
-    /// name so it stays resolvable across ip churn.
+    /// Stable address advertised to the replica list. In Kubernetes, use the pod's headless-service
+    /// DNS name so it stays resolvable when the pod IP changes.
     #[arg(long, default_value = "")]
     pub advertise_host: String,
 
-    /// path to a file that is touched every 30 seconds to signal liveness; used with k8s exec
-    /// probes when the waker has no http server. set to empty to disable.
+    /// File touched every 30 seconds for the Kubernetes exec probe.
+    /// The waker has no HTTP server. Leave this empty to disable the file.
     #[arg(long, default_value = "/tmp/runinator-waker-liveness")]
     pub liveness_file: String,
 }

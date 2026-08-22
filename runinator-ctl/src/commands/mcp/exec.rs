@@ -1,7 +1,7 @@
 //! running one `runinatorctl` command on behalf of a tool call.
 //!
 //! the line is handed to the same clap parser the process parses its own argv with, exactly as the
-//! console does, so a command added to `Commands` is callable over mcp the day it is added — with
+//! console does, so a command added to `Commands` is callable over MCP the day it is added — with
 //! the same flags, defaults, and help. a second table of verbs here would be the copy nobody
 //! updates.
 
@@ -140,7 +140,7 @@ pub(crate) async fn run(
 /// dispatch a parsed command, including the two that run offline.
 ///
 /// `workflows test` and `functions validate` need no web service, and `main` routes them around the
-/// authenticated client for that reason. the same routing is repeated here so they work over mcp
+/// authenticated client for that reason. the same routing is repeated here so they work over MCP
 /// with the server unreachable, which is exactly when a dry run is most useful.
 async fn dispatch(
     client: &Client,
@@ -160,8 +160,8 @@ async fn dispatch(
         Commands::Functions {
             command: FunctionCommands::Validate { path },
         } => crate::commands::functions_validate(path, json_output),
-        // the cycle is real: `run_command` can reach `mcp serve`, which reaches back here. the
-        // future is boxed so its type does not contain itself — `mcp` is refused above, so the
+        // The cycle is real: `run_command` can reach `mcp serve`, which reaches back here.
+        // Box the future so its type does not contain itself. `mcp` is refused above, so the
         // recursion cannot actually happen, but the compiler has to be told.
         command => {
             let dispatched: std::pin::Pin<

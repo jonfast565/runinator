@@ -31,7 +31,7 @@ use crate::errors::{
 };
 
 /// an artifact's bytes, streamed rather than buffered — a package archive is the one payload here
-/// that a worker fetches whole and that has no reason to sit in ws memory on the way through.
+/// that a worker fetches whole and that has no reason to sit in WS memory on the way through.
 pub struct ArtifactBytes {
     pub size_bytes: u64,
     pub body: Box<dyn AsyncRead + Send + Unpin>,
@@ -117,8 +117,8 @@ pub async fn open_artifact<T: DatabaseImpl>(
     let Some(artifact) = db.fetch_function_artifact(digest).await? else {
         return Err(FUNCTION_ARTIFACT_MISSING.error(format!("artifact {digest} not found")));
     };
-    // the uri is read back rather than re-derived, so an artifact stored under an older key layout
-    // stays readable if the derivation ever changes.
+    // Read the URI instead of deriving it again. This keeps artifacts stored under an older key layout
+    // readable if the derivation ever changes.
     let (bucket, key) = parse_blob_uri(&artifact.uri).ok_or_else(|| {
         FUNCTION_ARTIFACT_STORAGE.error(format!("bad artifact uri {}", artifact.uri))
     })?;
@@ -235,7 +235,7 @@ pub async fn sync_provider_catalog<T: DatabaseImpl>(
     let item = crate::repository::provider_catalog_item(&metadata);
     crate::repository::catalog::upsert_catalog_item(db, item).await?;
 
-    // the runtime `functions` provider too. it is normally seeded from the built-in catalog at ws
+    // Also add the runtime `functions` provider. It is normally seeded from the built-in catalog at WS
     // startup, but the adapter workflow generated below validates against it, and a publish must
     // not depend on that having happened — nor on a worker having registered anything.
     let runtime_item = crate::repository::provider_catalog_item(

@@ -2,7 +2,7 @@
 //!
 //! a provider writes its artifacts into the local `artifact_dir` the worker handed it and reports
 //! the path. that path means nothing to the web service — it names a directory on this worker — so
-//! before the artifact event is published the bytes are uploaded and the uri rewritten to the
+//! before the artifact event is published the bytes are uploaded and the URI rewritten to the
 //! `blob://` form every replica can read.
 //!
 //! failure is not fatal: the local path is reported as before, which is exactly today's behavior.
@@ -45,7 +45,7 @@ impl ArtifactUploader {
         artifact: &mut NewRunArtifact,
     ) {
         let path = Path::new(&artifact.uri);
-        // a uri that is not a local file is already durable (or is a reference the provider chose);
+        // A URI that is not a local file is already durable (or is a reference chosen by the provider).
         // either way it is not ours to rewrite.
         if !path.is_absolute() {
             return;

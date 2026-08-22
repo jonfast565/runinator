@@ -4,14 +4,14 @@
 //! reach the same verbs through the same clap parser (`commands::repl` → `commands::run_command`),
 //! which is what stops any of them growing a second, smaller table of commands that drifts. what
 //! differs is who is typing: a person at a prompt, a person in a browser, and here a model over
-//! json-rpc on stdin and stdout.
+//! JSON-RPC on stdin and stdout.
 //!
 //! the surface it advertises is the whole command line — one tool per command, derived in `schema`
 //! from the clap tree, plus `runinator_exec` for a raw line and `runinator_help` for the catalog.
 //! saved workflows can be exposed as tools too, behind `--workflow-tools`.
 //!
 //! the one thing this server has to be careful about is its own stdout: the command modules print
-//! with plain `println!`, and a table written into the middle of a json-rpc frame would desynchronise
+//! with plain `println!`, and a table written into the middle of a JSON-RPC frame would desynchronise
 //! the client. `capture` takes stdout and stderr away from them and hands back a duplicate of the
 //! real stdout, which is the only thing the protocol answers on.
 
@@ -34,7 +34,7 @@ use self::capture::OutputCapture;
 use self::protocol::{PARSE_ERROR, failure, internal_error, success};
 use crate::commands::{Client, Result};
 
-/// json-rpc's "no such method", for a request naming something this server does not implement.
+/// JSON-RPC's "no such method", for a request naming something this server does not implement.
 const METHOD_NOT_FOUND: i64 = -32601;
 
 /// how the server names itself to a client.

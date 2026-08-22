@@ -74,7 +74,7 @@ pub(crate) fn execute_command(
     let timeout = Duration::from_secs(request.timeout_secs.max(1) as u64);
 
     // interactive mode inherits the worker's stdio so the command runs in the operator's desktop
-    // session and can present its own prompts (a browser-based `aws sso login`, a Keychain access
+    // session and can present its own prompts, such as browser-based `aws SSO login` or Keychain access
     // dialog). there is no piped output to stream, so this path skips the reader threads. gated to
     // workers that advertise an interactive desktop session: a headless cloud worker has no terminal
     // to attach, so it rejects the request instead of hanging or failing obscurely.

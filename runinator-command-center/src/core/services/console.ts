@@ -205,7 +205,7 @@ export function createConsoleService(app: AppService) {
       replaceCell(cell);
 
       // a pure cell has already settled by the time this returns; only an effectful one needs
-      // following. that asymmetry is the console's whole point, so the ui does not poll for the
+      // following. That difference is why the UI does not poll for the
       // common case.
       if (isCellPending(cell)) {
         void followCell(cell.id);

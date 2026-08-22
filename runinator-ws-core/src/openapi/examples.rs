@@ -5,7 +5,7 @@
 
 use serde_json::{Value, json};
 
-/// the single uuid used across every example so generated samples look internally consistent.
+/// the single UUID used across every example so generated samples look internally consistent.
 pub const UUID_EXAMPLE: &str = "018f5f7c-4b74-7f44-8fd1-cde6b5c4d111";
 const FUNCTION_DIGEST_EXAMPLE: &str =
     "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";

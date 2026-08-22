@@ -12,7 +12,7 @@ export interface ConsoleSession {
   updated_at: string;
 }
 
-// what the backend classifier decided a cell was. persisted rather than re-derived, so the ui can
+// The kind chosen by the backend classifier. Store it so the UI can
 // say why a cell did or did not start a run without re-classifying source that may have changed.
 export type ConsoleCellKind = "expression" | "do" | "workflow";
 
@@ -59,7 +59,7 @@ export interface NewConsoleCell {
 // what an author writes to reach an earlier cell's result: `params.<name>`.
 //
 // `params` rather than a console-only root because a bare dotted path in rexrap already means *node
-// output* — `cells.load` would be a reference to a node called `cells`. kept here so the ui's hints
+// output*. For example, `cells.load` would refer to a node called `cells`. Keep it here so the UI's hints
 // and the backend's scope cannot describe different things.
 export const CELL_SCOPE = "params";
 
@@ -67,7 +67,7 @@ export const CELL_SCOPE = "params";
 export function cellBindingName(cell: Pick<ConsoleCell, "label" | "position">): string {
   // note this is emptiness, not nullishness: a whitespace-only label trims to `""`, and `??` would
   // hand that back as the binding name. the backend applies the same filter, and the two must agree
-  // or the ui would show a name no cell actually binds to.
+  // Otherwise the UI would show a name that no cell binds to.
   const label = cell.label?.trim();
 
   if (label) {
@@ -82,7 +82,7 @@ export function cellReference(cell: Pick<ConsoleCell, "label" | "position">): st
   return `${CELL_SCOPE}.${cellBindingName(cell)}`;
 }
 
-// true when a cell is waiting on a scratch workflow run, which is the only state the ui polls.
+// True when a cell waits on a scratch workflow run. This is the only state the UI polls.
 export function isCellPending(cell: ConsoleCell): boolean {
   return cell.status === "running";
 }

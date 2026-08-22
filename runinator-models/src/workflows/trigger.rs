@@ -11,7 +11,7 @@ pub enum WorkflowTriggerKind {
 }
 
 impl WorkflowTriggerKind {
-    /// every trigger kind in a stable, ui-facing order.
+    /// every trigger kind in a stable, UI-facing order.
     pub const ALL: [WorkflowTriggerKind; 3] = [
         WorkflowTriggerKind::Cron,
         WorkflowTriggerKind::Manual,

@@ -315,7 +315,7 @@ async fn reports_a_missing_object_as_not_found() {
 async fn signs_keys_containing_characters_sdks_percent_encode() {
     let harness = harness(false).await;
     // `!`, `*`, `'`, `(`, `)` are legal in a key but are not sigv4 "unreserved", so they are
-    // percent-encoded in the url. the signature must be computed over the encoded path, which is
+    // Percent-encode the URL path before signing. The signature must cover the encoded path, which is
     // exactly what this asserts.
     let awkward = key("weird/name!with*chars'(1).bin");
     harness

@@ -1,4 +1,4 @@
-//! persisted agent settings: the last-used service url and sandbox folder, so the GUI form does not
+//! persisted agent settings: the last-used service URL and sandbox folder, so the GUI form does not
 //! need to be re-filled on every launch. best-effort only; a missing or corrupt file falls back to
 //! defaults rather than blocking startup.
 
@@ -33,7 +33,7 @@ impl From<BrokerMode> for runinator_worker::BrokerMode {
 }
 
 impl BrokerMode {
-    /// parse a cli/env spelling; `None` when unrecognized so a caller can keep the persisted value.
+    /// parse a CLI/env spelling; `None` when unrecognized so a caller can keep the persisted value.
     pub fn parse(raw: &str) -> Option<Self> {
         match raw.trim().to_ascii_lowercase().as_str() {
             "relay" => Some(BrokerMode::Relay),
@@ -66,7 +66,7 @@ impl LogLevel {
         LogLevel::Trace,
     ];
 
-    /// parse a cli/env spelling; `None` when unrecognized so a caller can keep the persisted value.
+    /// parse a CLI/env spelling; `None` when unrecognized so a caller can keep the persisted value.
     pub fn parse(raw: &str) -> Option<Self> {
         LogLevel::ALL
             .into_iter()
@@ -96,7 +96,7 @@ pub enum WindowCloseAction {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentConfig {
-    /// also used to derive the ws broker relay URL in `BrokerMode::Relay` (scheme swapped,
+    /// also used to derive the WS broker relay URL in `BrokerMode::Relay` (scheme swapped,
     /// `/ws/desktop-worker` appended) — see `agent::derive_relay_url`.
     pub service_url: String,
     #[serde(default)]
@@ -128,17 +128,17 @@ pub struct AgentConfig {
     pub extra_labels: Vec<String>,
     #[serde(default)]
     pub broker_mode: BrokerMode,
-    /// broker backend name (`tcp`/`rabbitmq`/`kafka`/`http`), only used in `BrokerMode::Direct`.
+    /// Broker backend name (`tcp`/`rabbitmq`/`kafka`/`http`), used only in `Direct`.
     #[serde(default = "default_direct_broker_backend")]
     pub direct_broker_backend: String,
-    /// broker endpoint, only used in `BrokerMode::Direct` (e.g. `host:port` for tcp,
+    /// Broker endpoint, used only in `BrokerMode::Direct` (for example, `host:port` for tcp,
     /// `amqp://user:pass@host:port/%2f` for rabbitmq).
     #[serde(default)]
     pub direct_broker_endpoint: String,
     /// the command-center UI's URL, opened in the system's default browser by the "Open UI" button
     /// (and tray menu item) when `command_center_app_path` is empty. a separate field from
     /// `service_url`: the UI is typically its own deployment/ingress, not reachable by swapping a
-    /// path on the ws API's URL.
+    /// path on the WS API's URL.
     #[serde(default)]
     pub command_center_url: String,
     /// path to a native command-center install (a Tauri `.app` bundle on macOS, or an executable on

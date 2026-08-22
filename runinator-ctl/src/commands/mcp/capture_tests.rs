@@ -25,7 +25,7 @@ fn to_stdout(text: &str) {
     let _ = writeln!(stdout, "{text}");
 }
 
-// the reason this exists at all: a table written into the middle of a json-rpc frame would
+// This exists because a table written into the middle of a JSON-RPC frame would
 // desynchronise the client, so command output has to stop reaching the protocol channel.
 #[test]
 fn printing_lands_in_the_capture() {

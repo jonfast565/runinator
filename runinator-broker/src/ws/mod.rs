@@ -1,8 +1,6 @@
-//! the `ws` broker transport: a third wire transport alongside `tcp`/`http`, built for a client that
-//! can't reach the broker's internal network directly (e.g. an operator's desktop-agent talking
-//! through `runinator-ws`'s public, authenticated surface instead of straight to RabbitMQ). unlike
-//! the other two transports, `client`'s connection is long-lived, bidirectional, and multiplexed —
-//! see its module doc for the concurrency model.
+//! The `WS` broker transport is a third wire transport beside `TCP` and HTTP.
+//! It lets a client that cannot reach the broker's private network connect through the public,
+//! authenticated `runinator-ws` surface. The client keeps one long-lived, two-way connection.
 
 pub mod client;
 #[cfg(feature = "ws")]

@@ -262,7 +262,7 @@ impl AgentMetrics {
     }
 }
 
-/// first uuid segment; enough to correlate a console line with the run in the command center.
+/// first UUID segment; enough to correlate a console line with the run in the command center.
 pub fn short_id(id: &Uuid) -> String {
     id.to_string().chars().take(8).collect()
 }

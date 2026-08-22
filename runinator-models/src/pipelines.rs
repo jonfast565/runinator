@@ -458,7 +458,7 @@ pub struct PipelineRun {
 }
 
 /// a pipeline run with the member workflow runs it started. mirrors the workflow-run detail shape so
-/// the ui can render the same list+detail layout and click through from a member step to its run.
+/// the UI can render the same list+detail layout and click through from a member step to its run.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PipelineRunDetail {
     pub run: PipelineRun,

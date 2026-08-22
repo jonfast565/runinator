@@ -12,7 +12,7 @@ pub enum ActionTarget {
     /// any general-purpose (non-exclusive) worker.
     #[default]
     Any,
-    /// any worker whose labels are a superset of `selector` (k8s nodeSelector style).
+    /// Any worker whose labels include every entry in `selector`, like Kubernetes `nodeSelector`.
     Labels { selector: BTreeMap<String, String> },
     /// exactly one worker replica, identified by its replica id.
     Replica { replica_id: Uuid },

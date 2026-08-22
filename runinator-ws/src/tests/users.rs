@@ -1,4 +1,4 @@
-//! user administration and api keys: the last-enabled-admin guard, and key creation, rotation, and
+//! user administration and API keys: the last-enabled-admin guard, and key creation, rotation, and
 //! ownership for admin and non-admin callers.
 
 use super::*;

@@ -1,15 +1,13 @@
 //! aws signature v4 canonicalization.
 //!
-//! this is the half that must be byte-identical on both sides, so it is written once and used by the
-//! signer and the verifier alike. every rule here is from the aws spec rather than a choice:
-//! uri-encoding twice for the path unless the service is s3 (which encodes once), sorting query
-//! parameters by encoded name, lowercasing and trimming signed header values, and joining the
-//! canonical request with `\n`.
+//! The signer and verifier must produce the same bytes, so both use this code.
+//! The rules follow the AWS specification: encode paths as required, sort encoded query names,
+//! normalize signed headers, and join the canonical request with `\n`.
 
 use sha2::{Digest, Sha256};
 
-/// the payload hash a caller sends when the body is not signed. s3 accepts it for https traffic and
-/// for presigned urls, and it is what lets the server verify a request without buffering the body.
+/// Payload hash used when the body is not signed. S3 accepts it for HTTPS and presigned URLs.
+/// It lets the server verify the request without buffering the body.
 pub const UNSIGNED_PAYLOAD: &str = "UNSIGNED-PAYLOAD";
 
 /// the algorithm token in the `Authorization` header and the `X-Amz-Algorithm` query parameter.
@@ -20,11 +18,9 @@ pub struct CanonicalRequest<'a> {
     pub method: &'a str,
     /// the absolute path **exactly as it appears on the wire**, already percent-encoded.
     ///
-    /// s3 signs with single uri encoding (`use_double_uri_encode = false`), so the canonical path is
-    /// the request-target path verbatim rather than something re-derived from the key. a server
-    /// therefore passes its raw request path and a client passes the path it encoded when building
-    /// the url — which is what keeps a key containing `!`, `*`, `'`, `(`, or `)` verifiable, since
-    /// sdks percent-encode those but they are legal in a key.
+    /// S3 uses one URI-encoding pass (`use_double_uri_encode = false`).
+    /// Sign the request path exactly as it appears on the wire. This keeps keys containing
+    /// `!`, `*`, `'`, `(`, or `)` verifiable.
     pub path: &'a str,
     /// query parameters as `(name, value)`, unencoded and in any order.
     pub query: Vec<(String, String)>,
@@ -90,9 +86,8 @@ pub fn string_to_sign(amz_date: &str, scope: &str, canonical_request_hash: &str)
     format!("{ALGORITHM}\n{amz_date}\n{scope}\n{canonical_request_hash}")
 }
 
-/// percent-encode per the aws rules: unreserved characters pass through, everything else becomes
-/// uppercase hex. `encode_slash` is false only for path segments of non-s3 services; s3 signs its
-/// path with slashes intact and no double encoding, which is why callers pass the raw path here.
+/// Percent-encode a value using AWS rules. Keep unreserved characters and encode the rest as
+/// uppercase hex. For S3, leave slashes intact and do not encode the path twice.
 pub fn uri_encode(value: &str, encode_slash: bool) -> String {
     let mut out = String::with_capacity(value.len());
     for byte in value.as_bytes() {
@@ -109,7 +104,7 @@ pub fn uri_encode(value: &str, encode_slash: bool) -> String {
 }
 
 /// the canonical path. the wire path is already encoded, so the only normalisation is the empty
-/// path, which s3 signs as `/`.
+/// path, which S3 signs as `/`.
 fn canonical_path(path: &str) -> &str {
     if path.is_empty() {
         return "/";
@@ -117,8 +112,8 @@ fn canonical_path(path: &str) -> &str {
     path
 }
 
-/// percent-encode an object key into a url path, leaving separators intact. the counterpart a client
-/// uses when it builds the url whose path it will then sign verbatim.
+/// percent-encode an object key into a URL path, leaving separators intact. the counterpart a client
+/// uses when it builds the URL whose path it will then sign verbatim.
 pub fn encode_path_segments(path: &str) -> String {
     path.split('/')
         .map(|segment| uri_encode(segment, true))

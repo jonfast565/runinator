@@ -38,7 +38,7 @@ fn every_command_group_is_advertised() {
     );
 }
 
-// mcp names tools with `^[a-zA-Z0-9_-]{1,64}$`, and a client keys its call table on them.
+// MCP names tools with `^[a-zA-Z0-9_-]{1,64}$`, and a client keys its call table on them.
 #[test]
 fn tool_names_are_unique_and_legal() {
     let mut seen = std::collections::BTreeSet::new();

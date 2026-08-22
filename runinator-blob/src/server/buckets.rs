@@ -1,4 +1,4 @@
-//! the bucket-level s3 operations.
+//! the bucket-level S3 operations.
 
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, Method, StatusCode, Uri};
@@ -26,7 +26,7 @@ pub async fn list_buckets(
     unwrap(result, "/")
 }
 
-/// `PUT /{bucket}` — create a bucket. idempotent, as s3 is for an owner recreating their own.
+/// `PUT /{bucket}` creates a bucket. Repeating it is safe for the owner, as in S3.
 pub async fn put_bucket(
     State(service): State<Arc<BlobService>>,
     method: Method,

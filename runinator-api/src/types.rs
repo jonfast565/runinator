@@ -28,8 +28,8 @@ pub type RunArtifactPayload = NewRunArtifact;
 
 /// what `POST /artifacts/content` returns: where the bytes landed and what they hashed to.
 ///
-/// the caller records `uri` on the artifact it is already reporting; `sha256` lets it verify the
-/// round trip without re-reading the object.
+/// The caller records the `uri` on the artifact it is already reporting.
+/// The `sha256` value verifies the upload without reading the object again.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArtifactContentResponse {
     pub uri: String,

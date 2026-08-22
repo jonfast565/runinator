@@ -1,5 +1,5 @@
 //! pluggable node provisioning: a `Provisioner` trait with supervisor (local process) and
-//! kubernetes (deployment scale) backends, plus a registry that ws/ctl drive over the api.
+//! kubernetes (deployment scale) backends, plus a registry that WS/ctl drive over the API.
 
 pub mod errors;
 pub mod factory;

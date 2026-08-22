@@ -4,7 +4,7 @@
 //! the surface itself is split across sibling crates so no one crate owns both the wire vocabulary
 //! and the endpoints written against it:
 //!
-//! - `runinator-ws-core` — wire payloads, the json response envelope, the ui event bus, the openapi
+//! - `runinator-ws-core` — wire payloads, the json response envelope, the UI event bus, the openapi
 //!   documentation vocabulary.
 //! - `runinator-ws-middleware` — auth, authorization, rate limiting, overload protection.
 //! - `runinator-ws-identity` / `-authoring` / `-runtime` — the handler modules, each owning its

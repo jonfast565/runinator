@@ -1,0 +1,55 @@
+# Jargon Glossary
+
+Comments keep short names when the name is part of the code or protocol. This list gives the
+plain-English meaning.
+
+- **ADF** — Atlassian Document Format, the tree-shaped format used for Jira text.
+- **AMQP** — Advanced Message Queuing Protocol; a standard for message brokers.
+- **API** — application programming interface; the way one program talks to another.
+- **AST** — abstract syntax tree; the structured form of parsed source code.
+- **AWS** — Amazon Web Services.
+- **backoff** — waiting longer between repeated attempts.
+- **broker** — a service that passes messages between producers and consumers.
+- **CLI** — command-line interface; a program controlled from a terminal.
+- **CRUD** — create, read, update, and delete.
+- **DNS** — Domain Name System; turns host names into network addresses.
+- **egress** — data leaving a service or network.
+- **ETag** — a value used to identify a particular version of stored data.
+- **fan-out** — sending one message to every subscriber.
+- **gRPC** — Google’s remote procedure call framework.
+- **HMAC** — hash-based message authentication code; a way to prove a message was not changed.
+- **idempotent** — safe to repeat because later repeats have the same result.
+- **ingress** — data entering a service or network.
+- **JSON-RPC** — a remote procedure call format that uses JSON messages.
+- **JSON** — JavaScript Object Notation; a text format for structured data.
+- **JWT** — JSON Web Token; a signed set of claims.
+- **Kubernetes** — a system for running and managing containers.
+- **LSP** — Language Server Protocol; the protocol used by code editors for language features.
+- **MCP** — Model Context Protocol; a protocol for exposing tools and resources to a model.
+- **MIME** — the type label that describes a file or message body.
+- **NAT** — network address translation; a gateway that rewrites network addresses.
+- **OIDC** — OpenID Connect; an identity layer built on OAuth.
+- **OAuth** — an authorization protocol that lets one service grant limited access to another.
+- **OpenTelemetry** — a standard for collecting traces, metrics, and logs.
+- **payload** — the data carried by a message or request.
+- **RBAC** — role-based access control; permissions assigned through roles.
+- **replica** — one running copy of a service or worker.
+- **REXRAP** — Runinator’s expression and workflow language.
+- **RPC** — remote procedure call; calling a function in another process or service.
+- **S3** — Amazon Simple Storage Service, or a compatible object-storage interface.
+- **SDK** — software development kit; libraries and tools for using a service.
+- **SigV4** — AWS Signature Version 4; the method used to sign AWS requests.
+- **SMTP** — Simple Mail Transfer Protocol; the standard protocol for sending email.
+- **SPA** — single-page application; a web app that updates one page without full reloads.
+- **SSO** — single sign-on; one login shared across services.
+- **TCP** — Transmission Control Protocol; a reliable network connection.
+- **TLS** — Transport Layer Security; encryption for a network connection.
+- **TUI** — terminal user interface; an interactive screen drawn in a terminal.
+- **UDP** — User Datagram Protocol; a connectionless network protocol.
+- **UI** — user interface; the part a person uses.
+- **URI** — uniform resource identifier; a name for a resource.
+- **URL** — uniform resource locator; a URI that gives a web location.
+- **UUID** — universally unique identifier; a value designed to be unique across systems.
+- **VM** — virtual machine; a program that runs instructions in a controlled environment.
+- **WebSocket / WS** — a long-lived, two-way connection over the web.
+- **YAML** — a human-readable format often used for configuration.

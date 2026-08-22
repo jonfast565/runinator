@@ -239,7 +239,7 @@ impl From<AgentCommand> for AgentDelivery {
 /// where a self-reconnecting transport currently stands with its backend.
 ///
 /// only transports that own a long-lived connection and re-establish it themselves report this (the
-/// `ws` relay today); see [`crate::Broker::connection_state`]. it exists so a host can *show* the
+/// `WS` relay today); see [`crate::Broker::connection_state`]. it exists so a host can *show* the
 /// difference between "idle and healthy" and "silently retrying for the last ten minutes" — which
 /// otherwise only appears in logs, and which is the normal condition for an agent behind NAT.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

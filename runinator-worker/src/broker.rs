@@ -14,7 +14,7 @@ use crate::config;
 /// worker's CLI-oriented config. "which broker transport" and "what kind of worker this is" are
 /// orthogonal: any worker — cloud or desktop — can connect directly to a broker backend
 /// (tcp/rabbitmq/kafka/http/in-memory) or relay through `runinator-ws`'s `/ws/desktop-worker`
-/// endpoint (`"ws"`) depending on what network access it actually has.
+/// endpoint (`"ws"`) depending on the available network path.
 #[derive(Debug, Clone)]
 pub struct BrokerConfig {
     pub broker_backend: String,
@@ -25,7 +25,7 @@ pub struct BrokerConfig {
     pub broker_infrastructure_effect_topic: String,
     pub broker_effect_result_topic: String,
     pub broker_client_id: String,
-    /// presented as a bearer token; only used by the `http`/`ws` backends today.
+    /// Presented as a bearer token. Only the `http` and `ws` backends use it today.
     pub api_key: Option<String>,
 }
 

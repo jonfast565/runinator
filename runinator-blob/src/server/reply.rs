@@ -1,4 +1,4 @@
-//! turning store outcomes into s3-shaped http responses.
+//! Turn store results into S3-shaped HTTP responses.
 
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -10,7 +10,7 @@ use super::xml;
 /// content type for every xml document this service returns.
 pub const XML_CONTENT_TYPE: &str = "application/xml";
 
-/// a failure plus the resource it happened on, rendered as an s3 `<Error>` document.
+/// A failure and its resource, rendered as an S3 `<Error>` document.
 pub struct BlobRejection {
     error: BlobError,
     resource: String,
@@ -46,7 +46,7 @@ impl IntoResponse for BlobRejection {
         );
         // the code also rides in a header: a `HEAD` response carries no body, so the xml document
         // below is invisible to the one verb where distinguishing "no such bucket" from "no such
-        // key" matters most. s3 sends `x-amz-error-code` for the same reason.
+        // key" matters most. S3 sends `x-amz-error-code` for the same reason.
         let mut headers = HeaderMap::new();
         insert(
             &mut headers,

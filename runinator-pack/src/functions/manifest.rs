@@ -120,7 +120,7 @@ impl FunctionManifest {
             .unwrap_or(Value::Null)
     }
 
-    /// the exports, sorted by name — the order the catalog and the cli present them in.
+    /// the exports, sorted by name — the order the catalog and the CLI present them in.
     pub fn sorted_exports(&self) -> Vec<NewFunctionExport> {
         let mut exports = self.exports.clone();
         exports.sort_by(|left, right| left.name.cmp(&right.name));

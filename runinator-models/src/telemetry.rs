@@ -1,6 +1,6 @@
 // resource-usage telemetry sampled by each replica and carried on heartbeats under
 // `attributes.telemetry`. kept transport-friendly so it round-trips through the replica
-// registry and out the `/replicas` api without bespoke mapping.
+// registry and the `/replicas` API without bespoke mapping.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -41,8 +41,8 @@ pub struct ResourceTelemetry {
 }
 
 /// a flattened, persisted telemetry point for one replica, stored in the `replica_samples`
-/// time-series table so the ui can draw historical sparklines. only the scalar fields worth
-/// charting are kept; the full nested telemetry still rides on the live replica `attributes`.
+/// Time-series data used by the UI for historical sparklines.
+/// Keep only fields worth charting; full nested telemetry stays in live replica `attributes`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ReplicaSample {
     pub replica_id: uuid::Uuid,

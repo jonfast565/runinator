@@ -1,12 +1,10 @@
 //! standalone durable orchestration engine worker.
 //!
-//! runs the same `runinator_engine::run_background_engine` the web service can embed in-process,
-//! but as a separately deployable, horizontally-scalable process: it opens its own database pool and
-//! broker connection, registers as a `background` replica, and drives the workflow VM/effect
-//! loops, trigger and agent-directive publishers, and maintenance backstops. deploy it alongside
-//! `runinator-ws` started with `RUNINATOR_WS_RUN_ENGINE=false` so HTTP and engine tiers scale
-//! independently; multiple instances run active/active via the engine's durable claim/lease
-//! coordination.
+//! Runs the same `runinator_engine::run_background_engine` that the web service can embed.
+//! This process has its own database pool and broker connection, registers as a `background`
+//! replica, and runs the workflow, trigger, directive, and maintenance loops.
+//! Deploy it beside `runinator-ws` with `RUNINATOR_WS_RUN_ENGINE=false` to scale HTTP and engine
+//! workers independently. Durable claims and leases allow multiple instances to run together.
 
 mod config;
 mod service;
@@ -42,8 +40,8 @@ async fn main() -> Result<(), SendableError> {
 }
 
 async fn run_process() -> Result<(), SendableError> {
-    // the broker's http/tcp transports and the aws sdk both link rustls; install a process-default
-    // crypto provider before any rustls default-path config is built. an err means one is already
+    // The broker's HTTP/TCP transports and the AWS SDK both link rustls. Install a process-default
+    // crypto provider before building any rustls default configuration. An error means one is already
     // installed, which is fine.
     let _ = rustls::crypto::ring::default_provider().install_default();
 
@@ -67,7 +65,7 @@ async fn run_process() -> Result<(), SendableError> {
         max_concurrent_ingress,
     } = args;
 
-    // a stable per-process id used when claiming trigger/action-dispatch rows; k8s passes the pod name.
+    // Use a stable per-process ID when claiming trigger/action-dispatch rows. Kubernetes passes the pod name.
     let instance = instance_id
         .and_then(|value| {
             let trimmed = value.trim();
@@ -114,7 +112,7 @@ async fn run_process() -> Result<(), SendableError> {
         .expect("engine worker requested database");
 
     let database_backend = database.backend().label();
-    // advertised so this worker's replica record has backend parity with ws/worker/waker.
+    // Advertise it so this worker's replica record matches the WS, worker, and waker records.
     let attributes = runinator_models::json!({
         "broker_backend": broker_backend,
         "broker_client_id": broker_client_id_display,

@@ -40,7 +40,7 @@ pub trait NodeKindSpec: Send + Sync {
     /// the kind this spec describes.
     fn kind(&self) -> WorkflowNodeKind;
 
-    /// ui/authoring metadata: palette entry, field schema, edge slots, default template.
+    /// UI/authoring metadata: palette entry, field schema, edge slots, default template.
     fn metadata(&self) -> WorkflowNodeKindMetadata;
 
     /// how the graph walkers treat this kind.

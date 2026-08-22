@@ -73,7 +73,7 @@ describe("console cell naming", () => {
     expect(cellBindingName(cell({ label: "total" }))).toBe("total");
     expect(cellBindingName(cell({ label: null }))).toBe("cell_0");
     // a whitespace-only label is not a label. the backend filters it the same way, and a mismatch
-    // would have the ui showing a binding name nothing resolves to.
+    // This would make the UI show a binding name that resolves to nothing.
     expect(cellBindingName(cell({ label: "   " }))).toBe("cell_0");
     expect(cellReference(cell({ label: "   ", position: 2 }))).toBe("params.cell_2");
   });

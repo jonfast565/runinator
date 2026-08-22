@@ -32,7 +32,7 @@ impl AgentRuntime {
     /// start the lifecycle and return immediately. must be called from within a tokio runtime
     /// context.
     ///
-    /// only configuration that cannot be retried fails here (an unusable service url, an unreadable
+    /// only configuration that cannot be retried fails here (an unusable service URL, an unreadable
     /// plugin path). anything the agent could recover from — the service being down, the broker
     /// being unreachable — is retried inside the lifecycle and reported through `observer`, so a
     /// host never has to implement its own retry policy to be robust.

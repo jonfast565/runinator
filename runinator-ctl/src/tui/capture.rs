@@ -6,7 +6,7 @@
 //! dependency) lands in the transcript, which is the property that makes this worth the unsafe
 //! block.
 //!
-//! the ui itself must not go down that pipe, so `install` hands back a separate handle on the real
+//! the UI itself must not go down that pipe, so `install` hands back a separate handle on the real
 //! terminal for the backend to draw on. drawing through `io::stdout()` after this point would paint
 //! the interface into the log it is displaying.
 //!

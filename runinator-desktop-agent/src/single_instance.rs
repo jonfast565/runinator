@@ -1,16 +1,12 @@
-//! single-instance guard for the desktop agent. this process registers the machine as the exclusive
-//! `desktop` replica, so two copies running at once would both register that replica and contend for
-//! the same pinned/labeled work — a race the operator never wants. we prevent it by binding a fixed
-//! loopback tcp port at startup: the OS only lets one process hold it and releases it automatically
-//! when that process exits (including on a crash), so there is no stale lock file to reap. the socket
-//! is a pure liveness token — we never accept connections on it, we just hold it for the process's
-//! life.
+//! Single-instance guard for the desktop agent. The process registers one exclusive `desktop`
+//! replica, so two copies would compete for the same work. Bind a fixed loopback TCP port; the OS
+//! releases it when the process exits, including after a crash. No stale lock file is needed.
 
 use std::io;
 use std::net::{Ipv4Addr, SocketAddrV4, TcpListener};
 
 // fixed loopback port used solely as a single-instance mutex. picked well outside the ranges the
-// runinator services listen on (ws=8080, ...) and unlikely to collide with common local tooling.
+// Runinator services use ports such as WS=8080, so this port is unlikely to collide with them.
 const GUARD_PORT: u16 = 47_113;
 
 /// held for the whole process lifetime; dropping it (on exit) frees the port for the next launch.

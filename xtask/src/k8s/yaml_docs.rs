@@ -1,4 +1,4 @@
-//! multi-document k8s yaml handling. `kubectl kustomize` output is machine-rendered, so
+//! multi-document Kubernetes yaml handling. `kubectl kustomize` output is machine-rendered, so
 //! round-tripping it through `serde_yaml` is safe — unlike hand-maintained `kustomization.yaml`
 //! files, which [`super::kustomize`] edits with text surgery instead, to preserve
 //! comments/formatting.

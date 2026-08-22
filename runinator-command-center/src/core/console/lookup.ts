@@ -1,6 +1,6 @@
 // resolving the id-or-name references console commands accept.
 //
-// `runinatorctl` takes a workflow by uuid or by name everywhere, and the console has to as well, or
+// `runinatorctl` accepts a workflow UUID or name everywhere. The console must do the same, or
 // half the commands documented in `:help` would only work if you had an id to hand.
 
 import { fetchPipelines, fetchWorkflows } from "../api/commandCenterApi";

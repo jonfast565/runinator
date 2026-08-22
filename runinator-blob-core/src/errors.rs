@@ -35,8 +35,8 @@ pub enum BlobError {
 }
 
 impl BlobError {
-    /// the s3 `<Code>` a client expects for this failure. clients branch on these strings, so they
-    /// are part of the wire contract rather than cosmetic.
+    /// Return the S3 `<Code>` for this failure. Clients use these strings, so they are part of the
+    /// wire contract.
     pub fn s3_code(&self) -> &'static str {
         match self {
             BlobError::NotFound(_) => "NoSuchKey",
@@ -69,8 +69,8 @@ impl BlobError {
         }
     }
 
-    /// rebuild a variant from a status plus the s3 code the server sent, so a client call fails the
-    /// same way a local call would.
+    /// Rebuild an error from the HTTP status and S3 code sent by the server.
+    /// This makes remote and local calls fail in the same way.
     pub fn from_s3_code(code: &str, status: u16, detail: String) -> Self {
         match code {
             "NoSuchKey" => BlobError::NotFound(detail),

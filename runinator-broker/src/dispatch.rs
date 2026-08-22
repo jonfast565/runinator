@@ -1,22 +1,17 @@
-//! shared request/response dispatch for any transport built on [`crate::tcp::types::TcpRequest`]/
-//! [`crate::tcp::types::TcpResponse`] (the tcp transport, and the ws relay, which wraps the same
-//! enums in a request-id envelope for multiplexing over one persistent connection). kept
-//! transport-agnostic: no I/O here, just "given a decoded request, call the matching `Broker` method
-//! and encode the result."
+//! Shared request/response dispatch for TCP and the WS relay.
+//! It performs no I/O. It receives a decoded request, calls the matching `Broker` method, and
+//! encodes the result.
 
 use crate::{
     tcp::types::{TcpRequest, TcpResponse},
     Broker,
 };
 
-/// run one request against `broker`, returning the response to send back. never fails: any error
-/// from the broker call itself is encoded as [`TcpResponse::Error`] rather than propagated, since
-/// every transport using this always owes the peer exactly one response per request.
+/// Run one request against `broker` and return the response.
+/// Broker errors become [`TcpResponse::Error`] so every request gets one response.
 ///
-/// takes `&dyn Broker` (not a generic `B: Broker`) so it accepts `runinator-ws`'s `Arc<dyn Broker>`
-/// directly — a generic bound would implicitly require `Sized`, which a trait object never is. a
-/// concrete `&ConcreteBroker` (as `tcp`/`ws`'s standalone servers hold) still coerces to `&dyn Broker`
-/// at the call site same as any other unsizing coercion.
+/// Take `&dyn Broker` so the web service can pass its `Arc<dyn Broker>` directly.
+/// Concrete brokers coerce to the same trait-object reference at the call site.
 pub async fn dispatch(broker: &dyn Broker, request: TcpRequest) -> TcpResponse {
     let result = match request {
         TcpRequest::PublishControl { command } => broker

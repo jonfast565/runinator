@@ -24,7 +24,7 @@ describe("cursorDebug", () => {
     expect(isCursorPaused(cursors, "a", { paused: true })).toBe(true);
   });
 
-  // this is the rule that keeps the ui honest: once any cursor has been written, the flat frame is
+  // This keeps the UI honest: once any cursor is written, the flat frame is
   // the *primary's mirror*, not the run's state. reading it for a sibling would show branches as
   // paused that the reducer will happily keep running.
   it("stops falling back once any cursor carries a runtime", () => {

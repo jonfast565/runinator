@@ -60,8 +60,8 @@ pub struct ApprovalRequest {
     pub updated_at: DateTime<Utc>,
 }
 
-/// how a gate is resolved: `manual` (opened/closed from the ui), `condition` (the reducer
-/// auto-evaluates a rexrap boolean), or `external` (status set via the api by an outside system).
+/// how a gate is resolved: `manual` (opened/closed from the UI), `condition` (the reducer
+/// auto-evaluates a rexrap boolean), or `external` (status set via the API by an outside system).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GateKind {

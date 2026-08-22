@@ -32,7 +32,7 @@ pub fn split_image_reference(reference: &str) -> Result<ImageRef> {
     })
 }
 
-/// copies `deploy/k8s` into `target/k8s-render/k8s` and returns the path to `overlay_path`'s
+/// Copies `deploy/k8s` into `target/k8s-render/k8s` and returns the path to `overlay_path`'s
 /// counterpart inside that copy, so image/component edits never dirty the checked-in overlay.
 pub fn render_overlay_copy(workspace_root: &Path, overlay_path: &Path) -> Result<PathBuf> {
     let k8s_root = workspace_root.join("deploy/k8s");
@@ -168,7 +168,7 @@ pub fn add_component(
 }
 
 /// relative path from directory `from_dir` to `to_path`, assuming both are absolute and share a
-/// common ancestor (true here: both live under the same `target/k8s-render/k8s` copy).
+/// common ancestor (both live under the same `target/k8s-render/k8s` copy).
 fn relative_path(from_dir: &Path, to_path: &Path) -> PathBuf {
     let from_components: Vec<_> = from_dir.components().collect();
     let to_components: Vec<_> = to_path.components().collect();

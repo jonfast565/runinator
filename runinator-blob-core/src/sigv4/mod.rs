@@ -26,7 +26,7 @@ type HmacSha256 = Hmac<Sha256>;
 /// it bounds replay without demanding tight clock sync.
 pub const MAX_CLOCK_SKEW_MINUTES: i64 = 15;
 
-/// the longest lifetime a presigned url may claim, matching s3.
+/// Longest lifetime allowed for a presigned URL, matching S3.
 pub const MAX_PRESIGN_SECONDS: i64 = 7 * 24 * 60 * 60;
 
 /// the `X-Amz-Date` format.
@@ -86,7 +86,7 @@ pub struct PresentedSignature {
     pub signed_headers: String,
     pub signature: String,
     pub amz_date: String,
-    /// present only for a presigned url; bounds how long the signature stays valid.
+    /// Present only for a presigned URL. Limits how long the signature stays valid.
     pub expires_in: Option<i64>,
 }
 

@@ -8,7 +8,7 @@
 //! docker compose -f runinator-provider-db/tests/docker-compose.yml up -d
 //! ```
 //!
-//! then run them with the matching url env vars set, e.g.
+//! then run them with the matching URL env vars set, e.g.
 //!
 //! ```sh
 //! RUNINATOR_TEST_POSTGRES_URL=postgres://runi:runi@127.0.0.1:55432/runi \
@@ -352,7 +352,7 @@ fn postgres_creates_a_missing_database_through_the_admin_connection() {
     );
 }
 
-/// replace the database segment of a connection url, keeping credentials and host intact.
+/// replace the database segment of a connection URL, keeping credentials and host intact.
 fn swap_database(connection: &str, database: &str) -> String {
     let (prefix, _) = connection.rsplit_once('/').expect("url should have a path");
     format!("{prefix}/{database}")
@@ -907,7 +907,7 @@ mod mongo {
         .expect_err("a transactional mongo script must be refused, not silently run");
         assert!(transactional.contains("DB011"), "{transactional}");
 
-        // a mongo url without a database cannot be scoped, and says so.
+        // A Mongo URL without a database cannot be scoped, so report that clearly.
         let no_database = call(
             "query",
             json!({

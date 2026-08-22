@@ -52,7 +52,7 @@ fn resolves_against_size() {
     assert_eq!((resolved.start, resolved.length), (0, 16));
     assert_eq!(resolved.content_range(), "bytes 0-15/100");
 
-    // an end past the last byte clamps rather than failing, matching s3.
+    // An end past the last byte is clamped instead of rejected, matching S3.
     let clamped = ByteRange::From {
         start: 90,
         end: Some(999),

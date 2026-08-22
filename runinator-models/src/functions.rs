@@ -39,7 +39,7 @@ pub use package::FunctionPackage;
 pub use version::FunctionVersion;
 
 /// the alias every package has unless an operator makes another. named rather than implied so the
-/// cli, the ui, and the invocation api all resolve the same default.
+/// CLI, the UI, and the invocation API all resolve the same default.
 pub const DEFAULT_ALIAS: &str = "latest";
 
 /// the provider name a packaged function call lowers to. per-package authoring names
@@ -187,7 +187,7 @@ impl Default for FunctionVersionRef {
     }
 }
 
-/// a package plus everything published under it, as the api and ui read it.
+/// a package plus everything published under it, as the API and UI read it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FunctionPackageDetail {
     #[serde(flatten)]

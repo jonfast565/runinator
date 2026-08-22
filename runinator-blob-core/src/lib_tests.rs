@@ -1,4 +1,4 @@
-//! covers the `blob://` uri form shared by every artifact row.
+//! covers the `blob://` URI form shared by every artifact row.
 
 use super::*;
 
@@ -14,7 +14,7 @@ fn round_trips_a_blob_uri() {
 
 #[test]
 fn rejects_non_blob_uris() {
-    // a legacy artifact row holds an absolute local path; it must not be mistaken for a blob uri.
+    // A legacy artifact row holds an absolute local path, not a blob URI.
     assert!(parse_blob_uri("/var/lib/runinator/artifacts/run/report.txt").is_none());
     assert!(parse_blob_uri("https://example.com/a").is_none());
     assert!(parse_blob_uri("blob://bucket").is_none());

@@ -135,7 +135,7 @@ pub async fn validate_workflow_definition_with_catalog<T: DatabaseImpl>(
 /// every packaged-function binding in a definition must name a version that still exists, in an
 /// org the workflow may reach.
 ///
-/// placed here rather than in a handler so the ui save, `import_rexrap`, a pack import, and a revision
+/// placed here rather than in a handler so the UI save, `import_rexrap`, a pack import, and a revision
 /// rollback are all covered by the same check — a rollback in particular can restore a definition
 /// whose package was deleted since, and a run that discovers that at dispatch time is far worse
 /// than a save that refuses it.

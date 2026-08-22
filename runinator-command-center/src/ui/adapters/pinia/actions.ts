@@ -6,7 +6,7 @@ import { mirrorServiceState } from "./sync";
 
 // actions are a property of the authenticated principal (see the auth service), so this store
 // mirrors auth state. gating of per-resource actions (view/run/edit/own on a workflow/pipeline) stays
-// with the grant-aware services; this covers the platform/org action axis the whole ui gates on.
+// with grant-aware services. This covers platform and organization actions gated by the UI.
 export const useActionsStore = defineStore("actions", () => {
   const auth = mirrorServiceState(authService);
 

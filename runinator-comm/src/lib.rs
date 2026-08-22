@@ -523,12 +523,12 @@ pub enum WsIngressCommand {
         #[serde(default = "Uuid::now_v7")]
         trace_id: Uuid,
     },
-    /// worker -> ws: a control request raised by an executing action.
+    /// worker -> WS: a control request from an executing action.
     Control {
         workflow_run_id: Uuid,
         kind: ControlKind,
     },
-    /// agent -> ws: completion or refusal of a durable fleet directive.
+    /// agent -> WS: completion or refusal of a durable fleet command.
     AgentDirectiveResult { result: AgentDirectiveResult },
 }
 
@@ -606,18 +606,18 @@ impl DebugCommand {
     }
 }
 
-/// a live UI hint fanned out to every web-service replica so connected WebSocket clients refetch.
-/// best-effort: a dropped event at worst leaves a panel briefly stale until the next event. carried
-/// on the broker fan-out `events` channel (every ws pod receives every event); each replica may then
-/// drop events at WebSocket egress when [`Self::org_id`] does not match the caller's active org.
+/// A live UI hint sent to every web-service replica so connected WebSocket clients can refetch.
+/// Delivery is best effort. A dropped event only leaves a panel briefly stale.
+/// Each replica can drop the event at WebSocket egress when [`Self::org_id`] does not match the
+/// caller's active organization.
 ///
 /// wire shape keeps the historical tagged `type` field via flatten, with an optional sibling
 /// `org_id`. older publishers that omit `org_id` deserialize as unscoped (`None`) and remain
 /// visible to every client during the rollout phase.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiEvent {
-    /// when set, ws egress delivers only to platform admins and clients whose active org matches.
-    /// when absent, the event is treated as global (visible to every connected client).
+    /// When set, WS egress delivers only to platform admins and clients in the active organization.
+    /// When absent, every connected client can see the event.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub org_id: Option<Uuid>,
     #[serde(flatten)]

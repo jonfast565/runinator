@@ -1,4 +1,4 @@
-//! the console's terminal ui.
+//! the console's terminal UI.
 //!
 //! the console owns the screen: a status line, a scrollable pane holding everything commands have
 //! printed, the input, a completion menu, and a key legend. the pane can hold that output because

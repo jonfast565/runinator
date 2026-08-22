@@ -204,7 +204,7 @@ fn method_call_effectful_receiver_compiles_to_an_invocation() {
 }
 #[test]
 fn method_call_effectful_outside_compute_is_rejected() {
-    // `url.http_get()` is the effectful `http_get(url)` — rejected in a declarative position.
+    // `url.http_get()` is the effectful `http_get(url)` and is rejected here.
     let src = r#"
         workflow "Bad" v1 {
 
@@ -288,7 +288,7 @@ fn dynamic_index_lowers_to_at() {
 }
 #[test]
 fn effectful_postfix_access_compiles_to_an_invocation() {
-    // `http_get(url).body` is one invocation module with a durable call and VM field access.
+    // `http_get(params.url).body` is one invocation module with a durable call and VM field access.
     let src = r#"
         workflow "Fetch" v1 {
 

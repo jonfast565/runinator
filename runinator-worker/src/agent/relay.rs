@@ -1,17 +1,16 @@
-//! deriving the broker relay endpoint from the service url, so an operator configures one url
-//! rather than a service url and a separate broker endpoint.
+//! deriving the broker relay endpoint from the service URL, so an operator configures one URL
+//! rather than a service URL and a separate broker endpoint.
 
 use runinator_models::errors::SendableError;
 
-/// the web service's broker relay endpoint, relative to the service base url.
+/// the web service's broker relay endpoint, relative to the service base URL.
 pub const RELAY_PATH: &str = "ws/desktop-worker";
 
-/// derive the ws broker relay url from the service url: swap the scheme (`http`->`ws`,
-/// `https`->`wss`) and resolve [`RELAY_PATH`] against it.
+/// Derive the WS broker relay URL from the service URL.
+/// Change `http` to `ws` and `https` to `wss`, then resolve [`RELAY_PATH`].
 ///
-/// resolution uses the same `Url::join` the api client uses for every other endpoint, so a service
-/// hosted under a path prefix (`https://host/runinator/`) yields a relay url under the same prefix
-/// instead of one at the origin root.
+/// Use the same `Url::join` behavior as the API client.
+/// A service at `https://host/runinator/` therefore keeps that path prefix.
 pub fn derive_relay_url(service_url: &str) -> Result<String, SendableError> {
     derive_relay_url_with_path(service_url, RELAY_PATH)
 }

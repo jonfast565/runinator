@@ -46,7 +46,7 @@ fn authorization_error() -> Reply {
 }
 
 /// pure predicates over an [`AuthContext`] with no store access. a local trait since `AuthContext`
-/// lives in `runinator-models`, which stays free of ws-layer response concepts.
+/// lives in `runinator-models`, which stays free of WS-layer response concepts.
 #[allow(clippy::result_large_err)] // callers return the ready-to-send HTTP reply unchanged.
 pub trait AuthContextExt {
     fn is_platform_admin(&self) -> bool;
@@ -135,10 +135,9 @@ impl AuthContextExt for AuthContext {
 
     /// describe the caller as the author of a definition write, for the revision history.
     ///
-    /// the source is inferred from the principal kind: a user token is a person working through the
-    /// command center, a service key is automation. that is a proxy, not a certainty — a human with
-    /// a user token and curl records as `ui`. the distinction that actually matters, pack apply
-    /// versus hand edit, is stamped by the import path itself rather than inferred here.
+    /// The source is inferred from the principal kind. A user token is classified as `UI`, and a
+    /// service key is classified as `API`. This is only a hint: a person using curl still gets the
+    /// `UI` label. The import path records whether the write came from a pack or a hand edit.
     fn revision_author(&self) -> RevisionAuthor {
         RevisionAuthor {
             actor_id: self.principal_id,

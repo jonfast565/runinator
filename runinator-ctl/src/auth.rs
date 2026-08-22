@@ -111,7 +111,7 @@ pub async fn logout(cli: &Cli) -> Result<()> {
 
 /// an authenticated client, or an unauthenticated one when the web service cannot be reached.
 ///
-/// for the mcp server only. it is started by its client, often before the web service is up, and a
+/// for the MCP server only. it is started by its client, often before the web service is up, and a
 /// process that exits at startup is one the client marks failed for the whole session. an
 /// unreachable service becomes an error on the first tool call instead — which names the real
 /// problem, to a caller that can retry it.

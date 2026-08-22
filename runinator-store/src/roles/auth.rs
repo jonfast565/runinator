@@ -1,4 +1,4 @@
-//! identity and access: users, credentials, api keys, sessions, teams, and resource grants.
+//! identity and access: users, credentials, API keys, sessions, teams, and resource grants.
 //!
 //! one of the role traits `DatabaseImpl` composes. bound on this directly when a caller only
 //! needs this slice of the store.
@@ -22,9 +22,9 @@ use runinator_models::{
 pub use crate::runtime_store::RuntimeStore;
 
 /// Core persistence operations for Runinator.
-/// Identity and access: users, credentials, api keys, sessions, teams, and resource grants.
+/// Identity and access: users, credentials, API keys, sessions, teams, and resource grants.
 pub trait AuthStore: Send + Sync + 'static {
-    // ---- auth: users, identities, api keys, sessions ----
+    // ---- auth: users, identities, API keys, sessions ----
 
     /// Create a user and, when `password_hash` is set, a matching local identity.
     fn create_user(
@@ -86,34 +86,34 @@ pub trait AuthStore: Send + Sync + 'static {
     /// Delete a user and their identities/sessions.
     fn delete_user(&self, id: Uuid) -> impl Future<Output = Result<(), SendableError>> + Send;
 
-    /// Create an api key from a fully-formed record (caller supplies the hash).
+    /// Create an API key from a fully-formed record (caller supplies the hash).
     fn create_api_key(
         &self,
         record: ApiKeyRecord,
     ) -> impl Future<Output = Result<ApiKey, SendableError>> + Send;
 
-    /// Fetch an api key (incl. hash) by id for administration.
+    /// Fetch an API key (incl. hash) by id for administration.
     fn fetch_api_key(
         &self,
         id: Uuid,
     ) -> impl Future<Output = Result<Option<ApiKeyRecord>, SendableError>> + Send;
 
-    /// Fetch an api key (incl. hash) by its public prefix for verification.
+    /// Fetch an API key (incl. hash) by its public prefix for verification.
     fn fetch_api_key_by_prefix(
         &self,
         prefix: String,
     ) -> impl Future<Output = Result<Option<ApiKeyRecord>, SendableError>> + Send;
 
-    /// List api keys, optionally scoped to one owner.
+    /// List API keys, optionally scoped to one owner.
     fn list_api_keys(
         &self,
         user_id: Option<Uuid>,
     ) -> impl Future<Output = Result<Vec<ApiKey>, SendableError>> + Send;
 
-    /// Disable (revoke) an api key.
+    /// Disable (revoke) an API key.
     fn revoke_api_key(&self, id: Uuid) -> impl Future<Output = Result<(), SendableError>> + Send;
 
-    /// Update api key metadata.
+    /// Update API key metadata.
     fn update_api_key(
         &self,
         id: Uuid,
@@ -122,7 +122,7 @@ pub trait AuthStore: Send + Sync + 'static {
         disabled: Option<bool>,
     ) -> impl Future<Output = Result<ApiKey, SendableError>> + Send;
 
-    /// Record an api key's last-used timestamp (best effort).
+    /// Record an API key's last-used timestamp (best effort).
     fn touch_api_key(
         &self,
         id: Uuid,

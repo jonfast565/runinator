@@ -3,7 +3,7 @@
 //! an agent loses its connection two different ways, and only one of them restarts the worker loop.
 //! a broker that fails to build, or a loop that exits with an error, comes back through
 //! [`crate::agent::supervisor::run_supervised`]'s restart path. but a transport that reconnects
-//! internally — the ws relay every desktop agent uses by default — drops and re-dials underneath a
+//! internally — the WS relay every desktop agent uses by default — drops and re-dials underneath a
 //! loop that never notices, because `receive_*` retries across transient reconnects by design. a
 //! budget charged only on loop restarts would therefore never fire for the desktop's most common
 //! outage, which is precisely "the web service went away".

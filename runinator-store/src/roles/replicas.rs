@@ -121,7 +121,7 @@ pub trait ReplicaStore: Send + Sync + 'static {
         cutoff: DateTime<Utc>,
     ) -> impl Future<Output = Result<u64, SendableError>> + Send;
 
-    /// Fetch a single replica by id, so a caller presenting a `replica_id` (e.g. over the ws broker
+    /// Fetch a single replica by id, so a caller presenting a `replica_id` (e.g. over the WS broker
     /// relay) can be checked against who registered it.
     fn fetch_replica(
         &self,

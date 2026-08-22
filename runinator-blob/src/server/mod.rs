@@ -1,4 +1,4 @@
-//! the s3-compatible http service.
+//! the S3-compatible http service.
 //!
 //! path-style addressing only (`/{bucket}/{key}`), which is what an endpoint-overridden client uses
 //! and what avoids needing wildcard dns. virtual-host addressing (`{bucket}.host/{key}`) is not

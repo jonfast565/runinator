@@ -21,7 +21,7 @@ pub use runinator_auth::{
     new_refresh_token, verify_password,
 };
 
-/// state threaded into the auth middleware: config + db for api-key/session lookups.
+/// state threaded into the auth middleware: config + db for API key/session lookups.
 pub struct AuthState<T: DatabaseImpl> {
     pub config: Arc<AuthConfig>,
     pub db: Arc<T>,
@@ -141,7 +141,7 @@ pub async fn auth_middleware<T: DatabaseImpl>(
     else {
         return unauthorized("invalid or expired credential");
     };
-    // jwt principals carry their active org in the token; api-key/service principals select one per
+    // JWT principals carry their active org in the token; API key/service principals select one per
     // request via `X-Org-Id`. resolve the header's org here so downstream handlers see org context.
     if context.org_id.is_none()
         && let Some(org_id) = req

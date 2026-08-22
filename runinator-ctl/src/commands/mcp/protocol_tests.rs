@@ -1,4 +1,4 @@
-//! covers the json-rpc envelope and the tool-result shapes the protocol module builds.
+//! covers the JSON-RPC envelope and the tool-result shapes the protocol module builds.
 
 use super::*;
 
@@ -38,7 +38,7 @@ fn internal_error_uses_the_generic_code() {
     );
 }
 
-// a tool failure is an ordinary result with `isError`, not a json-rpc error: the model is meant to
+// A tool failure is an ordinary result with `isError`, not a JSON-RPC error. The model is meant to
 // read it and act on it.
 #[test]
 fn a_failed_tool_call_is_a_result_not_a_transport_error() {

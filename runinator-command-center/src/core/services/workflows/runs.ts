@@ -271,7 +271,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
    *
    * the web service only records the request; the reducer decides on the next drive whether it can
    * be serviced, and every refusal is silent. so the status message says "recorded", not "raised" --
-   * reporting it as raised would be the ui inventing a guarantee the backend does not make.
+   * Reporting it as raised would make the UI promise something the backend does not guarantee.
    */
   async function requestSelectedRunInterrupt(
     source: string,

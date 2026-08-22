@@ -9,7 +9,7 @@ use runinator_models::semver::SemVerBump;
 use runinator_models::settings::SettingKind;
 use runinator_rexrap::TypePolicy;
 
-/// cli-facing semantic-version bump level, mapped to the shared `SemVerBump`.
+/// CLI-facing semantic-version bump level, mapped to the shared `SemVerBump`.
 #[derive(Debug, Clone, Copy, Default, ValueEnum)]
 pub enum CliBumpLevel {
     Major,
@@ -28,7 +28,7 @@ impl From<CliBumpLevel> for SemVerBump {
     }
 }
 
-/// cli-facing setting kind, mapped to the shared `SettingKind`.
+/// CLI-facing setting kind, mapped to the shared `SettingKind`.
 #[derive(Debug, Clone, Copy, Default, ValueEnum)]
 pub enum CliSettingKind {
     #[default]
@@ -45,7 +45,7 @@ impl From<CliSettingKind> for SettingKind {
     }
 }
 
-/// cli-facing REXRAP typing policy.
+/// CLI-facing REXRAP typing policy.
 #[derive(Debug, Clone, Copy, Default, ValueEnum)]
 pub enum CliTyping {
     #[default]
@@ -62,7 +62,7 @@ impl From<CliTyping> for TypePolicy {
     }
 }
 
-/// cli-facing provisioning backend, mapped to the shared `ProvisionBackend`.
+/// CLI-facing provisioning backend, mapped to the shared `ProvisionBackend`.
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum CliProvisionBackend {
     Supervisor,
@@ -78,7 +78,7 @@ impl From<CliProvisionBackend> for ProvisionBackend {
     }
 }
 
-/// cli-facing node kind, mapped to the shared `ReplicaKind`.
+/// CLI-facing node kind, mapped to the shared `ReplicaKind`.
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum CliNodeKind {
     Worker,
@@ -183,8 +183,8 @@ pub enum Commands {
         #[command(subcommand)]
         command: PipelineCommands,
     },
-    /// Serve the Model Context Protocol on stdin/stdout, exposing every runinatorctl command as a
-    /// tool. Meant to be launched by an MCP client rather than run by hand; it speaks json-rpc, so
+    /// Serve MCP on stdin/stdout. Expose every runinatorctl command as a tool.
+    /// An MCP client should launch this command; it speaks JSON-RPC, so
     /// command output is captured into tool results instead of being printed.
     Mcp {
         /// Also expose every enabled workflow as a tool that starts a run of it. Off by default:
@@ -213,7 +213,7 @@ pub enum Commands {
         /// Return as soon as an effectful cell has started.
         #[arg(long)]
         no_follow: bool,
-        /// Use the plain line editor instead of the terminal ui.
+        /// Use the plain line editor instead of the terminal UI.
         #[arg(long)]
         plain: bool,
     },
@@ -260,7 +260,7 @@ pub enum Commands {
     },
 }
 
-/// cli-facing replica kind. wider than `CliNodeKind`, which only names the kinds a provisioner can
+/// CLI-facing replica kind. wider than `CliNodeKind`, which only names the kinds a provisioner can
 /// scale; every kind that registers can be listed.
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum CliReplicaKind {
@@ -285,7 +285,7 @@ impl From<CliReplicaKind> for ReplicaKind {
     }
 }
 
-/// cli-facing replica status.
+/// CLI-facing replica status.
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum CliReplicaStatus {
     Live,
@@ -887,7 +887,7 @@ pub enum PipelineCommands {
     Delete { pipeline: String },
 }
 
-/// cli-facing decision for a pipeline run's open `inquire` pause.
+/// CLI-facing decision for a pipeline run's open `inquire` pause.
 #[derive(Debug, Clone, Copy, Default, ValueEnum)]
 pub enum CliInquiryDecision {
     #[default]

@@ -148,7 +148,7 @@ pub struct Cli {
     )]
     pub cooldown_retention: String,
 
-    /// path to a file that is touched every 30 seconds to signal liveness; used with k8s exec.
+    /// File touched every 30 seconds for the Kubernetes exec probe.
     #[arg(
         long,
         env = "RUNINATOR_ARCHIVER_LIVENESS_FILE",
@@ -156,16 +156,16 @@ pub struct Cli {
     )]
     pub liveness_file: String,
 
-    /// web service base url. when set, the archiver registers itself in the replica list and
-    /// heartbeats; when unset it runs database-only as before.
+    /// Web service base URL. If set, the archiver registers and sends heartbeats.
+    /// If empty, it runs against the database only.
     #[arg(long, env = "RUNINATOR_SERVICE_URL")]
     pub api_base_url: Option<String>,
 
-    /// service api key presented to the web service when auth is enabled.
+    /// API key sent to the web service when authentication is enabled.
     #[arg(long, env = "RUNINATOR_API_KEY")]
     pub api_key: Option<String>,
 
-    /// stable address advertised to the replica list; in k8s this is the pod's dns name.
+    /// Stable address advertised to the replica list. In Kubernetes, this is the pod's DNS name.
     #[arg(long, env = "RUNINATOR_ADVERTISE_HOST")]
     pub advertise_host: Option<String>,
 }

@@ -15,9 +15,9 @@ use uuid::Uuid;
 // max hops in a chain of pipeline-to-pipeline triggers before we stop, bounding accidental cycles.
 const MAX_PIPELINE_CHAIN_DEPTH: i64 = 32;
 
-/// create a pipeline run for `pipeline` and start its entry members. used by manual/api starts and by
-/// chained-to-pipeline firing. returns the created run (already advanced to `running`, or settled
-/// `failed` when the pipeline has no entry members).
+/// Create a run for `pipeline` and start its entry members.
+/// Manual/API starts and chained triggers use this path. Return the run after it starts or fails
+/// because the pipeline has no entry members.
 pub async fn create_and_start_pipeline_run<T: DatabaseImpl>(
     db: &T,
     pipeline: &Pipeline,
@@ -446,7 +446,7 @@ async fn pipeline_for_run<T: DatabaseImpl>(
 }
 
 /// pause a pipeline run (`approval_required`) and record which member's failure raised the inquiry,
-/// so the ws inquiry-resolution endpoint and the command center can find it on `state.pending_inquiry`.
+/// so the WS inquiry-resolution endpoint and the command center can find it on `state.pending_inquiry`.
 async fn pause_pipeline_run_for_inquiry<T: DatabaseImpl>(
     db: &T,
     pipeline_run: &PipelineRun,

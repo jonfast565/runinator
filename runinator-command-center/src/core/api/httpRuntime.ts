@@ -63,7 +63,7 @@ function escape(part: unknown): string {
   return encodeURIComponent(String(part));
 }
 
-// who resolved an approval and what they said. every field is optional, so a ui that only clicks
+// Store who resolved an approval and what they said. Every field is optional, so a UI that only clicks
 // "approve" sends the same body it always did.
 const REGISTRY: Record<string, HttpDescriptor> = {
   auth_config: { method: "GET", path: () => "auth/config" },
@@ -549,7 +549,7 @@ const REGISTRY: Record<string, HttpDescriptor> = {
       }
 
       const version = argOpt(args, "version");
-      // an alias wins over a version, matching the api client: the two select the same thing, and
+      // An alias wins over a version. Both identify the same package, and
       // sending both would leave the server to break the tie.
       return version == null ? base : `${base}?version=${escape(version)}`;
     },

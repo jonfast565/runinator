@@ -1,8 +1,8 @@
 //! byte ranges, the random-access half of the store.
 //!
-//! parsing is deliberately narrow: a single `bytes=` range, the three forms s3 answers. multi-range
-//! requests are refused rather than half-honoured, because a caller that asked for two ranges and
-//! silently received one would corrupt whatever it was reassembling.
+//! Parse one `bytes=` range in one of the three forms S3 supports.
+//! Reject multi-range requests. Returning only one of two requested ranges could corrupt the
+//! caller's result.
 
 use std::fmt;
 
@@ -91,7 +91,7 @@ impl ByteRange {
                 if start >= size {
                     return Err(unsatisfiable());
                 }
-                // an end past the last byte is clamped rather than refused, which is what s3 does.
+                // Clamp an end past the last byte, matching S3.
                 let last = end.unwrap_or(size - 1).min(size - 1);
                 Ok(ResolvedRange {
                     start,

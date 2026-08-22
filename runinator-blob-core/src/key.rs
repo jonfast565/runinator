@@ -9,8 +9,8 @@ use std::fmt;
 
 use crate::errors::BlobError;
 
-/// the longest key s3 accepts, in bytes of utf-8. kept identical so a key that works here works
-/// against real s3 after a backend swap.
+/// Maximum key length accepted by S3, in UTF-8 bytes.
+/// Keep it the same here so a key also works after switching to real S3.
 pub const MAX_KEY_BYTES: usize = 1024;
 
 /// an object key that is safe to join onto a directory root.
@@ -18,7 +18,7 @@ pub const MAX_KEY_BYTES: usize = 1024;
 pub struct ObjectKey(String);
 
 impl ObjectKey {
-    /// validate a raw key. accepts the s3 "safe characters" set plus `/` as a separator.
+    /// validate a raw key. accepts the S3 "safe characters" set plus `/` as a separator.
     pub fn parse(raw: &str) -> Result<Self, BlobError> {
         if raw.is_empty() {
             return Err(BlobError::InvalidKey("key is empty".into()));
@@ -69,7 +69,7 @@ impl fmt::Display for ObjectKey {
     }
 }
 
-/// the s3 safe-character set, plus `/`.
+/// the S3 safe-character set, plus `/`.
 fn is_safe(character: char) -> bool {
     character.is_ascii_alphanumeric() || "!-_.*'()/".contains(character)
 }

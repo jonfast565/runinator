@@ -1,4 +1,4 @@
-//! the settings store: config/secret rows keyed by kind+scope+name, and the jwt signing secret
+//! the settings store: config/secret rows keyed by kind+scope+name, and the JWT signing secret
 //! that is encrypted at rest and migrated forward from a legacy plaintext row.
 
 use super::*;

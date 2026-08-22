@@ -1,4 +1,4 @@
-//! an http client that speaks the same s3 surface the service serves.
+//! An HTTP client for the S3 surface served by this crate.
 //!
 //! it implements [`BlobStore`], so a caller holding `Arc<dyn BlobStore>` cannot tell whether its
 //! objects are on a local disk or behind the blob service. signing goes through the same
@@ -55,7 +55,7 @@ impl S3BlobClient {
 
     /// build, sign, and send one request.
     ///
-    /// the path is encoded once and then signed verbatim, matching how s3 canonicalizes a request
+    /// the path is encoded once and then signed verbatim, matching how S3 canonicalizes a request
     /// (`use_double_uri_encode = false`); re-deriving the canonical path from the decoded key would
     /// disagree with the server for any key containing `!`, `*`, `'`, `(`, or `)`.
     async fn send(

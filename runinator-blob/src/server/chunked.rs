@@ -1,9 +1,8 @@
 //! the `aws-chunked` content encoding.
 //!
-//! modern aws sdks (and the aws cli by default) frame uploads as `aws-chunked` so they can append a
-//! checksum trailer after the body. the framing is the sender's business, not ours, so it is
-//! stripped before the bytes reach the store — otherwise every object would be stored with length
-//! prefixes embedded in it.
+//! AWS SDKs and the AWS CLI may frame uploads as `aws-chunked` so they can add a checksum trailer.
+//! Remove that framing before the bytes reach the store. Otherwise length prefixes would be stored
+//! as part of every object.
 //!
 //! ```text
 //! <hex-length>[;chunk-signature=...]\r\n<data>\r\n

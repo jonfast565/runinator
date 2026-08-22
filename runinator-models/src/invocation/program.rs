@@ -138,7 +138,7 @@ impl CallableTarget {
 pub enum EffectClass {
     /// no effect and no observation: same inputs, same answer, anywhere.
     Pure,
-    /// observes the host but reaches nothing external — `now`, `uuid`, `env`.
+    /// observes the host but reaches nothing external — `now`, `UUID`, `env`.
     ///
     /// evaluated in the reducer and *recorded* in the continuation, so a replay, a debugger step,
     /// or a shadow cursor sees the value the real run saw rather than a fresh one.

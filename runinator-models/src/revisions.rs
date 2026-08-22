@@ -20,7 +20,7 @@ pub enum RevisionSource {
     Ui,
     /// applied by a pack import (`runinatorctl workflows apply`).
     Pack,
-    /// written through the http api by a client that is not the command center.
+    /// written through the http API by a client that is not the command center.
     #[default]
     Api,
     /// created by duplicating an existing workflow into a sibling version.
@@ -40,7 +40,7 @@ impl RevisionSource {
         }
     }
 
-    /// every source in a stable, ui-facing order.
+    /// every source in a stable, UI-facing order.
     pub const ALL: [RevisionSource; 5] = [
         RevisionSource::Ui,
         RevisionSource::Pack,

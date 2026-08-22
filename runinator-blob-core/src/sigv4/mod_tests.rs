@@ -1,7 +1,7 @@
 //! covers signing and verification against aws's own published signature v4 vectors.
 //!
 //! the two expected signatures below are the ones in the aws "signature calculations" documentation
-//! for s3 (`GET /test.txt` with a `Range` header, and its presigned equivalent). they were also
+//! for S3 (`GET /test.txt` with a `Range` header, and its presigned equivalent). they were also
 //! reproduced locally against the aws common runtime signer, so a failure here means this
 //! implementation drifted, not that the vector is stale.
 
@@ -172,7 +172,7 @@ fn rejects_a_skewed_clock_and_an_expired_presign() {
     let presigned = presigned_request();
     let presigned_signature = sign_request(&presigned, &credential(), DEFAULT_REGION, signed_at());
     // a presign is judged against its own lifetime rather than the skew window, so an hour later is
-    // fine for a day-long url but a day and a second later is not.
+    // A URL that is valid for one day works; one that is valid for one day and one second does not.
     verify_request(
         &presigned,
         &presented(&presigned_signature, Some(86_400)),

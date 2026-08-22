@@ -157,7 +157,7 @@ async fn deletes_idempotently_and_reports_missing_reads() {
         .delete(BUCKET, &key("gone.txt"))
         .await
         .unwrap();
-    // a second delete is a success; s3 delete is idempotent.
+    // A second delete succeeds because S3 delete is idempotent.
     fixture
         .store
         .delete(BUCKET, &key("gone.txt"))
