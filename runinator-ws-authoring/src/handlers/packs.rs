@@ -20,7 +20,7 @@ use crate::handlers::credentials::import_secret_entries_with;
 use crate::handlers::workflows::{
     json_workflow_import_risk_acknowledged, json_workflow_import_risk_required,
 };
-use crate::repository;
+use runinator_engine::repository;
 use runinator_ws_core::events::{EventSender, emit_workflows_changed};
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::openapi::docs::{

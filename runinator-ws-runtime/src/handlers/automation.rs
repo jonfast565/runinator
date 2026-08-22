@@ -14,7 +14,7 @@ use runinator_models::orchestration::{
 use runinator_models::value::Value;
 use runinator_models::web::TaskResponse;
 
-use crate::repository;
+use runinator_engine::repository;
 use runinator_ws_core::models::{
     ApiResponse, AutomationRecordQuery, GateQuery, IdempotencyRequest,
 };

@@ -17,6 +17,7 @@ use runinator_broker::{
     ws::types::{WsRequestFrame, WsResponseFrame},
 };
 use runinator_database::interfaces::DatabaseImpl;
+use runinator_engine::services::ReplicaRegistry;
 use runinator_models::auth::{AuthContext, Permission, ResourceType};
 use runinator_models::rbac::{Action, ScopeKind, ScopeRef, SystemRole};
 use serde::Serialize;
@@ -405,8 +406,7 @@ pub(crate) async fn ws_desktop_worker<T: DatabaseImpl>(
                 // held so a delivery can be handed back if the reply never lands.
                 let stranded = StrandedDelivery::consumer_for(&frame.body);
                 let response =
-                    handle_desktop_worker_request(db.as_ref(), broker.as_ref(), &ctx, frame.body)
-                        .await;
+                    handle_desktop_worker_request(db, broker.as_ref(), &ctx, frame.body).await;
                 let stranded = stranded.zip_response(&response);
                 let Ok(payload) =
                     serde_json::to_string(&WsResponseFrame::new(frame.request_id, response))
@@ -540,13 +540,14 @@ impl StrandedConsumer {
 /// `receive_effect_for`/`ack_effect`/`nack_effect`, replica-targeted control, replica-targeted agent
 /// directives, effect-result publication, and payload-gated directive results on ingress.
 async fn handle_desktop_worker_request<T: DatabaseImpl>(
-    db: &T,
+    db: Arc<T>,
     broker: &dyn Broker,
     ctx: &AuthContext,
     mut request: TcpRequest,
 ) -> runinator_broker::tcp::types::TcpResponse {
     use runinator_broker::tcp::types::TcpResponse;
 
+    let registry = ReplicaRegistry::new(db);
     match &mut request {
         TcpRequest::ReceiveEffectFor { profile } => {
             if !profile.exclusive {
@@ -554,14 +555,14 @@ async fn handle_desktop_worker_request<T: DatabaseImpl>(
                     message: crate::errors::RELAY_NOT_EXCLUSIVE.bare().to_string(),
                 };
             }
-            if let Some(response) = refuse_unowned_replica(db, ctx, profile).await {
+            if let Some(response) = refuse_unowned_replica(&registry, ctx, profile).await {
                 return response;
             }
         }
         // control consumption is deliberately non-exclusive (a run-wide `Any` control must still
         // reach the desktop), so only the replica-ownership check applies here.
         TcpRequest::ReceiveControlFor { profile } => {
-            if let Some(response) = refuse_unowned_replica(db, ctx, profile).await {
+            if let Some(response) = refuse_unowned_replica(&registry, ctx, profile).await {
                 return response;
             }
             // a relay consumer must never win a run-wide Any control from the shared queue. making
@@ -569,7 +570,7 @@ async fn handle_desktop_worker_request<T: DatabaseImpl>(
             profile.exclusive = true;
         }
         TcpRequest::ReceiveAgentFor { profile } => {
-            if let Some(response) = refuse_unowned_replica(db, ctx, profile).await {
+            if let Some(response) = refuse_unowned_replica(&registry, ctx, profile).await {
                 return response;
             }
         }
@@ -599,14 +600,14 @@ async fn handle_desktop_worker_request<T: DatabaseImpl>(
 /// refuse a profile whose replica_id exists but is not registered by the connecting identity, so a
 /// desktop connection cannot impersonate another replica to receive its targeted deliveries.
 async fn refuse_unowned_replica<T: DatabaseImpl>(
-    db: &T,
+    registry: &ReplicaRegistry<T>,
     ctx: &AuthContext,
     profile: &runinator_comm::ConsumerProfile,
 ) -> Option<runinator_broker::tcp::types::TcpResponse> {
     use runinator_broker::tcp::types::TcpResponse;
 
     let replica_id = profile.replica_id?;
-    match repository::fetch_replica(db, replica_id).await {
+    match registry.fetch(replica_id).await {
         Ok(Some(replica)) if replica.registered_by_principal_id == ctx.principal_id => None,
         Ok(Some(_)) => Some(TcpResponse::Error {
             message: crate::errors::RELAY_REPLICA_NOT_OWNED

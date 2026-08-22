@@ -7,7 +7,7 @@ use runinator_models::auth::{AuthContext, Permission};
 use serde::Deserialize;
 use uuid::Uuid;
 
-use crate::repository;
+use runinator_engine::repository;
 use runinator_ws_core::events::{EventSender, emit_workflow_run};
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::openapi::docs::{EndpointDoc, Example, endpoint, json_body};

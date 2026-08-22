@@ -215,9 +215,11 @@ pub async fn settle_effect<T: DatabaseImpl>(
     {
         Ok(applied) => {
             if applied {
-                let org_id =
-                    crate::repository::org_id_for_workflow_run(db.as_ref(), effect.workflow_run_id)
-                        .await;
+                let org_id = runinator_engine::repository::org_id_for_workflow_run(
+                    db.as_ref(),
+                    effect.workflow_run_id,
+                )
+                .await;
                 emit_workflow_run(&events, effect.workflow_run_id, org_id);
             }
             (

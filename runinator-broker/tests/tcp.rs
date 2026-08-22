@@ -40,6 +40,21 @@ async fn tcp_broker_delivers_control_messages() {
 }
 
 #[tokio::test]
+async fn tcp_broker_heartbeat_checks_the_broker_without_queueing_work() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(serve(
+        listener,
+        runinator_broker::in_memory::InMemoryBroker::new(),
+    ));
+    let broker = TcpBroker::new(addr.to_string());
+
+    broker.heartbeat().await.unwrap();
+
+    server.abort();
+}
+
+#[tokio::test]
 async fn tcp_broker_delivers_targeted_agent_directives() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

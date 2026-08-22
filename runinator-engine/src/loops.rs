@@ -9,7 +9,9 @@ use tracing::{error, info, warn};
 
 use crate::{
     events::{AppEventKind, EventSender, emit, emit_pipeline_run, emit_workflow_run},
-    repository, stability,
+    repository,
+    services::{REPLICA_STALE_SECONDS, ReplicaRegistry},
+    stability,
 };
 
 const TRIGGER_INTERVAL: Duration = Duration::from_millis(1000);
@@ -279,7 +281,7 @@ pub async fn run_operational_metrics_sampler<T: DatabaseImpl>(db: Arc<T>, shutdo
             }
         }
 
-        let stale_before = now - chrono::Duration::seconds(repository::REPLICA_STALE_SECONDS);
+        let stale_before = now - chrono::Duration::seconds(REPLICA_STALE_SECONDS);
         match db.fetch_replicas(None, None, stale_before).await {
             Ok(replicas) => {
                 for kind in ReplicaKind::ALL {
@@ -333,10 +335,11 @@ pub async fn run_operational_metrics_sampler<T: DatabaseImpl>(db: Arc<T>, shutdo
 /// retires replicas that never sent an offline notice (e.g. crashed or evicted pods).
 pub async fn run_replica_reaper<T: DatabaseImpl>(db: Arc<T>, shutdown: Arc<Notify>) {
     info!("replica reaper started");
+    let registry = ReplicaRegistry::new(db);
     loop {
         let started = std::time::Instant::now();
         let mut succeeded = true;
-        match repository::reap_inactive_replicas(db.as_ref()).await {
+        match registry.reap_inactive().await {
             Ok(count) if count > 0 => {
                 stability::cleanup("replica_reap", true, count);
                 stability::replica_transition("all", "offline", count);
@@ -352,7 +355,7 @@ pub async fn run_replica_reaper<T: DatabaseImpl>(db: Arc<T>, shutdown: Arc<Notif
                 )
             }
         }
-        match repository::delete_expired_replicas(db.as_ref()).await {
+        match registry.delete_expired().await {
             Ok(count) if count > 0 => {
                 stability::cleanup("replica_purge", true, count);
                 stability::replica_transition("all", "deleted", count);
@@ -368,7 +371,7 @@ pub async fn run_replica_reaper<T: DatabaseImpl>(db: Arc<T>, shutdown: Arc<Notif
                 )
             }
         }
-        match repository::prune_replica_samples(db.as_ref()).await {
+        match registry.prune_samples().await {
             Ok(count) if count > 0 => {
                 stability::cleanup("replica_sample_prune", true, count);
                 info!(count, "pruned expired replica sample(s)")

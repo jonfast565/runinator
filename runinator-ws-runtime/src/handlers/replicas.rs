@@ -6,17 +6,16 @@ use axum::{
     extract::{ConnectInfo, Path, Query},
     http::{HeaderMap, StatusCode},
 };
-use runinator_database::interfaces::DatabaseImpl;
+use runinator_engine::services::ReplicaRegistry;
 use runinator_models::{
     auth::AuthContext,
-    rbac::SystemRole,
     replicas::{
         ReplicaHeartbeatRequest, ReplicaOfflineRequest, ReplicaProviderRegistrationRequest,
         ReplicaRegistrationRequest,
     },
 };
+use runinator_store::roles::ReplicaStore;
 
-use crate::repository;
 use runinator_ws_core::models::{ApiResponse, ReplicaQuery, ReplicaSampleQuery};
 use runinator_ws_core::openapi::docs::{
     EndpointDoc, Example, REPLICA_FILTERS, endpoint, json_body,
@@ -24,7 +23,7 @@ use runinator_ws_core::openapi::docs::{
 use runinator_ws_core::responses::{api_error, not_found};
 use runinator_ws_middleware::authz::AuthContextExt;
 
-pub async fn register_replica<T: DatabaseImpl>(
+pub async fn register_replica<T: ReplicaStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     headers: HeaderMap,
@@ -37,25 +36,17 @@ pub async fn register_replica<T: DatabaseImpl>(
     ]) {
         return reply;
     }
-    if matches!(
-        ctx.system_role,
-        Some(SystemRole::Agent | SystemRole::Replica)
-    ) {
-        match repository::fetch_replica_by_runtime(
-            db.as_ref(),
-            request.instance_id.clone(),
-            request.runtime_id.clone(),
-        )
+    let registry = ReplicaRegistry::new(db);
+    match registry
+        .agent_owns_runtime_registration(&ctx, &request)
         .await
-        {
-            Ok(Some(replica)) if replica.registered_by_principal_id != ctx.principal_id => {
-                return not_found("Replica not found");
-            }
-            Err(err) => return api_error(err.to_string()),
-            _ => {}
-        }
+    {
+        Ok(true) => {}
+        Ok(false) => return not_found("Replica not found"),
+        Err(err) => return api_error(err.to_string()),
     }
-    match repository::register_replica(db.as_ref(), request, observed_ip(&headers, connect), &ctx)
+    match registry
+        .register(request, observed_ip(&headers, connect), &ctx)
         .await
     {
         Ok(replica) => (StatusCode::OK, Json(ApiResponse::Replica(replica))),
@@ -63,7 +54,7 @@ pub async fn register_replica<T: DatabaseImpl>(
     }
 }
 
-pub async fn heartbeat_replica<T: DatabaseImpl>(
+pub async fn heartbeat_replica<T: ReplicaStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     headers: HeaderMap,
@@ -77,16 +68,13 @@ pub async fn heartbeat_replica<T: DatabaseImpl>(
     ]) {
         return reply;
     }
-    if let Some(reply) = reject_unowned_agent_replica(db.as_ref(), &ctx, replica_id).await {
+    let registry = ReplicaRegistry::new(db);
+    if let Some(reply) = reject_unowned_agent_replica(&registry, &ctx, replica_id).await {
         return reply;
     }
-    match repository::heartbeat_replica(
-        db.as_ref(),
-        replica_id,
-        request,
-        observed_ip(&headers, connect),
-    )
-    .await
+    match registry
+        .heartbeat(replica_id, request, observed_ip(&headers, connect))
+        .await
     {
         Ok(Some(replica)) => (StatusCode::OK, Json(ApiResponse::Replica(replica))),
         Ok(None) => not_found(format!(
@@ -96,7 +84,7 @@ pub async fn heartbeat_replica<T: DatabaseImpl>(
     }
 }
 
-pub async fn mark_replica_offline<T: DatabaseImpl>(
+pub async fn mark_replica_offline<T: ReplicaStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(replica_id): Path<Uuid>,
@@ -108,10 +96,11 @@ pub async fn mark_replica_offline<T: DatabaseImpl>(
     ]) {
         return reply;
     }
-    if let Some(reply) = reject_unowned_agent_replica(db.as_ref(), &ctx, replica_id).await {
+    let registry = ReplicaRegistry::new(db);
+    if let Some(reply) = reject_unowned_agent_replica(&registry, &ctx, replica_id).await {
         return reply;
     }
-    match repository::mark_replica_offline(db.as_ref(), replica_id, request.runtime_id).await {
+    match registry.mark_offline(replica_id, request.runtime_id).await {
         Ok(Some(replica)) => (StatusCode::OK, Json(ApiResponse::Replica(replica))),
         Ok(None) => not_found(format!(
             "Replica {replica_id} not found or runtime mismatch"
@@ -127,31 +116,37 @@ pub async fn mark_replica_offline<T: DatabaseImpl>(
     tag = "Replicas",
     responses((status = 200, description = "service replicas", body = serde_json::Value)),
 )]
-pub async fn get_replicas<T: DatabaseImpl>(
+pub async fn get_replicas<T: ReplicaStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(_ctx): Extension<AuthContext>,
     Query(query): Query<ReplicaQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    match repository::fetch_replicas(db.as_ref(), query.replica_type, query.status).await {
+    match ReplicaRegistry::new(db)
+        .list(query.replica_type, query.status)
+        .await
+    {
         Ok(replicas) => (StatusCode::OK, Json(ApiResponse::ReplicaList(replicas))),
         Err(err) => api_error(err.to_string()),
     }
 }
 
 /// fetch a replica's recent telemetry samples for charting.
-pub async fn get_replica_samples<T: DatabaseImpl>(
+pub async fn get_replica_samples<T: ReplicaStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(_ctx): Extension<AuthContext>,
     Path(replica_id): Path<Uuid>,
     Query(query): Query<ReplicaSampleQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    match repository::fetch_replica_samples(db.as_ref(), replica_id, query.since_seconds).await {
+    match ReplicaRegistry::new(db)
+        .samples(replica_id, query.since_seconds)
+        .await
+    {
         Ok(series) => (StatusCode::OK, Json(ApiResponse::ReplicaSamples(series))),
         Err(err) => api_error(err.to_string()),
     }
 }
 
-pub async fn upsert_replica_provider<T: DatabaseImpl>(
+pub async fn upsert_replica_provider<T: ReplicaStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(replica_id): Path<Uuid>,
@@ -163,10 +158,11 @@ pub async fn upsert_replica_provider<T: DatabaseImpl>(
     ]) {
         return reply;
     }
-    if let Some(reply) = reject_unowned_agent_replica(db.as_ref(), &ctx, replica_id).await {
+    let registry = ReplicaRegistry::new(db);
+    if let Some(reply) = reject_unowned_agent_replica(&registry, &ctx, replica_id).await {
         return reply;
     }
-    match repository::upsert_replica_provider_registration(db.as_ref(), replica_id, request).await {
+    match registry.upsert_provider(replica_id, request).await {
         Ok(registration) => (
             StatusCode::OK,
             Json(ApiResponse::ReplicaProviderRegistration(registration)),
@@ -175,12 +171,12 @@ pub async fn upsert_replica_provider<T: DatabaseImpl>(
     }
 }
 
-pub async fn get_replica_providers<T: DatabaseImpl>(
+pub async fn get_replica_providers<T: ReplicaStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(_ctx): Extension<AuthContext>,
     Path(replica_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    match repository::fetch_replica_provider_registrations(db.as_ref(), replica_id).await {
+    match ReplicaRegistry::new(db).providers(replica_id).await {
         Ok(registrations) => (
             StatusCode::OK,
             Json(ApiResponse::ReplicaProviderRegistrationList(registrations)),
@@ -200,26 +196,20 @@ fn observed_ip(headers: &HeaderMap, connect: SocketAddr) -> Option<String> {
         .or_else(|| Some(connect.ip().to_string()))
 }
 
-async fn reject_unowned_agent_replica<T: DatabaseImpl>(
-    db: &T,
+async fn reject_unowned_agent_replica<T: ReplicaStore>(
+    registry: &ReplicaRegistry<T>,
     ctx: &AuthContext,
     replica_id: Uuid,
 ) -> Option<(StatusCode, Json<ApiResponse>)> {
-    if !matches!(
-        ctx.system_role,
-        Some(SystemRole::Agent | SystemRole::Replica)
-    ) {
-        return None;
-    }
-    match repository::fetch_replica(db, replica_id).await {
-        Ok(Some(replica)) if replica.registered_by_principal_id == ctx.principal_id => None,
-        Ok(_) => Some(not_found("Replica not found")),
+    match registry.agent_owns_replica(ctx, replica_id).await {
+        Ok(true) => None,
+        Ok(false) => Some(not_found("Replica not found")),
         Err(err) => Some(api_error(err.to_string())),
     }
 }
 
 /// the `replicas` endpoints.
-pub fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
+pub fn routes<T: ReplicaStore>(pool: std::sync::Arc<T>) -> axum::Router {
     use axum::Extension;
     use axum::routing::{get, post};
     axum::Router::new()

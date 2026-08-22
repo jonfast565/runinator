@@ -97,6 +97,10 @@ impl Broker for TcpBroker {
         true
     }
 
+    async fn heartbeat(&self) -> Result<(), BrokerError> {
+        Self::expect_ok(self.request(TcpRequest::Heartbeat).await?)
+    }
+
     async fn publish_control(&self, command: ControlCommand) -> Result<(), BrokerError> {
         let response = self.request(TcpRequest::PublishControl { command }).await?;
         Self::expect_ok(response)

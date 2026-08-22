@@ -385,7 +385,7 @@ async fn agent_enrollment_rejections_are_uniform_and_labels_cannot_be_widened() 
 }
 
 #[tokio::test]
-async fn agent_principals_cannot_mutate_another_agents_replica() {
+async fn agent_principals_cannot_mutate_another_agents_replica_through_the_registry_service() {
     let (db, path) = test_db().await;
     let db = Arc::new(db);
     let owner_id = Uuid::new_v4();

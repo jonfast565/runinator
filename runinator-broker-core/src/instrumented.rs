@@ -28,6 +28,7 @@ const CH_EFFECT_RESULT: &str = "effect_result";
 const CH_WAKE: &str = "wake";
 const CH_INGRESS: &str = "ingress";
 const CH_EVENT: &str = "events";
+const CH_CONNECTION: &str = "connection";
 
 /// wrap `inner` so its operations emit otel metrics tagged with `backend`. the returned broker is a
 /// drop-in for the wrapped one; when otel is disabled the meter is a no-op and this adds only a
@@ -130,6 +131,14 @@ impl Broker for InstrumentedBroker {
 
     fn connection_state(&self) -> Option<tokio::sync::watch::Receiver<ConnectionState>> {
         self.inner.connection_state()
+    }
+
+    async fn heartbeat(&self) -> Result<(), BrokerError> {
+        let start = Instant::now();
+        let result = self.inner.heartbeat().await;
+        self.metrics
+            .record(CH_CONNECTION, "heartbeat", start, &result, true);
+        result
     }
 
     async fn publish_control(&self, command: ControlCommand) -> Result<(), BrokerError> {

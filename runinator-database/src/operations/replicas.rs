@@ -465,6 +465,52 @@ where
         row.as_ref().map(mappers::row_to_replica).transpose()
     }
 
+    async fn fetch_replicas(
+        &self,
+        replica_type: Option<ReplicaKind>,
+        status: Option<ReplicaStatus>,
+        stale_before: DateTime<Utc>,
+    ) -> Result<Vec<ReplicaRecord>, SendableError> {
+        let rows = if let Some(replica_type) = replica_type {
+            sqlx::query(&self.render("SELECT replica_id, replica_type, instance_id, runtime_id,
+                        CASE
+                            WHEN status = 'offline' THEN 'offline'
+                            WHEN last_heartbeat_at <= ? THEN 'stale'
+                            ELSE 'live'
+                        END AS status,
+                        display_name, host, port, base_path, observed_ip, version, attributes, first_seen_at, last_heartbeat_at, last_seen_at, offline_at,
+                        registered_by_principal_id, registered_by_kind, registered_by_org_id
+                 FROM replicas WHERE replica_type = ? ORDER BY replica_type, instance_id, replica_id"))
+            .bind(stale_before.timestamp())
+            .bind(replica_type.as_str())
+            .fetch_all(self.pool())
+            .await?
+        } else {
+            sqlx::query(&self.render(
+                "SELECT replica_id, replica_type, instance_id, runtime_id,
+                        CASE
+                            WHEN status = 'offline' THEN 'offline'
+                            WHEN last_heartbeat_at <= ? THEN 'stale'
+                            ELSE 'live'
+                        END AS status,
+                        display_name, host, port, base_path, observed_ip, version, attributes, first_seen_at, last_heartbeat_at, last_seen_at, offline_at,
+                        registered_by_principal_id, registered_by_kind, registered_by_org_id
+                 FROM replicas ORDER BY replica_type, instance_id, replica_id",
+            ))
+            .bind(stale_before.timestamp())
+            .fetch_all(self.pool())
+            .await?
+        };
+        let mut replicas = rows
+            .iter()
+            .map(mappers::row_to_replica)
+            .collect::<Result<Vec<_>, _>>()?;
+        if let Some(status) = status {
+            replicas.retain(|replica| replica.status == status);
+        }
+        Ok(replicas)
+    }
+
     async fn count_running_effects_by_executor(&self) -> Result<Vec<(Uuid, i64)>, SendableError> {
         // a held executor claim (current_executor_replica_id set) marks an effect that is actively
         // executing on that worker, so grouping the live claims yields the running-task count per

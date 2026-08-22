@@ -118,6 +118,21 @@ impl Broker for HttpBroker {
         true
     }
 
+    async fn heartbeat(&self) -> Result<(), BrokerError> {
+        let response = self
+            .client
+            .get(self.endpoint("health")?)
+            .send()
+            .await
+            .map_err(|err| BrokerError::Internal(err.to_string()))?;
+        match response.status() {
+            StatusCode::OK => Ok(()),
+            status => Err(BrokerError::Internal(format!(
+                "unexpected broker health status: {status}"
+            ))),
+        }
+    }
+
     async fn publish_control(&self, command: ControlCommand) -> Result<(), BrokerError> {
         let url = self.endpoint("control/publish")?;
         let response = self

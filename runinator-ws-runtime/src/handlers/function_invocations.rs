@@ -31,7 +31,7 @@ use runinator_models::{
 use serde::Deserialize;
 use uuid::Uuid;
 
-use crate::repository;
+use runinator_engine::repository;
 use runinator_ws_core::events::{EventSender, emit_workflow_run, nudge_wake_publisher};
 use runinator_ws_core::models::{self, ApiResponse};
 use runinator_ws_core::openapi::docs::{EndpointDoc, Example, endpoint, json_body};

@@ -8,7 +8,7 @@ use runinator_models::{
     workflows::WorkflowTrigger,
 };
 
-use crate::repository;
+use runinator_engine::repository;
 use runinator_ws_core::events::{EventSender, emit_workflows_changed};
 use runinator_ws_core::models::{ApiResponse, SchedulerTriggerClaimRequest};
 use runinator_ws_core::openapi::docs::{

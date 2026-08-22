@@ -12,6 +12,8 @@ struct WakerMetrics {
     wakes_driven: Counter<u64>,
     wakes_requeued: Counter<u64>,
     drive_failures: Counter<u64>,
+    broker_heartbeats: Counter<u64>,
+    broker_heartbeat_failures: Counter<u64>,
     wake_lead_ms: Histogram<f64>,
     wake_due_lag_ms: Histogram<f64>,
 }
@@ -33,6 +35,12 @@ fn metrics() -> &'static WakerMetrics {
                 .build(),
             drive_failures: meter
                 .u64_counter("runinator_waker_drive_failures_total")
+                .build(),
+            broker_heartbeats: meter
+                .u64_counter("runinator_waker_broker_heartbeats_total")
+                .build(),
+            broker_heartbeat_failures: meter
+                .u64_counter("runinator_waker_broker_heartbeat_failures_total")
                 .build(),
             wake_lead_ms: meter
                 .f64_histogram("runinator_waker_wake_lead_ms")
@@ -71,4 +79,14 @@ pub(crate) fn wake_requeued() {
 /// publishing the settle for a due wake failed; it was returned to the broker to retry.
 pub(crate) fn drive_failed() {
     metrics().drive_failures.add(1, &[]);
+}
+
+/// the relay completed a broker transport heartbeat while idle or active.
+pub(crate) fn broker_heartbeat() {
+    metrics().broker_heartbeats.add(1, &[]);
+}
+
+/// the broker transport did not answer a heartbeat. The relay keeps retrying its normal receive.
+pub(crate) fn broker_heartbeat_failed() {
+    metrics().broker_heartbeat_failures.add(1, &[]);
 }

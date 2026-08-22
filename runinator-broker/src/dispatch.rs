@@ -14,6 +14,7 @@ use crate::{
 /// Concrete brokers coerce to the same trait-object reference at the call site.
 pub async fn dispatch(broker: &dyn Broker, request: TcpRequest) -> TcpResponse {
     let result = match request {
+        TcpRequest::Heartbeat => broker.heartbeat().await.map(|_| TcpResponse::Ok),
         TcpRequest::PublishControl { command } => broker
             .publish_control(command)
             .await

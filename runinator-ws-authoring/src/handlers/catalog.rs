@@ -8,7 +8,7 @@ use runinator_models::json;
 use runinator_models::value::Value;
 
 use crate::handlers::providers::provider_catalog_item;
-use crate::repository;
+use runinator_engine::repository;
 use runinator_ws_core::models::{ApiResponse, CatalogQuery};
 use runinator_ws_core::openapi::docs::{
     CATALOG_FILTERS, EndpointDoc, Example, endpoint, json_body,

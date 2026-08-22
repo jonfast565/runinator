@@ -14,7 +14,7 @@ use runinator_models::{
 };
 use serde::Deserialize;
 
-use crate::repository;
+use runinator_engine::repository;
 use runinator_ws_core::events::{AppEvent, AppEventKind, EventSender, emit};
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::openapi::docs::{EndpointDoc, Example, endpoint, json_body};

@@ -144,21 +144,12 @@ services:
       dockerfile: deploy/Dockerfile
       target: waker
     depends_on:
-      - ws
       - broker
-    environment:
-      RUNINATOR_API_KEY: "localdev.runinator-local-dev-service-key"
     command:
-      - "--waker-id"
-      - "runinator-waker-compose"
       - "--broker-backend"
       - "tcp"
       - "--broker-endpoint"
       - "broker:7070"
-      - "--api-base-url"
-      - "http://ws:8080/"
-      - "--advertise-host"
-      - "waker"
 
   worker:
     build:

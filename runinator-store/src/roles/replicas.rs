@@ -136,6 +136,14 @@ pub trait ReplicaStore: Send + Sync + 'static {
         runtime_id: String,
     ) -> impl Future<Output = Result<Option<ReplicaRecord>, SendableError>> + Send;
 
+    /// Fetch replicas filtered by type and status, deriving stale state from heartbeat age.
+    fn fetch_replicas(
+        &self,
+        replica_type: Option<runinator_models::replicas::ReplicaKind>,
+        status: Option<runinator_models::replicas::ReplicaStatus>,
+        stale_before: DateTime<Utc>,
+    ) -> impl Future<Output = Result<Vec<ReplicaRecord>, SendableError>> + Send;
+
     /// Count effects currently held by each executor replica, keyed by replica id. reflects live
     /// executor claims, so the count is the number of tasks actively running on each worker.
     fn count_running_effects_by_executor(

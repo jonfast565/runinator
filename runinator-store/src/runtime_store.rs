@@ -7,7 +7,6 @@
 //! `DatabaseImpl` has this as a supertrait, so every existing `T: DatabaseImpl` caller already
 //! satisfies it and nothing needs re-plumbing.
 
-use chrono::{DateTime, Utc};
 use runinator_models::value::Value;
 use runinator_models::workflow_state::WorkflowExecutionState;
 use runinator_models::{
@@ -17,7 +16,7 @@ use runinator_models::{
     pipelines::{
         Pipeline, PipelineMemberAttempt, PipelineMemberAttemptStatus, PipelineRun, PipelineTrigger,
     },
-    replicas::{ReplicaKind, ReplicaRecord, ReplicaStatus, WorkflowRunProvenance},
+    replicas::WorkflowRunProvenance,
     settings::{SettingKind, SettingRecord},
     workflows::{WorkflowDefinition, WorkflowRun, WorkflowStatus, WorkflowTrigger},
 };
@@ -338,14 +337,6 @@ pub trait RuntimeStore: Send + Sync + 'static {
         name: String,
         open_only: bool,
     ) -> impl Future<Output = Result<Vec<WorkflowRun>, SendableError>> + Send;
-
-    /// Fetch replicas filtered by type and status, deriving stale state from heartbeat age.
-    fn fetch_replicas(
-        &self,
-        replica_type: Option<ReplicaKind>,
-        status: Option<ReplicaStatus>,
-        stale_before: DateTime<Utc>,
-    ) -> impl Future<Output = Result<Vec<ReplicaRecord>, SendableError>> + Send;
 
     /// Fetch orchestration records with optional filters.
     fn fetch_automation_records(

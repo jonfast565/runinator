@@ -9,6 +9,7 @@ use uuid::Uuid;
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum TcpRequest {
+    Heartbeat,
     PublishControl { command: ControlCommand },
     PublishAgent { command: AgentCommand },
     PublishEffect { message: EffectMessage },
@@ -47,6 +48,7 @@ impl TcpRequest {
     /// wire protocol without someone deciding what this — and the relay's allow-list — says about it.
     pub fn operation_name(&self) -> &'static str {
         match self {
+            Self::Heartbeat => "heartbeat",
             Self::PublishControl { .. } => "publish_control",
             Self::PublishAgent { .. } => "publish_agent",
             Self::PublishEffect { .. } => "publish_effect",

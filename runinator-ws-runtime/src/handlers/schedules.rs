@@ -13,7 +13,7 @@ use runinator_models::{
 };
 use serde::Deserialize;
 
-use crate::repository;
+use runinator_engine::repository;
 use runinator_ws_core::events::{AppEvent, AppEventKind, EventSender, emit, nudge_wake_publisher};
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::responses::{api_error, not_found};

@@ -61,6 +61,15 @@ pub trait Broker: Send + Sync + 'static {
         None
     }
 
+    /// Perform a lightweight broker health round trip.
+    ///
+    /// Queue-backed adapters already maintain their own protocol or consumer heartbeats; wire
+    /// adapters override this with an explicit request. Hosts use it for liveness telemetry only:
+    /// a failed heartbeat must not discard or alter queued work.
+    async fn heartbeat(&self) -> Result<(), BrokerError> {
+        Ok(())
+    }
+
     /// Receive an effect owned by the engine/web-service infrastructure host. This discriminator
     /// prevents timers and interaction waits from being claimed by provider workers on a shared
     /// competing-consumer channel.

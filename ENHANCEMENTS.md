@@ -18,7 +18,7 @@ The guiding constraint from `AGENTS.md`: keep dependency direction services→sh
 |---|------|------|---------------|
 | 8.1 | Narrow persistence contracts | **P1** | store, engine, ws-* |
 | 8.2 | Application-service boundary for HTTP | **P1** | engine, ws-* |
-| 8.3 | Restore broker-only waker | **P1** | waker, service-bootstrap |
+| 8.3 | Restore broker-only waker | **shipped 2026-08-22** | waker, service-bootstrap |
 | 6.8 | Secret expiry warnings | **P1** | engine, utilities |
 | 8.4 | Decouple UI event publication from engine | **P2** | comm, broker-core, engine, ws-core |
 | 8.5 | Separate provider metadata from executors | **P2** | provider-catalog, pack, lsp, ctl, worker |
@@ -52,12 +52,19 @@ The guiding constraint from `AGENTS.md`: keep dependency direction services→sh
 - **Boundary note:** define each service in terms of the narrow store contracts from 8.1 and capability-focused ports, not `Arc<dyn DatabaseImpl>`. This creates one policy-bearing home for each operation and stops the current aliases becoming permanent public API.
 - **Migration:** introduce one service behind an existing route module, migrate its handlers and tests, then delete the corresponding repository alias. Do not attempt a wholesale handler rewrite.
 
-### 8.3 Restore the waker's broker-only boundary
-- **Owning crates:** `runinator-waker`, `runinator-service-bootstrap`, `runinator-api`.
-- **Surveyed 2026-08-22:** the waker relay library correctly consumes `wake` and publishes `ingress`, but `main.rs` also builds an API client, registers a `ReplicaKind::Waker`, heartbeats it, and refuses to start after bounded registration retries. It therefore has API URL/key configuration and cannot deliver a due wake while the control plane is unavailable.
-- **Approach:** remove API-client setup, replica registration, heartbeat, API-key configuration, and their retry policy from the waker. Preserve liveness and telemetry; derive fleet visibility from broker-consumer metrics, or use a separately deployed optional observability reporter if registry visibility is required.
-- **Verification:** add a process-level test that a waker can consume and settle a wake when the web service is unavailable. The existing in-memory relay tests remain the behavioral contract for the core loop.
-- **Why P1:** a timer backend should fail only with its broker dependency. Reintroducing the web service into its critical path undermines the resilience separation that motivated the component.
+### 8.3 Restore the waker's broker-only boundary — shipped 2026-08-22
+- **Delivered:** `runinator-waker` now starts directly from `ProcessResources` plus a
+  `BrokerConsumerProfile::Waker` broker client. Its identified broker consumer (`client_id` and
+  shared wake consumer group) consumes `wake` and publishes settles to `ingress`; it has no API
+  client, replica registration/heartbeat, API URL/key settings, or registration retry policy. A
+  ten-second broker health heartbeat verifies the transport without emitting a durable work
+  message; it records success/failure metrics and never changes relay behavior. Liveness remains
+  local and fleet visibility comes from broker-consumer and operation telemetry.
+- **Bootstrap cleanup:** the unused API-client resource was removed from
+  `runinator-service-bootstrap`, so the waker no longer transitively links `runinator-api`.
+- **Verification:** a process-level TCP-broker test starts no web service and proves a waker can
+  consume and settle a due wake. The in-memory relay tests remain the behavioral contract for the
+  core loop.
 
 ### 6.8 Secret expiry warnings
 - **Owning crates:** `runinator-engine` (settings store), `runinator-utilities` (credential store).
@@ -297,7 +304,13 @@ These are unbounded-effort quality work rather than discrete features. None bloc
 - **Verified 2026-08-04:** `runinator-rexrap/src/parser.rs` is now **clean (0 `expect(` calls)** — that half is done. The remaining cluster is `runinator-ws/src/openapi.rs` (11 calls, e.g. `:114`, `:2407-2572`). These are document-generation paths over structures the file itself just built, so the residual risk is low — convert opportunistically per the error-dictionary convention rather than as a project.
 
 ### 2.1 Remaining backend test gaps
-- **Verified 2026-08-04, partially closed:** `runinator-waker` now has tests (`src/tests.rs`, 5 cases, including the head-of-line `due_wake_is_not_blocked_by_a_not_yet_due_wake` regression) and metrics (`runinator_waker_wakes_received/driven/requeued_total`, `runinator_waker_drive_failures_total`, `runinator_waker_wake_lead_ms`). `runinator-supervisor` has one test file. Still at zero: `runinator-bootstrap` and `runinator-provider-aws`.
+- **Verified 2026-08-22, partially closed:** `runinator-waker` now has eight tests (including the
+  head-of-line `due_wake_is_not_blocked_by_a_not_yet_due_wake` regression and a broker-only
+  process test) and metrics (`runinator_waker_wakes_received/driven/requeued_total`,
+  `runinator_waker_drive_failures_total`, `runinator_waker_broker_heartbeats_total`,
+  `runinator_waker_broker_heartbeat_failures_total`, `runinator_waker_wake_lead_ms`).
+  `runinator-supervisor` has one test file. Still at zero: `runinator-bootstrap` and
+  `runinator-provider-aws`.
 - **Residual:** no end-to-end `wake → ingress → drive` integration test crossing the crate boundary, and no alert wired to the `wake_lead_ms` histogram. Both are small and worth doing — but this is no longer the "highest residual risk" it was in the 2026-06-29 survey.
 
 ---

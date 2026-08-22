@@ -2,7 +2,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use runinator_broker_core::Broker;
-use runinator_engine::EnginePublisher;
+use runinator_engine::{EnginePublisher, services::ReplicaRegistryEvents};
 use runinator_models::runs::RunStatus;
 use tokio::sync::broadcast;
 
@@ -59,6 +59,13 @@ pub fn nudge_wake_publisher(events: &EventSender) {
 
 pub fn nudge_agent_directive_publisher(events: &EventSender) {
     events.publisher.nudge_agent_directive_publisher();
+}
+
+impl ReplicaRegistryEvents for EventBus {
+    fn agent_directive_queued(&self) {
+        nudge_agent_directive_publisher(self);
+        emit(self, AppEvent::global(AppEventKind::ReplicasChanged));
+    }
 }
 
 pub fn emit_task_run(events: &EventSender, run_id: Uuid, status: RunStatus, org_id: Option<Uuid>) {

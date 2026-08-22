@@ -7,6 +7,6 @@
 
 pub mod handlers;
 
-// persistence orchestration and settings encoding live in the engine; these aliases keep the
-// `crate::repository`/`crate::settings` paths the moved handler code already uses.
-pub(crate) use runinator_engine::{repository, settings};
+// settings encoding lives in the engine. Handler modules name the application boundary they use
+// directly so this crate does not grow another repository facade.
+pub(crate) use runinator_engine::settings;

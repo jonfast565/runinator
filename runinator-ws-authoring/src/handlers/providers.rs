@@ -9,7 +9,7 @@ use runinator_models::{
     providers::{ProviderMetadata, validate_provider_metadata},
 };
 
-use crate::repository;
+use runinator_engine::repository;
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::openapi::docs::{EndpointDoc, Example, endpoint, json_body};
 use runinator_ws_core::responses::{api_error, bad_request};
@@ -119,7 +119,7 @@ pub fn provider_metadata_from_item(item: Value) -> Result<ProviderMetadata, serd
 ///
 /// re-exported from the engine rather than rebuilt here: publishing a packaged function writes the
 /// same shape from the engine side, and two writers building it separately would drift.
-pub use crate::repository::provider_catalog_item;
+pub use runinator_engine::repository::provider_catalog_item;
 
 /// the `providers` endpoints.
 pub fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {

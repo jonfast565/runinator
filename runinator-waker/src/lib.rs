@@ -30,6 +30,43 @@ pub fn spawn_liveness(
     )
 }
 
+/// Periodically verify the broker transport while the wake queue is idle.
+///
+/// This is deliberately a broker protocol heartbeat, not a queued message and not a web-service
+/// call. It preserves the timer relay's failure boundary: a heartbeat failure is telemetry and the
+/// ordinary receive loop continues retrying the broker until it is reachable again.
+pub fn spawn_broker_heartbeat(
+    broker: Arc<dyn Broker>,
+    config: &Config,
+    shutdown: Arc<Notify>,
+) -> tokio::task::JoinHandle<()> {
+    let interval = Duration::from_secs(config.broker_heartbeat_seconds);
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(interval);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            tokio::select! {
+                _ = shutdown.notified() => return,
+                _ = ticker.tick() => {}
+            }
+            let heartbeat = tokio::select! {
+                _ = shutdown.notified() => return,
+                result = broker.heartbeat() => result,
+            };
+            match heartbeat {
+                Ok(()) => metrics::broker_heartbeat(),
+                Err(err) => {
+                    metrics::broker_heartbeat_failed();
+                    error!(
+                        error_code = error_code_or_unknown(&err),
+                        "broker heartbeat failed: {}", err
+                    );
+                }
+            }
+        }
+    })
+}
+
 /// consume wakes, sleep until each is due, then publish the settle on the ingress channel. multiple
 /// waker replicas share a consumer group so each wake is handled once; a not-yet-due wake is
 /// returned to the broker (nack) after a bounded sleep so the lease never expires under us and

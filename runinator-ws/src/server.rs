@@ -18,7 +18,9 @@ use tokio::{
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
-use runinator_engine::{EngineConfig, EnginePublisher, run_background_engine};
+use runinator_engine::{
+    EngineConfig, EnginePublisher, run_background_engine, services::ReplicaRegistry,
+};
 
 use crate::event_consumer::{instance_id, run_event_consumer};
 use crate::events::{AppEvent, EventBus};
@@ -74,27 +76,28 @@ pub async fn run_webserver<T: DatabaseImpl>(
         .clone()
         .unwrap_or_else(instance_id);
     let runtime_id = Uuid::new_v4().to_string();
-    let web_replica = crate::repository::register_replica(
-        pool.as_ref(),
-        ReplicaRegistrationRequest {
-            replica_type: ReplicaKind::Webservice,
-            instance_id: instance.clone(),
-            runtime_id: runtime_id.clone(),
-            display_name: Some(instance.clone()),
-            host: advertisement.host.clone(),
-            port: Some(port),
-            base_path: Some("/".into()),
-            version: Some(env!("CARGO_PKG_VERSION").to_string()),
-            attributes: runinator_utilities::resource_telemetry::attributes_with_host_metadata(
-                &advertisement.attributes,
-            ),
-        },
-        None,
-        // the web service registering its own replica at startup, not an external caller.
-        &AuthContext::disabled_platform_admin(),
-    )
-    .await?;
-    let heartbeat_db = pool.clone();
+    let replica_registry = ReplicaRegistry::new(pool.clone());
+    let web_replica = replica_registry
+        .register(
+            ReplicaRegistrationRequest {
+                replica_type: ReplicaKind::Webservice,
+                instance_id: instance.clone(),
+                runtime_id: runtime_id.clone(),
+                display_name: Some(instance.clone()),
+                host: advertisement.host.clone(),
+                port: Some(port),
+                base_path: Some("/".into()),
+                version: Some(env!("CARGO_PKG_VERSION").to_string()),
+                attributes: runinator_utilities::resource_telemetry::attributes_with_host_metadata(
+                    &advertisement.attributes,
+                ),
+            },
+            None,
+            // the web service registering its own replica at startup, not an external caller.
+            &AuthContext::disabled_platform_admin(),
+        )
+        .await?;
+    let heartbeat_registry = replica_registry.clone();
     let heartbeat_notify = notify.clone();
     let heartbeat_runtime_id = runtime_id.clone();
     let heartbeat_instance = instance.clone();
@@ -110,11 +113,9 @@ pub async fn run_webserver<T: DatabaseImpl>(
         loop {
             tokio::select! {
                 _ = heartbeat_notify.notified() => {
-                    let _ = crate::repository::mark_replica_offline(
-                        heartbeat_db.as_ref(),
-                        web_replica.replica_id,
-                        heartbeat_runtime_id.clone(),
-                    ).await;
+                    let _ = heartbeat_registry
+                        .mark_offline(web_replica.replica_id, heartbeat_runtime_id.clone())
+                        .await;
                     return;
                 }
                 _ = ticker.tick() => {
@@ -122,8 +123,7 @@ pub async fn run_webserver<T: DatabaseImpl>(
                         &heartbeat_attributes,
                         heartbeat_telemetry.as_ref(),
                     );
-                    let _ = crate::repository::heartbeat_replica(
-                        heartbeat_db.as_ref(),
+                    let _ = heartbeat_registry.heartbeat(
                         web_replica.replica_id,
                         ReplicaHeartbeatRequest {
                             runtime_id: heartbeat_runtime_id.clone(),

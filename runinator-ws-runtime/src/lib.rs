@@ -7,6 +7,6 @@
 
 pub mod handlers;
 
-// persistence orchestration, audit records, and the panic counter live in the engine; these aliases
-// keep the `crate::repository`/`crate::audit`/`crate::stability` paths the moved handler code uses.
-pub(crate) use runinator_engine::{repository, stability};
+// the panic counter lives in the engine. Handler modules name their application boundary directly
+// so this crate does not grow another repository facade.
+pub(crate) use runinator_engine::stability;

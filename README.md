@@ -974,8 +974,8 @@ service, also on Prometheus `/metrics`):
   `actions_duplicate_total`, `actions_in_flight` (gauge), `control_commands_total`
   (by `kind`), and `secret_resolution_failures_total`.
 - **Waker** (`runinator_waker_*`): `wakes_{received,driven,requeued}_total`,
-  `drive_failures_total`, and the `wake_lead_ms` histogram (scheduling lead/lag at
-  receipt).
+  `drive_failures_total`, `broker_heartbeats_total`, `broker_heartbeat_failures_total`, and the
+  `wake_lead_ms` histogram (scheduling lead/lag at receipt).
 - **VM** (`runinator_vm_*`): `continuations_driven_total` split by the bounded
   `outcome` label (`yielded`, `forked`, `joined`, `completed`, `failed`), the
   `drive_duration_ms` histogram for claim-and-advance batches, and

@@ -13,7 +13,7 @@ use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::auth::AuthContext;
 use runinator_models::runs::NewRunArtifact;
 
-use crate::repository;
+use runinator_engine::repository;
 use runinator_ws_core::events::{AppEvent, AppEventKind, EventSender, emit};
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::openapi::docs::{EndpointDoc, Example, RequestDoc, endpoint, json_body};

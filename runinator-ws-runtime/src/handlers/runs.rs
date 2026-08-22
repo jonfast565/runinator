@@ -12,7 +12,7 @@ use runinator_models::replicas::{TriggerActorType, TriggerSourceKind, WorkflowRu
 use runinator_models::runs::NewRunChunk;
 use serde::Deserialize;
 
-use crate::repository;
+use runinator_engine::repository;
 use runinator_ws_core::events::{
     AppEvent, AppEventKind, EventSender, emit, emit_task_run, emit_workflow_run,
     nudge_wake_publisher,

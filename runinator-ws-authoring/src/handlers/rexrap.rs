@@ -15,7 +15,7 @@ use runinator_rexrap::{
 use serde::{Deserialize, Serialize};
 
 use crate::handlers::providers::provider_metadata_from_items;
-use crate::repository;
+use runinator_engine::repository;
 use runinator_ws_core::events::{EventSender, emit_workflows_changed};
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::openapi::docs::{EndpointDoc, Example, endpoint, json_body};

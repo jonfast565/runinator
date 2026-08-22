@@ -8006,6 +8006,7 @@ dependencies = [
  "runinator-models",
  "runinator-rexrap",
  "runinator-runtime",
+ "runinator-store",
  "runinator-utilities",
  "runinator-workflows",
  "serde",
@@ -8405,8 +8406,6 @@ dependencies = [
 name = "runinator-service-bootstrap"
 version = "0.2.368"
 dependencies = [
- "reqwest",
- "runinator-api",
  "runinator-blob",
  "runinator-broker",
  "runinator-db-cli",
@@ -8474,11 +8473,8 @@ dependencies = [
  "chrono",
  "clap",
  "opentelemetry",
- "reqwest",
- "runinator-api",
  "runinator-broker",
  "runinator-models",
- "runinator-service-bootstrap",
  "runinator-utilities",
  "tokio",
  "tracing",

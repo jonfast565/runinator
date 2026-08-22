@@ -16,7 +16,9 @@ use clap::Parser;
 use log::info;
 use runinator_broker::Broker;
 use runinator_database::interfaces::DatabaseImpl;
-use runinator_engine::{EngineConfig, EnginePublisher, run_background_engine};
+use runinator_engine::{
+    EngineConfig, EnginePublisher, run_background_engine, services::ReplicaRegistry,
+};
 use runinator_models::auth::AuthContext;
 use runinator_models::errors::SendableError;
 use runinator_models::replicas::{
@@ -145,28 +147,29 @@ async fn run_engine_with_replica<T: DatabaseImpl>(
     shutdown: Arc<Notify>,
 ) -> Result<(), SendableError> {
     let runtime_id = Uuid::new_v4().to_string();
-    let replica = runinator_engine::repository::register_replica(
-        db.as_ref(),
-        ReplicaRegistrationRequest {
-            replica_type: ReplicaKind::Background,
-            instance_id: instance.clone(),
-            runtime_id: runtime_id.clone(),
-            display_name: Some(instance.clone()),
-            host: None,
-            port: None,
-            base_path: None,
-            version: Some(env!("CARGO_PKG_VERSION").to_string()),
-            attributes: resource_telemetry::attributes_with_host_metadata(&attributes),
-        },
-        None,
-        // the worker registering its own replica at startup, not an external caller.
-        &AuthContext::disabled_platform_admin(),
-    )
-    .await?;
+    let registry = ReplicaRegistry::new(db.clone());
+    let replica = registry
+        .register(
+            ReplicaRegistrationRequest {
+                replica_type: ReplicaKind::Background,
+                instance_id: instance.clone(),
+                runtime_id: runtime_id.clone(),
+                display_name: Some(instance.clone()),
+                host: None,
+                port: None,
+                base_path: None,
+                version: Some(env!("CARGO_PKG_VERSION").to_string()),
+                attributes: resource_telemetry::attributes_with_host_metadata(&attributes),
+            },
+            None,
+            // the worker registering its own replica at startup, not an external caller.
+            &AuthContext::disabled_platform_admin(),
+        )
+        .await?;
 
     // heartbeat loop: keeps the replica live and appends resource telemetry each tick, and marks the
     // replica offline on shutdown. best-effort, so a failed heartbeat never tears down the process.
-    let hb_db = db.clone();
+    let hb_registry = registry.clone();
     let hb_shutdown = shutdown.clone();
     let hb_replica_id = replica.replica_id;
     let hb_runtime_id = runtime_id.clone();
@@ -178,12 +181,9 @@ async fn run_engine_with_replica<T: DatabaseImpl>(
         loop {
             tokio::select! {
                 _ = hb_shutdown.notified() => {
-                    let _ = runinator_engine::repository::mark_replica_offline(
-                        hb_db.as_ref(),
-                        hb_replica_id,
-                        hb_runtime_id.clone(),
-                    )
-                    .await;
+                    let _ = hb_registry
+                        .mark_offline(hb_replica_id, hb_runtime_id.clone())
+                        .await;
                     return;
                 }
                 _ = ticker.tick() => {
@@ -191,8 +191,7 @@ async fn run_engine_with_replica<T: DatabaseImpl>(
                         &hb_attributes,
                         telemetry.as_ref(),
                     );
-                    let _ = runinator_engine::repository::heartbeat_replica(
-                        hb_db.as_ref(),
+                    let _ = hb_registry.heartbeat(
                         hb_replica_id,
                         ReplicaHeartbeatRequest {
                             runtime_id: hb_runtime_id.clone(),

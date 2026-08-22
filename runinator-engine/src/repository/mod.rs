@@ -38,7 +38,6 @@ pub use provider_meta::{
     provider_catalog_item, provider_catalog_uri, provider_metadata_from_item,
     provider_metadata_from_items,
 };
-pub use replicas::*;
 pub use runs::*;
 pub use triggers::*;
 
@@ -57,7 +56,6 @@ pub mod functions;
 mod pipeline_orchestration;
 mod pipelines;
 mod provider_meta;
-mod replicas;
 mod runs;
 mod support;
 mod triggers;

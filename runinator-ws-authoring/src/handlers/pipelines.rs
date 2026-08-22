@@ -9,7 +9,7 @@ use runinator_models::{
     pipelines::{Pipeline, PipelineTrigger},
 };
 
-use crate::repository;
+use runinator_engine::repository;
 use runinator_ws_core::events::{
     AppEvent, AppEventKind, EventSender, emit, emit_pipeline_run, emit_workflows_changed,
     nudge_wake_publisher,

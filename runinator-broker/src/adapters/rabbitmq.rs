@@ -663,6 +663,12 @@ impl Broker for RabbitMqBroker {
         self.config.has_workflow_effect_queues()
     }
 
+    async fn heartbeat(&self) -> Result<(), BrokerError> {
+        // `ensure_connected` uses RabbitMQ's protocol-level connection heartbeat and recreates a
+        // dropped channel before the next receive; no queue message is emitted for health.
+        self.inner.ensure_connected(&self.config).await.map(|_| ())
+    }
+
     async fn publish_control(&self, command: ControlCommand) -> Result<(), BrokerError> {
         let key = command.workflow_run_id.to_string();
         let payload = serde_json::to_string(&command)

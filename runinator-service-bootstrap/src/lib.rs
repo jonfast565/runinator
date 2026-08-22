@@ -5,7 +5,6 @@
 
 use std::{error::Error, fmt, path::PathBuf, sync::Arc};
 
-use runinator_api::{AsyncApiClient, StaticLocator};
 use runinator_blob::{BlobError, BlobStore};
 use runinator_broker::{Broker, build_broker_client};
 use runinator_db_cli::{DatabaseBackend, prepare_sqlite_path, required_database_url};
@@ -13,13 +12,6 @@ use runinator_utilities::startup::ProcessResources;
 
 pub use runinator_broker::{BrokerBuildError, BrokerClientConfig, BrokerConsumerProfile};
 pub use runinator_db_cli;
-
-/// Inputs for a static, authenticated web-service client.
-#[derive(Debug, Clone)]
-pub struct ApiClientConfig {
-    pub base_url: String,
-    pub api_key: Option<String>,
-}
 
 /// Request the process's object store and optionally reconcile its buckets on startup.
 #[derive(Debug, Clone, Copy)]
@@ -61,7 +53,6 @@ impl DatabaseResource {
 pub struct ServerResources {
     process: ProcessResources,
     broker: Option<Arc<dyn Broker>>,
-    api: Option<AsyncApiClient<StaticLocator>>,
     blobs: Option<Arc<dyn BlobStore>>,
     database: Option<DatabaseResource>,
 }
@@ -79,10 +70,6 @@ impl ServerResources {
         self.broker.as_ref()
     }
 
-    pub fn api(&self) -> Option<&AsyncApiClient<StaticLocator>> {
-        self.api.as_ref()
-    }
-
     pub fn blobs(&self) -> Option<&Arc<dyn BlobStore>> {
         self.blobs.as_ref()
     }
@@ -96,7 +83,6 @@ impl ServerResources {
 pub struct ServerResourcesBuilder {
     name: String,
     broker: Option<(BrokerClientConfig, BrokerConsumerProfile)>,
-    api: Option<ApiClientConfig>,
     blobs: Option<BlobRequest>,
     database: Option<DatabaseRequest>,
 }
@@ -106,7 +92,6 @@ impl ServerResourcesBuilder {
         Self {
             name: name.into(),
             broker: None,
-            api: None,
             blobs: None,
             database: None,
         }
@@ -114,11 +99,6 @@ impl ServerResourcesBuilder {
 
     pub fn broker(mut self, config: BrokerClientConfig, profile: BrokerConsumerProfile) -> Self {
         self.broker = Some((config, profile));
-        self
-    }
-
-    pub fn api(mut self, config: ApiClientConfig) -> Self {
-        self.api = Some(config);
         self
     }
 
@@ -139,16 +119,6 @@ impl ServerResourcesBuilder {
                 build_broker_client(&config, profile)
                     .await
                     .map_err(ServerBootstrapError::Broker)?,
-            ),
-            None => None,
-        };
-        let api = match self.api {
-            Some(config) => Some(
-                AsyncApiClient::with_credentials(
-                    StaticLocator::new(config.base_url),
-                    config.api_key,
-                )
-                .map_err(ServerBootstrapError::Api)?,
             ),
             None => None,
         };
@@ -173,7 +143,6 @@ impl ServerResourcesBuilder {
         Ok(ServerResources {
             process,
             broker,
-            api,
             blobs,
             database,
         })
@@ -210,7 +179,6 @@ async fn resolve_database(
 pub enum ServerBootstrapError {
     Process(Box<dyn Error + Send + Sync>),
     Broker(BrokerBuildError),
-    Api(reqwest::Error),
     Blob(BlobError),
     Database(Box<dyn Error + Send + Sync>),
 }
@@ -220,7 +188,6 @@ impl fmt::Display for ServerBootstrapError {
         match self {
             Self::Process(error) => write!(f, "process startup: {error}"),
             Self::Broker(error) => write!(f, "broker startup: {error}"),
-            Self::Api(error) => write!(f, "api client startup: {error}"),
             Self::Blob(error) => write!(f, "blob store startup: {error}"),
             Self::Database(error) => write!(f, "database startup: {error}"),
         }
@@ -294,15 +261,10 @@ mod tests {
                 },
                 BrokerConsumerProfile::Worker,
             )
-            .api(ApiClientConfig {
-                base_url: "http://127.0.0.1:8080/".into(),
-                api_key: Some("test-key".into()),
-            })
             .build()
             .await
             .unwrap();
         assert!(resources.broker().is_some());
-        assert!(resources.api().is_some());
         assert!(resources.blobs().is_none());
         assert!(resources.database().is_none());
     }

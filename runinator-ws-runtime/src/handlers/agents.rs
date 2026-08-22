@@ -7,13 +7,14 @@ use axum::{
 };
 use chrono::{Duration, Utc};
 use runinator_comm::AgentDirectiveKind;
-use runinator_database::interfaces::DatabaseImpl;
+use runinator_engine::services::ReplicaRegistry;
 use runinator_models::{
     auth::AuthContext,
     rbac::{Action, ScopeRef},
 };
+use runinator_store::roles::ReplicaStore;
 use runinator_ws_core::{
-    events::{AppEvent, AppEventKind, EventSender, emit, nudge_agent_directive_publisher},
+    events::EventSender,
     models::{AgentDirectiveQuery, ApiResponse, CreateAgentDirectiveRequest},
     openapi::docs::{EndpointDoc, Example, endpoint, json_body},
     responses::{api_error, not_found},
@@ -21,9 +22,7 @@ use runinator_ws_core::{
 use runinator_ws_middleware::authz::AuthContextExt;
 use uuid::Uuid;
 
-use crate::repository;
-
-pub async fn create<T: DatabaseImpl>(
+pub async fn create<T: ReplicaStore>(
     Extension(db): Extension<std::sync::Arc<T>>,
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<AuthContext>,
@@ -34,33 +33,26 @@ pub async fn create<T: DatabaseImpl>(
     if let Err(reply) = ctx.require_scope_action(action, scope) {
         return reply;
     }
-    match repository::fetch_replica(db.as_ref(), replica_id).await {
-        Ok(Some(_)) => {}
-        Ok(None) => return not_found(format!("Replica {replica_id} not found")),
-        Err(err) => return api_error(err.to_string()),
-    }
     let ttl = request.expires_in_seconds.unwrap_or(300).clamp(1, 86_400);
-    match repository::enqueue_agent_directive(
-        db.as_ref(),
-        replica_id,
-        request.kind,
-        Utc::now() + Duration::seconds(ttl as i64),
-    )
-    .await
+    match ReplicaRegistry::new(db)
+        .issue_directive(
+            replica_id,
+            request.kind,
+            Utc::now() + Duration::seconds(ttl as i64),
+            &events,
+        )
+        .await
     {
-        Ok(record) => {
-            nudge_agent_directive_publisher(&events);
-            emit(&events, AppEvent::global(AppEventKind::ReplicasChanged));
-            (
-                StatusCode::ACCEPTED,
-                Json(ApiResponse::AgentDirective(record)),
-            )
-        }
+        Ok(Some(record)) => (
+            StatusCode::ACCEPTED,
+            Json(ApiResponse::AgentDirective(record)),
+        ),
+        Ok(None) => not_found(format!("Replica {replica_id} not found")),
         Err(err) => api_error(err.to_string()),
     }
 }
 
-pub async fn list<T: DatabaseImpl>(
+pub async fn list<T: ReplicaStore>(
     Extension(db): Extension<std::sync::Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(replica_id): Path<Uuid>,
@@ -78,7 +70,8 @@ pub async fn list<T: DatabaseImpl>(
             ctx.selected_scope(),
         )
         .is_ok();
-    match repository::list_agent_directives(db.as_ref(), replica_id, query.limit.unwrap_or(100))
+    match ReplicaRegistry::new(db)
+        .directives(replica_id, query.limit.unwrap_or(100))
         .await
     {
         Ok(mut records) => {
@@ -117,7 +110,7 @@ fn required_policy(ctx: &AuthContext, kind: &AgentDirectiveKind) -> (Action, Sco
     }
 }
 
-pub fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
+pub fn routes<T: ReplicaStore>(pool: std::sync::Arc<T>) -> axum::Router {
     use axum::routing::get;
     axum::Router::new().route(
         "/replicas/{replica_id}/directives",
