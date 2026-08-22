@@ -8,7 +8,7 @@ Item IDs are **stable** — an item keeps the number it was first filed under (5
 
 The guiding constraint from `AGENTS.md`: keep dependency direction services→shared-contracts, keep changes scoped to the crate that owns the behavior, and thread any shared-contract change through every broker backend, mapper, and config file.
 
-**Last reprioritized:** 2026-08-13, after shipping 7.10 (race inside a loop body).
+**Last reprioritized:** 2026-08-22, after the architecture boundary survey (8.1–8.6).
 
 ---
 
@@ -16,10 +16,16 @@ The guiding constraint from `AGENTS.md`: keep dependency direction services→sh
 
 | # | Item | Band | Owning crates |
 |---|------|------|---------------|
+| 8.1 | Narrow persistence contracts | **P1** | store, engine, ws-* |
+| 8.2 | Application-service boundary for HTTP | **P1** | engine, ws-* |
+| 8.3 | Restore broker-only waker | **P1** | waker, service-bootstrap |
 | 6.8 | Secret expiry warnings | **P1** | engine, utilities |
+| 8.4 | Decouple UI event publication from engine | **P2** | comm, broker-core, engine, ws-core |
+| 8.5 | Separate provider metadata from executors | **P2** | provider-catalog, pack, lsp, ctl, worker |
 | 5.3 | Inbound webhook triggers | **P2** | ws, models |
 | 6.5 | Cross-run analytics | **P2** | database, ws, command-center |
 | 6.9 | Shareable run forms | **P2** | ws, command-center |
+| 8.6 | Split the utilities catch-all | **P3** | utilities and its consumers |
 | 5.6 | AI cost & token accounting | **P3** | provider-ai, comm/models, database |
 | 5.2 | AI-assisted REXRAP authoring | **P3** | command-center, provider-ai |
 | 5.7 | Pack environments + promotion | **P3** | ctl, ws, settings store |
@@ -30,7 +36,28 @@ The guiding constraint from `AGENTS.md`: keep dependency direction services→sh
 
 ---
 
-## P1 — close the known correctness gaps
+## P1 — close correctness and boundary gaps
+
+### 8.1 Narrow persistence contracts
+- **Owning crates:** `runinator-store`, `runinator-engine`, `runinator-ws-middleware`, `runinator-ws-identity`, `runinator-ws-authoring`, `runinator-ws-runtime`.
+- **Surveyed 2026-08-22:** `runinator-store` already owns the role-based contract, but the engine retains a production dependency on `runinator-database` solely through its re-exported `DatabaseImpl` surface. The engine contains 192 `T: DatabaseImpl` bounds; the HTTP handler crates contain another 279. `DatabaseImpl` composes 17 role traits, so callers that need a small storage slice inherit the complete persistence API.
+- **Approach:** import contracts from `runinator-store` directly. Replace broad bounds with the owning role traits (`AuthStore + RbacStore` for authentication, for example); where one atomic use case truly spans roles, add a small named use-case trait such as `PipelineStore` rather than growing a generic repository bound. Keep SQL implementations and dialect mapping in `runinator-database`.
+- **Migration:** first sever the engine's production dependency on `runinator-database`, then narrow the authentication middleware, then migrate handler domains one at a time. Preserve `DatabaseImpl` only for composition roots and genuine whole-store tasks such as schema initialization.
+- **Why P1:** this turns the existing test seam into a real one, reduces the blast radius of schema work, and prevents database-specific dependencies from creeping into orchestration.
+
+### 8.2 Application-service boundary for HTTP
+- **Owning crates:** `runinator-engine`, `runinator-ws-core`, `runinator-ws-identity`, `runinator-ws-authoring`, `runinator-ws-runtime`.
+- **Surveyed 2026-08-22:** the three WS domain crates are physically separated, but their library roots re-export `runinator-engine::repository` to preserve moved handler paths. Handlers consequently coordinate database calls, authorization checks, audit records, broker nudges, and UI events directly through generic `Extension<Arc<T>>` state.
+- **Approach:** retain the route-domain split, but put explicit command/query services behind it: for example `IdentityAdmin`, `WorkflowAuthoring`, `RunOperations`, and `ReplicaRegistry`. Handlers should translate HTTP input and replies; services should own transactional orchestration, auditing, durable event emission, and persistence coordination.
+- **Boundary note:** define each service in terms of the narrow store contracts from 8.1 and capability-focused ports, not `Arc<dyn DatabaseImpl>`. This creates one policy-bearing home for each operation and stops the current aliases becoming permanent public API.
+- **Migration:** introduce one service behind an existing route module, migrate its handlers and tests, then delete the corresponding repository alias. Do not attempt a wholesale handler rewrite.
+
+### 8.3 Restore the waker's broker-only boundary
+- **Owning crates:** `runinator-waker`, `runinator-service-bootstrap`, `runinator-api`.
+- **Surveyed 2026-08-22:** the waker relay library correctly consumes `wake` and publishes `ingress`, but `main.rs` also builds an API client, registers a `ReplicaKind::Waker`, heartbeats it, and refuses to start after bounded registration retries. It therefore has API URL/key configuration and cannot deliver a due wake while the control plane is unavailable.
+- **Approach:** remove API-client setup, replica registration, heartbeat, API-key configuration, and their retry policy from the waker. Preserve liveness and telemetry; derive fleet visibility from broker-consumer metrics, or use a separately deployed optional observability reporter if registry visibility is required.
+- **Verification:** add a process-level test that a waker can consume and settle a wake when the web service is unavailable. The existing in-memory relay tests remain the behavioral contract for the core loop.
+- **Why P1:** a timer backend should fail only with its broker dependency. Reintroducing the web service into its critical path undermines the resilience separation that motivated the component.
 
 ### 6.8 Secret expiry warnings
 - **Owning crates:** `runinator-engine` (settings store), `runinator-utilities` (credential store).
@@ -40,7 +67,20 @@ The guiding constraint from `AGENTS.md`: keep dependency direction services→sh
 
 ---
 
-## P2 — extend reach
+## P2 — extend reach and clarify cross-process contracts
+
+### 8.4 Decouple UI event publication from the engine
+- **Owning crates:** `runinator-comm`, `runinator-broker-core`, `runinator-engine`, `runinator-ws-core`, `runinator-ws`.
+- **Surveyed 2026-08-22:** `runinator-ws-core::EventBus` embeds `runinator_engine::EnginePublisher`, so a crate intended for wire payloads, responses, and local websocket fan-out depends upward on the engine. `EnginePublisher` also combines two unrelated responsibilities: publishing `UiEvent`s to the broker and signaling in-process wake/agent publisher loops with `Notify`.
+- **Approach:** extract a broker-backed UI-event publisher port shared by the engine and web service; keep the WS-local broadcast bridge in `runinator-ws-core`. Model wake and agent nudges separately as optional process-local signals owned by the embedded-engine composition root. The out-of-process engine remains correct through durable polling, with nudges only reducing latency.
+- **Boundary note:** do not put this publisher in `runinator-comm`, because `runinator-broker-core` already depends on that contract crate. A small adapter crate depending on both contracts, or a broker-core extension that does not create a cycle, keeps dependency direction intact.
+- **Result:** `runinator-ws-core` no longer needs an engine dependency, and standalone versus embedded engine deployment stops leaking into HTTP handler state.
+
+### 8.5 Separate provider metadata from provider executors
+- **Owning crates:** `runinator-provider-catalog`, `runinator-pack`, `runinator-lsp`, `runinator-ctl`, `runinator-worker`, `runinator-desktop-agent`.
+- **Surveyed 2026-08-22:** `runinator-provider-catalog::metadata()` builds every `Box<dyn Provider>` and calls `metadata()` on it. Pack compilation, the LSP, and ctl use that function only for validation, but consequently link AI, database, sandbox, and integration-provider execution code.
+- **Approach:** create a lightweight, static built-in metadata catalog for authoring and compilation, and retain a runtime registry that constructs executable providers for workers only. Add a parity test that compares the runtime registry's metadata with the static catalog so provider additions cannot drift.
+- **Result:** compiler-facing crates depend on provider vocabulary rather than on executable integrations, improving build time, dependency clarity, and the safety boundary around provider code.
 
 ### 5.3 Inbound webhook *triggers* (start a run)
 - **Owning crates:** `runinator-ws` (`handlers/webhook.rs`, trigger materialization), `runinator-models` (triggers).
@@ -63,7 +103,14 @@ The guiding constraint from `AGENTS.md`: keep dependency direction services→sh
 
 ---
 
-## P3 — AI surface and multi-environment lifecycle
+## P3 — AI, lifecycle, and dependency cleanup
+
+### 8.6 Split the `runinator-utilities` catch-all
+- **Owning crates:** `runinator-utilities` and its 27 direct consumers.
+- **Surveyed 2026-08-22:** one crate currently combines application paths, liveness, startup, logging/OpenTelemetry/resource telemetry, secret encryption and files, ZIP pack I/O, shell/FFI helpers, CSV/XLSX export, and GPU telemetry. Its dependencies are therefore a shared transitive build and conceptual surface for otherwise unrelated consumers.
+- **Approach:** split by capability rather than by caller: observability, secrets, filesystem/runtime support, and pack-wire I/O are sensible first boundaries; move data export to the provider/reporting boundary. Preserve stable facades temporarily if migration churn would otherwise be high.
+- **Boundary note:** separate crates provide real isolation in this workspace. Cargo feature flags alone will not, because workspace feature unification re-enables optional dependencies whenever another consumer selects them.
+- **Migration:** start with the leaf `pack` and observability modules, whose import sets are already distinct, then move secrets as an auditable unit. Leave generic helpers only after every remaining module has a coherent owner.
 
 ### 5.6 AI cost & token accounting
 - **Owning crates:** `runinator-provider-ai`, `runinator-models`/`runinator-comm` (result event), `runinator-database`.
