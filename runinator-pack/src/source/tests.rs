@@ -56,7 +56,7 @@ fn rejects_headerless_pack_sources() {
     ));
     fs::write(
         &path,
-        "workflow \"Legacy\" v1 {\n  node go <- console.run(command: \"hi\")\n}\n",
+        "workflow \"Legacy\" v1 {\n\n    do {\n      let go = console.run(command: \"hi\")\n    }\n}\n",
     )
     .expect("write legacy pack");
 
@@ -184,7 +184,7 @@ fn directory_pack_loads_rexraps_settings() {
     fs::create_dir_all(&dir).expect("temp pack dir");
     fs::write(
         dir.join("flow.rrx"),
-        "language rexrap-1\n\nworkflow \"Temp\" v1 {\n  node go <- console.run(command: \"hi\")\n}\n\nsettings {\nsecret app.token = \"abc\"\nconfig app.url = \"https://example.test\"\n}\n",
+        "language rexrap-1\n\nworkflow \"Temp\" v1 {\n\n    do {\n      let go = console.run(command: \"hi\")\n    }\n}\n\nsettings {\nsecret app.token = \"abc\"\nconfig app.url = \"https://example.test\"\n}\n",
     )
     .expect("write rexrap");
 
@@ -217,7 +217,10 @@ fn directory_pack_types_pack_local_subflows() {
 
 workflow "Child" v1 returns { url: string } {
   params { id: string }
-  console.run(command: params.id)
+
+  do {
+    console.run(command: params.id)
+  }
 }
 "#,
     )
@@ -227,8 +230,11 @@ workflow "Child" v1 returns { url: string } {
         r#"language rexrap-1
 
 workflow "Parent" v1 {
-  node child <- subflow("Child", params: { id: "RUNI-1" })
-  console.run(command: child.state.url)
+
+    do {
+      let child = subflow("Child", params: { id: "RUNI-1" })
+      console.run(command: child.state.url)
+    }
 }
 "#,
     )
@@ -254,7 +260,10 @@ fn rexrap_context_signatures_include_sibling_workflows() {
         dir.join("child.rrx"),
         r#"workflow "Child" v1 {
   params { id: string }
-  console.run(command: params.id)
+
+    do {
+      console.run(command: params.id)
+    }
 }
 "#,
     )
@@ -262,7 +271,10 @@ fn rexrap_context_signatures_include_sibling_workflows() {
 
     let parent_path = dir.join("parent.rrx");
     let parent = r#"workflow "Parent" v1 {
-  node child <- subflow("Child", params: { id: "RUNI-1" })
+
+    do {
+      let child = subflow("Child", params: { id: "RUNI-1" })
+    }
 }
 "#;
     let signatures =

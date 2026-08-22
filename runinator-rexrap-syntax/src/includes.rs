@@ -77,7 +77,10 @@ fn collect_stmt(
 ) -> Result<(), RexRapError> {
     match &stmt.kind {
         StmtKind::Action(action) => collect_entries(&action.args, source_dir, paths)?,
-        StmtKind::Do(compute) => collect_do_lines(&compute.body, source_dir, paths)?,
+        StmtKind::TaskCall(call) => collect_entries(&call.args, source_dir, paths)?,
+        StmtKind::Return(Some(value)) => collect_expr(value, source_dir, paths)?,
+        StmtKind::Return(None) | StmtKind::Detach(_) => {}
+        StmtKind::Compute(compute) => collect_do_lines(&compute.body, source_dir, paths)?,
         StmtKind::Subflow(subflow) => {
             if let Some(run_name) = &subflow.run_name {
                 collect_expr(run_name, source_dir, paths)?;
@@ -237,16 +240,16 @@ fn collect_stmt(
 }
 
 fn collect_do_lines(
-    lines: &[DoLine],
+    lines: &[ComputeLine],
     source_dir: &Path,
     paths: &mut Vec<PathBuf>,
 ) -> Result<(), RexRapError> {
     for line in lines {
         match line {
-            DoLine::Let { value, .. } | DoLine::Return(value) | DoLine::Expr(value) => {
-                collect_expr(value, source_dir, paths)?
-            }
-            DoLine::If {
+            ComputeLine::Let { value, .. }
+            | ComputeLine::Return(value)
+            | ComputeLine::Expr(value) => collect_expr(value, source_dir, paths)?,
+            ComputeLine::If {
                 cond,
                 then_branch,
                 else_branch,
@@ -255,7 +258,7 @@ fn collect_do_lines(
                 collect_do_lines(then_branch, source_dir, paths)?;
                 collect_do_lines(else_branch, source_dir, paths)?;
             }
-            DoLine::Goto(_) => {}
+            ComputeLine::Goto(_) => {}
         }
     }
     Ok(())

@@ -16,7 +16,7 @@ use runinator_models::invocation::InvocationModule;
 use super::Lowerer;
 
 impl Lowerer {
-    pub(super) fn lower_do_fragment(&self, body: &[DoLine]) -> Result<Value, RexRapError> {
+    pub(super) fn lower_do_fragment(&self, body: &[ComputeLine]) -> Result<Value, RexRapError> {
         // collect every local name so fragment lowering matches normal compute-node lowering.
         let previous_locals = self.compute_locals.replace(HashSet::new());
         collect_locals(body, &mut self.compute_locals.borrow_mut());
@@ -25,9 +25,9 @@ impl Lowerer {
         program
     }
 
-    pub(super) fn lower_do(
+    pub(super) fn lower_compute(
         &mut self,
-        compute: &DoStmt,
+        compute: &ComputeStmt,
         stmt: &Stmt,
         id: &str,
         next: &str,
@@ -57,7 +57,7 @@ impl Lowerer {
     fn push_invocation_node(
         &mut self,
         program: &[Value],
-        compute: &DoStmt,
+        compute: &ComputeStmt,
         stmt: &Stmt,
         id: &str,
         next: &str,
@@ -128,7 +128,7 @@ impl Lowerer {
     fn lower_foreign_do(
         &mut self,
         foreign: &ForeignDo,
-        compute: &DoStmt,
+        compute: &ComputeStmt,
         stmt: &Stmt,
         id: &str,
         next: &str,
@@ -162,34 +162,34 @@ impl Lowerer {
     /// lower a function block body into the same `$let`/`$return`/`$if` program array a `do`
     /// block produces. the caller has already registered the function parameters as compute locals;
     /// this adds the block's own `let`/lambda locals so bare references lower to `let` refs.
-    pub(super) fn lower_fn_block(&self, body: &[DoLine]) -> Result<Vec<Value>, RexRapError> {
+    pub(super) fn lower_fn_block(&self, body: &[ComputeLine]) -> Result<Vec<Value>, RexRapError> {
         collect_locals(body, &mut self.compute_locals.borrow_mut());
         self.lower_program(body)
     }
 
-    fn lower_program(&self, body: &[DoLine]) -> Result<Vec<Value>, RexRapError> {
+    fn lower_program(&self, body: &[ComputeLine]) -> Result<Vec<Value>, RexRapError> {
         body.iter().map(|line| self.lower_do_line(line)).collect()
     }
 
-    fn lower_do_line(&self, line: &DoLine) -> Result<Value, RexRapError> {
+    fn lower_do_line(&self, line: &ComputeLine) -> Result<Value, RexRapError> {
         match line {
-            DoLine::Let { name, value, .. } => {
+            ComputeLine::Let { name, value, .. } => {
                 let mut map = Map::new();
                 map.insert("$let".into(), Value::String(name.clone()));
                 map.insert("value".into(), self.lower_expr(value)?);
                 Ok(Value::Object(map))
             }
-            DoLine::Return(expr) => {
+            ComputeLine::Return(expr) => {
                 let mut map = Map::new();
                 map.insert("$return".into(), self.lower_expr(expr)?);
                 Ok(Value::Object(map))
             }
-            DoLine::Goto(target) => {
+            ComputeLine::Goto(target) => {
                 let mut map = Map::new();
                 map.insert("$goto".into(), Value::String(self.target_id(target)));
                 Ok(Value::Object(map))
             }
-            DoLine::If {
+            ComputeLine::If {
                 cond,
                 then_branch,
                 else_branch,
@@ -206,7 +206,7 @@ impl Lowerer {
                 );
                 Ok(Value::Object(map))
             }
-            DoLine::Expr(expr) => self.lower_expr(expr),
+            ComputeLine::Expr(expr) => self.lower_expr(expr),
         }
     }
 }
@@ -265,15 +265,15 @@ fn assembled_function(
 
 /// collect every `let` name and lambda parameter declared anywhere in the block (including nested
 /// `if` branches), so bare references to them lower to `let` refs.
-fn collect_locals(body: &[DoLine], out: &mut HashSet<String>) {
+fn collect_locals(body: &[ComputeLine], out: &mut HashSet<String>) {
     for line in body {
         match line {
-            DoLine::Let { name, value, .. } => {
+            ComputeLine::Let { name, value, .. } => {
                 out.insert(name.clone());
                 collect_locals_expr(value, out);
             }
-            DoLine::Return(expr) | DoLine::Expr(expr) => collect_locals_expr(expr, out),
-            DoLine::If {
+            ComputeLine::Return(expr) | ComputeLine::Expr(expr) => collect_locals_expr(expr, out),
+            ComputeLine::If {
                 cond,
                 then_branch,
                 else_branch,
@@ -282,7 +282,7 @@ fn collect_locals(body: &[DoLine], out: &mut HashSet<String>) {
                 collect_locals(then_branch, out);
                 collect_locals(else_branch, out);
             }
-            DoLine::Goto(_) => {}
+            ComputeLine::Goto(_) => {}
         }
     }
 }

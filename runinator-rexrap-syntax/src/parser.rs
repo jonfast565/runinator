@@ -97,6 +97,7 @@ pub fn parse_document(src: &str) -> Result<Document, RexRapError> {
                     correlation: None,
                     type_decls: Vec::new(),
                     body: Vec::new(),
+                    joins: Vec::new(),
                     span,
                     leading_comments: Vec::new(),
                     dangling_comments: Vec::new(),
@@ -158,14 +159,33 @@ pub fn parse_document(src: &str) -> Result<Document, RexRapError> {
                 let workflow = require_active(&mut active, &inner)?;
                 workflow.start = Some(parse_target(first_inner(inner)?)?);
             }
-            Rule::stmt => {
+            Rule::run_block => {
                 let workflow = require_active(&mut active, &inner)?;
-                workflow.body.push(parse_stmt(inner)?);
+                if !workflow.body.is_empty() {
+                    return Err(RexRapError::syntax(
+                        span_of(&inner),
+                        "a workflow declares exactly one `do { ... }` runtime block",
+                    ));
+                }
+                let (stmts, block_joins) = parse_run_block(inner)?;
+                workflow.body = stmts;
+                workflow.joins.extend(block_joins);
+            }
+            Rule::join_decl => {
+                let workflow = require_active(&mut active, &inner)?;
+                workflow.joins.push(parse_join_decl(inner)?);
+            }
+            Rule::stmt => {
+                return Err(RexRapError::syntax(
+                    span_of(&inner),
+                    "runtime statements live in a `do { ... }` block",
+                ));
             }
             _ => {}
         }
     }
     if let Some(workflow) = active.take() {
+        reject_duplicate_joins(&workflow.joins)?;
         workflows.push(workflow);
     }
     if workflows.is_empty() {
@@ -203,13 +223,13 @@ pub fn parse_condition_fragment(src: &str) -> Result<Cond, RexRapError> {
 }
 
 /// parse a standalone REXRAP compute block fragment, including the surrounding braces.
-pub fn parse_do_fragment(src: &str) -> Result<Vec<DoLine>, RexRapError> {
-    let pair = parse_fragment_rule(src, Rule::do_document)?;
+pub fn parse_do_fragment(src: &str) -> Result<Vec<ComputeLine>, RexRapError> {
+    let pair = parse_fragment_rule(src, Rule::compute_document)?;
     let block = pair
         .into_inner()
-        .find(|inner| inner.as_rule() == Rule::do_block)
+        .find(|inner| inner.as_rule() == Rule::compute_block)
         .ok_or_else(|| RexRapError::Parse("missing compute block".into()))?;
-    parse_do_block(block)
+    parse_compute_block(block)
 }
 
 fn parse_fragment_rule(src: &str, rule: Rule) -> Result<Pair<'_, Rule>, RexRapError> {
@@ -226,6 +246,7 @@ fn parse_func_def(pair: Pair<Rule>) -> Result<FunctionDef, RexRapError> {
     let mut ret = None;
     let mut body = None;
     let mut recursive = None;
+    let mut is_task = false;
     for inner in pair.into_inner() {
         match inner.as_rule() {
             Rule::fn_recursive => {
@@ -249,13 +270,48 @@ fn parse_func_def(pair: Pair<Rule>) -> Result<FunctionDef, RexRapError> {
                 }
             }
             Rule::type_expr => ret = Some(parse_type_expr(inner)?),
+            Rule::task_kw => is_task = true,
             Rule::fn_body => body = Some(parse_fn_body(inner)?),
+            Rule::run_block => {
+                let (stmts, joins) = parse_run_block(inner)?;
+                if !joins.is_empty() {
+                    return Err(RexRapError::syntax(
+                        span,
+                        "a `task fn` body cannot declare `join` continuations",
+                    ));
+                }
+                body = Some(FnBody::Run(stmts));
+            }
             _ => {}
         }
     }
     let body = body.ok_or_else(|| RexRapError::syntax(span, "function is missing a body"))?;
+    // a `task fn` is the only form whose body is runtime work, so the marker and the body agree.
+    match (is_task, &body) {
+        (true, FnBody::Run(stmts)) if stmts.is_empty() => {
+            return Err(RexRapError::syntax(
+                span,
+                format!("`task fn {name}` has an empty `do` block"),
+            ));
+        }
+        (true, FnBody::Run(_)) => {}
+        (true, _) => {
+            return Err(RexRapError::syntax(
+                span,
+                format!("`task fn {name}` needs a `do {{ ... }}` body"),
+            ));
+        }
+        (false, FnBody::Run(_)) => {
+            return Err(RexRapError::syntax(
+                span,
+                format!("`fn {name}` has a `do {{ ... }}` body; declare it `task fn {name}`"),
+            ));
+        }
+        _ => {}
+    }
     Ok(FunctionDef {
         name,
+        is_task,
         params,
         ret,
         body,
@@ -273,7 +329,7 @@ fn parse_fn_body(pair: Pair<Rule>) -> Result<FnBody, RexRapError> {
         Rule::fn_block => {
             let mut lines = Vec::new();
             for line in inner.into_inner() {
-                if line.as_rule() == Rule::do_line {
+                if line.as_rule() == Rule::compute_line {
                     lines.push(parse_do_line(line)?);
                 }
             }
@@ -584,6 +640,8 @@ fn parse_workflow(pair: Pair<Rule>, namespace: Option<String>) -> Result<Workflo
     let mut correlation = None;
     let mut type_decls = Vec::new();
     let mut body = Vec::new();
+    let mut joins: Vec<JoinDecl> = Vec::new();
+    let mut saw_run_block = false;
     for inner in pair.into_inner() {
         match inner.as_rule() {
             Rule::string => name = plain_string(inner)?,
@@ -622,10 +680,29 @@ fn parse_workflow(pair: Pair<Rule>, namespace: Option<String>) -> Result<Workflo
             Rule::alias_decl => aliases.push(parse_alias_decl(inner)?),
             Rule::type_decl => type_decls.push(parse_type_decl(inner)?),
             Rule::start_decl => start = Some(parse_target(first_inner(inner)?)?),
-            Rule::stmt => body.push(parse_stmt(inner)?),
+            Rule::run_block => {
+                if saw_run_block {
+                    return Err(RexRapError::syntax(
+                        span_of(&inner),
+                        "a workflow declares exactly one `do { ... }` runtime block",
+                    ));
+                }
+                saw_run_block = true;
+                let (stmts, block_joins) = parse_run_block(inner)?;
+                body = stmts;
+                joins.extend(block_joins);
+            }
+            Rule::join_decl => joins.push(parse_join_decl(inner)?),
             _ => {}
         }
     }
+    if !saw_run_block {
+        return Err(RexRapError::syntax(
+            span,
+            "a workflow needs a `do { ... }` runtime block holding its statements",
+        ));
+    }
+    reject_duplicate_joins(&joins)?;
     Ok(Workflow {
         name,
         version,
@@ -643,10 +720,67 @@ fn parse_workflow(pair: Pair<Rule>, namespace: Option<String>) -> Result<Workflo
         correlation,
         type_decls,
         body,
+        joins,
         span,
         leading_comments: Vec::new(),
         dangling_comments: Vec::new(),
     })
+}
+
+/// parse a `do { ... }` runtime block into its statements plus any `join` continuations declared
+/// inside it. joins are hoisted to the workflow either way, so both placements read the same.
+fn parse_run_block(pair: Pair<Rule>) -> Result<(Block, Vec<JoinDecl>), RexRapError> {
+    let mut stmts = Vec::new();
+    let mut joins = Vec::new();
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::stmt => stmts.push(parse_stmt(inner)?),
+            Rule::join_decl => joins.push(parse_join_decl(inner)?),
+            _ => {}
+        }
+    }
+    Ok((stmts, joins))
+}
+
+fn parse_join_decl(pair: Pair<Rule>) -> Result<JoinDecl, RexRapError> {
+    let span = span_of(&pair);
+    let mut name = String::new();
+    let mut body = Vec::new();
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::ident => name = inner.as_str().to_string(),
+            Rule::stmt => body.push(parse_stmt(inner)?),
+            _ => {}
+        }
+    }
+    if name.is_empty() {
+        return Err(RexRapError::syntax(span, "`join` is missing a name"));
+    }
+    if body.is_empty() {
+        return Err(RexRapError::syntax(
+            span,
+            format!("`join {name}` has an empty body"),
+        ));
+    }
+    Ok(JoinDecl {
+        name,
+        body,
+        span,
+        comments: CommentSet::default(),
+    })
+}
+
+fn reject_duplicate_joins(joins: &[JoinDecl]) -> Result<(), RexRapError> {
+    let mut seen = std::collections::HashSet::new();
+    for join in joins {
+        if !seen.insert(join.name.as_str()) {
+            return Err(RexRapError::syntax(
+                join.span,
+                format!("duplicate `join {}`", join.name),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn parse_workflow_decl(
@@ -1274,6 +1408,15 @@ fn parse_type_decl(pair: Pair<Rule>) -> Result<TypeDecl, RexRapError> {
 
 // statements ----------------------------------------------------------------
 
+/// which statement kinds may carry the call-site `async` marker: the ones that start durable work
+/// whose completion the run can join later. everything else already settles inline.
+fn is_async_schedulable(kind: &StmtKind) -> bool {
+    matches!(
+        kind,
+        StmtKind::Action(_) | StmtKind::Subflow(_) | StmtKind::Compute(_) | StmtKind::TaskCall(_)
+    )
+}
+
 fn parse_stmt(pair: Pair<Rule>) -> Result<Stmt, RexRapError> {
     let span = span_of(&pair);
     let mut annotations = Annotations::default();
@@ -1282,9 +1425,14 @@ fn parse_stmt(pair: Pair<Rule>) -> Result<Stmt, RexRapError> {
     let mut kind = None;
     let mut transitions = TransitionClause::default();
     let mut compensation = None;
+    let mut is_async = false;
+    // `@`-attributes are read at the statement level and injected into the step below, so every
+    // statement kind that carries modifiers gets them from the same one surface.
+    let mut step_modifiers = Modifiers::default();
     for inner in pair.into_inner() {
         match inner.as_rule() {
-            Rule::annotation => apply_annotation(&mut annotations, inner)?,
+            Rule::annotation => apply_annotation(&mut annotations, &mut step_modifiers, inner)?,
+            Rule::async_kw => is_async = true,
             Rule::node_decl => {
                 for part in inner.into_inner() {
                     match part.as_rule() {
@@ -1296,17 +1444,42 @@ fn parse_stmt(pair: Pair<Rule>) -> Result<Stmt, RexRapError> {
             }
             Rule::stmt_body => kind = Some(parse_stmt_body(inner)?),
             Rule::compensate_clause => {
-                compensation = Some(Box::new(parse_action(first_inner(inner)?)?));
+                // a compensation is a call of its own, so it carries its own `@`-attributes.
+                let mut ignored = Annotations::default();
+                let mut modifiers = Modifiers::default();
+                let mut action = None;
+                for part in inner.into_inner() {
+                    match part.as_rule() {
+                        Rule::annotation => apply_annotation(&mut ignored, &mut modifiers, part)?,
+                        Rule::action_stmt => action = Some(parse_action(part)?),
+                        _ => {}
+                    }
+                }
+                let mut action =
+                    action.ok_or_else(|| RexRapError::syntax(span, "`compensate` needs a call"))?;
+                action.modifiers = modifiers;
+                compensation = Some(Box::new(action));
             }
             Rule::transitions => transitions = parse_transitions(inner)?,
             _ => {}
         }
     }
-    let kind = kind.ok_or_else(|| RexRapError::syntax(span, "statement has no body"))?;
+    let mut kind = kind.ok_or_else(|| RexRapError::syntax(span, "statement has no body"))?;
+    attach_step_modifiers(&mut kind, step_modifiers, span)?;
     if matches!(kind, StmtKind::Yield(_)) && label.is_some() {
+        return Err(RexRapError::syntax(span, "`yield` cannot be bound"));
+    }
+    // `async` schedules a step as a task, so the handle needs a name to `await` or `detach` later.
+    if is_async && label.is_none() {
         return Err(RexRapError::syntax(
             span,
-            "`yield` cannot be bound with `node`",
+            "an `async` step must be bound: `let <name> = async ...`",
+        ));
+    }
+    if is_async && !is_async_schedulable(&kind) {
+        return Err(RexRapError::syntax(
+            span,
+            "only a provider action, a subflow, or a `task fn` call can be `async`",
         ));
     }
     if matches!(kind, StmtKind::Yield(_)) && !transitions.is_empty() {
@@ -1321,27 +1494,65 @@ fn parse_stmt(pair: Pair<Rule>) -> Result<Stmt, RexRapError> {
         label,
         label_type,
         kind,
+        is_async,
         transitions,
         compensation,
         comments: CommentSet::default(),
     })
 }
 
-fn apply_annotation(annotations: &mut Annotations, pair: Pair<Rule>) -> Result<(), RexRapError> {
-    let inner = first_inner(pair)?;
-    match inner.as_rule() {
-        Rule::ann_id => {
-            let string = first_inner(inner)?;
-            annotations.id = Some(plain_string(string)?);
+/// read one `@name(args)` attribute and route it to whichever record owns it.
+///
+/// `@id`/`@skip`/`@lock`/`@deadline` describe the graph node; everything else describes how the
+/// step executes and lands on the statement's `Modifiers`. one surface, two destinations — the
+/// author never has to remember which of two syntaxes an attribute used to belong to.
+fn apply_annotation(
+    annotations: &mut Annotations,
+    modifiers: &mut Modifiers,
+    pair: Pair<Rule>,
+) -> Result<(), RexRapError> {
+    let span = span_of(&pair);
+    let mut name = String::new();
+    let mut positional: Vec<Expr> = Vec::new();
+    let mut named: Vec<(String, Expr)> = Vec::new();
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::ann_name => name = inner.as_str().to_string(),
+            Rule::mod_arg_list => {
+                for marg in inner.into_inner().filter(|p| p.as_rule() == Rule::mod_arg) {
+                    let mut key = None;
+                    let mut value = None;
+                    for part in marg.into_inner() {
+                        match part.as_rule() {
+                            Rule::ident => key = Some(part.as_str().to_string()),
+                            Rule::expr => value = Some(parse_expr(part)?),
+                            _ => {}
+                        }
+                    }
+                    let value = value.ok_or_else(|| RexRapError::lower("attribute arg value"))?;
+                    match key {
+                        Some(key) => named.push((key, value)),
+                        None => positional.push(value),
+                    }
+                }
+            }
+            _ => {}
         }
-        Rule::ann_skip => annotations.skip = true,
-        Rule::ann_lock => annotations.locked = true,
-        Rule::ann_timeout => {
-            let duration = first_inner(inner)?;
-            annotations.timeout_seconds =
-                Some(parse_duration(duration.as_str(), span_of(&duration))?);
+    }
+    match name.as_str() {
+        "id" => {
+            let value = positional
+                .first()
+                .ok_or_else(|| RexRapError::syntax(span, "`@id` needs a name"))?;
+            annotations.id = Some(expect_string(value, "@id")?);
         }
-        _ => {}
+        "skip" => annotations.skip = true,
+        "lock" => annotations.locked = true,
+        // the graph node's own deadline, as distinct from the step's execution timeout below.
+        "deadline" => {
+            annotations.timeout_seconds = Some(expect_int(positional.first(), "@deadline")?);
+        }
+        _ => apply_step_attribute(modifiers, &name, span, positional, named)?,
     }
     Ok(())
 }
@@ -1350,7 +1561,24 @@ fn parse_stmt_body(pair: Pair<Rule>) -> Result<StmtKind, RexRapError> {
     let inner = first_inner(pair)?;
     match inner.as_rule() {
         Rule::action_stmt => Ok(StmtKind::Action(parse_action(inner)?)),
-        Rule::do_stmt => Ok(StmtKind::Do(parse_do(inner)?)),
+        Rule::task_call_stmt => Ok(StmtKind::TaskCall(parse_task_call(inner)?)),
+        Rule::compute_stmt => Ok(StmtKind::Compute(parse_compute(inner)?)),
+        Rule::return_stmt => {
+            let value = inner
+                .into_inner()
+                .find(|p| p.as_rule() == Rule::expr)
+                .map(parse_expr)
+                .transpose()?;
+            Ok(StmtKind::Return(value))
+        }
+        Rule::detach_stmt => {
+            let span = span_of(&inner);
+            let handle = inner
+                .into_inner()
+                .find(|p| p.as_rule() == Rule::ident)
+                .ok_or_else(|| RexRapError::syntax(span, "`detach` needs a task handle"))?;
+            Ok(StmtKind::Detach(handle.as_str().to_string()))
+        }
         Rule::subflow_stmt => Ok(StmtKind::Subflow(parse_subflow(inner)?)),
         Rule::wait_cond_stmt => Ok(StmtKind::While(parse_wait_until(inner)?)),
         Rule::wait_stmt => Ok(StmtKind::Wait(parse_wait(inner)?)),
@@ -1394,16 +1622,38 @@ fn parse_stmt_body(pair: Pair<Rule>) -> Result<StmtKind, RexRapError> {
     }
 }
 
+/// parse a `task fn` call: one undotted name plus the usual argument list and modifiers.
+fn parse_task_call(pair: Pair<Rule>) -> Result<TaskCallStmt, RexRapError> {
+    let span = span_of(&pair);
+    let mut name = String::new();
+    let mut args = Vec::new();
+    let modifiers = Modifiers::default();
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::ident => name = inner.as_str().to_string(),
+            Rule::arg_list => args = parse_arg_list(inner)?,
+            _ => {}
+        }
+    }
+    if name.is_empty() {
+        return Err(RexRapError::syntax(span, "call is missing a name"));
+    }
+    Ok(TaskCallStmt {
+        name,
+        args,
+        modifiers,
+    })
+}
+
 fn parse_action(pair: Pair<Rule>) -> Result<ActionStmt, RexRapError> {
     let span = span_of(&pair);
     let mut idents = Vec::new();
     let mut args = Vec::new();
-    let mut modifiers = Modifiers::default();
+    let modifiers = Modifiers::default();
     for inner in pair.into_inner() {
         match inner.as_rule() {
             Rule::action_ident => idents.push(inner.as_str().to_string()),
             Rule::arg_list => args = parse_arg_list(inner)?,
-            Rule::modifier => apply_modifier(&mut modifiers, inner)?,
             _ => {}
         }
     }
@@ -1426,19 +1676,18 @@ fn parse_action(pair: Pair<Rule>) -> Result<ActionStmt, RexRapError> {
     })
 }
 
-fn parse_do(pair: Pair<Rule>) -> Result<DoStmt, RexRapError> {
+fn parse_compute(pair: Pair<Rule>) -> Result<ComputeStmt, RexRapError> {
     let mut body = Vec::new();
     let mut foreign = None;
-    let mut modifiers = Modifiers::default();
+    let modifiers = Modifiers::default();
     for inner in pair.into_inner() {
         match inner.as_rule() {
-            Rule::do_block => body = parse_do_block(inner)?,
-            Rule::foreign_do => foreign = Some(parse_foreign_do(inner)?),
-            Rule::modifier => apply_modifier(&mut modifiers, inner)?,
+            Rule::compute_block => body = parse_compute_block(inner)?,
+            Rule::foreign_compute => foreign = Some(parse_foreign_do(inner)?),
             _ => {}
         }
     }
-    Ok(DoStmt {
+    Ok(ComputeStmt {
         body,
         foreign,
         modifiers,
@@ -1461,20 +1710,20 @@ fn parse_foreign_do(pair: Pair<Rule>) -> Result<ForeignDo, RexRapError> {
     })
 }
 
-fn parse_do_block(pair: Pair<Rule>) -> Result<Vec<DoLine>, RexRapError> {
+fn parse_compute_block(pair: Pair<Rule>) -> Result<Vec<ComputeLine>, RexRapError> {
     let mut lines = Vec::new();
     for inner in pair.into_inner() {
-        if inner.as_rule() == Rule::do_line {
+        if inner.as_rule() == Rule::compute_line {
             lines.push(parse_do_line(inner)?);
         }
     }
     Ok(lines)
 }
 
-fn parse_do_line(pair: Pair<Rule>) -> Result<DoLine, RexRapError> {
+fn parse_do_line(pair: Pair<Rule>) -> Result<ComputeLine, RexRapError> {
     let inner = first_inner(pair)?;
     match inner.as_rule() {
-        Rule::do_let => {
+        Rule::compute_let => {
             let mut name = String::new();
             let mut ty = None;
             let mut value = None;
@@ -1487,17 +1736,17 @@ fn parse_do_line(pair: Pair<Rule>) -> Result<DoLine, RexRapError> {
                 }
             }
             let value = value.ok_or_else(|| RexRapError::lower("compute let missing value"))?;
-            Ok(DoLine::Let { name, ty, value })
+            Ok(ComputeLine::Let { name, ty, value })
         }
-        Rule::do_return => Ok(DoLine::Return(parse_expr(first_inner(inner)?)?)),
-        Rule::do_goto => Ok(DoLine::Goto(parse_target(first_inner(inner)?)?)),
-        Rule::do_if => {
+        Rule::compute_return => Ok(ComputeLine::Return(parse_expr(first_inner(inner)?)?)),
+        Rule::compute_goto => Ok(ComputeLine::Goto(parse_target(first_inner(inner)?)?)),
+        Rule::compute_if => {
             let mut cond = None;
             let mut blocks = Vec::new();
             for part in inner.into_inner() {
                 match part.as_rule() {
                     Rule::cond => cond = Some(parse_cond(part)?),
-                    Rule::do_block => blocks.push(parse_do_block(part)?),
+                    Rule::compute_block => blocks.push(parse_compute_block(part)?),
                     _ => {}
                 }
             }
@@ -1505,13 +1754,13 @@ fn parse_do_line(pair: Pair<Rule>) -> Result<DoLine, RexRapError> {
             let mut blocks = blocks.into_iter();
             let then_branch = blocks.next().unwrap_or_default();
             let else_branch = blocks.next().unwrap_or_default();
-            Ok(DoLine::If {
+            Ok(ComputeLine::If {
                 cond,
                 then_branch,
                 else_branch,
             })
         }
-        Rule::do_expr_stmt => Ok(DoLine::Expr(parse_expr(first_inner(inner)?)?)),
+        Rule::compute_expr_stmt => Ok(ComputeLine::Expr(parse_expr(first_inner(inner)?)?)),
         other => Err(RexRapError::lower(format!(
             "unexpected compute line {other:?}"
         ))),
@@ -1645,38 +1894,16 @@ fn parse_spread_entry(pair: Pair<Rule>) -> Result<(String, Expr), RexRapError> {
     Ok((String::new(), Expr::new(ExprKind::Spread(name), span)))
 }
 
-fn apply_modifier(modifiers: &mut Modifiers, pair: Pair<Rule>) -> Result<(), RexRapError> {
-    let span = span_of(&pair);
-    let mut inner = pair.into_inner();
-    let name = inner
-        .next()
-        .ok_or_else(|| RexRapError::lower("modifier name"))?
-        .as_str()
-        .to_string();
-    let mut positional = Vec::new();
-    let mut named: Vec<(String, Expr)> = Vec::new();
-    for arg in inner {
-        if arg.as_rule() != Rule::mod_arg_list {
-            continue;
-        }
-        for marg in arg.into_inner().filter(|p| p.as_rule() == Rule::mod_arg) {
-            let mut name = None;
-            let mut value = None;
-            for part in marg.into_inner() {
-                match part.as_rule() {
-                    Rule::ident => name = Some(part.as_str().to_string()),
-                    Rule::expr => value = Some(parse_expr(part)?),
-                    _ => {}
-                }
-            }
-            let value = value.ok_or_else(|| RexRapError::lower("modifier arg value"))?;
-            match name {
-                Some(name) => named.push((name, value)),
-                None => positional.push(value),
-            }
-        }
-    }
-    match name.as_str() {
+/// apply one execution attribute (`@timeout`, `@retry`, `@tags`, `@mcp`, `@runner`,
+/// `@idempotent`, `@reentry`) to a statement's modifiers.
+fn apply_step_attribute(
+    modifiers: &mut Modifiers,
+    name: &str,
+    span: Span,
+    positional: Vec<Expr>,
+    named: Vec<(String, Expr)>,
+) -> Result<(), RexRapError> {
+    match name {
         "timeout" => {
             modifiers.timeout_seconds = Some(expect_int(positional.first(), "timeout")?);
         }
@@ -1746,7 +1973,31 @@ fn apply_modifier(modifiers: &mut Modifiers, pair: Pair<Rule>) -> Result<(), Rex
         other => {
             return Err(RexRapError::syntax(
                 span,
-                format!("unknown modifier '{other}'"),
+                format!("unknown attribute '@{other}'"),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// hand the statement-level `@`-attributes to whichever step kind carries modifiers.
+fn attach_step_modifiers(
+    kind: &mut StmtKind,
+    modifiers: Modifiers,
+    span: Span,
+) -> Result<(), RexRapError> {
+    if modifiers == Modifiers::default() {
+        return Ok(());
+    }
+    match kind {
+        StmtKind::Action(action) => action.modifiers = modifiers,
+        StmtKind::Compute(compute) => compute.modifiers = modifiers,
+        StmtKind::TaskCall(call) => call.modifiers = modifiers,
+        _ => {
+            return Err(RexRapError::syntax(
+                span,
+                "execution attributes (`@timeout`, `@retry`, ...) apply to a call or a `compute` \
+                 block; use `@deadline` for a step's own deadline",
             ));
         }
     }
@@ -2462,6 +2713,7 @@ fn parse_wait_until(pair: Pair<Rule>) -> Result<WhileStmt, RexRapError> {
         }
     }
     let wait = Stmt {
+        is_async: false,
         span: Span::default(),
         annotations: Annotations::default(),
         label: None,
@@ -2786,65 +3038,83 @@ fn parse_block(pair: Pair<Rule>) -> Result<Block, RexRapError> {
 
 // transitions ---------------------------------------------------------------
 
+/// parse an attached `routes { ... }` section into the transition clause.
 fn parse_transitions(pair: Pair<Rule>) -> Result<TransitionClause, RexRapError> {
     let mut clause = TransitionClause::default();
     for inner in pair.into_inner() {
-        match inner.as_rule() {
-            Rule::single_arrow => {
-                let target = parse_target(first_inner(inner)?)?;
-                clause.next = Some(target);
+        if inner.as_rule() != Rule::routes_block {
+            continue;
+        }
+        for arm in inner.into_inner() {
+            let arm = match arm.as_rule() {
+                Rule::route_arm => first_inner(arm)?,
+                _ => continue,
+            };
+            match arm.as_rule() {
+                Rule::outcome_route => apply_outcome_route(&mut clause, arm)?,
+                Rule::predicate_route => apply_predicate_route(&mut clause, arm)?,
+                _ => {}
             }
-            // an `edges { … }` block is just a delimited group of outcome and predicate arrows.
-            Rule::edges_block => {
-                for arrow in inner.into_inner() {
-                    match arrow.as_rule() {
-                        Rule::outcome_arrow => apply_outcome_arrow(&mut clause, arrow)?,
-                        Rule::predicate_arrow => apply_predicate_arrow(&mut clause, arrow)?,
-                        _ => {}
-                    }
-                }
-            }
-            Rule::outcome_arrow => apply_outcome_arrow(&mut clause, inner)?,
-            Rule::predicate_arrow => apply_predicate_arrow(&mut clause, inner)?,
-            _ => {}
         }
     }
     Ok(clause)
 }
 
-fn apply_outcome_arrow(clause: &mut TransitionClause, pair: Pair<Rule>) -> Result<(), RexRapError> {
-    let arrow_span = span_of(&pair);
+/// a route body is exactly `{ continue <target> }`; pull the target back out of it.
+fn route_body_target(pair: Pair<Rule>) -> Result<Target, RexRapError> {
+    let span = span_of(&pair);
+    for inner in pair.into_inner() {
+        if inner.as_rule() == Rule::continue_stmt {
+            return parse_target(first_inner(inner)?);
+        }
+    }
+    Err(RexRapError::syntax(
+        span,
+        "a route body needs a `continue <target>`",
+    ))
+}
+
+fn apply_outcome_route(clause: &mut TransitionClause, pair: Pair<Rule>) -> Result<(), RexRapError> {
+    let route_span = span_of(&pair);
     let mut outcome = String::new();
     let mut target = None;
     for part in pair.into_inner() {
         match part.as_rule() {
             Rule::outcome => outcome = part.as_str().to_string(),
-            Rule::target => target = Some(parse_target(part)?),
+            Rule::route_body => target = Some(route_body_target(part)?),
             _ => {}
         }
     }
-    let target = target.ok_or_else(|| RexRapError::lower("arrow missing target"))?;
-    match outcome.as_str() {
-        "next" => clause.next = Some(target),
-        "ok" => clause.on_success = Some(target),
-        "fail" => clause.on_failure = Some(target),
-        "timeout" => clause.on_timeout = Some(target),
-        "reject" => clause.on_reject = Some(target),
+    let target =
+        target.ok_or_else(|| RexRapError::syntax(route_span, "route missing `continue`"))?;
+    let slot = match outcome.as_str() {
+        "next" => &mut clause.next,
+        "success" => &mut clause.on_success,
+        "failure" => &mut clause.on_failure,
+        "timeout" => &mut clause.on_timeout,
+        "reject" => &mut clause.on_reject,
         other => {
             return Err(RexRapError::syntax(
-                arrow_span,
+                route_span,
                 format!("unknown outcome '{other}'"),
             ));
         }
+    };
+    if slot.is_some() {
+        return Err(RexRapError::syntax(
+            route_span,
+            format!("duplicate `on {outcome}` route"),
+        ));
     }
+    *slot = Some(target);
     Ok(())
 }
 
-fn apply_predicate_arrow(
+fn apply_predicate_route(
     clause: &mut TransitionClause,
     pair: Pair<Rule>,
 ) -> Result<(), RexRapError> {
-    let arrow_span = span_of(&pair);
+    let route_span = span_of(&pair);
     let mut when = None;
     let mut priority = None;
     let mut target = None;
@@ -2855,14 +3125,14 @@ fn apply_predicate_arrow(
                 let int = first_inner(part)?;
                 priority = Some(parse_i64(int.as_str(), span_of(&int))?);
             }
-            Rule::target => target = Some(parse_target(part)?),
+            Rule::route_body => target = Some(route_body_target(part)?),
             _ => {}
         }
     }
     let when =
-        when.ok_or_else(|| RexRapError::syntax(arrow_span, "predicate edge missing condition"))?;
+        when.ok_or_else(|| RexRapError::syntax(route_span, "predicate route missing condition"))?;
     let target =
-        target.ok_or_else(|| RexRapError::syntax(arrow_span, "predicate edge missing target"))?;
+        target.ok_or_else(|| RexRapError::syntax(route_span, "predicate route missing target"))?;
     clause.branches.push(PredicateEdge {
         when,
         target,
@@ -2873,7 +3143,7 @@ fn apply_predicate_arrow(
 
 fn parse_target(pair: Pair<Rule>) -> Result<Target, RexRapError> {
     match pair.as_str() {
-        "end" | "done" => Ok(Target::Done),
+        "end" => Ok(Target::End),
         "fail" => Ok(Target::Fail),
         other => Ok(Target::Label(other.to_string())),
     }
@@ -3583,7 +3853,7 @@ fn value_to_target(value: &Expr) -> Result<Target, RexRapError> {
         ExprKind::Path(segs) if segs.len() == 1 => {
             if let PathSeg::Key(name) = &segs[0] {
                 return Ok(match name.as_str() {
-                    "done" => Target::Done,
+                    "end" => Target::End,
                     "fail" => Target::Fail,
                     other => Target::Label(other.to_string()),
                 });

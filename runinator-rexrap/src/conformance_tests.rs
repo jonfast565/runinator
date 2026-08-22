@@ -44,24 +44,24 @@ fn fixtures() -> Vec<(WorkflowNodeKind, &'static str)> {
         // start and end are implicit in every workflow; the minimal body proves they are emitted.
         (
             WorkflowNodeKind::Start,
-            r#"workflow "Conf Start" v1 { node a <- console.run(command: "echo hi") }"#,
+            r#"workflow "Conf Start" v1 { do { let a = console.run(command: "echo hi") } }"#,
         ),
         (
             WorkflowNodeKind::End,
-            r#"workflow "Conf End" v1 { node a <- console.run(command: "echo hi") }"#,
+            r#"workflow "Conf End" v1 { do { let a = console.run(command: "echo hi") } }"#,
         ),
         (
             WorkflowNodeKind::Action,
-            r#"workflow "Conf Action" v1 { node a <- console.run(command: "echo hi") }"#,
+            r#"workflow "Conf Action" v1 { do { let a = console.run(command: "echo hi") } }"#,
         ),
         (
             WorkflowNodeKind::Wait,
-            r#"workflow "Conf Wait" v1 { wait 30s }"#,
+            r#"workflow "Conf Wait" v1 { do { wait 30s } }"#,
         ),
         // The same `do { }` an author already writes, compiled to bytecode.
         (
             WorkflowNodeKind::Invocation,
-            r#"workflow "Conf Invocation" v1 { do { return { total: prev.a } } }"#,
+            r#"workflow "Conf Invocation" v1 { do { compute { return { total: prev.a } } } }"#,
         ),
         // `resume` only ever appears inside an interrupt handler region, so its fixture has to
         // carry the region that gives it meaning.
@@ -74,7 +74,10 @@ fn fixtures() -> Vec<(WorkflowNodeKind, &'static str)> {
                     resume next
                 }
 
-                wait 30s
+                do {
+
+                    wait 30s
+                }
             }"#,
         ),
         // the other end of the same bracket: `interrupt` has no statement syntax of its own, it is
@@ -89,7 +92,10 @@ fn fixtures() -> Vec<(WorkflowNodeKind, &'static str)> {
                     resume next
                 }
 
-                wait 30s
+                do {
+
+                    wait 30s
+                }
             }"#,
         ),
         (
@@ -97,10 +103,13 @@ fn fixtures() -> Vec<(WorkflowNodeKind, &'static str)> {
             r#"
             workflow "Conf Condition" v1 {
                 params { flag: bool }
-                if params.flag {
-                    console.run(command: "echo yes")
-                } else {
-                    console.run(command: "echo no")
+
+                do {
+                    if params.flag {
+                        console.run(command: "echo yes")
+                    } else {
+                        console.run(command: "echo no")
+                    }
                 }
             }"#,
         ),
@@ -109,9 +118,12 @@ fn fixtures() -> Vec<(WorkflowNodeKind, &'static str)> {
             r#"
             workflow "Conf Switch" v1 {
                 params { env: string }
-                match params.env {
-                    "prod" -> { console.run(command: "echo prod") }
-                    else -> { console.run(command: "echo other") }
+
+                do {
+                    match params.env {
+                        "prod" -> { console.run(command: "echo prod") }
+                        else -> { console.run(command: "echo other") }
+                    }
                 }
             }"#,
         ),
@@ -120,9 +132,12 @@ fn fixtures() -> Vec<(WorkflowNodeKind, &'static str)> {
             r#"
             workflow "Conf Toggle" v1 {
                 params { flag: bool }
-                toggle params.flag {
-                    on -> { console.run(command: "echo on") }
-                    off -> { console.run(command: "echo off") }
+
+                do {
+                    toggle params.flag {
+                        on -> { console.run(command: "echo on") }
+                        off -> { console.run(command: "echo off") }
+                    }
                 }
             }"#,
         ),
@@ -131,31 +146,37 @@ fn fixtures() -> Vec<(WorkflowNodeKind, &'static str)> {
             r#"
             workflow "Conf Percentage" v1 {
                 params { user: string }
-                split on params.user {
-                    50% -> { console.run(command: "echo a") }
-                    else -> { console.run(command: "echo b") }
+
+                do {
+                    split on params.user {
+                        50% -> { console.run(command: "echo a") }
+                        else -> { console.run(command: "echo b") }
+                    }
                 }
             }"#,
         ),
         (
             WorkflowNodeKind::Approval,
-            r#"workflow "Conf Approval" v1 { approve "ship?" { env: "prod" } }"#,
+            r#"workflow "Conf Approval" v1 { do {approve "ship?" { env: "prod" } }}"#,
         ),
         (
             WorkflowNodeKind::Gate,
-            r#"workflow "Conf Gate" v1 { gate manual { label: "release" } }"#,
+            r#"workflow "Conf Gate" v1 { do {gate manual { label: "release" } }}"#,
         ),
         (
             WorkflowNodeKind::Signal,
-            r#"workflow "Conf Signal" v1 { signal "deploy-approved" { source: "ops" } }"#,
+            r#"workflow "Conf Signal" v1 { do {signal "deploy-approved" { source: "ops" } }}"#,
         ),
         (
             WorkflowNodeKind::Loop,
             r#"
             workflow "Conf Loop" v1 {
                 params { items: string[] }
-                for item in params.items limit none {
-                    console.run(command: "echo ${item}")
+
+                do {
+                    for item in params.items limit none {
+                        console.run(command: "echo ${item}")
+                    }
                 }
             }"#,
         ),
@@ -163,20 +184,26 @@ fn fixtures() -> Vec<(WorkflowNodeKind, &'static str)> {
             WorkflowNodeKind::Parallel,
             r#"
             workflow "Conf Parallel" v1 {
-                parallel {
-                    branch { console.run(command: "echo one") }
-                    branch { console.run(command: "echo two") }
-                } join all
+
+                do {
+                    parallel {
+                        branch { console.run(command: "echo one") }
+                        branch { console.run(command: "echo two") }
+                    } join all
+                }
             }"#,
         ),
         (
             WorkflowNodeKind::Join,
             r#"
             workflow "Conf Join" v1 {
-                parallel {
-                    branch { console.run(command: "echo one") }
-                    branch { console.run(command: "echo two") }
-                } join all
+
+                do {
+                    parallel {
+                        branch { console.run(command: "echo one") }
+                        branch { console.run(command: "echo two") }
+                    } join all
+                }
             }"#,
         ),
         (
@@ -184,8 +211,11 @@ fn fixtures() -> Vec<(WorkflowNodeKind, &'static str)> {
             r#"
             workflow "Conf Map" v1 {
                 params { items: string[] }
-                map shard in params.items concurrency none {
-                    console.run(command: "echo ${shard}")
+
+                do {
+                    map shard in params.items concurrency none {
+                        console.run(command: "echo ${shard}")
+                    }
                 }
             }"#,
         ),
@@ -193,9 +223,12 @@ fn fixtures() -> Vec<(WorkflowNodeKind, &'static str)> {
             WorkflowNodeKind::Race,
             r#"
             workflow "Conf Race" v1 {
-                race winner first_success {
-                    branch { console.run(command: "echo primary") }
-                    branch { console.run(command: "echo backup") }
+
+                do {
+                    race winner first_success {
+                        branch { console.run(command: "echo primary") }
+                        branch { console.run(command: "echo backup") }
+                    }
                 }
             }"#,
         ),
@@ -203,10 +236,13 @@ fn fixtures() -> Vec<(WorkflowNodeKind, &'static str)> {
             WorkflowNodeKind::Try,
             r#"
             workflow "Conf Try" v1 {
-                try {
-                    console.run(command: "echo risky")
-                } catch {
-                    console.run(command: "echo recover")
+
+                do {
+                    try {
+                        console.run(command: "echo risky")
+                    } catch {
+                        console.run(command: "echo recover")
+                    }
                 }
             }"#,
         ),
@@ -215,7 +251,10 @@ fn fixtures() -> Vec<(WorkflowNodeKind, &'static str)> {
             r#"
             workflow "Conf Subflow" v1 {
                 params { id: string }
-                subflow("Child", params: { id: params.id })
+
+                do {
+                    subflow("Child", params: { id: params.id })
+                }
             }"#,
         ),
         (
@@ -223,8 +262,11 @@ fn fixtures() -> Vec<(WorkflowNodeKind, &'static str)> {
             r#"
             workflow "Conf Assert" v1 {
                 params { amount: int }
-                assert {
-                    "amount_positive": params.amount > 0
+
+                do {
+                    assert {
+                        "amount_positive": params.amount > 0
+                    }
                 }
             }"#,
         ),
@@ -233,8 +275,11 @@ fn fixtures() -> Vec<(WorkflowNodeKind, &'static str)> {
             r#"
             workflow "Conf Transform" v1 {
                 params { amount: int }
-                transform {
-                    doubled = params.amount * 2
+
+                do {
+                    transform {
+                        doubled = params.amount * 2
+                    }
                 }
             }"#,
         ),
@@ -243,78 +288,90 @@ fn fixtures() -> Vec<(WorkflowNodeKind, &'static str)> {
             r#"
             workflow "Conf Audit" v1 {
                 params { user: string }
-                audit action "reviewed" actor params.user
+
+                do {
+                    audit action "reviewed" actor params.user
+                }
             }"#,
         ),
         (
             WorkflowNodeKind::Checkpoint,
-            r#"workflow "Conf Checkpoint" v1 { checkpoint "after-ingest" }"#,
+            r#"workflow "Conf Checkpoint" v1 { do { checkpoint "after-ingest" } }"#,
         ),
         (
             WorkflowNodeKind::Mutex,
-            r#"workflow "Conf Mutex" v1 { mutex "deploy-lock" every 5s timeout 300s }"#,
+            r#"workflow "Conf Mutex" v1 { do { mutex "deploy-lock" every 5s timeout 300s } }"#,
         ),
         (
             WorkflowNodeKind::Throttle,
-            r#"workflow "Conf Throttle" v1 { throttle "github-api" rate 10 per 60s }"#,
+            r#"workflow "Conf Throttle" v1 { do { throttle "github-api" rate 10 per 60s } }"#,
         ),
         (
             WorkflowNodeKind::Cooldown,
-            r#"workflow "Conf Cooldown" v1 { cooldown "scan-gate" every 300s }"#,
+            r#"workflow "Conf Cooldown" v1 { do { cooldown "scan-gate" every 300s } }"#,
         ),
         (
             WorkflowNodeKind::AwaitRun,
             r#"
             workflow "Conf Await" v1 {
                 params { user: string }
-                await workflow "Prep" key params.user mode "all" timeout 1800s
+
+                do {
+                    await workflow "Prep" key params.user mode "all" timeout 1800s
+                }
             }"#,
         ),
         (
             WorkflowNodeKind::Debounce,
-            r#"workflow "Conf Debounce" v1 { debounce "file-change" delay 30s }"#,
+            r#"workflow "Conf Debounce" v1 { do { debounce "file-change" delay 30s } }"#,
         ),
         (
             WorkflowNodeKind::Collect,
-            r#"workflow "Conf Collect" v1 { collect "events" max 50 timeout 300s }"#,
+            r#"workflow "Conf Collect" v1 { do { collect "events" max 50 timeout 300s } }"#,
         ),
         (
             WorkflowNodeKind::Barrier,
-            r#"workflow "Conf Barrier" v1 { barrier "shard-sync" count 4 timeout 600s }"#,
+            r#"workflow "Conf Barrier" v1 { do { barrier "shard-sync" count 4 timeout 600s } }"#,
         ),
         (
             WorkflowNodeKind::CircuitBreaker,
-            r#"workflow "Conf Breaker" v1 { circuit_breaker "payment-api" threshold 5 window 60s cooldown 120s }"#,
+            r#"workflow "Conf Breaker" v1 { do { circuit_breaker "payment-api" threshold 5 window 60s cooldown 120s } }"#,
         ),
         (
             WorkflowNodeKind::EventSource,
-            r#"workflow "Conf Events" v1 { event_source type "file.uploaded" max 100 timeout 3600s }"#,
+            r#"workflow "Conf Events" v1 { do { event_source type "file.uploaded" max 100 timeout 3600s } }"#,
         ),
         (
             WorkflowNodeKind::Config,
             r#"
             workflow "Conf Config" v1 {
                 params { ticket: string }
-                set name = "renamed: ${params.ticket}"
+
+                do {
+                    set name = "renamed: ${params.ticket}"
+                }
             }"#,
         ),
         (
             WorkflowNodeKind::Input,
-            r#"workflow "Conf Input" v1 { input "how many shards?" }"#,
+            r#"workflow "Conf Input" v1 { do { input "how many shards?" } }"#,
         ),
         (
             WorkflowNodeKind::Output,
             r#"
             workflow "Conf Output" v1 {
                 params { amount: int }
-                output {
-                    emit "ready" { value: params.amount }
+
+                do {
+                    output {
+                        emit "ready" { value: params.amount }
+                    }
                 }
             }"#,
         ),
         (
             WorkflowNodeKind::Fail,
-            r#"workflow "Conf Fail" v1 { fail "boom" }"#,
+            r#"workflow "Conf Fail" v1 { do { fail "boom" } }"#,
         ),
     ]
 }

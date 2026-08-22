@@ -13,7 +13,7 @@ credential files — add a new job, no workflow change.
 
 ## How it runs on the right machine
 
-Each node uses `.runner("creds-sync")`. The reducer routes a node with a required label to a live
+Each node uses `@runner("creds-sync")`. The reducer routes a node with a required label to a live
 worker advertising that label, and **parks then fails** (on the node `timeout`) when none is
 connected. So these workflows only ever execute on a worker you start on the operator's workstation,
 either a standalone worker:
@@ -58,7 +58,7 @@ captured or streamed to the UI.
 sets `RUNINATOR_CONSOLE_ALLOW_INTERACTIVE=1`, so the console provider permits it there. A headless
 cloud worker never sets that flag, so an interactive console command routed to one is rejected up
 front with `CONSOLE008 - Interactive console is only available on a desktop worker agent` instead of
-hanging with no terminal. Together with `.runner("creds-sync")`, this keeps these jobs on the
+hanging with no terminal. Together with `@runner("creds-sync")`, this keeps these jobs on the
 operator's machine.
 
 If that worker is offline when a scheduled run fires, the run fails — by design.

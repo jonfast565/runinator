@@ -8,12 +8,18 @@ fn alias_spread_lowers_like_explicit_args() {
     let aliased = r#"
         workflow "Aliased" v1 {
             alias conn = { base_url: config.jira.base_url, token: secret.jira.token }
-            node t <- jira.transition(...conn, key: "ABC-1")
+
+            do {
+                let t = jira.transition(...conn, key: "ABC-1")
+            }
         }
     "#;
     let explicit = r#"
         workflow "Aliased" v1 {
-            node t <- jira.transition(base_url: config.jira.base_url, token: secret.jira.token, key: "ABC-1")
+
+            do {
+                let t = jira.transition(base_url: config.jira.base_url, token: secret.jira.token, key: "ABC-1")
+            }
         }
     "#;
     assert_eq!(
@@ -28,12 +34,18 @@ fn explicit_arg_overrides_spread() {
     let aliased = r#"
         workflow "Override" v1 {
             alias conn = { base_url: "from-alias", region: "us" }
-            node t <- api.call(...conn, base_url: "explicit")
+
+            do {
+                let t = api.call(...conn, base_url: "explicit")
+            }
         }
     "#;
     let explicit = r#"
         workflow "Override" v1 {
-            node t <- api.call(base_url: "explicit", region: "us")
+
+            do {
+                let t = api.call(base_url: "explicit", region: "us")
+            }
         }
     "#;
     assert_eq!(
@@ -45,7 +57,10 @@ fn explicit_arg_overrides_spread() {
 fn unknown_alias_spread_is_a_semantic_error() {
     let src = r#"
         workflow "Bad" v1 {
-            node t <- api.call(...missing, key: "x")
+
+            do {
+                let t = api.call(...missing, key: "x")
+            }
         }
     "#;
     let message = expect_semantic_error(src);
@@ -57,7 +72,10 @@ fn duplicate_alias_is_a_semantic_error() {
         workflow "Dup" v1 {
             alias conn = { a: "1" }
             alias conn = { b: "2" }
-            node t <- api.call(...conn)
+
+            do {
+                let t = api.call(...conn)
+            }
         }
     "#;
     let message = expect_semantic_error(src);
@@ -68,7 +86,10 @@ fn format_preserves_alias_and_spread() {
     let src = r#"
         workflow "Fmt" v1 {
             alias conn = { base_url: config.jira.base_url, token: secret.jira.token }
-            node t <- jira.transition(...conn, key: "ABC-1")
+
+            do {
+                let t = jira.transition(...conn, key: "ABC-1")
+            }
         }
     "#;
     let formatted = format_str(src).expect("format");
@@ -103,12 +124,18 @@ fn object_spread_in_subflow_with_matches_explicit() {
         r#"
         workflow "Sub" v1 {
             alias conn = { base_url: config.a.b, token: secret.c.d }
-            subflow("Child", params: { ...conn, key: "K" })
+
+            do {
+                subflow("Child", params: { ...conn, key: "K" })
+            }
         }
         "#,
         r#"
         workflow "Sub" v1 {
-            subflow("Child", params: { base_url: config.a.b, token: secret.c.d, key: "K" })
+
+            do {
+                subflow("Child", params: { base_url: config.a.b, token: secret.c.d, key: "K" })
+            }
         }
         "#,
     );
@@ -119,16 +146,34 @@ fn object_spread_in_approval_metadata_matches_explicit() {
         r#"
         workflow "Appr" v1 {
             alias meta = { env: "prod", owner: "team" }
-            approve "Ship?" type "change" { ...meta, extra: "x" }
-                ok -> done
-                reject -> fail
+
+            do {
+                approve "Ship?" type "change" { ...meta, extra: "x" }
+                    routes {
+                        on success {
+                            continue end
+                        }
+                        on reject {
+                            continue fail
+                        }
+                    }
+            }
         }
         "#,
         r#"
         workflow "Appr" v1 {
-            approve "Ship?" type "change" { env: "prod", owner: "team", extra: "x" }
-                ok -> done
-                reject -> fail
+
+            do {
+                approve "Ship?" type "change" { env: "prod", owner: "team", extra: "x" }
+                    routes {
+                        on success {
+                            continue end
+                        }
+                        on reject {
+                            continue fail
+                        }
+                    }
+            }
         }
         "#,
     );
@@ -139,12 +184,18 @@ fn nested_object_spread_inside_action_arg() {
         r#"
         workflow "Nest" v1 {
             alias conn = { base_url: config.a.b }
-            node t <- api.call(config: { ...conn, timeout: 30 })
+
+            do {
+                let t = api.call(config: { ...conn, timeout: 30 })
+            }
         }
         "#,
         r#"
         workflow "Nest" v1 {
-            node t <- api.call(config: { base_url: config.a.b, timeout: 30 })
+
+            do {
+                let t = api.call(config: { base_url: config.a.b, timeout: 30 })
+            }
         }
         "#,
     );
@@ -156,12 +207,18 @@ fn aliases_compose_via_spread() {
         workflow "Compose" v1 {
             alias base = { base_url: config.a.b }
             alias full = { ...base, token: secret.c.d }
-            node t <- api.call(...full)
+
+            do {
+                let t = api.call(...full)
+            }
         }
         "#,
         r#"
         workflow "Compose" v1 {
-            node t <- api.call(base_url: config.a.b, token: secret.c.d)
+
+            do {
+                let t = api.call(base_url: config.a.b, token: secret.c.d)
+            }
         }
         "#,
     );
@@ -172,7 +229,10 @@ fn alias_cycle_is_a_semantic_error() {
         workflow "Cycle" v1 {
             alias a = { ...b }
             alias b = { ...a }
-            node t <- api.call(...a)
+
+            do {
+                let t = api.call(...a)
+            }
         }
     "#;
     let message = expect_semantic_error(src);
@@ -185,12 +245,18 @@ fn later_entry_overrides_spread() {
         r#"
         workflow "Last" v1 {
             alias conn = { x: "from-alias" }
-            node t <- api.call(x: "from-arg", ...conn)
+
+            do {
+                let t = api.call(x: "from-arg", ...conn)
+            }
         }
         "#,
         r#"
         workflow "Last" v1 {
-            node t <- api.call(x: "from-alias")
+
+            do {
+                let t = api.call(x: "from-alias")
+            }
         }
         "#,
     );
@@ -217,7 +283,10 @@ fn resugars_action_spread() {
         r#"
         workflow "Act" v1 {
             alias conn = { base_url: config.jira.base_url, token: secret.jira.token }
-            node t <- jira.transition(...conn, key: "ABC-1")
+
+            do {
+                let t = jira.transition(...conn, key: "ABC-1")
+            }
         }
         "#,
     );
@@ -231,7 +300,10 @@ fn resugars_subflow_with_spread() {
         r#"
         workflow "Sub" v1 {
             alias conn = { base_url: config.a.b, token: secret.c.d }
-            subflow("Child", params: { ...conn, key: "K" })
+
+            do {
+                subflow("Child", params: { ...conn, key: "K" })
+            }
         }
         "#,
     );
@@ -245,9 +317,18 @@ fn resugars_approval_metadata_spread() {
         r#"
         workflow "Appr" v1 {
             alias meta = { env: "prod", owner: "team" }
-            approve "Ship?" type "change" { ...meta, extra: "x" }
-                ok -> done
-                reject -> fail
+
+            do {
+                approve "Ship?" type "change" { ...meta, extra: "x" }
+                    routes {
+                        on success {
+                            continue end
+                        }
+                        on reject {
+                            continue fail
+                        }
+                    }
+            }
         }
         "#,
     );
@@ -260,7 +341,10 @@ fn resugars_nested_object_spread() {
         r#"
         workflow "Nest" v1 {
             alias conn = { base_url: config.a.b }
-            node t <- api.call(config: { ...conn, timeout: 30 })
+
+            do {
+                let t = api.call(config: { ...conn, timeout: 30 })
+            }
         }
         "#,
     );
@@ -275,7 +359,10 @@ fn resugars_alias_composition() {
         workflow "Compose" v1 {
             alias base = { base_url: config.a.b }
             alias full = { ...base, token: secret.c.d }
-            node t <- api.call(...full)
+
+            do {
+                let t = api.call(...full)
+            }
         }
         "#,
     );
@@ -291,7 +378,10 @@ fn resugars_override_keeping_authored_order() {
         r#"
         workflow "Over" v1 {
             alias conn = { base_url: "from-alias", region: "us" }
-            node t <- api.call(...conn, base_url: "explicit")
+
+            do {
+                let t = api.call(...conn, base_url: "explicit")
+            }
         }
         "#,
     );
@@ -306,7 +396,10 @@ fn resugars_override_keeping_authored_order() {
         r#"
         workflow "Over2" v1 {
             alias conn = { x: "from-alias" }
-            node t <- api.call(x: "from-arg", ...conn)
+
+            do {
+                let t = api.call(x: "from-arg", ...conn)
+            }
         }
         "#,
     );

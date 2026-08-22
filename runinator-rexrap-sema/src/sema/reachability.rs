@@ -16,7 +16,15 @@ pub(super) fn analyze(workflow: &Workflow, diagnostics: &mut Vec<Diagnostic>) {
         insert_target(start, &mut targeted);
     }
     collect_targets(&workflow.body, &mut targeted);
+    // a join is entered only by an explicit `continue <name>`, so its name is a target like any
+    // other and its body is walked for the targets it declares in turn.
+    for join in &workflow.joins {
+        collect_targets(&join.body, &mut targeted);
+    }
     check_block(&workflow.body, &targeted, diagnostics);
+    for join in &workflow.joins {
+        check_block(&join.body, &targeted, diagnostics);
+    }
 }
 
 fn check_block(block: &Block, targeted: &HashSet<String>, diagnostics: &mut Vec<Diagnostic>) {

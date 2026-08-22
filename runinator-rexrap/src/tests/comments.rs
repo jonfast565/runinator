@@ -15,9 +15,11 @@ fn comments_survive_format_round_trip() {
                \x20 // schedule\n\
                \x20 trigger cron \"0 * * * *\"\n\
                \n\
-               \x20 // greet the user\n\
-               \x20 node greet <- console.run(command: \"hi\") // inline note\n\
-               \x20 node bye <- console.run(command: \"bye\")\n\
+               \x20 do {\n\
+               \x20   // greet the user\n\
+               \x20   let greet = console.run(command: \"hi\") // inline note\n\
+               \x20   let bye = console.run(command: \"bye\")\n\
+               \x20 }\n\
                }\n\
                // end of file\n";
     let out = format_str(src).expect("format");
@@ -33,21 +35,23 @@ fn comments_survive_format_round_trip() {
     }
     // the trigger keeps its own leading comment; the node keeps its leading and its inline trailing.
     assert!(find_at(&out, "// schedule") < find_at(&out, "trigger cron"));
-    assert!(find_at(&out, "// greet the user") < find_at(&out, "node greet"));
-    assert!(find_at(&out, "node greet") < find_at(&out, "// inline note"));
-    assert!(find_at(&out, "// end of file") > find_at(&out, "node bye"));
+    assert!(find_at(&out, "// greet the user") < find_at(&out, "let greet"));
+    assert!(find_at(&out, "let greet") < find_at(&out, "// inline note"));
+    assert!(find_at(&out, "// end of file") > find_at(&out, "let bye"));
     // formatting is idempotent once comments are attached.
     assert_eq!(format_str(&out).expect("reformat"), out);
 }
 #[test]
 fn branch_comments_stay_in_their_branch() {
     let src = "workflow \"br\" v1 {\n\
-               \x20 if cond(\"true\") {\n\
-               \x20   node a <- console.run(command: \"a\")\n\
-               \x20   // note in if\n\
-               \x20 } else {\n\
-               \x20   // note in else\n\
-               \x20   node b <- console.run(command: \"b\")\n\
+               \x20 do {\n\
+               \x20   if cond(\"true\") {\n\
+               \x20     let a = console.run(command: \"a\")\n\
+               \x20     // note in if\n\
+               \x20   } else {\n\
+               \x20     // note in else\n\
+               \x20     let b = console.run(command: \"b\")\n\
+               \x20   }\n\
                \x20 }\n\
                }\n";
     let out = format_str(src).expect("format");
@@ -61,7 +65,7 @@ fn branch_comments_stay_in_their_branch() {
         find_at(&out, "// note in else") > else_at,
         "else-note escaped:\n{out}"
     );
-    assert!(find_at(&out, "// note in else") < find_at(&out, "node b"));
+    assert!(find_at(&out, "// note in else") < find_at(&out, "let b"));
     assert_eq!(format_str(&out).expect("reformat"), out);
 }
 #[test]
@@ -71,7 +75,9 @@ fn header_comments_track_their_declaration() {
                \x20 // first\n\
                \x20 import github\n\
                \n\
-               \x20 node a <- console.run(command: \"a\")\n\
+               \x20 do {\n\
+               \x20   let a = console.run(command: \"a\")\n\
+               \x20 }\n\
                }\n";
     let out = format_str(src).expect("format");
     assert!(find_at(&out, "import slack") < find_at(&out, "// we need slack"));
@@ -83,7 +89,9 @@ fn header_comments_track_their_declaration() {
 fn comment_markers_inside_strings_are_not_treated_as_comments() {
     // the `//` lives inside a string literal, so the formatter must not hoist it out as a comment.
     let src = "workflow \"s\" v1 {\n\
-               \x20 node a <- console.run(command: \"see http://example.com\")\n\
+               \x20 do {\n\
+               \x20   let a = console.run(command: \"see http://example.com\")\n\
+               \x20 }\n\
                }\n";
     let out = format_str(src).expect("format");
     assert!(out.contains("http://example.com"));
@@ -94,7 +102,9 @@ fn comment_markers_inside_strings_are_not_treated_as_comments() {
 #[test]
 fn commentless_source_still_round_trips() {
     let src = "workflow \"plain\" v1 {\n\
-               \x20 node a <- console.run(command: \"a\")\n\
+               \x20 do {\n\
+               \x20   let a = console.run(command: \"a\")\n\
+               \x20 }\n\
                }\n";
     let out = format_str(src).expect("format");
     assert!(!out.contains("//"));
@@ -115,7 +125,9 @@ fn params_field_comments_are_preserved() {
                \x20   // trailing param note\n\
                \x20 }\n\
                \n\
-               \x20 node a <- console.run(command: params.name)\n\
+               \x20 do {\n\
+               \x20   let a = console.run(command: params.name)\n\
+               \x20 }\n\
                }\n";
     let out = format_str(src).expect("format");
     // field-level leading comment stays with its field.
@@ -127,7 +139,7 @@ fn params_field_comments_are_preserved() {
     // a comment after the last field renders before the params block's closing brace, not below it.
     let dangling = find_at(&out, "// trailing param note");
     assert!(dangling > find_at(&out, "enabled: bool"));
-    assert!(dangling < find_at(&out, "node a"));
+    assert!(dangling < find_at(&out, "let a"));
     assert_eq!(format_str(&out).expect("reformat"), out);
 }
 #[test]
@@ -140,7 +152,9 @@ fn type_decl_field_comments_are_preserved() {
                \x20   id: string\n\
                \x20   label: string // human label\n\
                \x20 }\n\
-               \x20 node a <- console.run(command: \"x\")\n\
+               \x20 do {\n\
+               \x20   let a = console.run(command: \"x\")\n\
+               \x20 }\n\
                }\n";
     let out = format_str(src).expect("format");
     assert!(find_at(&out, "// shape of a record") < find_at(&out, "type Rec"));

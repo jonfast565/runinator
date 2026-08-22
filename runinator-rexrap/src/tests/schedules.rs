@@ -9,7 +9,10 @@ fn lowers_notify_policies_into_metadata() {
         workflow "Nightly" v1 {
             notify on failure -> slack "#oncall"
             notify on sla -> email "ops@example.com" after 30m severity critical
-            Console.run(command: "echo hi")
+
+            do {
+                Console.run(command: "echo hi")
+            }
         }
     "##;
     let def = compile(src);
@@ -44,7 +47,10 @@ fn round_trips_notify_policies() {
             notify on failure -> slack "#oncall"
             notify on retry_exhausted -> app "ui" severity info
             notify on parked -> slack "#oncall" after 2h with { token: "secret://slack/alt" } disabled
-            Console.run(command: "echo hi")
+
+            do {
+                Console.run(command: "echo hi")
+            }
         }
     "##;
     let def = compile(src);
@@ -68,7 +74,10 @@ fn lowers_concurrency_and_catchup_into_metadata() {
         workflow "Nightly" v1 {
             trigger cron "0 * * * *" catchup fire_all max 10
             concurrency 1 on_conflict queue
-            Console.run(command: "echo hi")
+
+            do {
+                Console.run(command: "echo hi")
+            }
         }
     "##;
     let def = compile(src);
@@ -98,7 +107,10 @@ fn concurrency_defaults_to_skip_and_round_trips() {
         workflow "Nightly" v1 {
             trigger cron "0 * * * *" catchup skip grace 5m
             concurrency 2
-            Console.run(command: "echo hi")
+
+            do {
+                Console.run(command: "echo hi")
+            }
         }
     "##;
     let def = compile(src);
@@ -135,7 +147,10 @@ fn a_catchup_option_must_match_its_policy() {
     let src = r##"
         workflow "Nightly" v1 {
             trigger cron "0 * * * *" catchup fire_once grace 5m
-            Console.run(command: "echo hi")
+
+            do {
+                Console.run(command: "echo hi")
+            }
         }
     "##;
     let err = compile_str(src, &CompileOptions::default()).expect_err("must reject");
@@ -148,7 +163,10 @@ fn concurrency_must_be_at_least_one() {
     let src = r##"
         workflow "Nightly" v1 {
             concurrency 0
-            Console.run(command: "echo hi")
+
+            do {
+                Console.run(command: "echo hi")
+            }
         }
     "##;
     let err = compile_str(src, &CompileOptions::default()).expect_err("must reject");
@@ -164,7 +182,10 @@ fn a_duration_notify_event_requires_a_threshold() {
     let src = r##"
         workflow "Nightly" v1 {
             notify on sla -> slack "#oncall"
-            Console.run(command: "echo hi")
+
+            do {
+                Console.run(command: "echo hi")
+            }
         }
     "##;
     let err = compile_str(src, &CompileOptions::default()).expect_err("must reject");

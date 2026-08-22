@@ -32,6 +32,9 @@ impl Document {
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionDef {
     pub name: String,
+    /// `task fn` — the body contains runtime work and is inlined into the graph. Callers still
+    /// choose the scheduling (`f(...)` vs `async f(...)`), so this is a capability, not a color.
+    pub is_task: bool,
     pub params: Vec<FnParam>,
     pub ret: Option<TypeExpr>,
     pub body: FnBody,
@@ -47,7 +50,9 @@ pub struct FunctionDef {
 #[derive(Debug, Clone, PartialEq)]
 pub enum FnBody {
     Expr(Box<Expr>),
-    Block(Vec<DoLine>),
+    Block(Vec<ComputeLine>),
+    /// a `task fn` body: `do { … }`, a region of runtime statements inlined at each call site.
+    Run(Block),
 }
 
 /// a function parameter: a typed name, optionally marked `?` or given a `= default` (both make it
@@ -95,12 +100,25 @@ pub struct Workflow {
     pub correlation: Option<Expr>,
     /// header `type <Name> ...` declarations: reusable named types.
     pub type_decls: Vec<TypeDecl>,
+    /// the statements of the workflow's `do { … }` runtime block.
     pub body: Block,
+    /// `join <name> { … }` named continuations, reachable only by an explicit `continue <name>`.
+    pub joins: Vec<JoinDecl>,
     pub span: Span,
     /// comments before the `workflow` keyword, preserved for lossless formatting.
     pub leading_comments: Vec<Comment>,
     /// comments after the last body statement, before the closing brace.
     pub dangling_comments: Vec<Comment>,
+}
+
+/// a `join <name> { … }` named continuation: a labelled region a `continue <name>` route enters.
+/// unlike a fallthrough sibling it is never reached implicitly.
+#[derive(Debug, Clone, PartialEq)]
+pub struct JoinDecl {
+    pub name: String,
+    pub body: Block,
+    pub span: Span,
+    pub comments: CommentSet,
 }
 
 /// a header `type <Name> { ... }` (struct shorthand) or `type <Name> = <type>` (alias) declaration.

@@ -5,17 +5,30 @@ use super::*;
 #[test]
 fn format_normalizes_rexrap_source() {
     let src = r#"workflow "Fmt"   v1{params{jira:{base_url:string,email?:string}, "odd-key": map<string[]>, fallback?: string, enabled: boolean, retry: integer, transitions:{done:string,in_progress:string,in_review:string}}
-@skip node first: { output: string, status: string, items: string[] } <- console.run(command:"echo ${params.jira.base_url}"++(params.fallback??"none"), transitions:{done:"done",in_progress:"progress",in_review:"review"}).timeout(30s).retry(2).tags("ci","fmt").mcp()
-fail -> cleanup
-timeout -> fail
+do {
+@timeout(30s)
+@retry(2)
+@tags("ci","fmt")
+@mcp
+@skip let first: { output: string, status: string, items: string[] } = console.run(command:"echo ${params.jira.base_url}"++(params.fallback??"none"), transitions:{done:"done",in_progress:"progress",in_review:"review"})
+routes {
+    on failure {
+        continue cleanup
+    }
+    on timeout {
+        continue fail
+    }
+}
 if params.enabled==true&&exists first.output{emit "ready"{value:first.output}}else{wait 5s}
 match first.status{"ok"->console.run(command:"ok") when params.retry > 0 -> {console.run(command:"retry")} else -> fail "bad"}
 parallel{branch{console.run(command:"a")}branch{console.run(command:"b")}}join any
 try{console.run(command:"risky")}catch{console.run(command:"recover")}finally{console.run(command:"done")}
 race winner first_success{branch{console.run(command:"primary")}branch{console.run(command:"backup")}}
 map item in first.items concurrency 2{console.run(command:string(item))}
-node cleanup <- console.run(command:"cleanup")
-jira.transition(base_url:params.jira.base_url,email:params.jira.email,key:first.output,token:"secret",transition_id:params.transitions.in_progress).timeout(30s)
+let cleanup = console.run(command:"cleanup")
+@timeout(30s)
+jira.transition(base_url:params.jira.base_url,email:params.jira.email,key:first.output,token:"secret",transition_id:params.transitions.in_progress)
+}
 }"#;
 
     let formatted = format_str(src).expect("format");
@@ -36,104 +49,112 @@ jira.transition(base_url:params.jira.base_url,email:params.jira.email,key:first.
         }
     }
 
-    @skip
-    node first: { output: string, status: string, items: string[] } <- console.run(
-        command: "echo ${params.jira.base_url}" ++ (params.fallback ?? "none"),
-        transitions: {
-            done: "done",
-            in_progress: "progress",
-            in_review: "review"
-        }
-    ).timeout(30s)
-     .retry(2)
-     .tags("ci", "fmt")
-     .mcp()
-    edges {
-        fail -> cleanup
-        timeout -> fail
-    }
-
-    if params.enabled == true && exists first.output {
-        emit "ready" {
-            value: first.output
-        }
-    } else {
-        wait 5s
-    }
-
-    match first.status {
-        "ok" -> {
-            console.run(
-                command: "ok"
-            )
-        }
-        when params.retry > 0 -> {
-            console.run(
-                command: "retry"
-            )
-        }
-        else -> {
-            fail "bad"
-        }
-    }
-
-    parallel {
-        branch {
-            console.run(
-                command: "a"
-            )
-        }
-        branch {
-            console.run(
-                command: "b"
-            )
-        }
-    } join any
-
-    try {
-        console.run(
-            command: "risky"
+    do {
+        @skip
+        @timeout(30s)
+        @retry(2)
+        @tags("ci", "fmt")
+        @mcp
+        let first: { output: string, status: string, items: string[] } = console.run(
+            command: "echo ${params.jira.base_url}" ++ (params.fallback ?? "none"),
+            transitions: {
+                done: "done",
+                in_progress: "progress",
+                in_review: "review"
+            }
         )
-    } catch {
-        console.run(
-            command: "recover"
-        )
-    } finally {
-        console.run(
-            command: "done"
-        )
-    }
+        routes {
+            on failure {
+                continue cleanup
+            }
+            on timeout {
+                continue fail
+            }
+        }
 
-    race winner first_success {
-        branch {
+        if params.enabled == true && exists first.output {
+            emit "ready" {
+                value: first.output
+            }
+        } else {
+            wait 5s
+        }
+
+        match first.status {
+            "ok" -> {
+                console.run(
+                    command: "ok"
+                )
+            }
+            when params.retry > 0 -> {
+                console.run(
+                    command: "retry"
+                )
+            }
+            else -> {
+                fail "bad"
+            }
+        }
+
+        parallel {
+            branch {
+                console.run(
+                    command: "a"
+                )
+            }
+            branch {
+                console.run(
+                    command: "b"
+                )
+            }
+        } join any
+
+        try {
             console.run(
-                command: "primary"
+                command: "risky"
+            )
+        } catch {
+            console.run(
+                command: "recover"
+            )
+        } finally {
+            console.run(
+                command: "done"
             )
         }
-        branch {
+
+        race winner first_success {
+            branch {
+                console.run(
+                    command: "primary"
+                )
+            }
+            branch {
+                console.run(
+                    command: "backup"
+                )
+            }
+        }
+
+        map item in first.items concurrency 2 {
             console.run(
-                command: "backup"
+                command: string(item)
             )
         }
-    }
 
-    map item in first.items concurrency 2 {
-        console.run(
-            command: string(item)
+        let cleanup = console.run(
+            command: "cleanup"
+        )
+
+        @timeout(30s)
+        jira.transition(
+            base_url: params.jira.base_url,
+            email: params.jira.email,
+            key: first.output,
+            token: "secret",
+            transition_id: params.transitions.in_progress
         )
     }
-
-    node cleanup <- console.run(
-        command: "cleanup"
-    )
-
-    jira.transition(
-        base_url: params.jira.base_url,
-        email: params.jira.email,
-        key: first.output,
-        token: "secret",
-        transition_id: params.transitions.in_progress
-    ).timeout(30s)
 }
 "#;
 
@@ -150,17 +171,20 @@ jira.transition(base_url:params.jira.base_url,email:params.jira.email,key:first.
 fn formats_toggle_and_split_idempotently() {
     let src = r#"
         workflow "Rollout" v1 {
-            node seed <- console.run(command: "seed")
-            toggle config.flags.new_checkout {
-                on -> { console.run(command: "new") }
-                off -> { console.run(command: "old") }
+
+            do {
+                let seed = console.run(command: "seed")
+                toggle config.flags.new_checkout {
+                    on -> { console.run(command: "new") }
+                    off -> { console.run(command: "old") }
+                }
+                split on seed.user_id {
+                    30% -> { console.run(command: "variant_a") }
+                    70% -> { console.run(command: "variant_b") }
+                    else -> { console.run(command: "control") }
+                }
+                let done = console.run(command: "done")
             }
-            split on seed.user_id {
-                30% -> { console.run(command: "variant_a") }
-                70% -> { console.run(command: "variant_b") }
-                else -> { console.run(command: "control") }
-            }
-            node done <- console.run(command: "done")
         }
     "#;
     let formatted = format_str(src).expect("format");
@@ -174,7 +198,7 @@ fn formats_toggle_and_split_idempotently() {
 fn format_parenthesizes_eventless_scalar_output() {
     // an event-less scalar payload must keep its parens through formatting, otherwise it would
     // be re-parsed as the event type and silently lose the payload.
-    let src = r#"workflow "E" { emit ("ready") }"#;
+    let src = r#"workflow "E" { do { emit ("ready") } }"#;
     let formatted = format_str(src).expect("format");
     assert!(
         formatted.contains("emit (\"ready\")"),

@@ -8,7 +8,10 @@ fn semantic_error_span_points_at_subexpression() {
     let src = r#"
         workflow "Bad" v1 {
             params { a: string }
-            console.run(command: params.b)
+
+            do {
+                console.run(command: params.b)
+            }
         }
     "#;
     let (span, message) = expect_semantic(src);
@@ -21,7 +24,10 @@ fn unorderable_comparison_blames_the_operand() {
     let src = r#"
         workflow "Bad" v1 {
             params { flag: boolean }
-            if params.flag > 0 { console.run(command: "y") }
+
+            do {
+                if params.flag > 0 { console.run(command: "y") }
+            }
         }
     "#;
     let (span, message) = expect_semantic(src);
@@ -33,7 +39,10 @@ fn unorderable_comparison_blames_the_operand() {
 fn unknown_reference_blames_the_path() {
     let src = r#"
         workflow "Bad" v1 {
-            console.run(command: ghost.value)
+
+            do {
+                console.run(command: ghost.value)
+            }
         }
     "#;
     let (span, message) = expect_semantic(src);
@@ -45,23 +54,29 @@ fn renders_semantic_error_with_caret() {
     let src = r#"
         workflow "Bad" v1 {
             params { a: string }
-            console.run(command: params.b)
+
+            do {
+                console.run(command: params.b)
+            }
         }
     "#;
     let err = compile_str(src, &CompileOptions::default()).unwrap_err();
     let rendered = err.render(src);
     assert!(rendered.contains("error:"), "{rendered}");
     assert!(rendered.contains("^"), "{rendered}");
-    // `params.b` sits on the fourth line of the raw string literal.
-    assert!(rendered.contains("line 4"), "{rendered}");
+    // `params.b` sits on the sixth line of the raw string literal.
+    assert!(rendered.contains("line 6"), "{rendered}");
 }
 #[test]
 fn analyze_source_reports_all_diagnostics() {
     let src = r#"
         workflow "Bad" v1 {
             params { a: string }
-            console.run(command: params.b)
-            console.run(command: params.c)
+
+            do {
+                console.run(command: params.b)
+                console.run(command: params.c)
+            }
         }
     "#;
     let diagnostics = analyze_source(src).expect("parse");
@@ -75,10 +90,10 @@ fn analyze_source_reports_all_diagnostics() {
 #[test]
 fn rejects_removed_source_forms() {
     for src in [
-        r#"workflow "Old" v1 { node x = console.run(command: "x") }"#,
-        r#"workflow "Old" v1 { output "done" { ok: true } }"#,
-        r#"workflow "Old" v1 { node child <- call "Child" with { id: "1" } }"#,
-        r#"workflow "Old" v1 { node spawn "Child" with { id: "1" } }"#,
+        r#"workflow "Old" v1 { do { node x = console.run(command: "x") } }"#,
+        r#"workflow "Old" v1 { do {output "done" { ok: true } }}"#,
+        r#"workflow "Old" v1 { do {let child = call "Child" with { id: "1" } }}"#,
+        r#"workflow "Old" v1 { do {node spawn "Child" with { id: "1" } }}"#,
         r#"workflow "Old" v1 { namespace old.inside }"#,
     ] {
         assert!(
@@ -94,12 +109,18 @@ fn accepts_document_level_and_namespace_block_workflows() {
         workflow "First" v1
 
         params { id: string }
-        node one <- console.run(command: params.id)
+
+        do {
+            let one = console.run(command: params.id)
+        }
 
         namespace core.more {
             workflow "Second" v1 {
-                node two <- do {
-                    return "ok"
+
+                do {
+                    let two = compute {
+                        return "ok"
+                    }
                 }
             }
         }
@@ -116,12 +137,15 @@ fn bound_control_region_yields_collected_value() {
     let src = r#"
         workflow "Functional" v1 {
             params { flag: boolean }
-            node decision <- if params.flag {
-                yield { status: "ready" }
-            } else {
-                yield { status: "empty" }
+
+            do {
+                let decision = if params.flag {
+                    yield { status: "ready" }
+                } else {
+                    yield { status: "empty" }
+                }
+                let report = console.run(command: decision.status)
             }
-            node report <- console.run(command: decision.status)
         }
     "#;
     let definition = compile(src);
@@ -134,15 +158,18 @@ fn bound_control_region_yields_collected_value() {
 fn bound_parallel_collects_functional_value_shape() {
     let src = r#"
         workflow "Parallel Value" v1 {
-            node joined <- parallel {
-                branch {
-                    console.run(command: "a")
-                }
-                branch {
-                    console.run(command: "b")
-                }
-            } join all
-            node report <- console.run(command: string(joined.outputs))
+
+            do {
+                let joined = parallel {
+                    branch {
+                        console.run(command: "a")
+                    }
+                    branch {
+                        console.run(command: "b")
+                    }
+                } join all
+                let report = console.run(command: string(joined.outputs))
+            }
         }
     "#;
     let definition = compile(src);
@@ -162,12 +189,16 @@ fn bound_parallel_collects_functional_value_shape() {
 fn unknown_modifier_is_a_syntax_error_with_span() {
     let src = r#"
         workflow "Bad" v1 {
-            console.run(command: "x").bogus()
+
+            do {
+                @bogus(1)
+                console.run(command: "x")
+            }
         }
     "#;
     match parse_document(src) {
         Err(RexRapError::Syntax { span, message }) => {
-            assert!(message.contains("unknown modifier 'bogus'"), "{message}");
+            assert!(message.contains("unknown attribute '@bogus'"), "{message}");
             assert!(span.end > span.start, "empty span {span:?}");
         }
         other => panic!("expected syntax error, got {other:?}"),

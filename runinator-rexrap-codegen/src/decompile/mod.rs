@@ -153,12 +153,19 @@ pub fn decompile_definition(
         .and_then(|node| node.transitions.next.as_ref())
         .map(|target| target.as_str().to_string());
     if let Some(entry) = entry {
-        // the explicit form names the otherwise-synthetic start edge.
+        // the explicit form names the otherwise-synthetic start edge. it is a header declaration,
+        // so it renders above the runtime block rather than inside it.
         if decompiler.explicit {
             let label = decompiler.target_label(&entry);
             decompiler.line(&format!("start -> {label}"));
         }
+        // every statement a run executes lives inside exactly one `do { … }` runtime block.
+        decompiler.line("do {");
+        decompiler.indent += 1;
         decompiler.emit_region(&entry, None)?;
+    } else {
+        decompiler.line("do {");
+        decompiler.indent += 1;
     }
 
     // emit any nodes reached only by fail/reject/timeout arrows or convergence as top-level
@@ -202,6 +209,10 @@ pub fn decompile_definition(
         }
         decompiler.emit_region(&id, None)?;
     }
+
+    // close the runtime block before the workflow's own closing brace.
+    decompiler.indent -= 1;
+    decompiler.line("}");
 
     decompiler.indent -= 1;
     decompiler.line("}");
@@ -283,7 +294,7 @@ fn decompile_retry(retry: &WorkflowRetry, explicit: bool) -> Option<String> {
     if let Some(on) = on {
         args.push(format!("on: {on}"));
     }
-    Some(format!(".retry({})", args.join(", ")))
+    Some(format!("@retry({})", args.join(", ")))
 }
 
 impl<'a> Decompiler<'a> {
@@ -527,7 +538,7 @@ impl<'a> Decompiler<'a> {
                 .and_then(Value::as_str)
                 .ok_or_else(|| RexRapError::Decompile("watch missing handler".into()))?;
             let target = match handler {
-                "end" => "done".to_string(),
+                "end" => "end".to_string(),
                 "fail" => "fail".to_string(),
                 other => other.to_string(),
             };
@@ -835,7 +846,7 @@ impl<'a> Decompiler<'a> {
             parts.push("@lock".to_string());
         }
         if let Some(timeout) = node.timeout_seconds {
-            parts.push(format!("@timeout({timeout}s)"));
+            parts.push(format!("@deadline({timeout}s)"));
         }
         if parts.is_empty() {
             String::new()
@@ -846,7 +857,7 @@ impl<'a> Decompiler<'a> {
 
     fn target_label(&self, id: &str) -> String {
         if self.end_ids.contains(id) {
-            "done".to_string()
+            "end".to_string()
         } else if self.fail_ids.contains(id) {
             "fail".to_string()
         } else {
@@ -874,15 +885,16 @@ impl<'a> Decompiler<'a> {
         cont: Option<String>,
         stop: Option<&str>,
     ) -> Option<String> {
-        // the explicit form always names the block's continuation edge with a `next ->` arrow,
-        // still walking inline into a fresh successor so it is emitted once.
+        // the explicit form always names the block's continuation edge with an attached
+        // `routes { on next { … } }` section, still walking inline into a fresh successor so it is
+        // emitted once.
         if self.explicit {
             let Some(c) = cont else {
                 self.line(closing);
                 return None;
             };
             let label = self.target_label(&c);
-            self.line(&format!("{closing} next -> {label}"));
+            self.close_block_route(closing, "on next", &label);
             let fresh =
                 !self.is_terminal(&c) && Some(c.as_str()) != stop && !self.visited.contains(&c);
             return fresh.then_some(c);
@@ -901,11 +913,11 @@ impl<'a> Decompiler<'a> {
                 None
             }
             Some(c) if self.fail_ids.contains(&c) => {
-                self.line(&format!("{closing} -> fail"));
+                self.close_block_route(closing, "on next", "fail");
                 None
             }
             Some(c) if self.visited.contains(&c) => {
-                self.line(&format!("{closing} -> {c}"));
+                self.close_block_route(closing, "on next", &c);
                 None
             }
             Some(c) => {
@@ -913,6 +925,21 @@ impl<'a> Decompiler<'a> {
                 Some(c)
             }
         }
+    }
+
+    /// close a control block and attach its continuation as a `routes { … }` section, matching the
+    /// shape `emit_leaf` uses so a block and a leaf render their edges identically.
+    fn close_block_route(&mut self, closing: &str, head: &str, label: &str) {
+        self.line(closing);
+        self.line("routes {");
+        self.indent += 1;
+        self.line(&format!("{head} {{"));
+        self.indent += 1;
+        self.line(&format!("continue {label}"));
+        self.indent -= 1;
+        self.line("}");
+        self.indent -= 1;
+        self.line("}");
     }
 
     // leaf statements -------------------------------------------------------
@@ -927,16 +954,12 @@ impl<'a> Decompiler<'a> {
         let prefix = if lets_binding {
             match self.declared_types.get(&node.id) {
                 Some(rendered) => format!(
-                    "{}node {}: {} <- ",
+                    "{}let {}: {} = ",
                     self.annotation_prefix(node, false),
                     node.id,
                     rendered
                 ),
-                None => format!(
-                    "{}node {} <- ",
-                    self.annotation_prefix(node, false),
-                    node.id
-                ),
+                None => format!("{}let {} = ", self.annotation_prefix(node, false), node.id),
             }
         } else if needs_id_annotation(&node.kind) {
             self.annotation_prefix(node, true)
@@ -949,16 +972,16 @@ impl<'a> Decompiler<'a> {
         // config); the populated field also names the explicit arrow keyword.
         let (succ_kw, success) = match (transitions.on_success.as_ref(), transitions.next.as_ref())
         {
-            (Some(target), _) => ("ok", Some(target.as_str().to_string())),
+            (Some(target), _) => ("success", Some(target.as_str().to_string())),
             (None, Some(target)) => ("next", Some(target.as_str().to_string())),
-            (None, None) => ("ok", None),
+            (None, None) => ("success", None),
         };
 
         // collect failure-style arrows and queue their targets for top-level emission, since
         // the linear walk never descends into them.
         let mut arrows: Vec<(String, String)> = Vec::new();
         for (outcome, target) in [
-            ("fail", &transitions.on_failure),
+            ("failure", &transitions.on_failure),
             ("timeout", &transitions.on_timeout),
             ("reject", &transitions.on_reject),
         ] {
@@ -981,35 +1004,43 @@ impl<'a> Decompiler<'a> {
             _ => None,
         };
 
-        // gather every rendered outgoing edge into one `edges { … }` section under the statement.
-        // the pure linear successor stays implicit (success_arrow is None), so most nodes emit no
-        // block; only explicit jumps and failure arrows surface a section.
-        let mut edges: Vec<String> = Vec::new();
+        // gather every rendered outgoing edge into one attached `routes { … }` section. the pure
+        // linear successor stays implicit (success_arrow is None), so most nodes emit no section;
+        // only explicit jumps and failure routes surface one.
+        let mut routes: Vec<(String, String)> = Vec::new();
         if let Some(label) = &success_arrow {
-            let kw = if self.explicit { succ_kw } else { "ok" };
-            edges.push(format!("{kw} -> {label}"));
+            let kw = if self.explicit { succ_kw } else { "success" };
+            routes.push((format!("on {kw}"), label.clone()));
         }
         for (outcome, label) in &arrows {
-            edges.push(format!("{outcome} -> {label}"));
+            routes.push((format!("on {outcome}"), label.clone()));
         }
-        // user-defined predicate edges, preserved in declaration order; an explicit `priority`
+        // user-defined predicate routes, preserved in declaration order; an explicit `priority`
         // token is rendered whenever the branch carries one, keeping the round-trip stable.
         for branch in &transitions.branches {
             let cond = self.cond(&branch.when.to_value())?;
             let label = self.target_label(branch.target.as_str());
             self.defer(branch.target.as_str());
-            match branch.priority {
-                Some(priority) => edges.push(format!("when {cond} priority {priority} -> {label}")),
-                None => edges.push(format!("when {cond} -> {label}")),
-            }
+            let head = match branch.priority {
+                Some(priority) => format!("when {cond} priority {priority}"),
+                None => format!("when {cond}"),
+            };
+            routes.push((head, label));
         }
 
+        for attribute in self.node_attributes(node)? {
+            self.line(&attribute);
+        }
         self.line(&format!("{prefix}{text}"));
-        if !edges.is_empty() {
-            self.line("edges {");
+        if !routes.is_empty() {
+            self.line("routes {");
             self.indent += 1;
-            for edge in &edges {
-                self.line(edge);
+            for (head, label) in &routes {
+                self.line(&format!("{head} {{"));
+                self.indent += 1;
+                self.line(&format!("continue {label}"));
+                self.indent -= 1;
+                self.line("}");
             }
             self.indent -= 1;
             self.line("}");
@@ -1075,23 +1106,12 @@ impl<'a> Decompiler<'a> {
     // render a compute block. inner lines carry their absolute indentation so the caller's
     // `self.line` (which only indents the first line) yields correctly nested output, and the
     // trailing success arrow appends cleanly after the closing brace.
-    fn compute_text(&self, node: &WorkflowNode, program: &[Value]) -> Result<String, RexRapError> {
+    fn compute_text(&self, _node: &WorkflowNode, program: &[Value]) -> Result<String, RexRapError> {
         let base = self.indent;
-        let mut out = String::from("do {\n");
+        let mut out = String::from("compute {\n");
         self.render_compute_lines(&mut out, program, base + 1)?;
         out.push_str(&"    ".repeat(base));
         out.push('}');
-        if let Some(action) = &node.action {
-            let mut modifiers = Vec::new();
-            if self.explicit || action.timeout_seconds != 60 {
-                modifiers.push(format!(".timeout({}s)", action.timeout_seconds));
-            }
-            if let Some(retry) = decompile_retry(&node.retry, self.explicit) {
-                modifiers.push(retry);
-            }
-            // a compute block always closes its brace on its own line, so the chain hugs it.
-            out.push_str(&self.modifier_suffix(base, &modifiers, true));
-        }
         Ok(out)
     }
 
@@ -1163,8 +1183,7 @@ impl<'a> Decompiler<'a> {
             ));
         }
 
-        let base = self.indent;
-        let mut out = format!("do {}", quote(language));
+        let mut out = format!("compute {}", quote(language));
         out.push_str(" ```\n");
         out.push_str(source);
         if !source.ends_with('\n') {
@@ -1172,14 +1191,6 @@ impl<'a> Decompiler<'a> {
         }
         out.push_str("```");
 
-        let mut modifiers = Vec::new();
-        if self.explicit || action.timeout_seconds != 60 {
-            modifiers.push(format!(".timeout({}s)", action.timeout_seconds));
-        }
-        if let Some(retry) = decompile_retry(&node.retry, self.explicit) {
-            modifiers.push(retry);
-        }
-        out.push_str(&self.modifier_suffix(base, &modifiers, true));
         Ok(out)
     }
 
@@ -1225,27 +1236,16 @@ impl<'a> Decompiler<'a> {
         out
     }
 
-    // append the fluent modifier chain (`.timeout(…)`, `.retry(…)`, …). the first call hugs the
-    // closing paren/brace; any further calls align their leading dot one column past it. an inline
-    // call (no multi-line args) keeps the whole chain on one line.
-    fn modifier_suffix(&self, base: usize, modifiers: &[String], multiline: bool) -> String {
-        let Some((first, rest)) = modifiers.split_first() else {
+    /// a step's `@`-attributes, rendered inline ahead of the call they belong to.
+    ///
+    /// they must *precede* the call: written after it they would be indistinguishable from the
+    /// attributes prefixing the next statement, and a decompile/recompile round trip would move
+    /// them onto it.
+    fn modifier_prefix(&self, modifiers: &[String]) -> String {
+        if modifiers.is_empty() {
             return String::new();
-        };
-        let mut out = String::from(first.as_str());
-        if !multiline {
-            for modifier in rest {
-                out.push_str(modifier);
-            }
-            return out;
         }
-        let pad = format!("{} ", "    ".repeat(base));
-        for modifier in rest {
-            out.push('\n');
-            out.push_str(&pad);
-            out.push_str(modifier);
-        }
-        out
+        format!("{} ", modifiers.join(" "))
     }
 
     fn action_text(&self, node: &WorkflowNode) -> Result<String, RexRapError> {
@@ -1297,21 +1297,10 @@ impl<'a> Decompiler<'a> {
             }
             args
         };
-        let multiline = !arg_parts.is_empty();
         let mut text = format!(
             "{call_provider}.{call_function}{}",
             self.call_args(&arg_parts, base)
         );
-        let mut modifiers = Vec::new();
-        modifiers.extend(self.call_timeout_modifier(action));
-        if let Some(retry) = decompile_retry(&node.retry, self.explicit) {
-            modifiers.push(retry);
-        }
-        modifiers.extend(self.call_modifiers(action)?);
-        if node.reentry.enabled {
-            modifiers.push(format!(".reentry({})", node.reentry.max_visits));
-        }
-        text.push_str(&self.modifier_suffix(base, &modifiers, multiline));
         if let Some(compensation) = &node.compensation {
             text.push_str(&format!(
                 " compensate {}",
@@ -1321,14 +1310,31 @@ impl<'a> Decompiler<'a> {
         Ok(text)
     }
 
-    /// the call's `.timeout(...)`, kept apart from [`Self::call_modifiers`] because a node's
-    /// `.retry(...)` renders between the two and the formatter's golden output pins that order.
+    /// every `@`-attribute a node's step carries, in the order the formatter emits them.
+    fn node_attributes(&self, node: &WorkflowNode) -> Result<Vec<String>, RexRapError> {
+        let Some(action) = &node.action else {
+            return Ok(Vec::new());
+        };
+        let mut out = Vec::new();
+        out.extend(self.call_timeout_modifier(action));
+        if let Some(retry) = decompile_retry(&node.retry, self.explicit) {
+            out.push(retry);
+        }
+        out.extend(self.call_modifiers(action)?);
+        if node.reentry.enabled {
+            out.push(format!("@reentry(max_visits: {})", node.reentry.max_visits));
+        }
+        Ok(out)
+    }
+
+    /// the call's `@timeout(...)`, kept apart from [`Self::call_modifiers`] because a node's
+    /// `@retry(...)` renders between the two and the formatter's golden output pins that order.
     fn call_timeout_modifier(
         &self,
         action: &runinator_models::workflows::WorkflowAction,
     ) -> Option<String> {
         (self.explicit || action.timeout_seconds != 60)
-            .then(|| format!(".timeout({}s)", action.timeout_seconds))
+            .then(|| format!("@timeout({}s)", action.timeout_seconds))
     }
 
     /// the remaining modifiers that belong to the call itself rather than to the node around it.
@@ -1347,10 +1353,10 @@ impl<'a> Decompiler<'a> {
                 .map(|tag| quote(tag))
                 .collect::<Vec<_>>()
                 .join(", ");
-            modifiers.push(format!(".tags({tags})"));
+            modifiers.push(format!("@tags({tags})"));
         }
         if action.mcp_enabled {
-            modifiers.push(".mcp()".to_string());
+            modifiers.push("@mcp".to_string());
         }
         if let Some(runner) = action.required_labels.get("runner") {
             // lowering adds the functions runner label itself when the author wrote no `.runner`,
@@ -1358,11 +1364,11 @@ impl<'a> Decompiler<'a> {
             let implicit = action.function_binding.is_some()
                 && runner == runinator_models::functions::FUNCTIONS_RUNNER_LABEL;
             if !implicit {
-                modifiers.push(format!(".runner({})", quote(runner)));
+                modifiers.push(format!("@runner({})", quote(runner)));
             }
         }
         if let Some(key) = &action.idempotency_key {
-            modifiers.push(format!(".idempotent(key: {})", self.expr(key)?));
+            modifiers.push(format!("@idempotent(key: {})", self.expr(key)?));
         }
         Ok(modifiers)
     }
@@ -1383,12 +1389,13 @@ impl<'a> Decompiler<'a> {
         let mut modifiers = Vec::new();
         modifiers.extend(self.call_timeout_modifier(action));
         modifiers.extend(self.call_modifiers(action)?);
+        let _ = multiline;
         Ok(format!(
-            "{}.{}{}{}",
+            "{}{}.{}{}",
+            self.modifier_prefix(&modifiers),
             action.provider,
             action.function,
             self.call_args(&args, base),
-            self.modifier_suffix(base, &modifiers, multiline),
         ))
     }
 

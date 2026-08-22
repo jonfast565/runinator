@@ -11,7 +11,10 @@ fn input_default_literal_lowers_and_round_trips() {
                 count: integer = 5
                 label: string = "hello"
             }
-            console.run(command: "go ${params.label}")
+
+            do {
+                console.run(command: "go ${params.label}")
+            }
         }
     "#;
     let def = compile(src);
@@ -38,7 +41,10 @@ fn input_default_expression_round_trips() {
                 token: string = secret.api.token
                 full: string = config.api.base_url ++ "/v1"
             }
-            console.run(command: params.base)
+
+            do {
+                console.run(command: params.base)
+            }
         }
     "#;
     let def = compile(src);
@@ -66,7 +72,10 @@ fn open_input_struct_lowers_and_round_trips() {
                 name: string
                 ...: integer
             }
-            console.run(command: params.name)
+
+            do {
+                console.run(command: params.name)
+            }
         }
     "#;
     let def = compile(src);
@@ -89,7 +98,10 @@ fn rejects_input_default_referencing_prev() {
         r#"
         workflow "Bad" v1 {
             params { x: string = prev.foo }
-            console.run(command: params.x)
+
+            do {
+                console.run(command: params.x)
+            }
         }
     "#,
     );
@@ -107,7 +119,10 @@ fn apply_input_defaults_fills_missing_fields() {
                 label: string = "n-" ++ string(params.count)
                 provided: string
             }
-            console.run(command: params.label)
+
+            do {
+                console.run(command: params.label)
+            }
         }
     "#;
     let def = compile(src);
@@ -127,7 +142,10 @@ fn apply_input_defaults_synthesizes_input_when_absent() {
     let src = r#"
         workflow "Defaults" v1 {
             params { greeting: string = "hi" }
-            console.run(command: params.greeting)
+
+            do {
+                console.run(command: params.greeting)
+            }
         }
     "#;
     let def = compile(src);
@@ -140,7 +158,7 @@ fn apply_input_defaults_synthesizes_input_when_absent() {
 }
 #[test]
 fn format_renders_input_defaults() {
-    let src = "workflow \"D\" v1 {\nparams {\ncount: integer = 5\nbase: string = config.x\n}\nconsole.run(command: params.base)\n}\n";
+    let src = "workflow \"D\" v1 {\nparams {\ncount: integer = 5\nbase: string = config.x\n}\n\n    do {\n    console.run(command: params.base)\n    }\n}\n";
     let formatted = format_str(src).expect("format");
     assert!(formatted.contains("count: integer = 5"), "{formatted}");
     assert!(formatted.contains("base: string = config.x"), "{formatted}");

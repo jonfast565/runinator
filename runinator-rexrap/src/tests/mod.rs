@@ -10,9 +10,9 @@
 mod aliases;
 mod calls;
 mod comments;
+mod compute_block;
 mod control_flow;
 mod diagnostics;
-mod do_block;
 mod explicit_form;
 mod expressions;
 mod fixtures;

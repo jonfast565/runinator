@@ -189,6 +189,30 @@ Keep dependency direction boring and predictable, structured with domains in min
   runtime ignores.
 - `runinator-rexrap`: the REXRAP surface language (grammar, parser, lowering to the JSON workflow model, and decompiling back). Authored sources always use the unified `.rrx` container: it may carry workflow, pipeline, settings, package-manifest, and test blocks, which are split by `parse_rrx_blocks` before their respective front ends run. It must round-trip every node kind's parameters, but its grammar must only express well-formed graphs. Do not add REXRAP syntax for degenerate or malformed graphs (e.g. a parallel with no matching join, a condition with no branches, a missing start node); the decompiler may error on such JSON instead. Keep the grammar a description of valid programs, not a serializer for every possible JSON shape. Header `trigger cron "..."` declarations and input-field defaults are carried in `definition.metadata.triggers` / the field's `default`; the web service materializes pack-managed triggers (`metadata.managed_by = "rexrap"`) on import. A pipeline block lowers to a portable `PipelineBundle` (members + links by workflow name); on import the web service resolves names to ids, upserts the `Pipeline`, and materializes each link as a managed `chained` trigger carrying `configuration.pipeline_id` (reconciled by pipeline id; header-trigger reconciliation skips triggers that carry a `pipeline_id`). The pipeline itself never runs — its chained triggers are the runtime linkage.
 
+  **RexRap 1.0 surface.** A workflow's runtime statements live in exactly one `do { … }` block; the
+  header declarations sit above it. `let name = …` is the only binding form. A statement's outgoing
+  edges are one attached `routes { … }` section whose arms hand control on with `continue <target>`,
+  where `end` and `fail` are the generated terminals; `join <name> { … }` is a named continuation
+  reachable only by an explicit `continue`. `compute { … }` is the pure in-process block. Every step
+  attribute is written `@name` / `@name(args)` **prefixed** to the statement — there is no fluent
+  `.timeout(...)` postfix chain. `@id`, `@skip`, `@lock`, and `@deadline` describe the graph node;
+  `@timeout`, `@retry`, `@tags`, `@mcp`, `@runner`, `@idempotent`, and `@reentry` describe the step's
+  execution. A `compensate` clause carries its own attributes *between* the keyword and its call —
+  written after the call they would re-parse as the next statement's attributes, which a
+  decompile/recompile round trip would then move.
+
+  **Asyncness is a property of the call site, never of the callee.** A plain call runs inline and
+  binds `T`; `async <call>` schedules the same call as a task and binds `task[T]`, joined by `await`
+  and dropped by `detach`. Nothing declares a color, so no callable ever needs a second version.
+  `task fn name(params) do { … }` is a runtime function: a named region inlined into the graph at
+  each call site (parameters are substituted, labels namespaced by the call-site node id — see
+  `lower/inline.rs`), and callable both ways like anything else. A plain `fn` stays pure, which is
+  what makes it structurally impossible for a `fn` to need an async twin. Consecutive `async`
+  launches — plus any interleaved work that touches none of their handles — are grouped into one
+  `parallel` fan-out whose join is the first statement that consumes a handle
+  (`inline::group_async_launches`); a lone launch stays an ordinary node, since a fan-out of one buys
+  nothing.
+
   The language core is four crates split by compile stage; see "The REXRAP crates" below. `runinator-rexrap` itself is the assembly crate and the only one consumers link.
 - `runinator-rexrap-syntax`: text ↔ ast. The pest grammar, the ast, comment attachment, the canonical formatter, `file(...)`/include resolution, and `RexRapError`/`Span` with the shared `REXRAP` error dictionary. It depends on no runinator crate but `runinator-models` and knows nothing of diagnostics or the workflow JSON model.
 - `runinator-rexrap-sema`: ast → diagnostics. Namespace resolution, alias desugaring, the callable registry (intrinsics + user `fn`s), purity classification, named-type resolution, and the four semantic passes. `CompileOptions`/`TypePolicy`/`WorkflowSignature` live here because it is the lowest crate that reads them.

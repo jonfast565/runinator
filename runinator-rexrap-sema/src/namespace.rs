@@ -63,8 +63,8 @@ pub fn resolve_cond_fragment(cond: &mut Cond) -> Result<(), RexRapError> {
 }
 
 /// resolve a standalone compute fragment.
-pub fn resolve_compute_fragment(body: &mut [DoLine]) -> Result<(), RexRapError> {
-    resolve_do_block(body, &Scope::empty())
+pub fn resolve_compute_fragment(body: &mut [ComputeLine]) -> Result<(), RexRapError> {
+    resolve_compute_block(body, &Scope::empty())
 }
 
 /// resolve every namespaced call in the document to its bare runtime form, in place.
@@ -78,7 +78,13 @@ pub fn resolve(document: &mut Document) -> Result<(), RexRapError> {
         }
         match &mut function.body {
             FnBody::Expr(expr) => resolve_expr(expr, &function_scope)?,
-            FnBody::Block(lines) => resolve_do_block(lines, &function_scope)?,
+            FnBody::Block(lines) => resolve_compute_block(lines, &function_scope)?,
+            // a `task fn` body is a statement region and resolves like a workflow body.
+            FnBody::Run(body) => {
+                for stmt in body.iter_mut() {
+                    resolve_stmt(stmt, &function_scope)?;
+                }
+            }
         }
     }
     let user_fns = document
@@ -127,6 +133,9 @@ pub fn resolve(document: &mut Document) -> Result<(), RexRapError> {
             resolve_block(&mut interrupt.body, &scope)?;
         }
         resolve_block(&mut workflow.body, &scope)?;
+        for join in workflow.joins.iter_mut() {
+            resolve_block(&mut join.body, &scope)?;
+        }
     }
     Ok(())
 }
@@ -244,7 +253,10 @@ fn resolve_block(block: &mut Block, scope: &Scope) -> Result<(), RexRapError> {
 fn resolve_stmt(stmt: &mut Stmt, scope: &Scope) -> Result<(), RexRapError> {
     match &mut stmt.kind {
         StmtKind::Action(action) => resolve_entries(&mut action.args, scope)?,
-        StmtKind::Do(compute) => resolve_do_block(&mut compute.body, scope)?,
+        StmtKind::TaskCall(call) => resolve_entries(&mut call.args, scope)?,
+        StmtKind::Return(Some(value)) => resolve_expr(value, scope)?,
+        StmtKind::Return(None) | StmtKind::Detach(_) => {}
+        StmtKind::Compute(compute) => resolve_compute_block(&mut compute.body, scope)?,
         StmtKind::Subflow(subflow) => {
             if let Some(run_name) = subflow.run_name.as_mut() {
                 resolve_expr(run_name, scope)?;
@@ -401,22 +413,22 @@ fn resolve_stmt(stmt: &mut Stmt, scope: &Scope) -> Result<(), RexRapError> {
     Ok(())
 }
 
-fn resolve_do_block(body: &mut [DoLine], scope: &Scope) -> Result<(), RexRapError> {
+fn resolve_compute_block(body: &mut [ComputeLine], scope: &Scope) -> Result<(), RexRapError> {
     for line in body.iter_mut() {
         match line {
-            DoLine::Let { value, .. } | DoLine::Return(value) | DoLine::Expr(value) => {
-                resolve_expr(value, scope)?
-            }
-            DoLine::If {
+            ComputeLine::Let { value, .. }
+            | ComputeLine::Return(value)
+            | ComputeLine::Expr(value) => resolve_expr(value, scope)?,
+            ComputeLine::If {
                 cond,
                 then_branch,
                 else_branch,
             } => {
                 resolve_cond(cond, scope)?;
-                resolve_do_block(then_branch, scope)?;
-                resolve_do_block(else_branch, scope)?;
+                resolve_compute_block(then_branch, scope)?;
+                resolve_compute_block(else_branch, scope)?;
             }
-            DoLine::Goto(_) => {}
+            ComputeLine::Goto(_) => {}
         }
     }
     Ok(())

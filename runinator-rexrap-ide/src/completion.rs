@@ -233,17 +233,41 @@ fn dedupe_completion_items(items: &mut Vec<RexRapCompletionItem>) {
 
 fn complete_edge_outcomes(replace_start: usize, replace_end: usize) -> RexRapCompletionResponse {
     let mut items = [
-        ("ok", "success edge", "ok -> ${target}"),
-        ("fail", "failure edge", "fail -> ${target}"),
-        ("timeout", "timeout edge", "timeout -> ${target}"),
-        ("reject", "approval rejection edge", "reject -> ${target}"),
-        ("next", "next edge", "next -> ${target}"),
-        ("when", "predicate edge", "when ${condition} -> ${target}"),
+        (
+            "on success",
+            "success route",
+            "on success {\n    continue ${target}\n}",
+        ),
+        (
+            "on failure",
+            "failure route",
+            "on failure {\n    continue ${target}\n}",
+        ),
+        (
+            "on timeout",
+            "timeout route",
+            "on timeout {\n    continue ${target}\n}",
+        ),
+        (
+            "on reject",
+            "approval rejection route",
+            "on reject {\n    continue ${target}\n}",
+        ),
+        (
+            "on next",
+            "next route",
+            "on next {\n    continue ${target}\n}",
+        ),
+        (
+            "when",
+            "predicate route",
+            "when ${condition} {\n    continue ${target}\n}",
+        ),
     ]
     .into_iter()
     .map(|(label, detail, insert_text)| RexRapCompletionItem {
         label: label.into(),
-        kind: "edge".into(),
+        kind: "route".into(),
         detail: Some(detail.into()),
         documentation: None,
         insert_text: insert_text.into(),
@@ -265,11 +289,11 @@ fn complete_transition_targets(
 ) -> RexRapCompletionResponse {
     let mut items = vec![
         RexRapCompletionItem {
-            label: "done".into(),
+            label: "end".into(),
             kind: "target".into(),
             detail: Some("terminal target".into()),
             documentation: None,
-            insert_text: "done".into(),
+            insert_text: "end".into(),
             is_snippet: false,
         },
         RexRapCompletionItem {
@@ -304,21 +328,71 @@ fn construct_completion_items() -> Vec<RexRapCompletionItem> {
             "workflow",
             "keyword",
             "workflow scaffold",
-            "workflow \"${name}\" {\n    params {\n        ${}\n    }\n\n    ${}\n}",
+            "workflow \"${name}\" {\n    params {\n        ${}\n    }\n\n    do {\n        ${}\n    }\n}",
             true,
         ),
         (
-            "node",
+            "let",
             "keyword",
             "provider action node",
-            "node ${name} <- ${provider}.${action}(${args})",
+            "let ${name} = ${provider}.${action}(${args})",
+            true,
+        ),
+        ("do", "keyword", "runtime block", "do {\n    ${}\n}", true),
+        (
+            "routes",
+            "keyword",
+            "attached routes section",
+            "routes {\n    on success {\n        continue ${target}\n    }\n}",
             true,
         ),
         (
-            "do",
+            "join",
             "keyword",
-            "do block",
-            "node ${name} <- do {\n    return ${value}\n}",
+            "named continuation",
+            "join ${name} {\n    ${}\n}",
+            true,
+        ),
+        (
+            "async",
+            "keyword",
+            "schedule a call as a task",
+            "let ${name} = async ${provider}.${action}(${args})",
+            true,
+        ),
+        (
+            "await",
+            "keyword",
+            "join a task handle",
+            "let ${name} = await ${handle}",
+            true,
+        ),
+        (
+            "detach",
+            "keyword",
+            "drop a task handle without joining it",
+            "detach ${handle}",
+            true,
+        ),
+        (
+            "return",
+            "keyword",
+            "successful terminal with a result",
+            "return ${value}",
+            true,
+        ),
+        (
+            "task fn",
+            "keyword",
+            "runtime function inlined at each call site",
+            "task fn ${name}(${params}) do {\n    ${}\n}",
+            true,
+        ),
+        (
+            "compute",
+            "keyword",
+            "compute block",
+            "let ${name} = compute {\n    return ${value}\n}",
             true,
         ),
         (
@@ -388,7 +462,7 @@ fn construct_completion_items() -> Vec<RexRapCompletionItem> {
             "subflow",
             "keyword",
             "subflow call",
-            "node ${name} <- subflow(\"${workflow}\", params: {\n    ${}\n})",
+            "let ${name} = subflow(\"${workflow}\", params: {\n    ${}\n})",
             true,
         ),
         (
@@ -402,7 +476,7 @@ fn construct_completion_items() -> Vec<RexRapCompletionItem> {
             "wait",
             "keyword",
             "wait node",
-            "node ${name} <- wait ${duration}",
+            "let ${name} = wait ${duration}",
             true,
         ),
         (

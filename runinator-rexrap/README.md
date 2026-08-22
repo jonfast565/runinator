@@ -24,16 +24,19 @@ workflow "Core Team SDLC Pipeline" v1 {
         jira: { base_url: string, email: string, token: string, jql: string }
     }
 
-    node tickets <- jira.search(
-        base_url: params.jira.base_url,
-        jql:      params.jira.jql,
-    ).timeout(60s)
+    do {
+        @timeout(60s)
+        let tickets = jira.search(
+            base_url: params.jira.base_url,
+            jql:      params.jira.jql,
+        )
 
-    for ticket in tickets.issues limit 50 {
-        subflow("Ticket Work", params: {
-            ticket,
-            parent_workflow_run_id: run.run_id
-        }, detached: true, reuse: true, name: "Ticket Work: ${ticket.key}")
+        for ticket in tickets.issues limit 50 {
+            subflow("Ticket Work", params: {
+                ticket,
+                parent_workflow_run_id: run.run_id
+            }, detached: true, reuse: true, name: "Ticket Work: ${ticket.key}")
+        }
     }
 }
 ```
@@ -44,27 +47,52 @@ workflow "Core Team SDLC Pipeline" v1 {
 `on_success`, control-ish leaves use `next`). A synthetic `start`/`end`/`fail` are always
 emitted. Every implicit part can also be written explicitly — see [Implicit vs explicit](#implicit-vs-explicit).
 
-**Node leaves carry `node` only when they bind a value.** Actions (`provider.fn(...)`),
-subflows (`subflow(...)`), control blocks, and `compute` blocks can bind their runtime value with
-`node name <- ...` or `node name: Type <- ...`. Bare statements are still allowed when their value is
-not referenced. `emit`, `wait`, `approve`, and similar side-effect statements stay bare unless you
-explicitly want a bound graph value. `let` is only a pure local inside a `compute` block.
+**A workflow's statements live in `do { … }`.** The runtime block is what a run executes; the
+header declarations (`params`, `import`, `trigger`, `alias`, `type`, `interrupt`, …) sit above it.
 
-**Arrows make transitions explicit.** `-> done` (single) or outcome arrows:
+**`let` binds a step's value.** Actions (`provider.fn(...)`), subflows (`subflow(...)`), control
+blocks, and `compute` blocks bind with `let name = ...` or `let name: Type = ...`. Bare statements
+are allowed when the value is not referenced. `emit`, `wait`, `approve`, and similar side-effect
+statements stay bare unless you want a bound graph value.
+
+**`async` is a call-site marker, not a colored callee.** A plain call runs inline and yields `T`;
+`async` schedules the same call as a task and yields `task[T]`, which `await` joins and `detach`
+drops. The callee is identical either way, so nothing is ever written twice. Consecutive `async`
+launches fan out into one `parallel`, joined where the first handle is consumed.
 
 ```
-node deploy <- github.deploy()
-    ok      -> verify
-    fail    -> rollback
-    timeout -> alert
+let build = ci.build(repo: input.repo)          // sync  -> Artifact
+let scan  = async security.scan(repo: input.repo)  // async -> task[Report]
+let report = await scan                          // joins -> Report
 ```
 
-`done` and `fail` are reserved targets (the terminal nodes).
+**`routes { … }` makes transitions explicit.** Each arm names an outcome (or a predicate) and hands
+control on with `continue`:
 
-**Chaining is configuration.** `.timeout(60s) .retry(3) .tags("ci","release") .mcp()
-.reentry(5) .runner("creds-sync") .idempotent(key: input.invoice_id)` on actions.
+```
+let deploy = github.deploy()
+    routes {
+        on success {
+            continue verify
+        }
+        on failure {
+            continue rollback
+        }
+        on timeout {
+            continue alert
+        }
+    }
+```
 
-`.idempotent(key: <expr>)` names the external effect this action has, so the platform can refuse to
+`end` and `fail` are reserved targets (the generated terminal nodes).
+
+**Attributes are configuration.** `@timeout(60s)`, `@retry(3)`, `@tags("ci", "release")`, `@mcp`,
+`@reentry(max_visits: 5)`, `@runner("creds-sync")`, and `@idempotent(key: input.invoice_id)` are
+written as lines above the step. `@` is the only attribute surface: there is no fluent
+`.timeout(...)` postfix chain. `@id("x")`, `@skip`, `@lock`, and `@deadline(30s)` describe the graph
+node; the rest describe how the step executes.
+
+`@idempotent(key: <expr>)` names the external effect this action has, so the platform can refuse to
 produce it twice. The expression is resolved per dispatch against the same run context the action's
 arguments see, then qualified by workflow (`workflow:<id>:<key>`) — two runs of the same workflow
 computing the same key dedupe against each other; an unrelated workflow computing the same string
@@ -73,7 +101,7 @@ does not. Lowers to the action's `idempotency_key`.
 The worker reserves the key before invoking the provider. Once an execution *succeeds* under a key,
 any later delivery carrying it replays the recorded result instead of re-invoking; because the result
 is recorded before the status publish, a failed publish no longer re-runs the side effect. A failed
-attempt records nothing and frees the reservation, so `.retry(...)` still works. A key that resolves
+attempt records nothing and frees the reservation, so `@retry(...)` still works. A key that resolves
 to null or empty is treated as absent rather than shared, since collapsing every run onto one key
 would silently skip real work.
 
@@ -81,12 +109,12 @@ What it cannot do: when a worker dies mid-invocation, nothing can know whether t
 landed. The resolved key is therefore also passed to the provider (`ProviderExecutionRequest
 .idempotency_key`) so providers with native idempotency can dedupe on it upstream.
 
-`.runner("<type>")` requires the action to run on a worker advertising the `runner=<type>` label
+`@runner("<type>")` requires the step to run on a worker advertising the `runner=<type>` label
 (`RUNINATOR_WORKER_LABELS`). The engine dispatches it to a live matching worker and parks the effect
-until one connects, so pair it with `.timeout(...)` to fail the run when no such worker is available.
+until one connects, so pair it with `@timeout(...)` to fail the run when no such worker is available.
 Lowers to the action's `required_labels` (`{ "runner": "<type>" }`).
 
-`.retry(max, backoff: <dur>, max: <dur>, jitter: <bool>, on: any|failure|timeout)` — only `max`
+`@retry(max, backoff: <dur>, max: <dur>, jitter: <bool>, on: any|failure|timeout)` — only `max`
 (attempt count) is required. `backoff` is the first-retry delay and doubles each attempt up to the
 `max` cap (defaults 1s/300s); `jitter` randomizes each delay into `[delay/2, delay]`; `on` narrows
 which terminal status retries (`failure` skips retrying timeouts, e.g. so a long, expensive action
@@ -96,8 +124,8 @@ is not blindly re-run). Defaults preserve the historical behavior (exponential 1
 
 | REXRAP | JSON kind |
 |---|---|
-| `node id <- provider.fn(args).mods` / `provider.fn(args).mods` | action |
-| `node id <- subflow("WF", params: { }, reuse: true)` / `subflow("WF", detached: true)` | subflow (wait / fire_and_forget) |
+| `let id = provider.fn(args)` / `provider.fn(args)` | action |
+| `let id = subflow("WF", params: { }, reuse: true)` / `subflow("WF", detached: true)` | subflow (wait / fire_and_forget) |
 | `wait 30s until "ready"` | wait |
 | `wait until <cond> every 30s` | condition poll-wait (sugar for `until <cond> { wait 30s }`; `every` defaults to 30s) |
 | `signal "name" key <expr>` (event wait; `key` lets an external webhook route here by correlation value; bound by `@timeout(...)`) | signal |
@@ -156,10 +184,11 @@ it lowers to `std.run` when pure and `std.exec` when effectful.
 Foreign-language compute code uses a fenced form:
 
 ````
-node score <- compute "python" ```
+let score = compute "python" ```
 def main(context):
     return {"score": context["input"]["score"] + 1}
-```.timeout(30s)
+@timeout(30s)
+```
 ````
 
 The fenced source is carried verbatim in the compiled workflow and lowers to `std.code`, which runs
@@ -167,7 +196,7 @@ on a worker through Docker. Foreign source must define `main(context)` and retur
 JSON-serializable value; Runinator owns context loading and output serialization. Python awaitables
 and JavaScript promises are awaited. The returned value becomes the compute node output and is
 available to later REXRAP nodes as `score.field`. A typed binding such as
-`node score: { score: integer } <- compute ...` also validates the returned JSON at runtime. Bash's
+`let score: { score: integer } = compute ...` also validates the returned JSON at runtime. Bash's
 `main` receives the context as a JSON string and must print its JSON result to stdout; Bash logging
 must use stderr. The Docker image and optional bash setup script are configured by an
 administrator under Admin -> Settings -> Foreign Languages, with built-in defaults for
@@ -265,7 +294,7 @@ relative-path safety rules as `file()` apply, and the listed files are bundled w
 For embedded source, use a fenced inline block:
 
 ````
-node run <- console.run(command: inline("python", ```
+let run = console.run(command: inline("python", ```
 print("hello")
 ```))
 ````
@@ -312,7 +341,10 @@ workflow "Nightly" v1 {
     trigger cron "0 9 * * *"
     trigger cron "*/5 * * * *" with { source: "cron" }
     trigger cron "0 0 * * *" disabled blackout "2026-01-01T00:00:00Z" to "2026-01-02T00:00:00Z"
-    ...
+
+    do {
+        ...
+    }
 }
 ```
 
@@ -336,7 +368,10 @@ that refreshes the watched value.
 ```
 workflow "Ticket Work" v1 {
     watch status_poll.fields.status.name != config.status.in_review -> handle_drift
-    ...
+
+    do {
+        ...
+    }
 }
 ```
 
@@ -347,17 +382,17 @@ parameters resolve against the live context, so a rollback can read the origin n
 created resource id). Rollback is best-effort: a failing compensation does not halt the unwind.
 
 ```
-node deploy_api <- github.dispatch(workflow_id: "deploy", ref: "main")
+let deploy_api = github.dispatch(workflow_id: "deploy", ref: "main")
     compensate github.dispatch(workflow_id: "rollback", ref: "main")
 ```
 
 It lowers to the node's `compensation` (a `WorkflowAction`) and round-trips through decompile.
 
 **Annotations**: `@id("explicit")`, `@skip`, `@lock`, and `@timeout(300s)` for round-trip
-stability and node-level orchestration metadata. Action `.timeout(...)` remains the provider
+stability and node-level orchestration metadata. Step `@timeout(...)` remains the provider
 command timeout; `@timeout(...)` maps to the workflow node timeout.
 
-**Typed bindings**: `node tickets: { issues: any[] } <- jira.search(...)` annotates a step's
+**Typed bindings**: `let tickets: { issues: any[] } = jira.search(...)` annotates a step's
 output type. The annotation is checked during semantic analysis, persisted in the graph
 metadata, and re-emitted by the decompiler so it survives a round trip.
 
@@ -381,7 +416,9 @@ model is unchanged. A waiting `subflow(...)` binding sees the type at `child.sta
 workflow "Ticket Work" v1 {
     alias jira_conn = { base_url: config.jira.base_url, email: config.jira.email, token: secret.jira.token }
 
-    node t <- jira.transition(...jira_conn, key: params.ticket.key, transition_id: config.transitions.done)
+    do {
+        let t = jira.transition(...jira_conn, key: params.ticket.key, transition_id: config.transitions.done)
+    }
 }
 ```
 
@@ -413,9 +450,9 @@ canonical fully-expanded source so a reader never has to guess how a workflow is
 |---|---|---|
 | synthetic `start` → first statement | `start -> <id>` (top of body) | first statement |
 | sequential happy-path edge | `ok -> <id>` (action/subflow/approval) or `next -> <id>` (wait/emit/config, control blocks) | next statement |
-| auto node id (`action_1`, `for_loop_2`…) | `node x <- …` (action/subflow/compute) or `@id("x") …` (any statement) | generated |
-| action `.timeout(…)` | `.timeout(60s)` | 60s |
-| action `.retry(…)` | `.retry(1)` | 1 attempt |
+| auto node id (`action_1`, `for_loop_2`…) | `let x = …` (action/subflow/compute) or `@id("x") …` (any statement) | generated |
+| step `@timeout(…)` | `@timeout(60s)` | 60s |
+| step `@retry(…)` | `@retry(1)` | 1 attempt |
 | `while`/`until` cap | `limit 1000` | 1000 |
 | `for` cap / `map` fan-out | `limit none` / `concurrency none` | unbounded |
 | approval kind | `type "generic"` | `generic` |
@@ -430,7 +467,10 @@ So this terse workflow:
 
 ```
 workflow "Hello" v1 {
-    node greeting <- console.run(command: "echo hi")
+
+    do {
+        let greeting = console.run(command: "echo hi")
+    }
 }
 ```
 
@@ -439,8 +479,17 @@ is exactly this fully-explicit one (`decompile --explicit`):
 ```
 workflow "Hello" v1 {
     start -> greeting
-    node greeting <- console.run(command: "echo hi").timeout(60s).retry(1)
-        ok -> done
+
+    do {
+        @timeout(60s)
+        @retry(1)
+        let greeting = console.run(command: "echo hi")
+            routes {
+                on success {
+                    continue end
+                }
+            }
+    }
 }
 ```
 

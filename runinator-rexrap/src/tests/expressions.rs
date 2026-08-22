@@ -7,7 +7,10 @@ use super::*;
 fn comparison_operators_lower_to_intrinsic_calls() {
     let src = r#"
         workflow "Cmp" v1 {
-            node go <- console.run(le: params.x <= 1, eq: params.y == params.z, gt: params.a > 2)
+
+            do {
+                let go = console.run(le: params.x <= 1, eq: params.y == params.z, gt: params.a > 2)
+            }
         }
     "#;
     let definition = compile(src);
@@ -26,7 +29,10 @@ fn comparison_operators_lower_to_intrinsic_calls() {
 fn ternary_lowers_to_if_form() {
     let src = r#"
         workflow "Tern" v1 {
-            node go <- console.run(size: params.n <= 1 ? "small" : "big")
+
+            do {
+                let go = console.run(size: params.n <= 1 ? "small" : "big")
+            }
         }
     "#;
     let definition = compile(src);
@@ -42,7 +48,7 @@ fn ternary_lowers_to_if_form() {
 }
 #[test]
 fn ternary_round_trips_through_formatter() {
-    let src = "workflow \"Tern\" v1 {\n    node go <- console.run(size: params.n <= 1 ? \"small\" : \"big\")\n}\n";
+    let src = "workflow \"Tern\" v1 {\n\n    do {\n        let go = console.run(size: params.n <= 1 ? \"small\" : \"big\")\n    }\n}\n";
     let formatted = format_str(src).expect("format");
     assert!(
         formatted.contains("params.n <= 1 ? \"small\" : \"big\""),
@@ -51,7 +57,7 @@ fn ternary_round_trips_through_formatter() {
 }
 #[test]
 fn comparison_round_trips_through_formatter() {
-    let src = "workflow \"Cmp\" v1 {\n    node go <- console.run(flag: params.x >= 2)\n}\n";
+    let src = "workflow \"Cmp\" v1 {\n\n    do {\n        let go = console.run(flag: params.x >= 2)\n    }\n}\n";
     let formatted = format_str(src).expect("format");
     assert!(formatted.contains("params.x >= 2"), "{formatted}");
 }
@@ -59,7 +65,10 @@ fn comparison_round_trips_through_formatter() {
 fn secret_reference_requires_scope_and_name() {
     let src = r#"
         workflow "BadSecret" v1 {
-            node go <- console.run(command: "x", token: secret.github)
+
+            do {
+                let go = console.run(command: "x", token: secret.github)
+            }
         }
     "#;
     match compile_str(src, &CompileOptions::default()) {
@@ -77,33 +86,73 @@ fn round_trips_fanin_error_handlers_and_convergence() {
     let src = r#"
         workflow "Fanin" v1 {
             params { poll: { interval: integer } }
-            node prepare <- console.run(command: "prepare")
-                fail -> notify_failure
-            node build <- console.run(command: "build")
-                fail -> notify_failure
 
-            until check.status == "passed" || check.status == "failed" limit 20 {
-                wait params.poll.interval
-                node check <- console.run(command: "poll")
+            do {
+                let prepare = console.run(command: "prepare")
+                    routes {
+                        on failure {
+                            continue notify_failure
+                        }
+                    }
+                let build = console.run(command: "build")
+                    routes {
+                        on failure {
+                            continue notify_failure
+                        }
+                    }
+                until check.status == "passed" || check.status == "failed" limit 20 {
+                    wait params.poll.interval
+                    let check = console.run(command: "poll")
+                }
+
+                if check.status == "passed" {
+                    approve "ship it?" type "merge"
+                        routes {
+                            on success {
+                                continue finalize
+                            }
+                            on reject {
+                                continue rollback
+                            }
+                        }
+                }
+                routes {
+                    on next {
+                        continue notify_failure
+                    }
+                }
+
+                let finalize = console.run(command: "finalize")
+                    routes {
+                        on failure {
+                            continue notify_failure
+                        }
+                    }
+                let report = console.run(command: "report")
+                    routes {
+                        on next {
+                            continue cleanup
+                        }
+                    }
+                let rollback = console.run(command: "rollback")
+                    routes {
+                        on next {
+                            continue cleanup
+                        }
+                    }
+                let notify_failure = console.run(command: "alert")
+                    routes {
+                        on next {
+                            continue cleanup
+                        }
+                    }
+                let cleanup = console.run(command: "cleanup")
+                    routes {
+                        on next {
+                            continue end
+                        }
+                    }
             }
-
-            if check.status == "passed" {
-                approve "ship it?" type "merge"
-                    ok -> finalize
-                    reject -> rollback
-            } -> notify_failure
-
-            node finalize <- console.run(command: "finalize")
-                fail -> notify_failure
-            node report <- console.run(command: "report")
-                -> cleanup
-
-            node rollback <- console.run(command: "rollback")
-                -> cleanup
-            node notify_failure <- console.run(command: "alert")
-                -> cleanup
-            node cleanup <- console.run(command: "cleanup")
-                -> done
         }
     "#;
     assert_round_trips_unordered(src);

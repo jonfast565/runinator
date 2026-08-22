@@ -13,18 +13,26 @@ fn decompile_output_is_format_idempotent() {
             params {
                 jira: { base_url: string, email: string, token: string, jql: string }
             }
-            node tickets <- jira.search(jql: params.jira.jql).timeout(120s).retry(3)
-            for ticket in tickets.issues limit 50 {
-                subflow("Ticket Work", params: { ticket, parent_workflow_run_id: run.run_id }, detached: true, reuse: true, name: "Ticket Work: ${ticket.key}")
-            }
+
+    do {
+                @timeout(120s)
+                @retry(3)
+                let tickets = jira.search(jql: params.jira.jql)
+                for ticket in tickets.issues limit 50 {
+                    subflow("Ticket Work", params: { ticket, parent_workflow_run_id: run.run_id }, detached: true, reuse: true, name: "Ticket Work: ${ticket.key}")
+                }
+    }
         }"#,
         r#"workflow "Concurrency" v1 {
-            node probe <- console.run(command: "probe")
-            parallel {
-                branch { console.run(command: "lint") }
-                branch { console.run(command: "test") }
-            } join all
-            node report <- console.run(command: "report")
+
+    do {
+                let probe = console.run(command: "probe")
+                parallel {
+                    branch { console.run(command: "lint") }
+                    branch { console.run(command: "test") }
+                } join all
+                let report = console.run(command: "report")
+    }
         }"#,
     ];
     for src in samples {
@@ -43,12 +51,15 @@ fn selected_parallel_join_leaves_unselected_branches_on_private_terminals() {
 
     let src = r#"
         workflow "Selected Parallel" v1 {
-            parallel {
-                branch "lint" { console.run(command: "lint") }
-                branch "tests" { console.run(command: "test") }
-                branch "security" { console.run(command: "security") }
-            } join ["lint", "tests"] all
-            console.run(command: "publish")
+
+            do {
+                parallel {
+                    branch "lint" { console.run(command: "lint") }
+                    branch "tests" { console.run(command: "test") }
+                    branch "security" { console.run(command: "security") }
+                } join ["lint", "tests"] all
+                console.run(command: "publish")
+            }
         }
     "#;
     let definition = compile(src);
@@ -98,25 +109,28 @@ fn new_node_kinds_compile_and_round_trip() {
     let src = r#"
         workflow "New Nodes" v1 {
             params { run_ids: string[], amount: int, user: string }
-            node seed <- console.run(command: "echo go")
-            assert {
-                "amount_positive": params.amount > 0
+
+            do {
+                let seed = console.run(command: "echo go")
+                assert {
+                    "amount_positive": params.amount > 0
+                }
+                transform {
+                    doubled = params.amount * 2
+                }
+                audit action "reviewed" actor params.user
+                checkpoint "after-audit"
+                mutex "deploy-lock" every 5s timeout 300s
+                throttle "github-api" rate 10 per 60s
+                cooldown "scan-gate" every 300s
+                await workflow "Prep" key params.user mode "all" timeout 1800s
+                debounce "file-change" delay 30s
+                collect "events" max 50 timeout 300s
+                barrier "shard-sync" count 4 timeout 600s
+                circuit_breaker "payment-api" threshold 5 window 60s cooldown 120s
+                event_source type "file.uploaded" max 100 timeout 3600s
+                let finish = console.run(command: "echo done")
             }
-            transform {
-                doubled = params.amount * 2
-            }
-            audit action "reviewed" actor params.user
-            checkpoint "after-audit"
-            mutex "deploy-lock" every 5s timeout 300s
-            throttle "github-api" rate 10 per 60s
-            cooldown "scan-gate" every 300s
-            await workflow "Prep" key params.user mode "all" timeout 1800s
-            debounce "file-change" delay 30s
-            collect "events" max 50 timeout 300s
-            barrier "shard-sync" count 4 timeout 600s
-            circuit_breaker "payment-api" threshold 5 window 60s cooldown 120s
-            event_source type "file.uploaded" max 100 timeout 3600s
-            node finish <- console.run(command: "echo done")
         }
     "#;
 
@@ -255,7 +269,7 @@ fn new_node_kinds_optional_clauses_round_trip() {
     ];
     for (label, body) in bodies {
         let src = format!(
-            "workflow \"Opt\" v1 {{\n  params {{ run_ids: string[], amount: int, user: string, size: int }}\n  node seed <- console.run(command: \"echo go\")\n  {body}\n  node finish <- console.run(command: \"echo done\")\n}}\n"
+            "workflow \"Opt\" v1 {{\n  params {{ run_ids: string[], amount: int, user: string, size: int }}\n\n    do {{\n      let seed = console.run(command: \"echo go\")\n      {body}\n      let finish = console.run(command: \"echo done\")\n    }}\n}}\n"
         );
         let first = compile_str(&src, &default_test_options())
             .unwrap_or_else(|err| panic!("compile {label} failed: {err}"));
@@ -275,7 +289,7 @@ fn new_node_kinds_optional_clauses_round_trip() {
 /// and round-trips back to the block form (with `hold` preserved).
 #[test]
 fn mutex_block_lowers_and_round_trips() {
-    let src = "workflow \"Crit\" v1 {\n  mutex \"deploy\" hold 300s {\n    node work <- console.run(command: \"echo go\")\n  }\n  node finish <- console.run(command: \"echo done\")\n}\n";
+    let src = "workflow \"Crit\" v1 {\n\n    do {\n      mutex \"deploy\" hold 300s {\n        let work = console.run(command: \"echo go\")\n      }\n      let finish = console.run(command: \"echo done\")\n    }\n}\n";
     let first = compile_str(src, &default_test_options()).expect("compile block");
 
     // the block produces a mutex acquire node and a paired mutex release node.
@@ -317,7 +331,7 @@ fn mutex_block_lowers_and_round_trips() {
 /// a bare `mutex release "name"` leaf lowers to a release node and round-trips.
 #[test]
 fn mutex_release_leaf_round_trips() {
-    let src = "workflow \"Rel\" v1 {\n  mutex \"deploy\"\n  node work <- console.run(command: \"echo go\")\n  mutex release \"deploy\"\n  node finish <- console.run(command: \"echo done\")\n}\n";
+    let src = "workflow \"Rel\" v1 {\n\n    do {\n      mutex \"deploy\"\n      let work = console.run(command: \"echo go\")\n      mutex release \"deploy\"\n      let finish = console.run(command: \"echo done\")\n    }\n}\n";
     let first = compile_str(src, &default_test_options()).expect("compile release leaf");
     let rexrap = decompile(&first).expect("decompile release leaf");
     assert!(

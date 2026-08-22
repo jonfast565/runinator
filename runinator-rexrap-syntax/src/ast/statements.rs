@@ -11,6 +11,9 @@ pub struct Stmt {
     /// an optional `node <label>: <type> <- ...` annotation declaring the step's output type.
     pub label_type: Option<TypeExpr>,
     pub kind: StmtKind,
+    /// `async <call>`: schedule this step as a task instead of joining it inline. Asyncness is a
+    /// property of the call site, never of the callee, so no callable ever needs a second version.
+    pub is_async: bool,
     pub transitions: TransitionClause,
     /// `compensate <call>` on an action node: the compensating action run in reverse on saga rollback.
     pub compensation: Option<Box<ActionStmt>>,
@@ -29,7 +32,9 @@ pub struct Annotations {
 #[derive(Debug, Clone, PartialEq)]
 pub enum StmtKind {
     Action(ActionStmt),
-    Do(DoStmt),
+    /// a call to a `task fn`, inlined at this site during lowering.
+    TaskCall(TaskCallStmt),
+    Compute(ComputeStmt),
     Subflow(SubflowStmt),
     Wait(WaitStmt),
     Output(OutputStmt),
@@ -52,6 +57,10 @@ pub enum StmtKind {
     CircuitBreaker(CircuitBreakerStmt),
     EventSource(EventSourceStmt),
     Config(ConfigStmt),
+    /// `return <expr>?` — supplies the run's result and continues to the generated `end` node.
+    Return(Option<Expr>),
+    /// `detach <handle>` — stop tracking an `async` task handle; it is never joined.
+    Detach(String),
     Fail(Option<Expr>),
     If(IfStmt),
     For(ForStmt),
@@ -101,8 +110,19 @@ pub struct PredicateEdge {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Target {
     Label(String),
-    Done,
+    /// the generated successful terminal, spelled `end` in source.
+    End,
+    /// the generated failing terminal, spelled `fail` in source.
     Fail,
+}
+
+/// `name(args)` where `name` is a `task fn`. the arguments are bound by substitution when the
+/// body is inlined, so a call site never pays for a child run.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TaskCallStmt {
+    pub name: String,
+    pub args: Vec<(String, Expr)>,
+    pub modifiers: Modifiers,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -150,8 +170,8 @@ pub struct ActionStmt {
 
 /// an imperative `do { ... }` block. lowers to a `std.run`/`std.exec` action node.
 #[derive(Debug, Clone, PartialEq)]
-pub struct DoStmt {
-    pub body: Vec<DoLine>,
+pub struct ComputeStmt {
+    pub body: Vec<ComputeLine>,
     pub foreign: Option<ForeignDo>,
     pub modifiers: Modifiers,
 }
@@ -165,7 +185,7 @@ pub struct ForeignDo {
 
 /// a single line in a compute block.
 #[derive(Debug, Clone, PartialEq)]
-pub enum DoLine {
+pub enum ComputeLine {
     Let {
         name: String,
         ty: Option<TypeExpr>,
@@ -175,8 +195,8 @@ pub enum DoLine {
     Goto(Target),
     If {
         cond: Cond,
-        then_branch: Vec<DoLine>,
-        else_branch: Vec<DoLine>,
+        then_branch: Vec<ComputeLine>,
+        else_branch: Vec<ComputeLine>,
     },
     Expr(Expr),
 }

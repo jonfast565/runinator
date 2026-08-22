@@ -8,7 +8,10 @@ fn lists_included_file_paths() {
     let src = r#"
         workflow "Includes" v1 {
             alias shared = { script: file("scripts/shared.py") }
-            node go <- console.run(command: file("scripts/job.py"), ...shared)
+
+            do {
+                let go = console.run(command: file("scripts/job.py"), ...shared)
+            }
         }
     "#;
     let mut paths =
@@ -35,7 +38,10 @@ fn lowers_file_include_relative_to_source_dir() {
 
     let src = r#"
         workflow "FileInclude" v1 {
-            node go <- console.run(command: file("scripts/job.py"))
+
+            do {
+                let go = console.run(command: file("scripts/job.py"))
+            }
         }
     "#;
     let options = CompileOptions {
@@ -55,7 +61,10 @@ fn lowers_file_include_relative_to_source_dir() {
 fn file_include_requires_source_dir() {
     let src = r#"
         workflow "FileInclude" v1 {
-            node go <- console.run(command: file("scripts/job.py"))
+
+            do {
+                let go = console.run(command: file("scripts/job.py"))
+            }
         }
     "#;
     match compile_str(src, &CompileOptions::default()) {
@@ -69,7 +78,10 @@ fn file_include_requires_source_dir() {
 fn file_include_cannot_escape_source_dir() {
     let src = r#"
         workflow "FileInclude" v1 {
-            node go <- console.run(command: file("../job.py"))
+
+            do {
+                let go = console.run(command: file("../job.py"))
+            }
         }
     "#;
     let options = CompileOptions {
@@ -111,7 +123,10 @@ fn dir_include_lists_top_level_by_default() {
     let dir = dir_fixture("dir-top");
     let src = r#"
         workflow "DirInclude" v1 {
-            node go <- console.run(command: dir("scripts"))
+
+            do {
+                let go = console.run(command: dir("scripts"))
+            }
         }
     "#;
     let options = CompileOptions {
@@ -131,7 +146,10 @@ fn dir_include_recurses_with_relative_paths() {
     let dir = dir_fixture("dir-recursive");
     let src = r#"
         workflow "DirInclude" v1 {
-            node go <- console.run(command: dir("scripts", true))
+
+            do {
+                let go = console.run(command: dir("scripts", true))
+            }
         }
     "#;
     let options = CompileOptions {
@@ -155,7 +173,10 @@ fn dir_include_depth_cap_stops_descent() {
     let dir = dir_fixture("dir-depth");
     let src = r#"
         workflow "DirInclude" v1 {
-            node go <- console.run(command: dir("scripts", true, 1))
+
+            do {
+                let go = console.run(command: dir("scripts", true, 1))
+            }
         }
     "#;
     let options = CompileOptions {
@@ -174,7 +195,10 @@ fn dir_include_depth_cap_stops_descent() {
 fn dir_include_requires_source_dir() {
     let src = r#"
         workflow "DirInclude" v1 {
-            node go <- console.run(command: dir("scripts"))
+
+            do {
+                let go = console.run(command: dir("scripts"))
+            }
         }
     "#;
     match compile_str(src, &CompileOptions::default()) {
@@ -187,7 +211,10 @@ fn dir_include_requires_source_dir() {
 #[test]
 fn dir_include_round_trips_through_formatter() {
     let src = r#"workflow "DirInclude" v1 {
-    node go <- console.run(command: dir("scripts", true, 2))
+
+    do {
+        let go = console.run(command: dir("scripts", true, 2))
+    }
 }
 "#;
     let formatted = format_str(src).expect("format");

@@ -3,8 +3,9 @@
 // the output is a WorkflowDefinition whose `definition` is `{ start, nodes: [...] }`.
 
 mod blocks;
-mod do_block;
+mod compute_block;
 mod expr;
+mod inline;
 mod spreads;
 
 use std::collections::{HashMap, HashSet};
@@ -40,6 +41,10 @@ struct Lowerer {
     nodes: Vec<Value>,
     used_ids: HashSet<String>,
     task_bindings: HashMap<String, TaskBinding>,
+    /// `task fn` definitions, inlined at each call site rather than compiled to a callable.
+    task_fns: HashMap<String, FunctionDef>,
+    /// handles explicitly dropped by `detach`, so an unconsumed one can be reported as an error.
+    detached: HashSet<String>,
     counter: u64,
     /// a counter of its own for `resume` node ids — see `fresh_resume`.
     resume_counter: u64,
@@ -126,6 +131,12 @@ fn lower_workflow(
     // assembles them into its module as it is emitted. the lowered form is identical either way —
     // function bodies do not depend on the body's node ids — so this only moves when it happens.
     lowerer.lowered_functions = lowerer.lower_functions(&document.functions)?;
+    // `task fn`s are inlined, not compiled into the function table, so keep them by name.
+    for def in &document.functions {
+        if def.is_task {
+            lowerer.task_fns.insert(def.name.clone(), def.clone());
+        }
+    }
     let end_id = lowerer.end_id.clone();
     // handler regions lower into the same node list as the main flow, just unreachable from `start`.
     // they go *first* because decompile emits them first, in the header: generated node ids come
@@ -133,6 +144,8 @@ fn lower_workflow(
     // numbered differently and the round trip diverges on nothing but its id.
     let interrupts = lowerer.lower_interrupts(&workflow.interrupts)?;
     let body_entry = lowerer.lower_block(&workflow.body, &end_id)?;
+    // named continuations lower after the main flow: they are reachable only by `continue <name>`.
+    let joins = lowerer.lower_joins(&workflow.joins, &end_id)?;
 
     // the entry is an explicit `start -> <target>` when present, else the first statement.
     let entry = match &workflow.start {
@@ -168,6 +181,11 @@ fn lower_workflow(
     // the `rexrap` sidecar carries source hints that let decompile reproduce the original source and
     // backend validation consume declared node output types.
     let mut rexrap = Map::new();
+    // record which nodes front a `join <name>` region so decompile can restore the declaration
+    // rather than rendering its pass-through entry as an ordinary statement.
+    if !joins.is_empty() {
+        rexrap.insert("joins".into(), Value::Array(joins));
+    }
     if !lowerer.declared_types.is_empty() {
         let mut types_map = Map::new();
         for (id, value) in &lowerer.declared_types {
@@ -355,7 +373,10 @@ pub fn lower_condition_fragment(
     lowerer.lower_cond(cond)
 }
 
-pub fn lower_do_fragment(body: &[DoLine], options: &CompileOptions) -> Result<Value, RexRapError> {
+pub fn lower_do_fragment(
+    body: &[ComputeLine],
+    options: &CompileOptions,
+) -> Result<Value, RexRapError> {
     let mut lowerer = Lowerer::new();
     lowerer.source_dir = options.source_dir.clone();
     lowerer.lower_do_fragment(body)
@@ -371,6 +392,8 @@ impl Lowerer {
             nodes: Vec::new(),
             used_ids,
             task_bindings: HashMap::new(),
+            task_fns: HashMap::new(),
+            detached: HashSet::new(),
             counter: 0,
             resume_counter: 0,
             start_id: "start".to_string(),
@@ -662,6 +685,9 @@ impl Lowerer {
             let (body_key, body_value) = match &def.body {
                 FnBody::Expr(expr) => ("body", self.lower_expr(expr)),
                 FnBody::Block(lines) => ("program", self.lower_fn_block(lines).map(Value::Array)),
+                // a `task fn` is a graph region inlined at each call site; it is never a compute
+                // intrinsic, so it never appears in `metadata.functions`.
+                FnBody::Run(_) => continue,
             };
             self.compute_locals.replace(saved);
             let body_value = body_value?;
@@ -737,6 +763,12 @@ impl Lowerer {
         if block.is_empty() {
             return Ok(cont.to_string());
         }
+        // `async` launches fan out: a run of them (plus whatever sits between the launches and the
+        // first statement that consumes one) becomes a `parallel` whose join is that consuming
+        // statement. this is what makes two `async` calls actually overlap rather than merely
+        // being spelled differently from two plain ones.
+        let grouped = inline::group_async_launches(block);
+        let block: &[Stmt] = &grouped;
         // pass 1: claim entry ids so forward references resolve.
         let mut entries = Vec::with_capacity(block.len());
         for stmt in block {
@@ -813,9 +845,21 @@ impl Lowerer {
     }
 
     fn lower_stmt(&mut self, stmt: &Stmt, id: &str, next: &str) -> Result<(), RexRapError> {
+        // an `async` call binds a task handle, whatever the callee is; `await`/`detach` resolve
+        // against this. the marker is on the call site, so the callee never has to declare a color.
+        if stmt.is_async {
+            if let Some(label) = &stmt.label {
+                let binding = match &stmt.kind {
+                    StmtKind::Subflow(_) => TaskBinding::Subflow,
+                    _ => TaskBinding::Provider,
+                };
+                self.task_bindings.insert(label.clone(), binding);
+            }
+        }
         match &stmt.kind {
             StmtKind::Action(action) => self.lower_action(action, stmt, id, next),
-            StmtKind::Do(compute) => self.lower_do(compute, stmt, id, next),
+            StmtKind::TaskCall(call) => self.lower_task_call(call, stmt, id, next),
+            StmtKind::Compute(compute) => self.lower_compute(compute, stmt, id, next),
             StmtKind::Subflow(subflow) => self.lower_subflow(subflow, stmt, id, next),
             StmtKind::Wait(wait) => self.lower_wait(wait, stmt, id, next),
             StmtKind::Output(output) => self.lower_output(output, stmt, id, next),
@@ -838,6 +882,8 @@ impl Lowerer {
             StmtKind::CircuitBreaker(cb) => self.lower_circuit_breaker(cb, stmt, id, next),
             StmtKind::EventSource(es) => self.lower_event_source(es, stmt, id, next),
             StmtKind::Config(config) => self.lower_config(config, stmt, id, next),
+            StmtKind::Return(value) => self.lower_return(value.as_ref(), stmt, id),
+            StmtKind::Detach(handle) => self.lower_detach(handle, stmt, id, next),
             StmtKind::Fail(message) => self.lower_fail(message.as_ref(), stmt, id),
             StmtKind::Resume(resume) => self.lower_resume(resume, stmt, id),
             StmtKind::If(if_stmt) => {
@@ -875,6 +921,52 @@ impl Lowerer {
         }
     }
 
+    /// `return <expr>?` — supply the run's result and continue to the generated `end` terminal.
+    /// it is a compute node like `yield`, but its continuation is always the successful terminal
+    /// rather than the next sibling, which is what makes it a concise terminal form.
+    fn lower_return(
+        &mut self,
+        value: Option<&Expr>,
+        stmt: &Stmt,
+        id: &str,
+    ) -> Result<(), RexRapError> {
+        let end = self.end_id.clone();
+        let body = match value {
+            Some(value) => vec![ComputeLine::Return(value.clone())],
+            None => Vec::new(),
+        };
+        let compute = ComputeStmt {
+            body,
+            foreign: None,
+            modifiers: Modifiers::default(),
+        };
+        self.lower_compute(&compute, stmt, id, &end)
+    }
+
+    /// `detach <handle>` — drop an `async` handle without joining it. the launch still runs; the
+    /// statement itself is a pure no-op node that records the intent so decompile can restore it.
+    fn lower_detach(
+        &mut self,
+        handle: &str,
+        stmt: &Stmt,
+        id: &str,
+        next: &str,
+    ) -> Result<(), RexRapError> {
+        if !self.task_bindings.contains_key(handle) {
+            return Err(RexRapError::semantic(
+                stmt.span,
+                format!("`detach {handle}` must reference an earlier `async` binding"),
+            ));
+        }
+        self.detached.insert(handle.to_string());
+        let mut params = Map::new();
+        params.insert("detach".into(), Value::String(handle.to_string()));
+        params.insert("bindings".into(), Value::Object(Map::new()));
+        let fields = self.leaf_fields(params, stmt, next, None)?;
+        self.push(node(id, "transform", fields));
+        Ok(())
+    }
+
     fn lower_yield(
         &mut self,
         value: &Expr,
@@ -882,12 +974,12 @@ impl Lowerer {
         id: &str,
         next: &str,
     ) -> Result<(), RexRapError> {
-        let compute = DoStmt {
-            body: vec![DoLine::Return(value.clone())],
+        let compute = ComputeStmt {
+            body: vec![ComputeLine::Return(value.clone())],
             foreign: None,
             modifiers: Modifiers::default(),
         };
-        self.lower_do(&compute, stmt, id, next)
+        self.lower_compute(&compute, stmt, id, next)
     }
 
     fn lower_value_collector(
@@ -899,12 +991,13 @@ impl Lowerer {
         let span = stmt.span;
         let value = control_value_expr(&stmt.kind);
         let synthetic = Stmt {
+            is_async: false,
             span,
             annotations: Annotations::default(),
             label: stmt.label.clone(),
             label_type: stmt.label_type.clone(),
-            kind: StmtKind::Do(DoStmt {
-                body: vec![DoLine::Return(value)],
+            kind: StmtKind::Compute(ComputeStmt {
+                body: vec![ComputeLine::Return(value)],
                 foreign: None,
                 modifiers: Modifiers::default(),
             }),
@@ -914,15 +1007,85 @@ impl Lowerer {
         };
         // the synthetic statement is built as a compute above; guard the invariant instead of
         // panicking if that ever changes.
-        let StmtKind::Do(compute) = &synthetic.kind else {
+        let StmtKind::Compute(compute) = &synthetic.kind else {
             return Err(RexRapError::lower(
                 "synthetic value collector statement must be a compute statement",
             ));
         };
-        self.lower_do(compute, &synthetic, id, next)
+        self.lower_compute(compute, &synthetic, id, next)
     }
 
     // leaf statements -------------------------------------------------------
+
+    /// lower a `task fn` call by splicing the callee's body into the caller's graph.
+    ///
+    /// the arguments are substituted into the body rather than passed at runtime, because an
+    /// inlined region has no frame to pass them in. the region's own labels are namespaced by the
+    /// call site's node id, so calling the same `task fn` twice cannot collide.
+    fn lower_task_call(
+        &mut self,
+        call: &TaskCallStmt,
+        stmt: &Stmt,
+        id: &str,
+        next: &str,
+    ) -> Result<(), RexRapError> {
+        let Some(def) = self.task_fns.get(&call.name).cloned() else {
+            return Err(RexRapError::semantic(
+                stmt.span,
+                format!("unknown `task fn` '{}'", call.name),
+            ));
+        };
+        let FnBody::Run(body) = &def.body else {
+            return Err(RexRapError::semantic(
+                stmt.span,
+                format!("'{}' is not a `task fn`", call.name),
+            ));
+        };
+        // bind by name, falling back to each parameter's declared default.
+        let flat = runinator_rexrap_sema::desugar::flatten_entries(&call.args, &self.aliases)?;
+        let supplied: HashMap<String, Expr> = flat.into_iter().collect();
+        let mut bindings = HashMap::new();
+        for param in &def.params {
+            let value = supplied
+                .get(&param.name)
+                .cloned()
+                .or_else(|| param.default.clone());
+            match value {
+                Some(value) => {
+                    bindings.insert(param.name.clone(), value);
+                }
+                None if param.optional => {}
+                None => {
+                    return Err(RexRapError::semantic(
+                        stmt.span,
+                        format!("`{}` is missing argument '{}'", call.name, param.name),
+                    ));
+                }
+            }
+        }
+        for name in supplied.keys() {
+            if !def.params.iter().any(|param| &param.name == name) {
+                return Err(RexRapError::semantic(
+                    stmt.span,
+                    format!("`{}` has no parameter '{name}'", call.name),
+                ));
+            }
+        }
+        let inlined = inline::inline_body(body, &bindings, id)?;
+        // the call site's own id fronts the region so transitions targeting the call still land.
+        let entry = self.lower_block(&inlined, next)?;
+        let mut params = Map::new();
+        params.insert("bindings".into(), Value::Object(Map::new()));
+        self.push(node(
+            id,
+            "transform",
+            vec![
+                ("parameters", Value::Object(params)),
+                ("transitions", transitions_next(&entry)),
+            ],
+        ));
+        Ok(())
+    }
 
     fn lower_action(
         &mut self,
@@ -1744,6 +1907,31 @@ impl Lowerer {
     /// the block's continuation is a synthetic terminal `resume`, which is what makes "every path
     /// out of a region hands control back" true by construction rather than by the author's care —
     /// a branch that just runs off the end of the block lands there instead of dangling.
+    /// lower each `join <name> { … }` continuation into the same node list as the main flow.
+    /// like an interrupt region it is unreachable from `start` — only an explicit `continue <name>`
+    /// route enters it. the region is fronted by a pass-through node carrying the join's name, so
+    /// the name is a stable transition target no matter how the first body statement is bound.
+    fn lower_joins(&mut self, joins: &[JoinDecl], cont: &str) -> Result<Vec<Value>, RexRapError> {
+        let mut names = Vec::with_capacity(joins.len());
+        for join in joins {
+            let body = self.lower_block(&join.body, cont)?;
+            // claimed after the body so the region's own generated ids are unaffected by it.
+            let entry = self.claim(&join.name)?;
+            let mut params = Map::new();
+            params.insert("bindings".into(), Value::Object(Map::new()));
+            self.push(node(
+                &entry,
+                "transform",
+                vec![
+                    ("parameters", Value::Object(params)),
+                    ("transitions", transitions_next(&body)),
+                ],
+            ));
+            names.push(Value::String(join.name.clone()));
+        }
+        Ok(names)
+    }
+
     fn lower_interrupts(
         &mut self,
         interrupts: &[InterruptDecl],
@@ -1884,7 +2072,7 @@ impl Lowerer {
 
     fn target_id(&self, target: &Target) -> String {
         match target {
-            Target::Done => self.end_id.clone(),
+            Target::End => self.end_id.clone(),
             Target::Fail => self.fail_id.clone(),
             Target::Label(name) => name.clone(),
         }
@@ -1971,8 +2159,9 @@ fn path_expr(parts: &[&str]) -> Expr {
 fn control_prefix(kind: &StmtKind) -> &'static str {
     match kind {
         StmtKind::Action(_) => "action",
+        StmtKind::TaskCall(_) => "call",
         StmtKind::Resume(_) => "resume",
-        StmtKind::Do(_) => "do",
+        StmtKind::Compute(_) => "compute",
         StmtKind::Subflow(_) => "subflow",
         StmtKind::Wait(_) => "wait",
         StmtKind::Output(_) => "output",
@@ -1995,6 +2184,8 @@ fn control_prefix(kind: &StmtKind) -> &'static str {
         StmtKind::CircuitBreaker(_) => "circuit_breaker",
         StmtKind::EventSource(_) => "event_source",
         StmtKind::Config(_) => "config",
+        StmtKind::Return(_) => "return_node",
+        StmtKind::Detach(_) => "detach",
         StmtKind::Fail(_) => "fail_node",
         StmtKind::If(_) => "if",
         StmtKind::For(_) => "for_loop",

@@ -42,7 +42,7 @@ conventions:
 - **Deterministic worktree.** The git worktree lives at `git.worktree_root/<TICKET-KEY>`.
   Development creates it; Review/Deploy re-attach the same path (`git.worktree` is create-or-attach);
   QA runs `git.cleanup` on finished tickets. Every worktree-touching node is pinned with
-  `.runner("sdlc")` so it lands on the one worker that holds the checkouts — run a single worker with
+  `@runner("sdlc")` so it lands on the one worker that holds the checkouts — run a single worker with
   `RUNINATOR_WORKER_LABELS=runner=sdlc`. If a phase ever lands without the worktree, `git.worktree`
   re-materializes it from the remote branch.
 - **PR by branch.** Phases re-obtain the PR with `github.create_pr` (create-or-update finds the open
@@ -74,7 +74,7 @@ runinatorctl settings set jira token <api-token> --kind secret   # fill real tok
 
 ## Retry policy
 
-Network-bound nodes carry `.retry(...)` with jittered exponential backoff and an error class chosen
+Network-bound nodes carry `@retry(...)` with jittered exponential backoff and an error class chosen
 by side-effect safety: **reads** (`jira.poll/search/comments`, `github.reviews/checks_summary/
 workflow_runs`, `git.diff`) retry `on: any`; **idempotent writes** (`git.push/worktree/cleanup`,
 `slack.send_message`) retry `on: failure` only; **non-idempotent writes** (`github.create_pr/

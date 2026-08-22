@@ -90,6 +90,9 @@ pub(super) fn analyze(
         prev: RuninatorType::Any,
     };
     env.check_block(&workflow.body, diagnostics);
+    for join in &workflow.joins {
+        env.check_block(&join.body, diagnostics);
+    }
 }
 
 fn report_duplicate_type_decls(workflow: &Workflow, diagnostics: &mut Vec<Diagnostic>) {
@@ -238,13 +241,20 @@ impl Env {
     fn check_stmt(&mut self, stmt: &Stmt, diagnostics: &mut Vec<Diagnostic>) {
         self.check_label_type(stmt, diagnostics);
         match &stmt.kind {
+            StmtKind::Return(Some(value)) => self.check_expr(value, diagnostics),
+            StmtKind::Return(None) | StmtKind::Detach(_) => {}
             StmtKind::Action(action) => {
                 self.check_action(action, stmt.span, diagnostics);
                 for (_, value) in &action.args {
                     self.check_expr(value, diagnostics);
                 }
             }
-            StmtKind::Do(compute) => {
+            StmtKind::TaskCall(call) => {
+                for (_, value) in &call.args {
+                    self.check_expr(value, diagnostics);
+                }
+            }
+            StmtKind::Compute(compute) => {
                 let base = self.scope.len();
                 self.check_compute_block(&compute.body, diagnostics);
                 self.scope.truncate(base);
@@ -781,13 +791,13 @@ impl Env {
     /// with block scoping.
     fn check_compute_block(
         &mut self,
-        body: &[runinator_rexrap_syntax::ast::DoLine],
+        body: &[runinator_rexrap_syntax::ast::ComputeLine],
         diagnostics: &mut Vec<Diagnostic>,
     ) {
-        use runinator_rexrap_syntax::ast::DoLine;
+        use runinator_rexrap_syntax::ast::ComputeLine;
         for line in body {
             match line {
-                DoLine::Let { name, ty, value } => {
+                ComputeLine::Let { name, ty, value } => {
                     self.check_expr(value, diagnostics);
                     let declared = ty
                         .as_ref()
@@ -827,8 +837,10 @@ impl Env {
                     let local_ty = declared.unwrap_or(value_ty);
                     self.scope.push((name.clone(), local_ty));
                 }
-                DoLine::Return(value) | DoLine::Expr(value) => self.check_expr(value, diagnostics),
-                DoLine::If {
+                ComputeLine::Return(value) | ComputeLine::Expr(value) => {
+                    self.check_expr(value, diagnostics)
+                }
+                ComputeLine::If {
                     then_branch,
                     else_branch,
                     ..
@@ -839,7 +851,7 @@ impl Env {
                     self.check_compute_block(else_branch, diagnostics);
                     self.scope.truncate(base);
                 }
-                DoLine::Goto(_) => {}
+                ComputeLine::Goto(_) => {}
             }
         }
     }

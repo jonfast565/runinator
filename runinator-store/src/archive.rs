@@ -168,7 +168,13 @@ mod tests {
 
     #[test]
     fn only_effect_output_events_use_an_event_id_primary_key() {
-        assert_eq!(ArchiveTable::WorkflowEffectOutputEvents.primary_key_column(), "event_id");
-        assert_eq!(ArchiveTable::WorkflowJournalEntries.primary_key_column(), "id");
+        assert_eq!(
+            ArchiveTable::WorkflowEffectOutputEvents.primary_key_column(),
+            "event_id"
+        );
+        assert_eq!(
+            ArchiveTable::WorkflowJournalEntries.primary_key_column(),
+            "id"
+        );
     }
 }

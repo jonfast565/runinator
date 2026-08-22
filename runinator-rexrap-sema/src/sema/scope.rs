@@ -64,13 +64,20 @@ pub(super) fn resolve_function_bodies(
             // a block body resolves like a compute block, with the params already in scope. the
             // `Function` context rejects any `goto` (a function body is not a graph region).
             runinator_rexrap_syntax::ast::FnBody::Block(lines) => {
-                resolver.resolve_do_block(
+                resolver.resolve_compute_block(
                     lines,
                     &mut scope,
                     def.span,
                     diagnostics,
                     BlockCtx::Function,
                 );
+            }
+            // a `task fn` body is a statement region: resolve it like a workflow body, with the
+            // parameters already bound.
+            runinator_rexrap_syntax::ast::FnBody::Run(body) => {
+                for stmt in body {
+                    resolver.resolve_stmt(stmt, &mut scope, diagnostics);
+                }
             }
         }
     }
@@ -84,6 +91,17 @@ pub(super) fn analyze(
 ) -> Symbols {
     let mut labels = HashSet::new();
     collect_block(&workflow.body, &mut labels, diagnostics);
+    // a `join <name> { … }` declares both its own name (the `continue` target) and whatever its
+    // body binds, so both are in scope for the rest of the workflow.
+    for join in &workflow.joins {
+        if !labels.insert(join.name.clone()) {
+            diagnostics.push(Diagnostic::error(
+                join.span,
+                format!("duplicate node id '{}'", join.name),
+            ));
+        }
+        collect_block(&join.body, &mut labels, diagnostics);
+    }
     let symbols = Symbols {
         labels,
         registry: crate::registry::FunctionRegistry::build(functions),
@@ -147,6 +165,10 @@ pub(super) fn analyze(
 
     let mut scope = Vec::new();
     resolver.resolve_block(&workflow.body, &mut scope, diagnostics);
+    // a join region resolves like the main flow; it is a continuation of it, not a separate scope.
+    for join in &workflow.joins {
+        resolver.resolve_block(&join.body, &mut scope, diagnostics);
+    }
     symbols
 }
 
@@ -203,13 +225,21 @@ impl Resolver<'_> {
 
         let ctx = ExprCtx::Declarative;
         match &stmt.kind {
+            StmtKind::Return(Some(value)) => self.resolve_expr(value, scope, ctx, diagnostics),
+            StmtKind::Return(None) | StmtKind::Detach(_) => {}
             StmtKind::Action(action) => {
                 self.resolve_reentry(&action.modifiers, span, diagnostics);
                 for (_, value) in &action.args {
                     self.resolve_expr(value, scope, ctx, diagnostics);
                 }
             }
-            StmtKind::Do(compute) => {
+            StmtKind::TaskCall(call) => {
+                self.resolve_reentry(&call.modifiers, span, diagnostics);
+                for (_, value) in &call.args {
+                    self.resolve_expr(value, scope, ctx, diagnostics);
+                }
+            }
+            StmtKind::Compute(compute) => {
                 self.resolve_do(compute, scope, span, diagnostics);
             }
             StmtKind::Subflow(subflow) => {
@@ -435,14 +465,14 @@ impl Resolver<'_> {
     /// locals, and enforce the purity rule that an effectful (`exec`) block may not use `goto`.
     fn resolve_do(
         &self,
-        compute: &runinator_rexrap_syntax::ast::DoStmt,
+        compute: &runinator_rexrap_syntax::ast::ComputeStmt,
         scope: &mut Vec<String>,
         span: Span,
         diagnostics: &mut Vec<Diagnostic>,
     ) {
         let effectful = crate::purity::block_is_effectful(&compute.body, &self.symbols.registry);
         let base = scope.len();
-        self.resolve_do_block(
+        self.resolve_compute_block(
             &compute.body,
             scope,
             span,
@@ -452,20 +482,20 @@ impl Resolver<'_> {
         scope.truncate(base);
     }
 
-    fn resolve_do_block(
+    fn resolve_compute_block(
         &self,
-        body: &[runinator_rexrap_syntax::ast::DoLine],
+        body: &[runinator_rexrap_syntax::ast::ComputeLine],
         scope: &mut Vec<String>,
         span: Span,
         diagnostics: &mut Vec<Diagnostic>,
         ctx: BlockCtx,
     ) {
-        use runinator_rexrap_syntax::ast::DoLine;
+        use runinator_rexrap_syntax::ast::ComputeLine;
         // locals introduced at this block level, for duplicate detection.
         let block_start = scope.len();
         for line in body {
             match line {
-                DoLine::Let { name, value, .. } => {
+                ComputeLine::Let { name, value, .. } => {
                     self.resolve_expr(value, scope, ExprCtx::Compute, diagnostics);
                     if scope[block_start..].iter().any(|n| n == name) {
                         diagnostics.push(Diagnostic::error(
@@ -475,10 +505,10 @@ impl Resolver<'_> {
                     }
                     scope.push(name.clone());
                 }
-                DoLine::Return(value) | DoLine::Expr(value) => {
+                ComputeLine::Return(value) | ComputeLine::Expr(value) => {
                     self.resolve_expr(value, scope, ExprCtx::Compute, diagnostics);
                 }
-                DoLine::Goto(target) => match ctx {
+                ComputeLine::Goto(target) => match ctx {
                     BlockCtx::Function => diagnostics.push(Diagnostic::error(
                         span,
                         "goto is not allowed in a function body (it is not a graph region)",
@@ -500,16 +530,16 @@ impl Resolver<'_> {
                         }
                     }
                 },
-                DoLine::If {
+                ComputeLine::If {
                     cond,
                     then_branch,
                     else_branch,
                 } => {
                     self.resolve_cond(cond, scope, ExprCtx::Compute, diagnostics);
                     let branch_start = scope.len();
-                    self.resolve_do_block(then_branch, scope, span, diagnostics, ctx);
+                    self.resolve_compute_block(then_branch, scope, span, diagnostics, ctx);
                     scope.truncate(branch_start);
-                    self.resolve_do_block(else_branch, scope, span, diagnostics, ctx);
+                    self.resolve_compute_block(else_branch, scope, span, diagnostics, ctx);
                     scope.truncate(branch_start);
                 }
             }

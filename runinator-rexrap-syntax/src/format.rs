@@ -73,6 +73,14 @@ impl Formatter {
                 out.push('}');
                 self.line(&out);
             }
+            // a `task fn` renders its runtime region exactly like a workflow's `do { … }`.
+            FnBody::Run(body) => {
+                self.line(&format!("task fn {}{signature} do {{", function.name));
+                self.indent += 1;
+                self.block_body(body);
+                self.indent -= 1;
+                self.line("}");
+            }
         }
         self.append_trailing(&function.comments);
     }
@@ -264,6 +272,9 @@ impl Formatter {
         if let Some(start) = &workflow.start {
             self.line(&format!("start -> {}", format_target(start)));
         }
+        // the runtime block: every statement a run executes lives inside exactly one `do { … }`.
+        self.line("do {");
+        self.indent += 1;
         self.block_body(&workflow.body);
         // comments trapped after the last body statement, before the closing brace.
         if !workflow.dangling_comments.is_empty() {
@@ -271,6 +282,19 @@ impl Formatter {
                 self.out.push('\n');
             }
             self.emit_leading(&workflow.dangling_comments);
+        }
+        self.indent -= 1;
+        self.line("}");
+        // named continuations render after the runtime block, in declaration order.
+        for join in &workflow.joins {
+            self.out.push('\n');
+            self.emit_leading(&join.comments.leading);
+            self.line(&format!("join {} {{", join.name));
+            self.indent += 1;
+            self.block_body(&join.body);
+            self.indent -= 1;
+            self.line("}");
+            self.append_trailing(&join.comments);
         }
         self.indent -= 1;
         self.line("}");
@@ -456,23 +480,41 @@ impl Formatter {
             self.line("@lock");
         }
         if let Some(timeout) = stmt.annotations.timeout_seconds {
-            self.line(&format!("@timeout({timeout}s)"));
+            self.line(&format!("@deadline({timeout}s)"));
+        }
+        // the step's execution attributes render as prefix lines too: `@` is the only attribute
+        // surface, so a reader never has to look in two places for how a step is configured.
+        for attribute in step_attributes(step_modifiers(&stmt.kind)) {
+            self.line(&attribute);
         }
 
         let mut text = String::new();
         if let Some(label) = &stmt.label {
-            text.push_str("node ");
+            text.push_str("let ");
             text.push_str(label);
             if let Some(label_type) = &stmt.label_type {
                 text.push_str(": ");
                 text.push_str(&format_type(label_type));
             }
-            text.push_str(" <- ");
+            text.push_str(" = ");
+        }
+        if stmt.is_async {
+            text.push_str("async ");
         }
 
         text.push_str(&self.stmt_kind(&stmt.kind));
         if let Some(compensation) = &stmt.compensation {
-            text.push_str(&format!(" compensate {}", self.action(compensation)));
+            // a compensation carries its own attributes, written inline before its call.
+            let attributes = step_attributes(Some(&compensation.modifiers));
+            let prefix = if attributes.is_empty() {
+                String::new()
+            } else {
+                format!("{} ", attributes.join(" "))
+            };
+            text.push_str(&format!(
+                " compensate {prefix}{}",
+                self.action(compensation)
+            ));
         }
         if stmt.transitions.is_empty() {
             self.line(&text);
@@ -485,41 +527,47 @@ impl Formatter {
     }
 
     fn stmt_with_transitions(&mut self, text: &str, transitions: &TransitionClause) {
-        // gather every outgoing edge into one `edges { … }` section under the statement, matching
-        // the decompiler's canonical shape so formatting never reflows the arrows differently.
-        let mut edges: Vec<(&str, &Target)> = Vec::new();
+        // gather every outgoing edge into one attached `routes { … }` section, matching the
+        // decompiler's canonical shape so formatting never reflows the routes differently.
+        let mut routes: Vec<(&str, &Target)> = Vec::new();
         for (outcome, target) in [
             ("next", &transitions.next),
-            ("ok", &transitions.on_success),
-            ("fail", &transitions.on_failure),
+            ("success", &transitions.on_success),
+            ("failure", &transitions.on_failure),
             ("timeout", &transitions.on_timeout),
             ("reject", &transitions.on_reject),
         ] {
             if let Some(target) = target {
-                edges.push((outcome, target));
+                routes.push((outcome, target));
             }
         }
 
         self.line(text);
-        if edges.is_empty() && transitions.branches.is_empty() {
+        if routes.is_empty() && transitions.branches.is_empty() {
             return;
         }
-        self.line("edges {");
+        self.line("routes {");
         self.indent += 1;
-        for (outcome, target) in edges {
-            self.line(&format!("{outcome} -> {}", format_target(target)));
+        for (outcome, target) in routes {
+            self.route_arm(&format!("on {outcome}"), target);
         }
-        // user-defined predicate edges, in declaration order, mirroring the decompiler's rendering.
+        // user-defined predicate routes, in declaration order, mirroring the decompiler.
         for branch in &transitions.branches {
             let cond = format_cond(&branch.when);
-            let target = format_target(&branch.target);
-            match branch.priority {
-                Some(priority) => {
-                    self.line(&format!("when {cond} priority {priority} -> {target}"))
-                }
-                None => self.line(&format!("when {cond} -> {target}")),
-            }
+            let head = match branch.priority {
+                Some(priority) => format!("when {cond} priority {priority}"),
+                None => format!("when {cond}"),
+            };
+            self.route_arm(&head, &branch.target);
         }
+        self.indent -= 1;
+        self.line("}");
+    }
+
+    fn route_arm(&mut self, head: &str, target: &Target) {
+        self.line(&format!("{head} {{"));
+        self.indent += 1;
+        self.line(&format!("continue {}", format_target(target)));
         self.indent -= 1;
         self.line("}");
     }
@@ -527,11 +575,17 @@ impl Formatter {
     fn stmt_kind(&mut self, kind: &StmtKind) -> String {
         match kind {
             StmtKind::Action(action) => self.action(action),
-            StmtKind::Do(compute) => self.compute(compute),
+            StmtKind::TaskCall(call) => self.task_call(call),
+            StmtKind::Compute(compute) => self.compute(compute),
             StmtKind::Subflow(subflow) => self.subflow(subflow),
             StmtKind::Wait(wait) => self.wait(wait),
             StmtKind::Output(output) => self.output(output),
             StmtKind::Yield(value) => format!("yield {}", format_expr(value)),
+            StmtKind::Return(value) => match value {
+                Some(value) => format!("return {}", format_expr(value)),
+                None => "return".to_string(),
+            },
+            StmtKind::Detach(handle) => format!("detach {handle}"),
             StmtKind::Input(input) => self.input_stmt(input),
             StmtKind::Approval(approval) => self.approval(approval),
             StmtKind::Gate(gate) => self.gate(gate),
@@ -571,11 +625,11 @@ impl Formatter {
         }
     }
 
-    fn compute(&mut self, compute: &DoStmt) -> String {
-        let mut out = match &compute.foreign {
-            Some(foreign) => self.foreign_do(foreign),
+    fn compute(&mut self, compute: &ComputeStmt) -> String {
+        let out = match &compute.foreign {
+            Some(foreign) => self.foreign_compute(foreign),
             None => {
-                let mut out = String::from("do {\n");
+                let mut out = String::from("compute {\n");
                 self.indent += 1;
                 self.compute_lines(&mut out, &compute.body);
                 self.indent -= 1;
@@ -584,20 +638,13 @@ impl Formatter {
                 out
             }
         };
-        // render trailing modifiers (e.g. `.timeout(30s)`) like an action call.
-        let mut modifiers = Vec::new();
-        if let Some(seconds) = compute.modifiers.timeout_seconds {
-            modifiers.push(format!(".timeout({seconds}s)"));
-        }
-        if let Some(retry) = &compute.modifiers.retry {
-            modifiers.push(format_retry(retry));
-        }
-        self.append_modifiers(&mut out, &modifiers, true);
+        // a compute block's execution attributes render as `@`-lines above the statement, the
+        // same as any other step's.
         out
     }
 
-    fn foreign_do(&self, foreign: &ForeignDo) -> String {
-        let mut out = format!("do {}", quote(&foreign.language));
+    fn foreign_compute(&self, foreign: &ForeignDo) -> String {
+        let mut out = format!("compute {}", quote(&foreign.language));
         out.push_str(" ```\n");
         out.push_str(&foreign.source);
         if !foreign.source.ends_with('\n') {
@@ -607,10 +654,10 @@ impl Formatter {
         out
     }
 
-    fn compute_lines(&mut self, out: &mut String, body: &[DoLine]) {
+    fn compute_lines(&mut self, out: &mut String, body: &[ComputeLine]) {
         for line in body {
             match line {
-                DoLine::Let { name, ty, value } => {
+                ComputeLine::Let { name, ty, value } => {
                     let ty = ty
                         .as_ref()
                         .map(|ty| format!(": {}", format_type(ty)))
@@ -618,19 +665,19 @@ impl Formatter {
                     self.push_indent(out);
                     out.push_str(&format!("let {name}{ty} = {}\n", format_expr(value)));
                 }
-                DoLine::Return(value) => {
+                ComputeLine::Return(value) => {
                     self.push_indent(out);
                     out.push_str(&format!("return {}\n", format_expr(value)));
                 }
-                DoLine::Goto(target) => {
+                ComputeLine::Goto(target) => {
                     self.push_indent(out);
                     out.push_str(&format!("goto {}\n", format_target(target)));
                 }
-                DoLine::Expr(value) => {
+                ComputeLine::Expr(value) => {
                     self.push_indent(out);
                     out.push_str(&format!("{}\n", format_expr(value)));
                 }
-                DoLine::If {
+                ComputeLine::If {
                     cond,
                     then_branch,
                     else_branch,
@@ -664,8 +711,18 @@ impl Formatter {
         } else {
             "()".to_string()
         };
-        let mut text = format!("{}.{}{args}", action.provider, action.function);
-        self.action_modifiers(action, &mut text, multiline);
+        let text = format!("{}.{}{args}", action.provider, action.function);
+        text
+    }
+
+    fn task_call(&self, call: &TaskCallStmt) -> String {
+        let multiline = !call.args.is_empty();
+        let args = if multiline {
+            self.action_args_multiline(&call.args)
+        } else {
+            "()".to_string()
+        };
+        let text = format!("{}{args}", call.name);
         text
     }
 
@@ -694,65 +751,6 @@ impl Formatter {
         out.push_str(&indent(self.indent));
         out.push(')');
         out
-    }
-
-    fn action_modifiers(&self, action: &ActionStmt, text: &mut String, multiline: bool) {
-        let mut modifiers = Vec::new();
-        if let Some(seconds) = action.modifiers.timeout_seconds {
-            modifiers.push(format!(".timeout({seconds}s)"));
-        }
-        if let Some(retry) = &action.modifiers.retry {
-            modifiers.push(format_retry(retry));
-        }
-        if !action.modifiers.tags.is_empty() {
-            let tags = action
-                .modifiers
-                .tags
-                .iter()
-                .map(|tag| quote(tag))
-                .collect::<Vec<_>>()
-                .join(", ");
-            modifiers.push(format!(".tags({tags})"));
-        }
-        if action.modifiers.mcp {
-            modifiers.push(".mcp()".to_string());
-        }
-        if let Some(runner) = &action.modifiers.runner {
-            modifiers.push(format!(".runner({})", quote(runner)));
-        }
-        if let Some(key) = &action.modifiers.idempotency_key {
-            modifiers.push(format!(".idempotent(key: {})", format_expr(key)));
-        }
-        if let Some(reentry) = &action.modifiers.reentry {
-            let mut modifier = format!(".reentry(max: {}", reentry.max_visits);
-            if let Some(target) = &reentry.on_exhausted {
-                modifier.push_str(&format!(", else: {}", format_target(target)));
-            }
-            modifier.push(')');
-            modifiers.push(modifier);
-        }
-        self.append_modifiers(text, &modifiers, multiline);
-    }
-
-    // attach the fluent modifier chain. the first call hugs the closing paren/brace; any further
-    // calls align their leading dot one column past it. an inline call keeps the chain on one line.
-    fn append_modifiers(&self, text: &mut String, modifiers: &[String], multiline: bool) {
-        let Some((first, rest)) = modifiers.split_first() else {
-            return;
-        };
-        text.push_str(first);
-        if !multiline {
-            for modifier in rest {
-                text.push_str(modifier);
-            }
-            return;
-        }
-        let pad = format!("{} ", indent(self.indent));
-        for modifier in rest {
-            text.push('\n');
-            text.push_str(&pad);
-            text.push_str(modifier);
-        }
     }
 
     fn subflow(&self, subflow: &SubflowStmt) -> String {
@@ -1896,7 +1894,7 @@ pub(crate) fn format_type_field(field: &TypeField) -> String {
 fn format_target(target: &Target) -> String {
     match target {
         Target::Label(label) => label.clone(),
-        Target::Done => "done".to_string(),
+        Target::End => "end".to_string(),
         Target::Fail => "fail".to_string(),
     }
 }
@@ -2008,4 +2006,54 @@ fn format_retry(retry: &RetryConfig) -> String {
 // a rendered statement spans multiple lines if its text, sans the trailing newline, contains one.
 fn is_multiline_piece(piece: &str) -> bool {
     piece.trim_end_matches('\n').contains('\n')
+}
+
+/// the modifiers a statement kind carries, if any.
+pub(crate) fn step_modifiers(kind: &StmtKind) -> Option<&Modifiers> {
+    match kind {
+        StmtKind::Action(action) => Some(&action.modifiers),
+        StmtKind::Compute(compute) => Some(&compute.modifiers),
+        StmtKind::TaskCall(call) => Some(&call.modifiers),
+        _ => None,
+    }
+}
+
+/// render a step's execution modifiers as `@`-attribute lines, in a stable order.
+pub(crate) fn step_attributes(modifiers: Option<&Modifiers>) -> Vec<String> {
+    let Some(modifiers) = modifiers else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    if let Some(seconds) = modifiers.timeout_seconds {
+        out.push(format!("@timeout({seconds}s)"));
+    }
+    if let Some(retry) = &modifiers.retry {
+        out.push(format!("@{}", format_retry(retry).trim_start_matches('.')));
+    }
+    if !modifiers.tags.is_empty() {
+        let tags = modifiers
+            .tags
+            .iter()
+            .map(|tag| quote(tag))
+            .collect::<Vec<_>>()
+            .join(", ");
+        out.push(format!("@tags({tags})"));
+    }
+    if modifiers.mcp {
+        out.push("@mcp".to_string());
+    }
+    if let Some(runner) = &modifiers.runner {
+        out.push(format!("@runner({})", quote(runner)));
+    }
+    if let Some(key) = &modifiers.idempotency_key {
+        out.push(format!("@idempotent(key: {})", format_expr(key)));
+    }
+    if let Some(reentry) = &modifiers.reentry {
+        let mut args = vec![format!("max_visits: {}", reentry.max_visits)];
+        if let Some(target) = &reentry.on_exhausted {
+            args.push(format!("on_exhausted: {}", format_target(target)));
+        }
+        out.push(format!("@reentry({})", args.join(", ")));
+    }
+    out
 }

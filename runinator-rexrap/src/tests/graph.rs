@@ -8,9 +8,12 @@ fn round_trips_expression_wait() {
     let src = r#"
         workflow "DynWait" v1 {
             params { poll: { interval: int } }
-            node seed <- console.run(command: "seed")
-            wait params.poll.interval until "ready"
-            node done <- console.run(command: "done")
+
+            do {
+                let seed = console.run(command: "seed")
+                wait params.poll.interval until "ready"
+                let done = console.run(command: "done")
+            }
         }
     "#;
     let definition = compile(src);
@@ -30,9 +33,12 @@ fn round_trips_expression_wait() {
 fn node_annotations_lower_and_round_trip() {
     let src = r#"
         workflow "Annotations" v1 {
-            @lock
-            @timeout(45s)
-            wait 1s
+
+            do {
+                @lock
+                @deadline(45s)
+                wait 1s
+            }
         }
     "#;
     let definition = compile(src);
@@ -49,7 +55,7 @@ fn node_annotations_lower_and_round_trip() {
 
     let rexrap = decompile(&definition).expect("decompile");
     assert!(rexrap.contains("@lock"), "{rexrap}");
-    assert!(rexrap.contains("@timeout(45s)"), "{rexrap}");
+    assert!(rexrap.contains("@deadline(45s)"), "{rexrap}");
     let second = compile_str(&rexrap, &CompileOptions::default()).expect("recompile");
     assert_eq!(
         definition.definition.as_value(),
@@ -61,7 +67,11 @@ fn round_trips_hyphenated_provider() {
     // providers like `ai-command` carry an internal hyphen in the call position.
     let src = r#"
         workflow "Hyphen" v1 {
-            node run <- ai-command.claude_code(prompt: "hi").timeout(60s)
+
+            do {
+                @timeout(60s)
+                let run = ai-command.claude_code(prompt: "hi")
+            }
         }
     "#;
     let definition = compile(src);
@@ -83,7 +93,10 @@ fn round_trips_hyphenated_provider() {
 fn lowers_config_and_secret_references() {
     let src = r#"
         workflow "Settings" v1 {
-            node go <- console.run(command: "x", url: config.api.url, token: secret.github.token)
+
+            do {
+                let go = console.run(command: "x", url: config.api.url, token: secret.github.token)
+            }
         }
     "#;
     let definition = compile(src);
@@ -122,9 +135,12 @@ fn lowers_config_and_secret_references() {
 fn lowers_inline_code_to_string_argument() {
     let src = r#"
         workflow "InlineCode" v1 {
-            node go <- console.run(command: inline("python", ```
+
+            do {
+                let go = console.run(command: inline("python", ```
 print("hello")
 ```))
+            }
         }
     "#;
     let definition = compile(src);

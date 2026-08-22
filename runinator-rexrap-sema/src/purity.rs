@@ -4,7 +4,7 @@
 // single source is consulted by both lowering and sema so their views cannot drift.
 
 use crate::registry::FunctionRegistry;
-use runinator_rexrap_syntax::ast::{Cond, CondKind, DoLine, Expr, ExprKind, FnBody, PathSeg};
+use runinator_rexrap_syntax::ast::{ComputeLine, Cond, CondKind, Expr, ExprKind, FnBody, PathSeg};
 
 /// whether a function body is effectful: an expression body reuses the expression rule, a block body
 /// the compute-block rule. used both to route calls onto the worker and to compute per-function
@@ -13,16 +13,18 @@ pub(crate) fn fn_body_is_effectful(body: &FnBody, registry: &FunctionRegistry) -
     match body {
         FnBody::Expr(expr) => expr_is_effectful(expr, registry),
         FnBody::Block(lines) => block_is_effectful(lines, registry),
+        // a `task fn` body is runtime work by construction: it can never fold in the compute VM.
+        FnBody::Run(_) => true,
     }
 }
 
 /// whether a compute block must run on the worker (`std.exec`).
-pub fn block_is_effectful(body: &[DoLine], registry: &FunctionRegistry) -> bool {
+pub fn block_is_effectful(body: &[ComputeLine], registry: &FunctionRegistry) -> bool {
     body.iter().any(|line| match line {
-        DoLine::Let { value, .. } | DoLine::Return(value) | DoLine::Expr(value) => {
+        ComputeLine::Let { value, .. } | ComputeLine::Return(value) | ComputeLine::Expr(value) => {
             expr_is_effectful(value, registry)
         }
-        DoLine::If {
+        ComputeLine::If {
             cond,
             then_branch,
             else_branch,
@@ -31,7 +33,7 @@ pub fn block_is_effectful(body: &[DoLine], registry: &FunctionRegistry) -> bool 
                 || block_is_effectful(then_branch, registry)
                 || block_is_effectful(else_branch, registry)
         }
-        DoLine::Goto(_) => false,
+        ComputeLine::Goto(_) => false,
     })
 }
 

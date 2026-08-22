@@ -95,12 +95,14 @@ pub fn workflow_source(cell_source: &str, workflow_name: &str) -> String {
     if declares_workflow(cell_source) {
         return cell_source.to_string();
     }
+    // a cell is a sequence of runtime statements, so it wraps into the workflow's `do { ... }`
+    // runtime block rather than sitting bare in the workflow body.
     let body = cell_source
         .lines()
-        .map(|line| format!("    {line}"))
+        .map(|line| format!("        {line}"))
         .collect::<Vec<_>>()
         .join("\n");
-    format!("workflow \"{workflow_name}\" v1 {{\n{body}\n}}\n")
+    format!("workflow \"{workflow_name}\" v1 {{\n    do {{\n{body}\n    }}\n}}\n")
 }
 
 // true when the source already opens with a `workflow "..."` declaration.

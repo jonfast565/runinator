@@ -41,7 +41,10 @@ fn function_options(entries: Vec<FunctionCatalogEntry>) -> CompileOptions {
 
 const SOURCE: &str = r#"
 workflow "Resize" {
-    functions.image_tools.resize(source: "a.png", width: 320)
+
+    do {
+        functions.image_tools.resize(source: "a.png", width: 320)
+    }
 }
 "#;
 
@@ -120,7 +123,11 @@ fn packaged_calls_are_routed_to_a_worker_that_can_run_them() {
 fn an_explicit_runner_wins_over_the_default() {
     let src = r#"
 workflow "Resize" {
-    functions.image_tools.resize(source: "a.png").runner("gpu")
+
+    do {
+        @runner("gpu")
+        functions.image_tools.resize(source: "a.png")
+    }
 }
 "#;
     let action = action_of(&compile_functions(src, vec![catalog_entry(1)]));
@@ -143,7 +150,10 @@ fn calling_an_unpublished_function_is_a_compile_error() {
 fn calling_an_unpublished_export_of_a_published_package_is_a_compile_error() {
     let src = r#"
 workflow "Resize" {
-    functions.image_tools.crop(source: "a.png")
+
+    do {
+        functions.image_tools.crop(source: "a.png")
+    }
 }
 "#;
     let error = compile_str(src, &function_options(vec![catalog_entry(1)]))
@@ -164,7 +174,7 @@ fn round_trips_through_decompile_without_a_catalog() {
     );
     assert!(rexrap.contains("source: \"a.png\""), "{rexrap}");
     // the implicit runner label is lowering's, not the author's, so it must not reappear as one.
-    assert!(!rexrap.contains(".runner(\"functions\")"), "{rexrap}");
+    assert!(!rexrap.contains("@runner(\"functions\")"), "{rexrap}");
 
     let second = compile_str(&rexrap, &function_options(vec![catalog_entry(3)]))
         .unwrap_or_else(|err| panic!("recompile failed: {err}\n--- decompiled ---\n{rexrap}"));
@@ -189,7 +199,10 @@ fn decompiled_output_is_format_idempotent() {
 fn an_ordinary_action_is_untouched_by_any_of_this() {
     let src = r#"
 workflow "Plain" {
-    github.comments(token: "t", owner: "o", repo: "a", issue_number: "1")
+
+    do {
+        github.comments(token: "t", owner: "o", repo: "a", issue_number: "1")
+    }
 }
 "#;
     let options = CompileOptions {
@@ -216,8 +229,11 @@ workflow "Plain" {
 fn a_compensating_packaged_call_is_bound_too() {
     let src = r#"
 workflow "Resize" {
-    functions.image_tools.resize(source: "a.png")
-        compensate functions.image_tools.resize(source: "b.png")
+
+    do {
+        functions.image_tools.resize(source: "a.png")
+            compensate functions.image_tools.resize(source: "b.png")
+    }
 }
 "#;
     let definition = compile_functions(src, vec![catalog_entry(2)]);
@@ -272,7 +288,10 @@ fn a_namespaced_package_keeps_its_namespace_in_the_call_path() {
     entry.namespace = Some("media".into());
     let src = r#"
 workflow "Resize" {
-    functions.media.image_tools.resize(source: "a.png")
+
+    do {
+        functions.media.image_tools.resize(source: "a.png")
+    }
 }
 "#;
     let action = action_of(&compile_functions(src, vec![entry]));
@@ -290,7 +309,10 @@ fn a_function_catalog_alone_does_not_make_a_compile_strict() {
     // action in any pack that gained one packaged function.
     let src = r#"
 workflow "Plain" {
-    some_unknown_provider.some_action(a: 1)
+
+    do {
+        some_unknown_provider.some_action(a: 1)
+    }
 }
 "#;
     compile_str(src, &function_options(vec![catalog_entry(1)]))
@@ -312,7 +334,10 @@ fn a_hyphenated_package_name_is_callable() {
     entry.package_name = "image-tools".into();
     let src = r#"
 workflow "Resize" {
-    functions.image-tools.resize(source: "a.png")
+
+    do {
+        functions.image-tools.resize(source: "a.png")
+    }
 }
 "#;
     let action = action_of(&compile_functions(src, vec![entry]));

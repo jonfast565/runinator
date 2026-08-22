@@ -9,7 +9,10 @@ fn declarative_pure_call_lowers_and_round_trips() {
     // it lowers to a `$call` and folds eagerly in the reducer.
     let src = r#"
         workflow "Inline" v1 {
-            slack.send_message(text: std.strings.upper(params.name), count: std.collections.len(params.items))
+
+            do {
+                slack.send_message(text: std.strings.upper(params.name), count: std.collections.len(params.items))
+            }
         }
     "#;
     let definition = compile(src);
@@ -30,7 +33,10 @@ fn declarative_higher_order_call_round_trips() {
     // a higher-order call with a lambda is valid in a declarative argument and round-trips.
     let src = r#"
         workflow "Inline" v1 {
-            slack.send_message(ids: std.collections.map(params.users, u => u.id))
+
+            do {
+                slack.send_message(ids: std.collections.map(params.users, u => u.id))
+            }
         }
     "#;
     let value = serde_json::to_value(&compile(src).definition).unwrap();
@@ -58,7 +64,10 @@ fn declarative_interpolation_allows_calls() {
     // string interpolation shares the one expression grammar, so a call works inside `${...}`.
     let src = r#"
         workflow "Inline" v1 {
-            slack.send_message(text: "hello ${std.strings.upper(params.name)}")
+
+            do {
+                slack.send_message(text: "hello ${std.strings.upper(params.name)}")
+            }
         }
     "#;
     let params = serde_json::to_value(&compile(src).definition).unwrap()["nodes"]
@@ -77,7 +86,10 @@ fn postfix_access_on_call_lowers_to_at_and_round_trips() {
     // access syntax (not `at(...)`).
     let src = r#"
         workflow "Chain" v1 {
-            slack.send_message(text: std.strings.upper(std.strings.split(params.csv, ",")[0]))
+
+            do {
+                slack.send_message(text: std.strings.upper(std.strings.split(params.csv, ",")[0]))
+            }
         }
     "#;
     let value = serde_json::to_value(&compile(src).definition).unwrap();
@@ -99,7 +111,10 @@ fn method_call_desugars_receiver_first() {
     // `recv.method(args)` lowers to `method(recv, args...)`.
     let src = r#"
         workflow "Fluent" v1 {
-            slack.send_message(text: params.name.upper())
+
+            do {
+                slack.send_message(text: params.name.upper())
+            }
         }
     "#;
     let params = serde_json::to_value(&compile(src).definition).unwrap()["nodes"]
@@ -120,7 +135,10 @@ fn fluent_chain_reads_left_to_right_and_round_trips() {
     // a multi-stage fluent pipeline nests into receiver-first calls.
     let src = r#"
         workflow "Fluent" v1 {
-            slack.send_message(ids: params.xs.filter(x => std.logic.gt(x, 1)).map(x => std.math.mul(x, 2)))
+
+            do {
+                slack.send_message(ids: params.xs.filter(x => std.logic.gt(x, 1)).map(x => std.math.mul(x, 2)))
+            }
         }
     "#;
     let params = serde_json::to_value(&compile(src).definition).unwrap()["nodes"]
@@ -144,7 +162,10 @@ fn method_call_on_call_result_chains() {
     // `a(..).b(..)` — a method call whose receiver is itself a call result.
     let src = r#"
         workflow "Fluent" v1 {
-            slack.send_message(text: std.strings.split(params.csv, ",").join("-"))
+
+            do {
+                slack.send_message(text: std.strings.split(params.csv, ",").join("-"))
+            }
         }
     "#;
     let params = serde_json::to_value(&compile(src).definition).unwrap()["nodes"]
@@ -163,13 +184,17 @@ fn method_call_effectful_receiver_compiles_to_an_invocation() {
     // A fluent durable call stays in the invocation module rather than becoming an action node.
     let src = r#"
         workflow "Fetch" v1 {
+
             do {
-                let host = std.exec.http_get(params.url).body.host
-                return { host: host }
+                compute {
+                    let host = std.exec.http_get(params.url).body.host
+                    return { host: host }
+                }
             }
         }
     "#;
-    let node = super::do_block::invocation_node(&super::do_block::compile_as_invocation(src));
+    let node =
+        super::compute_block::invocation_node(&super::compute_block::compile_as_invocation(src));
     assert!(
         node["parameters"]["module"]
             .to_string()
@@ -182,7 +207,10 @@ fn method_call_effectful_outside_compute_is_rejected() {
     // `url.http_get()` is the effectful `http_get(url)` — rejected in a declarative position.
     let src = r#"
         workflow "Bad" v1 {
-            slack.send_message(text: params.url.http_get())
+
+            do {
+                slack.send_message(text: params.url.http_get())
+            }
         }
     "#;
     let message = expect_semantic_error(src);
@@ -193,7 +221,10 @@ fn path_field_named_like_method_still_works() {
     // a plain `.field` (no parens) named like a function stays a path field, not a call.
     let src = r#"
         workflow "Fluent" v1 {
-            slack.send_message(text: params.map.value)
+
+            do {
+                slack.send_message(text: params.map.value)
+            }
         }
     "#;
     let params = serde_json::to_value(&compile(src).definition).unwrap()["nodes"]
@@ -214,7 +245,10 @@ fn postfix_access_on_path_folds_into_ref() {
     // chaining static keys onto a path stays a single `$ref`, not an `at` call.
     let src = r#"
         workflow "Chain" v1 {
-            slack.send_message(id: params.items[0].name)
+
+            do {
+                slack.send_message(id: params.items[0].name)
+            }
         }
     "#;
     let params = serde_json::to_value(&compile(src).definition).unwrap()["nodes"]
@@ -236,7 +270,10 @@ fn dynamic_index_lowers_to_at() {
     // a non-literal `[expr]` key never folds into a path; it indexes via `at`.
     let src = r#"
         workflow "Chain" v1 {
-            slack.send_message(v: params.items[params.idx])
+
+            do {
+                slack.send_message(v: params.items[params.idx])
+            }
         }
     "#;
     let params = serde_json::to_value(&compile(src).definition).unwrap()["nodes"]
@@ -254,13 +291,17 @@ fn effectful_postfix_access_compiles_to_an_invocation() {
     // `http_get(url).body` is one invocation module with a durable call and VM field access.
     let src = r#"
         workflow "Fetch" v1 {
+
             do {
-                let body = std.exec.http_get(params.url).body
-                return { body: body }
+                compute {
+                    let body = std.exec.http_get(params.url).body
+                    return { body: body }
+                }
             }
         }
     "#;
-    let node = super::do_block::invocation_node(&super::do_block::compile_as_invocation(src));
+    let node =
+        super::compute_block::invocation_node(&super::compute_block::compile_as_invocation(src));
     let module = node["parameters"]["module"].to_string();
     assert!(module.contains("http_get"));
     assert!(module.contains("at"));
@@ -272,7 +313,10 @@ fn explicit_at_with_literal_key_is_preserved() {
     // path on recompile and change the graph. it stays an `at` call through a round trip.
     let src = r#"
         workflow "At" v1 {
-            slack.send_message(v: std.collections.at(params.items, 0))
+
+            do {
+                slack.send_message(v: std.collections.at(params.items, 0))
+            }
         }
     "#;
     let params = serde_json::to_value(&compile(src).definition).unwrap()["nodes"]
@@ -295,7 +339,10 @@ fn effectful_postfix_access_outside_compute_is_rejected() {
     // the effectful call inside an access chain is still rejected in a declarative position.
     let src = r#"
         workflow "Bad" v1 {
-            slack.send_message(text: std.exec.http_get(params.url))
+
+            do {
+                slack.send_message(text: std.exec.http_get(params.url))
+            }
         }
     "#;
     let message = expect_semantic_error(src);
@@ -307,7 +354,10 @@ fn declarative_effectful_call_is_rejected() {
     // is the gate): the reducer cannot run side effects in an eager argument.
     let src = r#"
         workflow "Inline" v1 {
-            slack.send_message(at: std.exec.now())
+
+            do {
+                slack.send_message(at: std.exec.now())
+            }
         }
     "#;
     let message = expect_semantic_error(src);
@@ -321,8 +371,11 @@ fn declarative_effectful_call_in_condition_is_rejected() {
     // the same rule applies to declarative conditions.
     let src = r#"
         workflow "Inline" v1 {
-            if std.exec.now() == params.deadline {
-                slack.send_message(text: "ok")
+
+            do {
+                if std.exec.now() == params.deadline {
+                    slack.send_message(text: "ok")
+                }
             }
         }
     "#;

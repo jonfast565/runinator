@@ -9,7 +9,10 @@ fn workflow_namespace_and_qualified_subflow_round_trip() {
     let src = r#"
         namespace core_sdlc {
             workflow "Caller" v1 {
-                subflow("core_sdlc.ticket_work", params: { id: params.id })
+
+                do {
+                    subflow("core_sdlc.ticket_work", params: { id: params.id })
+                }
             }
         }
     "#;
@@ -32,9 +35,12 @@ fn import_std_brings_intrinsics_into_bare_scope() {
     let src = r#"
         workflow "Imp" v1 {
             import std
+
             do {
-                let total = add(params.a, params.b)
-                return upper(params.name)
+                compute {
+                    let total = add(params.a, params.b)
+                    return upper(params.name)
+                }
             }
         }
     "#;
@@ -61,7 +67,10 @@ fn aliased_module_import_resolves() {
     let src = r#"
         workflow "Alias" v1 {
             import std.strings as s
-            slack.send_message(text: s.upper(params.name))
+
+            do {
+                slack.send_message(text: s.upper(params.name))
+            }
         }
     "#;
     let definition = compile(src);
@@ -81,7 +90,10 @@ fn namespaced_provider_action_round_trips() {
     // the function.
     let src = r#"
         workflow "NsAction" v1 {
-            github.repos.create_pr(title: params.title)
+
+            do {
+                github.repos.create_pr(title: params.title)
+            }
         }
     "#;
     let definition = compile(src);
@@ -101,7 +113,10 @@ fn bare_intrinsic_prefix_call_is_rejected() {
     let (_, message) = expect_semantic(
         r#"
         workflow "Bare" v1 {
-            do { return add(1, 2) }
+
+            do {
+                compute { return add(1, 2) }
+            }
         }
     "#,
     );
@@ -112,7 +127,10 @@ fn wrong_std_module_is_rejected() {
     let (_, message) = expect_semantic(
         r#"
         workflow "WrongMod" v1 {
-            do { return std.math.upper(params.name) }
+
+            do {
+                compute { return std.math.upper(params.name) }
+            }
         }
     "#,
     );

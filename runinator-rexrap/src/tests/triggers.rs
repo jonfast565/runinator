@@ -8,7 +8,10 @@ fn lowers_cron_triggers_into_metadata() {
         workflow "Scheduled" v1 {
             trigger cron "0 9 * * *"
             trigger cron "*/5 * * * *" with { source: "cron" }
-            Console.run(command: "echo hi")
+
+            do {
+                Console.run(command: "echo hi")
+            }
         }
     "#;
     let def = compile(src);
@@ -32,7 +35,10 @@ fn trigger_options_lower_and_round_trip() {
     let src = r#"
         workflow "Scheduled" v1 {
             trigger cron "0 9 * * *" with { source: "cron" } disabled blackout "2026-01-01T00:00:00Z" to "2026-01-02T00:00:00Z"
-            Console.run(command: "echo hi")
+
+            do {
+                Console.run(command: "echo hi")
+            }
         }
     "#;
     let def = compile(src);
@@ -69,7 +75,10 @@ fn round_trips_cron_triggers() {
         workflow "Scheduled" v1 {
             trigger cron "0 9 * * *"
             trigger cron "*/5 * * * *" with { source: "cron" }
-            Console.run(command: "echo hi")
+
+            do {
+                Console.run(command: "echo hi")
+            }
         }
     "#;
     let def = compile(src);
@@ -93,7 +102,10 @@ fn lowers_chained_triggers_into_metadata() {
             trigger on_success workflow "Smoke Tests"
             trigger on_failure workflow "Rollback" with { reason: "deploy failed" }
             trigger on_complete workflow "Notify" disabled
-            Console.run(command: "echo deploy")
+
+            do {
+                Console.run(command: "echo deploy")
+            }
         }
     "#;
     let def = compile(src);
@@ -125,7 +137,10 @@ fn round_trips_chained_triggers() {
         workflow "Deploy" v1 {
             trigger on_success workflow "Smoke Tests"
             trigger on_failure workflow "Rollback" with { reason: "deploy failed" } disabled
-            Console.run(command: "echo deploy")
+
+            do {
+                Console.run(command: "echo deploy")
+            }
         }
     "#;
     let def = compile(src);
@@ -152,7 +167,10 @@ fn rejects_non_literal_trigger_schedule() {
         r#"
         workflow "Bad" v1 {
             trigger cron params.schedule
-            Console.run(command: "x")
+
+            do {
+                Console.run(command: "x")
+            }
         }
     "#,
     );

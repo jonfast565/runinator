@@ -96,7 +96,10 @@ fn completes_provider_names_at_action_position() {
     let labels = completion_labels(
         r#"
         workflow "Complete" v1 {
-            ji<>
+
+            do {
+                ji<>
+            }
         }
     "#,
         "<>",
@@ -110,13 +113,19 @@ fn completes_language_constructs_at_bare_position() {
     let response = complete_source(RexRapCompletionRequest {
         source: r#"
         workflow "Complete" v1 {
-            <>
+
+            do {
+                <>
+            }
         }
     "#
         .replace("<>", ""),
         cursor_byte: r#"
         workflow "Complete" v1 {
-            <>
+
+            do {
+                <>
+            }
         }
     "#
         .find("<>")
@@ -129,7 +138,7 @@ fn completes_language_constructs_at_bare_position() {
         .iter()
         .map(|item| item.label.as_str())
         .collect::<Vec<_>>();
-    assert!(labels.contains(&"node"), "labels: {labels:?}");
+    assert!(labels.contains(&"let"), "labels: {labels:?}");
     assert!(labels.contains(&"do"), "labels: {labels:?}");
     assert!(labels.contains(&"if"), "labels: {labels:?}");
     assert!(labels.contains(&"for"), "labels: {labels:?}");
@@ -141,7 +150,7 @@ fn completes_language_constructs_at_bare_position() {
             "missing {generated}: {labels:?}"
         );
     }
-    assert!(response.items.iter().any(|item| item.label == "node"
+    assert!(response.items.iter().any(|item| item.label == "let"
         && item.kind == "keyword"
         && item.is_snippet
         && item.insert_text.contains("provider")));
@@ -163,7 +172,7 @@ fn gate_completion_and_hover_follow_timeout_policy_syntax() {
     assert!(gate.insert_text.contains("on_timeout ${policy}"));
 
     let hover = hover_at(
-        "workflow \"Gate\" { gate manual timeout 30s <>on_timeout continue }",
+        "workflow \"Gate\" { do { gate manual timeout 30s <>on_timeout continue } }",
         "<>",
     );
     assert_eq!(hover.title, "on_timeout");
@@ -175,7 +184,10 @@ fn hovers_provider_action_docs_and_signature() {
     let hover = hover_at(
         r#"
         workflow "Hover" v1 {
-            node search <- jira.<>search(base_url: "", token: "", jql: "project = RUNI")
+
+            do {
+                let search = jira.<>search(base_url: "", token: "", jql: "project = RUNI")
+            }
         }
     "#,
         "<>",
@@ -198,9 +210,12 @@ fn hovers_inferred_node_result_field_type() {
     let hover = hover_at(
         r#"
         workflow "Hover" v1 {
-            node search <- jira.search(base_url: "", token: "", jql: "project = RUNI")
-            node inspect <- do {
-                return search.<>issues
+
+            do {
+                let search = jira.search(base_url: "", token: "", jql: "project = RUNI")
+                let inspect = compute {
+                    return search.<>issues
+                }
             }
         }
     "#,
@@ -223,7 +238,10 @@ fn completes_std_modules_and_functions() {
     let modules = completion_labels(
         r#"
         workflow "Complete" v1 {
-            do { return std.<> }
+
+            do {
+                compute { return std.<> }
+            }
         }
     "#,
         "<>",
@@ -240,7 +258,10 @@ fn completes_std_modules_and_functions() {
     let functions = completion_labels(
         r#"
         workflow "Complete" v1 {
-            do { return std.strings.<> }
+
+            do {
+                compute { return std.strings.<> }
+            }
         }
     "#,
         "<>",
@@ -269,7 +290,10 @@ fn completes_std_modules_when_std_provider_metadata_exists() {
     let modules = completion_labels_with_providers(
         r#"
         workflow "Complete" v1 {
-            do { return std.<> }
+
+            do {
+                compute { return std.<> }
+            }
         }
     "#,
         "<>",
@@ -290,7 +314,10 @@ fn completes_provider_actions_after_dot() {
     let labels = completion_labels(
         r#"
         workflow "Complete" v1 {
-            jira.<>
+
+            do {
+                jira.<>
+            }
         }
     "#,
         "<>",
@@ -305,7 +332,10 @@ fn completes_aliased_std_module_leaves() {
         r#"
         workflow "Complete" v1 {
             import std.strings as s
-            do { return s.<> }
+
+            do {
+                compute { return s.<> }
+            }
         }
     "#,
         "<>",
@@ -323,7 +353,10 @@ fn completes_bare_intrinsics_from_unaliased_import() {
         r#"
         workflow "Complete" v1 {
             import std.strings
-            do { return up<> }
+
+            do {
+                compute { return up<> }
+            }
         }
     "#,
         "<>",
@@ -341,7 +374,10 @@ fn does_not_complete_unimported_intrinsics_bare() {
     let labels = completion_labels(
         r#"
         workflow "Complete" v1 {
-            do { return up<> }
+
+            do {
+                compute { return up<> }
+            }
         }
     "#,
         "<>",
@@ -358,7 +394,10 @@ fn completes_user_functions_bare() {
         r#"
         fn shout(text: string) -> string = text
         workflow "Complete" v1 {
-            do { return sh<> }
+
+            do {
+                compute { return sh<> }
+            }
         }
     "#,
         "<>",
@@ -371,8 +410,11 @@ fn completes_node_labels_bare() {
     let labels = completion_labels(
         r#"
         workflow "Complete" v1 {
-            node tickets <- jira.search(base_url: "https://jira", token: "t", jql: "x")
-            emit "tickets" { total: <> }
+
+            do {
+                let tickets = jira.search(base_url: "https://jira", token: "t", jql: "x")
+                emit "tickets" { total: <> }
+            }
         }
     "#,
         "<>",
@@ -388,8 +430,16 @@ fn completes_node_labels_as_transition_targets() {
     let labels = completion_labels(
         r#"
         workflow "Complete" v1 {
-            node first <- console.run(command: "one") -> <>
-            node cleanup <- console.run(command: "cleanup")
+
+            do {
+                let first = console.run(command: "one")
+                    routes {
+                        on success {
+                            continue <>
+                        }
+                    }
+                let cleanup = console.run(command: "cleanup")
+            }
         }
     "#,
         "<>",
@@ -401,25 +451,31 @@ fn completes_node_labels_as_transition_targets() {
 }
 
 #[test]
-fn completes_edge_outcomes_in_edges_blocks() {
+fn completes_route_outcomes_in_routes_blocks() {
     let response = complete_source(RexRapCompletionRequest {
         source: r#"
         workflow "Complete" v1 {
-            node first <- console.run(command: "one")
-            edges {
-                <>
+
+            do {
+                let first = console.run(command: "one")
+                routes {
+                    <>
+                }
+                let cleanup = console.run(command: "cleanup")
             }
-            node cleanup <- console.run(command: "cleanup")
         }
     "#
         .replace("<>", ""),
         cursor_byte: r#"
         workflow "Complete" v1 {
-            node first <- console.run(command: "one")
-            edges {
-                <>
+
+            do {
+                let first = console.run(command: "one")
+                routes {
+                    <>
+                }
+                let cleanup = console.run(command: "cleanup")
             }
-            node cleanup <- console.run(command: "cleanup")
         }
     "#
         .find("<>")
@@ -432,12 +488,12 @@ fn completes_edge_outcomes_in_edges_blocks() {
         .iter()
         .map(|item| item.label.as_str())
         .collect::<Vec<_>>();
-    assert!(labels.contains(&"ok"), "labels: {labels:?}");
+    assert!(labels.contains(&"on success"), "labels: {labels:?}");
     assert!(labels.contains(&"when"), "labels: {labels:?}");
-    assert!(response.items.iter().any(|item| item.label == "ok"
-        && item.kind == "edge"
+    assert!(response.items.iter().any(|item| item.label == "on success"
+        && item.kind == "route"
         && item.is_snippet
-        && item.insert_text == "ok -> ${target}"));
+        && item.insert_text == "on success {\n    continue ${target}\n}"));
 }
 
 #[test]
@@ -445,15 +501,31 @@ fn completes_terminal_and_node_targets_after_arrow() {
     let response = complete_source(RexRapCompletionRequest {
         source: r#"
         workflow "Complete" v1 {
-            node first <- console.run(command: "one") -> <>
-            node cleanup <- console.run(command: "cleanup")
+
+            do {
+                let first = console.run(command: "one")
+                    routes {
+                        on success {
+                            continue <>
+                        }
+                    }
+                let cleanup = console.run(command: "cleanup")
+            }
         }
     "#
         .replace("<>", ""),
         cursor_byte: r#"
         workflow "Complete" v1 {
-            node first <- console.run(command: "one") -> <>
-            node cleanup <- console.run(command: "cleanup")
+
+            do {
+                let first = console.run(command: "one")
+                    routes {
+                        on success {
+                            continue <>
+                        }
+                    }
+                let cleanup = console.run(command: "cleanup")
+            }
         }
     "#
         .find("<>")
@@ -466,7 +538,7 @@ fn completes_terminal_and_node_targets_after_arrow() {
         .iter()
         .map(|item| item.label.as_str())
         .collect::<Vec<_>>();
-    assert!(labels.contains(&"done"), "labels: {labels:?}");
+    assert!(labels.contains(&"end"), "labels: {labels:?}");
     assert!(labels.contains(&"fail"), "labels: {labels:?}");
     assert!(labels.contains(&"cleanup"), "labels: {labels:?}");
     assert!(
@@ -479,7 +551,7 @@ fn completes_terminal_and_node_targets_after_arrow() {
         response
             .items
             .iter()
-            .any(|item| item.label == "done" && item.kind == "target")
+            .any(|item| item.label == "end" && item.kind == "target")
     );
 }
 
@@ -488,13 +560,19 @@ fn completes_missing_action_arguments() {
     let response = complete_source(RexRapCompletionRequest {
         source: r#"
         workflow "Complete" v1 {
-            jira.search(base_url: params.base, <>)
+
+            do {
+                jira.search(base_url: params.base, <>)
+            }
         }
         "#
         .replace("<>", ""),
         cursor_byte: r#"
         workflow "Complete" v1 {
-            jira.search(base_url: params.base, <>)
+
+            do {
+                jira.search(base_url: params.base, <>)
+            }
         }
         "#
         .find("<>")
@@ -523,7 +601,10 @@ fn completes_nested_input_fields() {
             params {
                 jira: { base_url: string, token: string }
             }
-            jira.search(base_url: params.jira.<>, token: params.jira.token, jql: "x")
+
+            do {
+                jira.search(base_url: params.jira.<>, token: params.jira.token, jql: "x")
+            }
         }
     "#,
         "<>",
@@ -537,8 +618,11 @@ fn completes_provider_result_outputs() {
     let labels = completion_labels(
         r#"
         workflow "Complete" v1 {
-            node tickets <- jira.search(base_url: "https://jira", token: "t", jql: "x")
-            emit "tickets" { issues: tickets.<> }
+
+            do {
+                let tickets = jira.search(base_url: "https://jira", token: "t", jql: "x")
+                emit "tickets" { issues: tickets.<> }
+            }
         }
     "#,
         "<>",
@@ -552,8 +636,11 @@ fn explicit_binding_type_overrides_provider_results() {
     let labels = completion_labels(
         r#"
         workflow "Complete" v1 {
-            node tickets: { custom: string } <- jira.search(base_url: "https://jira", token: "t", jql: "x")
-            emit "tickets" { value: tickets.<> }
+
+            do {
+                let tickets: { custom: string } = jira.search(base_url: "https://jira", token: "t", jql: "x")
+                emit "tickets" { value: tickets.<> }
+            }
         }
     "#,
         "<>",
@@ -567,9 +654,12 @@ fn completes_loop_variable_fields_from_array_source() {
     let labels = completion_labels(
         r#"
         workflow "Complete" v1 {
-            node tickets <- jira.search(base_url: "https://jira", token: "t", jql: "x")
-            for item in tickets.issues limit 10 {
-                emit "ticket" { key: item.<> }
+
+            do {
+                let tickets = jira.search(base_url: "https://jira", token: "t", jql: "x")
+                for item in tickets.issues limit 10 {
+                    emit "ticket" { key: item.<> }
+                }
             }
         }
     "#,
@@ -585,8 +675,11 @@ fn completes_prev_output_fields_after_action() {
     let labels = completion_labels(
         r#"
         workflow "Complete" v1 {
-            node tickets <- jira.search(base_url: "https://jira", token: "t", jql: "x")
-            emit "prev" { total: prev.<> }
+
+            do {
+                let tickets = jira.search(base_url: "https://jira", token: "t", jql: "x")
+                emit "prev" { total: prev.<> }
+            }
         }
     "#,
         "<>",
@@ -601,7 +694,10 @@ fn prev_has_no_fields_at_first_node() {
     let labels = completion_labels(
         r#"
         workflow "Complete" v1 {
-            emit "prev" { total: prev.<> }
+
+            do {
+                emit "prev" { total: prev.<> }
+            }
         }
     "#,
         "<>",
@@ -616,11 +712,14 @@ fn prev_has_no_fields_after_control_flow() {
     let labels = completion_labels(
         r#"
         workflow "Complete" v1 {
-            node tickets <- jira.search(base_url: "https://jira", token: "t", jql: "x")
-            for item in tickets.issues limit 10 {
-                emit "ticket" { key: item.key }
+
+            do {
+                let tickets = jira.search(base_url: "https://jira", token: "t", jql: "x")
+                for item in tickets.issues limit 10 {
+                    emit "ticket" { key: item.key }
+                }
+                emit "prev" { total: prev.<> }
             }
-            emit "prev" { total: prev.<> }
         }
     "#,
         "<>",
@@ -636,9 +735,12 @@ fn completes_loop_variable_fields_from_prev_array() {
     let labels = completion_labels(
         r#"
         workflow "Complete" v1 {
-            node tickets <- jira.search(base_url: "https://jira", token: "t", jql: "x")
-            for item in prev.issues limit 10 {
-                emit "ticket" { key: item.<> }
+
+            do {
+                let tickets = jira.search(base_url: "https://jira", token: "t", jql: "x")
+                for item in prev.issues limit 10 {
+                    emit "ticket" { key: item.<> }
+                }
             }
         }
     "#,
@@ -653,7 +755,10 @@ fn completes_provider_actions_in_incomplete_source() {
     let labels = completion_labels(
         r#"
         workflow "Complete" v1 {
-            jira.<>
+
+            do {
+                jira.<>
+            }
     "#,
         "<>",
     );
@@ -665,7 +770,10 @@ fn suppresses_completion_inside_plain_string() {
     let labels = completion_labels(
         r#"
         workflow "Complete" v1 {
-            emit "jira.<>"
+
+            do {
+                emit "jira.<>"
+            }
         }
     "#,
         "<>",
@@ -680,9 +788,12 @@ fn completes_map_result_element_fields() {
     let labels = completion_labels(
         r#"
         workflow "Complete" v1 {
-            node tickets <- jira.search(base_url: "https://jira", token: "t", jql: "x")
-            for row in std.collections.map(tickets.issues, i => { title: i.key }) limit 10 {
-                emit "row" { t: row.<> }
+
+            do {
+                let tickets = jira.search(base_url: "https://jira", token: "t", jql: "x")
+                for row in std.collections.map(tickets.issues, i => { title: i.key }) limit 10 {
+                    emit "row" { t: row.<> }
+                }
             }
         }
     "#,
@@ -696,7 +807,10 @@ fn completes_run_context_fields() {
     let labels = completion_labels(
         r#"
         workflow "Complete" v1 {
-            emit "run" { id: run.<> }
+
+            do {
+                emit "run" { id: run.<> }
+            }
         }
     "#,
         "<>",
@@ -742,7 +856,10 @@ fn completes_secret_scopes() {
     let labels = setting_completion(
         r#"
         workflow "Complete" v1 {
-            emit "out" { token: secret.<> }
+
+            do {
+                emit "out" { token: secret.<> }
+            }
         }
     "#,
         "<>",
@@ -760,7 +877,10 @@ fn completes_secret_names_within_scope() {
     let labels = setting_completion(
         r#"
         workflow "Complete" v1 {
-            emit "out" { token: secret.github.<> }
+
+            do {
+                emit "out" { token: secret.github.<> }
+            }
         }
     "#,
         "<>",
@@ -778,7 +898,10 @@ fn completes_config_scopes_separately_from_secrets() {
     let labels = setting_completion(
         r#"
         workflow "Complete" v1 {
-            emit "out" { url: config.github.<> }
+
+            do {
+                emit "out" { url: config.github.<> }
+            }
         }
     "#,
         "<>",
@@ -804,7 +927,7 @@ fn parameter_defaults_use_typed_placeholders() {
         ])],
         metadata: ProviderRuntimeMetadata::default(),
     }];
-    let src = "workflow \"D\" v1 {\n    demo.run()\n}";
+    let src = "workflow \"D\" v1 {\n\n    compute {\n        demo.run()\n    }\n}";
     let cursor = src.find("()").expect("marker") + 1;
     let inserts = complete_source(RexRapCompletionRequest {
         source: src.to_string(),
@@ -869,7 +992,10 @@ fn hovers_a_three_segment_packaged_function_call() {
     let hover = hover_with(
         r#"
         workflow "Hover" v1 {
-            functions.image_tools.re<>size(source: "a.png")
+
+            do {
+                functions.image_tools.re<>size(source: "a.png")
+            }
         }
     "#,
         "<>",
@@ -890,7 +1016,10 @@ fn hovering_the_package_half_reports_the_provider() {
     let hover = hover_with(
         r#"
         workflow "Hover" v1 {
-            functions.image<>_tools.resize(source: "a.png")
+
+            do {
+                functions.image<>_tools.resize(source: "a.png")
+            }
         }
     "#,
         "<>",
@@ -907,7 +1036,10 @@ fn completes_packaged_function_exports() {
     let labels = completion_labels_with_providers(
         r#"
         workflow "Complete" v1 {
-            functions.image_tools.<>
+
+            do {
+                functions.image_tools.<>
+            }
         }
     "#,
         "<>",
@@ -924,7 +1056,10 @@ fn completes_arguments_inside_a_three_segment_call() {
     let labels = completion_labels_with_providers(
         r#"
         workflow "Complete" v1 {
-            functions.image_tools.resize(<>)
+
+            do {
+                functions.image_tools.resize(<>)
+            }
         }
     "#,
         "<>",
@@ -946,7 +1081,10 @@ fn a_dotted_value_path_is_still_not_mistaken_for_a_provider() {
     let labels = completion_labels_with_providers(
         r#"
         workflow "Complete" v1 {
-            node a <- functions.image_tools.resize(source: config.database.<>)
+
+            do {
+                let a = functions.image_tools.resize(source: config.database.<>)
+            }
         }
     "#,
         "<>",

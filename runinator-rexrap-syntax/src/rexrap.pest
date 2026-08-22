@@ -12,17 +12,22 @@ document = { SOI ~ language_decl? ~ document_item* ~ EOI }
 language_decl = { "language" ~ "rexrap-1" }
 expr_document = { SOI ~ expr ~ EOI }
 cond_document = { SOI ~ cond ~ EOI }
-do_document = { SOI ~ do_block ~ EOI }
+compute_document = { SOI ~ compute_block ~ EOI }
 
 // a top-level function definition: an optional `@recursive(max_depth: N)` cap, then a typed
 // signature and a body. params reuse the parameter-field shape (`name: type` with an optional `?`
 // or `= default`). the body after `=` is either a single expression or a compute-style statement
 // block `{ let …; … ; return e }` reusing the compute lines. an object literal `{ k: v }` still
-// parses as an expression because `do_line` cannot consume the `:`; a brace body must hold at
+// parses as an expression because `compute_line` cannot consume the `:`; a brace body must hold at
 // least one statement so `{}` stays an empty object.
-func_def     = { fn_recursive? ~ "fn" ~ ident ~ "(" ~ fn_params? ~ ")" ~ ("->" ~ type_expr)? ~ "=" ~ fn_body }
+// a pure `fn` is `= <expr|block>` and folds in the compute VM. a `task fn` is `do { … }` and is a
+// named region of runtime statements inlined into the graph at each call site. `task` declares
+// that the body does runtime work; it is NOT a color, because the caller still chooses the
+// scheduling (`f(...)` joins inline, `async f(...)` yields a `task[T]`).
+func_def     = { fn_recursive? ~ task_kw? ~ "fn" ~ ident ~ "(" ~ fn_params? ~ ")" ~ ("->" ~ type_expr)? ~ (("=" ~ fn_body) | run_block) }
+task_kw      = @{ "task" ~ !(ASCII_ALPHANUMERIC | "_") }
 fn_body      = { fn_block | expr }
-fn_block     = { "{" ~ do_line+ ~ "}" }
+fn_block     = { "{" ~ compute_line+ ~ "}" }
 fn_recursive = { "@recursive" ~ "(" ~ "max_depth" ~ ":" ~ integer ~ ")" }
 fn_params    = { fn_param ~ ("," ~ fn_param)* ~ ","? }
 fn_param     = { ident ~ optional_mark? ~ ":" ~ type_expr ~ field_default? }
@@ -81,11 +86,24 @@ document_item = {
   | type_decl
   | alias_decl
   | start_decl
+  | run_block
+  | join_decl
   | stmt
 }
+
+// `do { … }` is the lexical runtime block: the thread of control a run follows. It holds the
+// statement sequence a workflow executes, separating it from the header declarations above.
+run_block = { do_kw ~ "{" ~ (join_decl | stmt)* ~ "}" }
+do_kw     = @{ "do" ~ !(ASCII_ALPHANUMERIC | "_") }
+
+// `join <name> { … }` is an explicit named continuation — a labelled region a `continue <name>`
+// route hands control to. It is not a parallel barrier; `parallel { … } join <policy>` is.
+join_decl = { join_kw ~ ident ~ "{" ~ stmt* ~ "}" }
+join_kw   = @{ "join" ~ !(ASCII_ALPHANUMERIC | "_") }
 namespace_block = { "namespace" ~ ns_path ~ "{" ~ workflow* ~ "}" }
 workflow_decl = { "workflow" ~ string ~ version? ~ returns_decl? }
-workflow = { "workflow" ~ string ~ version? ~ returns_decl? ~ "{" ~ params_block? ~ (import_decl | trigger_decl | notify_decl | concurrency_decl | watch_decl | interrupt_decl | correlate_decl | type_decl | alias_decl | start_decl | stmt)* ~ "}" }
+workflow = { "workflow" ~ string ~ version? ~ returns_decl? ~ "{" ~ params_block? ~ workflow_item* ~ "}" }
+workflow_item = _{ import_decl | trigger_decl | notify_decl | concurrency_decl | watch_decl | interrupt_decl | correlate_decl | type_decl | alias_decl | start_decl | run_block | join_decl }
 returns_decl = { "returns" ~ type_expr }
 
 // the namespace this workflow's identity lives in. a dotted path qualifying the workflow name so
@@ -233,24 +251,28 @@ type_named   = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 
 // statements ---------------------------------------------------------------
 
-stmt = { annotation* ~ node_decl? ~ stmt_body ~ compensate_clause? ~ transitions? }
+stmt = { annotation* ~ node_decl? ~ async_kw? ~ stmt_body ~ compensate_clause? ~ transitions? }
+// `async <call>` schedules the call as a task instead of joining it inline. Asyncness is a
+// property of the call *site*, never of the callee: the same provider action, subflow, or
+// library function is callable both ways, so nothing in the language is ever written twice.
+async_kw = @{ "async" ~ !(ASCII_ALPHANUMERIC | "_") }
 
 // `compensate <provider.fn(args)>` attaches a compensating action to an action node. when a later
 // step drives the run to a failed terminal, the engine runs the recorded compensations of every
 // already-succeeded node in reverse (saga rollback).
-compensate_clause = { "compensate" ~ action_stmt }
+compensate_clause = { "compensate" ~ annotation* ~ action_stmt }
 
-annotation = { ann_id | ann_skip | ann_lock | ann_timeout }
-ann_id     = { "@id" ~ "(" ~ string ~ ")" }
-ann_skip   = { "@skip" }
-ann_lock   = { "@lock" }
-ann_timeout = { "@timeout" ~ "(" ~ duration ~ ")" }
+// every step attribute is written `@name` or `@name(args)`, prefixed to the statement. there is
+// exactly one attribute surface: the fluent `.timeout(...)`/`.retry(...)` postfix chain is gone.
+// `@id`, `@skip`, `@lock`, and `@deadline` describe the graph node; `@timeout`, `@retry`, `@tags`,
+// `@mcp`, `@runner`, `@idempotent`, and `@reentry` describe the step's execution.
+annotation = { "@" ~ ann_name ~ ("(" ~ mod_arg_list? ~ ")")? }
+ann_name   = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 
-// A graph-node binding. `let name: task[T] = statement` is the language-style spelling; the
-// established `node name <- statement` spelling remains available for explicit graph authoring.
-// Both lower to the same durable node and therefore carry the same edge/transition semantics.
-node_decl = { (node_kw ~ ident ~ (":" ~ type_expr)? ~ "<-") | (let_kw ~ ident ~ (":" ~ type_expr)? ~ "=") }
-node_kw   = @{ "node" ~ !(ASCII_ALPHANUMERIC | "_") }
+// A graph-node binding. `let name = statement` binds the step's result; `let name: T = statement`
+// declares its type. A plain runtime call is synchronous and binds `T`; an `async` call binds
+// `task[T]` and must be joined by `await` (or discarded by `detach`).
+node_decl = { let_kw ~ ident ~ (":" ~ type_expr)? ~ "=" }
 let_kw    = @{ "let" ~ !(ASCII_ALPHANUMERIC | "_") }
 
 stmt_body = {
@@ -289,30 +311,38 @@ stmt_body = {
   | circuit_breaker_stmt
   | event_source_stmt
   | config_stmt
+  | return_stmt
+  | detach_stmt
   | fail_stmt
   | subflow_stmt
-  | do_stmt
+  | compute_stmt
   | action_stmt
+  | task_call_stmt
 }
 
-// an imperative `do` block. lowers to an action node invoking the `std` standard library:
+// a call to a `task fn`: a single undotted name, so `action_stmt` (two-or-more dotted segments)
+// always wins for a provider call. the body is inlined at this site, and the call-site `async`
+// marker — not the callee — decides whether the run joins it inline or takes a `task[T]`.
+task_call_stmt = { ident ~ "(" ~ arg_list? ~ ")" }
+
+// an imperative `compute` block. lowers to an action node invoking the `std` standard library:
 // `std.run` (pure, reduced in-process) when every called function is pure, `std.exec` (effectful,
 // dispatched to the worker) when any called function has side effects. a foreign `do` block
 // carries fenced source verbatim and lowers to `std.code`, executed by the worker through docker
 // using the admin-configured runtime for that language.
-// `do` lines reuse the one expression/condition grammar; the only block-specific surface is
-// `let`/`return`/`goto`/`if`.
-do_stmt  = { do_kw ~ (foreign_do | do_block) ~ modifier* }
-// `do` must not swallow the leading identifier of a longer word (e.g. a `document` alias).
-do_kw    = @{ "do" ~ !(ASCII_ALPHANUMERIC | "_") }
-foreign_do = { string ~ raw_block }
-do_block = { "{" ~ do_line* ~ "}" }
-do_line  = { do_let | do_return | do_goto | do_if | do_expr_stmt }
-do_let   = { "let" ~ ident ~ (":" ~ type_expr)? ~ "=" ~ expr }
-do_return = { "return" ~ expr }
-do_goto  = { "goto" ~ target }
-do_if    = { "if" ~ cond ~ do_block ~ ("else" ~ do_block)? }
-do_expr_stmt = { expr }
+// `compute` lines reuse the one expression/condition grammar; the only block-specific surface is
+// `let`/`return`/`goto`/`if`. `do { … }` is the *runtime* block and is a different construct.
+compute_stmt  = { compute_kw ~ (foreign_compute | compute_block) }
+// `compute` must not swallow the leading identifier of a longer word.
+compute_kw    = @{ "compute" ~ !(ASCII_ALPHANUMERIC | "_") }
+foreign_compute = { string ~ raw_block }
+compute_block = { "{" ~ compute_line* ~ "}" }
+compute_line  = { compute_let | compute_return | compute_goto | compute_if | compute_expr_stmt }
+compute_let   = { "let" ~ ident ~ (":" ~ type_expr)? ~ "=" ~ expr }
+compute_return = { "return" ~ expr }
+compute_goto  = { "goto" ~ target }
+compute_if    = { "if" ~ cond ~ compute_block ~ ("else" ~ compute_block)? }
+compute_expr_stmt = { expr }
 
 // arithmetic operators, shared by the sum/term expression levels below.
 add_op   = { "+" | "-" }
@@ -322,7 +352,7 @@ mul_op   = { "*" | "/" | "%" }
 // confined to the call position, where `-` is never an operator.
 // a provider action call. two-or-more dotted segments: the leading segments are the provider
 // namespace path (`github`, or `github.repos`), the trailing segment is the function name.
-action_stmt  = { action_ident ~ ("." ~ action_ident)+ ~ "(" ~ arg_list? ~ ")" ~ modifier* }
+action_stmt  = { action_ident ~ ("." ~ action_ident)+ ~ "(" ~ arg_list? ~ ")" }
 action_ident = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_" | "-")* }
 arg_list     = { arg ~ ("," ~ arg)* ~ ","? }
 arg          = { arg_spread | arg_pair }
@@ -330,7 +360,6 @@ arg          = { arg_spread | arg_pair }
 arg_spread   = { "..." ~ ident }
 arg_pair     = { ident ~ ":" ~ expr }
 
-modifier      = { "." ~ ident ~ "(" ~ mod_arg_list? ~ ")" }
 mod_arg_list  = { mod_arg ~ ("," ~ mod_arg)* ~ ","? }
 mod_arg       = { (ident ~ ":")? ~ expr }
 
@@ -460,6 +489,16 @@ config_stmt = { "set" ~ (config_name | config_meta) }
 config_name = { "name" ~ "=" ~ expr }
 config_meta = { "meta" ~ object }
 
+// `return <expr>` is the concise successful terminal: it supplies the run's result and continues
+// to the generated `end` node. `fail "<message>"` is its failing twin.
+return_stmt = { return_kw ~ expr? }
+return_kw   = @{ "return" ~ !(ASCII_ALPHANUMERIC | "_") }
+
+// `detach <handle>` discards an `async` task handle: the run stops tracking it and never joins it.
+// It is the explicit opt-out that makes an unconsumed handle an error rather than a silent leak.
+detach_stmt = { detach_kw ~ ident }
+detach_kw   = @{ "detach" ~ !(ASCII_ALPHANUMERIC | "_") }
+
 fail_stmt = { "fail" ~ expr? }
 
 if_stmt    = { "if" ~ cond ~ block ~ else_if* ~ else_block? }
@@ -512,7 +551,8 @@ try_catch  = { "catch" ~ block }
 try_finally = { "finally" ~ block }
 
 parallel_stmt = { "parallel" ~ "{" ~ branch+ ~ "}" ~ join_clause? }
-join_clause   = { "join" ~ branch_selector? ~ branch_policy }
+// note: a barrier clause always names a policy, so it can never be confused with a `join_decl`.
+join_clause   = { join_kw ~ branch_selector? ~ branch_policy }
 branch_selector = { "[" ~ (string ~ ("," ~ string)*)? ~ "]" }
 
 race_stmt    = { "race" ~ winner_clause? ~ "{" ~ branch+ ~ "}" }
@@ -525,22 +565,24 @@ block = { "{" ~ stmt* ~ "}" }
 
 // transitions --------------------------------------------------------------
 
-transitions   = { edges_block | (outcome_arrow | predicate_arrow)+ | single_arrow }
-// the canonical emitted form: every outgoing edge gathered into one delimited section under the
-// node statement. the bare arrow forms remain accepted for terse hand-written source.
-edges_block   = { "edges" ~ "{" ~ (outcome_arrow | predicate_arrow)+ ~ "}" }
-single_arrow  = { "->" ~ target }
-outcome_arrow = { outcome ~ "->" ~ target }
-// a user-defined predicate edge: routes to `target` when `cond` holds. multiple predicate edges are
-// tried in ascending `priority` (lower first); unset priorities keep declaration order.
-predicate_arrow = { "when" ~ cond ~ edge_priority? ~ "->" ~ target }
-edge_priority   = { "priority" ~ integer }
-// `next` names the happy-path edge for next-based leaves (wait/output/config) and control blocks,
-// the named twin of the `-> target` single arrow; `ok` is the happy path for on_success leaves.
-outcome       = { "ok" | "next" | "fail" | "timeout" | "reject" }
-// `end` is the language-facing spelling of the successful terminal. `done` remains accepted in
-// explicit graph form and decompilation for existing stored definitions.
-target        = { "end" | "done" | "fail" | ident }
+// every outgoing edge of a statement is gathered into one attached `routes { … }` section. each
+// arm names an outcome (or a predicate) and hands control on with `continue <target>`.
+transitions   = { routes_block }
+routes_block  = { "routes" ~ "{" ~ route_arm+ ~ "}" }
+route_arm     = { outcome_route | predicate_route }
+outcome_route = { "on" ~ outcome ~ route_body }
+// a user-defined predicate route: taken when `cond` holds. multiple predicate routes are tried in
+// ascending `priority` (lower first); unset priorities keep declaration order.
+predicate_route = { "when" ~ cond ~ edge_priority? ~ route_body }
+route_body    = { "{" ~ continue_stmt ~ "}" }
+continue_stmt = { "continue" ~ target }
+edge_priority = { "priority" ~ integer }
+// `next` names the happy-path edge for next-based leaves (wait/output/config) and control blocks;
+// `success` is the happy path for on_success leaves.
+outcome       = { "success" | "failure" | "timeout" | "reject" | "next" }
+// `end` and `fail` are reserved references to the generated terminal nodes; every other target
+// names a statement binding or a `join`.
+target        = { "end" | "fail" | ident }
 
 // conditions ---------------------------------------------------------------
 

@@ -8,7 +8,7 @@ use std::collections::{BTreeSet, HashMap};
 
 use crate::registry::{FunctionRegistry, duplicate_errors};
 use runinator_rexrap_syntax::ast::{
-    Cond, CondKind, DoLine, Expr, ExprKind, FnBody, FunctionDef, StrPart,
+    ComputeLine, Cond, CondKind, Expr, ExprKind, FnBody, FunctionDef, StrPart,
 };
 use runinator_rexrap_syntax::errors::RexRapError;
 
@@ -82,22 +82,24 @@ fn collect_user_calls_body(body: &FnBody, registry: &FunctionRegistry, out: &mut
     match body {
         FnBody::Expr(expr) => collect_user_calls(expr, registry, out),
         FnBody::Block(lines) => collect_user_calls_lines(lines, registry, out),
+        // a `task fn` body is a statement region; its calls are graph nodes, not compute calls.
+        FnBody::Run(_) => {}
     }
 }
 
 /// collect user-function calls across a block's compute lines, including nested `if` conditions and
 /// branches.
 fn collect_user_calls_lines(
-    lines: &[DoLine],
+    lines: &[ComputeLine],
     registry: &FunctionRegistry,
     out: &mut BTreeSet<String>,
 ) {
     for line in lines {
         match line {
-            DoLine::Let { value, .. } | DoLine::Return(value) | DoLine::Expr(value) => {
-                collect_user_calls(value, registry, out)
-            }
-            DoLine::If {
+            ComputeLine::Let { value, .. }
+            | ComputeLine::Return(value)
+            | ComputeLine::Expr(value) => collect_user_calls(value, registry, out),
+            ComputeLine::If {
                 cond,
                 then_branch,
                 else_branch,
@@ -106,7 +108,7 @@ fn collect_user_calls_lines(
                 collect_user_calls_lines(then_branch, registry, out);
                 collect_user_calls_lines(else_branch, registry, out);
             }
-            DoLine::Goto(_) => {}
+            ComputeLine::Goto(_) => {}
         }
     }
 }

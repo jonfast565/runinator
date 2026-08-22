@@ -7,20 +7,23 @@ use super::*;
 fn compiles_toggle_and_split_nodes() {
     let src = r#"
         workflow "Rollout" v1 {
-            node seed <- console.run(command: "seed")
 
-            toggle config.flags.new_checkout {
-                on -> { console.run(command: "new") }
-                off -> { console.run(command: "old") }
+            do {
+                let seed = console.run(command: "seed")
+
+                toggle config.flags.new_checkout {
+                    on -> { console.run(command: "new") }
+                    off -> { console.run(command: "old") }
+                }
+
+                split on seed.user_id {
+                    30% -> { console.run(command: "variant_a") }
+                    70% -> { console.run(command: "variant_b") }
+                    else -> { console.run(command: "control") }
+                }
+
+                let done = console.run(command: "done")
             }
-
-            split on seed.user_id {
-                30% -> { console.run(command: "variant_a") }
-                70% -> { console.run(command: "variant_b") }
-                else -> { console.run(command: "control") }
-            }
-
-            node done <- console.run(command: "done")
         }
     "#;
     use runinator_models::workflows::WorkflowNodeKind;
@@ -54,20 +57,23 @@ fn compiles_toggle_and_split_nodes() {
 fn round_trips_toggle_and_split() {
     let src = r#"
         workflow "Rollout" v1 {
-            node seed <- console.run(command: "seed")
 
-            toggle config.flags.new_checkout {
-                on -> { console.run(command: "new") }
-                off -> { console.run(command: "old") }
+            do {
+                let seed = console.run(command: "seed")
+
+                toggle config.flags.new_checkout {
+                    on -> { console.run(command: "new") }
+                    off -> { console.run(command: "old") }
+                }
+
+                split on seed.user_id {
+                    30% -> { console.run(command: "variant_a") }
+                    70% -> { console.run(command: "variant_b") }
+                    else -> { console.run(command: "control") }
+                }
+
+                let done = console.run(command: "done")
             }
-
-            split on seed.user_id {
-                30% -> { console.run(command: "variant_a") }
-                70% -> { console.run(command: "variant_b") }
-                else -> { console.run(command: "control") }
-            }
-
-            node done <- console.run(command: "done")
         }
     "#;
     assert_round_trips_unordered(src);
@@ -76,31 +82,34 @@ fn round_trips_toggle_and_split() {
 fn round_trips_concurrency() {
     let src = r#"
         workflow "Concurrency" v1 {
-            node probe <- console.run(command: "probe")
 
-            parallel {
-                branch { console.run(command: "lint") }
-                branch { console.run(command: "test") }
-            } join all
+            do {
+                let probe = console.run(command: "probe")
 
-            race winner first_success {
-                branch { console.run(command: "primary") }
-                branch { console.run(command: "backup") }
+                parallel {
+                    branch { console.run(command: "lint") }
+                    branch { console.run(command: "test") }
+                } join all
+
+                race winner first_success {
+                    branch { console.run(command: "primary") }
+                    branch { console.run(command: "backup") }
+                }
+
+                map shard in probe.shards concurrency 4 {
+                    console.run(command: "reindex ${shard}")
+                }
+
+                try {
+                    console.run(command: "risky")
+                } catch {
+                    console.run(command: "rollback")
+                } finally {
+                    console.run(command: "cleanup")
+                }
+
+                let report = console.run(command: "report")
             }
-
-            map shard in probe.shards concurrency 4 {
-                console.run(command: "reindex ${shard}")
-            }
-
-            try {
-                console.run(command: "risky")
-            } catch {
-                console.run(command: "rollback")
-            } finally {
-                console.run(command: "cleanup")
-            }
-
-            node report <- console.run(command: "report")
         }
     "#;
     assert_round_trips(src);
@@ -112,9 +121,14 @@ fn round_trips_sdlc() {
             params {
                 jira: { base_url: string, email: string, token: string, jql: string }
             }
-            node tickets <- jira.search(jql: params.jira.jql).timeout(120s).retry(3)
-            for ticket in tickets.issues limit 50 {
-                subflow("Ticket Work", params: { ticket, parent_workflow_run_id: run.run_id }, detached: true, reuse: true, name: "Ticket Work: ${ticket.key}")
+
+            do {
+                @timeout(120s)
+                @retry(3)
+                let tickets = jira.search(jql: params.jira.jql)
+                for ticket in tickets.issues limit 50 {
+                    subflow("Ticket Work", params: { ticket, parent_workflow_run_id: run.run_id }, detached: true, reuse: true, name: "Ticket Work: ${ticket.key}")
+                }
             }
         }
     "#;
@@ -184,17 +198,25 @@ fn compiles_and_validates_sdlc() {
                 jira: { base_url: string, email: string, token: string, jql: string }
             }
 
-            node tickets <- jira.search(
-                base_url: params.jira.base_url,
-                email:    params.jira.email,
-                token:    params.jira.token,
-                jql:      params.jira.jql,
-            ).timeout(60s)
+            do {
 
-            for ticket in tickets.issues limit 50 {
-                subflow("Ticket Work", params: { ticket, parent_workflow_run_id: run.run_id }, detached: true, reuse: true, name: "Ticket Work: ${ticket.key}")
+                @timeout(60s)
+                let tickets = jira.search(
+                    base_url: params.jira.base_url,
+                    email:    params.jira.email,
+                    token:    params.jira.token,
+                    jql:      params.jira.jql,
+                )
+
+                for ticket in tickets.issues limit 50 {
+                    subflow("Ticket Work", params: { ticket, parent_workflow_run_id: run.run_id }, detached: true, reuse: true, name: "Ticket Work: ${ticket.key}")
+                }
+                routes {
+                    on next {
+                        continue end
+                    }
+                }
             }
-            -> done
         }
     "#;
     let definition = compile(src);
@@ -237,27 +259,30 @@ fn compiles_and_validates_sdlc() {
 fn compiles_control_flow() {
     let src = r#"
         workflow "Control" {
-            node probe <- console.run(command: "probe")
-            if probe.count > 0 && probe.label contains "P0" {
-                console.run(command: "page")
-            } else {
-                emit "skip" { }
-            }
 
-            match probe.mode {
-                "fast" -> { console.run(command: "fast") }
-                else -> { console.run(command: "slow") }
-            }
+            do {
+                let probe = console.run(command: "probe")
+                if probe.count > 0 && probe.label contains "P0" {
+                    console.run(command: "page")
+                } else {
+                    emit "skip" { }
+                }
 
-            parallel {
-                branch { console.run(command: "a") }
-                branch { console.run(command: "b") }
-            } join all
+                match probe.mode {
+                    "fast" -> { console.run(command: "fast") }
+                    else -> { console.run(command: "slow") }
+                }
 
-            try {
-                console.run(command: "risky")
-            } catch {
-                console.run(command: "recover")
+                parallel {
+                    branch { console.run(command: "a") }
+                    branch { console.run(command: "b") }
+                } join all
+
+                try {
+                    console.run(command: "risky")
+                } catch {
+                    console.run(command: "recover")
+                }
             }
         }
     "#;

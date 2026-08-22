@@ -8,7 +8,10 @@ fn rejects_unknown_reference() {
     let message = expect_semantic_error(
         r#"
         workflow "Bad" v1 {
-            console.run(command: ghost.value)
+
+            do {
+                console.run(command: ghost.value)
+            }
         }
     "#,
     );
@@ -19,7 +22,15 @@ fn rejects_unknown_transition_target() {
     let message = expect_semantic_error(
         r#"
         workflow "Bad" v1 {
-            console.run(command: "x") -> ghost
+
+            do {
+                console.run(command: "x")
+                routes {
+                    on next {
+                        continue ghost
+                    }
+                }
+            }
         }
     "#,
     );
@@ -31,7 +42,10 @@ fn rejects_unknown_input_field() {
         r#"
         workflow "Bad" v1 {
             params { a: string }
-            console.run(command: params.b)
+
+            do {
+                console.run(command: params.b)
+            }
         }
     "#,
     );
@@ -43,7 +57,10 @@ fn rejects_non_array_for_source() {
         r#"
         workflow "Bad" v1 {
             params { n: integer }
-            for x in params.n { console.run(command: "y") }
+
+            do {
+                for x in params.n { console.run(command: "y") }
+            }
         }
     "#,
     );
@@ -55,7 +72,10 @@ fn rejects_unorderable_comparison() {
         r#"
         workflow "Bad" v1 {
             params { flag: boolean }
-            if params.flag > 0 { console.run(command: "y") }
+
+            do {
+                if params.flag > 0 { console.run(command: "y") }
+            }
         }
     "#,
     );
@@ -67,8 +87,11 @@ fn rejects_loop_var_out_of_scope() {
         r#"
         workflow "Bad" v1 {
             params { items: string[] }
-            for x in params.items { console.run(command: "in") }
-            console.run(command: x)
+
+            do {
+                for x in params.items { console.run(command: "in") }
+                console.run(command: x)
+            }
         }
     "#,
     );
@@ -79,8 +102,11 @@ fn rejects_duplicate_node_id() {
     let message = expect_semantic_error(
         r#"
         workflow "Bad" v1 {
-            node foo <- console.run(command: "a")
-            node foo <- console.run(command: "b")
+
+            do {
+                let foo = console.run(command: "a")
+                let foo = console.run(command: "b")
+            }
         }
     "#,
     );
@@ -90,9 +116,12 @@ fn rejects_duplicate_node_id() {
 fn warns_on_unreachable_after_fail() {
     let src = r#"
         workflow "Dead" v1 {
-            console.run(command: "ok")
-            fail "boom"
-            console.run(command: "never")
+
+            do {
+                console.run(command: "ok")
+                fail "boom"
+                console.run(command: "never")
+            }
         }
     "#;
     let (_, warnings) =

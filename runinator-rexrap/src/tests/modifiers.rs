@@ -9,7 +9,10 @@ fn explicit_decompile_surfaces_every_implicit_part() {
     let rexrap = assert_round_trips_explicit(
         r#"
         workflow "Hello" v1 {
-            node greeting <- console.run(command: "echo hi")
+
+            do {
+                let greeting = console.run(command: "echo hi")
+            }
         }
     "#,
     );
@@ -18,15 +21,15 @@ fn explicit_decompile_surfaces_every_implicit_part() {
         "missing start edge:\n{rexrap}"
     );
     assert!(
-        rexrap.contains(".timeout(60s)"),
+        rexrap.contains("@timeout(60s)"),
         "missing default timeout:\n{rexrap}"
     );
     assert!(
-        rexrap.contains(".retry(1)"),
+        rexrap.contains("@retry(1)"),
         "missing default retry:\n{rexrap}"
     );
     assert!(
-        rexrap.contains("ok -> done"),
+        rexrap.contains("continue end"),
         "missing success arrow:\n{rexrap}"
     );
 }
@@ -35,8 +38,10 @@ fn retry_lowers_backoff_and_classification() {
     let definition = compile(
         r#"
         workflow "Retry" v1 {
-            node go <- console.run(command: "echo hi")
-                .retry(4, backoff: 2s, max: 60s, jitter: true, on: failure)
+            do {
+                @retry(4, backoff: 2s, max: 60s, jitter: true, on: failure)
+                let go = console.run(command: "echo hi")
+            }
         }
     "#,
     );
@@ -60,9 +65,12 @@ fn compensation_lowers_and_round_trips() {
     let definition = compile(
         r#"
         workflow "Saga" v1 {
-            node deploy <- console.run(command: "deploy")
-                compensate console.run(command: "rollback")
-            node verify <- console.run(command: "verify")
+
+            do {
+                let deploy = console.run(command: "deploy")
+                    compensate console.run(command: "rollback")
+                let verify = console.run(command: "verify")
+            }
         }
     "#,
     );
@@ -79,9 +87,12 @@ fn compensation_lowers_and_round_trips() {
     assert_round_trips_unordered(
         r#"
         workflow "Saga" v1 {
-            node deploy <- console.run(command: "deploy")
-                compensate console.run(command: "rollback")
-            node verify <- console.run(command: "verify")
+
+            do {
+                let deploy = console.run(command: "deploy")
+                    compensate console.run(command: "rollback")
+                let verify = console.run(command: "verify")
+            }
         }
     "#,
     );
@@ -95,9 +106,13 @@ fn compensation_lowers_and_round_trips() {
 fn compensation_modifiers_survive_the_round_trip() {
     let source = r#"
         workflow "Saga" v1 {
-            node deploy <- console.run(command: "deploy")
-                compensate console.run(command: "rollback").timeout(300s).tags("undo").runner("ops")
-            node verify <- console.run(command: "verify")
+
+            do {
+                let deploy = console.run(command: "deploy")
+                    compensate @timeout(300s) @tags("undo") @runner("ops")
+                        console.run(command: "rollback")
+                let verify = console.run(command: "verify")
+            }
         }
     "#;
     let definition = compile(source);
@@ -120,7 +135,7 @@ fn compensation_modifiers_survive_the_round_trip() {
 
     let text = crate::decompile(&definition).expect("decompile");
     assert!(
-        text.contains(".timeout(300s)") && text.contains(".tags(\"undo\")"),
+        text.contains("@timeout(300s)") && text.contains("@tags(\"undo\")"),
         "compensation modifiers missing from the rendered rexrap:\n{text}"
     );
     assert_round_trips_unordered(source);
@@ -132,8 +147,11 @@ fn watch_guard_lowers_to_metadata_and_round_trips() {
         workflow "Watch" v1 {
             params { status: string }
             watch params.status != "In Review" -> handle_drift
-            node work <- console.run(command: "echo work")
-            node handle_drift <- console.run(command: "echo drift")
+
+            do {
+                let work = console.run(command: "echo work")
+                let handle_drift = console.run(command: "echo drift")
+            }
         }
     "#,
     );
@@ -155,8 +173,11 @@ fn watch_guard_lowers_to_metadata_and_round_trips() {
         workflow "Watch" v1 {
             params { status: string }
             watch params.status != "In Review" -> handle_drift
-            node work <- console.run(command: "echo work")
-            node handle_drift <- console.run(command: "echo drift")
+
+            do {
+                let work = console.run(command: "echo work")
+                let handle_drift = console.run(command: "echo drift")
+            }
         }
     "#,
     );
@@ -168,7 +189,10 @@ fn correlate_header_lowers_to_metadata_and_round_trips() {
         workflow "Orders" v1 {
             params { batch_id: string }
             correlate key params.batch_id
-            node work <- console.run(command: "echo work")
+
+            do {
+                let work = console.run(command: "echo work")
+            }
         }
     "#,
     );
@@ -186,7 +210,10 @@ fn correlate_header_lowers_to_metadata_and_round_trips() {
         workflow "Orders" v1 {
             params { batch_id: string }
             correlate key params.batch_id
-            node work <- console.run(command: "echo work")
+
+            do {
+                let work = console.run(command: "echo work")
+            }
         }
     "#,
     );
@@ -197,9 +224,12 @@ fn signal_correlation_key_lowers_and_round_trips() {
         r#"
         workflow "Sig" v1 {
             params { ticket: { key: string } }
-            node seed <- console.run(command: "echo go")
-            signal "github.review" key params.ticket.key
-            node after <- console.run(command: "echo done")
+
+            do {
+                let seed = console.run(command: "echo go")
+                signal "github.review" key params.ticket.key
+                let after = console.run(command: "echo done")
+            }
         }
     "#,
     );
@@ -218,9 +248,12 @@ fn signal_correlation_key_lowers_and_round_trips() {
         r#"
         workflow "Sig" v1 {
             params { ticket: { key: string } }
-            node seed <- console.run(command: "echo go")
-            signal "github.review" key params.ticket.key
-            node after <- console.run(command: "echo done")
+
+            do {
+                let seed = console.run(command: "echo go")
+                signal "github.review" key params.ticket.key
+                let after = console.run(command: "echo done")
+            }
         }
     "#,
     );
@@ -231,20 +264,26 @@ fn wait_until_desugars_to_condition_poll_loop() {
     let sugar = compile(
         r#"
         workflow "WaitUntil" v1 {
-            node seed <- console.run(command: "echo go")
-            wait until seed.status == "ready" every 15s
-            node after <- console.run(command: "echo done")
+
+            do {
+                let seed = console.run(command: "echo go")
+                wait until seed.status == "ready" every 15s
+                let after = console.run(command: "echo done")
+            }
         }
     "#,
     );
     let explicit = compile(
         r#"
         workflow "WaitUntil" v1 {
-            node seed <- console.run(command: "echo go")
-            until seed.status == "ready" {
-                wait 15s
+
+            do {
+                let seed = console.run(command: "echo go")
+                until seed.status == "ready" {
+                    wait 15s
+                }
+                let after = console.run(command: "echo done")
             }
-            node after <- console.run(command: "echo done")
         }
     "#,
     );
@@ -260,9 +299,12 @@ fn wait_until_defaults_interval() {
     let _ = compile(
         r#"
         workflow "WaitUntil" v1 {
-            node seed <- console.run(command: "echo go")
-            wait until seed.status == "ready"
-            node after <- console.run(command: "echo done")
+
+            do {
+                let seed = console.run(command: "echo go")
+                wait until seed.status == "ready"
+                let after = console.run(command: "echo done")
+            }
         }
     "#,
     );
@@ -272,8 +314,10 @@ fn retry_config_round_trips() {
     assert_round_trips(
         r#"
         workflow "Retry" v1 {
-            node go <- console.run(command: "echo hi")
-                .retry(4, backoff: 2s, max: 60s, jitter: true, on: failure)
+            do {
+                @retry(4, backoff: 2s, max: 60s, jitter: true, on: failure)
+                let go = console.run(command: "echo hi")
+            }
         }
     "#,
     );
@@ -282,9 +326,12 @@ fn retry_config_round_trips() {
 fn runner_modifier_lowers_and_round_trips() {
     let src = r#"
         workflow "Runner" v1 {
-            node go <- console.run(command: "echo hi")
-                .runner("creds-sync")
-                .timeout(300s)
+
+            do {
+                @runner("creds-sync")
+                @timeout(300s)
+                let go = console.run(command: "echo hi")
+            }
         }
     "#;
     let definition = compile(src);
@@ -301,11 +348,11 @@ fn runner_modifier_lowers_and_round_trips() {
         "runner modifier should lower to required_labels.runner"
     );
 
-    // the decompiled source must surface `.runner("creds-sync")` and round-trip.
+    // the decompiled source must surface `@runner("creds-sync")` and round-trip.
     let rexrap = decompile(&definition).expect("decompile");
     assert!(
-        rexrap.contains(".runner(\"creds-sync\")"),
-        "decompiled source missing runner modifier:\n{rexrap}"
+        rexrap.contains("@runner(\"creds-sync\")"),
+        "decompiled source missing runner attribute:\n{rexrap}"
     );
     assert_round_trips(src);
 }
@@ -315,8 +362,11 @@ fn idempotent_modifier_lowers_and_round_trips() {
     // read run inputs the way any other action argument does.
     let src = r#"
         workflow "Charges" v1 {
-            node charge <- billing.charge(amount: 100)
-                .idempotent(key: run.run_id)
+
+            do {
+                @idempotent(key: run.run_id)
+                let charge = billing.charge(amount: 100)
+            }
         }
     "#;
     let definition = compile(src);
@@ -334,8 +384,8 @@ fn idempotent_modifier_lowers_and_round_trips() {
 
     let rexrap = decompile(&definition).expect("decompile");
     assert!(
-        rexrap.contains(".idempotent(key: run.run_id)"),
-        "decompiled source missing idempotent modifier:\n{rexrap}"
+        rexrap.contains("@idempotent(key: run.run_id)"),
+        "decompiled source missing idempotent attribute:\n{rexrap}"
     );
     assert_round_trips(src);
 }
@@ -344,7 +394,10 @@ fn action_without_idempotent_modifier_carries_no_key() {
     // the default has to stay off: a key nobody asked for would silently dedupe real work.
     let src = r#"
         workflow "Plain" v1 {
-            node go <- console.run(command: "echo hi")
+
+            do {
+                let go = console.run(command: "echo hi")
+            }
         }
     "#;
     let definition = compile(src);
@@ -366,11 +419,13 @@ fn interrupt_region_lowers_to_metadata_and_round_trips() {
         r#"
         workflow "Interrupt" v1 {
             interrupt on wake {
-                node refresh <- console.run(command: "echo refresh")
+                let refresh = console.run(command: "echo refresh")
                 resume next
             }
 
-            wait 30s
+            do {
+                wait 30s
+            }
         }
     "#,
     );
@@ -414,11 +469,13 @@ fn interrupt_region_lowers_to_metadata_and_round_trips() {
         r#"
         workflow "Interrupt" v1 {
             interrupt on wake {
-                node refresh <- console.run(command: "echo refresh")
+                let refresh = console.run(command: "echo refresh")
                 resume next
             }
 
-            wait 30s
+            do {
+                wait 30s
+            }
         }
     "#,
     );
@@ -432,7 +489,10 @@ fn a_disabled_interrupt_link_round_trips_through_rexrap() {
                 audit action "record wake"
                 resume
             }
-            wait 30s
+
+            do {
+                wait 30s
+            }
         }
     "#;
     let definition = compile(source);
@@ -460,11 +520,13 @@ fn every_interrupt_source_parses_and_round_trips() {
             r#"
             workflow "Sources" v1 {{
                 interrupt on {source} {{
-                    node refresh <- console.run(command: "echo refresh")
+                    let refresh = console.run(command: "echo refresh")
                     resume
                 }}
 
-                wait 30s
+                do {{
+                    wait 30s
+                }}
             }}
         "#
         );
@@ -496,11 +558,13 @@ fn every_resume_mode_round_trips() {
             r#"
             workflow "Resume Mode" v1 {{
                 interrupt on wake {{
-                    node refresh <- console.run(command: "echo refresh")
+                    let refresh = console.run(command: "echo refresh")
                     {source}
                 }}
 
-                wait 30s
+                do {{
+                    wait 30s
+                }}
             }}
         "#
         );
@@ -528,10 +592,12 @@ fn a_region_without_an_explicit_resume_gets_a_synthetic_one() {
         r#"
         workflow "Implicit Resume" v1 {
             interrupt on wake {
-                node refresh <- console.run(command: "echo refresh")
+                let refresh = console.run(command: "echo refresh")
             }
 
-            wait 30s
+            do {
+                wait 30s
+            }
         }
     "#,
     );
@@ -663,8 +729,11 @@ fn a_call_site_policy_parses_and_survives_formatting() {
     // into the compiled graph is the invocation-ir lowering's job, not the grammar's.
     let src = r#"
         workflow "Policy" v1 {
-            node result <- do {
-                return std.strings.upper("hi") with { timeout: 30s }
+
+            do {
+                let result = compute {
+                    return std.strings.upper("hi") with { timeout: 30s }
+                }
             }
         }
     "#;
@@ -686,7 +755,10 @@ fn a_call_site_policy_does_not_swallow_a_cron_triggers_options() {
         r#"
         workflow "Scheduled" v1 {
             trigger cron "0 * * * *" with { tz: "UTC" }
-            node go <- console.run(command: "echo hi")
+
+            do {
+                let go = console.run(command: "echo hi")
+            }
         }
     "#,
     );
@@ -711,7 +783,10 @@ fn a_notify_policys_with_object_is_still_its_own() {
         r#"
         workflow "Notified" v1 {
             notify on failure -> slack "ops" with { channel: "alerts" }
-            node go <- console.run(command: "echo hi")
+
+            do {
+                let go = console.run(command: "echo hi")
+            }
         }
     "#,
     );

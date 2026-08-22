@@ -9,12 +9,15 @@ fn explicit_decompile_surfaces_loop_edges_and_none_caps() {
     let rexrap = assert_round_trips_explicit(
         r#"
         workflow "Loop" v1 {
-            node seed <- console.run(command: "seed")
-            for item in seed.items {
-                console.run(command: "work ${item}")
-            }
-            map shard in seed.shards {
-                console.run(command: "reindex ${shard}")
+
+            do {
+                let seed = console.run(command: "seed")
+                for item in seed.items {
+                    console.run(command: "work ${item}")
+                }
+                map shard in seed.shards {
+                    console.run(command: "reindex ${shard}")
+                }
             }
         }
     "#,
@@ -32,8 +35,8 @@ fn explicit_decompile_surfaces_loop_edges_and_none_caps() {
         "missing control-block id:\n{rexrap}"
     );
     assert!(
-        rexrap.contains("} next -> "),
-        "missing block continuation arrow:\n{rexrap}"
+        rexrap.contains("on next {"),
+        "missing block continuation route:\n{rexrap}"
     );
 }
 #[test]
@@ -41,10 +44,13 @@ fn terse_decompile_preserves_authored_control_block_id() {
     let first = compile(
         r#"
         workflow "LoopId" v1 {
-            node seed <- console.run(command: "seed")
-            @id("for_each_ticket")
-            for item in seed.items {
-                console.run(command: "work")
+
+            do {
+                let seed = console.run(command: "seed")
+                @id("for_each_ticket")
+                for item in seed.items {
+                    console.run(command: "work")
+                }
             }
         }
     "#,
@@ -77,9 +83,12 @@ fn terse_decompile_preserves_imported_control_block_id() {
     let definition = compile(
         r#"
         workflow "ImportedLoopId" v1 {
-            node seed <- console.run(command: "seed")
-            for item in seed.items {
-                console.run(command: "work")
+
+            do {
+                let seed = console.run(command: "seed")
+                for item in seed.items {
+                    console.run(command: "work")
+                }
             }
         }
     "#,
@@ -117,18 +126,24 @@ fn explicit_and_implicit_caps_are_equivalent() {
     let explicit = compile(
         r#"
         workflow "Caps" v1 {
-            node seed <- console.run(command: "seed")
-            for x in seed.items limit none { console.run(command: "a ${x}") }
-            map y in seed.items concurrency none { console.run(command: "b ${y}") }
+
+            do {
+                let seed = console.run(command: "seed")
+                for x in seed.items limit none { console.run(command: "a ${x}") }
+                map y in seed.items concurrency none { console.run(command: "b ${y}") }
+            }
         }
     "#,
     );
     let implicit = compile(
         r#"
         workflow "Caps" v1 {
-            node seed <- console.run(command: "seed")
-            for x in seed.items { console.run(command: "a ${x}") }
-            map y in seed.items { console.run(command: "b ${y}") }
+
+            do {
+                let seed = console.run(command: "seed")
+                for x in seed.items { console.run(command: "a ${x}") }
+                map y in seed.items { console.run(command: "b ${y}") }
+            }
         }
     "#,
     );
@@ -139,24 +154,38 @@ fn explicit_and_implicit_caps_are_equivalent() {
 }
 #[test]
 fn explicit_start_and_next_arrows_parse_and_match_implicit() {
-    // an explicit `start ->` plus `next ->`/`ok ->` arrows must produce the same graph as the
+    // an explicit `start ->` plus `on next`/`on success` routes must produce the same graph as the
     // implicit sequence they spell out.
     let explicit = compile(
         r#"
         workflow "Explicit" v1 {
             start -> first
-            @id("first") wait 5s
-                next -> second
-            @id("second") console.run(command: "go")
-                ok -> done
+
+            do {
+                @id("first") wait 5s
+                    routes {
+                        on next {
+                            continue second
+                        }
+                    }
+                @id("second") console.run(command: "go")
+                    routes {
+                        on success {
+                            continue end
+                        }
+                    }
+            }
         }
     "#,
     );
     let implicit = compile(
         r#"
         workflow "Explicit" v1 {
-            @id("first") wait 5s
-            @id("second") console.run(command: "go")
+
+            do {
+                @id("first") wait 5s
+                @id("second") console.run(command: "go")
+            }
         }
     "#,
     );
@@ -171,7 +200,10 @@ fn explicit_start_target_must_resolve() {
         r#"
         workflow "Bad" v1 {
             start -> ghost
-            console.run(command: "x")
+
+            do {
+                console.run(command: "x")
+            }
         }
     "#,
     );
@@ -183,25 +215,28 @@ fn explicit_round_trips_control_flow() {
     assert_round_trips_explicit(
         r#"
         workflow "Control" v1 {
-            node probe <- console.run(command: "probe")
-            if probe.count > 0 {
-                console.run(command: "many")
-            } else {
-                console.run(command: "none")
+
+            do {
+                let probe = console.run(command: "probe")
+                if probe.count > 0 {
+                    console.run(command: "many")
+                } else {
+                    console.run(command: "none")
+                }
+                while probe.status == "pending" limit 30 {
+                    console.run(command: "poll")
+                }
+                match probe.mode {
+                    "fast" -> { console.run(command: "fast") }
+                    else -> { console.run(command: "slow") }
+                }
+                parallel {
+                    branch { console.run(command: "a") }
+                    branch { console.run(command: "b") }
+                } join all
+                approve "ship?" { env: "prod" }
+                let report = console.run(command: "report")
             }
-            while probe.status == "pending" limit 30 {
-                console.run(command: "poll")
-            }
-            match probe.mode {
-                "fast" -> { console.run(command: "fast") }
-                else -> { console.run(command: "slow") }
-            }
-            parallel {
-                branch { console.run(command: "a") }
-                branch { console.run(command: "b") }
-            } join all
-            approve "ship?" { env: "prod" }
-            node report <- console.run(command: "report")
         }
     "#,
     );
@@ -210,11 +245,14 @@ fn explicit_round_trips_control_flow() {
 fn gate_node_round_trips_each_kind() {
     let src = r#"
         workflow "Gated" v1 {
-            node build <- console.run(command: "build")
-            gate condition when build.status == "ready" every 15s timeout 300s on_timeout continue
-            gate manual { label: "release" }
-            gate external every 60s
-            node report <- console.run(command: "report")
+
+            do {
+                let build = console.run(command: "build")
+                gate condition when build.status == "ready" every 15s timeout 300s on_timeout continue
+                gate manual { label: "release" }
+                gate external every 60s
+                let report = console.run(command: "report")
+            }
         }
     "#;
     let definition = compile(src);
@@ -260,9 +298,12 @@ fn gate_node_round_trips_each_kind() {
 fn signal_node_round_trips() {
     let src = r#"
         workflow "Signalled" v1 {
-            node build <- console.run(command: "build")
-            signal "deploy-approved" { source: "ops" }
-            node ship <- console.run(command: "ship")
+
+            do {
+                let build = console.run(command: "build")
+                signal "deploy-approved" { source: "ops" }
+                let ship = console.run(command: "ship")
+            }
         }
     "#;
     let definition = compile(src);
@@ -282,10 +323,13 @@ fn signal_node_round_trips() {
 fn output_node_artifact_round_trips() {
     let src = r#"
         workflow "Reports" v1 {
-            node dump <- console.run(command: "dump")
-            output {
-                report = dump.artifacts
-                first = dump.artifacts[0]
+
+            do {
+                let dump = console.run(command: "dump")
+                output {
+                    report = dump.artifacts
+                    first = dump.artifacts[0]
+                }
             }
         }
     "#;
@@ -310,14 +354,23 @@ fn predicate_edges_round_trip_with_priority() {
     let src = r#"
         workflow "Edges" v1 {
             params { status: string }
-            node check <- console.run(command: "check")
-            edges {
-                ok -> done
-                when params.status == "approved" priority 1 -> review
-                when params.status == "denied" priority 2 -> reject
+
+            do {
+                let check = console.run(command: "check")
+                routes {
+                    on success {
+                        continue end
+                    }
+                    when params.status == "approved" priority 1 {
+                        continue review
+                    }
+                    when params.status == "denied" priority 2 {
+                        continue reject
+                    }
+                }
+                let review = console.run(command: "review")
+                let reject = console.run(command: "reject")
             }
-            node review <- console.run(command: "review")
-            node reject <- console.run(command: "reject")
         }
     "#;
     let definition = compile(src);
@@ -340,11 +393,16 @@ fn predicate_edge_without_priority_round_trips() {
     let src = r#"
         workflow "Edges" v1 {
             params { status: string }
-            node check <- console.run(command: "check")
-            edges {
-                when params.status == "skip" -> done
+
+            do {
+                let check = console.run(command: "check")
+                routes {
+                    when params.status == "skip" {
+                        continue end
+                    }
+                }
+                let after = console.run(command: "after")
             }
-            node after <- console.run(command: "after")
         }
     "#;
     let definition = compile(src);
@@ -366,8 +424,11 @@ fn decompile_renders_back_edge_as_arrow_without_panicking() {
     let definition = compile(
         r#"
         workflow "Poller" v1 {
-            node a <- console.run(command: "a")
-            node b <- console.run(command: "b")
+
+            do {
+                let a = console.run(command: "a")
+                let b = console.run(command: "b")
+            }
         }
     "#,
     );
@@ -385,7 +446,7 @@ fn decompile_renders_back_edge_as_arrow_without_panicking() {
     // the back-edge must decompile to an explicit `-> a` arrow, never a crash or error.
     let rexrap = decompile(&looped).expect("decompile renders the back-edge");
     assert!(
-        rexrap.contains("-> a"),
-        "expected a back-edge arrow, got:\n{rexrap}"
+        rexrap.contains("continue a"),
+        "expected a back-edge route, got:\n{rexrap}"
     );
 }

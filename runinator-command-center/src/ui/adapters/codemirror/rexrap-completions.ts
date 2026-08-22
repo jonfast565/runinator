@@ -14,25 +14,45 @@ import { KEYWORDS, STD_INTRINSICS, STD_MODULES } from "./rexrap-vocabulary";
 const keywordCompletions = [...KEYWORDS].map((label) => ({ label, type: "keyword" }));
 
 const snippets = [
-  snippetCompletion("if ${condition} -> ok\nelse -> fail", {
+  snippetCompletion("if ${condition} {\n\t${}\n} else {\n\t${}\n}", {
     label: "if",
     type: "keyword",
-    detail: "if/else with outcomes",
+    detail: "if/else",
   }),
   snippetCompletion("for ${item} in ${collection} {\n\t${}\n}", {
     label: "for",
     type: "keyword",
     detail: "for loop",
   }),
-  snippetCompletion('workflow "${name}" {\n\tparams {\n\t\t${}\n\t}\n\n\t${}\n}', {
+  snippetCompletion('workflow "${name}" {\n\tparams {\n\t\t${}\n\t}\n\n\tdo {\n\t\t${}\n\t}\n}', {
     label: "workflow",
     type: "keyword",
     detail: "workflow scaffold",
   }),
-  snippetCompletion("node ${name} <- ${provider}.${action}(${args}) -> ok", {
+  snippetCompletion("let ${name} = ${provider}.${action}(${args})", {
     label: "action",
     type: "function",
     detail: "provider action node",
+  }),
+  snippetCompletion("let ${name} = async ${provider}.${action}(${args})", {
+    label: "async",
+    type: "keyword",
+    detail: "schedule a call as a task",
+  }),
+  snippetCompletion("routes {\n\ton success {\n\t\tcontinue ${target}\n\t}\n}", {
+    label: "routes",
+    type: "keyword",
+    detail: "attached routes section",
+  }),
+  snippetCompletion("join ${name} {\n\t${}\n}", {
+    label: "join",
+    type: "keyword",
+    detail: "named continuation",
+  }),
+  snippetCompletion("task fn ${name}(${arg}: ${type}) do {\n\t${}\n}", {
+    label: "task fn",
+    type: "function",
+    detail: "runtime function inlined at each call site",
   }),
   snippetCompletion("fn ${name}(${arg}: ${type}) -> ${return_type} = ${value}", {
     label: "fn",

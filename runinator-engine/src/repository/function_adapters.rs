@@ -142,11 +142,14 @@ fn adapter_source(entry: &FunctionCatalogEntry, export: &FunctionExport) -> Stri
         .map(|parameter| format!("{}: params.{}", parameter.name, parameter.name))
         .collect::<Vec<_>>()
         .join(", ");
+    // the adapter's single step lives in the workflow's `do { ... }` runtime block.
+    source.push_str("    do {\n");
     source.push_str(&format!(
-        "    node invoke <- {}.{}({args})\n",
+        "        let invoke = {}.{}({args})\n",
         entry.provider_name(),
         entry.export_name
     ));
+    source.push_str("    }\n");
     source.push_str("}\n");
     source
 }

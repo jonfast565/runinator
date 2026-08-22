@@ -12,7 +12,10 @@ fn round_trips_named_type_decls() {
             }
             type Cart { subtotal: number, tax: number }
             type Ids = integer[]
-            console.run(command: "go")
+
+            do {
+                console.run(command: "go")
+            }
         }
     "#;
     assert_round_trips(src);
@@ -42,7 +45,10 @@ fn round_trips_named_type_decls_with_aliases() {
         workflow "Typed" v1 {
             type Payload = { response: any }
             alias shared = { input: "hello" }
-            node probe: Payload <- ai-command.execute(command: "echo", ...shared)
+
+            do {
+                let probe: Payload = ai-command.execute(command: "echo", ...shared)
+            }
         }
     "#;
     assert_round_trips(src);
@@ -52,15 +58,18 @@ fn named_type_preserved_on_let_annotation() {
     let src = r#"
         workflow "Typed" v1 {
             type Cart { subtotal: number, tax: number }
-            node probe: Cart <- console.run(command: "probe")
-            console.run(command: "after")
+
+            do {
+                let probe: Cart = console.run(command: "probe")
+                console.run(command: "after")
+            }
         }
     "#;
     assert_round_trips(src);
     let rexrap = decompile(&compile(src)).expect("decompile");
     // the node annotation keeps the declared name rather than expanding the struct.
     assert!(
-        rexrap.contains("node probe: Cart"),
+        rexrap.contains("let probe: Cart"),
         "named node ref missing:\n{rexrap}"
     );
 }
@@ -70,7 +79,10 @@ fn named_type_resolves_in_input() {
         workflow "Typed" v1 {
             params { cart: Cart }
             type Cart { subtotal: number, tax: number }
-            console.run(command: "go")
+
+            do {
+                console.run(command: "go")
+            }
         }
     "#;
     let definition = compile(src);
@@ -84,7 +96,10 @@ fn rejects_cyclic_type_decls() {
         workflow "Cycle" v1 {
             type A = B
             type B = A
-            console.run(command: "go")
+
+            do {
+                console.run(command: "go")
+            }
         }
     "#;
     assert!(compile_str(src, &CompileOptions::default()).is_err());
@@ -95,7 +110,10 @@ fn rejects_duplicate_type_decls_semantically() {
         workflow "DuplicateTypes" v1 {
             type Payload = string
             type Payload = integer
-            console.run(command: "go")
+
+            do {
+                console.run(command: "go")
+            }
         }
     "#;
     let diagnostics = analyze_source(src).expect("analyze");
@@ -115,9 +133,12 @@ fn rejects_duplicate_type_decls_semantically() {
 fn provider_metadata_infers_action_result_types() {
     let src = r#"
         workflow "ProviderTypes" v1 {
-            node tickets <- jira.search(jql: "project = RUNI")
-            for ticket in tickets.issues limit none {
-                console.run(command: ticket.key)
+
+            do {
+                let tickets = jira.search(jql: "project = RUNI")
+                for ticket in tickets.issues limit none {
+                    console.run(command: ticket.key)
+                }
             }
         }
     "#;
@@ -172,7 +193,10 @@ fn constrained_types_and_returns_lower_and_round_trip() {
                 retries: integer range 0..10
                 delay: duration range 1s..1h
             }
-            console.run(command: "ok")
+
+            do {
+                console.run(command: "ok")
+            }
         }
     "#;
     let definition = compile(src);
@@ -212,21 +236,24 @@ fn strict_provider_arguments_are_checked() {
         ..CompileOptions::default()
     };
 
-    let missing = compile_str(r#"workflow "Bad" v1 { demo.run() }"#, &options).unwrap_err();
+    let missing = compile_str(r#"workflow "Bad" v1 { do { demo.run() } }"#, &options).unwrap_err();
     assert!(
         missing
             .to_string()
             .contains("missing required parameter 'count'"),
         "{missing}"
     );
-    let wrong =
-        compile_str(r#"workflow "Bad" v1 { demo.run(count: "no") }"#, &options).unwrap_err();
+    let wrong = compile_str(
+        r#"workflow "Bad" v1 { do { demo.run(count: "no") } }"#,
+        &options,
+    )
+    .unwrap_err();
     assert!(
         wrong.to_string().contains("expected integer, got string"),
         "{wrong}"
     );
     let unknown = compile_str(
-        r#"workflow "Bad" v1 { demo.run(count: 1, extra: 2) }"#,
+        r#"workflow "Bad" v1 { do { demo.run(count: 1, extra: 2) } }"#,
         &options,
     )
     .unwrap_err();
@@ -239,8 +266,11 @@ fn strict_provider_arguments_are_checked() {
 fn strict_subflow_requires_signature_and_types_state() {
     let parent = r#"
         workflow "Parent" v1 {
-            node child <- subflow("Child", params: { id: "RUNI-1" })
-            console.run(command: child.state.url)
+
+            do {
+                let child = subflow("Child", params: { id: "RUNI-1" })
+                console.run(command: child.state.url)
+            }
         }
     "#;
     let err = compile_str(parent, &CompileOptions::default()).unwrap_err();
@@ -252,7 +282,10 @@ fn strict_subflow_requires_signature_and_types_state() {
     let child = r#"
         workflow "Child" v1 returns { url: string } {
             params { id: string }
-            console.run(command: params.id)
+
+            do {
+                console.run(command: params.id)
+            }
         }
     "#;
     let options = CompileOptions {
@@ -263,14 +296,17 @@ fn strict_subflow_requires_signature_and_types_state() {
 
     let bad_state = r#"
         workflow "Parent" v1 {
-            node child <- subflow("Child", params: { id: "RUNI-1" })
-            console.run(command: child.state.missing)
+
+            do {
+                let child = subflow("Child", params: { id: "RUNI-1" })
+                console.run(command: child.state.missing)
+            }
         }
     "#;
     let err = compile_str(bad_state, &options).unwrap_err();
     assert!(err.to_string().contains("unknown field 'missing'"), "{err}");
 
-    let bad_params = r#"workflow "Parent" v1 { subflow("Child", params: { id: 7 }) }"#;
+    let bad_params = r#"workflow "Parent" v1 { do {subflow("Child", params: { id: 7 }) }}"#;
     let err = compile_str(bad_params, &options).unwrap_err();
     assert!(
         err.to_string()
@@ -285,7 +321,10 @@ fn detached_subflow_state_is_unavailable() {
     let child = r#"
         workflow "Child" v1 returns { url: string } {
             params { id: string }
-            console.run(command: params.id)
+
+            do {
+                console.run(command: params.id)
+            }
         }
     "#;
     let options = CompileOptions {
@@ -294,8 +333,11 @@ fn detached_subflow_state_is_unavailable() {
     };
     let detached = r#"
         workflow "Parent" v1 {
-            node child <- subflow("Child", params: { id: "RUNI-1" }, detached: true)
-            console.run(command: child.state.url)
+
+            do {
+                let child = subflow("Child", params: { id: "RUNI-1" }, detached: true)
+                console.run(command: child.state.url)
+            }
         }
     "#;
     let err = compile_str(detached, &options).unwrap_err();
@@ -308,8 +350,11 @@ fn detached_subflow_state_is_unavailable() {
     // the same reference against an awaited subflow types cleanly from the signature.
     let awaited = r#"
         workflow "Parent" v1 {
-            node child <- subflow("Child", params: { id: "RUNI-1" })
-            console.run(command: child.state.url)
+
+            do {
+                let child = subflow("Child", params: { id: "RUNI-1" })
+                console.run(command: child.state.url)
+            }
         }
     "#;
     compile_str(awaited, &options).expect("awaited subflow state resolves");
@@ -321,9 +366,12 @@ fn cast_lets_parse_json_adopt_a_shape() {
     let ok = r#"
         workflow "Cast" v1 {
             params { raw: string }
+
             do {
-                let data = std.encoding.parse_json(params.raw) as { id: integer }
-                return { id: data.id }
+                compute {
+                    let data = std.encoding.parse_json(params.raw) as { id: integer }
+                    return { id: data.id }
+                }
             }
         }
     "#;
@@ -332,9 +380,12 @@ fn cast_lets_parse_json_adopt_a_shape() {
     let bad = r#"
         workflow "Cast" v1 {
             params { raw: string }
+
             do {
-                let data = std.encoding.parse_json(params.raw) as { id: integer }
-                return { id: data.missing }
+                compute {
+                    let data = std.encoding.parse_json(params.raw) as { id: integer }
+                    return { id: data.missing }
+                }
             }
         }
     "#;
@@ -347,9 +398,12 @@ fn cast_rejects_incompatible_concrete_value() {
     // is a genuine mistake and is rejected (an opaque `any` inner would pass, which is the point).
     let src = r#"
         workflow "Cast" v1 {
+
             do {
-                let bad = 5 as string
-                return { out: bad }
+                compute {
+                    let bad = 5 as string
+                    return { out: bad }
+                }
             }
         }
     "#;
@@ -366,9 +420,12 @@ fn cast_round_trips() {
     let src = r#"
         workflow "Cast" v1 {
             params { raw: string }
+
             do {
-                let data = std.encoding.parse_json(params.raw) as { id: integer }
-                return { id: data.id }
+                compute {
+                    let data = std.encoding.parse_json(params.raw) as { id: integer }
+                    return { id: data.id }
+                }
             }
         }
     "#;
@@ -380,9 +437,12 @@ fn function_type_annotation_checks_and_round_trips() {
     // against the annotation and a later application resolves.
     let ok = r#"
         workflow "Fn" v1 {
+
             do {
-                let inc: function<(integer) -> integer> = x => x + 1
-                return { out: inc(2) }
+                compute {
+                    let inc: function<(integer) -> integer> = x => x + 1
+                    return { out: inc(2) }
+                }
             }
         }
     "#;
@@ -392,9 +452,12 @@ fn function_type_annotation_checks_and_round_trips() {
     // a lambda whose body conflicts with the declared return type is rejected.
     let bad = r#"
         workflow "Fn" v1 {
+
             do {
-                let inc: function<(integer) -> integer> = x => "not a number"
-                return { out: inc(2) }
+                compute {
+                    let inc: function<(integer) -> integer> = x => "not a number"
+                    return { out: inc(2) }
+                }
             }
         }
     "#;
@@ -407,9 +470,12 @@ fn applies_a_field_held_closure_and_round_trips() {
     // keeps it from re-parsing as a `obj.f(args)` method call, and it round-trips.
     let src = r#"
         workflow "Apply" v1 {
+
             do {
-                let ops = { inc: x => x + 1 }
-                return { out: (ops.inc)(5) }
+                compute {
+                    let ops = { inc: x => x + 1 }
+                    return { out: (ops.inc)(5) }
+                }
             }
         }
     "#;
@@ -421,9 +487,12 @@ fn applies_an_index_held_closure_and_round_trips() {
     // a closure stored in an array element is applied with `fns[0](args)`.
     let src = r#"
         workflow "Apply" v1 {
+
             do {
-                let fns = [x => x + 1, x => x + 2]
-                return { out: fns[0](10) }
+                compute {
+                    let fns = [x => x + 1, x => x + 2]
+                    return { out: fns[0](10) }
+                }
             }
         }
     "#;
@@ -435,9 +504,12 @@ fn applied_closure_checks_arity() {
     // applying a known-arity closure with the wrong argument count is an author-time error.
     let src = r#"
         workflow "Apply" v1 {
+
             do {
-                let ops = { inc: x => x + 1 }
-                return { out: (ops.inc)(1, 2) }
+                compute {
+                    let ops = { inc: x => x + 1 }
+                    return { out: (ops.inc)(1, 2) }
+                }
             }
         }
     "#;
@@ -452,15 +524,18 @@ fn applied_closure_checks_arity() {
 fn round_trips_let_type_annotation() {
     let src = r#"
         workflow "Typed" v1 {
-            node probe: { count: integer } <- console.run(command: "probe")
-            console.run(command: "after ${probe.count}")
+
+            do {
+                let probe: { count: integer } = console.run(command: "probe")
+                console.run(command: "after ${probe.count}")
+            }
         }
     "#;
     assert_round_trips(src);
     // the declared type survives compile -> decompile and re-appears in the source.
     let rexrap = decompile(&compile(src)).expect("decompile");
     assert!(
-        rexrap.contains("node probe:"),
+        rexrap.contains("let probe:"),
         "annotation missing:\n{rexrap}"
     );
 }

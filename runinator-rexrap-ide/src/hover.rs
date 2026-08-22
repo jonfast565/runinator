@@ -408,9 +408,20 @@ fn keyword_hover(word: WordAt<'_>) -> Option<RexRapHoverResponse> {
         "workflow" => "Declares a workflow and its body.",
         "params" => "Declares workflow input parameters.",
         "type" => "Declares a reusable named type.",
-        "node" => "Declares a workflow node.",
-        "let" => "Binds a block-local value.",
-        "do" => "Runs a `do` block and returns its value.",
+        "let" => {
+            "Binds a step's result. A plain call joins inline; an `async` call yields a \
+                  `task[T]` to `await`."
+        }
+        "async" => {
+            "Schedules this call as a task instead of joining it inline. Asyncness is a \
+                    property of the call site, never of the callee."
+        }
+        "await" => "Joins a `task[T]` handle and yields its result.",
+        "detach" => "Drops a task handle without joining it.",
+        "do" => "The runtime block: the statements a run executes.",
+        "routes" => "The statement's outgoing edges, each arm handing control on with `continue`.",
+        "join" => "A named continuation, entered only by an explicit `continue <name>`.",
+        "compute" => "A pure computation block, folded by the compute VM.",
         "if" => "Runs a branch when its condition is true.",
         "for" | "map" => "Iterates over a collection.",
         "while" | "until" => "Repeats a body while the condition holds.",
@@ -665,6 +676,11 @@ fn function_docs(function: &FunctionDef) -> Option<String> {
     match &function.body {
         FnBody::Expr(_) => Some("User-defined expression function.".into()),
         FnBody::Block(_) => Some("User-defined compute function.".into()),
+        FnBody::Run(_) => Some(
+            "User-defined runtime function (`task fn`). Call it directly to join it inline, or \
+             `async` it for a `task[T]` handle."
+                .into(),
+        ),
     }
 }
 

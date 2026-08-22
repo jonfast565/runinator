@@ -178,7 +178,11 @@ impl<'a> Cursor<'a> {
     pub(crate) fn transition_target_context(&self) -> Option<CompletionSpanContext> {
         let word = self.current_word();
         let before_word = &self.source[..word.start];
-        if before_word.trim_end().ends_with("->") || previous_word(before_word) == Some("goto") {
+        // `continue <target>` in a route arm, `goto <target>` in a compute block, and the `->`
+        // targets the header declarations still use.
+        if before_word.trim_end().ends_with("->")
+            || matches!(previous_word(before_word), Some("goto") | Some("continue"))
+        {
             return Some(CompletionSpanContext {
                 replace_start: word.start,
             });
@@ -214,11 +218,13 @@ impl<'a> Cursor<'a> {
         None
     }
 
+    /// true when the cursor sits directly in a `routes { … }` section — where a route arm head
+    /// (`on success`, `when …`) goes — rather than inside one of its arm bodies.
     pub(crate) fn inside_edges_block(&self) -> bool {
-        let Some(edges_start) = self.source[..self.pos].rfind("edges") else {
+        let Some(edges_start) = self.source[..self.pos].rfind("routes") else {
             return false;
         };
-        if !is_keyword_at(self.source, edges_start, "edges") {
+        if !is_keyword_at(self.source, edges_start, "routes") {
             return false;
         }
         let Some(open_rel) = self.source[edges_start..self.pos].find('{') else {

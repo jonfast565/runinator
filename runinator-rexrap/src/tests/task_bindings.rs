@@ -6,7 +6,10 @@ fn language_style_task_binding_lowers_as_an_action_node() {
         r#"language rexrap-1
 
 workflow "Smoke" v1 {
-    let result: task[SmokeResult] = monitoring.smoke(target: "api")
+
+    do {
+        let result: task[SmokeResult] = monitoring.smoke(target: "api")
+    }
 }"#,
     );
 
@@ -40,8 +43,11 @@ fn provider_task_is_joined_by_its_durable_task_handle() {
         r#"language rexrap-1
 
 workflow "Smoke" v1 {
-    let result: task[SmokeResult] = monitoring.smoke(target: "api")
-    await result
+
+    do {
+        let result: task[SmokeResult] = monitoring.smoke(target: "api")
+        await result
+    }
 }"#,
     );
     let graph = serde_json::to_value(&definition.definition).expect("serialize graph");
@@ -66,8 +72,11 @@ fn detached_subflow_task_is_joined_by_its_binding_name() {
     let source = r#"language rexrap-1
 
 workflow "Parent" v1 {
-    let smoke: task = subflow("Child", detached: true)
-    await smoke
+
+    do {
+        let smoke: task = subflow("Child", detached: true)
+        await smoke
+    }
 }"#;
     assert_round_trips(source);
     let definition = compile(source);
@@ -87,16 +96,19 @@ workflow "Parent" v1 {
 }
 
 #[test]
-fn do_blocks_interleave_with_language_style_bindings() {
+fn compute_blocks_interleave_with_language_style_bindings() {
     compile(
         r#"language rexrap-1
 
 workflow "Compute" v1 {
-    let prepared: integer = do {
-        let base = 40
-        return base + 2
+
+    do {
+        let prepared: integer = compute {
+            let base = 40
+            return base + 2
+        }
+        let sent = console.run(command: prepared)
     }
-    let sent = console.run(command: prepared)
 }"#,
     );
 }
@@ -107,10 +119,17 @@ fn language_routes_accept_end_and_fail_terminals() {
         r#"language rexrap-1
 
 workflow "Routes" v1 {
-    let action = console.run(command: "go")
-    edges {
-        ok -> end
-        fail -> fail
+
+    do {
+        let action = console.run(command: "go")
+        routes {
+            on success {
+                continue end
+            }
+            on failure {
+                continue fail
+            }
+        }
     }
 }"#,
     );

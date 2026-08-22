@@ -9,9 +9,12 @@ fn function_defaults_and_lambdas_lower_into_metadata() {
         fn fold_values(xs: integer[], seed: integer = 0) -> integer = std.collections.reduce(xs, seed, (acc, x) => std.math.add(acc, x))
 
         workflow "Fn" v1 {
+
             do {
-                let total = fold_values(params.xs)
-                return total
+                compute {
+                    let total = fold_values(params.xs)
+                    return total
+                }
             }
         }
     "#;
@@ -68,9 +71,12 @@ fn pure_block_body_function_lowers_to_program_and_round_trips() {
         }
 
         workflow "Fn" v1 {
+
             do {
-                let total = build(params.x, params.y)
-                return total
+                compute {
+                    let total = build(params.x, params.y)
+                    return total
+                }
             }
         }
     "#;
@@ -110,9 +116,12 @@ fn effectful_block_body_function_compiles_into_an_invocation_and_round_trips() {
         }
 
         workflow "Fetch" v1 {
+
             do {
-                let data = fetch(params.url)
-                return data
+                compute {
+                    let data = fetch(params.url)
+                    return data
+                }
             }
         }
     "#;
@@ -146,7 +155,10 @@ fn effectful_function_rejected_in_declarative_position() {
         }
 
         workflow "F" v1 {
-            slack.send_message(text: fetch(params.url))
+
+            do {
+                slack.send_message(text: fetch(params.url))
+            }
         }
     "#;
     let message = expect_semantic_error(src);
@@ -163,7 +175,10 @@ fn goto_in_function_body_is_rejected() {
         }
 
         workflow "F" v1 {
-            console.run(command: "x")
+
+            do {
+                console.run(command: "x")
+            }
         }
     "#;
     let message = expect_semantic_error(src);
@@ -179,7 +194,10 @@ fn block_body_function_surface_round_trips_through_formatter() {
         }
 
         workflow "Fn" v1 {
-            console.run(command: "go")
+
+            do {
+                console.run(command: "go")
+            }
         }
     "#;
     let formatted = format_str(src).expect("format");
@@ -198,7 +216,10 @@ fn recursive_function_requires_annotation() {
         fn loop(n: integer) = loop(n)
 
         workflow "Fn" v1 {
-            console.run(command: "go")
+
+            do {
+                console.run(command: "go")
+            }
         }
     "#;
     let message = expect_semantic_error(src);
@@ -212,7 +233,10 @@ fn recursive_function_surface_round_trips_through_formatter() {
         fn fold(xs: integer[], seed: integer = 0) -> integer = reduce(xs, seed, (acc, x) => add(acc, x))
 
         workflow "Fn" v1 {
-            console.run(command: "go")
+
+            do {
+                console.run(command: "go")
+            }
         }
     "#;
     let formatted = format_str(src).expect("format");
@@ -233,7 +257,10 @@ fn lowers_user_function_into_metadata_and_call() {
     let src = r#"
         fn double(x: integer) -> integer = x * 2
         workflow "Fns" v1 {
-            node go <- console.run(value: double(21))
+
+            do {
+                let go = console.run(value: double(21))
+            }
         }
     "#;
     let def = compile(src);
@@ -263,7 +290,10 @@ fn named_args_resolve_to_positional_with_defaults() {
     let src = r#"
         fn greet(name: string, excited: boolean = false) -> string = name
         workflow "Named" v1 {
-            node go <- console.run(value: greet(name: "ada"))
+
+            do {
+                let go = console.run(value: greet(name: "ada"))
+            }
         }
     "#;
     let def = compile(src);
@@ -281,7 +311,10 @@ fn rejects_unannotated_recursion() {
         r#"
         fn fact(n: integer) -> integer = n <= 1 ? 1 : n * fact(n - 1)
         workflow "Rec" v1 {
-            node go <- console.run(value: fact(5))
+
+            do {
+                let go = console.run(value: fact(5))
+            }
         }
     "#,
     );
@@ -295,7 +328,10 @@ fn recursive_function_evaluates_under_runtime() {
         @recursive(max_depth: 100)
         fn fact(n: integer) -> integer = n <= 1 ? 1 : n * fact(n - 1)
         workflow "Rec" v1 {
-            node go <- console.run(value: "ok")
+
+            do {
+                let go = console.run(value: "ok")
+            }
         }
     "#;
     let def = compile(src);
@@ -317,7 +353,10 @@ fn rejects_function_shadowing_intrinsic() {
         r#"
         fn substring(s: string) -> string = s
         workflow "Shadow" v1 {
-            node go <- console.run(value: "x")
+
+            do {
+                let go = console.run(value: "x")
+            }
         }
     "#,
     );
@@ -325,7 +364,7 @@ fn rejects_function_shadowing_intrinsic() {
 }
 #[test]
 fn function_definition_round_trips_through_formatter() {
-    let src = "fn double(x: integer) -> integer = x * 2\n\nworkflow \"Fns\" v1 {\n    node go <- console.run(value: double(21))\n}\n";
+    let src = "fn double(x: integer) -> integer = x * 2\n\nworkflow \"Fns\" v1 {\n\n    do {\n        let go = console.run(value: double(21))\n    }\n}\n";
     let formatted = format_str(src).expect("format");
     assert!(formatted.contains("fn double(x: integer)"), "{formatted}");
     assert!(formatted.contains("= x * 2"), "{formatted}");

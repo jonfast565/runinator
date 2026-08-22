@@ -403,7 +403,7 @@ a later `alias` movement unable to reach into a workflow that already compiled. 
 takes the newest published version and pins it; nothing re-resolves it afterwards.
 
 The call also gets `runner: functions` by default, so it only lands on a worker that can run
-containers — an explicit `.runner(...)` wins, since an operator who pinned a pool meant it. Retry,
+containers — an explicit `@runner(...)` wins, since an operator who pinned a pool meant it. Retry,
 timeout, transitions, compensation, and idempotency all behave exactly as they do for any other
 action, because after lowering it *is* one.
 
@@ -746,7 +746,7 @@ Workflow syntax now includes richer declarative control-flow nodes:
 An action node carries two failure-handling policies, both editable in the step editor and both
 previewed there so the effect is visible before saving:
 
-- **Retry** (`.retry(attempts, backoff: 2s, max: 60s, jitter: true, on: failure)`) re-runs the node
+- **Retry** (`@retry(attempts, backoff: 2s, max: 60s, jitter: true, on: failure)`) re-runs the node
   itself. The delay before attempt *n+1* is `clamp(backoff * 2^(n-1), backoff, max)`, optionally
   jittered into the lower half to spread a retry storm. `on` narrows which terminals are eligible
   (`any`, `failure`, `timeout`) so a long expensive action is not blindly re-run on a timeout. The
@@ -754,11 +754,12 @@ previewed there so the effect is visible before saving:
 - **Compensation** (`compensate provider.fn(args)`) is a saga rollback. Once the node has succeeded,
   a run that later reaches `fail` calls the compensating action; compensations unwind in reverse
   order and are best-effort, so one that fails does not stop the unwind. The clause is the same call
-  form as the forward action and carries the same modifiers.
+  form as the forward action and carries its own attributes.
 
 ```rexrap
-node deploy <- k8s.apply(manifest: params.manifest).retry(3, backoff: 5s, on: failure)
-    compensate k8s.rollback(release: deploy.release).timeout(300s)
+@retry(3, backoff: 5s, on: failure)
+let deploy = k8s.apply(manifest: params.manifest)
+    compensate @timeout(300s) k8s.rollback(release: deploy.release)
 ```
 
 #### Triggers and workflow chaining
