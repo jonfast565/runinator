@@ -35,6 +35,9 @@ pub struct DatabaseRedeployOptions<'a> {
     pub workspace_root: &'a Path,
     pub manifest_path: &'a Path,
     pub kube_context: Option<&'a str>,
+    pub from_scratch: bool,
+    pub skip_pack_import: bool,
+    pub pack_import_timeout_secs: u32,
 }
 
 const STALE_RESOURCES: &[&str] = &[
@@ -351,8 +354,10 @@ pub fn redeploy_grafana(options: GrafanaRedeployOptions) -> Result<()> {
 }
 
 /// Apply only PostgreSQL's Service and StatefulSet from a rendered overlay. Re-applying the
-/// StatefulSet updates its pod template without deleting its PVC, while leaving RabbitMQ and all
-/// application workloads untouched.
+/// StatefulSet updates its pod template without deleting its PVC. `from_scratch` instead scales
+/// PostgreSQL down and deletes its sole generated data claim before recreating the StatefulSet.
+/// It then restarts only the web service to run its database bootstrap and re-runs the bundled pack
+/// import, so the newly empty database becomes usable without applying the rest of the stack.
 pub fn redeploy_database(options: DatabaseRedeployOptions) -> Result<()> {
     exec::require_tool("kubectl")?;
 
@@ -378,6 +383,11 @@ pub fn redeploy_database(options: DatabaseRedeployOptions) -> Result<()> {
             .any(|doc| yaml_docs::doc_kind(doc) == Some("StatefulSet")),
         "no PostgreSQL StatefulSet was found in kustomize overlay {overlay_path}"
     );
+
+    if options.from_scratch {
+        reset_postgres_data(options.workspace_root, &ctx_args, &filtered)?;
+    }
+
     let stdin = yaml_docs::serialize_documents(&filtered)?;
     let apply_args = kubectl_args(&ctx_args, &["apply", "-f", "-"]);
     println!("==> Applying PostgreSQL resources from {overlay_path}");
@@ -385,6 +395,239 @@ pub fn redeploy_database(options: DatabaseRedeployOptions) -> Result<()> {
 
     let rollout = yaml_docs::rollout_target(&filtered, "runinator-postgres", "StatefulSet");
     run_rollout_checks(options.workspace_root, &ctx_args, &[rollout]);
+
+    if options.from_scratch {
+        bootstrap_fresh_database(
+            options.workspace_root,
+            &ctx_args,
+            &docs,
+            options.skip_pack_import,
+            options.pack_import_timeout_secs,
+        )?;
+    }
+
+    Ok(())
+}
+
+/// Kubernetes names StatefulSet claims as `<template-name>-<statefulset-name>-<ordinal>`. The
+/// bundled Postgres StatefulSet has one replica and therefore always uses ordinal zero. Refuse to
+/// guess if an overlay grows more than one claim template: deleting the wrong PVC is worse than
+/// making the operator select a purpose-built reset command.
+pub(super) fn postgres_data_claim_name(docs: &[Value]) -> Result<String> {
+    let statefulset = docs
+        .iter()
+        .find(|doc| {
+            yaml_docs::doc_kind(doc) == Some("StatefulSet")
+                && yaml_docs::doc_name(doc) == Some("runinator-postgres")
+        })
+        .ok_or_else(|| {
+            anyhow::anyhow!("rendered manifest does not contain statefulset/runinator-postgres")
+        })?;
+    let statefulset_name = yaml_docs::doc_name(statefulset)
+        .expect("PostgreSQL StatefulSet was selected by its metadata.name");
+    let claims = statefulset
+        .get("spec")
+        .and_then(|spec| spec.get("volumeClaimTemplates"))
+        .and_then(Value::as_sequence)
+        .ok_or_else(|| {
+            anyhow::anyhow!("statefulset/{statefulset_name} has no volumeClaimTemplates")
+        })?;
+    anyhow::ensure!(
+        claims.len() == 1,
+        "refusing to reset statefulset/{statefulset_name}: expected exactly one volumeClaimTemplate, found {}",
+        claims.len()
+    );
+    let template_name = claims[0]
+        .get("metadata")
+        .and_then(|metadata| metadata.get("name"))
+        .and_then(Value::as_str)
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| {
+            anyhow::anyhow!("statefulset/{statefulset_name} has an unnamed volumeClaimTemplate")
+        })?;
+    Ok(format!("{template_name}-{statefulset_name}-0"))
+}
+
+fn reset_postgres_data(workspace_root: &Path, ctx_args: &[String], docs: &[Value]) -> Result<()> {
+    let claim_name = postgres_data_claim_name(docs)?;
+
+    println!("==> Scaling down PostgreSQL before deleting data claim {claim_name}");
+    let scale_args = kubectl_args(
+        ctx_args,
+        &[
+            "scale",
+            "statefulset/runinator-postgres",
+            "--namespace",
+            NAMESPACE,
+            "--replicas=0",
+        ],
+    );
+    exec::run("kubectl", &scale_args, workspace_root)?;
+
+    // `--wait` ensures that the Postgres pod has released the claim before the command returns.
+    // This makes a PVC backed by a ReadWriteOnce volume safe to replace without separately polling
+    // a pod that may already have disappeared by the time `kubectl wait` is invoked.
+    let delete_args = kubectl_args(
+        ctx_args,
+        &[
+            "delete",
+            "pvc",
+            &claim_name,
+            "--namespace",
+            NAMESPACE,
+            "--ignore-not-found=true",
+            "--wait=true",
+            "--timeout=120s",
+        ],
+    );
+    exec::run("kubectl", &delete_args, workspace_root)
+}
+
+fn bootstrap_fresh_database(
+    workspace_root: &Path,
+    ctx_args: &[String],
+    docs: &[Value],
+    skip_pack_import: bool,
+    pack_import_timeout_secs: u32,
+) -> Result<()> {
+    println!("==> Restarting the web service to bootstrap the fresh database");
+    let restart_args = kubectl_args(
+        ctx_args,
+        &[
+            "rollout",
+            "restart",
+            "deployment/runinator-ws",
+            "--namespace",
+            NAMESPACE,
+        ],
+    );
+    exec::run("kubectl", &restart_args, workspace_root)?;
+    run_rollout_checks(
+        workspace_root,
+        ctx_args,
+        &[yaml_docs::rollout_target(
+            docs,
+            "runinator-ws",
+            "Deployment",
+        )],
+    );
+
+    if skip_pack_import {
+        println!("==> Skipping bundled pack import (--skip-pack-import)");
+        return Ok(());
+    }
+
+    // A standalone database reset renders the checked-in overlay directly. Its image declarations
+    // normally still say `:dev`, while the deployed stack may be using a versioned registry image.
+    // Match the bootstrap image that just initialized this database so the Job is available on the
+    // same cluster nodes and imports the packs from the same release.
+    let pack_import_image = deployed_ctl_image(workspace_root, ctx_args)?;
+    let mut pack_import = docs
+        .iter()
+        .find(|doc| {
+            yaml_docs::doc_kind(doc) == Some("Job")
+                && yaml_docs::doc_name(doc) == Some("runinator-pack-import")
+        })
+        .cloned()
+        .ok_or_else(|| {
+            anyhow::anyhow!("rendered manifest does not contain job/runinator-pack-import")
+        })?;
+    set_pack_import_image(&mut pack_import, &pack_import_image)?;
+    let delete_args = kubectl_args(
+        ctx_args,
+        &[
+            "delete",
+            "job/runinator-pack-import",
+            "--namespace",
+            NAMESPACE,
+            "--ignore-not-found=true",
+            "--wait=true",
+            "--timeout=120s",
+        ],
+    );
+    exec::run("kubectl", &delete_args, workspace_root)?;
+
+    println!("==> Re-importing bundled packs into the fresh database");
+    let stdin = yaml_docs::serialize_documents(&[pack_import])?;
+    let apply_args = kubectl_args(ctx_args, &["apply", "-f", "-"]);
+    exec::run_with_stdin("kubectl", &apply_args, workspace_root, &stdin)?;
+
+    let timeout = format!("{pack_import_timeout_secs}s");
+    let wait_args = kubectl_args(
+        ctx_args,
+        &[
+            "wait",
+            "--for=condition=complete",
+            "job/runinator-pack-import",
+            "--namespace",
+            NAMESPACE,
+            "--timeout",
+            &timeout,
+        ],
+    );
+    exec::run("kubectl", &wait_args, workspace_root)
+}
+
+fn deployed_ctl_image(workspace_root: &Path, ctx_args: &[String]) -> Result<String> {
+    let image_query = "jsonpath={.spec.template.spec.initContainers[0].image}";
+    let args = kubectl_args(
+        ctx_args,
+        &[
+            "get",
+            "deployment/runinator-ws",
+            "--namespace",
+            NAMESPACE,
+            "-o",
+            image_query,
+        ],
+    );
+    let bootstrap_image = exec::capture("kubectl", &args, workspace_root)?;
+    ctl_image_from_bootstrap(bootstrap_image.trim())
+}
+
+/// The K8s images are built as one release and differ only by the final target name. Retain the
+/// registry, repository, tag, or digest chosen by the deployment while selecting the ctl target.
+pub(super) fn ctl_image_from_bootstrap(bootstrap_image: &str) -> Result<String> {
+    let component_start = bootstrap_image
+        .rfind('/')
+        .map_or(0, |slash| slash.saturating_add(1));
+    let (prefix, component) = bootstrap_image.split_at(component_start);
+    let suffix = component
+        .strip_prefix("runinator-bootstrap")
+        .ok_or_else(|| {
+            anyhow::anyhow!("expected a runinator-bootstrap image, got '{bootstrap_image}'")
+        })?;
+    anyhow::ensure!(
+        suffix.is_empty() || suffix.starts_with(':') || suffix.starts_with('@'),
+        "expected a runinator-bootstrap image, got '{bootstrap_image}'"
+    );
+    Ok(format!("{prefix}runinator-ctl{suffix}"))
+}
+
+fn set_pack_import_image(pack_import: &mut Value, image: &str) -> Result<()> {
+    let containers = pack_import
+        .get_mut("spec")
+        .and_then(|spec| spec.get_mut("template"))
+        .and_then(|template| template.get_mut("spec"))
+        .and_then(|spec| spec.get_mut("containers"))
+        .and_then(Value::as_sequence_mut)
+        .ok_or_else(|| anyhow::anyhow!("pack-import Job has no pod containers"))?;
+    let container = containers
+        .iter_mut()
+        .find(|container| {
+            container
+                .get("name")
+                .and_then(Value::as_str)
+                .is_some_and(|name| name == "pack-import")
+        })
+        .ok_or_else(|| anyhow::anyhow!("pack-import Job has no pack-import container"))?;
+    let mapping = container
+        .as_mapping_mut()
+        .ok_or_else(|| anyhow::anyhow!("pack-import container is not a mapping"))?;
+    mapping.insert(
+        Value::String("image".to_string()),
+        Value::String(image.to_string()),
+    );
     Ok(())
 }
 

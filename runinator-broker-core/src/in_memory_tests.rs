@@ -1,9 +1,11 @@
 use chrono::Utc;
 use runinator_comm::ActionCommand;
+use std::sync::Arc;
+
 use runinator_models::json;
 use runinator_models::workflows::WorkflowAction;
 
-use crate::{Broker, BrokerMessage, EffectMessage, EffectResultMessage, ResultMessage};
+use crate::{instrument, Broker, BrokerMessage, EffectMessage, EffectResultMessage, ResultMessage};
 
 use super::*;
 
@@ -14,7 +16,9 @@ fn in_memory_broker_supports_workflow_result_channels() {
 
 #[tokio::test]
 async fn in_memory_broker_round_trips_vm_effects_without_action_identity() {
-    let broker = InMemoryBroker::new();
+    // Production brokers are wrapped for telemetry. Keep the VM channels in this path so a newly
+    // added Broker method cannot silently fall back to its `NotImplemented` default on the wrapper.
+    let broker = instrument(Arc::new(InMemoryBroker::new()), "in-memory");
     let command = runinator_comm::EffectCommand {
         version: runinator_models::workflow_vm::WORKFLOW_EFFECT_PROTOCOL_VERSION,
         command_id: Uuid::now_v7(),

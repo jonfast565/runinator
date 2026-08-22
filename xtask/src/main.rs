@@ -112,6 +112,17 @@ struct K8sDatabaseArgs {
     /// kustomize overlay directory.
     #[arg(long, default_value = "deploy/k8s/overlays/local")]
     manifest: PathBuf,
+    /// discard the PostgreSQL data PVC before recreating the database. This destroys all durable
+    /// Runinator state, then re-runs the web-service bootstrap and bundled pack import.
+    #[arg(long, default_value_t = false)]
+    from_scratch: bool,
+    /// do not re-import bundled workflow packs after --from-scratch. Use this only when the fresh
+    /// database must remain schema-only.
+    #[arg(long, default_value_t = false)]
+    skip_pack_import: bool,
+    /// seconds to wait for the bundled pack-import Job after --from-scratch.
+    #[arg(long, default_value_t = 600)]
+    pack_import_timeout_secs: u32,
 }
 
 #[derive(clap::Args)]
@@ -385,5 +396,8 @@ fn run_k8s_redeploy_database(
         workspace_root,
         manifest_path: &manifest_path,
         kube_context: args.kube_context.as_deref(),
+        from_scratch: args.from_scratch,
+        skip_pack_import: args.skip_pack_import,
+        pack_import_timeout_secs: args.pack_import_timeout_secs,
     })
 }

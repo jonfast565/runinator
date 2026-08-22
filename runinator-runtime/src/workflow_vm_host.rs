@@ -136,6 +136,7 @@ impl<'a, S: WorkflowVmStore> WorkflowVmHost<'a, S> {
                     continuation_id: continuation.id,
                     sequence,
                     attempt: 0,
+                    node_id: None,
                     request: request.clone(),
                     status: WorkflowEffectStatus::Requested,
                     result: None,

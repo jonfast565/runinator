@@ -72,6 +72,7 @@ fallible_row_mapper!(row_to_workflow_effect(row) -> WorkflowEffect {
         id: row.get("id"), workflow_run_id: row.get("workflow_run_id"),
         continuation_id: row.get("continuation_id"), sequence: u64_column(row.get("sequence"), "effect sequence")?,
         attempt: u32_column(row.get("attempt"), "effect attempt")?,
+        node_id: None,
         request: decode::<WorkflowEffectRequest>(&row.get::<String, _>("request_json"))?,
         status: decode::<WorkflowEffectStatus>(&format!("\"{}\"", row.get::<String, _>("status")))?,
         result: row.get::<Option<String>, _>("result_json").map(|raw| decode(&raw)).transpose()?,

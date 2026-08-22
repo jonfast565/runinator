@@ -204,6 +204,7 @@ async fn workflow_vm_effect_suspend_is_atomic_and_deduplicated() {
         continuation_id: continuation.id,
         sequence,
         attempt: 0,
+        node_id: None,
         request: request.clone(),
         status: WorkflowEffectStatus::Requested,
         result: None,
@@ -250,7 +251,15 @@ async fn workflow_vm_effect_suspend_is_atomic_and_deduplicated() {
         db.fetch_workflow_effects(run.id).await.unwrap(),
         vec![first.clone()]
     );
-    assert_eq!(db.fetch_workflow_journal(run.id).await.unwrap().len(), 2);
+    let journal = db.fetch_workflow_journal(run.id).await.unwrap();
+    assert_eq!(journal.len(), 2);
+    assert!(matches!(
+        journal[1].entry,
+        runinator_models::workflow_vm::WorkflowJournalEntry::EffectRequested {
+            effect_id: recorded_effect_id,
+            instruction_pointer: Some(0),
+        } if recorded_effect_id == effect_id
+    ));
     let dispatches = db
         .claim_pending_workflow_effect_dispatches(
             "effect-publisher".into(),

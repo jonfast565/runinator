@@ -11,8 +11,8 @@ use runinator_models::{
     auth::{AuthContext, Permission},
     value::Value,
     web::TaskResponse,
-    workflow_vm::WorkflowEffectStatus,
     workflow_vm::WorkflowVmCursor,
+    workflow_vm::{WorkflowEffect, WorkflowEffectStatus, WorkflowJournalEntry},
 };
 use serde::Deserialize;
 use uuid::Uuid;
@@ -80,13 +80,45 @@ pub async fn list_effects<T: DatabaseImpl>(
     if let Err(reply) = authorize_run(db.as_ref(), &ctx, workflow_run_id).await {
         return reply;
     }
-    match db.fetch_workflow_effects(workflow_run_id).await {
+    match project_effect_nodes(db.as_ref(), workflow_run_id).await {
         Ok(records) => (
             StatusCode::OK,
             Json(ApiResponse::WorkflowEffectList(records)),
         ),
         Err(err) => api_error(err.to_string()),
     }
+}
+
+/// Effects outlive the continuation location that issued them. Project their immutable journal
+/// boundary through the pinned module so operator clients can keep historical node highlights.
+async fn project_effect_nodes<T: DatabaseImpl>(
+    db: &T,
+    workflow_run_id: Uuid,
+) -> Result<Vec<WorkflowEffect>, runinator_models::errors::SendableError> {
+    let (mut effects, journal, module) = tokio::try_join!(
+        db.fetch_workflow_effects(workflow_run_id),
+        db.fetch_workflow_journal(workflow_run_id),
+        db.fetch_workflow_module(workflow_run_id),
+    )?;
+    let Some(module) = module else {
+        return Ok(effects);
+    };
+    let node_by_effect = journal
+        .into_iter()
+        .filter_map(|record| match record.entry {
+            WorkflowJournalEntry::EffectRequested {
+                effect_id,
+                instruction_pointer: Some(instruction_pointer),
+            } => module
+                .graph_location(instruction_pointer)
+                .map(|location| (effect_id, location.node_id.clone())),
+            _ => None,
+        })
+        .collect::<std::collections::HashMap<_, _>>();
+    for effect in &mut effects {
+        effect.node_id = node_by_effect.get(&effect.id).cloned();
+    }
+    Ok(effects)
 }
 
 pub async fn get_effect<T: DatabaseImpl>(

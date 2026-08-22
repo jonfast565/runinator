@@ -26,6 +26,8 @@ export interface WorkflowEffect {
   continuation_id: string;
   sequence: number;
   attempt: number;
+  /** Projected from the VM journal and frozen module by the web service. */
+  node_id?: string | null;
   request: JsonValue;
   status: string;
   result?: JsonValue | null;

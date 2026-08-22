@@ -1276,6 +1276,18 @@ RabbitMQ or the application workloads:
 cargo run -p xtask -- k8s redeploy-database
 ```
 
+To replace PostgreSQL with a completely empty database, use the explicit
+destructive mode below. It scales only PostgreSQL down, deletes its generated
+data PVC, recreates PostgreSQL, restarts the web service so its bootstrap
+init-container applies the schema, and re-runs the bundled pack import. It does
+not redeploy RabbitMQ or the other application workloads.
+
+```bash
+cargo run -p xtask -- k8s redeploy-database --from-scratch
+```
+
+Add `--skip-pack-import` when a schema-only empty database is intentional.
+
 By default only the command-center is reachable from outside the cluster (it
 proxies `/api` and `/ws` to the web service). To additionally expose the web
 service API/websocket directly and open a debugging-only NodePort to Postgres,

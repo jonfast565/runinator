@@ -784,6 +784,10 @@ pub struct WorkflowEffect {
     pub continuation_id: Uuid,
     pub sequence: u64,
     pub attempt: u32,
+    /// Source-map projection populated by the operator API. It is not stored with the effect
+    /// receipt, because the pinned module is the source of truth for that relationship.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
     pub request: WorkflowEffectRequest,
     pub status: WorkflowEffectStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -900,6 +904,10 @@ pub enum WorkflowJournalEntry {
     },
     EffectRequested {
         effect_id: Uuid,
+        /// The yielding opcode. Together with the run's frozen module this identifies the graph
+        /// node that requested the effect, even after its continuation moves on.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        instruction_pointer: Option<usize>,
     },
     EffectSettled {
         effect_id: Uuid,
@@ -947,6 +955,7 @@ mod tests {
             continuation_id: Uuid::nil(),
             sequence: 7,
             attempt: 2,
+            node_id: None,
             request: WorkflowEffectRequest::Timer { due_at: 1 },
             status: WorkflowEffectStatus::Requested,
             result: None,
@@ -981,6 +990,7 @@ mod tests {
             continuation_id: Uuid::nil(),
             sequence: 0,
             attempt: 0,
+            node_id: None,
             request: WorkflowEffectRequest::Timer { due_at: 1 },
             status: WorkflowEffectStatus::Requested,
             result: None,

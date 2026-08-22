@@ -1,5 +1,6 @@
 import { command, isTauriRuntime } from "./runtime";
 import { setHttpAuthToken } from "./httpRuntime";
+import { asJsonRecord } from "../domain/json";
 import type {
   JsonRecord,
   JsonValue,
@@ -320,7 +321,36 @@ export async function fetchRunArtifacts(runId: string) {
 }
 
 export async function fetchWorkflowRunArtifacts(workflowRunId: string) {
-  return command<WorkflowRunArtifact[]>("fetch_workflow_run_artifacts", { workflowRunId });
+  // Workflow VM output is the sole source of artifact history after the VM cutover. The former
+  // `/workflow_runs/{id}/artifacts` endpoint read the removed workflow_run_artifacts table.
+  const effects = await fetchWorkflowEffects(workflowRunId);
+  const output = await Promise.all(effects.map((effect) => fetchWorkflowEffectOutput(effect.id)));
+
+  return output.flatMap((events) =>
+    events.flatMap((event) => {
+      if (event.output.type !== "artifact") {
+        return [];
+      }
+
+      const artifact = asJsonRecord(event.output.artifact);
+      return [{
+        id: event.event_id,
+        workflow_run_id: event.workflow_run_id,
+        // VM effects, rather than node-run rows, own this output. The effect id is the durable
+        // execution identity that lets an operator correlate the artifact to the VM debugger.
+        node_id: event.effect_id,
+        // A VM artifact is addressed by its effect-output event and URI; legacy run_artifact ids
+        // no longer exist, so the old `/artifacts/{id}/download` endpoint cannot serve it.
+        artifact_id: null,
+        name: typeof artifact.name === "string" ? artifact.name : "artifact",
+        mime_type: typeof artifact.mime_type === "string" ? artifact.mime_type : "application/octet-stream",
+        size_bytes: typeof artifact.size_bytes === "number" ? artifact.size_bytes : 0,
+        uri: typeof artifact.uri === "string" ? artifact.uri : "",
+        metadata: asJsonRecord(artifact.metadata),
+        created_at: new Date(event.created_at * 1000).toISOString(),
+      } satisfies WorkflowRunArtifact];
+    }),
+  );
 }
 
 export async function fetchWorkflowContinuations(workflowRunId: string) {
@@ -607,7 +637,12 @@ export async function fetchWorkflowRun(workflowRunId: string): Promise<WorkflowR
   const nodes: WorkflowNodeRun[] = effects.flatMap((effect) => {
     const cursor = cursorByContinuation.get(effect.continuation_id);
 
-    if (!cursor?.node_id) {
+    // VM effects retain their originating graph node through the journal projection. A live
+    // cursor is only a fallback for older servers; it moves after an effect settles and cannot
+    // describe the historical node that ran.
+    const nodeId = effect.node_id ?? cursor?.node_id;
+
+    if (!nodeId) {
       return [];
     }
 
@@ -627,7 +662,7 @@ export async function fetchWorkflowRun(workflowRunId: string): Promise<WorkflowR
     return [{
       id: effect.id,
       workflow_run_id: effect.workflow_run_id,
-      node_id: cursor.node_id,
+      node_id: nodeId,
       status,
       attempt: effect.attempt,
       parameters: request,

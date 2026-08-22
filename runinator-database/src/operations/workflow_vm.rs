@@ -497,6 +497,9 @@ where
         .await?;
         let entry = WorkflowJournalEntry::EffectRequested {
             effect_id: effect.id,
+            // `yield_effect` advances the continuation before it is persisted. The preceding
+            // opcode is the stable source-map location of the graph node that issued this effect.
+            instruction_pointer: Some(continuation.instruction_pointer.saturating_sub(1)),
         };
         sqlx::query(&self.render(
             "INSERT INTO workflow_journal_entries (id, version, workflow_run_id, sequence, continuation_id, effect_id, entry_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -648,7 +651,7 @@ where
         .fetch_one(&mut *tx)
         .await?;
         let effect_id = match &journal {
-            WorkflowJournalEntry::EffectRequested { effect_id }
+            WorkflowJournalEntry::EffectRequested { effect_id, .. }
             | WorkflowJournalEntry::EffectSettled { effect_id, .. } => Some(*effect_id),
             _ => None,
         };

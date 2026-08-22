@@ -198,11 +198,13 @@
                           <td>{{ formatDate(artifact.created_at) }}</td>
                           <td>
                             <button
+                              v-if="artifact.artifact_id"
                               class="btn"
                               @click="download(artifact.artifact_id, artifact.name)"
                             >
                               Download
                             </button>
+                            <span v-else class="text-xs text-fg-muted">Effect output</span>
                           </td>
                         </tr>
                       </tbody>

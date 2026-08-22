@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use super::deploy::{ctl_image_from_bootstrap, postgres_data_claim_name};
 use super::images::{image_tag, versioned_image_tag};
 use super::kustomize::{add_component, set_overlay_images, split_image_reference};
 use super::yaml_docs::{
@@ -207,4 +208,40 @@ fn workload_kind_and_rollout_target_prefer_the_rendered_kind_over_the_fallback()
         rollout_target(&docs, "runinator-worker", "StatefulSet"),
         "statefulset/runinator-worker"
     );
+}
+
+#[test]
+fn postgres_data_claim_name_uses_the_statefulset_claim_template() {
+    let docs = parse_documents(
+        "\
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: runinator-postgres
+spec:
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-data
+",
+    )
+    .unwrap();
+
+    assert_eq!(
+        postgres_data_claim_name(&docs).unwrap(),
+        "postgres-data-runinator-postgres-0"
+    );
+}
+
+#[test]
+fn ctl_image_from_bootstrap_keeps_the_deployed_registry_and_tag() {
+    assert_eq!(
+        ctl_image_from_bootstrap("registry.example.com/runinator/runinator-bootstrap:0.2.368")
+            .unwrap(),
+        "registry.example.com/runinator/runinator-ctl:0.2.368"
+    );
+    assert_eq!(
+        ctl_image_from_bootstrap("runinator-bootstrap@sha256:abc").unwrap(),
+        "runinator-ctl@sha256:abc"
+    );
+    assert!(ctl_image_from_bootstrap("runinator-bootstrap-extra:0.2.368").is_err());
 }

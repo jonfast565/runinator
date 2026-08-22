@@ -9,6 +9,7 @@ import {
   fetchEnumCatalogs,
   fetchNodeKinds,
   fetchTriggerKinds,
+  fetchWorkflowRun,
   importPackArchive,
   listTeamMembers,
   requestRunInterrupt,
@@ -47,6 +48,53 @@ describe("command center catalog metadata API", () => {
   it("requests enum catalogs", async () => {
     await fetchEnumCatalogs();
     expect(invoke).toHaveBeenCalledWith("fetch_enum_catalogs", undefined);
+  });
+
+  it("keeps completed VM effects attached to the node that issued them", async () => {
+    vi.mocked(invoke).mockImplementation((name) => {
+      const responses: Record<string, unknown> = {
+        fetch_workflow_run: {
+          run: {
+            id: "run-1",
+            workflow_id: "workflow-1",
+            status: "succeeded",
+            active_node_id: "end",
+            created_at: "",
+            started_at: null,
+            finished_at: "",
+          },
+          nodes: [],
+        },
+        fetch_workflow_continuations: [],
+        fetch_workflow_effects: [{
+          version: 1,
+          id: "effect-1",
+          workflow_run_id: "run-1",
+          continuation_id: "continuation-1",
+          sequence: 0,
+          attempt: 0,
+          node_id: "publish",
+          request: { type: "action" },
+          status: "succeeded",
+          created_at: 0,
+          updated_at: 0,
+          finished_at: 1,
+        }],
+        fetch_workflow_journal: [],
+        // The continuation has moved to end. This used to overwrite the effect's true node.
+        fetch_workflow_vm_cursors: [{
+          continuation_id: "continuation-1",
+          instruction_pointer: 99,
+          node_id: "end",
+          status: "succeeded",
+        }],
+      };
+      return Promise.resolve(responses[name]);
+    });
+
+    const detail = await fetchWorkflowRun("run-1");
+
+    expect(detail.nodes).toMatchObject([{ node_id: "publish", status: "succeeded" }]);
   });
 });
 
