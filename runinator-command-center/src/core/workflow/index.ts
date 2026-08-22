@@ -32,7 +32,7 @@ import {
 } from "../domain/models/workflow-state";
 import type { IconName } from "../domain/icons";
 import type { GraphEdgeLike, GraphEdgeModel, GraphNodeModel } from "./graph-model";
-import { statusClassForNode } from "../utils/status";
+import { isTerminalWorkflowRunStatus, statusClassForNode } from "../utils/status";
 import { displayValue } from "../utils/values";
 import { addableNodeKinds, findNodeKindMetadata } from "./catalog-registry";
 import { headerIssues } from "./header-validation";
@@ -115,8 +115,13 @@ export function buildGraphNodeModels(
   const breakpointSet = new Set<string>(debug?.breakpoints ?? []);
   // one lookup built once, so a node carrying two cursors draws two markers rather than the
   // single "current node" highlight the debugger used to have.
+  const runCursors = coerceRunCursors(detail?.execution_state?.cursors);
   const markersByNode = cursorsByNode(
-    buildCursorMarkers(coerceRunCursors(detail?.execution_state?.cursors), debug, selectedCursorId),
+    buildCursorMarkers(
+      isTerminalWorkflowRunStatus(detail?.run.status) ? [] : runCursors,
+      debug,
+      selectedCursorId,
+    ),
   );
   // one region walk per graph rebuild rather than one per node, same as the cursor lookup above.
   const regions = interruptRegionOrigins(workflow);
@@ -127,7 +132,22 @@ export function buildGraphNodeModels(
       ? layoutPosition
       : { x: (index % 4) * 220, y: Math.floor(index / 4) * 90 };
     const run = runByNode.get(id);
-    const status = run?.status ?? inferredNodeStatus(node, id, detail);
+    const inferredStatus = inferredNodeStatus(node, id, detail);
+    const terminalEndpointStatus =
+      detail &&
+      isTerminalWorkflowRunStatus(detail.run.status) &&
+      ["end", "fail"].includes(String(node.kind ?? ""))
+        ? inferredStatus
+        : undefined;
+    // The run row advances before a node-run row necessarily exists (or before its queued row has
+    // been refreshed). While the run is live, its active-node status is the authoritative signal
+    // for the yellow in-progress state.
+    const status =
+      detail &&
+      !isTerminalWorkflowRunStatus(detail.run.status) &&
+      detail.run.active_node_id === id
+        ? (inferredStatus ?? run?.status)
+        : (terminalEndpointStatus ?? run?.status ?? inferredStatus);
     const kind = workflowNodeKind(node.kind);
     const interruptRegion = regions.get(id) ?? null;
     return {
@@ -1861,20 +1881,28 @@ function inferredNodeStatus(
     return undefined;
   }
 
-  if (detail.run.active_node_id === id && isWorkflowRunDisplayStatus(detail.run.status)) {
-    return detail.run.status;
-  }
+  const cursorReachedNode = coerceRunCursors(detail.execution_state?.cursors).some(
+    (cursor) => cursor.node_id === id,
+  );
 
   if (
     node.kind === "end" &&
-    detail.run.active_node_id === id &&
-    detail.run.status === "succeeded"
+    detail.run.status === "succeeded" &&
+    (detail.run.active_node_id === id || cursorReachedNode)
   ) {
     return "succeeded";
   }
 
-  if (node.kind === "fail" && detail.run.active_node_id === id && detail.run.status === "failed") {
+  if (
+    node.kind === "fail" &&
+    detail.run.status === "failed" &&
+    (detail.run.active_node_id === id || cursorReachedNode)
+  ) {
     return "failed";
+  }
+
+  if (detail.run.active_node_id === id && isWorkflowRunDisplayStatus(detail.run.status)) {
+    return detail.run.status;
   }
 
   if (node.kind === "start" && detail.nodes.length > 0) {

@@ -1,3 +1,5 @@
+language rexrap-1
+
 // the Core SDLC pipeline: a status-driven scan chain. each member workflow is an independent
 // scanner keyed to a Jira status inbox; a `chained` link fires the next phase as soon as the prior
 // one finishes a pass (each phase also carries its own cron backstop, so the chain is a latency

@@ -1228,12 +1228,54 @@ describe("workflow graph utils", () => {
           parameters: {},
           message: null,
         },
+        {
+          id: "00000000-0000-0000-0000-000000000013",
+          workflow_run_id: RUN_ID,
+          node_id: "b",
+          status: "queued",
+          attempt: 1,
+          parameters: {},
+          message: null,
+        },
       ],
     });
     const active = nodes.find((node) => node.id === "b");
     expect(active?.data.status).toBe("running");
     expect(active?.data.running).toBe(true);
     expect(active?.class).toBe("node-running");
+  });
+
+  it("marks the reached end successful and hides persisted cursors after completion", () => {
+    const terminalWorkflow: WorkflowDefinition = {
+      ...workflow,
+      definition: {
+        start: "start",
+        nodes: [
+          { id: "start", kind: "start", transitions: { next: { $node: "end" } } },
+          { id: "end", kind: "end", transitions: {} },
+        ],
+      },
+    };
+    const nodes = buildGraphNodes(terminalWorkflow, {
+      run: {
+        id: RUN_ID,
+        workflow_id: WORKFLOW_ID,
+        status: "succeeded",
+        active_node_id: "start",
+        created_at: "",
+        started_at: null,
+        finished_at: "",
+      },
+      nodes: [],
+      execution_state: {
+        cursors: [{ id: "00000000-0000-0000-0000-000000000014", node_id: "end" }],
+      },
+    });
+    const end = nodes.find((node) => node.id === "end");
+
+    expect(end?.data.status).toBe("succeeded");
+    expect(end?.class).toBe("node-success");
+    expect(nodes.every((node) => node.data.cursors?.length === 0)).toBe(true);
   });
 
   it("marks the active workflow node as debug paused", () => {

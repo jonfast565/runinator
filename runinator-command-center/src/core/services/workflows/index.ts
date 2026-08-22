@@ -30,6 +30,7 @@ import type { GraphEdgeModel, GraphNodeModel } from "../../workflow/graph-model"
 import type { AppTab } from "../../navigation/app";
 import type { RunOperationOptions, ToastAction } from "../app";
 import { isLockedWorkflowNode } from "../../workflow/editor-defaults";
+import { isTerminalWorkflowRunStatus } from "../../utils/status";
 import { createStore } from "../event-bus";
 import { createWorkflowCatalogService } from "./catalog";
 import { createWorkflowEditorService } from "./editor";
@@ -135,6 +136,9 @@ export function createWorkflowServices(inputDeps: WorkflowServiceDeps) {
 
   /** draw-ready markers for the graph and the cursor rail. */
   function getCursorMarkers(): CursorMarker[] {
+    if (isTerminalWorkflowRunStatus(state.workflowRunDetail?.run.status)) {
+      return [];
+    }
     return buildCursorMarkers(getCursors(), getDebugState(), getSelectedCursorId());
   }
 

@@ -25,6 +25,23 @@ fn file_modified(path: &Path) -> Option<DateTime<Utc>> {
         .map(DateTime::<Utc>::from)
 }
 
+fn parse_pack_source(path: &Path, data: &str) -> Result<runinator_rexrap::RrxBlocks> {
+    let blocks = runinator_rexrap::parse_rrx_blocks(data).map_err(|e| {
+        PackError::compile(format!(
+            "failed to parse {}:\n{}",
+            path.display(),
+            e.render(data)
+        ))
+    })?;
+    if !blocks.language_header {
+        return Err(PackError::compile(format!(
+            "{} must begin with `language rexrap-1`; legacy headerless pack sources are not accepted",
+            path.display()
+        )));
+    }
+    Ok(blocks)
+}
+
 // Returns true when the path is a unified `.rrx` source or a directory pack.
 // rather than a raw workflow/bundle json file.
 pub fn is_pack_source(path: &Path) -> bool {
@@ -94,13 +111,7 @@ pub fn load_pack_settings(path: &Path) -> Result<Option<SecretBundle>> {
     let mut secrets = Vec::new();
     for source_path in paths {
         let data = fs::read_to_string(&source_path)?;
-        let blocks = runinator_rexrap::parse_rrx_blocks(&data).map_err(|e| {
-            PackError::compile(format!(
-                "failed to parse {}:\n{}",
-                source_path.display(),
-                e.render(&data)
-            ))
-        })?;
+        let blocks = parse_pack_source(&source_path, &data)?;
         for settings in blocks.settings {
             let mut bundle = runinator_rexrap::parse_secrets_str(&settings).map_err(|e| {
                 PackError::compile(format!(
@@ -133,13 +144,7 @@ pub fn load_pack_pipelines(path: &Path) -> Result<Option<PipelineBundle>> {
     let mut pipelines = Vec::new();
     for source_path in paths {
         let data = fs::read_to_string(&source_path)?;
-        let blocks = runinator_rexrap::parse_rrx_blocks(&data).map_err(|e| {
-            PackError::compile(format!(
-                "failed to parse {}:\n{}",
-                source_path.display(),
-                e.render(&data)
-            ))
-        })?;
+        let blocks = parse_pack_source(&source_path, &data)?;
         if !blocks.pipelines.trim().is_empty() {
             let bundle = runinator_rexrap::parse_pipeline_str(&blocks.pipelines).map_err(|e| {
                 PackError::compile(format!(
@@ -262,13 +267,7 @@ pub fn load_workflow_bundle_with_catalog(
     match path.extension().and_then(|ext| ext.to_str()) {
         Some("rrx") => {
             let data = fs::read_to_string(path)?;
-            let blocks = runinator_rexrap::parse_rrx_blocks(&data).map_err(|e| {
-                PackError::compile(format!(
-                    "failed to parse {}:\n{}",
-                    path.display(),
-                    e.render(&data)
-                ))
-            })?;
+            let blocks = parse_pack_source(path, &data)?;
             Ok(WorkflowBundle {
                 workflows: compile_rexrap_all_with_signatures(
                     path,
@@ -488,13 +487,7 @@ fn load_rexrap_directory(dir: &Path, catalog: &PackCatalog) -> Result<WorkflowBu
     let mut workflows = Vec::with_capacity(rexrap_paths.len());
     for rexrap_path in &rexrap_paths {
         let data = fs::read_to_string(rexrap_path)?;
-        let blocks = runinator_rexrap::parse_rrx_blocks(&data).map_err(|e| {
-            PackError::compile(format!(
-                "failed to parse {}:\n{}",
-                rexrap_path.display(),
-                e.render(&data)
-            ))
-        })?;
+        let blocks = parse_pack_source(rexrap_path, &data)?;
         if blocks.workflows.trim().is_empty() {
             continue;
         }

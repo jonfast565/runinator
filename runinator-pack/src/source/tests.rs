@@ -47,6 +47,26 @@ fn loads_hello_world_unified_source() {
 }
 
 #[test]
+fn rejects_headerless_pack_sources() {
+    use std::fs;
+
+    let path = std::env::temp_dir().join(format!(
+        "runinator_headerless_pack_{}.rrx",
+        std::process::id()
+    ));
+    fs::write(
+        &path,
+        "workflow \"Legacy\" v1 {\n  node go <- console.run(command: \"hi\")\n}\n",
+    )
+    .expect("write legacy pack");
+
+    let error = load_workflow_bundle(&path).expect_err("headerless packs must be rejected");
+    assert!(error.to_string().contains("language rexrap-1"));
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
 fn checked_in_packs_all_compile_and_settings_parse() {
     let packs_dir = repo_root().join("packs");
     let manifests = vec![
@@ -164,7 +184,7 @@ fn directory_pack_loads_rexraps_settings() {
     fs::create_dir_all(&dir).expect("temp pack dir");
     fs::write(
         dir.join("flow.rrx"),
-        "workflow \"Temp\" v1 {\n  node go <- console.run(command: \"hi\")\n}\n\nsettings {\nsecret app.token = \"abc\"\nconfig app.url = \"https://example.test\"\n}\n",
+        "language rexrap-1\n\nworkflow \"Temp\" v1 {\n  node go <- console.run(command: \"hi\")\n}\n\nsettings {\nsecret app.token = \"abc\"\nconfig app.url = \"https://example.test\"\n}\n",
     )
     .expect("write rexrap");
 
@@ -193,7 +213,9 @@ fn directory_pack_types_pack_local_subflows() {
     fs::create_dir_all(&dir).expect("temp pack dir");
     fs::write(
         dir.join("child.rrx"),
-        r#"workflow "Child" v1 returns { url: string } {
+        r#"language rexrap-1
+
+workflow "Child" v1 returns { url: string } {
   params { id: string }
   console.run(command: params.id)
 }
@@ -202,7 +224,9 @@ fn directory_pack_types_pack_local_subflows() {
     .expect("write child");
     fs::write(
         dir.join("parent.rrx"),
-        r#"workflow "Parent" v1 {
+        r#"language rexrap-1
+
+workflow "Parent" v1 {
   node child <- subflow("Child", params: { id: "RUNI-1" })
   console.run(command: child.state.url)
 }

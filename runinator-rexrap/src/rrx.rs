@@ -10,6 +10,8 @@ use crate::{RexRapError, Span};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RrxBlocks {
+    /// Whether the container explicitly opts into the current REXRAP grammar.
+    pub language_header: bool,
     pub workflows: String,
     pub pipelines: String,
     pub settings: Vec<String>,
@@ -45,6 +47,14 @@ pub fn parse_rrx_blocks(source: &str) -> Result<RrxBlocks, RexRapError> {
                 .find('\n')
                 .map(|offset| cursor + offset + 1)
                 .unwrap_or(source.len());
+            let declaration = source[cursor..end].trim();
+            if declaration != "language rexrap-1" {
+                return Err(RexRapError::syntax(
+                    Span::new(cursor, end),
+                    "language declaration must be `language rexrap-1`",
+                ));
+            }
+            blocks.language_header = true;
             header.push_str(&source[cursor..end]);
             cursor = end;
             continue;
@@ -211,5 +221,6 @@ tests { case "smoke" {} }"#,
         assert!(blocks.pipelines.contains("pipeline \"All\""));
         assert_eq!(blocks.settings.len(), 1);
         assert_eq!(blocks.tests.len(), 1);
+        assert!(blocks.language_header);
     }
 }

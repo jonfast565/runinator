@@ -279,6 +279,7 @@ fn lower_node(
             .map(Value::from)
             .unwrap_or(Value::Null)
     };
+    let parameters = || node.parameters.clone().into();
     let next = || {
         node.transitions
             .on_success
@@ -470,13 +471,11 @@ fn lower_node(
             ));
             jump_next(output);
         }
-        WorkflowNodeKind::Audit => durable(node, "audit", configuration(), output, next()),
-        WorkflowNodeKind::Checkpoint => {
-            durable(node, "checkpoint", configuration(), output, next())
-        }
-        WorkflowNodeKind::Mutex => durable(node, "mutex", configuration(), output, next()),
-        WorkflowNodeKind::Throttle => durable(node, "throttle", configuration(), output, next()),
-        WorkflowNodeKind::Cooldown => durable(node, "cooldown", configuration(), output, next()),
+        WorkflowNodeKind::Audit => durable(node, "audit", parameters(), output, next()),
+        WorkflowNodeKind::Checkpoint => durable(node, "checkpoint", parameters(), output, next()),
+        WorkflowNodeKind::Mutex => durable(node, "mutex", parameters(), output, next()),
+        WorkflowNodeKind::Throttle => durable(node, "throttle", parameters(), output, next()),
+        WorkflowNodeKind::Cooldown => durable(node, "cooldown", parameters(), output, next()),
         WorkflowNodeKind::AwaitRun => {
             let workflow = node
                 .parameters
@@ -504,11 +503,11 @@ fn lower_node(
             ));
             jump_next(output);
         }
-        WorkflowNodeKind::Debounce => durable(node, "debounce", configuration(), output, next()),
-        WorkflowNodeKind::Collect => durable(node, "collect", configuration(), output, next()),
-        WorkflowNodeKind::Barrier => durable(node, "barrier", configuration(), output, next()),
+        WorkflowNodeKind::Debounce => durable(node, "debounce", parameters(), output, next()),
+        WorkflowNodeKind::Collect => durable(node, "collect", parameters(), output, next()),
+        WorkflowNodeKind::Barrier => durable(node, "barrier", parameters(), output, next()),
         WorkflowNodeKind::CircuitBreaker => {
-            durable(node, "circuit_breaker", configuration(), output, next())
+            durable(node, "circuit_breaker", parameters(), output, next())
         }
         WorkflowNodeKind::EventSource => {
             let event_type = node
@@ -899,6 +898,29 @@ mod tests {
             WorkflowInstruction::Fail { .. }
         ));
         assert_eq!(module.graph_location(3).unwrap().node_id, "fail");
+    }
+
+    #[test]
+    fn coordination_effect_carries_parameters_without_graph_node_references() {
+        let mut mutex = node("mutex", WorkflowNodeKind::Mutex, Some("end"));
+        mutex.parameters =
+            serde_json::from_value(serde_json::json!({ "name": "sdlc-development" })).unwrap();
+
+        let mut instructions = Vec::new();
+        lower_node(&mutex, &mut instructions).unwrap();
+
+        let Some(PendingInstruction::Instruction(WorkflowInstruction::Effect {
+            request: WorkflowEffectRequest::Coordination { kind, input },
+        })) = instructions.first()
+        else {
+            panic!("mutex must lower to a coordination effect");
+        };
+        assert_eq!(kind, "mutex");
+        assert_eq!(
+            input,
+            &runinator_models::json!({ "name": "sdlc-development" })
+        );
+        assert!(input.get("transitions").is_none());
     }
 
     #[test]

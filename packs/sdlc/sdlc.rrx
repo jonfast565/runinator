@@ -1,3 +1,5 @@
+language rexrap-1
+
 package {
 {
   "item_type": "rexrap_pack",

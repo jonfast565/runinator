@@ -52,6 +52,53 @@ async fn vm_run_start_freezes_run_module_root_and_journal_together() {
 }
 
 #[tokio::test]
+async fn terminal_vm_run_surfaces_the_continuation_failure() {
+    let path = std::env::temp_dir().join(format!(
+        "runinator-workflow-vm-failure-{}.db",
+        Utc::now().timestamp_nanos_opt().unwrap()
+    ));
+    let db = SqliteDb::new(path.to_str().unwrap()).await.unwrap();
+    db.run_init_scripts(&Vec::new()).await.unwrap();
+    let workflow_id = db
+        .upsert_workflow(&workflow("vm-failure"))
+        .await
+        .unwrap()
+        .id
+        .unwrap();
+    let snapshot = db.fetch_workflow(workflow_id).await.unwrap().unwrap();
+    let run = db
+        .create_workflow_vm_run(NewWorkflowVmRun {
+            workflow_id,
+            workflow_snapshot: snapshot,
+            parameters: Value::Null,
+            state: Value::Null,
+            name: None,
+            provenance: Default::default(),
+            pipeline_run_id: None,
+            pipeline_member_attempt_id: None,
+            module: WorkflowModule::new(vec![WorkflowInstruction::Pop]),
+            instruction_pointer: 0,
+        })
+        .await
+        .unwrap();
+
+    let outcomes = runinator_runtime::WorkflowVmHost::new(&db)
+        .drive_runnable("test-vm".into(), 1)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        outcomes,
+        vec![runinator_runtime::WorkflowVmDriveOutcome::Failed {
+            settled_run_id: Some(run.id),
+        }]
+    );
+    let settled = db.fetch_workflow_run(run.id).await.unwrap().unwrap();
+    assert_eq!(settled.status, WorkflowStatus::Failed);
+    assert_eq!(settled.message.as_deref(), Some("pop needs a stack value"));
+}
+
+#[tokio::test]
 async fn terminal_vm_pipeline_members_are_recoverable_until_the_attempt_settles() {
     let path = std::env::temp_dir().join(format!(
         "runinator-workflow-vm-pipeline-{}.db",

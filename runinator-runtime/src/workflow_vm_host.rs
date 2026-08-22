@@ -234,7 +234,17 @@ impl<'a, S: WorkflowVmStore> WorkflowVmHost<'a, S> {
             .iter()
             .any(|c| c.status == WorkflowContinuationStatus::Failed)
         {
-            (WorkflowStatus::Failed, Some("VM workflow failed".into()))
+            let failure = self
+                .store
+                .fetch_workflow_journal(workflow_run_id)
+                .await?
+                .into_iter()
+                .find_map(|record| match record.entry {
+                    WorkflowJournalEntry::Failed { message, .. } => Some(message),
+                    _ => None,
+                })
+                .unwrap_or_else(|| "VM workflow failed".into());
+            (WorkflowStatus::Failed, Some(failure))
         } else if continuations
             .iter()
             .any(|c| c.status == WorkflowContinuationStatus::Canceled)
