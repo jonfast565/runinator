@@ -19,7 +19,6 @@ use crate::{
 /// at the call site same as any other unsizing coercion.
 pub async fn dispatch(broker: &dyn Broker, request: TcpRequest) -> TcpResponse {
     let result = match request {
-        TcpRequest::Publish { message } => broker.publish(message).await.map(|_| TcpResponse::Ok),
         TcpRequest::PublishControl { command } => broker
             .publish_control(command)
             .await
@@ -27,10 +26,6 @@ pub async fn dispatch(broker: &dyn Broker, request: TcpRequest) -> TcpResponse {
         TcpRequest::PublishAgent { command } => {
             broker.publish_agent(command).await.map(|_| TcpResponse::Ok)
         }
-        TcpRequest::PublishResult { message } => broker
-            .publish_result(message)
-            .await
-            .map(|_| TcpResponse::Ok),
         TcpRequest::PublishEffect { message } => broker
             .publish_effect(message)
             .await
@@ -39,14 +34,6 @@ pub async fn dispatch(broker: &dyn Broker, request: TcpRequest) -> TcpResponse {
             .publish_effect_result(message)
             .await
             .map(|_| TcpResponse::Ok),
-        TcpRequest::Receive { consumer } => broker
-            .receive(&consumer)
-            .await
-            .map(|delivery| TcpResponse::Delivery { delivery }),
-        TcpRequest::ReceiveFor { profile } => broker
-            .receive_for(&profile)
-            .await
-            .map(|delivery| TcpResponse::Delivery { delivery }),
         TcpRequest::ReceiveControl { consumer } => broker
             .receive_control(&consumer)
             .await
@@ -63,10 +50,6 @@ pub async fn dispatch(broker: &dyn Broker, request: TcpRequest) -> TcpResponse {
             .receive_agent_for(&profile)
             .await
             .map(|delivery| TcpResponse::AgentDelivery { delivery }),
-        TcpRequest::ReceiveResult { consumer } => broker
-            .receive_result(&consumer)
-            .await
-            .map(|delivery| TcpResponse::ResultDelivery { delivery }),
         TcpRequest::ReceiveEffect { consumer } => broker
             .receive_effect(&consumer)
             .await
@@ -83,13 +66,6 @@ pub async fn dispatch(broker: &dyn Broker, request: TcpRequest) -> TcpResponse {
             .receive_effect_result(&consumer)
             .await
             .map(|delivery| TcpResponse::EffectResultDelivery { delivery }),
-        TcpRequest::Ack {
-            consumer,
-            delivery_id,
-        } => broker
-            .ack(&consumer, delivery_id)
-            .await
-            .map(|_| TcpResponse::Ok),
         TcpRequest::AckControl {
             consumer,
             delivery_id,
@@ -102,13 +78,6 @@ pub async fn dispatch(broker: &dyn Broker, request: TcpRequest) -> TcpResponse {
             delivery_id,
         } => broker
             .ack_agent(&consumer, delivery_id)
-            .await
-            .map(|_| TcpResponse::Ok),
-        TcpRequest::AckResult {
-            consumer,
-            delivery_id,
-        } => broker
-            .ack_result(&consumer, delivery_id)
             .await
             .map(|_| TcpResponse::Ok),
         TcpRequest::AckEffect {
@@ -125,13 +94,6 @@ pub async fn dispatch(broker: &dyn Broker, request: TcpRequest) -> TcpResponse {
             .ack_effect_result(&consumer, delivery_id)
             .await
             .map(|_| TcpResponse::Ok),
-        TcpRequest::Nack {
-            consumer,
-            delivery_id,
-        } => broker
-            .nack(&consumer, delivery_id)
-            .await
-            .map(|_| TcpResponse::Ok),
         TcpRequest::NackControl {
             consumer,
             delivery_id,
@@ -144,13 +106,6 @@ pub async fn dispatch(broker: &dyn Broker, request: TcpRequest) -> TcpResponse {
             delivery_id,
         } => broker
             .nack_agent(&consumer, delivery_id)
-            .await
-            .map(|_| TcpResponse::Ok),
-        TcpRequest::NackResult {
-            consumer,
-            delivery_id,
-        } => broker
-            .nack_result(&consumer, delivery_id)
             .await
             .map(|_| TcpResponse::Ok),
         TcpRequest::NackEffect {

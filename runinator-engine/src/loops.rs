@@ -52,12 +52,17 @@ pub async fn run_workflow_vm_driver<T: DatabaseImpl>(
                         runinator_runtime::WorkflowVmDriveOutcome::Joined => "joined",
                         runinator_runtime::WorkflowVmDriveOutcome::Completed { .. } => "completed",
                         runinator_runtime::WorkflowVmDriveOutcome::Failed { .. } => "failed",
+                        runinator_runtime::WorkflowVmDriveOutcome::Interrupted => "interrupted",
+                        runinator_runtime::WorkflowVmDriveOutcome::InterruptResolved { .. } => {
+                            "interrupt_resolved"
+                        }
                     });
                     let settled_run_id = match outcome {
                         runinator_runtime::WorkflowVmDriveOutcome::Completed { settled_run_id }
-                        | runinator_runtime::WorkflowVmDriveOutcome::Failed { settled_run_id } => {
-                            settled_run_id
-                        }
+                        | runinator_runtime::WorkflowVmDriveOutcome::Failed { settled_run_id }
+                        | runinator_runtime::WorkflowVmDriveOutcome::InterruptResolved {
+                            settled_run_id,
+                        } => settled_run_id,
                         _ => None,
                     };
                     if let Some(run_id) = settled_run_id {
@@ -135,6 +140,8 @@ pub async fn run_workflow_effect_dispatcher<T: DatabaseImpl>(
         {
             Ok(dispatches) => {
                 for dispatch in dispatches {
+                    // kept for the deadline arming below, since publishing consumes the command.
+                    let published_command = dispatch.command.clone();
                     match broker
                         .publish_effect(runinator_broker_core::EffectMessage {
                             dedupe_key: Some(dispatch.dedupe_key.clone()),
@@ -144,6 +151,10 @@ pub async fn run_workflow_effect_dispatcher<T: DatabaseImpl>(
                         .await
                     {
                         Ok(()) | Err(runinator_broker_core::BrokerError::Duplicate(_)) => {
+                            // armed after publication, never before: the backstop must not be able
+                            // to stop the work it protects.
+                            crate::effect_deadline::arm(broker.as_ref(), &published_command, now)
+                                .await;
                             if let Err(err) = db
                                 .mark_workflow_effect_dispatch_published(dispatch.id)
                                 .await
@@ -318,7 +329,7 @@ pub async fn run_operational_metrics_sampler<T: DatabaseImpl>(db: Arc<T>, shutdo
 
 /// periodically mark replicas offline once they have gone quiet past the inactivity window, then
 /// hard-delete rows that have stayed quiet far longer so offline replicas do not pile up forever.
-/// the reducer-facing views derive stale state per fetch; this loop is the durable cleanup that
+/// the operator-facing views derive stale state per fetch; this loop is the durable cleanup that
 /// retires replicas that never sent an offline notice (e.g. crashed or evicted pods).
 pub async fn run_replica_reaper<T: DatabaseImpl>(db: Arc<T>, shutdown: Arc<Notify>) {
     info!("replica reaper started");

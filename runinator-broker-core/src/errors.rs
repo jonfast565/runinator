@@ -9,8 +9,8 @@ pub enum BrokerError {
     UnknownDelivery(uuid::Uuid),
     #[error("BROKER003 - operation not implemented: {0}")]
     NotImplemented(&'static str),
-    #[error("BROKER004 - workflow result channels unsupported: {0}")]
-    WorkflowResultsUnsupported(String),
+    #[error("BROKER004 - workflow effect channels unsupported: {0}")]
+    WorkflowEffectsUnsupported(String),
     #[error("BROKER005 - internal broker error: {0}")]
     Internal(String),
     #[error("BROKER006 - {0} broker feature disabled: rebuild with --features {0}")]
@@ -34,10 +34,10 @@ pub const NOT_IMPLEMENTED: ErrorDescriptor = ErrorDescriptor::new(
     "broker.not_implemented",
     "Operation not implemented",
 );
-pub const WORKFLOW_RESULTS_UNSUPPORTED: ErrorDescriptor = ErrorDescriptor::new(
+pub const WORKFLOW_EFFECTS_UNSUPPORTED: ErrorDescriptor = ErrorDescriptor::new(
     "BROKER004",
-    "broker.workflow_results_unsupported",
-    "Workflow result channels unsupported",
+    "broker.workflow_effects_unsupported",
+    "Workflow effect channels unsupported",
 );
 pub const INTERNAL: ErrorDescriptor =
     ErrorDescriptor::new("BROKER005", "broker.internal", "Internal broker error");
@@ -62,7 +62,7 @@ pub const DICTIONARY: &[ErrorDescriptor] = &[
     DUPLICATE,
     UNKNOWN_DELIVERY,
     NOT_IMPLEMENTED,
-    WORKFLOW_RESULTS_UNSUPPORTED,
+    WORKFLOW_EFFECTS_UNSUPPORTED,
     INTERNAL,
     FEATURE_DISABLED,
     CONSUMER_STREAM_ENDED,

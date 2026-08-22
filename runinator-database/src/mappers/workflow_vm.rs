@@ -75,6 +75,8 @@ fallible_row_mapper!(row_to_workflow_effect(row) -> WorkflowEffect {
         node_id: None,
         request: decode::<WorkflowEffectRequest>(&row.get::<String, _>("request_json"))?,
         status: decode::<WorkflowEffectStatus>(&format!("\"{}\"", row.get::<String, _>("status")))?,
+        current_executor_replica_id: row.get("current_executor_replica_id"),
+        last_executor_replica_id: row.get("last_executor_replica_id"),
         result: row.get::<Option<String>, _>("result_json").map(|raw| decode(&raw)).transpose()?,
         message: row.get("message"), created_at: row.get("created_at"), updated_at: row.get("updated_at"), finished_at: row.get("finished_at"),
     })

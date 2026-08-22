@@ -19,10 +19,11 @@ use crate::config;
 pub struct BrokerConfig {
     pub broker_backend: String,
     pub broker_endpoint: String,
-    pub broker_action_topic: String,
     pub broker_control_topic: String,
     pub broker_agent_topic: String,
-    pub broker_result_topic: String,
+    pub broker_effect_topic: String,
+    pub broker_infrastructure_effect_topic: String,
+    pub broker_effect_result_topic: String,
     pub broker_client_id: String,
     /// presented as a bearer token; only used by the `http`/`ws` backends today.
     pub api_key: Option<String>,
@@ -34,10 +35,11 @@ impl config::Config {
         BrokerConfig {
             broker_backend: self.broker_backend.clone(),
             broker_endpoint: self.broker_endpoint.clone(),
-            broker_action_topic: self.broker_action_topic.clone(),
             broker_control_topic: self.broker_control_topic.clone(),
             broker_agent_topic: self.broker_agent_topic.clone(),
-            broker_result_topic: self.broker_result_topic.clone(),
+            broker_effect_topic: self.broker_effect_topic.clone(),
+            broker_infrastructure_effect_topic: self.broker_infrastructure_effect_topic.clone(),
+            broker_effect_result_topic: self.broker_effect_result_topic.clone(),
             broker_client_id: self.broker_client_id.clone(),
             api_key: self.api_key.clone(),
         }
@@ -49,10 +51,11 @@ pub async fn build_broker(config: &BrokerConfig) -> Result<Arc<dyn Broker>, Send
         &BrokerClientConfig {
             backend: config.broker_backend.clone(),
             endpoint: config.broker_endpoint.clone(),
-            action_topic: config.broker_action_topic.clone(),
             control_topic: config.broker_control_topic.clone(),
             agent_topic: Some(config.broker_agent_topic.clone()),
-            result_topic: config.broker_result_topic.clone(),
+            effect_topic: config.broker_effect_topic.clone(),
+            infrastructure_effect_topic: config.broker_infrastructure_effect_topic.clone(),
+            effect_result_topic: config.broker_effect_result_topic.clone(),
             client_id: config.broker_client_id.clone(),
             relay_credential: config.api_key.clone(),
             wake_topic: None,
@@ -83,7 +86,7 @@ fn map_build_error(err: BrokerBuildError) -> SendableError {
         }
         BrokerBuildError::Capability { message, .. } => broker_error(
             "workflow_results",
-            BrokerError::WorkflowResultsUnsupported(message.clone()),
+            BrokerError::WorkflowEffectsUnsupported(message.clone()),
         ),
         _ => Box::new(err),
     }

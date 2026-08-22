@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// runtime routing key stamped on an [`crate::ActionCommand`] by the reducer. selects which
+/// runtime routing key stamped on an [`crate::EffectCommand`] by the engine. selects which
 /// worker(s) may receive the action. `Any` preserves pre-targeting behavior, so existing serialized
 /// commands (which carry no target) deserialize as `Any`.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]

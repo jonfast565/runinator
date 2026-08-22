@@ -291,6 +291,48 @@ pub async fn decompile_to_rexrap(
         .map_err(|err| (StatusCode::BAD_REQUEST, err.to_string()))
 }
 
+/// One graph node and the byte range of the statement that renders it, within the `source` returned
+/// alongside it.
+#[derive(Serialize)]
+pub struct RexRapNodeSpan {
+    pub node_id: String,
+    pub start: usize,
+    pub end: usize,
+}
+
+#[derive(Serialize)]
+pub struct DecompiledRexRap {
+    pub source: String,
+    pub spans: Vec<RexRapNodeSpan>,
+}
+
+/// Decompile *and* report where each node lives in the returned text, so an editor can highlight
+/// the statement a cursor is on.
+///
+/// This is a separate endpoint rather than a field on `/rexrap/decompile` because that one returns
+/// a bare JSON string and existing clients read it as such. The spans are only valid against the
+/// `source` in the same response: the text is regenerated on every call, so offsets from one
+/// response must never be applied to another.
+pub async fn decompile_to_rexrap_with_spans(
+    Json(request): Json<DecompileRexRapRequest>,
+) -> Result<Json<DecompiledRexRap>, (StatusCode, String)> {
+    runinator_rexrap::decompile_with_spans(&request.workflow)
+        .map(|(source, spans)| {
+            Json(DecompiledRexRap {
+                source,
+                spans: spans
+                    .into_iter()
+                    .map(|span| RexRapNodeSpan {
+                        node_id: span.node_id,
+                        start: span.start,
+                        end: span.end,
+                    })
+                    .collect(),
+            })
+        })
+        .map_err(|err| (StatusCode::BAD_REQUEST, err.to_string()))
+}
+
 /// resolve a lowered expression against a sample context for the editor's preview. mirrors the
 /// desktop `evaluate_expression` command so the web client has the same behavior. evaluates the pure
 /// compute tier (stdlib + higher-order intrinsics) but not effectful ops, so a preview never runs
@@ -432,6 +474,10 @@ pub fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
             post(decompile_to_rexrap),
         )
         .route(
+            runinator_models::api_routes::API_REXRAP_DECOMPILE_SPANS,
+            post(decompile_to_rexrap_with_spans),
+        )
+        .route(
             runinator_models::api_routes::API_REXRAP_EVALUATE,
             post(evaluate_expression),
         )
@@ -534,6 +580,22 @@ pub const DOCS: &[EndpointDoc] = &[
         &[],
         200,
         "REXRAP source",
+        Example::RexRapSource,
+    ),
+    endpoint(
+        "post",
+        "/rexrap/decompile/spans",
+        "REXRAP",
+        "Decompile workflow JSON to REXRAP with node spans",
+        "Converts a workflow definition back into REXRAP source and reports the byte range of each graph node within that exact source, for editors that highlight the statement a run cursor is on.",
+        false,
+        json_body(
+            "Workflow definition to render as REXRAP.",
+            Example::RexRapDecompile,
+        ),
+        &[],
+        200,
+        "REXRAP source and node spans",
         Example::RexRapSource,
     ),
     endpoint(

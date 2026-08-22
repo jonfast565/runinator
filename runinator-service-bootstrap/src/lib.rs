@@ -282,10 +282,11 @@ mod tests {
                 BrokerClientConfig {
                     backend: "in-memory".into(),
                     endpoint: String::new(),
-                    action_topic: "actions".into(),
                     control_topic: "control".into(),
                     agent_topic: None,
-                    result_topic: "results".into(),
+                    effect_topic: "effects".into(),
+                    infrastructure_effect_topic: "effects.infrastructure".into(),
+                    effect_result_topic: "effect-results".into(),
                     client_id: "test".into(),
                     relay_credential: None,
                     wake_topic: None,

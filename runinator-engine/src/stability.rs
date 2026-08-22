@@ -25,7 +25,7 @@ const METRIC_INGRESS_APPLIED: &str = "runinator_ws_ingress_applied_total";
 const METRIC_INGRESS_RETRIED: &str = "runinator_ws_ingress_retried_total";
 const METRIC_INGRESS_DEAD_LETTERED: &str = "runinator_ws_ingress_dead_lettered_total";
 const METRIC_TRIGGERS_FIRED: &str = "runinator_ws_triggers_fired_total";
-const METRIC_REDUCER_DRIVE_MS: &str = "runinator_ws_reducer_drive_ms";
+const METRIC_VM_DRIVE_MS: &str = "runinator_vm_drive_ms";
 const METRIC_VM_CONTINUATIONS_DRIVEN: &str = "runinator_vm_continuations_driven_total";
 const METRIC_VM_DRIVE_DURATION_MS: &str = "runinator_vm_drive_duration_ms";
 const METRIC_VM_DRIVER_FAILURES: &str = "runinator_vm_driver_failures_total";
@@ -58,7 +58,7 @@ struct OtelCounters {
     ingress_retried: Counter<u64>,
     ingress_dead_lettered: Counter<u64>,
     triggers_fired: Counter<u64>,
-    reducer_drive_ms: Histogram<f64>,
+    vm_drive_ms: Histogram<f64>,
     vm_continuations_driven: Counter<u64>,
     vm_drive_duration_ms: Histogram<f64>,
     vm_driver_failures: Counter<u64>,
@@ -92,8 +92,8 @@ fn otel_counters() -> &'static OtelCounters {
             ingress_retried: meter.u64_counter(METRIC_INGRESS_RETRIED).build(),
             ingress_dead_lettered: meter.u64_counter(METRIC_INGRESS_DEAD_LETTERED).build(),
             triggers_fired: meter.u64_counter(METRIC_TRIGGERS_FIRED).build(),
-            reducer_drive_ms: meter
-                .f64_histogram(METRIC_REDUCER_DRIVE_MS)
+            vm_drive_ms: meter
+                .f64_histogram(METRIC_VM_DRIVE_MS)
                 .with_unit("ms")
                 .build(),
             vm_continuations_driven: meter.u64_counter(METRIC_VM_CONTINUATIONS_DRIVEN).build(),
@@ -216,7 +216,7 @@ pub fn ingress_retried() {
 }
 
 /// an ingress message exhausted its attempts and was dead-lettered. a nonzero rate points at a
-/// persistently failing reducer drive or control request.
+/// persistently failing VM drive or control request.
 pub fn ingress_dead_lettered() {
     metrics::counter!(METRIC_INGRESS_DEAD_LETTERED).increment(1);
     otel_counters().ingress_dead_lettered.add(1, &[]);
@@ -231,11 +231,11 @@ pub fn triggers_fired(count: u64) {
     otel_counters().triggers_fired.add(count, &[]);
 }
 
-/// record the wall-clock time the reducer spent advancing a run for one ingress drive, in
-/// milliseconds. surfaces reducer latency independent of broker/queue wait.
-pub fn record_reducer_drive_ms(millis: f64) {
-    metrics::histogram!(METRIC_REDUCER_DRIVE_MS).record(millis);
-    otel_counters().reducer_drive_ms.record(millis, &[]);
+/// record the wall-clock time the VM spent advancing one continuation, in milliseconds. surfaces
+/// interpreter latency independent of broker/queue wait.
+pub fn record_vm_drive_ms(millis: f64) {
+    metrics::histogram!(METRIC_VM_DRIVE_MS).record(millis);
+    otel_counters().vm_drive_ms.record(millis, &[]);
 }
 
 /// Record one continuation the durable VM drove. `outcome` is a fixed VM result, never a

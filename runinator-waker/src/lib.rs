@@ -30,7 +30,7 @@ pub fn spawn_liveness(
     )
 }
 
-/// consume wakes, sleep until each is due, then publish a drive on the ingress channel. multiple
+/// consume wakes, sleep until each is due, then publish the settle on the ingress channel. multiple
 /// waker replicas share a consumer group so each wake is handled once; a not-yet-due wake is
 /// returned to the broker (nack) after a bounded sleep so the lease never expires under us and
 /// other wakes still get serviced. wakes are handled concurrently up to `max_concurrent_wakes`,
@@ -73,13 +73,13 @@ pub async fn waker_loop(broker: Arc<dyn Broker>, notify: Arc<Notify>, config: &C
             }
         };
 
-        // carries this wake's correlation id through sleep/drive so it can be traced end to end
-        // alongside the ws-side ingress/reducer logs that consume the resulting drive.
+        // carries this wake's correlation id through the sleep and the settle so it can be traced
+        // end to end alongside the engine-side ingress logs that consume the resulting settle.
         let span = tracing::info_span!(
             "wake",
             trace_id = %delivery.command.trace_id,
-            run_id = %delivery.command.workflow_run_id,
-            node_id = %delivery.command.node_id,
+            run_id = %delivery.command.workflow_run_id(),
+            effect_id = %delivery.command.effect_id(),
         );
         let broker = Arc::clone(&broker);
         let notify = Arc::clone(&notify);
@@ -104,13 +104,11 @@ async fn handle_wake(
     delivery: runinator_broker::WakeDelivery,
 ) {
     let now = Utc::now();
-    metrics::wake_received((delivery.command.ready_at - now).num_milliseconds() as f64);
-    let remaining = (delivery.command.ready_at - now)
-        .to_std()
-        .unwrap_or_default();
+    metrics::wake_received((delivery.command.due_at - now).num_milliseconds() as f64);
+    let remaining = (delivery.command.due_at - now).to_std().unwrap_or_default();
 
     if remaining.is_zero() {
-        drive(broker, group, &delivery).await;
+        settle(broker, group, &delivery).await;
         return;
     }
 
@@ -127,8 +125,8 @@ async fn handle_wake(
         _ = tokio::time::sleep(sleep) => {}
     }
 
-    if Utc::now() >= delivery.command.ready_at {
-        drive(broker, group, &delivery).await;
+    if Utc::now() >= delivery.command.due_at {
+        settle(broker, group, &delivery).await;
     } else {
         metrics::wake_requeued();
         if let Err(err) = broker.nack_wake(group, delivery.delivery_id).await {
@@ -141,32 +139,33 @@ async fn handle_wake(
     }
 }
 
-async fn drive(broker: &dyn Broker, group: &str, delivery: &runinator_broker::WakeDelivery) {
+/// hand the wake's carried result back to the engine on the ingress channel.
+///
+/// the result is relayed verbatim: it was built (and its timestamp stamped at `due_at`) by the
+/// infrastructure effect host that armed this timer, so the waker never needs to know what kind of
+/// effect it is settling.
+async fn settle(broker: &dyn Broker, group: &str, delivery: &runinator_broker::WakeDelivery) {
     metrics::wake_due_lag(
-        (Utc::now() - delivery.command.ready_at)
+        (Utc::now() - delivery.command.due_at)
             .num_milliseconds()
             .max(0) as f64,
     );
-    let command = WsIngressCommand::drive(
-        delivery.command.ready_node_id,
-        delivery.command.workflow_run_id,
-        delivery.command.node_id.clone(),
-        delivery.command.trace_id,
-    );
+    let command =
+        WsIngressCommand::settle_effect(delivery.command.result.clone(), delivery.command.trace_id);
     let message = IngressMessage {
         command,
         dedupe_key: None,
         enqueued_at: Utc::now(),
     };
-    // a duplicate means the drive is already in flight; treat it as success and ack the wake.
+    // a duplicate means the settle is already in flight; treat it as success and ack the wake.
     match broker.publish_ingress(message).await {
         Ok(()) | Err(runinator_broker::BrokerError::Duplicate(_)) => {
             metrics::wake_driven();
-            info!("drive published");
+            info!("settle published");
             if let Err(err) = broker.ack_wake(group, delivery.delivery_id).await {
                 error!(
                     error_code = error_code_or_unknown(&err),
-                    "failed to ack driven wake: {}", err
+                    "failed to ack settled wake: {}", err
                 );
             }
         }
@@ -174,12 +173,12 @@ async fn drive(broker: &dyn Broker, group: &str, delivery: &runinator_broker::Wa
             metrics::drive_failed();
             error!(
                 error_code = error_code_or_unknown(&err),
-                "failed to publish drive: {}", err
+                "failed to publish settle: {}", err
             );
             if let Err(err) = broker.nack_wake(group, delivery.delivery_id).await {
                 error!(
                     error_code = error_code_or_unknown(&err),
-                    "failed to requeue wake after drive failure: {}", err
+                    "failed to requeue wake after settle failure: {}", err
                 );
             }
         }

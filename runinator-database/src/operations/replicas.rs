@@ -397,8 +397,8 @@ where
 
     async fn delete_expired_replicas(&self, cutoff: DateTime<Utc>) -> Result<u64, SendableError> {
         // null the historical attribution pointers (restrict-mode foreign keys) before deleting so
-        // the delete does not error; provider registrations cascade. a replica still claimed as a node
-        // run's current executor is excluded from the delete and left until that run resolves.
+        // the delete does not error; provider registrations cascade. a replica still claimed as an
+        // effect's current executor is excluded from the delete and left until that effect settles.
         let cutoff_ts = cutoff.timestamp();
         Ok(retry_delete(|| async {
             let mut tx = self.pool().begin().await?;
@@ -413,7 +413,7 @@ where
             .await?;
 
             sqlx::query(&self.render(
-                "UPDATE workflow_node_runs SET last_executor_replica_id = NULL
+                "UPDATE workflow_effects SET last_executor_replica_id = NULL
                  WHERE last_executor_replica_id IN
                      (SELECT replica_id FROM replicas WHERE last_heartbeat_at <= ?)",
             ))
@@ -423,7 +423,7 @@ where
 
             let deleted = sqlx::query(&self.render(
                 "DELETE FROM replicas WHERE last_heartbeat_at <= ? AND replica_id NOT IN
-                     (SELECT current_executor_replica_id FROM workflow_node_runs
+                     (SELECT current_executor_replica_id FROM workflow_effects
                       WHERE current_executor_replica_id IS NOT NULL)",
             ))
             .bind(cutoff_ts)
@@ -465,13 +465,13 @@ where
         row.as_ref().map(mappers::row_to_replica).transpose()
     }
 
-    async fn count_running_node_runs_by_executor(&self) -> Result<Vec<(Uuid, i64)>, SendableError> {
-        // a held executor claim (current_executor_replica_id set) marks a node run that is actively
+    async fn count_running_effects_by_executor(&self) -> Result<Vec<(Uuid, i64)>, SendableError> {
+        // a held executor claim (current_executor_replica_id set) marks an effect that is actively
         // executing on that worker, so grouping the live claims yields the running-task count per
-        // replica.
+        // replica. the claim moved onto the effect with the vm cutover; node runs are gone.
         let rows = sqlx::query(&self.render(
             "SELECT current_executor_replica_id AS replica_id, COUNT(*) AS running_count
-             FROM workflow_node_runs
+             FROM workflow_effects
              WHERE current_executor_replica_id IS NOT NULL
              GROUP BY current_executor_replica_id",
         ))

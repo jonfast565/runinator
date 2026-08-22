@@ -26,9 +26,8 @@ use crate::{
     EffectResultDelivery, EffectResultMessage,
 };
 use crate::{
-    Broker, BrokerDelivery, BrokerError, BrokerMessage, ControlCommand, ControlDelivery,
-    EventDelivery, EventMessage, IngressDelivery, IngressMessage, ResultDelivery, ResultMessage,
-    WakeDelivery, WakeMessage,
+    Broker, BrokerError, ControlCommand, ControlDelivery, EventDelivery, EventMessage,
+    IngressDelivery, IngressMessage, WakeDelivery, WakeMessage,
 };
 
 #[cfg(feature = "ws")]
@@ -230,7 +229,7 @@ mod imp {
     }
 
     fn clone_request(request: &TcpRequest) -> TcpRequest {
-        // `TcpRequest` isn't `Clone` (mirrors `BrokerMessage` etc., which aren't either); round-trip
+        // `TcpRequest` isn't `Clone` (mirrors `EffectMessage` etc., which aren't either); round-trip
         // through JSON rather than adding a derive that would ripple into every payload type it wraps.
         serde_json::from_str(&serde_json::to_string(request).expect("TcpRequest always serializes"))
             .expect("TcpRequest round-trips through its own wire format")
@@ -445,13 +444,6 @@ mod imp {
 
     #[async_trait]
     impl Broker for WsBroker {
-        fn supports_workflow_result_channels(&self) -> bool {
-            // like the other pass-through transports (Tcp/Http), capability depends on whatever
-            // backend runinator-ws holds, not on this transport — and a worker's only actual need
-            // (publish_result) is always in the relay's policy allow-list.
-            true
-        }
-
         fn supports_workflow_effect_channels(&self) -> bool {
             true
         }
@@ -462,80 +454,6 @@ mod imp {
 
         fn connection_state(&self) -> Option<watch::Receiver<ConnectionState>> {
             Some(self.state())
-        }
-
-        async fn publish(&self, message: BrokerMessage) -> Result<(), BrokerError> {
-            match self
-                .request_bounded(TcpRequest::Publish { message }, ONE_SHOT_RETRY_WINDOW)
-                .await?
-            {
-                TcpResponse::Ok => Ok(()),
-                TcpResponse::Error { message } => Err(BrokerError::Internal(message)),
-                _ => Err(unexpected_response()),
-            }
-        }
-
-        async fn receive(&self, consumer: &str) -> Result<BrokerDelivery, BrokerError> {
-            match self
-                .request_forever(TcpRequest::Receive {
-                    consumer: consumer.to_string(),
-                })
-                .await?
-            {
-                TcpResponse::Delivery { delivery } => Ok(delivery),
-                TcpResponse::Error { message } => Err(BrokerError::Internal(message)),
-                _ => Err(unexpected_response()),
-            }
-        }
-
-        async fn receive_for(
-            &self,
-            profile: &ConsumerProfile,
-        ) -> Result<BrokerDelivery, BrokerError> {
-            match self
-                .request_forever(TcpRequest::ReceiveFor {
-                    profile: profile.clone(),
-                })
-                .await?
-            {
-                TcpResponse::Delivery { delivery } => Ok(delivery),
-                TcpResponse::Error { message } => Err(BrokerError::Internal(message)),
-                _ => Err(unexpected_response()),
-            }
-        }
-
-        async fn ack(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
-            match self
-                .request_bounded(
-                    TcpRequest::Ack {
-                        consumer: consumer.to_string(),
-                        delivery_id,
-                    },
-                    ONE_SHOT_RETRY_WINDOW,
-                )
-                .await?
-            {
-                TcpResponse::Ok => Ok(()),
-                TcpResponse::Error { message } => Err(BrokerError::Internal(message)),
-                _ => Err(unexpected_response()),
-            }
-        }
-
-        async fn nack(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
-            match self
-                .request_bounded(
-                    TcpRequest::Nack {
-                        consumer: consumer.to_string(),
-                        delivery_id,
-                    },
-                    ONE_SHOT_RETRY_WINDOW,
-                )
-                .await?
-            {
-                TcpResponse::Ok => Ok(()),
-                TcpResponse::Error { message } => Err(BrokerError::Internal(message)),
-                _ => Err(unexpected_response()),
-            }
         }
 
         async fn publish_control(&self, command: ControlCommand) -> Result<(), BrokerError> {
@@ -676,64 +594,6 @@ mod imp {
             match self
                 .request_bounded(
                     TcpRequest::NackAgent {
-                        consumer: consumer.to_string(),
-                        delivery_id,
-                    },
-                    ONE_SHOT_RETRY_WINDOW,
-                )
-                .await?
-            {
-                TcpResponse::Ok => Ok(()),
-                TcpResponse::Error { message } => Err(BrokerError::Internal(message)),
-                _ => Err(unexpected_response()),
-            }
-        }
-
-        async fn publish_result(&self, message: ResultMessage) -> Result<(), BrokerError> {
-            match self
-                .request_bounded(TcpRequest::PublishResult { message }, ONE_SHOT_RETRY_WINDOW)
-                .await?
-            {
-                TcpResponse::Ok => Ok(()),
-                TcpResponse::Error { message } => Err(BrokerError::Internal(message)),
-                _ => Err(unexpected_response()),
-            }
-        }
-
-        async fn receive_result(&self, consumer: &str) -> Result<ResultDelivery, BrokerError> {
-            match self
-                .request_forever(TcpRequest::ReceiveResult {
-                    consumer: consumer.to_string(),
-                })
-                .await?
-            {
-                TcpResponse::ResultDelivery { delivery } => Ok(delivery),
-                TcpResponse::Error { message } => Err(BrokerError::Internal(message)),
-                _ => Err(unexpected_response()),
-            }
-        }
-
-        async fn ack_result(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
-            match self
-                .request_bounded(
-                    TcpRequest::AckResult {
-                        consumer: consumer.to_string(),
-                        delivery_id,
-                    },
-                    ONE_SHOT_RETRY_WINDOW,
-                )
-                .await?
-            {
-                TcpResponse::Ok => Ok(()),
-                TcpResponse::Error { message } => Err(BrokerError::Internal(message)),
-                _ => Err(unexpected_response()),
-            }
-        }
-
-        async fn nack_result(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
-            match self
-                .request_bounded(
-                    TcpRequest::NackResult {
                         consumer: consumer.to_string(),
                         delivery_id,
                     },
@@ -1082,22 +942,6 @@ fn ws_feature_error() -> BrokerError {
 #[async_trait]
 #[cfg(not(feature = "ws"))]
 impl Broker for WsBroker {
-    async fn publish(&self, _message: BrokerMessage) -> Result<(), BrokerError> {
-        Err(ws_feature_error())
-    }
-
-    async fn receive(&self, _consumer: &str) -> Result<BrokerDelivery, BrokerError> {
-        Err(ws_feature_error())
-    }
-
-    async fn ack(&self, _consumer: &str, _delivery_id: Uuid) -> Result<(), BrokerError> {
-        Err(ws_feature_error())
-    }
-
-    async fn nack(&self, _consumer: &str, _delivery_id: Uuid) -> Result<(), BrokerError> {
-        Err(ws_feature_error())
-    }
-
     async fn publish_control(&self, _command: ControlCommand) -> Result<(), BrokerError> {
         Err(ws_feature_error())
     }
@@ -1111,22 +955,6 @@ impl Broker for WsBroker {
     }
 
     async fn nack_control(&self, _consumer: &str, _delivery_id: Uuid) -> Result<(), BrokerError> {
-        Err(ws_feature_error())
-    }
-
-    async fn publish_result(&self, _message: ResultMessage) -> Result<(), BrokerError> {
-        Err(ws_feature_error())
-    }
-
-    async fn receive_result(&self, _consumer: &str) -> Result<ResultDelivery, BrokerError> {
-        Err(ws_feature_error())
-    }
-
-    async fn ack_result(&self, _consumer: &str, _delivery_id: Uuid) -> Result<(), BrokerError> {
-        Err(ws_feature_error())
-    }
-
-    async fn nack_result(&self, _consumer: &str, _delivery_id: Uuid) -> Result<(), BrokerError> {
         Err(ws_feature_error())
     }
 

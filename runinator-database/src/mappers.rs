@@ -1,8 +1,5 @@
 use chrono::{DateTime, Utc};
-use runinator_comm::{
-    ActionCommand, ActionDispatchRecord, AgentDirectiveKind, AgentDirectiveRecord,
-    AgentDirectiveState,
-};
+use runinator_comm::{AgentDirectiveKind, AgentDirectiveRecord, AgentDirectiveState};
 use runinator_models::value::Value;
 use runinator_models::workflow_state::WorkflowExecutionState;
 use runinator_models::{
@@ -17,14 +14,10 @@ use runinator_models::{
         FunctionAdapterWorkflow, FunctionAlias, FunctionArtifact, FunctionCatalogEntry,
         FunctionExport, FunctionPackage, FunctionRuntimeSpec, FunctionVersion,
     },
-    invocation::{
-        CallableTarget, InvocationContinuation, WorkflowInvocation, WorkflowInvocationCall,
-    },
     notifications::{
         Notification, NotificationChannel, NotificationDelivery, NotificationDeliveryStatus,
         NotificationEvent, NotificationPolicy, NotificationSeverity,
     },
-    orchestration::{OrchestrationEvent, ReadyNodeRecord},
     orgs::{OrgMembership, OrgRole, Organization},
     pipelines::{
         Pipeline, PipelineDefaults, PipelineMemberAttempt, PipelineMemberAttemptStatus,
@@ -43,9 +36,8 @@ use runinator_models::{
     telemetry::ReplicaSample,
     types::RuninatorType,
     workflows::{
-        WorkflowAction, WorkflowDefinition, WorkflowGraph, WorkflowNodeRun,
-        WorkflowNodeRunArtifact, WorkflowNodeRunChunk, WorkflowRun, WorkflowRunArtifact,
-        WorkflowStatus, WorkflowTaskRun, WorkflowTrigger, WorkflowTriggerKind,
+        WorkflowDefinition, WorkflowGraph, WorkflowRun, WorkflowStatus, WorkflowTrigger,
+        WorkflowTriggerKind,
     },
 };
 use sqlx::{ColumnIndex, Decode, Row, Type};
@@ -59,11 +51,6 @@ fn parse_type(raw: String) -> RuninatorType {
     let value = parse_json(raw);
     serde_json::from_value(value.clone().into())
         .unwrap_or_else(|_| RuninatorType::from_json_schema(&value))
-}
-
-fn parse_action_command(raw: String) -> Result<ActionCommand, SendableError> {
-    serde_json::from_str::<ActionCommand>(&raw)
-        .map_err(|err| crate::errors::ACTION_DISPATCH_INVALID_JSON.error(err))
 }
 
 /// define a row mapper generic over any sqlx row, with the column-decode bounds every mapper needs.
@@ -113,8 +100,6 @@ mod console;
 pub use console::*;
 mod functions;
 pub use functions::*;
-mod invocations;
-pub use invocations::*;
 mod workflow_vm;
 pub use workflow_vm::*;
 mod identity;
@@ -123,8 +108,6 @@ mod workflows;
 pub use workflows::*;
 mod automation;
 pub use automation::*;
-mod engine;
-pub use engine::*;
 mod replicas;
 pub use replicas::*;
 mod notifications;

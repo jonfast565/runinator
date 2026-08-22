@@ -16,7 +16,7 @@ use crate::loops::{
 
 /// Runtime limits for one durable engine instance.
 ///
-/// The ingress limit bounds reducer drives, control commands, and agent directive results that may
+/// The ingress limit bounds continuation drives, control commands, and agent directive results that may
 /// be processed concurrently. Durable ready-node claims and run-state compare-and-swap writes
 /// remain the authority for conflicting work.
 #[derive(Debug, Clone, Copy)]
@@ -60,10 +60,13 @@ mod tests {
 
 /// Run the durable VM orchestration engine.
 ///
-/// Continuation and effect outboxes are the only workflow execution queues.  In particular, this
-/// deliberately does not start the reducer ingress, legacy result, wake, ready-node reaper, or
-/// action-dispatch loops: starting either execution engine alongside the VM would make the
-/// cutover's exactly-once ownership guarantees meaningless.
+/// Continuation and effect outboxes are the only workflow execution queues. In particular, this
+/// deliberately does not start the pre-VM action-dispatch loop: starting either execution engine
+/// alongside the VM would make the cutover's exactly-once ownership guarantees meaningless.
+///
+/// The ingress consumer *is* started: ingress carries traffic toward the engine (a due timer wake
+/// from the waker, a worker control request, an agent directive reply), none of which belongs to
+/// the retired execution engine.
 ///
 /// the engine is safe to run N-up: the broker consumers compete on shared consumer ids, the trigger
 /// and notification-effect loops claim disjoint rows per `instance_id`, and the reapers are
@@ -87,6 +90,11 @@ pub async fn run_background_engine<T: DatabaseImpl>(
         shutdown.clone(),
     ));
     loops.spawn(crate::run_infrastructure_effect_host(
+        pool.clone(),
+        broker.clone(),
+        shutdown.clone(),
+    ));
+    loops.spawn(crate::run_ingress_consumer(
         pool.clone(),
         broker.clone(),
         shutdown.clone(),

@@ -1,6 +1,6 @@
 use super::support;
 use super::*;
-use runinator_models::interrupt::{InterruptSource, PendingInterrupt};
+use runinator_models::interrupt::InterruptSource;
 use runinator_models::workflow_state::WorkflowExecutionState;
 use uuid::Uuid;
 
@@ -182,12 +182,8 @@ pub async fn update_workflow_run_status<T: DatabaseImpl>(
     })
 }
 
-/// how many times a losing state writer rebuilds its change before giving up. a conflict means the
-/// reducer wrote first, and is resolved by re-reading rather than waiting.
-const MAX_EVENT_DELIVERY_ATTEMPTS: usize = 8;
-
 /// stamp an inbound event into the delivery slot a parked `event_source` node reads, then wake the
-/// run so the reducer consumes it on its next drive.
+/// run so the VM consumes it on its next drive.
 ///
 /// the slot lives in the run state rather than on the node run because the node re-parks after each
 /// event, and the state object is what survives that. delivering to a node that is not waiting is
@@ -282,17 +278,21 @@ async fn declares_interrupt<T: DatabaseImpl>(
 /// ask a run to raise an interrupt on its next drive.
 ///
 /// the request is recorded on the run rather than raised here: every rule about whether an interrupt
-/// can be serviced lives in the reducer, and duplicating any of it in the web service is how the two
-/// come to disagree. the reducer consumes the request on the drive that decides about it, so a
-/// request nobody can service is dropped rather than left to fire at some arbitrary later point.
+//// Record an out-of-band interrupt request against one thread of a run.
 ///
-/// `cursor_id` names one thread of control; `None` lets whichever real thread drives next take it.
+/// Nothing about serviceability is decided here. The request is stamped on the target continuation
+/// and the VM raises or refuses it at that thread's next safe point, which is the only place the
+/// fail-open rules live; a second copy of them in the web service is how the two come to disagree.
+/// The request is consumed by the drive that decides about it, so one nobody can service is dropped
+/// rather than left to fire at some arbitrary later point.
+///
+/// `continuation_id` names one thread of control; `None` targets the run's oldest live one.
 pub async fn request_run_interrupt<T: DatabaseImpl>(
     db: &T,
     workflow_run_id: Uuid,
     source: InterruptSource,
     payload: Value,
-    cursor_id: Option<Uuid>,
+    continuation_id: Option<Uuid>,
 ) -> Result<TaskResponse, SendableError> {
     let Some(run) = db.fetch_workflow_run(workflow_run_id).await? else {
         return Ok(TaskResponse {
@@ -306,75 +306,26 @@ pub async fn request_run_interrupt<T: DatabaseImpl>(
             message: format!("Workflow run {workflow_run_id} has already finished"),
         });
     }
-    let request = PendingInterrupt::new(source, payload, cursor_id);
-
-    // captured from the attempt that actually won the compare-and-swap, not the outer pre-loop
-    // fetch: a concurrent drive can move the cursor between that fetch and a winning retry, and
-    // deriving the wake target from the stale copy could wake the wrong node or miss it entirely.
-    let mut recorded: Option<runinator_models::workflows::WorkflowRun> = None;
-    for _ in 0..MAX_EVENT_DELIVERY_ATTEMPTS {
-        let Some(run) = db.fetch_workflow_run(workflow_run_id).await? else {
-            return Ok(TaskResponse {
-                success: false,
-                message: format!("Workflow run {workflow_run_id} not found"),
-            });
-        };
-        let mut state = run.execution_state.clone();
-        // replayable: the request carries its own id, so a losing writer re-adds the same one on top
-        // of whatever won rather than accumulating duplicates.
-        state.take_pending_interrupt(request.id);
-        state.pending_interrupts.push(request.clone());
-        if db
-            .update_workflow_run_execution_state_cas(workflow_run_id, run.state_version, state)
-            .await?
-        {
-            recorded = Some(run);
-            break;
-        }
-    }
-    let Some(run) = recorded else {
-        return Ok(TaskResponse {
+    let pending = runinator_models::workflow_vm::WorkflowPendingInterrupt {
+        id: Uuid::now_v7(),
+        source,
+        payload,
+    };
+    match db
+        .request_workflow_interrupt(workflow_run_id, continuation_id, pending)
+        .await?
+    {
+        Some(continuation_id) => Ok(TaskResponse {
+            success: true,
+            message: format!(
+                "Interrupt '{source}' requested for run {workflow_run_id} on continuation {continuation_id}"
+            ),
+        }),
+        None => Ok(TaskResponse {
             success: false,
-            message: format!("Run {workflow_run_id} state kept changing; interrupt not requested"),
-        });
-    };
-
-    // wake the thread so the request is looked at now rather than whenever the run next happens to
-    // move. an untargeted request rides the run's mirrored position, which is the primary cursor.
-    let node_id = match cursor_id.and_then(|id| run.execution_state.cursor(id).cloned()) {
-        Some(cursor) => Some(cursor.node_id().to_string()),
-        None => run.active_node_id.clone(),
-    };
-    if let Some(node_id) = node_id {
-        match cursor_id {
-            Some(cursor_id) => {
-                support::enqueue_node_ready_for_cursor(
-                    db,
-                    workflow_run_id,
-                    cursor_id,
-                    node_id,
-                    "interrupt_requested",
-                    Utc::now(),
-                )
-                .await?
-            }
-            None => {
-                support::enqueue_node_ready(
-                    db,
-                    workflow_run_id,
-                    node_id,
-                    "interrupt_requested",
-                    Utc::now(),
-                    runinator_models::json!({ "source": source.as_str() }),
-                )
-                .await?
-            }
-        }
+            message: format!("Workflow run {workflow_run_id} has no live thread to interrupt"),
+        }),
     }
-    Ok(TaskResponse {
-        success: true,
-        message: format!("Interrupt '{source}' requested for run {workflow_run_id}"),
-    })
 }
 
 pub async fn deliver_signal<T: DatabaseImpl>(

@@ -15,10 +15,11 @@ use crate::{
 pub struct BrokerClientConfig {
     pub backend: String,
     pub endpoint: String,
-    pub action_topic: String,
     pub control_topic: String,
     pub agent_topic: Option<String>,
-    pub result_topic: String,
+    pub effect_topic: String,
+    pub infrastructure_effect_topic: String,
+    pub effect_result_topic: String,
     pub client_id: String,
     pub relay_credential: Option<String>,
     pub wake_topic: Option<String>,
@@ -28,11 +29,11 @@ pub struct BrokerClientConfig {
 /// The channels a caller needs from a broker connection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BrokerConsumerProfile {
-    /// A workflow runtime publishes and consumes workflow result messages.
+    /// A workflow runtime publishes effect commands and consumes their results.
     WorkflowRuntime,
     /// The timer relay only needs the wake and ingress channels.
     Waker,
-    /// A provider worker consumes actions/control and publishes effect results.
+    /// A provider worker consumes effects/control and publishes effect results.
     Worker,
 }
 
@@ -72,14 +73,14 @@ pub async fn build_broker_client(
     config: &BrokerClientConfig,
     profile: BrokerConsumerProfile,
 ) -> Result<Arc<dyn Broker>, BrokerBuildError> {
-    let result_channel = match config.backend.as_str() {
-        "kafka" | "rabbitmq" => config.result_topic.as_str(),
+    let effect_channel = match config.backend.as_str() {
+        "kafka" | "rabbitmq" => config.effect_topic.as_str(),
         _ => "",
     };
     if profile != BrokerConsumerProfile::Waker {
-        runinator_broker_core::ensure_named_workflow_result_channel(
+        runinator_broker_core::ensure_named_workflow_effect_channel(
             &config.backend,
-            result_channel,
+            effect_channel,
         )
         .map_err(|err| BrokerBuildError::Capability {
             backend: config.backend.clone(),
@@ -136,7 +137,7 @@ pub async fn build_broker_client(
     };
 
     if profile != BrokerConsumerProfile::Waker {
-        runinator_broker_core::ensure_workflow_result_channels_supported(
+        runinator_broker_core::ensure_workflow_effect_channels_supported(
             &config.backend,
             broker.as_ref(),
         )
@@ -153,10 +154,11 @@ pub async fn build_broker_client(
 
 fn kafka_config(config: &BrokerClientConfig) -> KafkaBrokerConfig {
     let base = KafkaBrokerConfig::new(config.endpoint.clone())
-        .with_topics(
-            config.action_topic.clone(),
-            config.control_topic.clone(),
-            config.result_topic.clone(),
+        .with_control_topic(config.control_topic.clone())
+        .with_effect_topics(
+            config.effect_topic.clone(),
+            config.infrastructure_effect_topic.clone(),
+            config.effect_result_topic.clone(),
         )
         .with_client_id(config.client_id.clone());
     let base = match &config.agent_topic {
@@ -173,10 +175,11 @@ fn kafka_config(config: &BrokerClientConfig) -> KafkaBrokerConfig {
 
 fn rabbitmq_config(config: &BrokerClientConfig) -> RabbitMqBrokerConfig {
     let base = RabbitMqBrokerConfig::new(config.endpoint.clone())
-        .with_queues(
-            config.action_topic.clone(),
-            config.control_topic.clone(),
-            config.result_topic.clone(),
+        .with_control_queue(config.control_topic.clone())
+        .with_effect_queues(
+            config.effect_topic.clone(),
+            config.infrastructure_effect_topic.clone(),
+            config.effect_result_topic.clone(),
         )
         .with_client_id(config.client_id.clone());
     let base = match &config.agent_topic {
@@ -199,10 +202,11 @@ mod tests {
         BrokerClientConfig {
             backend: backend.into(),
             endpoint: "127.0.0.1:7070".into(),
-            action_topic: "actions".into(),
             control_topic: "control".into(),
             agent_topic: Some("agent".into()),
-            result_topic: "results".into(),
+            effect_topic: "effects".into(),
+            infrastructure_effect_topic: "effects.infrastructure".into(),
+            effect_result_topic: "effect-results".into(),
             client_id: "test".into(),
             relay_credential: Some("token".into()),
             wake_topic: Some("wake".into()),
@@ -214,10 +218,14 @@ mod tests {
     fn direct_adapter_configs_preserve_all_channel_names() {
         let config = config("kafka");
         let kafka = kafka_config(&config);
-        assert_eq!(kafka.action_topic, "actions");
+        assert_eq!(kafka.effect_topic, "effects");
+        assert_eq!(kafka.infrastructure_effect_topic, "effects.infrastructure");
+        assert_eq!(kafka.effect_result_topic, "effect-results");
         assert_eq!(kafka.agent_topic, "agent");
         assert_eq!(kafka.wake_topic, "wake");
         let rabbit = rabbitmq_config(&config);
+        assert_eq!(rabbit.effect_queue, "effects");
+        assert_eq!(rabbit.effect_result_queue, "effect-results");
         assert_eq!(rabbit.agent_queue_prefix, "agent");
         assert_eq!(rabbit.wake_queue, "wake");
     }
@@ -245,9 +253,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn workflow_profile_rejects_blank_direct_result_channel_before_connecting() {
+    async fn workflow_profile_rejects_blank_direct_effect_channel_before_connecting() {
         let mut config = config("kafka");
-        config.result_topic = " ".into();
+        config.effect_topic = " ".into();
         assert!(matches!(
             build_broker_client(&config, BrokerConsumerProfile::WorkflowRuntime).await,
             Err(BrokerBuildError::Capability { .. })

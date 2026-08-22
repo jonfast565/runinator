@@ -9,7 +9,8 @@ use std::{
 use runinator_api::{AsyncApiClient, StaticLocator};
 use runinator_models::json;
 use runinator_models::value::Value;
-use runinator_models::workflows::{WorkflowNodeRun, WorkflowRun, WorkflowStatus};
+use runinator_models::workflow_vm::{WorkflowEffect, WorkflowEffectOutput, WorkflowEffectStatus};
+use runinator_models::workflows::{WorkflowRun, WorkflowStatus};
 use sqlx::Row;
 use tokio::time::sleep;
 use uuid::Uuid;
@@ -39,23 +40,18 @@ async fn brokered_result_path_smoke() -> E2eResult<()> {
         .await?;
     let workflow_id = workflow.id.ok_or("imported smoke workflow has no id")?;
 
-    let (_run, nodes) = run_workflow_by_id(&api, workflow_id, json!({})).await?;
-    let action = latest_node(&nodes, "write_logs")?;
-    assert_eq!(action.status, WorkflowStatus::Succeeded);
+    let (run, effects) = run_workflow_by_id(&api, workflow_id, json!({})).await?;
+    let action = latest_effect(&api, &effects, "write_logs").await?;
+    assert_eq!(action.status, WorkflowEffectStatus::Succeeded);
     assert_eq!(
         action
-            .output_json
+            .result
             .as_ref()
             .and_then(|value| value.get("success")),
         Some(&Value::Bool(true))
     );
 
-    let chunks = poll_node_chunks(&api, action.id).await?;
-    let log = chunks
-        .iter()
-        .map(|chunk| chunk.content.as_str())
-        .collect::<Vec<_>>()
-        .join("\n");
+    let log = poll_effect_chunks(&api, action.id).await?;
     assert!(
         log.contains("broker-smoke-start"),
         "missing streamed stdout chunk: {log}"
@@ -65,7 +61,7 @@ async fn brokered_result_path_smoke() -> E2eResult<()> {
         "missing streamed stdout chunk: {log}"
     );
 
-    assert_broker_result_events(&harness.sqlite_path, action.id).await?;
+    assert_effect_output_persisted(&harness.sqlite_path, run.id, action.id).await?;
     Ok(())
 }
 
@@ -96,7 +92,7 @@ async fn durable_agent_result_outbox_smoke() -> E2eResult<()> {
         .create_workflow_run(workflow.id.ok_or("workflow has no id")?, json!({}))
         .await?;
 
-    wait_for_node_status(&api, run.id, "write_once", WorkflowStatus::Running).await?;
+    wait_for_effect_status(&api, run.id, "write_once", WorkflowEffectStatus::Running).await?;
     harness.supervisor_process("stop", "broker")?;
     sleep(Duration::from_secs(5)).await;
     assert_eq!(fs::read_to_string(&side_effect)?, "x");
@@ -113,30 +109,33 @@ async fn durable_agent_result_outbox_smoke() -> E2eResult<()> {
     Ok(())
 }
 
-async fn wait_for_node_status(
+/// Wait until the effect compiled from `node_id` reaches `expected`.
+///
+/// The node is found through the run's frozen module source map, which is how a graph node id maps
+/// to execution history now that node runs are gone.
+async fn wait_for_effect_status(
     api: &ApiClient,
     run_id: Uuid,
     node_id: &str,
-    expected: WorkflowStatus,
+    expected: WorkflowEffectStatus,
 ) -> E2eResult<()> {
     for _ in 0..60 {
-        let (_, nodes) = api.fetch_workflow_run(run_id).await?;
-        if nodes
-            .iter()
-            .any(|node| node.node_id == node_id && node.status == expected)
+        let effects = api.fetch_workflow_effects(run_id).await?;
+        if let Ok(effect) = latest_effect(api, &effects, node_id).await
+            && effect.status == expected
         {
             return Ok(());
         }
         sleep(Duration::from_millis(250)).await;
     }
-    Err(format!("node {node_id} did not reach {}", expected.as_str()).into())
+    Err(format!("node {node_id} did not reach {expected:?}").into())
 }
 
 async fn run_workflow_by_id(
     api: &ApiClient,
     workflow_id: Uuid,
     parameters: Value,
-) -> E2eResult<(WorkflowRun, Vec<WorkflowNodeRun>)> {
+) -> E2eResult<(WorkflowRun, Vec<WorkflowEffect>)> {
     let run = api.create_workflow_run(workflow_id, parameters).await?;
     poll_workflow(api, run.id).await
 }
@@ -144,16 +143,17 @@ async fn run_workflow_by_id(
 async fn poll_workflow(
     api: &ApiClient,
     workflow_run_id: Uuid,
-) -> E2eResult<(WorkflowRun, Vec<WorkflowNodeRun>)> {
+) -> E2eResult<(WorkflowRun, Vec<WorkflowEffect>)> {
     for _ in 0..60 {
-        let detail = api.fetch_workflow_run(workflow_run_id).await?;
-        if detail.0.status.is_terminal() {
-            if detail.0.status == WorkflowStatus::Succeeded {
-                return Ok(detail);
+        let run = api.fetch_workflow_run(workflow_run_id).await?;
+        if run.status.is_terminal() {
+            if run.status == WorkflowStatus::Succeeded {
+                let effects = api.fetch_workflow_effects(workflow_run_id).await?;
+                return Ok((run, effects));
             }
             return Err(format!(
                 "workflow run {workflow_run_id} finished with status {}",
-                detail.0.status.as_str()
+                run.status.as_str()
             )
             .into());
         }
@@ -162,60 +162,71 @@ async fn poll_workflow(
     Err(format!("workflow run {workflow_run_id} did not finish in time").into())
 }
 
-fn latest_node<'a>(nodes: &'a [WorkflowNodeRun], node_id: &str) -> E2eResult<&'a WorkflowNodeRun> {
-    nodes
+/// The newest effect the given graph node produced. `node_id` is the server-side source-map
+/// projection the effect list carries.
+async fn latest_effect(
+    _api: &ApiClient,
+    effects: &[WorkflowEffect],
+    node_id: &str,
+) -> E2eResult<WorkflowEffect> {
+    effects
         .iter()
-        .filter(|node| node.node_id == node_id)
-        .max_by_key(|node| node.created_at)
-        .ok_or_else(|| format!("missing node run {node_id}").into())
+        .filter(|effect| effect.node_id.as_deref() == Some(node_id))
+        .max_by_key(|effect| effect.created_at)
+        .cloned()
+        .ok_or_else(|| format!("missing effect for node {node_id}").into())
 }
 
-async fn poll_node_chunks(
-    api: &ApiClient,
-    workflow_node_run_id: Uuid,
-) -> E2eResult<Vec<runinator_models::workflows::WorkflowNodeRunChunk>> {
+async fn poll_effect_chunks(api: &ApiClient, effect_id: Uuid) -> E2eResult<String> {
     for _ in 0..30 {
-        let chunks = api
-            .fetch_workflow_node_run_chunks(workflow_node_run_id, None, 100)
-            .await?;
-        if !chunks.is_empty() {
-            return Ok(chunks);
+        let events = api.fetch_workflow_effect_output(effect_id).await?;
+        let log = events
+            .iter()
+            .filter_map(|event| match &event.output {
+                WorkflowEffectOutput::Chunk { content, .. } => Some(content.as_str()),
+                WorkflowEffectOutput::Artifact { .. } => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !log.is_empty() {
+            return Ok(log);
         }
         sleep(Duration::from_secs(1)).await;
     }
-    Err(format!("workflow node run {workflow_node_run_id} did not receive chunks").into())
+    Err(format!("workflow effect {effect_id} did not receive chunks").into())
 }
 
-async fn assert_broker_result_events(
+/// The streamed output the worker published must be durable, not just observable over HTTP: this
+/// is what proves the effect-result consumer wrote it rather than the api synthesising it.
+async fn assert_effect_output_persisted(
     sqlite_path: &Path,
-    workflow_node_run_id: Uuid,
+    workflow_run_id: Uuid,
+    effect_id: Uuid,
 ) -> E2eResult<()> {
     let url = format!("sqlite://{}", sqlite_path.display());
     let pool = sqlx::SqlitePool::connect(&url).await?;
-    let rows = sqlx::query(
-        "SELECT event_type, COUNT(*) AS count FROM workflow_result_events WHERE workflow_node_run_id = ? GROUP BY event_type",
+    let chunks: i64 = sqlx::query(
+        "SELECT COUNT(*) AS count FROM workflow_effect_output_events WHERE effect_id = ?",
     )
-    .bind(workflow_node_run_id)
-    .fetch_all(&pool)
-    .await?;
-
-    let mut chunk_count = 0_i64;
-    let mut status_count = 0_i64;
-    for row in rows {
-        match row.get::<String, _>("event_type").as_str() {
-            "chunk" => chunk_count = row.get("count"),
-            "status" => status_count = row.get("count"),
-            _ => {}
-        }
-    }
-
+    .bind(effect_id)
+    .fetch_one(&pool)
+    .await?
+    .get("count");
     assert!(
-        chunk_count >= 2,
-        "expected broker result consumer to persist streamed chunks, got {chunk_count}"
+        chunks >= 2,
+        "expected the effect-result consumer to persist streamed chunks, got {chunks}"
     );
+
+    let settled: i64 = sqlx::query(
+        "SELECT COUNT(*) AS count FROM workflow_journal_entries WHERE workflow_run_id = ? AND entry_json LIKE '%effect_settled%'",
+    )
+    .bind(workflow_run_id)
+    .fetch_one(&pool)
+    .await?
+    .get("count");
     assert!(
-        status_count >= 2,
-        "expected broker result consumer to persist running and final statuses, got {status_count}"
+        settled >= 1,
+        "expected the run journal to record an effect settlement, got {settled}"
     );
     Ok(())
 }

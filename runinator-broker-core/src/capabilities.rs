@@ -1,8 +1,8 @@
 use crate::{Broker, BrokerError};
 
-pub fn ensure_named_workflow_result_channel(
+pub fn ensure_named_workflow_effect_channel(
     backend: &str,
-    result_channel: &str,
+    effect_channel: &str,
 ) -> Result<(), BrokerError> {
     let channel_kind = match backend {
         "kafka" => "topic",
@@ -10,25 +10,25 @@ pub fn ensure_named_workflow_result_channel(
         _ => return Ok(()),
     };
 
-    if !result_channel.trim().is_empty() {
+    if !effect_channel.trim().is_empty() {
         return Ok(());
     }
 
-    Err(BrokerError::WorkflowResultsUnsupported(format!(
-        "Broker backend '{backend}' requires a non-empty workflow result {channel_kind} (--broker-result-topic) before brokered worker results can be used"
+    Err(BrokerError::WorkflowEffectsUnsupported(format!(
+        "Broker backend '{backend}' requires a non-empty workflow effect {channel_kind} (--broker-effect-topic) before workflow effects can be dispatched"
     )))
 }
 
-pub fn ensure_workflow_result_channels_supported(
+pub fn ensure_workflow_effect_channels_supported(
     backend: &str,
     broker: &dyn Broker,
 ) -> Result<(), BrokerError> {
-    if broker.supports_workflow_result_channels() {
+    if broker.supports_workflow_effect_channels() {
         return Ok(());
     }
 
-    Err(BrokerError::WorkflowResultsUnsupported(format!(
-        "Broker backend '{backend}' does not support workflow result channels; brokered worker results require result publish, receive, ack, and nack support"
+    Err(BrokerError::WorkflowEffectsUnsupported(format!(
+        "Broker backend '{backend}' does not support workflow effect channels; the workflow VM requires effect publish, receive, ack, and nack support"
     )))
 }
 

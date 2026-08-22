@@ -5,9 +5,7 @@ fn kafka_config_defaults_topics_and_client_id() {
     let config = KafkaBrokerConfig::new("localhost:9092");
 
     assert_eq!(config.bootstrap_servers, "localhost:9092");
-    assert_eq!(config.action_topic, DEFAULT_ACTION_TOPIC);
     assert_eq!(config.control_topic, DEFAULT_CONTROL_TOPIC);
-    assert_eq!(config.result_topic, DEFAULT_RESULT_TOPIC);
     assert_eq!(config.effect_topic, DEFAULT_EFFECT_TOPIC);
     assert_eq!(
         config.infrastructure_effect_topic,
@@ -20,20 +18,15 @@ fn kafka_config_defaults_topics_and_client_id() {
 #[test]
 fn kafka_config_accepts_topic_and_client_overrides() {
     let config = KafkaBrokerConfig::new("localhost:9092")
-        .with_topics("a", "c", "r")
+        .with_control_topic("c")
+        .with_effect_topics("e", "i", "er")
         .with_client_id("test-client");
 
-    assert_eq!(config.action_topic, "a");
     assert_eq!(config.control_topic, "c");
-    assert_eq!(config.result_topic, "r");
+    assert_eq!(config.effect_topic, "e");
+    assert_eq!(config.infrastructure_effect_topic, "i");
+    assert_eq!(config.effect_result_topic, "er");
     assert_eq!(config.client_id, "test-client");
-}
-
-#[test]
-fn kafka_config_detects_missing_result_topic() {
-    let config = KafkaBrokerConfig::new("localhost:9092").with_topics("a", "c", " ");
-
-    assert!(!config.has_workflow_result_topic());
 }
 
 #[test]

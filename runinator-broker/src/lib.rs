@@ -24,11 +24,11 @@ pub use factory::{
 
 // the contract and its backend-independent pieces, re-exported at their historical paths.
 pub use runinator_broker_core::{
-    ensure_named_workflow_result_channel, ensure_workflow_result_channels_supported, in_memory,
+    ensure_named_workflow_effect_channel, ensure_workflow_effect_channels_supported, in_memory,
     instrument, ActionTarget, AgentCommand, AgentDelivery, AgentDirectiveKind,
-    AgentDirectiveResult, AgentDirectiveStatus, Broker, BrokerDelivery, BrokerError, BrokerMessage,
-    ConnectionState, ConsumerProfile, ControlCommand, ControlDelivery, EffectDelivery,
-    EffectExecutor, EffectMessage, EffectResultDelivery, EffectResultMessage, EventDelivery,
-    EventMessage, IngressDelivery, IngressMessage, ResultDelivery, ResultMessage, UiEvent,
-    WakeCommand, WakeDelivery, WakeMessage, WsIngressCommand, STALE_CONTROL_TTL_SECONDS,
+    AgentDirectiveResult, AgentDirectiveStatus, Broker, BrokerError, ConnectionState,
+    ConsumerProfile, ControlCommand, ControlDelivery, EffectDelivery, EffectExecutor,
+    EffectMessage, EffectResult, EffectResultDelivery, EffectResultKind, EffectResultMessage,
+    EventDelivery, EventMessage, IngressDelivery, IngressMessage, UiEvent, WakeCommand,
+    WakeDelivery, WakeMessage, WsIngressCommand, STALE_CONTROL_TTL_SECONDS,
 };

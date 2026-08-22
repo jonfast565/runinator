@@ -1,15 +1,14 @@
 use crate::{
     http::types::{
         AckRequest, PublishAgentRequest, PublishControlRequest, PublishEffectRequest,
-        PublishEffectResultRequest, PublishEventRequest, PublishIngressRequest, PublishRequest,
-        PublishWakeRequest, ReceiveAgentResponse, ReceiveControlResponse, ReceiveEffectResponse,
+        PublishEffectResultRequest, PublishEventRequest, PublishIngressRequest, PublishWakeRequest,
+        ReceiveAgentResponse, ReceiveControlResponse, ReceiveEffectResponse,
         ReceiveEffectResultResponse, ReceiveEventResponse, ReceiveIngressResponse, ReceiveRequest,
-        ReceiveResponse, ReceiveResultResponse, ReceiveWakeResponse,
+        ReceiveWakeResponse,
     },
-    AgentCommand, AgentDelivery, Broker, BrokerDelivery, BrokerError, BrokerMessage,
-    ConsumerProfile, ControlCommand, ControlDelivery, EffectDelivery, EffectMessage,
-    EffectResultDelivery, EffectResultMessage, EventDelivery, EventMessage, IngressDelivery,
-    IngressMessage, ResultDelivery, ResultMessage, WakeDelivery, WakeMessage,
+    AgentCommand, AgentDelivery, Broker, BrokerError, ConsumerProfile, ControlCommand,
+    ControlDelivery, EffectDelivery, EffectMessage, EffectResultDelivery, EffectResultMessage,
+    EventDelivery, EventMessage, IngressDelivery, IngressMessage, WakeDelivery, WakeMessage,
 };
 use async_trait::async_trait;
 use reqwest::{Client, StatusCode, Url};
@@ -53,33 +52,6 @@ impl HttpBroker {
             StatusCode::OK => Ok(()),
             status => Err(BrokerError::Internal(format!(
                 "unexpected {path} status: {status}"
-            ))),
-        }
-    }
-
-    async fn receive_request(
-        &self,
-        request: ReceiveRequest,
-    ) -> Result<BrokerDelivery, BrokerError> {
-        let url = self.endpoint("receive")?;
-        let response = self
-            .client
-            .post(url)
-            .json(&request)
-            .send()
-            .await
-            .map_err(|err| BrokerError::Internal(err.to_string()))?;
-
-        match response.status() {
-            StatusCode::OK => {
-                let payload = response
-                    .json::<ReceiveResponse>()
-                    .await
-                    .map_err(|err| BrokerError::Internal(err.to_string()))?;
-                Ok(payload.delivery)
-            }
-            status => Err(BrokerError::Internal(format!(
-                "unexpected receive status: {status}"
             ))),
         }
     }
@@ -142,88 +114,8 @@ impl Broker for HttpBroker {
         true
     }
 
-    fn supports_workflow_result_channels(&self) -> bool {
-        true
-    }
-
     fn supports_agent_channel(&self) -> bool {
         true
-    }
-
-    async fn publish(&self, message: BrokerMessage) -> Result<(), BrokerError> {
-        let url = self.endpoint("publish")?;
-        let dedupe_key = message.dedupe_key_or_hash();
-        let response = self
-            .client
-            .post(url)
-            .json(&PublishRequest { message })
-            .send()
-            .await
-            .map_err(|err| BrokerError::Internal(err.to_string()))?;
-
-        match response.status() {
-            StatusCode::OK | StatusCode::CREATED => Ok(()),
-            StatusCode::CONFLICT => Err(BrokerError::Duplicate(dedupe_key)),
-            status => Err(BrokerError::Internal(format!(
-                "unexpected publish status: {status}"
-            ))),
-        }
-    }
-
-    async fn receive(&self, consumer: &str) -> Result<BrokerDelivery, BrokerError> {
-        self.receive_request(ReceiveRequest {
-            consumer: consumer.to_string(),
-            profile: None,
-        })
-        .await
-    }
-
-    async fn receive_for(&self, profile: &ConsumerProfile) -> Result<BrokerDelivery, BrokerError> {
-        self.receive_request(ReceiveRequest {
-            consumer: profile.id.clone(),
-            profile: Some(profile.clone()),
-        })
-        .await
-    }
-
-    async fn ack(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
-        let url = self.endpoint("ack")?;
-        let response = self
-            .client
-            .post(url)
-            .json(&AckRequest {
-                consumer: consumer.to_string(),
-                delivery_id,
-            })
-            .send()
-            .await
-            .map_err(|err| BrokerError::Internal(err.to_string()))?;
-        match response.status() {
-            StatusCode::OK => Ok(()),
-            status => Err(BrokerError::Internal(format!(
-                "unexpected ack status: {status}"
-            ))),
-        }
-    }
-
-    async fn nack(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
-        let url = self.endpoint("nack")?;
-        let response = self
-            .client
-            .post(url)
-            .json(&AckRequest {
-                consumer: consumer.to_string(),
-                delivery_id,
-            })
-            .send()
-            .await
-            .map_err(|err| BrokerError::Internal(err.to_string()))?;
-        match response.status() {
-            StatusCode::OK => Ok(()),
-            status => Err(BrokerError::Internal(format!(
-                "unexpected nack status: {status}"
-            ))),
-        }
     }
 
     async fn publish_control(&self, command: ControlCommand) -> Result<(), BrokerError> {
@@ -350,61 +242,6 @@ impl Broker for HttpBroker {
 
     async fn nack_agent(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
         self.post_ack("agent/nack", consumer, delivery_id).await
-    }
-
-    async fn publish_result(&self, message: ResultMessage) -> Result<(), BrokerError> {
-        let url = self.endpoint("results/publish")?;
-        let dedupe_key = message.dedupe_key_or_hash();
-        let response = self
-            .client
-            .post(url)
-            .json(&crate::http::types::PublishResultRequest { message })
-            .send()
-            .await
-            .map_err(|err| BrokerError::Internal(err.to_string()))?;
-
-        match response.status() {
-            StatusCode::OK | StatusCode::CREATED => Ok(()),
-            StatusCode::CONFLICT => Err(BrokerError::Duplicate(dedupe_key)),
-            status => Err(BrokerError::Internal(format!(
-                "unexpected result publish status: {status}"
-            ))),
-        }
-    }
-
-    async fn receive_result(&self, consumer: &str) -> Result<ResultDelivery, BrokerError> {
-        let url = self.endpoint("results/receive")?;
-        let response = self
-            .client
-            .post(url)
-            .json(&ReceiveRequest {
-                consumer: consumer.to_string(),
-                profile: None,
-            })
-            .send()
-            .await
-            .map_err(|err| BrokerError::Internal(err.to_string()))?;
-
-        match response.status() {
-            StatusCode::OK => {
-                let payload = response
-                    .json::<ReceiveResultResponse>()
-                    .await
-                    .map_err(|err| BrokerError::Internal(err.to_string()))?;
-                Ok(payload.delivery)
-            }
-            status => Err(BrokerError::Internal(format!(
-                "unexpected result receive status: {status}"
-            ))),
-        }
-    }
-
-    async fn ack_result(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
-        self.post_ack("results/ack", consumer, delivery_id).await
-    }
-
-    async fn nack_result(&self, consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
-        self.post_ack("results/nack", consumer, delivery_id).await
     }
 
     async fn publish_effect(&self, message: EffectMessage) -> Result<(), BrokerError> {

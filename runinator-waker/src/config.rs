@@ -3,9 +3,9 @@ use uuid::Uuid;
 
 use runinator_models::errors::SendableError;
 
-/// the waker is a broker-only timer/relay: it consumes wakes from the web service, sleeps until
-/// each is due, then publishes a drive on the ingress channel. it never talks to the web service
-/// over http and never shares a channel with the worker.
+/// the waker is a broker-only timer/relay: it consumes wakes from the engine, sleeps until each is
+/// due, then publishes the wake's carried effect settle on the ingress channel. it never talks to
+/// the web service over http and never shares a channel with the worker.
 #[derive(Parser, Debug, Clone)]
 pub struct Config {
     #[arg(long, default_value = "")]
@@ -31,14 +31,17 @@ pub struct Config {
     #[arg(long, default_value = "127.0.0.1:7070")]
     pub broker_endpoint: String,
 
-    #[arg(long, default_value = "runinator.actions")]
-    pub broker_action_topic: String,
+    #[arg(long, default_value = "runinator.effects")]
+    pub broker_effect_topic: String,
+
+    #[arg(long, default_value = "runinator.effects.infrastructure")]
+    pub broker_infrastructure_effect_topic: String,
 
     #[arg(long, default_value = "runinator.control")]
     pub broker_control_topic: String,
 
-    #[arg(long, default_value = "runinator.results")]
-    pub broker_result_topic: String,
+    #[arg(long, default_value = "runinator.effect-results")]
+    pub broker_effect_result_topic: String,
 
     #[arg(long, default_value = "runinator.wake")]
     pub broker_wake_topic: String,

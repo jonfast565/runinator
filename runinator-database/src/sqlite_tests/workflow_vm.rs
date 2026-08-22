@@ -254,6 +254,8 @@ async fn workflow_vm_effect_suspend_is_atomic_and_deduplicated() {
         node_id: None,
         request: request.clone(),
         status: WorkflowEffectStatus::Requested,
+        current_executor_replica_id: None,
+        last_executor_replica_id: None,
         result: None,
         message: None,
         created_at: now,

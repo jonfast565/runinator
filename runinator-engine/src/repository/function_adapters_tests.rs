@@ -3,7 +3,7 @@
 //!
 //! generating it by compiling REXRAP rather than assembling graph json is the reason these are cheap —
 //! if the source is wrong the compiler says so here, rather than a malformed graph reaching the
-//! reducer at invocation time.
+//! VM at invocation time.
 
 use super::*;
 

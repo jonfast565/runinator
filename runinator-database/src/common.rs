@@ -1,6 +1,5 @@
 use chrono::{DateTime, Utc};
 use croner::Cron;
-use runinator_comm::{WorkflowResultEvent, WorkflowResultEventKind};
 use runinator_models::errors::SendableError;
 use runinator_models::pipelines::PipelineTrigger;
 use runinator_models::value::Value;
@@ -36,14 +35,6 @@ pub(crate) fn json_metadata(value: &Value) -> String {
         .cloned()
         .unwrap_or_else(|| Value::Object(Default::default()))
         .to_string()
-}
-
-pub(crate) fn workflow_result_event_type(event: &WorkflowResultEvent) -> &'static str {
-    match &event.kind {
-        WorkflowResultEventKind::Status { .. } => "status",
-        WorkflowResultEventKind::Chunk { .. } => "chunk",
-        WorkflowResultEventKind::Artifact { .. } => "artifact",
-    }
 }
 
 pub(crate) fn next_execution_for_cron(

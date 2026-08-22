@@ -77,7 +77,7 @@ pub async fn validate_workflow<T: DatabaseImpl>(
     }
 }
 
-/// dry-run a workflow with the reducer's evaluators against live config, publishing no actions.
+/// dry-run a workflow with the VM's evaluators against live config, publishing no actions.
 /// A saved workflow requires `Run`; an unsaved draft only needs an authenticated caller. When
 /// `replay_run` is set, that run's recorded outputs drive the walk, so it is gated on the run too.
 pub async fn simulate_workflow<T: DatabaseImpl>(

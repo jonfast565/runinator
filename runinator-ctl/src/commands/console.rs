@@ -749,10 +749,12 @@ async fn follow_workflow(client: &Client, run_id: Uuid) -> Result<()> {
                 return Ok(());
             }
             _ = tokio::time::sleep(Duration::from_millis(500)) => {
-                let (run, nodes) = client.fetch_workflow_run(run_id).await?;
+                let run = client.fetch_workflow_run(run_id).await?;
                 if run.status.is_terminal() {
                     println!("[{}] workflow run {run_id}", run.status.as_str());
-                    if let Some(result) = nodes.iter().filter_map(|node| node.output_json.as_ref()).next_back() {
+                    // the run's last durable effect result is what a node output used to be.
+                    let effects = client.fetch_workflow_effects(run_id).await.unwrap_or_default();
+                    if let Some(result) = effects.iter().filter_map(|effect| effect.result.as_ref()).next_back() {
                         println!("{}", serde_json::to_string_pretty(result)?);
                     }
                     return Ok(());

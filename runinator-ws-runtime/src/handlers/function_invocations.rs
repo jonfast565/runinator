@@ -10,7 +10,7 @@
 //! gets 202 and a run id; otherwise the handler waits a bounded moment for a terminal status and
 //! returns the output inline, falling back to 202 when the run is still going. it is a short poll
 //! rather than a long-poll: nothing server-side blocks on a run today, and inventing that here would
-//! put a held connection in front of the reducer.
+//! put a held connection in front of the VM.
 
 use std::sync::Arc;
 use std::time::Duration;

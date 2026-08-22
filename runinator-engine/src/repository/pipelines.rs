@@ -460,7 +460,7 @@ pub async fn fetch_pipeline_run<T: DatabaseImpl>(
 }
 
 /// Apply pipeline graph consequences only after the VM has durably settled a member run. Keeping
-/// this dispatch in the engine prevents the pure VM host from depending on the legacy reducer
+/// this dispatch in the engine prevents the pure VM host from depending on pipeline
 /// persistence surface.
 pub async fn advance_pipeline_from_vm_terminal<T: DatabaseImpl>(
     db: &T,

@@ -145,7 +145,7 @@ pub async fn fetch_replicas<T: DatabaseImpl>(
         replicas.retain(|replica| replica.status == status);
     }
     let running_tasks = db
-        .count_running_node_runs_by_executor()
+        .count_running_effects_by_executor()
         .await?
         .into_iter()
         .collect::<std::collections::HashMap<Uuid, i64>>();

@@ -10,7 +10,8 @@ use runinator_models::{
     value::Value,
     workflow_vm::{
         WORKFLOW_EFFECT_PROTOCOL_VERSION, WorkflowContinuation, WorkflowContinuationStatus,
-        WorkflowEffect, WorkflowEffectStatus, WorkflowJournalEntry,
+        WorkflowEffect, WorkflowEffectStatus, WorkflowFailure, WorkflowFailureKind,
+        WorkflowJournalEntry,
     },
     workflows::WorkflowStatus,
 };
@@ -30,6 +31,8 @@ pub enum WorkflowVmDriveOutcome {
     Joined,
     Completed { settled_run_id: Option<Uuid> },
     Failed { settled_run_id: Option<Uuid> },
+    Interrupted,
+    InterruptResolved { settled_run_id: Option<Uuid> },
 }
 
 /// Drives continuations leased by a scheduler through their snapshotted workflow modules.
@@ -80,23 +83,33 @@ impl<'a, S: WorkflowVmStore> WorkflowVmHost<'a, S> {
                 .fetch_workflow_effect(effect_id)
                 .await?
                 .ok_or_else(|| WORKFLOW_VM_EFFECT_MISSING.error(effect_id))?;
+            // the classification, not only the message: the graph routes `on_timeout` and
+            // `on_reject` apart from `on_failure`, and only the effect's terminal status says
+            // which of the three this is.
             let result = match effect.status {
                 WorkflowEffectStatus::Succeeded => Ok(effect.result.unwrap_or(Value::Null)),
-                WorkflowEffectStatus::Failed => {
-                    Err(effect.message.unwrap_or_else(|| "effect failed".into()))
-                }
-                WorkflowEffectStatus::TimedOut => {
-                    Err(effect.message.unwrap_or_else(|| "effect timed out".into()))
-                }
-                WorkflowEffectStatus::Canceled => {
-                    Err(effect.message.unwrap_or_else(|| "effect canceled".into()))
-                }
+                WorkflowEffectStatus::Failed => Err(WorkflowFailure::new(
+                    WorkflowFailureKind::Failed,
+                    effect.message.unwrap_or_else(|| "effect failed".into()),
+                )),
+                WorkflowEffectStatus::Rejected => Err(WorkflowFailure::new(
+                    WorkflowFailureKind::Rejected,
+                    effect.message.unwrap_or_else(|| "effect rejected".into()),
+                )),
+                WorkflowEffectStatus::TimedOut => Err(WorkflowFailure::new(
+                    WorkflowFailureKind::TimedOut,
+                    effect.message.unwrap_or_else(|| "effect timed out".into()),
+                )),
+                WorkflowEffectStatus::Canceled => Err(WorkflowFailure::new(
+                    WorkflowFailureKind::Canceled,
+                    effect.message.unwrap_or_else(|| "effect canceled".into()),
+                )),
                 WorkflowEffectStatus::Requested | WorkflowEffectStatus::Running => {
                     return Err(WORKFLOW_VM_EFFECT_MISSING
                         .error(format!("effect {effect_id} was claimed before settlement")));
                 }
             };
-            resume_workflow_vm(&module, continuation, result)
+            resume_workflow_vm(&module, continuation, Some(&effect.request), result)
         } else {
             step_workflow_vm(&module, continuation)
         };
@@ -139,6 +152,8 @@ impl<'a, S: WorkflowVmStore> WorkflowVmHost<'a, S> {
                     node_id: None,
                     request: request.clone(),
                     status: WorkflowEffectStatus::Requested,
+                    current_executor_replica_id: None,
+                    last_executor_replica_id: None,
                     result: None,
                     message: None,
                     created_at: now,
@@ -219,6 +234,43 @@ impl<'a, S: WorkflowVmStore> WorkflowVmHost<'a, S> {
                 let settled_run_id = self.settle_run_if_terminal(run_id).await?.then_some(run_id);
                 Ok(WorkflowVmDriveOutcome::Failed { settled_run_id })
             }
+            WorkflowVmStep::Interrupted {
+                suspended,
+                handler,
+                source,
+            } => {
+                let journal = WorkflowJournalEntry::Interrupted {
+                    continuation_id: suspended.id,
+                    handler_continuation_id: handler.id,
+                    source,
+                };
+                self.store
+                    .raise_workflow_interrupt(suspended, handler, journal)
+                    .await?;
+                Ok(WorkflowVmDriveOutcome::Interrupted)
+            }
+            WorkflowVmStep::InterruptResolved {
+                handler,
+                interrupted_continuation_id,
+                outcome,
+            } => {
+                let run_id = handler.workflow_run_id;
+                let journal = WorkflowJournalEntry::InterruptResolved {
+                    continuation_id: interrupted_continuation_id,
+                    handler_continuation_id: handler.id,
+                    outcome: outcome.clone(),
+                };
+                self.store
+                    .settle_workflow_interrupt(
+                        handler,
+                        interrupted_continuation_id,
+                        outcome,
+                        journal,
+                    )
+                    .await?;
+                let settled_run_id = self.settle_run_if_terminal(run_id).await?.then_some(run_id);
+                Ok(WorkflowVmDriveOutcome::InterruptResolved { settled_run_id })
+            }
         }
     }
 
@@ -230,7 +282,13 @@ impl<'a, S: WorkflowVmStore> WorkflowVmHost<'a, S> {
         if continuations.is_empty() || continuations.iter().any(|c| !c.status.is_terminal()) {
             return Ok(false);
         }
-        let (status, message) = if continuations
+        // a handler is excluded from the vote: a region that broke on its own must not turn into a
+        // failed run, and one that finished cleanly must not turn a failing run into a passing one.
+        let deciding = continuations
+            .iter()
+            .filter(|c| !c.is_interrupt_handler())
+            .collect::<Vec<_>>();
+        let (status, message) = if deciding
             .iter()
             .any(|c| c.status == WorkflowContinuationStatus::Failed)
         {
@@ -245,7 +303,7 @@ impl<'a, S: WorkflowVmStore> WorkflowVmHost<'a, S> {
                 })
                 .unwrap_or_else(|| "VM workflow failed".into());
             (WorkflowStatus::Failed, Some(failure))
-        } else if continuations
+        } else if deciding
             .iter()
             .any(|c| c.status == WorkflowContinuationStatus::Canceled)
         {

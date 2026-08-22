@@ -1,8 +1,7 @@
 use crate::{
-    AgentCommand, AgentDelivery, Broker, BrokerDelivery, BrokerError, BrokerMessage,
-    ConsumerProfile, ControlCommand, ControlDelivery, EffectDelivery, EffectMessage,
-    EffectResultDelivery, EffectResultMessage, EventDelivery, EventMessage, IngressDelivery,
-    IngressMessage, ResultDelivery, ResultMessage, WakeDelivery, WakeMessage,
+    AgentCommand, AgentDelivery, Broker, BrokerError, ConsumerProfile, ControlCommand,
+    ControlDelivery, EffectDelivery, EffectMessage, EffectResultDelivery, EffectResultMessage,
+    EventDelivery, EventMessage, IngressDelivery, IngressMessage, WakeDelivery, WakeMessage,
 };
 use async_trait::async_trait;
 use parking_lot::Mutex;
@@ -16,16 +15,10 @@ const EVENT_CHANNEL_CAPACITY: usize = 1024;
 
 #[derive(Default)]
 struct BrokerState {
-    queue: VecDeque<BrokerDelivery>,
-    inflight: HashMap<Uuid, Leased<BrokerDelivery>>,
-    dedupe: HashSet<String>,
     control_queue: VecDeque<ControlDelivery>,
     control_inflight: HashMap<Uuid, Leased<ControlDelivery>>,
     agent_queue: VecDeque<AgentDelivery>,
     agent_inflight: HashMap<Uuid, Leased<AgentDelivery>>,
-    result_queue: VecDeque<ResultDelivery>,
-    result_inflight: HashMap<Uuid, Leased<ResultDelivery>>,
-    result_dedupe: HashSet<String>,
     effect_queue: VecDeque<EffectDelivery>,
     effect_inflight: HashMap<Uuid, Leased<EffectDelivery>>,
     effect_dedupe: HashSet<String>,
@@ -50,10 +43,8 @@ type EventReceiver = Arc<AsyncMutex<broadcast::Receiver<EventDelivery>>>;
 #[derive(Clone)]
 pub struct InMemoryBroker {
     state: Arc<Mutex<BrokerState>>,
-    notify: Arc<Notify>,
     control_notify: Arc<Notify>,
     agent_notify: Arc<Notify>,
-    result_notify: Arc<Notify>,
     effect_notify: Arc<Notify>,
     effect_result_notify: Arc<Notify>,
     wake_notify: Arc<Notify>,
@@ -84,10 +75,8 @@ impl Default for InMemoryBroker {
         let (event_tx, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
         Self {
             state: Arc::new(Mutex::new(BrokerState::default())),
-            notify: Arc::new(Notify::new()),
             control_notify: Arc::new(Notify::new()),
             agent_notify: Arc::new(Notify::new()),
-            result_notify: Arc::new(Notify::new()),
             effect_notify: Arc::new(Notify::new()),
             effect_result_notify: Arc::new(Notify::new()),
             wake_notify: Arc::new(Notify::new()),
@@ -199,99 +188,8 @@ impl Broker for InMemoryBroker {
         true
     }
 
-    fn supports_workflow_result_channels(&self) -> bool {
-        true
-    }
-
     fn supports_agent_channel(&self) -> bool {
         true
-    }
-
-    async fn publish(&self, message: BrokerMessage) -> Result<(), BrokerError> {
-        let mut guard = self.state.lock();
-        let dedupe = message.dedupe_key_or_hash();
-        if !guard.dedupe.insert(dedupe.clone()) {
-            return Err(BrokerError::Duplicate(dedupe));
-        }
-
-        let delivery: BrokerDelivery = message.into();
-        guard.queue.push_back(delivery);
-        drop(guard);
-        // deliveries are targeted, so wake every waiter: notify_one could wake a consumer whose
-        // profile does not match, leaving the matching consumer asleep for a full lease period.
-        self.notify.notify_waiters();
-        Ok(())
-    }
-
-    async fn receive(&self, consumer: &str) -> Result<BrokerDelivery, BrokerError> {
-        // a plain consumer is a general-pool consumer; it must not pick up replica/label-targeted
-        // deliveries intended for a specific worker.
-        self.receive_for(&ConsumerProfile::shared(consumer)).await
-    }
-
-    async fn receive_for(&self, profile: &ConsumerProfile) -> Result<BrokerDelivery, BrokerError> {
-        loop {
-            // register for wakeups before scanning: publishes use notify_waiters (no stored
-            // permit), so a publish landing between the scan and the wait would otherwise be lost
-            // until the sleep fallback fires.
-            let notified = self.notify.notified();
-            tokio::pin!(notified);
-            notified.as_mut().enable();
-            if let Some(delivery) = {
-                let mut guard = self.state.lock();
-                guard.reclaim_expired_actions(Instant::now());
-                // scan for the first delivery whose target matches this consumer. a non-matching
-                // head must not block matching deliveries queued behind it.
-                let index = guard
-                    .queue
-                    .iter()
-                    .position(|delivery| delivery.command.target.matches(profile));
-                match index.and_then(|index| guard.queue.remove(index)) {
-                    Some(delivery) => {
-                        guard.inflight.insert(
-                            delivery.delivery_id,
-                            Leased {
-                                delivery: delivery.clone(),
-                                leased_until: Instant::now() + self.lease_duration,
-                            },
-                        );
-                        Some(delivery)
-                    }
-                    None => None,
-                }
-            } {
-                return Ok(delivery);
-            }
-
-            tokio::select! {
-                _ = &mut notified => {}
-                _ = tokio::time::sleep(self.lease_duration) => {}
-            }
-        }
-    }
-
-    async fn ack(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
-        let mut guard = self.state.lock();
-        if let Some(leased) = guard.inflight.remove(&delivery_id) {
-            guard.dedupe.remove(&leased.delivery.dedupe_key);
-            Ok(())
-        } else {
-            Err(BrokerError::UnknownDelivery(delivery_id))
-        }
-    }
-
-    async fn nack(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
-        let mut guard = self.state.lock();
-        if let Some(leased) = guard.inflight.remove(&delivery_id) {
-            guard.queue.push_front(redeliver_action(leased.delivery));
-            drop(guard);
-            // wake sleeping consumers so a requeued delivery is not stranded until the sleep
-            // fallback when the nacking consumer disconnects right after returning it.
-            self.notify.notify_waiters();
-            Ok(())
-        } else {
-            Err(BrokerError::UnknownDelivery(delivery_id))
-        }
     }
 
     async fn publish_control(&self, command: ControlCommand) -> Result<(), BrokerError> {
@@ -512,72 +410,6 @@ impl Broker for InMemoryBroker {
         }
     }
 
-    async fn publish_result(&self, message: ResultMessage) -> Result<(), BrokerError> {
-        let mut guard = self.state.lock();
-        let dedupe = message.dedupe_key_or_hash();
-        if !guard.result_dedupe.insert(dedupe.clone()) {
-            return Err(BrokerError::Duplicate(dedupe));
-        }
-
-        let delivery: ResultDelivery = message.into();
-        guard.result_queue.push_back(delivery);
-        drop(guard);
-        self.result_notify.notify_one();
-        Ok(())
-    }
-
-    async fn receive_result(&self, _consumer: &str) -> Result<ResultDelivery, BrokerError> {
-        loop {
-            if let Some(delivery) = {
-                let mut guard = self.state.lock();
-                guard.reclaim_expired_results(Instant::now());
-                if let Some(delivery) = guard.result_queue.pop_front() {
-                    guard.result_inflight.insert(
-                        delivery.delivery_id,
-                        Leased {
-                            delivery: delivery.clone(),
-                            leased_until: Instant::now() + self.lease_duration,
-                        },
-                    );
-                    Some(delivery)
-                } else {
-                    None
-                }
-            } {
-                return Ok(delivery);
-            }
-
-            tokio::select! {
-                _ = self.result_notify.notified() => {}
-                _ = tokio::time::sleep(self.lease_duration) => {}
-            }
-        }
-    }
-
-    async fn ack_result(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
-        let mut guard = self.state.lock();
-        if let Some(leased) = guard.result_inflight.remove(&delivery_id) {
-            guard.result_dedupe.remove(&leased.delivery.dedupe_key);
-            Ok(())
-        } else {
-            Err(BrokerError::UnknownDelivery(delivery_id))
-        }
-    }
-
-    async fn nack_result(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
-        let mut guard = self.state.lock();
-        if let Some(leased) = guard.result_inflight.remove(&delivery_id) {
-            guard
-                .result_queue
-                .push_front(redeliver_result(leased.delivery));
-            drop(guard);
-            self.result_notify.notify_one();
-            Ok(())
-        } else {
-            Err(BrokerError::UnknownDelivery(delivery_id))
-        }
-    }
-
     async fn publish_wake(&self, message: WakeMessage) -> Result<(), BrokerError> {
         let mut guard = self.state.lock();
         let dedupe = message.dedupe_key_or_hash();
@@ -731,15 +563,6 @@ impl Broker for InMemoryBroker {
 }
 
 impl BrokerState {
-    fn reclaim_expired_actions(&mut self, now: Instant) {
-        let expired = expired_ids(&self.inflight, now);
-        for id in expired {
-            if let Some(leased) = self.inflight.remove(&id) {
-                self.queue.push_front(redeliver_action(leased.delivery));
-            }
-        }
-    }
-
     fn reclaim_expired_control(&mut self, now: Instant) {
         let expired = expired_ids(&self.control_inflight, now);
         for id in expired {
@@ -768,16 +591,6 @@ impl BrokerState {
         self.control_queue.retain(|delivery| {
             (now - delivery.enqueued_at).num_seconds() < crate::STALE_CONTROL_TTL_SECONDS
         });
-    }
-
-    fn reclaim_expired_results(&mut self, now: Instant) {
-        let expired = expired_ids(&self.result_inflight, now);
-        for id in expired {
-            if let Some(leased) = self.result_inflight.remove(&id) {
-                self.result_queue
-                    .push_front(redeliver_result(leased.delivery));
-            }
-        }
     }
 
     fn reclaim_expired_effects(&mut self, now: Instant) {
@@ -825,13 +638,6 @@ fn expired_ids<T>(inflight: &HashMap<Uuid, Leased<T>>, now: Instant) -> Vec<Uuid
         .collect()
 }
 
-fn redeliver_action(delivery: BrokerDelivery) -> BrokerDelivery {
-    BrokerDelivery {
-        delivery_id: Uuid::new_v4(),
-        ..delivery
-    }
-}
-
 fn redeliver_control(delivery: ControlDelivery) -> ControlDelivery {
     ControlDelivery {
         delivery_id: Uuid::new_v4(),
@@ -841,13 +647,6 @@ fn redeliver_control(delivery: ControlDelivery) -> ControlDelivery {
 
 fn redeliver_agent(delivery: AgentDelivery) -> AgentDelivery {
     AgentDelivery {
-        delivery_id: Uuid::new_v4(),
-        ..delivery
-    }
-}
-
-fn redeliver_result(delivery: ResultDelivery) -> ResultDelivery {
-    ResultDelivery {
         delivery_id: Uuid::new_v4(),
         ..delivery
     }

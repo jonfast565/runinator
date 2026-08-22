@@ -66,10 +66,11 @@ pub struct BrokerSelection {
     pub direct_backend: String,
     /// backend endpoint, only used in `Direct`.
     pub direct_endpoint: String,
-    pub action_topic: String,
     pub control_topic: String,
     pub agent_topic: String,
-    pub result_topic: String,
+    pub effect_topic: String,
+    pub infrastructure_effect_topic: String,
+    pub effect_result_topic: String,
     pub client_id: String,
     pub api_key: Option<String>,
 }
@@ -99,10 +100,11 @@ impl BrokerSelection {
             BrokerConfig {
                 broker_backend: backend,
                 broker_endpoint: endpoint,
-                broker_action_topic: self.action_topic,
+                broker_effect_topic: self.effect_topic,
+                broker_infrastructure_effect_topic: self.infrastructure_effect_topic,
                 broker_control_topic: self.control_topic,
                 broker_agent_topic: self.agent_topic,
-                broker_result_topic: self.result_topic,
+                broker_effect_result_topic: self.effect_result_topic,
                 broker_client_id: self.client_id,
                 api_key: self.api_key,
             },

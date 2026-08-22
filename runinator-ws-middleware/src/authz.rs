@@ -564,21 +564,6 @@ impl<'a, T: DatabaseImpl> AuthzChecker<'a, T> {
         }
     }
 
-    pub async fn require_node_run_workflow(
-        &self,
-        node_run_id: Uuid,
-        needed: Permission,
-    ) -> Result<(), Reply> {
-        if self.ctx.is_platform_admin() {
-            return Ok(());
-        }
-        let workflow_run_id = match self.db.fetch_workflow_node_run(node_run_id).await {
-            Ok(Some(node_run)) => node_run.workflow_run_id,
-            _ => return Err(not_found()),
-        };
-        self.require_run_workflow(workflow_run_id, needed).await
-    }
-
     pub async fn require_gate_workflow(
         &self,
         gate_id: Uuid,

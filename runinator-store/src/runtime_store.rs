@@ -8,39 +8,30 @@
 //! satisfies it and nothing needs re-plumbing.
 
 use chrono::{DateTime, Utc};
-use runinator_comm::{ActionCommand, ActionDispatchRecord};
 use runinator_models::value::Value;
 use runinator_models::workflow_state::WorkflowExecutionState;
 use runinator_models::{
     billing::OrgResourceGroup,
-    cursor::RunCursor,
     errors::SendableError,
-    orchestration::{NewOrchestrationEvent, ReadyNodeRecord},
     orgs::Organization,
     pipelines::{
         Pipeline, PipelineMemberAttempt, PipelineMemberAttemptStatus, PipelineRun, PipelineTrigger,
     },
     replicas::{ReplicaKind, ReplicaRecord, ReplicaStatus, WorkflowRunProvenance},
     settings::{SettingKind, SettingRecord},
-    workflows::{
-        NewWorkflowRunArtifact, WorkflowDefinition, WorkflowNodeRun, WorkflowNodeRunArtifact,
-        WorkflowRun, WorkflowRunArtifact, WorkflowStatus, WorkflowTrigger,
-    },
+    workflows::{WorkflowDefinition, WorkflowRun, WorkflowStatus, WorkflowTrigger},
 };
 use std::future::Future;
 use uuid::Uuid;
 
 use crate::roles::NewWorkflowVmRun;
-use crate::workflow_mutex::{WorkflowMutexClaim, WorkflowMutexClaimResult, WorkflowMutexWake};
 
-/// the persistence operations used by the graph runtime's store-backed host.
+/// the cross-domain persistence the engine's run, trigger, and pipeline orchestration reaches for.
 ///
-/// [`InvocationStore`] is a supertrait rather than a separate bound because the runtime *drives*
-/// invocations: stepping one, suspending it on a call, and settling that call are node-handler work,
-/// so a handler that could not reach them would have to hand the run back to a caller mid-step.
-pub trait RuntimeStore:
-    crate::roles::InvocationStore + crate::roles::TaskRunStore + Send + Sync + 'static
-{
+/// it deliberately spans several domains: keeping one use-case trait small is what makes the
+/// in-memory fake practical. an operation that belongs to exactly one domain goes on that domain's
+/// role instead.
+pub trait RuntimeStore: Send + Sync + 'static {
     /// Transitional pipeline seam: atomically bootstrap a compiled member workflow. Pipeline
     /// orchestration supplies the already-compiled module so persistence never depends on the
     /// graph compiler. Removed together with `RuntimeStore` at the legacy-runtime cutover.
@@ -192,101 +183,6 @@ pub trait RuntimeStore:
         now_unix: i64,
     ) -> impl Future<Output = Result<Option<i64>, SendableError>> + Send;
 
-    /// Join a named mutex's FIFO queue and atomically acquire it when this node run is first.
-    fn claim_workflow_mutex(
-        &self,
-        claim: WorkflowMutexClaim,
-        now_unix: i64,
-    ) -> impl Future<Output = Result<WorkflowMutexClaimResult, SendableError>> + Send;
-
-    /// Release a named mutex only when the supplied cursor owns it, returning the oldest waiter.
-    fn release_workflow_mutex(
-        &self,
-        name: String,
-        workflow_run_id: Uuid,
-        cursor_id: Uuid,
-        now_unix: i64,
-    ) -> impl Future<Output = Result<Option<WorkflowMutexWake>, SendableError>> + Send;
-
-    /// Release every mutex held by a terminal/canceled run and return each oldest waiter.
-    fn release_workflow_mutexes(
-        &self,
-        workflow_run_id: Uuid,
-        now_unix: i64,
-    ) -> impl Future<Output = Result<Vec<WorkflowMutexWake>, SendableError>> + Send;
-
-    /// Remove a node run that timed out or otherwise left a mutex queue without acquiring.
-    fn remove_workflow_mutex_waiter(
-        &self,
-        workflow_node_run_id: Uuid,
-    ) -> impl Future<Output = Result<(), SendableError>> + Send;
-
-    /// Create a new node execution record within a workflow run. `prev_node_run_id` is the
-    /// origin node run this one transitioned from (the runtime supplies it; `None` for the
-    /// first node or when unknown).
-    ///
-    /// `cursor` is the thread of control producing it, and supplies both the attribution and the
-    /// speculative marker. passing the cursor rather than the two columns it implies is what keeps
-    /// a node run from ever claiming a cursor it did not come from. `None` for callers outside the
-    /// state machine (the api's compatibility endpoints), which have no cursor.
-    fn create_workflow_node_run(
-        &self,
-        workflow_run_id: Uuid,
-        node_id: String,
-        parameters: Value,
-        prev_node_run_id: Option<Uuid>,
-        cursor: Option<&RunCursor>,
-    ) -> impl Future<Output = Result<WorkflowNodeRun, SendableError>> + Send;
-
-    /// Update the status and state of a specific node execution.
-    #[allow(clippy::too_many_arguments)]
-    fn update_workflow_node_run(
-        &self,
-        node_run_id: Uuid,
-        status: WorkflowStatus,
-        attempt: Option<i64>,
-        parameters: Option<Value>,
-        output_json: Option<Value>,
-        state: Option<Value>,
-        transition_reason: Option<String>,
-        message: Option<String>,
-    ) -> impl Future<Output = Result<(), SendableError>> + Send;
-
-    /// Fetch all node execution records for a workflow run.
-    fn fetch_workflow_node_runs(
-        &self,
-        workflow_run_id: Uuid,
-    ) -> impl Future<Output = Result<Vec<WorkflowNodeRun>, SendableError>> + Send;
-
-    /// Fetch artifacts promoted to the workflow-run result surface by output nodes.
-    fn fetch_promoted_workflow_run_artifacts(
-        &self,
-        workflow_run_id: Uuid,
-    ) -> impl Future<Output = Result<Vec<WorkflowRunArtifact>, SendableError>> + Send;
-
-    /// Clear the current executor and record the last executor for a node run. A no-op unless
-    /// `replica_id` is the current holder, so a stray release cannot free another replica's lease.
-    fn release_workflow_node_run_executor(
-        &self,
-        node_run_id: Uuid,
-        replica_id: Uuid,
-        released_at: DateTime<Utc>,
-    ) -> impl Future<Output = Result<(), SendableError>> + Send;
-
-    /// Promote a node artifact to a run-level artifact via an output node.
-    fn add_workflow_run_artifact(
-        &self,
-        artifact: &NewWorkflowRunArtifact,
-    ) -> impl Future<Output = Result<WorkflowRunArtifact, SendableError>> + Send;
-
-    /// Enqueue a state-machine node for scheduler processing.
-    fn enqueue_ready_node(
-        &self,
-        event: NewOrchestrationEvent,
-        node_id: String,
-        ready_at: DateTime<Utc>,
-    ) -> impl Future<Output = Result<Option<ReadyNodeRecord>, SendableError>> + Send;
-
     /// Create a new record in a generic orchestration table.
     fn create_automation_record(
         &self,
@@ -326,13 +222,6 @@ pub trait RuntimeStore:
         &self,
         record: Value,
     ) -> impl Future<Output = Result<Value, SendableError>> + Send;
-
-    /// Store an action dispatch intent for durable scheduler recovery.
-    fn enqueue_action_dispatch(
-        &self,
-        dedupe_key: String,
-        command: ActionCommand,
-    ) -> impl Future<Output = Result<ActionDispatchRecord, SendableError>> + Send;
 
     /// List every stored setting (encrypted values included), ordered by kind/scope/name.
     fn list_settings(
@@ -449,19 +338,6 @@ pub trait RuntimeStore:
         name: String,
         open_only: bool,
     ) -> impl Future<Output = Result<Vec<WorkflowRun>, SendableError>> + Send;
-
-    /// Fetch all node execution records in a given status across every run. Used to route an
-    /// inbound signal to a parked node by correlation key without knowing its run id.
-    fn fetch_workflow_node_runs_by_status(
-        &self,
-        status: WorkflowStatus,
-    ) -> impl Future<Output = Result<Vec<WorkflowNodeRun>, SendableError>> + Send;
-
-    /// Fetch every node artifact produced across a whole workflow run.
-    fn fetch_workflow_node_run_artifacts_for_run(
-        &self,
-        workflow_run_id: Uuid,
-    ) -> impl Future<Output = Result<Vec<WorkflowNodeRunArtifact>, SendableError>> + Send;
 
     /// Fetch replicas filtered by type and status, deriving stale state from heartbeat age.
     fn fetch_replicas(

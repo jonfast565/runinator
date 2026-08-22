@@ -17,8 +17,11 @@ pub mod simulate;
 pub mod stability;
 
 mod effect_consumer;
+mod effect_deadline;
+mod effect_retry;
 mod engine;
 mod infrastructure_effect_host;
+mod ingress_consumer;
 mod loops;
 
 pub use engine::{EngineConfig, run_background_engine};
@@ -26,3 +29,4 @@ pub use events::{AppEvent, AppEventKind, EnginePublisher, EventSender};
 pub use infrastructure_effect_host::run_infrastructure_effect_host;
 
 pub use effect_consumer::run_effect_result_consumer;
+pub use ingress_consumer::run_ingress_consumer;

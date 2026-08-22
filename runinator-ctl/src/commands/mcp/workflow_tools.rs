@@ -96,9 +96,14 @@ pub(crate) async fn call(client: &Client, name: &str, arguments: Value) -> Value
 async fn wait_for_settle(client: &Client, run_id: Uuid) -> Option<(WorkflowStatus, Value)> {
     let deadline = tokio::time::Instant::now() + SETTLE_TIMEOUT;
     loop {
-        let (run, nodes) = client.fetch_workflow_run(run_id).await.ok()?;
+        let run = client.fetch_workflow_run(run_id).await.ok()?;
         let status = run.status;
-        let payload = json!({ "run": run, "nodes": nodes });
+        // effects are the run's execution history; node runs no longer exist.
+        let effects = client
+            .fetch_workflow_effects(run_id)
+            .await
+            .unwrap_or_default();
+        let payload = json!({ "run": run, "effects": effects });
         if status.is_terminal() || tokio::time::Instant::now() >= deadline {
             return Some((status, payload));
         }

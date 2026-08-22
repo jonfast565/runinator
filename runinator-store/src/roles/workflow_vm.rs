@@ -14,7 +14,8 @@ use runinator_models::{
     value::Value,
     workflow_vm::{
         WorkflowContinuation, WorkflowEffect, WorkflowEffectOutputEvent, WorkflowEffectStatus,
-        WorkflowJournalEntry, WorkflowJournalRecord, WorkflowModule,
+        WorkflowInterruptOutcome, WorkflowJournalEntry, WorkflowJournalRecord, WorkflowModule,
+        WorkflowPendingInterrupt,
     },
     workflows::{WorkflowDefinition, WorkflowRun, WorkflowStatus},
 };
@@ -141,6 +142,67 @@ pub trait WorkflowVmStore: Send + Sync + 'static {
         continuation: WorkflowContinuation,
         journal: WorkflowJournalEntry,
     ) -> impl Future<Output = Result<(), SendableError>> + Send;
+
+    /// Atomically freeze one thread and start its handler continuation beside it. Both records
+    /// move in a single transaction: a suspended thread with no handler would never run again.
+    fn raise_workflow_interrupt(
+        &self,
+        suspended: WorkflowContinuation,
+        handler: WorkflowContinuation,
+        journal: WorkflowJournalEntry,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
+
+    /// Start a handler continuation beside a thread that is *not* being suspended, for a source
+    /// raised while the thread is already parked on an effect. Inserting the handler is idempotent
+    /// on its id, so a redelivered result cannot start the same handler twice.
+    fn start_workflow_interrupt_handler(
+        &self,
+        handler: WorkflowContinuation,
+        journal: WorkflowJournalEntry,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
+
+    /// Retire a finished handler and apply its decision to the thread it suspended.
+    fn settle_workflow_interrupt(
+        &self,
+        handler: WorkflowContinuation,
+        interrupted_continuation_id: Uuid,
+        outcome: WorkflowInterruptOutcome,
+        journal: WorkflowJournalEntry,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
+
+    /// Record an out-of-band interrupt request on one thread of a run, to be raised or refused by
+    /// the next drive of that thread. `continuation_id` selects a thread; `None` targets the run's
+    /// oldest live one. Returns the continuation it landed on.
+    fn request_workflow_interrupt(
+        &self,
+        workflow_run_id: Uuid,
+        continuation_id: Option<Uuid>,
+        pending: WorkflowPendingInterrupt,
+    ) -> impl Future<Output = Result<Option<Uuid>, SendableError>> + Send;
+
+    /// Record the replica executing one effect attempt, and mark the effect running. Returns
+    /// false for a stale attempt or an already-terminal effect. This is the VM's executor lease:
+    /// replica load and stale-replica reaping read it instead of the removed node-run columns.
+    fn claim_workflow_effect_executor(
+        &self,
+        effect_id: Uuid,
+        attempt: u32,
+        replica_id: Uuid,
+        claimed_at: DateTime<Utc>,
+    ) -> impl Future<Output = Result<bool, SendableError>> + Send;
+
+    /// Re-arm a failed effect for another attempt instead of settling it: bump the attempt, clear
+    /// the previous outcome and executor lease, and queue a fresh delayed dispatch of the *frozen*
+    /// command that is not claimable before `available_at`. Returns false for a stale attempt or an
+    /// already-terminal effect, so a duplicate result cannot schedule a second retry.
+    fn retry_workflow_effect(
+        &self,
+        effect_id: Uuid,
+        attempt: u32,
+        available_at: DateTime<Utc>,
+        message: Option<String>,
+        now: DateTime<Utc>,
+    ) -> impl Future<Output = Result<bool, SendableError>> + Send;
 
     /// Settle one effect exactly once. Returns false for stale attempts and already-terminal
     /// effects; a successful settlement must enqueue the addressed continuation for a drive.

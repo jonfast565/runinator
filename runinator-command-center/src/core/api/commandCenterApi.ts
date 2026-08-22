@@ -367,7 +367,7 @@ export async function fetchWorkflowEffectOutput(effectId: string) {
 
 export async function settleWorkflowEffect(
   effectId: string,
-  status: "succeeded" | "failed" | "timed_out" | "canceled",
+  status: "succeeded" | "failed" | "rejected" | "timed_out" | "canceled",
   output: JsonValue | null = null,
   message: string | null = null,
 ) {
@@ -1187,9 +1187,11 @@ export async function approveApproval(approvalId: string, resolution: ApprovalRe
 }
 
 export async function rejectApproval(approvalId: string, resolution: ApprovalResolution = {}) {
+  // "rejected", not "failed": the graph routes an approval's on_reject edge apart from its
+  // on_failure edge, and the terminal effect status is what the VM classifies the failure by.
   return settleWorkflowEffect(
     approvalId,
-    "failed",
+    "rejected",
     (resolution.output ?? { decision: "rejected" }) as JsonValue,
     resolution.message ?? null,
   );

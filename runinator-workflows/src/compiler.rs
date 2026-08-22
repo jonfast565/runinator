@@ -6,23 +6,26 @@ use runinator_compute::{
     CallableCatalog, WorkflowValidationError, assemble_module, parse_expression,
 };
 use runinator_models::{
+    interrupt::InterruptSource,
     invocation::{InvocationInstruction, InvocationModule, InvocationProgram},
     value::Value,
     workflow_ast::{ComputeProgram, ComputeStmt},
     workflow_vm::{
         WorkflowBranchPolicy, WorkflowEffectRequest, WorkflowInstruction, WorkflowModule,
         WorkflowOutputArtifact, WorkflowSourceMapEntry, WorkflowVmBranch,
+        WorkflowVmInterruptHandler,
     },
     workflows::{
         WorkflowDefinition, WorkflowNode, WorkflowNodeKind, WorkflowNodeRef, WorkflowSubflowType,
     },
 };
 
+use crate::node_kinds::graph_role;
 use crate::{
-    BranchPolicy, parse_approval_parameters, parse_gate_parameters, parse_input_parameters,
-    parse_join_parameters, parse_map_parameters, parse_parallel_parameters, parse_race_parameters,
-    parse_signal_parameters, parse_switch_parameters, parse_try_parameters, parse_wait_parameters,
-    target_slots, validate_workflow,
+    BranchPolicy, interrupt_declarations, parse_approval_parameters, parse_gate_parameters,
+    parse_input_parameters, parse_join_parameters, parse_map_parameters, parse_parallel_parameters,
+    parse_race_parameters, parse_signal_parameters, parse_switch_parameters, parse_try_parameters,
+    parse_wait_parameters, target_slots, validate_workflow,
 };
 
 /// A symbolic basic-block address.  Keeping these until the final layout pass means graph
@@ -33,6 +36,18 @@ struct Label(String);
 impl Label {
     fn node(node_id: &str) -> Self {
         Self(node_id.to_owned())
+    }
+
+    /// A synthetic block owned by `node_id`. The `#` prefix cannot collide with a graph node id,
+    /// which validation restricts to identifier characters.
+    fn synthetic(node_id: &str, suffix: &str) -> Self {
+        Self(format!("{node_id}#{suffix}"))
+    }
+
+    /// The edge slot a synthetic block stands for (`on_failure`, `on_timeout`, ...), or `None` for
+    /// a node's own block. This is what tells an operator watching a cursor which edge it took.
+    fn edge_slot(&self) -> Option<&str> {
+        self.0.split_once('#').map(|(_, slot)| slot)
     }
 }
 
@@ -52,9 +67,12 @@ enum PendingInstruction {
         exit: Label,
         max_iterations: Option<u64>,
     },
+    CheckInterrupt(Vec<(InterruptSource, Label)>),
     BeginTry {
         try_key: String,
         catch: Option<Label>,
+        on_timeout: Option<Label>,
+        on_reject: Option<Label>,
         finally: Option<Label>,
     },
     Race {
@@ -82,6 +100,10 @@ struct BasicBlock {
     label: Label,
     node_id: String,
     instructions: Vec<PendingInstruction>,
+    /// Whether an interrupt may suspend a thread positioned here.
+    interruptible: bool,
+    /// Offset within the block of its trailing exit sequence, when it has one.
+    exit_offset: Option<usize>,
 }
 
 /// Compile a validated authoring graph into an immutable module with a mandatory graph source map.
@@ -89,6 +111,17 @@ pub fn compile_workflow_module(
     workflow: &WorkflowDefinition,
 ) -> Result<WorkflowModule, WorkflowValidationError> {
     let (start, nodes) = validate_workflow(workflow)?;
+    // one handler per source, frozen into the module. an unknown or disabled source is dropped
+    // here rather than at runtime, so an old binary reading a newer definition simply has fewer
+    // handlers instead of failing the compile.
+    let declared_handlers: Vec<(InterruptSource, Label)> = interrupt_declarations(workflow, &nodes)
+        .into_iter()
+        .filter(|declaration| declaration.enabled)
+        .filter_map(|declaration| {
+            let source = declaration.source()?;
+            Some((source, Label::node(&declaration.handler)))
+        })
+        .collect();
     let mut ordered = Vec::with_capacity(nodes.len());
     let start_node = nodes
         .iter()
@@ -124,12 +157,43 @@ pub fn compile_workflow_module(
                 max_visits,
             });
         }
-        lower_node(node, &mut instructions)?;
+        let interruptible = graph_role(&node.kind).interruptible;
+        // the safe point an externally requested interrupt fires at. emitted only where one could
+        // actually be serviced, so a non-interruptible node costs nothing.
+        if interruptible && !declared_handlers.is_empty() {
+            instructions.push(PendingInstruction::CheckInterrupt(
+                declared_handlers.clone(),
+            ));
+        }
+        let mut body = Vec::new();
+        lower_node(node, &mut body)?;
+        let guard = apply_failure_edges(node, &mut body);
+        instructions.extend(body);
+        let exit_offset = exit_offset(&instructions);
         blocks.push(BasicBlock {
             label: Label::node(&node.id),
             node_id: node.id.clone(),
             instructions,
+            interruptible,
+            exit_offset,
         });
+        // one landing block per declared edge: it closes the node's guard frame before handing
+        // control to the target, so a re-entered node opens a fresh guard instead of finding the
+        // previous visit's.
+        for (label, target) in guard {
+            blocks.push(BasicBlock {
+                label,
+                node_id: node.id.clone(),
+                instructions: vec![
+                    PendingInstruction::Instruction(WorkflowInstruction::EndTry {
+                        try_key: guard_key(&node.id),
+                    }),
+                    PendingInstruction::Jump(target),
+                ],
+                interruptible: false,
+                exit_offset: None,
+            });
+        }
     }
 
     // Lay out blocks before resolving target labels.  This two-pass shape makes forward edges,
@@ -141,7 +205,14 @@ pub fn compile_workflow_module(
         let begin = instruction_count;
         instruction_count += block.instructions.len();
         starts.insert(block.label.clone(), begin);
-        ranges.push((begin, instruction_count, block.node_id.clone()));
+        ranges.push((
+            begin,
+            instruction_count,
+            block.node_id.clone(),
+            block.label.edge_slot().map(str::to_owned),
+            block.interruptible,
+            block.exit_offset.map(|offset| begin + offset),
+        ));
     }
 
     let resolve = |label: &Label| {
@@ -201,13 +272,28 @@ pub fn compile_workflow_module(
                 exit: resolve(&exit)?,
                 max_iterations,
             },
+            PendingInstruction::CheckInterrupt(handlers) => WorkflowInstruction::CheckInterrupt {
+                handlers: handlers
+                    .iter()
+                    .map(|(source, label)| {
+                        Ok(WorkflowVmInterruptHandler {
+                            source: *source,
+                            target: resolve(label)?,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, WorkflowValidationError>>()?,
+            },
             PendingInstruction::BeginTry {
                 try_key,
                 catch,
+                on_timeout,
+                on_reject,
                 finally,
             } => WorkflowInstruction::BeginTry {
                 try_key,
                 catch: catch.as_ref().map(resolve).transpose()?,
+                on_timeout: on_timeout.as_ref().map(resolve).transpose()?,
+                on_reject: on_reject.as_ref().map(resolve).transpose()?,
                 finally: finally.as_ref().map(resolve).transpose()?,
             },
             PendingInstruction::Race {
@@ -251,23 +337,63 @@ pub fn compile_workflow_module(
             }
         });
     }
+    let interrupt_handlers = declared_handlers
+        .iter()
+        .map(|(source, label)| {
+            Ok(WorkflowVmInterruptHandler {
+                source: *source,
+                target: resolve(label)?,
+            })
+        })
+        .collect::<Result<Vec<_>, WorkflowValidationError>>()?;
     Ok(WorkflowModule {
         version: runinator_models::workflow_vm::WORKFLOW_VM_VERSION,
         instructions,
         source_map: ranges
             .into_iter()
             .map(
-                |(instruction_start, instruction_end, node_id)| WorkflowSourceMapEntry {
+                |(
+                    instruction_start,
+                    instruction_end,
+                    node_id,
+                    edge_label,
+                    interruptible,
+                    exit_instruction_pointer,
+                )| WorkflowSourceMapEntry {
                     version: runinator_models::workflow_vm::WORKFLOW_SOURCE_MAP_VERSION,
                     instruction_start,
                     instruction_end,
                     node_id,
-                    edge_label: None,
-                    source_span: None,
+                    edge_label,
+                    interruptible,
+                    exit_instruction_pointer,
                 },
             )
             .collect(),
+        interrupt_handlers,
     })
+}
+
+/// Where a block hands control on: the first instruction of its trailing exit sequence.
+///
+/// An interrupt handler answering `continue` jumps here, so it must be *before* the guard's
+/// `EndTry` — landing on the jump alone would leave the node's failure-edge frame open.
+fn exit_offset(instructions: &[PendingInstruction]) -> Option<usize> {
+    let mut offset = instructions.len();
+    if offset > 0 && matches!(instructions[offset - 1], PendingInstruction::Jump(_)) {
+        offset -= 1;
+    } else {
+        return None;
+    }
+    if offset > 0
+        && matches!(
+            instructions[offset - 1],
+            PendingInstruction::Instruction(WorkflowInstruction::EndTry { .. })
+        )
+    {
+        offset -= 1;
+    }
+    Some(offset)
 }
 
 fn lower_node(
@@ -310,13 +436,18 @@ fn lower_node(
             }))
         }
         WorkflowNodeKind::Resume => {
+            // terminates a handler region. it does not transition anywhere in this thread: the
+            // handler continuation retires here and its mode is what moves the thread it froze.
             output.push(PendingInstruction::Instruction(
-                WorkflowInstruction::PureNode {
-                    kind: node.kind.clone(),
-                    configuration: configuration(),
+                WorkflowInstruction::ResumeInterrupt {
+                    mode: node
+                        .parameters
+                        .get("mode")
+                        .and_then(Value::as_str)
+                        .and_then(|mode| mode.parse().ok())
+                        .unwrap_or_default(),
                 },
             ));
-            jump_next(output);
         }
         WorkflowNodeKind::Action => {
             let action = node
@@ -649,6 +780,8 @@ fn lower_node(
                     .catch
                     .as_ref()
                     .map(|target| Label::node(target.as_str())),
+                on_timeout: None,
+                on_reject: None,
                 finally: params
                     .finally
                     .as_ref()
@@ -735,6 +868,112 @@ fn lower_node(
         }
     }
     Ok(())
+}
+
+/// The try key for a node's compiled failure edges. Distinct from the `try` node's own key, which
+/// is the bare node id, so a `try` node may also carry its own `on_failure` edge.
+fn guard_key(node_id: &str) -> String {
+    format!("{node_id}#edge")
+}
+
+/// Does this pending instruction hand control somewhere other than the next instruction?
+fn transfers_control(instruction: &PendingInstruction) -> bool {
+    match instruction {
+        PendingInstruction::Instruction(instruction) => matches!(
+            instruction,
+            WorkflowInstruction::Jump { .. }
+                | WorkflowInstruction::Return
+                | WorkflowInstruction::Fail { .. }
+                | WorkflowInstruction::Join { .. }
+        ),
+        PendingInstruction::Jump(_)
+        | PendingInstruction::Branch(..)
+        | PendingInstruction::Select(..)
+        | PendingInstruction::Fork(..)
+        | PendingInstruction::Race { .. }
+        | PendingInstruction::BeginLoop { .. }
+        | PendingInstruction::BeginMap { .. }
+        | PendingInstruction::BeginTry { .. }
+        | PendingInstruction::Reenter { .. } => true,
+        PendingInstruction::CheckInterrupt(_) => false,
+    }
+}
+
+/// Compile a node's `on_failure` / `on_timeout` / `on_reject` edges into a guard around its body,
+/// and return the synthetic landing blocks the caller must emit.
+///
+/// Without this the edges are authored, validated, and decompiled but never executed: a failing
+/// step would unwind to the enclosing `try` (or fail the run) rather than taking the edge the
+/// author wrote. The guard is only applied to a node whose lowering falls through or ends in a
+/// plain jump — a node that forks, branches, or loops has no single point at which the frame could
+/// be closed, and those kinds carry no failure edge in the catalog.
+fn apply_failure_edges(
+    node: &WorkflowNode,
+    body: &mut Vec<PendingInstruction>,
+) -> Vec<(Label, Label)> {
+    let edges = [
+        ("on_failure", node.transitions.on_failure.as_ref()),
+        ("on_timeout", node.transitions.on_timeout.as_ref()),
+        ("on_reject", node.transitions.on_reject.as_ref()),
+    ];
+    if edges.iter().all(|(_, target)| target.is_none()) {
+        return Vec::new();
+    }
+    // a `try` node is re-entered by its own body, catch, and finally blocks, and `BeginTry`
+    // resolves that second entry by consuming the frame it finds. a guard wrapped around it would
+    // be the frame consumed, so the node routes its own failures through `catch`/`finally`.
+    if node.kind == WorkflowNodeKind::Try {
+        return Vec::new();
+    }
+    let tail_position = body
+        .iter()
+        .rposition(|instruction| transfers_control(instruction));
+    let insert_at = match tail_position {
+        Some(position) if position + 1 == body.len() => {
+            if !matches!(body[position], PendingInstruction::Jump(_)) {
+                return Vec::new();
+            }
+            position
+        }
+        Some(_) => return Vec::new(),
+        None => body.len(),
+    };
+    let landing = |slot: &str| Label::synthetic(&node.id, slot);
+    let mut blocks = Vec::new();
+    for (slot, target) in edges {
+        if let Some(target) = target {
+            blocks.push((landing(slot), Label::node(target.as_str())));
+        }
+    }
+    body.insert(
+        insert_at,
+        PendingInstruction::Instruction(WorkflowInstruction::EndTry {
+            try_key: guard_key(&node.id),
+        }),
+    );
+    body.insert(
+        0,
+        PendingInstruction::BeginTry {
+            try_key: guard_key(&node.id),
+            catch: node
+                .transitions
+                .on_failure
+                .as_ref()
+                .map(|_| landing("on_failure")),
+            on_timeout: node
+                .transitions
+                .on_timeout
+                .as_ref()
+                .map(|_| landing("on_timeout")),
+            on_reject: node
+                .transitions
+                .on_reject
+                .as_ref()
+                .map(|_| landing("on_reject")),
+            finally: None,
+        },
+    );
+    blocks
 }
 
 /// Turn the JSON expression tree carried by a pure graph node into invocation bytecode.  The
@@ -858,7 +1097,7 @@ mod tests {
         // to the next instruction emitted while lowering `start`.
         assert_eq!(
             serde_json::to_string(&module).unwrap(),
-            r#"{"version":1,"instructions":[{"op":"enter_node","node_id":"start"},{"op":"jump","target":2},{"op":"enter_node","node_id":"end"},{"op":"return"}],"source_map":[{"version":1,"instruction_start":0,"instruction_end":2,"node_id":"start"},{"version":1,"instruction_start":2,"instruction_end":4,"node_id":"end"}]}"#
+            r#"{"version":1,"instructions":[{"op":"enter_node","node_id":"start"},{"op":"jump","target":2},{"op":"enter_node","node_id":"end"},{"op":"return"}],"source_map":[{"version":1,"instruction_start":0,"instruction_end":2,"node_id":"start","exit_instruction_pointer":1},{"version":1,"instruction_start":2,"instruction_end":4,"node_id":"end"}]}"#
         );
         let decoded: WorkflowModule =
             serde_json::from_str(&serde_json::to_string(&module).unwrap()).unwrap();
@@ -898,6 +1137,256 @@ mod tests {
             WorkflowInstruction::Fail { .. }
         ));
         assert_eq!(module.graph_location(3).unwrap().node_id, "fail");
+    }
+
+    #[test]
+    fn the_source_map_is_ordered_and_covers_every_instruction() {
+        // `graph_location` bisects, which is only correct while the ranges stay sorted and
+        // disjoint. compile something with branches, a guard, and a loop so the layout is not
+        // trivially linear.
+        let mut action = node("call", WorkflowNodeKind::Action, Some("end"));
+        action.action = Some(WorkflowAction {
+            provider: "github".into(),
+            function: "deploy".into(),
+            timeout_seconds: 30,
+            configuration: Default::default(),
+            mcp_enabled: false,
+            tags: Vec::new(),
+            required_labels: BTreeMap::new(),
+            idempotency_key: None,
+            function_binding: None,
+        });
+        action.transitions.on_failure = Some(WorkflowNodeRef::new("recover"));
+        action.transitions.on_timeout = Some(WorkflowNodeRef::new("slow"));
+        let definition = WorkflowDefinition {
+            id: None,
+            name: "ordered".into(),
+            namespace: None,
+            org_id: None,
+            version: Default::default(),
+            enabled: true,
+            input_type: Default::default(),
+            definition: WorkflowGraph {
+                start: Some("start".into()),
+                nodes: vec![
+                    node("start", WorkflowNodeKind::Start, Some("call")),
+                    action,
+                    node("recover", WorkflowNodeKind::End, None),
+                    node("slow", WorkflowNodeKind::End, None),
+                    node("end", WorkflowNodeKind::End, None),
+                ],
+                ..Default::default()
+            },
+            created_at: None,
+            updated_at: None,
+        };
+        let module = compile_workflow_module(&definition).unwrap();
+
+        assert!(
+            module.source_map_is_ordered(),
+            "source map is out of order or overlapping: {:?}",
+            module.source_map
+        );
+        // and the bisection agrees with a linear scan at every instruction.
+        for ip in 0..module.instructions.len() {
+            let scanned = module
+                .source_map
+                .iter()
+                .find(|entry| entry.instruction_start <= ip && ip < entry.instruction_end);
+            assert_eq!(
+                module.graph_location(ip).map(|entry| &entry.node_id),
+                scanned.map(|entry| &entry.node_id),
+                "bisection disagrees with a scan at instruction {ip}"
+            );
+        }
+    }
+
+    #[test]
+    fn failure_edges_compile_into_a_guard_that_routes_by_classification() {
+        let mut action = node("call", WorkflowNodeKind::Action, Some("end"));
+        action.action = Some(WorkflowAction {
+            provider: "github".into(),
+            function: "deploy".into(),
+            timeout_seconds: 30,
+            configuration: Default::default(),
+            mcp_enabled: false,
+            tags: Vec::new(),
+            required_labels: BTreeMap::new(),
+            idempotency_key: None,
+            function_binding: None,
+        });
+        action.transitions.on_failure = Some(WorkflowNodeRef::new("recover"));
+        action.transitions.on_timeout = Some(WorkflowNodeRef::new("slow"));
+        let definition = WorkflowDefinition {
+            id: None,
+            name: "edges".into(),
+            namespace: None,
+            org_id: None,
+            version: Default::default(),
+            enabled: true,
+            input_type: Default::default(),
+            definition: WorkflowGraph {
+                start: Some("start".into()),
+                nodes: vec![
+                    node("start", WorkflowNodeKind::Start, Some("call")),
+                    action,
+                    node("recover", WorkflowNodeKind::End, None),
+                    node("slow", WorkflowNodeKind::End, None),
+                    node("end", WorkflowNodeKind::End, None),
+                ],
+                ..Default::default()
+            },
+            created_at: None,
+            updated_at: None,
+        };
+
+        let module = compile_workflow_module(&definition).unwrap();
+        let Some(WorkflowInstruction::BeginTry {
+            try_key,
+            catch,
+            on_timeout,
+            on_reject,
+            finally,
+        }) = module
+            .instructions
+            .iter()
+            .find(|instruction| matches!(instruction, WorkflowInstruction::BeginTry { .. }))
+        else {
+            panic!("a node with failure edges must open a guard");
+        };
+        assert_eq!(try_key, "call#edge");
+        assert_eq!(*finally, None);
+        assert_eq!(*on_reject, None, "no on_reject edge was authored");
+
+        // each landing block closes the guard before jumping, so a re-entered node opens a fresh
+        // one instead of finding the previous visit's.
+        let recover = catch.expect("an on_failure edge was authored");
+        assert!(matches!(
+            module.instructions[recover],
+            WorkflowInstruction::EndTry { .. }
+        ));
+        let WorkflowInstruction::Jump { target } = module.instructions[recover + 1] else {
+            panic!("the on_failure landing must jump to its authored target");
+        };
+        assert_eq!(module.graph_location(target).unwrap().node_id, "recover");
+
+        // the landing block is attributed to its node *and* names the edge that reached it, which
+        // is what the cursors endpoint shows an operator.
+        let recover_location = module.graph_location(recover).unwrap();
+        assert_eq!(recover_location.node_id, "call");
+        assert_eq!(recover_location.edge_label.as_deref(), Some("on_failure"));
+
+        let timeout = on_timeout.unwrap();
+        assert_eq!(
+            module
+                .graph_location(timeout)
+                .unwrap()
+                .edge_label
+                .as_deref(),
+            Some("on_timeout")
+        );
+        assert!(matches!(
+            module.instructions[timeout],
+            WorkflowInstruction::EndTry { .. }
+        ));
+        let WorkflowInstruction::Jump { target } = module.instructions[timeout + 1] else {
+            panic!("the on_timeout landing must jump to its authored target");
+        };
+        assert_eq!(module.graph_location(target).unwrap().node_id, "slow");
+
+        // and the success path closes the same guard before taking `next`.
+        let end_try = module
+            .instructions
+            .iter()
+            .position(|instruction| matches!(instruction, WorkflowInstruction::EndTry { .. }))
+            .unwrap();
+        assert_eq!(module.graph_location(end_try).unwrap().node_id, "call");
+        assert_eq!(
+            module.graph_location(end_try).unwrap().edge_label,
+            None,
+            "a node's own block is not an edge landing"
+        );
+        let WorkflowInstruction::Jump { target } = module.instructions[end_try + 1] else {
+            panic!("the guarded body must jump on to `next`");
+        };
+        assert_eq!(module.graph_location(target).unwrap().node_id, "end");
+    }
+
+    #[test]
+    fn declared_interrupt_handlers_compile_into_the_module_and_a_safe_point() {
+        let mut action = node("call", WorkflowNodeKind::Action, Some("end"));
+        action.action = Some(WorkflowAction {
+            provider: "github".into(),
+            function: "deploy".into(),
+            timeout_seconds: 30,
+            configuration: Default::default(),
+            mcp_enabled: false,
+            tags: Vec::new(),
+            required_labels: BTreeMap::new(),
+            idempotency_key: None,
+            function_binding: None,
+        });
+        let mut handler = node("halt", WorkflowNodeKind::Interrupt, Some("give_up"));
+        handler.kind = WorkflowNodeKind::Interrupt;
+        let mut resume = node("give_up", WorkflowNodeKind::Resume, None);
+        resume.parameters = serde_json::from_value(serde_json::json!({ "mode": "fail" })).unwrap();
+        let definition = WorkflowDefinition {
+            id: None,
+            name: "interrupts".into(),
+            namespace: None,
+            org_id: None,
+            version: Default::default(),
+            enabled: true,
+            input_type: Default::default(),
+            definition: WorkflowGraph {
+                start: Some("start".into()),
+                nodes: vec![
+                    node("start", WorkflowNodeKind::Start, Some("call")),
+                    action,
+                    node("end", WorkflowNodeKind::End, None),
+                    handler,
+                    resume,
+                ],
+                metadata: serde_json::from_value(serde_json::json!({
+                    "interrupts": [{ "on": "external", "handler": "halt" }]
+                }))
+                .unwrap(),
+                ..Default::default()
+            },
+            created_at: None,
+            updated_at: None,
+        };
+
+        let module = compile_workflow_module(&definition).unwrap();
+        // the handler table is frozen into the module, so a run keeps the handlers it started with
+        // even after the definition is edited.
+        assert_eq!(module.interrupt_handlers.len(), 1);
+        let compiled = &module.interrupt_handlers[0];
+        assert_eq!(compiled.source, InterruptSource::External);
+        assert_eq!(
+            module.graph_location(compiled.target).unwrap().node_id,
+            "halt"
+        );
+
+        // an interruptible node gets a safe point; `start` and the terminals do not.
+        let checks: Vec<&str> = module
+            .instructions
+            .iter()
+            .enumerate()
+            .filter(|(_, instruction)| {
+                matches!(instruction, WorkflowInstruction::CheckInterrupt { .. })
+            })
+            .map(|(ip, _)| module.graph_location(ip).unwrap().node_id.as_str())
+            .collect();
+        assert_eq!(checks, vec!["call"]);
+
+        // and the region's `resume` is a real opcode, not a no-op pure node.
+        assert!(module.instructions.iter().any(|instruction| matches!(
+            instruction,
+            WorkflowInstruction::ResumeInterrupt {
+                mode: runinator_models::interrupt::InterruptMode::Fail
+            }
+        )));
     }
 
     #[test]

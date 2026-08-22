@@ -23,7 +23,7 @@ mod rrx;
 mod secrets;
 
 // the language core, re-exported at its historical paths so consumers name one crate.
-pub use runinator_rexrap_codegen::DecompileOptions;
+pub use runinator_rexrap_codegen::{DecompileOptions, lower::NodeSpan};
 pub use runinator_rexrap_sema::sema;
 pub use runinator_rexrap_sema::{CompileOptions, TypePolicy, WorkflowSignature};
 pub use runinator_rexrap_syntax::{ast, comments, errors};
@@ -348,6 +348,32 @@ pub fn decompile(definition: &WorkflowDefinition) -> Result<String, RexRapError>
     // decompiler output is always valid rexrap, so a parse failure here is a bug, not user input;
     // fall back to the raw rendering rather than failing the decompile outright.
     Ok(format_str(&source).unwrap_or(source))
+}
+
+/// decompile a definition and return the rexrap text together with the span of each graph node
+/// *within that text*.
+///
+/// spans cannot come from the decompiler itself: [`decompile`] reflows its output through the
+/// formatter, so any offset captured while rendering is stale by the time the caller sees it. they
+/// also cannot be frozen into the compiled module, because the authoring source is never persisted
+/// — the editor pane is this function's output, not what someone originally typed. so the text is
+/// produced first and the spans are read back off it, by parsing and lowering the finished text.
+/// round-tripping is what makes the node ids line up: the lowerer reproduces the same ids from the
+/// same text.
+pub fn decompile_with_spans(
+    definition: &WorkflowDefinition,
+) -> Result<(String, Vec<NodeSpan>), RexRapError> {
+    let text = decompile(definition)?;
+    let document = parse_document(&text)?;
+    let lowered = lower::lower_document_with_spans(&document, &CompileOptions::default())?;
+    // one workflow in, one workflow out; an empty document would mean decompile emitted something
+    // that is not a workflow, which is a bug rather than user input.
+    let spans = lowered
+        .into_iter()
+        .next()
+        .map(|(_, spans)| spans)
+        .unwrap_or_default();
+    Ok((text, spans))
 }
 
 /// decompile with explicit options. `DecompileOptions { explicit: true }` renders the canonical

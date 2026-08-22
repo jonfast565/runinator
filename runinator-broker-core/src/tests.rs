@@ -4,27 +4,27 @@
 use std::sync::Mutex;
 
 use async_trait::async_trait;
-use runinator_comm::{ActionCommand, ActionTarget, ConsumerProfile};
-use runinator_models::{json, workflows::WorkflowAction};
+use runinator_comm::{ActionTarget, ConsumerProfile, EffectCommand, EffectExecutor};
+use runinator_models::workflow_vm::WorkflowEffectRequest;
 use uuid::Uuid;
 
 use crate::{
-    Broker, BrokerDelivery, BrokerError, BrokerMessage, ControlCommand, ControlDelivery,
-    EventDelivery, EventMessage, IngressDelivery, IngressMessage, ResultDelivery, ResultMessage,
-    WakeDelivery, WakeMessage,
+    Broker, BrokerError, ControlCommand, ControlDelivery, EffectDelivery, EffectMessage,
+    EventDelivery, EventMessage, IngressDelivery, IngressMessage, WakeDelivery, WakeMessage,
 };
 
-/// a fake `Broker` exercising only the default `receive_for`: `receive` pops a fixed, pre-seeded
-/// queue of deliveries in order; `nack` just records the delivery id it was called with. every other
-/// method is unreachable in this test and panics if called.
+/// a fake `Broker` exercising only the default `receive_effect_for`: `receive_effect` pops a fixed,
+/// pre-seeded queue of deliveries in order; `nack_effect` just records the delivery id it was called
+/// with. every other method is unreachable in this test and panics if called.
 struct FakeBroker {
-    queue: Mutex<Vec<BrokerDelivery>>,
+    queue: Mutex<Vec<EffectDelivery>>,
     nacked: Mutex<Vec<Uuid>>,
 }
 
 impl FakeBroker {
-    fn with_deliveries(deliveries: Vec<BrokerDelivery>) -> Self {
-        // `receive` pops from the front, so reverse once up front and `pop()` (removes the back).
+    fn with_deliveries(deliveries: Vec<EffectDelivery>) -> Self {
+        // `receive_effect` pops from the front, so reverse once up front and `pop()` (removes the
+        // back).
         let mut queue = deliveries;
         queue.reverse();
         Self {
@@ -36,11 +36,7 @@ impl FakeBroker {
 
 #[async_trait]
 impl Broker for FakeBroker {
-    async fn publish(&self, _message: BrokerMessage) -> Result<(), BrokerError> {
-        unimplemented!("not exercised by this test")
-    }
-
-    async fn receive(&self, _consumer: &str) -> Result<BrokerDelivery, BrokerError> {
+    async fn receive_effect(&self, _consumer: &str) -> Result<EffectDelivery, BrokerError> {
         self.queue
             .lock()
             .unwrap()
@@ -48,11 +44,11 @@ impl Broker for FakeBroker {
             .ok_or_else(|| BrokerError::Internal("queue exhausted".into()))
     }
 
-    async fn ack(&self, _consumer: &str, _delivery_id: Uuid) -> Result<(), BrokerError> {
+    async fn ack_effect(&self, _consumer: &str, _delivery_id: Uuid) -> Result<(), BrokerError> {
         Ok(())
     }
 
-    async fn nack(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
+    async fn nack_effect(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
         self.nacked.lock().unwrap().push(delivery_id);
         Ok(())
     }
@@ -70,22 +66,6 @@ impl Broker for FakeBroker {
     }
 
     async fn nack_control(&self, _consumer: &str, _delivery_id: Uuid) -> Result<(), BrokerError> {
-        unimplemented!("not exercised by this test")
-    }
-
-    async fn publish_result(&self, _message: ResultMessage) -> Result<(), BrokerError> {
-        unimplemented!("not exercised by this test")
-    }
-
-    async fn receive_result(&self, _consumer: &str) -> Result<ResultDelivery, BrokerError> {
-        unimplemented!("not exercised by this test")
-    }
-
-    async fn ack_result(&self, _consumer: &str, _delivery_id: Uuid) -> Result<(), BrokerError> {
-        unimplemented!("not exercised by this test")
-    }
-
-    async fn nack_result(&self, _consumer: &str, _delivery_id: Uuid) -> Result<(), BrokerError> {
         unimplemented!("not exercised by this test")
     }
 
@@ -130,34 +110,23 @@ impl Broker for FakeBroker {
     }
 }
 
-fn delivery(target: ActionTarget) -> BrokerDelivery {
-    let command = ActionCommand {
+fn delivery(executor: EffectExecutor, target: ActionTarget) -> EffectDelivery {
+    let command = EffectCommand {
+        version: 1,
         command_id: Uuid::new_v4(),
+        effect_id: Uuid::now_v7(),
         workflow_run_id: Uuid::now_v7(),
-        workflow_node_run_id: Uuid::now_v7(),
-        node_id: "node-a".into(),
-        action: WorkflowAction {
-            provider: "test".into(),
-            function: "execute".into(),
-            timeout_seconds: 60,
-            configuration: runinator_models::workflows::WorkflowObject::default(),
-            mcp_enabled: false,
-            tags: Vec::new(),
-            required_labels: Default::default(),
-            idempotency_key: None,
-            function_binding: None,
-        },
+        continuation_id: Uuid::now_v7(),
         attempt: 1,
-        parameters: json!({}),
+        request: WorkflowEffectRequest::Timer { due_at: 42 },
+        executor,
         target,
         trace_id: Uuid::nil(),
         trace_context: Default::default(),
+        idempotency_key: Uuid::new_v4().to_string(),
         notification_delivery_id: None,
-        invocation_call_id: None,
-        task_run_id: None,
-        idempotency_key: None,
     };
-    BrokerDelivery::from(BrokerMessage {
+    EffectDelivery::from(EffectMessage {
         command,
         dedupe_key: None,
         enqueued_at: chrono::Utc::now(),
@@ -165,16 +134,21 @@ fn delivery(target: ActionTarget) -> BrokerDelivery {
 }
 
 #[tokio::test]
-async fn default_receive_for_requeues_mismatches_and_returns_the_first_match() {
-    let mismatched_one = delivery(ActionTarget::Labels {
-        selector: [("runner".to_string(), "other".to_string())].into(),
-    });
-    let mismatched_two = delivery(ActionTarget::Replica {
-        replica_id: Uuid::now_v7(),
-    });
-    let matching = delivery(ActionTarget::Labels {
-        selector: [("runner".to_string(), "creds-sync".to_string())].into(),
-    });
+async fn default_receive_effect_for_requeues_mismatches_and_returns_the_first_match() {
+    let mismatched_one = delivery(
+        EffectExecutor::Provider,
+        ActionTarget::Labels {
+            selector: [("runner".to_string(), "other".to_string())].into(),
+        },
+    );
+    // an infrastructure effect must never be claimed by a provider worker, whatever its target.
+    let mismatched_two = delivery(EffectExecutor::Infrastructure, ActionTarget::Any);
+    let matching = delivery(
+        EffectExecutor::Provider,
+        ActionTarget::Labels {
+            selector: [("runner".to_string(), "creds-sync".to_string())].into(),
+        },
+    );
     let matching_id = matching.command.command_id;
     let mismatched_ids = [mismatched_one.delivery_id, mismatched_two.delivery_id];
 
@@ -183,14 +157,14 @@ async fn default_receive_for_requeues_mismatches_and_returns_the_first_match() {
         mismatched_two,
         matching,
         // never reached: proves the loop stops at the first match instead of draining everything.
-        delivery(ActionTarget::Any),
+        delivery(EffectExecutor::Provider, ActionTarget::Any),
     ]);
 
     let profile = ConsumerProfile::shared("desktop")
         .with_labels([("runner".to_string(), "creds-sync".to_string())].into())
         .exclusive();
 
-    let result = broker.receive_for(&profile).await.unwrap();
+    let result = broker.receive_effect_for(&profile).await.unwrap();
     assert_eq!(result.command.command_id, matching_id);
 
     let nacked = broker.nacked.lock().unwrap().clone();

@@ -3,15 +3,12 @@
 use chrono::Utc;
 use runinator_broker::{
     ws::{client::WsBroker, server::serve},
-    Broker, BrokerMessage, ConnectionState, ControlCommand, EffectMessage, EffectResultMessage,
-    ResultMessage,
+    Broker, ConnectionState, ControlCommand, EffectMessage, EffectResultMessage,
 };
 use runinator_comm::{
-    ActionCommand, ActionTarget, AgentCommand, AgentDirectiveKind, ConsumerProfile, ControlKind,
-    EffectCommand, EffectExecutor, WorkflowResultEvent, WorkflowResultEventKind,
+    ActionTarget, AgentCommand, AgentDirectiveKind, ConsumerProfile, ControlKind, EffectCommand,
+    EffectExecutor,
 };
-use runinator_models::json;
-use runinator_models::workflows::WorkflowAction;
 use std::time::Duration;
 use tokio::net::TcpListener;
 use uuid::Uuid;
@@ -23,32 +20,6 @@ async fn spawn_server() -> (tokio::task::JoinHandle<()>, String) {
         let _ = serve(listener, runinator_broker::in_memory::InMemoryBroker::new()).await;
     });
     (server, format!("ws://{addr}/"))
-}
-
-#[tokio::test]
-async fn ws_broker_delivers_published_messages() {
-    let (server, url) = spawn_server().await;
-    let broker = WsBroker::connect(url, None);
-    let message = BrokerMessage {
-        command: action_command(),
-        dedupe_key: Some("ws-test".into()),
-        enqueued_at: Utc::now(),
-    };
-
-    broker.publish(message).await.unwrap();
-    let delivery = tokio::time::timeout(Duration::from_secs(5), broker.receive("test-consumer"))
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(delivery.command.workflow_run_id, Uuid::from_u128(42));
-    assert_eq!(delivery.command.workflow_node_run_id, Uuid::from_u128(99));
-    assert_eq!(delivery.dedupe_key, "ws-test");
-    broker
-        .ack("test-consumer", delivery.delivery_id)
-        .await
-        .unwrap();
-
-    server.abort();
 }
 
 #[tokio::test]
@@ -103,49 +74,6 @@ async fn ws_broker_delivers_targeted_agent_directives() {
 }
 
 #[tokio::test]
-async fn ws_broker_delivers_result_events() {
-    let (server, url) = spawn_server().await;
-    let broker = WsBroker::connect(url, None);
-    let command = action_command();
-    let event = WorkflowResultEvent::chunk(
-        &command,
-        runinator_models::runs::NewRunChunk {
-            stream: "log".into(),
-            content: "hello".into(),
-        },
-    );
-
-    broker
-        .publish_result(ResultMessage {
-            event,
-            dedupe_key: Some("ws-result-test".into()),
-            enqueued_at: Utc::now(),
-        })
-        .await
-        .unwrap();
-    let delivery = tokio::time::timeout(
-        Duration::from_secs(5),
-        broker.receive_result("result-consumer"),
-    )
-    .await
-    .unwrap()
-    .unwrap();
-    assert_eq!(delivery.event.workflow_run_id, Uuid::from_u128(42));
-    assert_eq!(delivery.event.workflow_node_run_id, Uuid::from_u128(99));
-    assert_eq!(delivery.dedupe_key, "ws-result-test");
-    match delivery.event.kind {
-        WorkflowResultEventKind::Chunk { chunk } => assert_eq!(chunk.content, "hello"),
-        _ => panic!("expected chunk event"),
-    }
-    broker
-        .ack_result("result-consumer", delivery.delivery_id)
-        .await
-        .unwrap();
-
-    server.abort();
-}
-
-#[tokio::test]
 async fn ws_broker_round_trips_executor_routed_effects() {
     let (server, url) = spawn_server().await;
     let broker = WsBroker::connect(url, None);
@@ -170,32 +98,32 @@ async fn ws_broker_concurrent_receive_for_does_not_block_concurrent_requests() {
         .exclusive();
     let stuck = tokio::spawn({
         let broker = std::sync::Arc::clone(&broker);
-        async move { broker.receive_for(&stuck_profile).await }
+        async move { broker.receive_effect_for(&stuck_profile).await }
     });
     // give the blocking request time to actually be in flight (registered in the pending map)
     // before racing the fast cycle against it.
     tokio::time::sleep(Duration::from_millis(200)).await;
 
-    let command = action_command();
+    let command = effect_command(EffectExecutor::Provider);
     let command_id = command.command_id;
     let fast_cycle = tokio::time::timeout(Duration::from_secs(5), async {
         broker
-            .publish(BrokerMessage {
+            .publish_effect(EffectMessage {
                 command,
                 dedupe_key: Some("ws-concurrency-test".into()),
                 enqueued_at: Utc::now(),
             })
             .await
             .unwrap();
-        let delivery = broker.receive("fast-consumer").await.unwrap();
+        let delivery = broker.receive_effect("fast-consumer").await.unwrap();
         broker
-            .ack("fast-consumer", delivery.delivery_id)
+            .ack_effect("fast-consumer", delivery.delivery_id)
             .await
             .unwrap();
         delivery
     })
     .await
-    .expect("fast publish/receive/ack cycle must not be blocked by the stuck receive_for");
+    .expect("fast publish/receive/ack cycle must not be blocked by the stuck receive_effect_for");
     assert_eq!(fast_cycle.command.command_id, command_id);
 
     stuck.abort();
@@ -295,7 +223,8 @@ async fn assert_rejected_credentials_are_fatal(status: &'static str) {
         "expected Unauthorized, got {observed:?}"
     );
 
-    let receive = tokio::time::timeout(Duration::from_secs(2), broker.receive("worker")).await;
+    let receive =
+        tokio::time::timeout(Duration::from_secs(2), broker.receive_effect("worker")).await;
     assert!(
         matches!(
             receive,
@@ -311,35 +240,6 @@ async fn assert_rejected_credentials_are_fatal(status: &'static str) {
     );
 
     server.abort();
-}
-
-fn action_command() -> ActionCommand {
-    ActionCommand {
-        command_id: Uuid::new_v4(),
-        workflow_run_id: Uuid::from_u128(42),
-        workflow_node_run_id: Uuid::from_u128(99),
-        node_id: "run".into(),
-        action: WorkflowAction {
-            provider: "test".into(),
-            function: "execute".into(),
-            timeout_seconds: 60,
-            configuration: runinator_models::workflows::WorkflowObject::default(),
-            mcp_enabled: false,
-            tags: Vec::new(),
-            required_labels: Default::default(),
-            idempotency_key: None,
-            function_binding: None,
-        },
-        attempt: 1,
-        parameters: json!({ "value": true }),
-        target: Default::default(),
-        trace_id: Uuid::nil(),
-        trace_context: Default::default(),
-        notification_delivery_id: None,
-        invocation_call_id: None,
-        task_run_id: None,
-        idempotency_key: None,
-    }
 }
 
 fn agent_command(replica_id: Uuid) -> AgentCommand {

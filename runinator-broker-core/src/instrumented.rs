@@ -11,9 +11,9 @@ use opentelemetry::metrics::{Counter, Histogram, ObservableGauge};
 use opentelemetry::KeyValue;
 
 use crate::types::{
-    AgentDelivery, BrokerDelivery, BrokerMessage, ConnectionState, ControlDelivery, EffectDelivery,
-    EffectMessage, EffectResultDelivery, EffectResultMessage, EventDelivery, EventMessage,
-    IngressDelivery, IngressMessage, ResultDelivery, ResultMessage, WakeDelivery, WakeMessage,
+    AgentDelivery, ConnectionState, ControlDelivery, EffectDelivery, EffectMessage,
+    EffectResultDelivery, EffectResultMessage, EventDelivery, EventMessage, IngressDelivery,
+    IngressMessage, WakeDelivery, WakeMessage,
 };
 use crate::{AgentCommand, Broker, BrokerError, ConsumerProfile, ControlCommand};
 
@@ -22,10 +22,8 @@ const METRIC_OPERATIONS: &str = "runinator_broker_operations_total";
 const METRIC_DURATION_MS: &str = "runinator_broker_operation_duration_ms";
 
 // channel names used as the `channel` attribute; they mirror the broker's logical channels.
-const CH_ACTION: &str = "action";
 const CH_CONTROL: &str = "control";
 const CH_AGENT: &str = "agent";
-const CH_RESULT: &str = "result";
 const CH_EFFECT: &str = "effect";
 const CH_EFFECT_RESULT: &str = "effect_result";
 const CH_WAKE: &str = "wake";
@@ -127,54 +125,12 @@ impl Broker for InstrumentedBroker {
         self.inner.supports_workflow_effect_channels()
     }
 
-    fn supports_workflow_result_channels(&self) -> bool {
-        self.inner.supports_workflow_result_channels()
-    }
-
     fn supports_agent_channel(&self) -> bool {
         self.inner.supports_agent_channel()
     }
 
     fn connection_state(&self) -> Option<tokio::sync::watch::Receiver<ConnectionState>> {
         self.inner.connection_state()
-    }
-
-    async fn publish(&self, message: BrokerMessage) -> Result<(), BrokerError> {
-        let start = Instant::now();
-        let result = self.inner.publish(message).await;
-        self.metrics
-            .record(CH_ACTION, "publish", start, &result, true);
-        result
-    }
-
-    async fn receive(&self, consumer: &str) -> Result<BrokerDelivery, BrokerError> {
-        let start = Instant::now();
-        let result = self.inner.receive(consumer).await;
-        self.metrics
-            .record(CH_ACTION, "receive", start, &result, false);
-        result
-    }
-
-    async fn receive_for(&self, profile: &ConsumerProfile) -> Result<BrokerDelivery, BrokerError> {
-        let start = Instant::now();
-        let result = self.inner.receive_for(profile).await;
-        self.metrics
-            .record(CH_ACTION, "receive", start, &result, false);
-        result
-    }
-
-    async fn ack(&self, consumer: &str, delivery_id: uuid::Uuid) -> Result<(), BrokerError> {
-        let start = Instant::now();
-        let result = self.inner.ack(consumer, delivery_id).await;
-        self.metrics.record(CH_ACTION, "ack", start, &result, true);
-        result
-    }
-
-    async fn nack(&self, consumer: &str, delivery_id: uuid::Uuid) -> Result<(), BrokerError> {
-        let start = Instant::now();
-        let result = self.inner.nack(consumer, delivery_id).await;
-        self.metrics.record(CH_ACTION, "nack", start, &result, true);
-        result
     }
 
     async fn publish_control(&self, command: ControlCommand) -> Result<(), BrokerError> {
@@ -265,40 +221,6 @@ impl Broker for InstrumentedBroker {
         let start = Instant::now();
         let result = self.inner.nack_agent(consumer, delivery_id).await;
         self.metrics.record(CH_AGENT, "nack", start, &result, true);
-        result
-    }
-
-    async fn publish_result(&self, message: ResultMessage) -> Result<(), BrokerError> {
-        let start = Instant::now();
-        let result = self.inner.publish_result(message).await;
-        self.metrics
-            .record(CH_RESULT, "publish", start, &result, true);
-        result
-    }
-
-    async fn receive_result(&self, consumer: &str) -> Result<ResultDelivery, BrokerError> {
-        let start = Instant::now();
-        let result = self.inner.receive_result(consumer).await;
-        self.metrics
-            .record(CH_RESULT, "receive", start, &result, false);
-        result
-    }
-
-    async fn ack_result(&self, consumer: &str, delivery_id: uuid::Uuid) -> Result<(), BrokerError> {
-        let start = Instant::now();
-        let result = self.inner.ack_result(consumer, delivery_id).await;
-        self.metrics.record(CH_RESULT, "ack", start, &result, true);
-        result
-    }
-
-    async fn nack_result(
-        &self,
-        consumer: &str,
-        delivery_id: uuid::Uuid,
-    ) -> Result<(), BrokerError> {
-        let start = Instant::now();
-        let result = self.inner.nack_result(consumer, delivery_id).await;
-        self.metrics.record(CH_RESULT, "nack", start, &result, true);
         result
     }
 

@@ -1,31 +1,10 @@
 use chrono::{DateTime, Utc};
 use runinator_comm::{
-    ActionCommand, AgentCommand, ControlCommand, EffectCommand, EffectResult, UiEvent, WakeCommand,
-    WorkflowResultEvent, WsIngressCommand,
+    AgentCommand, ControlCommand, EffectCommand, EffectResult, UiEvent, WakeCommand,
+    WsIngressCommand,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 use uuid::Uuid;
-
-/// Payload delivered through the broker.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BrokerMessage {
-    pub command: ActionCommand,
-    #[serde(default)]
-    pub dedupe_key: Option<String>,
-    #[serde(default = "utc_now")]
-    pub enqueued_at: DateTime<Utc>,
-}
-
-/// Message returned when polling the broker.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BrokerDelivery {
-    pub delivery_id: Uuid,
-    pub command: ActionCommand,
-    pub dedupe_key: String,
-    pub enqueued_at: DateTime<Utc>,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ControlDelivery {
@@ -39,26 +18,6 @@ pub struct ControlDelivery {
 pub struct AgentDelivery {
     pub delivery_id: Uuid,
     pub command: AgentCommand,
-    #[serde(default = "utc_now")]
-    pub enqueued_at: DateTime<Utc>,
-}
-
-/// Result event queued for web-service persistence.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ResultMessage {
-    pub event: WorkflowResultEvent,
-    #[serde(default)]
-    pub dedupe_key: Option<String>,
-    #[serde(default = "utc_now")]
-    pub enqueued_at: DateTime<Utc>,
-}
-
-/// Result event delivery returned when polling the result channel.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ResultDelivery {
-    pub delivery_id: Uuid,
-    pub event: WorkflowResultEvent,
-    pub dedupe_key: String,
     #[serde(default = "utc_now")]
     pub enqueued_at: DateTime<Utc>,
 }
@@ -219,28 +178,6 @@ impl From<IngressMessage> for IngressDelivery {
     }
 }
 
-impl BrokerMessage {
-    pub fn dedupe_key_or_hash(&self) -> String {
-        self.dedupe_key.clone().unwrap_or_else(|| {
-            let mut hasher = DefaultHasher::new();
-            if let Ok(serialized) = serde_json::to_string(&self.command) {
-                serialized.hash(&mut hasher);
-            } else {
-                self.command.command_id.hash(&mut hasher);
-            }
-            format!("{:x}", hasher.finish())
-        })
-    }
-}
-
-impl ResultMessage {
-    pub fn dedupe_key_or_hash(&self) -> String {
-        self.dedupe_key
-            .clone()
-            .unwrap_or_else(|| self.event.event_id.to_string())
-    }
-}
-
 impl EffectMessage {
     pub fn dedupe_key_or_hash(&self) -> String {
         self.dedupe_key
@@ -254,18 +191,6 @@ impl EffectResultMessage {
         self.dedupe_key
             .clone()
             .unwrap_or_else(|| self.result.event_id.to_string())
-    }
-}
-
-impl From<BrokerMessage> for BrokerDelivery {
-    fn from(message: BrokerMessage) -> Self {
-        let dedupe = message.dedupe_key_or_hash();
-        Self {
-            delivery_id: Uuid::new_v4(),
-            dedupe_key: dedupe,
-            enqueued_at: message.enqueued_at,
-            command: message.command,
-        }
     }
 }
 
@@ -307,18 +232,6 @@ impl From<AgentCommand> for AgentDelivery {
             delivery_id: Uuid::new_v4(),
             command,
             enqueued_at: utc_now(),
-        }
-    }
-}
-
-impl From<ResultMessage> for ResultDelivery {
-    fn from(message: ResultMessage) -> Self {
-        let dedupe = message.dedupe_key_or_hash();
-        Self {
-            delivery_id: Uuid::new_v4(),
-            dedupe_key: dedupe,
-            enqueued_at: message.enqueued_at,
-            event: message.event,
         }
     }
 }

@@ -1,6 +1,6 @@
 //! the action outbox, idempotency, and dead letters.
 //!
-//! the `DispatchStore` half of the generic sql implementation. bodies are written once, over any
+//! the `DeliveryStore` half of the generic sql implementation. bodies are written once, over any
 //! `SqlBackend`; see `super` for the shared helpers they call.
 
 use super::*;
@@ -8,7 +8,7 @@ use super::*;
 // the bound list is repeated verbatim in every role impl in this directory. it stays spelled out
 // rather than hidden behind a macro so that type errors inside the query bodies — the part that
 // actually gets edited — keep pointing at real source lines instead of a macro expansion.
-impl<B> DispatchStore for SqlStore<B>
+impl<B> DeliveryStore for SqlStore<B>
 where
     B: SqlBackend,
     // encode bounds for every bound value type.
@@ -37,27 +37,6 @@ where
     for<'c> &'c mut <B::Db as Database>::Connection: Executor<'c, Database = B::Db>,
     <B::Db as Database>::QueryResult: RowsAffected,
 {
-    async fn action_dispatch_queue_snapshot(
-        &self,
-        now: DateTime<Utc>,
-    ) -> Result<QueueSnapshot, SendableError> {
-        let row = sqlx::query(&self.render(
-            "SELECT COUNT(*) AS depth,
-                    COALESCE(SUM(CASE WHEN claimed_until > ? THEN 1 ELSE 0 END), 0) AS claimed,
-                    MIN(created_at) AS oldest
-             FROM workflow_action_dispatches WHERE published_at IS NULL",
-        ))
-        .bind(now.timestamp())
-        .fetch_one(self.pool())
-        .await?;
-        let oldest: Option<i64> = row.try_get("oldest")?;
-        Ok(QueueSnapshot {
-            depth: row.try_get::<i64, _>("depth")?.max(0) as u64,
-            claimed: row.try_get::<i64, _>("claimed")?.max(0) as u64,
-            oldest_enqueued_at: oldest.and_then(|value| DateTime::from_timestamp(value, 0)),
-        })
-    }
-
     async fn record_dead_letter(&self, record: Value) -> Result<Value, SendableError> {
         let now = Utc::now().timestamp();
         let id = Uuid::now_v7();
@@ -313,124 +292,5 @@ where
             )
             .await?;
         Ok(updated.affected() > 0)
-    }
-
-    async fn fetch_pending_action_dispatches(
-        &self,
-        limit: i64,
-    ) -> Result<Vec<ActionDispatchRecord>, SendableError> {
-        let rows = sqlx::query(&self.render(
-            "SELECT id, dedupe_key, command_json, attempts, created_at, updated_at, published_at, last_error, claimed_by, claimed_until
-             FROM workflow_action_dispatches
-             WHERE published_at IS NULL
-             ORDER BY updated_at ASC, id ASC
-             LIMIT ?",
-        ))
-        .bind(limit.max(1))
-        .fetch_all(self.pool())
-        .await?;
-        rows.iter().map(mappers::row_to_action_dispatch).collect()
-    }
-
-    async fn claim_pending_action_dispatches(
-        &self,
-        scheduler_id: String,
-        now: DateTime<Utc>,
-        lease_until: DateTime<Utc>,
-        limit: i64,
-    ) -> Result<Vec<ActionDispatchRecord>, SendableError> {
-        let columns = "id, dedupe_key, command_json, attempts, created_at, updated_at, published_at, last_error, claimed_by, claimed_until";
-
-        // mysql has no UPDATE ... RETURNING and cannot subquery the table being updated, so claim
-        // via a derived-table subselect, then read the claimed rows back by the lease just written.
-        if self.dialect() == SqlDialect::MySql {
-            sqlx::query(&self.render(
-                "UPDATE workflow_action_dispatches
-                 SET claimed_by = ?, claimed_until = ?, updated_at = ?
-                 WHERE id IN (
-                     SELECT id FROM (
-                         SELECT id FROM workflow_action_dispatches
-                         WHERE published_at IS NULL
-                           AND (claimed_until IS NULL OR claimed_until <= ? OR claimed_by = ?)
-                         ORDER BY updated_at ASC, id ASC
-                         LIMIT ?
-                     ) AS claimable
-                 )",
-            ))
-            .bind(scheduler_id.as_str())
-            .bind(lease_until.timestamp())
-            .bind(now.timestamp())
-            .bind(now.timestamp())
-            .bind(scheduler_id.as_str())
-            .bind(limit.max(1))
-            .execute(self.pool())
-            .await?;
-            let rows = sqlx::query(&self.render(&format!(
-                "SELECT {columns} FROM workflow_action_dispatches WHERE claimed_by = ? AND claimed_until = ? ORDER BY updated_at ASC, id ASC",
-            )))
-            .bind(scheduler_id.as_str())
-            .bind(lease_until.timestamp())
-            .fetch_all(self.pool())
-            .await?;
-            return rows.iter().map(mappers::row_to_action_dispatch).collect();
-        }
-
-        let sql = self.render(&format!(
-            "UPDATE workflow_action_dispatches
-             SET claimed_by = ?, claimed_until = ?, updated_at = ?
-             WHERE id IN (
-                 SELECT id FROM workflow_action_dispatches
-                 WHERE published_at IS NULL
-                   AND (claimed_until IS NULL OR claimed_until <= ? OR claimed_by = ?)
-                 ORDER BY updated_at ASC, id ASC
-                 LIMIT ?{skip}
-             )
-             RETURNING {columns}",
-            skip = self.dialect().skip_locked(),
-        ));
-        let rows = sqlx::query(&sql)
-            .bind(scheduler_id.as_str())
-            .bind(lease_until.timestamp())
-            .bind(now.timestamp())
-            .bind(now.timestamp())
-            .bind(scheduler_id.as_str())
-            .bind(limit.max(1))
-            .fetch_all(self.pool())
-            .await?;
-        rows.iter().map(mappers::row_to_action_dispatch).collect()
-    }
-
-    async fn mark_action_dispatch_published(&self, dispatch_id: Uuid) -> Result<(), SendableError> {
-        let now = Utc::now().timestamp();
-        sqlx::query(&self.render(
-            "UPDATE workflow_action_dispatches
-             SET published_at = ?, updated_at = ?, last_error = NULL, claimed_by = NULL, claimed_until = NULL
-             WHERE id = ?",
-        ))
-        .bind(now)
-        .bind(now)
-        .bind(dispatch_id)
-        .execute(self.pool())
-        .await?;
-        Ok(())
-    }
-
-    async fn mark_action_dispatch_failed(
-        &self,
-        dispatch_id: Uuid,
-        error: String,
-    ) -> Result<(), SendableError> {
-        let now = Utc::now().timestamp();
-        sqlx::query(&self.render(
-            "UPDATE workflow_action_dispatches
-             SET attempts = attempts + 1, updated_at = ?, last_error = ?, claimed_by = NULL, claimed_until = NULL
-             WHERE id = ?",
-        ))
-        .bind(now)
-        .bind(error)
-        .bind(dispatch_id)
-        .execute(self.pool())
-        .await?;
-        Ok(())
     }
 }

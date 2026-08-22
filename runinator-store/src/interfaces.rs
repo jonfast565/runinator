@@ -25,14 +25,13 @@ pub use crate::prelude::*;
 pub trait DatabaseImpl:
     RuntimeStore
     + ArchiveStore
-    + TaskRunStore
     + DefinitionStore
+    + DeliveryStore
+    + TaskRunStore
     + ScheduleStore
     + RunStore
-    + DispatchStore
     + ConsoleStore
     + FunctionStore
-    + InvocationStore
     + AutomationStore
     + NotificationStore
     + ReplicaStore

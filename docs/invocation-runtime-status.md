@@ -1,7 +1,18 @@
-# Unified resumable invocation runtime — implementation status
+# Unified resumable invocation runtime — implementation status (superseded)
 
-`unified-resumable-invocation-runtime-plan.md` is the design. This is what is built, what is
-deliberately gated, and what the remaining cutover requires from an operator.
+> **Superseded by the workflow VM cutover.** The invocation subsystem this documents was removed
+> rather than switched on: `workflow_invocations`/`workflow_invocation_calls`, `InvocationStore`,
+> `WorkflowNodeKind::Invocation`, the invocation node operation, `invocation_migration`,
+> `CompileOptions::emit_invocations`, and `invocation_call_id` on the broker are all gone. The
+> resumable-continuation idea it was reaching for is now the whole runtime — see
+> [the Phase 14 cutover record](workflow-vm-phase14-readiness.md) — so the two-switch deployment
+> sequence below never ran and is kept only as a record of the reasoning.
+>
+> `runinator-compute`'s VM, catalog, assembler, and operator intrinsics survive; they are what the
+> workflow VM uses for invocation frames.
+
+`unified-resumable-invocation-runtime-plan.md` is the design. This is what was built, what was
+deliberately gated, and what the cutover would have required from an operator.
 
 ## What is built
 

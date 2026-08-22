@@ -8,13 +8,11 @@ pub use wire::{WireCodec, WireError};
 
 use chrono::{DateTime, Utc};
 use runinator_models::{
-    runs::{NewRunArtifact, NewRunChunk},
     value::Value,
     workflow_vm::{
         UnsupportedWorkflowVmVersion, WORKFLOW_EFFECT_PROTOCOL_VERSION, WorkflowEffectRequest,
         WorkflowEffectStatus, ensure_effect_protocol_version,
     },
-    workflows::{WorkflowAction, WorkflowStatus},
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -71,75 +69,9 @@ pub enum GossipMessage {
     WebService { service: WebServiceAnnouncement },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ActionCommand {
-    pub command_id: Uuid,
-    pub workflow_run_id: Uuid,
-    pub workflow_node_run_id: Uuid,
-    pub node_id: String,
-    pub action: WorkflowAction,
-    pub attempt: i64,
-    #[serde(default)]
-    pub parameters: Value,
-    /// runtime routing key selecting which worker(s) may receive this action. the reducer stamps it
-    /// at dispatch; defaults to `Any` for backward-compatible deserialization of older messages.
-    #[serde(default)]
-    pub target: ActionTarget,
-    /// correlation id propagated across the ws -> broker -> worker hop so spans/logs for one action
-    /// execution line up. defaults for backward-compatible deserialization of older messages.
-    #[serde(default = "Uuid::now_v7")]
-    pub trace_id: Uuid,
-    /// w3c trace context (e.g. `traceparent`) captured at dispatch so the worker's execution span
-    /// joins the dispatching trace. empty when otel is off; defaults for older messages.
-    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
-    pub trace_context: std::collections::HashMap<String, String>,
-    /// set when this action is a notification delivery rather than a workflow node's work. the
-    /// engine reuses the action outbox so alert delivery runs through the normal provider path, and
-    /// the result consumer settles this delivery row instead of a node run. `None` for node actions.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub notification_delivery_id: Option<Uuid>,
-    /// set when this action is one durable call of a resumable invocation rather than a whole node.
-    ///
-    /// the second owner an action dispatch can have, following `notification_delivery_id`. an
-    /// invocation makes N calls under one node run, so the node run id alone cannot say *which*
-    /// call a result settles — this can, and the result consumer resumes the continuation parked on
-    /// it instead of settling the node run. `None` for plain node actions.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub invocation_call_id: Option<Uuid>,
-    /// set when this dispatch belongs to a durable RexRap `task[T]` handle. Its launcher node
-    /// advances immediately; only the task record is settled when the worker returns.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub task_run_id: Option<Uuid>,
-    /// resolved idempotency key for this action's external effect, from the node's
-    /// `.idempotent(key: <expr>)`. the reducer evaluates the expression against the run context and
-    /// stamps the result here; the worker reserves it before invoking the provider and replays a
-    /// previously recorded result instead of executing again. `None` for non-idempotent actions,
-    /// which is the default and the behaviour of every pre-existing message.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub idempotency_key: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ActionDispatchRecord {
-    pub id: Uuid,
-    pub dedupe_key: String,
-    pub command: ActionCommand,
-    pub attempts: i64,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub published_at: Option<DateTime<Utc>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_error: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub claimed_by: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub claimed_until: Option<DateTime<Utc>>,
-}
-
 /// Generic durable work published by the workflow VM host.
 ///
-/// Unlike [`ActionCommand`], this is not coupled to a node-run record. The effect id identifies
+/// This is not coupled to a node-run record. The effect id identifies
 /// the one persisted receipt that a result may settle, and the continuation id identifies exactly
 /// which suspended VM branch becomes runnable afterwards.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -276,6 +208,12 @@ pub enum EffectResultKind {
     Artifact {
         artifact: Value,
     },
+    /// The executing host has taken this attempt. It carries the executor's replica id, which is
+    /// the VM's executor lease — the fact replica load and stale-replica reaping read now that
+    /// node runs are gone. It is advisory: an effect settles whether or not a claim arrived.
+    Claimed {
+        executor_replica_id: Uuid,
+    },
 }
 
 impl EffectResult {
@@ -296,6 +234,24 @@ impl EffectResult {
                 status,
                 output,
                 message,
+            },
+            timestamp: Utc::now(),
+            trace_id: command.trace_id,
+            notification_delivery_id: command.notification_delivery_id,
+        }
+    }
+
+    /// Announce that `executor_replica_id` has taken this attempt.
+    pub fn claimed(command: &EffectCommand, executor_replica_id: Uuid) -> Self {
+        Self {
+            version: WORKFLOW_EFFECT_PROTOCOL_VERSION,
+            event_id: Uuid::now_v7(),
+            effect_id: command.effect_id,
+            workflow_run_id: command.workflow_run_id,
+            continuation_id: command.continuation_id,
+            attempt: command.attempt,
+            kind: EffectResultKind::Claimed {
+                executor_replica_id,
             },
             timestamp: Utc::now(),
             trace_id: command.trace_id,
@@ -508,46 +464,49 @@ pub struct AgentDirectiveRecord {
     pub claimed_by_runtime_id: Option<String>,
 }
 
-/// a timer ticket for a future-dated ready node. the web service publishes these when a ready
-/// node's `ready_at` is still in the future (and the reconcile backstop re-publishes lost ones);
-/// the waker is the sole consumer and relays a [`WsIngressCommand::Drive`] once due. already-due
-/// ready nodes skip this channel: the web service publishes their Drive on ingress directly.
+/// a timer ticket for a workflow VM effect that completes at a known instant.
+///
+/// the infrastructure effect host publishes one of these instead of sleeping in-process, carrying
+/// the terminal [`EffectResult`] it would have returned; the waker is the sole consumer and relays
+/// a [`WsIngressCommand::SettleEffect`] once due. the result is carried rather than rebuilt so the
+/// waker needs no database and the settle path stays the ordinary effect-result path.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WakeCommand {
-    pub ready_node_id: Uuid,
-    pub workflow_run_id: Uuid,
-    pub node_id: String,
-    pub ready_at: DateTime<Utc>,
-    pub source_event_id: Uuid,
+    /// the instant this wake becomes due and its result should be handed back.
+    pub due_at: DateTime<Utc>,
+    /// the effect result to publish once due. its `timestamp` is already stamped at `due_at`, so a
+    /// late relay never backdates or forward-dates the settlement.
+    pub result: EffectResult,
     /// correlation id minted when this wake is published, carried through the waker into the
-    /// resulting [`WsIngressCommand::Drive`] so a stuck or delayed wake can be traced end to end.
-    /// defaults for backward-compatible deserialization of older messages.
+    /// resulting [`WsIngressCommand::SettleEffect`] so a stuck or delayed wake can be traced end to
+    /// end. defaults for backward-compatible deserialization of older messages.
     #[serde(default = "Uuid::now_v7")]
     pub trace_id: Uuid,
 }
 
 impl WakeCommand {
-    pub fn new(
-        ready_node_id: Uuid,
-        workflow_run_id: Uuid,
-        node_id: String,
-        ready_at: DateTime<Utc>,
-        source_event_id: Uuid,
-        trace_id: Uuid,
-    ) -> Self {
+    pub fn new(due_at: DateTime<Utc>, result: EffectResult, trace_id: Uuid) -> Self {
         Self {
-            ready_node_id,
-            workflow_run_id,
-            node_id,
-            ready_at,
-            source_event_id,
+            due_at,
+            result,
             trace_id,
         }
     }
 
-    /// stable identity for broker deduplication while a wake is in flight.
+    /// the effect this wake settles.
+    pub fn effect_id(&self) -> Uuid {
+        self.result.effect_id
+    }
+
+    /// the run this wake settles an effect for.
+    pub fn workflow_run_id(&self) -> Uuid {
+        self.result.workflow_run_id
+    }
+
+    /// stable identity for broker deduplication while a wake is in flight. keyed on the attempt so
+    /// a retried effect arms a new timer rather than colliding with the one it replaced.
     pub fn dedupe_key(&self) -> String {
-        format!("{}:{}", self.ready_node_id, self.source_event_id)
+        format!("{}:{}", self.result.effect_id, self.result.attempt)
     }
 }
 
@@ -556,11 +515,9 @@ impl WakeCommand {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WsIngressCommand {
-    /// waker -> ws: run the reducer for a now-due ready node.
-    Drive {
-        ready_node_id: Uuid,
-        workflow_run_id: Uuid,
-        node_id: String,
+    /// waker -> engine: a timer wake came due; settle its effect with the carried result.
+    SettleEffect {
+        result: EffectResult,
         /// carried over from the originating [`WakeCommand::trace_id`]. defaults for
         /// backward-compatible deserialization of older messages.
         #[serde(default = "Uuid::now_v7")]
@@ -576,18 +533,8 @@ pub enum WsIngressCommand {
 }
 
 impl WsIngressCommand {
-    pub fn drive(
-        ready_node_id: Uuid,
-        workflow_run_id: Uuid,
-        node_id: String,
-        trace_id: Uuid,
-    ) -> Self {
-        Self::Drive {
-            ready_node_id,
-            workflow_run_id,
-            node_id,
-            trace_id,
-        }
+    pub fn settle_effect(result: EffectResult, trace_id: Uuid) -> Self {
+        Self::SettleEffect { result, trace_id }
     }
 
     pub fn control(workflow_run_id: Uuid, kind: ControlKind) -> Self {
@@ -600,7 +547,9 @@ impl WsIngressCommand {
     /// stable identity for broker deduplication while a message is in flight.
     pub fn dedupe_key(&self) -> String {
         match self {
-            Self::Drive { ready_node_id, .. } => format!("drive:{ready_node_id}"),
+            Self::SettleEffect { result, .. } => {
+                format!("settle:{}:{}", result.effect_id, result.attempt)
+            }
             Self::Control {
                 workflow_run_id,
                 kind,
@@ -723,57 +672,6 @@ pub enum UiEventKind {
     SchedulesChanged,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkflowResultEvent {
-    pub event_id: Uuid,
-    pub command_id: Uuid,
-    pub workflow_run_id: Uuid,
-    pub workflow_node_run_id: Uuid,
-    pub node_id: String,
-    /// the dispatch attempt (from the originating [`ActionCommand`]) this result belongs to, so a
-    /// very late result from a superseded attempt cannot overwrite a retry's status. defaults to 0
-    /// (unknown) for backward-compatible deserialization of older messages, which are applied
-    /// unconditionally as before.
-    #[serde(default)]
-    pub attempt: i64,
-    pub kind: WorkflowResultEventKind,
-    pub timestamp: DateTime<Utc>,
-    /// correlation id carried back from the originating [`ActionCommand`] so worker result handling
-    /// stays on the same trace. defaults for backward-compatible deserialization of older messages.
-    #[serde(default = "Uuid::now_v7")]
-    pub trace_id: Uuid,
-    /// carried back from the originating [`ActionCommand`]; when set, this result settles a
-    /// notification delivery rather than a workflow node run.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub notification_delivery_id: Option<Uuid>,
-    /// carried back from the originating [`ActionCommand`]; when set, this result settles one
-    /// durable call of a resumable invocation rather than the node run as a whole.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub invocation_call_id: Option<Uuid>,
-    /// copied from the originating action command. A task result settles its independent task
-    /// record rather than the already-completed launch node.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub task_run_id: Option<Uuid>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum WorkflowResultEventKind {
-    Status {
-        status: WorkflowStatus,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        output_json: Option<Value>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        message: Option<String>,
-    },
-    Chunk {
-        chunk: NewRunChunk,
-    },
-    Artifact {
-        artifact: NewRunArtifact,
-    },
-}
-
 impl ControlCommand {
     pub fn new(workflow_run_id: Uuid, kind: ControlKind) -> Self {
         Self {
@@ -815,49 +713,6 @@ impl ControlCommand {
     pub fn targeting_replica(mut self, replica_id: Uuid) -> Self {
         self.target = ActionTarget::Replica { replica_id };
         self
-    }
-}
-
-impl WorkflowResultEvent {
-    pub fn status(
-        command: &ActionCommand,
-        status: WorkflowStatus,
-        output_json: Option<Value>,
-        message: Option<String>,
-    ) -> Self {
-        Self::new(
-            command,
-            WorkflowResultEventKind::Status {
-                status,
-                output_json,
-                message,
-            },
-        )
-    }
-
-    pub fn chunk(command: &ActionCommand, chunk: NewRunChunk) -> Self {
-        Self::new(command, WorkflowResultEventKind::Chunk { chunk })
-    }
-
-    pub fn artifact(command: &ActionCommand, artifact: NewRunArtifact) -> Self {
-        Self::new(command, WorkflowResultEventKind::Artifact { artifact })
-    }
-
-    fn new(command: &ActionCommand, kind: WorkflowResultEventKind) -> Self {
-        Self {
-            event_id: Uuid::now_v7(),
-            command_id: command.command_id,
-            workflow_run_id: command.workflow_run_id,
-            workflow_node_run_id: command.workflow_node_run_id,
-            node_id: command.node_id.clone(),
-            attempt: command.attempt,
-            kind,
-            timestamp: Utc::now(),
-            trace_id: command.trace_id,
-            notification_delivery_id: command.notification_delivery_id,
-            invocation_call_id: command.invocation_call_id,
-            task_run_id: command.task_run_id,
-        }
     }
 }
 

@@ -19,19 +19,20 @@ mod tests;
 mod types;
 
 pub use capabilities::{
-    ensure_agent_channel_supported, ensure_named_workflow_result_channel,
-    ensure_workflow_result_channels_supported,
+    ensure_agent_channel_supported, ensure_named_workflow_effect_channel,
+    ensure_workflow_effect_channels_supported,
 };
 pub use errors::BrokerError;
 pub use instrumented::instrument;
 pub use runinator_comm::{
     ActionTarget, AgentCommand, AgentDirectiveKind, AgentDirectiveResult, AgentDirectiveStatus,
-    ConsumerProfile, ControlCommand, EffectExecutor, UiEvent, WakeCommand, WsIngressCommand,
+    ConsumerProfile, ControlCommand, EffectExecutor, EffectResult, EffectResultKind, UiEvent,
+    WakeCommand, WsIngressCommand,
 };
 pub use types::{
-    AgentDelivery, BrokerDelivery, BrokerMessage, ConnectionState, ControlDelivery, EffectDelivery,
-    EffectMessage, EffectResultDelivery, EffectResultMessage, EventDelivery, EventMessage,
-    IngressDelivery, IngressMessage, ResultDelivery, ResultMessage, WakeDelivery, WakeMessage,
+    AgentDelivery, ConnectionState, ControlDelivery, EffectDelivery, EffectMessage,
+    EffectResultDelivery, EffectResultMessage, EventDelivery, EventMessage, IngressDelivery,
+    IngressMessage, WakeDelivery, WakeMessage,
 };
 
 use async_trait::async_trait;
@@ -44,16 +45,11 @@ pub const STALE_CONTROL_TTL_SECONDS: i64 = 300;
 /// Trait implemented by queue backends capable of delivering task commands.
 #[async_trait]
 pub trait Broker: Send + Sync + 'static {
-    /// Whether this backend can carry the VM's generic effect protocol. The legacy action/result
-    /// channel is intentionally separate: a VM run must never be reconstructed as a node action.
+    /// Whether this backend can carry the VM's generic effect protocol, which is how all workflow
+    /// work is dispatched and settled.
     fn supports_workflow_effect_channels(&self) -> bool {
         false
     }
-    /// Report whether this backend supports workflow result channels.
-    fn supports_workflow_result_channels(&self) -> bool {
-        false
-    }
-
     fn supports_agent_channel(&self) -> bool {
         false
     }
@@ -66,35 +62,6 @@ pub trait Broker: Send + Sync + 'static {
     /// a real, observable property a host wants to display rather than infer from log lines.
     fn connection_state(&self) -> Option<tokio::sync::watch::Receiver<ConnectionState>> {
         None
-    }
-
-    /// Publish a message to the broker, optionally using a deduplication key.
-    async fn publish(&self, message: BrokerMessage) -> Result<(), BrokerError>;
-
-    /// Wait for and retrieve the next available delivery for the supplied consumer group. A plain
-    /// consumer is treated as a general-pool ([`ConsumerProfile::shared`]) consumer, so it never
-    /// receives replica- or label-targeted actions intended for a specific worker.
-    async fn receive(&self, consumer: &str) -> Result<BrokerDelivery, BrokerError>;
-
-    /// Wait for and retrieve the next delivery whose target matches `profile`. The targeting-aware
-    /// path: an exclusive consumer (e.g. the desktop worker) only receives `Replica`/`Labels`
-    /// targets it satisfies, never general-pool `Any` work.
-    ///
-    /// Backends that do not have a smarter override (their own queue/topic routing per target) get
-    /// this safety net for free: receive, check the delivery's target against `profile`, and requeue
-    /// (`nack`) anything that doesn't match rather than handing it to the wrong consumer. A brief
-    /// sleep between mismatches avoids a hot loop if nothing currently connected matches transiently;
-    /// the reducer's own pre-dispatch liveness check means a genuine, lasting mismatch should be rare
-    /// and will otherwise surface via the node's own timeout, not an unbounded spin here.
-    async fn receive_for(&self, profile: &ConsumerProfile) -> Result<BrokerDelivery, BrokerError> {
-        loop {
-            let delivery = self.receive(&profile.id).await?;
-            if delivery.command.target.matches(profile) {
-                return Ok(delivery);
-            }
-            self.nack(&profile.id, delivery.delivery_id).await?;
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        }
     }
 
     /// Receive an effect owned by the engine/web-service infrastructure host. This discriminator
@@ -113,12 +80,6 @@ pub trait Broker: Send + Sync + 'static {
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
     }
-
-    /// Acknowledge successful processing of a delivery.
-    async fn ack(&self, consumer: &str, delivery_id: uuid::Uuid) -> Result<(), BrokerError>;
-
-    /// Return the delivery to the queue for another attempt.
-    async fn nack(&self, consumer: &str, delivery_id: uuid::Uuid) -> Result<(), BrokerError>;
 
     /// Publish a generic workflow VM effect command.
     async fn publish_effect(&self, _message: EffectMessage) -> Result<(), BrokerError> {
@@ -278,19 +239,6 @@ pub trait Broker: Send + Sync + 'static {
     ) -> Result<(), BrokerError> {
         Err(BrokerError::NotImplemented("nack_agent"))
     }
-
-    /// Publish a workflow result event on the result channel.
-    async fn publish_result(&self, message: ResultMessage) -> Result<(), BrokerError>;
-
-    /// Wait for and retrieve the next workflow result delivery.
-    async fn receive_result(&self, consumer: &str) -> Result<ResultDelivery, BrokerError>;
-
-    /// Acknowledge successful processing of a workflow result delivery.
-    async fn ack_result(&self, consumer: &str, delivery_id: uuid::Uuid) -> Result<(), BrokerError>;
-
-    /// Return the workflow result delivery to the queue for another attempt.
-    async fn nack_result(&self, consumer: &str, delivery_id: uuid::Uuid)
-        -> Result<(), BrokerError>;
 
     /// Publish a delayed wake on the wake channel (web service -> waker).
     async fn publish_wake(&self, message: WakeMessage) -> Result<(), BrokerError>;

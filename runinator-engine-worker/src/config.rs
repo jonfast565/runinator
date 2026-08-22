@@ -38,9 +38,13 @@ pub(crate) struct CliArgs {
     )]
     pub broker_endpoint: String,
 
-    /// Kafka action topic or RabbitMQ action queue used by direct broker backends
-    #[arg(long, default_value = "runinator.actions")]
-    pub broker_action_topic: String,
+    /// Kafka effect topic or RabbitMQ effect queue used by direct broker backends
+    #[arg(long, default_value = "runinator.effects")]
+    pub broker_effect_topic: String,
+
+    /// Kafka infrastructure-effect topic or RabbitMQ queue used by direct broker backends
+    #[arg(long, default_value = "runinator.effects.infrastructure")]
+    pub broker_infrastructure_effect_topic: String,
 
     /// Kafka control topic or RabbitMQ control queue used by direct broker backends
     #[arg(long, default_value = "runinator.control")]
@@ -50,9 +54,19 @@ pub(crate) struct CliArgs {
     #[arg(long, default_value = "runinator.agent")]
     pub broker_agent_topic: String,
 
-    /// Kafka result topic or RabbitMQ result queue used by direct broker backends
-    #[arg(long, default_value = "runinator.results")]
-    pub broker_result_topic: String,
+    /// Kafka effect-result topic or RabbitMQ effect-result queue used by direct broker backends
+    #[arg(long, default_value = "runinator.effect-results")]
+    pub broker_effect_result_topic: String,
+
+    /// Kafka wake topic or RabbitMQ wake queue. the engine publishes a timer wake here for every
+    /// effect due in the future; it must match the waker's.
+    #[arg(long, default_value = "runinator.wake")]
+    pub broker_wake_topic: String,
+
+    /// Kafka ingress topic or RabbitMQ ingress queue. the engine is the sole consumer; it must
+    /// match the waker's and the worker's.
+    #[arg(long, default_value = "runinator.ingress")]
+    pub broker_ingress_topic: String,
 
     /// Kafka/RabbitMQ client id used by direct broker backends
     #[arg(long, default_value = "runinator-engine-worker")]

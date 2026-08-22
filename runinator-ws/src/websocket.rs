@@ -453,14 +453,14 @@ const RELAY_IDLE_TIMEOUT: Duration = Duration::from_secs(90);
 /// reply carrying it reaches the agent. without this, that delivery stays leased to a consumer that
 /// will never ack it and the work stalls until the lease expires.
 enum StrandedDelivery {
-    Action { consumer: String, delivery_id: Uuid },
+    Effect { consumer: String, delivery_id: Uuid },
     Control { consumer: String, delivery_id: Uuid },
     Agent { consumer: String, delivery_id: Uuid },
 }
 
 /// which consumer a receive-shaped request would be taking a delivery for, if any.
 enum StrandedConsumer {
-    Action(String),
+    Effect(String),
     Control(String),
     Agent(String),
     None,
@@ -469,7 +469,9 @@ enum StrandedConsumer {
 impl StrandedDelivery {
     fn consumer_for(request: &TcpRequest) -> StrandedConsumer {
         match request {
-            TcpRequest::ReceiveFor { profile } => StrandedConsumer::Action(profile.id.clone()),
+            TcpRequest::ReceiveEffectFor { profile } => {
+                StrandedConsumer::Effect(profile.id.clone())
+            }
             TcpRequest::ReceiveControlFor { profile } => {
                 StrandedConsumer::Control(profile.id.clone())
             }
@@ -482,10 +484,10 @@ impl StrandedDelivery {
 
     async fn nack(self, broker: &dyn Broker) {
         let (channel, result) = match self {
-            Self::Action {
+            Self::Effect {
                 consumer,
                 delivery_id,
-            } => ("action", broker.nack(&consumer, delivery_id).await),
+            } => ("effect", broker.nack_effect(&consumer, delivery_id).await),
             Self::Control {
                 consumer,
                 delivery_id,
@@ -510,8 +512,8 @@ impl StrandedConsumer {
     /// pair the consumer with the delivery the broker actually produced, if it produced one.
     fn zip_response(self, response: &TcpResponse) -> Option<StrandedDelivery> {
         match (self, response) {
-            (Self::Action(consumer), TcpResponse::Delivery { delivery }) => {
-                Some(StrandedDelivery::Action {
+            (Self::Effect(consumer), TcpResponse::EffectDelivery { delivery }) => {
+                Some(StrandedDelivery::Effect {
                     consumer,
                     delivery_id: delivery.delivery_id,
                 })
@@ -535,9 +537,8 @@ impl StrandedConsumer {
 
 /// the policy allow-list and replica-ownership check for the desktop-worker relay, ahead of the
 /// generic dispatch every other transport uses. a desktop worker only ever legitimately needs
-/// `receive_for`/`ack`/`nack` (action and provider-effect channels), replica-targeted control,
-/// replica-targeted agent directives, result publication, and payload-gated directive results on
-/// ingress.
+/// `receive_effect_for`/`ack_effect`/`nack_effect`, replica-targeted control, replica-targeted agent
+/// directives, effect-result publication, and payload-gated directive results on ingress.
 async fn handle_desktop_worker_request<T: DatabaseImpl>(
     db: &T,
     broker: &dyn Broker,
@@ -547,7 +548,7 @@ async fn handle_desktop_worker_request<T: DatabaseImpl>(
     use runinator_broker::tcp::types::TcpResponse;
 
     match &mut request {
-        TcpRequest::ReceiveFor { profile } | TcpRequest::ReceiveEffectFor { profile } => {
+        TcpRequest::ReceiveEffectFor { profile } => {
             if !profile.exclusive {
                 return TcpResponse::Error {
                     message: crate::errors::RELAY_NOT_EXCLUSIVE.bare().to_string(),
@@ -572,13 +573,10 @@ async fn handle_desktop_worker_request<T: DatabaseImpl>(
                 return response;
             }
         }
-        TcpRequest::Ack { .. }
-        | TcpRequest::Nack { .. }
-        | TcpRequest::AckControl { .. }
+        TcpRequest::AckControl { .. }
         | TcpRequest::NackControl { .. }
         | TcpRequest::AckAgent { .. }
         | TcpRequest::NackAgent { .. }
-        | TcpRequest::PublishResult { .. }
         | TcpRequest::AckEffect { .. }
         | TcpRequest::NackEffect { .. }
         | TcpRequest::PublishEffectResult { .. } => {}

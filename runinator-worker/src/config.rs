@@ -19,10 +19,11 @@ pub struct Config {
     pub broker_mode: BrokerMode,
     pub broker_backend: String,
     pub broker_endpoint: String,
-    pub broker_action_topic: String,
     pub broker_control_topic: String,
     pub broker_agent_topic: String,
-    pub broker_result_topic: String,
+    pub broker_effect_topic: String,
+    pub broker_infrastructure_effect_topic: String,
+    pub broker_effect_result_topic: String,
     pub broker_client_id: String,
     pub broker_consumer_id: String,
     pub max_concurrent_actions: usize,
@@ -38,7 +39,7 @@ pub struct Config {
     pub worker_id: Uuid,
     pub advertise_host: Option<String>,
     pub liveness_file: String,
-    /// routing labels this worker advertises; the reducer pins label-targeted actions to a worker
+    /// routing labels this worker advertises; the engine pins label-targeted effects to a worker
     /// whose labels are a superset of the action's required selector.
     pub labels: BTreeMap<String, String>,
 }
@@ -62,8 +63,11 @@ struct CliArgs {
     #[arg(long, default_value = "127.0.0.1:7070")]
     broker_endpoint: String,
 
-    #[arg(long, default_value = "runinator.actions")]
-    broker_action_topic: String,
+    #[arg(long, default_value = "runinator.effects")]
+    broker_effect_topic: String,
+
+    #[arg(long, default_value = "runinator.effects.infrastructure")]
+    broker_infrastructure_effect_topic: String,
 
     #[arg(long, default_value = "runinator.control")]
     broker_control_topic: String,
@@ -71,8 +75,8 @@ struct CliArgs {
     #[arg(long, default_value = "runinator.agent")]
     broker_agent_topic: String,
 
-    #[arg(long, default_value = "runinator.results")]
-    broker_result_topic: String,
+    #[arg(long, default_value = "runinator.effect-results")]
+    broker_effect_result_topic: String,
 
     #[arg(long, default_value = "runinator-worker")]
     broker_client_id: String,
@@ -177,10 +181,11 @@ pub fn parse_config() -> Result<Config, SendableError> {
         broker_mode,
         broker_backend: args.broker_backend,
         broker_endpoint: args.broker_endpoint,
-        broker_action_topic: args.broker_action_topic,
         broker_control_topic: args.broker_control_topic,
         broker_agent_topic: args.broker_agent_topic,
-        broker_result_topic: args.broker_result_topic,
+        broker_effect_topic: args.broker_effect_topic,
+        broker_infrastructure_effect_topic: args.broker_infrastructure_effect_topic,
+        broker_effect_result_topic: args.broker_effect_result_topic,
         broker_client_id: args.broker_client_id,
         broker_consumer_id: consumer_id,
         max_concurrent_actions: args.max_concurrent_actions.max(1),
@@ -218,10 +223,11 @@ impl Config {
             service_url: self.api_base_url.clone(),
             direct_backend: self.broker_backend.clone(),
             direct_endpoint: self.broker_endpoint.clone(),
-            action_topic: self.broker_action_topic.clone(),
             control_topic: self.broker_control_topic.clone(),
             agent_topic: self.broker_agent_topic.clone(),
-            result_topic: self.broker_result_topic.clone(),
+            effect_topic: self.broker_effect_topic.clone(),
+            infrastructure_effect_topic: self.broker_infrastructure_effect_topic.clone(),
+            effect_result_topic: self.broker_effect_result_topic.clone(),
             client_id: self.broker_client_id.clone(),
             api_key: self.api_key.clone(),
         }

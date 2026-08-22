@@ -415,7 +415,7 @@ pub async fn deliver_run_event<T: DatabaseImpl>(
     {
         return reply;
     }
-    // the reducer matches on the event's `type` and evaluates the node's filter against the whole
+    // the VM matches on the event's `type` and evaluates the node's filter against the whole
     // object, so the declared type rides alongside the payload rather than replacing it.
     let mut event = request.data;
     if let (Some(event_type), Some(object)) = (request.event_type, event.as_object_mut()) {
@@ -458,7 +458,7 @@ pub async fn deliver_signal<T: DatabaseImpl>(
 
 /// ask a run to raise an interrupt, running the handler region declared for that source.
 ///
-/// nothing about serviceability is decided here — the request is recorded on the run and the reducer
+/// nothing about serviceability is decided here — the request is recorded on the thread and the VM
 /// raises or drops it on the next drive of the target thread. that keeps one copy of the fail-open
 /// rules, in the crate that owns them.
 pub async fn request_interrupt<T: DatabaseImpl>(
@@ -478,11 +478,9 @@ pub async fn request_interrupt<T: DatabaseImpl>(
     let Ok(source) = raw.parse::<runinator_models::interrupt::InterruptSource>() else {
         return bad_request(format!("Unknown interrupt source '{raw}'"));
     };
-    // only a requested source can be raised from a `PendingInterrupt`; a drive-matched source (wake,
-    // timeout, retry, failure, resolved, child) is only ever raised by a drive that finds the matching
-    // node state, so a request for one would sit in `pending_interrupts` forever unconsumed — and,
-    // since a cursor exposes only its single oldest pending request, would permanently shadow any
-    // later, genuine request on the same cursor.
+    // only a requested source can be asked for out of band. a drive-matched source (wake, timeout,
+    // failure, resolved, child) is classified by the VM from the effect that just settled, so a
+    // request for one would sit on the continuation unconsumed and shadow a later genuine request.
     if !source.requested() {
         return bad_request(format!(
             "Interrupt source '{raw}' cannot be requested; it is only raised by a matching drive"
@@ -493,7 +491,7 @@ pub async fn request_interrupt<T: DatabaseImpl>(
         workflow_run_id,
         source,
         request.payload,
-        request.cursor_id,
+        request.continuation_id,
     )
     .await
     {
@@ -1089,7 +1087,7 @@ pub const DOCS: &[EndpointDoc] = &[
         "/workflow_runs/{id}/pause",
         "Workflow Runs",
         "Pause a workflow run",
-        "Requests that the reducer pause a workflow run at a safe runtime boundary.",
+        "Requests that the engine pause a workflow run at a safe runtime boundary.",
         false,
         None,
         &[],

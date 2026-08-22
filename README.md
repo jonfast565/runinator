@@ -229,16 +229,20 @@ The continuation-driven graph interpreter lives in `runinator-runtime`; its
 `WorkflowMachine` treats each durable cursor as a schedulable fiber and delegates
 bookkeeping to a `WorkflowHost`. `runinator-engine` drives it over the broker.
 The engine publishes scheduled work on the `wake` channel, and the
-`runinator-waker` (a small, broker-only timer/relay) sleeps until each ready
-node is due and then publishes a `drive` on the `ingress` channel for the
-engine to consume.
+`runinator-waker` (a small, broker-only timer/relay) sleeps until each wake is
+due and then publishes the settle it carries on the `ingress` channel for the
+engine to consume. That makes the waker the timer backend for the workflow VM:
+any effect that completes at a known future instant — a `wait`, an approval
+expiry, a gate deadline, a debounce — is armed as a wake rather than held open
+in an engine task, so a run can sleep for a week without occupying anything but
+a queued message.
 
 The durable orchestration engine — the workflow VM driver and effect dispatcher,
 the effect-result consumer and infrastructure-effect host, trigger and agent-directive
 publishers, plus replica/usage/metrics/notification maintenance — lives in the
 `runinator-engine` library crate. `runinator-engine-worker` is only an
 optional host for that engine; it does not execute provider actions and it no
-longer runs the removed legacy reducer/ingress loops. The engine can run in either
+longer runs the removed legacy reducer/action-dispatch loops. The engine can run in either
 of two topologies. By default `runinator-ws` embeds it in-process
 (`RUNINATOR_WS_RUN_ENGINE=true`), so the single-process local/dev/supervisor
 stack needs no engine-worker process. Setting `RUNINATOR_WS_RUN_ENGINE=false`
@@ -269,9 +273,10 @@ Kafka and RabbitMQ are available as feature-gated direct backends for the
 waker, worker, web service, and engine worker. Build those binaries with `--features kafka`
 or `--features rabbitmq`, set `--broker-backend kafka|rabbitmq`, use
 `--broker-endpoint` for Kafka bootstrap servers or the RabbitMQ AMQP URI, and
-override `--broker-action-topic`, `--broker-control-topic`,
-`--broker-result-topic`, `--broker-wake-topic`, or `--broker-ingress-topic` when
-not using the default `runinator.*` topics/queues.
+override `--broker-effect-topic`, `--broker-infrastructure-effect-topic`,
+`--broker-effect-result-topic`, `--broker-control-topic`, `--broker-wake-topic`,
+or `--broker-ingress-topic` when not using the default `runinator.*`
+topics/queues.
 Do not scale the built-in `runinator-broker` process horizontally: each instance
 has its own in-memory queue. For multi-broker high availability, run Kafka or
 RabbitMQ and point every web-service/engine-worker, waker, and worker instance at the same
@@ -955,7 +960,7 @@ OTLP exporters for **traces, metrics, and logs** over OTLP HTTP/protobuf;
 
 Trace context propagates across hops using W3C `traceparent`: inbound HTTP requests
 to the web service continue the caller's trace, and the graph runtime stamps the active
-context onto each `ActionCommand` so a worker's execution span links back to the
+context onto each `EffectCommand` so a worker's execution span links back to the
 dispatching trace. Prometheus `/metrics` remains available alongside OTLP metrics.
 
 Each service and the broker emit runtime metrics over OTLP (and, for the web

@@ -6,8 +6,9 @@
 
 use std::{sync::Arc, time::Duration};
 
-use runinator_broker_core::{Broker, EffectDelivery, EffectResultMessage};
-use runinator_comm::{EffectExecutor, EffectResult};
+use chrono::{DateTime, TimeZone, Utc};
+use runinator_broker_core::{Broker, EffectDelivery, EffectResultMessage, WakeMessage};
+use runinator_comm::{EffectExecutor, EffectResult, WakeCommand};
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::workflow_vm::{WorkflowEffectRequest, WorkflowEffectStatus};
 use tokio::{sync::Notify, task::JoinSet};
@@ -51,14 +52,29 @@ pub async fn run_infrastructure_effect_host<T: DatabaseImpl>(
     }
 }
 
+/// What the host should do with one infrastructure effect delivery.
+enum Outcome {
+    /// Publish this result on the effect-result channel now.
+    Settle(EffectResult),
+    /// Nothing to publish. The durable effect receipt is the registration for an external
+    /// interaction or coordinator, and its owning adapter settles that effect id later.
+    Registered,
+    /// The effect completes at a known future instant. Arm a timer wake carrying the result the
+    /// host would have returned, rather than holding a task open for the whole wait: the waker
+    /// sleeps on it and hands the result back through the ingress channel once due.
+    Timer {
+        due_at: DateTime<Utc>,
+        result: EffectResult,
+    },
+}
+
 async fn handle_delivery<T: DatabaseImpl>(
     db: Arc<T>,
     broker: Arc<dyn Broker>,
     delivery: EffectDelivery,
 ) {
-    let result = execute(db.as_ref(), &delivery).await;
-    let acknowledged = match result {
-        Some(result) => match broker
+    let acknowledged = match execute(db.as_ref(), &delivery).await {
+        Outcome::Settle(result) => match broker
             .publish_effect_result(EffectResultMessage {
                 dedupe_key: Some(result.event_id.to_string()),
                 result,
@@ -74,37 +90,97 @@ async fn handle_delivery<T: DatabaseImpl>(
                 broker.nack_effect(CONSUMER_ID, delivery.delivery_id).await
             }
         },
-        // The effect receipt itself is the durable registration for an external interaction or
-        // coordinator. Its owning adapter settles that effect id later.
-        None => broker.ack_effect(CONSUMER_ID, delivery.delivery_id).await,
+        Outcome::Timer { due_at, result } => {
+            let wake = WakeCommand::new(due_at, result, delivery.command.trace_id);
+            match broker
+                .publish_wake(WakeMessage {
+                    dedupe_key: Some(wake.dedupe_key()),
+                    command: wake,
+                    enqueued_at: chrono::Utc::now(),
+                })
+                .await
+            {
+                // a duplicate means this attempt's timer is already armed, which is exactly what
+                // the dedupe key is for: a redelivered effect must not arm a second wake.
+                Ok(()) | Err(runinator_broker_core::BrokerError::Duplicate(_)) => {
+                    info!(
+                        effect_id = %delivery.command.effect_id,
+                        due_at = %due_at,
+                        "armed a timer wake for an infrastructure effect",
+                    );
+                    broker.ack_effect(CONSUMER_ID, delivery.delivery_id).await
+                }
+                // nacking keeps the effect delivery as the durable record of the pending timer, so
+                // a broker that refused the wake redelivers the effect instead of dropping it.
+                Err(err) => {
+                    warn!(error = %err, effect_id = %delivery.command.effect_id, "failed to arm the timer wake");
+                    broker.nack_effect(CONSUMER_ID, delivery.delivery_id).await
+                }
+            }
+        }
+        Outcome::Registered => broker.ack_effect(CONSUMER_ID, delivery.delivery_id).await,
     };
     if let Err(err) = acknowledged {
         warn!(error = %err, effect_id = %delivery.command.effect_id, "failed to settle infrastructure effect delivery");
     }
 }
 
-async fn execute<T: DatabaseImpl>(db: &T, delivery: &EffectDelivery) -> Option<EffectResult> {
+/// Build the outcome for an effect that completes at `due_at` with a fixed result.
+///
+/// An already-due instant settles inline: routing it through the wake channel would add a hop for
+/// no wait. Otherwise the result's timestamp is stamped at `due_at` rather than at relay time, so
+/// a late or requeued wake records the settlement at the instant the effect actually completed.
+fn at_instant(
+    command: &runinator_comm::EffectCommand,
+    due_at: DateTime<Utc>,
+    status: WorkflowEffectStatus,
+    output: Option<runinator_models::value::Value>,
+    message: Option<String>,
+) -> Outcome {
+    let mut result = EffectResult::status(command, status, output, message);
+    if due_at <= Utc::now() {
+        return Outcome::Settle(result);
+    }
+    result.timestamp = due_at;
+    Outcome::Timer { due_at, result }
+}
+
+/// `due_at` as unix seconds, saturating at the representable range.
+fn instant_from_unix(due_at: i64) -> DateTime<Utc> {
+    Utc.timestamp_opt(due_at, 0)
+        .single()
+        .unwrap_or_else(Utc::now)
+}
+
+async fn execute<T: DatabaseImpl>(db: &T, delivery: &EffectDelivery) -> Outcome {
     let command = &delivery.command;
     if command.executor != EffectExecutor::Infrastructure {
-        return Some(failed(
+        return Outcome::Settle(failed(
             command,
             "provider effect reached infrastructure host",
         ));
     }
     if let Err(err) = command.ensure_supported() {
-        return Some(failed(command, err.to_string()));
+        return Outcome::Settle(failed(command, err.to_string()));
     }
 
     match &command.request {
-        WorkflowEffectRequest::Timer { due_at } => {
-            sleep_until_unix(*due_at).await;
-            Some(succeeded(command))
-        }
-        WorkflowEffectRequest::TimerDelay { seconds } => {
-            let due_at = delivery.enqueued_at.timestamp().saturating_add(*seconds);
-            sleep_until_unix(due_at).await;
-            Some(succeeded(command))
-        }
+        WorkflowEffectRequest::Timer { due_at } => at_instant(
+            command,
+            instant_from_unix(*due_at),
+            WorkflowEffectStatus::Succeeded,
+            None,
+            None,
+        ),
+        // measured from the delivery's enqueue time, not from now, so a redelivered or delayed
+        // effect never restarts its own clock.
+        WorkflowEffectRequest::TimerDelay { seconds } => at_instant(
+            command,
+            delivery.enqueued_at + chrono::Duration::seconds(*seconds),
+            WorkflowEffectStatus::Succeeded,
+            None,
+            None,
+        ),
         WorkflowEffectRequest::ChildRun {
             workflow_id,
             workflow_name,
@@ -112,7 +188,7 @@ async fn execute<T: DatabaseImpl>(db: &T, delivery: &EffectDelivery) -> Option<E
             wait,
             run_name,
             ..
-        } => Some(
+        } => Outcome::Settle(
             match execute_child_run(
                 db,
                 command,
@@ -138,7 +214,7 @@ async fn execute<T: DatabaseImpl>(db: &T, delivery: &EffectDelivery) -> Option<E
             key,
             run_id,
             mode,
-        } => Some(
+        } => Outcome::Settle(
             match execute_await_run(db, command, workflow, key.as_ref(), run_id.as_ref(), mode)
                 .await
             {
@@ -158,7 +234,7 @@ async fn execute<T: DatabaseImpl>(db: &T, delivery: &EffectDelivery) -> Option<E
             deadline_seconds,
             continue_on_timeout,
             ..
-        } => Some(
+        } => Outcome::Settle(
             match execute_condition_gate(
                 db,
                 command,
@@ -178,44 +254,47 @@ async fn execute<T: DatabaseImpl>(db: &T, delivery: &EffectDelivery) -> Option<E
                 Err(error) => failed(command, error.to_string()),
             },
         ),
+        // the approval is normally settled by an operator decision; this arms only its expiry. a
+        // decision that lands first settles the effect, and the due wake is then rejected as a
+        // stale settle of an already-terminal effect.
         WorkflowEffectRequest::Approval {
             expires_at: Some(expires_at),
             ..
-        } => {
-            sleep_until_unix(*expires_at).await;
-            Some(EffectResult::status(
-                command,
-                WorkflowEffectStatus::TimedOut,
-                None,
-                Some("approval expired".into()),
-            ))
-        }
+        } => at_instant(
+            command,
+            instant_from_unix(*expires_at),
+            WorkflowEffectStatus::TimedOut,
+            None,
+            Some("approval expired".into()),
+        ),
+        // a manual or external gate that nobody opens: this arms only the deadline, on the same
+        // terms as the approval expiry above.
         WorkflowEffectRequest::Gate {
             deadline_seconds: Some(deadline),
             continue_on_timeout,
             ..
-        } => {
-            tokio::time::sleep(Duration::from_secs((*deadline).max(0) as u64)).await;
-            Some(EffectResult::status(
-                command,
-                if *continue_on_timeout {
-                    WorkflowEffectStatus::Succeeded
-                } else {
-                    WorkflowEffectStatus::TimedOut
-                },
-                Some(runinator_models::json!({ "passed": false, "timed_out": true })),
-                Some("gate deadline elapsed".into()),
-            ))
-        }
-        WorkflowEffectRequest::Action { .. } => Some(failed(
+        } => at_instant(
+            command,
+            delivery.enqueued_at + chrono::Duration::seconds((*deadline).max(0)),
+            if *continue_on_timeout {
+                WorkflowEffectStatus::Succeeded
+            } else {
+                WorkflowEffectStatus::TimedOut
+            },
+            Some(runinator_models::json!({ "passed": false, "timed_out": true })),
+            Some("gate deadline elapsed".into()),
+        ),
+        WorkflowEffectRequest::Action { .. } => Outcome::Settle(failed(
             command,
             "provider action reached infrastructure host",
         )),
-        WorkflowEffectRequest::MutexAcquire { key } => Some(execute_mutex(db, command, key).await),
-        WorkflowEffectRequest::Coordination { kind, input } => {
-            execute_coordination(db, command, kind, input).await
+        WorkflowEffectRequest::MutexAcquire { key } => {
+            Outcome::Settle(execute_mutex(db, command, key).await)
         }
-        _ => None,
+        WorkflowEffectRequest::Coordination { kind, input } => {
+            execute_coordination(db, delivery, kind, input).await
+        }
+        _ => Outcome::Registered,
     }
 }
 
@@ -250,10 +329,11 @@ async fn execute_mutex<T: DatabaseImpl>(
 
 async fn execute_coordination<T: DatabaseImpl>(
     db: &T,
-    command: &runinator_comm::EffectCommand,
+    delivery: &EffectDelivery,
     kind: &str,
     input: &runinator_models::value::Value,
-) -> Option<EffectResult> {
+) -> Outcome {
+    let command = &delivery.command;
     let output = match kind {
         "audit" => {
             db.record_audit_log(runinator_models::json!({
@@ -282,21 +362,21 @@ async fn execute_coordination<T: DatabaseImpl>(
                 .get("name")
                 .and_then(runinator_models::value::Value::as_str)
                 .unwrap_or("default");
-            return Some(execute_mutex(db, command, key).await);
+            return Outcome::Settle(execute_mutex(db, command, key).await);
         }
         "debounce" => {
             let seconds = input
                 .get("delay_seconds")
                 .and_then(runinator_models::value::Value::as_i64)
                 .unwrap_or(30)
-                .max(0) as u64;
-            tokio::time::sleep(Duration::from_secs(seconds)).await;
-            return Some(EffectResult::status(
+                .max(0);
+            return at_instant(
                 command,
+                delivery.enqueued_at + chrono::Duration::seconds(seconds),
                 WorkflowEffectStatus::Succeeded,
                 Some(runinator_models::json!({ "elapsed": true, "delay_seconds": seconds })),
                 None,
-            ));
+            );
         }
         "cooldown" => {
             let name = input
@@ -307,7 +387,7 @@ async fn execute_coordination<T: DatabaseImpl>(
                 .get("window_seconds")
                 .and_then(runinator_models::value::Value::as_i64)
                 .unwrap_or(60);
-            return Some(
+            return Outcome::Settle(
                 match db
                     .claim_cooldown(name.to_string(), window, chrono::Utc::now().timestamp())
                     .await
@@ -328,19 +408,19 @@ async fn execute_coordination<T: DatabaseImpl>(
         }
         // These coordination points are deliberately settled by their external producer through
         // the effect settlement endpoint; the receipt is their durable registration.
-        "collect" => return None,
-        "barrier" => return Some(execute_barrier(db, command, input).await),
+        "collect" => return Outcome::Registered,
+        "barrier" => return Outcome::Settle(execute_barrier(db, command, input).await),
         "throttle" | "circuit_breaker" => {
-            return Some(execute_record_coordination(db, command, kind, input).await);
+            return Outcome::Settle(execute_record_coordination(db, command, kind, input).await);
         }
         unsupported => {
-            return Some(failed(
+            return Outcome::Settle(failed(
                 command,
                 format!("unsupported infrastructure coordination effect '{unsupported}'"),
             ));
         }
     };
-    Some(match output {
+    Outcome::Settle(match output {
         Ok(record) => {
             EffectResult::status(command, WorkflowEffectStatus::Succeeded, Some(record), None)
         }
@@ -701,17 +781,6 @@ fn value_string(value: &runinator_models::value::Value) -> Option<String> {
     }
 }
 
-async fn sleep_until_unix(due_at: i64) {
-    let delay = due_at.saturating_sub(chrono::Utc::now().timestamp()).max(0) as u64;
-    if delay > 0 {
-        tokio::time::sleep(Duration::from_secs(delay)).await;
-    }
-}
-
-fn succeeded(command: &runinator_comm::EffectCommand) -> EffectResult {
-    EffectResult::status(command, WorkflowEffectStatus::Succeeded, None, None)
-}
-
 fn failed(command: &runinator_comm::EffectCommand, message: impl Into<String>) -> EffectResult {
     EffectResult::status(
         command,
@@ -772,6 +841,126 @@ mod tests {
                 ..
             }
         ));
+        shutdown.notify_waiters();
+        host.await.unwrap();
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn a_future_timer_arms_a_wake_instead_of_sleeping_in_process() {
+        let path =
+            std::env::temp_dir().join(format!("runinator-infra-effect-{}.db", Uuid::now_v7()));
+        let db = Arc::new(
+            runinator_database::sqlite::SqliteDb::new(
+                path.to_str().expect("temporary database path"),
+            )
+            .await
+            .unwrap(),
+        );
+        db.run_init_scripts(&Vec::new()).await.unwrap();
+        let broker: Arc<dyn Broker> = Arc::new(InMemoryBroker::new());
+        let shutdown = Arc::new(Notify::new());
+        let host = tokio::spawn(run_infrastructure_effect_host(
+            db,
+            broker.clone(),
+            shutdown.clone(),
+        ));
+        // an hour out: holding a task open for this is exactly what the wake channel replaces.
+        let due_at = Utc::now() + chrono::Duration::hours(1);
+        let command = command(WorkflowEffectRequest::Timer {
+            due_at: due_at.timestamp(),
+        });
+        broker
+            .publish_effect(EffectMessage {
+                command: command.clone(),
+                dedupe_key: None,
+                enqueued_at: Utc::now(),
+            })
+            .await
+            .unwrap();
+
+        let delivery = tokio::time::timeout(Duration::from_secs(2), broker.receive_wake("test"))
+            .await
+            .expect("a future timer should arm a wake")
+            .unwrap();
+        assert_eq!(delivery.command.effect_id(), command.effect_id);
+        assert_eq!(delivery.command.due_at.timestamp(), due_at.timestamp());
+        // the result is stamped at the due instant, not at arming time, so a late relay records
+        // the settlement when the effect actually completed.
+        assert_eq!(
+            delivery.command.result.timestamp.timestamp(),
+            due_at.timestamp()
+        );
+        assert!(matches!(
+            delivery.command.result.kind,
+            runinator_comm::EffectResultKind::Status {
+                status: WorkflowEffectStatus::Succeeded,
+                ..
+            }
+        ));
+
+        // and nothing is settled yet: the effect completes only when the wake comes due.
+        assert!(
+            tokio::time::timeout(
+                Duration::from_millis(200),
+                broker.receive_effect_result("test")
+            )
+            .await
+            .is_err(),
+            "a future timer must not settle at arming time"
+        );
+
+        shutdown.notify_waiters();
+        host.await.unwrap();
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn a_future_approval_expiry_arms_a_timed_out_wake() {
+        let path =
+            std::env::temp_dir().join(format!("runinator-infra-effect-{}.db", Uuid::now_v7()));
+        let db = Arc::new(
+            runinator_database::sqlite::SqliteDb::new(
+                path.to_str().expect("temporary database path"),
+            )
+            .await
+            .unwrap(),
+        );
+        db.run_init_scripts(&Vec::new()).await.unwrap();
+        let broker: Arc<dyn Broker> = Arc::new(InMemoryBroker::new());
+        let shutdown = Arc::new(Notify::new());
+        let host = tokio::spawn(run_infrastructure_effect_host(
+            db,
+            broker.clone(),
+            shutdown.clone(),
+        ));
+        let expires_at = Utc::now() + chrono::Duration::hours(4);
+        let command = command(WorkflowEffectRequest::Approval {
+            prompt: Default::default(),
+            expires_at: Some(expires_at.timestamp()),
+        });
+        broker
+            .publish_effect(EffectMessage {
+                command: command.clone(),
+                dedupe_key: None,
+                enqueued_at: Utc::now(),
+            })
+            .await
+            .unwrap();
+
+        let delivery = tokio::time::timeout(Duration::from_secs(2), broker.receive_wake("test"))
+            .await
+            .expect("an approval expiry should arm a wake")
+            .unwrap();
+        assert_eq!(delivery.command.effect_id(), command.effect_id);
+        assert!(matches!(
+            delivery.command.result.kind,
+            runinator_comm::EffectResultKind::Status {
+                status: WorkflowEffectStatus::TimedOut,
+                ..
+            }
+        ));
+
         shutdown.notify_waiters();
         host.await.unwrap();
         let _ = std::fs::remove_file(path);

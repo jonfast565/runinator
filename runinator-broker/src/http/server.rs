@@ -1,12 +1,11 @@
 use crate::{
     http::auth::{AuthIdentity, BrokerAuth},
     http::types::{
-        AckRequest, PollRequest, PollResponse, PublishAgentRequest, PublishControlRequest,
-        PublishEffectRequest, PublishEffectResultRequest, PublishEventRequest,
-        PublishIngressRequest, PublishRequest, PublishResultRequest, PublishWakeRequest,
+        AckRequest, PublishAgentRequest, PublishControlRequest, PublishEffectRequest,
+        PublishEffectResultRequest, PublishEventRequest, PublishIngressRequest, PublishWakeRequest,
         ReceiveAgentResponse, ReceiveControlResponse, ReceiveEffectResponse,
         ReceiveEffectResultResponse, ReceiveEventResponse, ReceiveIngressResponse, ReceiveRequest,
-        ReceiveResponse, ReceiveResultResponse, ReceiveWakeResponse,
+        ReceiveWakeResponse,
     },
     Broker, BrokerError, ConsumerProfile,
 };
@@ -66,7 +65,6 @@ where
 
     let app = Router::new()
         .route("/health", get(health))
-        .route("/publish", post(publish::<B>))
         .route("/control/publish", post(publish_control::<B>))
         .route("/control/receive", post(receive_control::<B>))
         .route("/control/ack", post(ack_control::<B>))
@@ -75,10 +73,6 @@ where
         .route("/agent/receive", post(receive_agent::<B>))
         .route("/agent/ack", post(ack_agent::<B>))
         .route("/agent/nack", post(nack_agent::<B>))
-        .route("/results/publish", post(publish_result::<B>))
-        .route("/results/receive", post(receive_result::<B>))
-        .route("/results/ack", post(ack_result::<B>))
-        .route("/results/nack", post(nack_result::<B>))
         .route("/effects/publish", post(publish_effect::<B>))
         .route("/effects/receive", post(receive_effect::<B>))
         .route(
@@ -101,10 +95,6 @@ where
         .route("/ingress/nack", post(nack_ingress::<B>))
         .route("/events/publish", post(publish_event::<B>))
         .route("/events/receive", post(receive_event::<B>))
-        .route("/receive", post(receive::<B>))
-        .route("/poll", post(poll::<B>))
-        .route("/ack", post(ack::<B>))
-        .route("/nack", post(nack::<B>))
         .with_state(state)
         .layer(middleware::from_fn_with_state(auth, authenticate));
 
@@ -151,9 +141,9 @@ fn forbidden(detail: &str) -> Response {
     (StatusCode::FORBIDDEN, detail.to_string()).into_response()
 }
 
-/// authorize an action receive: a replica-scoped token (`rid`) may only receive for its own replica,
-/// closing cross-replica impersonation. an unscoped (plain user) token is allowed; auth-disabled
-/// requests carry no constraint.
+/// authorize an effect or agent receive: a replica-scoped token (`rid`) may only receive for its own
+/// replica, closing cross-replica impersonation. an unscoped (plain user) token is allowed;
+/// auth-disabled requests carry no constraint.
 #[allow(clippy::result_large_err)] // the response is returned directly by the axum handler.
 pub(crate) fn authorize_receive(
     identity: &AuthIdentity,
@@ -170,30 +160,8 @@ pub(crate) fn authorize_receive(
 
 // a replica-scoped token must use the targeted /receive path, not the general-pool /poll drain.
 #[allow(clippy::result_large_err)] // the response is returned directly by the axum handler.
-fn authorize_poll(identity: &AuthIdentity) -> Result<(), Response> {
-    match &identity.0 {
-        Some(_) => Err(forbidden(
-            "replica-scoped token cannot use the general poll path",
-        )),
-        _ => Ok(()),
-    }
-}
-
 async fn health() -> Json<HealthResponse> {
     Json(HealthResponse { status: "ok" })
-}
-
-async fn publish<B>(
-    State(state): State<AppState<B>>,
-    Json(request): Json<PublishRequest>,
-) -> Response
-where
-    B: Broker,
-{
-    respond(
-        state.broker.publish(request.message).await,
-        StatusCode::CREATED,
-    )
 }
 
 async fn publish_control<B>(
@@ -305,64 +273,6 @@ where
     )
 }
 
-async fn publish_result<B>(
-    State(state): State<AppState<B>>,
-    Json(request): Json<PublishResultRequest>,
-) -> Response
-where
-    B: Broker,
-{
-    respond(
-        state.broker.publish_result(request.message).await,
-        StatusCode::CREATED,
-    )
-}
-
-async fn receive_result<B>(
-    State(state): State<AppState<B>>,
-    Json(request): Json<ReceiveRequest>,
-) -> Response
-where
-    B: Broker,
-{
-    match state.broker.receive_result(&request.consumer).await {
-        Ok(delivery) => json_response(StatusCode::OK, ReceiveResultResponse { delivery }),
-        Err(err) => error_response(err),
-    }
-}
-
-async fn ack_result<B>(
-    State(state): State<AppState<B>>,
-    Json(request): Json<AckRequest>,
-) -> Response
-where
-    B: Broker,
-{
-    respond(
-        state
-            .broker
-            .ack_result(&request.consumer, request.delivery_id)
-            .await,
-        StatusCode::OK,
-    )
-}
-
-async fn nack_result<B>(
-    State(state): State<AppState<B>>,
-    Json(request): Json<AckRequest>,
-) -> Response
-where
-    B: Broker,
-{
-    respond(
-        state
-            .broker
-            .nack_result(&request.consumer, request.delivery_id)
-            .await,
-        StatusCode::OK,
-    )
-}
-
 async fn publish_effect<B>(
     State(state): State<AppState<B>>,
     Json(request): Json<PublishEffectRequest>,
@@ -378,11 +288,15 @@ where
 
 async fn receive_effect<B>(
     State(state): State<AppState<B>>,
+    Extension(identity): Extension<AuthIdentity>,
     Json(request): Json<ReceiveRequest>,
 ) -> Response
 where
     B: Broker,
 {
+    if let Err(response) = authorize_receive(&identity, request.profile.as_ref()) {
+        return response;
+    }
     let received = match &request.profile {
         Some(profile) => state.broker.receive_effect_for(profile).await,
         None => state.broker.receive_effect(&request.consumer).await,
@@ -652,88 +566,6 @@ where
     }
 }
 
-async fn receive<B>(
-    State(state): State<AppState<B>>,
-    Extension(identity): Extension<AuthIdentity>,
-    Json(request): Json<ReceiveRequest>,
-) -> Response
-where
-    B: Broker,
-{
-    if let Err(response) = authorize_receive(&identity, request.profile.as_ref()) {
-        return response;
-    }
-    let result = match &request.profile {
-        Some(profile) => state.broker.receive_for(profile).await,
-        None => state.broker.receive(&request.consumer).await,
-    };
-    match result {
-        Ok(delivery) => json_response(StatusCode::OK, ReceiveResponse { delivery }),
-        Err(err) => error_response(err),
-    }
-}
-
-async fn poll<B>(
-    State(state): State<AppState<B>>,
-    Extension(identity): Extension<AuthIdentity>,
-    Json(request): Json<PollRequest>,
-) -> Response
-where
-    B: Broker,
-{
-    if let Err(response) = authorize_poll(&identity) {
-        return response;
-    }
-    let poll_result = if let Some(timeout_ms) = request.timeout_ms {
-        let broker = state.broker.clone();
-        let consumer = request.consumer.clone();
-        let timeout = tokio::time::Duration::from_millis(timeout_ms);
-        match tokio::time::timeout(timeout, broker.receive(&consumer)).await {
-            Ok(result) => result.map(Some),
-            Err(_) => Ok(None),
-        }
-    } else {
-        state.broker.receive(&request.consumer).await.map(Some)
-    };
-
-    match poll_result {
-        Ok(Some(delivery)) => json_response(
-            StatusCode::OK,
-            PollResponse {
-                delivery: Some(delivery),
-            },
-        ),
-        Ok(None) => StatusCode::NO_CONTENT.into_response(),
-        Err(err) => error_response(err),
-    }
-}
-
-async fn ack<B>(State(state): State<AppState<B>>, Json(request): Json<AckRequest>) -> Response
-where
-    B: Broker,
-{
-    respond(
-        state
-            .broker
-            .ack(&request.consumer, request.delivery_id)
-            .await,
-        StatusCode::OK,
-    )
-}
-
-async fn nack<B>(State(state): State<AppState<B>>, Json(request): Json<AckRequest>) -> Response
-where
-    B: Broker,
-{
-    respond(
-        state
-            .broker
-            .nack(&request.consumer, request.delivery_id)
-            .await,
-        StatusCode::OK,
-    )
-}
-
 fn respond(result: Result<(), BrokerError>, success: StatusCode) -> Response {
     match result {
         Ok(_) => success.into_response(),
@@ -753,7 +585,7 @@ fn error_response(err: BrokerError) -> Response {
             StatusCode::NOT_IMPLEMENTED,
             ErrorResponse::new("not_implemented", context),
         ),
-        BrokerError::WorkflowResultsUnsupported(message) => json_response(
+        BrokerError::WorkflowEffectsUnsupported(message) => json_response(
             StatusCode::NOT_IMPLEMENTED,
             ErrorResponse::new("workflow_results_unsupported", message),
         ),

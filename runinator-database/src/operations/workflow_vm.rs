@@ -4,18 +4,93 @@ use super::*;
 use runinator_comm::{EffectCommand, EffectDispatchRecord};
 use runinator_models::workflow_vm::{
     WORKFLOW_JOURNAL_VERSION, WorkflowContinuation, WorkflowContinuationStatus, WorkflowEffect,
-    WorkflowEffectOutputEvent, WorkflowEffectStatus, WorkflowFrame, WorkflowJournalEntry,
-    WorkflowJournalRecord, WorkflowModule,
+    WorkflowEffectOutputEvent, WorkflowEffectStatus, WorkflowFrame, WorkflowInterruptOutcome,
+    WorkflowJournalEntry, WorkflowJournalRecord, WorkflowModule, WorkflowPendingInterrupt,
 };
 use runinator_store::roles::NewWorkflowVmRun;
 
 const CONTINUATION_COLUMNS: &str = "id, workflow_run_id, module_version, continuation_json, status, version, ready_at, claimed_by, claimed_until, created_at, updated_at";
-const EFFECT_COLUMNS: &str = "id, version, workflow_run_id, continuation_id, sequence, attempt, request_json, status, result_json, message, created_at, updated_at, finished_at";
+const EFFECT_COLUMNS: &str = "id, version, workflow_run_id, continuation_id, sequence, attempt, request_json, status, current_executor_replica_id, last_executor_replica_id, result_json, message, created_at, updated_at, finished_at";
 const JOURNAL_COLUMNS: &str =
     "id, version, workflow_run_id, sequence, continuation_id, effect_id, entry_json, created_at";
 
 fn wire_name<T: serde::Serialize>(value: &T) -> Result<String, SendableError> {
     Ok(serde_json::to_string(value)?.trim_matches('"').to_string())
+}
+
+/// Release every named mutex held by one run. Called from the same transaction that settles or
+/// cancels the run, so a terminal run can never leave a key locked behind it.
+async fn release_run_mutexes<B>(
+    store: &SqlStore<B>,
+    tx: &mut sqlx::Transaction<'_, B::Db>,
+    workflow_run_id: Uuid,
+    now: i64,
+) -> Result<(), SendableError>
+where
+    B: SqlBackend,
+    for<'q> i64: Encode<'q, B::Db> + Type<B::Db>,
+    for<'q> Uuid: Encode<'q, B::Db> + Type<B::Db>,
+    for<'q> <B::Db as Database>::Arguments<'q>: IntoArguments<'q, B::Db>,
+    for<'c> &'c mut <B::Db as Database>::Connection: Executor<'c, Database = B::Db>,
+{
+    sqlx::query(&store.render(
+        "UPDATE workflow_mutexes SET holder_run_id = NULL, holder_continuation_id = NULL, acquired_at = NULL, updated_at = ? WHERE holder_run_id = ?",
+    ))
+    .bind(now)
+    .bind(workflow_run_id)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+/// Append one journal record inside an open transaction, allocating its per-run sequence.
+async fn append_journal<B>(
+    store: &SqlStore<B>,
+    tx: &mut sqlx::Transaction<'_, B::Db>,
+    workflow_run_id: Uuid,
+    continuation_id: Option<Uuid>,
+    entry: &WorkflowJournalEntry,
+    now: i64,
+) -> Result<(), SendableError>
+where
+    B: SqlBackend,
+    for<'q> i64: Encode<'q, B::Db> + Type<B::Db>,
+    for<'q> String: Encode<'q, B::Db> + Type<B::Db>,
+    for<'q> Uuid: Encode<'q, B::Db> + Type<B::Db>,
+    for<'q> Option<Uuid>: Encode<'q, B::Db> + Type<B::Db>,
+    for<'r> i64: Decode<'r, B::Db> + Type<B::Db>,
+    for<'c> &'c str: ColumnIndex<<B::Db as Database>::Row>,
+    for<'q> <B::Db as Database>::Arguments<'q>: IntoArguments<'q, B::Db>,
+    for<'c> &'c mut <B::Db as Database>::Connection: Executor<'c, Database = B::Db>,
+{
+    let lock = match store.dialect() {
+        SqlDialect::Sqlite => "",
+        SqlDialect::Postgres | SqlDialect::MySql => " FOR UPDATE",
+    };
+    sqlx::query(&store.render(&format!("SELECT id FROM workflow_runs WHERE id = ?{lock}")))
+        .bind(workflow_run_id)
+        .fetch_one(&mut **tx)
+        .await?;
+    let sequence: i64 = sqlx::query(&store.render(
+        "SELECT COALESCE(MAX(sequence), -1) + 1 AS next_sequence FROM workflow_journal_entries WHERE workflow_run_id = ?",
+    ))
+    .bind(workflow_run_id)
+    .fetch_one(&mut **tx)
+    .await?
+    .try_get("next_sequence")?;
+    sqlx::query(&store.render(
+        "INSERT INTO workflow_journal_entries (id, version, workflow_run_id, sequence, continuation_id, effect_id, entry_json, created_at) VALUES (?, ?, ?, ?, ?, NULL, ?, ?)",
+    ))
+    .bind(Uuid::now_v7())
+    .bind(i64::from(WORKFLOW_JOURNAL_VERSION))
+    .bind(workflow_run_id)
+    .bind(sequence)
+    .bind(continuation_id)
+    .bind(serde_json::to_string(entry)?)
+    .bind(now)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
 }
 
 fn cas_error() -> SendableError {
@@ -332,15 +407,22 @@ where
         status: WorkflowStatus,
         message: Option<String>,
     ) -> Result<(), SendableError> {
+        let now = Utc::now().timestamp();
+        let mut tx = self.pool().begin().await?;
         sqlx::query(&self.render(
             "UPDATE workflow_runs SET status = ?, finished_at = ?, message = ? WHERE id = ?",
         ))
         .bind(status.as_str())
-        .bind(Utc::now().timestamp())
+        .bind(now)
         .bind(message)
         .bind(workflow_run_id)
-        .execute(self.pool())
+        .execute(&mut *tx)
         .await?;
+        // a terminal run must not keep holding a named mutex. it is released in the same
+        // transaction that settles the run, because a release that could be lost between the two
+        // is a permanent deadlock for every later run of the same key.
+        release_run_mutexes(self, &mut tx, workflow_run_id, now).await?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -463,7 +545,7 @@ where
             return Err(cas_error());
         }
         sqlx::query(&self.render(
-            "INSERT INTO workflow_effects (id, version, workflow_run_id, continuation_id, sequence, attempt, request_json, status, result_json, message, idempotency_key, created_at, updated_at, finished_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO workflow_effects (id, version, workflow_run_id, continuation_id, sequence, attempt, request_json, status, current_executor_replica_id, last_executor_replica_id, result_json, message, idempotency_key, created_at, updated_at, finished_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         ))
         .bind(effect.id)
         .bind(i64::from(effect.version))
@@ -473,6 +555,8 @@ where
         .bind(i64::from(effect.attempt))
         .bind(serde_json::to_string(&effect.request)?)
         .bind(wire_name(&effect.status)?)
+        .bind(effect.current_executor_replica_id)
+        .bind(effect.last_executor_replica_id)
         .bind(effect.result.as_ref().map(serde_json::to_string).transpose()?)
         .bind(effect.message.clone())
         .bind(effect.idempotency_key())
@@ -672,6 +756,353 @@ where
         Ok(())
     }
 
+    async fn raise_workflow_interrupt(
+        &self,
+        mut suspended: WorkflowContinuation,
+        handler: WorkflowContinuation,
+        journal: WorkflowJournalEntry,
+    ) -> Result<(), SendableError> {
+        if !suspended.is_supported() || !handler.is_supported() {
+            return Err(crate::errors::WORKFLOW_VM_CORRUPT_STATE
+                .error("cannot raise an interrupt from an unsupported continuation"));
+        }
+        let now = Utc::now().timestamp();
+        let expected = suspended.revision;
+        suspended.revision += 1;
+        let mut tx = self.pool().begin().await?;
+        // the freeze is compare-and-swapped like every other transition: a drive that lost a race
+        // must reread rather than suspend a thread that has already moved.
+        let updated = sqlx::query(&self.render(
+            "UPDATE workflow_continuations SET continuation_json = ?, status = 'suspended', version = ?, ready_at = NULL, claimed_by = NULL, claimed_until = NULL, updated_at = ? WHERE id = ? AND version = ?",
+        ))
+        .bind(serde_json::to_string(&suspended)?)
+        .bind(suspended.revision as i64)
+        .bind(now)
+        .bind(suspended.id)
+        .bind(expected as i64)
+        .execute(&mut *tx)
+        .await?;
+        if updated.affected() == 0 {
+            tx.rollback().await?;
+            return Err(cas_error());
+        }
+        // the handler id is derived from the interrupted thread and the source, so a redelivered
+        // drive re-raising the same interrupt inserts nothing rather than a second handler.
+        sqlx::query(&self.render(&self.dialect().insert_ignore(
+            "workflow_continuations",
+            "id, workflow_run_id, module_version, continuation_json, status, version, ready_at, created_at, updated_at",
+            "?, ?, ?, ?, ?, ?, ?, ?, ?",
+            "id",
+            None,
+        )))
+        .bind(handler.id)
+        .bind(handler.workflow_run_id)
+        .bind(i64::from(handler.module_version))
+        .bind(serde_json::to_string(&handler)?)
+        .bind(wire_name(&handler.status)?)
+        .bind(handler.revision as i64)
+        .bind(now)
+        .bind(now)
+        .bind(now)
+        .execute(&mut *tx)
+        .await?;
+        append_journal(
+            self,
+            &mut tx,
+            suspended.workflow_run_id,
+            Some(suspended.id),
+            &journal,
+            now,
+        )
+        .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn start_workflow_interrupt_handler(
+        &self,
+        handler: WorkflowContinuation,
+        journal: WorkflowJournalEntry,
+    ) -> Result<(), SendableError> {
+        if !handler.is_supported() {
+            return Err(crate::errors::WORKFLOW_VM_CORRUPT_STATE
+                .error("cannot start a handler from an unsupported continuation"));
+        }
+        let now = Utc::now().timestamp();
+        let mut tx = self.pool().begin().await?;
+        let inserted = sqlx::query(&self.render(&self.dialect().insert_ignore(
+            "workflow_continuations",
+            "id, workflow_run_id, module_version, continuation_json, status, version, ready_at, created_at, updated_at",
+            "?, ?, ?, ?, ?, ?, ?, ?, ?",
+            "id",
+            None,
+        )))
+        .bind(handler.id)
+        .bind(handler.workflow_run_id)
+        .bind(i64::from(handler.module_version))
+        .bind(serde_json::to_string(&handler)?)
+        .bind(wire_name(&handler.status)?)
+        .bind(handler.revision as i64)
+        .bind(now)
+        .bind(now)
+        .bind(now)
+        .execute(&mut *tx)
+        .await?;
+        // an already-present handler means a redelivered result; do not journal it a second time.
+        if inserted.affected() == 0 {
+            tx.commit().await?;
+            return Ok(());
+        }
+        append_journal(
+            self,
+            &mut tx,
+            handler.workflow_run_id,
+            Some(handler.id),
+            &journal,
+            now,
+        )
+        .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn settle_workflow_interrupt(
+        &self,
+        mut handler: WorkflowContinuation,
+        interrupted_continuation_id: Uuid,
+        outcome: WorkflowInterruptOutcome,
+        journal: WorkflowJournalEntry,
+    ) -> Result<(), SendableError> {
+        let now = Utc::now().timestamp();
+        let expected = handler.revision;
+        handler.revision += 1;
+        let mut tx = self.pool().begin().await?;
+        let updated = sqlx::query(&self.render(
+            "UPDATE workflow_continuations SET continuation_json = ?, status = ?, version = ?, ready_at = NULL, claimed_by = NULL, claimed_until = NULL, updated_at = ? WHERE id = ? AND version = ?",
+        ))
+        .bind(serde_json::to_string(&handler)?)
+        .bind(wire_name(&handler.status)?)
+        .bind(handler.revision as i64)
+        .bind(now)
+        .bind(handler.id)
+        .bind(expected as i64)
+        .execute(&mut *tx)
+        .await?;
+        if updated.affected() == 0 {
+            tx.rollback().await?;
+            return Err(cas_error());
+        }
+        let row = sqlx::query(&self.render(&format!(
+            "SELECT {CONTINUATION_COLUMNS} FROM workflow_continuations WHERE id = ?"
+        )))
+        .bind(interrupted_continuation_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        // a thread that was cancelled or settled while its handler ran simply stays that way. the
+        // handler still retires, which is what stops it being driven forever.
+        if let Some(row) = row {
+            let mut interrupted = mappers::row_to_workflow_continuation(&row)?;
+            if interrupted.status == WorkflowContinuationStatus::Suspended {
+                let expected = interrupted.revision;
+                interrupted.revision += 1;
+                let (status, ready) = match &outcome {
+                    WorkflowInterruptOutcome::Resume {
+                        instruction_pointer,
+                    } => {
+                        interrupted.instruction_pointer = *instruction_pointer;
+                        interrupted.awaiting_effect_id = None;
+                        (WorkflowContinuationStatus::Runnable, true)
+                    }
+                    WorkflowInterruptOutcome::Fail { .. } => {
+                        (WorkflowContinuationStatus::Failed, false)
+                    }
+                };
+                interrupted.status = status;
+                sqlx::query(&self.render(
+                    "UPDATE workflow_continuations SET continuation_json = ?, status = ?, version = ?, ready_at = ?, claimed_by = NULL, claimed_until = NULL, updated_at = ? WHERE id = ? AND version = ?",
+                ))
+                .bind(serde_json::to_string(&interrupted)?)
+                .bind(wire_name(&interrupted.status)?)
+                .bind(interrupted.revision as i64)
+                .bind(ready.then_some(now))
+                .bind(now)
+                .bind(interrupted.id)
+                .bind(expected as i64)
+                .execute(&mut *tx)
+                .await?;
+            }
+        }
+        append_journal(
+            self,
+            &mut tx,
+            handler.workflow_run_id,
+            Some(handler.id),
+            &journal,
+            now,
+        )
+        .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn request_workflow_interrupt(
+        &self,
+        workflow_run_id: Uuid,
+        continuation_id: Option<Uuid>,
+        pending: WorkflowPendingInterrupt,
+    ) -> Result<Option<Uuid>, SendableError> {
+        let now = Utc::now().timestamp();
+        let mut tx = self.pool().begin().await?;
+        let rows = sqlx::query(&self.render(&format!(
+            "SELECT {CONTINUATION_COLUMNS} FROM workflow_continuations WHERE workflow_run_id = ? AND status IN ('runnable', 'waiting', 'paused') ORDER BY created_at, id"
+        )))
+        .bind(workflow_run_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        let mut target = None;
+        for row in &rows {
+            let candidate = mappers::row_to_workflow_continuation(row)?;
+            let matches = match continuation_id {
+                Some(id) => candidate.id == id,
+                // untargeted: the run's oldest live thread, which is the one `active_node_id`
+                // mirrors for single-position consumers.
+                None => true,
+            };
+            if matches {
+                target = Some(candidate);
+                break;
+            }
+        }
+        let Some(mut target) = target else {
+            tx.rollback().await?;
+            return Ok(None);
+        };
+        let expected = target.revision;
+        target.revision += 1;
+        target.pending_interrupt = Some(pending);
+        let updated = sqlx::query(&self.render(
+            "UPDATE workflow_continuations SET continuation_json = ?, version = ?, updated_at = ? WHERE id = ? AND version = ?",
+        ))
+        .bind(serde_json::to_string(&target)?)
+        .bind(target.revision as i64)
+        .bind(now)
+        .bind(target.id)
+        .bind(expected as i64)
+        .execute(&mut *tx)
+        .await?;
+        if updated.affected() == 0 {
+            tx.rollback().await?;
+            return Err(cas_error());
+        }
+        tx.commit().await?;
+        Ok(Some(target.id))
+    }
+
+    async fn claim_workflow_effect_executor(
+        &self,
+        effect_id: Uuid,
+        attempt: u32,
+        replica_id: Uuid,
+        claimed_at: DateTime<Utc>,
+    ) -> Result<bool, SendableError> {
+        // guarded on the attempt so a redelivery to a second worker after the first one's attempt
+        // was superseded cannot steal the lease from the live executor.
+        let updated = sqlx::query(&self.render(
+            "UPDATE workflow_effects SET status = 'running', current_executor_replica_id = ?, updated_at = ? WHERE id = ? AND attempt = ? AND status IN ('requested', 'running')",
+        ))
+        .bind(replica_id)
+        .bind(claimed_at.timestamp())
+        .bind(effect_id)
+        .bind(i64::from(attempt))
+        .execute(self.pool())
+        .await?;
+        Ok(updated.affected() > 0)
+    }
+
+    async fn retry_workflow_effect(
+        &self,
+        effect_id: Uuid,
+        attempt: u32,
+        available_at: DateTime<Utc>,
+        message: Option<String>,
+        now: DateTime<Utc>,
+    ) -> Result<bool, SendableError> {
+        let mut tx = self.pool().begin().await?;
+        let row = sqlx::query(&self.render(&format!(
+            "SELECT {EFFECT_COLUMNS} FROM workflow_effects WHERE id = ?"
+        )))
+        .bind(effect_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some(row) = row else {
+            tx.commit().await?;
+            return Ok(false);
+        };
+        let mut effect = mappers::row_to_workflow_effect(&row)?;
+        if effect.attempt != attempt || effect.status.is_terminal() {
+            tx.commit().await?;
+            return Ok(false);
+        }
+        let stamp = now.timestamp();
+        // re-arming clears the previous outcome but keeps the executor attribution, exactly as
+        // settling does: a retry-exhaustion report still needs to name who ran the attempt before.
+        let updated = sqlx::query(&self.render(
+            "UPDATE workflow_effects SET attempt = attempt + 1, status = 'requested', result_json = NULL, message = ?, updated_at = ?, finished_at = NULL, last_executor_replica_id = COALESCE(current_executor_replica_id, last_executor_replica_id), current_executor_replica_id = NULL WHERE id = ? AND attempt = ? AND status IN ('requested', 'running')",
+        ))
+        .bind(message)
+        .bind(stamp)
+        .bind(effect_id)
+        .bind(i64::from(attempt))
+        .execute(&mut *tx)
+        .await?;
+        if updated.affected() == 0 {
+            tx.commit().await?;
+            return Ok(false);
+        }
+        effect.attempt = attempt + 1;
+        // re-publish the *frozen* command rather than rebuilding one from workflow state, bumping
+        // only the fields that identify this attempt. `idempotency_key()` carries the attempt, so
+        // the worker's claim cannot replay the attempt that just failed.
+        let command_json: String = sqlx::query(&self.render(
+            "SELECT command_json FROM workflow_effect_dispatches WHERE effect_id = ? ORDER BY created_at DESC, id DESC LIMIT 1",
+        ))
+        .bind(effect_id)
+        .fetch_one(&mut *tx)
+        .await?
+        .try_get("command_json")?;
+        let mut command: EffectCommand = serde_json::from_str(&command_json)?;
+        command.command_id = Uuid::now_v7();
+        command.attempt = effect.attempt;
+        command.idempotency_key = effect.idempotency_key();
+        sqlx::query(&self.render(
+            "INSERT INTO workflow_effect_dispatches (id, effect_id, dedupe_key, command_json, created_at, updated_at, available_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ))
+        .bind(command.command_id)
+        .bind(effect_id)
+        .bind(effect.idempotency_key())
+        .bind(serde_json::to_string(&command)?)
+        .bind(stamp)
+        .bind(stamp)
+        .bind(available_at.timestamp())
+        .execute(&mut *tx)
+        .await?;
+        append_journal(
+            self,
+            &mut tx,
+            effect.workflow_run_id,
+            Some(effect.continuation_id),
+            &WorkflowJournalEntry::EffectRetryScheduled {
+                effect_id,
+                attempt: effect.attempt,
+                available_at: available_at.timestamp(),
+            },
+            stamp,
+        )
+        .await?;
+        tx.commit().await?;
+        Ok(true)
+    }
+
     async fn settle_workflow_effect(
         &self,
         effect_id: Uuid,
@@ -714,8 +1145,10 @@ where
             return Ok(false);
         }
         let now = settled_at.timestamp();
+        // settling releases the executor lease but keeps the attribution: `last_...` is what a
+        // retry-exhaustion report and the replica views read after the fact.
         let updated = sqlx::query(&self.render(
-            "UPDATE workflow_effects SET status = ?, result_json = ?, message = ?, updated_at = ?, finished_at = ? WHERE id = ? AND attempt = ? AND status IN ('requested', 'running')",
+            "UPDATE workflow_effects SET status = ?, result_json = ?, message = ?, updated_at = ?, finished_at = ?, last_executor_replica_id = COALESCE(current_executor_replica_id, last_executor_replica_id), current_executor_replica_id = NULL WHERE id = ? AND attempt = ? AND status IN ('requested', 'running')",
         ))
         .bind(wire_name(&status)?)
         .bind(output.as_ref().map(serde_json::to_string).transpose()?)
@@ -932,6 +1365,7 @@ where
         .bind(workflow_run_id)
         .execute(&mut *tx)
         .await?;
+        release_run_mutexes(self, &mut tx, workflow_run_id, now).await?;
         tx.commit().await?;
         Ok(pending_effects)
     }
@@ -962,20 +1396,41 @@ where
         .bind(name.as_str())
         .execute(&mut *tx)
         .await?;
-        let row =
-            sqlx::query(&self.render("SELECT holder_run_id FROM workflow_mutexes WHERE name = ?"))
-                .bind(name.as_str())
-                .fetch_one(&mut *tx)
-                .await?;
+        let row = sqlx::query(
+            &self.render("SELECT holder_run_id, acquired_at FROM workflow_mutexes WHERE name = ?"),
+        )
+        .bind(name.as_str())
+        .fetch_one(&mut *tx)
+        .await?;
         let holder = row.try_get::<Option<Uuid>, _>("holder_run_id")?;
-        let acquired = holder.is_none() || holder == Some(workflow_run_id);
+        let held_since = row.try_get::<Option<i64>, _>("acquired_at")?;
+        // a holder whose run has already finished is a lock nobody will ever release — a crash
+        // between the effect settling and the run settling leaves exactly that row. treating it
+        // as free is what keeps one lost release from deadlocking the key forever.
+        let stale_holder = match holder {
+            Some(holder) if holder != workflow_run_id => sqlx::query(&self.render(
+                "SELECT 1 AS present FROM workflow_runs WHERE id = ? AND status NOT IN ('succeeded', 'failed', 'timed_out', 'canceled')",
+            ))
+            .bind(holder)
+            .fetch_optional(&mut *tx)
+            .await?
+            .is_none(),
+            _ => false,
+        };
+        let acquired = holder.is_none() || holder == Some(workflow_run_id) || stale_holder;
         if acquired {
+            // a re-entrant claim by the current holder keeps its original acquisition time; taking
+            // the key over from nobody, or from a stale holder, starts the clock now.
+            let acquired_at = match holder {
+                Some(holder) if holder == workflow_run_id => held_since.unwrap_or(now),
+                _ => now,
+            };
             sqlx::query(&self.render(
-                "UPDATE workflow_mutexes SET holder_run_id = ?, holder_continuation_id = ?, acquired_at = COALESCE(acquired_at, ?), updated_at = ? WHERE name = ?",
+                "UPDATE workflow_mutexes SET holder_run_id = ?, holder_continuation_id = ?, acquired_at = ?, updated_at = ? WHERE name = ?",
             ))
             .bind(workflow_run_id)
             .bind(continuation_id)
-            .bind(now)
+            .bind(acquired_at)
             .bind(now)
             .bind(name.as_str())
             .execute(&mut *tx)
@@ -1038,9 +1493,10 @@ where
         const COLUMNS: &str = "id, effect_id, dedupe_key, command_json, attempts, published_at, created_at, updated_at, last_error, claimed_by, claimed_until";
         let mut tx = self.pool().begin().await?;
         let ids = sqlx::query(&self.render(&format!(
-            "SELECT id FROM workflow_effect_dispatches WHERE published_at IS NULL AND (claimed_until IS NULL OR claimed_until <= ? OR claimed_by = ?) ORDER BY created_at, id LIMIT ?{}",
+            "SELECT id FROM workflow_effect_dispatches WHERE published_at IS NULL AND available_at <= ? AND (claimed_until IS NULL OR claimed_until <= ? OR claimed_by = ?) ORDER BY created_at, id LIMIT ?{}",
             self.dialect().skip_locked()
         )))
+        .bind(now.timestamp())
         .bind(now.timestamp())
         .bind(publisher_id.as_str())
         .bind(limit.max(1))

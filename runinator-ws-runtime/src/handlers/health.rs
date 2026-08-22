@@ -21,7 +21,7 @@ pub struct HealthResponse {
 pub struct ReadinessResponse {
     status: String,
     database: String,
-    broker_result_channels: bool,
+    broker_effect_channels: bool,
     counters: stability::StabilityCounters,
 }
 
@@ -86,7 +86,7 @@ pub async fn ready<T: DatabaseImpl>(
         Json(ReadinessResponse {
             status: status.into(),
             database: if database_ready { "ok" } else { "error" }.into(),
-            broker_result_channels: broker.supports_workflow_result_channels(),
+            broker_effect_channels: broker.supports_workflow_effect_channels(),
             counters: stability::snapshot(),
         }),
     )

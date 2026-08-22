@@ -1,17 +1,14 @@
 use chrono::Utc;
-use runinator_comm::ActionCommand;
+use runinator_comm::{EffectCommand, EffectExecutor};
 use std::sync::Arc;
 
-use runinator_models::json;
-use runinator_models::workflows::WorkflowAction;
-
-use crate::{instrument, Broker, BrokerMessage, EffectMessage, EffectResultMessage, ResultMessage};
+use crate::{instrument, Broker, EffectMessage, EffectResultMessage};
 
 use super::*;
 
 #[test]
-fn in_memory_broker_supports_workflow_result_channels() {
-    assert!(InMemoryBroker::new().supports_workflow_result_channels());
+fn in_memory_broker_supports_workflow_effect_channels() {
+    assert!(InMemoryBroker::new().supports_workflow_effect_channels());
 }
 
 #[tokio::test]
@@ -102,58 +99,64 @@ async fn agent_directives_route_only_to_the_target_replica() {
 }
 
 #[tokio::test]
-async fn in_memory_broker_redelivers_expired_action_delivery() {
+async fn in_memory_broker_redelivers_expired_effect_delivery() {
     let broker = InMemoryBroker::with_lease_duration(Duration::from_millis(10));
     broker
-        .publish(BrokerMessage {
-            command: action_command(),
-            dedupe_key: Some("lease-action".into()),
+        .publish_effect(EffectMessage {
+            command: effect_command(),
+            dedupe_key: Some("lease-effect".into()),
             enqueued_at: Utc::now(),
         })
         .await
         .unwrap();
 
-    let first = broker.receive("consumer-a").await.unwrap();
+    let first = broker.receive_effect("consumer-a").await.unwrap();
     tokio::time::sleep(Duration::from_millis(15)).await;
-    let second = broker.receive("consumer-b").await.unwrap();
+    let second = broker.receive_effect("consumer-b").await.unwrap();
 
     assert_ne!(first.delivery_id, second.delivery_id);
     assert_eq!(first.command.command_id, second.command.command_id);
-    assert!(broker.ack("consumer-a", first.delivery_id).await.is_err());
-    broker.ack("consumer-b", second.delivery_id).await.unwrap();
+    assert!(broker
+        .ack_effect("consumer-a", first.delivery_id)
+        .await
+        .is_err());
+    broker
+        .ack_effect("consumer-b", second.delivery_id)
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
-async fn in_memory_broker_redelivers_expired_result_delivery() {
+async fn in_memory_broker_redelivers_expired_effect_result_delivery() {
     let broker = InMemoryBroker::with_lease_duration(Duration::from_millis(10));
-    let command = action_command();
-    let event = runinator_comm::WorkflowResultEvent::status(
+    let command = effect_command();
+    let result = runinator_comm::EffectResult::status(
         &command,
-        runinator_models::workflows::WorkflowStatus::Succeeded,
+        runinator_models::workflow_vm::WorkflowEffectStatus::Succeeded,
         None,
         None,
     );
     broker
-        .publish_result(ResultMessage {
-            event,
-            dedupe_key: Some("lease-result".into()),
+        .publish_effect_result(EffectResultMessage {
+            result,
+            dedupe_key: Some("lease-effect-result".into()),
             enqueued_at: Utc::now(),
         })
         .await
         .unwrap();
 
-    let first = broker.receive_result("consumer-a").await.unwrap();
+    let first = broker.receive_effect_result("consumer-a").await.unwrap();
     tokio::time::sleep(Duration::from_millis(15)).await;
-    let second = broker.receive_result("consumer-b").await.unwrap();
+    let second = broker.receive_effect_result("consumer-b").await.unwrap();
 
     assert_ne!(first.delivery_id, second.delivery_id);
-    assert_eq!(first.event.event_id, second.event.event_id);
+    assert_eq!(first.result.event_id, second.result.event_id);
     assert!(broker
-        .ack_result("consumer-a", first.delivery_id)
+        .ack_effect_result("consumer-a", first.delivery_id)
         .await
         .is_err());
     broker
-        .ack_result("consumer-b", second.delivery_id)
+        .ack_effect_result("consumer-b", second.delivery_id)
         .await
         .unwrap();
 }
@@ -161,14 +164,7 @@ async fn in_memory_broker_redelivers_expired_result_delivery() {
 #[tokio::test]
 async fn in_memory_broker_redelivers_expired_wake_delivery() {
     let broker = InMemoryBroker::with_lease_duration(Duration::from_millis(10));
-    let command = runinator_comm::WakeCommand::new(
-        Uuid::now_v7(),
-        Uuid::now_v7(),
-        "node-a".into(),
-        Utc::now(),
-        Uuid::new_v4(),
-        Uuid::now_v7(),
-    );
+    let command = runinator_comm::WakeCommand::new(Utc::now(), wake_result(), Uuid::now_v7());
     broker
         .publish_wake(crate::WakeMessage {
             command,
@@ -183,7 +179,7 @@ async fn in_memory_broker_redelivers_expired_wake_delivery() {
     let second = broker.receive_wake("consumer-b").await.unwrap();
 
     assert_ne!(first.delivery_id, second.delivery_id);
-    assert_eq!(first.command.ready_node_id, second.command.ready_node_id);
+    assert_eq!(first.command.effect_id(), second.command.effect_id());
     assert!(broker
         .ack_wake("consumer-a", first.delivery_id)
         .await
@@ -197,12 +193,7 @@ async fn in_memory_broker_redelivers_expired_wake_delivery() {
 #[tokio::test]
 async fn in_memory_broker_round_trips_ingress_delivery() {
     let broker = InMemoryBroker::new();
-    let command = runinator_comm::WsIngressCommand::drive(
-        Uuid::now_v7(),
-        Uuid::now_v7(),
-        "node-a".into(),
-        Uuid::now_v7(),
-    );
+    let command = runinator_comm::WsIngressCommand::settle_effect(wake_result(), Uuid::now_v7());
     broker
         .publish_ingress(crate::IngressMessage {
             command,
@@ -215,7 +206,7 @@ async fn in_memory_broker_round_trips_ingress_delivery() {
     let delivery = broker.receive_ingress("ws").await.unwrap();
     assert!(matches!(
         delivery.command,
-        runinator_comm::WsIngressCommand::Drive { .. }
+        runinator_comm::WsIngressCommand::SettleEffect { .. }
     ));
     broker
         .ack_ingress("ws", delivery.delivery_id)
@@ -347,20 +338,20 @@ async fn nack_control_requeues_for_the_matching_consumer() {
 }
 
 #[tokio::test]
-async fn receive_for_routes_targeted_actions_to_the_matching_consumer() {
+async fn receive_effect_for_routes_targeted_effects_to_the_matching_consumer() {
     use runinator_comm::{ActionTarget, ConsumerProfile};
 
     let broker = InMemoryBroker::new();
     let replica = Uuid::now_v7();
 
-    // a replica-targeted action and a general-pool (Any) action share the queue.
-    let mut targeted = action_command();
+    // a replica-targeted effect and a general-pool (Any) effect share the queue.
+    let mut targeted = effect_command();
     targeted.target = ActionTarget::Replica {
         replica_id: replica,
     };
-    let any = action_command();
+    let any = effect_command();
     broker
-        .publish(BrokerMessage {
+        .publish_effect(EffectMessage {
             command: targeted.clone(),
             dedupe_key: Some("targeted".into()),
             enqueued_at: Utc::now(),
@@ -368,7 +359,7 @@ async fn receive_for_routes_targeted_actions_to_the_matching_consumer() {
         .await
         .unwrap();
     broker
-        .publish(BrokerMessage {
+        .publish_effect(EffectMessage {
             command: any.clone(),
             dedupe_key: Some("any".into()),
             enqueued_at: Utc::now(),
@@ -376,46 +367,58 @@ async fn receive_for_routes_targeted_actions_to_the_matching_consumer() {
         .await
         .unwrap();
 
-    // an exclusive consumer bound to the replica only sees the targeted action, even though it
-    // sits ahead of nothing special; it must never receive the Any action.
+    // an exclusive consumer bound to the replica only sees the targeted effect, even though it
+    // sits ahead of nothing special; it must never receive the Any effect.
     let desktop = ConsumerProfile::shared("desktop")
         .with_replica_id(replica)
         .exclusive();
-    let delivery = broker.receive_for(&desktop).await.unwrap();
+    let delivery = broker.receive_effect_for(&desktop).await.unwrap();
     assert_eq!(delivery.command.command_id, targeted.command_id);
-    broker.ack("desktop", delivery.delivery_id).await.unwrap();
+    broker
+        .ack_effect("desktop", delivery.delivery_id)
+        .await
+        .unwrap();
 
-    // a general-pool consumer picks up the remaining Any action.
+    // a general-pool consumer picks up the remaining Any effect.
     let server = ConsumerProfile::shared("server");
-    let delivery = broker.receive_for(&server).await.unwrap();
+    let delivery = broker.receive_effect_for(&server).await.unwrap();
     assert_eq!(delivery.command.command_id, any.command_id);
 }
 
-fn action_command() -> ActionCommand {
-    ActionCommand {
+fn effect_command() -> EffectCommand {
+    EffectCommand {
+        version: runinator_models::workflow_vm::WORKFLOW_EFFECT_PROTOCOL_VERSION,
         command_id: Uuid::new_v4(),
+        effect_id: Uuid::now_v7(),
         workflow_run_id: Uuid::now_v7(),
-        workflow_node_run_id: Uuid::now_v7(),
-        node_id: "node-a".into(),
-        action: WorkflowAction {
-            provider: "test".into(),
-            function: "execute".into(),
-            timeout_seconds: 60,
-            configuration: runinator_models::workflows::WorkflowObject::default(),
-            mcp_enabled: false,
-            tags: Vec::new(),
-            required_labels: Default::default(),
-            idempotency_key: None,
-            function_binding: None,
-        },
+        continuation_id: Uuid::now_v7(),
         attempt: 1,
-        parameters: json!({}),
+        request: runinator_models::workflow_vm::WorkflowEffectRequest::Timer { due_at: 42 },
+        executor: EffectExecutor::Provider,
         target: Default::default(),
         trace_id: Uuid::nil(),
         trace_context: Default::default(),
+        idempotency_key: Uuid::new_v4().to_string(),
         notification_delivery_id: None,
-        invocation_call_id: None,
-        task_run_id: None,
-        idempotency_key: None,
+    }
+}
+
+/// a terminal effect result for the wake/ingress payloads exercised above.
+fn wake_result() -> runinator_comm::EffectResult {
+    runinator_comm::EffectResult {
+        version: runinator_models::workflow_vm::WORKFLOW_EFFECT_PROTOCOL_VERSION,
+        event_id: Uuid::now_v7(),
+        effect_id: Uuid::now_v7(),
+        workflow_run_id: Uuid::now_v7(),
+        continuation_id: Uuid::now_v7(),
+        attempt: 0,
+        kind: runinator_comm::EffectResultKind::Status {
+            status: runinator_models::workflow_vm::WorkflowEffectStatus::Succeeded,
+            output: None,
+            message: None,
+        },
+        timestamp: Utc::now(),
+        trace_id: Uuid::now_v7(),
+        notification_delivery_id: None,
     }
 }

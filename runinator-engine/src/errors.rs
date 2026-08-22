@@ -91,6 +91,11 @@ pub const CONTROL_PUBLISH: ErrorDescriptor = ErrorDescriptor::new(
     "workflow.control.publish",
     "Failed to publish control command",
 );
+pub const EFFECT_RESULT_PUBLISH: ErrorDescriptor = ErrorDescriptor::new(
+    "RUNI139",
+    "workflow.effect_result.publish",
+    "Failed to publish effect result",
+);
 pub const PIPELINE_PAUSE_NOT_FOUND: ErrorDescriptor = ErrorDescriptor::new(
     "RUNI150",
     "pipeline.pause.not_found",
@@ -264,6 +269,7 @@ pub const DICTIONARY: &[ErrorDescriptor] = &[
     RESUME_NOT_FOUND,
     CANCEL_NOT_FOUND,
     CONTROL_PUBLISH,
+    EFFECT_RESULT_PUBLISH,
     PIPELINE_PAUSE_NOT_FOUND,
     PIPELINE_RESUME_NOT_FOUND,
     PIPELINE_NOT_FOUND,

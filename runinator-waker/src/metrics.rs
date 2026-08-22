@@ -46,7 +46,7 @@ fn metrics() -> &'static WakerMetrics {
     })
 }
 
-/// a wake was pulled off the wake channel. `lead_ms` is how far in the future its `ready_at` is at
+/// a wake was pulled off the wake channel. `lead_ms` is how far in the future its `due_at` is at
 /// receipt (negative when already overdue), recorded so scheduling lead/lag is observable.
 pub(crate) fn wake_received(lead_ms: f64) {
     metrics().wakes_received.add(1, &[]);
@@ -57,7 +57,8 @@ pub(crate) fn wake_due_lag(lag_ms: f64) {
     metrics().wake_due_lag_ms.record(lag_ms.max(0.0), &[]);
 }
 
-/// a due wake was relayed to the ingress channel as a drive (or was already in flight).
+/// a due wake was relayed to the ingress channel as an effect settle (or was already in flight).
+/// the exported metric name predates the settle payload and is kept as a stable contract.
 pub(crate) fn wake_driven() {
     metrics().wakes_driven.add(1, &[]);
 }
@@ -67,7 +68,7 @@ pub(crate) fn wake_requeued() {
     metrics().wakes_requeued.add(1, &[]);
 }
 
-/// publishing the drive for a due wake failed; it was returned to the broker to retry.
+/// publishing the settle for a due wake failed; it was returned to the broker to retry.
 pub(crate) fn drive_failed() {
     metrics().drive_failures.add(1, &[]);
 }

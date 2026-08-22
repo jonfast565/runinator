@@ -1,31 +1,43 @@
 use crate::{
-    ActionCommand, ActionTarget, AgentDirectiveKind, ControlCommand, ControlKind, GossipMessage,
-    UiEvent, UiEventKind, WakeCommand, WebServiceAnnouncement, WireCodec, WorkflowResultEvent,
-    WorkflowResultEventKind, WsIngressCommand,
+    ActionTarget, AgentDirectiveKind, ControlCommand, ControlKind, EffectCommand, EffectExecutor,
+    EffectResult, EffectResultKind, GossipMessage, UiEvent, UiEventKind, WakeCommand,
+    WebServiceAnnouncement, WireCodec, WsIngressCommand,
 };
 use chrono::Utc;
-use runinator_models::{json, runs::NewRunChunk, workflows::WorkflowAction};
+use runinator_models::json;
 use uuid::Uuid;
 
 #[test]
-fn wake_command_round_trips_with_json_and_dedupes_by_node() {
-    let source = Uuid::new_v4();
-    let ready_node_id = Uuid::now_v7();
+fn wake_command_round_trips_with_json_and_carries_its_effect_result() {
+    let effect_id = Uuid::now_v7();
     let workflow_run_id = Uuid::now_v7();
+    let due_at = Utc::now();
     let command = WakeCommand::new(
-        ready_node_id,
-        workflow_run_id,
-        "node-a".into(),
-        Utc::now(),
-        source,
+        due_at,
+        EffectResult {
+            version: crate::WORKFLOW_EFFECT_PROTOCOL_VERSION,
+            event_id: Uuid::now_v7(),
+            effect_id,
+            workflow_run_id,
+            continuation_id: Uuid::now_v7(),
+            attempt: 0,
+            kind: EffectResultKind::Status {
+                status: runinator_models::workflow_vm::WorkflowEffectStatus::Succeeded,
+                output: None,
+                message: None,
+            },
+            timestamp: due_at,
+            trace_id: Uuid::now_v7(),
+            notification_delivery_id: None,
+        },
         Uuid::now_v7(),
     );
     let encoded = command.to_wire().unwrap();
     let decoded = WakeCommand::from_wire(&encoded).unwrap();
 
-    assert_eq!(decoded.ready_node_id, ready_node_id);
-    assert_eq!(decoded.workflow_run_id, workflow_run_id);
-    assert_eq!(decoded.dedupe_key(), format!("{ready_node_id}:{source}"));
+    assert_eq!(decoded.effect_id(), effect_id);
+    assert_eq!(decoded.workflow_run_id(), workflow_run_id);
+    assert_eq!(decoded.dedupe_key(), format!("{effect_id}:0"));
 }
 
 #[test]
@@ -37,26 +49,67 @@ fn unknown_agent_directive_types_deserialize_as_unsupported_candidates() {
 
 #[test]
 fn ws_ingress_command_round_trips_and_dedupes_per_kind() {
-    let ready_node_id = Uuid::now_v7();
     let workflow_run_id = Uuid::now_v7();
-    let drive = WsIngressCommand::drive(
-        ready_node_id,
+    let effect_id = Uuid::now_v7();
+    let result = EffectResult {
+        version: crate::WORKFLOW_EFFECT_PROTOCOL_VERSION,
+        event_id: Uuid::now_v7(),
+        effect_id,
         workflow_run_id,
-        "node-a".into(),
-        Uuid::now_v7(),
-    );
-    let decoded = WsIngressCommand::from_wire(&drive.to_wire().unwrap()).unwrap();
+        continuation_id: Uuid::now_v7(),
+        attempt: 2,
+        kind: EffectResultKind::Status {
+            status: runinator_models::workflow_vm::WorkflowEffectStatus::Succeeded,
+            output: None,
+            message: None,
+        },
+        timestamp: chrono::Utc::now(),
+        trace_id: Uuid::now_v7(),
+        notification_delivery_id: None,
+    };
+    let settle = WsIngressCommand::settle_effect(result.clone(), Uuid::now_v7());
+    let decoded = WsIngressCommand::from_wire(&settle.to_wire().unwrap()).unwrap();
     assert!(matches!(
         decoded,
-        WsIngressCommand::Drive { ready_node_id: rid, .. } if rid == ready_node_id
+        WsIngressCommand::SettleEffect { result, .. } if result.effect_id == effect_id
     ));
-    assert_eq!(drive.dedupe_key(), format!("drive:{ready_node_id}"));
+    assert_eq!(settle.dedupe_key(), format!("settle:{effect_id}:2"));
 
     let control = WsIngressCommand::control(workflow_run_id, ControlKind::Cancel);
     assert_eq!(
         control.dedupe_key(),
         format!("control:{workflow_run_id}:Cancel")
     );
+}
+
+#[test]
+fn wake_command_dedupes_per_effect_attempt_and_carries_its_result() {
+    let effect_id = Uuid::now_v7();
+    let due_at = chrono::Utc::now() + chrono::Duration::seconds(30);
+    let result = EffectResult {
+        version: crate::WORKFLOW_EFFECT_PROTOCOL_VERSION,
+        event_id: Uuid::now_v7(),
+        effect_id,
+        workflow_run_id: Uuid::now_v7(),
+        continuation_id: Uuid::now_v7(),
+        attempt: 0,
+        kind: EffectResultKind::Status {
+            status: runinator_models::workflow_vm::WorkflowEffectStatus::Succeeded,
+            output: None,
+            message: None,
+        },
+        timestamp: due_at,
+        trace_id: Uuid::now_v7(),
+        notification_delivery_id: None,
+    };
+    let wake = WakeCommand::new(due_at, result, Uuid::now_v7());
+
+    assert_eq!(wake.effect_id(), effect_id);
+    assert_eq!(wake.dedupe_key(), format!("{effect_id}:0"));
+    // a retried attempt must arm its own timer rather than collide with the one it replaced.
+    let mut retried = wake.clone();
+    retried.result.attempt = 1;
+    assert_ne!(wake.dedupe_key(), retried.dedupe_key());
 }
 
 #[test]
@@ -76,61 +129,57 @@ fn control_command_round_trips_its_target_and_defaults_older_messages_to_any() {
 }
 
 #[test]
-fn workflow_result_events_round_trip_with_json() {
-    let workflow_node_run_id = Uuid::now_v7();
-    let command = ActionCommand {
-        command_id: Uuid::new_v4(),
+fn effect_results_round_trip_with_json() {
+    let command = EffectCommand {
+        version: runinator_models::workflow_vm::WORKFLOW_EFFECT_PROTOCOL_VERSION,
+        command_id: Uuid::now_v7(),
+        effect_id: Uuid::now_v7(),
         workflow_run_id: Uuid::now_v7(),
-        workflow_node_run_id,
-        node_id: "node-a".into(),
-        action: WorkflowAction {
-            provider: "test".into(),
-            function: "execute".into(),
-            timeout_seconds: 60,
-            configuration: runinator_models::workflows::WorkflowObject::default(),
-            mcp_enabled: false,
-            tags: Vec::new(),
-            required_labels: Default::default(),
-            idempotency_key: None,
-            function_binding: None,
-        },
+        continuation_id: Uuid::now_v7(),
         attempt: 1,
-        parameters: json!({}),
+        request: runinator_models::workflow_vm::WorkflowEffectRequest::Timer { due_at: 1 },
+        executor: EffectExecutor::Provider,
         target: Default::default(),
         trace_id: Uuid::nil(),
         trace_context: Default::default(),
+        idempotency_key: "effect-key".into(),
         notification_delivery_id: None,
-        invocation_call_id: None,
-        task_run_id: None,
-        idempotency_key: None,
     };
-    let event = WorkflowResultEvent::chunk(
+    let result = EffectResult::status(
         &command,
-        NewRunChunk {
-            stream: "log".into(),
-            content: "hello".into(),
-        },
+        runinator_models::workflow_vm::WorkflowEffectStatus::Succeeded,
+        Some(json!({"ok": true})),
+        None,
     );
 
-    let encoded = event.to_wire().unwrap();
-    let decoded = WorkflowResultEvent::from_wire(&encoded).unwrap();
+    let encoded = result.to_wire().unwrap();
+    let decoded = EffectResult::from_wire(&encoded).unwrap();
 
-    assert_eq!(decoded.command_id, command.command_id);
-    assert_eq!(decoded.workflow_node_run_id, workflow_node_run_id);
+    assert_eq!(decoded.effect_id, command.effect_id);
+    assert_eq!(decoded.continuation_id, command.continuation_id);
     assert_eq!(decoded.attempt, 1);
     match decoded.kind {
-        WorkflowResultEventKind::Chunk { chunk } => {
-            assert_eq!(chunk.stream, "log");
-            assert_eq!(chunk.content, "hello");
+        EffectResultKind::Status { status, output, .. } => {
+            assert_eq!(
+                status,
+                runinator_models::workflow_vm::WorkflowEffectStatus::Succeeded
+            );
+            assert_eq!(output, Some(json!({"ok": true})));
         }
-        _ => panic!("expected chunk result event"),
+        _ => panic!("expected status result"),
     }
 
-    // an older message with no attempt field decodes to 0 (unknown), never an error.
-    let mut legacy = serde_json::to_value(&event).unwrap();
-    legacy.as_object_mut().unwrap().remove("attempt");
-    let decoded: WorkflowResultEvent = serde_json::from_value(legacy).unwrap();
-    assert_eq!(decoded.attempt, 0);
+    // a message from an unknown future protocol version decodes, then fails the version gate
+    // rather than being silently applied.
+    let mut future = serde_json::to_value(&result).unwrap();
+    future.as_object_mut().unwrap().insert(
+        "version".into(),
+        serde_json::Value::from(
+            runinator_models::workflow_vm::WORKFLOW_EFFECT_PROTOCOL_VERSION + 1,
+        ),
+    );
+    let decoded: EffectResult = serde_json::from_value(future).unwrap();
+    assert!(!decoded.is_supported());
 }
 
 #[test]

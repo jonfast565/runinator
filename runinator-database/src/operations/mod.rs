@@ -8,10 +8,8 @@ use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
 use runinator_comm::{
-    ActionCommand, ActionDispatchRecord, AgentDirectiveKind, AgentDirectiveRecord,
-    AgentDirectiveResult, AgentDirectiveStatus, WorkflowResultEvent, WorkflowResultEventKind,
+    AgentDirectiveKind, AgentDirectiveRecord, AgentDirectiveResult, AgentDirectiveStatus,
 };
-use runinator_models::cursor::RunCursor;
 use runinator_models::value::Value;
 use runinator_models::workflow_state::WorkflowExecutionState;
 use runinator_models::workflow_vm::{
@@ -32,17 +30,11 @@ use runinator_models::{
         FunctionAdapterWorkflow, FunctionAlias, FunctionArtifact, FunctionCatalogEntry,
         FunctionExport, FunctionPackage, FunctionVersion, NewFunctionVersion,
     },
-    invocation::{
-        InvocationContinuation, NewInvocationCall, WorkflowInvocation, WorkflowInvocationCall,
-    },
     notifications::{
         NewNotification, NewNotificationPolicy, Notification, NotificationChannel,
         NotificationDelivery, NotificationDeliveryStatus, NotificationEvent, NotificationPolicy,
     },
-    orchestration::{
-        IdempotencyClaim, NewOrchestrationEvent, NodeTransition, NodeTransitionStat,
-        OrchestrationEvent, ReadyNodeRecord,
-    },
+    orchestration::IdempotencyClaim,
     orgs::{OrgMembership, OrgRole, Organization},
     pipelines::{
         Pipeline, PipelineMemberAttempt, PipelineMemberAttemptStatus, PipelineRun, PipelineTrigger,
@@ -64,11 +56,7 @@ use runinator_models::{
     },
     settings::{SettingKind, SettingRecord},
     telemetry::ReplicaSample,
-    workflows::{
-        NewWorkflowRunArtifact, WorkflowAction, WorkflowDefinition, WorkflowNodeRun,
-        WorkflowNodeRunArtifact, WorkflowNodeRunChunk, WorkflowRun, WorkflowRunArtifact,
-        WorkflowStatus, WorkflowTaskRun, WorkflowTrigger,
-    },
+    workflows::{WorkflowDefinition, WorkflowRun, WorkflowStatus, WorkflowTrigger},
 };
 use sqlx::{ColumnIndex, Database, Decode, Encode, Executor, IntoArguments, Row, Type};
 use uuid::Uuid;
@@ -79,22 +67,16 @@ use crate::{
     common::{
         PipelineTriggerExt, WorkflowTriggerExt, cron_slots_between, json_metadata, json_opt_i64,
         json_opt_str, json_opt_uuid, json_str, next_execution_for_cron, status_list,
-        workflow_result_event_type,
     },
     mappers,
     queries::SqlDialect,
 };
 use runinator_store::prelude::*;
-use runinator_store::workflow_mutex::{
-    WorkflowMutexClaim, WorkflowMutexClaimResult, WorkflowMutexWake,
-};
 
 const WORKFLOW_RUN_COLUMNS: &str = "id, workflow_id, workflow_snapshot, status, active_node_id, parameters, state, state_version, created_at, started_at, finished_at, message, name, correlation_key, pipeline_run_id, trigger_source_kind, trigger_actor_type, trigger_actor_replica_id, trigger_actor_display_name, trigger_request_host, trigger_request_ip, trigger_metadata";
-const WORKFLOW_NODE_RUN_COLUMNS: &str = "id, workflow_run_id, node_id, cursor_id, speculative, status, attempt, parameters, output_json, state, transition_reason, prev_node_run_id, created_at, started_at, finished_at, message, current_executor_replica_id, last_executor_replica_id, executor_claimed_at, executor_released_at";
 /// every column `mappers::row_to_ready_node` reads. hoisted because this list appeared verbatim in
 /// seven places, and a mapper reading a column one of them forgot to select panics only on that one
 /// code path.
-pub(super) const READY_NODE_COLUMNS: &str = "id, source_event_id, workflow_run_id, node_id, cursor_id, status, ready_at, attempts, claimed_by, claimed_until, completed_at, created_at, updated_at";
 const REPLICA_COLUMNS: &str = "replica_id, replica_type, instance_id, runtime_id, status, display_name, host, port, base_path, observed_ip, version, attributes, first_seen_at, last_heartbeat_at, last_seen_at, offline_at, registered_by_principal_id, registered_by_kind, registered_by_org_id";
 const REPLICA_PROVIDER_COLUMNS: &str = "replica_id, provider_name, provider_json, first_registered_at, last_registered_at, last_heartbeat_at";
 const AGENT_DIRECTIVE_COLUMNS: &str = "directive_id, replica_id, kind_json, state, issued_at, expires_at, published_at, completed_at, payload_json, message, attempts, claimed_at, claimed_by_runtime_id";
@@ -1097,10 +1079,9 @@ mod automation;
 mod console;
 mod database_impl;
 mod definitions;
-mod dispatch;
+mod delivery;
 mod execution_state_sql;
 mod functions;
-mod invocations;
 mod notifications;
 mod orgs;
 mod rbac;

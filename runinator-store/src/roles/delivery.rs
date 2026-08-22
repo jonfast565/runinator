@@ -1,15 +1,14 @@
-//! at-least-once delivery plumbing: the action-dispatch outbox, idempotency claims, and dead letters.
+//! delivery hygiene: the dead-letter log and the idempotency-key ledger.
 //!
-//! one of the role traits `DatabaseImpl` composes. bound on this directly when a caller only
-//! needs this slice of the store.
+//! one of the role traits `DatabaseImpl` composes. the action-dispatch outbox this file was named
+//! for is gone — the vm's effect dispatches live in [`super::WorkflowVmStore`] — but a worker still
+//! needs somewhere to record an undeliverable payload and to claim a key exactly once.
 
 use std::future::Future;
 
-use super::QueueSnapshot;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
-use runinator_comm::ActionDispatchRecord;
 use runinator_models::value::Value;
 use runinator_models::{errors::SendableError, orchestration::IdempotencyClaim};
 
@@ -19,13 +18,7 @@ pub use crate::runtime_store::RuntimeStore;
 
 /// Core persistence operations for Runinator.
 /// At-least-once delivery plumbing: the action-dispatch outbox, idempotency claims, and dead letters.
-pub trait DispatchStore: Send + Sync + 'static {
-    /// Operational snapshot of unpublished action-dispatch intents.
-    fn action_dispatch_queue_snapshot(
-        &self,
-        now: DateTime<Utc>,
-    ) -> impl Future<Output = Result<QueueSnapshot, SendableError>> + Send;
-
+pub trait DeliveryStore: Send + Sync + 'static {
     /// Persist a dead-lettered broker message for later inspection/replay.
     fn record_dead_letter(
         &self,
@@ -92,32 +85,4 @@ pub trait DispatchStore: Send + Sync + 'static {
         key: String,
         owner_node_run_id: Uuid,
     ) -> impl Future<Output = Result<bool, SendableError>> + Send;
-
-    /// Fetch unpublished action dispatch intents.
-    fn fetch_pending_action_dispatches(
-        &self,
-        limit: i64,
-    ) -> impl Future<Output = Result<Vec<ActionDispatchRecord>, SendableError>> + Send;
-
-    /// Claim unpublished action dispatch intents for one publisher.
-    fn claim_pending_action_dispatches(
-        &self,
-        scheduler_id: String,
-        now: DateTime<Utc>,
-        lease_until: DateTime<Utc>,
-        limit: i64,
-    ) -> impl Future<Output = Result<Vec<ActionDispatchRecord>, SendableError>> + Send;
-
-    /// Mark an action dispatch as successfully published.
-    fn mark_action_dispatch_published(
-        &self,
-        dispatch_id: Uuid,
-    ) -> impl Future<Output = Result<(), SendableError>> + Send;
-
-    /// Record a failed action dispatch publish attempt.
-    fn mark_action_dispatch_failed(
-        &self,
-        dispatch_id: Uuid,
-        error: String,
-    ) -> impl Future<Output = Result<(), SendableError>> + Send;
 }

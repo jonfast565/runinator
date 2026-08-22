@@ -32,7 +32,9 @@ use runinator_models::{
         WORKFLOW_EFFECT_PROTOCOL_VERSION, WorkflowContinuation, WorkflowEffect,
         WorkflowEffectRequest, WorkflowEffectStatus, WorkflowInstruction, WorkflowModule,
     },
-    workflows::{WorkflowDefinition, WorkflowGraph, WorkflowTrigger, WorkflowTriggerKind},
+    workflows::{
+        WorkflowDefinition, WorkflowGraph, WorkflowStatus, WorkflowTrigger, WorkflowTriggerKind,
+    },
 };
 use uuid::Uuid;
 
@@ -144,6 +146,8 @@ pub(crate) async fn assert_dialect_parity<T: ExecutionStateParityDb>(db: &T) {
     assert_function_lifecycle(db, id).await;
     assert_console_lifecycle(db).await;
     assert_workflow_vm_readback(db, &after).await;
+    assert_workflow_vm_mutex_lifecycle(db, &after).await;
+    assert_workflow_effect_retry_lifecycle(db, &after).await;
     assert_unreferenced_artifacts(db).await;
 
     // the legacy run mapper reads a column named `trigger`, which is reserved in mysql and has to
@@ -224,6 +228,8 @@ async fn assert_workflow_vm_readback<T: DatabaseImpl + WorkflowVmStore>(
         node_id: None,
         request: request.clone(),
         status: WorkflowEffectStatus::Requested,
+        current_executor_replica_id: None,
+        last_executor_replica_id: None,
         result: None,
         message: None,
         created_at: now,
@@ -260,6 +266,171 @@ async fn assert_workflow_vm_readback<T: DatabaseImpl + WorkflowVmStore>(
     assert_eq!(journal.len(), 2);
     assert_eq!(journal[0].sequence, 0);
     assert_eq!(journal[1].sequence, 1);
+
+    // the executor lease. a claim marks the effect running and names the replica; settling releases
+    // the claim but keeps the attribution, which is what `count_running_effects_by_executor` and
+    // the stale-replica reaper read now that node runs are gone.
+    let replica_id = Uuid::now_v7();
+    assert!(
+        db.claim_workflow_effect_executor(effect_id, 0, replica_id, Utc::now())
+            .await
+            .unwrap()
+    );
+    let claimed_effect = db
+        .fetch_workflow_effect(effect_id)
+        .await
+        .unwrap()
+        .expect("effect");
+    assert_eq!(claimed_effect.status, WorkflowEffectStatus::Running);
+    assert_eq!(claimed_effect.current_executor_replica_id, Some(replica_id));
+    assert_eq!(
+        db.count_running_effects_by_executor().await.unwrap(),
+        vec![(replica_id, 1)]
+    );
+    // a stale attempt must not steal the lease from the live executor.
+    assert!(
+        !db.claim_workflow_effect_executor(effect_id, 1, Uuid::now_v7(), Utc::now())
+            .await
+            .unwrap()
+    );
+    assert!(
+        db.settle_workflow_effect(
+            effect_id,
+            0,
+            WorkflowEffectStatus::Succeeded,
+            None,
+            None,
+            Utc::now(),
+        )
+        .await
+        .unwrap()
+    );
+    // the engine's action deadline backstop settles `TimedOut` from a timer wake without first
+    // reading the effect, so losing the race to a real result must be an exact no-op. this guard is
+    // what makes the backstop safe to arm beside every dispatched action.
+    assert!(
+        !db.settle_workflow_effect(
+            effect_id,
+            0,
+            WorkflowEffectStatus::TimedOut,
+            None,
+            Some("no result within 60s; the executing worker never reported".into()),
+            Utc::now(),
+        )
+        .await
+        .unwrap()
+    );
+    let settled_effect = db
+        .fetch_workflow_effect(effect_id)
+        .await
+        .unwrap()
+        .expect("effect");
+    assert_eq!(settled_effect.status, WorkflowEffectStatus::Succeeded);
+    assert_eq!(settled_effect.message, None);
+    assert_eq!(settled_effect.current_executor_replica_id, None);
+    assert_eq!(settled_effect.last_executor_replica_id, Some(replica_id));
+    assert!(
+        db.count_running_effects_by_executor()
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    // deleting the run must take its whole vm footprint with it. the delete names every child
+    // explicitly rather than trusting the declared cascades, because mysql 8 discards a
+    // column-level `REFERENCES` that mariadb honours — so a cascade-only delete orphans rows on one
+    // engine and not the other. asserting the read-backs here is what proves the statement list is
+    // complete on all three.
+    db.delete_workflow_run(run.id).await.unwrap();
+    assert!(db.fetch_workflow_run(run.id).await.unwrap().is_none());
+    assert!(db.fetch_workflow_module(run.id).await.unwrap().is_none());
+    assert!(
+        db.fetch_workflow_continuations(run.id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(db.fetch_workflow_effects(run.id).await.unwrap().is_empty());
+    assert!(db.fetch_workflow_effect(effect_id).await.unwrap().is_none());
+    assert!(db.fetch_workflow_journal(run.id).await.unwrap().is_empty());
+}
+
+/// A named mutex must come back when its holder finishes. The release lived on the removed reducer
+/// store, so after the VM cutover a key acquired by one run stayed locked forever and every later
+/// run of the same key spun in the infrastructure host's acquire loop.
+async fn assert_workflow_vm_mutex_lifecycle<T: DatabaseImpl + WorkflowVmStore>(
+    db: &T,
+    workflow: &WorkflowDefinition,
+) {
+    async fn start_run<T: DatabaseImpl>(db: &T, workflow_id: Uuid) -> Uuid {
+        let snapshot = db
+            .fetch_workflow(workflow_id)
+            .await
+            .unwrap()
+            .expect("workflow snapshot");
+        db.create_workflow_run(
+            workflow_id,
+            snapshot,
+            Value::Null,
+            Value::Null,
+            None,
+            Default::default(),
+        )
+        .await
+        .unwrap()
+        .id
+    }
+    let workflow_id = workflow.id.expect("workflow id");
+    let holder = start_run(db, workflow_id).await;
+    let waiter = start_run(db, workflow_id).await;
+    let key = format!("parity-mutex-{}", Uuid::now_v7());
+    let now = Utc::now().timestamp();
+
+    assert!(
+        db.claim_workflow_vm_mutex(key.clone(), holder, Uuid::now_v7(), now)
+            .await
+            .unwrap()
+    );
+    // re-entrant for the holder, refused for anyone else.
+    assert!(
+        db.claim_workflow_vm_mutex(key.clone(), holder, Uuid::now_v7(), now)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !db.claim_workflow_vm_mutex(key.clone(), waiter, Uuid::now_v7(), now)
+            .await
+            .unwrap()
+    );
+
+    db.settle_workflow_vm_run(holder, WorkflowStatus::Succeeded, None)
+        .await
+        .unwrap();
+    assert!(
+        db.claim_workflow_vm_mutex(key.clone(), waiter, Uuid::now_v7(), now)
+            .await
+            .unwrap(),
+        "settling the holder must release the key"
+    );
+
+    // and a holder that reached a terminal without releasing — a crash between the two writes —
+    // is treated as stale rather than deadlocking the key.
+    let successor = start_run(db, workflow_id).await;
+    db.update_workflow_run_status(waiter, WorkflowStatus::Failed, None, None, None)
+        .await
+        .unwrap();
+    assert!(
+        db.claim_workflow_vm_mutex(key.clone(), successor, Uuid::now_v7(), now)
+            .await
+            .unwrap(),
+        "a terminal holder must not hold the key forever"
+    );
+    db.cancel_workflow_vm_run(successor, "parity teardown".into())
+        .await
+        .unwrap();
+    for run in [holder, waiter, successor] {
+        db.delete_workflow_run(run).await.unwrap();
+    }
 }
 
 async fn assert_agent_directive_lifecycle<T: DatabaseImpl>(db: &T) {
@@ -1305,4 +1476,178 @@ async fn assert_function_lifecycle<T: DatabaseImpl>(db: &T, workflow_id: Uuid) {
 
     assert!(db.restore_function_package(package.id).await.unwrap());
     assert_eq!(db.fetch_function_catalog().await.unwrap().len(), 2);
+}
+
+/// Re-arming a failed effect: the attempt advances, the outcome is cleared, the continuation stays
+/// parked, and a *delayed* dispatch is queued that the publisher cannot claim before it is due.
+async fn assert_workflow_effect_retry_lifecycle<T: DatabaseImpl + WorkflowVmStore>(
+    db: &T,
+    workflow: &WorkflowDefinition,
+) {
+    let snapshot = db
+        .fetch_workflow(workflow.id.expect("workflow id"))
+        .await
+        .unwrap()
+        .expect("workflow snapshot");
+    let run = db
+        .create_workflow_run(
+            snapshot.id.expect("workflow id"),
+            snapshot,
+            Value::Null,
+            Value::Null,
+            None,
+            Default::default(),
+        )
+        .await
+        .unwrap();
+    let module = WorkflowModule::new(vec![
+        WorkflowInstruction::Effect {
+            request: WorkflowEffectRequest::TimerDelay { seconds: 1 },
+        },
+        WorkflowInstruction::Return,
+    ]);
+    let root = WorkflowContinuation::start(run.id, module.version);
+    db.create_workflow_vm(module.clone(), root.clone())
+        .await
+        .unwrap();
+    let claimed = db
+        .claim_runnable_workflow_continuations(
+            format!("retry-parity-{}", Uuid::now_v7()),
+            Utc::now(),
+            Utc::now() + Duration::seconds(30),
+            10,
+        )
+        .await
+        .unwrap();
+    let claimed = claimed
+        .into_iter()
+        .find(|continuation| continuation.id == root.id)
+        .expect("the new run's root continuation is claimable");
+    let runinator_runtime::WorkflowVmStep::Yield {
+        continuation,
+        effect_id,
+        sequence,
+        request,
+    } = runinator_runtime::step_workflow_vm(&module, claimed)
+    else {
+        panic!("expected an effect yield");
+    };
+    let now = Utc::now().timestamp();
+    let effect = WorkflowEffect {
+        version: WORKFLOW_EFFECT_PROTOCOL_VERSION,
+        id: effect_id,
+        workflow_run_id: run.id,
+        continuation_id: continuation.id,
+        sequence,
+        attempt: 0,
+        node_id: None,
+        request: request.clone(),
+        status: WorkflowEffectStatus::Requested,
+        current_executor_replica_id: None,
+        last_executor_replica_id: None,
+        result: None,
+        message: None,
+        created_at: now,
+        updated_at: now,
+        finished_at: None,
+    };
+    let command = EffectCommand {
+        version: WORKFLOW_EFFECT_PROTOCOL_VERSION,
+        command_id: Uuid::now_v7(),
+        effect_id,
+        workflow_run_id: run.id,
+        continuation_id: continuation.id,
+        attempt: 0,
+        request,
+        executor: runinator_comm::EffectExecutor::Provider,
+        target: Default::default(),
+        trace_id: Uuid::now_v7(),
+        trace_context: Default::default(),
+        idempotency_key: effect.idempotency_key(),
+        notification_delivery_id: None,
+    };
+    let continuation_id = continuation.id;
+    db.suspend_on_effect(continuation, effect, command)
+        .await
+        .unwrap();
+    let replica_id = Uuid::now_v7();
+    assert!(
+        db.claim_workflow_effect_executor(effect_id, 0, replica_id, Utc::now())
+            .await
+            .unwrap()
+    );
+
+    let due = Utc::now() + Duration::seconds(120);
+    assert!(
+        db.retry_workflow_effect(effect_id, 0, due, Some("boom".into()), Utc::now())
+            .await
+            .unwrap()
+    );
+    let retried = db
+        .fetch_workflow_effect(effect_id)
+        .await
+        .unwrap()
+        .expect("effect");
+    assert_eq!(retried.attempt, 1);
+    assert_eq!(retried.status, WorkflowEffectStatus::Requested);
+    assert_eq!(retried.result, None);
+    assert_eq!(retried.finished_at, None);
+    // the lease is released but the attribution survives, exactly as settling does.
+    assert_eq!(retried.current_executor_replica_id, None);
+    assert_eq!(retried.last_executor_replica_id, Some(replica_id));
+    // the parked thread must stay waiting: a retry is invisible to the graph.
+    let parked = db
+        .fetch_workflow_continuation(continuation_id)
+        .await
+        .unwrap()
+        .expect("continuation");
+    assert_eq!(
+        parked.status,
+        runinator_models::workflow_vm::WorkflowContinuationStatus::Waiting
+    );
+
+    // the same result arriving twice must not schedule a second attempt.
+    assert!(
+        !db.retry_workflow_effect(effect_id, 0, due, None, Utc::now())
+            .await
+            .unwrap()
+    );
+
+    // the re-dispatch is not claimable until it is due, and carries the bumped attempt when it is.
+    let publisher = format!("retry-publisher-{}", Uuid::now_v7());
+    let early = db
+        .claim_pending_workflow_effect_dispatches(
+            publisher.clone(),
+            Utc::now(),
+            Utc::now() + Duration::seconds(30),
+            50,
+        )
+        .await
+        .unwrap();
+    // the original attempt-0 dispatch is still unpublished here, so key on the attempt: it is the
+    // retry specifically that must not be claimable yet.
+    assert!(
+        !early
+            .iter()
+            .any(|record| record.effect_id == effect_id && record.command.attempt == 1),
+        "a retry must not be published before its backoff has elapsed"
+    );
+    let ready = db
+        .claim_pending_workflow_effect_dispatches(
+            publisher,
+            due + Duration::seconds(1),
+            due + Duration::seconds(31),
+            50,
+        )
+        .await
+        .unwrap();
+    let record = ready
+        .iter()
+        .find(|record| record.effect_id == effect_id && record.command.attempt == 1)
+        .expect("the retry becomes claimable once due");
+    assert_eq!(
+        record.command.idempotency_key,
+        retried.idempotency_key(),
+        "the attempt is part of the key, so the worker cannot replay the failed attempt"
+    );
 }

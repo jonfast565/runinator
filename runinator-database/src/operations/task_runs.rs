@@ -37,69 +37,6 @@ where
     for<'c> &'c mut <B::Db as Database>::Connection: Executor<'c, Database = B::Db>,
     <B::Db as Database>::QueryResult: RowsAffected,
 {
-    async fn create_workflow_task_run(
-        &self,
-        workflow_run_id: Uuid,
-        launch_node_run_id: Uuid,
-        node_id: String,
-        action: WorkflowAction,
-        parameters: Value,
-    ) -> Result<WorkflowTaskRun, SendableError> {
-        let id = Uuid::now_v7();
-        let now = Utc::now().timestamp();
-        sqlx::query(&self.render(
-            "INSERT INTO workflow_task_runs (id, workflow_run_id, launch_node_run_id, node_id, action, status, attempt, parameters, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        ))
-        .bind(id).bind(workflow_run_id).bind(launch_node_run_id).bind(node_id)
-        .bind(serde_json::to_string(&action)?).bind(WorkflowStatus::Queued.as_str())
-        .bind(0i64).bind(parameters.to_string()).bind(now).execute(self.pool()).await?;
-        self.fetch_workflow_task_run(id)
-            .await?
-            .ok_or_else(|| "created task run disappeared".into())
-    }
-
-    async fn fetch_workflow_task_run(
-        &self,
-        task_run_id: Uuid,
-    ) -> Result<Option<WorkflowTaskRun>, SendableError> {
-        let row = sqlx::query(&self.render(
-            "SELECT id, workflow_run_id, launch_node_run_id, node_id, action, status, attempt, parameters, output_json, message, current_executor_replica_id, last_executor_replica_id, executor_claimed_at, executor_released_at, created_at, started_at, finished_at FROM workflow_task_runs WHERE id = ?",
-        )).bind(task_run_id).fetch_optional(self.pool()).await?;
-        Ok(row.as_ref().map(mappers::row_to_workflow_task_run))
-    }
-
-    async fn fetch_workflow_task_runs(
-        &self,
-        workflow_run_id: Uuid,
-    ) -> Result<Vec<WorkflowTaskRun>, SendableError> {
-        let rows = sqlx::query(&self.render(
-            "SELECT id, workflow_run_id, launch_node_run_id, node_id, action, status, attempt, parameters, output_json, message, current_executor_replica_id, last_executor_replica_id, executor_claimed_at, executor_released_at, created_at, started_at, finished_at FROM workflow_task_runs WHERE workflow_run_id = ? ORDER BY created_at, id",
-        ))
-        .bind(workflow_run_id)
-        .fetch_all(self.pool())
-        .await?;
-        Ok(rows.iter().map(mappers::row_to_workflow_task_run).collect())
-    }
-
-    async fn update_workflow_task_run(
-        &self,
-        task_run_id: Uuid,
-        status: WorkflowStatus,
-        attempt: Option<i64>,
-        output_json: Option<Value>,
-        message: Option<String>,
-    ) -> Result<(), SendableError> {
-        let now = Utc::now().timestamp();
-        let terminal = status.is_terminal();
-        sqlx::query(&self.render(
-            "UPDATE workflow_task_runs SET status = ?, attempt = COALESCE(?, attempt), output_json = COALESCE(?, output_json), message = COALESCE(?, message), started_at = CASE WHEN ? = 'running' AND started_at IS NULL THEN ? ELSE started_at END, finished_at = CASE WHEN ? THEN ? ELSE finished_at END WHERE id = ?",
-        ))
-        .bind(status.as_str()).bind(attempt).bind(output_json.map(|value| value.to_string())).bind(message)
-        .bind(status.as_str()).bind(now).bind(terminal).bind(now).bind(task_run_id)
-        .execute(self.pool()).await?;
-        Ok(())
-    }
-
     async fn fetch_runs_by_status(
         &self,
         status: RunStatus,

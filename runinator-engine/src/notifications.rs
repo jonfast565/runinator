@@ -1,7 +1,7 @@
 //! notification policy evaluation and emission.
 //!
 //! policies are declarative rules mapping a runtime failure condition to a severity and a delivery
-//! channel. emission lives here (in the engine) rather than in the reducer because the engine owns
+//! channel. emission lives here (in the engine) rather than in the VM because the engine owns
 //! the terminal-state transition and the durable side effects that follow it.
 //!
 //! delivery never speaks a vendor protocol from this process. an in-app policy writes the

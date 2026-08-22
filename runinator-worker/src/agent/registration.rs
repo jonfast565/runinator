@@ -176,7 +176,7 @@ pub async fn publish_provider_metadata(
     ));
 }
 
-// the registration payload, including the routing facts the reducer needs to target this agent.
+// the registration payload, including the routing facts the engine needs to target this agent.
 fn replica_service_config(config: &AgentRuntimeConfig) -> ReplicaServiceConfig {
     ReplicaServiceConfig {
         replica_type: ReplicaKind::Worker,

@@ -323,7 +323,7 @@ pub async fn get_console_cell<T: DatabaseImpl>(
         Ok(cell) => cell,
         Err(reply) => return reply,
     };
-    // settle it from its run first: the reducer records the run, and this is where a finished run
+    // settle it from its run first: the VM records the run, and this is where a finished run
     // becomes a finished cell. a poll that only read the row would show `running` forever.
     if let Some(run_id) = cell.workflow_run_id {
         match repository::console::settle_cell_for_run(db.as_ref(), run_id).await {

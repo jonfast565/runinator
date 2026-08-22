@@ -1,6 +1,6 @@
 //! VM provider-effect worker and its control/directive side loops.
 //!
-//! The reducer action protocol deliberately has no consumer here. A worker executes only durable
+//! The legacy action protocol deliberately has no consumer here. A worker executes only durable
 //! `EffectCommand`s, whose continuation/effect identities are settled by the VM effect host.
 
 use std::{

@@ -3,15 +3,12 @@
 use chrono::Utc;
 use runinator_broker::{
     adapters::rabbitmq::{RabbitMqBroker, RabbitMqBrokerConfig},
-    ActionTarget, Broker, BrokerMessage, ConsumerProfile, ControlCommand, EffectMessage,
-    EffectResultMessage, ResultMessage,
+    ActionTarget, Broker, ConsumerProfile, ControlCommand, EffectMessage, EffectResultMessage,
 };
 use runinator_comm::{
-    ActionCommand, AgentCommand, AgentDirectiveKind, ControlKind, EffectCommand, EffectExecutor,
-    EffectResult, EffectResultKind, WorkflowResultEvent,
+    AgentCommand, AgentDirectiveKind, ControlKind, EffectCommand, EffectExecutor, EffectResult,
+    EffectResultKind,
 };
-use runinator_models::json;
-use runinator_models::{runs::NewRunChunk, workflows::WorkflowAction};
 use tokio::time::{timeout, Duration};
 use uuid::Uuid;
 
@@ -23,13 +20,8 @@ async fn rabbitmq_broker() -> Option<RabbitMqBroker> {
             return None;
         }
     };
-    let action_queue = std::env::var("RUNINATOR_RABBITMQ_ACTION_QUEUE")
-        .unwrap_or_else(|_| format!("runinator.test.actions.{}", Uuid::new_v4()));
-    let targeted_action_queue = format!("{action_queue}.targeted");
     let control_queue = std::env::var("RUNINATOR_RABBITMQ_CONTROL_QUEUE")
         .unwrap_or_else(|_| format!("runinator.test.control.{}", Uuid::new_v4()));
-    let result_queue = std::env::var("RUNINATOR_RABBITMQ_RESULT_QUEUE")
-        .unwrap_or_else(|_| format!("runinator.test.results.{}", Uuid::new_v4()));
     let agent_prefix = std::env::var("RUNINATOR_RABBITMQ_AGENT_QUEUE_PREFIX")
         .unwrap_or_else(|_| format!("runinator.test.agent.{}", Uuid::new_v4()));
     let effect_queue = format!("runinator.test.effects.{}", Uuid::new_v4());
@@ -39,8 +31,7 @@ async fn rabbitmq_broker() -> Option<RabbitMqBroker> {
     Some(
         RabbitMqBroker::connect(
             RabbitMqBrokerConfig::new(uri)
-                .with_queues(action_queue, control_queue, result_queue)
-                .with_targeted_action_queue(targeted_action_queue)
+                .with_control_queue(control_queue)
                 .with_agent_queue_prefix(agent_prefix)
                 .with_effect_queues(
                     effect_queue,
@@ -87,33 +78,6 @@ async fn rabbitmq_broker_routes_agent_directives_by_replica_queue() {
 
 #[tokio::test]
 #[ignore = "requires a reachable RabbitMQ broker"]
-async fn rabbitmq_broker_delivers_published_messages() {
-    let Some(broker) = rabbitmq_broker().await else {
-        return;
-    };
-    let command = action_command();
-    let command_id = command.command_id;
-    broker
-        .publish(BrokerMessage {
-            command,
-            dedupe_key: Some(command_id.to_string()),
-            enqueued_at: Utc::now(),
-        })
-        .await
-        .unwrap();
-
-    let consumer = format!("test-actions-{}", Uuid::new_v4());
-    let delivery = timeout(Duration::from_secs(10), broker.receive(&consumer))
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(delivery.command.command_id, command_id);
-    assert_eq!(delivery.command.workflow_run_id, Uuid::from_u128(42));
-    broker.ack(&consumer, delivery.delivery_id).await.unwrap();
-}
-
-#[tokio::test]
-#[ignore = "requires a reachable RabbitMQ broker"]
 async fn rabbitmq_broker_delivers_control_messages() {
     let Some(broker) = rabbitmq_broker().await else {
         return;
@@ -141,52 +105,15 @@ async fn rabbitmq_broker_delivers_control_messages() {
 
 #[tokio::test]
 #[ignore = "requires a reachable RabbitMQ broker"]
-async fn rabbitmq_broker_delivers_result_events() {
-    let Some(broker) = rabbitmq_broker().await else {
-        return;
-    };
-    let command = action_command();
-    let event = WorkflowResultEvent::chunk(
-        &command,
-        NewRunChunk {
-            stream: "log".into(),
-            content: "hello".into(),
-        },
-    );
-    let event_id = event.event_id;
-    broker
-        .publish_result(ResultMessage {
-            event,
-            dedupe_key: Some(event_id.to_string()),
-            enqueued_at: Utc::now(),
-        })
-        .await
-        .unwrap();
-
-    let consumer = format!("test-results-{}", Uuid::new_v4());
-    let delivery = timeout(Duration::from_secs(10), broker.receive_result(&consumer))
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(delivery.event.event_id, event_id);
-    assert_eq!(delivery.event.workflow_node_run_id, Uuid::from_u128(99));
-    broker
-        .ack_result(&consumer, delivery.delivery_id)
-        .await
-        .unwrap();
-}
-
-#[tokio::test]
-#[ignore = "requires a reachable RabbitMQ broker"]
 async fn rabbitmq_broker_nack_redelivers_messages() {
     let Some(broker) = rabbitmq_broker().await else {
         return;
     };
-    let command = action_command();
+    let command = effect_command(EffectExecutor::Provider);
     let command_id = command.command_id;
     let consumer = format!("test-nack-{}", Uuid::new_v4());
     broker
-        .publish(BrokerMessage {
+        .publish_effect(EffectMessage {
             command,
             dedupe_key: Some(command_id.to_string()),
             enqueued_at: Utc::now(),
@@ -194,19 +121,25 @@ async fn rabbitmq_broker_nack_redelivers_messages() {
         .await
         .unwrap();
 
-    let delivery = timeout(Duration::from_secs(10), broker.receive(&consumer))
+    let delivery = timeout(Duration::from_secs(10), broker.receive_effect(&consumer))
         .await
         .unwrap()
         .unwrap();
     assert_eq!(delivery.command.command_id, command_id);
-    broker.nack(&consumer, delivery.delivery_id).await.unwrap();
+    broker
+        .nack_effect(&consumer, delivery.delivery_id)
+        .await
+        .unwrap();
 
-    let redelivery = timeout(Duration::from_secs(10), broker.receive(&consumer))
+    let redelivery = timeout(Duration::from_secs(10), broker.receive_effect(&consumer))
         .await
         .unwrap()
         .unwrap();
     assert_eq!(redelivery.command.command_id, command_id);
-    broker.ack(&consumer, redelivery.delivery_id).await.unwrap();
+    broker
+        .ack_effect(&consumer, redelivery.delivery_id)
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -336,14 +269,14 @@ fn effect_command(executor: EffectExecutor) -> EffectCommand {
 
 #[tokio::test]
 #[ignore = "requires a reachable RabbitMQ broker"]
-async fn rabbitmq_broker_still_delivers_any_targeted_actions_via_receive_for() {
+async fn rabbitmq_broker_still_delivers_any_targeted_effects_via_receive_effect_for() {
     let Some(broker) = rabbitmq_broker().await else {
         return;
     };
-    let command = action_command();
+    let command = effect_command(EffectExecutor::Provider);
     let command_id = command.command_id;
     broker
-        .publish(BrokerMessage {
+        .publish_effect(EffectMessage {
             command,
             dedupe_key: Some(command_id.to_string()),
             enqueued_at: Utc::now(),
@@ -353,12 +286,15 @@ async fn rabbitmq_broker_still_delivers_any_targeted_actions_via_receive_for() {
 
     // a plain, non-exclusive, unlabeled consumer still gets `Any` work through the shared queue.
     let profile = ConsumerProfile::shared(format!("test-any-{}", Uuid::new_v4()));
-    let delivery = timeout(Duration::from_secs(10), broker.receive_for(&profile))
+    let delivery = timeout(Duration::from_secs(10), broker.receive_effect_for(&profile))
         .await
         .unwrap()
         .unwrap();
     assert_eq!(delivery.command.command_id, command_id);
-    broker.ack(&profile.id, delivery.delivery_id).await.unwrap();
+    broker
+        .ack_effect(&profile.id, delivery.delivery_id)
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -367,13 +303,13 @@ async fn rabbitmq_broker_routes_labels_target_to_the_matching_consumer_only() {
     let Some(broker) = rabbitmq_broker().await else {
         return;
     };
-    let mut command = action_command();
+    let mut command = effect_command(EffectExecutor::Provider);
     command.target = ActionTarget::Labels {
         selector: [("runner".to_string(), "creds-sync".to_string())].into(),
     };
     let command_id = command.command_id;
     broker
-        .publish(BrokerMessage {
+        .publish_effect(EffectMessage {
             command,
             dedupe_key: Some(command_id.to_string()),
             enqueued_at: Utc::now(),
@@ -394,10 +330,10 @@ async fn rabbitmq_broker_routes_labels_target_to_the_matching_consumer_only() {
     // within the timeout even with `mismatched` also competing on the same targeted queue.
     let delivery = timeout(Duration::from_secs(10), async {
         tokio::select! {
-            delivery = broker.receive_for(&matching) => delivery,
+            delivery = broker.receive_effect_for(&matching) => delivery,
             // if the mismatched profile somehow won the race, that's the bug under test: surface
             // it as a wrong delivery rather than hanging.
-            delivery = broker.receive_for(&mismatched) => delivery.map(|d| {
+            delivery = broker.receive_effect_for(&mismatched) => delivery.map(|d| {
                 panic!(
                     "mismatched consumer received command {} not intended for it",
                     d.command.command_id
@@ -410,7 +346,7 @@ async fn rabbitmq_broker_routes_labels_target_to_the_matching_consumer_only() {
     .unwrap();
     assert_eq!(delivery.command.command_id, command_id);
     broker
-        .ack(&matching.id, delivery.delivery_id)
+        .ack_effect(&matching.id, delivery.delivery_id)
         .await
         .unwrap();
 }
@@ -422,11 +358,11 @@ async fn rabbitmq_broker_routes_replica_target_to_the_bound_replica_only() {
         return;
     };
     let replica_id = Uuid::now_v7();
-    let mut command = action_command();
+    let mut command = effect_command(EffectExecutor::Provider);
     command.target = ActionTarget::Replica { replica_id };
     let command_id = command.command_id;
     broker
-        .publish(BrokerMessage {
+        .publish_effect(EffectMessage {
             command,
             dedupe_key: Some(command_id.to_string()),
             enqueued_at: Utc::now(),
@@ -437,41 +373,15 @@ async fn rabbitmq_broker_routes_replica_target_to_the_bound_replica_only() {
     let bound = ConsumerProfile::shared(format!("test-bound-{}", Uuid::new_v4()))
         .with_replica_id(replica_id)
         .exclusive();
-    let delivery = timeout(Duration::from_secs(10), broker.receive_for(&bound))
+    let delivery = timeout(Duration::from_secs(10), broker.receive_effect_for(&bound))
         .await
         .unwrap()
         .unwrap();
     assert_eq!(delivery.command.command_id, command_id);
-    broker.ack(&bound.id, delivery.delivery_id).await.unwrap();
-}
-
-fn action_command() -> ActionCommand {
-    ActionCommand {
-        command_id: Uuid::new_v4(),
-        workflow_run_id: Uuid::from_u128(42),
-        workflow_node_run_id: Uuid::from_u128(99),
-        node_id: "run".into(),
-        action: WorkflowAction {
-            provider: "test".into(),
-            function: "execute".into(),
-            timeout_seconds: 60,
-            configuration: runinator_models::workflows::WorkflowObject::default(),
-            mcp_enabled: false,
-            tags: Vec::new(),
-            required_labels: Default::default(),
-            idempotency_key: None,
-            function_binding: None,
-        },
-        attempt: 1,
-        parameters: json!({ "value": true }),
-        target: Default::default(),
-        trace_id: Uuid::nil(),
-        trace_context: Default::default(),
-        notification_delivery_id: None,
-        invocation_call_id: None,
-        task_run_id: None,
-        idempotency_key: None,
-    }
+    broker
+        .ack_effect(&bound.id, delivery.delivery_id)
+        .await
+        .unwrap();
 }
 
 fn agent_command(replica_id: Uuid) -> AgentCommand {

@@ -1,16 +1,10 @@
 use crate::{
-    AgentCommand, AgentDelivery, BrokerDelivery, BrokerMessage, ConsumerProfile, ControlCommand,
-    ControlDelivery, EffectDelivery, EffectMessage, EffectResultDelivery, EffectResultMessage,
-    EventDelivery, EventMessage, IngressDelivery, IngressMessage, ResultDelivery, ResultMessage,
-    WakeDelivery, WakeMessage,
+    AgentCommand, AgentDelivery, ConsumerProfile, ControlCommand, ControlDelivery, EffectDelivery,
+    EffectMessage, EffectResultDelivery, EffectResultMessage, EventDelivery, EventMessage,
+    IngressDelivery, IngressMessage, WakeDelivery, WakeMessage,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct PublishRequest {
-    pub message: BrokerMessage,
-}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ReceiveRequest {
@@ -19,11 +13,6 @@ pub struct ReceiveRequest {
     /// pre-targeting clients, which keep the plain general-pool `receive` behavior.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<ConsumerProfile>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ReceiveResponse {
-    pub delivery: BrokerDelivery,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -44,16 +33,6 @@ pub struct PublishAgentRequest {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ReceiveAgentResponse {
     pub delivery: AgentDelivery,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct PublishResultRequest {
-    pub message: ResultMessage,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ReceiveResultResponse {
-    pub delivery: ResultDelivery,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -104,18 +83,6 @@ pub struct PublishEventRequest {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ReceiveEventResponse {
     pub delivery: EventDelivery,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct PollRequest {
-    pub consumer: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub timeout_ms: Option<u64>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct PollResponse {
-    pub delivery: Option<BrokerDelivery>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

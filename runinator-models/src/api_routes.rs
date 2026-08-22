@@ -23,6 +23,7 @@ pub const API_REXRAP_COMPILE: &str = "/rexrap/compile";
 pub const API_REXRAP_ANALYZE: &str = "/rexrap/analyze";
 pub const API_REXRAP_FORMAT: &str = "/rexrap/format";
 pub const API_REXRAP_DECOMPILE: &str = "/rexrap/decompile";
+pub const API_REXRAP_DECOMPILE_SPANS: &str = "/rexrap/decompile/spans";
 pub const API_REXRAP_EVALUATE: &str = "/rexrap/evaluate";
 pub const API_REXRAP_IMPORT: &str = "/rexrap/import";
 pub const API_WORKFLOW_TRIGGERS_DUE: &str = "/workflow_triggers/due";
@@ -43,16 +44,11 @@ pub const API_WORKFLOW_RUNS: &str = "/workflow_runs";
 pub const API_WORKFLOW_CONTINUATIONS: &str = "/workflow_continuations";
 pub const API_WORKFLOW_EFFECTS: &str = "/workflow_effects";
 pub const API_SCHEDULER_WORKFLOW_RUNS_CLAIM: &str = "/scheduler/workflow_runs/claim";
-pub const API_SCHEDULER_READY_NODES_CLAIM: &str = "/scheduler/ready_nodes/claim";
 pub const API_RUNS: &str = "/runs";
 pub const API_ARTIFACTS: &str = "/artifacts";
 /// store artifact bytes and get back the uri to record against them. records no row: the caller's
 /// artifact is already accounted for by whatever recorded it.
 pub const API_ARTIFACTS_CONTENT: &str = "/artifacts/content";
-pub const API_SCHEDULER_ACTION_DISPATCHES: &str = "/scheduler/action_dispatches";
-pub const API_SCHEDULER_ACTION_DISPATCHES_PENDING: &str = "/scheduler/action_dispatches/pending";
-pub const API_SCHEDULER_ACTION_DISPATCHES_CLAIM: &str = "/scheduler/action_dispatches/claim";
-pub const API_WORKFLOW_NODE_RUNS: &str = "/workflow_node_runs";
 pub const API_SUPERVISOR_STATUS: &str = "/supervisor/status";
 pub const API_APPROVALS: &str = "/approvals";
 pub const API_IDEMPOTENCY_KEYS: &str = "/idempotency_keys";
@@ -133,10 +129,6 @@ pub fn api_workflow_run_command(workflow_run_id: Uuid, command: &str) -> String 
     format!("{API_WORKFLOW_RUNS}/{workflow_run_id}/{command}")
 }
 
-pub fn api_workflow_run_nodes(workflow_run_id: Uuid) -> String {
-    format!("{API_WORKFLOW_RUNS}/{workflow_run_id}/nodes")
-}
-
 pub fn api_workflow_run_continuations(workflow_run_id: Uuid) -> String {
     format!("{API_WORKFLOW_RUNS}/{workflow_run_id}/continuations")
 }
@@ -167,16 +159,8 @@ pub fn api_workflow_effect_output(effect_id: Uuid) -> String {
     format!("{API_WORKFLOW_EFFECTS}/{effect_id}/output")
 }
 
-pub fn api_workflow_run_artifacts(workflow_run_id: Uuid) -> String {
-    format!("{API_WORKFLOW_RUNS}/{workflow_run_id}/artifacts")
-}
-
 pub fn api_workflow_run_transitions(workflow_run_id: Uuid) -> String {
     format!("{API_WORKFLOW_RUNS}/{workflow_run_id}/transitions")
-}
-
-pub fn api_workflow_node_transitions(workflow_id: Uuid, node_id: &str) -> String {
-    format!("{API_WORKFLOWS}/{workflow_id}/nodes/{node_id}/transitions")
 }
 
 pub fn api_scheduler_workflow_run_claim_renew(workflow_run_id: Uuid) -> String {
@@ -185,18 +169,6 @@ pub fn api_scheduler_workflow_run_claim_renew(workflow_run_id: Uuid) -> String {
 
 pub fn api_scheduler_workflow_run_claim_release(workflow_run_id: Uuid) -> String {
     format!("/scheduler/workflow_runs/{workflow_run_id}/claim/release")
-}
-
-pub fn api_scheduler_ready_node_process(ready_node_id: Uuid) -> String {
-    format!("/scheduler/ready_nodes/{ready_node_id}/process")
-}
-
-pub fn api_scheduler_action_dispatch_published(dispatch_id: Uuid) -> String {
-    format!("/scheduler/action_dispatches/{dispatch_id}/published")
-}
-
-pub fn api_scheduler_action_dispatch_failed(dispatch_id: Uuid) -> String {
-    format!("/scheduler/action_dispatches/{dispatch_id}/failed")
 }
 
 pub fn api_run(run_id: Uuid) -> String {
@@ -211,28 +183,8 @@ pub fn api_run_artifacts(run_id: Uuid) -> String {
     format!("{API_RUNS}/{run_id}/artifacts")
 }
 
-pub fn api_workflow_node_run(node_run_id: Uuid) -> String {
-    format!("{API_WORKFLOW_NODE_RUNS}/{node_run_id}")
-}
-
-pub fn api_workflow_node_run_chunks(node_run_id: Uuid) -> String {
-    format!("{API_WORKFLOW_NODE_RUNS}/{node_run_id}/chunks")
-}
-
-pub fn api_workflow_node_run_artifacts(node_run_id: Uuid) -> String {
-    format!("{API_WORKFLOW_NODE_RUNS}/{node_run_id}/artifacts")
-}
-
 pub fn api_artifact_download(artifact_id: Uuid) -> String {
     format!("{API_ARTIFACTS}/{artifact_id}/download")
-}
-
-pub fn api_workflow_node_run_claim(node_run_id: Uuid) -> String {
-    format!("{API_WORKFLOW_NODE_RUNS}/{node_run_id}/claim")
-}
-
-pub fn api_workflow_node_run_release(node_run_id: Uuid) -> String {
-    format!("{API_WORKFLOW_NODE_RUNS}/{node_run_id}/release")
 }
 
 pub fn api_replica(replica_id: Uuid) -> String {

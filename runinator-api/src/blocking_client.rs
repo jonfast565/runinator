@@ -116,7 +116,7 @@ where
         Ok(response.json::<WorkflowDefinition>()?)
     }
 
-    /// server-side dry-run: walk the request's workflow with the reducer's evaluators against live
+    /// server-side dry-run: walk the request's workflow with the VM's evaluators against live
     /// config, publishing no actions. Returns the raw `SimulationRun` JSON.
     pub fn simulate_workflow(
         &self,

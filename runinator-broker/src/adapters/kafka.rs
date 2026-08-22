@@ -4,17 +4,14 @@ use crate::{
     EffectResultDelivery, EffectResultMessage,
 };
 use crate::{
-    Broker, BrokerDelivery, BrokerError, BrokerMessage, ControlCommand, ControlDelivery,
-    EventDelivery, EventMessage, IngressDelivery, IngressMessage, ResultDelivery, ResultMessage,
-    WakeDelivery, WakeMessage,
+    Broker, BrokerError, ControlCommand, ControlDelivery, EventDelivery, EventMessage,
+    IngressDelivery, IngressMessage, WakeDelivery, WakeMessage,
 };
 use async_trait::async_trait;
 use uuid::Uuid;
 
-const DEFAULT_ACTION_TOPIC: &str = "runinator.actions";
 const DEFAULT_CONTROL_TOPIC: &str = "runinator.control";
 const DEFAULT_AGENT_TOPIC: &str = "runinator.agent";
-const DEFAULT_RESULT_TOPIC: &str = "runinator.results";
 const DEFAULT_EFFECT_TOPIC: &str = "runinator.effects";
 const DEFAULT_INFRASTRUCTURE_EFFECT_TOPIC: &str = "runinator.effects.infrastructure";
 const DEFAULT_EFFECT_RESULT_TOPIC: &str = "runinator.effect-results";
@@ -26,10 +23,8 @@ const DEFAULT_CLIENT_ID: &str = "runinator";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KafkaBrokerConfig {
     pub bootstrap_servers: String,
-    pub action_topic: String,
     pub control_topic: String,
     pub agent_topic: String,
-    pub result_topic: String,
     pub effect_topic: String,
     pub infrastructure_effect_topic: String,
     pub effect_result_topic: String,
@@ -44,10 +39,8 @@ impl KafkaBrokerConfig {
     pub fn new(bootstrap_servers: impl Into<String>) -> Self {
         Self {
             bootstrap_servers: bootstrap_servers.into(),
-            action_topic: DEFAULT_ACTION_TOPIC.into(),
             control_topic: DEFAULT_CONTROL_TOPIC.into(),
             agent_topic: DEFAULT_AGENT_TOPIC.into(),
-            result_topic: DEFAULT_RESULT_TOPIC.into(),
             effect_topic: DEFAULT_EFFECT_TOPIC.into(),
             infrastructure_effect_topic: DEFAULT_INFRASTRUCTURE_EFFECT_TOPIC.into(),
             effect_result_topic: DEFAULT_EFFECT_RESULT_TOPIC.into(),
@@ -69,15 +62,8 @@ impl KafkaBrokerConfig {
         self
     }
 
-    pub fn with_topics(
-        mut self,
-        action_topic: impl Into<String>,
-        control_topic: impl Into<String>,
-        result_topic: impl Into<String>,
-    ) -> Self {
-        self.action_topic = action_topic.into();
+    pub fn with_control_topic(mut self, control_topic: impl Into<String>) -> Self {
         self.control_topic = control_topic.into();
-        self.result_topic = result_topic.into();
         self
     }
 
@@ -107,10 +93,6 @@ impl KafkaBrokerConfig {
     pub fn with_client_id(mut self, client_id: impl Into<String>) -> Self {
         self.client_id = client_id.into();
         self
-    }
-
-    pub fn has_workflow_result_topic(&self) -> bool {
-        !self.result_topic.trim().is_empty()
     }
 
     pub fn has_workflow_effect_topics(&self) -> bool {
@@ -150,10 +132,8 @@ impl KafkaBroker {
 #[cfg(feature = "kafka")]
 struct KafkaBrokerInner {
     producer: rdkafka::producer::FutureProducer,
-    action_consumers: Mutex<HashMap<String, Arc<rdkafka::consumer::StreamConsumer>>>,
     control_consumers: Mutex<HashMap<String, Arc<rdkafka::consumer::StreamConsumer>>>,
     agent_consumers: Mutex<HashMap<String, Arc<rdkafka::consumer::StreamConsumer>>>,
-    result_consumers: Mutex<HashMap<String, Arc<rdkafka::consumer::StreamConsumer>>>,
     effect_consumers: Mutex<HashMap<String, Arc<rdkafka::consumer::StreamConsumer>>>,
     infrastructure_effect_consumers: Mutex<HashMap<String, Arc<rdkafka::consumer::StreamConsumer>>>,
     effect_result_consumers: Mutex<HashMap<String, Arc<rdkafka::consumer::StreamConsumer>>>,
@@ -180,10 +160,8 @@ struct PendingDelivery {
 #[cfg(feature = "kafka")]
 #[derive(Clone, Copy)]
 enum KafkaChannel {
-    Action,
     Control,
     Agent,
-    Result,
     Effect,
     InfrastructureEffect,
     EffectResult,
@@ -205,10 +183,8 @@ impl KafkaBrokerInner {
 
         Ok(Self {
             producer,
-            action_consumers: Mutex::new(HashMap::new()),
             control_consumers: Mutex::new(HashMap::new()),
             agent_consumers: Mutex::new(HashMap::new()),
-            result_consumers: Mutex::new(HashMap::new()),
             effect_consumers: Mutex::new(HashMap::new()),
             infrastructure_effect_consumers: Mutex::new(HashMap::new()),
             effect_result_consumers: Mutex::new(HashMap::new()),
@@ -226,10 +202,8 @@ impl KafkaBrokerInner {
         consumer_id: &str,
     ) -> Result<Arc<rdkafka::consumer::StreamConsumer>, BrokerError> {
         let map = match channel {
-            KafkaChannel::Action => &self.action_consumers,
             KafkaChannel::Control => &self.control_consumers,
             KafkaChannel::Agent => &self.agent_consumers,
-            KafkaChannel::Result => &self.result_consumers,
             KafkaChannel::Effect => &self.effect_consumers,
             KafkaChannel::InfrastructureEffect => &self.infrastructure_effect_consumers,
             KafkaChannel::EffectResult => &self.effect_result_consumers,
@@ -280,10 +254,8 @@ impl KafkaBrokerInner {
 impl KafkaChannel {
     fn topic_for(self, config: &KafkaBrokerConfig) -> &str {
         match self {
-            KafkaChannel::Action => &config.action_topic,
             KafkaChannel::Control => &config.control_topic,
             KafkaChannel::Agent => &config.agent_topic,
-            KafkaChannel::Result => &config.result_topic,
             KafkaChannel::Effect => &config.effect_topic,
             KafkaChannel::InfrastructureEffect => &config.infrastructure_effect_topic,
             KafkaChannel::EffectResult => &config.effect_result_topic,
@@ -295,10 +267,8 @@ impl KafkaChannel {
 
     fn name(self) -> &'static str {
         match self {
-            KafkaChannel::Action => "actions",
             KafkaChannel::Control => "control",
             KafkaChannel::Agent => "agent",
-            KafkaChannel::Result => "results",
             KafkaChannel::Effect => "effects",
             KafkaChannel::InfrastructureEffect => "effects.infrastructure",
             KafkaChannel::EffectResult => "effect-results",
@@ -476,51 +446,12 @@ impl KafkaBroker {
 #[async_trait]
 #[cfg(feature = "kafka")]
 impl Broker for KafkaBroker {
-    fn supports_workflow_result_channels(&self) -> bool {
-        self.config.has_workflow_result_topic()
-    }
-
     fn supports_agent_channel(&self) -> bool {
         !self.config.agent_topic.trim().is_empty()
     }
 
     fn supports_workflow_effect_channels(&self) -> bool {
         self.config.has_workflow_effect_topics()
-    }
-
-    async fn publish(&self, message: BrokerMessage) -> Result<(), BrokerError> {
-        let key = message.dedupe_key_or_hash();
-        let payload = serde_json::to_string(&message)
-            .map_err(|err| BrokerError::Internal(err.to_string()))?;
-        publish_json(
-            &self.inner.producer,
-            &self.config.action_topic,
-            &key,
-            payload,
-        )
-        .await
-    }
-
-    async fn receive(&self, consumer: &str) -> Result<BrokerDelivery, BrokerError> {
-        let (message, pending) =
-            receive_json::<BrokerMessage>(self, KafkaChannel::Action, consumer).await?;
-        let delivery = BrokerDelivery::from(message);
-        self.inner.track_delivery(
-            delivery.delivery_id,
-            pending.consumer,
-            pending.topic,
-            pending.partition,
-            pending.offset,
-        );
-        Ok(delivery)
-    }
-
-    async fn ack(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
-        ack_pending(self.inner.take_pending(delivery_id)?)
-    }
-
-    async fn nack(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
-        nack_pending(self.inner.take_pending(delivery_id)?)
     }
 
     async fn publish_control(&self, command: ControlCommand) -> Result<(), BrokerError> {
@@ -590,41 +521,6 @@ impl Broker for KafkaBroker {
     }
 
     async fn nack_agent(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
-        nack_pending(self.inner.take_pending(delivery_id)?)
-    }
-
-    async fn publish_result(&self, message: ResultMessage) -> Result<(), BrokerError> {
-        let key = message.dedupe_key_or_hash();
-        let payload = serde_json::to_string(&message)
-            .map_err(|err| BrokerError::Internal(err.to_string()))?;
-        publish_json(
-            &self.inner.producer,
-            &self.config.result_topic,
-            &key,
-            payload,
-        )
-        .await
-    }
-
-    async fn receive_result(&self, consumer: &str) -> Result<ResultDelivery, BrokerError> {
-        let (message, pending) =
-            receive_json::<ResultMessage>(self, KafkaChannel::Result, consumer).await?;
-        let delivery = ResultDelivery::from(message);
-        self.inner.track_delivery(
-            delivery.delivery_id,
-            pending.consumer,
-            pending.topic,
-            pending.partition,
-            pending.offset,
-        );
-        Ok(delivery)
-    }
-
-    async fn ack_result(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
-        ack_pending(self.inner.take_pending(delivery_id)?)
-    }
-
-    async fn nack_result(&self, _consumer: &str, delivery_id: Uuid) -> Result<(), BrokerError> {
         nack_pending(self.inner.take_pending(delivery_id)?)
     }
 
@@ -788,26 +684,6 @@ impl Broker for KafkaBroker {
 #[async_trait]
 #[cfg(not(feature = "kafka"))]
 impl Broker for KafkaBroker {
-    fn supports_workflow_result_channels(&self) -> bool {
-        false
-    }
-
-    async fn publish(&self, _message: BrokerMessage) -> Result<(), BrokerError> {
-        Err(kafka_feature_error())
-    }
-
-    async fn receive(&self, _consumer: &str) -> Result<BrokerDelivery, BrokerError> {
-        Err(kafka_feature_error())
-    }
-
-    async fn ack(&self, _consumer: &str, _delivery_id: Uuid) -> Result<(), BrokerError> {
-        Err(kafka_feature_error())
-    }
-
-    async fn nack(&self, _consumer: &str, _delivery_id: Uuid) -> Result<(), BrokerError> {
-        Err(kafka_feature_error())
-    }
-
     async fn publish_control(&self, _command: ControlCommand) -> Result<(), BrokerError> {
         Err(kafka_feature_error())
     }
@@ -821,22 +697,6 @@ impl Broker for KafkaBroker {
     }
 
     async fn nack_control(&self, _consumer: &str, _delivery_id: Uuid) -> Result<(), BrokerError> {
-        Err(kafka_feature_error())
-    }
-
-    async fn publish_result(&self, _message: ResultMessage) -> Result<(), BrokerError> {
-        Err(kafka_feature_error())
-    }
-
-    async fn receive_result(&self, _consumer: &str) -> Result<ResultDelivery, BrokerError> {
-        Err(kafka_feature_error())
-    }
-
-    async fn ack_result(&self, _consumer: &str, _delivery_id: Uuid) -> Result<(), BrokerError> {
-        Err(kafka_feature_error())
-    }
-
-    async fn nack_result(&self, _consumer: &str, _delivery_id: Uuid) -> Result<(), BrokerError> {
         Err(kafka_feature_error())
     }
 

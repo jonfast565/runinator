@@ -8,7 +8,6 @@ use runinator_models::{
     notifications::{
         NewNotificationPolicy, NotificationChannel, NotificationEvent, NotificationSeverity,
     },
-    orchestration::NewOrchestrationEvent,
     pipelines::Pipeline,
     revisions::{RevisionAuthor, RevisionSource, WorkflowRevision},
     schedules::{

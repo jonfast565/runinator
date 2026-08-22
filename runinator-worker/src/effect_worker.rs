@@ -52,6 +52,7 @@ pub(crate) async fn run_provider_effect_loop(
     drained: Arc<AtomicBool>,
 ) -> Result<(), SendableError> {
     let consumer = profile.id.clone();
+    let executor_replica_id = profile.replica_id;
     let permits = Arc::new(tokio::sync::Semaphore::new(max_concurrent_effects.max(1)));
     let cache = Arc::new(FunctionCache::new(api_client.clone()));
     let mut tasks = JoinSet::new();
@@ -109,6 +110,7 @@ pub(crate) async fn run_provider_effect_loop(
             if let Err(error) = process_provider_effect(
                 broker,
                 &consumer,
+                executor_replica_id,
                 libraries,
                 api_client,
                 providers,
@@ -152,6 +154,7 @@ pub(crate) async fn run_provider_effect_loop(
 async fn process_provider_effect(
     broker: Arc<dyn Broker>,
     consumer: &str,
+    executor_replica_id: Option<Uuid>,
     libraries: Arc<HashMap<String, Plugin>>,
     api_client: AsyncApiClient<StaticLocator>,
     providers: ProviderFactory,
@@ -255,7 +258,8 @@ async fn process_provider_effect(
     let action = WorkflowAction {
         provider,
         function,
-        timeout_seconds: timeout_seconds.unwrap_or(60),
+        timeout_seconds: timeout_seconds
+            .unwrap_or(runinator_models::workflow_vm::DEFAULT_ACTION_TIMEOUT_SECONDS),
         configuration,
         mcp_enabled: false,
         tags,
@@ -338,6 +342,18 @@ async fn process_provider_effect(
         function: function_name.clone(),
         attempt: i64::from(command.attempt),
     });
+    // take the effect's executor lease before running it. this is best-effort and deliberately not
+    // durable: it is what the replica views and the stale-replica reaper read, and losing it must
+    // never stop the effect from executing or settling.
+    if let Some(replica_id) = executor_replica_id {
+        let mut claim = EffectResult::claimed(&command, replica_id);
+        claim.event_id = stable_event_id(command.effect_id, "claim");
+        if let Err(error) =
+            publish_result(broker.as_ref(), result_outbox.as_ref(), &mut claim, false).await
+        {
+            warn!(effect_id = %command.effect_id, %error, "failed to publish effect executor claim");
+        }
+    }
     let _in_flight_metric = crate::metrics::in_flight_guard();
     let output_sink = Arc::new(EffectOutputSink::new(
         command.clone(),

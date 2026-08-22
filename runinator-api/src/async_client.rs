@@ -5,9 +5,7 @@ mod settings;
 
 use chrono::{DateTime, Utc};
 use reqwest::{Client, Response, Url};
-use runinator_comm::{
-    ActionCommand, ActionDispatchRecord, AgentDirectiveKind, AgentDirectiveRecord,
-};
+use runinator_comm::{AgentDirectiveKind, AgentDirectiveRecord};
 use runinator_models::json;
 use runinator_models::pipelines::{Pipeline, PipelineBundle, PipelineRun, PipelineRunDetail};
 use runinator_models::value::Value;
@@ -15,25 +13,18 @@ use runinator_models::{
     api_routes::{
         api_artifact_download, api_freeze_window, api_replica_heartbeat, api_replica_offline,
         api_replica_providers, api_run, api_run_artifacts, api_run_chunks,
-        api_scheduler_action_dispatch_failed, api_scheduler_action_dispatch_published,
-        api_scheduler_ready_node_process, api_scheduler_workflow_run_claim_release,
-        api_scheduler_workflow_run_claim_renew, api_workflow, api_workflow_continuation,
-        api_workflow_duplicate, api_workflow_effect, api_workflow_effect_output,
-        api_workflow_node_run, api_workflow_node_run_artifacts, api_workflow_node_run_chunks,
-        api_workflow_node_run_claim, api_workflow_node_run_release, api_workflow_node_transitions,
-        api_workflow_revision, api_workflow_revision_restore, api_workflow_revisions,
-        api_workflow_run, api_workflow_run_artifacts, api_workflow_run_command,
+        api_scheduler_workflow_run_claim_release, api_scheduler_workflow_run_claim_renew,
+        api_workflow, api_workflow_continuation, api_workflow_duplicate, api_workflow_effect,
+        api_workflow_effect_output, api_workflow_revision, api_workflow_revision_restore,
+        api_workflow_revisions, api_workflow_run, api_workflow_run_command,
         api_workflow_run_continuations, api_workflow_run_cursors, api_workflow_run_effects,
-        api_workflow_run_journal, api_workflow_run_nodes, api_workflow_run_rename,
-        api_workflow_run_replay, api_workflow_run_transitions, api_workflow_runs,
-        api_workflow_trigger, api_workflow_trigger_backfill, api_workflow_trigger_runs,
-        api_workflow_triggers, API_APPROVALS, API_ARTIFACTS_CONTENT, API_CREDENTIALS,
-        API_FREEZE_WINDOWS, API_FUNCTIONS, API_FUNCTIONS_CATALOG, API_FUNCTION_ARTIFACTS,
-        API_FUNCTION_EXPORTS, API_IDEMPOTENCY_KEYS, API_IDEMPOTENCY_KEYS_CLAIM,
-        API_IDEMPOTENCY_KEYS_COMPLETE, API_IDEMPOTENCY_KEYS_RELEASE, API_PACKS_IMPORT,
-        API_PROVIDERS, API_REPLICAS, API_RUNS, API_SCHEDULER_ACTION_DISPATCHES,
-        API_SCHEDULER_ACTION_DISPATCHES_CLAIM, API_SCHEDULER_ACTION_DISPATCHES_PENDING,
-        API_SCHEDULER_READY_NODES_CLAIM, API_SCHEDULER_WORKFLOW_RUNS_CLAIM,
+        api_workflow_run_journal, api_workflow_run_rename, api_workflow_run_replay,
+        api_workflow_run_transitions, api_workflow_runs, api_workflow_trigger,
+        api_workflow_trigger_backfill, api_workflow_trigger_runs, api_workflow_triggers,
+        API_APPROVALS, API_ARTIFACTS_CONTENT, API_CREDENTIALS, API_FREEZE_WINDOWS, API_FUNCTIONS,
+        API_FUNCTIONS_CATALOG, API_FUNCTION_ARTIFACTS, API_FUNCTION_EXPORTS, API_IDEMPOTENCY_KEYS,
+        API_IDEMPOTENCY_KEYS_CLAIM, API_IDEMPOTENCY_KEYS_COMPLETE, API_IDEMPOTENCY_KEYS_RELEASE,
+        API_PACKS_IMPORT, API_PROVIDERS, API_REPLICAS, API_RUNS, API_SCHEDULER_WORKFLOW_RUNS_CLAIM,
         API_SCHEDULER_WORKFLOW_TRIGGER_FIRINGS_CLAIM, API_SUPERVISOR_STATUS, API_WORKFLOWS,
         API_WORKFLOWS_EXPORT, API_WORKFLOWS_IMPORT, API_WORKFLOWS_SIMULATE, API_WORKFLOWS_VALIDATE,
         API_WORKFLOW_EFFECTS, API_WORKFLOW_RUNS, API_WORKFLOW_TRIGGERS_DUE,
@@ -53,7 +44,7 @@ use runinator_models::{
     },
     orchestration::{
         IdempotencyClaim, IdempotencyClaimRequest, IdempotencyCompleteRequest,
-        IdempotencyReleaseRequest, ReadyNodeRecord, ACTION_IDEMPOTENCY_SCOPE,
+        IdempotencyReleaseRequest, ACTION_IDEMPOTENCY_SCOPE,
     },
     providers::ProviderMetadata,
     provisioning::{NodeBackendsResponse, ProvisionedGroup, ScaleNodesRequest, StopNodeRequest},
@@ -72,9 +63,8 @@ use runinator_models::{
         WorkflowJournalRecord, WorkflowVmCursor,
     },
     workflows::{
-        WorkflowBundle, WorkflowDefinition, WorkflowNodeRun, WorkflowNodeRunArtifact,
-        WorkflowNodeRunChunk, WorkflowRun, WorkflowRunArtifact, WorkflowSimulateRequest,
-        WorkflowStatus, WorkflowTrigger,
+        WorkflowBundle, WorkflowDefinition, WorkflowRun, WorkflowSimulateRequest, WorkflowStatus,
+        WorkflowTrigger,
     },
 };
 use uuid::Uuid;
@@ -82,10 +72,7 @@ use uuid::Uuid;
 use crate::{
     error::{ApiError, Result},
     locator::ServiceLocator,
-    types::{
-        ArtifactContentResponse, RunArtifactPayload, RunChunkPayload, RunStatusPayload,
-        WorkflowNodeRunStatusPayload,
-    },
+    types::{ArtifactContentResponse, RunArtifactPayload, RunChunkPayload, RunStatusPayload},
 };
 
 /// Default cap on a single request's total wall-clock time. Bounds a hung or slow web service so a
@@ -851,7 +838,7 @@ where
         Ok(response.json::<WorkflowDefinition>().await?)
     }
 
-    /// server-side dry-run: walk `request.workflow` with the reducer's evaluators against live
+    /// server-side dry-run: walk `request.workflow` with the VM's evaluators against live
     /// config (optionally replaying a prior run), publishing no actions. Returns the raw
     /// `SimulationRun` JSON (status, ordered steps, branch targets, final output).
     pub async fn simulate_workflow(
@@ -1527,154 +1514,18 @@ where
         Ok(response.json::<TaskResponse>().await?)
     }
 
-    pub async fn enqueue_action_dispatch(
-        &self,
-        dedupe_key: &str,
-        command: &ActionCommand,
-    ) -> Result<ActionDispatchRecord> {
-        let url = self.build_url(API_SCHEDULER_ACTION_DISPATCHES).await?;
-        let response = self
-            .http_post(url.clone())
-            .json(&json!({
-                "dedupe_key": dedupe_key,
-                "command": command,
-            }))
-            .send()
-            .await?;
-        let response = Self::handle_response(url, response).await?;
-        Ok(response.json::<ActionDispatchRecord>().await?)
-    }
-
-    pub async fn fetch_pending_action_dispatches(
-        &self,
-        limit: i64,
-    ) -> Result<Vec<ActionDispatchRecord>> {
-        let mut url = self
-            .build_url(API_SCHEDULER_ACTION_DISPATCHES_PENDING)
-            .await?;
-        url.query_pairs_mut()
-            .append_pair("limit", &limit.to_string());
-        let response = self.http_get(url.clone()).send().await?;
-        let response = Self::handle_response(url, response).await?;
-        Ok(response.json::<Vec<ActionDispatchRecord>>().await?)
-    }
-
-    pub async fn claim_ready_nodes(
-        &self,
-        scheduler_id: &str,
-        lease_until: DateTime<Utc>,
-        limit: i64,
-    ) -> Result<Vec<ReadyNodeRecord>> {
-        let url = self.build_url(API_SCHEDULER_READY_NODES_CLAIM).await?;
-        let response = self
-            .http_post(url.clone())
-            .json(&json!({
-                "scheduler_id": scheduler_id,
-                "lease_until": lease_until,
-                "limit": limit,
-            }))
-            .send()
-            .await?;
-        let response = Self::handle_response(url, response).await?;
-        Ok(response.json::<Vec<ReadyNodeRecord>>().await?)
-    }
-
-    pub async fn process_ready_node(
-        &self,
-        ready_node_id: Uuid,
-        scheduler_id: &str,
-        workflow_run_id: Option<Uuid>,
-        node_id: Option<String>,
-        next_ready_at: Option<DateTime<Utc>>,
-    ) -> Result<TaskResponse> {
-        let url = self
-            .build_url(&api_scheduler_ready_node_process(ready_node_id))
-            .await?;
-        let response = self
-            .http_post(url.clone())
-            .json(&json!({
-                "scheduler_id": scheduler_id,
-                "workflow_run_id": workflow_run_id,
-                "node_id": node_id,
-                "next_ready_at": next_ready_at,
-            }))
-            .send()
-            .await?;
-        let response = Self::handle_response(url, response).await?;
-        Ok(response.json::<TaskResponse>().await?)
-    }
-
-    pub async fn claim_pending_action_dispatches(
-        &self,
-        scheduler_id: &str,
-        lease_until: DateTime<Utc>,
-        limit: i64,
-    ) -> Result<Vec<ActionDispatchRecord>> {
-        let url = self
-            .build_url(API_SCHEDULER_ACTION_DISPATCHES_CLAIM)
-            .await?;
-        let response = self
-            .http_post(url.clone())
-            .json(&json!({
-                "scheduler_id": scheduler_id,
-                "lease_until": lease_until,
-                "limit": limit,
-            }))
-            .send()
-            .await?;
-        let response = Self::handle_response(url, response).await?;
-        Ok(response.json::<Vec<ActionDispatchRecord>>().await?)
-    }
-
-    pub async fn mark_action_dispatch_published(&self, dispatch_id: Uuid) -> Result<TaskResponse> {
-        let url = self
-            .build_url(&api_scheduler_action_dispatch_published(dispatch_id))
-            .await?;
-        let response = self.http_post(url.clone()).send().await?;
-        let response = Self::handle_response(url, response).await?;
-        Ok(response.json::<TaskResponse>().await?)
-    }
-
-    pub async fn mark_action_dispatch_failed(
-        &self,
-        dispatch_id: Uuid,
-        error: &str,
-    ) -> Result<TaskResponse> {
-        let url = self
-            .build_url(&api_scheduler_action_dispatch_failed(dispatch_id))
-            .await?;
-        let response = self
-            .http_post(url.clone())
-            .json(&json!({ "error": error }))
-            .send()
-            .await?;
-        let response = Self::handle_response(url, response).await?;
-        Ok(response.json::<TaskResponse>().await?)
-    }
-
-    pub async fn fetch_workflow_run(
-        &self,
-        workflow_run_id: Uuid,
-    ) -> Result<(WorkflowRun, Vec<WorkflowNodeRun>)> {
+    pub async fn fetch_workflow_run(&self, workflow_run_id: Uuid) -> Result<WorkflowRun> {
         let url = self.build_url(&api_workflow_run(workflow_run_id)).await?;
         let response = self.http_get(url.clone()).send().await?;
         let response = Self::handle_response(url, response).await?;
         let body = response.json::<Value>().await?;
-        let run = serde_json::from_value(
+        serde_json::from_value(
             body.get("run")
                 .cloned()
                 .ok_or_else(|| ApiError::UnexpectedResponse("missing run".into()))?
                 .into(),
         )
-        .map_err(|err| ApiError::UnexpectedResponse(err.to_string()))?;
-        let nodes = serde_json::from_value(
-            body.get("nodes")
-                .cloned()
-                .unwrap_or(Value::Array(vec![]))
-                .into(),
-        )
-        .map_err(|err| ApiError::UnexpectedResponse(err.to_string()))?;
-        Ok((run, nodes))
+        .map_err(|err| ApiError::UnexpectedResponse(err.to_string()).into())
     }
 
     pub async fn delete_workflow_run(&self, workflow_run_id: Uuid) -> Result<TaskResponse> {
@@ -1684,172 +1535,6 @@ where
         let response = self.http_delete(url.clone()).send().await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<TaskResponse>().await?)
-    }
-
-    pub async fn create_workflow_node_run(
-        &self,
-        workflow_run_id: Uuid,
-        node_id: &str,
-        parameters: Value,
-        prev_node_run_id: Option<Uuid>,
-    ) -> Result<WorkflowNodeRun> {
-        let url = self
-            .build_url(&api_workflow_run_nodes(workflow_run_id))
-            .await?;
-        let response = self
-            .http_post(url.clone())
-            .json(&json!({
-                "node_id": node_id,
-                "parameters": parameters,
-                "prev_node_run_id": prev_node_run_id,
-            }))
-            .send()
-            .await?;
-        let response = Self::handle_response(url, response).await?;
-        Ok(response.json::<WorkflowNodeRun>().await?)
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub async fn update_workflow_node_run(
-        &self,
-        node_run_id: Uuid,
-        status: WorkflowStatus,
-        attempt: Option<i64>,
-        parameters: Option<Value>,
-        output_json: Option<Value>,
-        state: Option<Value>,
-        transition_reason: Option<String>,
-        message: Option<String>,
-    ) -> Result<TaskResponse> {
-        let url = self.build_url(&api_workflow_node_run(node_run_id)).await?;
-        let response = self
-            .http_patch(url.clone())
-            .json(&json!({
-                "status": status,
-                "attempt": attempt,
-                "parameters": parameters,
-                "output_json": output_json,
-                "state": state,
-                "transition_reason": transition_reason,
-                "message": message
-            }))
-            .send()
-            .await?;
-        let response = Self::handle_response(url, response).await?;
-        Ok(response.json::<TaskResponse>().await?)
-    }
-
-    pub async fn set_workflow_node_run_status(
-        &self,
-        node_run_id: Uuid,
-        payload: &WorkflowNodeRunStatusPayload,
-    ) -> Result<TaskResponse> {
-        let url = self.build_url(&api_workflow_node_run(node_run_id)).await?;
-        let response = self.http_patch(url.clone()).json(payload).send().await?;
-        let response = Self::handle_response(url, response).await?;
-        Ok(response.json::<TaskResponse>().await?)
-    }
-
-    /// acquire the executor lease for a node run; `Ok(true)` means this worker won the claim and may
-    /// execute, `Ok(false)` means a live executor already holds it and this delivery is a duplicate.
-    /// `stale_before` is the cutoff past which an existing claim is considered abandoned.
-    pub async fn claim_workflow_node_run_executor(
-        &self,
-        node_run_id: Uuid,
-        replica_id: Uuid,
-        claimed_at: DateTime<Utc>,
-        stale_before: DateTime<Utc>,
-    ) -> Result<bool> {
-        let url = self
-            .build_url(&api_workflow_node_run_claim(node_run_id))
-            .await?;
-        let response = self
-            .http_post(url.clone())
-            .json(&json!({
-                "replica_id": replica_id,
-                "claimed_at": claimed_at,
-                "stale_before": stale_before,
-            }))
-            .send()
-            .await?;
-        let response = Self::handle_response(url, response).await?;
-        Ok(response.json::<TaskResponse>().await?.success)
-    }
-
-    pub async fn release_workflow_node_run_executor(
-        &self,
-        node_run_id: Uuid,
-        replica_id: Uuid,
-        released_at: DateTime<Utc>,
-    ) -> Result<TaskResponse> {
-        let url = self
-            .build_url(&api_workflow_node_run_release(node_run_id))
-            .await?;
-        let response = self
-            .http_post(url.clone())
-            .json(&json!({ "replica_id": replica_id, "released_at": released_at }))
-            .send()
-            .await?;
-        let response = Self::handle_response(url, response).await?;
-        Ok(response.json::<TaskResponse>().await?)
-    }
-
-    pub async fn append_workflow_node_run_chunk(
-        &self,
-        node_run_id: Uuid,
-        payload: &RunChunkPayload,
-    ) -> Result<Vec<WorkflowNodeRunChunk>> {
-        let url = self
-            .build_url(&api_workflow_node_run_chunks(node_run_id))
-            .await?;
-        let response = self.http_post(url.clone()).json(payload).send().await?;
-        let response = Self::handle_response(url, response).await?;
-        Ok(response.json::<Vec<WorkflowNodeRunChunk>>().await?)
-    }
-
-    pub async fn fetch_workflow_node_run_chunks(
-        &self,
-        node_run_id: Uuid,
-        cursor: Option<i64>,
-        limit: i64,
-    ) -> Result<Vec<WorkflowNodeRunChunk>> {
-        let mut url = self
-            .build_url(&api_workflow_node_run_chunks(node_run_id))
-            .await?;
-        url.query_pairs_mut()
-            .append_pair("limit", &limit.to_string());
-        if let Some(cursor) = cursor {
-            url.query_pairs_mut()
-                .append_pair("cursor", &cursor.to_string());
-        }
-        let response = self.http_get(url.clone()).send().await?;
-        let response = Self::handle_response(url, response).await?;
-        Ok(response.json::<Vec<WorkflowNodeRunChunk>>().await?)
-    }
-
-    pub async fn add_workflow_node_run_artifact(
-        &self,
-        node_run_id: Uuid,
-        payload: &RunArtifactPayload,
-    ) -> Result<Vec<WorkflowNodeRunArtifact>> {
-        let url = self
-            .build_url(&api_workflow_node_run_artifacts(node_run_id))
-            .await?;
-        let response = self.http_post(url.clone()).json(payload).send().await?;
-        let response = Self::handle_response(url, response).await?;
-        Ok(response.json::<Vec<WorkflowNodeRunArtifact>>().await?)
-    }
-
-    pub async fn fetch_workflow_run_artifacts(
-        &self,
-        workflow_run_id: Uuid,
-    ) -> Result<Vec<WorkflowRunArtifact>> {
-        let url = self
-            .build_url(&api_workflow_run_artifacts(workflow_run_id))
-            .await?;
-        let response = self.http_get(url.clone()).send().await?;
-        let response = Self::handle_response(url, response).await?;
-        Ok(response.json::<Vec<WorkflowRunArtifact>>().await?)
     }
 
     /// Read VM execution branches for a workflow run.  This is the successor to graph-cursor and
@@ -1965,33 +1650,6 @@ where
         Ok(response
             .json::<Vec<runinator_models::orchestration::NodeTransition>>()
             .await?)
-    }
-
-    pub async fn fetch_workflow_node_transitions(
-        &self,
-        workflow_id: Uuid,
-        node_id: &str,
-    ) -> Result<Vec<runinator_models::orchestration::NodeTransitionStat>> {
-        let url = self
-            .build_url(&api_workflow_node_transitions(workflow_id, node_id))
-            .await?;
-        let response = self.http_get(url.clone()).send().await?;
-        let response = Self::handle_response(url, response).await?;
-        Ok(response
-            .json::<Vec<runinator_models::orchestration::NodeTransitionStat>>()
-            .await?)
-    }
-
-    pub async fn fetch_workflow_node_run_artifacts(
-        &self,
-        node_run_id: Uuid,
-    ) -> Result<Vec<WorkflowNodeRunArtifact>> {
-        let url = self
-            .build_url(&api_workflow_node_run_artifacts(node_run_id))
-            .await?;
-        let response = self.http_get(url.clone()).send().await?;
-        let response = Self::handle_response(url, response).await?;
-        Ok(response.json::<Vec<WorkflowNodeRunArtifact>>().await?)
     }
 
     /// download an artifact's raw bytes from the streaming download endpoint.

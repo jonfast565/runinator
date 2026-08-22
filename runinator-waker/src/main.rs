@@ -30,10 +30,11 @@ async fn run_process() -> Result<(), SendableError> {
             BrokerClientConfig {
                 backend: config.broker_backend.clone(),
                 endpoint: config.broker_endpoint.clone(),
-                action_topic: config.broker_action_topic.clone(),
+                effect_topic: config.broker_effect_topic.clone(),
+                infrastructure_effect_topic: config.broker_infrastructure_effect_topic.clone(),
                 control_topic: config.broker_control_topic.clone(),
                 agent_topic: None,
-                result_topic: config.broker_result_topic.clone(),
+                effect_result_topic: config.broker_effect_result_topic.clone(),
                 client_id: config.broker_client_id.clone(),
                 relay_credential: None,
                 wake_topic: Some(config.broker_wake_topic.clone()),

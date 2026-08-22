@@ -3,14 +3,12 @@
 use chrono::Utc;
 use runinator_broker::{
     adapters::kafka::{KafkaBroker, KafkaBrokerConfig},
-    Broker, BrokerMessage, ControlCommand, EffectMessage, EffectResultMessage, ResultMessage,
+    Broker, ControlCommand, EffectMessage, EffectResultMessage,
 };
 use runinator_comm::{
-    ActionCommand, ActionTarget, AgentCommand, AgentDirectiveKind, ConsumerProfile, ControlKind,
-    EffectCommand, EffectExecutor, EffectResult, EffectResultKind, WorkflowResultEvent,
+    ActionTarget, AgentCommand, AgentDirectiveKind, ConsumerProfile, ControlKind, EffectCommand,
+    EffectExecutor, EffectResult, EffectResultKind,
 };
-use runinator_models::json;
-use runinator_models::{runs::NewRunChunk, workflows::WorkflowAction};
 use tokio::time::{timeout, Duration};
 use uuid::Uuid;
 
@@ -22,12 +20,8 @@ fn kafka_broker() -> Option<KafkaBroker> {
             return None;
         }
     };
-    let action_topic = std::env::var("RUNINATOR_KAFKA_ACTION_TOPIC")
-        .unwrap_or_else(|_| "runinator.actions".into());
     let control_topic = std::env::var("RUNINATOR_KAFKA_CONTROL_TOPIC")
         .unwrap_or_else(|_| "runinator.control".into());
-    let result_topic = std::env::var("RUNINATOR_KAFKA_RESULT_TOPIC")
-        .unwrap_or_else(|_| "runinator.results".into());
     let agent_topic =
         std::env::var("RUNINATOR_KAFKA_AGENT_TOPIC").unwrap_or_else(|_| "runinator.agent".into());
     let effect_topic = std::env::var("RUNINATOR_KAFKA_EFFECT_TOPIC")
@@ -40,7 +34,7 @@ fn kafka_broker() -> Option<KafkaBroker> {
     Some(
         KafkaBroker::new(
             KafkaBrokerConfig::new(bootstrap)
-                .with_topics(action_topic, control_topic, result_topic)
+                .with_control_topic(control_topic)
                 .with_agent_topic(agent_topic)
                 .with_effect_topics(
                     effect_topic,
@@ -84,37 +78,6 @@ async fn kafka_broker_delivers_targeted_agent_directives() {
 
 #[tokio::test]
 #[ignore = "requires a reachable Kafka broker and pre-created topics"]
-async fn kafka_broker_delivers_published_messages() {
-    let Some(broker) = kafka_broker() else {
-        return;
-    };
-    let command = action_command();
-    let command_id = command.command_id;
-    broker
-        .publish(BrokerMessage {
-            command,
-            dedupe_key: Some(command_id.to_string()),
-            enqueued_at: Utc::now(),
-        })
-        .await
-        .unwrap();
-
-    let consumer = format!("test-actions-{}", Uuid::new_v4());
-    loop {
-        let delivery = timeout(Duration::from_secs(10), broker.receive(&consumer))
-            .await
-            .unwrap()
-            .unwrap();
-        broker.ack(&consumer, delivery.delivery_id).await.unwrap();
-        if delivery.command.command_id == command_id {
-            assert_eq!(delivery.command.workflow_run_id, Uuid::from_u128(42));
-            break;
-        }
-    }
-}
-
-#[tokio::test]
-#[ignore = "requires a reachable Kafka broker and pre-created topics"]
 async fn kafka_broker_delivers_control_messages() {
     let Some(broker) = kafka_broker() else {
         return;
@@ -146,56 +109,15 @@ async fn kafka_broker_delivers_control_messages() {
 
 #[tokio::test]
 #[ignore = "requires a reachable Kafka broker and pre-created topics"]
-async fn kafka_broker_delivers_result_events() {
-    let Some(broker) = kafka_broker() else {
-        return;
-    };
-    let command = action_command();
-    let event = WorkflowResultEvent::chunk(
-        &command,
-        NewRunChunk {
-            stream: "log".into(),
-            content: "hello".into(),
-        },
-    );
-    let event_id = event.event_id;
-    broker
-        .publish_result(ResultMessage {
-            event,
-            dedupe_key: Some(event_id.to_string()),
-            enqueued_at: Utc::now(),
-        })
-        .await
-        .unwrap();
-
-    let consumer = format!("test-results-{}", Uuid::new_v4());
-    loop {
-        let delivery = timeout(Duration::from_secs(10), broker.receive_result(&consumer))
-            .await
-            .unwrap()
-            .unwrap();
-        broker
-            .ack_result(&consumer, delivery.delivery_id)
-            .await
-            .unwrap();
-        if delivery.event.event_id == event_id {
-            assert_eq!(delivery.event.workflow_node_run_id, Uuid::from_u128(99));
-            break;
-        }
-    }
-}
-
-#[tokio::test]
-#[ignore = "requires a reachable Kafka broker and pre-created topics"]
 async fn kafka_broker_nack_redelivers_messages() {
     let Some(broker) = kafka_broker() else {
         return;
     };
-    let command = action_command();
+    let command = effect_command(EffectExecutor::Provider);
     let command_id = command.command_id;
     let consumer = format!("test-nack-{}", Uuid::new_v4());
     broker
-        .publish(BrokerMessage {
+        .publish_effect(EffectMessage {
             command,
             dedupe_key: Some(command_id.to_string()),
             enqueued_at: Utc::now(),
@@ -204,23 +126,32 @@ async fn kafka_broker_nack_redelivers_messages() {
         .unwrap();
 
     let delivery = loop {
-        let delivery = timeout(Duration::from_secs(10), broker.receive(&consumer))
+        let delivery = timeout(Duration::from_secs(10), broker.receive_effect(&consumer))
             .await
             .unwrap()
             .unwrap();
         if delivery.command.command_id == command_id {
             break delivery;
         }
-        broker.ack(&consumer, delivery.delivery_id).await.unwrap();
+        broker
+            .ack_effect(&consumer, delivery.delivery_id)
+            .await
+            .unwrap();
     };
-    broker.nack(&consumer, delivery.delivery_id).await.unwrap();
+    broker
+        .nack_effect(&consumer, delivery.delivery_id)
+        .await
+        .unwrap();
 
-    let redelivery = timeout(Duration::from_secs(10), broker.receive(&consumer))
+    let redelivery = timeout(Duration::from_secs(10), broker.receive_effect(&consumer))
         .await
         .unwrap()
         .unwrap();
     assert_eq!(redelivery.command.command_id, command_id);
-    broker.ack(&consumer, redelivery.delivery_id).await.unwrap();
+    broker
+        .ack_effect(&consumer, redelivery.delivery_id)
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -346,35 +277,6 @@ fn effect_command(executor: EffectExecutor) -> EffectCommand {
         trace_context: Default::default(),
         idempotency_key: Uuid::now_v7().to_string(),
         notification_delivery_id: None,
-    }
-}
-
-fn action_command() -> ActionCommand {
-    ActionCommand {
-        command_id: Uuid::new_v4(),
-        workflow_run_id: Uuid::from_u128(42),
-        workflow_node_run_id: Uuid::from_u128(99),
-        node_id: "run".into(),
-        action: WorkflowAction {
-            provider: "test".into(),
-            function: "execute".into(),
-            timeout_seconds: 60,
-            configuration: runinator_models::workflows::WorkflowObject::default(),
-            mcp_enabled: false,
-            tags: Vec::new(),
-            required_labels: Default::default(),
-            idempotency_key: None,
-            function_binding: None,
-        },
-        attempt: 1,
-        parameters: json!({ "value": true }),
-        target: Default::default(),
-        trace_id: Uuid::nil(),
-        trace_context: Default::default(),
-        notification_delivery_id: None,
-        invocation_call_id: None,
-        task_run_id: None,
-        idempotency_key: None,
     }
 }
 

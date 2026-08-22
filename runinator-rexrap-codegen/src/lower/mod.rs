@@ -40,6 +40,11 @@ enum TaskBinding {
 struct Lowerer {
     nodes: Vec<Value>,
     used_ids: HashSet<String>,
+    /// the source span of the statement currently being lowered, so every node it produces can be
+    /// traced back to the text that produced it. see [`NodeSpan`].
+    current_span: Option<Span>,
+    /// node id -> the span of the statement that produced it, in emission order.
+    spans: Vec<NodeSpan>,
     task_bindings: HashMap<String, TaskBinding>,
     /// `task fn` definitions, inlined at each call site rather than compiled to a callable.
     task_fns: HashMap<String, FunctionDef>,
@@ -98,10 +103,35 @@ struct LowerEntry {
     collector: Option<String>,
 }
 
+/// One graph node paired with the source span of the statement that produced it.
+///
+/// Spans index the text the document was parsed from, so they are only meaningful alongside that
+/// exact text — see `decompile_with_spans`, which returns both together.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NodeSpan {
+    pub node_id: String,
+    pub start: usize,
+    pub end: usize,
+}
+
 pub fn lower_document(
     document: &Document,
     options: &CompileOptions,
 ) -> Result<Vec<WorkflowDefinition>, RexRapError> {
+    document
+        .workflows
+        .iter()
+        .map(|workflow| {
+            lower_workflow(document, workflow, options).map(|(definition, _)| definition)
+        })
+        .collect()
+}
+
+/// Lower every workflow in `document`, keeping the node-to-span map for each.
+pub fn lower_document_with_spans(
+    document: &Document,
+    options: &CompileOptions,
+) -> Result<Vec<(WorkflowDefinition, Vec<NodeSpan>)>, RexRapError> {
     document
         .workflows
         .iter()
@@ -113,7 +143,7 @@ fn lower_workflow(
     document: &Document,
     workflow: &Workflow,
     options: &CompileOptions,
-) -> Result<WorkflowDefinition, RexRapError> {
+) -> Result<(WorkflowDefinition, Vec<NodeSpan>), RexRapError> {
     let mut lowerer = Lowerer::new();
     lowerer.source_dir = options.source_dir.clone();
     // the callable registry resolves keyword args in both the workflow body and function bodies.
@@ -340,19 +370,22 @@ fn lower_workflow(
         None => Default::default(),
     };
 
-    Ok(WorkflowDefinition {
-        id: None,
-        name: workflow.name.clone(),
-        namespace: workflow.namespace.clone(),
-        // org is assigned by the web service at import time, not during compilation.
-        org_id: None,
-        version: workflow.version.unwrap_or(options.default_version),
-        enabled: options.enabled,
-        input_type,
-        definition: graph,
-        created_at: None,
-        updated_at: None,
-    })
+    Ok((
+        WorkflowDefinition {
+            id: None,
+            name: workflow.name.clone(),
+            namespace: workflow.namespace.clone(),
+            // org is assigned by the web service at import time, not during compilation.
+            org_id: None,
+            version: workflow.version.unwrap_or(options.default_version),
+            enabled: options.enabled,
+            input_type,
+            definition: graph,
+            created_at: None,
+            updated_at: None,
+        },
+        std::mem::take(&mut lowerer.spans),
+    ))
 }
 
 pub fn lower_expression_fragment(
@@ -394,6 +427,8 @@ impl Lowerer {
             task_bindings: HashMap::new(),
             task_fns: HashMap::new(),
             detached: HashSet::new(),
+            current_span: None,
+            spans: Vec::new(),
             counter: 0,
             resume_counter: 0,
             start_id: "start".to_string(),
@@ -845,6 +880,15 @@ impl Lowerer {
     }
 
     fn lower_stmt(&mut self, stmt: &Stmt, id: &str, next: &str) -> Result<(), RexRapError> {
+        // a nested block re-enters here, so save and restore rather than assign: an inner statement
+        // must not leave its span attached to the rest of its parent's nodes.
+        let outer_span = self.current_span.replace(stmt.span);
+        let result = self.lower_stmt_inner(stmt, id, next);
+        self.current_span = outer_span;
+        result
+    }
+
+    fn lower_stmt_inner(&mut self, stmt: &Stmt, id: &str, next: &str) -> Result<(), RexRapError> {
         // an `async` call binds a task handle, whatever the callee is; `await`/`detach` resolve
         // against this. the marker is on the call site, so the callee never has to declare a color.
         if stmt.is_async {
@@ -2079,6 +2123,17 @@ impl Lowerer {
     }
 
     fn push(&mut self, node: Value) {
+        // a node inherits the span of the statement being lowered. synthetic nodes emitted outside
+        // any statement (start/end/fail) simply have none.
+        if let (Some(span), Some(id)) =
+            (self.current_span, node.get("id").and_then(|id| id.as_str()))
+        {
+            self.spans.push(NodeSpan {
+                node_id: id.to_string(),
+                start: span.start,
+                end: span.end,
+            });
+        }
         self.nodes.push(node);
     }
 

@@ -318,8 +318,9 @@ pub struct InterruptRequest {
     pub source: Option<String>,
     #[serde(default)]
     pub payload: Value,
-    #[serde(default)]
-    pub cursor_id: Option<Uuid>,
+    /// The thread to interrupt. `cursor_id` is accepted as the pre-VM spelling of the same field.
+    #[serde(default, alias = "cursor_id")]
+    pub continuation_id: Option<Uuid>,
 }
 
 /// an event delivered to a parked `event_source` node. `type` selects which subscriptions match;
@@ -346,59 +347,6 @@ pub struct WebhookSignalRequest {
 pub struct WorkflowRunReplayRequest {
     #[serde(default)]
     pub from_step_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct WorkflowNodeRunRequest {
-    pub node_id: String,
-    #[serde(default)]
-    pub parameters: Value,
-    #[serde(default)]
-    pub prev_node_run_id: Option<Uuid>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct WorkflowNodeRunStatusRequest {
-    pub status: WorkflowStatus,
-    #[serde(default)]
-    pub attempt: Option<i64>,
-    #[serde(default)]
-    pub parameters: Option<Value>,
-    #[serde(default)]
-    pub output_json: Option<Value>,
-    #[serde(default)]
-    pub state: Option<Value>,
-    #[serde(default)]
-    pub transition_reason: Option<String>,
-    #[serde(default)]
-    pub message: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct WorkflowNodeRunInputRequest {
-    #[serde(default)]
-    pub output_json: Value,
-    #[serde(default)]
-    pub message: Option<String>,
-    #[serde(default)]
-    pub resolved_by: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct WorkflowNodeRunExecutorClaimRequest {
-    pub replica_id: Uuid,
-    pub claimed_at: DateTime<Utc>,
-    /// claims older than this are treated as stale and may be stolen; the worker derives it from the
-    /// action timeout so a live executor is never preempted mid-run. defaults to `claimed_at` (steal
-    /// only truly unclaimed slots) when an older worker omits it.
-    #[serde(default)]
-    pub stale_before: Option<DateTime<Utc>>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct WorkflowNodeRunExecutorReleaseRequest {
-    pub replica_id: Uuid,
-    pub released_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Serialize)]

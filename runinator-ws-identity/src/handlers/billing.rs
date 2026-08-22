@@ -289,7 +289,7 @@ async fn scale_org_pool(
     let Some(provisioner) = registry.get(backend) else {
         return;
     };
-    // label spawned nodes `org=<slug>` so the reducer can route this org's work to them, and put them
+    // label spawned nodes `org=<slug>` so the engine can route this org's work to them, and put them
     // in the org's own group so pools scale independently of other tenants.
     let mut spec = NodeSpec {
         group: Some(org_pool_group(slug, kind)),

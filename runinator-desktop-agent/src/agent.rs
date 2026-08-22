@@ -53,10 +53,11 @@ const ALLOW_WRITE_ENV: &str = "RUNINATOR_LOCAL_FILES_ALLOW_WRITE";
 const MAX_LOG_LINES: usize = 10_000;
 // broker channel names/client id; fixed rather than exposed in the GUI — an advanced operator who
 // needs to match a non-default cluster naming scheme can still edit the persisted config JSON.
-const DEFAULT_ACTION_TOPIC: &str = "runinator.actions";
 const DEFAULT_CONTROL_TOPIC: &str = "runinator.control";
 const DEFAULT_AGENT_TOPIC: &str = "runinator.agent";
-const DEFAULT_RESULT_TOPIC: &str = "runinator.results";
+const DEFAULT_EFFECT_TOPIC: &str = "runinator.effects";
+const DEFAULT_INFRASTRUCTURE_EFFECT_TOPIC: &str = "runinator.effects.infrastructure";
+const DEFAULT_EFFECT_RESULT_TOPIC: &str = "runinator.effect-results";
 const DEFAULT_BROKER_CLIENT_ID: &str = "runinator-desktop-agent";
 // how long to wait for in-flight work to drain when the operator stops the agent.
 const STOP_GRACE: Duration = Duration::from_secs(15);
@@ -472,10 +473,11 @@ pub fn runtime_config(config: &AgentConfig) -> Result<AgentRuntimeConfig, Sendab
         service_url: config.service_url.clone(),
         direct_backend: config.direct_broker_backend.clone(),
         direct_endpoint: config.direct_broker_endpoint.clone(),
-        action_topic: DEFAULT_ACTION_TOPIC.to_string(),
+        effect_topic: DEFAULT_EFFECT_TOPIC.to_string(),
+        infrastructure_effect_topic: DEFAULT_INFRASTRUCTURE_EFFECT_TOPIC.to_string(),
         control_topic: DEFAULT_CONTROL_TOPIC.to_string(),
         agent_topic: DEFAULT_AGENT_TOPIC.to_string(),
-        result_topic: DEFAULT_RESULT_TOPIC.to_string(),
+        effect_result_topic: DEFAULT_EFFECT_RESULT_TOPIC.to_string(),
         client_id: DEFAULT_BROKER_CLIENT_ID.to_string(),
         api_key: config.api_key.clone(),
     }

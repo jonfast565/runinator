@@ -1,7 +1,7 @@
 //! the web service’s behaviour tests, partitioned by subject.
 //!
 //! most of these boot a real `SqliteDb` and drive the engine through it, because what they cover is
-//! the seam between an http handler, the reducer, and persistence — the part no single crate owns.
+//! the seam between an http handler, the VM, and persistence — the part no single crate owns.
 //! prefer `runinator-runtime`’s fake-backed suite for anything that is purely a node-handler
 //! decision; reach for this layer when the database or the broker is part of the assertion.
 //!

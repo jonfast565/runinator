@@ -4,10 +4,12 @@
 //! atomically persisting the returned continuation and effect receipt.
 
 use runinator_models::{
+    interrupt::{InterruptMode, InterruptSource},
     value::Value,
     workflow_vm::{
         WorkflowCompensationFrame, WorkflowContinuation, WorkflowContinuationStatus,
-        WorkflowEffectRequest, WorkflowForkFrame, WorkflowFrame, WorkflowInstruction,
+        WorkflowEffectRequest, WorkflowFailure, WorkflowFailureKind, WorkflowForkFrame,
+        WorkflowFrame, WorkflowInstruction, WorkflowInterruptFrame, WorkflowInterruptOutcome,
         WorkflowLoopFrame, WorkflowMapFrame, WorkflowModule, WorkflowRaceFrame, WorkflowTryFrame,
         WorkflowTryPhase,
     },
@@ -41,13 +43,31 @@ pub enum WorkflowVmStep {
         continuation: WorkflowContinuation,
         message: String,
     },
+    /// A thread reached a safe point with an interrupt to service. The host persists both records
+    /// in one transaction: the frozen thread, and the handler continuation now running beside it.
+    Interrupted {
+        suspended: WorkflowContinuation,
+        handler: WorkflowContinuation,
+        source: runinator_models::interrupt::InterruptSource,
+    },
+    /// A handler finished. The host retires it and applies `outcome` to the thread it suspended.
+    InterruptResolved {
+        handler: WorkflowContinuation,
+        interrupted_continuation_id: uuid::Uuid,
+        outcome: WorkflowInterruptOutcome,
+    },
 }
 
 /// Resume a continuation after the host durably settled its sole outstanding effect.
+///
+/// `request` is the settled effect's own request. It is what lets the VM classify the arrival —
+/// a timer elapsing, a park being resolved, a child run finishing — which is how the drive-matched
+/// interrupt sources are detected without a host re-reading graph ancestry.
 pub fn resume(
     module: &WorkflowModule,
     mut continuation: WorkflowContinuation,
-    result: Result<Value, String>,
+    request: Option<&WorkflowEffectRequest>,
+    result: Result<Value, WorkflowFailure>,
 ) -> WorkflowVmStep {
     // Persisted effect settlement makes the row runnable so a scheduler can claim it, while the
     // effect id remains available for the durable host to load its immutable receipt.
@@ -87,11 +107,69 @@ pub fn resume(
             return fail(continuation, message);
         }
     }
+    // an arriving result is a safe point for the sources the VM can classify for itself. a handler
+    // continuation is excluded: it may not be interrupted, and it may not fail the run.
+    if let Some(source) = arrival_interrupt_source(request, &result)
+        && let Some(step) = try_raise_detected(module, &continuation, source)
+    {
+        return step;
+    }
     match result {
         Ok(value) => continuation.stack.push(value),
-        Err(message) => return handle_failure(module, continuation, message),
+        Err(failure) => return handle_classified_failure(module, continuation, failure),
     }
     step(module, continuation)
+}
+
+/// The interrupt source a settled effect represents, in [`InterruptSource::ALL`] precedence.
+///
+/// `Retry` is the one source with no counterpart here: a re-dispatch is the effect host's business
+/// and never reaches the VM as a step, so nothing in a continuation can observe it.
+fn arrival_interrupt_source(
+    request: Option<&WorkflowEffectRequest>,
+    result: &Result<Value, WorkflowFailure>,
+) -> Option<InterruptSource> {
+    if let Err(failure) = result {
+        return match failure.kind {
+            WorkflowFailureKind::TimedOut => Some(InterruptSource::Timeout),
+            WorkflowFailureKind::Failed => Some(InterruptSource::Failure),
+            // a cancel is not a condition a handler gets to reconsider.
+            WorkflowFailureKind::Canceled | WorkflowFailureKind::Rejected => None,
+        };
+    }
+    match request? {
+        WorkflowEffectRequest::Timer { .. } | WorkflowEffectRequest::TimerDelay { .. } => {
+            Some(InterruptSource::Wake)
+        }
+        WorkflowEffectRequest::ChildRun { .. } => Some(InterruptSource::Child),
+        WorkflowEffectRequest::Signal { .. }
+        | WorkflowEffectRequest::Approval { .. }
+        | WorkflowEffectRequest::Input { .. } => Some(InterruptSource::Resolved),
+        _ => None,
+    }
+}
+
+/// Raise a VM-detected interrupt, if everything the fail-open rules ask for holds.
+fn try_raise_detected(
+    module: &WorkflowModule,
+    continuation: &WorkflowContinuation,
+    source: InterruptSource,
+) -> Option<WorkflowVmStep> {
+    if interrupt_frame(continuation).is_some() {
+        return None;
+    }
+    let handler = module.interrupt_handler(source)?;
+    let location = module.graph_location(continuation.instruction_pointer)?;
+    if !location.interruptible {
+        return None;
+    }
+    Some(raise_interrupt(
+        module,
+        continuation.clone(),
+        source,
+        Value::Null,
+        handler.target,
+    ))
 }
 
 /// Run a continuation until it reaches its next durable boundary.
@@ -268,42 +346,33 @@ pub fn step(module: &WorkflowModule, mut continuation: WorkflowContinuation) -> 
                     continuation.instruction_pointer = frame.exit;
                 }
             }
-            // Interrupt delivery is a host operation: this safe point deliberately has no
-            // side effect until a host creates a handler continuation.  It is nevertheless an
-            // executable opcode, not an unsupported persisted state.
-            WorkflowInstruction::CheckInterrupt { .. } => continuation.instruction_pointer += 1,
-            WorkflowInstruction::ResumeInterrupt { mode } => {
-                let Some(position) = continuation
-                    .frames
+            // The safe point an externally requested interrupt fires at. Everything about the
+            // decision is on the continuation and the frozen module, so it stays a pure step.
+            WorkflowInstruction::CheckInterrupt { handlers } => {
+                let Some(pending) = continuation.pending_interrupt.take() else {
+                    continuation.instruction_pointer += 1;
+                    continue;
+                };
+                match handlers
                     .iter()
-                    .rposition(|frame| matches!(frame, WorkflowFrame::Interrupt(_)))
-                else {
-                    return handle_failure(
-                        module,
-                        continuation,
-                        "resume_interrupt has no interrupt frame".into(),
-                    );
-                };
-                let frame = match continuation.frames.remove(position) {
-                    WorkflowFrame::Interrupt(frame) => frame,
-                    _ => unreachable!(),
-                };
-                match mode {
-                    runinator_models::interrupt::InterruptMode::Fail => {
-                        return handle_failure(
+                    .find(|handler| handler.source == pending.source)
+                {
+                    // fail-open, and the request is consumed either way: a source nobody declared
+                    // a handler for must not linger and fire at some arbitrary later point.
+                    None => continuation.instruction_pointer += 1,
+                    Some(handler) => {
+                        return raise_interrupt(
                             module,
                             continuation,
-                            "interrupt handler selected fail".into(),
+                            pending.source,
+                            pending.payload,
+                            handler.target,
                         );
                     }
-                    runinator_models::interrupt::InterruptMode::Resume
-                    | runinator_models::interrupt::InterruptMode::Restart => {
-                        continuation.instruction_pointer = frame.resume_instruction_pointer;
-                    }
-                    runinator_models::interrupt::InterruptMode::Continue => {
-                        continuation.instruction_pointer += 1
-                    }
                 }
+            }
+            WorkflowInstruction::ResumeInterrupt { mode } => {
+                return resolve_interrupt(module, continuation, *mode);
             }
             WorkflowInstruction::DebugBoundary { label } => {
                 let mut park_after_boundary = false;
@@ -481,6 +550,8 @@ pub fn step(module: &WorkflowModule, mut continuation: WorkflowContinuation) -> 
             WorkflowInstruction::BeginTry {
                 try_key,
                 catch,
+                on_timeout,
+                on_reject,
                 finally,
             } => {
                 let position = continuation.frames.iter().rposition(
@@ -520,6 +591,8 @@ pub fn step(module: &WorkflowModule, mut continuation: WorkflowContinuation) -> 
                             try_key: try_key.clone(),
                             phase: WorkflowTryPhase::Body,
                             catch: *catch,
+                            on_timeout: *on_timeout,
+                            on_reject: *on_reject,
                             finally: *finally,
                             pending_failure: None,
                         }));
@@ -728,6 +801,11 @@ pub fn step(module: &WorkflowModule, mut continuation: WorkflowContinuation) -> 
                 };
             }
             WorkflowInstruction::Return => {
+                // a handler region that runs off its end without an explicit `resume` still has to
+                // hand control back, or the thread it froze would never move again.
+                if interrupt_frame(&continuation).is_some() {
+                    return resolve_interrupt(module, continuation, InterruptMode::Resume);
+                }
                 let value = continuation.stack.pop().unwrap_or(Value::Null);
                 continuation.status = WorkflowContinuationStatus::Succeeded;
                 return WorkflowVmStep::Complete {
@@ -824,6 +902,20 @@ fn fork_map(
 }
 
 fn fail(mut continuation: WorkflowContinuation, message: String) -> WorkflowVmStep {
+    // a handler cannot fail the run. the strongest thing it can say is `resume fail`, and a handler
+    // that breaks on its own gives the interrupted thread back untouched instead.
+    if let Some(frame) = interrupt_frame(&continuation) {
+        let interrupted_continuation_id = frame.interrupted_continuation_id;
+        let instruction_pointer = frame.resume_instruction_pointer;
+        continuation.status = WorkflowContinuationStatus::Failed;
+        return WorkflowVmStep::InterruptResolved {
+            handler: continuation,
+            interrupted_continuation_id,
+            outcome: WorkflowInterruptOutcome::Resume {
+                instruction_pointer,
+            },
+        };
+    }
     continuation.status = WorkflowContinuationStatus::Failed;
     WorkflowVmStep::Failed {
         continuation,
@@ -964,14 +1056,160 @@ fn resolve_effect_request(
     })
 }
 
+/// Freeze `continuation` and start a handler continuation beside it.
+///
+/// The handler is a separate continuation rather than a frame on this one, because the interrupted
+/// thread must stay exactly where it was: everything the handler does is invisible to it, and the
+/// only channel back is the decision its `resume` carries.
+/// Build the handler continuation for `source` beside `continuation`, deciding nothing about the
+/// interrupted thread itself.
+///
+/// [`raise_interrupt`] pairs this with a suspend. The engine's retry path calls it directly instead:
+/// a thread parked on an effect is already stopped, and suspending it would stop the retried
+/// effect's own settlement from resuming it.
+pub fn interrupt_handler_continuation(
+    module: &WorkflowModule,
+    continuation: &WorkflowContinuation,
+    source: InterruptSource,
+    payload: Value,
+    target: usize,
+    discriminator: &str,
+) -> WorkflowContinuation {
+    let location = module.graph_location(continuation.instruction_pointer);
+    let frame = WorkflowInterruptFrame {
+        source,
+        interrupted_continuation_id: continuation.id,
+        // the interrupted thread resumes *after* the point it was frozen at, so servicing an
+        // interrupt at a safe point cannot re-raise the same one on the next drive.
+        resume_instruction_pointer: continuation.instruction_pointer + 1,
+        node_start_instruction_pointer: location
+            .map(|entry| entry.instruction_start)
+            .unwrap_or(continuation.instruction_pointer),
+        node_exit_instruction_pointer: location.and_then(|entry| entry.exit_instruction_pointer),
+        payload: payload.clone(),
+        handled_at_instruction_pointers: vec![continuation.instruction_pointer],
+    };
+
+    let mut handler = WorkflowContinuation::start(continuation.workflow_run_id, module.version);
+    // the handler id is derived from the interrupted thread, the source, and the caller's
+    // discriminator, so a redelivered drive re-raising the same interrupt inserts nothing while a
+    // genuinely new occurrence (the next retry attempt) gets its own handler.
+    handler.id = stable_id(
+        continuation.id,
+        &format!("interrupt:{}:{target}:{discriminator}", source.as_str()),
+    );
+    handler.instruction_pointer = target;
+    // the region reads the run's context plus what raised it; it writes nothing back except its
+    // `resume` decision.
+    handler.locals = continuation.locals.clone();
+    handler.locals.insert(
+        "interrupt".into(),
+        runinator_models::json!({ "source": source.as_str(), "payload": payload }),
+    );
+    handler.parent_id = Some(continuation.id);
+    handler.frames = vec![WorkflowFrame::Interrupt(frame)];
+    handler
+}
+
+fn raise_interrupt(
+    module: &WorkflowModule,
+    mut continuation: WorkflowContinuation,
+    source: InterruptSource,
+    payload: Value,
+    target: usize,
+) -> WorkflowVmStep {
+    let handler =
+        interrupt_handler_continuation(module, &continuation, source, payload, target, "");
+    continuation.status = WorkflowContinuationStatus::Suspended;
+    WorkflowVmStep::Interrupted {
+        suspended: continuation,
+        handler,
+        source,
+    }
+}
+
+/// Finish a handler and say what the thread it suspended should do next.
+fn resolve_interrupt(
+    module: &WorkflowModule,
+    mut continuation: WorkflowContinuation,
+    mode: InterruptMode,
+) -> WorkflowVmStep {
+    let Some(position) = continuation
+        .frames
+        .iter()
+        .rposition(|frame| matches!(frame, WorkflowFrame::Interrupt(_)))
+    else {
+        return handle_failure(
+            module,
+            continuation,
+            "resume_interrupt has no interrupt frame".into(),
+        );
+    };
+    let frame = match continuation.frames.remove(position) {
+        WorkflowFrame::Interrupt(frame) => frame,
+        _ => unreachable!("interrupt frame position was checked"),
+    };
+    let outcome = match mode {
+        InterruptMode::Resume => WorkflowInterruptOutcome::Resume {
+            instruction_pointer: frame.resume_instruction_pointer,
+        },
+        InterruptMode::Restart => WorkflowInterruptOutcome::Resume {
+            instruction_pointer: frame.node_start_instruction_pointer,
+        },
+        // a node with no single exit cannot be stepped past, so `continue` degrades to `resume`
+        // rather than guessing a location.
+        InterruptMode::Continue => WorkflowInterruptOutcome::Resume {
+            instruction_pointer: frame
+                .node_exit_instruction_pointer
+                .unwrap_or(frame.resume_instruction_pointer),
+        },
+        InterruptMode::Fail => WorkflowInterruptOutcome::Fail {
+            message: format!(
+                "interrupt handler for '{}' selected fail",
+                frame.source.as_str()
+            ),
+        },
+    };
+    continuation.status = WorkflowContinuationStatus::Succeeded;
+    WorkflowVmStep::InterruptResolved {
+        handler: continuation,
+        interrupted_continuation_id: frame.interrupted_continuation_id,
+        outcome,
+    }
+}
+
+/// The interrupt frame a handler continuation carries, if this is one.
+fn interrupt_frame(continuation: &WorkflowContinuation) -> Option<&WorkflowInterruptFrame> {
+    continuation
+        .frames
+        .iter()
+        .rev()
+        .find_map(|frame| match frame {
+            WorkflowFrame::Interrupt(frame) => Some(frame),
+            _ => None,
+        })
+}
+
 /// Route a failure through the nearest structured try frame, then through the durable
 /// compensation stack. This keeps the decision entirely inside the continuation; a host never
 /// needs to rediscover graph ancestry from node-run history.
 fn handle_failure(
     module: &WorkflowModule,
-    mut continuation: WorkflowContinuation,
+    continuation: WorkflowContinuation,
     message: String,
 ) -> WorkflowVmStep {
+    handle_classified_failure(module, continuation, WorkflowFailure::failed(message))
+}
+
+/// The `on_failure` / `on_timeout` / `on_reject` edges of one graph node are compiled into a try
+/// frame whose targets differ by classification, so the routing decision needs the kind and not
+/// only the message.
+fn handle_classified_failure(
+    module: &WorkflowModule,
+    mut continuation: WorkflowContinuation,
+    failure: WorkflowFailure,
+) -> WorkflowVmStep {
+    let message = failure.message;
     if let Some(position) = continuation
         .frames
         .iter()
@@ -982,7 +1220,12 @@ fn handle_failure(
             _ => unreachable!("try frame position was checked"),
         };
         if frame.phase == WorkflowTryPhase::Body {
-            if let Some(catch) = frame.catch {
+            let classified = match failure.kind {
+                WorkflowFailureKind::TimedOut => frame.on_timeout,
+                WorkflowFailureKind::Rejected => frame.on_reject,
+                WorkflowFailureKind::Failed | WorkflowFailureKind::Canceled => None,
+            };
+            if let Some(catch) = classified.or(frame.catch) {
                 continuation
                     .frames
                     .push(WorkflowFrame::Try(WorkflowTryFrame {
@@ -1137,6 +1380,300 @@ mod tests {
         WorkflowContinuation::start(Uuid::now_v7(), 1)
     }
 
+    fn interrupt_module() -> WorkflowModule {
+        // [0] enter    [1] check    [2] effect    [3] return
+        // [4] handler: const  [5] resume(mode)
+        let mut module = WorkflowModule::new(vec![
+            WorkflowInstruction::EnterNode {
+                node_id: "call".into(),
+            },
+            WorkflowInstruction::CheckInterrupt {
+                handlers: vec![runinator_models::workflow_vm::WorkflowVmInterruptHandler {
+                    source: InterruptSource::External,
+                    target: 4,
+                }],
+            },
+            WorkflowInstruction::Effect {
+                request: WorkflowEffectRequest::TimerDelay { seconds: 1 },
+            },
+            WorkflowInstruction::Return,
+            WorkflowInstruction::Const {
+                value: Value::from("handled"),
+            },
+            WorkflowInstruction::ResumeInterrupt {
+                mode: InterruptMode::Resume,
+            },
+        ]);
+        module.source_map = vec![runinator_models::workflow_vm::WorkflowSourceMapEntry {
+            version: runinator_models::workflow_vm::WORKFLOW_SOURCE_MAP_VERSION,
+            instruction_start: 0,
+            instruction_end: 4,
+            node_id: "call".into(),
+            edge_label: None,
+            interruptible: true,
+            exit_instruction_pointer: Some(3),
+        }];
+        module
+    }
+
+    #[test]
+    fn a_handler_id_is_stable_per_occurrence_but_distinct_across_them() {
+        // the engine's retry path starts one handler per attempt. the id must be stable enough that
+        // a redelivered result inserts nothing, and distinct enough that attempt 2 still gets a
+        // handler of its own.
+        let module = WorkflowModule::new(vec![WorkflowInstruction::Return]);
+        let continuation = WorkflowContinuation::start(Uuid::now_v7(), module.version);
+        let build = |discriminator: &str| {
+            interrupt_handler_continuation(
+                &module,
+                &continuation,
+                InterruptSource::Retry,
+                Value::Null,
+                0,
+                discriminator,
+            )
+            .id
+        };
+
+        assert_eq!(build("attempt:1"), build("attempt:1"));
+        assert_ne!(build("attempt:1"), build("attempt:2"));
+    }
+
+    #[test]
+    fn a_handler_reads_what_raised_it_and_leaves_the_thread_alone() {
+        let module = WorkflowModule::new(vec![WorkflowInstruction::Return]);
+        let continuation = WorkflowContinuation::start(Uuid::now_v7(), module.version);
+        let before = continuation.status;
+        let handler = interrupt_handler_continuation(
+            &module,
+            &continuation,
+            InterruptSource::Retry,
+            runinator_models::json!({ "next_attempt": 2 }),
+            0,
+            "attempt:2",
+        );
+
+        assert_eq!(handler.parent_id, Some(continuation.id));
+        assert_eq!(handler.locals["interrupt"]["source"], Value::from("retry"));
+        assert_eq!(handler.locals["interrupt"]["payload"]["next_attempt"], 2);
+        // building a handler decides nothing about the interrupted thread; the retry path relies on
+        // that, because a suspended thread could never be settled by its retried effect.
+        assert_eq!(continuation.status, before);
+    }
+
+    #[test]
+    fn a_requested_interrupt_freezes_its_thread_and_a_handler_runs_beside_it() {
+        let module = interrupt_module();
+        let mut continuation = continuation();
+        continuation.pending_interrupt =
+            Some(runinator_models::workflow_vm::WorkflowPendingInterrupt {
+                id: uuid::Uuid::now_v7(),
+                source: InterruptSource::External,
+                payload: Value::from("stop"),
+            });
+
+        let WorkflowVmStep::Interrupted {
+            suspended, handler, ..
+        } = step(&module, continuation)
+        else {
+            panic!("a requested interrupt must suspend its thread");
+        };
+        assert_eq!(suspended.status, WorkflowContinuationStatus::Suspended);
+        // consumed by the drive that decided about it, so it cannot fire again later.
+        assert_eq!(suspended.pending_interrupt, None);
+        assert_eq!(handler.instruction_pointer, 4);
+        assert_eq!(handler.parent_id, Some(suspended.id));
+        assert_eq!(
+            handler
+                .locals
+                .get("interrupt")
+                .and_then(|v| v.get("source")),
+            Some(&Value::from("external"))
+        );
+
+        let WorkflowVmStep::InterruptResolved {
+            interrupted_continuation_id,
+            outcome,
+            handler,
+        } = step(&module, handler)
+        else {
+            panic!("the handler must hand control back");
+        };
+        assert_eq!(interrupted_continuation_id, suspended.id);
+        assert_eq!(handler.status, WorkflowContinuationStatus::Succeeded);
+        // `resume` continues after the safe point, never at it — otherwise the same interrupt
+        // would be re-examined on the very next drive.
+        assert_eq!(
+            outcome,
+            WorkflowInterruptOutcome::Resume {
+                instruction_pointer: 2
+            }
+        );
+    }
+
+    #[test]
+    fn a_handler_mode_picks_where_the_frozen_thread_lands() {
+        let module = interrupt_module();
+        for (mode, expected) in [
+            (InterruptMode::Resume, Some(2usize)),
+            (InterruptMode::Restart, Some(0)),
+            (InterruptMode::Continue, Some(3)),
+            (InterruptMode::Fail, None),
+        ] {
+            let mut continuation = continuation();
+            continuation.pending_interrupt =
+                Some(runinator_models::workflow_vm::WorkflowPendingInterrupt {
+                    id: uuid::Uuid::now_v7(),
+                    source: InterruptSource::External,
+                    payload: Value::Null,
+                });
+            let WorkflowVmStep::Interrupted { handler, .. } = step(&module, continuation) else {
+                panic!("expected a suspension");
+            };
+            let WorkflowVmStep::InterruptResolved { outcome, .. } =
+                resolve_interrupt(&module, handler, mode)
+            else {
+                panic!("{mode:?} must resolve the interrupt");
+            };
+            match (expected, outcome) {
+                (
+                    Some(ip),
+                    WorkflowInterruptOutcome::Resume {
+                        instruction_pointer,
+                    },
+                ) => {
+                    assert_eq!(instruction_pointer, ip, "{mode:?}")
+                }
+                // a handler can settle the interrupted node failed; it can never fail the run.
+                (None, WorkflowInterruptOutcome::Fail { .. }) => {}
+                (expected, outcome) => panic!("{mode:?} gave {outcome:?}, wanted {expected:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn a_source_nobody_declared_is_dropped_rather_than_left_pending() {
+        let module = interrupt_module();
+        let mut continuation = continuation();
+        continuation.pending_interrupt =
+            Some(runinator_models::workflow_vm::WorkflowPendingInterrupt {
+                id: uuid::Uuid::now_v7(),
+                source: InterruptSource::Child,
+                payload: Value::Null,
+            });
+        let WorkflowVmStep::Yield { continuation, .. } = step(&module, continuation) else {
+            panic!("an unhandled source must not stop the drive");
+        };
+        assert_eq!(continuation.pending_interrupt, None);
+    }
+
+    #[test]
+    fn a_settled_effect_raises_the_source_it_represents() {
+        let mut module = interrupt_module();
+        module.instructions[1] = WorkflowInstruction::CheckInterrupt {
+            handlers: Vec::new(),
+        };
+        module.interrupt_handlers =
+            vec![runinator_models::workflow_vm::WorkflowVmInterruptHandler {
+                source: InterruptSource::Wake,
+                target: 4,
+            }];
+        let WorkflowVmStep::Yield { continuation, .. } = step(&module, continuation()) else {
+            panic!("the timer must yield");
+        };
+        let request = WorkflowEffectRequest::TimerDelay { seconds: 1 };
+        let WorkflowVmStep::Interrupted { source, .. } =
+            resume(&module, continuation, Some(&request), Ok(Value::Null))
+        else {
+            panic!("an elapsed timer with a `wake` handler must raise it");
+        };
+        assert_eq!(source, InterruptSource::Wake);
+    }
+
+    #[test]
+    fn a_handler_that_breaks_gives_the_frozen_thread_back_instead_of_failing_the_run() {
+        let mut module = interrupt_module();
+        module.instructions[4] = WorkflowInstruction::Fail {
+            message: "handler blew up".into(),
+        };
+        let mut continuation = continuation();
+        continuation.pending_interrupt =
+            Some(runinator_models::workflow_vm::WorkflowPendingInterrupt {
+                id: uuid::Uuid::now_v7(),
+                source: InterruptSource::External,
+                payload: Value::Null,
+            });
+        let WorkflowVmStep::Interrupted { handler, .. } = step(&module, continuation) else {
+            panic!("expected a suspension");
+        };
+        let WorkflowVmStep::InterruptResolved { outcome, .. } = step(&module, handler) else {
+            panic!("a broken handler must still hand control back, not fail the run");
+        };
+        assert_eq!(
+            outcome,
+            WorkflowInterruptOutcome::Resume {
+                instruction_pointer: 2
+            }
+        );
+    }
+
+    #[test]
+    fn a_timeout_takes_the_on_timeout_edge_and_a_plain_failure_the_catch() {
+        // the shape the compiler emits for a node carrying both `on_failure` and `on_timeout`:
+        // one guard whose classified target is preferred over `catch`.
+        let module = WorkflowModule::new(vec![
+            WorkflowInstruction::BeginTry {
+                try_key: "call#edge".into(),
+                catch: Some(5),
+                on_timeout: Some(7),
+                on_reject: None,
+                finally: None,
+            },
+            WorkflowInstruction::Effect {
+                request: WorkflowEffectRequest::TimerDelay { seconds: 1 },
+            },
+            WorkflowInstruction::EndTry {
+                try_key: "call#edge".into(),
+            },
+            WorkflowInstruction::Const {
+                value: Value::from("ok"),
+            },
+            WorkflowInstruction::Return,
+            WorkflowInstruction::EndTry {
+                try_key: "call#edge".into(),
+            },
+            WorkflowInstruction::Fail {
+                message: "recovered".into(),
+            },
+            WorkflowInstruction::EndTry {
+                try_key: "call#edge".into(),
+            },
+            WorkflowInstruction::Fail {
+                message: "slow".into(),
+            },
+        ]);
+
+        for (kind, expected) in [
+            (WorkflowFailureKind::TimedOut, "slow"),
+            (WorkflowFailureKind::Failed, "recovered"),
+            // no `on_reject` edge was compiled, so a rejection falls back to `catch`.
+            (WorkflowFailureKind::Rejected, "recovered"),
+        ] {
+            let WorkflowVmStep::Yield { continuation, .. } = step(&module, continuation()) else {
+                panic!("the guarded effect must yield");
+            };
+            let WorkflowVmStep::Failed { message, .. } = resume(
+                &module,
+                continuation,
+                None,
+                Err(WorkflowFailure::new(kind, "boom")),
+            ) else {
+                panic!("{kind:?} must reach a terminal");
+            };
+            assert_eq!(message, expected, "{kind:?} took the wrong edge");
+        }
+    }
+
     #[test]
     fn freezes_action_references_before_yielding() {
         let module = WorkflowModule::new(vec![WorkflowInstruction::Effect {
@@ -1201,9 +1738,12 @@ mod tests {
         assert_eq!(sequence, 0);
         assert_eq!(continuation.awaiting_effect_id, Some(effect_id));
         assert_eq!(continuation.status, WorkflowContinuationStatus::Waiting);
-        let WorkflowVmStep::Complete { value, .. } =
-            resume(&module, continuation, Ok(Value::String("done".into())))
-        else {
+        let WorkflowVmStep::Complete { value, .. } = resume(
+            &module,
+            continuation,
+            None,
+            Ok(Value::String("done".into())),
+        ) else {
             panic!("expected completion");
         };
         assert_eq!(value, Value::String("done".into()));
@@ -1247,12 +1787,12 @@ mod tests {
             panic!("expected effect yield");
         };
         let WorkflowVmStep::Complete { continuation, .. } =
-            resume(&module, continuation, Ok(Value::Null))
+            resume(&module, continuation, None, Ok(Value::Null))
         else {
             panic!("expected completion");
         };
         assert!(matches!(
-            resume(&module, continuation, Ok(Value::Null)),
+            resume(&module, continuation, None, Ok(Value::Null)),
             WorkflowVmStep::Failed { .. }
         ));
     }
@@ -1384,7 +1924,7 @@ mod tests {
             let value = Value::String("settled".into());
             let WorkflowVmStep::Complete {
                 value: completed, ..
-            } = resume(&module, waiting, Ok(value.clone()))
+            } = resume(&module, waiting, None, Ok(value.clone()))
             else {
                 panic!("settled parking request must resume");
             };
@@ -1601,7 +2141,7 @@ mod tests {
             continuation,
             request,
             ..
-        } = resume(&module, continuation, Ok(Value::Null))
+        } = resume(&module, continuation, None, Ok(Value::Null))
         else {
             panic!("compensation should yield")
         };
@@ -1609,7 +2149,7 @@ mod tests {
         let WorkflowVmStep::Failed {
             message,
             continuation,
-        } = resume(&module, continuation, Ok(Value::Null))
+        } = resume(&module, continuation, None, Ok(Value::Null))
         else {
             panic!("failure should survive compensation")
         };
@@ -1623,6 +2163,8 @@ mod tests {
             WorkflowInstruction::BeginTry {
                 try_key: "guard".into(),
                 catch: Some(4),
+                on_timeout: None,
+                on_reject: None,
                 finally: Some(6),
             },
             WorkflowInstruction::Jump { target: 3 },
