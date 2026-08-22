@@ -9,14 +9,14 @@ use std::{sync::Arc, time::Duration};
 use chrono::{DateTime, TimeZone, Utc};
 use runinator_broker_core::{Broker, EffectDelivery, EffectResultMessage, WakeMessage};
 use runinator_comm::{EffectExecutor, EffectResult, WakeCommand};
-use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::workflow_vm::{WorkflowEffectRequest, WorkflowEffectStatus};
+use runinator_store::{RuntimeStore, roles::WorkflowVmStore};
 use tokio::{sync::Notify, task::JoinSet};
 use tracing::{info, warn};
 
 const CONSUMER_ID: &str = "runinator-infrastructure-effects";
 
-pub async fn run_infrastructure_effect_host<T: DatabaseImpl>(
+pub async fn run_infrastructure_effect_host<T: RuntimeStore + WorkflowVmStore>(
     db: Arc<T>,
     broker: Arc<dyn Broker>,
     shutdown: Arc<Notify>,
@@ -68,7 +68,7 @@ enum Outcome {
     },
 }
 
-async fn handle_delivery<T: DatabaseImpl>(
+async fn handle_delivery<T: RuntimeStore + WorkflowVmStore>(
     db: Arc<T>,
     broker: Arc<dyn Broker>,
     delivery: EffectDelivery,
@@ -152,7 +152,7 @@ fn instant_from_unix(due_at: i64) -> DateTime<Utc> {
         .unwrap_or_else(Utc::now)
 }
 
-async fn execute<T: DatabaseImpl>(db: &T, delivery: &EffectDelivery) -> Outcome {
+async fn execute<T: RuntimeStore + WorkflowVmStore>(db: &T, delivery: &EffectDelivery) -> Outcome {
     let command = &delivery.command;
     if command.executor != EffectExecutor::Infrastructure {
         return Outcome::Settle(failed(
@@ -298,7 +298,7 @@ async fn execute<T: DatabaseImpl>(db: &T, delivery: &EffectDelivery) -> Outcome 
     }
 }
 
-async fn execute_mutex<T: DatabaseImpl>(
+async fn execute_mutex<T: RuntimeStore + WorkflowVmStore>(
     db: &T,
     command: &runinator_comm::EffectCommand,
     key: &str,
@@ -327,7 +327,7 @@ async fn execute_mutex<T: DatabaseImpl>(
     }
 }
 
-async fn execute_coordination<T: DatabaseImpl>(
+async fn execute_coordination<T: RuntimeStore + WorkflowVmStore>(
     db: &T,
     delivery: &EffectDelivery,
     kind: &str,
@@ -428,7 +428,7 @@ async fn execute_coordination<T: DatabaseImpl>(
     })
 }
 
-async fn execute_barrier<T: DatabaseImpl>(
+async fn execute_barrier<T: RuntimeStore + WorkflowVmStore>(
     db: &T,
     command: &runinator_comm::EffectCommand,
     input: &runinator_models::value::Value,
@@ -505,7 +505,7 @@ async fn execute_barrier<T: DatabaseImpl>(
     }
 }
 
-async fn execute_record_coordination<T: DatabaseImpl>(
+async fn execute_record_coordination<T: RuntimeStore + WorkflowVmStore>(
     db: &T,
     command: &runinator_comm::EffectCommand,
     kind: &str,
@@ -622,7 +622,7 @@ async fn execute_record_coordination<T: DatabaseImpl>(
     }
 }
 
-async fn execute_condition_gate<T: DatabaseImpl>(
+async fn execute_condition_gate<T: RuntimeStore + WorkflowVmStore>(
     db: &T,
     command: &runinator_comm::EffectCommand,
     condition: &runinator_models::workflows::WorkflowCondition,
@@ -663,7 +663,7 @@ async fn execute_condition_gate<T: DatabaseImpl>(
     }
 }
 
-async fn execute_child_run<T: DatabaseImpl>(
+async fn execute_child_run<T: RuntimeStore + WorkflowVmStore>(
     db: &T,
     command: &runinator_comm::EffectCommand,
     workflow_id: Option<uuid::Uuid>,
@@ -722,7 +722,7 @@ async fn execute_child_run<T: DatabaseImpl>(
     }
 }
 
-async fn execute_await_run<T: DatabaseImpl>(
+async fn execute_await_run<T: RuntimeStore + WorkflowVmStore>(
     db: &T,
     command: &runinator_comm::EffectCommand,
     workflow_name: &str,
@@ -796,6 +796,7 @@ mod tests {
     use chrono::Utc;
     use runinator_broker_core::{EffectMessage, in_memory::InMemoryBroker};
     use runinator_comm::EffectCommand;
+    use runinator_store::DatabaseImpl;
     use uuid::Uuid;
 
     #[tokio::test]

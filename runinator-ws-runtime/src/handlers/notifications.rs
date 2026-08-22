@@ -6,12 +6,12 @@ use axum::{
     extract::{Path, Query},
     http::StatusCode,
 };
-use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::{
     auth::{AuthContext, Permission},
     notifications::{NewNotification, NewNotificationPolicy},
     web::TaskResponse,
 };
+use runinator_store::{RuntimeStore, roles::NotificationStore};
 use serde::Deserialize;
 
 use runinator_engine::repository;
@@ -19,7 +19,7 @@ use runinator_ws_core::events::{AppEvent, AppEventKind, EventSender, emit};
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::openapi::docs::{EndpointDoc, Example, endpoint, json_body};
 use runinator_ws_core::responses::{api_error, not_found};
-use runinator_ws_middleware::authz::{AuthContextExt, AuthzChecker};
+use runinator_ws_middleware::authz::{AuthContextExt, AuthorizationStore, AuthzChecker};
 
 type Reply = (StatusCode, Json<ApiResponse>);
 
@@ -31,7 +31,7 @@ pub struct NotificationsListQuery {
     pub limit: Option<i64>,
 }
 
-pub async fn list_notifications<T: DatabaseImpl>(
+pub async fn list_notifications<T: AuthorizationStore + RuntimeStore + NotificationStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Query(query): Query<NotificationsListQuery>,
@@ -52,7 +52,7 @@ pub async fn list_notifications<T: DatabaseImpl>(
     }
 }
 
-pub async fn create_notification<T: DatabaseImpl>(
+pub async fn create_notification<T: AuthorizationStore + RuntimeStore + NotificationStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<AuthContext>,
@@ -81,7 +81,7 @@ pub async fn create_notification<T: DatabaseImpl>(
     }
 }
 
-pub async fn mark_notification_read<T: DatabaseImpl>(
+pub async fn mark_notification_read<T: AuthorizationStore + RuntimeStore + NotificationStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<AuthContext>,
@@ -109,7 +109,7 @@ pub async fn mark_notification_read<T: DatabaseImpl>(
     }
 }
 
-pub async fn delete_notification<T: DatabaseImpl>(
+pub async fn delete_notification<T: AuthorizationStore + RuntimeStore + NotificationStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<AuthContext>,
@@ -147,7 +147,9 @@ pub struct NotificationPoliciesQuery {
     pub workflow_id: Option<Uuid>,
 }
 
-pub async fn list_notification_policies<T: DatabaseImpl>(
+pub async fn list_notification_policies<
+    T: AuthorizationStore + RuntimeStore + NotificationStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Query(query): Query<NotificationPoliciesQuery>,
@@ -174,7 +176,9 @@ pub async fn list_notification_policies<T: DatabaseImpl>(
     }
 }
 
-pub async fn create_notification_policy<T: DatabaseImpl>(
+pub async fn create_notification_policy<
+    T: AuthorizationStore + RuntimeStore + NotificationStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Json(policy): Json<NewNotificationPolicy>,
@@ -193,7 +197,9 @@ pub async fn create_notification_policy<T: DatabaseImpl>(
     }
 }
 
-pub async fn update_notification_policy<T: DatabaseImpl>(
+pub async fn update_notification_policy<
+    T: AuthorizationStore + RuntimeStore + NotificationStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(policy_id): Path<Uuid>,
@@ -224,7 +230,9 @@ pub async fn update_notification_policy<T: DatabaseImpl>(
     }
 }
 
-pub async fn delete_notification_policy<T: DatabaseImpl>(
+pub async fn delete_notification_policy<
+    T: AuthorizationStore + RuntimeStore + NotificationStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(policy_id): Path<Uuid>,
@@ -252,7 +260,7 @@ pub async fn delete_notification_policy<T: DatabaseImpl>(
     }
 }
 
-async fn require_policy_target<T: DatabaseImpl>(
+async fn require_policy_target<T: AuthorizationStore + RuntimeStore + NotificationStore>(
     db: &T,
     ctx: &AuthContext,
     workflow_id: Option<Uuid>,
@@ -273,7 +281,9 @@ async fn require_policy_target<T: DatabaseImpl>(
 
 /// the external-channel delivery attempts for one notification, so an operator can see whether the
 /// alert actually reached slack/email rather than only that it was raised.
-pub async fn list_notification_deliveries<T: DatabaseImpl>(
+pub async fn list_notification_deliveries<
+    T: AuthorizationStore + RuntimeStore + NotificationStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Path(notification_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -286,7 +296,9 @@ pub async fn list_notification_deliveries<T: DatabaseImpl>(
     }
 }
 
-pub async fn mark_all_notifications_read<T: DatabaseImpl>(
+pub async fn mark_all_notifications_read<
+    T: AuthorizationStore + RuntimeStore + NotificationStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -309,7 +321,9 @@ pub async fn mark_all_notifications_read<T: DatabaseImpl>(
 }
 
 /// the `notifications` endpoints.
-pub fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
+pub fn routes<T: AuthorizationStore + RuntimeStore + NotificationStore>(
+    pool: std::sync::Arc<T>,
+) -> axum::Router {
     use axum::Extension;
     use axum::routing::{delete, get, patch, post};
     axum::Router::new()

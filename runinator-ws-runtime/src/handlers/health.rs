@@ -4,7 +4,7 @@ use axum::{
     response::IntoResponse,
 };
 use runinator_broker_core::Broker;
-use runinator_database::interfaces::DatabaseImpl;
+use runinator_store::roles::RunStore;
 use serde::Serialize;
 use std::sync::Arc;
 use utoipa::ToSchema;
@@ -68,7 +68,7 @@ pub async fn metrics() -> impl IntoResponse {
         (status = 503, description = "a dependency is unavailable", body = ReadinessResponse),
     ),
 )]
-pub async fn ready<T: DatabaseImpl>(
+pub async fn ready<T: RunStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(broker): Extension<Arc<dyn Broker>>,
 ) -> (StatusCode, Json<ReadinessResponse>) {
@@ -93,7 +93,7 @@ pub async fn ready<T: DatabaseImpl>(
 }
 
 /// the `health` endpoints.
-pub fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
+pub fn routes<T: RunStore>(pool: std::sync::Arc<T>) -> axum::Router {
     use axum::Extension;
     use axum::routing::get;
     axum::Router::new()

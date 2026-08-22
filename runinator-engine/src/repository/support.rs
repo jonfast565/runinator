@@ -1,7 +1,7 @@
 use super::*;
 use uuid::Uuid;
 
-pub(super) async fn fetch_workflow_snapshot<T: DatabaseImpl>(
+pub(super) async fn fetch_workflow_snapshot<T: RuntimeStore>(
     db: &T,
     workflow_id: Uuid,
 ) -> Result<WorkflowDefinition, SendableError> {

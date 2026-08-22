@@ -2,21 +2,21 @@ use super::*;
 use runinator_models::notifications::{NotificationDelivery, NotificationPolicy};
 use uuid::Uuid;
 
-pub async fn fetch_notification_policies<T: DatabaseImpl>(
+pub async fn fetch_notification_policies<T: NotificationStore>(
     db: &T,
     workflow_id: Option<Uuid>,
 ) -> Result<Vec<NotificationPolicy>, SendableError> {
     db.fetch_notification_policies(workflow_id).await
 }
 
-pub async fn fetch_notification_policy<T: DatabaseImpl>(
+pub async fn fetch_notification_policy<T: NotificationStore>(
     db: &T,
     policy_id: Uuid,
 ) -> Result<Option<NotificationPolicy>, SendableError> {
     db.fetch_notification_policy(policy_id).await
 }
 
-pub async fn create_notification_policy<T: DatabaseImpl>(
+pub async fn create_notification_policy<T: NotificationStore>(
     db: &T,
     policy: &NewNotificationPolicy,
 ) -> Result<NotificationPolicy, SendableError> {
@@ -24,7 +24,7 @@ pub async fn create_notification_policy<T: DatabaseImpl>(
     db.create_notification_policy(policy).await
 }
 
-pub async fn update_notification_policy<T: DatabaseImpl>(
+pub async fn update_notification_policy<T: NotificationStore>(
     db: &T,
     policy_id: Uuid,
     policy: &NewNotificationPolicy,
@@ -33,14 +33,14 @@ pub async fn update_notification_policy<T: DatabaseImpl>(
     db.update_notification_policy(policy_id, policy).await
 }
 
-pub async fn delete_notification_policy<T: DatabaseImpl>(
+pub async fn delete_notification_policy<T: NotificationStore>(
     db: &T,
     policy_id: Uuid,
 ) -> Result<bool, SendableError> {
     db.delete_notification_policy(policy_id).await
 }
 
-pub async fn fetch_notification_deliveries<T: DatabaseImpl>(
+pub async fn fetch_notification_deliveries<T: NotificationStore>(
     db: &T,
     notification_id: Uuid,
 ) -> Result<Vec<NotificationDelivery>, SendableError> {

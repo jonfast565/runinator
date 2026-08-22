@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
 use axum::{Extension, Json, extract::Path, http::StatusCode};
-use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::auth::AuthContext;
 use runinator_models::orgs::{
     AddOrgMemberRequest, CreateOrgRequest, OrgContextResponse, OrgMembershipView, OrgRole,
     SwitchOrgRequest, UpdateOrgMemberRequest, UpdateOrgRequest, slugify,
 };
 use runinator_models::value::Value;
+use runinator_store::{RuntimeStore, roles::OrgStore};
 use serde::Serialize;
 use uuid::Uuid;
 
@@ -58,7 +58,7 @@ fn require_principal(ctx: &AuthContext) -> Result<Uuid, Reply> {
 }
 
 /// create an organization. the creating user becomes its owner (self-serve signup).
-pub async fn create_org<T: DatabaseImpl>(
+pub async fn create_org<T: OrgStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<CreateOrgRequest>,
@@ -97,7 +97,7 @@ pub async fn create_org<T: DatabaseImpl>(
 }
 
 /// list every org (platform-admin view).
-pub async fn list_orgs<T: DatabaseImpl>(
+pub async fn list_orgs<T: OrgStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> Reply {
@@ -114,7 +114,7 @@ pub async fn list_orgs<T: DatabaseImpl>(
 }
 
 /// the caller's org memberships, each with their role.
-pub async fn list_my_orgs<T: DatabaseImpl>(
+pub async fn list_my_orgs<T: OrgStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> Reply {
@@ -135,7 +135,7 @@ pub async fn list_my_orgs<T: DatabaseImpl>(
 }
 
 /// fetch one org (any member, or platform admin).
-pub async fn get_org<T: DatabaseImpl>(
+pub async fn get_org<T: OrgStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(org_id): Path<Uuid>,
@@ -153,7 +153,7 @@ pub async fn get_org<T: DatabaseImpl>(
 }
 
 /// rename or (dis|en)able an org (org admin, or platform admin).
-pub async fn update_org<T: DatabaseImpl>(
+pub async fn update_org<T: OrgStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(org_id): Path<Uuid>,
@@ -175,7 +175,7 @@ pub async fn update_org<T: DatabaseImpl>(
 }
 
 /// delete an org and its memberships (org owner, or platform admin).
-pub async fn delete_org<T: DatabaseImpl>(
+pub async fn delete_org<T: OrgStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(org_id): Path<Uuid>,
@@ -192,7 +192,7 @@ pub async fn delete_org<T: DatabaseImpl>(
 }
 
 /// list an org's members (any member, or platform admin).
-pub async fn list_org_members<T: DatabaseImpl>(
+pub async fn list_org_members<T: OrgStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(org_id): Path<Uuid>,
@@ -209,7 +209,7 @@ pub async fn list_org_members<T: DatabaseImpl>(
 }
 
 /// add or re-role a member (org admin, or platform admin).
-pub async fn add_org_member<T: DatabaseImpl>(
+pub async fn add_org_member<T: OrgStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(org_id): Path<Uuid>,
@@ -241,7 +241,7 @@ pub async fn add_org_member<T: DatabaseImpl>(
 }
 
 /// change a member's role (org admin, or platform admin).
-pub async fn update_org_member<T: DatabaseImpl>(
+pub async fn update_org_member<T: OrgStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path((org_id, user_id)): Path<(Uuid, Uuid)>,
@@ -266,7 +266,7 @@ pub async fn update_org_member<T: DatabaseImpl>(
 }
 
 /// remove a member (org admin, or platform admin).
-pub async fn remove_org_member<T: DatabaseImpl>(
+pub async fn remove_org_member<T: OrgStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path((org_id, user_id)): Path<(Uuid, Uuid)>,
@@ -288,7 +288,7 @@ pub async fn remove_org_member<T: DatabaseImpl>(
 }
 
 /// switch the active org: re-issue an access token bound to `org_id` and the caller's role there.
-pub async fn switch_org<T: DatabaseImpl>(
+pub async fn switch_org<T: OrgStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(config): Extension<Arc<AuthConfig>>,
     Extension(ctx): Extension<AuthContext>,
@@ -332,7 +332,7 @@ pub async fn switch_org<T: DatabaseImpl>(
 }
 
 /// reject a role change/removal that would leave `org_id` with no owner.
-async fn guard_last_owner<T: DatabaseImpl>(
+async fn guard_last_owner<T: OrgStore + RuntimeStore>(
     db: &T,
     org_id: Uuid,
     user_id: Uuid,
@@ -361,7 +361,7 @@ async fn guard_last_owner<T: DatabaseImpl>(
 }
 
 /// the `orgs` endpoints.
-pub fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
+pub fn routes<T: OrgStore + RuntimeStore>(pool: std::sync::Arc<T>) -> axum::Router {
     use axum::Extension;
     use axum::routing::{get, patch, post};
     axum::Router::new()

@@ -1,35 +1,35 @@
 use super::*;
 use uuid::Uuid;
 
-pub async fn upsert_catalog_item<T: DatabaseImpl>(
+pub async fn upsert_catalog_item<T: DefinitionStore>(
     db: &T,
     item: Value,
 ) -> Result<Value, SendableError> {
     db.upsert_catalog_item(item).await
 }
 
-pub async fn fetch_catalog_items<T: DatabaseImpl>(
+pub async fn fetch_catalog_items<T: DefinitionStore>(
     db: &T,
     item_type: Option<String>,
 ) -> Result<Vec<Value>, SendableError> {
     db.fetch_catalog_items(item_type).await
 }
 
-pub async fn fetch_catalog_item<T: DatabaseImpl>(
+pub async fn fetch_catalog_item<T: DefinitionStore>(
     db: &T,
     uri: String,
 ) -> Result<Option<Value>, SendableError> {
     db.fetch_catalog_item(uri).await
 }
 
-pub async fn delete_catalog_item<T: DatabaseImpl>(
+pub async fn delete_catalog_item<T: DefinitionStore>(
     db: &T,
     uri: &str,
 ) -> Result<bool, SendableError> {
     db.delete_catalog_item(uri.to_string()).await
 }
 
-pub async fn create_automation_record<T: DatabaseImpl>(
+pub async fn create_automation_record<T: RuntimeStore>(
     db: &T,
     record_type: &str,
     record: Value,
@@ -38,7 +38,7 @@ pub async fn create_automation_record<T: DatabaseImpl>(
         .await
 }
 
-pub async fn fetch_automation_records<T: DatabaseImpl>(
+pub async fn fetch_automation_records<T: AutomationStore + RuntimeStore>(
     db: &T,
     record_type: &str,
     workflow_run_id: Option<Uuid>,
@@ -48,7 +48,7 @@ pub async fn fetch_automation_records<T: DatabaseImpl>(
         .await
 }
 
-pub async fn put_idempotency_key<T: DatabaseImpl>(
+pub async fn put_idempotency_key<T: DeliveryStore>(
     db: &T,
     scope: String,
     key: String,
@@ -57,7 +57,7 @@ pub async fn put_idempotency_key<T: DatabaseImpl>(
     db.put_idempotency_key(scope, key, result).await
 }
 
-pub async fn fetch_idempotency_key<T: DatabaseImpl>(
+pub async fn fetch_idempotency_key<T: DeliveryStore>(
     db: &T,
     scope: String,
     key: String,
@@ -68,7 +68,7 @@ pub async fn fetch_idempotency_key<T: DatabaseImpl>(
 /// reserve an action node's idempotency key on behalf of the worker about to invoke its provider.
 /// `lease_seconds` is the caller's own execution deadline: a reservation older than that is treated
 /// as abandoned by a dead worker and taken over.
-pub async fn claim_idempotency_key<T: DatabaseImpl>(
+pub async fn claim_idempotency_key<T: DeliveryStore>(
     db: &T,
     scope: String,
     key: String,
@@ -82,7 +82,7 @@ pub async fn claim_idempotency_key<T: DatabaseImpl>(
 }
 
 /// free an unfinished reservation after a non-success outcome, so a retry is not held off.
-pub async fn release_idempotency_key<T: DatabaseImpl>(
+pub async fn release_idempotency_key<T: DeliveryStore>(
     db: &T,
     scope: String,
     key: String,
@@ -93,7 +93,7 @@ pub async fn release_idempotency_key<T: DatabaseImpl>(
 }
 
 /// record a completed execution against a reserved key so a redelivery replays it.
-pub async fn complete_idempotency_key<T: DatabaseImpl>(
+pub async fn complete_idempotency_key<T: DeliveryStore>(
     db: &T,
     scope: String,
     key: String,
@@ -104,7 +104,7 @@ pub async fn complete_idempotency_key<T: DatabaseImpl>(
         .await
 }
 
-pub async fn fetch_gates<T: DatabaseImpl>(
+pub async fn fetch_gates<T: AutomationStore>(
     db: &T,
     workflow_run_id: Option<Uuid>,
     status: Option<String>,
@@ -112,18 +112,18 @@ pub async fn fetch_gates<T: DatabaseImpl>(
     db.fetch_gates(workflow_run_id, status).await
 }
 
-pub async fn fetch_gate<T: DatabaseImpl>(
+pub async fn fetch_gate<T: RuntimeStore>(
     db: &T,
     gate_id: Uuid,
 ) -> Result<Option<Value>, SendableError> {
     db.fetch_gate(gate_id).await
 }
 
-pub async fn delete_gate<T: DatabaseImpl>(db: &T, gate_id: Uuid) -> Result<bool, SendableError> {
+pub async fn delete_gate<T: AutomationStore>(db: &T, gate_id: Uuid) -> Result<bool, SendableError> {
     db.delete_gate(gate_id).await
 }
 
-pub async fn delete_automation_record<T: DatabaseImpl>(
+pub async fn delete_automation_record<T: AutomationStore>(
     db: &T,
     record_type: &str,
     record_id: Uuid,
@@ -132,6 +132,6 @@ pub async fn delete_automation_record<T: DatabaseImpl>(
         .await
 }
 
-pub async fn create_gate<T: DatabaseImpl>(db: &T, record: Value) -> Result<Value, SendableError> {
+pub async fn create_gate<T: RuntimeStore>(db: &T, record: Value) -> Result<Value, SendableError> {
     db.create_gate(record).await
 }

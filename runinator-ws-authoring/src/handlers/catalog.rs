@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
 use axum::{Extension, Json, extract::Query, http::StatusCode};
-use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::auth::AuthContext;
 use runinator_models::errors::SendableError;
 use runinator_models::json;
 use runinator_models::value::Value;
+use runinator_store::roles::DefinitionStore;
 
 use crate::handlers::providers::provider_catalog_item;
 use runinator_engine::repository;
@@ -16,7 +16,7 @@ use runinator_ws_core::openapi::docs::{
 use runinator_ws_core::responses::{api_error, not_found};
 use runinator_ws_middleware::authz::AuthContextExt;
 
-pub async fn get_catalog_items<T: DatabaseImpl>(
+pub async fn get_catalog_items<T: DefinitionStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(_ctx): Extension<AuthContext>,
     Query(query): Query<CatalogQuery>,
@@ -34,7 +34,7 @@ pub async fn get_catalog_items<T: DatabaseImpl>(
     }
 }
 
-pub async fn upsert_catalog_item<T: DatabaseImpl>(
+pub async fn upsert_catalog_item<T: DefinitionStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Json(item): Json<Value>,
@@ -51,7 +51,7 @@ pub async fn upsert_catalog_item<T: DatabaseImpl>(
     }
 }
 
-pub async fn seed_builtin_catalog<T: DatabaseImpl>(db: &T) -> Result<(), SendableError> {
+pub async fn seed_builtin_catalog<T: DefinitionStore>(db: &T) -> Result<(), SendableError> {
     for raw in [include_str!("../../../packs/sdlc/sdlc.rrx")] {
         let item = rexrap_pack_catalog_item(raw)?;
         db.upsert_catalog_item(item).await?;
@@ -92,7 +92,7 @@ fn rexrap_pack_catalog_item(raw: &str) -> Result<Value, SendableError> {
 }
 
 /// the `catalog` endpoints.
-pub fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
+pub fn routes<T: DefinitionStore>(pool: std::sync::Arc<T>) -> axum::Router {
     use axum::Extension;
     use axum::routing::get;
     axum::Router::new().route(

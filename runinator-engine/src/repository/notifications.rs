@@ -8,7 +8,7 @@ pub struct CreatedNotification {
     pub org_id: Option<Uuid>,
 }
 
-pub async fn fetch_notifications<T: DatabaseImpl>(
+pub async fn fetch_notifications<T: NotificationStore>(
     db: &T,
     unread_only: bool,
     limit: i64,
@@ -18,7 +18,7 @@ pub async fn fetch_notifications<T: DatabaseImpl>(
 
 /// persist a notification and resolve the org that owns it, so the caller emits the UI event to the
 /// right audience rather than globally.
-pub async fn create_notification<T: DatabaseImpl>(
+pub async fn create_notification<T: NotificationStore + RuntimeStore>(
     db: &T,
     notification: &NewNotification,
 ) -> Result<CreatedNotification, SendableError> {
@@ -33,18 +33,20 @@ pub async fn create_notification<T: DatabaseImpl>(
     })
 }
 
-pub async fn mark_notification_read<T: DatabaseImpl>(
+pub async fn mark_notification_read<T: NotificationStore>(
     db: &T,
     notification_id: Uuid,
 ) -> Result<Option<Notification>, SendableError> {
     db.mark_notification_read(notification_id).await
 }
 
-pub async fn mark_all_notifications_read<T: DatabaseImpl>(db: &T) -> Result<u64, SendableError> {
+pub async fn mark_all_notifications_read<T: NotificationStore>(
+    db: &T,
+) -> Result<u64, SendableError> {
     db.mark_all_notifications_read().await
 }
 
-pub async fn delete_notification<T: DatabaseImpl>(
+pub async fn delete_notification<T: NotificationStore>(
     db: &T,
     notification_id: Uuid,
 ) -> Result<bool, SendableError> {

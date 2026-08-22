@@ -1,9 +1,14 @@
 use std::{sync::Arc, time::Duration};
 
 use runinator_broker_core::Broker;
-use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::errors::error_code_or_unknown;
 use runinator_models::replicas::{ReplicaKind, ReplicaStatus};
+use runinator_store::{
+    RuntimeStore,
+    roles::{
+        DefinitionStore, NotificationStore, OrgStore, ReplicaStore, ScheduleStore, WorkflowVmStore,
+    },
+};
 use tokio::sync::Notify;
 use tracing::{error, info, warn};
 
@@ -35,7 +40,7 @@ fn queue_age(
 
 /// Drive compiled workflow continuations. Effect publication is intentionally separate: the VM
 /// host writes an effect outbox record which the generic dispatcher drains.
-pub async fn run_workflow_vm_driver<T: DatabaseImpl>(
+pub async fn run_workflow_vm_driver<T: RuntimeStore + WorkflowVmStore>(
     db: Arc<T>,
     instance: String,
     shutdown: Arc<Notify>,
@@ -122,7 +127,7 @@ pub async fn run_workflow_vm_driver<T: DatabaseImpl>(
 
 /// Drain the VM effect outbox. The command was frozen in the same transaction as the suspended
 /// continuation, so this publisher never re-reads graph or node-run state to rebuild a delivery.
-pub async fn run_workflow_effect_dispatcher<T: DatabaseImpl>(
+pub async fn run_workflow_effect_dispatcher<T: WorkflowVmStore>(
     db: Arc<T>,
     broker: Arc<dyn Broker>,
     instance: String,
@@ -182,7 +187,7 @@ pub async fn run_workflow_effect_dispatcher<T: DatabaseImpl>(
 /// Drain the notification-owned provider-effect outbox. Notification records deliberately share
 /// worker provider execution with VM effects while retaining their own persistence receipt and
 /// settlement path.
-pub async fn run_notification_effect_dispatcher<T: DatabaseImpl>(
+pub async fn run_notification_effect_dispatcher<T: NotificationStore>(
     db: Arc<T>,
     broker: Arc<dyn Broker>,
     instance: String,
@@ -238,7 +243,12 @@ pub async fn run_notification_effect_dispatcher<T: DatabaseImpl>(
 
 /// Periodically samples durable operational state so an idle deployment still has useful gauges.
 /// This deliberately queries only aggregate queue/fleet state and never emits record identities.
-pub async fn run_operational_metrics_sampler<T: DatabaseImpl>(db: Arc<T>, shutdown: Arc<Notify>) {
+pub async fn run_operational_metrics_sampler<
+    T: RuntimeStore + WorkflowVmStore + NotificationStore + OrgStore + ReplicaStore,
+>(
+    db: Arc<T>,
+    shutdown: Arc<Notify>,
+) {
     info!("operational metrics sampler started");
     loop {
         let started = std::time::Instant::now();
@@ -333,7 +343,7 @@ pub async fn run_operational_metrics_sampler<T: DatabaseImpl>(db: Arc<T>, shutdo
 /// hard-delete rows that have stayed quiet far longer so offline replicas do not pile up forever.
 /// the operator-facing views derive stale state per fetch; this loop is the durable cleanup that
 /// retires replicas that never sent an offline notice (e.g. crashed or evicted pods).
-pub async fn run_replica_reaper<T: DatabaseImpl>(db: Arc<T>, shutdown: Arc<Notify>) {
+pub async fn run_replica_reaper<T: ReplicaStore>(db: Arc<T>, shutdown: Arc<Notify>) {
     info!("replica reaper started");
     let registry = ReplicaRegistry::new(db);
     loop {
@@ -418,7 +428,7 @@ fn bucket_to_interval(
 #[path = "loops_tests.rs"]
 mod tests;
 
-pub async fn run_usage_sampler<T: DatabaseImpl>(db: Arc<T>, shutdown: Arc<Notify>) {
+pub async fn run_usage_sampler<T: OrgStore>(db: Arc<T>, shutdown: Arc<Notify>) {
     info!("usage sampler started");
     loop {
         let started = std::time::Instant::now();
@@ -469,7 +479,9 @@ pub async fn run_usage_sampler<T: DatabaseImpl>(db: Arc<T>, shutdown: Arc<Notify
 }
 
 /// periodically turn due workflow triggers into runs (formerly a waker loop, now in-process).
-pub async fn run_trigger_loop<T: DatabaseImpl>(
+pub async fn run_trigger_loop<
+    T: RuntimeStore + DefinitionStore + ScheduleStore + WorkflowVmStore,
+>(
     db: Arc<T>,
     events: EventSender,
     instance_id: String,
@@ -569,7 +581,7 @@ pub async fn run_trigger_loop<T: DatabaseImpl>(
 }
 
 /// drain the durable replica-directive outbox, with periodic redelivery as a reconnect backstop.
-pub async fn run_agent_directive_publisher<T: DatabaseImpl>(
+pub async fn run_agent_directive_publisher<T: ReplicaStore>(
     db: Arc<T>,
     broker: Arc<dyn Broker>,
     instance_id: String,

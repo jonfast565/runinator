@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
 use axum::{Extension, Json, http::StatusCode};
-use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::value::Value;
 use runinator_models::{
     auth::AuthContext,
     bundles::ProviderBundle,
     providers::{ProviderMetadata, validate_provider_metadata},
 };
+use runinator_store::roles::DefinitionStore;
 
 use runinator_engine::repository;
 use runinator_ws_core::models::ApiResponse;
@@ -22,7 +22,7 @@ use runinator_ws_middleware::authz::AuthContextExt;
     tag = "Providers",
     responses((status = 200, description = "registered providers", body = serde_json::Value)),
 )]
-pub async fn get_providers<T: DatabaseImpl>(
+pub async fn get_providers<T: DefinitionStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(_ctx): Extension<AuthContext>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -39,7 +39,7 @@ pub async fn get_providers<T: DatabaseImpl>(
     }
 }
 
-pub async fn upsert_provider<T: DatabaseImpl>(
+pub async fn upsert_provider<T: DefinitionStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Json(provider): Json<ProviderMetadata>,
@@ -65,7 +65,7 @@ pub async fn upsert_provider<T: DatabaseImpl>(
     }
 }
 
-pub async fn import_provider_bundle<T: DatabaseImpl>(
+pub async fn import_provider_bundle<T: DefinitionStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Json(bundle): Json<ProviderBundle>,
@@ -122,7 +122,7 @@ pub fn provider_metadata_from_item(item: Value) -> Result<ProviderMetadata, serd
 pub use runinator_engine::repository::provider_catalog_item;
 
 /// the `providers` endpoints.
-pub fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
+pub fn routes<T: DefinitionStore>(pool: std::sync::Arc<T>) -> axum::Router {
     use axum::Extension;
     use axum::routing::{get, post};
     axum::Router::new()

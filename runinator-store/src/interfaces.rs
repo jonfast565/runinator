@@ -16,9 +16,9 @@ pub use crate::prelude::*;
 
 /// the full persistence surface: every role trait, composed.
 ///
-/// this stays the bound for callers that genuinely touch many domains — the engine and the web
-/// service both do. a caller that needs one slice should bound on that role instead, the way
-/// `runinator-runtime` bounds on `RuntimeStore`.
+/// this stays the bound for composition roots and genuinely whole-store work such as schema
+/// initialization. a caller that needs one slice should bound on that role (or a small named
+/// use-case contract) instead, the way `runinator-runtime` bounds on `RuntimeStore`.
 ///
 /// because the roles are separate traits, calling methods from several of them means bringing each
 /// into scope; glob [`prelude`] when that list would be long and uninformative.

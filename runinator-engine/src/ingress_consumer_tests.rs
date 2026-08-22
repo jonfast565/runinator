@@ -7,8 +7,8 @@ use runinator_broker_core::{IngressMessage, in_memory::InMemoryBroker};
 use runinator_comm::{
     AgentDirectiveKind, AgentDirectiveResult, AgentDirectiveStatus, EffectResultKind,
 };
-use runinator_database::interfaces::prelude::*;
 use runinator_models::workflow_vm::WorkflowEffectStatus;
+use runinator_store::prelude::*;
 use uuid::Uuid;
 
 /// a sqlite store on a temporary file, returned with the path so the caller can remove it.

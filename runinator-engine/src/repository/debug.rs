@@ -2,7 +2,7 @@ use super::support;
 use super::*;
 use uuid::Uuid;
 
-pub async fn pause_workflow_run<T: DatabaseImpl>(
+pub async fn pause_workflow_run<T: WorkflowVmStore>(
     db: &T,
     workflow_run_id: Uuid,
 ) -> Result<TaskResponse, SendableError> {
@@ -13,7 +13,7 @@ pub async fn pause_workflow_run<T: DatabaseImpl>(
     })
 }
 
-pub async fn resume_workflow_run<T: DatabaseImpl>(
+pub async fn resume_workflow_run<T: WorkflowVmStore>(
     db: &T,
     workflow_run_id: Uuid,
 ) -> Result<TaskResponse, SendableError> {
@@ -24,7 +24,7 @@ pub async fn resume_workflow_run<T: DatabaseImpl>(
     })
 }
 
-pub async fn cancel_workflow_run<T: DatabaseImpl>(
+pub async fn cancel_workflow_run<T: RuntimeStore + WorkflowVmStore>(
     db: &T,
     broker: &dyn Broker,
     workflow_run_id: Uuid,
@@ -59,7 +59,7 @@ async fn publish_worker_control_command(
 }
 
 /// Dispatch a VM-native debugger command against a run.
-pub async fn apply_debug_command<T: DatabaseImpl>(
+pub async fn apply_debug_command<T: RuntimeStore + WorkflowVmStore>(
     db: &T,
     workflow_run_id: Uuid,
     verb: DebugVerb,
@@ -71,7 +71,7 @@ pub async fn apply_debug_command<T: DatabaseImpl>(
 }
 
 /// advance one thread of control by exactly one node.
-pub async fn step_debug_cursor<T: DatabaseImpl>(
+pub async fn step_debug_cursor<T: RuntimeStore + WorkflowVmStore>(
     db: &T,
     workflow_run_id: Uuid,
     cursor: Option<Uuid>,
@@ -122,7 +122,7 @@ pub async fn step_debug_cursor<T: DatabaseImpl>(
 }
 
 /// resume one thread of control, still honoring breakpoints.
-pub async fn continue_debug_cursor<T: DatabaseImpl>(
+pub async fn continue_debug_cursor<T: RuntimeStore + WorkflowVmStore>(
     db: &T,
     workflow_run_id: Uuid,
     cursor: Option<Uuid>,
@@ -169,7 +169,7 @@ pub async fn continue_debug_cursor<T: DatabaseImpl>(
     })
 }
 
-pub async fn replay_workflow_run<T: DatabaseImpl>(
+pub async fn replay_workflow_run<T: RuntimeStore + WorkflowVmStore>(
     db: &T,
     workflow_run_id: Uuid,
     from_step_id: Option<String>,

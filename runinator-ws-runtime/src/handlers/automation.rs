@@ -6,13 +6,16 @@ use axum::{
     extract::{Path, Query},
     http::StatusCode,
 };
-use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::auth::{AuthContext, Permission};
 use runinator_models::orchestration::{
     IdempotencyClaimRequest, IdempotencyCompleteRequest, IdempotencyReleaseRequest,
 };
 use runinator_models::value::Value;
 use runinator_models::web::TaskResponse;
+use runinator_store::{
+    RuntimeStore,
+    roles::{AutomationStore, DeliveryStore},
+};
 
 use runinator_engine::repository;
 use runinator_ws_core::models::{
@@ -23,9 +26,9 @@ use runinator_ws_core::openapi::docs::{
 };
 use runinator_ws_core::responses::{api_error, not_found};
 use runinator_ws_middleware::authz::AuthContextExt;
-use runinator_ws_middleware::authz::AuthzChecker;
+use runinator_ws_middleware::authz::{AuthorizationStore, AuthzChecker};
 
-async fn list_records<T: DatabaseImpl>(
+async fn list_records<T: AuthorizationStore + RuntimeStore + AutomationStore + DeliveryStore>(
     Extension(db): Extension<Arc<T>>,
     ctx: &AuthContext,
     Query(query): Query<AutomationRecordQuery>,
@@ -47,7 +50,7 @@ async fn list_records<T: DatabaseImpl>(
     }
 }
 
-async fn create_record<T: DatabaseImpl>(
+async fn create_record<T: AuthorizationStore + RuntimeStore + AutomationStore + DeliveryStore>(
     Extension(db): Extension<Arc<T>>,
     ctx: &AuthContext,
     record_type: &'static str,
@@ -66,7 +69,9 @@ async fn create_record<T: DatabaseImpl>(
     }
 }
 
-pub async fn get_external_items<T: DatabaseImpl>(
+pub async fn get_external_items<
+    T: AuthorizationStore + RuntimeStore + AutomationStore + DeliveryStore,
+>(
     ext: Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     query: Query<AutomationRecordQuery>,
@@ -74,7 +79,9 @@ pub async fn get_external_items<T: DatabaseImpl>(
     list_records(ext, &ctx, query, "external_items").await
 }
 
-pub async fn create_external_item<T: DatabaseImpl>(
+pub async fn create_external_item<
+    T: AuthorizationStore + RuntimeStore + AutomationStore + DeliveryStore,
+>(
     ext: Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     json: Json<Value>,
@@ -82,7 +89,7 @@ pub async fn create_external_item<T: DatabaseImpl>(
     create_record(ext, &ctx, "external_items", json).await
 }
 
-pub async fn get_gates<T: DatabaseImpl>(
+pub async fn get_gates<T: AuthorizationStore + RuntimeStore + AutomationStore + DeliveryStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Query(query): Query<GateQuery>,
@@ -96,7 +103,7 @@ pub async fn get_gates<T: DatabaseImpl>(
     }
 }
 
-pub async fn get_gate<T: DatabaseImpl>(
+pub async fn get_gate<T: AuthorizationStore + RuntimeStore + AutomationStore + DeliveryStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(gate_id): Path<Uuid>,
@@ -114,7 +121,7 @@ pub async fn get_gate<T: DatabaseImpl>(
     }
 }
 
-pub async fn create_gate<T: DatabaseImpl>(
+pub async fn create_gate<T: AuthorizationStore + RuntimeStore + AutomationStore + DeliveryStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Json(record): Json<Value>,
@@ -132,7 +139,7 @@ pub async fn create_gate<T: DatabaseImpl>(
     }
 }
 
-pub async fn delete_gate<T: DatabaseImpl>(
+pub async fn delete_gate<T: AuthorizationStore + RuntimeStore + AutomationStore + DeliveryStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(gate_id): Path<Uuid>,
@@ -150,7 +157,9 @@ pub async fn delete_gate<T: DatabaseImpl>(
     }
 }
 
-pub async fn get_automation_events<T: DatabaseImpl>(
+pub async fn get_automation_events<
+    T: AuthorizationStore + RuntimeStore + AutomationStore + DeliveryStore,
+>(
     ext: Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     query: Query<AutomationRecordQuery>,
@@ -158,7 +167,9 @@ pub async fn get_automation_events<T: DatabaseImpl>(
     list_records(ext, &ctx, query, "automation_events").await
 }
 
-pub async fn create_automation_event<T: DatabaseImpl>(
+pub async fn create_automation_event<
+    T: AuthorizationStore + RuntimeStore + AutomationStore + DeliveryStore,
+>(
     ext: Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     json: Json<Value>,
@@ -166,7 +177,9 @@ pub async fn create_automation_event<T: DatabaseImpl>(
     create_record(ext, &ctx, "automation_events", json).await
 }
 
-pub async fn delete_automation_event<T: DatabaseImpl>(
+pub async fn delete_automation_event<
+    T: AuthorizationStore + RuntimeStore + AutomationStore + DeliveryStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(event_id): Path<Uuid>,
@@ -184,7 +197,9 @@ pub async fn delete_automation_event<T: DatabaseImpl>(
     }
 }
 
-pub async fn get_approvals<T: DatabaseImpl>(
+pub async fn get_approvals<
+    T: AuthorizationStore + RuntimeStore + AutomationStore + DeliveryStore,
+>(
     ext: Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     query: Query<AutomationRecordQuery>,
@@ -192,7 +207,9 @@ pub async fn get_approvals<T: DatabaseImpl>(
     list_records(ext, &ctx, query, "approval_requests").await
 }
 
-pub async fn create_approval<T: DatabaseImpl>(
+pub async fn create_approval<
+    T: AuthorizationStore + RuntimeStore + AutomationStore + DeliveryStore,
+>(
     ext: Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     json: Json<Value>,
@@ -200,7 +217,9 @@ pub async fn create_approval<T: DatabaseImpl>(
     create_record(ext, &ctx, "approval_requests", json).await
 }
 
-pub async fn get_idempotency_key<T: DatabaseImpl>(
+pub async fn get_idempotency_key<
+    T: AuthorizationStore + RuntimeStore + AutomationStore + DeliveryStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Query(query): Query<HashMap<String, String>>,
@@ -225,7 +244,9 @@ pub async fn get_idempotency_key<T: DatabaseImpl>(
     }
 }
 
-pub async fn put_idempotency_key<T: DatabaseImpl>(
+pub async fn put_idempotency_key<
+    T: AuthorizationStore + RuntimeStore + AutomationStore + DeliveryStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<IdempotencyRequest>,
@@ -245,7 +266,9 @@ pub async fn put_idempotency_key<T: DatabaseImpl>(
     }
 }
 
-pub async fn claim_idempotency_key<T: DatabaseImpl>(
+pub async fn claim_idempotency_key<
+    T: AuthorizationStore + RuntimeStore + AutomationStore + DeliveryStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<IdempotencyClaimRequest>,
@@ -274,7 +297,9 @@ pub async fn claim_idempotency_key<T: DatabaseImpl>(
     }
 }
 
-pub async fn complete_idempotency_key<T: DatabaseImpl>(
+pub async fn complete_idempotency_key<
+    T: AuthorizationStore + RuntimeStore + AutomationStore + DeliveryStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<IdempotencyCompleteRequest>,
@@ -310,7 +335,9 @@ pub async fn complete_idempotency_key<T: DatabaseImpl>(
     }
 }
 
-pub async fn release_idempotency_key<T: DatabaseImpl>(
+pub async fn release_idempotency_key<
+    T: AuthorizationStore + RuntimeStore + AutomationStore + DeliveryStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<IdempotencyReleaseRequest>,
@@ -345,7 +372,7 @@ pub async fn release_idempotency_key<T: DatabaseImpl>(
     }
 }
 
-async fn filter_records<T: DatabaseImpl>(
+async fn filter_records<T: AuthorizationStore + RuntimeStore + AutomationStore + DeliveryStore>(
     db: &T,
     ctx: &AuthContext,
     records: Vec<Value>,
@@ -383,7 +410,9 @@ async fn filter_records<T: DatabaseImpl>(
 }
 
 /// the `automation` endpoints.
-pub fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
+pub fn routes<T: AuthorizationStore + RuntimeStore + AutomationStore + DeliveryStore>(
+    pool: std::sync::Arc<T>,
+) -> axum::Router {
     use axum::Extension;
     use axum::routing::{delete, get, post};
     axum::Router::new()

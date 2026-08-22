@@ -6,10 +6,13 @@ use axum::{
     extract::{Path, Query},
     http::StatusCode,
 };
-use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::{
     auth::{AuthContext, Permission},
     schedules::{BackfillRequest, NewFreezeWindow},
+};
+use runinator_store::{
+    RuntimeStore,
+    roles::{DefinitionStore, ScheduleStore},
 };
 use serde::Deserialize;
 
@@ -17,7 +20,7 @@ use runinator_engine::repository;
 use runinator_ws_core::events::{AppEvent, AppEventKind, EventSender, emit, nudge_wake_publisher};
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::responses::{api_error, not_found};
-use runinator_ws_middleware::authz::{AuthContextExt, AuthzChecker};
+use runinator_ws_middleware::authz::{AuthContextExt, AuthorizationStore, AuthzChecker};
 
 type Reply = (StatusCode, Json<ApiResponse>);
 
@@ -32,7 +35,9 @@ pub struct FreezeWindowsQuery {
     pub active: Option<bool>,
 }
 
-pub async fn list_freeze_windows<T: DatabaseImpl>(
+pub async fn list_freeze_windows<
+    T: AuthorizationStore + RuntimeStore + DefinitionStore + ScheduleStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Query(query): Query<FreezeWindowsQuery>,
@@ -59,7 +64,9 @@ pub async fn list_freeze_windows<T: DatabaseImpl>(
     }
 }
 
-pub async fn create_freeze_window<T: DatabaseImpl>(
+pub async fn create_freeze_window<
+    T: AuthorizationStore + RuntimeStore + DefinitionStore + ScheduleStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<AuthContext>,
@@ -84,7 +91,9 @@ pub async fn create_freeze_window<T: DatabaseImpl>(
     }
 }
 
-pub async fn update_freeze_window<T: DatabaseImpl>(
+pub async fn update_freeze_window<
+    T: AuthorizationStore + RuntimeStore + DefinitionStore + ScheduleStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<AuthContext>,
@@ -130,7 +139,9 @@ pub async fn update_freeze_window<T: DatabaseImpl>(
     }
 }
 
-pub async fn delete_freeze_window<T: DatabaseImpl>(
+pub async fn delete_freeze_window<
+    T: AuthorizationStore + RuntimeStore + DefinitionStore + ScheduleStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<AuthContext>,
@@ -164,7 +175,9 @@ pub async fn delete_freeze_window<T: DatabaseImpl>(
 
 /// replay a cron trigger's slots across a past range. slots the loop already fired keep their
 /// original run, so re-issuing an overlapping backfill is safe.
-pub async fn backfill_workflow_trigger<T: DatabaseImpl>(
+pub async fn backfill_workflow_trigger<
+    T: AuthorizationStore + RuntimeStore + DefinitionStore + ScheduleStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<AuthContext>,
@@ -200,7 +213,9 @@ pub async fn backfill_workflow_trigger<T: DatabaseImpl>(
     }
 }
 
-async fn require_window_target<T: DatabaseImpl>(
+async fn require_window_target<
+    T: AuthorizationStore + RuntimeStore + DefinitionStore + ScheduleStore,
+>(
     db: &T,
     ctx: &AuthContext,
     window: &NewFreezeWindow,
@@ -224,7 +239,9 @@ async fn require_window_target<T: DatabaseImpl>(
 }
 
 /// the `schedules` endpoints.
-pub fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
+pub fn routes<T: AuthorizationStore + RuntimeStore + DefinitionStore + ScheduleStore>(
+    pool: std::sync::Arc<T>,
+) -> axum::Router {
     use axum::Extension;
     use axum::routing::{get, patch, post};
     axum::Router::new()

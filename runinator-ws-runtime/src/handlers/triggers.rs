@@ -2,10 +2,13 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use axum::{Extension, Json, extract::Path, http::StatusCode};
-use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::{
     auth::{AuthContext, Permission},
     workflows::WorkflowTrigger,
+};
+use runinator_store::{
+    RuntimeStore,
+    roles::{DefinitionStore, ScheduleStore},
 };
 
 use runinator_engine::repository;
@@ -16,9 +19,11 @@ use runinator_ws_core::openapi::docs::{
 };
 use runinator_ws_core::responses::{api_error, not_found};
 use runinator_ws_middleware::authz::AuthContextExt;
-use runinator_ws_middleware::authz::AuthzChecker;
+use runinator_ws_middleware::authz::{AuthorizationStore, AuthzChecker};
 
-pub async fn upsert_workflow_trigger<T: DatabaseImpl>(
+pub async fn upsert_workflow_trigger<
+    T: AuthorizationStore + RuntimeStore + DefinitionStore + ScheduleStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<AuthContext>,
@@ -42,7 +47,9 @@ pub async fn upsert_workflow_trigger<T: DatabaseImpl>(
     }
 }
 
-pub async fn update_workflow_trigger<T: DatabaseImpl>(
+pub async fn update_workflow_trigger<
+    T: AuthorizationStore + RuntimeStore + DefinitionStore + ScheduleStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<AuthContext>,
@@ -66,7 +73,9 @@ pub async fn update_workflow_trigger<T: DatabaseImpl>(
     }
 }
 
-pub async fn get_workflow_trigger<T: DatabaseImpl>(
+pub async fn get_workflow_trigger<
+    T: AuthorizationStore + RuntimeStore + DefinitionStore + ScheduleStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(trigger_id): Path<Uuid>,
@@ -84,7 +93,9 @@ pub async fn get_workflow_trigger<T: DatabaseImpl>(
     }
 }
 
-pub async fn get_workflow_triggers<T: DatabaseImpl>(
+pub async fn get_workflow_triggers<
+    T: AuthorizationStore + RuntimeStore + DefinitionStore + ScheduleStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(workflow_id): Path<Uuid>,
@@ -104,7 +115,9 @@ pub async fn get_workflow_triggers<T: DatabaseImpl>(
     }
 }
 
-pub async fn get_due_workflow_triggers<T: DatabaseImpl>(
+pub async fn get_due_workflow_triggers<
+    T: AuthorizationStore + RuntimeStore + DefinitionStore + ScheduleStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -123,7 +136,9 @@ pub async fn get_due_workflow_triggers<T: DatabaseImpl>(
     }
 }
 
-pub async fn claim_due_workflow_trigger_firings<T: DatabaseImpl>(
+pub async fn claim_due_workflow_trigger_firings<
+    T: AuthorizationStore + RuntimeStore + DefinitionStore + ScheduleStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<SchedulerTriggerClaimRequest>,
@@ -151,7 +166,9 @@ pub async fn claim_due_workflow_trigger_firings<T: DatabaseImpl>(
     }
 }
 
-pub async fn delete_workflow_trigger<T: DatabaseImpl>(
+pub async fn delete_workflow_trigger<
+    T: AuthorizationStore + RuntimeStore + DefinitionStore + ScheduleStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<AuthContext>,
@@ -176,7 +193,7 @@ pub async fn delete_workflow_trigger<T: DatabaseImpl>(
     }
 }
 
-async fn workflow_org<T: DatabaseImpl>(
+async fn workflow_org<T: AuthorizationStore + RuntimeStore + DefinitionStore + ScheduleStore>(
     db: &T,
     workflow_id: Uuid,
     fallback: Option<Uuid>,
@@ -188,7 +205,9 @@ async fn workflow_org<T: DatabaseImpl>(
 }
 
 /// the `triggers` endpoints.
-pub fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
+pub fn routes<T: AuthorizationStore + RuntimeStore + DefinitionStore + ScheduleStore>(
+    pool: std::sync::Arc<T>,
+) -> axum::Router {
     use axum::Extension;
     use axum::routing::{get, post};
     axum::Router::new()

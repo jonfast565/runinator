@@ -10,7 +10,6 @@
 //! where `cells.a` means something different depending on how `a` happened to be written.
 
 use runinator_console::{CellKind, ConsoleContext, cell_binding_name, scratch_workflow_name};
-use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::console::{
     CONSOLE_MANAGED_BY, ConsoleBinding, ConsoleCell, ConsoleCellKind, ConsoleCellStatus,
     ConsoleSession, ConsoleSessionDetail, NewConsoleCell,
@@ -20,6 +19,13 @@ use runinator_models::replicas::{TriggerActorType, TriggerSourceKind, WorkflowRu
 use runinator_models::revisions::{RevisionAuthor, RevisionSource};
 use runinator_models::value::Value;
 use runinator_models::workflows::WorkflowRun;
+use runinator_store::{
+    RuntimeStore,
+    roles::{
+        ConsoleStore, DefinitionStore, FunctionStore, NotificationStore, ScheduleStore,
+        WorkflowVmStore,
+    },
+};
 use uuid::Uuid;
 
 use crate::errors::{CONSOLE_CELL_NOT_FOUND, CONSOLE_SESSION_NOT_FOUND};
@@ -32,7 +38,7 @@ pub struct CellOutcome {
     pub run: Option<WorkflowRun>,
 }
 
-pub async fn create_session<T: DatabaseImpl>(
+pub async fn create_session<T: ConsoleStore>(
     db: &T,
     org_id: Option<Uuid>,
     name: &str,
@@ -41,12 +47,12 @@ pub async fn create_session<T: DatabaseImpl>(
     db.create_console_session(org_id, name, created_by).await
 }
 
-pub async fn fetch_sessions<T: DatabaseImpl>(db: &T) -> Result<Vec<ConsoleSession>, SendableError> {
+pub async fn fetch_sessions<T: ConsoleStore>(db: &T) -> Result<Vec<ConsoleSession>, SendableError> {
     db.fetch_console_sessions().await
 }
 
 /// one session with its cells and scope.
-pub async fn fetch_session_detail<T: DatabaseImpl>(
+pub async fn fetch_session_detail<T: ConsoleStore>(
     db: &T,
     session_id: Uuid,
 ) -> Result<Option<ConsoleSessionDetail>, SendableError> {
@@ -60,7 +66,7 @@ pub async fn fetch_session_detail<T: DatabaseImpl>(
     }))
 }
 
-pub async fn rename_session<T: DatabaseImpl>(
+pub async fn rename_session<T: ConsoleStore>(
     db: &T,
     session_id: Uuid,
     name: &str,
@@ -68,14 +74,14 @@ pub async fn rename_session<T: DatabaseImpl>(
     db.rename_console_session(session_id, name).await
 }
 
-pub async fn delete_session<T: DatabaseImpl>(
+pub async fn delete_session<T: ConsoleStore>(
     db: &T,
     session_id: Uuid,
 ) -> Result<bool, SendableError> {
     db.delete_console_session(session_id).await
 }
 
-pub async fn upsert_cell<T: DatabaseImpl>(
+pub async fn upsert_cell<T: ConsoleStore>(
     db: &T,
     session_id: Uuid,
     cell_id: Option<Uuid>,
@@ -87,19 +93,19 @@ pub async fn upsert_cell<T: DatabaseImpl>(
     db.upsert_console_cell(session_id, cell_id, cell).await
 }
 
-pub async fn fetch_cell<T: DatabaseImpl>(
+pub async fn fetch_cell<T: ConsoleStore>(
     db: &T,
     cell_id: Uuid,
 ) -> Result<Option<ConsoleCell>, SendableError> {
     db.fetch_console_cell(cell_id).await
 }
 
-pub async fn delete_cell<T: DatabaseImpl>(db: &T, cell_id: Uuid) -> Result<bool, SendableError> {
+pub async fn delete_cell<T: ConsoleStore>(db: &T, cell_id: Uuid) -> Result<bool, SendableError> {
     db.delete_console_cell(cell_id).await
 }
 
 /// the scope a cell runs against, built fresh from the session's stored bindings.
-pub async fn session_context<T: DatabaseImpl>(
+pub async fn session_context<T: ConsoleStore>(
     db: &T,
     session_id: Uuid,
 ) -> Result<ConsoleContext, SendableError> {
@@ -115,7 +121,15 @@ pub async fn session_context<T: DatabaseImpl>(
 /// `functions` is the published packaged-function catalog, threaded through so a console cell can
 /// call one exactly as a workflow does — the console is the same language, so it must see the same
 /// catalog.
-pub async fn run_cell<T: DatabaseImpl>(
+pub async fn run_cell<
+    T: ConsoleStore
+        + RuntimeStore
+        + DefinitionStore
+        + FunctionStore
+        + NotificationStore
+        + ScheduleStore
+        + WorkflowVmStore,
+>(
     db: &T,
     cell_id: Uuid,
     providers: Vec<runinator_models::providers::ProviderMetadata>,
@@ -168,7 +182,7 @@ pub async fn run_cell<T: DatabaseImpl>(
 /// called when a run reaches a terminal state. a console cell whose run finished but which still
 /// reads `Running` is the failure mode this exists to prevent — the cell is the only place a
 /// console user looks.
-pub async fn settle_cell_for_run<T: DatabaseImpl>(
+pub async fn settle_cell_for_run<T: ConsoleStore + RuntimeStore + WorkflowVmStore>(
     db: &T,
     workflow_run_id: Uuid,
 ) -> Result<Option<ConsoleCell>, SendableError> {
@@ -219,7 +233,15 @@ pub async fn settle_cell_for_run<T: DatabaseImpl>(
 }
 
 // compile the cell into a scratch workflow and start a run of it.
-async fn run_scratch_workflow<T: DatabaseImpl>(
+async fn run_scratch_workflow<
+    T: ConsoleStore
+        + RuntimeStore
+        + DefinitionStore
+        + FunctionStore
+        + NotificationStore
+        + ScheduleStore
+        + WorkflowVmStore,
+>(
     db: &T,
     cell: &ConsoleCell,
     options: &runinator_rexrap::CompileOptions,
@@ -313,7 +335,7 @@ async fn run_scratch_workflow<T: DatabaseImpl>(
 }
 
 // record a success and bind the result into the session's scope.
-async fn settle_succeeded<T: DatabaseImpl>(
+async fn settle_succeeded<T: ConsoleStore>(
     db: &T,
     cell: &ConsoleCell,
     kind: ConsoleCellKind,
@@ -337,7 +359,7 @@ async fn settle_succeeded<T: DatabaseImpl>(
     Ok(CellOutcome { cell, run: None })
 }
 
-async fn settle_failed<T: DatabaseImpl>(
+async fn settle_failed<T: ConsoleStore>(
     db: &T,
     cell: &ConsoleCell,
     kind: Option<ConsoleCellKind>,
@@ -348,7 +370,7 @@ async fn settle_failed<T: DatabaseImpl>(
 
 // a failure does *not* bind: leaving the previous value under the name would make a later cell read
 // a stale result while the cell that produced it is visibly red.
-async fn settle_failed_with_run<T: DatabaseImpl>(
+async fn settle_failed_with_run<T: ConsoleStore>(
     db: &T,
     cell: &ConsoleCell,
     kind: Option<ConsoleCellKind>,
@@ -394,7 +416,7 @@ fn stamp_managed(definition: &mut runinator_models::workflows::WorkflowDefinitio
 }
 
 /// the bindings of one session, for the API.
-pub async fn fetch_bindings<T: DatabaseImpl>(
+pub async fn fetch_bindings<T: ConsoleStore>(
     db: &T,
     session_id: Uuid,
 ) -> Result<Vec<ConsoleBinding>, SendableError> {

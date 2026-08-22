@@ -6,7 +6,6 @@ use axum::{
     extract::{Path, Query},
     http::{HeaderMap, StatusCode},
 };
-use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::{
     api_routes::{WORKFLOW_JSON_IMPORT_RISK_ACK, WORKFLOW_JSON_IMPORT_RISK_HEADER},
     auth::{AuthContext, Permission},
@@ -15,6 +14,10 @@ use runinator_models::{
     workflows::{
         WorkflowBundle, WorkflowDefinition, WorkflowDuplicateRequest, WorkflowSimulateRequest,
     },
+};
+use runinator_store::{
+    RuntimeStore,
+    roles::{DefinitionStore, FunctionStore, NotificationStore, ScheduleStore, WorkflowVmStore},
 };
 use serde::Deserialize;
 
@@ -26,9 +29,17 @@ use runinator_ws_core::openapi::docs::{
 };
 use runinator_ws_core::responses::{api_error, bad_request, not_found, validation_error};
 use runinator_ws_middleware::authz::AuthContextExt;
-use runinator_ws_middleware::authz::AuthzChecker;
+use runinator_ws_middleware::authz::{AuthorizationStore, AuthzChecker};
 
-pub async fn upsert_workflow<T: DatabaseImpl>(
+pub async fn upsert_workflow<
+    T: AuthorizationStore
+        + DefinitionStore
+        + RuntimeStore
+        + FunctionStore
+        + NotificationStore
+        + ScheduleStore
+        + WorkflowVmStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<AuthContext>,
@@ -67,7 +78,15 @@ pub async fn upsert_workflow<T: DatabaseImpl>(
     }
 }
 
-pub async fn validate_workflow<T: DatabaseImpl>(
+pub async fn validate_workflow<
+    T: AuthorizationStore
+        + DefinitionStore
+        + RuntimeStore
+        + FunctionStore
+        + NotificationStore
+        + ScheduleStore
+        + WorkflowVmStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Json(workflow): Json<WorkflowDefinition>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -80,7 +99,15 @@ pub async fn validate_workflow<T: DatabaseImpl>(
 /// dry-run a workflow with the VM's evaluators against live config, publishing no actions.
 /// A saved workflow requires `Run`; an unsaved draft only needs an authenticated caller. When
 /// `replay_run` is set, that run's recorded outputs drive the walk, so it is gated on the run too.
-pub async fn simulate_workflow<T: DatabaseImpl>(
+pub async fn simulate_workflow<
+    T: AuthorizationStore
+        + DefinitionStore
+        + RuntimeStore
+        + FunctionStore
+        + NotificationStore
+        + ScheduleStore
+        + WorkflowVmStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<WorkflowSimulateRequest>,
@@ -134,7 +161,15 @@ pub struct WorkflowQuery {
     tag = "Workflows",
     responses((status = 200, description = "workflow definitions", body = serde_json::Value)),
 )]
-pub async fn get_workflows<T: DatabaseImpl>(
+pub async fn get_workflows<
+    T: AuthorizationStore
+        + DefinitionStore
+        + RuntimeStore
+        + FunctionStore
+        + NotificationStore
+        + ScheduleStore
+        + WorkflowVmStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Query(query): Query<WorkflowQuery>,
@@ -198,7 +233,15 @@ pub async fn get_workflows<T: DatabaseImpl>(
         (status = 401, description = "request is missing or has an invalid credential", body = runinator_ws_core::models::ApiError),
     ),
 )]
-pub async fn import_workflow_bundle<T: DatabaseImpl>(
+pub async fn import_workflow_bundle<
+    T: AuthorizationStore
+        + DefinitionStore
+        + RuntimeStore
+        + FunctionStore
+        + NotificationStore
+        + ScheduleStore
+        + WorkflowVmStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<AuthContext>,
@@ -216,7 +259,15 @@ pub async fn import_workflow_bundle<T: DatabaseImpl>(
     import_acknowledged_workflow_bundle(db, events, ctx.org_id, bundle).await
 }
 
-pub async fn import_acknowledged_workflow_bundle<T: DatabaseImpl>(
+pub async fn import_acknowledged_workflow_bundle<
+    T: AuthorizationStore
+        + DefinitionStore
+        + RuntimeStore
+        + FunctionStore
+        + NotificationStore
+        + ScheduleStore
+        + WorkflowVmStore,
+>(
     db: Arc<T>,
     events: EventSender,
     org_id: Option<Uuid>,
@@ -262,7 +313,15 @@ pub fn json_workflow_import_risk_required() -> (StatusCode, Json<ApiResponse>) {
     ))
 }
 
-pub async fn export_workflow_bundle<T: DatabaseImpl>(
+pub async fn export_workflow_bundle<
+    T: AuthorizationStore
+        + DefinitionStore
+        + RuntimeStore
+        + FunctionStore
+        + NotificationStore
+        + ScheduleStore
+        + WorkflowVmStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -288,7 +347,15 @@ pub async fn export_workflow_bundle<T: DatabaseImpl>(
     }
 }
 
-pub async fn export_single_workflow_bundle<T: DatabaseImpl>(
+pub async fn export_single_workflow_bundle<
+    T: AuthorizationStore
+        + DefinitionStore
+        + RuntimeStore
+        + FunctionStore
+        + NotificationStore
+        + ScheduleStore
+        + WorkflowVmStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(workflow_id): Path<Uuid>,
@@ -308,7 +375,15 @@ pub async fn export_single_workflow_bundle<T: DatabaseImpl>(
     }
 }
 
-pub async fn get_workflow<T: DatabaseImpl>(
+pub async fn get_workflow<
+    T: AuthorizationStore
+        + DefinitionStore
+        + RuntimeStore
+        + FunctionStore
+        + NotificationStore
+        + ScheduleStore
+        + WorkflowVmStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(workflow_id): Path<Uuid>,
@@ -348,7 +423,15 @@ pub struct RevisionListQuery {
     ),
     responses((status = 200, description = "revision history", body = serde_json::Value)),
 )]
-pub async fn get_workflow_revisions<T: DatabaseImpl>(
+pub async fn get_workflow_revisions<
+    T: AuthorizationStore
+        + DefinitionStore
+        + RuntimeStore
+        + FunctionStore
+        + NotificationStore
+        + ScheduleStore
+        + WorkflowVmStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(workflow_id): Path<Uuid>,
@@ -387,7 +470,15 @@ pub async fn get_workflow_revisions<T: DatabaseImpl>(
         (status = 404, description = "no such revision"),
     ),
 )]
-pub async fn get_workflow_revision<T: DatabaseImpl>(
+pub async fn get_workflow_revision<
+    T: AuthorizationStore
+        + DefinitionStore
+        + RuntimeStore
+        + FunctionStore
+        + NotificationStore
+        + ScheduleStore
+        + WorkflowVmStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path((workflow_id, revision)): Path<(Uuid, i64)>,
@@ -422,7 +513,15 @@ pub async fn get_workflow_revision<T: DatabaseImpl>(
         (status = 404, description = "no such workflow or revision"),
     ),
 )]
-pub async fn restore_workflow_revision<T: DatabaseImpl>(
+pub async fn restore_workflow_revision<
+    T: AuthorizationStore
+        + DefinitionStore
+        + RuntimeStore
+        + FunctionStore
+        + NotificationStore
+        + ScheduleStore
+        + WorkflowVmStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<AuthContext>,
@@ -450,7 +549,15 @@ pub async fn restore_workflow_revision<T: DatabaseImpl>(
     }
 }
 
-pub async fn duplicate_workflow<T: DatabaseImpl>(
+pub async fn duplicate_workflow<
+    T: AuthorizationStore
+        + DefinitionStore
+        + RuntimeStore
+        + FunctionStore
+        + NotificationStore
+        + ScheduleStore
+        + WorkflowVmStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<AuthContext>,
@@ -484,7 +591,15 @@ pub async fn duplicate_workflow<T: DatabaseImpl>(
     }
 }
 
-pub async fn delete_workflow<T: DatabaseImpl>(
+pub async fn delete_workflow<
+    T: AuthorizationStore
+        + DefinitionStore
+        + RuntimeStore
+        + FunctionStore
+        + NotificationStore
+        + ScheduleStore
+        + WorkflowVmStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(workflow_id): Path<Uuid>,
@@ -502,7 +617,17 @@ pub async fn delete_workflow<T: DatabaseImpl>(
 }
 
 /// the `workflows` endpoints.
-pub fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
+pub fn routes<
+    T: AuthorizationStore
+        + DefinitionStore
+        + RuntimeStore
+        + FunctionStore
+        + NotificationStore
+        + ScheduleStore
+        + WorkflowVmStore,
+>(
+    pool: std::sync::Arc<T>,
+) -> axum::Router {
     use axum::Extension;
     use axum::routing::{get, post};
     axum::Router::new()

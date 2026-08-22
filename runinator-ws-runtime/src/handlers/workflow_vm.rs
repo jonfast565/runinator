@@ -6,7 +6,6 @@
 use std::sync::Arc;
 
 use axum::{Extension, Json, extract::Path, http::StatusCode};
-use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::{
     auth::{AuthContext, Permission},
     value::Value,
@@ -14,6 +13,7 @@ use runinator_models::{
     workflow_vm::WorkflowVmCursor,
     workflow_vm::{WorkflowEffect, WorkflowEffectStatus, WorkflowJournalEntry},
 };
+use runinator_store::{RuntimeStore, roles::WorkflowVmStore};
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -23,9 +23,9 @@ use runinator_ws_core::{
     openapi::docs::{EndpointDoc, Example, endpoint},
     responses::{api_error, not_found},
 };
-use runinator_ws_middleware::authz::AuthzChecker;
+use runinator_ws_middleware::authz::{AuthorizationStore, AuthzChecker};
 
-async fn authorize_run<T: DatabaseImpl>(
+async fn authorize_run<T: AuthorizationStore + RuntimeStore + WorkflowVmStore>(
     db: &T,
     ctx: &AuthContext,
     workflow_run_id: Uuid,
@@ -35,7 +35,7 @@ async fn authorize_run<T: DatabaseImpl>(
         .await
 }
 
-pub async fn list_continuations<T: DatabaseImpl>(
+pub async fn list_continuations<T: AuthorizationStore + RuntimeStore + WorkflowVmStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(workflow_run_id): Path<Uuid>,
@@ -52,7 +52,7 @@ pub async fn list_continuations<T: DatabaseImpl>(
     }
 }
 
-pub async fn get_continuation<T: DatabaseImpl>(
+pub async fn get_continuation<T: AuthorizationStore + RuntimeStore + WorkflowVmStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(continuation_id): Path<Uuid>,
@@ -72,7 +72,7 @@ pub async fn get_continuation<T: DatabaseImpl>(
     }
 }
 
-pub async fn list_effects<T: DatabaseImpl>(
+pub async fn list_effects<T: AuthorizationStore + RuntimeStore + WorkflowVmStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(workflow_run_id): Path<Uuid>,
@@ -91,7 +91,7 @@ pub async fn list_effects<T: DatabaseImpl>(
 
 /// Effects outlive the continuation location that issued them. Project their immutable journal
 /// boundary through the pinned module so operator clients can keep historical node highlights.
-async fn project_effect_nodes<T: DatabaseImpl>(
+async fn project_effect_nodes<T: AuthorizationStore + RuntimeStore + WorkflowVmStore>(
     db: &T,
     workflow_run_id: Uuid,
 ) -> Result<Vec<WorkflowEffect>, runinator_models::errors::SendableError> {
@@ -121,7 +121,7 @@ async fn project_effect_nodes<T: DatabaseImpl>(
     Ok(effects)
 }
 
-pub async fn get_effect<T: DatabaseImpl>(
+pub async fn get_effect<T: AuthorizationStore + RuntimeStore + WorkflowVmStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(effect_id): Path<Uuid>,
@@ -138,7 +138,7 @@ pub async fn get_effect<T: DatabaseImpl>(
     }
 }
 
-pub async fn list_effect_output<T: DatabaseImpl>(
+pub async fn list_effect_output<T: AuthorizationStore + RuntimeStore + WorkflowVmStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(effect_id): Path<Uuid>,
@@ -171,7 +171,7 @@ pub struct SettleEffectRequest {
 
 /// Resolve an approval/input/signal/gate/event wait by its durable effect identity. Provider
 /// effects use the broker result path; accepting them here would bypass worker attempt ownership.
-pub async fn settle_effect<T: DatabaseImpl>(
+pub async fn settle_effect<T: AuthorizationStore + RuntimeStore + WorkflowVmStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<AuthContext>,
@@ -238,7 +238,7 @@ pub async fn settle_effect<T: DatabaseImpl>(
     }
 }
 
-pub async fn list_journal<T: DatabaseImpl>(
+pub async fn list_journal<T: AuthorizationStore + RuntimeStore + WorkflowVmStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(workflow_run_id): Path<Uuid>,
@@ -252,7 +252,7 @@ pub async fn list_journal<T: DatabaseImpl>(
     }
 }
 
-pub async fn list_cursors<T: DatabaseImpl>(
+pub async fn list_cursors<T: AuthorizationStore + RuntimeStore + WorkflowVmStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(workflow_run_id): Path<Uuid>,
@@ -301,7 +301,9 @@ pub async fn list_cursors<T: DatabaseImpl>(
     }
 }
 
-pub fn routes<T: DatabaseImpl>(pool: Arc<T>) -> axum::Router {
+pub fn routes<T: AuthorizationStore + RuntimeStore + WorkflowVmStore>(
+    pool: Arc<T>,
+) -> axum::Router {
     use axum::routing::{get, post};
     axum::Router::new()
         .route(

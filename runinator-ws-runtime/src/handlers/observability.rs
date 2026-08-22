@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use axum::{Extension, Json, extract::Query, http::StatusCode};
-use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::auth::AuthContext;
+use runinator_store::roles::{AutomationStore, DeliveryStore};
 
 use runinator_ws_core::models::{ApiResponse, AuditLogQuery, DeadLetterQuery};
 use runinator_ws_core::responses::api_error;
@@ -25,7 +25,7 @@ fn clamp_limit(limit: Option<i64>) -> i64 {
     tag = "Observability",
     responses((status = 200, description = "dead-lettered messages", body = [serde_json::Value])),
 )]
-pub async fn get_dead_letters<T: DatabaseImpl>(
+pub async fn get_dead_letters<T: DeliveryStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Query(query): Query<DeadLetterQuery>,
@@ -52,7 +52,7 @@ pub async fn get_dead_letters<T: DatabaseImpl>(
     tag = "Observability",
     responses((status = 200, description = "audit-log entries", body = [serde_json::Value])),
 )]
-pub async fn get_audit_log<T: DatabaseImpl>(
+pub async fn get_audit_log<T: AutomationStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Query(query): Query<AuditLogQuery>,
@@ -73,7 +73,7 @@ pub async fn get_audit_log<T: DatabaseImpl>(
 }
 
 /// the `observability` endpoints.
-pub fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
+pub fn routes<T: DeliveryStore + AutomationStore>(pool: std::sync::Arc<T>) -> axum::Router {
     use axum::Extension;
     use axum::routing::get;
     axum::Router::new()

@@ -1,7 +1,6 @@
 use chrono::{DateTime, Duration, Utc};
 use runinator_broker_core::{Broker, ControlCommand};
 use runinator_comm::{ControlKind, DebugVerb};
-use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::value::Value;
 use runinator_models::{
     errors::SendableError,
@@ -17,6 +16,13 @@ use runinator_models::{
     workflows::{
         WorkflowBundle, WorkflowDefinition, WorkflowNodeKind, WorkflowRun, WorkflowStatus,
         WorkflowTrigger,
+    },
+};
+use runinator_store::{
+    RuntimeStore,
+    roles::{
+        AutomationStore, DefinitionStore, DeliveryStore, FunctionStore, NotificationStore,
+        RunStore, ScheduleStore, WorkflowVmStore,
     },
 };
 

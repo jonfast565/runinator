@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
-use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::errors::SendableError;
 use runinator_models::value::Value;
 use runinator_models::workflows::WorkflowDefinition;
+use runinator_store::{RuntimeStore, roles::WorkflowVmStore};
 use runinator_workflows::{
     NodeEvalRequest, NodeOutcome, SimulationEnv, SimulationRun, simulate_workflow,
 };
@@ -24,7 +24,7 @@ impl DbSimulationEnv {
     /// load config from the settings store and, when `replay_run` is set, that run's recorded
     /// effect outcomes. Async because both come from the database; the trait methods are then pure
     /// reads.
-    pub async fn load<T: DatabaseImpl>(db: &T, replay_run: Option<Uuid>) -> Self {
+    pub async fn load<T: WorkflowVmStore + RuntimeStore>(db: &T, replay_run: Option<Uuid>) -> Self {
         let config = runinator_runtime::config::config_tree(db).await;
         let mut recorded = HashMap::new();
         if let Some(run_id) = replay_run
@@ -82,7 +82,7 @@ impl SimulationEnv for DbSimulationEnv {
 
 /// dry-run `workflow` against live config (and optionally a prior run's outputs) without publishing
 /// effects. Used for server-side branch preview and live editing.
-pub async fn simulate_run<T: DatabaseImpl>(
+pub async fn simulate_run<T: WorkflowVmStore + RuntimeStore>(
     db: &T,
     workflow: &WorkflowDefinition,
     inputs: Value,

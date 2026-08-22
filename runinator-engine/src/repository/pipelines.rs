@@ -7,7 +7,7 @@ use runinator_models::pipelines::{
 use runinator_models::replicas::{TriggerActorType, TriggerSourceKind, WorkflowRunProvenance};
 use uuid::Uuid;
 
-pub async fn upsert_pipeline<T: DatabaseImpl>(
+pub async fn upsert_pipeline<T: DefinitionStore>(
     db: &T,
     pipeline: &Pipeline,
 ) -> Result<Pipeline, SendableError> {
@@ -171,7 +171,7 @@ fn validate_pipeline(pipeline: &Pipeline) -> Result<(), SendableError> {
 /// ids, upsert the pipeline (reusing an existing id with the same name + org so re-import updates in
 /// place), and atomically replace its first-class graph. pack-managed pipelines carry
 /// `metadata.managed_by = "rexrap"`; only pipeline start triggers are materialized separately.
-pub async fn import_pipeline_bundle_with<T: DatabaseImpl>(
+pub async fn import_pipeline_bundle_with<T: DefinitionStore + RuntimeStore + ScheduleStore>(
     db: &T,
     bundle: &PipelineBundle,
     import_org: Option<Uuid>,
@@ -184,7 +184,7 @@ pub async fn import_pipeline_bundle_with<T: DatabaseImpl>(
     Ok(imported)
 }
 
-async fn import_pipeline_spec<T: DatabaseImpl>(
+async fn import_pipeline_spec<T: DefinitionStore + RuntimeStore + ScheduleStore>(
     db: &T,
     spec: &PipelineSpec,
     import_org: Option<Uuid>,
@@ -275,7 +275,7 @@ async fn import_pipeline_spec<T: DatabaseImpl>(
 // realize a pipeline's header triggers as managed `pipeline_triggers`. reconciles idempotently: drop
 // this pipeline's prior managed triggers, then insert the current specs. manually-created pipeline
 // triggers (no `managed_by == "rexrap"`) are left untouched.
-async fn materialize_pipeline_triggers<T: DatabaseImpl>(
+async fn materialize_pipeline_triggers<T: ScheduleStore>(
     db: &T,
     spec: &PipelineSpec,
     pipeline_id: Uuid,
@@ -309,18 +309,18 @@ async fn materialize_pipeline_triggers<T: DatabaseImpl>(
     Ok(())
 }
 
-pub async fn fetch_pipelines<T: DatabaseImpl>(db: &T) -> Result<Vec<Pipeline>, SendableError> {
+pub async fn fetch_pipelines<T: DefinitionStore>(db: &T) -> Result<Vec<Pipeline>, SendableError> {
     db.fetch_pipelines().await
 }
 
-pub async fn fetch_pipeline<T: DatabaseImpl>(
+pub async fn fetch_pipeline<T: RuntimeStore>(
     db: &T,
     pipeline_id: Uuid,
 ) -> Result<Option<Pipeline>, SendableError> {
     db.fetch_pipeline(pipeline_id).await
 }
 
-pub async fn delete_pipeline<T: DatabaseImpl>(
+pub async fn delete_pipeline<T: DefinitionStore>(
     db: &T,
     pipeline_id: Uuid,
 ) -> Result<TaskResponse, SendableError> {
@@ -331,7 +331,7 @@ pub async fn delete_pipeline<T: DatabaseImpl>(
     })
 }
 
-pub async fn set_pipeline_org<T: DatabaseImpl>(
+pub async fn set_pipeline_org<T: DefinitionStore>(
     db: &T,
     pipeline_id: Uuid,
     org_id: Option<Uuid>,
@@ -341,28 +341,28 @@ pub async fn set_pipeline_org<T: DatabaseImpl>(
 
 // --- pipeline triggers ---
 
-pub async fn upsert_pipeline_trigger<T: DatabaseImpl>(
+pub async fn upsert_pipeline_trigger<T: ScheduleStore>(
     db: &T,
     trigger: &PipelineTrigger,
 ) -> Result<PipelineTrigger, SendableError> {
     db.upsert_pipeline_trigger(trigger).await
 }
 
-pub async fn fetch_pipeline_triggers<T: DatabaseImpl>(
+pub async fn fetch_pipeline_triggers<T: ScheduleStore>(
     db: &T,
     pipeline_id: Uuid,
 ) -> Result<Vec<PipelineTrigger>, SendableError> {
     db.fetch_pipeline_triggers(pipeline_id).await
 }
 
-pub async fn fetch_pipeline_trigger<T: DatabaseImpl>(
+pub async fn fetch_pipeline_trigger<T: ScheduleStore>(
     db: &T,
     trigger_id: Uuid,
 ) -> Result<Option<PipelineTrigger>, SendableError> {
     db.fetch_pipeline_trigger(trigger_id).await
 }
 
-pub async fn delete_pipeline_trigger<T: DatabaseImpl>(
+pub async fn delete_pipeline_trigger<T: ScheduleStore>(
     db: &T,
     trigger_id: Uuid,
 ) -> Result<TaskResponse, SendableError> {
@@ -376,7 +376,7 @@ pub async fn delete_pipeline_trigger<T: DatabaseImpl>(
 // --- pipeline runs ---
 
 /// start a manual pipeline run for a pipeline id (creates the run and its entry members).
-pub async fn create_manual_pipeline_run<T: DatabaseImpl>(
+pub async fn create_manual_pipeline_run<T: RuntimeStore + WorkflowVmStore>(
     db: &T,
     pipeline_id: Uuid,
     parameters: Value,
@@ -401,7 +401,7 @@ pub async fn create_manual_pipeline_run<T: DatabaseImpl>(
 }
 
 /// start a pipeline run from a manual/cron pipeline trigger id.
-pub async fn create_pipeline_run_for_trigger<T: DatabaseImpl>(
+pub async fn create_pipeline_run_for_trigger<T: ScheduleStore + RuntimeStore + WorkflowVmStore>(
     db: &T,
     trigger_id: Uuid,
     parameters: Value,
@@ -434,7 +434,9 @@ pub async fn create_pipeline_run_for_trigger<T: DatabaseImpl>(
 
 /// fire due cron pipeline triggers and start each created run's entry members. mirrors the workflow
 /// trigger claim wrapper.
-pub async fn claim_due_pipeline_trigger_firings<T: DatabaseImpl>(
+pub async fn claim_due_pipeline_trigger_firings<
+    T: ScheduleStore + RuntimeStore + WorkflowVmStore,
+>(
     db: &T,
     scheduler_id: String,
     limit: i64,
@@ -452,7 +454,7 @@ pub async fn claim_due_pipeline_trigger_firings<T: DatabaseImpl>(
     Ok(admitted)
 }
 
-pub async fn fetch_pipeline_run<T: DatabaseImpl>(
+pub async fn fetch_pipeline_run<T: RuntimeStore>(
     db: &T,
     pipeline_run_id: Uuid,
 ) -> Result<Option<PipelineRun>, SendableError> {
@@ -462,7 +464,7 @@ pub async fn fetch_pipeline_run<T: DatabaseImpl>(
 /// Apply pipeline graph consequences only after the VM has durably settled a member run. Keeping
 /// this dispatch in the engine prevents the pure VM host from depending on pipeline
 /// persistence surface.
-pub async fn advance_pipeline_from_vm_terminal<T: DatabaseImpl>(
+pub async fn advance_pipeline_from_vm_terminal<T: RuntimeStore + WorkflowVmStore>(
     db: &T,
     workflow_run_id: Uuid,
 ) -> Result<(), SendableError> {
@@ -475,7 +477,7 @@ pub async fn advance_pipeline_from_vm_terminal<T: DatabaseImpl>(
     Ok(())
 }
 
-pub async fn fetch_recent_pipeline_runs<T: DatabaseImpl>(
+pub async fn fetch_recent_pipeline_runs<T: DefinitionStore>(
     db: &T,
     limit: i64,
 ) -> Result<Vec<PipelineRun>, SendableError> {
@@ -483,7 +485,7 @@ pub async fn fetch_recent_pipeline_runs<T: DatabaseImpl>(
 }
 
 /// fetch a pipeline run together with the member workflow runs it started.
-pub async fn fetch_pipeline_run_detail<T: DatabaseImpl>(
+pub async fn fetch_pipeline_run_detail<T: RuntimeStore>(
     db: &T,
     pipeline_run_id: Uuid,
 ) -> Result<Option<PipelineRunDetail>, SendableError> {
@@ -549,14 +551,14 @@ pub async fn fetch_pipeline_run_detail<T: DatabaseImpl>(
     }))
 }
 
-pub async fn fetch_pipeline_runs_for_pipeline<T: DatabaseImpl>(
+pub async fn fetch_pipeline_runs_for_pipeline<T: DefinitionStore>(
     db: &T,
     pipeline_id: Uuid,
 ) -> Result<Vec<PipelineRun>, SendableError> {
     db.fetch_pipeline_runs_for_pipeline(pipeline_id).await
 }
 
-pub async fn delete_pipeline_run<T: DatabaseImpl>(
+pub async fn delete_pipeline_run<T: DefinitionStore>(
     db: &T,
     pipeline_run_id: Uuid,
 ) -> Result<TaskResponse, SendableError> {
@@ -568,7 +570,7 @@ pub async fn delete_pipeline_run<T: DatabaseImpl>(
 }
 
 /// cancel a pipeline run and every active member workflow run it owns.
-pub async fn cancel_pipeline_run<T: DatabaseImpl>(
+pub async fn cancel_pipeline_run<T: RuntimeStore + WorkflowVmStore>(
     db: &T,
     broker: &dyn runinator_broker_core::Broker,
     pipeline_run_id: Uuid,
@@ -605,7 +607,7 @@ pub async fn cancel_pipeline_run<T: DatabaseImpl>(
     })
 }
 
-pub async fn pause_pipeline_run<T: DatabaseImpl>(
+pub async fn pause_pipeline_run<T: RuntimeStore + WorkflowVmStore>(
     db: &T,
     pipeline_run_id: Uuid,
 ) -> Result<TaskResponse, SendableError> {
@@ -646,7 +648,7 @@ pub async fn pause_pipeline_run<T: DatabaseImpl>(
     })
 }
 
-pub async fn resume_pipeline_run<T: DatabaseImpl>(
+pub async fn resume_pipeline_run<T: RuntimeStore + WorkflowVmStore>(
     db: &T,
     pipeline_run_id: Uuid,
 ) -> Result<TaskResponse, SendableError> {
@@ -677,7 +679,7 @@ pub async fn resume_pipeline_run<T: DatabaseImpl>(
 /// resolve a pipeline run's pending inquiry (a member with `Inquire` failure mode paused it).
 /// `continue_pipeline` fires the failed member's onward pipeline links and resumes; `false` aborts
 /// (settles the pipeline run `failed` now).
-pub async fn resolve_pipeline_run_inquiry<T: DatabaseImpl>(
+pub async fn resolve_pipeline_run_inquiry<T: RuntimeStore + WorkflowVmStore>(
     db: &T,
     pipeline_run_id: Uuid,
     continue_pipeline: bool,
@@ -699,7 +701,7 @@ pub async fn resolve_pipeline_run_inquiry<T: DatabaseImpl>(
     .await
 }
 
-pub async fn retry_pipeline_run_member<T: DatabaseImpl>(
+pub async fn retry_pipeline_run_member<T: RuntimeStore + WorkflowVmStore>(
     db: &T,
     pipeline_run_id: Uuid,
     member_key: String,

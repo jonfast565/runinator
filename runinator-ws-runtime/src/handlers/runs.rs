@@ -7,9 +7,12 @@ use axum::{
     http::{HeaderMap, StatusCode},
 };
 use runinator_broker_core::Broker;
-use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::replicas::{TriggerActorType, TriggerSourceKind, WorkflowRunProvenance};
 use runinator_models::runs::NewRunChunk;
+use runinator_store::{
+    RuntimeStore,
+    roles::{RunStore, ScheduleStore, TaskRunStore, WorkflowVmStore},
+};
 use serde::Deserialize;
 
 use runinator_engine::repository;
@@ -28,7 +31,25 @@ use runinator_ws_core::openapi::docs::{
 };
 use runinator_ws_core::responses::{api_error, bad_request, not_found};
 use runinator_ws_middleware::authz::AuthContextExt;
-use runinator_ws_middleware::authz::AuthzChecker;
+use runinator_ws_middleware::authz::{AuthorizationStore, AuthzChecker};
+
+/// Persistence the workflow/task-run HTTP surface coordinates. It excludes authoring, settings,
+/// notifications, functions, and replica management while keeping the cross-domain run commands
+/// atomic at the handler boundary.
+pub trait RunOperationsStore:
+    AuthorizationStore + RuntimeStore + WorkflowVmStore + RunStore + ScheduleStore + TaskRunStore
+{
+}
+
+impl<T> RunOperationsStore for T where
+    T: AuthorizationStore
+        + RuntimeStore
+        + WorkflowVmStore
+        + RunStore
+        + ScheduleStore
+        + TaskRunStore
+{
+}
 
 #[derive(Debug, Default, Deserialize)]
 pub struct ChunkQuery {
@@ -36,7 +57,7 @@ pub struct ChunkQuery {
     pub limit: Option<i64>,
 }
 
-pub async fn create_workflow_trigger_run<T: DatabaseImpl>(
+pub async fn create_workflow_trigger_run<T: RunOperationsStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
@@ -77,7 +98,7 @@ pub async fn create_workflow_trigger_run<T: DatabaseImpl>(
     }
 }
 
-pub async fn create_workflow_run<T: DatabaseImpl>(
+pub async fn create_workflow_run<T: RunOperationsStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
@@ -154,7 +175,7 @@ fn request_actor_display_name() -> String {
     "api".into()
 }
 
-pub async fn claim_workflow_runs_for_scheduler<T: DatabaseImpl>(
+pub async fn claim_workflow_runs_for_scheduler<T: RunOperationsStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Json(request): Json<SchedulerRunClaimRequest>,
@@ -193,7 +214,7 @@ pub async fn claim_workflow_runs_for_scheduler<T: DatabaseImpl>(
     }
 }
 
-pub async fn renew_workflow_run_claim<T: DatabaseImpl>(
+pub async fn renew_workflow_run_claim<T: RunOperationsStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Path(workflow_run_id): Path<Uuid>,
@@ -228,7 +249,7 @@ pub async fn renew_workflow_run_claim<T: DatabaseImpl>(
     }
 }
 
-pub async fn release_workflow_run_claim<T: DatabaseImpl>(
+pub async fn release_workflow_run_claim<T: RunOperationsStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Path(workflow_run_id): Path<Uuid>,
@@ -268,7 +289,7 @@ pub async fn release_workflow_run_claim<T: DatabaseImpl>(
         (status = 401, description = "request is missing or has an invalid credential", body = runinator_ws_core::models::ApiError),
     ),
 )]
-pub async fn cancel_workflow_run<T: DatabaseImpl>(
+pub async fn cancel_workflow_run<T: RunOperationsStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(broker): Extension<Arc<dyn Broker>>,
     Extension(events): Extension<EventSender>,
@@ -303,7 +324,7 @@ pub async fn cancel_workflow_run<T: DatabaseImpl>(
         (status = 401, description = "request is missing or has an invalid credential", body = runinator_ws_core::models::ApiError),
     ),
 )]
-pub async fn pause_workflow_run<T: DatabaseImpl>(
+pub async fn pause_workflow_run<T: RunOperationsStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
@@ -336,7 +357,7 @@ pub async fn pause_workflow_run<T: DatabaseImpl>(
         (status = 401, description = "request is missing or has an invalid credential", body = runinator_ws_core::models::ApiError),
     ),
 )]
-pub async fn resume_workflow_run<T: DatabaseImpl>(
+pub async fn resume_workflow_run<T: RunOperationsStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
@@ -370,7 +391,7 @@ pub async fn resume_workflow_run<T: DatabaseImpl>(
         (status = 401, description = "request is missing or has an invalid credential", body = runinator_ws_core::models::ApiError),
     ),
 )]
-pub async fn replay_workflow_run<T: DatabaseImpl>(
+pub async fn replay_workflow_run<T: RunOperationsStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
@@ -402,7 +423,7 @@ pub async fn replay_workflow_run<T: DatabaseImpl>(
 
 /// deliver an event to a parked `event_source` node in one run. the node consumes it on the next
 /// drive and re-parks, so repeated deliveries drive repeated iterations of its body.
-pub async fn deliver_run_event<T: DatabaseImpl>(
+pub async fn deliver_run_event<T: RunOperationsStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
@@ -431,7 +452,7 @@ pub async fn deliver_run_event<T: DatabaseImpl>(
     }
 }
 
-pub async fn deliver_signal<T: DatabaseImpl>(
+pub async fn deliver_signal<T: RunOperationsStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
@@ -461,7 +482,7 @@ pub async fn deliver_signal<T: DatabaseImpl>(
 /// nothing about serviceability is decided here — the request is recorded on the thread and the VM
 /// raises or drops it on the next drive of the target thread. that keeps one copy of the fail-open
 /// rules, in the crate that owns them.
-pub async fn request_interrupt<T: DatabaseImpl>(
+pub async fn request_interrupt<T: RunOperationsStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
@@ -516,7 +537,7 @@ pub async fn request_interrupt<T: DatabaseImpl>(
         (status = 401, description = "request is missing or has an invalid credential", body = runinator_ws_core::models::ApiError),
     ),
 )]
-pub async fn rename_workflow_run<T: DatabaseImpl>(
+pub async fn rename_workflow_run<T: RunOperationsStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
@@ -546,7 +567,7 @@ pub async fn rename_workflow_run<T: DatabaseImpl>(
     tag = "Workflow Runs",
     responses((status = 200, description = "workflow runs", body = serde_json::Value)),
 )]
-pub async fn get_workflow_runs<T: DatabaseImpl>(
+pub async fn get_workflow_runs<T: RunOperationsStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Query(query): Query<WorkflowRunStatusQuery>,
@@ -618,7 +639,7 @@ const DEFAULT_RECENT_RUN_LIMIT: i64 = 200;
 /// hard ceiling on `?limit=`, so a client can't ask for an unbounded dump.
 const MAX_RECENT_RUN_LIMIT: i64 = 1000;
 
-pub async fn get_runs<T: DatabaseImpl>(
+pub async fn get_runs<T: RunOperationsStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Query(query): Query<RunStatusQuery>,
@@ -639,7 +660,7 @@ pub async fn get_runs<T: DatabaseImpl>(
     }
 }
 
-pub async fn update_run<T: DatabaseImpl>(
+pub async fn update_run<T: RunOperationsStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
@@ -670,7 +691,7 @@ pub async fn update_run<T: DatabaseImpl>(
     }
 }
 
-pub async fn get_run_chunks<T: DatabaseImpl>(
+pub async fn get_run_chunks<T: RunOperationsStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Path(run_id): Path<Uuid>,
@@ -696,7 +717,7 @@ pub async fn get_run_chunks<T: DatabaseImpl>(
     }
 }
 
-pub async fn append_run_chunk<T: DatabaseImpl>(
+pub async fn append_run_chunk<T: RunOperationsStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
@@ -725,7 +746,7 @@ pub async fn append_run_chunk<T: DatabaseImpl>(
     }
 }
 
-pub async fn update_workflow_run<T: DatabaseImpl>(
+pub async fn update_workflow_run<T: RunOperationsStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
@@ -758,7 +779,7 @@ pub async fn update_workflow_run<T: DatabaseImpl>(
     }
 }
 
-pub async fn get_workflow_run<T: DatabaseImpl>(
+pub async fn get_workflow_run<T: RunOperationsStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Path(workflow_run_id): Path<Uuid>,
@@ -782,7 +803,7 @@ pub async fn get_workflow_run<T: DatabaseImpl>(
     }
 }
 
-pub async fn delete_workflow_run<T: DatabaseImpl>(
+pub async fn delete_workflow_run<T: RunOperationsStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Path(workflow_run_id): Path<Uuid>,
@@ -819,7 +840,7 @@ fn filter_runs(
 }
 
 /// the `runs` endpoints.
-pub fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
+pub fn routes<T: RunOperationsStore>(pool: std::sync::Arc<T>) -> axum::Router {
     use axum::Extension;
     use axum::routing::{get, patch, post};
     axum::Router::new()

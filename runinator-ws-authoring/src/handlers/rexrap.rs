@@ -2,7 +2,6 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use axum::{Extension, Json, http::StatusCode};
-use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::{
     auth::{AuthContext, Permission},
     types::RuninatorType,
@@ -12,6 +11,10 @@ use runinator_models::{
 use runinator_rexrap::{
     CompileOptions, RexRapError, RexRapFragmentKind, Severity, WorkflowSignature,
 };
+use runinator_store::{
+    RuntimeStore,
+    roles::{DefinitionStore, FunctionStore, NotificationStore, ScheduleStore},
+};
 use serde::{Deserialize, Serialize};
 
 use crate::handlers::providers::provider_metadata_from_items;
@@ -20,7 +23,7 @@ use runinator_ws_core::events::{EventSender, emit_workflows_changed};
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::openapi::docs::{EndpointDoc, Example, endpoint, json_body};
 use runinator_ws_core::responses::{api_error, bad_request};
-use runinator_ws_middleware::authz::AuthzChecker;
+use runinator_ws_middleware::authz::{AuthorizationStore, AuthzChecker};
 
 pub async fn complete_rexrap(
     Json(request): Json<runinator_rexrap_ide::RexRapCompletionRequest>,
@@ -89,7 +92,14 @@ pub struct DiagnosticSummary {
     pub message: String,
 }
 
-pub async fn compile_rexrap<T: DatabaseImpl>(
+pub async fn compile_rexrap<
+    T: AuthorizationStore
+        + DefinitionStore
+        + RuntimeStore
+        + FunctionStore
+        + NotificationStore
+        + ScheduleStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Json(request): Json<CompileRexRapRequest>,
 ) -> Result<Json<WorkflowDefinition>, (StatusCode, String)> {
@@ -110,7 +120,14 @@ pub async fn compile_rexrap<T: DatabaseImpl>(
         .map_err(|err| (StatusCode::BAD_REQUEST, err.to_string()))
 }
 
-pub async fn import_rexrap<T: DatabaseImpl>(
+pub async fn import_rexrap<
+    T: AuthorizationStore
+        + DefinitionStore
+        + RuntimeStore
+        + FunctionStore
+        + NotificationStore
+        + ScheduleStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<AuthContext>,
@@ -179,7 +196,14 @@ pub async fn import_rexrap<T: DatabaseImpl>(
     }
 }
 
-pub async fn analyze_rexrap<T: DatabaseImpl>(
+pub async fn analyze_rexrap<
+    T: AuthorizationStore
+        + DefinitionStore
+        + RuntimeStore
+        + FunctionStore
+        + NotificationStore
+        + ScheduleStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Json(request): Json<RexRapSourceRequest>,
 ) -> Json<Vec<DiagnosticSummary>> {
@@ -231,7 +255,14 @@ pub async fn analyze_rexrap<T: DatabaseImpl>(
     Json(summaries)
 }
 
-async fn fetch_provider_metadata<T: DatabaseImpl>(
+async fn fetch_provider_metadata<
+    T: AuthorizationStore
+        + DefinitionStore
+        + RuntimeStore
+        + FunctionStore
+        + NotificationStore
+        + ScheduleStore,
+>(
     db: &T,
 ) -> Result<Vec<runinator_models::providers::ProviderMetadata>, String> {
     let items = repository::fetch_catalog_items(db, Some("provider_metadata".into()))
@@ -240,7 +271,14 @@ async fn fetch_provider_metadata<T: DatabaseImpl>(
     provider_metadata_from_items(items).map_err(|err| err.to_string())
 }
 
-async fn workflow_signatures_for_compile<T: DatabaseImpl>(
+async fn workflow_signatures_for_compile<
+    T: AuthorizationStore
+        + DefinitionStore
+        + RuntimeStore
+        + FunctionStore
+        + NotificationStore
+        + ScheduleStore,
+>(
     db: &T,
     source: &str,
 ) -> Result<Vec<WorkflowSignature>, String> {
@@ -445,7 +483,16 @@ fn rexrap_error_to_summary(err: RexRapError, source: &str) -> DiagnosticSummary 
 }
 
 /// the `rexrap` endpoints.
-pub fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
+pub fn routes<
+    T: AuthorizationStore
+        + DefinitionStore
+        + RuntimeStore
+        + FunctionStore
+        + NotificationStore
+        + ScheduleStore,
+>(
+    pool: std::sync::Arc<T>,
+) -> axum::Router {
     use axum::Extension;
     use axum::routing::post;
     axum::Router::new()

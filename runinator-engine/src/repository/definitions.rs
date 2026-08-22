@@ -20,7 +20,7 @@ pub fn merge_json_object(defaults: &Value, parameters: &Value) -> Value {
     }
 }
 
-pub async fn upsert_workflow<T: DatabaseImpl>(
+pub async fn upsert_workflow<T: DefinitionStore + RuntimeStore + FunctionStore>(
     db: &T,
     workflow: &WorkflowDefinition,
     author: &RevisionAuthor,
@@ -36,7 +36,7 @@ pub async fn upsert_workflow<T: DatabaseImpl>(
 /// best-effort, like the audit trail: history is worth having, but failing a legitimate save
 /// because it could not be written would be the worse outcome. a `None` result is the store
 /// reporting the definition was unchanged, not a failure.
-pub async fn record_workflow_revision<T: DatabaseImpl>(
+pub async fn record_workflow_revision<T: DefinitionStore>(
     db: &T,
     saved: &WorkflowDefinition,
     author: &RevisionAuthor,
@@ -66,7 +66,7 @@ pub async fn record_workflow_revision<T: DatabaseImpl>(
     }
 }
 
-pub async fn fetch_workflow_revisions<T: DatabaseImpl>(
+pub async fn fetch_workflow_revisions<T: DefinitionStore>(
     db: &T,
     workflow_id: Uuid,
     limit: i64,
@@ -74,7 +74,7 @@ pub async fn fetch_workflow_revisions<T: DatabaseImpl>(
     db.fetch_workflow_revisions(workflow_id, limit).await
 }
 
-pub async fn fetch_workflow_revision<T: DatabaseImpl>(
+pub async fn fetch_workflow_revision<T: DefinitionStore>(
     db: &T,
     workflow_id: Uuid,
     revision: i64,
@@ -88,7 +88,7 @@ pub async fn fetch_workflow_revision<T: DatabaseImpl>(
 /// against today's provider catalog and saved as a *new* revision. that is what stops a rollback
 /// from resurrecting a definition referencing an action that has since been removed — it fails
 /// loudly instead of persisting something that cannot run.
-pub async fn restore_workflow_revision<T: DatabaseImpl>(
+pub async fn restore_workflow_revision<T: DefinitionStore + RuntimeStore + FunctionStore>(
     db: &T,
     workflow_id: Uuid,
     revision: i64,
@@ -116,7 +116,9 @@ pub async fn restore_workflow_revision<T: DatabaseImpl>(
     upsert_workflow(db, &restored, &author).await
 }
 
-pub async fn validate_workflow_definition_with_catalog<T: DatabaseImpl>(
+pub async fn validate_workflow_definition_with_catalog<
+    T: DefinitionStore + RuntimeStore + FunctionStore,
+>(
     db: &T,
     workflow: &WorkflowDefinition,
 ) -> Result<WorkflowDefinition, SendableError> {
@@ -139,7 +141,7 @@ pub async fn validate_workflow_definition_with_catalog<T: DatabaseImpl>(
 /// rollback are all covered by the same check — a rollback in particular can restore a definition
 /// whose package was deleted since, and a run that discovers that at dispatch time is far worse
 /// than a save that refuses it.
-async fn validate_workflow_function_bindings<T: DatabaseImpl>(
+async fn validate_workflow_function_bindings<T: FunctionStore>(
     db: &T,
     workflow: &WorkflowDefinition,
 ) -> Result<(), SendableError> {
@@ -205,7 +207,7 @@ async fn validate_workflow_function_bindings<T: DatabaseImpl>(
     Ok(())
 }
 
-async fn validate_workflow_subflows<T: DatabaseImpl>(
+async fn validate_workflow_subflows<T: RuntimeStore>(
     db: &T,
     workflow: &WorkflowDefinition,
 ) -> Result<(), SendableError> {
@@ -242,7 +244,7 @@ pub fn validate_workflow_definition(
 /// generated workflows (a packaged function's adapter) are filtered out: they exist so an http
 /// invocation has a run to start, and listing them would put one entry per published export into a
 /// workflow list nobody authored.
-pub async fn fetch_workflows<T: DatabaseImpl>(
+pub async fn fetch_workflows<T: DefinitionStore>(
     db: &T,
 ) -> Result<Vec<WorkflowDefinition>, SendableError> {
     Ok(fetch_workflows_with_managed(db, false).await?)
@@ -253,7 +255,7 @@ pub async fn fetch_workflows<T: DatabaseImpl>(
 /// filtered in rust after the fetch, the way the org and grant filters already are, rather than as
 /// a json predicate in sql — the marker lives inside a json column and the three dialects do not
 /// agree on how to reach into one.
-pub async fn fetch_workflows_with_managed<T: DatabaseImpl>(
+pub async fn fetch_workflows_with_managed<T: DefinitionStore>(
     db: &T,
     include_managed: bool,
 ) -> Result<Vec<WorkflowDefinition>, SendableError> {
@@ -273,7 +275,7 @@ pub async fn fetch_workflows_with_managed<T: DatabaseImpl>(
     Ok(normalized)
 }
 
-pub async fn fetch_workflow<T: DatabaseImpl>(
+pub async fn fetch_workflow<T: RuntimeStore + DefinitionStore>(
     db: &T,
     workflow_id: Uuid,
 ) -> Result<Option<WorkflowDefinition>, SendableError> {
@@ -283,7 +285,7 @@ pub async fn fetch_workflow<T: DatabaseImpl>(
     Ok(Some(normalize_persisted_workflow(db, workflow).await?))
 }
 
-pub async fn set_workflow_org<T: DatabaseImpl>(
+pub async fn set_workflow_org<T: DefinitionStore>(
     db: &T,
     workflow_id: Uuid,
     org_id: Option<Uuid>,
@@ -291,7 +293,7 @@ pub async fn set_workflow_org<T: DatabaseImpl>(
     db.set_workflow_org(workflow_id, org_id).await
 }
 
-pub async fn fetch_workflow_by_name<T: DatabaseImpl>(
+pub async fn fetch_workflow_by_name<T: RuntimeStore + DefinitionStore>(
     db: &T,
     name: String,
 ) -> Result<Option<WorkflowDefinition>, SendableError> {
@@ -312,7 +314,9 @@ fn incoming_is_newer(incoming: Option<DateTime<Utc>>, stored: Option<DateTime<Ut
     }
 }
 
-pub async fn import_workflow_bundle<T: DatabaseImpl>(
+pub async fn import_workflow_bundle<
+    T: DefinitionStore + RuntimeStore + FunctionStore + NotificationStore + ScheduleStore,
+>(
     db: &T,
     bundle: WorkflowBundle,
 ) -> Result<WorkflowBundle, SendableError> {
@@ -322,7 +326,9 @@ pub async fn import_workflow_bundle<T: DatabaseImpl>(
 // `overwrite` makes an explicit re-apply authoritative: existing items are updated in place even
 // when the incoming copy is not strictly newer, bypassing the reconciliation timestamp gate that
 // background sync relies on. callers that reconcile (gossip, plain imports) pass `false`.
-pub async fn import_workflow_bundle_with<T: DatabaseImpl>(
+pub async fn import_workflow_bundle_with<
+    T: DefinitionStore + RuntimeStore + FunctionStore + NotificationStore + ScheduleStore,
+>(
     db: &T,
     bundle: WorkflowBundle,
     overwrite: bool,
@@ -375,7 +381,7 @@ pub async fn import_workflow_bundle_with<T: DatabaseImpl>(
 }
 
 /// validate that every subflow node targets a workflow present in the bundle or already stored.
-async fn validate_subflow_targets<T: DatabaseImpl>(
+async fn validate_subflow_targets<T: RuntimeStore>(
     db: &T,
     bundle: &WorkflowBundle,
 ) -> Result<(), SendableError> {
@@ -421,7 +427,7 @@ async fn validate_subflow_targets<T: DatabaseImpl>(
 }
 
 /// validate that every chaining trigger targets a workflow present in the bundle or already stored.
-async fn validate_chained_targets<T: DatabaseImpl>(
+async fn validate_chained_targets<T: RuntimeStore>(
     db: &T,
     bundle: &WorkflowBundle,
 ) -> Result<(), SendableError> {
@@ -469,7 +475,7 @@ async fn validate_chained_targets<T: DatabaseImpl>(
 /// replace a workflow's `managed_by: rexrap` notification policies with the ones declared in its
 /// `definition.metadata.notifications`. hand-authored policies on the same workflow are left
 /// untouched, and re-import is idempotent, mirroring how managed triggers reconcile.
-async fn materialize_workflow_notifications<T: DatabaseImpl>(
+async fn materialize_workflow_notifications<T: NotificationStore>(
     db: &T,
     workflow: &WorkflowDefinition,
 ) -> Result<(), SendableError> {
@@ -527,7 +533,7 @@ async fn materialize_workflow_notifications<T: DatabaseImpl>(
 /// `definition.metadata.triggers`. manually-added triggers are left untouched; re-import is
 /// idempotent (delete the pack-managed set, then insert the current declarations). each spec's
 /// `kind` selects the trigger kind (absent ⇒ `cron` for back-compat with older packs).
-async fn materialize_workflow_triggers<T: DatabaseImpl>(
+async fn materialize_workflow_triggers<T: ScheduleStore + RuntimeStore>(
     db: &T,
     workflow: &WorkflowDefinition,
 ) -> Result<(), SendableError> {
@@ -647,7 +653,7 @@ fn parse_trigger_datetime(value: &str) -> Result<DateTime<Utc>, SendableError> {
         })
 }
 
-pub async fn export_workflow_bundle<T: DatabaseImpl>(
+pub async fn export_workflow_bundle<T: DefinitionStore + RuntimeStore + ScheduleStore>(
     db: &T,
     workflow_id: Option<Uuid>,
 ) -> Result<WorkflowBundle, SendableError> {
@@ -673,7 +679,7 @@ pub async fn export_workflow_bundle<T: DatabaseImpl>(
     })
 }
 
-async fn normalize_persisted_workflow<T: DatabaseImpl>(
+async fn normalize_persisted_workflow<T: DefinitionStore>(
     db: &T,
     workflow: WorkflowDefinition,
 ) -> Result<WorkflowDefinition, SendableError> {
@@ -690,7 +696,7 @@ async fn normalize_persisted_workflow<T: DatabaseImpl>(
 // duplicate a workflow into a new row that shares its name but carries a bumped semantic
 // version. the copy is a fresh, disabled draft (new id) so it never clobbers the original or
 // inherits its triggers; the highest-versioned sibling is left to the caller to promote.
-pub async fn duplicate_workflow<T: DatabaseImpl>(
+pub async fn duplicate_workflow<T: DefinitionStore + RuntimeStore + FunctionStore>(
     db: &T,
     workflow_id: Uuid,
     bump: SemVerBump,
@@ -723,7 +729,7 @@ pub async fn duplicate_workflow<T: DatabaseImpl>(
     Ok(created)
 }
 
-pub async fn delete_workflow<T: DatabaseImpl>(
+pub async fn delete_workflow<T: DefinitionStore>(
     db: &T,
     workflow_id: Uuid,
 ) -> Result<TaskResponse, SendableError> {

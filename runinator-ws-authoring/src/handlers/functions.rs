@@ -19,7 +19,6 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use runinator_blob_core::BlobStore;
-use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::{
     auth::{AuthContext, Permission, ResourceType},
     functions::{
@@ -28,6 +27,10 @@ use runinator_models::{
     },
     rbac::{Action, ScopeKind, ScopeRef},
 };
+use runinator_store::{
+    RuntimeStore,
+    roles::{DefinitionStore, FunctionStore},
+};
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -35,7 +38,7 @@ use runinator_engine::repository;
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::openapi::docs::{EndpointDoc, Example, endpoint, json_body};
 use runinator_ws_core::responses::{api_error, bad_request, not_found};
-use runinator_ws_middleware::authz::{AuthContextExt, AuthzChecker};
+use runinator_ws_middleware::authz::{AuthContextExt, AuthorizationStore, AuthzChecker};
 
 fn selected_scope(ctx: &AuthContext) -> ScopeRef {
     ctx.org_id
@@ -44,7 +47,9 @@ fn selected_scope(ctx: &AuthContext) -> ScopeRef {
 }
 
 /// list packages visible to the caller.
-pub async fn get_functions<T: DatabaseImpl>(
+pub async fn get_functions<
+    T: AuthorizationStore + FunctionStore + DefinitionStore + RuntimeStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -78,7 +83,9 @@ pub async fn get_functions<T: DatabaseImpl>(
 /// this is what an offline compile is handed, so it lists every *version*'s exports rather than
 /// only the current release: a workflow pinned to version 2 must still type-check after version 3
 /// ships.
-pub async fn get_function_catalog<T: DatabaseImpl>(
+pub async fn get_function_catalog<
+    T: AuthorizationStore + FunctionStore + DefinitionStore + RuntimeStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -110,7 +117,9 @@ pub async fn get_function_catalog<T: DatabaseImpl>(
 }
 
 /// publish one version of a package.
-pub async fn publish_function<T: DatabaseImpl>(
+pub async fn publish_function<
+    T: AuthorizationStore + FunctionStore + DefinitionStore + RuntimeStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Json(mut request): Json<NewFunctionVersion>,
@@ -164,7 +173,9 @@ pub async fn publish_function<T: DatabaseImpl>(
 }
 
 /// one package with its versions, aliases, and current exports.
-pub async fn get_function<T: DatabaseImpl>(
+pub async fn get_function<
+    T: AuthorizationStore + FunctionStore + DefinitionStore + RuntimeStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(package): Path<String>,
@@ -204,7 +215,9 @@ pub async fn get_function<T: DatabaseImpl>(
 }
 
 /// delete a package and everything under it.
-pub async fn delete_function<T: DatabaseImpl>(
+pub async fn delete_function<
+    T: AuthorizationStore + FunctionStore + DefinitionStore + RuntimeStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(package): Path<String>,
@@ -234,7 +247,9 @@ pub async fn delete_function<T: DatabaseImpl>(
 }
 
 /// restore an archived package.
-pub async fn restore_function<T: DatabaseImpl>(
+pub async fn restore_function<
+    T: AuthorizationStore + FunctionStore + DefinitionStore + RuntimeStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(package): Path<String>,
@@ -280,7 +295,9 @@ pub struct SetFunctionAliasRequest {
 }
 
 /// point an alias at a version.
-pub async fn set_function_alias<T: DatabaseImpl>(
+pub async fn set_function_alias<
+    T: AuthorizationStore + FunctionStore + DefinitionStore + RuntimeStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(package): Path<String>,
@@ -318,7 +335,9 @@ pub async fn set_function_alias<T: DatabaseImpl>(
 }
 
 /// delete an alias, leaving the version it named untouched.
-pub async fn delete_function_alias<T: DatabaseImpl>(
+pub async fn delete_function_alias<
+    T: AuthorizationStore + FunctionStore + DefinitionStore + RuntimeStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path((package, alias)): Path<(String, String)>,
@@ -351,7 +370,9 @@ pub async fn delete_function_alias<T: DatabaseImpl>(
 ///
 /// the invocation path's single read. a version is immutable, so a worker caches the answer for as
 /// long as it caches the code, and a promotion never changes what an already-dispatched action runs.
-pub async fn resolve_function_export<T: DatabaseImpl>(
+pub async fn resolve_function_export<
+    T: AuthorizationStore + FunctionStore + DefinitionStore + RuntimeStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(export_id): Path<Uuid>,
@@ -376,7 +397,9 @@ pub async fn resolve_function_export<T: DatabaseImpl>(
 }
 
 /// the artifact record for a digest, or 404. this is the "do I need to upload?" probe.
-pub async fn get_function_artifact<T: DatabaseImpl>(
+pub async fn get_function_artifact<
+    T: AuthorizationStore + FunctionStore + DefinitionStore + RuntimeStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(digest): Path<String>,
@@ -398,7 +421,9 @@ pub async fn get_function_artifact<T: DatabaseImpl>(
 }
 
 /// upload package bytes under their digest. re-uploading bytes already stored is a no-op.
-pub async fn upload_function_artifact<T: DatabaseImpl>(
+pub async fn upload_function_artifact<
+    T: AuthorizationStore + FunctionStore + DefinitionStore + RuntimeStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(blobs): Extension<Arc<dyn BlobStore>>,
     Extension(ctx): Extension<AuthContext>,
@@ -423,7 +448,9 @@ pub async fn upload_function_artifact<T: DatabaseImpl>(
 }
 
 /// stream an artifact's bytes. this is the worker's fetch path.
-pub async fn download_function_artifact<T: DatabaseImpl>(
+pub async fn download_function_artifact<
+    T: AuthorizationStore + FunctionStore + DefinitionStore + RuntimeStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(blobs): Extension<Arc<dyn BlobStore>>,
     Extension(ctx): Extension<AuthContext>,
@@ -466,7 +493,9 @@ pub async fn download_function_artifact<T: DatabaseImpl>(
         })
 }
 
-async fn function_export_visible<T: DatabaseImpl>(
+async fn function_export_visible<
+    T: AuthorizationStore + FunctionStore + DefinitionStore + RuntimeStore,
+>(
     db: &T,
     ctx: &AuthContext,
     export_id: Uuid,
@@ -480,7 +509,9 @@ async fn function_export_visible<T: DatabaseImpl>(
         .is_ok()
 }
 
-async fn function_artifact_visible<T: DatabaseImpl>(
+async fn function_artifact_visible<
+    T: AuthorizationStore + FunctionStore + DefinitionStore + RuntimeStore,
+>(
     db: &T,
     ctx: &AuthContext,
     digest: &str,
@@ -509,7 +540,7 @@ fn split_qualified(package: &str) -> (Option<String>, String) {
     }
 }
 
-async fn resolve_package<T: DatabaseImpl>(
+async fn resolve_package<T: AuthorizationStore + FunctionStore + DefinitionStore + RuntimeStore>(
     db: &T,
     ctx: &AuthContext,
     package: &str,
@@ -523,7 +554,7 @@ async fn resolve_package<T: DatabaseImpl>(
         .filter(|package| package.archived_at.is_none()))
 }
 
-async fn newest_version<T: DatabaseImpl>(
+async fn newest_version<T: AuthorizationStore + FunctionStore + DefinitionStore + RuntimeStore>(
     db: &T,
     package_id: Uuid,
 ) -> Result<Option<i64>, runinator_models::errors::SendableError> {
@@ -532,7 +563,9 @@ async fn newest_version<T: DatabaseImpl>(
 }
 
 /// the `functions` endpoints.
-pub fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
+pub fn routes<T: AuthorizationStore + FunctionStore + DefinitionStore + RuntimeStore>(
+    pool: std::sync::Arc<T>,
+) -> axum::Router {
     use axum::Extension;
     use axum::routing::{delete, get, post};
     axum::Router::new()

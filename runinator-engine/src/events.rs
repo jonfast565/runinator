@@ -3,8 +3,8 @@ use uuid::Uuid;
 
 use runinator_broker_core::{Broker, EventMessage};
 use runinator_comm::UiEventKind;
-use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::runs::RunStatus;
+use runinator_store::RuntimeStore;
 use tokio::sync::Notify;
 
 use crate::repository;
@@ -101,7 +101,7 @@ pub fn is_terminal_run_status(status: RunStatus) -> bool {
     )
 }
 
-pub async fn emit_workflow_run_resolved<T: DatabaseImpl>(
+pub async fn emit_workflow_run_resolved<T: RuntimeStore>(
     db: &T,
     events: &EventSender,
     run_id: Uuid,
@@ -110,7 +110,7 @@ pub async fn emit_workflow_run_resolved<T: DatabaseImpl>(
     emit_workflow_run(events, run_id, org_id);
 }
 
-pub async fn emit_pipeline_run_resolved<T: DatabaseImpl>(
+pub async fn emit_pipeline_run_resolved<T: RuntimeStore>(
     db: &T,
     events: &EventSender,
     run_id: Uuid,

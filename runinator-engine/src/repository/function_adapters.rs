@@ -10,13 +10,16 @@
 //! **compiling REXRAP** rather than by assembling graph json: the compiler is what guarantees the graph
 //! is well-formed, and it is the same path that produced every other workflow in the system.
 
-use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::errors::SendableError;
 use runinator_models::functions::{FunctionCatalogEntry, FunctionExport};
 use runinator_models::providers::ParameterMetadata;
 use runinator_models::types::RuninatorType;
 use runinator_models::value::Value;
 use runinator_models::workflows::WorkflowDefinition;
+use runinator_store::{
+    RuntimeStore,
+    roles::{DefinitionStore, FunctionStore},
+};
 use uuid::Uuid;
 
 use crate::errors::FUNCTION_NOT_FOUND;
@@ -41,7 +44,7 @@ pub fn adapter_workflow_name(entry: &FunctionCatalogEntry) -> String {
 /// keyed on the export id, so republishing a package mints new adapters for the new version's
 /// exports and leaves the old ones pointing at the old code — which is what keeps an in-flight
 /// invocation of the previous version running exactly what it started.
-pub async fn sync_adapter_workflows<T: DatabaseImpl>(
+pub async fn sync_adapter_workflows<T: FunctionStore + RuntimeStore + DefinitionStore>(
     db: &T,
     package_id: Uuid,
 ) -> Result<Vec<WorkflowDefinition>, SendableError> {
@@ -196,7 +199,7 @@ fn stamp_managed(definition: &mut WorkflowDefinition, entry: &FunctionCatalogEnt
 ///
 /// through the repository rather than straight off the store because it is the invocation path's
 /// join from "an export" to "a run to start" — orchestration, not crud.
-pub async fn fetch_adapter_workflow<T: DatabaseImpl>(
+pub async fn fetch_adapter_workflow<T: FunctionStore>(
     db: &T,
     export_id: Uuid,
 ) -> Result<Option<runinator_models::functions::FunctionAdapterWorkflow>, SendableError> {

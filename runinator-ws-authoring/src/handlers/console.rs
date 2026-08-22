@@ -12,11 +12,17 @@ use std::sync::Arc;
 
 use axum::{Extension, Json, extract::Path, http::StatusCode};
 use runinator_broker_core::Broker;
-use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::{
     auth::{AuthContext, Permission, ResourceType},
     console::{ConsoleSession, NewConsoleCell},
     rbac::{Action, ScopeKind, ScopeRef},
+};
+use runinator_store::{
+    RuntimeStore,
+    roles::{
+        ConsoleStore, DefinitionStore, FunctionStore, NotificationStore, ScheduleStore,
+        WorkflowVmStore,
+    },
 };
 use serde::Deserialize;
 use uuid::Uuid;
@@ -26,7 +32,7 @@ use runinator_ws_core::events::{EventSender, emit_workflow_run, nudge_wake_publi
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::openapi::docs::{EndpointDoc, Example, endpoint, json_body};
 use runinator_ws_core::responses::{api_error, bad_request, not_found};
-use runinator_ws_middleware::authz::{AuthContextExt, AuthzChecker};
+use runinator_ws_middleware::authz::{AuthContextExt, AuthorizationStore, AuthzChecker};
 
 fn selected_scope(ctx: &AuthContext) -> ScopeRef {
     ctx.org_id
@@ -52,7 +58,16 @@ fn session_name(request: &ConsoleSessionRequest) -> String {
 }
 
 /// list the caller's sessions.
-pub async fn get_console_sessions<T: DatabaseImpl>(
+pub async fn get_console_sessions<
+    T: AuthorizationStore
+        + ConsoleStore
+        + RuntimeStore
+        + DefinitionStore
+        + FunctionStore
+        + NotificationStore
+        + ScheduleStore
+        + WorkflowVmStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -82,7 +97,16 @@ pub async fn get_console_sessions<T: DatabaseImpl>(
 }
 
 /// create a session.
-pub async fn create_console_session<T: DatabaseImpl>(
+pub async fn create_console_session<
+    T: AuthorizationStore
+        + ConsoleStore
+        + RuntimeStore
+        + DefinitionStore
+        + FunctionStore
+        + NotificationStore
+        + ScheduleStore
+        + WorkflowVmStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<ConsoleSessionRequest>,
@@ -112,7 +136,16 @@ pub async fn create_console_session<T: DatabaseImpl>(
 }
 
 /// one session with its cells and scope.
-pub async fn get_console_session<T: DatabaseImpl>(
+pub async fn get_console_session<
+    T: AuthorizationStore
+        + ConsoleStore
+        + RuntimeStore
+        + DefinitionStore
+        + FunctionStore
+        + NotificationStore
+        + ScheduleStore
+        + WorkflowVmStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(session_id): Path<Uuid>,
@@ -134,7 +167,16 @@ pub async fn get_console_session<T: DatabaseImpl>(
 }
 
 /// rename a session.
-pub async fn rename_console_session<T: DatabaseImpl>(
+pub async fn rename_console_session<
+    T: AuthorizationStore
+        + ConsoleStore
+        + RuntimeStore
+        + DefinitionStore
+        + FunctionStore
+        + NotificationStore
+        + ScheduleStore
+        + WorkflowVmStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(session_id): Path<Uuid>,
@@ -153,7 +195,16 @@ pub async fn rename_console_session<T: DatabaseImpl>(
 }
 
 /// delete a session and everything under it.
-pub async fn delete_console_session<T: DatabaseImpl>(
+pub async fn delete_console_session<
+    T: AuthorizationStore
+        + ConsoleStore
+        + RuntimeStore
+        + DefinitionStore
+        + FunctionStore
+        + NotificationStore
+        + ScheduleStore
+        + WorkflowVmStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(session_id): Path<Uuid>,
@@ -175,7 +226,16 @@ pub async fn delete_console_session<T: DatabaseImpl>(
 }
 
 /// append a cell to a session.
-pub async fn create_console_cell<T: DatabaseImpl>(
+pub async fn create_console_cell<
+    T: AuthorizationStore
+        + ConsoleStore
+        + RuntimeStore
+        + DefinitionStore
+        + FunctionStore
+        + NotificationStore
+        + ScheduleStore
+        + WorkflowVmStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(session_id): Path<Uuid>,
@@ -191,7 +251,16 @@ pub async fn create_console_cell<T: DatabaseImpl>(
 }
 
 /// replace a cell's source.
-pub async fn update_console_cell<T: DatabaseImpl>(
+pub async fn update_console_cell<
+    T: AuthorizationStore
+        + ConsoleStore
+        + RuntimeStore
+        + DefinitionStore
+        + FunctionStore
+        + NotificationStore
+        + ScheduleStore
+        + WorkflowVmStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(cell_id): Path<Uuid>,
@@ -213,7 +282,16 @@ pub async fn update_console_cell<T: DatabaseImpl>(
 }
 
 /// delete a cell.
-pub async fn delete_console_cell<T: DatabaseImpl>(
+pub async fn delete_console_cell<
+    T: AuthorizationStore
+        + ConsoleStore
+        + RuntimeStore
+        + DefinitionStore
+        + FunctionStore
+        + NotificationStore
+        + ScheduleStore
+        + WorkflowVmStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(cell_id): Path<Uuid>,
@@ -243,7 +321,16 @@ pub async fn delete_console_cell<T: DatabaseImpl>(
 /// the response is the cell, not a run: a pure cell has already settled by the time this returns,
 /// and an effectful one carries its `workflow_run_id` for the caller to follow. one shape either
 /// way, so the UI does not branch on how the cell happened to be written.
-pub async fn run_console_cell<T: DatabaseImpl>(
+pub async fn run_console_cell<
+    T: AuthorizationStore
+        + ConsoleStore
+        + RuntimeStore
+        + DefinitionStore
+        + FunctionStore
+        + NotificationStore
+        + ScheduleStore
+        + WorkflowVmStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<AuthContext>,
@@ -284,7 +371,16 @@ pub async fn run_console_cell<T: DatabaseImpl>(
 }
 
 /// replay a settled cell against the session's current binding snapshot.
-pub async fn replay_console_cell<T: DatabaseImpl>(
+pub async fn replay_console_cell<
+    T: AuthorizationStore
+        + ConsoleStore
+        + RuntimeStore
+        + DefinitionStore
+        + FunctionStore
+        + NotificationStore
+        + ScheduleStore
+        + WorkflowVmStore,
+>(
     db: Extension<Arc<T>>,
     events: Extension<EventSender>,
     ctx: Extension<AuthContext>,
@@ -294,7 +390,16 @@ pub async fn replay_console_cell<T: DatabaseImpl>(
 }
 
 /// cancel the durable workflow behind an effectful cell.
-pub async fn cancel_console_cell<T: DatabaseImpl>(
+pub async fn cancel_console_cell<
+    T: AuthorizationStore
+        + ConsoleStore
+        + RuntimeStore
+        + DefinitionStore
+        + FunctionStore
+        + NotificationStore
+        + ScheduleStore
+        + WorkflowVmStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(broker): Extension<Arc<dyn Broker>>,
     Extension(ctx): Extension<AuthContext>,
@@ -314,7 +419,16 @@ pub async fn cancel_console_cell<T: DatabaseImpl>(
 }
 
 /// re-read a cell, which is how a caller polls one waiting on a scratch run.
-pub async fn get_console_cell<T: DatabaseImpl>(
+pub async fn get_console_cell<
+    T: AuthorizationStore
+        + ConsoleStore
+        + RuntimeStore
+        + DefinitionStore
+        + FunctionStore
+        + NotificationStore
+        + ScheduleStore
+        + WorkflowVmStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(cell_id): Path<Uuid>,
@@ -336,7 +450,16 @@ pub async fn get_console_cell<T: DatabaseImpl>(
 }
 
 // a session the caller may see, or the reply that says otherwise.
-async fn require_session<T: DatabaseImpl>(
+async fn require_session<
+    T: AuthorizationStore
+        + ConsoleStore
+        + RuntimeStore
+        + DefinitionStore
+        + FunctionStore
+        + NotificationStore
+        + ScheduleStore
+        + WorkflowVmStore,
+>(
     db: &T,
     ctx: &AuthContext,
     session_id: Uuid,
@@ -347,7 +470,16 @@ async fn require_session<T: DatabaseImpl>(
         .await
 }
 
-async fn require_cell<T: DatabaseImpl>(
+async fn require_cell<
+    T: AuthorizationStore
+        + ConsoleStore
+        + RuntimeStore
+        + DefinitionStore
+        + FunctionStore
+        + NotificationStore
+        + ScheduleStore
+        + WorkflowVmStore,
+>(
     db: &T,
     ctx: &AuthContext,
     cell_id: Uuid,
@@ -364,7 +496,18 @@ async fn require_cell<T: DatabaseImpl>(
 }
 
 /// the `console` endpoints.
-pub fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
+pub fn routes<
+    T: AuthorizationStore
+        + ConsoleStore
+        + RuntimeStore
+        + DefinitionStore
+        + FunctionStore
+        + NotificationStore
+        + ScheduleStore
+        + WorkflowVmStore,
+>(
+    pool: std::sync::Arc<T>,
+) -> axum::Router {
     use axum::Extension;
     use axum::routing::{get, post};
     axum::Router::new()

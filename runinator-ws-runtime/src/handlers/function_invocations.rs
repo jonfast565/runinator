@@ -20,13 +20,16 @@ use axum::{
     extract::{Path, Query},
     http::{HeaderMap, StatusCode},
 };
-use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::{
     auth::{AuthContext, Permission, ResourceType},
     functions::{DEFAULT_ALIAS, FunctionVersionRef},
     replicas::{TriggerActorType, TriggerSourceKind, WorkflowRunProvenance},
     value::Value,
     workflows::WorkflowRun,
+};
+use runinator_store::{
+    RuntimeStore,
+    roles::{DefinitionStore, DeliveryStore, FunctionStore, WorkflowVmStore},
 };
 use serde::Deserialize;
 use uuid::Uuid;
@@ -36,7 +39,7 @@ use runinator_ws_core::events::{EventSender, emit_workflow_run, nudge_wake_publi
 use runinator_ws_core::models::{self, ApiResponse};
 use runinator_ws_core::openapi::docs::{EndpointDoc, Example, endpoint, json_body};
 use runinator_ws_core::responses::{api_error, bad_request, not_found};
-use runinator_ws_middleware::authz::AuthzChecker;
+use runinator_ws_middleware::authz::{AuthorizationStore, AuthzChecker};
 
 /// how long a synchronous invocation waits before falling back to 202.
 const SYNC_WAIT: Duration = Duration::from_secs(5);
@@ -60,7 +63,14 @@ pub struct InvocationQuery {
 }
 
 /// start one invocation.
-pub async fn create_function_invocation<T: DatabaseImpl>(
+pub async fn create_function_invocation<
+    T: AuthorizationStore
+        + DefinitionStore
+        + DeliveryStore
+        + FunctionStore
+        + RuntimeStore
+        + WorkflowVmStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<AuthContext>,
@@ -202,7 +212,14 @@ pub async fn create_function_invocation<T: DatabaseImpl>(
 }
 
 /// the status of one invocation, which is the status of its run.
-pub async fn get_function_invocation<T: DatabaseImpl>(
+pub async fn get_function_invocation<
+    T: AuthorizationStore
+        + DefinitionStore
+        + DeliveryStore
+        + FunctionStore
+        + RuntimeStore
+        + WorkflowVmStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(run_id): Path<Uuid>,
@@ -214,7 +231,14 @@ pub async fn get_function_invocation<T: DatabaseImpl>(
 }
 
 /// cancel one invocation.
-pub async fn cancel_function_invocation<T: DatabaseImpl>(
+pub async fn cancel_function_invocation<
+    T: AuthorizationStore
+        + DefinitionStore
+        + DeliveryStore
+        + FunctionStore
+        + RuntimeStore
+        + WorkflowVmStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(broker): Extension<Arc<dyn runinator_broker_core::Broker>>,
     Extension(events): Extension<EventSender>,
@@ -236,7 +260,14 @@ pub async fn cancel_function_invocation<T: DatabaseImpl>(
 }
 
 // wait a bounded moment for a terminal status, then answer with the output or with 202.
-async fn settle_or_accept<T: DatabaseImpl>(
+async fn settle_or_accept<
+    T: AuthorizationStore
+        + DefinitionStore
+        + DeliveryStore
+        + FunctionStore
+        + RuntimeStore
+        + WorkflowVmStore,
+>(
     db: &T,
     run: WorkflowRun,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -270,7 +301,17 @@ fn accepted(run: WorkflowRun) -> (StatusCode, Json<ApiResponse>) {
 }
 
 // Read the VM-backed run. Effects and journal entries have their own resources.
-async fn replay<T: DatabaseImpl>(db: &T, run_id: Uuid) -> (StatusCode, Json<ApiResponse>) {
+async fn replay<
+    T: AuthorizationStore
+        + DefinitionStore
+        + DeliveryStore
+        + FunctionStore
+        + RuntimeStore
+        + WorkflowVmStore,
+>(
+    db: &T,
+    run_id: Uuid,
+) -> (StatusCode, Json<ApiResponse>) {
     let run = match repository::fetch_workflow_run(db, run_id).await {
         Ok(Some(found)) => found,
         Ok(None) => return not_found(format!("invocation {run_id} not found")),
@@ -290,7 +331,14 @@ async fn replay<T: DatabaseImpl>(db: &T, run_id: Uuid) -> (StatusCode, Json<ApiR
     )
 }
 
-async fn require_run_access<T: DatabaseImpl>(
+async fn require_run_access<
+    T: AuthorizationStore
+        + DefinitionStore
+        + DeliveryStore
+        + FunctionStore
+        + RuntimeStore
+        + WorkflowVmStore,
+>(
     db: &T,
     ctx: &AuthContext,
     run_id: Uuid,
@@ -336,7 +384,16 @@ fn split_qualified(package: &str) -> (Option<String>, String) {
 }
 
 /// the function-invocation endpoints.
-pub fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
+pub fn routes<
+    T: AuthorizationStore
+        + DefinitionStore
+        + DeliveryStore
+        + FunctionStore
+        + RuntimeStore
+        + WorkflowVmStore,
+>(
+    pool: std::sync::Arc<T>,
+) -> axum::Router {
     use axum::Extension;
     use axum::routing::{get, post};
     axum::Router::new()

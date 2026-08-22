@@ -11,9 +11,9 @@ tower-http = { version = "0.6.2", features = ["cors", "catch-panic", "timeout"] 
 uuid = { version = "1.18", features = ["v4"] }
 
 runinator-auth = { path = "../runinator-auth" }
-runinator-database = { path = "../runinator-database", default-features = false }
 runinator-engine = { path = "../runinator-engine" }
 runinator-models = { path = "../runinator-models" }
+runinator-store = { path = "../runinator-store" }
 runinator-ws-core = { path = "../runinator-ws-core" }
 
 [dev-dependencies]

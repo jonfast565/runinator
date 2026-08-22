@@ -10,8 +10,8 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
-use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::auth::AuthContext;
+use runinator_store::roles::{AuthStore, RbacStore};
 use uuid::Uuid;
 
 // the crypto/token primitives live in the transport-agnostic `runinator-auth` crate; re-export the
@@ -22,13 +22,13 @@ pub use runinator_auth::{
 };
 
 /// state threaded into the auth middleware: config + db for API key/session lookups.
-pub struct AuthState<T: DatabaseImpl> {
+pub struct AuthState<T: AuthStore + RbacStore> {
     pub config: Arc<AuthConfig>,
     pub db: Arc<T>,
 }
 
 // manual Clone: the fields are `Arc`, so cloning never requires `T: Clone` (the derive would).
-impl<T: DatabaseImpl> Clone for AuthState<T> {
+impl<T: AuthStore + RbacStore> Clone for AuthState<T> {
     fn clone(&self) -> Self {
         Self {
             config: self.config.clone(),
@@ -38,7 +38,7 @@ impl<T: DatabaseImpl> Clone for AuthState<T> {
 }
 
 // bridge the database to the auth library's storage trait so credential resolution lives in the lib.
-impl<T: DatabaseImpl> runinator_auth::CredentialStore for AuthState<T> {
+impl<T: AuthStore + RbacStore> runinator_auth::CredentialStore for AuthState<T> {
     async fn api_key_by_prefix(
         &self,
         prefix: String,
@@ -120,7 +120,7 @@ fn url_query_value(query: &str, key: &str) -> Option<String> {
 
 /// gate every non-public request. when auth is disabled, inject a synthetic admin so existing
 /// behavior is unchanged.
-pub async fn auth_middleware<T: DatabaseImpl>(
+pub async fn auth_middleware<T: AuthStore + RbacStore>(
     State(state): State<AuthState<T>>,
     mut req: Request<Body>,
     next: Next,
@@ -157,7 +157,7 @@ pub async fn auth_middleware<T: DatabaseImpl>(
 }
 
 /// Bind an `X-Org-Id` only when a live assignment authorizes that organization.
-async fn resolve_header_org<T: DatabaseImpl>(
+async fn resolve_header_org<T: AuthStore + RbacStore>(
     _state: &AuthState<T>,
     context: &mut AuthContext,
     org_id: Uuid,

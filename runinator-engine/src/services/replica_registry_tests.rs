@@ -10,15 +10,13 @@ use std::{
 
 use chrono::{Duration, Utc};
 use runinator_comm::AgentDirectiveKind;
-use runinator_database::{
-    interfaces::{DatabaseImpl, ReplicaStore},
-    sqlite::SqliteDb,
-};
+use runinator_database::sqlite::SqliteDb;
 use runinator_models::{
     auth::AuthContext,
     json,
     replicas::{ReplicaKind, ReplicaRegistrationRequest},
 };
+use runinator_store::{DatabaseImpl, roles::ReplicaStore};
 
 use super::*;
 

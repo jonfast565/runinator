@@ -1,16 +1,16 @@
 use std::sync::Arc;
 
 use runinator_blob_core::BlobStore;
-use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::value::Value;
 use runinator_models::{
     errors::SendableError,
     runs::{NewRunArtifact, NewRunChunk, RunArtifact, RunChunk, RunStatus, RunSummary},
     web::TaskResponse,
 };
+use runinator_store::roles::TaskRunStore;
 use uuid::Uuid;
 
-pub async fn fetch_run_chunks<T: DatabaseImpl>(
+pub async fn fetch_run_chunks<T: TaskRunStore>(
     db: &T,
     run_id: Uuid,
     cursor: Option<i64>,
@@ -19,14 +19,14 @@ pub async fn fetch_run_chunks<T: DatabaseImpl>(
     db.fetch_run_chunks(run_id, cursor, limit).await
 }
 
-pub async fn fetch_runs_by_status<T: DatabaseImpl>(
+pub async fn fetch_runs_by_status<T: TaskRunStore>(
     db: &T,
     status: RunStatus,
 ) -> Result<Vec<RunSummary>, SendableError> {
     db.fetch_runs_by_status(status).await
 }
 
-pub async fn update_run_status<T: DatabaseImpl>(
+pub async fn update_run_status<T: TaskRunStore>(
     db: &T,
     run_id: Uuid,
     status: RunStatus,
@@ -41,7 +41,7 @@ pub async fn update_run_status<T: DatabaseImpl>(
     })
 }
 
-pub async fn append_run_chunk<T: DatabaseImpl>(
+pub async fn append_run_chunk<T: TaskRunStore>(
     db: &T,
     run_id: Uuid,
     chunk: &NewRunChunk,
@@ -49,14 +49,14 @@ pub async fn append_run_chunk<T: DatabaseImpl>(
     db.append_run_chunk(run_id, chunk).await
 }
 
-pub async fn fetch_run_artifacts<T: DatabaseImpl>(
+pub async fn fetch_run_artifacts<T: TaskRunStore>(
     db: &T,
     run_id: Uuid,
 ) -> Result<Vec<RunArtifact>, SendableError> {
     db.fetch_run_artifacts(run_id).await
 }
 
-pub async fn add_run_artifact<T: DatabaseImpl>(
+pub async fn add_run_artifact<T: TaskRunStore>(
     db: &T,
     run_id: Uuid,
     artifact: &NewRunArtifact,
@@ -64,13 +64,13 @@ pub async fn add_run_artifact<T: DatabaseImpl>(
     db.add_run_artifact(run_id, artifact).await
 }
 
-pub async fn fetch_all_artifacts<T: DatabaseImpl>(
+pub async fn fetch_all_artifacts<T: TaskRunStore>(
     db: &T,
 ) -> Result<Vec<RunArtifact>, SendableError> {
     db.fetch_all_artifacts().await
 }
 
-pub async fn fetch_artifact<T: DatabaseImpl>(
+pub async fn fetch_artifact<T: TaskRunStore>(
     db: &T,
     artifact_id: Uuid,
 ) -> Result<Option<RunArtifact>, SendableError> {
@@ -79,7 +79,7 @@ pub async fn fetch_artifact<T: DatabaseImpl>(
 
 /// delete an artifact: remove its bytes (best-effort) then remove the db row. returns false when no
 /// such artifact exists.
-pub async fn delete_artifact<T: DatabaseImpl>(
+pub async fn delete_artifact<T: TaskRunStore>(
     db: &T,
     blobs: &Arc<dyn BlobStore>,
     artifact_id: Uuid,
@@ -93,7 +93,7 @@ pub async fn delete_artifact<T: DatabaseImpl>(
 }
 
 /// store uploaded artifact bytes and record the row(s) that point at them.
-pub async fn persist_artifact_file<T: DatabaseImpl>(
+pub async fn persist_artifact_file<T: TaskRunStore>(
     db: &T,
     blobs: &Arc<dyn BlobStore>,
     run_id: Uuid,

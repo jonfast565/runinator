@@ -3,10 +3,13 @@ use uuid::Uuid;
 
 use axum::{Extension, Json, extract::Path, http::StatusCode};
 use runinator_broker_core::Broker;
-use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::{
     auth::{AuthContext, Permission},
     pipelines::{Pipeline, PipelineTrigger},
+};
+use runinator_store::{
+    RuntimeStore,
+    roles::{DefinitionStore, ScheduleStore, WorkflowVmStore},
 };
 
 use runinator_engine::repository;
@@ -19,9 +22,11 @@ use runinator_ws_core::models::{
     PipelineRunResolutionRequest,
 };
 use runinator_ws_core::responses::{api_error, bad_request, not_found};
-use runinator_ws_middleware::authz::AuthzChecker;
+use runinator_ws_middleware::authz::{AuthorizationStore, AuthzChecker};
 
-pub async fn get_pipelines<T: DatabaseImpl>(
+pub async fn get_pipelines<
+    T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -44,7 +49,9 @@ pub async fn get_pipelines<T: DatabaseImpl>(
     }
 }
 
-pub async fn get_pipeline<T: DatabaseImpl>(
+pub async fn get_pipeline<
+    T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(pipeline_id): Path<Uuid>,
@@ -62,7 +69,9 @@ pub async fn get_pipeline<T: DatabaseImpl>(
     }
 }
 
-pub async fn create_pipeline<T: DatabaseImpl>(
+pub async fn create_pipeline<
+    T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<AuthContext>,
@@ -88,7 +97,9 @@ pub async fn create_pipeline<T: DatabaseImpl>(
     }
 }
 
-pub async fn update_pipeline<T: DatabaseImpl>(
+pub async fn update_pipeline<
+    T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<AuthContext>,
@@ -117,7 +128,9 @@ pub async fn update_pipeline<T: DatabaseImpl>(
     }
 }
 
-pub async fn delete_pipeline<T: DatabaseImpl>(
+pub async fn delete_pipeline<
+    T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<AuthContext>,
@@ -145,7 +158,9 @@ pub async fn delete_pipeline<T: DatabaseImpl>(
 
 // --- pipeline triggers ---
 
-pub async fn get_pipeline_triggers<T: DatabaseImpl>(
+pub async fn get_pipeline_triggers<
+    T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(pipeline_id): Path<Uuid>,
@@ -165,7 +180,9 @@ pub async fn get_pipeline_triggers<T: DatabaseImpl>(
     }
 }
 
-pub async fn upsert_pipeline_trigger<T: DatabaseImpl>(
+pub async fn upsert_pipeline_trigger<
+    T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<AuthContext>,
@@ -189,7 +206,9 @@ pub async fn upsert_pipeline_trigger<T: DatabaseImpl>(
     }
 }
 
-pub async fn update_pipeline_trigger<T: DatabaseImpl>(
+pub async fn update_pipeline_trigger<
+    T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<AuthContext>,
@@ -213,7 +232,9 @@ pub async fn update_pipeline_trigger<T: DatabaseImpl>(
     }
 }
 
-pub async fn delete_pipeline_trigger<T: DatabaseImpl>(
+pub async fn delete_pipeline_trigger<
+    T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<AuthContext>,
@@ -240,7 +261,9 @@ pub async fn delete_pipeline_trigger<T: DatabaseImpl>(
 
 // --- pipeline runs ---
 
-pub async fn create_pipeline_run<T: DatabaseImpl>(
+pub async fn create_pipeline_run<
+    T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<AuthContext>,
@@ -276,7 +299,9 @@ pub async fn create_pipeline_run<T: DatabaseImpl>(
     }
 }
 
-pub async fn create_pipeline_trigger_run<T: DatabaseImpl>(
+pub async fn create_pipeline_trigger_run<
+    T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<AuthContext>,
@@ -312,7 +337,9 @@ pub async fn create_pipeline_trigger_run<T: DatabaseImpl>(
     }
 }
 
-pub async fn get_pipeline_runs<T: DatabaseImpl>(
+pub async fn get_pipeline_runs<
+    T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -335,7 +362,9 @@ pub async fn get_pipeline_runs<T: DatabaseImpl>(
     }
 }
 
-pub async fn get_pipeline_run<T: DatabaseImpl>(
+pub async fn get_pipeline_run<
+    T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(pipeline_run_id): Path<Uuid>,
@@ -353,7 +382,9 @@ pub async fn get_pipeline_run<T: DatabaseImpl>(
     }
 }
 
-pub async fn delete_pipeline_run<T: DatabaseImpl>(
+pub async fn delete_pipeline_run<
+    T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(pipeline_run_id): Path<Uuid>,
@@ -370,7 +401,9 @@ pub async fn delete_pipeline_run<T: DatabaseImpl>(
     }
 }
 
-pub async fn cancel_pipeline_run<T: DatabaseImpl>(
+pub async fn cancel_pipeline_run<
+    T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(broker): Extension<Arc<dyn Broker>>,
     Extension(events): Extension<EventSender>,
@@ -397,7 +430,9 @@ pub async fn cancel_pipeline_run<T: DatabaseImpl>(
     }
 }
 
-pub async fn pause_pipeline_run<T: DatabaseImpl>(
+pub async fn pause_pipeline_run<
+    T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<AuthContext>,
@@ -420,7 +455,9 @@ pub async fn pause_pipeline_run<T: DatabaseImpl>(
     }
 }
 
-pub async fn resume_pipeline_run<T: DatabaseImpl>(
+pub async fn resume_pipeline_run<
+    T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<AuthContext>,
@@ -446,7 +483,9 @@ pub async fn resume_pipeline_run<T: DatabaseImpl>(
 /// resolve a pipeline run's pending inquiry: a member whose failure mode is `Inquire` paused the run
 /// until a human decides whether to continue (fire that member's onward pipeline links and resume)
 /// or abort (settle the run `failed` now).
-pub async fn resolve_pipeline_run<T: DatabaseImpl>(
+pub async fn resolve_pipeline_run<
+    T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<AuthContext>,
@@ -483,7 +522,9 @@ pub async fn resolve_pipeline_run<T: DatabaseImpl>(
     }
 }
 
-pub async fn retry_pipeline_member<T: DatabaseImpl>(
+pub async fn retry_pipeline_member<
+    T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<AuthContext>,
@@ -522,7 +563,9 @@ pub async fn retry_pipeline_member<T: DatabaseImpl>(
     }
 }
 
-async fn pipeline_org<T: DatabaseImpl>(
+async fn pipeline_org<
+    T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
+>(
     db: &T,
     pipeline_id: Uuid,
     fallback: Option<Uuid>,
@@ -534,7 +577,11 @@ async fn pipeline_org<T: DatabaseImpl>(
 }
 
 /// the `pipelines` endpoints.
-pub fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
+pub fn routes<
+    T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
+>(
+    pool: std::sync::Arc<T>,
+) -> axum::Router {
     use axum::Extension;
     use axum::routing::{get, patch, post};
     axum::Router::new()

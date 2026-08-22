@@ -9,8 +9,11 @@ use std::{sync::Arc, time::Duration};
 
 use runinator_broker_core::{Broker, EffectResultMessage, IngressDelivery};
 use runinator_comm::{ControlKind, WsIngressCommand};
-use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::errors::SendableError;
+use runinator_store::{
+    RuntimeStore,
+    roles::{ReplicaStore, WorkflowVmStore},
+};
 use tokio::sync::Notify;
 use tracing::{error, info, warn};
 
@@ -21,7 +24,7 @@ const INGRESS_CONSUMER_ID: &str = "runinator-engine-ingress";
 /// A message is acknowledged once its effect has been durably recorded or handed to the channel
 /// that owns it; anything else is returned to the broker, since dropping an ingress message loses
 /// the only copy of a due timer or a directive reply.
-pub async fn run_ingress_consumer<T: DatabaseImpl>(
+pub async fn run_ingress_consumer<T: RuntimeStore + ReplicaStore + WorkflowVmStore>(
     db: Arc<T>,
     broker: Arc<dyn Broker>,
     shutdown: Arc<Notify>,
@@ -67,7 +70,7 @@ pub async fn run_ingress_consumer<T: DatabaseImpl>(
     }
 }
 
-async fn apply<T: DatabaseImpl>(
+async fn apply<T: RuntimeStore + ReplicaStore + WorkflowVmStore>(
     db: &T,
     broker: &dyn Broker,
     delivery: &IngressDelivery,

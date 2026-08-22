@@ -1,9 +1,9 @@
-use runinator_database::interfaces::DatabaseImpl;
+use runinator_store::RuntimeStore;
 use uuid::Uuid;
 
 /// resolve the owning org for a workflow run. prefers the live workflow row so an org reassignment
 /// is reflected; falls back to the run snapshot when the workflow row is gone.
-pub async fn org_id_for_workflow_run<T: DatabaseImpl>(
+pub async fn org_id_for_workflow_run<T: RuntimeStore>(
     db: &T,
     workflow_run_id: Uuid,
 ) -> Option<Uuid> {
@@ -21,7 +21,7 @@ pub async fn org_id_for_workflow_run<T: DatabaseImpl>(
 }
 
 /// resolve the owning org for a pipeline run via the live pipeline row, then the snapshot.
-pub async fn org_id_for_pipeline_run<T: DatabaseImpl>(
+pub async fn org_id_for_pipeline_run<T: RuntimeStore>(
     db: &T,
     pipeline_run_id: Uuid,
 ) -> Option<Uuid> {

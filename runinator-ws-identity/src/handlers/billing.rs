@@ -2,7 +2,6 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use axum::{Extension, Json, extract::Path, http::StatusCode};
-use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::auth::AuthContext;
 use runinator_models::billing::{
     OrgQuota, OrgResourceGroup, OrgUsage, RateCard, ScaleOrgNodesRequest, UpdateOrgQuotaRequest,
@@ -12,6 +11,7 @@ use runinator_models::provisioning::{NodeSpec, ProvisionBackend};
 use runinator_models::replicas::ReplicaKind;
 use runinator_models::value::Value;
 use runinator_provisioner::ProvisionerRegistry;
+use runinator_store::{RuntimeStore, roles::OrgStore};
 use serde::Serialize;
 use uuid::Uuid;
 
@@ -68,7 +68,7 @@ pub async fn get_rate_card() -> Reply {
 }
 
 /// an org's dedicated allocations, each annotated with its projected monthly cost.
-pub async fn get_org_nodes<T: DatabaseImpl>(
+pub async fn get_org_nodes<T: OrgStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(org_id): Path<Uuid>,
@@ -92,7 +92,7 @@ pub async fn get_org_nodes<T: DatabaseImpl>(
 
 /// scale an org's dedicated allocation for a (backend, kind), enforcing quota, then scale the org's
 /// own labeled node pool (`org-<slug>-<kind>`) to match so its work routes to dedicated workers.
-pub async fn scale_org_nodes<T: DatabaseImpl>(
+pub async fn scale_org_nodes<T: OrgStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(registry): Extension<Arc<ProvisionerRegistry>>,
     Extension(ctx): Extension<AuthContext>,
@@ -175,7 +175,7 @@ pub async fn scale_org_nodes<T: DatabaseImpl>(
 }
 
 /// an org's quota (or an unset default), viewable by any org member.
-pub async fn get_org_quota<T: DatabaseImpl>(
+pub async fn get_org_quota<T: OrgStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(org_id): Path<Uuid>,
@@ -197,7 +197,7 @@ pub async fn get_org_quota<T: DatabaseImpl>(
 }
 
 /// set an org's quota (platform admin only — quotas are a platform-level cap on tenants).
-pub async fn put_org_quota<T: DatabaseImpl>(
+pub async fn put_org_quota<T: OrgStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(org_id): Path<Uuid>,
@@ -229,7 +229,7 @@ pub async fn put_org_quota<T: DatabaseImpl>(
 }
 
 /// an org's accrued usage and cost since a rolling 30-day window.
-pub async fn get_org_usage<T: DatabaseImpl>(
+pub async fn get_org_usage<T: OrgStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(org_id): Path<Uuid>,
@@ -349,7 +349,7 @@ pub fn integrate_usage(org_id: Uuid, samples: Vec<UsageSample>, card: &RateCard)
 }
 
 /// the `billing` endpoints.
-pub fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
+pub fn routes<T: OrgStore + RuntimeStore>(pool: std::sync::Arc<T>) -> axum::Router {
     use axum::Extension;
     use axum::routing::{get, post};
     axum::Router::new()

@@ -4,7 +4,6 @@ use std::sync::Arc;
 
 use runinator_broker_core::Broker;
 use runinator_comm::EffectResultKind;
-use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::interrupt::InterruptSource;
 use runinator_models::workflow_vm::{
     WorkflowEffectOutput, WorkflowEffectOutputEvent, WorkflowJournalEntry,
@@ -13,6 +12,10 @@ use runinator_models::{
     notifications::NotificationDeliveryStatus, workflow_vm::WorkflowEffectStatus,
 };
 use runinator_runtime::workflow_vm::interrupt_handler_continuation;
+use runinator_store::{
+    RuntimeStore,
+    roles::{NotificationStore, WorkflowVmStore},
+};
 use tokio::sync::Notify;
 use tracing::{error, info, warn};
 
@@ -20,7 +23,7 @@ const EFFECT_RESULT_CONSUMER_ID: &str = "runinator-ws-effects";
 
 /// Consume effect results independently of the legacy node-run result channel. A stale attempt is
 /// harmless: `settle_workflow_effect` returns `false`, after which this delivery is acknowledged.
-pub async fn run_effect_result_consumer<T: DatabaseImpl>(
+pub async fn run_effect_result_consumer<T: WorkflowVmStore + NotificationStore + RuntimeStore>(
     db: Arc<T>,
     broker: Arc<dyn Broker>,
     publisher: crate::events::EnginePublisher,
@@ -194,7 +197,7 @@ pub async fn run_effect_result_consumer<T: DatabaseImpl>(
 ///
 /// A non-terminal status, a non-retryable terminal, or an exhausted budget all return `false`, at
 /// which point the caller settles the effect exactly as it did before retries existed.
-async fn schedule_retry<T: DatabaseImpl>(
+async fn schedule_retry<T: WorkflowVmStore>(
     db: &T,
     effect_id: uuid::Uuid,
     attempt: u32,
@@ -249,7 +252,7 @@ async fn schedule_retry<T: DatabaseImpl>(
 /// and suspending it would stop the retried effect from ever settling it. The handler therefore
 /// observes the retry and hands nothing back — its `resume` retires it and leaves the main flow to
 /// the attempt now queued.
-async fn raise_retry_interrupt<T: DatabaseImpl>(
+async fn raise_retry_interrupt<T: WorkflowVmStore>(
     db: &T,
     effect: &runinator_models::workflow_vm::WorkflowEffect,
     attempt: u32,

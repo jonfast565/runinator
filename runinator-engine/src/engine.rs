@@ -1,8 +1,14 @@
 use std::sync::Arc;
 
 use runinator_broker_core::Broker;
-use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::errors::SendableError;
+use runinator_store::{
+    RuntimeStore,
+    roles::{
+        DefinitionStore, NotificationStore, OrgStore, ReplicaStore, RunStore, ScheduleStore,
+        WorkflowVmStore,
+    },
+};
 use tokio::sync::Notify;
 use tokio::task::JoinSet;
 use tracing::{error, info};
@@ -40,6 +46,35 @@ impl EngineConfig {
     }
 }
 
+/// Persistence required by the background-engine lifecycle.
+///
+/// This is a use-case boundary, not a catch-all repository: it names the durable queues and
+/// records the long-running orchestration loops coordinate. Authentication, function packages,
+/// task-run history, and schema initialization deliberately stay outside it.
+pub trait BackgroundEngineStore:
+    RuntimeStore
+    + WorkflowVmStore
+    + RunStore
+    + NotificationStore
+    + ReplicaStore
+    + OrgStore
+    + ScheduleStore
+    + DefinitionStore
+{
+}
+
+impl<T> BackgroundEngineStore for T where
+    T: RuntimeStore
+        + WorkflowVmStore
+        + RunStore
+        + NotificationStore
+        + ReplicaStore
+        + OrgStore
+        + ScheduleStore
+        + DefinitionStore
+{
+}
+
 #[cfg(test)]
 mod tests {
     use super::EngineConfig;
@@ -71,7 +106,7 @@ mod tests {
 /// the engine is safe to run N-up: the broker consumers compete on shared consumer ids, the trigger
 /// and notification-effect loops claim disjoint rows per `instance_id`, and the reapers are
 /// idempotent.
-pub async fn run_background_engine<T: DatabaseImpl>(
+pub async fn run_background_engine<T: BackgroundEngineStore>(
     pool: Arc<T>,
     broker: Arc<dyn Broker>,
     publisher: EnginePublisher,

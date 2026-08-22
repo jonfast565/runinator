@@ -15,12 +15,15 @@ use runinator_blob_core::{
     BlobError, BlobStore, ByteRange, FUNCTION_ARTIFACT_BUCKET, ObjectKey, PutOptions, blob_uri,
     parse_blob_uri, sha256_hex,
 };
-use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::errors::SendableError;
 use runinator_models::functions::{
     ARTIFACT_MEDIA_TYPE, DEFAULT_ALIAS, FunctionAlias, FunctionArtifact, FunctionCatalogEntry,
     FunctionExport, FunctionInvocationTarget, FunctionPackage, FunctionPackageDetail,
     FunctionVersion, FunctionVersionRef, NewFunctionVersion, digest_from_hex, is_valid_digest,
+};
+use runinator_store::{
+    RuntimeStore,
+    roles::{DefinitionStore, FunctionStore},
 };
 use tokio::io::AsyncRead;
 use uuid::Uuid;
@@ -56,7 +59,7 @@ fn artifact_key(digest: &str) -> Result<ObjectKey, SendableError> {
 /// the digest is verified against the bytes rather than trusted. everything downstream — pinning, a
 /// worker's cache, "republishing identical bytes is free" — assumes the digest names these exact
 /// bytes, and a caller that got it wrong would poison all three.
-pub async fn put_artifact_if_absent<T: DatabaseImpl>(
+pub async fn put_artifact_if_absent<T: FunctionStore>(
     db: &T,
     blobs: &Arc<dyn BlobStore>,
     digest: &str,
@@ -100,7 +103,7 @@ pub async fn put_artifact_if_absent<T: DatabaseImpl>(
 }
 
 /// fetch an artifact record by digest.
-pub async fn fetch_artifact<T: DatabaseImpl>(
+pub async fn fetch_artifact<T: FunctionStore>(
     db: &T,
     digest: &str,
 ) -> Result<Option<FunctionArtifact>, SendableError> {
@@ -108,7 +111,7 @@ pub async fn fetch_artifact<T: DatabaseImpl>(
 }
 
 /// open an artifact's bytes, optionally a byte range of them.
-pub async fn open_artifact<T: DatabaseImpl>(
+pub async fn open_artifact<T: FunctionStore>(
     db: &T,
     blobs: &Arc<dyn BlobStore>,
     digest: &str,
@@ -133,7 +136,7 @@ pub async fn open_artifact<T: DatabaseImpl>(
 }
 
 /// delete an artifact's row and its bytes. refused while a version still references it.
-pub async fn delete_artifact<T: DatabaseImpl>(
+pub async fn delete_artifact<T: FunctionStore>(
     db: &T,
     blobs: &Arc<dyn BlobStore>,
     digest: &str,
@@ -155,7 +158,7 @@ pub async fn delete_artifact<T: DatabaseImpl>(
 }
 
 /// publish one version, refusing a publish whose artifact was never uploaded.
-pub async fn publish_version<T: DatabaseImpl>(
+pub async fn publish_version<T: FunctionStore + RuntimeStore + DefinitionStore>(
     db: &T,
     request: &NewFunctionVersion,
 ) -> Result<FunctionVersion, SendableError> {
@@ -187,7 +190,7 @@ pub async fn publish_version<T: DatabaseImpl>(
 ///
 /// `ProviderMetadata.name` is free-form and dotted names already validate, so this needs no new
 /// item type — it is an ordinary catalog row that every existing reader already understands.
-pub async fn sync_provider_catalog<T: DatabaseImpl>(
+pub async fn sync_provider_catalog<T: FunctionStore + DefinitionStore>(
     db: &T,
     package_id: Uuid,
 ) -> Result<(), SendableError> {
@@ -246,14 +249,14 @@ pub async fn sync_provider_catalog<T: DatabaseImpl>(
 }
 
 /// every package, newest first.
-pub async fn fetch_packages<T: DatabaseImpl>(
+pub async fn fetch_packages<T: FunctionStore>(
     db: &T,
 ) -> Result<Vec<FunctionPackage>, SendableError> {
     db.fetch_function_packages().await
 }
 
 /// one package with its versions, aliases, and the exports of its default alias.
-pub async fn fetch_package_detail<T: DatabaseImpl>(
+pub async fn fetch_package_detail<T: FunctionStore>(
     db: &T,
     org_id: Option<Uuid>,
     namespace: Option<&str>,
@@ -288,7 +291,7 @@ pub async fn fetch_package_detail<T: DatabaseImpl>(
 /// here rather than in the handler because it is three chained row reads, which is orchestration by
 /// the definition `AGENTS.md` uses; the handler keeps the authorization decision it makes with the
 /// answer.
-pub async fn fetch_export_package<T: DatabaseImpl>(
+pub async fn fetch_export_package<T: FunctionStore>(
     db: &T,
     export_id: Uuid,
 ) -> Result<Option<FunctionPackage>, SendableError> {
@@ -306,7 +309,7 @@ pub async fn fetch_export_package<T: DatabaseImpl>(
 /// an artifact is content-addressed and therefore shared: two packages that published identical
 /// bytes have the same digest, so this returns all of them and lets the caller decide which it may
 /// see.
-pub async fn packages_with_artifact<T: DatabaseImpl>(
+pub async fn packages_with_artifact<T: FunctionStore>(
     db: &T,
     digest: &str,
 ) -> Result<Vec<FunctionPackage>, SendableError> {
@@ -324,7 +327,7 @@ pub async fn packages_with_artifact<T: DatabaseImpl>(
 }
 
 /// a package's versions, newest first.
-pub async fn fetch_package_versions<T: DatabaseImpl>(
+pub async fn fetch_package_versions<T: FunctionStore>(
     db: &T,
     package_id: Uuid,
 ) -> Result<Vec<FunctionVersion>, SendableError> {
@@ -332,7 +335,7 @@ pub async fn fetch_package_versions<T: DatabaseImpl>(
 }
 
 /// archive a package and remove only its authoring catalog mirror.
-pub async fn delete_package<T: DatabaseImpl>(
+pub async fn delete_package<T: FunctionStore + DefinitionStore>(
     db: &T,
     package_id: Uuid,
 ) -> Result<bool, SendableError> {
@@ -357,7 +360,7 @@ pub async fn delete_package<T: DatabaseImpl>(
 }
 
 /// restore an archived package and rebuild its derived catalog mirror.
-pub async fn restore_package<T: DatabaseImpl>(
+pub async fn restore_package<T: FunctionStore + RuntimeStore + DefinitionStore>(
     db: &T,
     package_id: Uuid,
 ) -> Result<bool, SendableError> {
@@ -370,7 +373,7 @@ pub async fn restore_package<T: DatabaseImpl>(
 }
 
 /// point an alias at a version, named either by number or by another alias.
-pub async fn set_alias<T: DatabaseImpl>(
+pub async fn set_alias<T: FunctionStore + DefinitionStore>(
     db: &T,
     package_id: Uuid,
     alias: &str,
@@ -385,7 +388,7 @@ pub async fn set_alias<T: DatabaseImpl>(
 }
 
 /// delete an alias, leaving the version it named untouched.
-pub async fn delete_alias<T: DatabaseImpl>(
+pub async fn delete_alias<T: FunctionStore>(
     db: &T,
     package_id: Uuid,
     alias: &str,
@@ -394,7 +397,7 @@ pub async fn delete_alias<T: DatabaseImpl>(
 }
 
 /// resolve a version reference within a package.
-pub async fn resolve_version<T: DatabaseImpl>(
+pub async fn resolve_version<T: FunctionStore>(
     db: &T,
     package_id: Uuid,
     reference: &FunctionVersionRef,
@@ -418,7 +421,7 @@ pub async fn resolve_version<T: DatabaseImpl>(
 }
 
 /// resolve one export by package, version reference, and export name — the invocation path.
-pub async fn resolve_export<T: DatabaseImpl>(
+pub async fn resolve_export<T: FunctionStore>(
     db: &T,
     package: &FunctionPackage,
     reference: &FunctionVersionRef,
@@ -443,7 +446,7 @@ pub async fn resolve_export<T: DatabaseImpl>(
 ///
 /// this is the invocation path's single read. a version is immutable, so the answer never changes
 /// and a worker caches it for as long as it caches the code itself.
-pub async fn resolve_invocation_target<T: DatabaseImpl>(
+pub async fn resolve_invocation_target<T: FunctionStore>(
     db: &T,
     export_id: Uuid,
 ) -> Result<Option<FunctionInvocationTarget>, SendableError> {
@@ -479,7 +482,7 @@ pub const ARTIFACT_RETENTION_HOURS: i64 = 24;
 /// returns the digests removed. bytes are deleted through [`delete_artifact`], which refuses any
 /// artifact a version still pins — so a row that gained a reference between the scan and the delete
 /// is skipped rather than orphaning a live version.
-pub async fn sweep_unreferenced_artifacts<T: DatabaseImpl>(
+pub async fn sweep_unreferenced_artifacts<T: FunctionStore>(
     db: &T,
     blobs: &Arc<dyn BlobStore>,
     retention_hours: i64,
@@ -509,7 +512,7 @@ pub async fn sweep_unreferenced_artifacts<T: DatabaseImpl>(
 }
 
 /// the flattened catalog of every published export.
-pub async fn fetch_catalog<T: DatabaseImpl>(
+pub async fn fetch_catalog<T: FunctionStore>(
     db: &T,
 ) -> Result<Vec<FunctionCatalogEntry>, SendableError> {
     db.fetch_function_catalog().await

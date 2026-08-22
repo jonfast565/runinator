@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use axum::{Extension, Json, extract::Path, http::StatusCode};
 use runinator_comm::DebugVerb;
-use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::auth::{AuthContext, Permission};
+use runinator_store::{RuntimeStore, roles::WorkflowVmStore};
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -12,11 +12,11 @@ use runinator_ws_core::events::{EventSender, emit_workflow_run};
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::openapi::docs::{EndpointDoc, Example, endpoint, json_body};
 use runinator_ws_core::responses::bad_request;
-use runinator_ws_middleware::authz::AuthzChecker;
+use runinator_ws_middleware::authz::{AuthorizationStore, AuthzChecker};
 
 /// Unified VM debugger entrypoint. The VM supports continuation-scoped Step and Continue only;
 /// reducer-era node mutation, breakpoint, and speculative-cursor commands were removed.
-pub async fn debug_command<T: DatabaseImpl>(
+pub async fn debug_command<T: AuthorizationStore + RuntimeStore + WorkflowVmStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<AuthContext>,
@@ -51,7 +51,7 @@ fn cursor_of(body: &Option<Json<CursorRequest>>) -> Option<Uuid> {
     body.as_ref().and_then(|Json(req)| req.cursor)
 }
 
-pub async fn step_debug_workflow_run<T: DatabaseImpl>(
+pub async fn step_debug_workflow_run<T: AuthorizationStore + RuntimeStore + WorkflowVmStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<AuthContext>,
@@ -74,7 +74,7 @@ pub async fn step_debug_workflow_run<T: DatabaseImpl>(
     }
 }
 
-pub async fn continue_debug_workflow_run<T: DatabaseImpl>(
+pub async fn continue_debug_workflow_run<T: AuthorizationStore + RuntimeStore + WorkflowVmStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
     Extension(ctx): Extension<AuthContext>,
@@ -97,7 +97,9 @@ pub async fn continue_debug_workflow_run<T: DatabaseImpl>(
     }
 }
 
-pub fn routes<T: DatabaseImpl>(pool: Arc<T>) -> axum::Router {
+pub fn routes<T: AuthorizationStore + RuntimeStore + WorkflowVmStore>(
+    pool: Arc<T>,
+) -> axum::Router {
     use axum::routing::post;
 
     axum::Router::new()

@@ -5,11 +5,11 @@ use runinator_broker_core::{Broker, BrokerError};
 use runinator_comm::{
     ActionTarget, AgentCommand, AgentDirectiveKind, AgentDirectiveRecord, AgentDirectiveResult,
 };
-use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::errors::SendableError;
+use runinator_store::roles::ReplicaStore;
 use uuid::Uuid;
 
-pub async fn enqueue_agent_directive<T: DatabaseImpl>(
+pub async fn enqueue_agent_directive<T: ReplicaStore>(
     db: &T,
     replica_id: Uuid,
     kind: AgentDirectiveKind,
@@ -19,14 +19,14 @@ pub async fn enqueue_agent_directive<T: DatabaseImpl>(
         .await
 }
 
-pub async fn fetch_agent_directive<T: DatabaseImpl>(
+pub async fn fetch_agent_directive<T: ReplicaStore>(
     db: &T,
     directive_id: Uuid,
 ) -> Result<Option<AgentDirectiveRecord>, SendableError> {
     db.fetch_agent_directive(directive_id).await
 }
 
-pub async fn list_agent_directives<T: DatabaseImpl>(
+pub async fn list_agent_directives<T: ReplicaStore>(
     db: &T,
     replica_id: Uuid,
     limit: i64,
@@ -34,14 +34,14 @@ pub async fn list_agent_directives<T: DatabaseImpl>(
     db.list_agent_directives(replica_id, limit).await
 }
 
-pub async fn complete_agent_directive<T: DatabaseImpl>(
+pub async fn complete_agent_directive<T: ReplicaStore>(
     db: &T,
     result: AgentDirectiveResult,
 ) -> Result<Option<AgentDirectiveRecord>, SendableError> {
     db.complete_agent_directive(result).await
 }
 
-pub async fn publish_due_agent_directives<T: DatabaseImpl>(
+pub async fn publish_due_agent_directives<T: ReplicaStore>(
     db: &T,
     broker: &dyn Broker,
     runtime_id: &str,

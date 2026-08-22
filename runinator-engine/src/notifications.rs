@@ -11,7 +11,6 @@
 use std::sync::Arc;
 
 use runinator_comm::{EffectCommand, EffectExecutor};
-use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::errors::{SendableError, error_code_or_unknown};
 use runinator_models::notifications::{
     NewNotification, NotificationChannel, NotificationEvent, NotificationPolicy,
@@ -20,6 +19,10 @@ use runinator_models::value::Value;
 use runinator_models::workflow_vm::{WORKFLOW_EFFECT_PROTOCOL_VERSION, WorkflowEffectRequest};
 use runinator_models::workflows::{WorkflowRun, WorkflowStatus};
 use runinator_models::{settings::SettingKind, settings::SettingRecord};
+use runinator_store::{
+    RuntimeStore,
+    roles::{NotificationStore, RunStore, WorkflowVmStore},
+};
 use runinator_utilities::secret_cipher::SecretCipher;
 use runinator_utilities::stored_secret::secret_expiry_occurrence;
 use tokio::sync::Notify;
@@ -51,7 +54,11 @@ struct EmissionContext {
 
 /// evaluate the run-terminal policies for a run that has just settled. a run that ended anywhere
 /// other than failed/timed-out is not an alertable condition and returns without querying policies.
-pub async fn on_run_terminal<T: DatabaseImpl>(db: &T, events: &EventSender, workflow_run_id: Uuid) {
+pub async fn on_run_terminal<T: RuntimeStore + NotificationStore + RunStore + WorkflowVmStore>(
+    db: &T,
+    events: &EventSender,
+    workflow_run_id: Uuid,
+) {
     let Ok(Some(run)) = db.fetch_workflow_run(workflow_run_id).await else {
         return;
     };
@@ -83,7 +90,9 @@ pub async fn on_run_terminal<T: DatabaseImpl>(db: &T, events: &EventSender, work
 
 /// periodically emit scan-based events, which have no transition to hang off. each policy's
 /// threshold is applied to the matching run or secret.
-pub async fn run_notification_scanner<T: DatabaseImpl>(
+pub async fn run_notification_scanner<
+    T: RuntimeStore + NotificationStore + RunStore + WorkflowVmStore,
+>(
     db: Arc<T>,
     events: EventSender,
     shutdown: Arc<Notify>,
@@ -112,7 +121,10 @@ pub async fn run_notification_scanner<T: DatabaseImpl>(
 }
 
 /// one sweep across secret expiry and duration-based run events.
-async fn scan_once<T: DatabaseImpl>(db: &T, events: &EventSender) -> Result<(), SendableError> {
+async fn scan_once<T: RuntimeStore + NotificationStore + RunStore + WorkflowVmStore>(
+    db: &T,
+    events: &EventSender,
+) -> Result<(), SendableError> {
     scan_secret_expiry(db, events, chrono::Utc::now()).await?;
     for event in [
         NotificationEvent::RunSlaBreached,
@@ -141,7 +153,9 @@ async fn scan_once<T: DatabaseImpl>(db: &T, events: &EventSender) -> Result<(), 
             if event == NotificationEvent::RunParked && !is_parked(run.status) {
                 continue;
             }
-            let age = (chrono::Utc::now() - run.created_at).num_seconds();
+            let age = chrono::Utc::now()
+                .signed_duration_since(run.created_at)
+                .num_seconds();
             let context_builder = EmissionContextBuilder { db, run: &run };
             let dispatcher = NotificationDispatcher { db, events };
             for policy in &policies {
@@ -166,7 +180,7 @@ async fn scan_once<T: DatabaseImpl>(db: &T, events: &EventSender) -> Result<(), 
 /// opened only long enough to read the envelope metadata; notification content never includes the
 /// value. a policy/secret/expiry/window tuple is the logical occurrence, so repeated scans dedupe
 /// while a rotated secret with a new expiry can warn again.
-async fn scan_secret_expiry<T: DatabaseImpl>(
+async fn scan_secret_expiry<T: RuntimeStore + NotificationStore + RunStore + WorkflowVmStore>(
     db: &T,
     events: &EventSender,
     now: chrono::DateTime<chrono::Utc>,
@@ -277,12 +291,15 @@ fn policy_covers(policy: &NotificationPolicy, workflow_id: Uuid) -> bool {
 
 /// dispatches fired policies to persistence and delivery. `db` and `events` are invariant across
 /// every method here — one dispatcher serves an entire scan or terminal-transition callback.
-struct NotificationDispatcher<'a, T: DatabaseImpl> {
+struct NotificationDispatcher<'a, T: RuntimeStore + NotificationStore + RunStore + WorkflowVmStore>
+{
     db: &'a T,
     events: &'a EventSender,
 }
 
-impl<T: DatabaseImpl> NotificationDispatcher<'_, T> {
+impl<T: RuntimeStore + NotificationStore + RunStore + WorkflowVmStore>
+    NotificationDispatcher<'_, T>
+{
     /// load the policies for one transition-based event and fire each.
     async fn dispatch_event(
         &self,
@@ -466,12 +483,15 @@ fn delivery_configuration(
 
 /// builds emission contexts (the facts a fired policy renders its message from) for one run. `db`
 /// and `run` are invariant across every method here.
-struct EmissionContextBuilder<'a, T: DatabaseImpl> {
+struct EmissionContextBuilder<'a, T: RuntimeStore + NotificationStore + RunStore + WorkflowVmStore>
+{
     db: &'a T,
     run: &'a WorkflowRun,
 }
 
-impl<T: DatabaseImpl> EmissionContextBuilder<'_, T> {
+impl<T: RuntimeStore + NotificationStore + RunStore + WorkflowVmStore>
+    EmissionContextBuilder<'_, T>
+{
     /// render the message for a failed run.
     async fn run_failed(&self) -> EmissionContext {
         let run = self.run;

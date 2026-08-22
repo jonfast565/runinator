@@ -16,7 +16,7 @@ The guiding constraint from `AGENTS.md`: keep dependency direction services→sh
 
 | # | Item | Band | Owning crates |
 |---|------|------|---------------|
-| 8.1 | Narrow persistence contracts | **P1** | store, engine, ws-* |
+| 8.1 | Narrow persistence contracts | **shipped 2026-08-22** | store, engine, ws-* |
 | 8.2 | Application-service boundary for HTTP | **P1** | engine, ws-* |
 | 8.3 | Restore broker-only waker | **shipped 2026-08-22** | waker, service-bootstrap |
 | 6.8 | Secret expiry warnings | **P1** | engine, utilities |
@@ -38,12 +38,10 @@ The guiding constraint from `AGENTS.md`: keep dependency direction services→sh
 
 ## P1 — close correctness and boundary gaps
 
-### 8.1 Narrow persistence contracts
-- **Owning crates:** `runinator-store`, `runinator-engine`, `runinator-ws-middleware`, `runinator-ws-identity`, `runinator-ws-authoring`, `runinator-ws-runtime`.
-- **Surveyed 2026-08-22:** `runinator-store` already owns the role-based contract, but the engine retains a production dependency on `runinator-database` solely through its re-exported `DatabaseImpl` surface. The engine contains 192 `T: DatabaseImpl` bounds; the HTTP handler crates contain another 279. `DatabaseImpl` composes 17 role traits, so callers that need a small storage slice inherit the complete persistence API.
-- **Approach:** import contracts from `runinator-store` directly. Replace broad bounds with the owning role traits (`AuthStore + RbacStore` for authentication, for example); where one atomic use case truly spans roles, add a small named use-case trait such as `PipelineStore` rather than growing a generic repository bound. Keep SQL implementations and dialect mapping in `runinator-database`.
-- **Migration:** first sever the engine's production dependency on `runinator-database`, then narrow the authentication middleware, then migrate handler domains one at a time. Preserve `DatabaseImpl` only for composition roots and genuine whole-store tasks such as schema initialization.
-- **Why P1:** this turns the existing test seam into a real one, reduces the blast radius of schema work, and prevents database-specific dependencies from creeping into orchestration.
+### 8.1 Narrow persistence contracts — shipped 2026-08-22
+- **Delivered:** `runinator-engine` now depends on `runinator-store` in production and reserves `runinator-database` for SQLite-backed tests. Repository and loop bounds use their owning role traits; `BackgroundEngineStore` names the durable background-loop slice.
+- **HTTP boundary:** `runinator-ws-middleware`, `runinator-ws-identity`, `runinator-ws-authoring`, and `runinator-ws-runtime` no longer declare a concrete-database dependency. Authentication uses `AuthStore + RbacStore`; `AuthorizationStore` and `RunOperationsStore` name the genuine cross-domain authorization and run-operation use cases, while CRUD and single-domain endpoints bind directly to role contracts.
+- **Composition rule:** `DatabaseImpl` remains only the full-store composition contract, used for schema initialization and composition roots. SQL implementations and dialect mapping remain in `runinator-database`.
 
 ### 8.2 Application-service boundary for HTTP
 - **Owning crates:** `runinator-engine`, `runinator-ws-core`, `runinator-ws-identity`, `runinator-ws-authoring`, `runinator-ws-runtime`.

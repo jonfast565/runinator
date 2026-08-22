@@ -9,9 +9,9 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use runinator_blob_core::BlobStore;
-use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::auth::AuthContext;
 use runinator_models::runs::NewRunArtifact;
+use runinator_store::{RuntimeStore, roles::TaskRunStore};
 
 use runinator_engine::repository;
 use runinator_ws_core::events::{AppEvent, AppEventKind, EventSender, emit};
@@ -20,7 +20,7 @@ use runinator_ws_core::openapi::docs::{EndpointDoc, Example, RequestDoc, endpoin
 use runinator_ws_core::responses::{api_error, bad_request};
 use runinator_ws_middleware::authz::AuthContextExt;
 
-pub async fn get_run_artifacts<T: DatabaseImpl>(
+pub async fn get_run_artifacts<T: TaskRunStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(run_id): Path<Uuid>,
@@ -38,7 +38,7 @@ pub async fn get_run_artifacts<T: DatabaseImpl>(
     }
 }
 
-pub async fn add_run_artifact<T: DatabaseImpl>(
+pub async fn add_run_artifact<T: TaskRunStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(run_id): Path<Uuid>,
@@ -60,7 +60,7 @@ pub async fn add_run_artifact<T: DatabaseImpl>(
     }
 }
 
-pub async fn list_artifacts<T: DatabaseImpl>(
+pub async fn list_artifacts<T: TaskRunStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -77,7 +77,7 @@ pub async fn list_artifacts<T: DatabaseImpl>(
     }
 }
 
-pub async fn upload_artifact<T: DatabaseImpl>(
+pub async fn upload_artifact<T: TaskRunStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(blobs): Extension<Arc<dyn BlobStore>>,
     Extension(events): Extension<EventSender>,
@@ -191,7 +191,7 @@ pub async fn upload_artifact<T: DatabaseImpl>(
     }
 }
 
-pub async fn delete_artifact<T: DatabaseImpl>(
+pub async fn delete_artifact<T: TaskRunStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(blobs): Extension<Arc<dyn BlobStore>>,
     Extension(ctx): Extension<AuthContext>,
@@ -221,7 +221,7 @@ pub async fn delete_artifact<T: DatabaseImpl>(
     }
 }
 
-pub async fn download_artifact<T: DatabaseImpl>(
+pub async fn download_artifact<T: TaskRunStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(blobs): Extension<Arc<dyn BlobStore>>,
     Extension(ctx): Extension<AuthContext>,
@@ -340,7 +340,7 @@ pub async fn upload_artifact_content(
 }
 
 /// the `artifacts` endpoints.
-pub fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
+pub fn routes<T: TaskRunStore + RuntimeStore>(pool: std::sync::Arc<T>) -> axum::Router {
     use axum::Extension;
     use axum::routing::{delete, get, post};
     axum::Router::new()

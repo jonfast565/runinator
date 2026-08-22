@@ -10,7 +10,6 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::{Duration, Utc};
 use runinator_auth::enroll::EnrollToken;
-use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::auth::{
     AddTeamMemberRequest, AgentEnrollmentToken, AgentEnrollmentTokenRecord, ApiKey, ApiKeyRecord,
     AuthContext, AuthSession, CreateAgentEnrollmentTokenRequest,
@@ -22,6 +21,10 @@ use runinator_models::auth::{
 use runinator_models::rbac::{Action, PlatformRole, Role, ScopeKind, ScopeRef, SystemRole};
 use runinator_models::settings::SettingKind;
 use runinator_models::value::Value;
+use runinator_store::{
+    RuntimeStore,
+    roles::{AuthStore, RbacStore, SettingStore},
+};
 use runinator_utilities::secret_cipher::SecretCipher;
 use serde::Serialize;
 use uuid::Uuid;
@@ -50,7 +53,9 @@ pub struct AuthSettingsRequest {
     pub max_refreshes: i64,
 }
 
-async fn max_refreshes<T: DatabaseImpl>(db: &T) -> Result<i64, Reply> {
+async fn max_refreshes<T: AuthStore + RbacStore + RuntimeStore + SettingStore>(
+    db: &T,
+) -> Result<i64, Reply> {
     let Some(record) = db
         .fetch_setting(
             SettingKind::Config,
@@ -100,7 +105,9 @@ fn too_many_requests(retry_after_secs: f64) -> Reply {
     )
 }
 
-async fn enabled_admin_count<T: DatabaseImpl>(db: &T) -> Result<usize, Reply> {
+async fn enabled_admin_count<T: AuthStore + RbacStore + RuntimeStore>(
+    db: &T,
+) -> Result<usize, Reply> {
     let assignments = db
         .list_scope_role_assignments(ScopeRef::PLATFORM)
         .await
@@ -126,7 +133,7 @@ async fn enabled_admin_count<T: DatabaseImpl>(db: &T) -> Result<usize, Reply> {
     Ok(count)
 }
 
-async fn would_remove_last_enabled_admin<T: DatabaseImpl>(
+async fn would_remove_last_enabled_admin<T: AuthStore + RbacStore + RuntimeStore>(
     db: &T,
     user: &User,
     removes_admin: bool,
@@ -160,7 +167,10 @@ fn ok_value<T: Serialize>(value: &T) -> Reply {
     }
 }
 
-async fn user_with_platform_role<T: DatabaseImpl>(db: &T, user: &User) -> Result<Value, Reply> {
+async fn user_with_platform_role<T: AuthStore + RbacStore + RuntimeStore>(
+    db: &T,
+    user: &User,
+) -> Result<Value, Reply> {
     let mut value = serde_json::to_value(user).map_err(|err| api_error(err.to_string()))?;
     let id = user.id.ok_or_else(|| api_error("stored user has no id"))?;
     let role = db
@@ -185,7 +195,7 @@ async fn user_with_platform_role<T: DatabaseImpl>(db: &T, user: &User) -> Result
 
 // ---- session helpers ----
 
-async fn issue_session<T: DatabaseImpl>(
+async fn issue_session<T: AuthStore + RbacStore + RuntimeStore + SettingStore>(
     db: &T,
     config: &AuthConfig,
     user: User,
@@ -269,7 +279,7 @@ pub async fn auth_config(Extension(config): Extension<Arc<AuthConfig>>) -> Reply
         (status = 401, description = "invalid username or password", body = ApiError),
     ),
 )]
-pub async fn login<T: DatabaseImpl>(
+pub async fn login<T: AuthStore + RbacStore + RuntimeStore + SettingStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(config): Extension<Arc<AuthConfig>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
@@ -327,7 +337,11 @@ pub async fn login<T: DatabaseImpl>(
 }
 
 /// record a failed login attempt without leaking the credential material.
-async fn audit_login_failure<T: DatabaseImpl>(db: &T, username: &str, reason: &str) {
+async fn audit_login_failure<T: AuthStore + RbacStore + RuntimeStore>(
+    db: &T,
+    username: &str,
+    reason: &str,
+) {
     crate::audit::record_audit(
         db,
         None,
@@ -341,7 +355,7 @@ async fn audit_login_failure<T: DatabaseImpl>(db: &T, username: &str, reason: &s
     .await;
 }
 
-async fn audit_credential_change<T: DatabaseImpl>(
+async fn audit_credential_change<T: AuthStore + RbacStore + RuntimeStore>(
     db: &T,
     ctx: &AuthContext,
     action: &str,
@@ -371,7 +385,7 @@ async fn audit_credential_change<T: DatabaseImpl>(
         (status = 401, description = "invalid or expired refresh token", body = ApiError),
     ),
 )]
-pub async fn refresh<T: DatabaseImpl>(
+pub async fn refresh<T: AuthStore + RbacStore + RuntimeStore + SettingStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(config): Extension<Arc<AuthConfig>>,
     Json(request): Json<RefreshRequest>,
@@ -417,7 +431,7 @@ pub async fn refresh<T: DatabaseImpl>(
     tag = "Auth",
     responses((status = 200, description = "refresh policy", body = serde_json::Value)),
 )]
-pub async fn auth_settings<T: DatabaseImpl>(
+pub async fn auth_settings<T: AuthStore + RbacStore + RuntimeStore + SettingStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> Reply {
@@ -442,7 +456,7 @@ pub async fn auth_settings<T: DatabaseImpl>(
     request_body = serde_json::Value,
     responses((status = 200, description = "refresh policy saved", body = serde_json::Value)),
 )]
-pub async fn update_auth_settings<T: DatabaseImpl>(
+pub async fn update_auth_settings<T: AuthStore + RbacStore + RuntimeStore + SettingStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<AuthSettingsRequest>,
@@ -490,7 +504,7 @@ pub async fn update_auth_settings<T: DatabaseImpl>(
         (status = 401, description = "request is missing or has an invalid credential", body = ApiError),
     ),
 )]
-pub async fn logout<T: DatabaseImpl>(
+pub async fn logout<T: AuthStore + RbacStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Json(request): Json<RefreshRequest>,
 ) -> Reply {
@@ -510,7 +524,7 @@ pub async fn logout<T: DatabaseImpl>(
     tag = "Auth",
     responses((status = 200, description = "current principal", body = serde_json::Value)),
 )]
-pub async fn me<T: DatabaseImpl>(
+pub async fn me<T: AuthStore + RbacStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> Reply {
@@ -550,7 +564,7 @@ pub async fn me<T: DatabaseImpl>(
 
 // ---- user administration (admin only) ----
 
-pub async fn list_users<T: DatabaseImpl>(
+pub async fn list_users<T: AuthStore + RbacStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> Reply {
@@ -575,7 +589,7 @@ pub async fn list_users<T: DatabaseImpl>(
     }
 }
 
-pub async fn create_user<T: DatabaseImpl>(
+pub async fn create_user<T: AuthStore + RbacStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<CreateUserRequest>,
@@ -608,7 +622,7 @@ pub async fn create_user<T: DatabaseImpl>(
     }
 }
 
-pub async fn update_user<T: DatabaseImpl>(
+pub async fn update_user<T: AuthStore + RbacStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(user_id): Path<Uuid>,
@@ -677,7 +691,7 @@ pub async fn update_user<T: DatabaseImpl>(
     }
 }
 
-pub async fn delete_user<T: DatabaseImpl>(
+pub async fn delete_user<T: AuthStore + RbacStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(user_id): Path<Uuid>,
@@ -706,7 +720,7 @@ pub async fn delete_user<T: DatabaseImpl>(
 
 // ---- api keys ----
 
-pub async fn list_api_keys<T: DatabaseImpl>(
+pub async fn list_api_keys<T: AuthStore + RbacStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> Reply {
@@ -725,7 +739,7 @@ pub async fn list_api_keys<T: DatabaseImpl>(
     }
 }
 
-pub async fn create_api_key<T: DatabaseImpl>(
+pub async fn create_api_key<T: AuthStore + RbacStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<CreateApiKeyRequest>,
@@ -810,7 +824,7 @@ pub async fn create_api_key<T: DatabaseImpl>(
     }
 }
 
-pub async fn update_api_key<T: DatabaseImpl>(
+pub async fn update_api_key<T: AuthStore + RbacStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(key_id): Path<Uuid>,
@@ -836,7 +850,7 @@ pub async fn update_api_key<T: DatabaseImpl>(
     }
 }
 
-pub async fn rotate_api_key<T: DatabaseImpl>(
+pub async fn rotate_api_key<T: AuthStore + RbacStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(key_id): Path<Uuid>,
@@ -883,7 +897,7 @@ pub async fn rotate_api_key<T: DatabaseImpl>(
     }
 }
 
-pub async fn revoke_api_key<T: DatabaseImpl>(
+pub async fn revoke_api_key<T: AuthStore + RbacStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(key_id): Path<Uuid>,
@@ -922,7 +936,7 @@ fn can_manage_api_key(ctx: &AuthContext, key: &ApiKey) -> bool {
 const MAX_ENROLLMENT_TTL_SECONDS: u64 = 86_400;
 const ENROLLMENT_REJECTED: &str = "enrollment rejected";
 
-pub async fn create_agent_enrollment_token<T: DatabaseImpl>(
+pub async fn create_agent_enrollment_token<T: AuthStore + RbacStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<CreateAgentEnrollmentTokenRequest>,
@@ -987,7 +1001,7 @@ pub async fn create_agent_enrollment_token<T: DatabaseImpl>(
     }
 }
 
-pub async fn list_agent_enrollment_tokens<T: DatabaseImpl>(
+pub async fn list_agent_enrollment_tokens<T: AuthStore + RbacStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> Reply {
@@ -1006,7 +1020,7 @@ pub async fn list_agent_enrollment_tokens<T: DatabaseImpl>(
     }
 }
 
-pub async fn delete_agent_enrollment_token<T: DatabaseImpl>(
+pub async fn delete_agent_enrollment_token<T: AuthStore + RbacStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(token_id): Path<String>,
@@ -1023,7 +1037,7 @@ pub async fn delete_agent_enrollment_token<T: DatabaseImpl>(
     }
 }
 
-pub async fn enroll_agent<T: DatabaseImpl>(
+pub async fn enroll_agent<T: AuthStore + RbacStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(request): Json<EnrollAgentRequest>,
@@ -1049,7 +1063,7 @@ pub async fn enroll_agent<T: DatabaseImpl>(
     }
 }
 
-async fn authorize_enrollment<T: DatabaseImpl>(
+async fn authorize_enrollment<T: AuthStore + RbacStore + RuntimeStore>(
     db: &T,
     request: EnrollAgentRequest,
 ) -> Result<Option<EnrollAgentResponse>, runinator_models::errors::SendableError> {
@@ -1130,7 +1144,7 @@ async fn authorize_enrollment<T: DatabaseImpl>(
 
 // ---- teams (admin only) ----
 
-pub async fn list_teams<T: DatabaseImpl>(
+pub async fn list_teams<T: AuthStore + RbacStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> Reply {
@@ -1149,7 +1163,7 @@ pub async fn list_teams<T: DatabaseImpl>(
     }
 }
 
-pub async fn list_user_teams<T: DatabaseImpl>(
+pub async fn list_user_teams<T: AuthStore + RbacStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(user_id): Path<Uuid>,
@@ -1169,7 +1183,7 @@ pub async fn list_user_teams<T: DatabaseImpl>(
     }
 }
 
-pub async fn create_team<T: DatabaseImpl>(
+pub async fn create_team<T: AuthStore + RbacStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<CreateTeamRequest>,
@@ -1190,7 +1204,7 @@ pub async fn create_team<T: DatabaseImpl>(
     }
 }
 
-pub async fn update_team<T: DatabaseImpl>(
+pub async fn update_team<T: AuthStore + RbacStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(team_id): Path<Uuid>,
@@ -1208,7 +1222,7 @@ pub async fn update_team<T: DatabaseImpl>(
     }
 }
 
-pub async fn delete_team<T: DatabaseImpl>(
+pub async fn delete_team<T: AuthStore + RbacStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(team_id): Path<Uuid>,
@@ -1225,7 +1239,7 @@ pub async fn delete_team<T: DatabaseImpl>(
     }
 }
 
-pub async fn list_team_members<T: DatabaseImpl>(
+pub async fn list_team_members<T: AuthStore + RbacStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(team_id): Path<Uuid>,
@@ -1245,7 +1259,7 @@ pub async fn list_team_members<T: DatabaseImpl>(
     }
 }
 
-pub async fn add_team_member<T: DatabaseImpl>(
+pub async fn add_team_member<T: AuthStore + RbacStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(team_id): Path<Uuid>,
@@ -1266,7 +1280,7 @@ pub async fn add_team_member<T: DatabaseImpl>(
     }
 }
 
-pub async fn remove_team_member<T: DatabaseImpl>(
+pub async fn remove_team_member<T: AuthStore + RbacStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path((team_id, user_id)): Path<(Uuid, Uuid)>,
@@ -1284,7 +1298,9 @@ pub async fn remove_team_member<T: DatabaseImpl>(
 }
 
 /// the `auth` endpoints.
-pub fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
+pub fn routes<T: AuthStore + RbacStore + RuntimeStore + SettingStore>(
+    pool: std::sync::Arc<T>,
+) -> axum::Router {
     use axum::Extension;
     use axum::routing::{delete, get, patch, post};
     axum::Router::new()

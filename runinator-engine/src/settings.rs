@@ -8,10 +8,10 @@
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
-use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::settings::SettingKind;
 use runinator_models::types::RuninatorType;
 use runinator_models::value::Value;
+use runinator_store::RuntimeStore;
 use runinator_utilities::secret_cipher::SecretCipher;
 use runinator_utilities::stored_secret::StoredSecret;
 
@@ -144,7 +144,7 @@ fn settings_cipher() -> SecretCipher {
 /// the config type tree `{ <scope>: { <name>: <type> } }` used to type-check `config.*` references
 /// at workflow validation. each level is an open struct, so a not-yet-configured scope or name
 /// stays permissive (`any`) rather than failing validation.
-pub async fn config_type_tree<T: DatabaseImpl>(db: &T) -> RuninatorType {
+pub async fn config_type_tree<T: RuntimeStore>(db: &T) -> RuninatorType {
     let cipher = settings_cipher();
     let Ok(entries) = db.list_settings().await else {
         return RuninatorType::map(RuninatorType::Any);

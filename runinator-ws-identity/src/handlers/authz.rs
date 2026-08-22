@@ -4,7 +4,6 @@ use std::sync::Arc;
 
 use axum::{Extension, Json, extract::Path, http::StatusCode};
 use chrono::Utc;
-use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::{
     auth::{
         AuthContext, CreateGrantRequest, Grant, Permission, PrincipalKind, PrincipalType,
@@ -19,13 +18,14 @@ use runinator_ws_core::{
     openapi::docs::{EndpointDoc, EndpointPolicy, Example, endpoint_with_policy, json_body},
     responses::{api_error, bad_request, not_found, task_response_success},
 };
+use runinator_ws_middleware::authz::AuthorizationStore;
 use runinator_ws_middleware::authz::{AuthContextExt, AuthzChecker};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 type Reply = (StatusCode, Json<ApiResponse>);
 
-async fn audit_change<T: DatabaseImpl>(
+async fn audit_change<T: AuthorizationStore>(
     db: &T,
     ctx: &AuthContext,
     action: &str,
@@ -129,7 +129,7 @@ fn role_matches_scope(role: Role, scope: ScopeRef) -> bool {
     )
 }
 
-async fn principal_exists<T: DatabaseImpl>(
+async fn principal_exists<T: AuthorizationStore>(
     db: &T,
     kind: PrincipalKind,
     id: Uuid,
@@ -148,7 +148,7 @@ async fn principal_exists<T: DatabaseImpl>(
     }
 }
 
-async fn authorize_scope_with_ancestry<T: DatabaseImpl>(
+async fn authorize_scope_with_ancestry<T: AuthorizationStore>(
     db: &T,
     ctx: &AuthContext,
     action: Action,
@@ -170,7 +170,7 @@ async fn authorize_scope_with_ancestry<T: DatabaseImpl>(
     Ok(ctx.authorize_scope(action, team.scope))
 }
 
-async fn can_assign<T: DatabaseImpl>(
+async fn can_assign<T: AuthorizationStore>(
     db: &T,
     ctx: &AuthContext,
     scope: ScopeRef,
@@ -221,7 +221,7 @@ pub async fn catalog(Extension(_ctx): Extension<AuthContext>) -> Reply {
     })
 }
 
-pub async fn list_assignments<T: DatabaseImpl>(
+pub async fn list_assignments<T: AuthorizationStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path((kind, id)): Path<(String, String)>,
@@ -252,7 +252,7 @@ pub async fn list_assignments<T: DatabaseImpl>(
     }
 }
 
-pub async fn set_assignment<T: DatabaseImpl>(
+pub async fn set_assignment<T: AuthorizationStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path((scope_kind, scope_id, principal_kind, principal_id)): Path<(
@@ -310,7 +310,7 @@ pub async fn set_assignment<T: DatabaseImpl>(
     }
 }
 
-pub async fn delete_assignment<T: DatabaseImpl>(
+pub async fn delete_assignment<T: AuthorizationStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path((scope_kind, scope_id, principal_kind, principal_id)): Path<(
@@ -377,7 +377,7 @@ pub async fn delete_assignment<T: DatabaseImpl>(
     }
 }
 
-pub async fn list_resource_grants<T: DatabaseImpl>(
+pub async fn list_resource_grants<T: AuthorizationStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path((kind, resource_id)): Path<(String, Uuid)>,
@@ -397,7 +397,7 @@ pub async fn list_resource_grants<T: DatabaseImpl>(
     }
 }
 
-pub async fn create_resource_grant<T: DatabaseImpl>(
+pub async fn create_resource_grant<T: AuthorizationStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path((kind, resource_id)): Path<(String, Uuid)>,
@@ -461,7 +461,7 @@ pub async fn create_resource_grant<T: DatabaseImpl>(
     }
 }
 
-pub async fn delete_resource_grant<T: DatabaseImpl>(
+pub async fn delete_resource_grant<T: AuthorizationStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path((kind, resource_id, grant_id)): Path<(String, Uuid, Uuid)>,
@@ -496,7 +496,7 @@ pub async fn delete_resource_grant<T: DatabaseImpl>(
     }
 }
 
-pub async fn transfer_resource<T: DatabaseImpl>(
+pub async fn transfer_resource<T: AuthorizationStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path((kind, resource_id)): Path<(String, Uuid)>,
@@ -587,7 +587,7 @@ pub async fn transfer_resource<T: DatabaseImpl>(
     }
 }
 
-pub async fn list_service_accounts<T: DatabaseImpl>(
+pub async fn list_service_accounts<T: AuthorizationStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> Reply {
@@ -600,7 +600,7 @@ pub async fn list_service_accounts<T: DatabaseImpl>(
     }
 }
 
-pub async fn create_service_account<T: DatabaseImpl>(
+pub async fn create_service_account<T: AuthorizationStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<CreateServiceAccountRequest>,
@@ -631,7 +631,7 @@ pub async fn create_service_account<T: DatabaseImpl>(
     }
 }
 
-pub async fn update_service_account<T: DatabaseImpl>(
+pub async fn update_service_account<T: AuthorizationStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Path(id): Path<Uuid>,
@@ -661,7 +661,7 @@ pub async fn update_service_account<T: DatabaseImpl>(
     }
 }
 
-pub fn routes<T: DatabaseImpl>(pool: Arc<T>) -> axum::Router {
+pub fn routes<T: AuthorizationStore>(pool: Arc<T>) -> axum::Router {
     use axum::routing::{delete, get, patch, post, put};
     axum::Router::new()
         .route("/authz/catalog", get(catalog))

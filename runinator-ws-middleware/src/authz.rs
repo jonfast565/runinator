@@ -4,7 +4,6 @@ use std::collections::HashSet;
 
 use axum::{Json, http::StatusCode};
 use chrono::Utc;
-use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::auth::{
     AuthContext, Grant, Permission, PrincipalKind, PrincipalType, ResourceType,
 };
@@ -14,11 +13,29 @@ use runinator_models::rbac::{
 };
 use runinator_models::revisions::{RevisionAuthor, RevisionSource};
 use runinator_models::value::Value;
+use runinator_store::{
+    RuntimeStore,
+    roles::{AuthStore, AutomationStore, RbacStore, ScheduleStore},
+};
 use uuid::Uuid;
 
 use runinator_ws_core::models::{ApiError, ApiResponse};
 
 type Reply = (StatusCode, Json<ApiResponse>);
+
+/// Persistence needed to make one authorization decision, including parent-resource lookups and
+/// its best-effort denial audit. This is deliberately narrower than the full database surface:
+/// authorization does not need workflow definitions, credentials settings, functions, or task
+/// history.
+pub trait AuthorizationStore:
+    AuthStore + RbacStore + ScheduleStore + RuntimeStore + AutomationStore
+{
+}
+
+impl<T> AuthorizationStore for T where
+    T: AuthStore + RbacStore + ScheduleStore + RuntimeStore + AutomationStore
+{
+}
 
 fn forbidden() -> Reply {
     (
@@ -269,12 +286,12 @@ fn ceiling_allows(ctx: &AuthContext, permission: Permission) -> bool {
 /// resource-visibility checks that need both a store handle and the caller's identity. `db` and
 /// `ctx` are genuinely invariant across every method here (unlike a graph cursor's node/run, which
 /// varies per call), so both belong on `self` rather than threaded through each call individually.
-pub struct AuthzChecker<'a, T: DatabaseImpl> {
+pub struct AuthzChecker<'a, T: AuthorizationStore> {
     pub db: &'a T,
     pub ctx: &'a AuthContext,
 }
 
-impl<'a, T: DatabaseImpl> AuthzChecker<'a, T> {
+impl<'a, T: AuthorizationStore> AuthzChecker<'a, T> {
     pub fn new(db: &'a T, ctx: &'a AuthContext) -> Self {
         Self { db, ctx }
     }

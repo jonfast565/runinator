@@ -4,9 +4,9 @@ use runinator_models::interrupt::InterruptSource;
 use runinator_models::workflow_state::WorkflowExecutionState;
 use uuid::Uuid;
 
-use runinator_database::roles::NewWorkflowVmRun;
+use runinator_store::roles::NewWorkflowVmRun;
 
-pub async fn delete_workflow_run<T: DatabaseImpl>(
+pub async fn delete_workflow_run<T: RunStore>(
     db: &T,
     workflow_run_id: Uuid,
 ) -> Result<TaskResponse, SendableError> {
@@ -17,7 +17,7 @@ pub async fn delete_workflow_run<T: DatabaseImpl>(
     })
 }
 
-pub async fn create_workflow_run<T: DatabaseImpl>(
+pub async fn create_workflow_run<T: RuntimeStore + WorkflowVmStore>(
     db: &T,
     workflow_id: Uuid,
     parameters: Value,
@@ -57,7 +57,7 @@ pub async fn create_workflow_run<T: DatabaseImpl>(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn create_workflow_vm_run<T: DatabaseImpl>(
+pub(crate) async fn create_workflow_vm_run<T: WorkflowVmStore>(
     db: &T,
     workflow_id: Uuid,
     workflow_snapshot: WorkflowDefinition,
@@ -95,14 +95,14 @@ pub(crate) async fn create_workflow_vm_run<T: DatabaseImpl>(
     .await
 }
 
-pub async fn fetch_workflow_runs_by_status<T: DatabaseImpl>(
+pub async fn fetch_workflow_runs_by_status<T: RunStore>(
     db: &T,
     status: WorkflowStatus,
 ) -> Result<Vec<WorkflowRun>, SendableError> {
     db.fetch_workflow_runs_by_status(status).await
 }
 
-pub async fn claim_workflow_runs_for_scheduler<T: DatabaseImpl>(
+pub async fn claim_workflow_runs_for_scheduler<T: RunStore>(
     db: &T,
     scheduler_id: String,
     statuses: Vec<WorkflowStatus>,
@@ -113,7 +113,7 @@ pub async fn claim_workflow_runs_for_scheduler<T: DatabaseImpl>(
         .await
 }
 
-pub async fn renew_workflow_run_claim<T: DatabaseImpl>(
+pub async fn renew_workflow_run_claim<T: RunStore>(
     db: &T,
     workflow_run_id: Uuid,
     scheduler_id: String,
@@ -123,7 +123,7 @@ pub async fn renew_workflow_run_claim<T: DatabaseImpl>(
         .await
 }
 
-pub async fn release_workflow_run_claim<T: DatabaseImpl>(
+pub async fn release_workflow_run_claim<T: RunStore>(
     db: &T,
     workflow_run_id: Uuid,
     scheduler_id: String,
@@ -132,14 +132,14 @@ pub async fn release_workflow_run_claim<T: DatabaseImpl>(
         .await
 }
 
-pub async fn fetch_recent_workflow_runs<T: DatabaseImpl>(
+pub async fn fetch_recent_workflow_runs<T: RunStore>(
     db: &T,
     limit: i64,
 ) -> Result<Vec<WorkflowRun>, SendableError> {
     db.fetch_recent_workflow_runs(limit).await
 }
 
-pub async fn fetch_workflow_runs_for_workflow<T: DatabaseImpl>(
+pub async fn fetch_workflow_runs_for_workflow<T: RuntimeStore>(
     db: &T,
     workflow_id: Uuid,
 ) -> Result<Vec<WorkflowRun>, SendableError> {
@@ -148,14 +148,14 @@ pub async fn fetch_workflow_runs_for_workflow<T: DatabaseImpl>(
 
 /// Fetch a VM-backed workflow run. Continuations, effects, and journal entries are read through
 /// their dedicated resources; node-run history is intentionally not reconstructed here.
-pub async fn fetch_workflow_run<T: DatabaseImpl>(
+pub async fn fetch_workflow_run<T: RuntimeStore>(
     db: &T,
     workflow_run_id: Uuid,
 ) -> Result<Option<WorkflowRun>, SendableError> {
     db.fetch_workflow_run(workflow_run_id).await
 }
 
-pub async fn fetch_workflow_runs_by_name<T: DatabaseImpl>(
+pub async fn fetch_workflow_runs_by_name<T: RuntimeStore>(
     db: &T,
     name: String,
     open_only: bool,
@@ -166,7 +166,7 @@ pub async fn fetch_workflow_runs_by_name<T: DatabaseImpl>(
     db.fetch_workflow_runs_by_name(name, open_only).await
 }
 
-pub async fn update_workflow_run_status<T: DatabaseImpl>(
+pub async fn update_workflow_run_status<T: RuntimeStore>(
     db: &T,
     workflow_run_id: Uuid,
     status: WorkflowStatus,
@@ -188,7 +188,7 @@ pub async fn update_workflow_run_status<T: DatabaseImpl>(
 /// the slot lives in the run state rather than on the node run because the node re-parks after each
 /// event, and the state object is what survives that. delivering to a node that is not waiting is
 /// reported back rather than silently dropped, so a misrouted webhook is visible.
-pub async fn deliver_run_event<T: DatabaseImpl>(
+pub async fn deliver_run_event<T: WorkflowVmStore>(
     db: &T,
     workflow_run_id: Uuid,
     node_id: String,
@@ -255,7 +255,7 @@ pub async fn deliver_run_event<T: DatabaseImpl>(
 ///
 /// asked before changing an existing behaviour on a run's behalf, so a workflow that never opted in
 /// keeps the behaviour it had.
-async fn declares_interrupt<T: DatabaseImpl>(
+async fn declares_interrupt<T: RuntimeStore>(
     db: &T,
     workflow_run_id: Uuid,
     source: InterruptSource,
@@ -287,7 +287,7 @@ async fn declares_interrupt<T: DatabaseImpl>(
 /// rather than left to fire at some arbitrary later point.
 ///
 /// `continuation_id` names one thread of control; `None` targets the run's oldest live one.
-pub async fn request_run_interrupt<T: DatabaseImpl>(
+pub async fn request_run_interrupt<T: RuntimeStore + WorkflowVmStore>(
     db: &T,
     workflow_run_id: Uuid,
     source: InterruptSource,
@@ -328,7 +328,7 @@ pub async fn request_run_interrupt<T: DatabaseImpl>(
     }
 }
 
-pub async fn deliver_signal<T: DatabaseImpl>(
+pub async fn deliver_signal<T: RuntimeStore + WorkflowVmStore>(
     db: &T,
     workflow_run_id: Uuid,
     name: String,
@@ -383,7 +383,7 @@ pub async fn deliver_signal<T: DatabaseImpl>(
     })
 }
 
-pub async fn set_workflow_run_name<T: DatabaseImpl>(
+pub async fn set_workflow_run_name<T: RuntimeStore>(
     db: &T,
     workflow_run_id: Uuid,
     name: Option<String>,

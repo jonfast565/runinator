@@ -1,9 +1,12 @@
 use super::*;
-use runinator_database::interfaces::{NotificationStore, SettingStore};
 use runinator_models::notifications::{
     NewNotificationPolicy, NotificationChannel, NotificationEvent, NotificationSeverity,
 };
 use runinator_models::settings::{SettingKind, SettingRecord};
+use runinator_store::{
+    DatabaseImpl,
+    roles::{NotificationStore, SettingStore},
+};
 use runinator_utilities::{secret_cipher::SecretCipher, stored_secret::StoredSecret};
 
 use crate::EnginePublisher;

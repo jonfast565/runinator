@@ -1,35 +1,36 @@
 use super::support;
 use super::*;
+use runinator_store::roles::ScheduledWorkflowVm;
 use uuid::Uuid;
 
-pub async fn upsert_workflow_trigger<T: DatabaseImpl>(
+pub async fn upsert_workflow_trigger<T: ScheduleStore>(
     db: &T,
     trigger: &WorkflowTrigger,
 ) -> Result<WorkflowTrigger, SendableError> {
     db.upsert_workflow_trigger(trigger).await
 }
 
-pub async fn fetch_workflow_triggers<T: DatabaseImpl>(
+pub async fn fetch_workflow_triggers<T: ScheduleStore + RuntimeStore>(
     db: &T,
     workflow_id: Uuid,
 ) -> Result<Vec<WorkflowTrigger>, SendableError> {
     db.fetch_workflow_triggers(workflow_id).await
 }
 
-pub async fn fetch_workflow_trigger<T: DatabaseImpl>(
+pub async fn fetch_workflow_trigger<T: ScheduleStore>(
     db: &T,
     trigger_id: Uuid,
 ) -> Result<Option<WorkflowTrigger>, SendableError> {
     db.fetch_workflow_trigger(trigger_id).await
 }
 
-pub async fn fetch_due_workflow_triggers<T: DatabaseImpl>(
+pub async fn fetch_due_workflow_triggers<T: ScheduleStore>(
     db: &T,
 ) -> Result<Vec<WorkflowTrigger>, SendableError> {
     db.fetch_due_workflow_triggers(Utc::now()).await
 }
 
-pub async fn claim_due_workflow_trigger_firings<T: DatabaseImpl>(
+pub async fn claim_due_workflow_trigger_firings<T: ScheduleStore + RuntimeStore>(
     db: &T,
     scheduler_id: String,
     limit: i64,
@@ -44,7 +45,7 @@ pub async fn claim_due_workflow_trigger_firings<T: DatabaseImpl>(
             .map_err(|error| -> SendableError { Box::new(error) })?;
         modules.insert(
             trigger.workflow_id,
-            runinator_database::roles::ScheduledWorkflowVm { snapshot, module },
+            ScheduledWorkflowVm { snapshot, module },
         );
     }
     db.claim_due_workflow_trigger_firings(scheduler_id, Utc::now(), limit, modules)
@@ -53,7 +54,7 @@ pub async fn claim_due_workflow_trigger_firings<T: DatabaseImpl>(
 
 /// replay a cron trigger's missed slots across a past range. slots the loop already fired keep
 /// their original run, so a backfill is safe to re-issue over an overlapping range.
-pub async fn backfill_workflow_trigger<T: DatabaseImpl>(
+pub async fn backfill_workflow_trigger<T: ScheduleStore + RuntimeStore>(
     db: &T,
     trigger_id: Uuid,
     request: &BackfillRequest,
@@ -68,32 +69,32 @@ pub async fn backfill_workflow_trigger<T: DatabaseImpl>(
     db.backfill_workflow_trigger(
         trigger_id,
         request,
-        runinator_database::roles::ScheduledWorkflowVm { snapshot, module },
+        ScheduledWorkflowVm { snapshot, module },
     )
     .await
 }
 
-pub async fn fetch_freeze_windows<T: DatabaseImpl>(
+pub async fn fetch_freeze_windows<T: ScheduleStore>(
     db: &T,
     org_id: Option<Uuid>,
 ) -> Result<Vec<FreezeWindow>, SendableError> {
     db.fetch_freeze_windows(org_id).await
 }
 
-pub async fn fetch_freeze_window<T: DatabaseImpl>(
+pub async fn fetch_freeze_window<T: ScheduleStore>(
     db: &T,
     window_id: Uuid,
 ) -> Result<Option<FreezeWindow>, SendableError> {
     db.fetch_freeze_window(window_id).await
 }
 
-pub async fn fetch_active_freeze_windows<T: DatabaseImpl>(
+pub async fn fetch_active_freeze_windows<T: ScheduleStore>(
     db: &T,
 ) -> Result<Vec<FreezeWindow>, SendableError> {
     db.fetch_active_freeze_windows(Utc::now()).await
 }
 
-pub async fn create_freeze_window<T: DatabaseImpl>(
+pub async fn create_freeze_window<T: ScheduleStore>(
     db: &T,
     window: &NewFreezeWindow,
 ) -> Result<FreezeWindow, SendableError> {
@@ -101,7 +102,7 @@ pub async fn create_freeze_window<T: DatabaseImpl>(
     db.create_freeze_window(window).await
 }
 
-pub async fn update_freeze_window<T: DatabaseImpl>(
+pub async fn update_freeze_window<T: ScheduleStore>(
     db: &T,
     window_id: Uuid,
     window: &NewFreezeWindow,
@@ -110,7 +111,7 @@ pub async fn update_freeze_window<T: DatabaseImpl>(
     db.update_freeze_window(window_id, window).await
 }
 
-pub async fn delete_freeze_window<T: DatabaseImpl>(
+pub async fn delete_freeze_window<T: ScheduleStore>(
     db: &T,
     window_id: Uuid,
 ) -> Result<TaskResponse, SendableError> {
@@ -148,7 +149,7 @@ pub fn validate_backfill_request(request: &BackfillRequest) -> Result<(), Sendab
     Ok(())
 }
 
-pub async fn delete_workflow_trigger<T: DatabaseImpl>(
+pub async fn delete_workflow_trigger<T: ScheduleStore>(
     db: &T,
     trigger_id: Uuid,
 ) -> Result<TaskResponse, SendableError> {
@@ -159,7 +160,7 @@ pub async fn delete_workflow_trigger<T: DatabaseImpl>(
     })
 }
 
-pub async fn create_workflow_run_for_trigger<T: DatabaseImpl>(
+pub async fn create_workflow_run_for_trigger<T: ScheduleStore + RuntimeStore + WorkflowVmStore>(
     db: &T,
     trigger_id: Uuid,
     parameters: Value,

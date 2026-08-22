@@ -2,7 +2,6 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::{Extension, Json, extract::Query, http::StatusCode};
-use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::auth::AuthContext;
 use runinator_models::value::Value;
 use runinator_models::{
@@ -10,6 +9,7 @@ use runinator_models::{
     settings::SettingKind,
     web::TaskResponse,
 };
+use runinator_store::{RuntimeStore, roles::SettingStore};
 use runinator_utilities::secret_cipher::SecretCipher;
 
 use crate::settings::{
@@ -37,7 +37,7 @@ fn now_unix() -> i64 {
         .unwrap_or(0)
 }
 
-pub async fn get_credential<T: DatabaseImpl>(
+pub async fn get_credential<T: SettingStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Query(query): Query<CredentialQuery>,
@@ -127,7 +127,7 @@ pub async fn get_credential<T: DatabaseImpl>(
     }
 }
 
-pub async fn put_credential<T: DatabaseImpl>(
+pub async fn put_credential<T: SettingStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<CredentialPutRequest>,
@@ -192,7 +192,7 @@ pub async fn put_credential<T: DatabaseImpl>(
 /// re-encrypt every stored setting with the current primary key. used to complete a credential-key
 /// rotation: run it while the old key is still configured as a secondary, then the old key can be
 /// retired. idempotent — values already tagged with the primary key are left untouched.
-pub async fn reencrypt_settings<T: DatabaseImpl>(
+pub async fn reencrypt_settings<T: SettingStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -242,7 +242,7 @@ pub async fn reencrypt_settings<T: DatabaseImpl>(
     )
 }
 
-pub async fn import_secret_bundle<T: DatabaseImpl>(
+pub async fn import_secret_bundle<T: SettingStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Json(bundle): Json<SecretBundle>,
@@ -283,7 +283,7 @@ impl SecretImportError {
 /// import every entry in a secret bundle into the settings store, reconciling by modification time,
 /// and return the redacted echo. shared by the json `/credentials/import` endpoint and the compiled
 /// pack import at `/packs/import`.
-pub async fn import_secret_entries<T: DatabaseImpl>(
+pub async fn import_secret_entries<T: SettingStore + RuntimeStore>(
     db: &T,
     bundle: &SecretBundle,
 ) -> Result<Vec<SecretBundleEntry>, SecretImportError> {
@@ -292,7 +292,7 @@ pub async fn import_secret_entries<T: DatabaseImpl>(
 
 // `overwrite` makes an explicit re-apply authoritative: an existing setting is replaced even when
 // the incoming entry is not strictly newer, bypassing the reconciliation timestamp gate.
-pub async fn import_secret_entries_with<T: DatabaseImpl>(
+pub async fn import_secret_entries_with<T: SettingStore + RuntimeStore>(
     db: &T,
     bundle: &SecretBundle,
     overwrite: bool,
@@ -364,7 +364,7 @@ pub async fn import_secret_entries_with<T: DatabaseImpl>(
 }
 
 // the schema pinned in a config slot's previously-stored bytes, if any. secrets carry no schema.
-async fn config_stored_schema<T: DatabaseImpl>(
+async fn config_stored_schema<T: SettingStore + RuntimeStore>(
     db: &T,
     cipher: &SecretCipher,
     kind: SettingKind,
@@ -396,7 +396,7 @@ fn redacted_entry(secret: &SecretBundleEntry) -> SecretBundleEntry {
     }
 }
 
-pub async fn delete_credential<T: DatabaseImpl>(
+pub async fn delete_credential<T: SettingStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
     Query(query): Query<CredentialQuery>,
@@ -424,7 +424,7 @@ pub async fn delete_credential<T: DatabaseImpl>(
 }
 
 /// the `credentials` endpoints.
-pub fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
+pub fn routes<T: SettingStore + RuntimeStore>(pool: std::sync::Arc<T>) -> axum::Router {
     use axum::Extension;
     use axum::routing::{get, post};
     axum::Router::new()

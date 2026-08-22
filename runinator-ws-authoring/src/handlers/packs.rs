@@ -6,12 +6,15 @@ use axum::{
     extract::Query,
     http::{HeaderMap, StatusCode, header},
 };
-use runinator_database::interfaces::DatabaseImpl;
 use runinator_models::workflows::WorkflowBundle;
 use runinator_models::{
     auth::AuthContext,
     bundles::{PackImportResult, SecretBundle},
     rbac::{Action, ScopeKind, ScopeRef},
+};
+use runinator_store::{
+    RuntimeStore,
+    roles::{DefinitionStore, FunctionStore, NotificationStore, ScheduleStore, SettingStore},
 };
 use serde::Deserialize;
 use utoipa::IntoParams;
@@ -66,7 +69,14 @@ pub struct PackImportParams {
         (status = 401, description = "request is missing or has an invalid credential", body = runinator_ws_core::models::ApiError),
     ),
 )]
-pub async fn import_pack<T: DatabaseImpl>(
+pub async fn import_pack<
+    T: DefinitionStore
+        + RuntimeStore
+        + FunctionStore
+        + NotificationStore
+        + ScheduleStore
+        + SettingStore,
+>(
     Extension(db): Extension<Arc<T>>,
     Extension(events): Extension<EventSender>,
     // a pack may carry function archives, whose bytes go to the object store.
@@ -237,7 +247,16 @@ fn is_json_content_type(headers: &HeaderMap) -> bool {
 }
 
 /// the `packs` endpoints.
-pub fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
+pub fn routes<
+    T: DefinitionStore
+        + RuntimeStore
+        + FunctionStore
+        + NotificationStore
+        + ScheduleStore
+        + SettingStore,
+>(
+    pool: std::sync::Arc<T>,
+) -> axum::Router {
     use axum::Extension;
     use axum::routing::post;
     axum::Router::new().route(
