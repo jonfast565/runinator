@@ -304,38 +304,30 @@ async fn mark_all<T: ArchiveStore>(db: &T, config: &Config) -> Result<u64, Senda
         (ArchiveTable::RunChunks, config.node_log_retention),
         (ArchiveTable::Runs, config.task_run_retention),
         (
-            ArchiveTable::WorkflowNodeArtifacts,
+            ArchiveTable::WorkflowEffectOutputEvents,
+            config.workflow_run_retention,
+        ),
+        (
+            ArchiveTable::WorkflowEffectDispatches,
+            config.effect_dispatch_retention,
+        ),
+        (ArchiveTable::WorkflowEffects, config.workflow_run_retention),
+        (
+            ArchiveTable::WorkflowJournalEntries,
+            config.workflow_run_retention,
+        ),
+        (
+            ArchiveTable::WorkflowContinuations,
+            config.workflow_run_retention,
+        ),
+        (
+            ArchiveTable::WorkflowVmModules,
             config.workflow_run_retention,
         ),
         (ArchiveTable::WorkflowRuns, config.workflow_run_retention),
         (
-            ArchiveTable::WorkflowNodeRuns,
-            config.workflow_run_retention,
-        ),
-        (ArchiveTable::WorkflowNodeChunks, config.node_log_retention),
-        (
-            ArchiveTable::WorkflowRunArtifacts,
-            config.workflow_run_retention,
-        ),
-        (
-            ArchiveTable::WorkflowReadyNodes,
-            config.ready_node_retention,
-        ),
-        (
-            ArchiveTable::WorkflowOrchestrationEvents,
-            config.workflow_run_retention,
-        ),
-        (
-            ArchiveTable::WorkflowResultEvents,
-            config.workflow_run_retention,
-        ),
-        (
             ArchiveTable::WorkflowTriggerFirings,
             config.workflow_run_retention,
-        ),
-        (
-            ArchiveTable::WorkflowActionDispatches,
-            config.published_dispatch_retention,
         ),
         (
             ArchiveTable::PipelineTriggerFirings,
