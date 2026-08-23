@@ -17,7 +17,7 @@ The guiding constraint from `AGENTS.md`: keep dependency direction services→sh
 | # | Item | Band | Owning crates |
 |---|------|------|---------------|
 | 8.1 | Narrow persistence contracts | **shipped 2026-08-22** | store, engine, ws-* |
-| 8.2 | Application-service boundary for HTTP | **P1** | engine, ws-* |
+| 8.2 | Application-service boundary for HTTP | **shipped 2026-08-22** | engine, ws-* |
 | 8.3 | Restore broker-only waker | **shipped 2026-08-22** | waker, service-bootstrap |
 | 6.8 | Secret expiry warnings | **P1** | engine, utilities |
 | 8.4 | Decouple UI event publication from engine | **shipped 2026-08-22** | comm, broker-core, engine, ws-core |
@@ -43,12 +43,11 @@ The guiding constraint from `AGENTS.md`: keep dependency direction services→sh
 - **HTTP boundary:** `runinator-ws-middleware`, `runinator-ws-identity`, `runinator-ws-authoring`, and `runinator-ws-runtime` no longer declare a concrete-database dependency. Authentication uses `AuthStore + RbacStore`; `AuthorizationStore` and `RunOperationsStore` name the genuine cross-domain authorization and run-operation use cases, while CRUD and single-domain endpoints bind directly to role contracts.
 - **Composition rule:** `DatabaseImpl` remains only the full-store composition contract, used for schema initialization and composition roots. SQL implementations and dialect mapping remain in `runinator-database`.
 
-### 8.2 Application-service boundary for HTTP
+### 8.2 Application-service boundary for HTTP — shipped 2026-08-22
 - **Owning crates:** `runinator-engine`, `runinator-ws-core`, `runinator-ws-identity`, `runinator-ws-authoring`, `runinator-ws-runtime`.
-- **Surveyed 2026-08-22:** the three WS domain crates are physically separated, but their library roots re-export `runinator-engine::repository` to preserve moved handler paths. Handlers consequently coordinate database calls, authorization checks, audit records, broker nudges, and UI events directly through generic `Extension<Arc<T>>` state.
-- **Approach:** retain the route-domain split, but put explicit command/query services behind it: for example `IdentityAdmin`, `WorkflowAuthoring`, `RunOperations`, and `ReplicaRegistry`. Handlers should translate HTTP input and replies; services should own transactional orchestration, auditing, durable event emission, and persistence coordination.
-- **Boundary note:** define each service in terms of the narrow store contracts from 8.1 and capability-focused ports, not `Arc<dyn DatabaseImpl>`. This creates one policy-bearing home for each operation and stops the current aliases becoming permanent public API.
-- **Migration:** introduce one service behind an existing route module, migrate its handlers and tests, then delete the corresponding repository alias. Do not attempt a wholesale handler rewrite.
+- **Delivered:** `runinator-engine::services` now owns the command/query seams for workflow authoring, runs, pipelines, scheduling, replicas, packages, functions, artifacts, notifications, console execution, debugging, catalog operations, and automation. Their handlers translate HTTP and perform authorization, then call an injected service; durable publication, broker control, and optional embedded-engine nudges occur only after the service's persistence work succeeds.
+- **Boundary:** each service binds only the store roles and capability ports it needs. The three WS domain crates no longer re-export engine implementation modules, and `runinator-ws-middleware` resolves a run parent through its own `RuntimeStore` bound rather than an engine repository compatibility alias. The `runinator-ws` source lint ratchets both requirements across every handler crate.
+- **Identity exception:** direct store access remains intentionally limited to thin identity/tenancy/billing CRUD, credentials, VM operator rows, catalog startup seeding, and readiness. The closed allowlist in `runinator-ws/src/store_access_tests.rs` documents and tests those exceptions; the runtime does not orchestrate them, so an `IdentityAdmin` facade would add indirection without owning a cross-domain transaction.
 
 ### 8.3 Restore the waker's broker-only boundary — shipped 2026-08-22
 - **Delivered:** `runinator-waker` now starts directly from `ProcessResources` plus a

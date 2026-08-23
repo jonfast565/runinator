@@ -15,9 +15,10 @@ crate a new endpoint belongs in.
 ## Where To Start
 
 - Route merging and the middleware stack: `src/router.rs`.
-- Handlers: `../runinator-ws-{identity,authoring,runtime}/src/handlers/`; they call the engine
-  repository facade directly, and `src/lib.rs` re-exports them at `crate::handlers::<domain>` for the
-  openapi `paths(...)` table and the test suite.
+- Handlers: `../runinator-ws-{identity,authoring,runtime}/src/handlers/`; orchestrating handlers
+  call injected engine application services. The deliberately thin direct-store exceptions are
+  documented and ratcheted by `src/store_access_tests.rs`. `src/lib.rs` re-exports handlers at
+  `crate::handlers::<domain>` for the openapi `paths(...)` table and the test suite.
 - Engine startup/hosting: `src/server.rs`; shared engine implementation: `../runinator-engine/src/`.
 - Graph interpreter and host boundary: `../runinator-runtime/src/{machine,host}.rs`; node behavior: `../runinator-runtime/src/orchestration/`.
 - The two source lints over the merged surface: `src/openapi/route_parity.rs` and

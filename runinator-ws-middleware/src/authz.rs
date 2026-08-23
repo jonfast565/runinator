@@ -7,6 +7,7 @@ use chrono::Utc;
 use runinator_models::auth::{
     AuthContext, Grant, Permission, PrincipalKind, PrincipalType, ResourceType,
 };
+use runinator_models::errors::error_code_or_unknown;
 use runinator_models::orgs::OrgRole;
 use runinator_models::rbac::{
     Action, PlatformRole, Role, ScopeKind, ScopeRef, SystemRole, TeamRole,
@@ -348,17 +349,24 @@ impl<'a, T: AuthorizationStore> AuthzChecker<'a, T> {
         resource_id: Uuid,
         needed: Permission,
     ) {
-        crate::audit::record_audit(
-            self.db,
-            self.ctx.principal_id,
-            self.ctx.actor_kind(),
-            "authz.denied",
-            crate::audit::AuditOutcome::Denied,
-            Some(resource_type.as_str()),
-            Some(resource_id),
-            Some(&format!("missing {:?} permission", needed)),
-        )
-        .await;
+        // Authorization is the middleware's own durable concern. Keep this best-effort audit
+        // write on the `RuntimeStore` contract instead of reaching into the engine solely for a
+        // compatibility helper.
+        let record = runinator_models::json!({
+            "actor_id": self.ctx.principal_id.map(|id| id.to_string()),
+            "actor_kind": self.ctx.actor_kind(),
+            "action": "authz.denied",
+            "outcome": "denied",
+            "resource_type": resource_type.as_str(),
+            "resource_id": resource_id.to_string(),
+            "detail": format!("missing {:?} permission", needed),
+        });
+        if let Err(err) = self.db.record_audit_log(record).await {
+            log::error!(
+                "failed to persist authz.denied audit log (error code {}): {err}",
+                error_code_or_unknown(err.as_ref())
+            );
+        }
     }
 
     /// the workflow ids the caller can see, or `None` meaning "all" (admin / auth disabled).
@@ -530,7 +538,7 @@ impl<'a, T: AuthorizationStore> AuthzChecker<'a, T> {
         if self.ctx.is_platform_admin() {
             return Ok(());
         }
-        match crate::repository::fetch_workflow_run(self.db, workflow_run_id).await {
+        match self.db.fetch_workflow_run(workflow_run_id).await {
             Ok(Some(run)) => self.require_workflow(run.workflow_id, needed).await,
             _ => Err(not_found()),
         }
