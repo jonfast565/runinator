@@ -80,7 +80,23 @@ describe("command center catalog metadata API", () => {
           updated_at: 0,
           finished_at: 1,
         }],
-        fetch_workflow_journal: [],
+        fetch_workflow_journal: [{
+          version: 1,
+          id: "journal-1",
+          workflow_run_id: "run-1",
+          sequence: 1,
+          continuation_id: "continuation-1",
+          entry: { type: "node_entered", continuation_id: "continuation-1", node_id: "config" },
+          created_at: 0,
+        }, {
+          version: 1,
+          id: "journal-2",
+          workflow_run_id: "run-1",
+          sequence: 2,
+          continuation_id: "continuation-1",
+          entry: { type: "node_entered", continuation_id: "continuation-1", node_id: "publish" },
+          created_at: 1,
+        }],
         // The continuation has moved to end. This used to overwrite the effect's true node.
         fetch_workflow_vm_cursors: [{
           continuation_id: "continuation-1",
@@ -94,7 +110,43 @@ describe("command center catalog metadata API", () => {
 
     const detail = await fetchWorkflowRun("run-1");
 
-    expect(detail.nodes).toMatchObject([{ node_id: "publish", status: "succeeded" }]);
+    expect(detail.nodes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ node_id: "config", status: "succeeded" }),
+      expect.objectContaining({ node_id: "publish", status: "succeeded" }),
+    ]));
+  });
+
+  it("marks an inline node failed when its journaled evaluation fails", async () => {
+    vi.mocked(invoke).mockImplementation((name) => {
+      const responses: Record<string, unknown> = {
+        fetch_workflow_run: { run: { id: "run-1", workflow_id: "workflow-1", status: "failed" }, nodes: [] },
+        fetch_workflow_continuations: [],
+        fetch_workflow_effects: [],
+        fetch_workflow_journal: [{
+          version: 1,
+          id: "journal-1",
+          workflow_run_id: "run-1",
+          sequence: 1,
+          continuation_id: "continuation-1",
+          entry: { type: "node_entered", continuation_id: "continuation-1", node_id: "config" },
+          created_at: 0,
+        }, {
+          version: 1,
+          id: "journal-2",
+          workflow_run_id: "run-1",
+          sequence: 2,
+          continuation_id: "continuation-1",
+          entry: { type: "failed", continuation_id: "continuation-1", node_id: "config" },
+          created_at: 1,
+        }],
+        fetch_workflow_vm_cursors: [],
+      };
+      return Promise.resolve(responses[name]);
+    });
+
+    const detail = await fetchWorkflowRun("run-1");
+
+    expect(detail.nodes).toMatchObject([{ node_id: "config", status: "failed" }]);
   });
 });
 

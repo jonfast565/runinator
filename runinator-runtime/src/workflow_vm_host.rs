@@ -222,12 +222,14 @@ impl<'a, S: WorkflowVmStore> WorkflowVmHost<'a, S> {
                 message,
             } => {
                 let run_id = continuation.workflow_run_id;
+                let node_id = continuation.pending_node_entries.last().cloned();
                 self.store
                     .commit_workflow_continuation(
                         continuation.clone(),
                         WorkflowJournalEntry::Failed {
                             continuation_id: continuation.id,
                             message,
+                            node_id,
                         },
                     )
                     .await?;

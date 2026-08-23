@@ -23,6 +23,7 @@ async fn vm_run_start_freezes_run_module_root_and_journal_together() {
         .unwrap();
     let snapshot = db.fetch_workflow(workflow_id).await.unwrap().unwrap();
     let parameters = runinator_models::json!({ "customer": "acme" });
+    let config = runinator_models::json!({ "jira": { "base_url": "https://jira.test" } });
     let module = WorkflowModule::new(vec![WorkflowInstruction::Return]);
 
     let run = db
@@ -30,6 +31,7 @@ async fn vm_run_start_freezes_run_module_root_and_journal_together() {
             workflow_id,
             workflow_snapshot: snapshot,
             parameters: parameters.clone(),
+            config: config.clone(),
             state: runinator_models::json!({}),
             name: Some("atomic start".into()),
             provenance: Default::default(),
@@ -48,6 +50,7 @@ async fn vm_run_start_freezes_run_module_root_and_journal_together() {
     let roots = db.fetch_workflow_continuations(run.id).await.unwrap();
     assert_eq!(roots.len(), 1);
     assert_eq!(roots[0].locals.get("input"), Some(&parameters));
+    assert_eq!(roots[0].locals.get("config"), Some(&config));
     assert_eq!(db.fetch_workflow_journal(run.id).await.unwrap().len(), 1);
 }
 
@@ -71,12 +74,18 @@ async fn terminal_vm_run_surfaces_the_continuation_failure() {
             workflow_id,
             workflow_snapshot: snapshot,
             parameters: Value::Null,
+            config: Value::Null,
             state: Value::Null,
             name: None,
             provenance: Default::default(),
             pipeline_run_id: None,
             pipeline_member_attempt_id: None,
-            module: WorkflowModule::new(vec![WorkflowInstruction::Pop]),
+            module: WorkflowModule::new(vec![
+                WorkflowInstruction::EnterNode {
+                    node_id: "config".into(),
+                },
+                WorkflowInstruction::Pop,
+            ]),
             instruction_pointer: 0,
         })
         .await
@@ -96,6 +105,21 @@ async fn terminal_vm_run_surfaces_the_continuation_failure() {
     let settled = db.fetch_workflow_run(run.id).await.unwrap().unwrap();
     assert_eq!(settled.status, WorkflowStatus::Failed);
     assert_eq!(settled.message.as_deref(), Some("pop needs a stack value"));
+    let journal = db.fetch_workflow_journal(run.id).await.unwrap();
+    assert!(matches!(
+        journal[1].entry,
+        runinator_models::workflow_vm::WorkflowJournalEntry::NodeEntered {
+            ref node_id,
+            ..
+        } if node_id == "config"
+    ));
+    assert!(matches!(
+        journal[2].entry,
+        runinator_models::workflow_vm::WorkflowJournalEntry::Failed {
+            node_id: Some(ref node_id),
+            ..
+        } if node_id == "config"
+    ));
 }
 
 #[tokio::test]
@@ -153,6 +177,7 @@ async fn terminal_vm_pipeline_members_are_recoverable_until_the_attempt_settles(
             workflow_id,
             workflow_snapshot: snapshot,
             parameters: Value::Null,
+            config: Value::Null,
             state: Value::Null,
             name: None,
             provenance: Default::default(),
@@ -214,6 +239,9 @@ async fn workflow_vm_effect_suspend_is_atomic_and_deduplicated() {
         .await
         .unwrap();
     let module = WorkflowModule::new(vec![
+        WorkflowInstruction::EnterNode {
+            node_id: "timer".into(),
+        },
         WorkflowInstruction::Effect {
             request: WorkflowEffectRequest::TimerDelay { seconds: 1 },
         },
@@ -291,6 +319,7 @@ async fn workflow_vm_effect_suspend_is_atomic_and_deduplicated() {
         Some(module.clone())
     );
     let mut waiting = continuation.clone();
+    waiting.pending_node_entries.clear();
     waiting.revision += 1;
     assert_eq!(
         db.fetch_workflow_continuations(run.id).await.unwrap(),
@@ -301,12 +330,19 @@ async fn workflow_vm_effect_suspend_is_atomic_and_deduplicated() {
         vec![first.clone()]
     );
     let journal = db.fetch_workflow_journal(run.id).await.unwrap();
-    assert_eq!(journal.len(), 2);
+    assert_eq!(journal.len(), 3);
     assert!(matches!(
         journal[1].entry,
+        runinator_models::workflow_vm::WorkflowJournalEntry::NodeEntered {
+            ref node_id,
+            ..
+        } if node_id == "timer"
+    ));
+    assert!(matches!(
+        journal[2].entry,
         runinator_models::workflow_vm::WorkflowJournalEntry::EffectRequested {
             effect_id: recorded_effect_id,
-            instruction_pointer: Some(0),
+            instruction_pointer: Some(1),
         } if recorded_effect_id == effect_id
     ));
     let dispatches = db
@@ -412,8 +448,8 @@ async fn workflow_vm_effect_suspend_is_atomic_and_deduplicated() {
     assert_eq!(resumed.revision, continuation.revision + 3);
     assert_eq!(db.resume_workflow_vm_run(run.id, false).await.unwrap(), 1);
     assert_eq!(db.fetch_workflow_effects(run.id).await.unwrap().len(), 1);
-    // boot, effect suspension, operator pause, effect settlement, operator resume
-    assert_eq!(db.fetch_workflow_journal(run.id).await.unwrap().len(), 5);
+    // boot, node entry, effect suspension, operator pause, effect settlement, operator resume
+    assert_eq!(db.fetch_workflow_journal(run.id).await.unwrap().len(), 6);
 
     let mut completed = db
         .fetch_workflow_continuation(continuation.id)
@@ -438,7 +474,7 @@ async fn workflow_vm_effect_suspend_is_atomic_and_deduplicated() {
             .status,
         runinator_models::workflow_vm::WorkflowContinuationStatus::Succeeded
     );
-    assert_eq!(db.fetch_workflow_journal(run.id).await.unwrap().len(), 6);
+    assert_eq!(db.fetch_workflow_journal(run.id).await.unwrap().len(), 7);
 
     let _ = fs::remove_file(path);
 }

@@ -634,7 +634,37 @@ export async function fetchWorkflowRun(workflowRunId: string): Promise<WorkflowR
   const cursorByContinuation = new Map(
     vmCursors.map((cursor) => [cursor.continuation_id, cursor] as const),
   );
-  const nodes: WorkflowNodeRun[] = effects.flatMap((effect) => {
+  const failedNodeIds = new Set(
+    journal.flatMap((record) => {
+      const entry = asJsonRecord(record.entry);
+      return entry.type === "failed" && typeof entry.node_id === "string"
+        ? [entry.node_id]
+        : [];
+    }),
+  );
+  const enteredNodes: WorkflowNodeRun[] = journal.flatMap((record) => {
+    const entry = asJsonRecord(record.entry);
+    if (entry.type !== "node_entered" || typeof entry.node_id !== "string") {
+      return [];
+    }
+
+    const timestamp = new Date(record.created_at * 1000).toISOString();
+    return [{
+      id: record.id,
+      workflow_run_id: record.workflow_run_id,
+      node_id: entry.node_id,
+      status: failedNodeIds.has(entry.node_id) ? "failed" : "succeeded",
+      attempt: 0,
+      parameters: {},
+      state: { journal_entry_id: record.id },
+      cursor_id: record.continuation_id ?? null,
+      created_at: timestamp,
+      started_at: timestamp,
+      finished_at: timestamp,
+      message: null,
+    }];
+  });
+  const effectNodes: WorkflowNodeRun[] = effects.flatMap((effect) => {
     const cursor = cursorByContinuation.get(effect.continuation_id);
 
     // VM effects retain their originating graph node through the journal projection. A live
@@ -681,7 +711,9 @@ export async function fetchWorkflowRun(workflowRunId: string): Promise<WorkflowR
     ...detail,
     // Temporary graph-view projection. These are derived entirely from VM records and do not
     // fetch or mutate the legacy node-run resource.
-    nodes,
+    // Effect receipts come last so waiting, retrying, and terminal action state takes precedence
+    // over the successful `node_entered` marker for that same graph node.
+    nodes: [...enteredNodes, ...effectNodes],
     continuations,
     effects,
     journal,

@@ -27,6 +27,9 @@ pub struct NewWorkflowVmRun {
     pub workflow_id: Uuid,
     pub workflow_snapshot: WorkflowDefinition,
     pub parameters: Value,
+    /// Eager configuration snapshot exposed to bytecode as the `config` local. Resolving it when
+    /// the run starts makes retries and resumed continuations independent of later setting edits.
+    pub config: Value,
     pub state: Value,
     pub name: Option<String>,
     pub provenance: WorkflowRunProvenance,

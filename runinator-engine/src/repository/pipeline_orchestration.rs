@@ -393,10 +393,12 @@ async fn start_member_run<T: RuntimeStore + WorkflowVmStore>(
     }
     let module = runinator_workflows::compile_workflow_module(&snapshot)
         .map_err(|error| -> SendableError { Box::new(error) })?;
+    let config = runinator_runtime::config::config_tree(db).await;
     db.create_workflow_vm_run(NewWorkflowVmRun {
         workflow_id,
         workflow_snapshot: snapshot,
         parameters,
+        config,
         state: runinator_models::json!({ "control": { "pause_requested": false } }),
         name: None,
         provenance: WorkflowRunProvenance {

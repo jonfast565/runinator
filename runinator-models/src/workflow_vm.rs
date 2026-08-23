@@ -688,6 +688,10 @@ pub struct WorkflowContinuation {
     pub stack: Vec<Value>,
     #[serde(default)]
     pub locals: BTreeMap<String, Value>,
+    /// Node entries observed since the last durable VM boundary. Persistence drains these into
+    /// journal records atomically with the boundary, so inline nodes remain visible after reload.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pending_node_entries: Vec<String>,
     /// Structured execution state for nested control flow, invocation calls, compensation, and
     /// debugging. This deliberately has no graph cursor or node-run identity.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -740,6 +744,7 @@ impl WorkflowContinuation {
             instruction_pointer: 0,
             stack: Vec::new(),
             locals: BTreeMap::new(),
+            pending_node_entries: Vec::new(),
             frames: Vec::new(),
             next_effect_sequence: 0,
             parent_id: None,
@@ -1055,6 +1060,12 @@ pub enum WorkflowJournalEntry {
         continuation_id: Uuid,
         instruction_pointer: usize,
     },
+    /// An author-facing graph node began executing. Unlike an effect receipt, this also covers
+    /// pure nodes such as Config, Transform, and Assert.
+    NodeEntered {
+        continuation_id: Uuid,
+        node_id: String,
+    },
     Forked {
         continuation_id: Uuid,
         children: Vec<Uuid>,
@@ -1085,6 +1096,10 @@ pub enum WorkflowJournalEntry {
     Failed {
         continuation_id: Uuid,
         message: String,
+        /// The last graph node entered by this continuation, if failure happened during inline
+        /// evaluation before an effect could be requested.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        node_id: Option<String>,
     },
     /// A thread was frozen and a handler continuation started beside it.
     Interrupted {

@@ -10,7 +10,7 @@ use runinator_models::{
     types::RuninatorType,
     workflows::{WorkflowDefinition, WorkflowGraph},
 };
-use runinator_store::{DatabaseImpl, RuntimeStore};
+use runinator_store::{DatabaseImpl, RuntimeStore, roles::WorkflowVmStore};
 
 use super::*;
 use crate::repository;
@@ -78,6 +78,9 @@ async fn create_persists_and_nudges_the_embedded_engine() {
         .await
         .unwrap();
     assert!(db.fetch_workflow_run(run.id).await.unwrap().is_some());
+    let continuations = db.fetch_workflow_continuations(run.id).await.unwrap();
+    assert_eq!(continuations.len(), 1);
+    assert_eq!(continuations[0].locals.get("config"), Some(&json!({})));
 
     tokio::time::timeout(
         Duration::from_secs(1),

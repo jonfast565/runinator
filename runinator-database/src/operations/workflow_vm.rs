@@ -93,6 +93,45 @@ where
     Ok(())
 }
 
+/// Persist all graph nodes an interpreter drive entered before reaching its next durable boundary.
+/// Keeping the short-lived queue on the continuation makes the trace crash-safe without turning
+/// pure bytecode instructions into store calls.
+async fn append_node_entries<B>(
+    store: &SqlStore<B>,
+    tx: &mut sqlx::Transaction<'_, B::Db>,
+    workflow_run_id: Uuid,
+    continuation_id: Uuid,
+    node_ids: Vec<String>,
+    now: i64,
+) -> Result<(), SendableError>
+where
+    B: SqlBackend,
+    for<'q> i64: Encode<'q, B::Db> + Type<B::Db>,
+    for<'q> String: Encode<'q, B::Db> + Type<B::Db>,
+    for<'q> Uuid: Encode<'q, B::Db> + Type<B::Db>,
+    for<'q> Option<Uuid>: Encode<'q, B::Db> + Type<B::Db>,
+    for<'r> i64: Decode<'r, B::Db> + Type<B::Db>,
+    for<'c> &'c str: ColumnIndex<<B::Db as Database>::Row>,
+    for<'q> <B::Db as Database>::Arguments<'q>: IntoArguments<'q, B::Db>,
+    for<'c> &'c mut <B::Db as Database>::Connection: Executor<'c, Database = B::Db>,
+{
+    for node_id in node_ids {
+        append_journal(
+            store,
+            tx,
+            workflow_run_id,
+            Some(continuation_id),
+            &WorkflowJournalEntry::NodeEntered {
+                continuation_id,
+                node_id,
+            },
+            now,
+        )
+        .await?;
+    }
+    Ok(())
+}
+
 fn cas_error() -> SendableError {
     crate::errors::WORKFLOW_VM_CORRUPT_STATE
         .error("stale workflow continuation revision; reload before driving it again")
@@ -137,6 +176,7 @@ where
             workflow_id,
             workflow_snapshot,
             parameters,
+            config,
             state,
             name,
             provenance,
@@ -159,6 +199,7 @@ where
         continuation
             .locals
             .insert("input".into(), parameters.clone());
+        continuation.locals.insert("config".into(), config);
         let entry = WorkflowJournalEntry::Entered {
             continuation_id: continuation.id,
             instruction_pointer: continuation.instruction_pointer,
@@ -442,7 +483,7 @@ where
     async fn create_workflow_vm(
         &self,
         module: WorkflowModule,
-        continuation: WorkflowContinuation,
+        mut continuation: WorkflowContinuation,
     ) -> Result<(), SendableError> {
         if !module.is_supported()
             || !continuation.is_supported()
@@ -452,6 +493,7 @@ where
                 .error("cannot create a workflow VM from incompatible module state"));
         }
         let now = Utc::now().timestamp();
+        let node_entries = std::mem::take(&mut continuation.pending_node_entries);
         let mut tx = self.pool().begin().await?;
         sqlx::query(&self.render(
             "INSERT INTO workflow_vm_modules (workflow_run_id, version, module_json, created_at) VALUES (?, ?, ?, ?)",
@@ -493,6 +535,15 @@ where
         .bind(now)
         .execute(&mut *tx)
         .await?;
+        append_node_entries(
+            self,
+            &mut tx,
+            continuation.workflow_run_id,
+            continuation.id,
+            node_entries,
+            now,
+        )
+        .await?;
         tx.commit().await?;
         Ok(())
     }
@@ -527,6 +578,7 @@ where
             tx.commit().await?;
             return Ok(existing);
         }
+        let node_entries = std::mem::take(&mut continuation.pending_node_entries);
         let expected = continuation.revision;
         continuation.revision += 1;
         let updated = sqlx::query(&self.render(
@@ -564,6 +616,15 @@ where
         .bind(effect.updated_at)
         .bind(effect.finished_at)
         .execute(&mut *tx)
+        .await?;
+        append_node_entries(
+            self,
+            &mut tx,
+            effect.workflow_run_id,
+            continuation.id,
+            node_entries,
+            effect.created_at,
+        )
         .await?;
         let lock = match self.dialect() {
             SqlDialect::Sqlite => "",
@@ -616,10 +677,15 @@ where
     async fn fork_workflow_continuation(
         &self,
         mut parent: WorkflowContinuation,
-        children: Vec<WorkflowContinuation>,
+        mut children: Vec<WorkflowContinuation>,
         join_key: String,
     ) -> Result<(), SendableError> {
         let now = Utc::now().timestamp();
+        let parent_node_entries = std::mem::take(&mut parent.pending_node_entries);
+        let child_node_entries: Vec<_> = children
+            .iter_mut()
+            .map(|child| (child.id, std::mem::take(&mut child.pending_node_entries)))
+            .collect();
         let expected = parent.revision;
         parent.revision += 1;
         let mut tx = self.pool().begin().await?;
@@ -652,6 +718,26 @@ where
             .bind(now)
             .bind(now)
             .execute(&mut *tx)
+            .await?;
+        }
+        append_node_entries(
+            self,
+            &mut tx,
+            parent.workflow_run_id,
+            parent.id,
+            parent_node_entries,
+            now,
+        )
+        .await?;
+        for (continuation_id, node_entries) in child_node_entries {
+            append_node_entries(
+                self,
+                &mut tx,
+                parent.workflow_run_id,
+                continuation_id,
+                node_entries,
+                now,
+            )
             .await?;
         }
         let lock = match self.dialect() {
@@ -700,6 +786,7 @@ where
                 .error("cannot commit an unsupported workflow continuation"));
         }
         let now = Utc::now().timestamp();
+        let node_entries = std::mem::take(&mut continuation.pending_node_entries);
         let expected = continuation.revision;
         continuation.revision += 1;
         let mut tx = self.pool().begin().await?;
@@ -720,6 +807,15 @@ where
             tx.rollback().await?;
             return Err(cas_error());
         }
+        append_node_entries(
+            self,
+            &mut tx,
+            continuation.workflow_run_id,
+            continuation.id,
+            node_entries,
+            now,
+        )
+        .await?;
         let lock = match self.dialect() {
             SqlDialect::Sqlite => "",
             SqlDialect::Postgres | SqlDialect::MySql => " FOR UPDATE",
@@ -759,7 +855,7 @@ where
     async fn raise_workflow_interrupt(
         &self,
         mut suspended: WorkflowContinuation,
-        handler: WorkflowContinuation,
+        mut handler: WorkflowContinuation,
         journal: WorkflowJournalEntry,
     ) -> Result<(), SendableError> {
         if !suspended.is_supported() || !handler.is_supported() {
@@ -767,6 +863,8 @@ where
                 .error("cannot raise an interrupt from an unsupported continuation"));
         }
         let now = Utc::now().timestamp();
+        let suspended_node_entries = std::mem::take(&mut suspended.pending_node_entries);
+        let handler_node_entries = std::mem::take(&mut handler.pending_node_entries);
         let expected = suspended.revision;
         suspended.revision += 1;
         let mut tx = self.pool().begin().await?;
@@ -806,6 +904,24 @@ where
         .bind(now)
         .execute(&mut *tx)
         .await?;
+        append_node_entries(
+            self,
+            &mut tx,
+            suspended.workflow_run_id,
+            suspended.id,
+            suspended_node_entries,
+            now,
+        )
+        .await?;
+        append_node_entries(
+            self,
+            &mut tx,
+            handler.workflow_run_id,
+            handler.id,
+            handler_node_entries,
+            now,
+        )
+        .await?;
         append_journal(
             self,
             &mut tx,
@@ -821,7 +937,7 @@ where
 
     async fn start_workflow_interrupt_handler(
         &self,
-        handler: WorkflowContinuation,
+        mut handler: WorkflowContinuation,
         journal: WorkflowJournalEntry,
     ) -> Result<(), SendableError> {
         if !handler.is_supported() {
@@ -829,6 +945,7 @@ where
                 .error("cannot start a handler from an unsupported continuation"));
         }
         let now = Utc::now().timestamp();
+        let node_entries = std::mem::take(&mut handler.pending_node_entries);
         let mut tx = self.pool().begin().await?;
         let inserted = sqlx::query(&self.render(&self.dialect().insert_ignore(
             "workflow_continuations",
@@ -853,6 +970,15 @@ where
             tx.commit().await?;
             return Ok(());
         }
+        append_node_entries(
+            self,
+            &mut tx,
+            handler.workflow_run_id,
+            handler.id,
+            node_entries,
+            now,
+        )
+        .await?;
         append_journal(
             self,
             &mut tx,
@@ -874,6 +1000,7 @@ where
         journal: WorkflowJournalEntry,
     ) -> Result<(), SendableError> {
         let now = Utc::now().timestamp();
+        let node_entries = std::mem::take(&mut handler.pending_node_entries);
         let expected = handler.revision;
         handler.revision += 1;
         let mut tx = self.pool().begin().await?;
@@ -892,6 +1019,15 @@ where
             tx.rollback().await?;
             return Err(cas_error());
         }
+        append_node_entries(
+            self,
+            &mut tx,
+            handler.workflow_run_id,
+            handler.id,
+            node_entries,
+            now,
+        )
+        .await?;
         let row = sqlx::query(&self.render(&format!(
             "SELECT {CONTINUATION_COLUMNS} FROM workflow_continuations WHERE id = ?"
         )))

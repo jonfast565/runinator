@@ -205,7 +205,8 @@ pub fn step(module: &WorkflowModule, mut continuation: WorkflowContinuation) -> 
             );
         };
         match instruction {
-            WorkflowInstruction::EnterNode { .. } => {
+            WorkflowInstruction::EnterNode { node_id } => {
+                continuation.pending_node_entries.push(node_id.clone());
                 continuation.instruction_pointer += 1;
             }
             WorkflowInstruction::Const { value } => {
@@ -839,6 +840,9 @@ fn fork(
         );
         child.parent_id = Some(parent.id);
         child.fork_key = Some(key.to_owned());
+        // Entries before the fork belong to the parent branch. Each child will collect only the
+        // nodes it enters after its own target, preventing duplicated history at fan-out.
+        child.pending_node_entries.clear();
         child.instruction_pointer = *target;
         child.awaiting_effect_id = None;
         child.status = WorkflowContinuationStatus::Runnable;

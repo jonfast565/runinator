@@ -57,7 +57,7 @@ pub async fn create_workflow_run<T: RuntimeStore + WorkflowVmStore>(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn create_workflow_vm_run<T: WorkflowVmStore>(
+pub(crate) async fn create_workflow_vm_run<T: RuntimeStore + WorkflowVmStore>(
     db: &T,
     workflow_id: Uuid,
     workflow_snapshot: WorkflowDefinition,
@@ -80,10 +80,14 @@ pub(crate) async fn create_workflow_vm_run<T: WorkflowVmStore>(
     } else {
         0
     };
+    // Configuration is a run input, just like parameters: retain one resolved snapshot so an
+    // in-flight run neither loses its settings nor changes behaviour after an edit.
+    let config = runinator_runtime::config::config_tree(db).await;
     db.create_workflow_vm_run(NewWorkflowVmRun {
         workflow_id,
         workflow_snapshot,
         parameters,
+        config,
         state,
         name,
         provenance,
