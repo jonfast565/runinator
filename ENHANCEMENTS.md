@@ -20,8 +20,8 @@ The guiding constraint from `AGENTS.md`: keep dependency direction services→sh
 | 8.2 | Application-service boundary for HTTP | **P1** | engine, ws-* |
 | 8.3 | Restore broker-only waker | **shipped 2026-08-22** | waker, service-bootstrap |
 | 6.8 | Secret expiry warnings | **P1** | engine, utilities |
-| 8.4 | Decouple UI event publication from engine | **P2** | comm, broker-core, engine, ws-core |
-| 8.5 | Separate provider metadata from executors | **P2** | provider-catalog, pack, lsp, ctl, worker |
+| 8.4 | Decouple UI event publication from engine | **shipped 2026-08-22** | comm, broker-core, engine, ws-core |
+| ~~8.5~~ | ~~Separate provider metadata from executors~~ | **declined 2026-08-22** | provider-catalog, pack, lsp, ctl, worker |
 | 5.3 | Inbound webhook triggers | **P2** | ws, models |
 | 6.5 | Cross-run analytics | **P2** | database, ws, command-center |
 | 6.9 | Shareable run forms | **P2** | ws, command-center |
@@ -74,18 +74,15 @@ The guiding constraint from `AGENTS.md`: keep dependency direction services→sh
 
 ## P2 — extend reach and clarify cross-process contracts
 
-### 8.4 Decouple UI event publication from the engine
-- **Owning crates:** `runinator-comm`, `runinator-broker-core`, `runinator-engine`, `runinator-ws-core`, `runinator-ws`.
-- **Surveyed 2026-08-22:** `runinator-ws-core::EventBus` embeds `runinator_engine::EnginePublisher`, so a crate intended for wire payloads, responses, and local websocket fan-out depends upward on the engine. `EnginePublisher` also combines two unrelated responsibilities: publishing `UiEvent`s to the broker and signaling in-process wake/agent publisher loops with `Notify`.
-- **Approach:** extract a broker-backed UI-event publisher port shared by the engine and web service; keep the WS-local broadcast bridge in `runinator-ws-core`. Model wake and agent nudges separately as optional process-local signals owned by the embedded-engine composition root. The out-of-process engine remains correct through durable polling, with nudges only reducing latency.
-- **Boundary note:** do not put this publisher in `runinator-comm`, because `runinator-broker-core` already depends on that contract crate. A small adapter crate depending on both contracts, or a broker-core extension that does not create a cycle, keeps dependency direction intact.
-- **Result:** `runinator-ws-core` no longer needs an engine dependency, and standalone versus embedded engine deployment stops leaking into HTTP handler state.
+### 8.4 Decouple UI event publication from the engine — shipped 2026-08-22
+- **Delivered:** `runinator-broker-core::UiEventPublisher` owns best-effort broker fan-out publication for `UiEvent`s. The engine and web service share it, while `runinator-ws-core::EventBus` now owns only its per-replica WebSocket broadcast bridge.
+- **Signals:** `EmbeddedEngineSignals` separates VM-work and agent-directive latency nudges from publication. The web-service composition root creates and wires them only when embedding an engine; the standalone engine passes no signals and remains correct through durable polling.
+- **Boundary cleanup:** `runinator-ws-core` no longer depends on `runinator-engine`. Replica-directive persistence likewise returns before its HTTP transport layer emits UI hints or optional local nudges.
+- **Verification:** broker-core fan-out, retained-signal, WS-core bridge, engine, and web-service test suites cover the split.
 
-### 8.5 Separate provider metadata from provider executors
+### ~~8.5 Separate provider metadata from provider executors~~ — declined 2026-08-22
 - **Owning crates:** `runinator-provider-catalog`, `runinator-pack`, `runinator-lsp`, `runinator-ctl`, `runinator-worker`, `runinator-desktop-agent`.
-- **Surveyed 2026-08-22:** `runinator-provider-catalog::metadata()` builds every `Box<dyn Provider>` and calls `metadata()` on it. Pack compilation, the LSP, and ctl use that function only for validation, but consequently link AI, database, sandbox, and integration-provider execution code.
-- **Approach:** create a lightweight, static built-in metadata catalog for authoring and compilation, and retain a runtime registry that constructs executable providers for workers only. Add a parity test that compares the runtime registry's metadata with the static catalog so provider additions cannot drift.
-- **Result:** compiler-facing crates depend on provider vocabulary rather than on executable integrations, improving build time, dependency clarity, and the safety boundary around provider code.
+- **Decision:** not pursuing. The catalog continues to derive metadata from the executable provider registry.
 
 ### 5.3 Inbound webhook *triggers* (start a run)
 - **Owning crates:** `runinator-ws` (`handlers/webhook.rs`, trigger materialization), `runinator-models` (triggers).

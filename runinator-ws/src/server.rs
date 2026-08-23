@@ -3,7 +3,7 @@ use std::{
     sync::Arc,
 };
 
-use runinator_broker::Broker;
+use runinator_broker::{Broker, EmbeddedEngineSignals, UiEventPublisher};
 use runinator_database::{interfaces::DatabaseImpl, load_jwt_secret, load_jwt_secret_previous};
 use runinator_models::auth::AuthContext;
 use runinator_models::errors::SendableError;
@@ -18,9 +18,7 @@ use tokio::{
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
-use runinator_engine::{
-    EngineConfig, EnginePublisher, run_background_engine, services::ReplicaRegistry,
-};
+use runinator_engine::{EngineConfig, run_background_engine, services::ReplicaRegistry};
 
 use crate::event_consumer::{instance_id, run_event_consumer};
 use crate::events::{AppEvent, EventBus};
@@ -139,12 +137,12 @@ pub async fn run_webserver<T: DatabaseImpl>(
             }
         }
     });
-    // the bus publishes emitted events to the broker; the event consumer is the sole writer to the
-    // local broadcast that feeds this replica's WebSocket clients.
-    // one publisher handle is shared by the EventBus (HTTP emit/nudge) and the in-process engine so
-    // create handlers can interrupt the wake-publisher poll sleep via the same Notify.
-    let engine_publisher = EnginePublisher::new(broker.clone());
-    let bus = EventBus::from_publisher(events_tx.clone(), engine_publisher.clone());
+    // The broker-backed UI-event publisher is shared by HTTP handlers and the embedded engine. The
+    // local signals are deliberately separate and exist only for the embedded deployment shape.
+    let publisher = UiEventPublisher::new(broker.clone());
+    let local_engine_signals = run_engine.then(EmbeddedEngineSignals::new);
+    let bus = EventBus::from_publisher(events_tx.clone(), publisher.clone())
+        .with_embedded_engine_signals(local_engine_signals.clone());
     // every replica consumes the broker fan-out events channel so its WebSocket clients see events
     // emitted by any replica or a standalone engine worker, regardless of who did the work.
     background.spawn(run_event_consumer(
@@ -168,7 +166,8 @@ pub async fn run_webserver<T: DatabaseImpl>(
             if let Err(err) = run_background_engine(
                 engine_pool,
                 engine_broker,
-                engine_publisher,
+                publisher,
+                local_engine_signals,
                 engine_instance,
                 EngineConfig {
                     max_concurrent_ingress,

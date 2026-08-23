@@ -1,77 +1,116 @@
-use std::sync::Arc;
-use uuid::Uuid;
+use std::{ops::Deref, sync::Arc};
 
-use runinator_broker_core::Broker;
-use runinator_engine::{EnginePublisher, services::ReplicaRegistryEvents};
-use runinator_models::runs::RunStatus;
+use runinator_broker_core::{Broker, EmbeddedEngineSignals, UiEventPublisher};
 use tokio::sync::broadcast;
 
-// the UI event contract lives in runinator-comm so it can cross the broker fan-out events channel.
-pub use runinator_comm::{UiEvent as AppEvent, UiEventKind as AppEventKind};
+// The UI event contract crosses the broker fan-out channel, while this module owns only the local
+// WebSocket broadcast bridge for one web-service replica.
+pub use runinator_broker_core::{
+    AppEvent, AppEventKind, emit, emit_pipeline_run, emit_task_run, emit_workflow_run,
+    emit_workflows_changed,
+};
 
-/// fan-out bus for UI events. it keeps the local broadcast that feeds this replica's WebSocket
-/// clients (via [`EventBus::subscribe`], written solely by the web service's event consumer, which
-/// owns the only writer to that broadcast) and delegates every emit to the shared
-/// [`EnginePublisher`], so WS handlers and the background engine publish onto the broker `events`
-/// channel through one code path. this keeps every WS replica's clients in sync regardless of which
-/// replica (or a standalone engine worker) did the work.
+/// Fan-out bus for UI events in one web-service replica.
+///
+/// All writes go through the broker-backed [`UiEventPublisher`]; only the web service's broker
+/// consumer writes `local`, which feeds this process's WebSocket clients. Optional local signals
+/// are latency hints for an engine embedded by this same process and are absent for standalone
+/// engine deployments.
 #[derive(Clone)]
 pub struct EventBus {
     local: broadcast::Sender<AppEvent>,
-    publisher: EnginePublisher,
+    publisher: UiEventPublisher,
+    local_signals: Option<EmbeddedEngineSignals>,
 }
 
 impl EventBus {
     pub fn new(local: broadcast::Sender<AppEvent>, broker: Arc<dyn Broker>) -> Self {
-        Self::from_publisher(local, EnginePublisher::new(broker))
+        Self::from_publisher(local, UiEventPublisher::new(broker))
     }
 
-    /// share an existing [`EnginePublisher`] so HTTP create handlers can nudge the in-process wake
-    /// publisher owned by the same handle.
-    pub fn from_publisher(local: broadcast::Sender<AppEvent>, publisher: EnginePublisher) -> Self {
-        Self { local, publisher }
+    pub fn from_publisher(local: broadcast::Sender<AppEvent>, publisher: UiEventPublisher) -> Self {
+        Self {
+            local,
+            publisher,
+            local_signals: None,
+        }
     }
 
-    /// subscribe a WebSocket client to this replica's locally-broadcast events.
+    /// Attach process-local signals only when this web-service process embeds an engine.
+    pub fn with_embedded_engine_signals(mut self, signals: Option<EmbeddedEngineSignals>) -> Self {
+        self.local_signals = signals;
+        self
+    }
+
+    /// Subscribe a WebSocket client to this replica's locally-broadcast events.
     pub fn subscribe(&self) -> broadcast::Receiver<AppEvent> {
         self.local.subscribe()
     }
-}
 
-// the threaded handle stays named EventSender so handler signatures are unchanged.
-pub type EventSender = EventBus;
+    /// Prompt the embedded VM driver to poll its durable continuation queue. This is a no-op when
+    /// the engine runs out of process, where the same durable queue is reached by normal polling.
+    pub fn nudge_workflow_vm(&self) {
+        if let Some(signals) = &self.local_signals {
+            signals.nudge_workflow_vm();
+        }
+    }
 
-pub fn emit(events: &EventSender, event: AppEvent) {
-    runinator_engine::events::emit(&events.publisher, event);
-}
-
-pub fn emit_workflow_run(events: &EventSender, run_id: Uuid, org_id: Option<Uuid>) {
-    runinator_engine::events::emit_workflow_run(&events.publisher, run_id, org_id);
-}
-
-pub fn emit_pipeline_run(events: &EventSender, run_id: Uuid, org_id: Option<Uuid>) {
-    runinator_engine::events::emit_pipeline_run(&events.publisher, run_id, org_id);
-}
-
-pub fn nudge_wake_publisher(events: &EventSender) {
-    events.publisher.nudge_wake_publisher();
-}
-
-pub fn nudge_agent_directive_publisher(events: &EventSender) {
-    events.publisher.nudge_agent_directive_publisher();
-}
-
-impl ReplicaRegistryEvents for EventBus {
-    fn agent_directive_queued(&self) {
-        nudge_agent_directive_publisher(self);
-        emit(self, AppEvent::global(AppEventKind::ReplicasChanged));
+    /// Prompt the embedded agent-directive publisher to poll its durable outbox.
+    pub fn nudge_agent_directives(&self) {
+        if let Some(signals) = &self.local_signals {
+            signals.nudge_agent_directives();
+        }
     }
 }
 
-pub fn emit_task_run(events: &EventSender, run_id: Uuid, status: RunStatus, org_id: Option<Uuid>) {
-    runinator_engine::events::emit_task_run(&events.publisher, run_id, status, org_id);
+impl Deref for EventBus {
+    type Target = UiEventPublisher;
+
+    fn deref(&self) -> &Self::Target {
+        &self.publisher
+    }
 }
 
-pub fn emit_workflows_changed(events: &EventSender, org_id: Option<Uuid>) {
-    runinator_engine::events::emit_workflows_changed(&events.publisher, org_id);
+// The threaded handle stays named EventSender so handler signatures stay focused on the event role.
+pub type EventSender = EventBus;
+
+pub fn nudge_workflow_vm(events: &EventSender) {
+    events.nudge_workflow_vm();
+}
+
+pub fn nudge_agent_directives(events: &EventSender) {
+    events.nudge_agent_directives();
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use runinator_broker_core::in_memory::InMemoryBroker;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn bus_forwards_local_nudges_to_its_embedded_engine_signals() {
+        let (local, _) = broadcast::channel(1);
+        let signals = EmbeddedEngineSignals::new();
+        let bus = EventBus::new(local, Arc::new(InMemoryBroker::new()))
+            .with_embedded_engine_signals(Some(signals.clone()));
+
+        nudge_workflow_vm(&bus);
+        nudge_agent_directives(&bus);
+
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            signals.workflow_vm_notifier().notified(),
+        )
+        .await
+        .expect("workflow VM nudge should reach the embedded engine");
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            signals.agent_directives_notifier().notified(),
+        )
+        .await
+        .expect("agent directive nudge should reach the embedded engine");
+    }
 }

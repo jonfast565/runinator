@@ -215,21 +215,19 @@ async fn in_memory_broker_round_trips_ingress_delivery() {
 }
 
 #[tokio::test]
-async fn in_memory_broker_fans_out_events_to_every_subscriber() {
-    use crate::EventMessage;
+async fn broker_ui_event_publisher_fans_out_to_every_subscriber() {
+    use crate::UiEventPublisher;
     use runinator_comm::UiEvent;
 
-    let broker = InMemoryBroker::new();
+    let broker = Arc::new(InMemoryBroker::new());
     // both subscribers must register before publishing so each gets the event.
     let _ = broker.event_receiver("ws-a");
     let _ = broker.event_receiver("ws-b");
+    let publisher = UiEventPublisher::new(broker.clone());
 
-    broker
-        .publish_event(EventMessage::new(UiEvent::global(
-            runinator_comm::UiEventKind::WorkflowsChanged,
-        )))
-        .await
-        .unwrap();
+    publisher.emit(UiEvent::global(
+        runinator_comm::UiEventKind::WorkflowsChanged,
+    ));
 
     let a = broker.receive_event("ws-a").await.unwrap();
     let b = broker.receive_event("ws-b").await.unwrap();

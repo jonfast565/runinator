@@ -29,6 +29,7 @@ pub use runinator_broker_core::{
     AgentDirectiveResult, AgentDirectiveStatus, Broker, BrokerError, ConnectionState,
     ConsumerProfile, ControlCommand, ControlDelivery, EffectDelivery, EffectExecutor,
     EffectMessage, EffectResult, EffectResultDelivery, EffectResultKind, EffectResultMessage,
-    EventDelivery, EventMessage, IngressDelivery, IngressMessage, UiEvent, WakeCommand,
-    WakeDelivery, WakeMessage, WsIngressCommand, STALE_CONTROL_TTL_SECONDS,
+    EmbeddedEngineSignals, EventDelivery, EventMessage, IngressDelivery, IngressMessage, UiEvent,
+    UiEventPublisher, WakeCommand, WakeDelivery, WakeMessage, WsIngressCommand,
+    STALE_CONTROL_TTL_SECONDS,
 };

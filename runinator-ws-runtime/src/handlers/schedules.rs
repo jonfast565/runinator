@@ -17,7 +17,7 @@ use runinator_store::{
 use serde::Deserialize;
 
 use runinator_engine::repository;
-use runinator_ws_core::events::{AppEvent, AppEventKind, EventSender, emit, nudge_wake_publisher};
+use runinator_ws_core::events::{AppEvent, AppEventKind, EventSender, emit, nudge_workflow_vm};
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::responses::{api_error, not_found};
 use runinator_ws_middleware::authz::{AuthContextExt, AuthorizationStore, AuthzChecker};
@@ -205,7 +205,7 @@ pub async fn backfill_workflow_trigger<
             // the backfilled runs have ready nodes waiting; do not make them sit out the wake
             // publisher's poll interval.
             if !runs.is_empty() {
-                nudge_wake_publisher(&events);
+                nudge_workflow_vm(&events);
             }
             (StatusCode::OK, Json(ApiResponse::Backfill(response)))
         }

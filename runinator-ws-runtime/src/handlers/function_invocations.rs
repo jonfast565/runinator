@@ -35,7 +35,7 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use runinator_engine::repository;
-use runinator_ws_core::events::{EventSender, emit_workflow_run, nudge_wake_publisher};
+use runinator_ws_core::events::{EventSender, emit_workflow_run, nudge_workflow_vm};
 use runinator_ws_core::models::{self, ApiResponse};
 use runinator_ws_core::openapi::docs::{EndpointDoc, Example, endpoint, json_body};
 use runinator_ws_core::responses::{api_error, bad_request, not_found};
@@ -191,7 +191,7 @@ pub async fn create_function_invocation<
     };
     let org_id = repository::org_id_for_workflow_run(db.as_ref(), run.id).await;
     emit_workflow_run(&events, run.id, org_id);
-    nudge_wake_publisher(&events);
+    nudge_workflow_vm(&events);
 
     if let Some(key) = &idempotency_key {
         let scope = idempotency_scope(ctx.org_id, &package, &export);
@@ -252,7 +252,7 @@ pub async fn cancel_function_invocation<
     // run, and a second cancel implementation is a second set of edge cases.
     match repository::cancel_workflow_run(db.as_ref(), broker.as_ref(), run_id).await {
         Ok(_) => {
-            nudge_wake_publisher(&events);
+            nudge_workflow_vm(&events);
             replay(db.as_ref(), run_id).await
         }
         Err(err) => api_error(err.to_string()),

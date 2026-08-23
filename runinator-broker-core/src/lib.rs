@@ -14,6 +14,7 @@ mod instrumented;
 #[cfg(test)]
 mod tests;
 mod types;
+pub mod ui_events;
 
 pub use capabilities::{
     ensure_agent_channel_supported, ensure_named_workflow_effect_channel,
@@ -30,6 +31,10 @@ pub use types::{
     AgentDelivery, ConnectionState, ControlDelivery, EffectDelivery, EffectMessage,
     EffectResultDelivery, EffectResultMessage, EventDelivery, EventMessage, IngressDelivery,
     IngressMessage, WakeDelivery, WakeMessage,
+};
+pub use ui_events::{
+    emit, emit_pipeline_run, emit_task_run, emit_workflow_run, emit_workflows_changed,
+    is_terminal_run_status, AppEvent, AppEventKind, EmbeddedEngineSignals, UiEventPublisher,
 };
 
 use async_trait::async_trait;

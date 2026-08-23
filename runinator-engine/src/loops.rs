@@ -43,6 +43,7 @@ fn queue_age(
 pub async fn run_workflow_vm_driver<T: RuntimeStore + WorkflowVmStore>(
     db: Arc<T>,
     instance: String,
+    ready_nudge: Arc<Notify>,
     shutdown: Arc<Notify>,
 ) {
     info!("workflow VM driver started");
@@ -120,6 +121,7 @@ pub async fn run_workflow_vm_driver<T: RuntimeStore + WorkflowVmStore>(
         stability::loop_iteration("workflow_vm_driver", succeeded, started.elapsed());
         tokio::select! {
             _ = shutdown.notified() => return,
+            _ = ready_nudge.notified() => {}
             _ = tokio::time::sleep(WORKFLOW_VM_DRIVE_INTERVAL) => {}
         }
     }

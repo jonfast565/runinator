@@ -15,7 +15,7 @@ use runinator_store::{
 use runinator_engine::repository;
 use runinator_ws_core::events::{
     AppEvent, AppEventKind, EventSender, emit, emit_pipeline_run, emit_workflows_changed,
-    nudge_wake_publisher,
+    nudge_workflow_vm,
 };
 use runinator_ws_core::models::{
     ApiResponse, PipelineMemberRetryRequest, PipelineRunInquiryDecision, PipelineRunRequest,
@@ -292,7 +292,7 @@ pub async fn create_pipeline_run<
                 &events,
                 AppEvent::new(org_id, AppEventKind::PipelineRunActivity),
             );
-            nudge_wake_publisher(&events);
+            nudge_workflow_vm(&events);
             (StatusCode::ACCEPTED, Json(ApiResponse::PipelineRun(run)))
         }
         Err(err) => api_error(err.to_string()),
@@ -330,7 +330,7 @@ pub async fn create_pipeline_trigger_run<
                 &events,
                 AppEvent::new(org_id, AppEventKind::PipelineRunActivity),
             );
-            nudge_wake_publisher(&events);
+            nudge_workflow_vm(&events);
             (StatusCode::ACCEPTED, Json(ApiResponse::PipelineRun(run)))
         }
         Err(err) => api_error(err.to_string()),
@@ -448,7 +448,7 @@ pub async fn pause_pipeline_run<
         Ok(resp) => {
             let org_id = repository::org_id_for_pipeline_run(db.as_ref(), pipeline_run_id).await;
             emit_pipeline_run(&events, pipeline_run_id, org_id);
-            nudge_wake_publisher(&events);
+            nudge_workflow_vm(&events);
             (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
         }
         Err(err) => api_error(err.to_string()),
@@ -473,7 +473,7 @@ pub async fn resume_pipeline_run<
         Ok(resp) => {
             let org_id = repository::org_id_for_pipeline_run(db.as_ref(), pipeline_run_id).await;
             emit_pipeline_run(&events, pipeline_run_id, org_id);
-            nudge_wake_publisher(&events);
+            nudge_workflow_vm(&events);
             (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
         }
         Err(err) => api_error(err.to_string()),
@@ -515,7 +515,7 @@ pub async fn resolve_pipeline_run<
                 &events,
                 AppEvent::new(org_id, AppEventKind::PipelineRunActivity),
             );
-            nudge_wake_publisher(&events);
+            nudge_workflow_vm(&events);
             (StatusCode::OK, Json(ApiResponse::PipelineRun(run)))
         }
         Err(err) => api_error(err.to_string()),
@@ -548,7 +548,7 @@ pub async fn retry_pipeline_member<
         Ok(attempt) => {
             let org_id = repository::org_id_for_pipeline_run(db.as_ref(), pipeline_run_id).await;
             emit_pipeline_run(&events, pipeline_run_id, org_id);
-            nudge_wake_publisher(&events);
+            nudge_workflow_vm(&events);
             (
                 StatusCode::ACCEPTED,
                 Json(ApiResponse::PipelineMemberAttempt(attempt)),

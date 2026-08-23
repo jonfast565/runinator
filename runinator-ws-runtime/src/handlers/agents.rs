@@ -14,7 +14,7 @@ use runinator_models::{
 };
 use runinator_store::roles::ReplicaStore;
 use runinator_ws_core::{
-    events::EventSender,
+    events::{AppEvent, AppEventKind, EventSender, emit, nudge_agent_directives},
     models::{AgentDirectiveQuery, ApiResponse, CreateAgentDirectiveRequest},
     openapi::docs::{EndpointDoc, Example, endpoint, json_body},
     responses::{api_error, not_found},
@@ -39,14 +39,19 @@ pub async fn create<T: ReplicaStore>(
             replica_id,
             request.kind,
             Utc::now() + Duration::seconds(ttl as i64),
-            &events,
         )
         .await
     {
-        Ok(Some(record)) => (
-            StatusCode::ACCEPTED,
-            Json(ApiResponse::AgentDirective(record)),
-        ),
+        Ok(Some(record)) => {
+            // The durable outbox is authoritative; these optional hints only reduce local delivery
+            // and WebSocket-update latency when this replica embeds the engine.
+            nudge_agent_directives(&events);
+            emit(&events, AppEvent::global(AppEventKind::ReplicasChanged));
+            (
+                StatusCode::ACCEPTED,
+                Json(ApiResponse::AgentDirective(record)),
+            )
+        }
         Ok(None) => not_found(format!("Replica {replica_id} not found")),
         Err(err) => api_error(err.to_string()),
     }

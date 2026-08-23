@@ -17,7 +17,7 @@ use log::info;
 use runinator_broker::Broker;
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_engine::{
-    EngineConfig, EnginePublisher, run_background_engine, services::ReplicaRegistry,
+    EngineConfig, EventSender, run_background_engine, services::ReplicaRegistry,
 };
 use runinator_models::auth::AuthContext;
 use runinator_models::errors::SendableError;
@@ -209,11 +209,12 @@ async fn run_engine_with_replica<T: DatabaseImpl>(
         }
     });
 
-    let publisher = EnginePublisher::new(broker.clone());
+    let publisher = EventSender::new(broker.clone());
     let result = run_background_engine(
         db,
         broker,
         publisher,
+        None,
         instance,
         EngineConfig {
             max_concurrent_ingress,

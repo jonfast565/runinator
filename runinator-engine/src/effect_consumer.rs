@@ -26,7 +26,7 @@ const EFFECT_RESULT_CONSUMER_ID: &str = "runinator-ws-effects";
 pub async fn run_effect_result_consumer<T: WorkflowVmStore + NotificationStore + RuntimeStore>(
     db: Arc<T>,
     broker: Arc<dyn Broker>,
-    publisher: crate::events::EnginePublisher,
+    publisher: crate::events::EventSender,
     shutdown: Arc<Notify>,
 ) {
     info!("workflow VM effect result consumer started");

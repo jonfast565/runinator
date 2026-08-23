@@ -30,15 +30,6 @@ pub const REPLICA_SAMPLE_RETENTION_SECONDS: i64 = 86_400;
 const REPLICA_SAMPLE_DEFAULT_WINDOW_SECONDS: i64 = 3_600;
 const REPLICA_SAMPLE_MAX_POINTS: i64 = 1_000;
 
-/// The capability needed after an HTTP operation durably queues an agent directive.
-///
-/// The service deliberately knows neither about WebSockets nor a concrete broker. Its transport
-/// adapter publishes a fleet-change hint and wakes the local outbox publisher after persistence.
-pub trait ReplicaRegistryEvents: Send + Sync {
-    /// Notify listeners that a directive is ready for delivery to a replica.
-    fn agent_directive_queued(&self);
-}
-
 /// Coordinates the replica persistence slice used by fleet-facing transports and engine loops.
 pub struct ReplicaRegistry<T> {
     store: Arc<T>,
@@ -258,13 +249,14 @@ impl<T: ReplicaStore> ReplicaRegistry<T> {
             .await
     }
 
-    /// Enqueue a replica directive and signal the publisher only after it is durable.
+    /// Enqueue a replica directive. Transport hints are emitted by the caller after this durable
+    /// write succeeds, so this service remains independent of WebSockets, broker publication, and
+    /// an embedded engine's process-local latency signals.
     pub async fn issue_directive(
         &self,
         replica_id: Uuid,
         kind: AgentDirectiveKind,
         expires_at: DateTime<Utc>,
-        events: &dyn ReplicaRegistryEvents,
     ) -> Result<Option<AgentDirectiveRecord>, SendableError> {
         if self.fetch(replica_id).await?.is_none() {
             return Ok(None);
@@ -273,7 +265,6 @@ impl<T: ReplicaStore> ReplicaRegistry<T> {
             .store
             .enqueue_agent_directive(replica_id, kind, expires_at)
             .await?;
-        events.agent_directive_queued();
         Ok(Some(record))
     }
 

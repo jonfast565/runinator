@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use runinator_broker_core::Broker;
+use runinator_broker_core::{Broker, EmbeddedEngineSignals};
 use runinator_models::errors::SendableError;
 use runinator_store::{
     RuntimeStore,
@@ -13,7 +13,7 @@ use tokio::sync::Notify;
 use tokio::task::JoinSet;
 use tracing::{error, info};
 
-use crate::events::EnginePublisher;
+use crate::events::EventSender;
 use crate::loops::{
     run_agent_directive_publisher, run_notification_effect_dispatcher,
     run_operational_metrics_sampler, run_replica_reaper, run_trigger_loop, run_usage_sampler,
@@ -109,13 +109,16 @@ mod tests {
 pub async fn run_background_engine<T: BackgroundEngineStore>(
     pool: Arc<T>,
     broker: Arc<dyn Broker>,
-    publisher: EnginePublisher,
+    publisher: EventSender,
+    local_signals: Option<EmbeddedEngineSignals>,
     instance: String,
     config: EngineConfig,
     shutdown: Arc<Notify>,
 ) -> Result<(), SendableError> {
     crate::stability::init_metrics();
     let _config = config.normalized();
+    // A standalone engine owns no HTTP-side signals; its durable loops continue polling normally.
+    let local_signals = local_signals.unwrap_or_default();
 
     let mut loops: JoinSet<()> = JoinSet::new();
     loops.spawn(crate::effect_consumer::run_effect_result_consumer(
@@ -144,12 +147,13 @@ pub async fn run_background_engine<T: BackgroundEngineStore>(
         pool.clone(),
         broker.clone(),
         instance.clone(),
-        publisher.agent_nudge(),
+        local_signals.agent_directives_notifier(),
         shutdown.clone(),
     ));
     loops.spawn(run_workflow_vm_driver(
         pool.clone(),
         instance.clone(),
+        local_signals.workflow_vm_notifier(),
         shutdown.clone(),
     ));
     loops.spawn(run_workflow_effect_dispatcher(

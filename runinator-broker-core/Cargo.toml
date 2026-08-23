@@ -7,6 +7,7 @@ license = "Apache-2.0"
 [dependencies]
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
+log = "0.4"
 opentelemetry = "0.32"
 parking_lot = "0.12"
 runinator-comm = { path = "../runinator-comm" }

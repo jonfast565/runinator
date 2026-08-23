@@ -17,8 +17,7 @@ use serde::Deserialize;
 
 use runinator_engine::repository;
 use runinator_ws_core::events::{
-    AppEvent, AppEventKind, EventSender, emit, emit_task_run, emit_workflow_run,
-    nudge_wake_publisher,
+    AppEvent, AppEventKind, EventSender, emit, emit_task_run, emit_workflow_run, nudge_workflow_vm,
 };
 use runinator_ws_core::models::{
     self, ApiResponse, RunStatusQuery, RunStatusRequest, SchedulerRunClaimReleaseRequest,
@@ -85,7 +84,7 @@ pub async fn create_workflow_trigger_run<T: RunOperationsStore>(
         Ok(run) => {
             let org_id = repository::org_id_for_workflow_run(db.as_ref(), run.id).await;
             emit_workflow_run(&events, run.id, org_id);
-            nudge_wake_publisher(&events);
+            nudge_workflow_vm(&events);
             (
                 StatusCode::ACCEPTED,
                 Json(ApiResponse::WorkflowRun(models::WorkflowRunResponse::new(
@@ -131,7 +130,7 @@ pub async fn create_workflow_run<T: RunOperationsStore>(
         Ok(run) => {
             let org_id = repository::org_id_for_workflow_run(db.as_ref(), run.id).await;
             emit_workflow_run(&events, run.id, org_id);
-            nudge_wake_publisher(&events);
+            nudge_workflow_vm(&events);
             (
                 StatusCode::ACCEPTED,
                 Json(ApiResponse::WorkflowRun(models::WorkflowRunResponse::new(
@@ -306,7 +305,7 @@ pub async fn cancel_workflow_run<T: RunOperationsStore>(
         Ok(resp) => {
             let org_id = repository::org_id_for_workflow_run(db.as_ref(), workflow_run_id).await;
             emit_workflow_run(&events, workflow_run_id, org_id);
-            nudge_wake_publisher(&events);
+            nudge_workflow_vm(&events);
             (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
         }
         Err(err) => bad_request(err.to_string()),

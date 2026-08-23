@@ -28,7 +28,7 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use runinator_engine::repository;
-use runinator_ws_core::events::{EventSender, emit_workflow_run, nudge_wake_publisher};
+use runinator_ws_core::events::{EventSender, emit_workflow_run, nudge_workflow_vm};
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::openapi::docs::{EndpointDoc, Example, endpoint, json_body};
 use runinator_ws_core::responses::{api_error, bad_request, not_found};
@@ -362,7 +362,7 @@ pub async fn run_console_cell<
             if let Some(run) = &outcome.run {
                 let org_id = repository::org_id_for_workflow_run(db.as_ref(), run.id).await;
                 emit_workflow_run(&events, run.id, org_id);
-                nudge_wake_publisher(&events);
+                nudge_workflow_vm(&events);
             }
             (StatusCode::OK, Json(ApiResponse::ConsoleCell(outcome.cell)))
         }

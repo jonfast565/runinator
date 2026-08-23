@@ -9,7 +9,7 @@ use runinator_store::{
 };
 use runinator_utilities::{secret_cipher::SecretCipher, stored_secret::StoredSecret};
 
-use crate::EnginePublisher;
+use runinator_broker_core::UiEventPublisher;
 
 fn policy(channel: NotificationChannel, target: Option<&str>) -> NotificationPolicy {
     NotificationPolicy {
@@ -228,7 +228,7 @@ async fn repeated_secret_expiry_scans_emit_one_notification() {
     )
     .await
     .unwrap();
-    let events = EnginePublisher::new(Arc::new(InMemoryBroker::new()));
+    let events = UiEventPublisher::new(Arc::new(InMemoryBroker::new()));
 
     scan_secret_expiry(&db, &events, now).await.unwrap();
     scan_secret_expiry(&db, &events, now).await.unwrap();
