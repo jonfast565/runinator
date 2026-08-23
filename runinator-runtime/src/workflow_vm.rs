@@ -1322,6 +1322,11 @@ fn select_target(
                     .get("key")
                     .ok_or_else(|| "percentage.key is required".to_string())?,
             )?;
+            // Match the graph-layer percentage evaluator: a null key does not participate in a
+            // rollout, so it follows the authored fallback rather than being hashed as JSON null.
+            if key.is_null() {
+                return Ok(default);
+            }
             let buckets = parameters
                 .get("buckets")
                 .and_then(Value::as_array)

@@ -797,15 +797,27 @@ fn lower_node(
             }
         }
         WorkflowNodeKind::Toggle | WorkflowNodeKind::Percentage => {
+            let mut default = next().map(|target| Label::node(&target));
             let targets = target_slots(node)?
                 .into_iter()
-                .map(|slot| Label::node(slot.target.as_str()))
+                .filter_map(|slot| {
+                    // `percentage.default` is a fallback target, not another weighted bucket.
+                    // Keep it out of `targets` so the VM can continue to require one target per
+                    // bucket; otherwise a graph with an authored default always fails that
+                    // invariant before it can select anything.
+                    if node.kind == WorkflowNodeKind::Percentage && slot.key == "default" {
+                        default = Some(Label::node(slot.target.as_str()));
+                        None
+                    } else {
+                        Some(Label::node(slot.target.as_str()))
+                    }
+                })
                 .collect();
             output.push(PendingInstruction::Select(
                 node.kind.clone(),
                 configuration(),
                 targets,
-                next().map(|target| Label::node(&target)),
+                default,
             ));
         }
         WorkflowNodeKind::Parallel => {
