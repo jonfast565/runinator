@@ -123,7 +123,7 @@ pub async fn prepare_agent_credentials(
         cluster_id: token.cluster_id,
     };
     let bytes = serde_json::to_vec(&stored)?;
-    runinator_utilities::secret_file::write_secret_file_atomic(&config.credential_file, &bytes)
+    runinator_secrets::secret_file::write_secret_file_atomic(&config.credential_file, &bytes)
         .map_err(|err| crate::errors::API_CLIENT.error(err))?;
     apply(config, stored);
     Ok(())

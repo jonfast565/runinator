@@ -88,7 +88,7 @@ const LOG_ENV: &str = "RUNINATOR_LOG";
 /// open (creating dirs) the append-mode agent log file under the app-data dir. `None` on any io
 /// error so logging degrades to console-only rather than blocking startup.
 fn open_log_file() -> Option<Arc<Mutex<File>>> {
-    let path: PathBuf = runinator_utilities::app_data::app_data_path(LOG_FILE_NAME).ok()?;
+    let path: PathBuf = runinator_platform::app_data::app_data_path(LOG_FILE_NAME).ok()?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).ok()?;
     }

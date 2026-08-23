@@ -68,7 +68,7 @@ async fn main() -> ExitCode {
 async fn run_process() -> ExitCode {
     // Use the same RUNINATOR_LOG tracing pipeline as the other services. The guard is
     // dropped immediately after startup since this is a one-shot job with no otel signals to flush.
-    if let Err(err) = runinator_utilities::startup::startup("Runinator Bootstrap") {
+    if let Err(err) = runinator_platform::startup::startup("Runinator Bootstrap") {
         eprintln!("Bootstrap startup failed: {err}");
         return ExitCode::FAILURE;
     }

@@ -463,7 +463,7 @@ where
     // below route through this so every outbound call is traced uniformly.
     fn traced(&self, builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         let mut headers = reqwest::header::HeaderMap::new();
-        runinator_utilities::telemetry::inject_into_headers(&mut headers);
+        runinator_observability::telemetry::inject_into_headers(&mut headers);
         builder.headers(headers)
     }
 
@@ -885,7 +885,7 @@ where
         overwrite: bool,
     ) -> Result<PackImportResult> {
         self.import_pack_zip(
-            runinator_utilities::pack::PackBuilder::new(workflows)
+            runinator_pack_wire::pack::PackBuilder::new(workflows)
                 .secrets(secrets)
                 .pipelines(pipelines)
                 .build()
@@ -910,7 +910,7 @@ where
         artifacts: Vec<(String, Vec<u8>)>,
         overwrite: bool,
     ) -> Result<PackImportResult> {
-        let mut builder = runinator_utilities::pack::PackBuilder::new(workflows)
+        let mut builder = runinator_pack_wire::pack::PackBuilder::new(workflows)
             .secrets(secrets)
             .pipelines(pipelines)
             .functions(functions);

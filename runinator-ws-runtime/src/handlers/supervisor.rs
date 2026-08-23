@@ -1,5 +1,5 @@
 use axum::{Json, http::StatusCode};
-use runinator_utilities::app_data;
+use runinator_platform::app_data;
 
 use crate::handlers::runs::compute_stale_seconds;
 use runinator_ws_core::openapi::docs::{EndpointDoc, Example, endpoint};

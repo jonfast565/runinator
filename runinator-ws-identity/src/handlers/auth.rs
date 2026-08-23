@@ -21,11 +21,11 @@ use runinator_models::auth::{
 use runinator_models::rbac::{Action, PlatformRole, Role, ScopeKind, ScopeRef, SystemRole};
 use runinator_models::settings::SettingKind;
 use runinator_models::value::Value;
+use runinator_secrets::secret_cipher::SecretCipher;
 use runinator_store::{
     RuntimeStore,
     roles::{AuthStore, RbacStore, SettingStore},
 };
-use runinator_utilities::secret_cipher::SecretCipher;
 use serde::Serialize;
 use uuid::Uuid;
 

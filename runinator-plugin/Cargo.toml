@@ -8,5 +8,5 @@ log = "0.4"
 libloading = "0.9.0"
 serde_json = "1.0"
 
-runinator-utilities = { path = "../runinator-utilities" }
+runinator-platform = { path = "../runinator-platform" }
 runinator-models = { path = "../runinator-models" }

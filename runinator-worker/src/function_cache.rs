@@ -21,7 +21,7 @@ use runinator_api::{AsyncApiClient, StaticLocator};
 use runinator_models::errors::SendableError;
 use runinator_models::functions::{FunctionBinding, is_valid_digest};
 use runinator_models::value::{Map, Value};
-use runinator_utilities::app_data;
+use runinator_platform::app_data;
 use tracing::debug;
 
 use crate::errors::{

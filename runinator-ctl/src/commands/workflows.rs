@@ -184,7 +184,7 @@ fn resolve_workflow_apply_path(file: Option<&Path>) -> Result<PathBuf> {
     match file {
         Some(path) => Ok(path.to_path_buf()),
         None => {
-            let fallback = runinator_utilities::app_data::app_data_path("workflows")
+            let fallback = runinator_platform::app_data::app_data_path("workflows")
                 .map_err(|e| err(e.to_string()))?;
             if !fallback.exists() {
                 return Err(err(format!(

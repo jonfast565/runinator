@@ -2,11 +2,11 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
-use runinator_models::errors::SendableError;
-use runinator_models::runs::NewRunArtifact;
-use runinator_utilities::data_export::{
+use runinator_data_export::data_export::{
     TableExportContext, TableExporter, csv::CsvTableExporter, excel::ExcelTableExporter,
 };
+use runinator_models::errors::SendableError;
+use runinator_models::runs::NewRunArtifact;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 

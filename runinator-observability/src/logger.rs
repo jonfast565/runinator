@@ -5,7 +5,6 @@ use std::sync::OnceLock;
 use std::{env, fs, fs::File, path::PathBuf, sync::Mutex};
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
-use crate::app_data;
 use crate::telemetry::{self, TelemetryGuard};
 
 // ensures the global subscriber is installed at most once per process. plugins loaded into a
@@ -18,13 +17,16 @@ static INITIALIZED: OnceLock<()> = OnceLock::new();
 /// also bridges spans and log events to the otlp exporters under `service_name`. honors
 /// `RUNINATOR_LOG` (an `EnvFilter` directive); falls back to `info`. returns a guard that flushes
 /// otel on drop; keep it alive for the process lifetime.
-pub fn setup_logger(service_name: &str) -> Result<TelemetryGuard, SendableError> {
+pub fn setup_logger(
+    service_name: &str,
+    default_log_path: Option<PathBuf>,
+) -> Result<TelemetryGuard, SendableError> {
     if INITIALIZED.set(()).is_err() {
         // already initialized in this process; do not stand up a second subscriber/exporter set.
         return Ok(TelemetryGuard::disabled());
     }
 
-    let log_file = open_log_file()?;
+    let log_file = open_log_file(default_log_path)?;
 
     let filter = EnvFilter::try_from_env("RUNINATOR_LOG")
         .or_else(|_| EnvFilter::try_new("info"))
@@ -66,11 +68,11 @@ pub fn print_env() -> std::io::Result<()> {
     Ok(())
 }
 
-fn open_log_file() -> std::io::Result<File> {
+fn open_log_file(default_log_path: Option<PathBuf>) -> std::io::Result<File> {
     let mut last_error: Option<std::io::Error> = None;
     let mut had_failure = false;
 
-    for path in desired_log_paths() {
+    for path in desired_log_paths(default_log_path) {
         let path_string = path.display().to_string();
         if let Some(parent) = path.parent()
             && let Err(err) = fs::create_dir_all(parent)
@@ -103,7 +105,7 @@ fn open_log_file() -> std::io::Result<File> {
         .unwrap_or_else(|| std::io::Error::other("unable to open log file at any known location")))
 }
 
-fn desired_log_paths() -> Vec<PathBuf> {
+fn desired_log_paths(default_log_path: Option<PathBuf>) -> Vec<PathBuf> {
     let mut paths = Vec::new();
 
     if let Ok(custom) = env::var("RUNINATOR_LOG_PATH")
@@ -112,9 +114,8 @@ fn desired_log_paths() -> Vec<PathBuf> {
         paths.push(PathBuf::from(custom));
     }
 
-    match app_data::default_log_path() {
-        Ok(path) => paths.push(path),
-        Err(err) => error!("Failed to resolve Runinator log path: {}", err),
+    if let Some(path) = default_log_path {
+        paths.push(path);
     }
 
     paths.push(env::temp_dir().join("runinator-output.log"));

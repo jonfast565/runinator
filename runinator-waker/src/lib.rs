@@ -23,9 +23,9 @@ pub fn spawn_liveness(
     config: &Config,
     shutdown: Arc<Notify>,
 ) -> Option<tokio::task::JoinHandle<()>> {
-    runinator_utilities::liveness::spawn_liveness(
+    runinator_platform::liveness::spawn_liveness(
         &config.liveness_file,
-        runinator_utilities::liveness::DEFAULT_LIVENESS_INTERVAL,
+        runinator_platform::liveness::DEFAULT_LIVENESS_INTERVAL,
         shutdown,
     )
 }

@@ -233,7 +233,7 @@ impl Default for AgentConfig {
 
 /// load the last-saved config, falling back to defaults on any error (no file yet, bad json, ...).
 pub fn load() -> AgentConfig {
-    runinator_utilities::app_data::app_data_path(CONFIG_FILE_NAME)
+    runinator_platform::app_data::app_data_path(CONFIG_FILE_NAME)
         .ok()
         .and_then(|path| std::fs::read_to_string(path).ok())
         .and_then(|raw| serde_json::from_str(&raw).ok())
@@ -242,7 +242,7 @@ pub fn load() -> AgentConfig {
 
 /// best-effort save; a failure here should never block the caller (e.g. starting the agent).
 pub fn save(config: &AgentConfig) {
-    let Ok(path) = runinator_utilities::app_data::app_data_path(CONFIG_FILE_NAME) else {
+    let Ok(path) = runinator_platform::app_data::app_data_path(CONFIG_FILE_NAME) else {
         return;
     };
     if let Some(parent) = path.parent() {

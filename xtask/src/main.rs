@@ -260,7 +260,7 @@ fn run_local_up(workspace_root: &std::path::Path, args: &LocalUpArgs) -> anyhow:
 
     let database_path = match &args.database_path {
         Some(path) => path.clone(),
-        None => runinator_utilities::app_data::default_sqlite_path()
+        None => runinator_platform::app_data::default_sqlite_path()
             .map_err(|err| anyhow::anyhow!("failed to resolve default sqlite path: {err}"))?,
     };
     let database_path = if database_path.is_absolute() {

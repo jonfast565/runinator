@@ -25,9 +25,9 @@ use runinator_api::{AsyncApiClient, StaticLocator};
 use runinator_comm::{AgentDirectiveKind, ControlKind};
 use runinator_models::errors::SendableError;
 use runinator_models::replicas::ReplicaKind;
+use runinator_observability::resource_telemetry::TelemetryCollector;
 use runinator_provider_catalog::{StaticProvider, built_in_providers};
 use runinator_provider_local_files::LocalProvider;
-use runinator_utilities::resource_telemetry::TelemetryCollector;
 use runinator_worker::agent::{
     AgentHandle, AgentObserver, AgentRuntime, AgentRuntimeConfig, BrokerSelection,
     DEFAULT_HEARTBEAT_INTERVAL, DEFAULT_REGISTER_MAX_ATTEMPTS, LocatorMode,
@@ -499,11 +499,11 @@ pub fn runtime_config(config: &AgentConfig) -> Result<AgentRuntimeConfig, Sendab
         gossip_port: config.gossip_port,
         api_key: config.api_key.clone(),
         enrollment_token: config.enrollment_token.clone(),
-        credential_file: runinator_utilities::app_data::app_data_path(
+        credential_file: runinator_platform::app_data::app_data_path(
             "agent/desktop-credential.json",
         )
         .unwrap_or_else(|_| std::path::PathBuf::from("desktop-credential.json")),
-        outbox_file: runinator_utilities::app_data::app_data_path(
+        outbox_file: runinator_platform::app_data::app_data_path(
             "agent/desktop-result-outbox.jsonl",
         )
         .unwrap_or_else(|_| std::path::PathBuf::from("desktop-result-outbox.jsonl")),

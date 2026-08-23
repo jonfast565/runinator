@@ -53,7 +53,7 @@ fn working_dir(raw: Option<&str>) -> Option<PathBuf> {
 // directory when one is set so a relative path in the command resolves predictably. surfaces a clear
 // error if that directory is configured but missing, rather than letting `spawn` fail obscurely.
 fn build_shell_command(command_text: &str) -> Result<Command, SendableError> {
-    let mut command = runinator_utilities::shell::shell_command(command_text);
+    let mut command = runinator_platform::shell::shell_command(command_text);
     if let Some(dir) = configured_working_dir() {
         if !dir.is_dir() {
             return Err(WORKING_DIR_MISSING.error(dir.display().to_string()));

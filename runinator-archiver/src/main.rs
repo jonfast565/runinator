@@ -27,7 +27,9 @@ use runinator_database::{
 use runinator_db_cli::dispatch_database;
 use runinator_models::errors::SendableError;
 use runinator_models::replicas::ReplicaKind;
-use runinator_utilities::resource_telemetry::{TelemetryCollector, attributes_with_host_metadata};
+use runinator_observability::resource_telemetry::{
+    TelemetryCollector, attributes_with_host_metadata,
+};
 use serde_json::json;
 use tracing::{error, info, warn};
 use uuid::Uuid;
@@ -45,7 +47,7 @@ async fn main() -> ExitCode {
 async fn run_process() -> ExitCode {
     // held for the process lifetime so otel signals flush on shutdown. shares the same
     // Use the same RUNINATOR_LOG tracing, file, and OpenTelemetry pipeline as the other services.
-    let _telemetry = match runinator_utilities::startup::startup("Runinator Archiver") {
+    let _telemetry = match runinator_platform::startup::startup("Runinator Archiver") {
         Ok(guard) => guard,
         Err(err) => {
             eprintln!("Archiver startup failed: {err}");
@@ -111,9 +113,9 @@ async fn run_loop<T: ArchiveStore>(db: Arc<T>, config: Config) -> Result<(), Sen
 
 // Touch the liveness file until shutdown for the Kubernetes exec probe.
 fn spawn_liveness(config: &Config, shutdown: Arc<Notify>) -> Option<tokio::task::JoinHandle<()>> {
-    runinator_utilities::liveness::spawn_liveness(
+    runinator_platform::liveness::spawn_liveness(
         &config.liveness_file,
-        runinator_utilities::liveness::DEFAULT_LIVENESS_INTERVAL,
+        runinator_platform::liveness::DEFAULT_LIVENESS_INTERVAL,
         shutdown,
     )
 }

@@ -7,7 +7,7 @@ use runinator_models::auth::{ApiKey, ApiKeyRecord, PrincipalKind};
 use runinator_models::errors::SendableError;
 use runinator_models::rbac::{PlatformRole, Role, ScopeRef};
 use runinator_models::settings::SettingKind;
-use runinator_utilities::secret_cipher::SecretCipher;
+use runinator_secrets::secret_cipher::SecretCipher;
 use uuid::Uuid;
 
 pub mod backend;

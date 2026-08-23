@@ -15,7 +15,7 @@ use runinator_models::auth::{
 use runinator_models::replicas::{
     ReplicaHeartbeatRequest, ReplicaKind, ReplicaRegistrationRequest,
 };
-use runinator_utilities::secret_cipher::SecretCipher;
+use runinator_secrets::secret_cipher::SecretCipher;
 
 #[tokio::test]
 async fn user_admin_handlers_preserve_last_enabled_admin() {

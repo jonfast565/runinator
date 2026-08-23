@@ -137,7 +137,7 @@ fn default_true() -> bool {
 }
 
 fn default_state_dir() -> String {
-    runinator_utilities::app_data::default_supervisor_state_dir()
+    runinator_platform::app_data::default_supervisor_state_dir()
         .map(|path| path.to_string_lossy().into_owned())
         .unwrap_or_else(|_| ".runinator/supervisor".to_string())
 }

@@ -68,7 +68,7 @@ where
         builder: reqwest::blocking::RequestBuilder,
     ) -> reqwest::blocking::RequestBuilder {
         let mut headers = reqwest::header::HeaderMap::new();
-        runinator_utilities::telemetry::inject_into_headers(&mut headers);
+        runinator_observability::telemetry::inject_into_headers(&mut headers);
         builder.headers(headers)
     }
 
@@ -160,7 +160,7 @@ where
         pipelines: Option<&PipelineBundle>,
         overwrite: bool,
     ) -> Result<PackImportResult> {
-        let body = runinator_utilities::pack::build_pack_zip(workflows, secrets, pipelines)
+        let body = runinator_pack_wire::pack::build_pack_zip(workflows, secrets, pipelines)
             .map_err(|err| ApiError::Pack(err.to_string()))?;
         let mut url = self.build_url(API_PACKS_IMPORT)?;
         if overwrite {

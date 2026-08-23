@@ -32,7 +32,7 @@ fn ensure_console_plugin_installed(target_dir: &Path) -> Result<()> {
         return Ok(());
     }
 
-    let plugins_dir = runinator_utilities::app_data::app_data_path("plugins")
+    let plugins_dir = runinator_platform::app_data::app_data_path("plugins")
         .map_err(|err| anyhow::anyhow!("failed to resolve plugin directory: {err}"))?;
     ensure_dir(&plugins_dir)?;
     let destination = plugins_dir.join(plugin_file_name);

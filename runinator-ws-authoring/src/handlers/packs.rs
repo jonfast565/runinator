@@ -126,7 +126,7 @@ pub async fn import_pack<
         );
     }
 
-    let contents = match runinator_utilities::pack::read_pack_zip(&body) {
+    let contents = match runinator_pack_wire::pack::read_pack_zip(&body) {
         Ok(parsed) => parsed,
         Err(err) => return bad_request(format!("invalid pack zip: {err}")),
     };

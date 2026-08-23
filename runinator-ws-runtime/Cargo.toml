@@ -24,7 +24,7 @@ runinator-models = { path = "../runinator-models" }
 runinator-store = { path = "../runinator-store" }
 runinator-provisioner = { path = "../runinator-provisioner" }
 runinator-supervisor = { path = "../runinator-supervisor" }
-runinator-utilities = { path = "../runinator-utilities" }
+runinator-platform = { path = "../runinator-platform" }
 runinator-workflows = { path = "../runinator-workflows" }
 runinator-ws-core = { path = "../runinator-ws-core" }
 runinator-ws-middleware = { path = "../runinator-ws-middleware" }

@@ -168,7 +168,7 @@ async fn process_provider_effect(
     command
         .ensure_supported()
         .map_err(|error| -> SendableError { Box::new(error) })?;
-    runinator_utilities::telemetry::apply_trace_context(
+    runinator_observability::telemetry::apply_trace_context(
         &tracing::Span::current(),
         &command.trace_context,
     );

@@ -6,7 +6,7 @@ use runinator_models::replicas::{
     ReplicaProviderRegistrationRequest, ReplicaRecord, ReplicaRegistrationRequest,
 };
 use runinator_models::value::Value;
-use runinator_utilities::resource_telemetry::{attributes_with_telemetry, TelemetryCollector};
+use runinator_observability::resource_telemetry::{attributes_with_telemetry, TelemetryCollector};
 use tokio::{sync::Notify, task::JoinHandle};
 use uuid::Uuid;
 

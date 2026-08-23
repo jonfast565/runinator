@@ -9,8 +9,8 @@ use runinator_models::{
     settings::SettingKind,
     web::TaskResponse,
 };
+use runinator_secrets::secret_cipher::SecretCipher;
 use runinator_store::{RuntimeStore, roles::SettingStore};
-use runinator_utilities::secret_cipher::SecretCipher;
 
 use crate::settings::{
     decode_config_schema, decode_config_value, decode_secret, validate_and_encode_with_expiry,

@@ -7,8 +7,8 @@ use std::time::Duration;
 
 use runinator_api::{AsyncApiClient, StaticLocator};
 use runinator_models::errors::SendableError;
-use runinator_utilities::liveness;
-use runinator_utilities::resource_telemetry::TelemetryCollector;
+use runinator_observability::resource_telemetry::TelemetryCollector;
+use runinator_platform::liveness;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 use uuid::Uuid;

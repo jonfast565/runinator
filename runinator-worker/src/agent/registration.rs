@@ -12,7 +12,7 @@ use runinator_api::{AsyncApiClient, ReplicaClient, ReplicaServiceConfig, StaticL
 use runinator_models::errors::SendableError;
 use runinator_models::replicas::ReplicaKind;
 use runinator_models::value::{Map, Value};
-use runinator_utilities::resource_telemetry::{
+use runinator_observability::resource_telemetry::{
     TelemetryCollector, attributes_with_host_metadata, attributes_with_telemetry,
 };
 use tokio::task::JoinHandle;

@@ -52,7 +52,7 @@ fn local_data_dir() -> String {
             return configured;
         }
     }
-    runinator_utilities::app_data::app_data_path("blobs")
+    runinator_platform::app_data::app_data_path("blobs")
         .map(|path| path.display().to_string())
         .unwrap_or_else(|_| DEFAULT_DATA_DIR.to_string())
 }

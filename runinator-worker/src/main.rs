@@ -1,7 +1,7 @@
 use std::{env, ffi::OsString, sync::Arc, time::Duration};
 
 use runinator_models::errors::SendableError;
-use runinator_utilities::startup::{ProcessResources, Shutdown};
+use runinator_platform::startup::{ProcessResources, Shutdown};
 use tracing::{error, info};
 
 use runinator_worker::{AgentRuntime, Config, NoopObserver, errors, parse_config};

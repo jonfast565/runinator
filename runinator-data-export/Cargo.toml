@@ -1,0 +1,10 @@
+[package]
+name = "runinator-data-export"
+version.workspace = true
+edition = "2024"
+
+[dependencies]
+csv = "1"
+runinator-models = { path = "../runinator-models" }
+rust_xlsxwriter = "0.94.1"
+

@@ -8,7 +8,7 @@ use runinator_models::{
         TaskExecutionResult,
     },
 };
-use runinator_utilities::ffiutils;
+use runinator_platform::ffiutils;
 use std::{
     ffi::{CString, c_char, c_int},
     fs::{self, File, OpenOptions},
@@ -199,7 +199,7 @@ fn path_to_cstring(path: &Path, kind: &str) -> Result<CString, SendableError> {
 }
 
 fn unique_temp_file(kind: &str, extension: &str) -> PathBuf {
-    runinator_utilities::app_data::app_data_path("plugin/tmp")
+    runinator_platform::app_data::app_data_path("plugin/tmp")
         .unwrap_or_else(|_| std::env::temp_dir().join("runinator-plugin"))
         .join(format!(
             "{}-{}-{}.{}",

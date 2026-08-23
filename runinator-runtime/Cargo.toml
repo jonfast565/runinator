@@ -13,7 +13,7 @@ uuid = { version = "1.18", features = ["v4", "v5", "v7"] }
 runinator-comm = { path = "../runinator-comm" }
 runinator-store = { path = "../runinator-store" }
 runinator-models = { path = "../runinator-models" }
-runinator-utilities = { path = "../runinator-utilities" }
+runinator-secrets = { path = "../runinator-secrets" }
 runinator-compute = { path = "../runinator-compute" }
 runinator-workflows = { path = "../runinator-workflows" }
 

@@ -21,4 +21,4 @@ runinator-store = { path = "../runinator-store" }
 runinator-provisioner = { path = "../runinator-provisioner" }
 runinator-ws-core = { path = "../runinator-ws-core" }
 runinator-ws-middleware = { path = "../runinator-ws-middleware" }
-runinator-utilities = { path = "../runinator-utilities" }
+runinator-secrets = { path = "../runinator-secrets" }

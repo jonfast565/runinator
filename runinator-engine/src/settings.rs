@@ -11,9 +11,9 @@ use chrono::{DateTime, Utc};
 use runinator_models::settings::SettingKind;
 use runinator_models::types::RuninatorType;
 use runinator_models::value::Value;
+use runinator_secrets::secret_cipher::SecretCipher;
+use runinator_secrets::stored_secret::StoredSecret;
 use runinator_store::RuntimeStore;
-use runinator_utilities::secret_cipher::SecretCipher;
-use runinator_utilities::stored_secret::StoredSecret;
 
 use serde::{Deserialize, Serialize};
 

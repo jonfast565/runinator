@@ -108,7 +108,7 @@ async fn jwt_secret_is_encrypted_at_rest_and_round_trips() {
         .unwrap()
         .value;
     assert!(
-        runinator_utilities::secret_cipher::SecretCipher::is_sealed(&stored),
+        runinator_secrets::secret_cipher::SecretCipher::is_sealed(&stored),
         "jwt secret must be encrypted at rest"
     );
     assert_ne!(
@@ -156,7 +156,7 @@ async fn legacy_plaintext_jwt_secret_loads_and_migrates_to_encrypted() {
         .unwrap()
         .value;
     assert!(
-        runinator_utilities::secret_cipher::SecretCipher::is_sealed(&migrated),
+        runinator_secrets::secret_cipher::SecretCipher::is_sealed(&migrated),
         "legacy secret must be sealed after migration"
     );
     assert_eq!(crate::load_jwt_secret(&db).await.unwrap(), legacy);

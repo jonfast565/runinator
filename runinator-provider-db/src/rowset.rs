@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
-pub use runinator_utilities::data_export::TableData;
+pub use runinator_data_export::data_export::TableData;
 
 /// the coarse shape of a column, derived from the driver's type info. deliberately small: it
 /// describes what the json value looks like, not the engine's native type name.

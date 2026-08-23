@@ -1,8 +1,8 @@
 use runinator_models::settings::SettingKind;
 use runinator_models::types::RuninatorType;
 use runinator_models::value::{Map, Value};
+use runinator_secrets::secret_cipher::SecretCipher;
 use runinator_store::RuntimeStore;
-use runinator_utilities::secret_cipher::SecretCipher;
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};

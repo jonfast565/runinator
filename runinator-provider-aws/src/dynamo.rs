@@ -18,7 +18,7 @@ use runinator_models::{errors::SendableError, runs::NewRunArtifact};
 use crate::errors::{
     DYNAMO_TIMEOUT, INVALID_ATTRIBUTE_VALUE, MISSING_KEY_CONDITION, MISSING_PARTIQL_STATEMENT,
 };
-use runinator_utilities::data_export::{
+use runinator_data_export::data_export::{
     TableData, TableExportContext, TableExporter, csv::CsvTableExporter, excel::ExcelTableExporter,
 };
 use serde::Deserialize;

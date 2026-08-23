@@ -1,7 +1,7 @@
 //! the blob service binary.
 
 use runinator_blob::{config::BlobServerConfig, run_server};
-use runinator_utilities::startup::ProcessResources;
+use runinator_platform::startup::ProcessResources;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {

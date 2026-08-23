@@ -8,7 +8,7 @@ use std::{error::Error, fmt, path::PathBuf, sync::Arc};
 use runinator_blob::{BlobError, BlobStore};
 use runinator_broker::{Broker, build_broker_client};
 use runinator_db_cli::{DatabaseBackend, prepare_sqlite_path, required_database_url};
-use runinator_utilities::startup::ProcessResources;
+use runinator_platform::startup::ProcessResources;
 
 pub use runinator_broker::{BrokerBuildError, BrokerClientConfig, BrokerConsumerProfile};
 pub use runinator_db_cli;
@@ -154,7 +154,7 @@ async fn resolve_database(
 ) -> Result<DatabaseResource, ServerBootstrapError> {
     let sqlite_path = match request.sqlite_path {
         Some(path) => path,
-        None => runinator_utilities::app_data::default_sqlite_path()
+        None => runinator_platform::app_data::default_sqlite_path()
             .map_err(ServerBootstrapError::Process)?,
     };
     let sqlite_connection = prepare_sqlite_path(sqlite_path)

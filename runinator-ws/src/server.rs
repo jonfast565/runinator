@@ -86,9 +86,10 @@ pub async fn run_webserver<T: DatabaseImpl>(
                 port: Some(port),
                 base_path: Some("/".into()),
                 version: Some(env!("CARGO_PKG_VERSION").to_string()),
-                attributes: runinator_utilities::resource_telemetry::attributes_with_host_metadata(
-                    &advertisement.attributes,
-                ),
+                attributes:
+                    runinator_observability::resource_telemetry::attributes_with_host_metadata(
+                        &advertisement.attributes,
+                    ),
             },
             None,
             // the web service registering its own replica at startup, not an external caller.
@@ -102,7 +103,7 @@ pub async fn run_webserver<T: DatabaseImpl>(
     let heartbeat_host = advertisement.host.clone();
     let heartbeat_attributes = advertisement.attributes.clone();
     let heartbeat_telemetry =
-        std::sync::Arc::new(runinator_utilities::resource_telemetry::TelemetryCollector::new());
+        std::sync::Arc::new(runinator_observability::resource_telemetry::TelemetryCollector::new());
     // every long-lived loop runs in this set so an unexpected exit (panic or early return) is
     // observed at the join below instead of silently leaving a dead loop behind.
     let mut background: JoinSet<()> = JoinSet::new();
@@ -117,7 +118,7 @@ pub async fn run_webserver<T: DatabaseImpl>(
                     return;
                 }
                 _ = ticker.tick() => {
-                    let attributes = runinator_utilities::resource_telemetry::attributes_with_telemetry(
+                    let attributes = runinator_observability::resource_telemetry::attributes_with_telemetry(
                         &heartbeat_attributes,
                         heartbeat_telemetry.as_ref(),
                     );

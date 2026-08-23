@@ -1,6 +1,6 @@
 use log::error;
 use runinator_models::providers::{ActionMetadata, ProviderMetadata};
-use runinator_utilities::ffiutils;
+use runinator_platform::ffiutils;
 use std::ffi::{c_char, c_int};
 
 use crate::runner::execute_request;

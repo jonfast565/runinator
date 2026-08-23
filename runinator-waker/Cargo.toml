@@ -10,7 +10,7 @@ tokio = { version = "1", features = ["full"] }
 chrono = { version = "0.4", features = ["serde"] }
 
 runinator-models = { path = "../runinator-models" }
-runinator-utilities = { path = "../runinator-utilities" }
+runinator-platform = { path = "../runinator-platform" }
 opentelemetry = "0.32"
 runinator-broker = { path = "../runinator-broker", default-features = false }
 

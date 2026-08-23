@@ -1,6 +1,6 @@
 use runinator_broker::{BrokerConsumerProfile, build_broker_client};
 use runinator_models::errors::SendableError;
-use runinator_utilities::startup::ProcessResources;
+use runinator_platform::startup::ProcessResources;
 use tracing::{error, info};
 
 use runinator_waker::{config::parse_config, waker_loop};

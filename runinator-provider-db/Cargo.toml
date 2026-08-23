@@ -24,7 +24,7 @@ bigdecimal = "0.4"
 mongodb = { version = "3", optional = true }
 
 runinator-plugin = { path = "../runinator-plugin" }
-runinator-utilities = { path = "../runinator-utilities" }
+runinator-data-export = { path = "../runinator-data-export" }
 runinator-models = { path = "../runinator-models" }
 
 [features]

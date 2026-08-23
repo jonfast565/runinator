@@ -13,5 +13,5 @@ aws-sdk-dynamodb = "1.98"
 base64 = "0.22"
 
 runinator-plugin = { path = "../runinator-plugin" }
-runinator-utilities = { path = "../runinator-utilities" }
+runinator-data-export = { path = "../runinator-data-export" }
 runinator-models = { path = "../runinator-models" }

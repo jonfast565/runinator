@@ -33,7 +33,7 @@ use tokio::sync::Notify;
 use uuid::Uuid;
 
 use crate::config::CliArgs;
-use runinator_utilities::resource_telemetry;
+use runinator_observability::resource_telemetry;
 use service::EngineWorkerService;
 
 #[tokio::main]

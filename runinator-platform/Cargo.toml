@@ -1,0 +1,12 @@
+[package]
+name = "runinator-platform"
+version.workspace = true
+edition = "2024"
+
+[dependencies]
+log = "0.4"
+log-panics = "2.1"
+runinator-models = { path = "../runinator-models" }
+runinator-observability = { path = "../runinator-observability" }
+tokio = { version = "1", features = ["signal", "sync", "rt", "macros", "time"] }
+

@@ -36,7 +36,9 @@ runinator-database = { path = "../runinator-database", default-features = false 
 runinator-db-cli = { path = "../runinator-db-cli", default-features = false }
 runinator-models = { path = "../runinator-models" }
 runinator-comm = { path = "../runinator-comm" }
-runinator-utilities = { path = "../runinator-utilities" }
+runinator-observability = { path = "../runinator-observability" }
+runinator-platform = { path = "../runinator-platform" }
+runinator-secrets = { path = "../runinator-secrets" }
 runinator-workflows = { path = "../runinator-workflows" }
 runinator-provisioner = { path = "../runinator-provisioner" }
 runinator-rexrap = { path = "../runinator-rexrap" }

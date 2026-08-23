@@ -13,7 +13,7 @@ Primary runtime flow:
 3. `runinator-waker` is a small, horizontally scalable, broker-only timer/relay: it consumes the `wake` channel, sleeps until each wake is due, then publishes the settle it carries on the `ingress` channel. It is the timer backend for the workflow VM — every effect that completes at a known future instant (`Timer`, `TimerDelay`, an approval expiry, a manual/external gate deadline, a `debounce`) is armed as a wake by the engine's infrastructure effect host rather than slept on in-process. It has no database, no HTTP client to the web service, and shares no channel with the worker.
 4. `runinator-worker` polls the broker effect channel, resolves a provider/plugin, executes the effect, and publishes results on the broker effect-result channel. It self-publishes its built-in provider metadata to the web service on startup.
 5. `runinator-desktop-agent` is the standalone, exclusive desktop worker. It reuses `runinator-worker`'s runtime, exposes built-in providers plus the sandboxed local-files provider, and can relay broker traffic through `runinator-ws`. It is a separate tray application, not a Tauri sidecar or command-center service.
-6. `runinator-ctl` is the control CLI (`runinatorctl`). Among other commands, `workflows apply` is the one-shot pack importer: it compiles a `.rrx` source or directory **client-side**, zips the compiled artifacts (`workflows.json` + optional `secrets.json` + optional `pipelines.json`), and uploads a single `application/zip` to the web service's `/packs/import` endpoint. Compilation never happens on the backend; `/packs/import` only reads the compiled JSON. There is no long-running importer service. Pack zip read/write lives in `runinator-utilities::pack`; the entry-name layout is the wire contract shared by ctl/api/command-center (writers) and ws (reader). `.rrx` is the only authored pack-file extension: its REXRAP container may carry workflow, pipeline, settings, package-manifest, and test blocks.
+6. `runinator-ctl` is the control CLI (`runinatorctl`). Among other commands, `workflows apply` is the one-shot pack importer: it compiles a `.rrx` source or directory **client-side**, zips the compiled artifacts (`workflows.json` + optional `secrets.json` + optional `pipelines.json`), and uploads a single `application/zip` to the web service's `/packs/import` endpoint. Compilation never happens on the backend; `/packs/import` only reads the compiled JSON. There is no long-running importer service. Pack zip read/write lives in `runinator-pack-wire`; the entry-name layout is the wire contract shared by ctl/api/command-center (writers) and ws (reader). `.rrx` is the only authored pack-file extension: its REXRAP container may carry workflow, pipeline, settings, package-manifest, and test blocks.
 
    `runinatorctl console` is the terminal console. Its `:` lines are parsed by the **same clap
    parser** the process uses (`commands/repl.rs` → `commands::run_command`), so every command-line
@@ -226,7 +226,11 @@ Keep dependency direction boring and predictable, structured with domains in min
 - `runinator-provider-functions`: executing published packaged functions. it advertises exactly one action, `invoke`; per-export names would be rejected by the worker's metadata check, and no static list could enumerate every export ever published, so the export is named by the action's `FunctionBinding`. it makes **no control-plane calls** — the worker stages the code and passes a local path — which is what lets the same provider run on a host worker, the desktop agent, or a future kubernetes-job runtime. `InvocationRuntime` is the seam where that varies; `runinator-sandbox` is where the container work is shared.
 - `runinator-plugin`: dynamic plugin loading and `Provider` trait integration. Keep FFI details contained here.
 - `runinator-provider-*`: provider implementations. Always implement a new library for a new provider. Keep provider-specific configuration and external system behavior out of core crates.
-- `runinator-utilities`: small cross-cutting helpers such as startup/logging, credential store trait, and data export. Do not turn this into a dumping ground for domain logic.
+- `runinator-observability`: process logging, OpenTelemetry propagation/export, and host-resource telemetry. It has no application-path or secret dependency.
+- `runinator-secrets`: secret encryption, expiry envelopes, and atomic credential-file persistence. Keep plaintext-handling and crypto changes auditable here.
+- `runinator-platform`: application paths, process startup/shutdown, liveness, shell, and FFI support. It may use observability to assemble a binary's startup, but observability must not depend back on it.
+- `runinator-pack-wire`: the compiled-pack ZIP reader/writer and entry-name wire contract shared by pack writers and import readers; it does not compile authored source.
+- `runinator-data-export`: CSV/XLSX table output for providers and future reporting surfaces. Depend on it directly rather than loading export dependencies into unrelated providers.
 
 If a change requires a dependency from a lower-level/shared crate back into a service crate, stop and redesign the boundary.
 
@@ -476,7 +480,7 @@ cargo run -p runinator-supervisor -- stop
 (Go, `client-go`) bridge one operator's local credentials (e.g. a Claude Code login)
 into Kubernetes Secrets. They are an optional, macOS-operator-machine bridge for that
 one credential source, not part of the portable runtime — the portable credential
-path is `CredentialStore` (`runinator-auth`), `SecretCipher` (`runinator-utilities`),
+path is `CredentialStore` (`runinator-auth`), `SecretCipher` (`runinator-secrets`),
 and the settings store's `secret://` references, all of which are OS-agnostic.
 
 ## Error Handling And Async

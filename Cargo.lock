@@ -7693,7 +7693,8 @@ dependencies = [
  "reqwest",
  "runinator-comm",
  "runinator-models",
- "runinator-utilities",
+ "runinator-observability",
+ "runinator-pack-wire",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
@@ -7713,7 +7714,8 @@ dependencies = [
  "runinator-database",
  "runinator-db-cli",
  "runinator-models",
- "runinator-utilities",
+ "runinator-observability",
+ "runinator-platform",
  "serde_json",
  "tokio",
  "tracing",
@@ -7746,7 +7748,7 @@ dependencies = [
  "reqwest",
  "runinator-blob-core",
  "runinator-models",
- "runinator-utilities",
+ "runinator-platform",
  "serde",
  "serde_json",
  "tokio",
@@ -7781,7 +7783,7 @@ dependencies = [
  "runinator-database",
  "runinator-db-cli",
  "runinator-models",
- "runinator-utilities",
+ "runinator-platform",
  "tokio",
  "tracing",
 ]
@@ -7803,7 +7805,7 @@ dependencies = [
  "runinator-broker-core",
  "runinator-comm",
  "runinator-models",
- "runinator-utilities",
+ "runinator-platform",
  "rustls 0.23.40",
  "serde",
  "serde_json",
@@ -7852,10 +7854,10 @@ dependencies = [
  "reqwest",
  "runinator-models",
  "runinator-pack",
+ "runinator-pack-wire",
  "runinator-provider-catalog",
  "runinator-rexrap",
  "runinator-rexrap-ide",
- "runinator-utilities",
  "runinator-workflows",
  "serde",
  "serde_json",
@@ -7905,15 +7907,24 @@ dependencies = [
  "runinator-comm",
  "runinator-models",
  "runinator-pack",
+ "runinator-platform",
  "runinator-provider-catalog",
  "runinator-rexrap",
- "runinator-utilities",
  "runinator-workflows",
  "serde",
  "serde_json",
  "tokio",
  "uuid",
  "windows-sys 0.60.2",
+]
+
+[[package]]
+name = "runinator-data-export"
+version = "0.2.368"
+dependencies = [
+ "csv",
+ "runinator-models",
+ "rust_xlsxwriter",
 ]
 
 [[package]]
@@ -7928,8 +7939,8 @@ dependencies = [
  "runinator-comm",
  "runinator-models",
  "runinator-runtime",
+ "runinator-secrets",
  "runinator-store",
- "runinator-utilities",
  "serde",
  "serde_json",
  "sqlx",
@@ -7961,11 +7972,12 @@ dependencies = [
  "runinator-api",
  "runinator-comm",
  "runinator-models",
+ "runinator-observability",
+ "runinator-platform",
  "runinator-plugin",
  "runinator-provider-catalog",
  "runinator-provider-console",
  "runinator-provider-local-files",
- "runinator-utilities",
  "runinator-worker",
  "serde",
  "serde_json",
@@ -8007,8 +8019,8 @@ dependencies = [
  "runinator-models",
  "runinator-rexrap",
  "runinator-runtime",
+ "runinator-secrets",
  "runinator-store",
- "runinator-utilities",
  "runinator-workflows",
  "serde",
  "serde_json",
@@ -8030,8 +8042,8 @@ dependencies = [
  "runinator-db-cli",
  "runinator-engine",
  "runinator-models",
+ "runinator-observability",
  "runinator-service-bootstrap",
- "runinator-utilities",
  "rustls 0.23.40",
  "tokio",
  "uuid",
@@ -8063,6 +8075,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "runinator-observability"
+version = "0.2.368"
+dependencies = [
+ "chrono",
+ "http 1.4.0",
+ "log",
+ "nvml-wrapper",
+ "opentelemetry",
+ "opentelemetry-appender-tracing",
+ "opentelemetry-http",
+ "opentelemetry-otlp",
+ "opentelemetry-semantic-conventions",
+ "opentelemetry_sdk",
+ "runinator-models",
+ "serde_json",
+ "sysinfo",
+ "tracing",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "runinator-pack"
 version = "0.2.368"
 dependencies = [
@@ -8079,13 +8113,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "runinator-pack-wire"
+version = "0.2.368"
+dependencies = [
+ "runinator-models",
+ "serde",
+ "serde_json",
+ "zip",
+]
+
+[[package]]
+name = "runinator-platform"
+version = "0.2.368"
+dependencies = [
+ "log",
+ "log-panics",
+ "runinator-models",
+ "runinator-observability",
+ "tokio",
+]
+
+[[package]]
 name = "runinator-plugin"
 version = "0.2.368"
 dependencies = [
  "libloading 0.9.0",
  "log",
  "runinator-models",
- "runinator-utilities",
+ "runinator-platform",
  "serde_json",
 ]
 
@@ -8096,7 +8151,7 @@ dependencies = [
  "libc",
  "log",
  "runinator-models",
- "runinator-utilities",
+ "runinator-platform",
  "serde",
  "serde_json",
  "winapi",
@@ -8107,9 +8162,9 @@ name = "runinator-provider-ai"
 version = "0.2.368"
 dependencies = [
  "runinator-models",
+ "runinator-platform",
  "runinator-plugin",
  "runinator-provider-support",
- "runinator-utilities",
  "serde",
  "serde_json",
  "uuid",
@@ -8135,9 +8190,9 @@ dependencies = [
  "aws-sdk-dynamodb",
  "base64 0.22.1",
  "log",
+ "runinator-data-export",
  "runinator-models",
  "runinator-plugin",
- "runinator-utilities",
  "serde",
  "serde_json",
  "tokio",
@@ -8169,9 +8224,9 @@ version = "0.2.368"
 dependencies = [
  "log",
  "runinator-models",
+ "runinator-platform",
  "runinator-plugin",
  "runinator-provider-support",
- "runinator-utilities",
  "serde",
  "serde_json",
 ]
@@ -8183,9 +8238,9 @@ dependencies = [
  "bigdecimal",
  "chrono",
  "mongodb",
+ "runinator-data-export",
  "runinator-models",
  "runinator-plugin",
- "runinator-utilities",
  "serde",
  "serde_json",
  "sqlx",
@@ -8385,8 +8440,8 @@ dependencies = [
  "runinator-comm",
  "runinator-compute",
  "runinator-models",
+ "runinator-secrets",
  "runinator-store",
- "runinator-utilities",
  "runinator-workflows",
  "serde",
  "serde_json",
@@ -8404,13 +8459,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "runinator-secrets"
+version = "0.2.368"
+dependencies = [
+ "chacha20poly1305",
+ "chrono",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "uuid",
+]
+
+[[package]]
 name = "runinator-service-bootstrap"
 version = "0.2.368"
 dependencies = [
  "runinator-blob",
  "runinator-broker",
  "runinator-db-cli",
- "runinator-utilities",
+ "runinator-platform",
  "tokio",
 ]
 
@@ -8430,41 +8498,9 @@ version = "0.2.368"
 dependencies = [
  "chrono",
  "clap",
- "runinator-utilities",
+ "runinator-platform",
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "runinator-utilities"
-version = "0.2.368"
-dependencies = [
- "chacha20poly1305",
- "chrono",
- "csv",
- "http 1.4.0",
- "log",
- "log-panics",
- "nvml-wrapper",
- "opentelemetry",
- "opentelemetry-appender-tracing",
- "opentelemetry-http",
- "opentelemetry-otlp",
- "opentelemetry-semantic-conventions",
- "opentelemetry_sdk",
- "runinator-models",
- "rust_xlsxwriter",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "sysinfo",
- "tempfile",
- "tokio",
- "tracing",
- "tracing-opentelemetry",
- "tracing-subscriber",
- "uuid",
- "zip",
 ]
 
 [[package]]
@@ -8476,7 +8512,7 @@ dependencies = [
  "opentelemetry",
  "runinator-broker",
  "runinator-models",
- "runinator-utilities",
+ "runinator-platform",
  "tokio",
  "tracing",
  "uuid",
@@ -8497,10 +8533,12 @@ dependencies = [
  "runinator-broker",
  "runinator-comm",
  "runinator-models",
+ "runinator-observability",
+ "runinator-platform",
  "runinator-plugin",
  "runinator-provider-catalog",
+ "runinator-secrets",
  "runinator-service-bootstrap",
- "runinator-utilities",
  "rustls 0.23.40",
  "serde",
  "serde_json",
@@ -8546,13 +8584,15 @@ dependencies = [
  "runinator-db-cli",
  "runinator-engine",
  "runinator-models",
+ "runinator-observability",
  "runinator-pack",
+ "runinator-platform",
  "runinator-provider-catalog",
  "runinator-provisioner",
  "runinator-rexrap",
  "runinator-runtime",
+ "runinator-secrets",
  "runinator-service-bootstrap",
- "runinator-utilities",
  "runinator-workflows",
  "runinator-ws-authoring",
  "runinator-ws-core",
@@ -8579,11 +8619,12 @@ dependencies = [
  "runinator-broker-core",
  "runinator-engine",
  "runinator-models",
+ "runinator-pack-wire",
  "runinator-provider-catalog",
  "runinator-rexrap",
  "runinator-rexrap-ide",
+ "runinator-secrets",
  "runinator-store",
- "runinator-utilities",
  "runinator-workflows",
  "runinator-ws-core",
  "runinator-ws-middleware",
@@ -8624,8 +8665,8 @@ dependencies = [
  "runinator-engine",
  "runinator-models",
  "runinator-provisioner",
+ "runinator-secrets",
  "runinator-store",
- "runinator-utilities",
  "runinator-ws-core",
  "runinator-ws-middleware",
  "serde",
@@ -8666,10 +8707,10 @@ dependencies = [
  "runinator-comm",
  "runinator-engine",
  "runinator-models",
+ "runinator-platform",
  "runinator-provisioner",
  "runinator-store",
  "runinator-supervisor",
- "runinator-utilities",
  "runinator-workflows",
  "runinator-ws-core",
  "runinator-ws-middleware",
@@ -13140,7 +13181,7 @@ dependencies = [
  "clap",
  "regex",
  "runinator-db-cli",
- "runinator-utilities",
+ "runinator-platform",
  "serde",
  "serde_yaml",
  "walkdir",

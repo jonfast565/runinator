@@ -145,7 +145,7 @@ pub async fn apply_dev_pack(
         load_pack_settings(&source)?
     };
     // desktop dev re-apply pushes workflows + settings; pipelines are pack-managed via ctl apply.
-    let body = runinator_utilities::pack::build_pack_zip(&bundle, settings.as_ref(), None)
+    let body = runinator_pack_wire::pack::build_pack_zip(&bundle, settings.as_ref(), None)
         .map_err(|err| CommandError::Unexpected(err.to_string()))?;
     let mut url = build_state_url(&state, API_PACKS_IMPORT).await?;
     // an explicit dev re-apply is authoritative: update existing items in place.

@@ -8,7 +8,7 @@ license = "Apache-2.0"
 runinator-blob = { path = "../runinator-blob", default-features = false, features = ["client"] }
 runinator-broker = { path = "../runinator-broker", default-features = false }
 runinator-db-cli = { path = "../runinator-db-cli", default-features = false }
-runinator-utilities = { path = "../runinator-utilities" }
+runinator-platform = { path = "../runinator-platform" }
 
 [features]
 default = ["sqlite", "http", "tcp"]

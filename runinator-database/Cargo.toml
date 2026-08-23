@@ -18,7 +18,7 @@ runinator-auth = { path = "../runinator-auth" }
 runinator-models = { path = "../runinator-models" }
 runinator-store = { path = "../runinator-store" }
 runinator-comm = { path = "../runinator-comm" }
-runinator-utilities = { path = "../runinator-utilities" }
+runinator-secrets = { path = "../runinator-secrets" }
 
 [features]
 # Production binaries select only the driver they need.

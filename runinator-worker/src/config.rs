@@ -1,6 +1,6 @@
 use clap::Parser;
 use runinator_models::errors::SendableError;
-use runinator_utilities::app_data;
+use runinator_platform::app_data;
 use std::collections::BTreeMap;
 use std::time::Duration;
 use uuid::Uuid;

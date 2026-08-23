@@ -66,7 +66,7 @@ fn execute_command(
     timeout_secs: i64,
     events_jsonl_path: &str,
 ) -> Result<c_int, Box<dyn std::error::Error>> {
-    let mut command = runinator_utilities::shell::shell_command(args_str);
+    let mut command = runinator_platform::shell::shell_command(args_str);
     #[cfg(target_os = "windows")]
     command.creation_flags(0x00000008);
 

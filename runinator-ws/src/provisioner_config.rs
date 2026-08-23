@@ -2,10 +2,10 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use runinator_models::replicas::ReplicaKind;
+use runinator_platform::app_data;
 use runinator_provisioner::{
     KubernetesBackendConfig, ProvisionerConfig, SupervisorBackendConfig, SupervisorNodeTemplate,
 };
-use runinator_utilities::app_data;
 
 // reads the on-demand node provisioner configuration from the environment. each backend is opt-in;
 // an all-disabled environment yields an empty config (provisioning endpoints report no backends).

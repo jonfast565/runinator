@@ -23,7 +23,7 @@ pub(crate) fn run_shell_command(
         return Err(CANCELED.bare());
     }
     let input = params.input.unwrap_or_else(|| json!({}));
-    let mut child = runinator_utilities::shell::shell_command(&params.command)
+    let mut child = runinator_platform::shell::shell_command(&params.command)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

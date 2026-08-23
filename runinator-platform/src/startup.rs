@@ -1,9 +1,9 @@
-use crate::{
-    dirutils,
+use crate::{app_data, dirutils};
+use log::info;
+use runinator_observability::{
     logger::{self, print_env},
     telemetry::TelemetryGuard,
 };
-use log::info;
 use std::{
     env,
     sync::{
@@ -23,7 +23,7 @@ pub fn startup(
         env::set_var("RUST_BACKTRACE", "1");
     }
     dirutils::set_exe_dir_as_cwd()?;
-    let guard = logger::setup_logger(name)?;
+    let guard = logger::setup_logger(name, app_data::default_log_path().ok())?;
     log_panics::init();
 
     info!("--- {} ---", name);

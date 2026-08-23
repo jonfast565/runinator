@@ -387,8 +387,8 @@ fn line_editor() -> Reedline {
 }
 
 fn history_file() -> Result<PathBuf> {
-    fs::create_dir_all(runinator_utilities::app_data::app_data_dir()?)?;
-    runinator_utilities::app_data::app_data_path(HISTORY_FILE)
+    fs::create_dir_all(runinator_platform::app_data::app_data_dir()?)?;
+    runinator_platform::app_data::app_data_path(HISTORY_FILE)
 }
 
 const HISTORY_FILE: &str = "ctl-console-history.txt";

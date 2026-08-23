@@ -151,7 +151,7 @@ async fn trace_propagation_middleware(
         path = %path,
         request_id = %request_id,
     );
-    runinator_utilities::telemetry::apply_http_context(&span, request.headers());
+    runinator_observability::telemetry::apply_http_context(&span, request.headers());
 
     async move {
         let started = std::time::Instant::now();

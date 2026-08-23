@@ -22,7 +22,7 @@ runinator-service-bootstrap = { path = "../runinator-service-bootstrap", default
 runinator-database = { path = "../runinator-database", default-features = false }
 runinator-db-cli = { path = "../runinator-db-cli", default-features = false }
 runinator-models = { path = "../runinator-models" }
-runinator-utilities = { path = "../runinator-utilities" }
+runinator-observability = { path = "../runinator-observability" }
 
 [features]
 default = ["sqlite", "http", "tcp"]

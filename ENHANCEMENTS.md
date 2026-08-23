@@ -25,7 +25,7 @@ The guiding constraint from `AGENTS.md`: keep dependency direction services→sh
 | 5.3 | Inbound webhook triggers | **P2** | ws, models |
 | 6.5 | Cross-run analytics | **P2** | database, ws, command-center |
 | 6.9 | Shareable run forms | **P2** | ws, command-center |
-| 8.6 | Split the utilities catch-all | **P3** | utilities and its consumers |
+| 8.6 | Split the utilities catch-all | **shipped 2026-08-22** | observability, secrets, platform, pack-wire, data-export |
 | 5.6 | AI cost & token accounting | **P3** | provider-ai, comm/models, database |
 | 5.2 | AI-assisted REXRAP authoring | **P3** | command-center, provider-ai |
 | 5.7 | Pack environments + promotion | **P3** | ctl, ws, settings store |
@@ -65,7 +65,7 @@ The guiding constraint from `AGENTS.md`: keep dependency direction services→sh
   core loop.
 
 ### 6.8 Secret expiry warnings
-- **Owning crates:** `runinator-engine` (settings store), `runinator-utilities` (credential store).
+- **Owning crates:** `runinator-engine` (settings store), `runinator-secrets` (credential store).
 - **Problem:** The creds-sync pack copies credentials on a cron, but nothing warns **before** one expires — the first signal is a failed job.
 - **Approach:** Optional expiry metadata on settings-store secrets and a scan that raises a notification ahead of expiry.
 - Delivered through the shipped notification-policy layer (**6.1**, Appendix B); it is the cheapest proof that layer generalizes beyond run failures.
@@ -107,12 +107,10 @@ The guiding constraint from `AGENTS.md`: keep dependency direction services→sh
 
 ## P3 — AI, lifecycle, and dependency cleanup
 
-### 8.6 Split the `runinator-utilities` catch-all
-- **Owning crates:** `runinator-utilities` and its 27 direct consumers.
-- **Surveyed 2026-08-22:** one crate currently combines application paths, liveness, startup, logging/OpenTelemetry/resource telemetry, secret encryption and files, ZIP pack I/O, shell/FFI helpers, CSV/XLSX export, and GPU telemetry. Its dependencies are therefore a shared transitive build and conceptual surface for otherwise unrelated consumers.
-- **Approach:** split by capability rather than by caller: observability, secrets, filesystem/runtime support, and pack-wire I/O are sensible first boundaries; move data export to the provider/reporting boundary. Preserve stable facades temporarily if migration churn would otherwise be high.
-- **Boundary note:** separate crates provide real isolation in this workspace. Cargo feature flags alone will not, because workspace feature unification re-enables optional dependencies whenever another consumer selects them.
-- **Migration:** start with the leaf `pack` and observability modules, whose import sets are already distinct, then move secrets as an auditable unit. Leave generic helpers only after every remaining module has a coherent owner.
+### 8.6 Split the `runinator-utilities` catch-all — shipped 2026-08-22
+- **Delivered:** all direct consumers now depend only on their required capability: `runinator-observability` owns logging, OpenTelemetry, and host/GPU telemetry; `runinator-secrets` owns authenticated encryption, expiry envelopes, and atomic secret files; `runinator-platform` owns application paths, process lifecycle, liveness, shell, and FFI helpers; `runinator-pack-wire` owns the compiled-pack ZIP wire format; and `runinator-data-export` owns CSV/XLSX table output.
+- **Boundary:** pack compilation remains in `runinator-pack`; only its compiled-artifact transport format belongs in `runinator-pack-wire`. `runinator-platform` can compose observability during process startup, but the observability crate has no reverse dependency on application paths or process lifecycle.
+- **Result:** the retired `runinator-utilities` package has no compatibility facade, so its old aggregate dependency surface cannot be accidentally pulled back into a consumer.
 
 ### 5.6 AI cost & token accounting
 - **Owning crates:** `runinator-provider-ai`, `runinator-models`/`runinator-comm` (result event), `runinator-database`.

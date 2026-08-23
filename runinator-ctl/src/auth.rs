@@ -7,7 +7,7 @@ use std::{
 use runinator_api::{ApiError, AsyncApiClient, StaticLocator};
 use runinator_models::auth::LoginResponse;
 use runinator_models::json;
-use runinator_utilities::app_data::{app_data_dir, app_data_path};
+use runinator_platform::app_data::{app_data_dir, app_data_path};
 use serde::{Deserialize, Serialize};
 
 use crate::{

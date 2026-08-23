@@ -2,7 +2,7 @@
 use runinator_broker::http;
 use runinator_broker::in_memory::InMemoryBroker;
 use runinator_broker::tcp;
-use runinator_utilities::startup::ProcessResources;
+use runinator_platform::startup::ProcessResources;
 use std::{env, net::SocketAddr};
 
 #[path = "main/service.rs"]

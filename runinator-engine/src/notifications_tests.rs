@@ -3,11 +3,11 @@ use runinator_models::notifications::{
     NewNotificationPolicy, NotificationChannel, NotificationEvent, NotificationSeverity,
 };
 use runinator_models::settings::{SettingKind, SettingRecord};
+use runinator_secrets::{secret_cipher::SecretCipher, stored_secret::StoredSecret};
 use runinator_store::{
     DatabaseImpl,
     roles::{NotificationStore, SettingStore},
 };
-use runinator_utilities::{secret_cipher::SecretCipher, stored_secret::StoredSecret};
 
 use runinator_broker_core::UiEventPublisher;
 
