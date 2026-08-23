@@ -81,20 +81,10 @@ fn config_with_liveness(liveness_file: &str) -> crate::config::Config {
 }
 
 #[test]
-fn register_backoff_grows_then_caps() {
-    use super::{REGISTER_BASE_BACKOFF, REGISTER_MAX_BACKOFF, register_backoff};
-    assert_eq!(register_backoff(1), REGISTER_BASE_BACKOFF);
-    assert_eq!(register_backoff(2), REGISTER_BASE_BACKOFF * 2);
-    assert_eq!(register_backoff(3), REGISTER_BASE_BACKOFF * 4);
-    // large attempts saturate at the cap instead of overflowing.
-    assert_eq!(register_backoff(64), REGISTER_MAX_BACKOFF);
-    assert_eq!(register_backoff(u32::MAX), REGISTER_MAX_BACKOFF);
-}
-
-#[test]
-fn registration_is_disabled_without_a_service_url() {
+fn registration_uses_the_default_broker_ingress() {
     let config = config_with_liveness("");
-    assert!(config.api_base_url.is_none());
+    assert_eq!(config.broker_backend, "tcp");
+    assert_eq!(config.broker_ingress_topic, "runinator.ingress");
 }
 
 #[tokio::test]

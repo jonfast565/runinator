@@ -71,6 +71,8 @@ pub struct BrokerSelection {
     pub effect_topic: String,
     pub infrastructure_effect_topic: String,
     pub effect_result_topic: String,
+    /// The broker ingress path that carries this worker's lifecycle observations to the engine.
+    pub ingress_topic: String,
     pub client_id: String,
     pub api_key: Option<String>,
 }
@@ -105,6 +107,7 @@ impl BrokerSelection {
                 broker_control_topic: self.control_topic,
                 broker_agent_topic: self.agent_topic,
                 broker_effect_result_topic: self.effect_result_topic,
+                broker_ingress_topic: self.ingress_topic,
                 broker_client_id: self.client_id,
                 api_key: self.api_key,
             },
@@ -128,8 +131,8 @@ pub struct AgentRuntimeConfig {
     pub credential_file: PathBuf,
     /// fsynced terminal-result buffer, adjacent to the issued credential under app data.
     pub outbox_file: PathBuf,
-    /// stable identity for this agent; folded into the replica registration so a restart on the
-    /// same machine reclaims the same replica row.
+    /// Stable instance identity for this agent. Each runtime activation mints a fresh replica id,
+    /// while this value links successive activations in the fleet history.
     pub instance_id: String,
     pub display_name: Option<String>,
     /// stable address other components display for this agent, when it has one.
@@ -141,8 +144,7 @@ pub struct AgentRuntimeConfig {
     /// when true the consumer never picks up general-pool `Any` work — only actions pinned to this
     /// replica id or targeted at a label it advertises.
     pub exclusive: bool,
-    /// broker consumer id. `None` uses the replica id, which is what an agent with an identity
-    /// assigned at registration time wants; a host that must join a named competing-consumer group
+    /// broker consumer id. `None` uses the preallocated replica id; a host that must join a named competing-consumer group
     /// (kafka's `runinator-workers`) supplies it explicitly.
     pub consumer_id: Option<String>,
     /// extra registration attributes, merged with host metadata before registering.
@@ -151,7 +153,7 @@ pub struct AgentRuntimeConfig {
     /// human description of the broker path, from [`BrokerSelection::resolve`].
     pub broker_description: String,
     pub providers: ProviderFactory,
-    /// publish each provider's metadata to the web service after registering. the desktop agent
+    /// publish each provider's metadata with the broker availability announcement. the desktop agent
     /// does; the standalone worker binary does not, because in-cluster provider metadata is
     /// published by whichever worker registers first and the extra round trips buy nothing.
     pub publish_providers: bool,
@@ -165,9 +167,6 @@ pub struct AgentRuntimeConfig {
     pub heartbeat_interval: Duration,
     /// advertised health window; remote agents use a wider window than in-cluster workers.
     pub stale_after: Duration,
-    /// how many times to retry replica registration before giving up. registration is interruptible
-    /// by shutdown regardless.
-    pub register_max_attempts: u32,
     /// how many *consecutive* failed worker-loop attempts to tolerate before the agent gives up and
     /// stops itself. the counter resets once an attempt stays up long enough to call it healthy, so
     /// this bounds one unreachable episode rather than a machine's lifetime. `0` retries forever,
@@ -183,9 +182,6 @@ pub struct AgentRuntimeConfig {
 
 /// default replica heartbeat cadence, matching what both hosts used before they shared this config.
 pub const DEFAULT_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10);
-
-/// default registration retry budget; roughly two minutes of backoff before giving up.
-pub const DEFAULT_REGISTER_MAX_ATTEMPTS: u32 = 8;
 
 /// default reconnect budget for a host that wants a finite one: ten consecutive failures, which the
 /// capped backoff spreads over roughly seven minutes before the agent stops.

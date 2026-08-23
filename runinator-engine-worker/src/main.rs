@@ -14,16 +14,12 @@ use std::time::Duration;
 
 use clap::Parser;
 use log::info;
-use runinator_broker::Broker;
+use runinator_broker::{Broker, IngressMessage};
+use runinator_comm::WsIngressCommand;
 use runinator_database::interfaces::DatabaseImpl;
-use runinator_engine::{
-    EngineConfig, EventSender, run_background_engine, services::ReplicaRegistry,
-};
-use runinator_models::auth::AuthContext;
+use runinator_engine::{EngineConfig, EventSender, run_background_engine};
 use runinator_models::errors::SendableError;
-use runinator_models::replicas::{
-    ReplicaHeartbeatRequest, ReplicaKind, ReplicaRegistrationRequest,
-};
+use runinator_models::replicas::{ReplicaKind, ReplicaRegistrationRequest};
 use runinator_models::value::Value;
 use runinator_service_bootstrap::{
     BrokerClientConfig, BrokerConsumerProfile, DatabaseRequest, ServerResources,
@@ -136,8 +132,9 @@ async fn run_process() -> Result<(), SendableError> {
     Ok(())
 }
 
-/// register this process as a `Background` replica, run a heartbeat alongside the engine so it stays
-/// live in the fleet view, drive the durable engine, and mark the replica offline on shutdown.
+/// Run the durable engine while advertising this background runtime through broker ingress.
+/// Web services write their own records directly; every other runtime, including this one, uses
+/// the same broker lifecycle contract so availability has one durable ingestion path.
 async fn run_engine_with_replica<T: DatabaseImpl>(
     db: Arc<T>,
     broker: Arc<dyn Broker>,
@@ -146,44 +143,37 @@ async fn run_engine_with_replica<T: DatabaseImpl>(
     max_concurrent_ingress: usize,
     shutdown: Arc<Notify>,
 ) -> Result<(), SendableError> {
-    let runtime_id = Uuid::new_v4().to_string();
-    let registry = ReplicaRegistry::new(db.clone());
-    let replica = registry
-        .register(
-            ReplicaRegistrationRequest {
-                replica_type: ReplicaKind::Background,
-                instance_id: instance.clone(),
-                runtime_id: runtime_id.clone(),
-                display_name: Some(instance.clone()),
-                host: None,
-                port: None,
-                base_path: None,
-                version: Some(env!("CARGO_PKG_VERSION").to_string()),
-                attributes: resource_telemetry::attributes_with_host_metadata(&attributes),
-            },
-            None,
-            // the worker registering its own replica at startup, not an external caller.
-            &AuthContext::disabled_platform_admin(),
-        )
-        .await?;
+    let replica_id = Uuid::now_v7();
+    let runtime_id = replica_id.to_string();
+    let base_attributes = resource_telemetry::attributes_with_host_metadata(&attributes);
+    publish_replica_availability(
+        broker.as_ref(),
+        replica_id,
+        &runtime_id,
+        &instance,
+        base_attributes.clone(),
+    )
+    .await?;
 
-    // heartbeat loop: keeps the replica live and appends resource telemetry each tick, and marks the
-    // replica offline on shutdown. best-effort, so a failed heartbeat never tears down the process.
-    let hb_registry = registry.clone();
+    // Heartbeats and clean shutdown take the same ingress route as the initial announcement.
     let hb_shutdown = shutdown.clone();
-    let hb_replica_id = replica.replica_id;
+    let hb_broker = broker.clone();
+    let hb_replica_id = replica_id;
     let hb_runtime_id = runtime_id.clone();
     let hb_instance = instance.clone();
-    let hb_attributes = attributes.clone();
+    let hb_attributes = base_attributes;
     let telemetry = Arc::new(resource_telemetry::TelemetryCollector::new());
     let heartbeat = tokio::spawn(async move {
         let mut ticker = tokio::time::interval(Duration::from_secs(10));
         loop {
             tokio::select! {
                 _ = hb_shutdown.notified() => {
-                    let _ = hb_registry
-                        .mark_offline(hb_replica_id, hb_runtime_id.clone())
-                        .await;
+                    let command = WsIngressCommand::replica_offline(hb_replica_id, hb_runtime_id.clone());
+                    let _ = hb_broker.publish_ingress(IngressMessage {
+                        dedupe_key: Some(command.dedupe_key()),
+                        command,
+                        enqueued_at: chrono::Utc::now(),
+                    }).await;
                     return;
                 }
                 _ = ticker.tick() => {
@@ -191,19 +181,13 @@ async fn run_engine_with_replica<T: DatabaseImpl>(
                         &hb_attributes,
                         telemetry.as_ref(),
                     );
-                    let _ = hb_registry.heartbeat(
+                    let _ = publish_replica_availability(
+                        hb_broker.as_ref(),
                         hb_replica_id,
-                        ReplicaHeartbeatRequest {
-                            runtime_id: hb_runtime_id.clone(),
-                            display_name: Some(hb_instance.clone()),
-                            host: None,
-                            port: None,
-                            base_path: None,
-                            attributes,
-                        },
-                        None,
-                    )
-                    .await;
+                        &hb_runtime_id,
+                        &hb_instance,
+                        attributes,
+                    ).await;
                 }
             }
         }
@@ -212,7 +196,7 @@ async fn run_engine_with_replica<T: DatabaseImpl>(
     let publisher = EventSender::new(broker.clone());
     let result = run_background_engine(
         db,
-        broker,
+        broker.clone(),
         publisher,
         None,
         instance,
@@ -222,6 +206,55 @@ async fn run_engine_with_replica<T: DatabaseImpl>(
         shutdown,
     )
     .await;
+    // Do not rely only on the heartbeat task observing shutdown: the engine can also return after
+    // an internal error, and aborting that task first would leave this replica live until stale
+    // reaping. The offline observation is idempotent with the heartbeat's shutdown branch.
+    publish_replica_offline(broker.as_ref(), replica_id, &runtime_id).await;
     heartbeat.abort();
     result
+}
+
+async fn publish_replica_availability(
+    broker: &dyn Broker,
+    replica_id: Uuid,
+    runtime_id: &str,
+    instance: &str,
+    attributes: Value,
+) -> Result<(), runinator_broker::BrokerError> {
+    let command = WsIngressCommand::replica_available(
+        ReplicaRegistrationRequest {
+            replica_id: Some(replica_id),
+            replica_type: ReplicaKind::Background,
+            instance_id: instance.to_string(),
+            runtime_id: runtime_id.to_string(),
+            display_name: Some(instance.to_string()),
+            host: None,
+            port: None,
+            base_path: None,
+            version: Some(env!("CARGO_PKG_VERSION").to_string()),
+            attributes,
+        },
+        Vec::new(),
+    );
+    broker
+        .publish_ingress(IngressMessage {
+            dedupe_key: Some(command.dedupe_key()),
+            command,
+            enqueued_at: chrono::Utc::now(),
+        })
+        .await
+}
+
+async fn publish_replica_offline(broker: &dyn Broker, replica_id: Uuid, runtime_id: &str) {
+    let command = WsIngressCommand::replica_offline(replica_id, runtime_id);
+    if let Err(err) = broker
+        .publish_ingress(IngressMessage {
+            dedupe_key: Some(command.dedupe_key()),
+            command,
+            enqueued_at: chrono::Utc::now(),
+        })
+        .await
+    {
+        log::warn!("failed to announce background engine shutdown: {err}");
+    }
 }

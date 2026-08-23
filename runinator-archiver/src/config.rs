@@ -156,14 +156,38 @@ pub struct Cli {
     )]
     pub liveness_file: String,
 
-    /// Web service base URL. If set, the archiver registers and sends heartbeats.
-    /// If empty, it runs against the database only.
-    #[arg(long, env = "RUNINATOR_SERVICE_URL")]
-    pub api_base_url: Option<String>,
+    /// Broker transport used for lifecycle announcements.
+    #[arg(long, env = "RUNINATOR_BROKER_BACKEND", default_value = "tcp")]
+    pub broker_backend: String,
 
-    /// API key sent to the web service when authentication is enabled.
-    #[arg(long, env = "RUNINATOR_API_KEY")]
-    pub api_key: Option<String>,
+    /// Broker endpoint used for lifecycle announcements.
+    #[arg(
+        long,
+        env = "RUNINATOR_BROKER_ENDPOINT",
+        default_value = "127.0.0.1:7070"
+    )]
+    pub broker_endpoint: String,
+
+    #[arg(long, default_value = "runinator.effects")]
+    pub broker_effect_topic: String,
+
+    #[arg(long, default_value = "runinator.effects.infrastructure")]
+    pub broker_infrastructure_effect_topic: String,
+
+    #[arg(long, default_value = "runinator.control")]
+    pub broker_control_topic: String,
+
+    #[arg(long, default_value = "runinator.effect-results")]
+    pub broker_effect_result_topic: String,
+
+    #[arg(long, default_value = "runinator.wake")]
+    pub broker_wake_topic: String,
+
+    #[arg(long, default_value = "runinator.ingress")]
+    pub broker_ingress_topic: String,
+
+    #[arg(long, default_value = "runinator-archiver")]
+    pub broker_client_id: String,
 
     /// Stable address advertised to the replica list. In Kubernetes, this is the pod's DNS name.
     #[arg(long, env = "RUNINATOR_ADVERTISE_HOST")]
@@ -196,8 +220,15 @@ pub struct Config {
     pub security_retention: Option<Duration>,
     pub cooldown_retention: Option<Duration>,
     pub liveness_file: String,
-    pub api_base_url: Option<String>,
-    pub api_key: Option<String>,
+    pub broker_backend: String,
+    pub broker_endpoint: String,
+    pub broker_effect_topic: String,
+    pub broker_infrastructure_effect_topic: String,
+    pub broker_control_topic: String,
+    pub broker_effect_result_topic: String,
+    pub broker_wake_topic: String,
+    pub broker_ingress_topic: String,
+    pub broker_client_id: String,
     pub advertise_host: Option<String>,
 }
 
@@ -235,8 +266,15 @@ impl Config {
             security_retention: parse_optional_duration(&cli.security_retention)?,
             cooldown_retention: parse_optional_duration(&cli.cooldown_retention)?,
             liveness_file: cli.liveness_file,
-            api_base_url: cli.api_base_url.filter(|value| !value.trim().is_empty()),
-            api_key: cli.api_key.filter(|value| !value.trim().is_empty()),
+            broker_backend: cli.broker_backend,
+            broker_endpoint: cli.broker_endpoint,
+            broker_effect_topic: cli.broker_effect_topic,
+            broker_infrastructure_effect_topic: cli.broker_infrastructure_effect_topic,
+            broker_control_topic: cli.broker_control_topic,
+            broker_effect_result_topic: cli.broker_effect_result_topic,
+            broker_wake_topic: cli.broker_wake_topic,
+            broker_ingress_topic: cli.broker_ingress_topic,
+            broker_client_id: cli.broker_client_id,
             advertise_host: cli.advertise_host.filter(|value| !value.trim().is_empty()),
         })
     }

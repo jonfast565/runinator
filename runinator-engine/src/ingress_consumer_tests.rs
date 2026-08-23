@@ -6,7 +6,9 @@ use super::*;
 use runinator_broker_core::{IngressMessage, in_memory::InMemoryBroker};
 use runinator_comm::{
     AgentDirectiveKind, AgentDirectiveResult, AgentDirectiveStatus, EffectResultKind,
+    ReplicaAvailability, WsIngressCommand,
 };
+use runinator_models::replicas::{ReplicaKind, ReplicaRegistrationRequest, ReplicaStatus};
 use runinator_models::workflow_vm::WorkflowEffectStatus;
 use runinator_store::prelude::*;
 use uuid::Uuid;
@@ -86,6 +88,7 @@ async fn an_agent_directive_reply_completes_its_durable_record() {
     let replica = db
         .register_replica(
             runinator_models::replicas::ReplicaRegistrationRequest {
+                replica_id: None,
                 replica_type: runinator_models::replicas::ReplicaKind::Worker,
                 instance_id: "ingress-agent".to_string(),
                 runtime_id: "ingress-runtime".to_string(),
@@ -197,6 +200,85 @@ async fn a_reply_for_an_unknown_directive_is_acknowledged_rather_than_requeued()
             .expect("the unknown directive must not block the message behind it")
             .unwrap();
     assert_eq!(delivery.result.effect_id, effect_id);
+
+    shutdown.notify_waiters();
+    consumer.await.unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn broker_announced_replica_lifecycle_is_visible_and_retires_cleanly() {
+    let (db, path) = store().await;
+    let broker: Arc<dyn Broker> = Arc::new(InMemoryBroker::new());
+    let shutdown = Arc::new(Notify::new());
+    let consumer = tokio::spawn(run_ingress_consumer(
+        db.clone(),
+        broker.clone(),
+        shutdown.clone(),
+    ));
+    let replica_id = Uuid::now_v7();
+    let runtime_id = replica_id.to_string();
+    let registration = ReplicaRegistrationRequest {
+        replica_id: Some(replica_id),
+        replica_type: ReplicaKind::Waker,
+        instance_id: "waker-test".to_string(),
+        runtime_id: runtime_id.clone(),
+        display_name: Some("waker-test".to_string()),
+        host: None,
+        port: None,
+        base_path: None,
+        version: None,
+        attributes: runinator_models::json!({ "broker_backend": "in-memory" }),
+    };
+    broker
+        .publish_ingress(IngressMessage {
+            command: WsIngressCommand::ReplicaAvailability {
+                availability: ReplicaAvailability::Available {
+                    registration,
+                    providers: Vec::new(),
+                },
+            },
+            dedupe_key: None,
+            enqueued_at: chrono::Utc::now(),
+        })
+        .await
+        .unwrap();
+
+    let mut registered = false;
+    for _ in 0..100 {
+        if matches!(db.fetch_replica(replica_id).await.unwrap(), Some(replica) if replica.status == ReplicaStatus::Live)
+        {
+            registered = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(
+        registered,
+        "broker lifecycle must create a live waker record"
+    );
+
+    broker
+        .publish_ingress(IngressMessage {
+            command: WsIngressCommand::replica_offline(replica_id, runtime_id),
+            dedupe_key: None,
+            enqueued_at: chrono::Utc::now(),
+        })
+        .await
+        .unwrap();
+    let mut offline = false;
+    for _ in 0..100 {
+        if matches!(db.fetch_replica(replica_id).await.unwrap(), Some(replica) if replica.status == ReplicaStatus::Offline)
+        {
+            offline = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(
+        offline,
+        "clean broker lifecycle shutdown must retire the replica"
+    );
 
     shutdown.notify_waiters();
     consumer.await.unwrap();

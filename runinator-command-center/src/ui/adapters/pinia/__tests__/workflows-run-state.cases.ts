@@ -1,8 +1,18 @@
 import { expect, it, vi } from "vitest";
 import { useWorkflowsStore } from "../workflows";
 import type { WorkflowRunDetail } from "../../../../core/domain/models";
-import { closeGate, fetchGates, fetchWorkflowRun, openGate } from "../../../../core/api/commandCenterApi";
-import { RUN_ID, flushWorkflowSync, workflowDetail, waitingGateWorkflowDetail } from "./workflows-fixtures";
+import {
+  closeGate,
+  fetchGates,
+  fetchWorkflowRun,
+  openGate,
+} from "../../../../core/api/commandCenterApi";
+import {
+  RUN_ID,
+  flushWorkflowSync,
+  workflowDetail,
+  waitingGateWorkflowDetail,
+} from "./workflows-fixtures";
 
 export function registerWorkflowRunStateTests() {
   it("does not let older HTTP fetches overwrite a WebSocket push", async () => {
@@ -23,6 +33,30 @@ export function registerWorkflowRunStateTests() {
 
     expect(workflows.workflowRunDetail?.run.status).toBe("running");
     expect(workflows.workflowRunDetail?.run.message).toBe("ws");
+  });
+
+  it("retains projected VM node history when the run stream sends its lightweight envelope", () => {
+    const workflows = useWorkflowsStore();
+    const projected = waitingGateWorkflowDetail();
+    workflows.setWorkflowRunDetail(projected);
+
+    workflows.setWorkflowRunDetail({
+      run: {
+        ...projected.run,
+        status: "succeeded",
+        workflow_snapshot: undefined,
+      },
+      nodes: [],
+      execution_state: {},
+    });
+
+    expect(workflows.workflowRunDetail).toMatchObject({
+      run: {
+        status: "succeeded",
+        workflow_snapshot: projected.run.workflow_snapshot,
+      },
+      nodes: projected.nodes,
+    });
   });
 
   it("loads run gates for waiting gate nodes and refreshes after resolving them", async () => {
@@ -75,5 +109,4 @@ export function registerWorkflowRunStateTests() {
       reason: "Window approved",
     });
   });
-
 }

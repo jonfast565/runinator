@@ -24,6 +24,7 @@ pub struct BrokerConfig {
     pub broker_effect_topic: String,
     pub broker_infrastructure_effect_topic: String,
     pub broker_effect_result_topic: String,
+    pub broker_ingress_topic: String,
     pub broker_client_id: String,
     /// Presented as a bearer token. Only the `http` and `ws` backends use it today.
     pub api_key: Option<String>,
@@ -40,6 +41,7 @@ impl config::Config {
             broker_effect_topic: self.broker_effect_topic.clone(),
             broker_infrastructure_effect_topic: self.broker_infrastructure_effect_topic.clone(),
             broker_effect_result_topic: self.broker_effect_result_topic.clone(),
+            broker_ingress_topic: self.broker_ingress_topic.clone(),
             broker_client_id: self.broker_client_id.clone(),
             api_key: self.api_key.clone(),
         }
@@ -59,7 +61,7 @@ pub async fn build_broker(config: &BrokerConfig) -> Result<Arc<dyn Broker>, Send
             client_id: config.broker_client_id.clone(),
             relay_credential: config.api_key.clone(),
             wake_topic: None,
-            ingress_topic: None,
+            ingress_topic: Some(config.broker_ingress_topic.clone()),
         },
         BrokerConsumerProfile::Worker,
     )

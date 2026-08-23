@@ -33,8 +33,17 @@ pub enum BrokerConsumerProfile {
     WorkflowRuntime,
     /// The timer relay only needs the wake and ingress channels.
     Waker,
+    /// A broker-only service that announces lifecycle observations on ingress but consumes no
+    /// workflow channel (the archiver today).
+    IngressPublisher,
     /// A provider worker consumes effects/control and publishes effect results.
     Worker,
+}
+
+impl BrokerConsumerProfile {
+    fn needs_workflow_effect_channels(self) -> bool {
+        matches!(self, Self::WorkflowRuntime | Self::Worker)
+    }
 }
 
 /// Startup errors produced before a concrete broker is available.
@@ -77,7 +86,7 @@ pub async fn build_broker_client(
         "kafka" | "rabbitmq" => config.effect_topic.as_str(),
         _ => "",
     };
-    if profile != BrokerConsumerProfile::Waker {
+    if profile.needs_workflow_effect_channels() {
         runinator_broker_core::ensure_named_workflow_effect_channel(
             &config.backend,
             effect_channel,
@@ -136,7 +145,7 @@ pub async fn build_broker_client(
         other => return Err(BrokerBuildError::UnknownBackend(other.to_string())),
     };
 
-    if profile != BrokerConsumerProfile::Waker {
+    if profile.needs_workflow_effect_channels() {
         runinator_broker_core::ensure_workflow_effect_channels_supported(
             &config.backend,
             broker.as_ref(),
@@ -165,11 +174,13 @@ fn kafka_config(config: &BrokerClientConfig) -> KafkaBrokerConfig {
         Some(agent) => base.with_agent_topic(agent.clone()),
         None => base,
     };
-    match (&config.wake_topic, &config.ingress_topic) {
-        (Some(wake), Some(ingress)) => {
-            base.with_orchestration_topics(wake.clone(), ingress.clone())
-        }
-        _ => base,
+    let base = match &config.wake_topic {
+        Some(wake) => base.with_wake_topic(wake.clone()),
+        None => base,
+    };
+    match &config.ingress_topic {
+        Some(ingress) => base.with_ingress_topic(ingress.clone()),
+        None => base,
     }
 }
 
@@ -186,11 +197,13 @@ fn rabbitmq_config(config: &BrokerClientConfig) -> RabbitMqBrokerConfig {
         Some(agent) => base.with_agent_queue_prefix(agent.clone()),
         None => base,
     };
-    match (&config.wake_topic, &config.ingress_topic) {
-        (Some(wake), Some(ingress)) => {
-            base.with_orchestration_queues(wake.clone(), ingress.clone())
-        }
-        _ => base,
+    let base = match &config.wake_topic {
+        Some(wake) => base.with_wake_queue(wake.clone()),
+        None => base,
+    };
+    match &config.ingress_topic {
+        Some(ingress) => base.with_ingress_queue(ingress.clone()),
+        None => base,
     }
 }
 
@@ -223,11 +236,22 @@ mod tests {
         assert_eq!(kafka.effect_result_topic, "effect-results");
         assert_eq!(kafka.agent_topic, "agent");
         assert_eq!(kafka.wake_topic, "wake");
+        assert_eq!(kafka.ingress_topic, "ingress");
         let rabbit = rabbitmq_config(&config);
         assert_eq!(rabbit.effect_queue, "effects");
         assert_eq!(rabbit.effect_result_queue, "effect-results");
         assert_eq!(rabbit.agent_queue_prefix, "agent");
         assert_eq!(rabbit.wake_queue, "wake");
+        assert_eq!(rabbit.ingress_queue, "ingress");
+    }
+
+    #[test]
+    fn direct_adapter_configs_allow_an_ingress_only_override() {
+        let mut config = config("kafka");
+        config.wake_topic = None;
+
+        assert_eq!(kafka_config(&config).ingress_topic, "ingress");
+        assert_eq!(rabbitmq_config(&config).ingress_queue, "ingress");
     }
 
     #[tokio::test]
@@ -236,6 +260,7 @@ mod tests {
         for profile in [
             BrokerConsumerProfile::WorkflowRuntime,
             BrokerConsumerProfile::Waker,
+            BrokerConsumerProfile::IngressPublisher,
             BrokerConsumerProfile::Worker,
         ] {
             assert!(build_broker_client(&config, profile).await.is_ok());

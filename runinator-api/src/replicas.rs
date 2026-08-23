@@ -104,6 +104,7 @@ where
         let runtime_id = Uuid::new_v4().to_string();
         let replica = api
             .register_replica(&ReplicaRegistrationRequest {
+                replica_id: None,
                 replica_type: config.replica_type,
                 instance_id: config.instance_id.clone(),
                 runtime_id: runtime_id.clone(),

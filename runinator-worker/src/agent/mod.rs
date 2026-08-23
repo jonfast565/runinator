@@ -1,10 +1,10 @@
 //! the shared agent runtime.
 //!
-//! everything a machine needs to join a cluster as a worker replica and stay joined: registration
-//! with retry, provider publication, heartbeat, and a supervised action loop that reconnects on its
-//! own. the standalone `runinator-worker` binary and `runinator-desktop-agent` both host this, so
-//! neither can drift into having a lifecycle behavior the other lacks — the only difference between
-//! them is the [`AgentObserver`] attached and the provider set supplied.
+//! everything a machine needs to join a cluster as a worker replica and stay joined: broker
+//! availability, provider publication, heartbeat, and a supervised action loop that reconnects on
+//! its own. the standalone `runinator-worker` binary and `runinator-desktop-agent` both host this,
+//! so neither can drift into having a lifecycle behavior the other lacks — the only difference
+//! between them is the [`AgentObserver`] attached and the provider set supplied.
 
 pub mod config;
 pub mod directives;
@@ -22,8 +22,7 @@ pub mod supervisor;
 
 pub use config::{
     AgentRuntimeConfig, BrokerMode, BrokerSelection, DEFAULT_HEARTBEAT_INTERVAL,
-    DEFAULT_RECONNECT_MAX_ATTEMPTS, DEFAULT_REGISTER_MAX_ATTEMPTS, LocatorMode,
-    RECONNECT_UNLIMITED,
+    DEFAULT_RECONNECT_MAX_ATTEMPTS, LocatorMode, RECONNECT_UNLIMITED,
 };
 pub use directives::{DefaultDirectiveHandler, DirectiveHandler, DirectiveResponse};
 pub use enroll::prepare_agent_credentials;

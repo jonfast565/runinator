@@ -1,137 +1,91 @@
-//! replica registration for the shared agent lifecycle.
+//! Broker-mediated replica availability for the shared agent lifecycle.
 //!
-//! registration is required rather than best effort: an agent that never registers is invisible in
-//! the replica registry, cannot heartbeat, and cannot be targeted, so it would run as a phantom.
-//! retry with backoff, stay interruptible, and give up loudly once the budget is spent.
+//! Workers announce the same durable lifecycle facts as every non-web-service runtime, but do so
+//! through broker ingress. They therefore never need to call the web service merely to become
+//! visible, routable, and live in the fleet view.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use chrono::Utc;
-use runinator_api::{AsyncApiClient, ReplicaClient, ReplicaServiceConfig, StaticLocator};
-use runinator_models::errors::SendableError;
-use runinator_models::replicas::ReplicaKind;
+use runinator_broker::{Broker, IngressMessage};
+use runinator_comm::WsIngressCommand;
+use runinator_models::replicas::{ReplicaKind, ReplicaRegistrationRequest};
 use runinator_models::value::{Map, Value};
 use runinator_observability::resource_telemetry::{
     TelemetryCollector, attributes_with_host_metadata, attributes_with_telemetry,
 };
 use tokio::task::JoinHandle;
+use uuid::Uuid;
 
 use crate::agent::config::AgentRuntimeConfig;
 use crate::agent::reporter::StatusReporter;
 use crate::agent::shutdown::Shutdown;
 use crate::agent::status::AgentReportContext;
 
-// registration retry envelope: keep trying while the web service is briefly unreachable, then give
-// up so the process exits non-zero and its orchestrator restarts it.
-const REGISTER_BASE_BACKOFF: Duration = Duration::from_secs(2);
-const REGISTER_MAX_BACKOFF: Duration = Duration::from_secs(30);
-
-/// exponential backoff for the nth registration attempt (1-based), capped at [`REGISTER_MAX_BACKOFF`].
-pub fn register_backoff(attempt: u32) -> Duration {
-    let factor = 1u32
-        .checked_shl(attempt.saturating_sub(1))
-        .unwrap_or(u32::MAX);
-    REGISTER_BASE_BACKOFF
-        .saturating_mul(factor)
-        .min(REGISTER_MAX_BACKOFF)
-}
-
-/// register this agent as a worker replica, retrying with backoff. `Ok(None)` means shutdown fired
-/// during a retry window, which is a clean stop rather than a failure.
-pub async fn register_agent_replica(
-    api_client: &AsyncApiClient<StaticLocator>,
+/// Send the startup availability observation. A successful broker publish is required before the
+/// worker starts consuming effects, so a process cannot silently execute as an untracked phantom.
+pub async fn announce_agent_replica(
+    broker: &dyn Broker,
     config: &AgentRuntimeConfig,
     reporter: &StatusReporter,
     report_context: &AgentReportContext,
-    shutdown: &Shutdown,
-) -> Result<Option<ReplicaClient<StaticLocator>>, SendableError> {
-    let mut service_config = replica_service_config(config);
-    insert_status(
-        &mut service_config.attributes,
-        report_context.report(&reporter.status(), 0, 0),
-    );
-    let mut attempt = 1;
-    loop {
-        if shutdown.is_stopping() {
-            return Ok(None);
-        }
-        match ReplicaClient::register(api_client.clone(), service_config.clone()).await {
-            Ok(client) => {
-                if attempt > 1 {
-                    reporter.log(format!("Registered replica after {attempt} attempts."));
-                }
-                return Ok(Some(client));
-            }
-            Err(err) if attempt >= config.register_max_attempts => {
-                reporter.log(format!(
-                    "Failed to register replica after {attempt} attempts, giving up: {err}"
-                ));
-                return Err(crate::errors::REPLICA_REGISTER.error(err));
-            }
-            Err(err) => {
-                let backoff = register_backoff(attempt);
-                reporter.log(format!(
-                    "Failed to register replica (attempt {attempt}/{}), retrying in {}s: {err}",
-                    config.register_max_attempts,
-                    backoff.as_secs()
-                ));
-                if shutdown.sleep_or_stop(backoff).await {
-                    return Ok(None);
-                }
-                attempt += 1;
-            }
-        }
-    }
+    replica_id: Uuid,
+    runtime_id: &str,
+) -> Result<(), runinator_broker::BrokerError> {
+    let availability = AgentAvailability::from_config(config);
+    publish_agent_availability(
+        broker,
+        &availability,
+        reporter,
+        report_context,
+        replica_id,
+        runtime_id,
+        0,
+        None,
+    )
+    .await
 }
 
-/// heartbeat with the agent-specific status envelope, updating the clock-skew estimate from each
-/// accepted response and marking the replica offline on a clean stop.
+/// Heartbeat the agent through broker ingress and explicitly retire it on a clean stop.
 pub fn spawn_agent_heartbeat(
-    replica_client: ReplicaClient<StaticLocator>,
+    broker: Arc<dyn Broker>,
     config: &AgentRuntimeConfig,
+    replica_id: Uuid,
+    runtime_id: String,
     reporter: Arc<StatusReporter>,
     report_context: Arc<AgentReportContext>,
     telemetry: Option<Arc<TelemetryCollector>>,
     shutdown: Shutdown,
 ) -> JoinHandle<()> {
+    let availability = AgentAvailability::from_config(config);
     let heartbeat_interval = config.heartbeat_interval;
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(heartbeat_interval);
         let mut heartbeat_seq = 0u64;
-        let mut clock_skew_ms = 0i64;
         let shutdown_notify = shutdown.notify();
         loop {
             if shutdown.is_stopping() {
-                mark_offline(&replica_client, &reporter).await;
+                mark_offline(broker.as_ref(), replica_id, &runtime_id, &reporter).await;
                 return;
             }
             tokio::select! {
                 _ = shutdown_notify.notified() => {
-                    mark_offline(&replica_client, &reporter).await;
+                    mark_offline(broker.as_ref(), replica_id, &runtime_id, &reporter).await;
                     return;
                 }
                 _ = ticker.tick() => {
                     heartbeat_seq = heartbeat_seq.saturating_add(1);
-                    let mut request = replica_client.session.heartbeat_request();
-                    if let Some(collector) = telemetry.as_ref() {
-                        request.attributes = attributes_with_telemetry(&request.attributes, collector);
-                    }
-                    insert_status(
-                        &mut request.attributes,
-                        report_context.report(&reporter.status(), heartbeat_seq, clock_skew_ms),
-                    );
-                    match replica_client.api
-                        .heartbeat_replica(replica_client.replica_id(), &request)
-                        .await
-                    {
-                        Ok(replica) => {
-                            clock_skew_ms = replica
-                                .last_seen_at
-                                .signed_duration_since(Utc::now())
-                                .num_milliseconds();
-                        }
-                        Err(err) => reporter.record_error(format!("heartbeat failed: {err}")),
+                    if let Err(err) = publish_agent_availability(
+                        broker.as_ref(),
+                        &availability,
+                        reporter.as_ref(),
+                        report_context.as_ref(),
+                        replica_id,
+                        &runtime_id,
+                        heartbeat_seq,
+                        telemetry.as_deref(),
+                    ).await {
+                        reporter.record_error(format!("availability heartbeat failed: {err}"));
                     }
                 }
             }
@@ -139,56 +93,100 @@ pub fn spawn_agent_heartbeat(
     })
 }
 
-async fn mark_offline(replica_client: &ReplicaClient<StaticLocator>, reporter: &StatusReporter) {
-    if let Err(err) = replica_client
-        .api
-        .mark_replica_offline(
-            replica_client.replica_id(),
-            &replica_client.session.offline_request(),
-        )
+async fn mark_offline(
+    broker: &dyn Broker,
+    replica_id: Uuid,
+    runtime_id: &str,
+    reporter: &StatusReporter,
+) {
+    let command = WsIngressCommand::replica_offline(replica_id, runtime_id);
+    if let Err(err) = broker
+        .publish_ingress(IngressMessage {
+            dedupe_key: Some(command.dedupe_key()),
+            command,
+            enqueued_at: Utc::now(),
+        })
         .await
     {
         reporter.record_error(format!("failed to mark replica offline: {err}"));
     }
 }
 
-/// publish every provider this agent can run, so the service knows what to route here. best effort
-/// per provider: one rejected entry must not keep the agent from starting its loop.
-pub async fn publish_provider_metadata(
-    replica_client: &ReplicaClient<StaticLocator>,
-    config: &AgentRuntimeConfig,
-    reporter: &StatusReporter,
-) {
-    let providers = (config.providers)();
-    let total = providers.len();
-    let mut published = 0usize;
-    for provider in providers {
-        match replica_client.register_provider(provider.metadata()).await {
-            Ok(_) => published += 1,
-            Err(err) => reporter.log(format!(
-                "Failed to publish provider metadata for '{}': {err}",
-                provider.name()
-            )),
-        }
-    }
-    reporter.log(format!(
-        "Published provider metadata ({published} of {total})."
-    ));
+#[derive(Clone)]
+struct AgentAvailability {
+    instance_id: String,
+    display_name: Option<String>,
+    host: Option<String>,
+    version: Option<String>,
+    attributes: Value,
+    providers: crate::provider_repository::ProviderFactory,
+    publish_providers: bool,
 }
 
-// the registration payload, including the routing facts the engine needs to target this agent.
-fn replica_service_config(config: &AgentRuntimeConfig) -> ReplicaServiceConfig {
-    ReplicaServiceConfig {
-        replica_type: ReplicaKind::Worker,
-        instance_id: config.instance_id.clone(),
-        display_name: config.display_name.clone(),
-        host: config.advertise_host.clone(),
-        port: None,
-        base_path: None,
-        version: config.version.clone(),
-        attributes: registration_attributes(config),
-        heartbeat_interval: config.heartbeat_interval,
+impl AgentAvailability {
+    fn from_config(config: &AgentRuntimeConfig) -> Self {
+        Self {
+            instance_id: config.instance_id.clone(),
+            display_name: config.display_name.clone(),
+            host: config.advertise_host.clone(),
+            version: config.version.clone(),
+            attributes: registration_attributes(config),
+            providers: Arc::clone(&config.providers),
+            publish_providers: config.publish_providers,
+        }
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn publish_agent_availability(
+    broker: &dyn Broker,
+    availability: &AgentAvailability,
+    reporter: &StatusReporter,
+    report_context: &AgentReportContext,
+    replica_id: Uuid,
+    runtime_id: &str,
+    heartbeat_seq: u64,
+    telemetry: Option<&TelemetryCollector>,
+) -> Result<(), runinator_broker::BrokerError> {
+    let mut attributes = availability.attributes.clone();
+    if let Some(telemetry) = telemetry {
+        attributes = attributes_with_telemetry(&attributes, telemetry);
+    }
+    insert_status(
+        &mut attributes,
+        report_context.report(&reporter.status(), heartbeat_seq, 0),
+    );
+    let providers = availability
+        .publish_providers
+        .then(|| {
+            (availability.providers)()
+                .into_iter()
+                .map(|provider| provider.metadata())
+                .collect()
+        })
+        .unwrap_or_default();
+    let command = WsIngressCommand::replica_available(
+        ReplicaRegistrationRequest {
+            replica_id: Some(replica_id),
+            replica_type: ReplicaKind::Worker,
+            instance_id: availability.instance_id.clone(),
+            runtime_id: runtime_id.to_string(),
+            display_name: availability.display_name.clone(),
+            host: availability.host.clone(),
+            port: None,
+            base_path: None,
+            version: availability.version.clone(),
+            attributes,
+        },
+        providers,
+    );
+    broker
+        .publish_ingress(IngressMessage {
+            dedupe_key: Some(command.dedupe_key()),
+            command,
+            enqueued_at: Utc::now(),
+        })
+        .await
 }
 
 // merge the routing facts every agent advertises into the host's own attributes, then stamp host
@@ -229,7 +227,3 @@ fn insert_status(attributes: &mut Value, status: runinator_models::replicas::Age
         object.insert("status".to_string(), status);
     }
 }
-
-#[cfg(test)]
-#[path = "registration_tests.rs"]
-mod tests;

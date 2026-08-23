@@ -19,6 +19,8 @@ spec:
           imagePullPolicy: IfNotPresent
           command: ["runinator-waker"]
           args:
+            - "--waker-id"
+            - "$(POD_NAME)"
             - "--broker-backend"
             - "rabbitmq"
             - "--broker-endpoint"

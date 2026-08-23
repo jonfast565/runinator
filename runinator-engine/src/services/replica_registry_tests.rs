@@ -3,7 +3,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use chrono::{Duration, Utc};
-use runinator_comm::AgentDirectiveKind;
+use runinator_comm::{AgentDirectiveKind, ReplicaAvailability};
 use runinator_database::sqlite::SqliteDb;
 use runinator_models::{
     auth::AuthContext,
@@ -26,6 +26,7 @@ async fn test_db() -> (Arc<SqliteDb>, PathBuf) {
 
 fn registration(instance_id: &str, runtime_id: &str) -> ReplicaRegistrationRequest {
     ReplicaRegistrationRequest {
+        replica_id: None,
         replica_type: ReplicaKind::Worker,
         instance_id: instance_id.to_string(),
         runtime_id: runtime_id.to_string(),
@@ -85,5 +86,25 @@ async fn missing_replica_returns_no_directive() {
         .unwrap();
 
     assert!(directive.is_none());
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn broker_availability_refuses_webservice_registration() {
+    let (db, path) = test_db().await;
+    let registry = ReplicaRegistry::new(db);
+    let mut request = registration("webservice", "runtime-a");
+    request.replica_id = Some(uuid::Uuid::now_v7());
+    request.replica_type = ReplicaKind::Webservice;
+
+    let err = registry
+        .observe_broker_availability(ReplicaAvailability::Available {
+            registration: request,
+            providers: Vec::new(),
+        })
+        .await
+        .unwrap_err();
+
+    assert!(err.to_string().contains("register directly"));
     let _ = std::fs::remove_file(path);
 }

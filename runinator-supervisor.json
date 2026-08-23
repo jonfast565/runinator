@@ -94,6 +94,10 @@
       "name": "waker",
       "command": "./target/debug/runinator-waker",
       "args": [
+        "--waker-id",
+        "runinator-waker-local",
+        "--advertise-host",
+        "127.0.0.1",
         "--broker-backend",
         "tcp",
         "--broker-endpoint",

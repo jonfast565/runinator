@@ -6,8 +6,8 @@ use std::time::Duration;
 use uuid::Uuid;
 
 use crate::agent::{
-    AgentRuntimeConfig, BrokerMode, BrokerSelection, DEFAULT_HEARTBEAT_INTERVAL,
-    DEFAULT_REGISTER_MAX_ATTEMPTS, LocatorMode, RECONNECT_UNLIMITED,
+    AgentRuntimeConfig, BrokerMode, BrokerSelection, DEFAULT_HEARTBEAT_INTERVAL, LocatorMode,
+    RECONNECT_UNLIMITED,
 };
 use crate::provider_repository::default_provider_factory;
 
@@ -24,6 +24,7 @@ pub struct Config {
     pub broker_effect_topic: String,
     pub broker_infrastructure_effect_topic: String,
     pub broker_effect_result_topic: String,
+    pub broker_ingress_topic: String,
     pub broker_client_id: String,
     pub broker_consumer_id: String,
     pub max_concurrent_actions: usize,
@@ -77,6 +78,9 @@ struct CliArgs {
 
     #[arg(long, default_value = "runinator.effect-results")]
     broker_effect_result_topic: String,
+
+    #[arg(long, default_value = "runinator.ingress")]
+    broker_ingress_topic: String,
 
     #[arg(long, default_value = "runinator-worker")]
     broker_client_id: String,
@@ -186,6 +190,7 @@ pub fn parse_config() -> Result<Config, SendableError> {
         broker_effect_topic: args.broker_effect_topic,
         broker_infrastructure_effect_topic: args.broker_infrastructure_effect_topic,
         broker_effect_result_topic: args.broker_effect_result_topic,
+        broker_ingress_topic: args.broker_ingress_topic,
         broker_client_id: args.broker_client_id,
         broker_consumer_id: consumer_id,
         max_concurrent_actions: args.max_concurrent_actions.max(1),
@@ -228,6 +233,7 @@ impl Config {
             effect_topic: self.broker_effect_topic.clone(),
             infrastructure_effect_topic: self.broker_infrastructure_effect_topic.clone(),
             effect_result_topic: self.broker_effect_result_topic.clone(),
+            ingress_topic: self.broker_ingress_topic.clone(),
             client_id: self.broker_client_id.clone(),
             api_key: self.api_key.clone(),
         }
@@ -265,7 +271,6 @@ impl Config {
             liveness_file: self.liveness_file.clone(),
             heartbeat_interval: DEFAULT_HEARTBEAT_INTERVAL,
             stale_after: Duration::from_secs(30),
-            register_max_attempts: DEFAULT_REGISTER_MAX_ATTEMPTS,
             reconnect_max_attempts: self.reconnect_max_attempts,
             sample_telemetry: true,
             directive_handler: std::sync::Arc::new(crate::agent::DefaultDirectiveHandler),

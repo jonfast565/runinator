@@ -8,6 +8,10 @@ use std::time::Duration;
 use chrono::Utc;
 use runinator_broker::{Broker, IngressMessage, WsIngressCommand};
 use runinator_models::errors::error_code_or_unknown;
+use runinator_models::replicas::{ReplicaKind, ReplicaRegistrationRequest};
+use runinator_observability::resource_telemetry::{
+    TelemetryCollector, attributes_with_host_metadata, attributes_with_telemetry,
+};
 use tokio::sync::{Notify, Semaphore};
 use tokio::task::JoinSet;
 use tracing::{Instrument, error, info};
@@ -65,6 +69,90 @@ pub fn spawn_broker_heartbeat(
             }
         }
     })
+}
+
+/// Announce this broker-only waker to the engine. The same ingress lifecycle contract is used by
+/// every non-web-service runtime, so the waker never has to reach the web service over HTTP.
+pub async fn publish_replica_availability(
+    broker: &dyn Broker,
+    config: &Config,
+    replica_id: uuid::Uuid,
+    runtime_id: &str,
+    attributes: runinator_models::value::Value,
+) -> Result<(), runinator_broker::BrokerError> {
+    let registration = ReplicaRegistrationRequest {
+        replica_id: Some(replica_id),
+        replica_type: ReplicaKind::Waker,
+        instance_id: config.waker_id.clone(),
+        runtime_id: runtime_id.to_string(),
+        display_name: Some(config.waker_id.clone()),
+        host: non_blank(&config.advertise_host),
+        port: None,
+        base_path: None,
+        version: Some(env!("CARGO_PKG_VERSION").to_string()),
+        attributes,
+    };
+    let command = WsIngressCommand::replica_available(registration, Vec::new());
+    broker
+        .publish_ingress(IngressMessage {
+            dedupe_key: Some(command.dedupe_key()),
+            command,
+            enqueued_at: Utc::now(),
+        })
+        .await
+}
+
+/// Send a periodic availability observation and an explicit offline observation on a clean stop.
+/// The initial availability is published by the caller before it starts this task, so startup is
+/// never silently invisible when the ingress channel is unavailable.
+pub fn spawn_replica_heartbeat(
+    broker: Arc<dyn Broker>,
+    config: Config,
+    replica_id: uuid::Uuid,
+    runtime_id: String,
+    shutdown: Arc<Notify>,
+) -> tokio::task::JoinHandle<()> {
+    let base_attributes = attributes_with_host_metadata(&runinator_models::json!({
+        "broker_backend": config.broker_backend.clone(),
+        "broker_client_id": config.broker_client_id.clone(),
+        "consumer_group": config.waker_consumer_group.clone(),
+    }));
+    let telemetry = TelemetryCollector::new();
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(Duration::from_secs(10));
+        loop {
+            tokio::select! {
+                _ = shutdown.notified() => {
+                    let command = WsIngressCommand::replica_offline(replica_id, runtime_id.clone());
+                    if let Err(err) = broker.publish_ingress(IngressMessage {
+                        dedupe_key: Some(command.dedupe_key()),
+                        command,
+                        enqueued_at: Utc::now(),
+                    }).await {
+                        error!(error_code = error_code_or_unknown(&err), "failed to announce waker shutdown: {err}");
+                    }
+                    return;
+                }
+                _ = ticker.tick() => {
+                    let attributes = attributes_with_telemetry(&base_attributes, &telemetry);
+                    if let Err(err) = publish_replica_availability(
+                        broker.as_ref(),
+                        &config,
+                        replica_id,
+                        &runtime_id,
+                        attributes,
+                    ).await {
+                        error!(error_code = error_code_or_unknown(&err), "failed to announce waker availability: {err}");
+                    }
+                }
+            }
+        }
+    })
+}
+
+fn non_blank(value: &str) -> Option<String> {
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.to_string())
 }
 
 /// consume wakes, sleep until each is due, then publish the settle on the ingress channel. multiple

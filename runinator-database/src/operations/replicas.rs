@@ -241,7 +241,7 @@ where
                 .bind(request.runtime_id.as_str()),
             )
             .await?;
-        let replica_id = Uuid::now_v7();
+        let replica_id = request.replica_id.unwrap_or_else(Uuid::now_v7);
         if self.dialect() == SqlDialect::MySql {
             let conflict = SqlDialect::MySql.on_conflict_update(
                 "instance_id, runtime_id",

@@ -19,16 +19,19 @@ use tokio::sync::Notify;
 use chrono::{Duration as ChronoDuration, Utc};
 use clap::Parser;
 use flate2::{Compression, write::GzEncoder};
-use runinator_api::{AsyncApiClient, ReplicaClient, ReplicaServiceConfig, StaticLocator};
+use runinator_broker::{
+    Broker, BrokerClientConfig, BrokerConsumerProfile, IngressMessage, build_broker_client,
+};
+use runinator_comm::WsIngressCommand;
 use runinator_database::{
     archive::{ArchiveRow, ArchiveTable},
     interfaces::ArchiveStore,
 };
 use runinator_db_cli::dispatch_database;
 use runinator_models::errors::SendableError;
-use runinator_models::replicas::ReplicaKind;
+use runinator_models::replicas::{ReplicaKind, ReplicaRegistrationRequest};
 use runinator_observability::resource_telemetry::{
-    TelemetryCollector, attributes_with_host_metadata,
+    TelemetryCollector, attributes_with_host_metadata, attributes_with_telemetry,
 };
 use serde_json::json;
 use tracing::{error, info, warn};
@@ -69,27 +72,68 @@ async fn run_process() -> ExitCode {
 
 async fn run() -> Result<(), SendableError> {
     let config = Config::from_cli(Cli::parse())?;
+    let broker = build_broker_client(
+        &BrokerClientConfig {
+            backend: config.broker_backend.clone(),
+            endpoint: config.broker_endpoint.clone(),
+            effect_topic: config.broker_effect_topic.clone(),
+            infrastructure_effect_topic: config.broker_infrastructure_effect_topic.clone(),
+            control_topic: config.broker_control_topic.clone(),
+            agent_topic: None,
+            effect_result_topic: config.broker_effect_result_topic.clone(),
+            client_id: config.broker_client_id.clone(),
+            relay_credential: None,
+            // Direct broker adapters initialize the ingress topology only when both orchestration
+            // names are supplied. The archiver publishes ingress only and never consumes wakes.
+            wake_topic: Some(config.broker_wake_topic.clone()),
+            ingress_topic: Some(config.broker_ingress_topic.clone()),
+        },
+        BrokerConsumerProfile::IngressPublisher,
+    )
+    .await?;
     dispatch_database!(
         config.database,
         sqlite: config.database_url.clone(),
         url: config.database_url.clone(),
-        |db| { run_loop(db, config).await }
+        |db| { run_loop(db, broker.clone(), config).await }
     )
 }
 
-async fn run_loop<T: ArchiveStore>(db: Arc<T>, config: Config) -> Result<(), SendableError> {
+async fn run_loop<T: ArchiveStore>(
+    db: Arc<T>,
+    broker: Arc<dyn Broker>,
+    config: Config,
+) -> Result<(), SendableError> {
     fs::create_dir_all(&config.archive_dir)?;
     let archiver_id = format!("runinator-archiver-{}", Uuid::new_v4());
     info!(archiver_id = %archiver_id, "archiver started");
     let shutdown = Arc::new(Notify::new());
     spawn_liveness(&config, shutdown.clone());
-    // Registration is optional. With a service URL, the archiver appears in the replica list,
-    // sends heartbeats, and keeps the registration handle alive.
-    let _heartbeat = match register_replica(&config, &archiver_id, shutdown.clone()).await? {
-        Registration::Heartbeat(handle) => Some(handle),
-        Registration::Disabled => None,
-        Registration::Shutdown => return Ok(()),
-    };
+    let replica_id = Uuid::now_v7();
+    let runtime_id = replica_id.to_string();
+    let base_attributes = attributes_with_host_metadata(&runinator_models::json!({
+        "archive_dir": config.archive_dir.display().to_string(),
+        "broker_backend": config.broker_backend.clone(),
+        "broker_client_id": config.broker_client_id.clone(),
+    }));
+    publish_replica_availability(
+        broker.as_ref(),
+        replica_id,
+        &runtime_id,
+        &archiver_id,
+        config.advertise_host.clone(),
+        base_attributes.clone(),
+    )
+    .await?;
+    let heartbeat = spawn_replica_heartbeat(
+        broker.clone(),
+        replica_id,
+        runtime_id,
+        archiver_id.clone(),
+        config.advertise_host.clone(),
+        base_attributes,
+        shutdown.clone(),
+    );
     loop {
         if let Err(err) = run_once(db.as_ref(), &config, &archiver_id).await {
             error!(
@@ -104,6 +148,7 @@ async fn run_loop<T: ArchiveStore>(db: Arc<T>, config: Config) -> Result<(), Sen
                 }
                 info!("archiver shutting down");
                 shutdown.notify_waiters();
+                let _ = heartbeat.await;
                 return Ok(());
             }
             _ = tokio::time::sleep(config.interval) => {}
@@ -120,116 +165,72 @@ fn spawn_liveness(config: &Config, shutdown: Arc<Notify>) -> Option<tokio::task:
     )
 }
 
-// outcome of the optional replica registration at startup.
-enum Registration {
-    // registration succeeded; the heartbeat task keeps the replica live.
-    Heartbeat(tokio::task::JoinHandle<()>),
-    // No web service URL is configured, so the archiver runs against the database only.
-    Disabled,
-    // ctrl_c arrived during registration; the caller should exit cleanly.
-    Shutdown,
+async fn publish_replica_availability(
+    broker: &dyn Broker,
+    replica_id: Uuid,
+    runtime_id: &str,
+    instance_id: &str,
+    host: Option<String>,
+    attributes: runinator_models::value::Value,
+) -> Result<(), runinator_broker::BrokerError> {
+    let command = WsIngressCommand::replica_available(
+        ReplicaRegistrationRequest {
+            replica_id: Some(replica_id),
+            replica_type: ReplicaKind::Archiver,
+            instance_id: instance_id.to_string(),
+            runtime_id: runtime_id.to_string(),
+            display_name: Some(instance_id.to_string()),
+            host,
+            port: None,
+            base_path: None,
+            version: Some(env!("CARGO_PKG_VERSION").to_string()),
+            attributes,
+        },
+        Vec::new(),
+    );
+    broker
+        .publish_ingress(IngressMessage {
+            dedupe_key: Some(command.dedupe_key()),
+            command,
+            enqueued_at: Utc::now(),
+        })
+        .await
 }
 
-// Register the archiver when a service URL is configured. Retry with backoff, but let Ctrl-C
-// Interrupt startup when Ctrl-C arrives.
-async fn register_replica(
-    config: &Config,
-    archiver_id: &str,
+fn spawn_replica_heartbeat(
+    broker: Arc<dyn Broker>,
+    replica_id: Uuid,
+    runtime_id: String,
+    instance_id: String,
+    host: Option<String>,
+    base_attributes: runinator_models::value::Value,
     shutdown: Arc<Notify>,
-) -> Result<Registration, SendableError> {
-    let Some(api_base_url) = config.api_base_url.as_deref() else {
-        info!("no web service url configured; running database-only without replica registration");
-        return Ok(Registration::Disabled);
-    };
-    let api_client = AsyncApiClient::with_credentials(
-        StaticLocator::new(api_base_url.to_string()),
-        config.api_key.clone(),
-    )
-    .map_err(|err| errors::REPLICA_REGISTER.error(err))?;
-    let service_config = ReplicaServiceConfig {
-        replica_type: ReplicaKind::Archiver,
-        instance_id: archiver_id.to_string(),
-        display_name: Some(archiver_id.to_string()),
-        host: config.advertise_host.clone(),
-        port: None,
-        base_path: None,
-        version: Some(env!("CARGO_PKG_VERSION").to_string()),
-        attributes: attributes_with_host_metadata(&runinator_models::json!({
-            "archive_dir": config.archive_dir.display().to_string(),
-        })),
-        heartbeat_interval: Duration::from_secs(10),
-    };
-    let replica_client = tokio::select! {
-        result = register_archiver_replica_with_retry(&api_client, &service_config) => result?,
-        signal = tokio::signal::ctrl_c() => {
-            if let Err(err) = signal {
-                warn!("failed to listen for shutdown signal: {err}");
-            }
-            info!("shutdown signal received before archiver registration completed");
-            return Ok(Registration::Shutdown);
-        }
-    };
-    Ok(Registration::Heartbeat(
-        replica_client
-            .spawn_heartbeat_with_telemetry(shutdown, Some(Arc::new(TelemetryCollector::new()))),
-    ))
-}
-
-// registration retry envelope: archiver startup keeps trying while the web service is briefly
-// unreachable, then gives up so the process exits non-zero and the orchestrator restarts it.
-const REGISTER_MAX_ATTEMPTS: u32 = 8;
-const REGISTER_BASE_BACKOFF: Duration = Duration::from_secs(2);
-const REGISTER_MAX_BACKOFF: Duration = Duration::from_secs(30);
-
-// exponential backoff for the nth registration attempt (1-based), capped at REGISTER_MAX_BACKOFF.
-fn register_backoff(attempt: u32) -> Duration {
-    let factor = 1u32
-        .checked_shl(attempt.saturating_sub(1))
-        .unwrap_or(u32::MAX);
-    REGISTER_BASE_BACKOFF
-        .saturating_mul(factor)
-        .min(REGISTER_MAX_BACKOFF)
-}
-
-// register with bounded retries and loud logging, returning an error once attempts are exhausted so
-// the archiver fails visibly instead of running unregistered.
-async fn register_archiver_replica_with_retry(
-    api_client: &AsyncApiClient<StaticLocator>,
-    service_config: &ReplicaServiceConfig,
-) -> Result<ReplicaClient<StaticLocator>, SendableError> {
-    let mut attempt = 1;
-    loop {
-        match ReplicaClient::register(api_client.clone(), service_config.clone()).await {
-            Ok(replica_client) => {
-                if attempt > 1 {
-                    info!(attempt, "archiver replica registered");
+) -> tokio::task::JoinHandle<()> {
+    let telemetry = TelemetryCollector::new();
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(Duration::from_secs(10));
+        loop {
+            tokio::select! {
+                _ = shutdown.notified() => {
+                    let command = WsIngressCommand::replica_offline(replica_id, runtime_id.clone());
+                    let _ = broker.publish_ingress(IngressMessage {
+                        dedupe_key: Some(command.dedupe_key()),
+                        command,
+                        enqueued_at: Utc::now(),
+                    }).await;
+                    return;
                 }
-                return Ok(replica_client);
-            }
-            Err(err) if attempt >= REGISTER_MAX_ATTEMPTS => {
-                error!(
-                    attempt,
-                    error_code = runinator_models::errors::error_code_or_unknown(&err),
-                    "failed to register archiver replica, giving up: {}",
-                    err
-                );
-                return Err(errors::REPLICA_REGISTER.error(err));
-            }
-            Err(err) => {
-                let backoff = register_backoff(attempt);
-                error!(
-                    attempt,
-                    max_attempts = REGISTER_MAX_ATTEMPTS,
-                    retry_in_secs = backoff.as_secs(),
-                    error_code = runinator_models::errors::error_code_or_unknown(&err),
-                    "failed to register archiver replica, retrying: {}",
-                    err
-                );
-                tokio::time::sleep(backoff).await;
-                attempt += 1;
+                _ = ticker.tick() => {
+                    let attributes = attributes_with_telemetry(&base_attributes, &telemetry);
+                    if let Err(err) = publish_replica_availability(
+                        broker.as_ref(), replica_id, &runtime_id, &instance_id, host.clone(), attributes,
+                    ).await {
+                        error!("failed to announce archiver availability: {err}");
+                    }
+                }
             }
         }
-    }
+    })
 }
 
 async fn run_once<T: ArchiveStore>(

@@ -4,9 +4,11 @@ use crate::config::Config;
 
 #[test]
 fn config_parser_uses_local_development_defaults() {
-    let config = Config::try_parse_from(["runinator-waker"]).unwrap();
+    let config =
+        crate::config::normalize_config(Config::try_parse_from(["runinator-waker"]).unwrap());
 
     assert_eq!(config.waker_consumer_group, "runinator-waker");
+    assert!(config.waker_id.starts_with("waker-"));
     assert_eq!(config.max_wake_sleep_seconds, 20);
     assert_eq!(config.broker_backend, "tcp");
     assert_eq!(config.broker_endpoint, "127.0.0.1:7070");
@@ -21,6 +23,8 @@ fn config_parser_accepts_waker_and_broker_overrides() {
         "runinator-waker",
         "--waker-consumer-group",
         "wake-workers",
+        "--waker-id",
+        "relay-1",
         "--max-wake-sleep-seconds",
         "5",
         "--broker-backend",
@@ -35,6 +39,7 @@ fn config_parser_accepts_waker_and_broker_overrides() {
     .unwrap();
 
     assert_eq!(config.waker_consumer_group, "wake-workers");
+    assert_eq!(config.waker_id, "relay-1");
     assert_eq!(config.max_wake_sleep_seconds, 5);
     assert_eq!(config.broker_backend, "http");
     assert_eq!(config.broker_endpoint, "127.0.0.1:9090");
@@ -44,12 +49,7 @@ fn config_parser_accepts_waker_and_broker_overrides() {
 
 #[test]
 fn config_parser_rejects_control_plane_options() {
-    for option in [
-        "--api-base-url",
-        "--api-key",
-        "--advertise-host",
-        "--waker-id",
-    ] {
+    for option in ["--api-base-url", "--api-key"] {
         assert!(
             Config::try_parse_from(["runinator-waker", option, "unused"]).is_err(),
             "{option} must not be accepted by the broker-only waker"

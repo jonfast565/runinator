@@ -6,7 +6,9 @@ The design keeps three concerns separate:
 
 - **Authoring and control plane** — the CLI and command center compile and manage workflows through the authenticated HTTP/WebSocket service.
 - **Durable orchestration** — the engine drives the workflow VM, persists state, dispatches effects, consumes results, and reconciles triggers and maintenance work.
-- **Execution plane** — workers and the waker independently consume broker work. They never write directly to the database.
+- **Execution plane** — workers, wakers, background engines, and the archiver communicate their
+  availability to the durable engine through broker ingress. They never write replica records
+  directly to the database; web services self-register because they own the control-plane store.
 
 ## System overview
 
@@ -130,7 +132,9 @@ Workflow and task state, cursors, effect dispatches, triggers, and metadata are 
 3. The engine loads the definition and run state, then drives `WorkflowMachine` until it reaches a terminal state or parks a cursor on an effect, external signal, child run, or join.
 4. Provider work is persisted as a dispatch and published to `effect`. A worker executes it and returns an `effect_result`; the engine applies the result, records run events and artifacts, and drives the waiting cursor again.
 5. Timed infrastructure effects do not occupy an engine task. The engine publishes a due-time `wake`; the stateless waker relays the already-built settlement back through `ingress` at that time.
-6. When the last real cursor retires, the runtime transitions the run to its terminal status. Results, logs, events, and artifacts remain durable and available through the API.
+6. Each non-web-service runtime also announces startup, heartbeat, and clean shutdown through
+   `ingress`; the engine persists those observations in the fleet registry.
+7. When the last real cursor retires, the runtime transitions the run to its terminal status. Results, logs, events, and artifacts remain durable and available through the API.
 
 ## Extension guide
 

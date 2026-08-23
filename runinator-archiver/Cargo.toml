@@ -10,9 +10,10 @@ flate2 = "1"
 serde_json = "1"
 tracing = "0.1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"] }
-uuid = { version = "1.18", features = ["v4"] }
+uuid = { version = "1.18", features = ["v4", "v7"] }
 
-runinator-api = { path = "../runinator-api" }
+runinator-broker = { path = "../runinator-broker", default-features = false }
+runinator-comm = { path = "../runinator-comm" }
 runinator-database = { path = "../runinator-database", default-features = false }
 runinator-db-cli = { path = "../runinator-db-cli", default-features = false }
 runinator-models = { path = "../runinator-models" }
@@ -20,7 +21,11 @@ runinator-observability = { path = "../runinator-observability" }
 runinator-platform = { path = "../runinator-platform" }
 
 [features]
-default = ["sqlite"]
+default = ["sqlite", "http", "tcp"]
 sqlite = ["runinator-database/sqlite", "runinator-db-cli/sqlite"]
 postgres = ["runinator-database/postgres", "runinator-db-cli/postgres"]
 mysql = ["runinator-database/mysql", "runinator-db-cli/mysql"]
+http = ["runinator-broker/http"]
+tcp = ["runinator-broker/tcp"]
+kafka = ["runinator-broker/kafka"]
+rabbitmq = ["runinator-broker/rabbitmq"]

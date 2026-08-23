@@ -8,11 +8,13 @@ tracing = "0.1"
 clap = { version = "4.5", features = ["derive", "env"] }
 tokio = { version = "1", features = ["full"] }
 chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.18", features = ["v4", "v7"] }
 
 runinator-models = { path = "../runinator-models" }
 runinator-platform = { path = "../runinator-platform" }
 opentelemetry = "0.32"
 runinator-broker = { path = "../runinator-broker", default-features = false }
+runinator-observability = { path = "../runinator-observability" }
 
 [features]
 default = ["http", "tcp"]
@@ -20,6 +22,3 @@ http = ["runinator-broker/http"]
 tcp = ["runinator-broker/tcp"]
 kafka = ["runinator-broker/kafka"]
 rabbitmq = ["runinator-broker/rabbitmq"]
-
-[dev-dependencies]
-uuid = { version = "1.18", features = ["v4"] }

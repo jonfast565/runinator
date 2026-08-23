@@ -96,25 +96,37 @@ async fn broker_only_process_relays_a_due_wake_without_a_web_service() {
         .await
         .unwrap();
 
-    let delivery = tokio::time::timeout(
-        Duration::from_secs(10),
-        broker.receive_ingress("broker-only-process-test"),
-    )
-    .await
-    .expect("waker should settle the due wake without waiting for a web service")
-    .unwrap();
-    match delivery.command {
-        WsIngressCommand::SettleEffect {
-            result: relayed, ..
-        } => {
-            assert_eq!(relayed.effect_id, result.effect_id);
-        }
-        other => panic!("expected a settle effect, got {other:?}"),
-    }
-    broker
-        .ack_ingress("broker-only-process-test", delivery.delivery_id)
+    // The waker first announces its broker availability. A deployment normally has an engine
+    // consuming that observation; this broker-only test owns ingress itself, so acknowledge it
+    // and keep waiting for the wake settlement it exists to prove.
+    loop {
+        let delivery = tokio::time::timeout(
+            Duration::from_secs(10),
+            broker.receive_ingress("broker-only-process-test"),
+        )
         .await
+        .expect("waker should settle the due wake without waiting for a web service")
         .unwrap();
+        match delivery.command {
+            WsIngressCommand::SettleEffect {
+                result: relayed, ..
+            } => {
+                assert_eq!(relayed.effect_id, result.effect_id);
+                broker
+                    .ack_ingress("broker-only-process-test", delivery.delivery_id)
+                    .await
+                    .unwrap();
+                break;
+            }
+            WsIngressCommand::ReplicaAvailability { .. } => {
+                broker
+                    .ack_ingress("broker-only-process-test", delivery.delivery_id)
+                    .await
+                    .unwrap();
+            }
+            other => panic!("expected a settle effect, got {other:?}"),
+        }
+    }
 
     assert!(
         waker.child_mut().try_wait().unwrap().is_none(),

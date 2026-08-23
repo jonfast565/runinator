@@ -16,9 +16,7 @@ use uuid::Uuid;
 use crate::agent::config::AgentRuntimeConfig;
 use crate::agent::observer::AgentObserver;
 use crate::agent::outbox::{FileOutbox, ResultOutbox};
-use crate::agent::registration::{
-    publish_provider_metadata, register_agent_replica, spawn_agent_heartbeat,
-};
+use crate::agent::registration::{announce_agent_replica, spawn_agent_heartbeat};
 use crate::agent::reporter::StatusReporter;
 use crate::agent::shutdown::Shutdown;
 use crate::agent::status::{AgentConnection, AgentReportContext, AgentStatus};
@@ -176,24 +174,32 @@ async fn run_lifecycle(
         shutdown.notify(),
     );
 
-    let replica_client =
-        match register_agent_replica(&api_client, &config, &reporter, &report_context, &shutdown)
-            .await
-        {
-            Ok(Some(client)) => client,
-            // shutdown during a retry window is a clean stop, not a failure.
-            Ok(None) => {
-                settle(&reporter, liveness_task);
-                return Ok(());
-            }
-            Err(err) => {
-                settle(&reporter, liveness_task);
-                return Err(err);
-            }
-        };
-    let replica_id = replica_client.replica_id();
+    // A broker-announced replica knows its identity before the asynchronous ingress consumer
+    // writes the row. That same id is safe to put in effect claims and targeted broker profiles.
+    let replica_id = Uuid::now_v7();
+    let runtime_id = replica_id.to_string();
+    let presence_broker = match crate::broker::build_broker(&config.broker).await {
+        Ok(broker) => broker,
+        Err(err) => {
+            settle(&reporter, liveness_task);
+            return Err(err);
+        }
+    };
+    if let Err(err) = announce_agent_replica(
+        presence_broker.as_ref(),
+        &config,
+        reporter.as_ref(),
+        report_context.as_ref(),
+        replica_id,
+        &runtime_id,
+    )
+    .await
+    {
+        settle(&reporter, liveness_task);
+        return Err(Box::new(err));
+    }
     reporter.update(|status| status.replica_id = Some(replica_id));
-    reporter.log(format!("Registered replica {replica_id}."));
+    reporter.log(format!("Announced broker replica {replica_id}."));
     if !config.labels.is_empty() {
         // surfacing the advertised labels makes "which agent did this go to" answerable from the
         // agent's own output: a label-targeted action only routes here when these satisfy it.
@@ -206,14 +212,12 @@ async fn run_lifecycle(
         reporter.log(format!("Advertising labels: {rendered}"));
     }
 
-    if config.publish_providers {
-        publish_provider_metadata(&replica_client, &config, &reporter).await;
-    }
-
-    // the heartbeat keeps the replica live and marks it offline on shutdown.
-    spawn_agent_heartbeat(
-        replica_client.clone(),
+    // The broker heartbeat keeps the replica live and marks it offline on shutdown.
+    let availability_heartbeat = spawn_agent_heartbeat(
+        presence_broker,
         &config,
+        replica_id,
+        runtime_id,
         Arc::clone(&reporter),
         report_context,
         telemetry,
@@ -222,7 +226,17 @@ async fn run_lifecycle(
     reporter.log(format!("Broker: {}", config.broker_description));
 
     let inputs = SupervisedLoop::new(&config, api_client, replica_id, libraries, result_outbox);
-    let outcome = run_supervised(inputs, Arc::clone(&reporter), shutdown).await;
+    let outcome = run_supervised(inputs, Arc::clone(&reporter), shutdown.clone()).await;
+
+    // An intentional stop is normally already latched, but an unexpected terminal loop result
+    // must also retire the broker-announced replica. Wait briefly so the offline message has a
+    // chance to reach the transport before a standalone process exits.
+    shutdown.trigger();
+    match tokio::time::timeout(Duration::from_secs(5), availability_heartbeat).await {
+        Ok(Ok(())) => {}
+        Ok(Err(err)) => reporter.record_error(format!("availability heartbeat stopped: {err}")),
+        Err(_) => reporter.record_error("timed out retiring broker replica"),
+    }
 
     settle(&reporter, liveness_task);
     // an exhausted reconnect budget is the agent stopping itself, not a clean stop; propagate it so

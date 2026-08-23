@@ -1,4 +1,5 @@
 use clap::Parser;
+use uuid::Uuid;
 
 use runinator_models::errors::SendableError;
 
@@ -7,6 +8,11 @@ use runinator_models::errors::SendableError;
 /// the web service over http and never shares a channel with the worker.
 #[derive(Parser, Debug, Clone)]
 pub struct Config {
+    /// Stable process identity shown in the replica list. A generated value is sufficient when the
+    /// host has no durable identity; orchestrators should pass the pod or service instance name.
+    #[arg(long, default_value = "")]
+    pub waker_id: String,
+
     /// consumer group shared across waker replicas so a wake is handled by exactly one of them.
     #[arg(long, default_value = "runinator-waker")]
     pub waker_consumer_group: String,
@@ -48,6 +54,11 @@ pub struct Config {
     #[arg(long, default_value = "runinator-waker")]
     pub broker_client_id: String,
 
+    /// Address displayed for this broker-only replica. It is descriptive only; nothing dials a
+    /// waker directly.
+    #[arg(long, default_value = "")]
+    pub advertise_host: String,
+
     /// Cadence for the broker health heartbeat. It verifies the transport while the wake consumer
     /// is idle, without sending a durable message to any workflow channel.
     #[arg(long, default_value_t = 10)]
@@ -60,9 +71,15 @@ pub struct Config {
 }
 
 pub fn parse_config() -> Result<Config, SendableError> {
-    let mut config = Config::try_parse()?;
+    Ok(normalize_config(Config::try_parse()?))
+}
+
+pub fn normalize_config(mut config: Config) -> Config {
+    if config.waker_id.trim().is_empty() {
+        config.waker_id = format!("waker-{}", Uuid::now_v7());
+    }
     config.max_wake_sleep_seconds = config.max_wake_sleep_seconds.max(1);
     config.max_concurrent_wakes = config.max_concurrent_wakes.max(1);
     config.broker_heartbeat_seconds = config.broker_heartbeat_seconds.max(1);
-    Ok(config)
+    config
 }

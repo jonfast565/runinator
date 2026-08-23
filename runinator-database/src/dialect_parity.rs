@@ -437,6 +437,7 @@ async fn assert_agent_directive_lifecycle<T: DatabaseImpl>(db: &T) {
     let replica = db
         .register_replica(
             runinator_models::replicas::ReplicaRegistrationRequest {
+                replica_id: None,
                 replica_type: runinator_models::replicas::ReplicaKind::Worker,
                 instance_id: "parity-agent".to_string(),
                 runtime_id: "parity-runtime".to_string(),

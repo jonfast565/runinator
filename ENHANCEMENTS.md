@@ -53,10 +53,12 @@ The guiding constraint from `AGENTS.md`: keep dependency direction services→sh
 - **Delivered:** `runinator-waker` now starts directly from `ProcessResources` plus a
   `BrokerConsumerProfile::Waker` broker client. Its identified broker consumer (`client_id` and
   shared wake consumer group) consumes `wake` and publishes settles to `ingress`; it has no API
-  client, replica registration/heartbeat, API URL/key settings, or registration retry policy. A
+  client, API URL/key settings, or HTTP registration retry policy. Its availability, heartbeat,
+  and clean shutdown now travel through the same broker ingress lifecycle protocol as workers,
+  background engines, and archivers. A
   ten-second broker health heartbeat verifies the transport without emitting a durable work
   message; it records success/failure metrics and never changes relay behavior. Liveness remains
-  local and fleet visibility comes from broker-consumer and operation telemetry.
+  local while broker lifecycle observations supply fleet visibility.
 - **Bootstrap cleanup:** the unused API-client resource was removed from
   `runinator-service-bootstrap`, so the waker no longer transitively links `runinator-api`.
 - **Verification:** a process-level TCP-broker test starts no web service and proves a waker can

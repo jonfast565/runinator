@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use chrono::{DateTime, Duration, Utc};
-use runinator_comm::{AgentDirectiveKind, AgentDirectiveRecord};
+use runinator_comm::{AgentDirectiveKind, AgentDirectiveRecord, ReplicaAvailability};
 use runinator_models::{
     auth::AuthContext,
     errors::SendableError,
@@ -89,16 +89,75 @@ impl<T: ReplicaStore> ReplicaRegistry<T> {
             .store
             .heartbeat_replica(replica_id, request, observed_ip)
             .await?;
-        if replica.is_some()
-            && let Some(telemetry) = telemetry
-        {
-            let sample = ReplicaSample::from_telemetry(replica_id, &telemetry);
-            // sampling is best-effort observability; never fail a heartbeat over it.
-            if let Err(err) = self.store.insert_replica_sample(sample).await {
-                log::warn!("failed to record replica sample for {replica_id}: {err}");
-            }
+        if replica.is_some() {
+            self.record_telemetry(replica_id, telemetry).await;
         }
         Ok(replica)
+    }
+
+    /// Persist a lifecycle observation received through the broker ingress channel.
+    ///
+    /// Workers, wakers, background engines, and archivers all use this path. Their availability
+    /// is therefore recorded by the same registry service as HTTP registrations, without making a
+    /// data-plane process depend on the web-service API.
+    pub async fn observe_broker_availability(
+        &self,
+        availability: ReplicaAvailability,
+    ) -> Result<(), SendableError> {
+        match availability {
+            ReplicaAvailability::Available {
+                registration,
+                providers,
+            } => {
+                match registration.replica_type {
+                    ReplicaKind::Worker
+                    | ReplicaKind::Waker
+                    | ReplicaKind::Background
+                    | ReplicaKind::Archiver => {}
+                    ReplicaKind::Webservice | ReplicaKind::Postgres => {
+                        return Err(format!(
+                            "{} replicas must register directly with the web service",
+                            registration.replica_type.as_str()
+                        )
+                        .into());
+                    }
+                }
+                let expected_id = registration.replica_id.ok_or_else(|| {
+                    "broker-announced replica availability requires a replica_id".to_string()
+                })?;
+                let telemetry = extract_telemetry(&registration.attributes);
+                let runtime_id = registration.runtime_id.clone();
+                let replica = self
+                    .register(registration, None, &AuthContext::disabled_platform_admin())
+                    .await?;
+                if replica.replica_id != expected_id {
+                    return Err(format!(
+                        "broker-announced replica {expected_id} resolved to {}, refusing mismatched identity",
+                        replica.replica_id
+                    )
+                    .into());
+                }
+                self.record_telemetry(replica.replica_id, telemetry).await;
+                for provider in providers {
+                    self.upsert_provider(
+                        replica.replica_id,
+                        ReplicaProviderRegistrationRequest {
+                            runtime_id: runtime_id.clone(),
+                            provider,
+                        },
+                    )
+                    .await?;
+                }
+                Ok(())
+            }
+            ReplicaAvailability::Offline {
+                replica_id,
+                runtime_id,
+            } => {
+                self.mark_offline(replica_id, runtime_id).await?;
+                Ok(())
+            }
+        }
     }
 
     /// Mark a replica offline if the supplied runtime identity still matches.
@@ -247,6 +306,17 @@ impl<T: ReplicaStore> ReplicaRegistry<T> {
         self.store
             .fetch_replica_provider_registrations(replica_id)
             .await
+    }
+
+    async fn record_telemetry(&self, replica_id: Uuid, telemetry: Option<ResourceTelemetry>) {
+        let Some(telemetry) = telemetry else {
+            return;
+        };
+        let sample = ReplicaSample::from_telemetry(replica_id, &telemetry);
+        // Sampling is best-effort observability; never fail liveness over it.
+        if let Err(err) = self.store.insert_replica_sample(sample).await {
+            log::warn!("failed to record replica sample for {replica_id}: {err}");
+        }
     }
 
     /// Enqueue a replica directive. Transport hints are emitted by the caller after this durable

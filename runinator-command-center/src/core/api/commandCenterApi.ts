@@ -169,7 +169,11 @@ export async function createResourceGrant(
   });
 }
 
-export async function revokeResourceGrant(resourceType: string, resourceId: string, grantId: string) {
+export async function revokeResourceGrant(
+  resourceType: string,
+  resourceId: string,
+  grantId: string,
+) {
   return command<TaskResponse>("revoke_resource_grant", { resourceType, resourceId, grantId });
 }
 
@@ -179,7 +183,12 @@ export async function transferResourceOwner(
   scopeKind: "platform" | "organization" | "team" | "user",
   scopeId: string | null,
 ) {
-  return command<JsonRecord>("transfer_resource_owner", { resourceType, resourceId, scopeKind, scopeId });
+  return command<JsonRecord>("transfer_resource_owner", {
+    resourceType,
+    resourceId,
+    scopeKind,
+    scopeId,
+  });
 }
 
 export interface CreateUserInput {
@@ -252,7 +261,11 @@ export async function listUserTeams(userId: string) {
   return command<Team[]>("list_user_teams", { userId });
 }
 
-export async function addTeamMember(teamId: string, userId: string, role: "owner" | "admin" | "operator" | "member") {
+export async function addTeamMember(
+  teamId: string,
+  userId: string,
+  role: "owner" | "admin" | "operator" | "member",
+) {
   return command<TaskResponse>("add_team_member", { teamId, userId, role });
 }
 
@@ -333,22 +346,27 @@ export async function fetchWorkflowRunArtifacts(workflowRunId: string) {
       }
 
       const artifact = asJsonRecord(event.output.artifact);
-      return [{
-        id: event.event_id,
-        workflow_run_id: event.workflow_run_id,
-        // VM effects, rather than node-run rows, own this output. The effect id is the durable
-        // execution identity that lets an operator correlate the artifact to the VM debugger.
-        node_id: event.effect_id,
-        // A VM artifact is addressed by its effect-output event and URI; legacy run_artifact ids
-        // no longer exist, so the old `/artifacts/{id}/download` endpoint cannot serve it.
-        artifact_id: null,
-        name: typeof artifact.name === "string" ? artifact.name : "artifact",
-        mime_type: typeof artifact.mime_type === "string" ? artifact.mime_type : "application/octet-stream",
-        size_bytes: typeof artifact.size_bytes === "number" ? artifact.size_bytes : 0,
-        uri: typeof artifact.uri === "string" ? artifact.uri : "",
-        metadata: asJsonRecord(artifact.metadata),
-        created_at: new Date(event.created_at * 1000).toISOString(),
-      } satisfies WorkflowRunArtifact];
+      return [
+        {
+          id: event.event_id,
+          workflow_run_id: event.workflow_run_id,
+          // VM effects, rather than node-run rows, own this output. The effect id is the durable
+          // execution identity that lets an operator correlate the artifact to the VM debugger.
+          node_id: event.effect_id,
+          // A VM artifact is addressed by its effect-output event and URI; legacy run_artifact ids
+          // no longer exist, so the old `/artifacts/{id}/download` endpoint cannot serve it.
+          artifact_id: null,
+          name: typeof artifact.name === "string" ? artifact.name : "artifact",
+          mime_type:
+            typeof artifact.mime_type === "string"
+              ? artifact.mime_type
+              : "application/octet-stream",
+          size_bytes: typeof artifact.size_bytes === "number" ? artifact.size_bytes : 0,
+          uri: typeof artifact.uri === "string" ? artifact.uri : "",
+          metadata: asJsonRecord(artifact.metadata),
+          created_at: new Date(event.created_at * 1000).toISOString(),
+        } satisfies WorkflowRunArtifact,
+      ];
     }),
   );
 }
@@ -535,7 +553,12 @@ export async function deletePipeline(pipelineId: string) {
 
 // reassign a pipeline's owning organization; null makes it platform-global.
 export async function setPipelineOwner(pipelineId: string, orgId: string | null) {
-  await transferResourceOwner("pipeline", pipelineId, orgId == null ? "platform" : "organization", orgId);
+  await transferResourceOwner(
+    "pipeline",
+    pipelineId,
+    orgId == null ? "platform" : "organization",
+    orgId,
+  );
   return fetchPipeline(pipelineId);
 }
 
@@ -623,6 +646,60 @@ export async function fetchWorkflowRuns(workflowId?: string) {
   return command<RunSummary[]>("fetch_workflow_runs", { workflowId });
 }
 
+/**
+ * The web service projects an effect's source-map location when it can, but journal order is a
+ * second, durable way to recover that association.  It is particularly important while a run is
+ * live: a continuation cursor moves on after an effect settles, so it cannot describe the node
+ * that issued a historical effect.
+ */
+function journalEffectNodeIds(journal: WorkflowJournalRecord[]): Map<string, string> {
+  const lastNodeByContinuation = new Map<string, string>();
+  const nodeByEffect = new Map<string, string>();
+
+  for (const record of [...journal].sort((left, right) => left.sequence - right.sequence)) {
+    const entry = asJsonRecord(record.entry);
+    const continuationId =
+      record.continuation_id ??
+      (typeof entry.continuation_id === "string" ? entry.continuation_id : null);
+
+    if (entry.type === "node_entered" && continuationId && typeof entry.node_id === "string") {
+      lastNodeByContinuation.set(continuationId, entry.node_id);
+      continue;
+    }
+
+    if (entry.type !== "effect_requested" || typeof entry.effect_id !== "string") {
+      continue;
+    }
+
+    const nodeId = continuationId ? lastNodeByContinuation.get(continuationId) : undefined;
+
+    if (nodeId) {
+      nodeByEffect.set(entry.effect_id, nodeId);
+    }
+  }
+
+  return nodeByEffect;
+}
+
+function workflowEffectRequest(effect: WorkflowEffect): JsonRecord {
+  return typeof effect.request === "object" && effect.request !== null
+    ? (effect.request as JsonRecord)
+    : {};
+}
+
+function projectedEffectNodeId(
+  effect: WorkflowEffect,
+  cursorByContinuation: Map<string, WorkflowVmCursor>,
+  journalNodesByEffect: Map<string, string>,
+): string | null {
+  return (
+    effect.node_id ??
+    journalNodesByEffect.get(effect.id) ??
+    cursorByContinuation.get(effect.continuation_id)?.node_id ??
+    null
+  );
+}
+
 export async function fetchWorkflowRun(workflowRunId: string): Promise<WorkflowRunDetail> {
   const [detail, continuations, effects, journal, vmCursors] = await Promise.all([
     command<WorkflowRunDetail>("fetch_workflow_run", { workflowRunId }),
@@ -634,52 +711,103 @@ export async function fetchWorkflowRun(workflowRunId: string): Promise<WorkflowR
   const cursorByContinuation = new Map(
     vmCursors.map((cursor) => [cursor.continuation_id, cursor] as const),
   );
+  const journalNodesByEffect = journalEffectNodeIds(journal);
   const failedNodeIds = new Set(
     journal.flatMap((record) => {
       const entry = asJsonRecord(record.entry);
-      return entry.type === "failed" && typeof entry.node_id === "string"
-        ? [entry.node_id]
-        : [];
+      return entry.type === "failed" && typeof entry.node_id === "string" ? [entry.node_id] : [];
     }),
   );
   const enteredNodes: WorkflowNodeRun[] = journal.flatMap((record) => {
     const entry = asJsonRecord(record.entry);
+
     if (entry.type !== "node_entered" || typeof entry.node_id !== "string") {
       return [];
     }
 
     const timestamp = new Date(record.created_at * 1000).toISOString();
-    return [{
-      id: record.id,
-      workflow_run_id: record.workflow_run_id,
-      node_id: entry.node_id,
-      status: failedNodeIds.has(entry.node_id) ? "failed" : "succeeded",
-      attempt: 0,
-      parameters: {},
-      state: { journal_entry_id: record.id },
-      cursor_id: record.continuation_id ?? null,
-      created_at: timestamp,
-      started_at: timestamp,
-      finished_at: timestamp,
-      message: null,
-    }];
+    return [
+      {
+        id: record.id,
+        workflow_run_id: record.workflow_run_id,
+        node_id: entry.node_id,
+        status: failedNodeIds.has(entry.node_id) ? "failed" : "succeeded",
+        attempt: 0,
+        parameters: {},
+        state: { journal_entry_id: record.id },
+        cursor_id: record.continuation_id ?? null,
+        created_at: timestamp,
+        started_at: timestamp,
+        finished_at: timestamp,
+        message: null,
+      },
+    ];
   });
-  const effectNodes: WorkflowNodeRun[] = effects.flatMap((effect) => {
-    const cursor = cursorByContinuation.get(effect.continuation_id);
+  const retryNodes: WorkflowNodeRun[] = journal.flatMap((record) => {
+    const entry = asJsonRecord(record.entry);
 
-    // VM effects retain their originating graph node through the journal projection. A live
-    // cursor is only a fallback for older servers; it moves after an effect settles and cannot
-    // describe the historical node that ran.
-    const nodeId = effect.node_id ?? cursor?.node_id;
+    if (
+      entry.type !== "effect_retry_scheduled" ||
+      typeof entry.effect_id !== "string" ||
+      typeof entry.attempt !== "number" ||
+      !Number.isFinite(entry.attempt)
+    ) {
+      return [];
+    }
+
+    const effect = effects.find((candidate) => candidate.id === entry.effect_id);
+
+    if (!effect) {
+      return [];
+    }
+
+    const nodeId = projectedEffectNodeId(effect, cursorByContinuation, journalNodesByEffect);
 
     if (!nodeId) {
       return [];
     }
 
-    const request =
-      typeof effect.request === "object" && effect.request !== null
-        ? (effect.request as JsonRecord)
-        : {};
+    const timestamp = new Date(record.created_at * 1000).toISOString();
+    const availableAt =
+      typeof entry.available_at === "number"
+        ? new Date(entry.available_at * 1000).toISOString()
+        : null;
+    const attempt = Math.floor(entry.attempt);
+    return [
+      {
+        id: record.id,
+        workflow_run_id: record.workflow_run_id,
+        node_id: nodeId,
+        status: "retrying",
+        attempt,
+        parameters: workflowEffectRequest(effect),
+        state: {
+          effect_id: effect.id,
+          journal_entry_id: record.id,
+          retry_available_at: entry.available_at ?? null,
+        },
+        cursor_id: effect.continuation_id,
+        created_at: timestamp,
+        started_at: timestamp,
+        finished_at: timestamp,
+        message: availableAt
+          ? `Retry attempt ${String(attempt)} scheduled for ${availableAt}`
+          : `Retry attempt ${String(attempt)} scheduled`,
+      },
+    ];
+  });
+  const effectNodes: WorkflowNodeRun[] = effects.flatMap((effect) => {
+    // VM effects retain their originating graph node through the journal projection. A live
+    // cursor is only the last fallback: it moves after an effect settles and cannot describe the
+    // historical node that ran. The journal fallback keeps the canvas correct when a lightweight
+    // websocket update races the server's source-map projection.
+    const nodeId = projectedEffectNodeId(effect, cursorByContinuation, journalNodesByEffect);
+
+    if (!nodeId) {
+      return [];
+    }
+
+    const request = workflowEffectRequest(effect);
     const requestType = typeof request.type === "string" ? request.type : "";
     const status =
       effect.status === "requested" || effect.status === "running"
@@ -689,42 +817,44 @@ export async function fetchWorkflowRun(workflowRunId: string): Promise<WorkflowR
             ? "waiting"
             : effect.status
         : effect.status;
-    return [{
-      id: effect.id,
-      workflow_run_id: effect.workflow_run_id,
-      node_id: nodeId,
-      status,
-      attempt: effect.attempt,
-      parameters: request,
-      output_json: effect.result ?? null,
-      state: { effect_id: effect.id, ...request },
-      cursor_id: effect.continuation_id,
-      created_at: new Date(effect.created_at * 1000).toISOString(),
-      started_at: new Date(effect.created_at * 1000).toISOString(),
-      finished_at: effect.finished_at
-        ? new Date(effect.finished_at * 1000).toISOString()
-        : null,
-      message: effect.message ?? null,
-    }];
+    return [
+      {
+        id: effect.id,
+        workflow_run_id: effect.workflow_run_id,
+        node_id: nodeId,
+        status,
+        attempt: effect.attempt,
+        parameters: request,
+        output_json: effect.result ?? null,
+        state: { effect_id: effect.id, ...request },
+        cursor_id: effect.continuation_id,
+        created_at: new Date(effect.created_at * 1000).toISOString(),
+        started_at: new Date(effect.created_at * 1000).toISOString(),
+        finished_at: effect.finished_at ? new Date(effect.finished_at * 1000).toISOString() : null,
+        message: effect.message ?? null,
+      },
+    ];
   });
   return {
     ...detail,
     // Temporary graph-view projection. These are derived entirely from VM records and do not
     // fetch or mutate the legacy node-run resource.
-    // Effect receipts come last so waiting, retrying, and terminal action state takes precedence
-    // over the successful `node_entered` marker for that same graph node.
-    nodes: [...enteredNodes, ...effectNodes],
+    // The immutable retry journal is rendered as history, while the current mutable effect comes
+    // last so a terminal result still takes precedence over its earlier retry markers on the graph.
+    nodes: [...enteredNodes, ...retryNodes, ...effectNodes],
     continuations,
     effects,
     journal,
     vm_cursors: vmCursors,
     execution_state: {
       ...(detail.execution_state ?? {}),
-      cursors: vmCursors.map((cursor) => ({
-        id: cursor.continuation_id,
-        node_id: cursor.node_id ?? "",
-        debug: { paused: cursor.status === "paused" },
-      })).filter((cursor) => cursor.node_id.length > 0),
+      cursors: vmCursors
+        .map((cursor) => ({
+          id: cursor.continuation_id,
+          node_id: cursor.node_id ?? "",
+          debug: { paused: cursor.status === "paused" },
+        }))
+        .filter((cursor) => cursor.node_id.length > 0),
     },
   } satisfies WorkflowRunDetail;
 }
@@ -892,7 +1022,12 @@ export async function fetchReplicaProviders(replicaId: string) {
 }
 
 export async function setWorkflowOwner(workflowId: string, orgId: string | null) {
-  await transferResourceOwner("workflow", workflowId, orgId == null ? "platform" : "organization", orgId);
+  await transferResourceOwner(
+    "workflow",
+    workflowId,
+    orgId == null ? "platform" : "organization",
+    orgId,
+  );
 
   const workflow = (await fetchWorkflows()).find((candidate) => candidate.id === workflowId);
 

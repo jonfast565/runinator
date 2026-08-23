@@ -94,6 +94,13 @@ export function useWorkflowRunStream() {
       try {
         const detail = JSON.parse(data) as WorkflowRunDetail;
         workflows.setWorkflowRunDetail(detail);
+        // The run websocket is intentionally a small status envelope. Schedule an authoritative
+        // VM detail read after every push so a newly opened tab gets its journal/effect projection
+        // even when the initial status message races the first HTTP read.
+
+        if (detail.nodes.length === 0) {
+          workflows.scheduleWorkflowRunDetailRefresh(runId);
+        }
 
         if (isTerminalWorkflowRunStatus(detail.run.status)) {
           handle.terminal = true;

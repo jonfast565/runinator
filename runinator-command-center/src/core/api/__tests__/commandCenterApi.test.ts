@@ -66,79 +66,94 @@ describe("command center catalog metadata API", () => {
           nodes: [],
         },
         fetch_workflow_continuations: [],
-        fetch_workflow_effects: [{
-          version: 1,
-          id: "effect-1",
-          workflow_run_id: "run-1",
-          continuation_id: "continuation-1",
-          sequence: 0,
-          attempt: 0,
-          node_id: "publish",
-          request: { type: "action" },
-          status: "succeeded",
-          created_at: 0,
-          updated_at: 0,
-          finished_at: 1,
-        }],
-        fetch_workflow_journal: [{
-          version: 1,
-          id: "journal-1",
-          workflow_run_id: "run-1",
-          sequence: 1,
-          continuation_id: "continuation-1",
-          entry: { type: "node_entered", continuation_id: "continuation-1", node_id: "config" },
-          created_at: 0,
-        }, {
-          version: 1,
-          id: "journal-2",
-          workflow_run_id: "run-1",
-          sequence: 2,
-          continuation_id: "continuation-1",
-          entry: { type: "node_entered", continuation_id: "continuation-1", node_id: "publish" },
-          created_at: 1,
-        }],
+        fetch_workflow_effects: [
+          {
+            version: 1,
+            id: "effect-1",
+            workflow_run_id: "run-1",
+            continuation_id: "continuation-1",
+            sequence: 0,
+            attempt: 0,
+            node_id: "publish",
+            request: { type: "action" },
+            status: "succeeded",
+            created_at: 0,
+            updated_at: 0,
+            finished_at: 1,
+          },
+        ],
+        fetch_workflow_journal: [
+          {
+            version: 1,
+            id: "journal-1",
+            workflow_run_id: "run-1",
+            sequence: 1,
+            continuation_id: "continuation-1",
+            entry: { type: "node_entered", continuation_id: "continuation-1", node_id: "config" },
+            created_at: 0,
+          },
+          {
+            version: 1,
+            id: "journal-2",
+            workflow_run_id: "run-1",
+            sequence: 2,
+            continuation_id: "continuation-1",
+            entry: { type: "node_entered", continuation_id: "continuation-1", node_id: "publish" },
+            created_at: 1,
+          },
+        ],
         // The continuation has moved to end. This used to overwrite the effect's true node.
-        fetch_workflow_vm_cursors: [{
-          continuation_id: "continuation-1",
-          instruction_pointer: 99,
-          node_id: "end",
-          status: "succeeded",
-        }],
+        fetch_workflow_vm_cursors: [
+          {
+            continuation_id: "continuation-1",
+            instruction_pointer: 99,
+            node_id: "end",
+            status: "succeeded",
+          },
+        ],
       };
       return Promise.resolve(responses[name]);
     });
 
     const detail = await fetchWorkflowRun("run-1");
 
-    expect(detail.nodes).toEqual(expect.arrayContaining([
-      expect.objectContaining({ node_id: "config", status: "succeeded" }),
-      expect.objectContaining({ node_id: "publish", status: "succeeded" }),
-    ]));
+    expect(detail.nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ node_id: "config", status: "succeeded" }),
+        expect.objectContaining({ node_id: "publish", status: "succeeded" }),
+      ]),
+    );
   });
 
   it("marks an inline node failed when its journaled evaluation fails", async () => {
     vi.mocked(invoke).mockImplementation((name) => {
       const responses: Record<string, unknown> = {
-        fetch_workflow_run: { run: { id: "run-1", workflow_id: "workflow-1", status: "failed" }, nodes: [] },
+        fetch_workflow_run: {
+          run: { id: "run-1", workflow_id: "workflow-1", status: "failed" },
+          nodes: [],
+        },
         fetch_workflow_continuations: [],
         fetch_workflow_effects: [],
-        fetch_workflow_journal: [{
-          version: 1,
-          id: "journal-1",
-          workflow_run_id: "run-1",
-          sequence: 1,
-          continuation_id: "continuation-1",
-          entry: { type: "node_entered", continuation_id: "continuation-1", node_id: "config" },
-          created_at: 0,
-        }, {
-          version: 1,
-          id: "journal-2",
-          workflow_run_id: "run-1",
-          sequence: 2,
-          continuation_id: "continuation-1",
-          entry: { type: "failed", continuation_id: "continuation-1", node_id: "config" },
-          created_at: 1,
-        }],
+        fetch_workflow_journal: [
+          {
+            version: 1,
+            id: "journal-1",
+            workflow_run_id: "run-1",
+            sequence: 1,
+            continuation_id: "continuation-1",
+            entry: { type: "node_entered", continuation_id: "continuation-1", node_id: "config" },
+            created_at: 0,
+          },
+          {
+            version: 1,
+            id: "journal-2",
+            workflow_run_id: "run-1",
+            sequence: 2,
+            continuation_id: "continuation-1",
+            entry: { type: "failed", continuation_id: "continuation-1", node_id: "config" },
+            created_at: 1,
+          },
+        ],
         fetch_workflow_vm_cursors: [],
       };
       return Promise.resolve(responses[name]);
@@ -147,6 +162,119 @@ describe("command center catalog metadata API", () => {
     const detail = await fetchWorkflowRun("run-1");
 
     expect(detail.nodes).toMatchObject([{ node_id: "config", status: "failed" }]);
+  });
+
+  it("keeps every scheduled retry in the projected node history", async () => {
+    vi.mocked(invoke).mockImplementation((name) => {
+      const responses: Record<string, unknown> = {
+        fetch_workflow_run: {
+          run: { id: "run-1", workflow_id: "workflow-1", status: "failed" },
+          nodes: [],
+        },
+        fetch_workflow_continuations: [],
+        fetch_workflow_effects: [
+          {
+            version: 1,
+            id: "effect-1",
+            workflow_run_id: "run-1",
+            continuation_id: "continuation-1",
+            sequence: 0,
+            attempt: 3,
+            // Exercise the durable journal fallback too: a terminal cursor has already moved on.
+            node_id: null,
+            request: { type: "action" },
+            status: "failed",
+            message: "provider unavailable",
+            created_at: 0,
+            updated_at: 4,
+            finished_at: 4,
+          },
+        ],
+        fetch_workflow_journal: [
+          {
+            version: 1,
+            id: "journal-entered",
+            workflow_run_id: "run-1",
+            sequence: 1,
+            continuation_id: "continuation-1",
+            entry: { type: "node_entered", continuation_id: "continuation-1", node_id: "tickets" },
+            created_at: 0,
+          },
+          {
+            version: 1,
+            id: "journal-requested",
+            workflow_run_id: "run-1",
+            sequence: 2,
+            continuation_id: "continuation-1",
+            entry: { type: "effect_requested", effect_id: "effect-1", instruction_pointer: 7 },
+            created_at: 0,
+          },
+          {
+            version: 1,
+            id: "journal-retry-1",
+            workflow_run_id: "run-1",
+            sequence: 3,
+            continuation_id: "continuation-1",
+            entry: {
+              type: "effect_retry_scheduled",
+              effect_id: "effect-1",
+              attempt: 1,
+              available_at: 1,
+            },
+            created_at: 1,
+          },
+          {
+            version: 1,
+            id: "journal-retry-2",
+            workflow_run_id: "run-1",
+            sequence: 4,
+            continuation_id: "continuation-1",
+            entry: {
+              type: "effect_retry_scheduled",
+              effect_id: "effect-1",
+              attempt: 2,
+              available_at: 2,
+            },
+            created_at: 2,
+          },
+          {
+            version: 1,
+            id: "journal-retry-3",
+            workflow_run_id: "run-1",
+            sequence: 5,
+            continuation_id: "continuation-1",
+            entry: {
+              type: "effect_retry_scheduled",
+              effect_id: "effect-1",
+              attempt: 3,
+              available_at: 3,
+            },
+            created_at: 3,
+          },
+        ],
+        fetch_workflow_vm_cursors: [
+          {
+            continuation_id: "continuation-1",
+            instruction_pointer: 99,
+            node_id: "end",
+            status: "succeeded",
+          },
+        ],
+      };
+      return Promise.resolve(responses[name]);
+    });
+
+    const detail = await fetchWorkflowRun("run-1");
+    const tickets = detail.nodes.filter((node) => node.node_id === "tickets");
+
+    expect(tickets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "journal-retry-1", status: "retrying", attempt: 1 }),
+        expect.objectContaining({ id: "journal-retry-2", status: "retrying", attempt: 2 }),
+        expect.objectContaining({ id: "journal-retry-3", status: "retrying", attempt: 3 }),
+        expect.objectContaining({ id: "effect-1", status: "failed", attempt: 3 }),
+      ]),
+    );
   });
 });
 

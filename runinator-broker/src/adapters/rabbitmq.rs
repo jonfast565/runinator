@@ -98,6 +98,16 @@ impl RabbitMqBrokerConfig {
         self
     }
 
+    pub fn with_wake_queue(mut self, wake_queue: impl Into<String>) -> Self {
+        self.wake_queue = wake_queue.into();
+        self
+    }
+
+    pub fn with_ingress_queue(mut self, ingress_queue: impl Into<String>) -> Self {
+        self.ingress_queue = ingress_queue.into();
+        self
+    }
+
     pub fn with_effect_queues(
         mut self,
         effect_queue: impl Into<String>,

@@ -17,12 +17,7 @@ import {
   resumeWorkflowRun,
   stepWorkflowRun,
 } from "../../api/commandCenterApi";
-import type {
-  GateRecord,
-  JsonRecord,
-  RunSummary,
-  WorkflowRunDetail,
-} from "../../domain/models";
+import type { GateRecord, JsonRecord, RunSummary, WorkflowRunDetail } from "../../domain/models";
 import { asJsonRecord, isJsonRecord, jsonRecordArray } from "../../domain/json";
 
 import { coerceRunCursors, isCursorPaused } from "../../domain/models/workflow-state";
@@ -641,6 +636,40 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
 
   function setWorkflowRunDetail(detail: WorkflowRunDetail | null) {
     if (detail) {
+      const previous = internal.runDetailById.get(detail.run.id) ?? null;
+      // `/ws/workflow-runs/:id` deliberately carries the lightweight run envelope, whose node
+      // array is empty. Do not let that status push erase the VM history an HTTP detail refresh
+      // just reconstructed; it would make the graph flicker or remain unhighlighted when the
+      // stream races that refresh.
+
+      if (
+        previous &&
+        detail.nodes.length === 0 &&
+        detail.continuations === undefined &&
+        detail.effects === undefined &&
+        detail.journal === undefined &&
+        detail.vm_cursors === undefined
+      ) {
+        detail = {
+          ...detail,
+          run: {
+            ...previous.run,
+            ...detail.run,
+            workflow_snapshot: detail.run.workflow_snapshot ?? previous.run.workflow_snapshot,
+          },
+          nodes: previous.nodes,
+          continuations: previous.continuations,
+          effects: previous.effects,
+          journal: previous.journal,
+          vm_cursors: previous.vm_cursors,
+          execution_state: {
+            ...previous.execution_state,
+            ...detail.execution_state,
+            cursors: previous.execution_state?.cursors ?? detail.execution_state?.cursors,
+          },
+        };
+      }
+
       internal.latestWorkflowRunPushVersion.set(
         detail.run.id,
         ++internal.nextWorkflowRunDetailVersion,
@@ -890,9 +919,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
       "",
       `Workflow effect ${effect.id} chunks`,
       ...chunks.map((event) =>
-        event.output.type === "chunk"
-          ? `[${event.output.stream}] ${event.output.content}`
-          : "",
+        event.output.type === "chunk" ? `[${event.output.stream}] ${event.output.content}` : "",
       ),
       "",
       `Workflow effect ${effect.id} artifacts`,

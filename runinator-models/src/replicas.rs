@@ -162,6 +162,11 @@ impl TryFrom<&str> for ReplicaStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplicaRegistrationRequest {
+    /// Caller-selected identity for broker-announced replicas. HTTP callers leave this unset and
+    /// the registry assigns one; a broker consumer must know its identity before the asynchronous
+    /// registration is applied so it can safely stamp executor claims and receive directives.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replica_id: Option<Uuid>,
     pub replica_type: ReplicaKind,
     pub instance_id: String,
     pub runtime_id: String,

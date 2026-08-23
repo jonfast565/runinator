@@ -46,7 +46,7 @@ pub async fn run_ingress_consumer<T: RuntimeStore + ReplicaStore + WorkflowVmSto
             }
         };
 
-        match apply(db.as_ref(), broker.as_ref(), &delivery).await {
+        match apply(db.clone(), broker.as_ref(), &delivery).await {
             Ok(()) => {
                 crate::stability::ingress_applied();
                 if let Err(err) = broker
@@ -71,7 +71,7 @@ pub async fn run_ingress_consumer<T: RuntimeStore + ReplicaStore + WorkflowVmSto
 }
 
 async fn apply<T: RuntimeStore + ReplicaStore + WorkflowVmStore>(
-    db: &T,
+    db: Arc<T>,
     broker: &dyn Broker,
     delivery: &IngressDelivery,
 ) -> Result<(), SendableError> {
@@ -109,13 +109,14 @@ async fn apply<T: RuntimeStore + ReplicaStore + WorkflowVmStore>(
             info!(workflow_run_id = %workflow_run_id, kind = ?kind, "applying a worker control request");
             match kind {
                 ControlKind::Cancel => {
-                    crate::repository::cancel_workflow_run(db, broker, *workflow_run_id).await?;
+                    crate::repository::cancel_workflow_run(db.as_ref(), broker, *workflow_run_id)
+                        .await?;
                 }
                 ControlKind::Pause => {
-                    crate::repository::pause_workflow_run(db, *workflow_run_id).await?;
+                    crate::repository::pause_workflow_run(db.as_ref(), *workflow_run_id).await?;
                 }
                 ControlKind::Resume => {
-                    crate::repository::resume_workflow_run(db, *workflow_run_id).await?;
+                    crate::repository::resume_workflow_run(db.as_ref(), *workflow_run_id).await?;
                 }
             }
             Ok(())
@@ -125,13 +126,20 @@ async fn apply<T: RuntimeStore + ReplicaStore + WorkflowVmStore>(
         // pending forever.
         WsIngressCommand::AgentDirectiveResult { result } => {
             let directive_id = result.directive_id;
-            let record = crate::repository::complete_agent_directive(db, result.clone()).await?;
+            let record =
+                crate::repository::complete_agent_directive(db.as_ref(), result.clone()).await?;
             if record.is_none() {
                 // an unknown or already-completed directive is not a failure: a redelivered reply
                 // must not park the ingress channel behind a message that can never apply.
                 warn!(directive_id = %directive_id, "ignoring a reply for an unknown agent directive");
             }
             Ok(())
+        }
+        WsIngressCommand::ReplicaAvailability { availability } => {
+            info!("applying broker-announced replica availability");
+            crate::services::ReplicaRegistry::new(db)
+                .observe_broker_availability(availability.clone())
+                .await
         }
     }
 }

@@ -13,6 +13,7 @@ fn selection(mode: BrokerMode) -> BrokerSelection {
         control_topic: "runinator.control".to_string(),
         agent_topic: "runinator.agent".to_string(),
         effect_result_topic: "runinator.effect-results".to_string(),
+        ingress_topic: "runinator.ingress".to_string(),
         client_id: "test-agent".to_string(),
         api_key: Some("secret".to_string()),
     }

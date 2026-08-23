@@ -20,6 +20,7 @@ use runinator_database::interfaces::DatabaseImpl;
 use runinator_engine::services::ReplicaRegistry;
 use runinator_models::auth::{AuthContext, Permission, ResourceType};
 use runinator_models::rbac::{Action, ScopeKind, ScopeRef, SystemRole};
+use runinator_models::replicas::ReplicaKind;
 use serde::Serialize;
 use std::sync::Arc;
 use tokio::sync::broadcast;
@@ -538,7 +539,7 @@ impl StrandedConsumer {
 /// the policy allow-list and replica-ownership check for the desktop-worker relay, ahead of the
 /// generic dispatch every other transport uses. a desktop worker only ever legitimately needs
 /// `receive_effect_for`/`ack_effect`/`nack_effect`, replica-targeted control, replica-targeted agent
-/// directives, effect-result publication, and payload-gated directive results on ingress.
+/// directives, effect-result publication, and its own lifecycle observations on ingress.
 async fn handle_desktop_worker_request<T: DatabaseImpl>(
     db: Arc<T>,
     broker: &dyn Broker,
@@ -581,11 +582,23 @@ async fn handle_desktop_worker_request<T: DatabaseImpl>(
         | TcpRequest::AckEffect { .. }
         | TcpRequest::NackEffect { .. }
         | TcpRequest::PublishEffectResult { .. } => {}
-        TcpRequest::PublishIngress { message }
-            if matches!(
-                message.command,
-                runinator_comm::WsIngressCommand::AgentDirectiveResult { .. }
-            ) => {}
+        TcpRequest::PublishIngress { message } => match &message.command {
+            runinator_comm::WsIngressCommand::AgentDirectiveResult { .. } => {}
+            runinator_comm::WsIngressCommand::ReplicaAvailability { availability } => {
+                if let Err(response) =
+                    authorize_desktop_availability(&registry, ctx, availability).await
+                {
+                    return response;
+                }
+            }
+            _ => {
+                return TcpResponse::Error {
+                    message: crate::errors::RELAY_OPERATION_REFUSED
+                        .error(request.operation_name())
+                        .to_string(),
+                };
+            }
+        },
         _ => {
             return TcpResponse::Error {
                 message: crate::errors::RELAY_OPERATION_REFUSED
@@ -595,6 +608,83 @@ async fn handle_desktop_worker_request<T: DatabaseImpl>(
         }
     }
     dispatch(broker, request).await
+}
+
+/// The relay is the authenticated boundary for a desktop worker's lifecycle message. It records
+/// the registration with the caller's principal before forwarding it to the engine, so later
+/// targeted receives retain the existing ownership guarantee. The engine's copy is idempotent and
+/// deliberately preserves that original owner.
+async fn authorize_desktop_availability<T: DatabaseImpl>(
+    registry: &ReplicaRegistry<T>,
+    ctx: &AuthContext,
+    availability: &runinator_comm::ReplicaAvailability,
+) -> Result<(), runinator_broker::tcp::types::TcpResponse> {
+    use runinator_broker::tcp::types::TcpResponse;
+
+    match availability {
+        runinator_comm::ReplicaAvailability::Available { registration, .. } => {
+            if registration.replica_type != ReplicaKind::Worker || registration.replica_id.is_none()
+            {
+                return Err(TcpResponse::Error {
+                    message: crate::errors::RELAY_OPERATION_REFUSED
+                        .error("publish_replica_availability")
+                        .to_string(),
+                });
+            }
+            match registry
+                .agent_owns_runtime_registration(ctx, registration)
+                .await
+            {
+                Ok(true) => {}
+                Ok(false) => {
+                    return Err(TcpResponse::Error {
+                        message: crate::errors::RELAY_REPLICA_NOT_OWNED
+                            .error(registration.replica_id.expect("checked above"))
+                            .to_string(),
+                    });
+                }
+                Err(err) => {
+                    return Err(TcpResponse::Error {
+                        message: crate::errors::RELAY_REPLICA_LOOKUP.error(err).to_string(),
+                    });
+                }
+            }
+            registry
+                .register(registration.clone(), None, ctx)
+                .await
+                .map_err(|err| TcpResponse::Error {
+                    message: crate::errors::RELAY_REPLICA_LOOKUP.error(err).to_string(),
+                })?;
+            Ok(())
+        }
+        runinator_comm::ReplicaAvailability::Offline {
+            replica_id,
+            runtime_id,
+        } => {
+            match registry.agent_owns_replica(ctx, *replica_id).await {
+                Ok(true) => {}
+                Ok(false) => {
+                    return Err(TcpResponse::Error {
+                        message: crate::errors::RELAY_REPLICA_NOT_OWNED
+                            .error(replica_id)
+                            .to_string(),
+                    });
+                }
+                Err(err) => {
+                    return Err(TcpResponse::Error {
+                        message: crate::errors::RELAY_REPLICA_LOOKUP.error(err).to_string(),
+                    });
+                }
+            }
+            registry
+                .mark_offline(*replica_id, runtime_id.clone())
+                .await
+                .map_err(|err| TcpResponse::Error {
+                    message: crate::errors::RELAY_REPLICA_LOOKUP.error(err).to_string(),
+                })?;
+            Ok(())
+        }
+    }
 }
 
 /// refuse a profile whose replica_id exists but is not registered by the connecting identity, so a
@@ -622,6 +712,77 @@ async fn refuse_unowned_replica<T: DatabaseImpl>(
         Err(err) => Some(TcpResponse::Error {
             message: crate::errors::RELAY_REPLICA_LOOKUP.error(err).to_string(),
         }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use runinator_comm::ReplicaAvailability;
+    use runinator_database::sqlite::SqliteDb;
+    use runinator_models::{
+        auth::PrincipalKind,
+        rbac::SystemRole,
+        replicas::{ReplicaRegistrationRequest, ReplicaStatus},
+    };
+
+    async fn test_db() -> (Arc<SqliteDb>, std::path::PathBuf) {
+        let path =
+            std::env::temp_dir().join(format!("runinator-websocket-replica-{}.db", Uuid::new_v4()));
+        let db = SqliteDb::new(path.to_str().expect("temporary path is UTF-8"))
+            .await
+            .expect("open sqlite database");
+        db.run_init_scripts(&Vec::new())
+            .await
+            .expect("initialize sqlite database");
+        (Arc::new(db), path)
+    }
+
+    #[tokio::test]
+    async fn desktop_availability_is_registered_by_the_websocket_principal() {
+        let (db, path) = test_db().await;
+        let registry = ReplicaRegistry::new(db);
+        let owner = Uuid::now_v7();
+        let replica_id = Uuid::now_v7();
+        let context = AuthContext {
+            principal_id: Some(owner),
+            session_id: None,
+            kind: PrincipalKind::Service,
+            platform_role: None,
+            assignments: Vec::new(),
+            system_role: Some(SystemRole::Agent),
+            action_ceiling: Vec::new(),
+            org_id: None,
+        };
+        let availability = ReplicaAvailability::Available {
+            registration: ReplicaRegistrationRequest {
+                replica_id: Some(replica_id),
+                replica_type: ReplicaKind::Worker,
+                instance_id: "desktop-test".to_string(),
+                runtime_id: replica_id.to_string(),
+                display_name: Some("Desktop test".to_string()),
+                host: None,
+                port: None,
+                base_path: None,
+                version: None,
+                attributes: runinator_models::json!({"exclusive": true}),
+            },
+            providers: Vec::new(),
+        };
+
+        authorize_desktop_availability(&registry, &context, &availability)
+            .await
+            .expect("desktop worker availability is accepted");
+
+        let replica = registry
+            .fetch(replica_id)
+            .await
+            .expect("fetch replica")
+            .expect("desktop replica was registered");
+        assert_eq!(replica.registered_by_principal_id, Some(owner));
+        assert_eq!(replica.status, ReplicaStatus::Live);
+
+        let _ = std::fs::remove_file(path);
     }
 }
 

@@ -35,7 +35,11 @@
         v-if="data.interruptRegion"
         class="node-interrupt-badge"
         :title="`Interrupt handler for '${data.interruptRegion.source}'${data.interruptRegion.enabled ? '' : ' (disabled)'} (region entry ${data.interruptRegion.handler})`"
-        >{{ data.interruptEntry ? `⚡ ${data.interruptRegion.source}${data.interruptRegion.enabled ? '' : ' · off'}` : "⚡" }}</span
+        >{{
+          data.interruptEntry
+            ? `⚡ ${data.interruptRegion.source}${data.interruptRegion.enabled ? "" : " · off"}`
+            : "⚡"
+        }}</span
       >
       <span v-if="isWaitingState" class="node-waiting-icon" title="Waiting">
         <Icon name="hourglass" :size="12" />
@@ -289,7 +293,12 @@ const isWaitingState = computed(() =>
   ),
 );
 const isNodeRunning = computed(() => {
-  const run = workflows.workflowRunDetail?.nodes.find((n) => n.node_id === props.id);
+  // VM history can include the node-entered marker, retry markers, and the current effect. The
+  // most recent projection is authoritative; selecting the first marker made a later running
+  // effect look completed.
+  const run = [...(workflows.workflowRunDetail?.nodes ?? [])]
+    .reverse()
+    .find((n) => n.node_id === props.id);
 
   if (run) {
     return run.status === "running" || run.status === "queued";
@@ -358,7 +367,6 @@ function cancelInlineEdit() {
   // close the inline form but keep the node selected for the inspector.
   workflows.inlineEditNodeId = "";
 }
-
 </script>
 
 <style scoped src="./workflow-node.css"></style>

@@ -78,6 +78,7 @@ pub async fn run_webserver<T: DatabaseImpl>(
     let web_replica = replica_registry
         .register(
             ReplicaRegistrationRequest {
+                replica_id: None,
                 replica_type: ReplicaKind::Webservice,
                 instance_id: instance.clone(),
                 runtime_id: runtime_id.clone(),

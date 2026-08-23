@@ -44,9 +44,12 @@ spec:
             - "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)"
             - "--archive-dir"
             - "/var/lib/runinator/archive"
-            # register in the replica list and heartbeat; omit to run database-only.
-            - "--api-base-url"
-            - "$(WS_API_BASE_URL)"
+            - "--broker-backend"
+            - "rabbitmq"
+            - "--broker-endpoint"
+            - "amqp://$(RABBIT_USER):$(RABBIT_PASS)@$(RABBITMQ_HOST):$(RABBITMQ_PORT)/%2f"
+            - "--broker-client-id"
+            - "runinator-archiver-$(POD_NAME)"
             - "--advertise-host"
             - "$(POD_NAME)"
           envFrom:
@@ -54,12 +57,9 @@ spec:
                 name: runinator-common
             - secretRef:
                 name: runinator-postgres-secret
+            - secretRef:
+                name: runinator-rabbitmq-secret
           env:
-            - name: RUNINATOR_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: runinator-app-secret
-                  key: RUNINATOR_AUTH_BOOTSTRAP_SERVICE_API_KEY
             - name: POD_NAME
               valueFrom:
                 fieldRef:

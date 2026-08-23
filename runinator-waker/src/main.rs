@@ -2,6 +2,7 @@ use runinator_broker::{BrokerConsumerProfile, build_broker_client};
 use runinator_models::errors::SendableError;
 use runinator_platform::startup::ProcessResources;
 use tracing::{error, info};
+use uuid::Uuid;
 
 use runinator_waker::{config::parse_config, waker_loop};
 
@@ -43,10 +44,34 @@ async fn run_process() -> Result<(), SendableError> {
     .await?;
     let shutdown = process.shutdown();
     let notify = shutdown.notifier();
+    let replica_id = Uuid::now_v7();
+    let runtime_id = replica_id.to_string();
+    let attributes = runinator_observability::resource_telemetry::attributes_with_host_metadata(
+        &runinator_models::json!({
+            "broker_backend": config.broker_backend.clone(),
+            "broker_client_id": config.broker_client_id.clone(),
+            "consumer_group": config.waker_consumer_group.clone(),
+        }),
+    );
+    runinator_waker::publish_replica_availability(
+        broker.as_ref(),
+        &config,
+        replica_id,
+        &runtime_id,
+        attributes,
+    )
+    .await?;
 
     runinator_waker::spawn_liveness(&config, notify.clone());
     let heartbeat =
         runinator_waker::spawn_broker_heartbeat(broker.clone(), &config, notify.clone());
+    let replica_heartbeat = runinator_waker::spawn_replica_heartbeat(
+        broker.clone(),
+        config.clone(),
+        replica_id,
+        runtime_id,
+        notify.clone(),
+    );
 
     let loop_notify = notify.clone();
     let loop_broker = broker.clone();
@@ -63,6 +88,12 @@ async fn run_process() -> Result<(), SendableError> {
     }
     if let Err(err) = heartbeat.await {
         error!("error while shutting down waker heartbeat: {:?}", err);
+    }
+    if let Err(err) = replica_heartbeat.await {
+        error!(
+            "error while shutting down waker replica heartbeat: {:?}",
+            err
+        );
     }
 
     info!("waker shutdown complete");

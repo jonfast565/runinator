@@ -30,7 +30,7 @@ use runinator_provider_catalog::{StaticProvider, built_in_providers};
 use runinator_provider_local_files::LocalProvider;
 use runinator_worker::agent::{
     AgentHandle, AgentObserver, AgentRuntime, AgentRuntimeConfig, BrokerSelection,
-    DEFAULT_HEARTBEAT_INTERVAL, DEFAULT_REGISTER_MAX_ATTEMPTS, LocatorMode,
+    DEFAULT_HEARTBEAT_INTERVAL, LocatorMode,
 };
 use runinator_worker::agent::{DirectiveHandler, DirectiveResponse};
 use runinator_worker::{ActionOutcome, ProviderFactory, WorkerEvent, parse_labels};
@@ -54,6 +54,7 @@ const DEFAULT_AGENT_TOPIC: &str = "runinator.agent";
 const DEFAULT_EFFECT_TOPIC: &str = "runinator.effects";
 const DEFAULT_INFRASTRUCTURE_EFFECT_TOPIC: &str = "runinator.effects.infrastructure";
 const DEFAULT_EFFECT_RESULT_TOPIC: &str = "runinator.effect-results";
+const DEFAULT_INGRESS_TOPIC: &str = "runinator.ingress";
 const DEFAULT_BROKER_CLIENT_ID: &str = "runinator-desktop-agent";
 // how long to wait for in-flight work to drain when the operator stops the agent.
 const STOP_GRACE: Duration = Duration::from_secs(15);
@@ -474,6 +475,7 @@ pub fn runtime_config(config: &AgentConfig) -> Result<AgentRuntimeConfig, Sendab
         control_topic: DEFAULT_CONTROL_TOPIC.to_string(),
         agent_topic: DEFAULT_AGENT_TOPIC.to_string(),
         effect_result_topic: DEFAULT_EFFECT_RESULT_TOPIC.to_string(),
+        ingress_topic: DEFAULT_INGRESS_TOPIC.to_string(),
         client_id: DEFAULT_BROKER_CLIENT_ID.to_string(),
         api_key: config.api_key.clone(),
     }
@@ -529,7 +531,6 @@ pub fn runtime_config(config: &AgentConfig) -> Result<AgentRuntimeConfig, Sendab
         liveness_file: config.liveness_file.clone(),
         heartbeat_interval: DEFAULT_HEARTBEAT_INTERVAL,
         stale_after: Duration::from_secs(90),
-        register_max_attempts: DEFAULT_REGISTER_MAX_ATTEMPTS,
         reconnect_max_attempts: config.reconnect_max_attempts,
         sample_telemetry: true,
         directive_handler: Arc::new(runinator_worker::agent::DefaultDirectiveHandler),

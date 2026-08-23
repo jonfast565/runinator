@@ -78,6 +78,16 @@ impl KafkaBrokerConfig {
         self
     }
 
+    pub fn with_wake_topic(mut self, wake_topic: impl Into<String>) -> Self {
+        self.wake_topic = wake_topic.into();
+        self
+    }
+
+    pub fn with_ingress_topic(mut self, ingress_topic: impl Into<String>) -> Self {
+        self.ingress_topic = ingress_topic.into();
+        self
+    }
+
     pub fn with_effect_topics(
         mut self,
         effect_topic: impl Into<String>,

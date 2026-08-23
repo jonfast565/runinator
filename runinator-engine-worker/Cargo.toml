@@ -11,12 +11,14 @@ path = "src/main.rs"
 log = "0.4"
 tokio = { version = "1", features = ["full"] }
 clap = { version = "4.5", features = ["derive", "env"] }
-uuid = { version = "1.18", features = ["v4"] }
+uuid = { version = "1.18", features = ["v4", "v7"] }
+chrono = { version = "0.4", features = ["serde"] }
 reqwest = { version = "0.13.3", default-features = false, features = ["json", "rustls"], optional = true }
 # used only to install a process-default rustls CryptoProvider at startup (see main.rs).
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 
 runinator-engine = { path = "../runinator-engine" }
+runinator-comm = { path = "../runinator-comm" }
 runinator-broker = { path = "../runinator-broker", default-features = false }
 runinator-service-bootstrap = { path = "../runinator-service-bootstrap", default-features = false }
 runinator-database = { path = "../runinator-database", default-features = false }

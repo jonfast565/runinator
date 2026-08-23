@@ -7710,7 +7710,8 @@ dependencies = [
  "chrono",
  "clap",
  "flate2",
- "runinator-api",
+ "runinator-broker",
+ "runinator-comm",
  "runinator-database",
  "runinator-db-cli",
  "runinator-models",
@@ -8034,10 +8035,12 @@ dependencies = [
 name = "runinator-engine-worker"
 version = "0.2.368"
 dependencies = [
+ "chrono",
  "clap",
  "log",
  "reqwest",
  "runinator-broker",
+ "runinator-comm",
  "runinator-database",
  "runinator-db-cli",
  "runinator-engine",
@@ -8512,6 +8515,7 @@ dependencies = [
  "opentelemetry",
  "runinator-broker",
  "runinator-models",
+ "runinator-observability",
  "runinator-platform",
  "tokio",
  "tracing",

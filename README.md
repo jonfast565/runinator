@@ -100,7 +100,7 @@ password: admin
 That seed happens even while HTTP auth is still disabled by default, so the usual local stack keeps working unchanged. If you later enable `RUNINATOR_AUTH_ENABLED=true` for the web service, you can immediately log in with that account and rotate it.
 
 The same bootstrap step also seeds a dev-only service API key and feeds it to
-the supervisor-managed development worker, waker, one-shot `runinatorctl workflows apply`,
+the supervisor-managed development worker, one-shot `runinatorctl workflows apply`,
 and the `bash scripts/run-local.sh sync|dev|smoke-sync` helpers. That means the
 default local stack continues to work unchanged with auth off, and starts
 working against an auth-enabled local web service without hand-editing
@@ -253,7 +253,7 @@ independently. The engine is multi-replica safe: durable claims/leases
 (`FOR UPDATE SKIP LOCKED`), shared-group result/ingress consumers, broker-deduped
 wakes, and an idempotent per-window usage sampler let any number of
 `runinator-engine-worker` (and/or engine-embedding ws) replicas run
-active/active. Engine workers register as `background` replicas and appear in
+active/active. Engine workers announce themselves as `background` replicas through broker ingress and appear in
 the fleet/replica view. The Kubernetes base (`deploy/k8s/base`) and
 `deploy/docker-compose.yml` ship the split topology; flip ws back to
 `RUNINATOR_WS_RUN_ENGINE=true` and drop the engine-worker Deployment to fold it back
@@ -270,7 +270,7 @@ broker can also serve the same broker contract over HTTP by setting
 `RUNINATOR_BROKER_TRANSPORT=http`; HTTP clients must use an endpoint like
 `http://127.0.0.1:7070/`, while TCP clients use `127.0.0.1:7070`.
 Kafka and RabbitMQ are available as feature-gated direct backends for the
-waker, worker, web service, and engine worker. Build those binaries with `--features kafka`
+waker, worker, web service, engine worker, and archiver. Build those binaries with `--features kafka`
 or `--features rabbitmq`, set `--broker-backend kafka|rabbitmq`, use
 `--broker-endpoint` for Kafka bootstrap servers or the RabbitMQ AMQP URI, and
 override `--broker-effect-topic`, `--broker-infrastructure-effect-topic`,
@@ -279,10 +279,12 @@ or `--broker-ingress-topic` when not using the default `runinator.*`
 topics/queues.
 Do not scale the built-in `runinator-broker` process horizontally: each instance
 has its own in-memory queue. For multi-broker high availability, run Kafka or
-RabbitMQ and point every web-service/engine-worker, waker, and worker instance at the same
+RabbitMQ and point every web-service/engine-worker, waker, worker, and archiver instance at the same
 shared broker topics or queues.
 
-Worker-originated control requests travel to the engine over the broker
+Every non-web-service runtime announces availability, heartbeats, and clean shutdown to the
+engine over broker `ingress`; web services write their own replica record as part of startup.
+Worker-originated control requests travel to the engine over that same broker
 `ingress` channel; API-originated `cancel`/`pause`/`resume` requests pass through
 the engine and reach workers over the `control` channel. There is no direct
 worker-to-waker channel.
@@ -1476,6 +1478,9 @@ machine behind NAT needs only outbound access to the web service — no inbound
 ports and no route to RabbitMQ. The relay URL is derived from the service URL
 (`https://` becomes `wss://`), so pointing the agent at a TLS ingress works as-is.
 Use direct broker mode only for a machine actually on the broker's network.
+The relay also authenticates the desktop agent's replica availability announcements before
+forwarding them to engine ingress, preserving the same lifecycle contract without exposing the
+cluster broker to the desktop.
 
 ## Package macOS Runtime Apps
 

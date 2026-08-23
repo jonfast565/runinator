@@ -402,6 +402,7 @@ async fn agent_principals_cannot_mutate_another_agents_replica_through_the_regis
         org_id: None,
     };
     let request = ReplicaRegistrationRequest {
+        replica_id: None,
         replica_type: ReplicaKind::Worker,
         instance_id: "owned-agent".to_string(),
         runtime_id: "runtime-a".to_string(),

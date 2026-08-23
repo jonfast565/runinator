@@ -8,6 +8,8 @@ pub use wire::{WireCodec, WireError};
 
 use chrono::{DateTime, Utc};
 use runinator_models::{
+    providers::ProviderMetadata,
+    replicas::ReplicaRegistrationRequest,
     value::Value,
     workflow_vm::{
         UnsupportedWorkflowVmVersion, WORKFLOW_EFFECT_PROTOCOL_VERSION, WorkflowEffectRequest,
@@ -510,8 +512,30 @@ impl WakeCommand {
     }
 }
 
-/// a message addressed to the web service from a waker or a worker, carried on the ingress
-/// channel. the web service is the sole consumer, so producers never depend on each other.
+/// One availability observation sent by a broker-only runtime to the engine.
+///
+/// `Available` is both registration and heartbeat: the runtime owns its identity before the
+/// asynchronous message is applied, which lets a worker safely use that identity in broker targets
+/// and effect claims. The engine is the single durable writer of the replica row. A clean shutdown
+/// sends `Offline`; missed observations still fall through to the normal stale/reap policy.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum ReplicaAvailability {
+    Available {
+        registration: ReplicaRegistrationRequest,
+        /// Provider declarations travel with availability so a broker-only worker does not need a
+        /// separate web-service API call just to be discoverable.
+        #[serde(default)]
+        providers: Vec<ProviderMetadata>,
+    },
+    Offline {
+        replica_id: Uuid,
+        runtime_id: String,
+    },
+}
+
+/// A message addressed to the engine from a non-web-service runtime, carried on the ingress
+/// channel. The engine is the sole consumer, so producers never depend on each other.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WsIngressCommand {
@@ -530,6 +554,10 @@ pub enum WsIngressCommand {
     },
     /// agent -> WS: completion or refusal of a durable fleet command.
     AgentDirectiveResult { result: AgentDirectiveResult },
+    /// non-web-service runtime -> engine: durable lifecycle observation. This is intentionally
+    /// broker mediated so data-plane runtimes do not need to call the web service to appear in the
+    /// fleet.
+    ReplicaAvailability { availability: ReplicaAvailability },
 }
 
 impl WsIngressCommand {
@@ -541,6 +569,27 @@ impl WsIngressCommand {
         Self::Control {
             workflow_run_id,
             kind,
+        }
+    }
+
+    pub fn replica_available(
+        registration: ReplicaRegistrationRequest,
+        providers: Vec<ProviderMetadata>,
+    ) -> Self {
+        Self::ReplicaAvailability {
+            availability: ReplicaAvailability::Available {
+                registration,
+                providers,
+            },
+        }
+    }
+
+    pub fn replica_offline(replica_id: Uuid, runtime_id: impl Into<String>) -> Self {
+        Self::ReplicaAvailability {
+            availability: ReplicaAvailability::Offline {
+                replica_id,
+                runtime_id: runtime_id.into(),
+            },
         }
     }
 
@@ -560,6 +609,19 @@ impl WsIngressCommand {
                     result.directive_id, result.status
                 )
             }
+            Self::ReplicaAvailability { availability } => match availability {
+                ReplicaAvailability::Available { registration, .. } => {
+                    format!(
+                        "replica-available:{}:{}",
+                        registration.replica_id.unwrap_or_default(),
+                        registration.runtime_id
+                    )
+                }
+                ReplicaAvailability::Offline {
+                    replica_id,
+                    runtime_id,
+                } => format!("replica-offline:{replica_id}:{runtime_id}"),
+            },
         }
     }
 }
