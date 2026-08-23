@@ -2,6 +2,8 @@
 //! capability set each principal kind resolves to.
 
 use super::*;
+use runinator_broker::UiEventPublisher;
+use runinator_engine::services::WorkflowAuthoring;
 use runinator_models::rbac::{Action, ScopeRef};
 
 async fn register_workflow_ownership(db: &SqliteDb, workflow_id: Uuid, org_id: Option<Uuid>) {
@@ -135,6 +137,10 @@ async fn workflow_listing_is_isolated_by_org() {
     .unwrap();
 
     // a member of org B sees the shared workflow but not org A's.
+    let authoring = Arc::new(WorkflowAuthoring::new(
+        db.clone(),
+        UiEventPublisher::new(Arc::new(InMemoryBroker::new())),
+    ));
     let ctx_b = AuthContext {
         principal_id: Some(user_id),
         session_id: None,
@@ -156,6 +162,7 @@ async fn workflow_listing_is_isolated_by_org() {
     };
     let (status, body) = crate::handlers::workflows::get_workflows::<SqliteDb>(
         Extension(db.clone()),
+        Extension(authoring.clone()),
         Extension(ctx_b.clone()),
         Query(crate::handlers::workflows::WorkflowQuery { name: None }),
     )
@@ -168,6 +175,7 @@ async fn workflow_listing_is_isolated_by_org() {
     // and fetching org A's workflow directly is a not-found for the org-B caller.
     let (status, _) = crate::handlers::workflows::get_workflow::<SqliteDb>(
         Extension(db.clone()),
+        Extension(authoring.clone()),
         Extension(ctx_b),
         Path(wf_a_id),
     )
@@ -187,6 +195,7 @@ async fn workflow_listing_is_isolated_by_org() {
     };
     let (_, body) = crate::handlers::workflows::get_workflows::<SqliteDb>(
         Extension(db.clone()),
+        Extension(authoring),
         Extension(admin_ctx),
         Query(crate::handlers::workflows::WorkflowQuery { name: None }),
     )

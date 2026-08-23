@@ -9,6 +9,7 @@ use super::*;
 use std::sync::Arc;
 
 use runinator_blob::{BlobStore, FUNCTION_ARTIFACT_BUCKET, FsBlobStore};
+use runinator_engine::services::FunctionPackages;
 use runinator_models::functions::{FunctionVersionRef, NewFunctionVersion};
 use runinator_pack::functions::{FunctionSource, MANIFEST_FILE, archive_directory};
 use runinator_ws_middleware::authz::AuthContextExt;
@@ -43,6 +44,13 @@ fn admin_ctx() -> AuthContext {
     }
 }
 
+fn function_packages(
+    db: &Arc<SqliteDb>,
+    blobs: &Arc<dyn BlobStore>,
+) -> Extension<Arc<FunctionPackages<SqliteDb>>> {
+    Extension(Arc::new(FunctionPackages::new(db.clone(), blobs.clone())))
+}
+
 // a package directory on disk, plus the blob store the handlers write its bytes into.
 async fn fixture(name: &str) -> (std::path::PathBuf, Arc<dyn BlobStore>, std::path::PathBuf) {
     let root = std::env::temp_dir().join(format!("runi-ws-fn-{name}-{}", Uuid::new_v4()));
@@ -71,7 +79,7 @@ async fn publishing_uploads_by_digest_and_republishing_stores_nothing_new() {
 
     // the client's probe: nothing stored yet, so the upload is required.
     let (status, _) = crate::handlers::functions::get_function_artifact::<SqliteDb>(
-        Extension(db.clone()),
+        function_packages(&db, &blobs),
         Extension(admin_ctx()),
         Path(digest.clone()),
     )
@@ -80,7 +88,7 @@ async fn publishing_uploads_by_digest_and_republishing_stores_nothing_new() {
 
     let (status, body) = crate::handlers::functions::upload_function_artifact::<SqliteDb>(
         Extension(db.clone()),
-        Extension(blobs.clone()),
+        function_packages(&db, &blobs),
         Extension(admin_ctx()),
         Path(digest.clone()),
         source.archive.bytes.clone().into(),
@@ -99,7 +107,7 @@ async fn publishing_uploads_by_digest_and_republishing_stores_nothing_new() {
     // uploading the identical bytes again returns the same record rather than writing a second copy.
     let (status, body) = crate::handlers::functions::upload_function_artifact::<SqliteDb>(
         Extension(db.clone()),
-        Extension(blobs.clone()),
+        function_packages(&db, &blobs),
         Extension(admin_ctx()),
         Path(digest.clone()),
         source.archive.bytes.clone().into(),
@@ -116,6 +124,7 @@ async fn publishing_uploads_by_digest_and_republishing_stores_nothing_new() {
     for expected in [1i64, 2] {
         let (status, body) = crate::handlers::functions::publish_function::<SqliteDb>(
             Extension(db.clone()),
+            function_packages(&db, &blobs),
             Extension(admin_ctx()),
             Json(request.clone()),
         )
@@ -132,6 +141,7 @@ async fn publishing_uploads_by_digest_and_republishing_stores_nothing_new() {
 
     let (status, body) = crate::handlers::functions::get_function::<SqliteDb>(
         Extension(db.clone()),
+        function_packages(&db, &blobs),
         Extension(admin_ctx()),
         Path("image-tools".to_string()),
     )
@@ -161,12 +171,13 @@ async fn publishing_uploads_by_digest_and_republishing_stores_nothing_new() {
 async fn a_publish_without_its_bytes_is_refused() {
     let (db, db_path) = test_db().await;
     let db = Arc::new(db);
-    let (root, _blobs, blob_root) = fixture("no-bytes").await;
+    let (root, blobs, blob_root) = fixture("no-bytes").await;
 
     // the artifact was never uploaded, so publishing it would create a version nothing can run.
     let request = FunctionSource::load(&root).unwrap().publish_request();
     let (status, _body) = crate::handlers::functions::publish_function::<SqliteDb>(
         Extension(db.clone()),
+        function_packages(&db, &blobs),
         Extension(admin_ctx()),
         Json(request),
     )
@@ -188,7 +199,7 @@ async fn bytes_that_disagree_with_their_digest_are_refused() {
     // the digest is what pins a workflow to exact code, so a caller cannot name one for other bytes.
     let (status, _) = crate::handlers::functions::upload_function_artifact::<SqliteDb>(
         Extension(db.clone()),
-        Extension(blobs.clone()),
+        function_packages(&db, &blobs),
         Extension(admin_ctx()),
         Path(digest),
         axum::body::Bytes::from_static(b"not the archive"),
@@ -210,7 +221,7 @@ async fn moving_an_alias_leaves_earlier_versions_where_they_are() {
 
     let _ = crate::handlers::functions::upload_function_artifact::<SqliteDb>(
         Extension(db.clone()),
-        Extension(blobs.clone()),
+        function_packages(&db, &blobs),
         Extension(admin_ctx()),
         Path(source.archive.digest.clone()),
         source.archive.bytes.clone().into(),
@@ -222,6 +233,7 @@ async fn moving_an_alias_leaves_earlier_versions_where_they_are() {
     for _ in 0..2 {
         let _ = crate::handlers::functions::publish_function::<SqliteDb>(
             Extension(db.clone()),
+            function_packages(&db, &blobs),
             Extension(admin_ctx()),
             Json(request.clone()),
         )
@@ -309,7 +321,7 @@ async fn publishing_generates_a_hidden_adapter_workflow_per_export() {
 
     let _ = crate::handlers::functions::upload_function_artifact::<SqliteDb>(
         Extension(db.clone()),
-        Extension(blobs.clone()),
+        function_packages(&db, &blobs),
         Extension(admin_ctx()),
         Path(source.archive.digest.clone()),
         source.archive.bytes.clone().into(),
@@ -317,6 +329,7 @@ async fn publishing_generates_a_hidden_adapter_workflow_per_export() {
     .await;
     let (status, body) = crate::handlers::functions::publish_function::<SqliteDb>(
         Extension(db.clone()),
+        function_packages(&db, &blobs),
         Extension(admin_ctx()),
         Json(source.publish_request()),
     )
@@ -382,7 +395,7 @@ async fn republishing_retains_an_immutable_adapter_for_each_version() {
 
     let _ = crate::handlers::functions::upload_function_artifact::<SqliteDb>(
         Extension(db.clone()),
-        Extension(blobs.clone()),
+        function_packages(&db, &blobs),
         Extension(admin_ctx()),
         Path(source.archive.digest.clone()),
         source.archive.bytes.clone().into(),
@@ -391,6 +404,7 @@ async fn republishing_retains_an_immutable_adapter_for_each_version() {
     for _ in 0..2 {
         let (status, _) = crate::handlers::functions::publish_function::<SqliteDb>(
             Extension(db.clone()),
+            function_packages(&db, &blobs),
             Extension(admin_ctx()),
             Json(source.publish_request()),
         )
@@ -432,6 +446,7 @@ async fn deleting_a_package_archives_it_and_restore_reactivates_it() {
 
     let (status, _) = crate::handlers::functions::delete_function::<SqliteDb>(
         Extension(db.clone()),
+        function_packages(&db, &blobs),
         Extension(admin_ctx()),
         Path("image-tools".to_string()),
     )
@@ -446,6 +461,7 @@ async fn deleting_a_package_archives_it_and_restore_reactivates_it() {
 
     let (status, _) = crate::handlers::functions::get_function::<SqliteDb>(
         Extension(db.clone()),
+        function_packages(&db, &blobs),
         Extension(admin_ctx()),
         Path("image-tools".to_string()),
     )
@@ -454,6 +470,7 @@ async fn deleting_a_package_archives_it_and_restore_reactivates_it() {
 
     let (status, _) = crate::handlers::functions::restore_function::<SqliteDb>(
         Extension(db.clone()),
+        function_packages(&db, &blobs),
         Extension(admin_ctx()),
         Path("image-tools".to_string()),
     )
@@ -488,7 +505,7 @@ async fn published(
     let source = FunctionSource::load(root).unwrap();
     let _ = crate::handlers::functions::upload_function_artifact::<SqliteDb>(
         Extension(db.clone()),
-        Extension(blobs.clone()),
+        function_packages(db, blobs),
         Extension(admin_ctx()),
         Path(source.archive.digest.clone()),
         source.archive.bytes.clone().into(),
@@ -496,6 +513,7 @@ async fn published(
     .await;
     let (status, _) = crate::handlers::functions::publish_function::<SqliteDb>(
         Extension(db.clone()),
+        function_packages(db, blobs),
         Extension(admin_ctx()),
         Json(source.publish_request()),
     )

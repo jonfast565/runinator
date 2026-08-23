@@ -55,6 +55,19 @@ const DIRECT_STORE_ACCESS: &[(&str, &str)] = &[
     ),
 ];
 
+/// Handler modules that completed the service migration. They may authorize a request against the
+/// store, but must not reach back into the engine repository facade; that would put persistence,
+/// event publication, and transport side effects back into HTTP glue.
+const SERVICE_BACKED_HANDLERS: &[(&str, &str)] = &[
+    ("runinator-ws-authoring/functions.rs", "FunctionPackages"),
+    ("runinator-ws-authoring/pipelines.rs", "PipelineOperations"),
+    ("runinator-ws-authoring/workflows.rs", "WorkflowAuthoring"),
+    ("runinator-ws-runtime/automation.rs", "AutomationOperations"),
+    ("runinator-ws-runtime/replicas.rs", "ReplicaRegistry"),
+    ("runinator-ws-runtime/runs.rs", "RunOperations"),
+    ("runinator-ws-runtime/schedules.rs", "SchedulingOperations"),
+];
+
 /// `db.foo(` and `db.as_ref().foo(` are store calls; `db.as_ref()` and `db.clone()` on their own are
 /// how a handler hands the store to a repository function, which is the sanctioned path.
 fn calls_store_directly(source: &str) -> bool {
@@ -176,6 +189,30 @@ fn every_exemption_states_a_reason() {
         assert!(
             reason.len() > 20,
             "{name} needs a real reason for its exemption, not {reason:?}"
+        );
+    }
+}
+
+#[test]
+fn migrated_handlers_use_services_not_the_engine_repository_facade() {
+    let workspace = workspace_root();
+    for (key, service) in SERVICE_BACKED_HANDLERS {
+        let (crate_name, file_name) = key
+            .split_once('/')
+            .expect("service-backed handler key has crate/file form");
+        let path = workspace
+            .join(crate_name)
+            .join("src/handlers")
+            .join(file_name);
+        let source =
+            fs::read_to_string(&path).unwrap_or_else(|err| panic!("{key} source readable: {err}"));
+        assert!(
+            source.contains(service),
+            "{key} must keep using its {service} application-service seam"
+        );
+        assert!(
+            !source.contains("repository::") && !source.contains("runinator_engine::repository"),
+            "{key} bypasses {service} through runinator-engine::repository; move that operation into the service instead"
         );
     }
 }

@@ -16,8 +16,7 @@ use runinator_store::{
 };
 use serde::Deserialize;
 
-use runinator_engine::repository;
-use runinator_ws_core::events::{AppEvent, AppEventKind, EventSender, emit, nudge_workflow_vm};
+use runinator_engine::services::SchedulingOperations;
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::responses::{api_error, not_found};
 use runinator_ws_middleware::authz::{AuthContextExt, AuthorizationStore, AuthzChecker};
@@ -38,7 +37,7 @@ pub struct FreezeWindowsQuery {
 pub async fn list_freeze_windows<
     T: AuthorizationStore + RuntimeStore + DefinitionStore + ScheduleStore,
 >(
-    Extension(db): Extension<Arc<T>>,
+    Extension(service): Extension<Arc<SchedulingOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Query(query): Query<FreezeWindowsQuery>,
 ) -> Reply {
@@ -54,10 +53,9 @@ pub async fn list_freeze_windows<
     if let Err(reply) = ctx.require_scope_action(runinator_models::rbac::Action::View, scope) {
         return reply;
     }
-    let windows = match query.active.unwrap_or(false) {
-        true => repository::fetch_active_freeze_windows(db.as_ref()).await,
-        false => repository::fetch_freeze_windows(db.as_ref(), query.org_id).await,
-    };
+    let windows = service
+        .list_freeze_windows(query.org_id, query.active.unwrap_or(false))
+        .await;
     match windows {
         Ok(windows) => (StatusCode::OK, Json(ApiResponse::FreezeWindowList(windows))),
         Err(err) => api_error(err.to_string()),
@@ -68,7 +66,7 @@ pub async fn create_freeze_window<
     T: AuthorizationStore + RuntimeStore + DefinitionStore + ScheduleStore,
 >(
     Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
+    Extension(service): Extension<Arc<SchedulingOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Json(mut window): Json<NewFreezeWindow>,
 ) -> Reply {
@@ -76,17 +74,14 @@ pub async fn create_freeze_window<
         return reply;
     }
     if let Some(workflow_id) = window.workflow_id {
-        window.org_id = match repository::fetch_workflow(db.as_ref(), workflow_id).await {
+        window.org_id = match service.workflow(workflow_id).await {
             Ok(Some(workflow)) => workflow.org_id,
             Ok(None) => return not_found(format!("Workflow {workflow_id} not found")),
             Err(err) => return api_error(err.to_string()),
         };
     }
-    match repository::create_freeze_window(db.as_ref(), &window).await {
-        Ok(window) => {
-            emit(&events, AppEvent::global(AppEventKind::SchedulesChanged));
-            (StatusCode::CREATED, Json(ApiResponse::FreezeWindow(window)))
-        }
+    match service.create_freeze_window(&window).await {
+        Ok(window) => (StatusCode::CREATED, Json(ApiResponse::FreezeWindow(window))),
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -95,12 +90,12 @@ pub async fn update_freeze_window<
     T: AuthorizationStore + RuntimeStore + DefinitionStore + ScheduleStore,
 >(
     Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
+    Extension(service): Extension<Arc<SchedulingOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(window_id): Path<Uuid>,
     Json(mut window): Json<NewFreezeWindow>,
 ) -> Reply {
-    let current = match repository::fetch_freeze_window(db.as_ref(), window_id).await {
+    let current = match service.fetch_freeze_window(window_id).await {
         Ok(Some(window)) => window,
         Ok(None) => return not_found(format!("Freeze window {window_id} not found")),
         Err(err) => return api_error(err.to_string()),
@@ -123,17 +118,14 @@ pub async fn update_freeze_window<
         return reply;
     }
     if let Some(workflow_id) = window.workflow_id {
-        window.org_id = match repository::fetch_workflow(db.as_ref(), workflow_id).await {
+        window.org_id = match service.workflow(workflow_id).await {
             Ok(Some(workflow)) => workflow.org_id,
             Ok(None) => return not_found(format!("Workflow {workflow_id} not found")),
             Err(err) => return api_error(err.to_string()),
         };
     }
-    match repository::update_freeze_window(db.as_ref(), window_id, &window).await {
-        Ok(Some(window)) => {
-            emit(&events, AppEvent::global(AppEventKind::SchedulesChanged));
-            (StatusCode::OK, Json(ApiResponse::FreezeWindow(window)))
-        }
+    match service.update_freeze_window(window_id, &window).await {
+        Ok(Some(window)) => (StatusCode::OK, Json(ApiResponse::FreezeWindow(window))),
         Ok(None) => not_found(format!("Freeze window {window_id} not found")),
         Err(err) => api_error(err.to_string()),
     }
@@ -143,11 +135,11 @@ pub async fn delete_freeze_window<
     T: AuthorizationStore + RuntimeStore + DefinitionStore + ScheduleStore,
 >(
     Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
+    Extension(service): Extension<Arc<SchedulingOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(window_id): Path<Uuid>,
 ) -> Reply {
-    let current = match repository::fetch_freeze_window(db.as_ref(), window_id).await {
+    let current = match service.fetch_freeze_window(window_id).await {
         Ok(Some(window)) => window,
         Ok(None) => return not_found(format!("Freeze window {window_id} not found")),
         Err(err) => return api_error(err.to_string()),
@@ -164,11 +156,8 @@ pub async fn delete_freeze_window<
     if let Err(reply) = require_window_target(db.as_ref(), &ctx, &target, Permission::Edit).await {
         return reply;
     }
-    match repository::delete_freeze_window(db.as_ref(), window_id).await {
-        Ok(response) => {
-            emit(&events, AppEvent::global(AppEventKind::SchedulesChanged));
-            (StatusCode::OK, Json(ApiResponse::TaskResponse(response)))
-        }
+    match service.delete_freeze_window(window_id).await {
+        Ok(response) => (StatusCode::OK, Json(ApiResponse::TaskResponse(response))),
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -179,7 +168,7 @@ pub async fn backfill_workflow_trigger<
     T: AuthorizationStore + RuntimeStore + DefinitionStore + ScheduleStore,
 >(
     Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
+    Extension(service): Extension<Arc<SchedulingOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(trigger_id): Path<Uuid>,
     Json(request): Json<BackfillRequest>,
@@ -190,25 +179,14 @@ pub async fn backfill_workflow_trigger<
     {
         return reply;
     }
-    if let Err(err) = repository::validate_backfill_request(&request) {
+    if let Err(err) = service.validate_backfill(&request) {
         return api_error(err.to_string());
     }
-    match repository::backfill_workflow_trigger(db.as_ref(), trigger_id, &request).await {
-        Ok((response, runs)) => {
-            for run in &runs {
-                let org_id = repository::org_id_for_workflow_run(db.as_ref(), run.id).await;
-                emit(
-                    &events,
-                    AppEvent::new(org_id, AppEventKind::WorkflowRunChanged { run_id: run.id }),
-                );
-            }
-            // the backfilled runs have ready nodes waiting; do not make them sit out the wake
-            // publisher's poll interval.
-            if !runs.is_empty() {
-                nudge_workflow_vm(&events);
-            }
-            (StatusCode::OK, Json(ApiResponse::Backfill(response)))
-        }
+    match service
+        .backfill_workflow_trigger(trigger_id, &request)
+        .await
+    {
+        Ok(response) => (StatusCode::OK, Json(ApiResponse::Backfill(response))),
         Err(err) => api_error(err.to_string()),
     }
 }

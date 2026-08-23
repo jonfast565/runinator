@@ -8,6 +8,7 @@ use axum::extract::ConnectInfo;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{Duration as ChronoDuration, Utc};
 use runinator_auth::enroll::EnrollToken;
+use runinator_engine::services::ReplicaRegistry;
 use runinator_models::auth::{
     AgentEnrollmentRequestBody, AgentEnrollmentToken, AgentEnrollmentTokenRecord,
     EnrollAgentRequest,
@@ -388,6 +389,7 @@ async fn agent_enrollment_rejections_are_uniform_and_labels_cannot_be_widened() 
 async fn agent_principals_cannot_mutate_another_agents_replica_through_the_registry_service() {
     let (db, path) = test_db().await;
     let db = Arc::new(db);
+    let registry = Arc::new(ReplicaRegistry::new(db.clone()));
     let owner_id = Uuid::new_v4();
     let owner = AuthContext {
         principal_id: Some(owner_id),
@@ -411,7 +413,7 @@ async fn agent_principals_cannot_mutate_another_agents_replica_through_the_regis
         attributes: json!({}),
     };
     let (status, _) = crate::handlers::replicas::register_replica::<SqliteDb>(
-        Extension(db.clone()),
+        Extension(registry.clone()),
         Extension(owner),
         axum::http::HeaderMap::new(),
         ConnectInfo(SocketAddr::from(([127, 12, 0, 1], 49152))),
@@ -437,7 +439,7 @@ async fn agent_principals_cannot_mutate_another_agents_replica_through_the_regis
         org_id: None,
     };
     let (status, _) = crate::handlers::replicas::heartbeat_replica::<SqliteDb>(
-        Extension(db.clone()),
+        Extension(registry),
         Extension(intruder),
         axum::http::HeaderMap::new(),
         ConnectInfo(SocketAddr::from(([127, 12, 0, 2], 49152))),

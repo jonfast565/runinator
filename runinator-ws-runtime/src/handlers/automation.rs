@@ -17,7 +17,7 @@ use runinator_store::{
     roles::{AutomationStore, DeliveryStore},
 };
 
-use runinator_engine::repository;
+use runinator_engine::services::AutomationOperations;
 use runinator_ws_core::models::{
     ApiResponse, AutomationRecordQuery, GateQuery, IdempotencyRequest,
 };
@@ -29,20 +29,17 @@ use runinator_ws_middleware::authz::AuthContextExt;
 use runinator_ws_middleware::authz::{AuthorizationStore, AuthzChecker};
 
 async fn list_records<T: AuthorizationStore + RuntimeStore + AutomationStore + DeliveryStore>(
-    Extension(db): Extension<Arc<T>>,
+    db: &T,
+    service: &AutomationOperations<T>,
     ctx: &AuthContext,
     Query(query): Query<AutomationRecordQuery>,
     record_type: &'static str,
 ) -> (StatusCode, Json<ApiResponse>) {
-    match repository::fetch_automation_records(
-        db.as_ref(),
-        record_type,
-        query.workflow_run_id,
-        query.external_item_id,
-    )
-    .await
+    match service
+        .list_records(record_type, query.workflow_run_id, query.external_item_id)
+        .await
     {
-        Ok(records) => match filter_records(db.as_ref(), ctx, records).await {
+        Ok(records) => match filter_records(db, service, ctx, records).await {
             Ok(records) => (StatusCode::OK, Json(ApiResponse::JsonList(records))),
             Err(reply) => reply,
         },
@@ -51,7 +48,7 @@ async fn list_records<T: AuthorizationStore + RuntimeStore + AutomationStore + D
 }
 
 async fn create_record<T: AuthorizationStore + RuntimeStore + AutomationStore + DeliveryStore>(
-    Extension(db): Extension<Arc<T>>,
+    service: &AutomationOperations<T>,
     ctx: &AuthContext,
     record_type: &'static str,
     Json(record): Json<Value>,
@@ -63,7 +60,7 @@ async fn create_record<T: AuthorizationStore + RuntimeStore + AutomationStore + 
     ]) {
         return reply;
     }
-    match repository::create_automation_record(db.as_ref(), record_type, record).await {
+    match service.create_record(record_type, record).await {
         Ok(record) => (StatusCode::ACCEPTED, Json(ApiResponse::JsonValue(record))),
         Err(err) => api_error(err.to_string()),
     }
@@ -72,30 +69,35 @@ async fn create_record<T: AuthorizationStore + RuntimeStore + AutomationStore + 
 pub async fn get_external_items<
     T: AuthorizationStore + RuntimeStore + AutomationStore + DeliveryStore,
 >(
-    ext: Extension<Arc<T>>,
+    Extension(db): Extension<Arc<T>>,
+    Extension(service): Extension<Arc<AutomationOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     query: Query<AutomationRecordQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    list_records(ext, &ctx, query, "external_items").await
+    list_records(db.as_ref(), &service, &ctx, query, "external_items").await
 }
 
 pub async fn create_external_item<
     T: AuthorizationStore + RuntimeStore + AutomationStore + DeliveryStore,
 >(
-    ext: Extension<Arc<T>>,
+    Extension(service): Extension<Arc<AutomationOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     json: Json<Value>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    create_record(ext, &ctx, "external_items", json).await
+    create_record(&service, &ctx, "external_items", json).await
 }
 
 pub async fn get_gates<T: AuthorizationStore + RuntimeStore + AutomationStore + DeliveryStore>(
     Extension(db): Extension<Arc<T>>,
+    Extension(service): Extension<Arc<AutomationOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Query(query): Query<GateQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    match repository::fetch_gates(db.as_ref(), query.workflow_run_id, query.status).await {
-        Ok(records) => match filter_records(db.as_ref(), &ctx, records).await {
+    match service
+        .list_gates(query.workflow_run_id, query.status)
+        .await
+    {
+        Ok(records) => match filter_records(db.as_ref(), &service, &ctx, records).await {
             Ok(records) => (StatusCode::OK, Json(ApiResponse::JsonList(records))),
             Err(reply) => reply,
         },
@@ -105,6 +107,7 @@ pub async fn get_gates<T: AuthorizationStore + RuntimeStore + AutomationStore + 
 
 pub async fn get_gate<T: AuthorizationStore + RuntimeStore + AutomationStore + DeliveryStore>(
     Extension(db): Extension<Arc<T>>,
+    Extension(service): Extension<Arc<AutomationOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(gate_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -114,7 +117,7 @@ pub async fn get_gate<T: AuthorizationStore + RuntimeStore + AutomationStore + D
     {
         return reply;
     }
-    match repository::fetch_gate(db.as_ref(), gate_id).await {
+    match service.fetch_gate(gate_id).await {
         Ok(Some(record)) => (StatusCode::OK, Json(ApiResponse::JsonValue(record))),
         Ok(None) => not_found("Gate not found"),
         Err(err) => api_error(err.to_string()),
@@ -122,7 +125,7 @@ pub async fn get_gate<T: AuthorizationStore + RuntimeStore + AutomationStore + D
 }
 
 pub async fn create_gate<T: AuthorizationStore + RuntimeStore + AutomationStore + DeliveryStore>(
-    Extension(db): Extension<Arc<T>>,
+    Extension(service): Extension<Arc<AutomationOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Json(record): Json<Value>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -133,7 +136,7 @@ pub async fn create_gate<T: AuthorizationStore + RuntimeStore + AutomationStore 
     ]) {
         return reply;
     }
-    match repository::create_gate(db.as_ref(), record).await {
+    match service.create_gate(record).await {
         Ok(record) => (StatusCode::ACCEPTED, Json(ApiResponse::JsonValue(record))),
         Err(err) => api_error(err.to_string()),
     }
@@ -141,6 +144,7 @@ pub async fn create_gate<T: AuthorizationStore + RuntimeStore + AutomationStore 
 
 pub async fn delete_gate<T: AuthorizationStore + RuntimeStore + AutomationStore + DeliveryStore>(
     Extension(db): Extension<Arc<T>>,
+    Extension(service): Extension<Arc<AutomationOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(gate_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -150,7 +154,7 @@ pub async fn delete_gate<T: AuthorizationStore + RuntimeStore + AutomationStore 
     {
         return reply;
     }
-    match repository::delete_gate(db.as_ref(), gate_id).await {
+    match service.delete_gate(gate_id).await {
         Ok(true) => (StatusCode::OK, Json(ApiResponse::JsonValue(Value::Null))),
         Ok(false) => not_found("Gate not found"),
         Err(err) => api_error(err.to_string()),
@@ -160,27 +164,29 @@ pub async fn delete_gate<T: AuthorizationStore + RuntimeStore + AutomationStore 
 pub async fn get_automation_events<
     T: AuthorizationStore + RuntimeStore + AutomationStore + DeliveryStore,
 >(
-    ext: Extension<Arc<T>>,
+    Extension(db): Extension<Arc<T>>,
+    Extension(service): Extension<Arc<AutomationOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     query: Query<AutomationRecordQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    list_records(ext, &ctx, query, "automation_events").await
+    list_records(db.as_ref(), &service, &ctx, query, "automation_events").await
 }
 
 pub async fn create_automation_event<
     T: AuthorizationStore + RuntimeStore + AutomationStore + DeliveryStore,
 >(
-    ext: Extension<Arc<T>>,
+    Extension(service): Extension<Arc<AutomationOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     json: Json<Value>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    create_record(ext, &ctx, "automation_events", json).await
+    create_record(&service, &ctx, "automation_events", json).await
 }
 
 pub async fn delete_automation_event<
     T: AuthorizationStore + RuntimeStore + AutomationStore + DeliveryStore,
 >(
     Extension(db): Extension<Arc<T>>,
+    Extension(service): Extension<Arc<AutomationOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(event_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -190,7 +196,7 @@ pub async fn delete_automation_event<
     {
         return reply;
     }
-    match repository::delete_automation_record(db.as_ref(), "automation_events", event_id).await {
+    match service.delete_record("automation_events", event_id).await {
         Ok(true) => (StatusCode::OK, Json(ApiResponse::JsonValue(Value::Null))),
         Ok(false) => not_found("Automation event not found"),
         Err(err) => api_error(err.to_string()),
@@ -200,27 +206,28 @@ pub async fn delete_automation_event<
 pub async fn get_approvals<
     T: AuthorizationStore + RuntimeStore + AutomationStore + DeliveryStore,
 >(
-    ext: Extension<Arc<T>>,
+    Extension(db): Extension<Arc<T>>,
+    Extension(service): Extension<Arc<AutomationOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     query: Query<AutomationRecordQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    list_records(ext, &ctx, query, "approval_requests").await
+    list_records(db.as_ref(), &service, &ctx, query, "approval_requests").await
 }
 
 pub async fn create_approval<
     T: AuthorizationStore + RuntimeStore + AutomationStore + DeliveryStore,
 >(
-    ext: Extension<Arc<T>>,
+    Extension(service): Extension<Arc<AutomationOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     json: Json<Value>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    create_record(ext, &ctx, "approval_requests", json).await
+    create_record(&service, &ctx, "approval_requests", json).await
 }
 
 pub async fn get_idempotency_key<
     T: AuthorizationStore + RuntimeStore + AutomationStore + DeliveryStore,
 >(
-    Extension(db): Extension<Arc<T>>,
+    Extension(service): Extension<Arc<AutomationOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Query(query): Query<HashMap<String, String>>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -237,7 +244,7 @@ pub async fn get_idempotency_key<
     let Some(key) = query.get("key").cloned() else {
         return api_error("idempotency query requires key");
     };
-    match repository::fetch_idempotency_key(db.as_ref(), scope, key).await {
+    match service.fetch_idempotency_key(scope, key).await {
         Ok(Some(record)) => (StatusCode::OK, Json(ApiResponse::JsonValue(record))),
         Ok(None) => not_found("idempotency key not found"),
         Err(err) => api_error(err.to_string()),
@@ -247,7 +254,7 @@ pub async fn get_idempotency_key<
 pub async fn put_idempotency_key<
     T: AuthorizationStore + RuntimeStore + AutomationStore + DeliveryStore,
 >(
-    Extension(db): Extension<Arc<T>>,
+    Extension(service): Extension<Arc<AutomationOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<IdempotencyRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -258,7 +265,8 @@ pub async fn put_idempotency_key<
     ]) {
         return reply;
     }
-    match repository::put_idempotency_key(db.as_ref(), request.scope, request.key, request.result)
+    match service
+        .put_idempotency_key(request.scope, request.key, request.result)
         .await
     {
         Ok(record) => (StatusCode::OK, Json(ApiResponse::JsonValue(record))),
@@ -269,7 +277,7 @@ pub async fn put_idempotency_key<
 pub async fn claim_idempotency_key<
     T: AuthorizationStore + RuntimeStore + AutomationStore + DeliveryStore,
 >(
-    Extension(db): Extension<Arc<T>>,
+    Extension(service): Extension<Arc<AutomationOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<IdempotencyClaimRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -280,15 +288,7 @@ pub async fn claim_idempotency_key<
     ]) {
         return reply;
     }
-    match repository::claim_idempotency_key(
-        db.as_ref(),
-        request.scope,
-        request.key,
-        request.owner_node_run_id,
-        request.lease_seconds,
-    )
-    .await
-    {
+    match service.claim_idempotency_key(request).await {
         Ok(claim) => match Value::encode(&claim) {
             Ok(value) => (StatusCode::OK, Json(ApiResponse::JsonValue(value))),
             Err(err) => api_error(err.to_string()),
@@ -300,7 +300,7 @@ pub async fn claim_idempotency_key<
 pub async fn complete_idempotency_key<
     T: AuthorizationStore + RuntimeStore + AutomationStore + DeliveryStore,
 >(
-    Extension(db): Extension<Arc<T>>,
+    Extension(service): Extension<Arc<AutomationOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<IdempotencyCompleteRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -311,15 +311,7 @@ pub async fn complete_idempotency_key<
     ]) {
         return reply;
     }
-    match repository::complete_idempotency_key(
-        db.as_ref(),
-        request.scope,
-        request.key,
-        request.owner_node_run_id,
-        request.result,
-    )
-    .await
-    {
+    match service.complete_idempotency_key(request).await {
         Ok(recorded) => (
             StatusCode::OK,
             Json(ApiResponse::TaskResponse(TaskResponse {
@@ -338,7 +330,7 @@ pub async fn complete_idempotency_key<
 pub async fn release_idempotency_key<
     T: AuthorizationStore + RuntimeStore + AutomationStore + DeliveryStore,
 >(
-    Extension(db): Extension<Arc<T>>,
+    Extension(service): Extension<Arc<AutomationOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<IdempotencyReleaseRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -349,14 +341,7 @@ pub async fn release_idempotency_key<
     ]) {
         return reply;
     }
-    match repository::release_idempotency_key(
-        db.as_ref(),
-        request.scope,
-        request.key,
-        request.owner_node_run_id,
-    )
-    .await
-    {
+    match service.release_idempotency_key(request).await {
         Ok(released) => (
             StatusCode::OK,
             Json(ApiResponse::TaskResponse(TaskResponse {
@@ -374,6 +359,7 @@ pub async fn release_idempotency_key<
 
 async fn filter_records<T: AuthorizationStore + RuntimeStore + AutomationStore + DeliveryStore>(
     db: &T,
+    service: &AutomationOperations<T>,
     ctx: &AuthContext,
     records: Vec<Value>,
 ) -> Result<Vec<Value>, (StatusCode, Json<ApiResponse>)> {
@@ -396,7 +382,8 @@ async fn filter_records<T: AuthorizationStore + RuntimeStore + AutomationStore +
         else {
             continue;
         };
-        let Some(run) = repository::fetch_workflow_run(db, workflow_run_id)
+        let Some(run) = service
+            .workflow_run(workflow_run_id)
             .await
             .map_err(|err| api_error(err.to_string()))?
         else {

@@ -6,7 +6,6 @@ use axum::{
     extract::{ConnectInfo, Path, Query},
     http::{HeaderMap, StatusCode},
 };
-use runinator_broker_core::Broker;
 use runinator_models::replicas::{TriggerActorType, TriggerSourceKind, WorkflowRunProvenance};
 use runinator_models::runs::NewRunChunk;
 use runinator_store::{
@@ -15,10 +14,7 @@ use runinator_store::{
 };
 use serde::Deserialize;
 
-use runinator_engine::repository;
-use runinator_ws_core::events::{
-    AppEvent, AppEventKind, EventSender, emit, emit_task_run, emit_workflow_run, nudge_workflow_vm,
-};
+use runinator_engine::services::RunOperations;
 use runinator_ws_core::models::{
     self, ApiResponse, RunStatusQuery, RunStatusRequest, SchedulerRunClaimReleaseRequest,
     SchedulerRunClaimRenewRequest, SchedulerRunClaimRequest, TaskResponseSchema,
@@ -58,7 +54,7 @@ pub struct ChunkQuery {
 
 pub async fn create_workflow_trigger_run<T: RunOperationsStore>(
     Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
+    Extension(operations): Extension<Arc<RunOperations<T>>>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     _headers: HeaderMap,
     _connect: ConnectInfo<SocketAddr>,
@@ -71,35 +67,30 @@ pub async fn create_workflow_trigger_run<T: RunOperationsStore>(
     {
         return reply;
     }
-    match repository::create_workflow_run_for_trigger(
-        db.as_ref(),
-        trigger_id,
-        request.parameters,
-        request.debug,
-        None,
-        Some(request_actor_display_name()),
-    )
-    .await
+    match operations
+        .create_for_trigger(
+            trigger_id,
+            request.parameters,
+            request.debug,
+            None,
+            Some(request_actor_display_name()),
+        )
+        .await
     {
-        Ok(run) => {
-            let org_id = repository::org_id_for_workflow_run(db.as_ref(), run.id).await;
-            emit_workflow_run(&events, run.id, org_id);
-            nudge_workflow_vm(&events);
-            (
-                StatusCode::ACCEPTED,
-                Json(ApiResponse::WorkflowRun(models::WorkflowRunResponse::new(
-                    run,
-                    Vec::new(),
-                ))),
-            )
-        }
+        Ok(run) => (
+            StatusCode::ACCEPTED,
+            Json(ApiResponse::WorkflowRun(models::WorkflowRunResponse::new(
+                run,
+                Vec::new(),
+            ))),
+        ),
         Err(err) => api_error(err.to_string()),
     }
 }
 
 pub async fn create_workflow_run<T: RunOperationsStore>(
     Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
+    Extension(operations): Extension<Arc<RunOperations<T>>>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     headers: HeaderMap,
     ConnectInfo(connect): ConnectInfo<SocketAddr>,
@@ -112,33 +103,28 @@ pub async fn create_workflow_run<T: RunOperationsStore>(
     {
         return reply;
     }
-    match repository::create_workflow_run(
-        db.as_ref(),
-        workflow_id,
-        request.parameters,
-        request.debug,
-        request.name,
-        request_provenance(
-            TriggerSourceKind::Api,
-            &headers,
-            connect,
-            runinator_models::json!({}),
-        ),
-    )
-    .await
+    match operations
+        .create(
+            workflow_id,
+            request.parameters,
+            request.debug,
+            request.name,
+            request_provenance(
+                TriggerSourceKind::Api,
+                &headers,
+                connect,
+                runinator_models::json!({}),
+            ),
+        )
+        .await
     {
-        Ok(run) => {
-            let org_id = repository::org_id_for_workflow_run(db.as_ref(), run.id).await;
-            emit_workflow_run(&events, run.id, org_id);
-            nudge_workflow_vm(&events);
-            (
-                StatusCode::ACCEPTED,
-                Json(ApiResponse::WorkflowRun(models::WorkflowRunResponse::new(
-                    run,
-                    Vec::new(),
-                ))),
-            )
-        }
+        Ok(run) => (
+            StatusCode::ACCEPTED,
+            Json(ApiResponse::WorkflowRun(models::WorkflowRunResponse::new(
+                run,
+                Vec::new(),
+            ))),
+        ),
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -175,7 +161,7 @@ fn request_actor_display_name() -> String {
 }
 
 pub async fn claim_workflow_runs_for_scheduler<T: RunOperationsStore>(
-    Extension(db): Extension<Arc<T>>,
+    Extension(operations): Extension<Arc<RunOperations<T>>>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Json(request): Json<SchedulerRunClaimRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -199,14 +185,14 @@ pub async fn claim_workflow_runs_for_scheduler<T: RunOperationsStore>(
     } else {
         request.statuses
     };
-    match repository::claim_workflow_runs_for_scheduler(
-        db.as_ref(),
-        request.scheduler_id,
-        statuses,
-        request.lease_until,
-        request.limit.unwrap_or(50),
-    )
-    .await
+    match operations
+        .claim_for_scheduler(
+            request.scheduler_id,
+            statuses,
+            request.lease_until,
+            request.limit.unwrap_or(50),
+        )
+        .await
     {
         Ok(runs) => (StatusCode::OK, Json(ApiResponse::WorkflowRunList(runs))),
         Err(err) => api_error(err.to_string()),
@@ -214,7 +200,7 @@ pub async fn claim_workflow_runs_for_scheduler<T: RunOperationsStore>(
 }
 
 pub async fn renew_workflow_run_claim<T: RunOperationsStore>(
-    Extension(db): Extension<Arc<T>>,
+    Extension(operations): Extension<Arc<RunOperations<T>>>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Path(workflow_run_id): Path<Uuid>,
     Json(request): Json<SchedulerRunClaimRenewRequest>,
@@ -226,13 +212,9 @@ pub async fn renew_workflow_run_claim<T: RunOperationsStore>(
     ]) {
         return reply;
     }
-    match repository::renew_workflow_run_claim(
-        db.as_ref(),
-        workflow_run_id,
-        request.scheduler_id,
-        request.lease_until,
-    )
-    .await
+    match operations
+        .renew_scheduler_claim(workflow_run_id, request.scheduler_id, request.lease_until)
+        .await
     {
         Ok(true) => (
             StatusCode::OK,
@@ -249,7 +231,7 @@ pub async fn renew_workflow_run_claim<T: RunOperationsStore>(
 }
 
 pub async fn release_workflow_run_claim<T: RunOperationsStore>(
-    Extension(db): Extension<Arc<T>>,
+    Extension(operations): Extension<Arc<RunOperations<T>>>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Path(workflow_run_id): Path<Uuid>,
     Json(request): Json<SchedulerRunClaimReleaseRequest>,
@@ -261,7 +243,8 @@ pub async fn release_workflow_run_claim<T: RunOperationsStore>(
     ]) {
         return reply;
     }
-    match repository::release_workflow_run_claim(db.as_ref(), workflow_run_id, request.scheduler_id)
+    match operations
+        .release_scheduler_claim(workflow_run_id, request.scheduler_id)
         .await
     {
         Ok(()) => (
@@ -290,8 +273,7 @@ pub async fn release_workflow_run_claim<T: RunOperationsStore>(
 )]
 pub async fn cancel_workflow_run<T: RunOperationsStore>(
     Extension(db): Extension<Arc<T>>,
-    Extension(broker): Extension<Arc<dyn Broker>>,
-    Extension(events): Extension<EventSender>,
+    Extension(operations): Extension<Arc<RunOperations<T>>>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Path(workflow_run_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -301,13 +283,8 @@ pub async fn cancel_workflow_run<T: RunOperationsStore>(
     {
         return reply;
     }
-    match repository::cancel_workflow_run(db.as_ref(), broker.as_ref(), workflow_run_id).await {
-        Ok(resp) => {
-            let org_id = repository::org_id_for_workflow_run(db.as_ref(), workflow_run_id).await;
-            emit_workflow_run(&events, workflow_run_id, org_id);
-            nudge_workflow_vm(&events);
-            (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
-        }
+    match operations.cancel(workflow_run_id).await {
+        Ok(resp) => (StatusCode::OK, Json(ApiResponse::TaskResponse(resp))),
         Err(err) => bad_request(err.to_string()),
     }
 }
@@ -325,7 +302,7 @@ pub async fn cancel_workflow_run<T: RunOperationsStore>(
 )]
 pub async fn pause_workflow_run<T: RunOperationsStore>(
     Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
+    Extension(operations): Extension<Arc<RunOperations<T>>>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Path(workflow_run_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -335,12 +312,8 @@ pub async fn pause_workflow_run<T: RunOperationsStore>(
     {
         return reply;
     }
-    match repository::pause_workflow_run(db.as_ref(), workflow_run_id).await {
-        Ok(resp) => {
-            let org_id = repository::org_id_for_workflow_run(db.as_ref(), workflow_run_id).await;
-            emit_workflow_run(&events, workflow_run_id, org_id);
-            (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
-        }
+    match operations.pause(workflow_run_id).await {
+        Ok(resp) => (StatusCode::OK, Json(ApiResponse::TaskResponse(resp))),
         Err(err) => bad_request(err.to_string()),
     }
 }
@@ -358,7 +331,7 @@ pub async fn pause_workflow_run<T: RunOperationsStore>(
 )]
 pub async fn resume_workflow_run<T: RunOperationsStore>(
     Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
+    Extension(operations): Extension<Arc<RunOperations<T>>>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Path(workflow_run_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -368,12 +341,8 @@ pub async fn resume_workflow_run<T: RunOperationsStore>(
     {
         return reply;
     }
-    match repository::resume_workflow_run(db.as_ref(), workflow_run_id).await {
-        Ok(resp) => {
-            let org_id = repository::org_id_for_workflow_run(db.as_ref(), workflow_run_id).await;
-            emit_workflow_run(&events, workflow_run_id, org_id);
-            (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
-        }
+    match operations.resume(workflow_run_id).await {
+        Ok(resp) => (StatusCode::OK, Json(ApiResponse::TaskResponse(resp))),
         Err(err) => bad_request(err.to_string()),
     }
 }
@@ -392,7 +361,7 @@ pub async fn resume_workflow_run<T: RunOperationsStore>(
 )]
 pub async fn replay_workflow_run<T: RunOperationsStore>(
     Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
+    Extension(operations): Extension<Arc<RunOperations<T>>>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Path(workflow_run_id): Path<Uuid>,
     body: Option<Json<runinator_ws_core::models::WorkflowRunReplayRequest>>,
@@ -404,18 +373,14 @@ pub async fn replay_workflow_run<T: RunOperationsStore>(
         return reply;
     }
     let from_step_id = body.and_then(|Json(request)| request.from_step_id);
-    match repository::replay_workflow_run(db.as_ref(), workflow_run_id, from_step_id).await {
-        Ok(run) => {
-            let org_id = repository::org_id_for_workflow_run(db.as_ref(), run.id).await;
-            emit_workflow_run(&events, run.id, org_id);
-            (
-                StatusCode::ACCEPTED,
-                Json(ApiResponse::WorkflowRun(models::WorkflowRunResponse::new(
-                    run,
-                    Vec::new(),
-                ))),
-            )
-        }
+    match operations.replay(workflow_run_id, from_step_id).await {
+        Ok(run) => (
+            StatusCode::ACCEPTED,
+            Json(ApiResponse::WorkflowRun(models::WorkflowRunResponse::new(
+                run,
+                Vec::new(),
+            ))),
+        ),
         Err(err) => bad_request(err.to_string()),
     }
 }
@@ -424,7 +389,7 @@ pub async fn replay_workflow_run<T: RunOperationsStore>(
 /// drive and re-parks, so repeated deliveries drive repeated iterations of its body.
 pub async fn deliver_run_event<T: RunOperationsStore>(
     Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
+    Extension(operations): Extension<Arc<RunOperations<T>>>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Path((workflow_run_id, node_id)): Path<(Uuid, String)>,
     Json(request): Json<runinator_ws_core::models::EventDeliveryRequest>,
@@ -441,19 +406,18 @@ pub async fn deliver_run_event<T: RunOperationsStore>(
     if let (Some(event_type), Some(object)) = (request.event_type, event.as_object_mut()) {
         object.insert("type".into(), event_type.into());
     }
-    match repository::deliver_run_event(db.as_ref(), workflow_run_id, node_id, event).await {
-        Ok(response) => {
-            let org_id = repository::org_id_for_workflow_run(db.as_ref(), workflow_run_id).await;
-            emit_workflow_run(&events, workflow_run_id, org_id);
-            (StatusCode::OK, Json(ApiResponse::TaskResponse(response)))
-        }
+    match operations
+        .deliver_event(workflow_run_id, node_id, event)
+        .await
+    {
+        Ok(response) => (StatusCode::OK, Json(ApiResponse::TaskResponse(response))),
         Err(err) => bad_request(err.to_string()),
     }
 }
 
 pub async fn deliver_signal<T: RunOperationsStore>(
     Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
+    Extension(operations): Extension<Arc<RunOperations<T>>>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Path(workflow_run_id): Path<Uuid>,
     Json(request): Json<runinator_ws_core::models::SignalDeliveryRequest>,
@@ -464,14 +428,11 @@ pub async fn deliver_signal<T: RunOperationsStore>(
     {
         return reply;
     }
-    match repository::deliver_signal(db.as_ref(), workflow_run_id, request.name, request.payload)
+    match operations
+        .deliver_signal(workflow_run_id, request.name, request.payload)
         .await
     {
-        Ok(response) => {
-            let org_id = repository::org_id_for_workflow_run(db.as_ref(), workflow_run_id).await;
-            emit_workflow_run(&events, workflow_run_id, org_id);
-            (StatusCode::OK, Json(ApiResponse::TaskResponse(response)))
-        }
+        Ok(response) => (StatusCode::OK, Json(ApiResponse::TaskResponse(response))),
         Err(err) => bad_request(err.to_string()),
     }
 }
@@ -483,7 +444,7 @@ pub async fn deliver_signal<T: RunOperationsStore>(
 /// rules, in the crate that owns them.
 pub async fn request_interrupt<T: RunOperationsStore>(
     Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
+    Extension(operations): Extension<Arc<RunOperations<T>>>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Path(workflow_run_id): Path<Uuid>,
     Json(request): Json<runinator_ws_core::models::InterruptRequest>,
@@ -506,20 +467,16 @@ pub async fn request_interrupt<T: RunOperationsStore>(
             "Interrupt source '{raw}' cannot be requested; it is only raised by a matching drive"
         ));
     }
-    match repository::request_run_interrupt(
-        db.as_ref(),
-        workflow_run_id,
-        source,
-        request.payload,
-        request.continuation_id,
-    )
-    .await
+    match operations
+        .request_interrupt(
+            workflow_run_id,
+            source,
+            request.payload,
+            request.continuation_id,
+        )
+        .await
     {
-        Ok(response) => {
-            let org_id = repository::org_id_for_workflow_run(db.as_ref(), workflow_run_id).await;
-            emit_workflow_run(&events, workflow_run_id, org_id);
-            (StatusCode::OK, Json(ApiResponse::TaskResponse(response)))
-        }
+        Ok(response) => (StatusCode::OK, Json(ApiResponse::TaskResponse(response))),
         Err(err) => bad_request(err.to_string()),
     }
 }
@@ -538,7 +495,7 @@ pub async fn request_interrupt<T: RunOperationsStore>(
 )]
 pub async fn rename_workflow_run<T: RunOperationsStore>(
     Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
+    Extension(operations): Extension<Arc<RunOperations<T>>>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Path(workflow_run_id): Path<Uuid>,
     Json(request): Json<runinator_ws_core::models::WorkflowRunRenameRequest>,
@@ -549,12 +506,8 @@ pub async fn rename_workflow_run<T: RunOperationsStore>(
     {
         return reply;
     }
-    match repository::set_workflow_run_name(db.as_ref(), workflow_run_id, request.name).await {
-        Ok(response) => {
-            let org_id = repository::org_id_for_workflow_run(db.as_ref(), workflow_run_id).await;
-            emit_workflow_run(&events, workflow_run_id, org_id);
-            (StatusCode::OK, Json(ApiResponse::TaskResponse(response)))
-        }
+    match operations.rename(workflow_run_id, request.name).await {
+        Ok(response) => (StatusCode::OK, Json(ApiResponse::TaskResponse(response))),
         Err(err) => bad_request(err.to_string()),
     }
 }
@@ -568,6 +521,7 @@ pub async fn rename_workflow_run<T: RunOperationsStore>(
 )]
 pub async fn get_workflow_runs<T: RunOperationsStore>(
     Extension(db): Extension<Arc<T>>,
+    Extension(operations): Extension<Arc<RunOperations<T>>>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Query(query): Query<WorkflowRunStatusQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -580,12 +534,9 @@ pub async fn get_workflow_runs<T: RunOperationsStore>(
     };
 
     if let Some(name) = query.name {
-        return match repository::fetch_workflow_runs_by_name(
-            db.as_ref(),
-            name,
-            query.open.unwrap_or(false),
-        )
-        .await
+        return match operations
+            .list_workflow_by_name(name, query.open.unwrap_or(false))
+            .await
         {
             Ok(runs) => (
                 StatusCode::OK,
@@ -602,14 +553,14 @@ pub async fn get_workflow_runs<T: RunOperationsStore>(
         {
             return reply;
         }
-        return match repository::fetch_workflow_runs_for_workflow(db.as_ref(), workflow_id).await {
+        return match operations.list_workflow_for_definition(workflow_id).await {
             Ok(runs) => (StatusCode::OK, Json(ApiResponse::WorkflowRunList(runs))),
             Err(err) => api_error(err.to_string()),
         };
     }
 
     if let Some(status) = query.status {
-        return match repository::fetch_workflow_runs_by_status(db.as_ref(), status).await {
+        return match operations.list_workflow_by_status(status).await {
             Ok(runs) => (
                 StatusCode::OK,
                 Json(ApiResponse::WorkflowRunList(filter_runs(runs, &visible))),
@@ -622,7 +573,7 @@ pub async fn get_workflow_runs<T: RunOperationsStore>(
         .limit
         .map(|value| value.clamp(1, MAX_RECENT_RUN_LIMIT))
         .unwrap_or(DEFAULT_RECENT_RUN_LIMIT);
-    match repository::fetch_recent_workflow_runs(db.as_ref(), limit).await {
+    match operations.list_recent_workflow(limit).await {
         Ok(runs) => (
             StatusCode::OK,
             Json(ApiResponse::WorkflowRunList(filter_runs(runs, &visible))),
@@ -639,7 +590,7 @@ const DEFAULT_RECENT_RUN_LIMIT: i64 = 200;
 const MAX_RECENT_RUN_LIMIT: i64 = 1000;
 
 pub async fn get_runs<T: RunOperationsStore>(
-    Extension(db): Extension<Arc<T>>,
+    Extension(operations): Extension<Arc<RunOperations<T>>>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Query(query): Query<RunStatusQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -653,15 +604,14 @@ pub async fn get_runs<T: RunOperationsStore>(
     let Some(status) = query.status else {
         return bad_request("run status query is required");
     };
-    match repository::fetch_runs_by_status(db.as_ref(), status).await {
+    match operations.list_task_by_status(status).await {
         Ok(runs) => (StatusCode::OK, Json(ApiResponse::RunList(runs))),
         Err(err) => api_error(err.to_string()),
     }
 }
 
 pub async fn update_run<T: RunOperationsStore>(
-    Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
+    Extension(operations): Extension<Arc<RunOperations<T>>>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Path(run_id): Path<Uuid>,
     Json(request): Json<RunStatusRequest>,
@@ -673,25 +623,23 @@ pub async fn update_run<T: RunOperationsStore>(
     ]) {
         return reply;
     }
-    match repository::update_run_status(
-        db.as_ref(),
-        run_id,
-        request.status,
-        request.output_json,
-        request.message,
-    )
-    .await
+    match operations
+        .update_task_status(
+            run_id,
+            request.status,
+            request.output_json,
+            request.message,
+            ctx.org_id,
+        )
+        .await
     {
-        Ok(resp) => {
-            emit_task_run(&events, run_id, request.status, ctx.org_id);
-            (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
-        }
+        Ok(resp) => (StatusCode::OK, Json(ApiResponse::TaskResponse(resp))),
         Err(err) => api_error(err.to_string()),
     }
 }
 
 pub async fn get_run_chunks<T: RunOperationsStore>(
-    Extension(db): Extension<Arc<T>>,
+    Extension(operations): Extension<Arc<RunOperations<T>>>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Path(run_id): Path<Uuid>,
     Query(query): Query<ChunkQuery>,
@@ -703,13 +651,9 @@ pub async fn get_run_chunks<T: RunOperationsStore>(
     ]) {
         return reply;
     }
-    match repository::fetch_run_chunks(
-        db.as_ref(),
-        run_id,
-        query.cursor,
-        query.limit.unwrap_or(100),
-    )
-    .await
+    match operations
+        .task_chunks(run_id, query.cursor, query.limit.unwrap_or(100))
+        .await
     {
         Ok(chunks) => (StatusCode::OK, Json(ApiResponse::RunChunks(chunks))),
         Err(err) => api_error(err.to_string()),
@@ -717,8 +661,7 @@ pub async fn get_run_chunks<T: RunOperationsStore>(
 }
 
 pub async fn append_run_chunk<T: RunOperationsStore>(
-    Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
+    Extension(operations): Extension<Arc<RunOperations<T>>>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Path(run_id): Path<Uuid>,
     Json(chunk): Json<NewRunChunk>,
@@ -730,24 +673,20 @@ pub async fn append_run_chunk<T: RunOperationsStore>(
     ]) {
         return reply;
     }
-    match repository::append_run_chunk(db.as_ref(), run_id, &chunk).await {
-        Ok(chunk) => {
-            emit(
-                &events,
-                AppEvent::new(ctx.org_id, AppEventKind::RunChunkAdded { run_id }),
-            );
-            (
-                StatusCode::ACCEPTED,
-                Json(ApiResponse::RunChunks(vec![chunk])),
-            )
-        }
+    match operations
+        .append_task_chunk(run_id, &chunk, ctx.org_id)
+        .await
+    {
+        Ok(chunk) => (
+            StatusCode::ACCEPTED,
+            Json(ApiResponse::RunChunks(vec![chunk])),
+        ),
         Err(err) => api_error(err.to_string()),
     }
 }
 
 pub async fn update_workflow_run<T: RunOperationsStore>(
-    Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
+    Extension(operations): Extension<Arc<RunOperations<T>>>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Path(workflow_run_id): Path<Uuid>,
     Json(request): Json<WorkflowRunStatusRequest>,
@@ -759,27 +698,24 @@ pub async fn update_workflow_run<T: RunOperationsStore>(
     ]) {
         return reply;
     }
-    match repository::update_workflow_run_status(
-        db.as_ref(),
-        workflow_run_id,
-        request.status,
-        request.active_node_id,
-        None,
-        request.message,
-    )
-    .await
+    match operations
+        .update_workflow_status(
+            workflow_run_id,
+            request.status,
+            request.active_node_id,
+            None,
+            request.message,
+        )
+        .await
     {
-        Ok(resp) => {
-            let org_id = repository::org_id_for_workflow_run(db.as_ref(), workflow_run_id).await;
-            emit_workflow_run(&events, workflow_run_id, org_id);
-            (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
-        }
+        Ok(resp) => (StatusCode::OK, Json(ApiResponse::TaskResponse(resp))),
         Err(err) => api_error(err.to_string()),
     }
 }
 
 pub async fn get_workflow_run<T: RunOperationsStore>(
     Extension(db): Extension<Arc<T>>,
+    Extension(operations): Extension<Arc<RunOperations<T>>>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Path(workflow_run_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -789,7 +725,7 @@ pub async fn get_workflow_run<T: RunOperationsStore>(
     {
         return reply;
     }
-    match repository::fetch_workflow_run(db.as_ref(), workflow_run_id).await {
+    match operations.fetch_workflow(workflow_run_id).await {
         Ok(Some(run)) => (
             StatusCode::OK,
             Json(ApiResponse::WorkflowRun(models::WorkflowRunResponse::new(
@@ -804,6 +740,7 @@ pub async fn get_workflow_run<T: RunOperationsStore>(
 
 pub async fn delete_workflow_run<T: RunOperationsStore>(
     Extension(db): Extension<Arc<T>>,
+    Extension(operations): Extension<Arc<RunOperations<T>>>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
     Path(workflow_run_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -813,7 +750,7 @@ pub async fn delete_workflow_run<T: RunOperationsStore>(
     {
         return reply;
     }
-    match repository::delete_workflow_run(db.as_ref(), workflow_run_id).await {
+    match operations.delete(workflow_run_id).await {
         Ok(resp) => (StatusCode::OK, Json(ApiResponse::TaskResponse(resp))),
         Err(err) => api_error(err.to_string()),
     }

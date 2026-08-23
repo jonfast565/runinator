@@ -47,6 +47,18 @@ impl EventBus {
         self.local.subscribe()
     }
 
+    /// Clone the transport-backed publisher for an application service. The service still has no
+    /// access to this replica's WebSocket broadcast receiver.
+    pub fn publisher(&self) -> UiEventPublisher {
+        self.publisher.clone()
+    }
+
+    /// Clone the optional local latency hints for an application service. Their absence is the
+    /// normal standalone-engine deployment shape, where durable polling remains authoritative.
+    pub fn embedded_engine_signals(&self) -> Option<EmbeddedEngineSignals> {
+        self.local_signals.clone()
+    }
+
     /// Prompt the embedded VM driver to poll its durable continuation queue. This is a no-op when
     /// the engine runs out of process, where the same durable queue is reached by normal polling.
     pub fn nudge_workflow_vm(&self) {

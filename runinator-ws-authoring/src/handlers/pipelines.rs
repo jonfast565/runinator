@@ -2,7 +2,6 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use axum::{Extension, Json, extract::Path, http::StatusCode};
-use runinator_broker_core::Broker;
 use runinator_models::{
     auth::{AuthContext, Permission},
     pipelines::{Pipeline, PipelineTrigger},
@@ -12,11 +11,7 @@ use runinator_store::{
     roles::{DefinitionStore, ScheduleStore, WorkflowVmStore},
 };
 
-use runinator_engine::repository;
-use runinator_ws_core::events::{
-    AppEvent, AppEventKind, EventSender, emit, emit_pipeline_run, emit_workflows_changed,
-    nudge_workflow_vm,
-};
+use runinator_engine::services::PipelineOperations;
 use runinator_ws_core::models::{
     ApiResponse, PipelineMemberRetryRequest, PipelineRunInquiryDecision, PipelineRunRequest,
     PipelineRunResolutionRequest,
@@ -28,9 +23,10 @@ pub async fn get_pipelines<
     T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
 >(
     Extension(db): Extension<Arc<T>>,
+    Extension(service): Extension<Arc<PipelineOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    match repository::fetch_pipelines(db.as_ref()).await {
+    match service.list().await {
         Ok(pipelines) => {
             let visible = AuthzChecker::new(db.as_ref(), &ctx)
                 .visible_pipeline_ids()
@@ -53,6 +49,7 @@ pub async fn get_pipeline<
     T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
 >(
     Extension(db): Extension<Arc<T>>,
+    Extension(service): Extension<Arc<PipelineOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(pipeline_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -62,7 +59,7 @@ pub async fn get_pipeline<
     {
         return reply;
     }
-    match repository::fetch_pipeline(db.as_ref(), pipeline_id).await {
+    match service.fetch(pipeline_id).await {
         Ok(Some(pipeline)) => (StatusCode::OK, Json(ApiResponse::Pipeline(pipeline))),
         Ok(None) => not_found(format!("Pipeline {pipeline_id} not found")),
         Err(err) => api_error(err.to_string()),
@@ -73,14 +70,14 @@ pub async fn create_pipeline<
     T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
 >(
     Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
+    Extension(service): Extension<Arc<PipelineOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Json(mut pipeline): Json<Pipeline>,
 ) -> (StatusCode, Json<ApiResponse>) {
     // a create always mints a fresh id and is owned by the creator's active org (None = global).
     pipeline.id = None;
     pipeline.org_id = ctx.org_id;
-    match repository::upsert_pipeline(db.as_ref(), &pipeline).await {
+    match service.save(&pipeline).await {
         Ok(pipeline) => {
             if let Some(id) = pipeline.id {
                 if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
@@ -90,7 +87,6 @@ pub async fn create_pipeline<
                     return reply;
                 }
             }
-            emit_workflows_changed(&events, pipeline.org_id);
             (StatusCode::OK, Json(ApiResponse::Pipeline(pipeline)))
         }
         Err(err) => bad_request(err.to_string()),
@@ -101,10 +97,10 @@ pub async fn update_pipeline<
     T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
 >(
     Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
+    Extension(service): Extension<Arc<PipelineOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(pipeline_id): Path<Uuid>,
-    Json(mut pipeline): Json<Pipeline>,
+    Json(pipeline): Json<Pipeline>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
         .require_pipeline(pipeline_id, Permission::Edit)
@@ -112,18 +108,9 @@ pub async fn update_pipeline<
     {
         return reply;
     }
-    pipeline.id = Some(pipeline_id);
-    // preserve the stored org on update so a client cannot re-tenant a pipeline by editing it.
-    pipeline.org_id = match repository::fetch_pipeline(db.as_ref(), pipeline_id).await {
-        Ok(Some(existing)) => existing.org_id,
-        Ok(None) => return not_found(format!("Pipeline {pipeline_id} not found")),
-        Err(err) => return api_error(err.to_string()),
-    };
-    match repository::upsert_pipeline(db.as_ref(), &pipeline).await {
-        Ok(pipeline) => {
-            emit_workflows_changed(&events, pipeline.org_id);
-            (StatusCode::OK, Json(ApiResponse::Pipeline(pipeline)))
-        }
+    match service.update(pipeline_id, pipeline).await {
+        Ok(Some(pipeline)) => (StatusCode::OK, Json(ApiResponse::Pipeline(pipeline))),
+        Ok(None) => not_found(format!("Pipeline {pipeline_id} not found")),
         Err(err) => bad_request(err.to_string()),
     }
 }
@@ -132,7 +119,7 @@ pub async fn delete_pipeline<
     T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
 >(
     Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
+    Extension(service): Extension<Arc<PipelineOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(pipeline_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -142,16 +129,8 @@ pub async fn delete_pipeline<
     {
         return reply;
     }
-    let org_id = match repository::fetch_pipeline(db.as_ref(), pipeline_id).await {
-        Ok(Some(pipeline)) => pipeline.org_id.or(ctx.org_id),
-        Ok(None) => ctx.org_id,
-        Err(_) => ctx.org_id,
-    };
-    match repository::delete_pipeline(db.as_ref(), pipeline_id).await {
-        Ok(resp) => {
-            emit_workflows_changed(&events, org_id);
-            (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
-        }
+    match service.delete(pipeline_id, ctx.org_id).await {
+        Ok(resp) => (StatusCode::OK, Json(ApiResponse::TaskResponse(resp))),
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -162,6 +141,7 @@ pub async fn get_pipeline_triggers<
     T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
 >(
     Extension(db): Extension<Arc<T>>,
+    Extension(service): Extension<Arc<PipelineOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(pipeline_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -171,7 +151,7 @@ pub async fn get_pipeline_triggers<
     {
         return reply;
     }
-    match repository::fetch_pipeline_triggers(db.as_ref(), pipeline_id).await {
+    match service.list_triggers(pipeline_id).await {
         Ok(triggers) => (
             StatusCode::OK,
             Json(ApiResponse::PipelineTriggerList(triggers)),
@@ -184,7 +164,7 @@ pub async fn upsert_pipeline_trigger<
     T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
 >(
     Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
+    Extension(service): Extension<Arc<PipelineOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(pipeline_id): Path<Uuid>,
     Json(mut trigger): Json<PipelineTrigger>,
@@ -196,12 +176,8 @@ pub async fn upsert_pipeline_trigger<
         return reply;
     }
     trigger.pipeline_id = pipeline_id;
-    match repository::upsert_pipeline_trigger(db.as_ref(), &trigger).await {
-        Ok(trigger) => {
-            let org_id = pipeline_org(db.as_ref(), pipeline_id, ctx.org_id).await;
-            emit_workflows_changed(&events, org_id);
-            (StatusCode::OK, Json(ApiResponse::PipelineTrigger(trigger)))
-        }
+    match service.save_trigger(&trigger, ctx.org_id).await {
+        Ok(trigger) => (StatusCode::OK, Json(ApiResponse::PipelineTrigger(trigger))),
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -210,7 +186,7 @@ pub async fn update_pipeline_trigger<
     T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
 >(
     Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
+    Extension(service): Extension<Arc<PipelineOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(trigger_id): Path<Uuid>,
     Json(mut trigger): Json<PipelineTrigger>,
@@ -222,12 +198,8 @@ pub async fn update_pipeline_trigger<
         return reply;
     }
     trigger.id = Some(trigger_id);
-    match repository::upsert_pipeline_trigger(db.as_ref(), &trigger).await {
-        Ok(trigger) => {
-            let org_id = pipeline_org(db.as_ref(), trigger.pipeline_id, ctx.org_id).await;
-            emit_workflows_changed(&events, org_id);
-            (StatusCode::OK, Json(ApiResponse::PipelineTrigger(trigger)))
-        }
+    match service.save_trigger(&trigger, ctx.org_id).await {
+        Ok(trigger) => (StatusCode::OK, Json(ApiResponse::PipelineTrigger(trigger))),
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -236,7 +208,7 @@ pub async fn delete_pipeline_trigger<
     T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
 >(
     Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
+    Extension(service): Extension<Arc<PipelineOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(trigger_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -246,15 +218,8 @@ pub async fn delete_pipeline_trigger<
     {
         return reply;
     }
-    let org_id = match repository::fetch_pipeline_trigger(db.as_ref(), trigger_id).await {
-        Ok(Some(trigger)) => pipeline_org(db.as_ref(), trigger.pipeline_id, ctx.org_id).await,
-        _ => ctx.org_id,
-    };
-    match repository::delete_pipeline_trigger(db.as_ref(), trigger_id).await {
-        Ok(resp) => {
-            emit_workflows_changed(&events, org_id);
-            (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
-        }
+    match service.delete_trigger(trigger_id, ctx.org_id).await {
+        Ok(resp) => (StatusCode::OK, Json(ApiResponse::TaskResponse(resp))),
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -265,7 +230,7 @@ pub async fn create_pipeline_run<
     T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
 >(
     Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
+    Extension(service): Extension<Arc<PipelineOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(pipeline_id): Path<Uuid>,
     Json(request): Json<PipelineRunRequest>,
@@ -276,25 +241,11 @@ pub async fn create_pipeline_run<
     {
         return reply;
     }
-    match repository::create_manual_pipeline_run(
-        db.as_ref(),
-        pipeline_id,
-        request.parameters,
-        None,
-        Some("api".into()),
-    )
-    .await
+    match service
+        .create_run(pipeline_id, request.parameters, Some("api".into()))
+        .await
     {
-        Ok(run) => {
-            let org_id = repository::org_id_for_pipeline_run(db.as_ref(), run.id).await;
-            emit_pipeline_run(&events, run.id, org_id);
-            emit(
-                &events,
-                AppEvent::new(org_id, AppEventKind::PipelineRunActivity),
-            );
-            nudge_workflow_vm(&events);
-            (StatusCode::ACCEPTED, Json(ApiResponse::PipelineRun(run)))
-        }
+        Ok(run) => (StatusCode::ACCEPTED, Json(ApiResponse::PipelineRun(run))),
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -303,7 +254,7 @@ pub async fn create_pipeline_trigger_run<
     T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
 >(
     Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
+    Extension(service): Extension<Arc<PipelineOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(trigger_id): Path<Uuid>,
     Json(request): Json<PipelineRunRequest>,
@@ -314,25 +265,11 @@ pub async fn create_pipeline_trigger_run<
     {
         return reply;
     }
-    match repository::create_pipeline_run_for_trigger(
-        db.as_ref(),
-        trigger_id,
-        request.parameters,
-        None,
-        Some("api".into()),
-    )
-    .await
+    match service
+        .create_run_for_trigger(trigger_id, request.parameters, Some("api".into()))
+        .await
     {
-        Ok(run) => {
-            let org_id = repository::org_id_for_pipeline_run(db.as_ref(), run.id).await;
-            emit_pipeline_run(&events, run.id, org_id);
-            emit(
-                &events,
-                AppEvent::new(org_id, AppEventKind::PipelineRunActivity),
-            );
-            nudge_workflow_vm(&events);
-            (StatusCode::ACCEPTED, Json(ApiResponse::PipelineRun(run)))
-        }
+        Ok(run) => (StatusCode::ACCEPTED, Json(ApiResponse::PipelineRun(run))),
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -341,9 +278,10 @@ pub async fn get_pipeline_runs<
     T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
 >(
     Extension(db): Extension<Arc<T>>,
+    Extension(service): Extension<Arc<PipelineOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    match repository::fetch_recent_pipeline_runs(db.as_ref(), 200).await {
+    match service.list_recent_runs(200).await {
         Ok(runs) => {
             let visible = AuthzChecker::new(db.as_ref(), &ctx)
                 .visible_pipeline_ids()
@@ -366,6 +304,7 @@ pub async fn get_pipeline_run<
     T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
 >(
     Extension(db): Extension<Arc<T>>,
+    Extension(service): Extension<Arc<PipelineOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(pipeline_run_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -375,7 +314,7 @@ pub async fn get_pipeline_run<
     {
         return reply;
     }
-    match repository::fetch_pipeline_run_detail(db.as_ref(), pipeline_run_id).await {
+    match service.fetch_run_detail(pipeline_run_id).await {
         Ok(Some(detail)) => (StatusCode::OK, Json(ApiResponse::PipelineRunDetail(detail))),
         Ok(None) => not_found(format!("Pipeline run {pipeline_run_id} not found")),
         Err(err) => api_error(err.to_string()),
@@ -386,6 +325,7 @@ pub async fn delete_pipeline_run<
     T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
 >(
     Extension(db): Extension<Arc<T>>,
+    Extension(service): Extension<Arc<PipelineOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(pipeline_run_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -395,7 +335,7 @@ pub async fn delete_pipeline_run<
     {
         return reply;
     }
-    match repository::delete_pipeline_run(db.as_ref(), pipeline_run_id).await {
+    match service.delete_run(pipeline_run_id).await {
         Ok(resp) => (StatusCode::OK, Json(ApiResponse::TaskResponse(resp))),
         Err(err) => api_error(err.to_string()),
     }
@@ -405,8 +345,7 @@ pub async fn cancel_pipeline_run<
     T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
 >(
     Extension(db): Extension<Arc<T>>,
-    Extension(broker): Extension<Arc<dyn Broker>>,
-    Extension(events): Extension<EventSender>,
+    Extension(service): Extension<Arc<PipelineOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(pipeline_run_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -416,16 +355,8 @@ pub async fn cancel_pipeline_run<
     {
         return reply;
     }
-    match repository::cancel_pipeline_run(db.as_ref(), broker.as_ref(), pipeline_run_id).await {
-        Ok(resp) => {
-            let org_id = repository::org_id_for_pipeline_run(db.as_ref(), pipeline_run_id).await;
-            emit_pipeline_run(&events, pipeline_run_id, org_id);
-            emit(
-                &events,
-                AppEvent::new(org_id, AppEventKind::PipelineRunActivity),
-            );
-            (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
-        }
+    match service.cancel_run(pipeline_run_id).await {
+        Ok(resp) => (StatusCode::OK, Json(ApiResponse::TaskResponse(resp))),
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -434,7 +365,7 @@ pub async fn pause_pipeline_run<
     T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
 >(
     Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
+    Extension(service): Extension<Arc<PipelineOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(pipeline_run_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -444,13 +375,8 @@ pub async fn pause_pipeline_run<
     {
         return reply;
     }
-    match repository::pause_pipeline_run(db.as_ref(), pipeline_run_id).await {
-        Ok(resp) => {
-            let org_id = repository::org_id_for_pipeline_run(db.as_ref(), pipeline_run_id).await;
-            emit_pipeline_run(&events, pipeline_run_id, org_id);
-            nudge_workflow_vm(&events);
-            (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
-        }
+    match service.pause_run(pipeline_run_id).await {
+        Ok(resp) => (StatusCode::OK, Json(ApiResponse::TaskResponse(resp))),
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -459,7 +385,7 @@ pub async fn resume_pipeline_run<
     T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
 >(
     Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
+    Extension(service): Extension<Arc<PipelineOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(pipeline_run_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -469,13 +395,8 @@ pub async fn resume_pipeline_run<
     {
         return reply;
     }
-    match repository::resume_pipeline_run(db.as_ref(), pipeline_run_id).await {
-        Ok(resp) => {
-            let org_id = repository::org_id_for_pipeline_run(db.as_ref(), pipeline_run_id).await;
-            emit_pipeline_run(&events, pipeline_run_id, org_id);
-            nudge_workflow_vm(&events);
-            (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
-        }
+    match service.resume_run(pipeline_run_id).await {
+        Ok(resp) => (StatusCode::OK, Json(ApiResponse::TaskResponse(resp))),
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -487,7 +408,7 @@ pub async fn resolve_pipeline_run<
     T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
 >(
     Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
+    Extension(service): Extension<Arc<PipelineOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(pipeline_run_id): Path<Uuid>,
     Json(request): Json<PipelineRunResolutionRequest>,
@@ -499,25 +420,16 @@ pub async fn resolve_pipeline_run<
         return reply;
     }
     let continue_pipeline = request.decision == PipelineRunInquiryDecision::Continue;
-    match repository::resolve_pipeline_run_inquiry(
-        db.as_ref(),
-        pipeline_run_id,
-        continue_pipeline,
-        request.resolved_by,
-        request.message,
-    )
-    .await
+    match service
+        .resolve_run_inquiry(
+            pipeline_run_id,
+            continue_pipeline,
+            request.resolved_by,
+            request.message,
+        )
+        .await
     {
-        Ok(run) => {
-            let org_id = repository::org_id_for_pipeline_run(db.as_ref(), pipeline_run_id).await;
-            emit_pipeline_run(&events, pipeline_run_id, org_id);
-            emit(
-                &events,
-                AppEvent::new(org_id, AppEventKind::PipelineRunActivity),
-            );
-            nudge_workflow_vm(&events);
-            (StatusCode::OK, Json(ApiResponse::PipelineRun(run)))
-        }
+        Ok(run) => (StatusCode::OK, Json(ApiResponse::PipelineRun(run))),
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -526,7 +438,7 @@ pub async fn retry_pipeline_member<
     T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
 >(
     Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
+    Extension(service): Extension<Arc<PipelineOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path((pipeline_run_id, member_key)): Path<(Uuid, String)>,
     Json(request): Json<PipelineMemberRetryRequest>,
@@ -537,42 +449,20 @@ pub async fn retry_pipeline_member<
     {
         return reply;
     }
-    match repository::retry_pipeline_run_member(
-        db.as_ref(),
-        pipeline_run_id,
-        member_key,
-        request.parameters,
-    )
-    .await
+    match service
+        .retry_member(pipeline_run_id, member_key, request.parameters)
+        .await
     {
-        Ok(attempt) => {
-            let org_id = repository::org_id_for_pipeline_run(db.as_ref(), pipeline_run_id).await;
-            emit_pipeline_run(&events, pipeline_run_id, org_id);
-            nudge_workflow_vm(&events);
-            (
-                StatusCode::ACCEPTED,
-                Json(ApiResponse::PipelineMemberAttempt(attempt)),
-            )
-        }
+        Ok(attempt) => (
+            StatusCode::ACCEPTED,
+            Json(ApiResponse::PipelineMemberAttempt(attempt)),
+        ),
         Err(err) => (
             StatusCode::CONFLICT,
             Json(ApiResponse::ApiError(
                 runinator_ws_core::models::ApiError::new(err.to_string()),
             )),
         ),
-    }
-}
-
-async fn pipeline_org<
-    T: AuthorizationStore + DefinitionStore + RuntimeStore + ScheduleStore + WorkflowVmStore,
->(
-    db: &T,
-    pipeline_id: Uuid,
-    fallback: Option<Uuid>,
-) -> Option<Uuid> {
-    match repository::fetch_pipeline(db, pipeline_id).await {
-        Ok(Some(pipeline)) => pipeline.org_id.or(fallback),
-        _ => fallback,
     }
 }
 

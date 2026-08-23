@@ -12,6 +12,10 @@ use axum::{Extension, Router, extract::DefaultBodyLimit, middleware::from_fn_wit
 use runinator_blob::BlobStore;
 use runinator_broker::Broker;
 use runinator_database::interfaces::DatabaseImpl;
+use runinator_engine::services::{
+    AutomationOperations, FunctionPackages, PipelineOperations, RunOperations,
+    SchedulingOperations, WorkflowAuthoring,
+};
 use runinator_provisioner::ProvisionerRegistry;
 use tower_http::catch_panic::CatchPanicLayer;
 use tower_http::cors::{Any, CorsLayer};
@@ -42,6 +46,26 @@ pub fn build_router<T: DatabaseImpl>(
 ) -> Router {
     let auth_config_arc = Arc::new(auth);
     let rate_limiter = Arc::new(RateLimiter::new(rate_limit));
+    let run_operations = Arc::new(RunOperations::new(
+        pool.clone(),
+        broker.clone(),
+        events.publisher(),
+        events.embedded_engine_signals(),
+    ));
+    let workflow_authoring = Arc::new(WorkflowAuthoring::new(pool.clone(), events.publisher()));
+    let pipeline_operations = Arc::new(PipelineOperations::new(
+        pool.clone(),
+        broker.clone(),
+        events.publisher(),
+        events.embedded_engine_signals(),
+    ));
+    let function_packages = Arc::new(FunctionPackages::new(pool.clone(), blobs.clone()));
+    let automation_operations = Arc::new(AutomationOperations::new(pool.clone()));
+    let scheduling_operations = Arc::new(SchedulingOperations::new(
+        pool.clone(),
+        events.publisher(),
+        events.embedded_engine_signals(),
+    ));
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
@@ -81,6 +105,12 @@ pub fn build_router<T: DatabaseImpl>(
         .merge(orgs::routes(pool.clone()))
         .merge(billing::routes(pool.clone()))
         .layer(Extension(events))
+        .layer(Extension(scheduling_operations))
+        .layer(Extension(automation_operations))
+        .layer(Extension(function_packages))
+        .layer(Extension(pipeline_operations))
+        .layer(Extension(run_operations))
+        .layer(Extension(workflow_authoring))
         .layer(Extension(broker))
         .layer(Extension(blobs))
         .layer(Extension(provisioner))

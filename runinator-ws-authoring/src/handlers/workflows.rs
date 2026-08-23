@@ -21,8 +21,7 @@ use runinator_store::{
 };
 use serde::Deserialize;
 
-use runinator_engine::repository;
-use runinator_ws_core::events::{EventSender, emit_workflows_changed};
+use runinator_engine::services::WorkflowAuthoring;
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::openapi::docs::{
     EndpointDoc, Example, WORKFLOW_FILTERS, WORKFLOW_IMPORT_HEADERS, endpoint, json_body,
@@ -41,7 +40,7 @@ pub async fn upsert_workflow<
         + WorkflowVmStore,
 >(
     Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
+    Extension(authoring): Extension<Arc<WorkflowAuthoring<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Json(mut workflow): Json<WorkflowDefinition>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -55,7 +54,7 @@ pub async fn upsert_workflow<
             return reply;
         }
         // preserve the stored org on update so a client cannot re-tenant a workflow by editing it.
-        workflow.org_id = match repository::fetch_workflow(db.as_ref(), id).await {
+        workflow.org_id = match authoring.fetch(id).await {
             Ok(Some(existing)) => existing.org_id,
             Ok(None) => workflow.org_id,
             Err(err) => return api_error(err.to_string()),
@@ -64,14 +63,13 @@ pub async fn upsert_workflow<
         // a new workflow is owned by the creator's active org (None = platform-global).
         workflow.org_id = ctx.org_id;
     }
-    match repository::upsert_workflow(db.as_ref(), &workflow, &ctx.revision_author()).await {
+    match authoring.save(&workflow, &ctx.revision_author()).await {
         Ok(workflow) => {
             if !is_update && let Some(id) = workflow.id {
                 if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx).grant_owner(id).await {
                     return reply;
                 }
             }
-            emit_workflows_changed(&events, workflow.org_id);
             (StatusCode::OK, Json(ApiResponse::Workflow(workflow)))
         }
         Err(err) => api_error(err.to_string()),
@@ -87,10 +85,10 @@ pub async fn validate_workflow<
         + ScheduleStore
         + WorkflowVmStore,
 >(
-    Extension(db): Extension<Arc<T>>,
+    Extension(authoring): Extension<Arc<WorkflowAuthoring<T>>>,
     Json(workflow): Json<WorkflowDefinition>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    match repository::validate_workflow_definition_with_catalog(db.as_ref(), &workflow).await {
+    match authoring.validate(&workflow).await {
         Ok(workflow) => (StatusCode::OK, Json(ApiResponse::Workflow(workflow))),
         Err(err) => validation_error(err.as_ref()),
     }
@@ -109,6 +107,7 @@ pub async fn simulate_workflow<
         + WorkflowVmStore,
 >(
     Extension(db): Extension<Arc<T>>,
+    Extension(authoring): Extension<Arc<WorkflowAuthoring<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<WorkflowSimulateRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -120,7 +119,7 @@ pub async fn simulate_workflow<
         return reply;
     }
     if let Some(run_id) = request.replay_run {
-        match repository::fetch_workflow_run(db.as_ref(), run_id).await {
+        match authoring.workflow_run(run_id).await {
             Ok(Some(run)) => {
                 if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
                     .require_workflow(run.workflow_id, Permission::Run)
@@ -133,13 +132,9 @@ pub async fn simulate_workflow<
             Err(err) => return api_error(err.to_string()),
         }
     }
-    match runinator_engine::simulate::simulate_run(
-        db.as_ref(),
-        &request.workflow,
-        request.inputs,
-        request.replay_run,
-    )
-    .await
+    match authoring
+        .simulate(&request.workflow, request.inputs, request.replay_run)
+        .await
     {
         Ok(run) => match Value::encode(&run) {
             Ok(value) => (StatusCode::OK, Json(ApiResponse::JsonValue(value))),
@@ -171,11 +166,12 @@ pub async fn get_workflows<
         + WorkflowVmStore,
 >(
     Extension(db): Extension<Arc<T>>,
+    Extension(authoring): Extension<Arc<WorkflowAuthoring<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Query(query): Query<WorkflowQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Some(name) = query.name {
-        return match repository::fetch_workflow_by_name(db.as_ref(), name).await {
+        return match authoring.fetch_by_name(name).await {
             Ok(Some(workflow)) => match workflow.id {
                 Some(id)
                     if AuthzChecker::new(db.as_ref(), &ctx)
@@ -192,7 +188,7 @@ pub async fn get_workflows<
         };
     }
 
-    match repository::fetch_workflows(db.as_ref()).await {
+    match authoring.list().await {
         Ok(workflows) => {
             let visible = AuthzChecker::new(db.as_ref(), &ctx)
                 .visible_workflow_ids()
@@ -242,8 +238,7 @@ pub async fn import_workflow_bundle<
         + ScheduleStore
         + WorkflowVmStore,
 >(
-    Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
+    Extension(authoring): Extension<Arc<WorkflowAuthoring<T>>>,
     Extension(ctx): Extension<AuthContext>,
     headers: HeaderMap,
     Json(bundle): Json<WorkflowBundle>,
@@ -256,7 +251,7 @@ pub async fn import_workflow_bundle<
     if !json_workflow_import_risk_acknowledged(&headers) {
         return json_workflow_import_risk_required();
     }
-    import_acknowledged_workflow_bundle(db, events, ctx.org_id, bundle).await
+    import_acknowledged_workflow_bundle(authoring, ctx.org_id, bundle).await
 }
 
 pub async fn import_acknowledged_workflow_bundle<
@@ -268,8 +263,7 @@ pub async fn import_acknowledged_workflow_bundle<
         + ScheduleStore
         + WorkflowVmStore,
 >(
-    db: Arc<T>,
-    events: EventSender,
+    authoring: Arc<WorkflowAuthoring<T>>,
     org_id: Option<Uuid>,
     bundle: WorkflowBundle,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -278,15 +272,9 @@ pub async fn import_acknowledged_workflow_bundle<
         bundle.workflows.len(),
         bundle.triggers.len()
     );
-    match repository::import_workflow_bundle(db.as_ref(), bundle).await {
+    match authoring.import(bundle, false, org_id).await {
         Ok(bundle) => {
             log::info!("Imported workflow bundle successfully");
-            let org_id = bundle
-                .workflows
-                .first()
-                .and_then(|workflow| workflow.org_id)
-                .or(org_id);
-            emit_workflows_changed(&events, org_id);
             (StatusCode::OK, Json(ApiResponse::WorkflowBundle(bundle)))
         }
         Err(err) => {
@@ -323,9 +311,10 @@ pub async fn export_workflow_bundle<
         + WorkflowVmStore,
 >(
     Extension(db): Extension<Arc<T>>,
+    Extension(authoring): Extension<Arc<WorkflowAuthoring<T>>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    match repository::export_workflow_bundle(db.as_ref(), None).await {
+    match authoring.export(None).await {
         Ok(mut bundle) => {
             if let Some(ids) = match AuthzChecker::new(db.as_ref(), &ctx)
                 .visible_workflow_ids()
@@ -357,6 +346,7 @@ pub async fn export_single_workflow_bundle<
         + WorkflowVmStore,
 >(
     Extension(db): Extension<Arc<T>>,
+    Extension(authoring): Extension<Arc<WorkflowAuthoring<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(workflow_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -366,7 +356,7 @@ pub async fn export_single_workflow_bundle<
     {
         return reply;
     }
-    match repository::export_workflow_bundle(db.as_ref(), Some(workflow_id)).await {
+    match authoring.export(Some(workflow_id)).await {
         Ok(bundle) if bundle.workflows.is_empty() => {
             not_found(format!("Workflow {workflow_id} not found"))
         }
@@ -385,6 +375,7 @@ pub async fn get_workflow<
         + WorkflowVmStore,
 >(
     Extension(db): Extension<Arc<T>>,
+    Extension(authoring): Extension<Arc<WorkflowAuthoring<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(workflow_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -394,7 +385,7 @@ pub async fn get_workflow<
     {
         return reply;
     }
-    match repository::fetch_workflow(db.as_ref(), workflow_id).await {
+    match authoring.fetch(workflow_id).await {
         // a cross-tenant workflow is not-found even if a stray grant would otherwise reveal it.
         Ok(Some(workflow)) => (StatusCode::OK, Json(ApiResponse::Workflow(workflow))),
         Ok(None) => not_found(format!("Workflow {workflow_id} not found")),
@@ -433,6 +424,7 @@ pub async fn get_workflow_revisions<
         + WorkflowVmStore,
 >(
     Extension(db): Extension<Arc<T>>,
+    Extension(authoring): Extension<Arc<WorkflowAuthoring<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(workflow_id): Path<Uuid>,
     Query(query): Query<RevisionListQuery>,
@@ -447,7 +439,7 @@ pub async fn get_workflow_revisions<
         .limit
         .unwrap_or(DEFAULT_REVISION_LIMIT)
         .clamp(1, MAX_REVISION_LIMIT);
-    match repository::fetch_workflow_revisions(db.as_ref(), workflow_id, limit).await {
+    match authoring.revisions(workflow_id, limit).await {
         Ok(revisions) => (
             StatusCode::OK,
             Json(ApiResponse::WorkflowRevisionList(revisions)),
@@ -480,6 +472,7 @@ pub async fn get_workflow_revision<
         + WorkflowVmStore,
 >(
     Extension(db): Extension<Arc<T>>,
+    Extension(authoring): Extension<Arc<WorkflowAuthoring<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path((workflow_id, revision)): Path<(Uuid, i64)>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -489,7 +482,7 @@ pub async fn get_workflow_revision<
     {
         return reply;
     }
-    match repository::fetch_workflow_revision(db.as_ref(), workflow_id, revision).await {
+    match authoring.revision(workflow_id, revision).await {
         Ok(Some(found)) => (StatusCode::OK, Json(ApiResponse::WorkflowRevision(found))),
         Ok(None) => not_found(format!("Workflow {workflow_id} has no revision {revision}")),
         Err(err) => api_error(err.to_string()),
@@ -523,7 +516,7 @@ pub async fn restore_workflow_revision<
         + WorkflowVmStore,
 >(
     Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
+    Extension(authoring): Extension<Arc<WorkflowAuthoring<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path((workflow_id, revision)): Path<(Uuid, i64)>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -533,18 +526,11 @@ pub async fn restore_workflow_revision<
     {
         return reply;
     }
-    match repository::restore_workflow_revision(
-        db.as_ref(),
-        workflow_id,
-        revision,
-        &ctx.revision_author(),
-    )
-    .await
+    match authoring
+        .restore_revision(workflow_id, revision, &ctx.revision_author())
+        .await
     {
-        Ok(workflow) => {
-            emit_workflows_changed(&events, workflow.org_id);
-            (StatusCode::OK, Json(ApiResponse::Workflow(workflow)))
-        }
+        Ok(workflow) => (StatusCode::OK, Json(ApiResponse::Workflow(workflow))),
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -559,7 +545,7 @@ pub async fn duplicate_workflow<
         + WorkflowVmStore,
 >(
     Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
+    Extension(authoring): Extension<Arc<WorkflowAuthoring<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(workflow_id): Path<Uuid>,
     Query(request): Query<WorkflowDuplicateRequest>,
@@ -570,13 +556,14 @@ pub async fn duplicate_workflow<
     {
         return reply;
     }
-    match repository::duplicate_workflow(
-        db.as_ref(),
-        workflow_id,
-        request.bump,
-        &ctx.revision_author(),
-    )
-    .await
+    match authoring
+        .duplicate(
+            workflow_id,
+            request.bump,
+            &ctx.revision_author(),
+            ctx.org_id,
+        )
+        .await
     {
         Ok(workflow) => {
             if let Some(id) = workflow.id {
@@ -584,7 +571,6 @@ pub async fn duplicate_workflow<
                     return reply;
                 }
             }
-            emit_workflows_changed(&events, workflow.org_id.or(ctx.org_id));
             (StatusCode::OK, Json(ApiResponse::Workflow(workflow)))
         }
         Err(err) => api_error(err.to_string()),
@@ -601,6 +587,7 @@ pub async fn delete_workflow<
         + WorkflowVmStore,
 >(
     Extension(db): Extension<Arc<T>>,
+    Extension(authoring): Extension<Arc<WorkflowAuthoring<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(workflow_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -610,7 +597,7 @@ pub async fn delete_workflow<
     {
         return reply;
     }
-    match repository::delete_workflow(db.as_ref(), workflow_id).await {
+    match authoring.delete(workflow_id).await {
         Ok(resp) => (StatusCode::OK, Json(ApiResponse::TaskResponse(resp))),
         Err(err) => api_error(err.to_string()),
     }

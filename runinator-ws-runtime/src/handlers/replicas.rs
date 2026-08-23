@@ -24,7 +24,7 @@ use runinator_ws_core::responses::{api_error, not_found};
 use runinator_ws_middleware::authz::AuthContextExt;
 
 pub async fn register_replica<T: ReplicaStore>(
-    Extension(db): Extension<Arc<T>>,
+    Extension(registry): Extension<Arc<ReplicaRegistry<T>>>,
     Extension(ctx): Extension<AuthContext>,
     headers: HeaderMap,
     ConnectInfo(connect): ConnectInfo<SocketAddr>,
@@ -36,7 +36,6 @@ pub async fn register_replica<T: ReplicaStore>(
     ]) {
         return reply;
     }
-    let registry = ReplicaRegistry::new(db);
     match registry
         .agent_owns_runtime_registration(&ctx, &request)
         .await
@@ -55,7 +54,7 @@ pub async fn register_replica<T: ReplicaStore>(
 }
 
 pub async fn heartbeat_replica<T: ReplicaStore>(
-    Extension(db): Extension<Arc<T>>,
+    Extension(registry): Extension<Arc<ReplicaRegistry<T>>>,
     Extension(ctx): Extension<AuthContext>,
     headers: HeaderMap,
     ConnectInfo(connect): ConnectInfo<SocketAddr>,
@@ -68,7 +67,6 @@ pub async fn heartbeat_replica<T: ReplicaStore>(
     ]) {
         return reply;
     }
-    let registry = ReplicaRegistry::new(db);
     if let Some(reply) = reject_unowned_agent_replica(&registry, &ctx, replica_id).await {
         return reply;
     }
@@ -85,7 +83,7 @@ pub async fn heartbeat_replica<T: ReplicaStore>(
 }
 
 pub async fn mark_replica_offline<T: ReplicaStore>(
-    Extension(db): Extension<Arc<T>>,
+    Extension(registry): Extension<Arc<ReplicaRegistry<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(replica_id): Path<Uuid>,
     Json(request): Json<ReplicaOfflineRequest>,
@@ -96,7 +94,6 @@ pub async fn mark_replica_offline<T: ReplicaStore>(
     ]) {
         return reply;
     }
-    let registry = ReplicaRegistry::new(db);
     if let Some(reply) = reject_unowned_agent_replica(&registry, &ctx, replica_id).await {
         return reply;
     }
@@ -117,14 +114,11 @@ pub async fn mark_replica_offline<T: ReplicaStore>(
     responses((status = 200, description = "service replicas", body = serde_json::Value)),
 )]
 pub async fn get_replicas<T: ReplicaStore>(
-    Extension(db): Extension<Arc<T>>,
+    Extension(registry): Extension<Arc<ReplicaRegistry<T>>>,
     Extension(_ctx): Extension<AuthContext>,
     Query(query): Query<ReplicaQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    match ReplicaRegistry::new(db)
-        .list(query.replica_type, query.status)
-        .await
-    {
+    match registry.list(query.replica_type, query.status).await {
         Ok(replicas) => (StatusCode::OK, Json(ApiResponse::ReplicaList(replicas))),
         Err(err) => api_error(err.to_string()),
     }
@@ -132,22 +126,19 @@ pub async fn get_replicas<T: ReplicaStore>(
 
 /// fetch a replica's recent telemetry samples for charting.
 pub async fn get_replica_samples<T: ReplicaStore>(
-    Extension(db): Extension<Arc<T>>,
+    Extension(registry): Extension<Arc<ReplicaRegistry<T>>>,
     Extension(_ctx): Extension<AuthContext>,
     Path(replica_id): Path<Uuid>,
     Query(query): Query<ReplicaSampleQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    match ReplicaRegistry::new(db)
-        .samples(replica_id, query.since_seconds)
-        .await
-    {
+    match registry.samples(replica_id, query.since_seconds).await {
         Ok(series) => (StatusCode::OK, Json(ApiResponse::ReplicaSamples(series))),
         Err(err) => api_error(err.to_string()),
     }
 }
 
 pub async fn upsert_replica_provider<T: ReplicaStore>(
-    Extension(db): Extension<Arc<T>>,
+    Extension(registry): Extension<Arc<ReplicaRegistry<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(replica_id): Path<Uuid>,
     Json(request): Json<ReplicaProviderRegistrationRequest>,
@@ -158,7 +149,6 @@ pub async fn upsert_replica_provider<T: ReplicaStore>(
     ]) {
         return reply;
     }
-    let registry = ReplicaRegistry::new(db);
     if let Some(reply) = reject_unowned_agent_replica(&registry, &ctx, replica_id).await {
         return reply;
     }
@@ -172,11 +162,11 @@ pub async fn upsert_replica_provider<T: ReplicaStore>(
 }
 
 pub async fn get_replica_providers<T: ReplicaStore>(
-    Extension(db): Extension<Arc<T>>,
+    Extension(registry): Extension<Arc<ReplicaRegistry<T>>>,
     Extension(_ctx): Extension<AuthContext>,
     Path(replica_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    match ReplicaRegistry::new(db).providers(replica_id).await {
+    match registry.providers(replica_id).await {
         Ok(registrations) => (
             StatusCode::OK,
             Json(ApiResponse::ReplicaProviderRegistrationList(registrations)),
@@ -212,32 +202,33 @@ async fn reject_unowned_agent_replica<T: ReplicaStore>(
 pub fn routes<T: ReplicaStore>(pool: std::sync::Arc<T>) -> axum::Router {
     use axum::Extension;
     use axum::routing::{get, post};
+    let registry = Arc::new(ReplicaRegistry::new(pool));
     axum::Router::new()
         .route(
             runinator_models::api_routes::API_REPLICAS,
-            get(get_replicas::<T>).layer(Extension(pool.clone())),
+            get(get_replicas::<T>).layer(Extension(registry.clone())),
         )
         .route(
             "/replicas/register",
-            post(register_replica::<T>).layer(Extension(pool.clone())),
+            post(register_replica::<T>).layer(Extension(registry.clone())),
         )
         .route(
             "/replicas/{replica_id}/heartbeat",
-            post(heartbeat_replica::<T>).layer(Extension(pool.clone())),
+            post(heartbeat_replica::<T>).layer(Extension(registry.clone())),
         )
         .route(
             "/replicas/{replica_id}/offline",
-            post(mark_replica_offline::<T>).layer(Extension(pool.clone())),
+            post(mark_replica_offline::<T>).layer(Extension(registry.clone())),
         )
         .route(
             "/replicas/{replica_id}/providers",
             get(get_replica_providers::<T>)
                 .post(upsert_replica_provider::<T>)
-                .layer(Extension(pool.clone())),
+                .layer(Extension(registry.clone())),
         )
         .route(
             "/replicas/{replica_id}/samples",
-            get(get_replica_samples::<T>).layer(Extension(pool.clone())),
+            get(get_replica_samples::<T>).layer(Extension(registry)),
         )
 }
 

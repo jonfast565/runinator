@@ -18,7 +18,6 @@ use axum::{
     http::{StatusCode, header},
     response::{IntoResponse, Response},
 };
-use runinator_blob_core::BlobStore;
 use runinator_models::{
     auth::{AuthContext, Permission, ResourceType},
     functions::{
@@ -34,7 +33,7 @@ use runinator_store::{
 use serde::Deserialize;
 use uuid::Uuid;
 
-use runinator_engine::repository;
+use runinator_engine::services::FunctionPackages;
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::openapi::docs::{EndpointDoc, Example, endpoint, json_body};
 use runinator_ws_core::responses::{api_error, bad_request, not_found};
@@ -51,6 +50,7 @@ pub async fn get_functions<
     T: AuthorizationStore + FunctionStore + DefinitionStore + RuntimeStore,
 >(
     Extension(db): Extension<Arc<T>>,
+    Extension(service): Extension<Arc<FunctionPackages<T>>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> (StatusCode, Json<ApiResponse>) {
     let visible = match AuthzChecker::new(db.as_ref(), &ctx)
@@ -60,7 +60,7 @@ pub async fn get_functions<
         Ok(visible) => visible,
         Err(reply) => return reply,
     };
-    match repository::functions::fetch_packages(db.as_ref()).await {
+    match service.list().await {
         Ok(packages) => {
             let packages: Vec<_> = packages
                 .into_iter()
@@ -87,9 +87,10 @@ pub async fn get_function_catalog<
     T: AuthorizationStore + FunctionStore + DefinitionStore + RuntimeStore,
 >(
     Extension(db): Extension<Arc<T>>,
+    Extension(service): Extension<Arc<FunctionPackages<T>>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    let packages = match repository::functions::fetch_packages(db.as_ref()).await {
+    let packages = match service.list().await {
         Ok(packages) => packages,
         Err(err) => return api_error(err.to_string()),
     };
@@ -104,7 +105,7 @@ pub async fn get_function_catalog<
         Ok(Some(ids)) => ids.into_iter().collect(),
         Err(reply) => return reply,
     };
-    match repository::functions::fetch_catalog(db.as_ref()).await {
+    match service.catalog().await {
         Ok(entries) => {
             let entries: Vec<_> = entries
                 .into_iter()
@@ -121,6 +122,7 @@ pub async fn publish_function<
     T: AuthorizationStore + FunctionStore + DefinitionStore + RuntimeStore,
 >(
     Extension(db): Extension<Arc<T>>,
+    Extension(service): Extension<Arc<FunctionPackages<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Json(mut request): Json<NewFunctionVersion>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -130,8 +132,8 @@ pub async fn publish_function<
     // the owning org is the caller's, never the request's: a manifest that named an org would be
     // publishing into a tenant the publisher may not belong to.
     request.package.org_id = ctx.org_id;
-    let existing = match db
-        .fetch_function_package(
+    let existing = match service
+        .fetch_package(
             ctx.org_id,
             request.package.namespace.as_deref(),
             &request.package.name,
@@ -157,7 +159,7 @@ pub async fn publish_function<
     if request.exports.is_empty() {
         return bad_request("a version must declare at least one export");
     }
-    match repository::functions::publish_version(db.as_ref(), &request).await {
+    match service.publish(&request).await {
         Ok(version) => {
             if existing.is_none()
                 && let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
@@ -177,17 +179,14 @@ pub async fn get_function<
     T: AuthorizationStore + FunctionStore + DefinitionStore + RuntimeStore,
 >(
     Extension(db): Extension<Arc<T>>,
+    Extension(service): Extension<Arc<FunctionPackages<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(package): Path<String>,
 ) -> (StatusCode, Json<ApiResponse>) {
     let (namespace, name) = split_qualified(&package);
-    match repository::functions::fetch_package_detail(
-        db.as_ref(),
-        ctx.org_id,
-        namespace.as_deref(),
-        &name,
-    )
-    .await
+    match service
+        .fetch_package_detail(ctx.org_id, namespace.as_deref(), &name)
+        .await
     {
         // an archived package reads as absent, the same way the list endpoint filters it out.
         // deleting is an archive rather than a row removal so a restore can bring it back, but that
@@ -219,10 +218,11 @@ pub async fn delete_function<
     T: AuthorizationStore + FunctionStore + DefinitionStore + RuntimeStore,
 >(
     Extension(db): Extension<Arc<T>>,
+    Extension(service): Extension<Arc<FunctionPackages<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(package): Path<String>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    let found = match resolve_package(db.as_ref(), &ctx, &package).await {
+    let found = match resolve_package(&service, &ctx, &package).await {
         Ok(Some(found)) => found,
         Ok(None) => return not_found(format!("function package '{package}' not found")),
         Err(err) => return api_error(err.to_string()),
@@ -233,7 +233,7 @@ pub async fn delete_function<
     {
         return reply;
     }
-    match repository::functions::delete_package(db.as_ref(), found.id).await {
+    match service.archive(found.id).await {
         Ok(true) => (
             StatusCode::OK,
             Json(ApiResponse::JsonValue(runinator_models::json!({
@@ -251,12 +251,13 @@ pub async fn restore_function<
     T: AuthorizationStore + FunctionStore + DefinitionStore + RuntimeStore,
 >(
     Extension(db): Extension<Arc<T>>,
+    Extension(service): Extension<Arc<FunctionPackages<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(package): Path<String>,
 ) -> (StatusCode, Json<ApiResponse>) {
     let (namespace, name) = split_qualified(&package);
-    let found = match db
-        .fetch_function_package(ctx.org_id, namespace.as_deref(), &name)
+    let found = match service
+        .fetch_package(ctx.org_id, namespace.as_deref(), &name)
         .await
     {
         Ok(Some(found)) if found.archived_at.is_some() => found,
@@ -269,7 +270,7 @@ pub async fn restore_function<
     {
         return reply;
     }
-    match repository::functions::restore_package(db.as_ref(), found.id).await {
+    match service.restore(found.id).await {
         Ok(true) => (
             StatusCode::OK,
             Json(ApiResponse::JsonValue(runinator_models::json!({
@@ -299,11 +300,12 @@ pub async fn set_function_alias<
     T: AuthorizationStore + FunctionStore + DefinitionStore + RuntimeStore,
 >(
     Extension(db): Extension<Arc<T>>,
+    Extension(service): Extension<Arc<FunctionPackages<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(package): Path<String>,
     Json(request): Json<SetFunctionAliasRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    let found = match resolve_package(db.as_ref(), &ctx, &package).await {
+    let found = match resolve_package(&service, &ctx, &package).await {
         Ok(Some(found)) => found,
         Ok(None) => return not_found(format!("function package '{package}' not found")),
         Err(err) => return api_error(err.to_string()),
@@ -322,13 +324,13 @@ pub async fn set_function_alias<
         (None, Some(alias)) => FunctionVersionRef::Alias(alias.clone()),
         // no target at all means the newest published version, which is what a release promotion
         // reaches for and saves the caller a round trip to look the number up.
-        (None, None) => match newest_version(db.as_ref(), found.id).await {
+        (None, None) => match service.newest_version(found.id).await {
             Ok(Some(version)) => FunctionVersionRef::Exact(version),
             Ok(None) => return bad_request("package has no published versions"),
             Err(err) => return api_error(err.to_string()),
         },
     };
-    match repository::functions::set_alias(db.as_ref(), found.id, &request.alias, &target).await {
+    match service.set_alias(found.id, &request.alias, &target).await {
         Ok(alias) => (StatusCode::OK, Json(ApiResponse::FunctionAlias(alias))),
         Err(err) => api_error(err.to_string()),
     }
@@ -339,10 +341,11 @@ pub async fn delete_function_alias<
     T: AuthorizationStore + FunctionStore + DefinitionStore + RuntimeStore,
 >(
     Extension(db): Extension<Arc<T>>,
+    Extension(service): Extension<Arc<FunctionPackages<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path((package, alias)): Path<(String, String)>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    let found = match resolve_package(db.as_ref(), &ctx, &package).await {
+    let found = match resolve_package(&service, &ctx, &package).await {
         Ok(Some(found)) => found,
         Ok(None) => return not_found(format!("function package '{package}' not found")),
         Err(err) => return api_error(err.to_string()),
@@ -353,7 +356,7 @@ pub async fn delete_function_alias<
     {
         return reply;
     }
-    match repository::functions::delete_alias(db.as_ref(), found.id, &alias).await {
+    match service.delete_alias(found.id, &alias).await {
         Ok(true) => (
             StatusCode::OK,
             Json(ApiResponse::JsonValue(runinator_models::json!({
@@ -374,6 +377,7 @@ pub async fn resolve_function_export<
     T: AuthorizationStore + FunctionStore + DefinitionStore + RuntimeStore,
 >(
     Extension(db): Extension<Arc<T>>,
+    Extension(service): Extension<Arc<FunctionPackages<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(export_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -383,10 +387,10 @@ pub async fn resolve_function_export<
     ]) {
         return reply;
     }
-    if !function_export_visible(db.as_ref(), &ctx, export_id).await {
+    if !function_export_visible(db.as_ref(), &service, &ctx, export_id).await {
         return not_found(format!("function export {export_id} not found"));
     }
-    match repository::functions::resolve_invocation_target(db.as_ref(), export_id).await {
+    match service.resolve_invocation_target(export_id).await {
         Ok(Some(target)) => (
             StatusCode::OK,
             Json(ApiResponse::FunctionInvocationTarget(Box::new(target))),
@@ -400,7 +404,7 @@ pub async fn resolve_function_export<
 pub async fn get_function_artifact<
     T: AuthorizationStore + FunctionStore + DefinitionStore + RuntimeStore,
 >(
-    Extension(db): Extension<Arc<T>>,
+    Extension(service): Extension<Arc<FunctionPackages<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(digest): Path<String>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -410,7 +414,7 @@ pub async fn get_function_artifact<
     if !is_valid_digest(&digest) {
         return bad_request(format!("'{digest}' is not a sha256 artifact digest"));
     }
-    match repository::functions::fetch_artifact(db.as_ref(), &digest).await {
+    match service.fetch_artifact(&digest).await {
         Ok(Some(artifact)) => (
             StatusCode::OK,
             Json(ApiResponse::FunctionArtifact(artifact)),
@@ -424,8 +428,8 @@ pub async fn get_function_artifact<
 pub async fn upload_function_artifact<
     T: AuthorizationStore + FunctionStore + DefinitionStore + RuntimeStore,
 >(
-    Extension(db): Extension<Arc<T>>,
-    Extension(blobs): Extension<Arc<dyn BlobStore>>,
+    Extension(_db): Extension<Arc<T>>,
+    Extension(service): Extension<Arc<FunctionPackages<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(digest): Path<String>,
     body: axum::body::Bytes,
@@ -436,9 +440,7 @@ pub async fn upload_function_artifact<
     if !is_valid_digest(&digest) {
         return bad_request(format!("'{digest}' is not a sha256 artifact digest"));
     }
-    match repository::functions::put_artifact_if_absent(db.as_ref(), &blobs, &digest, body.to_vec())
-        .await
-    {
+    match service.put_artifact_if_absent(&digest, body.to_vec()).await {
         Ok(artifact) => (
             StatusCode::OK,
             Json(ApiResponse::FunctionArtifact(artifact)),
@@ -452,7 +454,7 @@ pub async fn download_function_artifact<
     T: AuthorizationStore + FunctionStore + DefinitionStore + RuntimeStore,
 >(
     Extension(db): Extension<Arc<T>>,
-    Extension(blobs): Extension<Arc<dyn BlobStore>>,
+    Extension(service): Extension<Arc<FunctionPackages<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(digest): Path<String>,
 ) -> Response {
@@ -469,14 +471,13 @@ pub async fn download_function_artifact<
         )
             .into_response();
     }
-    if !function_artifact_visible(db.as_ref(), &ctx, &digest).await {
+    if !function_artifact_visible(db.as_ref(), &service, &ctx, &digest).await {
         return (StatusCode::NOT_FOUND, "artifact not found").into_response();
     }
-    let content =
-        match repository::functions::open_artifact(db.as_ref(), &blobs, &digest, None).await {
-            Ok(content) => content,
-            Err(err) => return (StatusCode::NOT_FOUND, err.to_string()).into_response(),
-        };
+    let content = match service.open_artifact(&digest).await {
+        Ok(content) => content,
+        Err(err) => return (StatusCode::NOT_FOUND, err.to_string()).into_response(),
+    };
     let length = content.size_bytes;
     let body = Body::from_stream(tokio_util::io::ReaderStream::new(content.body));
     Response::builder()
@@ -497,10 +498,11 @@ async fn function_export_visible<
     T: AuthorizationStore + FunctionStore + DefinitionStore + RuntimeStore,
 >(
     db: &T,
+    service: &FunctionPackages<T>,
     ctx: &AuthContext,
     export_id: Uuid,
 ) -> bool {
-    let Ok(Some(package)) = repository::functions::fetch_export_package(db, export_id).await else {
+    let Ok(Some(package)) = service.export_package(export_id).await else {
         return false;
     };
     AuthzChecker::new(db, ctx)
@@ -513,10 +515,11 @@ async fn function_artifact_visible<
     T: AuthorizationStore + FunctionStore + DefinitionStore + RuntimeStore,
 >(
     db: &T,
+    service: &FunctionPackages<T>,
     ctx: &AuthContext,
     digest: &str,
 ) -> bool {
-    let Ok(packages) = repository::functions::packages_with_artifact(db, digest).await else {
+    let Ok(packages) = service.packages_with_artifact(digest).await else {
         return false;
     };
     for package in packages {
@@ -541,25 +544,15 @@ fn split_qualified(package: &str) -> (Option<String>, String) {
 }
 
 async fn resolve_package<T: AuthorizationStore + FunctionStore + DefinitionStore + RuntimeStore>(
-    db: &T,
+    service: &FunctionPackages<T>,
     ctx: &AuthContext,
     package: &str,
 ) -> Result<Option<FunctionPackage>, runinator_models::errors::SendableError> {
     let (namespace, name) = split_qualified(package);
-    let found =
-        repository::functions::fetch_package_detail(db, ctx.org_id, namespace.as_deref(), &name)
-            .await?;
-    Ok(found
-        .map(|detail| detail.package)
-        .filter(|package| package.archived_at.is_none()))
-}
-
-async fn newest_version<T: AuthorizationStore + FunctionStore + DefinitionStore + RuntimeStore>(
-    db: &T,
-    package_id: Uuid,
-) -> Result<Option<i64>, runinator_models::errors::SendableError> {
-    let detail = repository::functions::fetch_package_versions(db, package_id).await?;
-    Ok(detail.first().map(|version| version.version))
+    let found = service
+        .fetch_package(ctx.org_id, namespace.as_deref(), &name)
+        .await?;
+    Ok(found.filter(|package| package.archived_at.is_none()))
 }
 
 /// the `functions` endpoints.
