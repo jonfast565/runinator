@@ -18,8 +18,7 @@ use runinator_store::{
 use serde::{Deserialize, Serialize};
 
 use crate::handlers::providers::provider_metadata_from_items;
-use runinator_engine::repository;
-use runinator_ws_core::events::{EventSender, emit_workflows_changed};
+use runinator_engine::services::{CatalogOperations, WorkflowAuthoring};
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::openapi::docs::{EndpointDoc, Example, endpoint, json_body};
 use runinator_ws_core::responses::{api_error, bad_request};
@@ -100,13 +99,14 @@ pub async fn compile_rexrap<
         + NotificationStore
         + ScheduleStore,
 >(
-    Extension(db): Extension<Arc<T>>,
+    Extension(catalog): Extension<Arc<CatalogOperations<T>>>,
+    Extension(authoring): Extension<Arc<WorkflowAuthoring<T>>>,
     Json(request): Json<CompileRexRapRequest>,
 ) -> Result<Json<WorkflowDefinition>, (StatusCode, String)> {
-    let providers = fetch_provider_metadata(db.as_ref())
+    let providers = fetch_provider_metadata(&catalog)
         .await
         .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err))?;
-    let workflow_signatures = workflow_signatures_for_compile(db.as_ref(), &request.source)
+    let workflow_signatures = workflow_signatures_for_compile(&authoring, &request.source)
         .await
         .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err))?;
     let options = CompileOptions {
@@ -129,7 +129,8 @@ pub async fn import_rexrap<
         + ScheduleStore,
 >(
     Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
+    Extension(catalog): Extension<Arc<CatalogOperations<T>>>,
+    Extension(authoring): Extension<Arc<WorkflowAuthoring<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<ImportRexRapRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -142,12 +143,12 @@ pub async fn import_rexrap<
     {
         return reply;
     }
-    let providers = match fetch_provider_metadata(db.as_ref()).await {
+    let providers = match fetch_provider_metadata(&catalog).await {
         Ok(providers) => providers,
         Err(err) => return api_error(err),
     };
     let workflow_signatures =
-        match workflow_signatures_for_compile(db.as_ref(), &request.source).await {
+        match workflow_signatures_for_compile(&authoring, &request.source).await {
             Ok(signatures) => signatures,
             Err(err) => return api_error(err),
         };
@@ -171,7 +172,7 @@ pub async fn import_rexrap<
         workflows: vec![workflow],
         triggers: request.triggers,
     };
-    match repository::import_workflow_bundle(db.as_ref(), bundle).await {
+    match authoring.import(bundle, false, ctx.org_id).await {
         Ok(saved) => {
             if is_create {
                 for workflow in &saved.workflows {
@@ -184,12 +185,6 @@ pub async fn import_rexrap<
                     }
                 }
             }
-            let org_id = saved
-                .workflows
-                .first()
-                .and_then(|workflow| workflow.org_id)
-                .or(ctx.org_id);
-            emit_workflows_changed(&events, org_id);
             (StatusCode::OK, Json(ApiResponse::WorkflowBundle(saved)))
         }
         Err(err) => api_error(err.to_string()),
@@ -204,13 +199,12 @@ pub async fn analyze_rexrap<
         + NotificationStore
         + ScheduleStore,
 >(
-    Extension(db): Extension<Arc<T>>,
+    Extension(catalog): Extension<Arc<CatalogOperations<T>>>,
+    Extension(authoring): Extension<Arc<WorkflowAuthoring<T>>>,
     Json(request): Json<RexRapSourceRequest>,
 ) -> Json<Vec<DiagnosticSummary>> {
     let source = request.source;
-    let providers = fetch_provider_metadata(db.as_ref())
-        .await
-        .unwrap_or_default();
+    let providers = fetch_provider_metadata(&catalog).await.unwrap_or_default();
     if let Some(kind) = request.fragment {
         let options = CompileOptions {
             providers,
@@ -222,7 +216,7 @@ pub async fn analyze_rexrap<
         };
     }
     // a parse failure is itself a finding, so surface it as a diagnostic instead of an error.
-    let workflow_signatures = workflow_signatures_for_compile(db.as_ref(), &source)
+    let workflow_signatures = workflow_signatures_for_compile(&authoring, &source)
         .await
         .unwrap_or_default();
     let diagnostics = match runinator_rexrap::analyze_source_with_options(
@@ -263,9 +257,10 @@ async fn fetch_provider_metadata<
         + NotificationStore
         + ScheduleStore,
 >(
-    db: &T,
+    catalog: &CatalogOperations<T>,
 ) -> Result<Vec<runinator_models::providers::ProviderMetadata>, String> {
-    let items = repository::fetch_catalog_items(db, Some("provider_metadata".into()))
+    let items = catalog
+        .list(Some("provider_metadata".into()))
         .await
         .map_err(|err| err.to_string())?;
     provider_metadata_from_items(items).map_err(|err| err.to_string())
@@ -279,11 +274,11 @@ async fn workflow_signatures_for_compile<
         + NotificationStore
         + ScheduleStore,
 >(
-    db: &T,
+    authoring: &WorkflowAuthoring<T>,
     source: &str,
 ) -> Result<Vec<WorkflowSignature>, String> {
-    let mut signatures = db
-        .fetch_workflows()
+    let mut signatures = authoring
+        .list()
         .await
         .map_err(|err| err.to_string())?
         .iter()

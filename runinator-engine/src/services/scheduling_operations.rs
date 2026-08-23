@@ -4,12 +4,15 @@ use std::sync::Arc;
 
 use runinator_broker_core::{
     AppEvent, AppEventKind, EmbeddedEngineSignals, UiEventPublisher, emit, emit_workflow_run,
+    emit_workflows_changed,
 };
 use runinator_models::{
     errors::SendableError,
-    schedules::{BackfillRequest, BackfillResponse, FreezeWindow, NewFreezeWindow},
+    schedules::{
+        BackfillRequest, BackfillResponse, FreezeWindow, NewFreezeWindow, TriggerFiringBatch,
+    },
     web::TaskResponse,
-    workflows::WorkflowDefinition,
+    workflows::{WorkflowDefinition, WorkflowRun, WorkflowTrigger},
 };
 use runinator_store::{
     RuntimeStore,
@@ -79,6 +82,64 @@ impl<T: RuntimeStore + DefinitionStore + ScheduleStore> SchedulingOperations<T> 
         workflow_id: Uuid,
     ) -> Result<Option<WorkflowDefinition>, SendableError> {
         repository::fetch_workflow(self.store.as_ref(), workflow_id).await
+    }
+
+    pub async fn list_workflow_triggers(
+        &self,
+        workflow_id: Uuid,
+    ) -> Result<Vec<WorkflowTrigger>, SendableError> {
+        repository::fetch_workflow_triggers(self.store.as_ref(), workflow_id).await
+    }
+
+    pub async fn fetch_workflow_trigger(
+        &self,
+        trigger_id: Uuid,
+    ) -> Result<Option<WorkflowTrigger>, SendableError> {
+        repository::fetch_workflow_trigger(self.store.as_ref(), trigger_id).await
+    }
+
+    pub async fn due_workflow_triggers(&self) -> Result<Vec<WorkflowTrigger>, SendableError> {
+        repository::fetch_due_workflow_triggers(self.store.as_ref()).await
+    }
+
+    pub async fn claim_due_workflow_trigger_firings(
+        &self,
+        scheduler_id: String,
+        limit: i64,
+    ) -> Result<TriggerFiringBatch<WorkflowRun>, SendableError> {
+        repository::claim_due_workflow_trigger_firings(self.store.as_ref(), scheduler_id, limit)
+            .await
+    }
+
+    pub async fn save_workflow_trigger(
+        &self,
+        trigger: &WorkflowTrigger,
+        fallback_org_id: Option<Uuid>,
+    ) -> Result<WorkflowTrigger, SendableError> {
+        let saved = repository::upsert_workflow_trigger(self.store.as_ref(), trigger).await?;
+        let org_id = match self.workflow(saved.workflow_id).await {
+            Ok(Some(workflow)) => workflow.org_id.or(fallback_org_id),
+            _ => fallback_org_id,
+        };
+        emit_workflows_changed(&self.events, org_id);
+        Ok(saved)
+    }
+
+    pub async fn delete_workflow_trigger(
+        &self,
+        trigger_id: Uuid,
+        fallback_org_id: Option<Uuid>,
+    ) -> Result<TaskResponse, SendableError> {
+        let org_id = match self.fetch_workflow_trigger(trigger_id).await {
+            Ok(Some(trigger)) => match self.workflow(trigger.workflow_id).await {
+                Ok(Some(workflow)) => workflow.org_id.or(fallback_org_id),
+                _ => fallback_org_id,
+            },
+            _ => fallback_org_id,
+        };
+        let response = repository::delete_workflow_trigger(self.store.as_ref(), trigger_id).await?;
+        emit_workflows_changed(&self.events, org_id);
+        Ok(response)
     }
 
     pub async fn create_freeze_window(

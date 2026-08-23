@@ -14,8 +14,7 @@ use runinator_models::{
 use runinator_store::{RuntimeStore, roles::NotificationStore};
 use serde::Deserialize;
 
-use runinator_engine::repository;
-use runinator_ws_core::events::{AppEvent, AppEventKind, EventSender, emit};
+use runinator_engine::services::NotificationOperations;
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::openapi::docs::{EndpointDoc, Example, endpoint, json_body};
 use runinator_ws_core::responses::{api_error, not_found};
@@ -32,7 +31,7 @@ pub struct NotificationsListQuery {
 }
 
 pub async fn list_notifications<T: AuthorizationStore + RuntimeStore + NotificationStore>(
-    Extension(db): Extension<Arc<T>>,
+    Extension(service): Extension<Arc<NotificationOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Query(query): Query<NotificationsListQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -43,7 +42,7 @@ pub async fn list_notifications<T: AuthorizationStore + RuntimeStore + Notificat
     }
     let unread_only = query.unread.unwrap_or(false);
     let limit = query.limit.unwrap_or(200);
-    match repository::fetch_notifications(db.as_ref(), unread_only, limit).await {
+    match service.list(unread_only, limit).await {
         Ok(notifications) => (
             StatusCode::OK,
             Json(ApiResponse::NotificationList(notifications)),
@@ -53,37 +52,24 @@ pub async fn list_notifications<T: AuthorizationStore + RuntimeStore + Notificat
 }
 
 pub async fn create_notification<T: AuthorizationStore + RuntimeStore + NotificationStore>(
-    Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
+    Extension(service): Extension<Arc<NotificationOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Json(notification): Json<NewNotification>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_system_role(&[runinator_models::rbac::SystemRole::Engine]) {
         return reply;
     }
-    match repository::create_notification(db.as_ref(), &notification).await {
-        Ok(created) => {
-            emit(
-                &events,
-                AppEvent::new(
-                    created.org_id,
-                    AppEventKind::NotificationCreated {
-                        notification_id: created.notification.id,
-                    },
-                ),
-            );
-            (
-                StatusCode::CREATED,
-                Json(ApiResponse::Notification(created.notification)),
-            )
-        }
+    match service.create(&notification).await {
+        Ok(notification) => (
+            StatusCode::CREATED,
+            Json(ApiResponse::Notification(notification)),
+        ),
         Err(err) => api_error(err.to_string()),
     }
 }
 
 pub async fn mark_notification_read<T: AuthorizationStore + RuntimeStore + NotificationStore>(
-    Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
+    Extension(service): Extension<Arc<NotificationOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(notification_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -93,25 +79,18 @@ pub async fn mark_notification_read<T: AuthorizationStore + RuntimeStore + Notif
     ) {
         return reply;
     }
-    match repository::mark_notification_read(db.as_ref(), notification_id).await {
-        Ok(Some(notification)) => {
-            emit(
-                &events,
-                AppEvent::global(AppEventKind::NotificationsChanged),
-            );
-            (
-                StatusCode::OK,
-                Json(ApiResponse::Notification(notification)),
-            )
-        }
+    match service.mark_read(notification_id).await {
+        Ok(Some(notification)) => (
+            StatusCode::OK,
+            Json(ApiResponse::Notification(notification)),
+        ),
         Ok(None) => not_found(format!("Notification {notification_id} not found")),
         Err(err) => api_error(err.to_string()),
     }
 }
 
 pub async fn delete_notification<T: AuthorizationStore + RuntimeStore + NotificationStore>(
-    Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
+    Extension(service): Extension<Arc<NotificationOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(notification_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -121,20 +100,14 @@ pub async fn delete_notification<T: AuthorizationStore + RuntimeStore + Notifica
     ) {
         return reply;
     }
-    match repository::delete_notification(db.as_ref(), notification_id).await {
-        Ok(true) => {
-            emit(
-                &events,
-                AppEvent::global(AppEventKind::NotificationsChanged),
-            );
-            (
-                StatusCode::OK,
-                Json(ApiResponse::TaskResponse(TaskResponse {
-                    success: true,
-                    message: "Notification deleted".to_string(),
-                })),
-            )
-        }
+    match service.delete(notification_id).await {
+        Ok(true) => (
+            StatusCode::OK,
+            Json(ApiResponse::TaskResponse(TaskResponse {
+                success: true,
+                message: "Notification deleted".to_string(),
+            })),
+        ),
         Ok(false) => not_found(format!("Notification {notification_id} not found")),
         Err(err) => api_error(err.to_string()),
     }
@@ -151,6 +124,7 @@ pub async fn list_notification_policies<
     T: AuthorizationStore + RuntimeStore + NotificationStore,
 >(
     Extension(db): Extension<Arc<T>>,
+    Extension(service): Extension<Arc<NotificationOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Query(query): Query<NotificationPoliciesQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -167,7 +141,7 @@ pub async fn list_notification_policies<
     ) {
         return reply;
     }
-    match repository::fetch_notification_policies(db.as_ref(), query.workflow_id).await {
+    match service.list_policies(query.workflow_id).await {
         Ok(policies) => (
             StatusCode::OK,
             Json(ApiResponse::NotificationPolicyList(policies)),
@@ -180,6 +154,7 @@ pub async fn create_notification_policy<
     T: AuthorizationStore + RuntimeStore + NotificationStore,
 >(
     Extension(db): Extension<Arc<T>>,
+    Extension(service): Extension<Arc<NotificationOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Json(policy): Json<NewNotificationPolicy>,
 ) -> Reply {
@@ -188,7 +163,7 @@ pub async fn create_notification_policy<
     {
         return reply;
     }
-    match repository::create_notification_policy(db.as_ref(), &policy).await {
+    match service.create_policy(&policy).await {
         Ok(policy) => (
             StatusCode::CREATED,
             Json(ApiResponse::NotificationPolicy(policy)),
@@ -201,11 +176,12 @@ pub async fn update_notification_policy<
     T: AuthorizationStore + RuntimeStore + NotificationStore,
 >(
     Extension(db): Extension<Arc<T>>,
+    Extension(service): Extension<Arc<NotificationOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(policy_id): Path<Uuid>,
     Json(policy): Json<NewNotificationPolicy>,
 ) -> Reply {
-    let current = match repository::fetch_notification_policy(db.as_ref(), policy_id).await {
+    let current = match service.fetch_policy(policy_id).await {
         Ok(Some(policy)) => policy,
         Ok(None) => return not_found(format!("Notification policy {policy_id} not found")),
         Err(err) => return api_error(err.to_string()),
@@ -220,7 +196,7 @@ pub async fn update_notification_policy<
     {
         return reply;
     }
-    match repository::update_notification_policy(db.as_ref(), policy_id, &policy).await {
+    match service.update_policy(policy_id, &policy).await {
         Ok(Some(policy)) => (
             StatusCode::OK,
             Json(ApiResponse::NotificationPolicy(policy)),
@@ -234,10 +210,11 @@ pub async fn delete_notification_policy<
     T: AuthorizationStore + RuntimeStore + NotificationStore,
 >(
     Extension(db): Extension<Arc<T>>,
+    Extension(service): Extension<Arc<NotificationOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(policy_id): Path<Uuid>,
 ) -> Reply {
-    let current = match repository::fetch_notification_policy(db.as_ref(), policy_id).await {
+    let current = match service.fetch_policy(policy_id).await {
         Ok(Some(policy)) => policy,
         Ok(None) => return not_found(format!("Notification policy {policy_id} not found")),
         Err(err) => return api_error(err.to_string()),
@@ -247,7 +224,7 @@ pub async fn delete_notification_policy<
     {
         return reply;
     }
-    match repository::delete_notification_policy(db.as_ref(), policy_id).await {
+    match service.delete_policy(policy_id).await {
         Ok(true) => (
             StatusCode::OK,
             Json(ApiResponse::TaskResponse(TaskResponse {
@@ -284,10 +261,10 @@ async fn require_policy_target<T: AuthorizationStore + RuntimeStore + Notificati
 pub async fn list_notification_deliveries<
     T: AuthorizationStore + RuntimeStore + NotificationStore,
 >(
-    Extension(db): Extension<Arc<T>>,
+    Extension(service): Extension<Arc<NotificationOperations<T>>>,
     Path(notification_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    match repository::fetch_notification_deliveries(db.as_ref(), notification_id).await {
+    match service.deliveries(notification_id).await {
         Ok(deliveries) => (
             StatusCode::OK,
             Json(ApiResponse::NotificationDeliveryList(deliveries)),
@@ -299,23 +276,16 @@ pub async fn list_notification_deliveries<
 pub async fn mark_all_notifications_read<
     T: AuthorizationStore + RuntimeStore + NotificationStore,
 >(
-    Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
+    Extension(service): Extension<Arc<NotificationOperations<T>>>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    match repository::mark_all_notifications_read(db.as_ref()).await {
-        Ok(count) => {
-            emit(
-                &events,
-                AppEvent::global(AppEventKind::NotificationsChanged),
-            );
-            (
-                StatusCode::OK,
-                Json(ApiResponse::TaskResponse(TaskResponse {
-                    success: true,
-                    message: format!("Marked {count} notification(s) as read"),
-                })),
-            )
-        }
+    match service.mark_all_read().await {
+        Ok(count) => (
+            StatusCode::OK,
+            Json(ApiResponse::TaskResponse(TaskResponse {
+                success: true,
+                message: format!("Marked {count} notification(s) as read"),
+            })),
+        ),
         Err(err) => api_error(err.to_string()),
     }
 }

@@ -43,7 +43,7 @@ const DIRECT_STORE_ACCESS: &[(&str, &str)] = &[
     ),
     (
         "runinator-ws-authoring/catalog.rs",
-        "catalog item rows: crud the runtime never drives",
+        "startup-only built-in catalog seeding writes static metadata before HTTP serves requests",
     ),
     (
         "runinator-ws-runtime/health.rs",
@@ -60,12 +60,28 @@ const DIRECT_STORE_ACCESS: &[(&str, &str)] = &[
 /// event publication, and transport side effects back into HTTP glue.
 const SERVICE_BACKED_HANDLERS: &[(&str, &str)] = &[
     ("runinator-ws-authoring/functions.rs", "FunctionPackages"),
+    ("runinator-ws-authoring/catalog.rs", "CatalogOperations"),
+    ("runinator-ws-authoring/console.rs", "ConsoleOperations"),
     ("runinator-ws-authoring/pipelines.rs", "PipelineOperations"),
+    ("runinator-ws-authoring/packs.rs", "PackOperations"),
     ("runinator-ws-authoring/workflows.rs", "WorkflowAuthoring"),
+    ("runinator-ws-authoring/providers.rs", "CatalogOperations"),
+    ("runinator-ws-authoring/rexrap.rs", "WorkflowAuthoring"),
     ("runinator-ws-runtime/automation.rs", "AutomationOperations"),
+    ("runinator-ws-runtime/artifacts.rs", "ArtifactOperations"),
+    ("runinator-ws-runtime/debug.rs", "DebugOperations"),
+    (
+        "runinator-ws-runtime/function_invocations.rs",
+        "FunctionInvocations",
+    ),
+    (
+        "runinator-ws-runtime/notifications.rs",
+        "NotificationOperations",
+    ),
     ("runinator-ws-runtime/replicas.rs", "ReplicaRegistry"),
     ("runinator-ws-runtime/runs.rs", "RunOperations"),
     ("runinator-ws-runtime/schedules.rs", "SchedulingOperations"),
+    ("runinator-ws-runtime/triggers.rs", "SchedulingOperations"),
 ];
 
 /// `db.foo(` and `db.as_ref().foo(` are store calls; `db.as_ref()` and `db.clone()` on their own are
@@ -211,8 +227,34 @@ fn migrated_handlers_use_services_not_the_engine_repository_facade() {
             "{key} must keep using its {service} application-service seam"
         );
         assert!(
-            !source.contains("repository::") && !source.contains("runinator_engine::repository"),
-            "{key} bypasses {service} through runinator-engine::repository; move that operation into the service instead"
+            !source.contains("repository::")
+                && !source.contains("runinator_engine::repository")
+                && !source.contains("runinator_engine::artifact_storage")
+                && !source.contains("runinator_engine::simulate"),
+            "{key} bypasses {service} through a runinator-engine implementation module; move that operation into the service instead"
         );
+    }
+}
+
+#[test]
+fn handlers_do_not_call_engine_implementation_modules() {
+    let workspace = workspace_root();
+    for crate_name in HANDLER_CRATES {
+        let dir = workspace.join(crate_name).join("src").join("handlers");
+        for entry in fs::read_dir(&dir).expect("handler directory readable") {
+            let path = entry.expect("handler entry readable").path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("rs") {
+                continue;
+            }
+            let source = fs::read_to_string(&path).expect("handler source readable");
+            assert!(
+                !source.contains("repository::")
+                    && !source.contains("runinator_engine::repository")
+                    && !source.contains("runinator_engine::artifact_storage")
+                    && !source.contains("runinator_engine::simulate"),
+                "{} calls a runinator-engine implementation module directly; use an injected application service instead",
+                path.display()
+            );
+        }
     }
 }

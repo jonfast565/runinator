@@ -3,6 +3,8 @@
 
 use super::*;
 
+use runinator_engine::services::{CatalogOperations, WorkflowAuthoring};
+
 #[tokio::test]
 async fn rexrap_evaluate_accepts_legacy_lowered_expression() {
     let request = crate::handlers::rexrap::EvaluateExpressionRequest {
@@ -95,8 +97,12 @@ async fn get_enum_catalogs_returns_catalog_json() {
 #[tokio::test]
 async fn rexrap_analyze_validates_source_fragments() {
     let (db, path) = test_db().await;
+    let db = Arc::new(db);
+    let (tx, _rx) = tokio::sync::broadcast::channel(64);
+    let events = crate::events::EventBus::new(tx, Arc::new(InMemoryBroker::new()));
     let Json(diagnostics) = crate::handlers::rexrap::analyze_rexrap(
-        Extension(Arc::new(db)),
+        Extension(Arc::new(CatalogOperations::new(db.clone()))),
+        Extension(Arc::new(WorkflowAuthoring::new(db, events.publisher()))),
         Json(crate::handlers::rexrap::RexRapSourceRequest {
             source: "params.count >".into(),
             fragment: Some(RexRapFragmentKind::Condition),

@@ -34,8 +34,7 @@ use runinator_store::{
 use serde::Deserialize;
 use uuid::Uuid;
 
-use runinator_engine::repository;
-use runinator_ws_core::events::{EventSender, emit_workflow_run, nudge_workflow_vm};
+use runinator_engine::services::FunctionInvocations;
 use runinator_ws_core::models::{self, ApiResponse};
 use runinator_ws_core::openapi::docs::{EndpointDoc, Example, endpoint, json_body};
 use runinator_ws_core::responses::{api_error, bad_request, not_found};
@@ -72,7 +71,7 @@ pub async fn create_function_invocation<
         + WorkflowVmStore,
 >(
     Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
+    Extension(service): Extension<Arc<FunctionInvocations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     headers: HeaderMap,
     Path((package, export)): Path<(String, String)>,
@@ -80,30 +79,24 @@ pub async fn create_function_invocation<
     Json(input): Json<Value>,
 ) -> (StatusCode, Json<ApiResponse>) {
     let (namespace, name) = split_qualified(&package);
-    let Some(detail) = (match repository::functions::fetch_package_detail(
-        db.as_ref(),
-        ctx.org_id,
-        namespace.as_deref(),
-        &name,
-    )
-    .await
+    let package_detail = match service
+        .fetch_package(ctx.org_id, namespace.as_deref(), &name)
+        .await
     {
-        Ok(detail) => detail,
+        Ok(Some(package_detail)) => package_detail,
+        Ok(None) => return not_found(format!("function package '{package}' not found")),
         Err(err) => return api_error(err.to_string()),
-    }) else {
-        return not_found(format!("function package '{package}' not found"));
     };
     if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
         .require_resource(
             ResourceType::FunctionPackage,
-            detail.package.id,
+            package_detail.id,
             Permission::Run,
         )
         .await
     {
         return reply;
     }
-
     // the alias resolves at call time, which is exactly the difference between this path and a
     // compiled workflow: an http caller asking for `production` means whatever `production` is now,
     // while a workflow pinned its version when it compiled.
@@ -113,32 +106,23 @@ pub async fn create_function_invocation<
         (None, Some(alias)) => FunctionVersionRef::Alias(alias.clone()),
         (None, None) => FunctionVersionRef::Alias(DEFAULT_ALIAS.to_string()),
     };
-    let resolved =
-        repository::functions::resolve_export(db.as_ref(), &detail.package, &reference, &export)
-            .await;
-    let (version, resolved_export) = match resolved {
-        Ok(resolved) => resolved,
-        Err(err) => return not_found(err.to_string()),
-    };
-
-    let Some(adapter) = (match repository::function_adapters::fetch_adapter_workflow(
-        db.as_ref(),
-        resolved_export.id,
-    )
-    .await
+    let resolved = match service
+        .resolve_export(package_detail, &reference, &export)
+        .await
     {
-        Ok(adapter) => adapter,
-        Err(err) => return api_error(err.to_string()),
-    }) else {
-        return api_error(format!(
-            "'{package}.{export}' has no adapter workflow; republish the package"
-        ));
+        Ok(Some(resolved)) => resolved,
+        Ok(None) => {
+            return api_error(format!(
+                "'{package}.{export}' has no adapter workflow; republish the package"
+            ));
+        }
+        Err(err) => return not_found(err.to_string()),
     };
 
     // authorized against the adapter workflow, so a function grant is an ordinary workflow grant
     // and nothing here invents a second permission model.
     if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
-        .require_workflow(adapter.workflow_id, Permission::Run)
+        .require_workflow(resolved.workflow_id, Permission::Run)
         .await
     {
         return reply;
@@ -150,14 +134,14 @@ pub async fn create_function_invocation<
     let idempotency_key = header(&headers, IDEMPOTENCY_HEADER);
     if let Some(key) = &idempotency_key {
         let scope = idempotency_scope(ctx.org_id, &package, &export);
-        match repository::fetch_idempotency_key(db.as_ref(), scope, key.clone()).await {
+        match service.fetch_idempotency(scope, key.clone()).await {
             Ok(Some(stored)) => {
                 if let Some(run_id) = stored
                     .pointer("/result/workflow_run_id")
                     .and_then(Value::as_str)
                     .and_then(|raw| raw.parse::<Uuid>().ok())
                 {
-                    return replay(db.as_ref(), run_id).await;
+                    return replay(&service, run_id).await;
                 }
             }
             Ok(None) => {}
@@ -172,43 +156,38 @@ pub async fn create_function_invocation<
         metadata: runinator_models::json!({
             "package": package,
             "export": export,
-            "version": version.version,
+            "version": resolved.version.version,
         }),
         ..Default::default()
     };
-    let run = match repository::create_workflow_run(
-        db.as_ref(),
-        adapter.workflow_id,
-        input,
-        false,
-        Some(format!("{package}.{export} v{}", version.version)),
-        provenance,
-    )
-    .await
+    let run = match service
+        .start(
+            resolved.workflow_id,
+            input,
+            Some(format!("{package}.{export} v{}", resolved.version.version)),
+            provenance,
+        )
+        .await
     {
         Ok(run) => run,
         Err(err) => return api_error(err.to_string()),
     };
-    let org_id = repository::org_id_for_workflow_run(db.as_ref(), run.id).await;
-    emit_workflow_run(&events, run.id, org_id);
-    nudge_workflow_vm(&events);
-
     if let Some(key) = &idempotency_key {
         let scope = idempotency_scope(ctx.org_id, &package, &export);
         // recorded after the run exists, so a stored key always names a run that was really started.
-        let _ = repository::put_idempotency_key(
-            db.as_ref(),
-            scope,
-            key.clone(),
-            runinator_models::json!({ "workflow_run_id": run.id }),
-        )
-        .await;
+        let _ = service
+            .put_idempotency(
+                scope,
+                key.clone(),
+                runinator_models::json!({ "workflow_run_id": run.id }),
+            )
+            .await;
     }
 
     if prefers_async(&headers) {
         return accepted(run);
     }
-    settle_or_accept(db.as_ref(), run).await
+    settle_or_accept(&service, run).await
 }
 
 /// the status of one invocation, which is the status of its run.
@@ -221,13 +200,16 @@ pub async fn get_function_invocation<
         + WorkflowVmStore,
 >(
     Extension(db): Extension<Arc<T>>,
+    Extension(service): Extension<Arc<FunctionInvocations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(run_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = require_run_access(db.as_ref(), &ctx, run_id, Permission::View).await {
+    if let Err(reply) =
+        require_run_access(db.as_ref(), &service, &ctx, run_id, Permission::View).await
+    {
         return reply;
     }
-    replay(db.as_ref(), run_id).await
+    replay(&service, run_id).await
 }
 
 /// cancel one invocation.
@@ -240,21 +222,19 @@ pub async fn cancel_function_invocation<
         + WorkflowVmStore,
 >(
     Extension(db): Extension<Arc<T>>,
-    Extension(broker): Extension<Arc<dyn runinator_broker_core::Broker>>,
-    Extension(events): Extension<EventSender>,
+    Extension(service): Extension<Arc<FunctionInvocations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(run_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = require_run_access(db.as_ref(), &ctx, run_id, Permission::Run).await {
+    if let Err(reply) =
+        require_run_access(db.as_ref(), &service, &ctx, run_id, Permission::Run).await
+    {
         return reply;
     }
     // delegates to the ordinary run-cancel path rather than reimplementing it: an invocation is a
     // run, and a second cancel implementation is a second set of edge cases.
-    match repository::cancel_workflow_run(db.as_ref(), broker.as_ref(), run_id).await {
-        Ok(_) => {
-            nudge_workflow_vm(&events);
-            replay(db.as_ref(), run_id).await
-        }
+    match service.cancel(run_id).await {
+        Ok(_) => replay(&service, run_id).await,
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -268,7 +248,7 @@ async fn settle_or_accept<
         + RuntimeStore
         + WorkflowVmStore,
 >(
-    db: &T,
+    service: &FunctionInvocations<T>,
     run: WorkflowRun,
 ) -> (StatusCode, Json<ApiResponse>) {
     let deadline = std::time::Instant::now() + SYNC_WAIT;
@@ -277,9 +257,9 @@ async fn settle_or_accept<
             return accepted(run);
         }
         tokio::time::sleep(SYNC_POLL).await;
-        match repository::fetch_workflow_run(db, run.id).await {
+        match service.fetch_run(run.id).await {
             Ok(Some(current)) if current.status.is_terminal() => {
-                return replay(db, current.id).await;
+                return replay(service, current.id).await;
             }
             Ok(_) => continue,
             // a read failure mid-wait is not the invocation's failure: the run exists and is going,
@@ -309,10 +289,10 @@ async fn replay<
         + RuntimeStore
         + WorkflowVmStore,
 >(
-    db: &T,
+    service: &FunctionInvocations<T>,
     run_id: Uuid,
 ) -> (StatusCode, Json<ApiResponse>) {
-    let run = match repository::fetch_workflow_run(db, run_id).await {
+    let run = match service.fetch_run(run_id).await {
         Ok(Some(found)) => found,
         Ok(None) => return not_found(format!("invocation {run_id} not found")),
         Err(err) => return api_error(err.to_string()),
@@ -340,11 +320,12 @@ async fn require_run_access<
         + WorkflowVmStore,
 >(
     db: &T,
+    service: &FunctionInvocations<T>,
     ctx: &AuthContext,
     run_id: Uuid,
     permission: Permission,
 ) -> Result<(), (StatusCode, Json<ApiResponse>)> {
-    let run = match repository::fetch_workflow_run(db, run_id).await {
+    let run = match service.fetch_run(run_id).await {
         Ok(Some(found)) => found,
         Ok(None) => return Err(not_found(format!("invocation {run_id} not found"))),
         Err(err) => return Err(api_error(err.to_string())),

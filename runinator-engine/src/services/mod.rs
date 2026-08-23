@@ -3,16 +3,30 @@
 //! Each service is bound to the smallest store role it needs. HTTP handlers translate requests and
 //! responses around these services; they do not reach through to the repository facade directly.
 
+mod artifact_operations;
 mod automation_operations;
+mod catalog_operations;
+mod console_operations;
+mod debug_operations;
+mod function_invocations;
 mod function_packages;
+mod notification_operations;
+mod pack_operations;
 mod pipeline_operations;
 mod replica_registry;
 mod run_operations;
 mod scheduling_operations;
 mod workflow_authoring;
 
+pub use artifact_operations::ArtifactOperations;
 pub use automation_operations::AutomationOperations;
+pub use catalog_operations::{CatalogOperations, provider_catalog_item};
+pub use console_operations::ConsoleOperations;
+pub use debug_operations::DebugOperations;
+pub use function_invocations::FunctionInvocations;
 pub use function_packages::FunctionPackages;
+pub use notification_operations::NotificationOperations;
+pub use pack_operations::PackOperations;
 pub use pipeline_operations::PipelineOperations;
 pub use replica_registry::{
     DEFAULT_REPLICA_DELETE_SECONDS, DEFAULT_REPLICA_REAP_SECONDS, REPLICA_SAMPLE_RETENTION_SECONDS,

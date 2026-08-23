@@ -11,8 +11,7 @@ use runinator_store::{
     roles::{DefinitionStore, ScheduleStore},
 };
 
-use runinator_engine::repository;
-use runinator_ws_core::events::{EventSender, emit_workflows_changed};
+use runinator_engine::services::SchedulingOperations;
 use runinator_ws_core::models::{ApiResponse, SchedulerTriggerClaimRequest};
 use runinator_ws_core::openapi::docs::{
     EndpointDoc, Example, WORKFLOW_TRIGGER_FILTERS, endpoint, json_body,
@@ -25,7 +24,7 @@ pub async fn upsert_workflow_trigger<
     T: AuthorizationStore + RuntimeStore + DefinitionStore + ScheduleStore,
 >(
     Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
+    Extension(scheduling): Extension<Arc<SchedulingOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(workflow_id): Path<Uuid>,
     Json(mut trigger): Json<WorkflowTrigger>,
@@ -37,12 +36,8 @@ pub async fn upsert_workflow_trigger<
         return reply;
     }
     trigger.workflow_id = workflow_id;
-    match repository::upsert_workflow_trigger(db.as_ref(), &trigger).await {
-        Ok(trigger) => {
-            let org_id = workflow_org(db.as_ref(), workflow_id, ctx.org_id).await;
-            emit_workflows_changed(&events, org_id);
-            (StatusCode::OK, Json(ApiResponse::WorkflowTrigger(trigger)))
-        }
+    match scheduling.save_workflow_trigger(&trigger, ctx.org_id).await {
+        Ok(trigger) => (StatusCode::OK, Json(ApiResponse::WorkflowTrigger(trigger))),
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -51,7 +46,7 @@ pub async fn update_workflow_trigger<
     T: AuthorizationStore + RuntimeStore + DefinitionStore + ScheduleStore,
 >(
     Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
+    Extension(scheduling): Extension<Arc<SchedulingOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(trigger_id): Path<Uuid>,
     Json(mut trigger): Json<WorkflowTrigger>,
@@ -63,12 +58,8 @@ pub async fn update_workflow_trigger<
         return reply;
     }
     trigger.id = Some(trigger_id);
-    match repository::upsert_workflow_trigger(db.as_ref(), &trigger).await {
-        Ok(trigger) => {
-            let org_id = workflow_org(db.as_ref(), trigger.workflow_id, ctx.org_id).await;
-            emit_workflows_changed(&events, org_id);
-            (StatusCode::OK, Json(ApiResponse::WorkflowTrigger(trigger)))
-        }
+    match scheduling.save_workflow_trigger(&trigger, ctx.org_id).await {
+        Ok(trigger) => (StatusCode::OK, Json(ApiResponse::WorkflowTrigger(trigger))),
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -77,6 +68,7 @@ pub async fn get_workflow_trigger<
     T: AuthorizationStore + RuntimeStore + DefinitionStore + ScheduleStore,
 >(
     Extension(db): Extension<Arc<T>>,
+    Extension(scheduling): Extension<Arc<SchedulingOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(trigger_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -86,7 +78,7 @@ pub async fn get_workflow_trigger<
     {
         return reply;
     }
-    match repository::fetch_workflow_trigger(db.as_ref(), trigger_id).await {
+    match scheduling.fetch_workflow_trigger(trigger_id).await {
         Ok(Some(trigger)) => (StatusCode::OK, Json(ApiResponse::WorkflowTrigger(trigger))),
         Ok(None) => not_found(format!("Workflow trigger {trigger_id} not found")),
         Err(err) => api_error(err.to_string()),
@@ -97,6 +89,7 @@ pub async fn get_workflow_triggers<
     T: AuthorizationStore + RuntimeStore + DefinitionStore + ScheduleStore,
 >(
     Extension(db): Extension<Arc<T>>,
+    Extension(scheduling): Extension<Arc<SchedulingOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(workflow_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -106,7 +99,7 @@ pub async fn get_workflow_triggers<
     {
         return reply;
     }
-    match repository::fetch_workflow_triggers(db.as_ref(), workflow_id).await {
+    match scheduling.list_workflow_triggers(workflow_id).await {
         Ok(triggers) => (
             StatusCode::OK,
             Json(ApiResponse::WorkflowTriggerList(triggers)),
@@ -118,7 +111,8 @@ pub async fn get_workflow_triggers<
 pub async fn get_due_workflow_triggers<
     T: AuthorizationStore + RuntimeStore + DefinitionStore + ScheduleStore,
 >(
-    Extension(db): Extension<Arc<T>>,
+    Extension(_db): Extension<Arc<T>>,
+    Extension(scheduling): Extension<Arc<SchedulingOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_system_role(&[
@@ -127,7 +121,7 @@ pub async fn get_due_workflow_triggers<
     ]) {
         return reply;
     }
-    match repository::fetch_due_workflow_triggers(db.as_ref()).await {
+    match scheduling.due_workflow_triggers().await {
         Ok(triggers) => (
             StatusCode::OK,
             Json(ApiResponse::WorkflowTriggerList(triggers)),
@@ -139,7 +133,8 @@ pub async fn get_due_workflow_triggers<
 pub async fn claim_due_workflow_trigger_firings<
     T: AuthorizationStore + RuntimeStore + DefinitionStore + ScheduleStore,
 >(
-    Extension(db): Extension<Arc<T>>,
+    Extension(_db): Extension<Arc<T>>,
+    Extension(scheduling): Extension<Arc<SchedulingOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<SchedulerTriggerClaimRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -149,12 +144,9 @@ pub async fn claim_due_workflow_trigger_firings<
     ]) {
         return reply;
     }
-    match repository::claim_due_workflow_trigger_firings(
-        db.as_ref(),
-        request.scheduler_id,
-        request.limit.unwrap_or(50),
-    )
-    .await
+    match scheduling
+        .claim_due_workflow_trigger_firings(request.scheduler_id, request.limit.unwrap_or(50))
+        .await
     {
         // the compatibility endpoint reports only the runs created; slots the schedule policy
         // declined are engine-side bookkeeping and have no run to report.
@@ -170,7 +162,7 @@ pub async fn delete_workflow_trigger<
     T: AuthorizationStore + RuntimeStore + DefinitionStore + ScheduleStore,
 >(
     Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
+    Extension(scheduling): Extension<Arc<SchedulingOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(trigger_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -180,27 +172,12 @@ pub async fn delete_workflow_trigger<
     {
         return reply;
     }
-    let org_id = match repository::fetch_workflow_trigger(db.as_ref(), trigger_id).await {
-        Ok(Some(trigger)) => workflow_org(db.as_ref(), trigger.workflow_id, ctx.org_id).await,
-        _ => ctx.org_id,
-    };
-    match repository::delete_workflow_trigger(db.as_ref(), trigger_id).await {
-        Ok(resp) => {
-            emit_workflows_changed(&events, org_id);
-            (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
-        }
+    match scheduling
+        .delete_workflow_trigger(trigger_id, ctx.org_id)
+        .await
+    {
+        Ok(resp) => (StatusCode::OK, Json(ApiResponse::TaskResponse(resp))),
         Err(err) => api_error(err.to_string()),
-    }
-}
-
-async fn workflow_org<T: AuthorizationStore + RuntimeStore + DefinitionStore + ScheduleStore>(
-    db: &T,
-    workflow_id: Uuid,
-    fallback: Option<Uuid>,
-) -> Option<Uuid> {
-    match repository::fetch_workflow(db, workflow_id).await {
-        Ok(Some(workflow)) => workflow.org_id.or(fallback),
-        _ => fallback,
     }
 }
 

@@ -215,11 +215,15 @@ pub async fn settle_effect<T: AuthorizationStore + RuntimeStore + WorkflowVmStor
     {
         Ok(applied) => {
             if applied {
-                let org_id = runinator_engine::repository::org_id_for_workflow_run(
-                    db.as_ref(),
-                    effect.workflow_run_id,
-                )
-                .await;
+                let org_id = match db.fetch_workflow_run(effect.workflow_run_id).await {
+                    Ok(Some(run)) => db
+                        .fetch_workflow(run.workflow_id)
+                        .await
+                        .ok()
+                        .flatten()
+                        .and_then(|workflow| workflow.org_id),
+                    _ => None,
+                };
                 emit_workflow_run(&events, effect.workflow_run_id, org_id);
             }
             (

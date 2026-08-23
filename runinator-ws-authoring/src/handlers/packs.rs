@@ -23,8 +23,7 @@ use crate::handlers::credentials::import_secret_entries_with;
 use crate::handlers::workflows::{
     json_workflow_import_risk_acknowledged, json_workflow_import_risk_required,
 };
-use runinator_engine::repository;
-use runinator_ws_core::events::{EventSender, emit_workflows_changed};
+use runinator_engine::services::PackOperations;
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::openapi::docs::{
     EndpointDoc, Example, PACK_IMPORT_PARAMS, RequestDoc, endpoint,
@@ -78,9 +77,7 @@ pub async fn import_pack<
         + SettingStore,
 >(
     Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
-    // a pack may carry function archives, whose bytes go to the object store.
-    Extension(blobs): Extension<Arc<dyn runinator_blob_core::BlobStore>>,
+    Extension(packs): Extension<Arc<PackOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Query(params): Query<PackImportParams>,
     headers: HeaderMap,
@@ -110,12 +107,11 @@ pub async fn import_pack<
             bundle.workflows.len(),
             bundle.triggers.len()
         );
-        let workflows =
-            match repository::import_workflow_bundle_with(db.as_ref(), bundle, overwrite).await {
-                Ok(bundle) => bundle,
-                Err(err) => return api_error(err.to_string()),
-            };
-        emit_workflows_changed(&events, import_org);
+        let workflows = match packs.import_workflows(bundle, overwrite).await {
+            Ok(bundle) => bundle,
+            Err(err) => return api_error(err.to_string()),
+        };
+        packs.workflows_changed(import_org);
         return (
             StatusCode::OK,
             Json(ApiResponse::PackImport(PackImportResult {
@@ -151,13 +147,9 @@ pub async fn import_pack<
     // does not hold is refused, which is what keeps a half-imported pack from leaving versions
     // nothing can run.
     for (digest, bytes) in &contents.function_artifacts {
-        if let Err(err) = repository::functions::put_artifact_if_absent(
-            db.as_ref(),
-            &blobs,
-            digest,
-            bytes.clone(),
-        )
-        .await
+        if let Err(err) = packs
+            .put_function_artifact_if_absent(digest, bytes.clone())
+            .await
         {
             return api_error(format!("pack artifact {digest} could not be stored: {err}"));
         }
@@ -169,7 +161,7 @@ pub async fn import_pack<
         // publishing into a tenant it may not belong to.
         request.package.org_id = import_org;
 
-        match repository::functions::publish_version(db.as_ref(), &request).await {
+        match packs.publish_function(&request).await {
             Ok(version) => published.push(version),
             Err(err) => {
                 return api_error(format!(
@@ -192,31 +184,23 @@ pub async fn import_pack<
         },
         None => SecretBundle::default(),
     };
-    let workflows = match repository::import_workflow_bundle_with(
-        db.as_ref(),
-        workflow_bundle,
-        overwrite,
-    )
-    .await
-    {
+    let workflows = match packs.import_workflows(workflow_bundle, overwrite).await {
         Ok(bundle) => bundle,
         Err(err) => return api_error(err.to_string()),
     };
     // import pipelines after workflows so member names resolve to freshly-imported ids, and their
     // links materialize as managed chained triggers stamped with the pipeline id.
     let pipelines = match &pipeline_bundle {
-        Some(bundle) => {
-            match repository::import_pipeline_bundle_with(db.as_ref(), bundle, import_org).await {
-                Ok(imported) => imported,
-                Err(err) => return api_error(err.to_string()),
-            }
-        }
+        Some(bundle) => match packs.import_pipelines(bundle, import_org).await {
+            Ok(imported) => imported,
+            Err(err) => return api_error(err.to_string()),
+        },
         None => Vec::new(),
     };
     if let Some(bundle) = &pipeline_bundle {
         log::info!("Imported {} pipelines from pack", bundle.pipelines.len());
     }
-    emit_workflows_changed(&events, import_org);
+    packs.workflows_changed(import_org);
     (
         StatusCode::OK,
         Json(ApiResponse::PackImport(PackImportResult {

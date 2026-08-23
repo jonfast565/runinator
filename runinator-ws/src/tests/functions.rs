@@ -9,7 +9,7 @@ use super::*;
 use std::sync::Arc;
 
 use runinator_blob::{BlobStore, FUNCTION_ARTIFACT_BUCKET, FsBlobStore};
-use runinator_engine::services::FunctionPackages;
+use runinator_engine::services::{FunctionInvocations, FunctionPackages};
 use runinator_models::functions::{FunctionVersionRef, NewFunctionVersion};
 use runinator_pack::functions::{FunctionSource, MANIFEST_FILE, archive_directory};
 use runinator_ws_middleware::authz::AuthContextExt;
@@ -49,6 +49,18 @@ fn function_packages(
     blobs: &Arc<dyn BlobStore>,
 ) -> Extension<Arc<FunctionPackages<SqliteDb>>> {
     Extension(Arc::new(FunctionPackages::new(db.clone(), blobs.clone())))
+}
+
+fn function_invocations(
+    db: &Arc<SqliteDb>,
+    events: &crate::events::EventSender,
+) -> Extension<Arc<FunctionInvocations<SqliteDb>>> {
+    Extension(Arc::new(FunctionInvocations::new(
+        db.clone(),
+        Arc::new(InMemoryBroker::new()),
+        events.publisher(),
+        events.embedded_engine_signals(),
+    )))
 }
 
 // a package directory on disk, plus the blob store the handlers write its bytes into.
@@ -549,7 +561,7 @@ async fn an_http_invocation_starts_a_run_of_the_adapter_workflow() {
     let (status, body) =
         crate::handlers::function_invocations::create_function_invocation::<SqliteDb>(
             Extension(db.clone()),
-            Extension(events.clone()),
+            function_invocations(&db, &events),
             Extension(admin_ctx()),
             axum::http::HeaderMap::from_iter([(
                 axum::http::HeaderName::from_static("prefer"),
@@ -600,7 +612,7 @@ async fn an_idempotency_key_replays_the_run_it_already_started() {
     let invoke = async |headers: axum::http::HeaderMap| {
         crate::handlers::function_invocations::create_function_invocation::<SqliteDb>(
             Extension(db.clone()),
-            Extension(events.clone()),
+            function_invocations(&db, &events),
             Extension(admin_ctx()),
             headers,
             Path(("image-tools".to_string(), "resize".to_string())),
@@ -645,7 +657,7 @@ async fn invoking_an_unknown_export_is_not_found() {
     let (status, _) =
         crate::handlers::function_invocations::create_function_invocation::<SqliteDb>(
             Extension(db.clone()),
-            Extension(events.clone()),
+            function_invocations(&db, &events),
             Extension(admin_ctx()),
             axum::http::HeaderMap::new(),
             Path(("image-tools".to_string(), "crop".to_string())),
@@ -707,7 +719,7 @@ async fn invoking_is_gated_separately_from_publishing() {
     let (status, _) =
         crate::handlers::function_invocations::create_function_invocation::<SqliteDb>(
             Extension(db.clone()),
-            Extension(test_event_bus()),
+            function_invocations(&db, &test_event_bus()),
             Extension(member),
             axum::http::HeaderMap::new(),
             Path(("image-tools".to_string(), "resize".to_string())),

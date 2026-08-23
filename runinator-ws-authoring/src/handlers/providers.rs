@@ -9,7 +9,7 @@ use runinator_models::{
 };
 use runinator_store::roles::DefinitionStore;
 
-use runinator_engine::repository;
+use runinator_engine::services::CatalogOperations;
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::openapi::docs::{EndpointDoc, Example, endpoint, json_body};
 use runinator_ws_core::responses::{api_error, bad_request};
@@ -23,12 +23,10 @@ use runinator_ws_middleware::authz::AuthContextExt;
     responses((status = 200, description = "registered providers", body = serde_json::Value)),
 )]
 pub async fn get_providers<T: DefinitionStore>(
-    Extension(db): Extension<Arc<T>>,
+    Extension(service): Extension<Arc<CatalogOperations<T>>>,
     Extension(_ctx): Extension<AuthContext>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    let items = match repository::fetch_catalog_items(db.as_ref(), Some("provider_metadata".into()))
-        .await
-    {
+    let items = match service.list(Some("provider_metadata".into())).await {
         Ok(items) => items,
         Err(err) => return api_error(err.to_string()),
     };
@@ -40,7 +38,7 @@ pub async fn get_providers<T: DefinitionStore>(
 }
 
 pub async fn upsert_provider<T: DefinitionStore>(
-    Extension(db): Extension<Arc<T>>,
+    Extension(service): Extension<Arc<CatalogOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Json(provider): Json<ProviderMetadata>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -54,7 +52,7 @@ pub async fn upsert_provider<T: DefinitionStore>(
         return bad_request(err);
     }
     let item = provider_catalog_item(&provider);
-    let item = match repository::upsert_catalog_item(db.as_ref(), item).await {
+    let item = match service.upsert(item).await {
         Ok(item) => item,
         Err(err) => return api_error(err.to_string()),
     };
@@ -66,7 +64,7 @@ pub async fn upsert_provider<T: DefinitionStore>(
 }
 
 pub async fn import_provider_bundle<T: DefinitionStore>(
-    Extension(db): Extension<Arc<T>>,
+    Extension(service): Extension<Arc<CatalogOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Json(bundle): Json<ProviderBundle>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -82,7 +80,7 @@ pub async fn import_provider_bundle<T: DefinitionStore>(
             return bad_request(err);
         }
         let item = provider_catalog_item(provider);
-        let item = match repository::upsert_catalog_item(db.as_ref(), item).await {
+        let item = match service.upsert(item).await {
             Ok(item) => item,
             Err(err) => return api_error(err.to_string()),
         };
@@ -117,9 +115,9 @@ pub fn provider_metadata_from_item(item: Value) -> Result<ProviderMetadata, serd
 
 /// the catalog row a provider's metadata is stored as.
 ///
-/// re-exported from the engine rather than rebuilt here: publishing a packaged function writes the
-/// same shape from the engine side, and two writers building it separately would drift.
-pub use runinator_engine::repository::provider_catalog_item;
+/// re-exported from the engine service rather than rebuilt here: publishing a packaged function
+/// writes the same shape from the engine side, and two writers building it separately would drift.
+pub use runinator_engine::services::provider_catalog_item;
 
 /// the `providers` endpoints.
 pub fn routes<T: DefinitionStore>(pool: std::sync::Arc<T>) -> axum::Router {

@@ -13,8 +13,9 @@ use runinator_blob::BlobStore;
 use runinator_broker::Broker;
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_engine::services::{
-    AutomationOperations, FunctionPackages, PipelineOperations, RunOperations,
-    SchedulingOperations, WorkflowAuthoring,
+    ArtifactOperations, AutomationOperations, CatalogOperations, ConsoleOperations,
+    DebugOperations, FunctionInvocations, FunctionPackages, NotificationOperations, PackOperations,
+    PipelineOperations, RunOperations, SchedulingOperations, WorkflowAuthoring,
 };
 use runinator_provisioner::ProvisionerRegistry;
 use tower_http::catch_panic::CatchPanicLayer;
@@ -66,6 +67,38 @@ pub fn build_router<T: DatabaseImpl>(
         events.publisher(),
         events.embedded_engine_signals(),
     ));
+    let notification_operations = Arc::new(NotificationOperations::new(
+        pool.clone(),
+        events.publisher(),
+    ));
+    let function_invocations = Arc::new(FunctionInvocations::new(
+        pool.clone(),
+        broker.clone(),
+        events.publisher(),
+        events.embedded_engine_signals(),
+    ));
+    let catalog_operations = Arc::new(CatalogOperations::new(pool.clone()));
+    let artifact_operations = Arc::new(ArtifactOperations::new(
+        pool.clone(),
+        blobs.clone(),
+        events.publisher(),
+    ));
+    let debug_operations = Arc::new(DebugOperations::new(
+        pool.clone(),
+        events.publisher(),
+        events.embedded_engine_signals(),
+    ));
+    let console_operations = Arc::new(ConsoleOperations::new(
+        pool.clone(),
+        broker.clone(),
+        events.publisher(),
+        events.embedded_engine_signals(),
+    ));
+    let pack_operations = Arc::new(PackOperations::new(
+        pool.clone(),
+        blobs.clone(),
+        events.publisher(),
+    ));
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
@@ -105,6 +138,13 @@ pub fn build_router<T: DatabaseImpl>(
         .merge(orgs::routes(pool.clone()))
         .merge(billing::routes(pool.clone()))
         .layer(Extension(events))
+        .layer(Extension(pack_operations))
+        .layer(Extension(console_operations))
+        .layer(Extension(debug_operations))
+        .layer(Extension(artifact_operations))
+        .layer(Extension(catalog_operations))
+        .layer(Extension(function_invocations))
+        .layer(Extension(notification_operations))
         .layer(Extension(scheduling_operations))
         .layer(Extension(automation_operations))
         .layer(Extension(function_packages))

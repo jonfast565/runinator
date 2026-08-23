@@ -8,7 +8,7 @@ use runinator_models::value::Value;
 use runinator_store::roles::DefinitionStore;
 
 use crate::handlers::providers::provider_catalog_item;
-use runinator_engine::repository;
+use runinator_engine::services::CatalogOperations;
 use runinator_ws_core::models::{ApiResponse, CatalogQuery};
 use runinator_ws_core::openapi::docs::{
     CATALOG_FILTERS, EndpointDoc, Example, endpoint, json_body,
@@ -17,25 +17,25 @@ use runinator_ws_core::responses::{api_error, not_found};
 use runinator_ws_middleware::authz::AuthContextExt;
 
 pub async fn get_catalog_items<T: DefinitionStore>(
-    Extension(db): Extension<Arc<T>>,
+    Extension(service): Extension<Arc<CatalogOperations<T>>>,
     Extension(_ctx): Extension<AuthContext>,
     Query(query): Query<CatalogQuery>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Some(uri) = query.uri {
-        return match repository::fetch_catalog_item(db.as_ref(), uri.clone()).await {
+        return match service.fetch(uri.clone()).await {
             Ok(Some(item)) => (StatusCode::OK, Json(ApiResponse::JsonValue(item))),
             Ok(None) => not_found(format!("Catalog item {uri} not found")),
             Err(err) => api_error(err.to_string()),
         };
     }
-    match repository::fetch_catalog_items(db.as_ref(), query.item_type).await {
+    match service.list(query.item_type).await {
         Ok(items) => (StatusCode::OK, Json(ApiResponse::JsonList(items))),
         Err(err) => api_error(err.to_string()),
     }
 }
 
 pub async fn upsert_catalog_item<T: DefinitionStore>(
-    Extension(db): Extension<Arc<T>>,
+    Extension(service): Extension<Arc<CatalogOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Json(item): Json<Value>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -45,7 +45,7 @@ pub async fn upsert_catalog_item<T: DefinitionStore>(
     ) {
         return reply;
     }
-    match repository::upsert_catalog_item(db.as_ref(), item).await {
+    match service.upsert(item).await {
         Ok(item) => (StatusCode::OK, Json(ApiResponse::JsonValue(item))),
         Err(err) => api_error(err.to_string()),
     }

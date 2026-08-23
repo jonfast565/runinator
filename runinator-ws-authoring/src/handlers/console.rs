@@ -11,7 +11,6 @@
 use std::sync::Arc;
 
 use axum::{Extension, Json, extract::Path, http::StatusCode};
-use runinator_broker_core::Broker;
 use runinator_models::{
     auth::{AuthContext, Permission, ResourceType},
     console::{ConsoleSession, NewConsoleCell},
@@ -27,8 +26,7 @@ use runinator_store::{
 use serde::Deserialize;
 use uuid::Uuid;
 
-use runinator_engine::repository;
-use runinator_ws_core::events::{EventSender, emit_workflow_run, nudge_workflow_vm};
+use runinator_engine::services::ConsoleOperations;
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::openapi::docs::{EndpointDoc, Example, endpoint, json_body};
 use runinator_ws_core::responses::{api_error, bad_request, not_found};
@@ -69,6 +67,7 @@ pub async fn get_console_sessions<
         + WorkflowVmStore,
 >(
     Extension(db): Extension<Arc<T>>,
+    Extension(console): Extension<Arc<ConsoleOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_scope_action(Action::ConsoleUse, selected_scope(&ctx)) {
@@ -81,7 +80,7 @@ pub async fn get_console_sessions<
         Ok(visible) => visible,
         Err(reply) => return reply,
     };
-    match repository::console::fetch_sessions(db.as_ref()).await {
+    match console.list_sessions().await {
         Ok(sessions) => {
             let sessions: Vec<ConsoleSession> = sessions
                 .into_iter()
@@ -108,19 +107,16 @@ pub async fn create_console_session<
         + WorkflowVmStore,
 >(
     Extension(db): Extension<Arc<T>>,
+    Extension(console): Extension<Arc<ConsoleOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Json(request): Json<ConsoleSessionRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_scope_action(Action::ConsoleUse, selected_scope(&ctx)) {
         return reply;
     }
-    match repository::console::create_session(
-        db.as_ref(),
-        ctx.org_id,
-        &session_name(&request),
-        ctx.principal_id,
-    )
-    .await
+    match console
+        .create_session(ctx.org_id, &session_name(&request), ctx.principal_id)
+        .await
     {
         Ok(session) => {
             if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
@@ -147,6 +143,7 @@ pub async fn get_console_session<
         + WorkflowVmStore,
 >(
     Extension(db): Extension<Arc<T>>,
+    Extension(console): Extension<Arc<ConsoleOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(session_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -156,7 +153,7 @@ pub async fn get_console_session<
     {
         return reply;
     }
-    match repository::console::fetch_session_detail(db.as_ref(), session_id).await {
+    match console.session_detail(session_id).await {
         Ok(Some(detail)) => (
             StatusCode::OK,
             Json(ApiResponse::ConsoleSessionDetail(Box::new(detail))),
@@ -178,6 +175,7 @@ pub async fn rename_console_session<
         + WorkflowVmStore,
 >(
     Extension(db): Extension<Arc<T>>,
+    Extension(console): Extension<Arc<ConsoleOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(session_id): Path<Uuid>,
     Json(request): Json<ConsoleSessionRequest>,
@@ -185,10 +183,19 @@ pub async fn rename_console_session<
     if let Err(reply) = require_session(db.as_ref(), &ctx, session_id, Permission::Edit).await {
         return reply;
     }
-    match repository::console::rename_session(db.as_ref(), session_id, &session_name(&request))
+    match console
+        .rename_session(session_id, &session_name(&request))
         .await
     {
-        Ok(true) => get_console_session(Extension(db), Extension(ctx), Path(session_id)).await,
+        Ok(true) => {
+            get_console_session(
+                Extension(db),
+                Extension(console),
+                Extension(ctx),
+                Path(session_id),
+            )
+            .await
+        }
         Ok(false) => not_found(format!("console session {session_id} not found")),
         Err(err) => api_error(err.to_string()),
     }
@@ -206,13 +213,14 @@ pub async fn delete_console_session<
         + WorkflowVmStore,
 >(
     Extension(db): Extension<Arc<T>>,
+    Extension(console): Extension<Arc<ConsoleOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(session_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = require_session(db.as_ref(), &ctx, session_id, Permission::Own).await {
         return reply;
     }
-    match repository::console::delete_session(db.as_ref(), session_id).await {
+    match console.delete_session(session_id).await {
         Ok(true) => (
             StatusCode::OK,
             Json(ApiResponse::JsonValue(runinator_models::json!({
@@ -237,6 +245,7 @@ pub async fn create_console_cell<
         + WorkflowVmStore,
 >(
     Extension(db): Extension<Arc<T>>,
+    Extension(console): Extension<Arc<ConsoleOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(session_id): Path<Uuid>,
     Json(cell): Json<NewConsoleCell>,
@@ -244,7 +253,7 @@ pub async fn create_console_cell<
     if let Err(reply) = require_session(db.as_ref(), &ctx, session_id, Permission::Edit).await {
         return reply;
     }
-    match repository::console::upsert_cell(db.as_ref(), session_id, None, &cell).await {
+    match console.upsert_cell(session_id, None, &cell).await {
         Ok(cell) => (StatusCode::OK, Json(ApiResponse::ConsoleCell(cell))),
         Err(err) => api_error(err.to_string()),
     }
@@ -262,18 +271,28 @@ pub async fn update_console_cell<
         + WorkflowVmStore,
 >(
     Extension(db): Extension<Arc<T>>,
+    Extension(console): Extension<Arc<ConsoleOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(cell_id): Path<Uuid>,
     Json(request): Json<NewConsoleCell>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    let cell = match require_cell(db.as_ref(), &ctx, cell_id, Permission::Edit).await {
+    let cell = match require_cell(
+        db.as_ref(),
+        console.as_ref(),
+        &ctx,
+        cell_id,
+        Permission::Edit,
+    )
+    .await
+    {
         Ok(cell) => cell,
         Err(reply) => return reply,
     };
     if cell.status == runinator_models::console::ConsoleCellStatus::Running {
         return bad_request("a running console cell must be canceled before it can be edited");
     }
-    match repository::console::upsert_cell(db.as_ref(), cell.session_id, Some(cell_id), &request)
+    match console
+        .upsert_cell(cell.session_id, Some(cell_id), &request)
         .await
     {
         Ok(cell) => (StatusCode::OK, Json(ApiResponse::ConsoleCell(cell))),
@@ -293,17 +312,26 @@ pub async fn delete_console_cell<
         + WorkflowVmStore,
 >(
     Extension(db): Extension<Arc<T>>,
+    Extension(console): Extension<Arc<ConsoleOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(cell_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    let cell = match require_cell(db.as_ref(), &ctx, cell_id, Permission::Edit).await {
+    let cell = match require_cell(
+        db.as_ref(),
+        console.as_ref(),
+        &ctx,
+        cell_id,
+        Permission::Edit,
+    )
+    .await
+    {
         Ok(cell) => cell,
         Err(reply) => return reply,
     };
     if cell.status == runinator_models::console::ConsoleCellStatus::Running {
         return bad_request("a running console cell must be canceled before it can be deleted");
     }
-    match repository::console::delete_cell(db.as_ref(), cell_id).await {
+    match console.delete_cell(cell_id).await {
         Ok(true) => (
             StatusCode::OK,
             Json(ApiResponse::JsonValue(runinator_models::json!({
@@ -332,40 +360,27 @@ pub async fn run_console_cell<
         + WorkflowVmStore,
 >(
     Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
+    Extension(console): Extension<Arc<ConsoleOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(cell_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    let cell = match require_cell(db.as_ref(), &ctx, cell_id, Permission::Run).await {
+    let cell = match require_cell(
+        db.as_ref(),
+        console.as_ref(),
+        &ctx,
+        cell_id,
+        Permission::Run,
+    )
+    .await
+    {
         Ok(cell) => cell,
         Err(reply) => return reply,
     };
     if cell.status == runinator_models::console::ConsoleCellStatus::Running {
         return bad_request("console cell is already running");
     }
-    // the console is the same language as a workflow, so it compiles against the same catalog —
-    // both halves of it, or a cell could not call what a workflow can.
-    let providers =
-        match repository::fetch_catalog_items(db.as_ref(), Some("provider_metadata".into()))
-            .await
-            .and_then(|items| Ok(repository::provider_metadata_from_items(items)?))
-        {
-            Ok(providers) => providers,
-            Err(err) => return api_error(err.to_string()),
-        };
-    let functions = repository::functions::fetch_catalog(db.as_ref())
-        .await
-        .unwrap_or_default();
-
-    match repository::console::run_cell(db.as_ref(), cell_id, providers, functions).await {
-        Ok(outcome) => {
-            if let Some(run) = &outcome.run {
-                let org_id = repository::org_id_for_workflow_run(db.as_ref(), run.id).await;
-                emit_workflow_run(&events, run.id, org_id);
-                nudge_workflow_vm(&events);
-            }
-            (StatusCode::OK, Json(ApiResponse::ConsoleCell(outcome.cell)))
-        }
+    match console.run_cell(cell_id).await {
+        Ok(outcome) => (StatusCode::OK, Json(ApiResponse::ConsoleCell(outcome.cell))),
         Err(err) => api_error(err.to_string()),
     }
 }
@@ -382,11 +397,11 @@ pub async fn replay_console_cell<
         + WorkflowVmStore,
 >(
     db: Extension<Arc<T>>,
-    events: Extension<EventSender>,
+    console: Extension<Arc<ConsoleOperations<T>>>,
     ctx: Extension<AuthContext>,
     cell_id: Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    run_console_cell(db, events, ctx, cell_id).await
+    run_console_cell(db, console, ctx, cell_id).await
 }
 
 /// cancel the durable workflow behind an effectful cell.
@@ -401,18 +416,26 @@ pub async fn cancel_console_cell<
         + WorkflowVmStore,
 >(
     Extension(db): Extension<Arc<T>>,
-    Extension(broker): Extension<Arc<dyn Broker>>,
+    Extension(console): Extension<Arc<ConsoleOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(cell_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    let cell = match require_cell(db.as_ref(), &ctx, cell_id, Permission::Run).await {
+    let cell = match require_cell(
+        db.as_ref(),
+        console.as_ref(),
+        &ctx,
+        cell_id,
+        Permission::Run,
+    )
+    .await
+    {
         Ok(cell) => cell,
         Err(reply) => return reply,
     };
     let Some(run_id) = cell.workflow_run_id else {
         return bad_request("console cell has no workflow run to cancel");
     };
-    match repository::cancel_workflow_run(db.as_ref(), broker.as_ref(), run_id).await {
+    match console.cancel_cell_run(run_id).await {
         Ok(response) => (StatusCode::OK, Json(ApiResponse::TaskResponse(response))),
         Err(err) => api_error(err.to_string()),
     }
@@ -430,17 +453,26 @@ pub async fn get_console_cell<
         + WorkflowVmStore,
 >(
     Extension(db): Extension<Arc<T>>,
+    Extension(console): Extension<Arc<ConsoleOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(cell_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    let cell = match require_cell(db.as_ref(), &ctx, cell_id, Permission::View).await {
+    let cell = match require_cell(
+        db.as_ref(),
+        console.as_ref(),
+        &ctx,
+        cell_id,
+        Permission::View,
+    )
+    .await
+    {
         Ok(cell) => cell,
         Err(reply) => return reply,
     };
     // settle it from its run first: the VM records the run, and this is where a finished run
     // becomes a finished cell. a poll that only read the row would show `running` forever.
     if let Some(run_id) = cell.workflow_run_id {
-        match repository::console::settle_cell_for_run(db.as_ref(), run_id).await {
+        match console.settle_cell_for_run(run_id).await {
             Ok(Some(settled)) => return (StatusCode::OK, Json(ApiResponse::ConsoleCell(settled))),
             Ok(None) => {}
             Err(err) => return api_error(err.to_string()),
@@ -481,11 +513,12 @@ async fn require_cell<
         + WorkflowVmStore,
 >(
     db: &T,
+    console: &ConsoleOperations<T>,
     ctx: &AuthContext,
     cell_id: Uuid,
     needed: Permission,
 ) -> Result<runinator_models::console::ConsoleCell, (StatusCode, Json<ApiResponse>)> {
-    let cell = match repository::console::fetch_cell(db, cell_id).await {
+    let cell = match console.fetch_cell(cell_id).await {
         Ok(Some(cell)) => cell,
         Ok(None) => return Err(not_found(format!("console cell {cell_id} not found"))),
         Err(err) => return Err(api_error(err.to_string())),

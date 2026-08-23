@@ -7,8 +7,7 @@ use runinator_store::{RuntimeStore, roles::WorkflowVmStore};
 use serde::Deserialize;
 use uuid::Uuid;
 
-use runinator_engine::repository;
-use runinator_ws_core::events::{EventSender, emit_workflow_run};
+use runinator_engine::services::DebugOperations;
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::openapi::docs::{EndpointDoc, Example, endpoint, json_body};
 use runinator_ws_core::responses::bad_request;
@@ -18,7 +17,7 @@ use runinator_ws_middleware::authz::{AuthorizationStore, AuthzChecker};
 /// reducer-era node mutation, breakpoint, and speculative-cursor commands were removed.
 pub async fn debug_command<T: AuthorizationStore + RuntimeStore + WorkflowVmStore>(
     Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
+    Extension(debug): Extension<Arc<DebugOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(workflow_run_id): Path<Uuid>,
     Json(verb): Json<DebugVerb>,
@@ -29,12 +28,8 @@ pub async fn debug_command<T: AuthorizationStore + RuntimeStore + WorkflowVmStor
     {
         return reply;
     }
-    match repository::apply_debug_command(db.as_ref(), workflow_run_id, verb).await {
-        Ok(resp) => {
-            let org_id = repository::org_id_for_workflow_run(db.as_ref(), workflow_run_id).await;
-            emit_workflow_run(&events, workflow_run_id, org_id);
-            (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
-        }
+    match debug.command(workflow_run_id, verb).await {
+        Ok(resp) => (StatusCode::OK, Json(ApiResponse::TaskResponse(resp))),
         Err(err) => bad_request(err.to_string()),
     }
 }
@@ -53,7 +48,7 @@ fn cursor_of(body: &Option<Json<CursorRequest>>) -> Option<Uuid> {
 
 pub async fn step_debug_workflow_run<T: AuthorizationStore + RuntimeStore + WorkflowVmStore>(
     Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
+    Extension(debug): Extension<Arc<DebugOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(workflow_run_id): Path<Uuid>,
     body: Option<Json<CursorRequest>>,
@@ -64,19 +59,15 @@ pub async fn step_debug_workflow_run<T: AuthorizationStore + RuntimeStore + Work
     {
         return reply;
     }
-    match repository::step_debug_cursor(db.as_ref(), workflow_run_id, cursor_of(&body)).await {
-        Ok(resp) => {
-            let org_id = repository::org_id_for_workflow_run(db.as_ref(), workflow_run_id).await;
-            emit_workflow_run(&events, workflow_run_id, org_id);
-            (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
-        }
+    match debug.step(workflow_run_id, cursor_of(&body)).await {
+        Ok(resp) => (StatusCode::OK, Json(ApiResponse::TaskResponse(resp))),
         Err(err) => bad_request(err.to_string()),
     }
 }
 
 pub async fn continue_debug_workflow_run<T: AuthorizationStore + RuntimeStore + WorkflowVmStore>(
     Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
+    Extension(debug): Extension<Arc<DebugOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(workflow_run_id): Path<Uuid>,
     body: Option<Json<CursorRequest>>,
@@ -87,12 +78,11 @@ pub async fn continue_debug_workflow_run<T: AuthorizationStore + RuntimeStore + 
     {
         return reply;
     }
-    match repository::continue_debug_cursor(db.as_ref(), workflow_run_id, cursor_of(&body)).await {
-        Ok(resp) => {
-            let org_id = repository::org_id_for_workflow_run(db.as_ref(), workflow_run_id).await;
-            emit_workflow_run(&events, workflow_run_id, org_id);
-            (StatusCode::OK, Json(ApiResponse::TaskResponse(resp)))
-        }
+    match debug
+        .continue_cursor(workflow_run_id, cursor_of(&body))
+        .await
+    {
+        Ok(resp) => (StatusCode::OK, Json(ApiResponse::TaskResponse(resp))),
         Err(err) => bad_request(err.to_string()),
     }
 }

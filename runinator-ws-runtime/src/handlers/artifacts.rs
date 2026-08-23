@@ -8,20 +8,19 @@ use axum::{
     http::{StatusCode, header},
     response::{IntoResponse, Response},
 };
-use runinator_blob_core::BlobStore;
 use runinator_models::auth::AuthContext;
 use runinator_models::runs::NewRunArtifact;
 use runinator_store::{RuntimeStore, roles::TaskRunStore};
 
-use runinator_engine::repository;
-use runinator_ws_core::events::{AppEvent, AppEventKind, EventSender, emit};
+use runinator_engine::services::ArtifactOperations;
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::openapi::docs::{EndpointDoc, Example, RequestDoc, endpoint, json_body};
 use runinator_ws_core::responses::{api_error, bad_request};
 use runinator_ws_middleware::authz::AuthContextExt;
 
 pub async fn get_run_artifacts<T: TaskRunStore + RuntimeStore>(
-    Extension(db): Extension<Arc<T>>,
+    Extension(_db): Extension<Arc<T>>,
+    Extension(artifacts): Extension<Arc<ArtifactOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(run_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -32,14 +31,15 @@ pub async fn get_run_artifacts<T: TaskRunStore + RuntimeStore>(
     ]) {
         return reply;
     }
-    match repository::fetch_run_artifacts(db.as_ref(), run_id).await {
+    match artifacts.list_for_run(run_id).await {
         Ok(artifacts) => (StatusCode::OK, Json(ApiResponse::RunArtifacts(artifacts))),
         Err(err) => api_error(err.to_string()),
     }
 }
 
 pub async fn add_run_artifact<T: TaskRunStore + RuntimeStore>(
-    Extension(db): Extension<Arc<T>>,
+    Extension(_db): Extension<Arc<T>>,
+    Extension(artifacts): Extension<Arc<ArtifactOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(run_id): Path<Uuid>,
     Json(artifact): Json<NewRunArtifact>,
@@ -51,7 +51,7 @@ pub async fn add_run_artifact<T: TaskRunStore + RuntimeStore>(
     ]) {
         return reply;
     }
-    match repository::add_run_artifact(db.as_ref(), run_id, &artifact).await {
+    match artifacts.add(run_id, &artifact).await {
         Ok(artifact) => (
             StatusCode::ACCEPTED,
             Json(ApiResponse::RunArtifacts(vec![artifact])),
@@ -61,7 +61,8 @@ pub async fn add_run_artifact<T: TaskRunStore + RuntimeStore>(
 }
 
 pub async fn list_artifacts<T: TaskRunStore + RuntimeStore>(
-    Extension(db): Extension<Arc<T>>,
+    Extension(_db): Extension<Arc<T>>,
+    Extension(artifacts): Extension<Arc<ArtifactOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
 ) -> (StatusCode, Json<ApiResponse>) {
     if let Err(reply) = ctx.require_system_role(&[
@@ -71,16 +72,15 @@ pub async fn list_artifacts<T: TaskRunStore + RuntimeStore>(
     ]) {
         return reply;
     }
-    match repository::fetch_all_artifacts(db.as_ref()).await {
+    match artifacts.list().await {
         Ok(artifacts) => (StatusCode::OK, Json(ApiResponse::RunArtifacts(artifacts))),
         Err(err) => api_error(err.to_string()),
     }
 }
 
 pub async fn upload_artifact<T: TaskRunStore + RuntimeStore>(
-    Extension(db): Extension<Arc<T>>,
-    Extension(blobs): Extension<Arc<dyn BlobStore>>,
-    Extension(events): Extension<EventSender>,
+    Extension(_db): Extension<Arc<T>>,
+    Extension(artifacts): Extension<Arc<ArtifactOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     mut multipart: Multipart,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -158,42 +158,21 @@ pub async fn upload_artifact<T: TaskRunStore + RuntimeStore>(
             .to_string()
     });
 
-    match repository::persist_artifact_file(
-        db.as_ref(),
-        &blobs,
-        run_id,
-        &resolved_name,
-        &resolved_mime,
-        &bytes,
-    )
-    .await
+    match artifacts
+        .persist(run_id, &resolved_name, &resolved_mime, &bytes, ctx.org_id)
+        .await
     {
-        Ok(artifact) => {
-            let org_id = repository::org_id_for_workflow_run(db.as_ref(), run_id)
-                .await
-                .or(ctx.org_id);
-            emit(
-                &events,
-                AppEvent::new(
-                    org_id,
-                    AppEventKind::ArtifactCreated {
-                        artifact_id: artifact.id,
-                        run_id: artifact.run_id,
-                    },
-                ),
-            );
-            (
-                StatusCode::OK,
-                Json(ApiResponse::RunArtifacts(vec![artifact])),
-            )
-        }
+        Ok(artifact) => (
+            StatusCode::OK,
+            Json(ApiResponse::RunArtifacts(vec![artifact])),
+        ),
         Err(err) => api_error(err.to_string()),
     }
 }
 
 pub async fn delete_artifact<T: TaskRunStore + RuntimeStore>(
-    Extension(db): Extension<Arc<T>>,
-    Extension(blobs): Extension<Arc<dyn BlobStore>>,
+    Extension(_db): Extension<Arc<T>>,
+    Extension(artifacts): Extension<Arc<ArtifactOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(artifact_id): Path<Uuid>,
 ) -> (StatusCode, Json<ApiResponse>) {
@@ -204,7 +183,7 @@ pub async fn delete_artifact<T: TaskRunStore + RuntimeStore>(
     ]) {
         return reply;
     }
-    match repository::delete_artifact(db.as_ref(), &blobs, artifact_id).await {
+    match artifacts.delete(artifact_id).await {
         Ok(true) => (
             StatusCode::OK,
             Json(ApiResponse::TaskResponse(
@@ -222,8 +201,8 @@ pub async fn delete_artifact<T: TaskRunStore + RuntimeStore>(
 }
 
 pub async fn download_artifact<T: TaskRunStore + RuntimeStore>(
-    Extension(db): Extension<Arc<T>>,
-    Extension(blobs): Extension<Arc<dyn BlobStore>>,
+    Extension(_db): Extension<Arc<T>>,
+    Extension(artifacts): Extension<Arc<ArtifactOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Path(artifact_id): Path<Uuid>,
 ) -> Response {
@@ -234,7 +213,7 @@ pub async fn download_artifact<T: TaskRunStore + RuntimeStore>(
     ]) {
         return reply.into_response();
     }
-    let artifact = match repository::fetch_artifact(db.as_ref(), artifact_id).await {
+    let artifact = match artifacts.fetch(artifact_id).await {
         Ok(Some(artifact)) => artifact,
         Ok(None) => {
             return (StatusCode::NOT_FOUND, "artifact not found").into_response();
@@ -242,13 +221,7 @@ pub async fn download_artifact<T: TaskRunStore + RuntimeStore>(
         Err(err) => return (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
     };
 
-    let content = match runinator_engine::artifact_storage::open_artifact(
-        &blobs,
-        &artifact.uri,
-        None,
-    )
-    .await
-    {
+    let content = match artifacts.open(&artifact.uri).await {
         Ok(content) => content,
         Err(err) => {
             return (
@@ -296,8 +269,8 @@ pub struct ArtifactContentQuery {
 ///
 /// the body is the raw bytes rather than a multipart form: the caller is a worker, not a browser,
 /// and multipart would buy nothing but a parser.
-pub async fn upload_artifact_content(
-    Extension(blobs): Extension<Arc<dyn BlobStore>>,
+pub async fn upload_artifact_content<T: TaskRunStore + RuntimeStore>(
+    Extension(artifacts): Extension<Arc<ArtifactOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Query(query): Query<ArtifactContentQuery>,
     body: axum::body::Bytes,
@@ -318,14 +291,9 @@ pub async fn upload_artifact_content(
             .to_string()
     });
 
-    match runinator_engine::artifact_storage::put_artifact(
-        &blobs,
-        query.run_id,
-        &resolved_name,
-        &resolved_mime,
-        &bytes,
-    )
-    .await
+    match artifacts
+        .put_content(query.run_id, &resolved_name, &resolved_mime, &bytes)
+        .await
     {
         Ok(uri) => (
             StatusCode::CREATED,
@@ -358,7 +326,10 @@ pub fn routes<T: TaskRunStore + RuntimeStore>(pool: std::sync::Arc<T>) -> axum::
             "/artifacts/upload",
             post(upload_artifact::<T>).layer(Extension(pool.clone())),
         )
-        .route("/artifacts/content", post(upload_artifact_content))
+        .route(
+            "/artifacts/content",
+            post(upload_artifact_content::<T>).layer(Extension(pool.clone())),
+        )
         .route(
             "/artifacts/{id}/download",
             get(download_artifact::<T>).layer(Extension(pool.clone())),
