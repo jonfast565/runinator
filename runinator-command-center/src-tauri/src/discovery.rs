@@ -297,7 +297,7 @@ fn parse_announcement(bytes: &[u8], sender: IpAddr) -> Option<WebServiceAnnounce
         relay_path: service
             .get("relay_path")
             .and_then(Value::as_str)
-            .unwrap_or("/ws/desktop-worker")
+            .unwrap_or("/ws/broker")
             .to_string(),
         cluster_id: service
             .get("cluster_id")

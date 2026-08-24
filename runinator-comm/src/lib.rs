@@ -61,7 +61,7 @@ fn default_service_scheme() -> String {
 }
 
 fn default_relay_path() -> String {
-    "/ws/desktop-worker".to_string()
+    "/ws/broker".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

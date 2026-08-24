@@ -1,6 +1,7 @@
 use std::{path::PathBuf, time::Duration};
 
 use clap::Parser;
+use runinator_broker::DEFAULT_BROKER_RELAY_PATH;
 use runinator_db_cli::DatabaseBackend;
 use runinator_models::errors::SendableError;
 
@@ -168,6 +169,27 @@ pub struct Cli {
     )]
     pub broker_endpoint: String,
 
+    /// How this process reaches the broker: `direct` (the configured backend) or `relay`
+    /// (through the web service's authenticated WebSocket endpoint).
+    #[arg(long, env = "RUNINATOR_BROKER_MODE", default_value = "direct")]
+    pub broker_mode: String,
+
+    /// Web-service base URL used only with `--broker-mode relay`.
+    #[arg(long, env = "RUNINATOR_SERVICE_URL")]
+    pub service_url: Option<String>,
+
+    /// Bearer credential for the WebSocket relay, used only with `--broker-mode relay`.
+    #[arg(long, env = "RUNINATOR_API_KEY")]
+    pub api_key: Option<String>,
+
+    /// Relay path relative to `--service-url`; override during a staged endpoint migration.
+    #[arg(
+        long,
+        env = "RUNINATOR_BROKER_RELAY_PATH",
+        default_value = DEFAULT_BROKER_RELAY_PATH
+    )]
+    pub broker_relay_path: String,
+
     #[arg(long, default_value = "runinator.effects")]
     pub broker_effect_topic: String,
 
@@ -222,6 +244,10 @@ pub struct Config {
     pub liveness_file: String,
     pub broker_backend: String,
     pub broker_endpoint: String,
+    pub broker_mode: String,
+    pub service_url: Option<String>,
+    pub api_key: Option<String>,
+    pub broker_relay_path: String,
     pub broker_effect_topic: String,
     pub broker_infrastructure_effect_topic: String,
     pub broker_control_topic: String,
@@ -268,6 +294,10 @@ impl Config {
             liveness_file: cli.liveness_file,
             broker_backend: cli.broker_backend,
             broker_endpoint: cli.broker_endpoint,
+            broker_mode: cli.broker_mode,
+            service_url: cli.service_url,
+            api_key: cli.api_key,
+            broker_relay_path: cli.broker_relay_path,
             broker_effect_topic: cli.broker_effect_topic,
             broker_infrastructure_effect_topic: cli.broker_infrastructure_effect_topic,
             broker_control_topic: cli.broker_control_topic,

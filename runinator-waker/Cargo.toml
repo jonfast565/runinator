@@ -17,8 +17,9 @@ runinator-broker = { path = "../runinator-broker", default-features = false }
 runinator-observability = { path = "../runinator-observability" }
 
 [features]
-default = ["http", "tcp"]
+default = ["http", "tcp", "ws"]
 http = ["runinator-broker/http"]
 tcp = ["runinator-broker/tcp"]
 kafka = ["runinator-broker/kafka"]
 rabbitmq = ["runinator-broker/rabbitmq"]
+ws = ["runinator-broker/ws"]

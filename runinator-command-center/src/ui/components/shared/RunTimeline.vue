@@ -175,7 +175,11 @@ import Icon from "./Icon.vue";
 import StatusBadge from "./StatusBadge.vue";
 import { workflowRunExtrasService } from "../../../core/services";
 import { formatErrorMessage } from "../../../core/utils/format";
-import type { WorkflowNodeRun, WorkflowRunDetail } from "../../../core/domain/models";
+import {
+  workflowEffectId,
+  type WorkflowNodeRun,
+  type WorkflowRunDetail,
+} from "../../../core/domain/models";
 import {
   formatMs,
   isFailedNode,
@@ -397,23 +401,32 @@ function logState(node: WorkflowNodeRun): string {
   return cached || "No logs for this step.";
 }
 
-async function loadLogs(nodeRunId: string) {
-  if (nodeRunId in logCache.value || logLoading.value.has(nodeRunId)) {
+async function loadLogs(node: WorkflowNodeRun) {
+  if (node.id in logCache.value || logLoading.value.has(node.id)) {
     return;
   }
 
-  logLoading.value.add(nodeRunId);
+  const effectId = workflowEffectId(node);
+
+  // Journal-only rows describe a node entering, retrying, or failing before it created an effect.
+  // Their ids are journal-entry ids, not valid `/workflow_effects/:id/output` resources.
+  if (!effectId) {
+    logCache.value = { ...logCache.value, [node.id]: "" };
+    return;
+  }
+
+  logLoading.value.add(node.id);
 
   try {
-    const chunks = await workflowRunExtrasService.fetchNodeRunChunks(nodeRunId);
+    const chunks = await workflowRunExtrasService.fetchNodeRunChunks(effectId);
     logCache.value = {
       ...logCache.value,
-      [nodeRunId]: chunks.map((chunk) => chunk.content).join("\n"),
+      [node.id]: chunks.map((chunk) => chunk.content).join("\n"),
     };
   } catch {
-    logCache.value = { ...logCache.value, [nodeRunId]: "" };
+    logCache.value = { ...logCache.value, [node.id]: "" };
   } finally {
-    logLoading.value.delete(nodeRunId);
+    logLoading.value.delete(node.id);
   }
 }
 
@@ -422,7 +435,7 @@ function onSelect(node: WorkflowNodeRun) {
   expandedId.value = expandedId.value === node.id ? null : node.id;
 
   if (expandedId.value === node.id) {
-    void loadLogs(node.id);
+    void loadLogs(node);
   }
 }
 
@@ -438,7 +451,7 @@ watch(
 
     if (node) {
       expandedId.value = node.id;
-      void loadLogs(node.id);
+      void loadLogs(node);
     }
   },
   { immediate: true },

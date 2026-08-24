@@ -1,11 +1,13 @@
 use clap::Parser;
+use runinator_broker::DEFAULT_BROKER_RELAY_PATH;
 use uuid::Uuid;
 
 use runinator_models::errors::SendableError;
 
 /// the waker is a broker-only timer/relay: it consumes wakes from the engine, sleeps until each is
-/// due, then publishes the wake's carried effect settle on the ingress channel. it never talks to
-/// the web service over http and never shares a channel with the worker.
+/// due, then publishes the wake's carried effect settle on the ingress channel. It has no web API
+/// dependency: when it runs outside the broker network, its broker calls travel through the
+/// authenticated WebSocket relay instead.
 #[derive(Parser, Debug, Clone)]
 pub struct Config {
     /// Stable process identity shown in the replica list. A generated value is sufficient when the
@@ -32,6 +34,27 @@ pub struct Config {
 
     #[arg(long, default_value = "127.0.0.1:7070")]
     pub broker_endpoint: String,
+
+    /// How this process reaches the broker: `direct` (the configured backend) or `relay`
+    /// (through the web service's authenticated WebSocket endpoint).
+    #[arg(long, env = "RUNINATOR_BROKER_MODE", default_value = "direct")]
+    pub broker_mode: String,
+
+    /// Web-service base URL used only with `--broker-mode relay`.
+    #[arg(long, env = "RUNINATOR_SERVICE_URL")]
+    pub service_url: Option<String>,
+
+    /// Bearer credential for the WebSocket relay, used only with `--broker-mode relay`.
+    #[arg(long, env = "RUNINATOR_API_KEY")]
+    pub api_key: Option<String>,
+
+    /// Relay path relative to `--service-url`; override during a staged endpoint migration.
+    #[arg(
+        long,
+        env = "RUNINATOR_BROKER_RELAY_PATH",
+        default_value = DEFAULT_BROKER_RELAY_PATH
+    )]
+    pub broker_relay_path: String,
 
     #[arg(long, default_value = "runinator.effects")]
     pub broker_effect_topic: String,

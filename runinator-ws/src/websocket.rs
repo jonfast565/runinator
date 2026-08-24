@@ -298,15 +298,36 @@ pub(crate) async fn ws_run_stream<T: DatabaseImpl>(
     })
 }
 
-/// relays broker traffic for an external, lower-trust worker (e.g. `runinator-desktop-agent`) that
-/// can't reach the internal broker (RabbitMQ) directly, but can reach this already-authenticated,
-/// already-exposed endpoint. dispatches against the exact same `Arc<dyn Broker>` every other part of
-/// this service uses, so it's correct regardless of the deployment's backend, and it inherits the
-/// standard auth middleware (already applied to every `/ws/*` route) for free.
+/// relays broker traffic for a cluster runtime that cannot reach the broker network directly, but
+/// can reach this already-authenticated, already-exposed endpoint. It dispatches against the exact
+/// same `Arc<dyn Broker>` every other part of this service uses, so direct and relay-connected
+/// processes see the same broker contract regardless of the deployment's backend.
 ///
 /// unlike `ws_events` (fan-out, no ack, read-only), this is bidirectional and multiplexed: each
 /// incoming request is dispatched on its own spawned task so a slow `receive_for`/`receive_control`
 /// never blocks a concurrent `ack` arriving moments later on the same connection.
+pub(crate) async fn ws_broker_relay<T: DatabaseImpl>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(broker): Extension<Arc<dyn Broker>>,
+    Extension(ctx): Extension<AuthContext>,
+    ws: WebSocketUpgrade,
+) -> Response {
+    if let Err(reply) = ctx.require_system_role(&[
+        SystemRole::Agent,
+        SystemRole::Worker,
+        SystemRole::Waker,
+        SystemRole::Engine,
+        SystemRole::Replica,
+    ]) {
+        return reply.into_response();
+    }
+    let relay_role = RelayRole::for_context(&ctx);
+    upgrade_broker_relay(db, broker, ctx, ws, relay_role)
+}
+
+/// Compatibility endpoint for older desktop agents. It remains deliberately worker-shaped; new
+/// cluster applications use `/ws/broker`, where their system role selects the least-privileged
+/// broker operation set.
 pub(crate) async fn ws_desktop_worker<T: DatabaseImpl>(
     Extension(db): Extension<Arc<T>>,
     Extension(broker): Extension<Arc<dyn Broker>>,
@@ -316,10 +337,45 @@ pub(crate) async fn ws_desktop_worker<T: DatabaseImpl>(
     if let Err(reply) = ctx.require_system_role(&[SystemRole::Agent, SystemRole::Worker]) {
         return reply.into_response();
     }
-    log::info!("WebSocket upgrade request for /ws/desktop-worker");
+    upgrade_broker_relay(db, broker, ctx, ws, RelayRole::Worker)
+}
+
+/// Access policy selected from the credential's system role. A relay is intentionally not a raw
+/// broker socket: lower-trust roles receive exactly the operations their runtime needs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RelayRole {
+    Worker,
+    Waker,
+    Engine,
+    Archiver,
+}
+
+impl RelayRole {
+    fn for_context(ctx: &AuthContext) -> Self {
+        match ctx.system_role {
+            Some(SystemRole::Agent | SystemRole::Worker) => Self::Worker,
+            Some(SystemRole::Waker) => Self::Waker,
+            Some(SystemRole::Engine) => Self::Engine,
+            Some(SystemRole::Replica) => Self::Archiver,
+            // `require_system_role` above allows a platform admin without requiring a system-role
+            // claim. Platform admins already hold the strongest control-plane permission, so their
+            // explicit relay path is the engine profile.
+            None => Self::Engine,
+        }
+    }
+}
+
+fn upgrade_broker_relay<T: DatabaseImpl>(
+    db: Arc<T>,
+    broker: Arc<dyn Broker>,
+    ctx: AuthContext,
+    ws: WebSocketUpgrade,
+    relay_role: RelayRole,
+) -> Response {
+    log::info!("WebSocket upgrade request for broker relay as {relay_role:?}");
     ws.on_upgrade(move |socket| async move {
-        let _connection = crate::metrics::websocket_connected("desktop_worker");
-        log::info!("WebSocket connection established for /ws/desktop-worker");
+        let _connection = crate::metrics::websocket_connected("broker_relay");
+        log::info!("WebSocket connection established for broker relay as {relay_role:?}");
         let (tx, mut rx_ws) = socket.split();
         let tx = Arc::new(tokio::sync::Mutex::new(tx));
         let in_flight = Arc::new(tokio::sync::Semaphore::new(RELAY_MAX_IN_FLIGHT));
@@ -355,7 +411,7 @@ pub(crate) async fn ws_desktop_worker<T: DatabaseImpl>(
                 Ok(None) => break,
                 Err(_) => {
                     log::warn!(
-                        "/ws/desktop-worker idle for {}s with no frame; closing",
+                        "broker relay idle for {}s with no frame; closing",
                         RELAY_IDLE_TIMEOUT.as_secs()
                     );
                     break;
@@ -407,7 +463,8 @@ pub(crate) async fn ws_desktop_worker<T: DatabaseImpl>(
                 // held so a delivery can be handed back if the reply never lands.
                 let stranded = StrandedDelivery::consumer_for(&frame.body);
                 let response =
-                    handle_desktop_worker_request(db, broker.as_ref(), &ctx, frame.body).await;
+                    handle_broker_relay_request(db, broker.as_ref(), &ctx, relay_role, frame.body)
+                        .await;
                 let stranded = stranded.zip_response(&response);
                 let Ok(payload) =
                     serde_json::to_string(&WsResponseFrame::new(frame.request_id, response))
@@ -431,7 +488,7 @@ pub(crate) async fn ws_desktop_worker<T: DatabaseImpl>(
             });
         }
         ping.abort();
-        log::info!("WebSocket connection closed for /ws/desktop-worker");
+        log::info!("WebSocket connection closed for broker relay as {relay_role:?}");
     })
 }
 
@@ -455,23 +512,36 @@ const RELAY_IDLE_TIMEOUT: Duration = Duration::from_secs(90);
 /// will never ack it and the work stalls until the lease expires.
 enum StrandedDelivery {
     Effect { consumer: String, delivery_id: Uuid },
+    EffectResult { consumer: String, delivery_id: Uuid },
     Control { consumer: String, delivery_id: Uuid },
     Agent { consumer: String, delivery_id: Uuid },
+    Wake { consumer: String, delivery_id: Uuid },
+    Ingress { consumer: String, delivery_id: Uuid },
 }
 
 /// which consumer a receive-shaped request would be taking a delivery for, if any.
 enum StrandedConsumer {
     Effect(String),
+    EffectResult(String),
     Control(String),
     Agent(String),
+    Wake(String),
+    Ingress(String),
     None,
 }
 
 impl StrandedDelivery {
     fn consumer_for(request: &TcpRequest) -> StrandedConsumer {
         match request {
+            TcpRequest::ReceiveEffect { consumer } => StrandedConsumer::Effect(consumer.clone()),
             TcpRequest::ReceiveEffectFor { profile } => {
                 StrandedConsumer::Effect(profile.id.clone())
+            }
+            TcpRequest::ReceiveInfrastructureEffect { consumer } => {
+                StrandedConsumer::Effect(consumer.clone())
+            }
+            TcpRequest::ReceiveEffectResult { consumer } => {
+                StrandedConsumer::EffectResult(consumer.clone())
             }
             TcpRequest::ReceiveControlFor { profile } => {
                 StrandedConsumer::Control(profile.id.clone())
@@ -479,6 +549,8 @@ impl StrandedDelivery {
             TcpRequest::ReceiveControl { consumer } => StrandedConsumer::Control(consumer.clone()),
             TcpRequest::ReceiveAgentFor { profile } => StrandedConsumer::Agent(profile.id.clone()),
             TcpRequest::ReceiveAgent { consumer } => StrandedConsumer::Agent(consumer.clone()),
+            TcpRequest::ReceiveWake { consumer } => StrandedConsumer::Wake(consumer.clone()),
+            TcpRequest::ReceiveIngress { consumer } => StrandedConsumer::Ingress(consumer.clone()),
             _ => StrandedConsumer::None,
         }
     }
@@ -489,6 +561,13 @@ impl StrandedDelivery {
                 consumer,
                 delivery_id,
             } => ("effect", broker.nack_effect(&consumer, delivery_id).await),
+            Self::EffectResult {
+                consumer,
+                delivery_id,
+            } => (
+                "effect_result",
+                broker.nack_effect_result(&consumer, delivery_id).await,
+            ),
             Self::Control {
                 consumer,
                 delivery_id,
@@ -497,13 +576,21 @@ impl StrandedDelivery {
                 consumer,
                 delivery_id,
             } => ("agent", broker.nack_agent(&consumer, delivery_id).await),
+            Self::Wake {
+                consumer,
+                delivery_id,
+            } => ("wake", broker.nack_wake(&consumer, delivery_id).await),
+            Self::Ingress {
+                consumer,
+                delivery_id,
+            } => ("ingress", broker.nack_ingress(&consumer, delivery_id).await),
         };
         match result {
             Ok(()) => log::warn!(
-                "/ws/desktop-worker: returned an undelivered {channel} delivery after the connection dropped"
+                "broker relay: returned an undelivered {channel} delivery after the connection dropped"
             ),
             Err(err) => log::warn!(
-                "/ws/desktop-worker: failed to return an undelivered {channel} delivery: {err}"
+                "broker relay: failed to return an undelivered {channel} delivery: {err}"
             ),
         }
     }
@@ -515,6 +602,12 @@ impl StrandedConsumer {
         match (self, response) {
             (Self::Effect(consumer), TcpResponse::EffectDelivery { delivery }) => {
                 Some(StrandedDelivery::Effect {
+                    consumer,
+                    delivery_id: delivery.delivery_id,
+                })
+            }
+            (Self::EffectResult(consumer), TcpResponse::EffectResultDelivery { delivery }) => {
+                Some(StrandedDelivery::EffectResult {
                     consumer,
                     delivery_id: delivery.delivery_id,
                 })
@@ -531,16 +624,45 @@ impl StrandedConsumer {
                     delivery_id: delivery.delivery_id,
                 })
             }
+            (Self::Wake(consumer), TcpResponse::WakeDelivery { delivery }) => {
+                Some(StrandedDelivery::Wake {
+                    consumer,
+                    delivery_id: delivery.delivery_id,
+                })
+            }
+            (Self::Ingress(consumer), TcpResponse::IngressDelivery { delivery }) => {
+                Some(StrandedDelivery::Ingress {
+                    consumer,
+                    delivery_id: delivery.delivery_id,
+                })
+            }
             _ => None,
         }
     }
 }
 
-/// the policy allow-list and replica-ownership check for the desktop-worker relay, ahead of the
-/// generic dispatch every other transport uses. a desktop worker only ever legitimately needs
+/// Apply the role-specific allow-list before the generic dispatch every other transport uses.
+async fn handle_broker_relay_request<T: DatabaseImpl>(
+    db: Arc<T>,
+    broker: &dyn Broker,
+    ctx: &AuthContext,
+    relay_role: RelayRole,
+    request: TcpRequest,
+) -> runinator_broker::tcp::types::TcpResponse {
+    match relay_role {
+        RelayRole::Worker => handle_worker_relay_request(db, broker, ctx, request).await,
+        RelayRole::Waker => handle_waker_relay_request(db, broker, ctx, request).await,
+        // The engine is the trusted broker coordinator. It must be able to drive every workflow
+        // channel, including future engine-only requests, so it uses the complete broker contract.
+        RelayRole::Engine => dispatch(broker, request).await,
+        RelayRole::Archiver => handle_archiver_relay_request(db, broker, ctx, request).await,
+    }
+}
+
+/// The worker allow-list and replica-ownership check. A worker only ever legitimately needs
 /// `receive_effect_for`/`ack_effect`/`nack_effect`, replica-targeted control, replica-targeted agent
 /// directives, effect-result publication, and its own lifecycle observations on ingress.
-async fn handle_desktop_worker_request<T: DatabaseImpl>(
+async fn handle_worker_relay_request<T: DatabaseImpl>(
     db: Arc<T>,
     broker: &dyn Broker,
     ctx: &AuthContext,
@@ -586,7 +708,8 @@ async fn handle_desktop_worker_request<T: DatabaseImpl>(
             runinator_comm::WsIngressCommand::AgentDirectiveResult { .. } => {}
             runinator_comm::WsIngressCommand::ReplicaAvailability { availability } => {
                 if let Err(response) =
-                    authorize_desktop_availability(&registry, ctx, availability).await
+                    authorize_relay_availability(&registry, ctx, availability, ReplicaKind::Worker)
+                        .await
                 {
                     return response;
                 }
@@ -610,31 +733,97 @@ async fn handle_desktop_worker_request<T: DatabaseImpl>(
     dispatch(broker, request).await
 }
 
-/// The relay is the authenticated boundary for a desktop worker's lifecycle message. It records
-/// the registration with the caller's principal before forwarding it to the engine, so later
-/// targeted receives retain the existing ownership guarantee. The engine's copy is idempotent and
-/// deliberately preserves that original owner.
-async fn authorize_desktop_availability<T: DatabaseImpl>(
+/// Wakers only consume timer wakes and publish the already-armed settlement back to ingress.
+async fn handle_waker_relay_request<T: DatabaseImpl>(
+    db: Arc<T>,
+    broker: &dyn Broker,
+    ctx: &AuthContext,
+    request: TcpRequest,
+) -> runinator_broker::tcp::types::TcpResponse {
+    match &request {
+        TcpRequest::Heartbeat
+        | TcpRequest::ReceiveWake { .. }
+        | TcpRequest::AckWake { .. }
+        | TcpRequest::NackWake { .. } => dispatch(broker, request).await,
+        TcpRequest::PublishIngress { message } => match &message.command {
+            runinator_comm::WsIngressCommand::SettleEffect { .. } => {
+                dispatch(broker, request).await
+            }
+            runinator_comm::WsIngressCommand::ReplicaAvailability { availability } => {
+                let registry = ReplicaRegistry::new(db);
+                match authorize_relay_availability(&registry, ctx, availability, ReplicaKind::Waker)
+                    .await
+                {
+                    Ok(()) => dispatch(broker, request).await,
+                    Err(response) => response,
+                }
+            }
+            _ => refused_relay_operation(&request),
+        },
+        _ => refused_relay_operation(&request),
+    }
+}
+
+/// Archivers do not consume workflow messages; they only publish their owned lifecycle state.
+async fn handle_archiver_relay_request<T: DatabaseImpl>(
+    db: Arc<T>,
+    broker: &dyn Broker,
+    ctx: &AuthContext,
+    request: TcpRequest,
+) -> runinator_broker::tcp::types::TcpResponse {
+    match &request {
+        TcpRequest::Heartbeat => dispatch(broker, request).await,
+        TcpRequest::PublishIngress { message } => match &message.command {
+            runinator_comm::WsIngressCommand::ReplicaAvailability { availability } => {
+                let registry = ReplicaRegistry::new(db);
+                match authorize_relay_availability(
+                    &registry,
+                    ctx,
+                    availability,
+                    ReplicaKind::Archiver,
+                )
+                .await
+                {
+                    Ok(()) => dispatch(broker, request).await,
+                    Err(response) => response,
+                }
+            }
+            _ => refused_relay_operation(&request),
+        },
+        _ => refused_relay_operation(&request),
+    }
+}
+
+fn refused_relay_operation(request: &TcpRequest) -> runinator_broker::tcp::types::TcpResponse {
+    runinator_broker::tcp::types::TcpResponse::Error {
+        message: crate::errors::RELAY_OPERATION_REFUSED
+            .error(request.operation_name())
+            .to_string(),
+    }
+}
+
+/// The relay is the authenticated boundary for a runtime's lifecycle message. It records the
+/// registration with the caller's principal before forwarding it to the engine, so later targeted
+/// receives retain the ownership guarantee. The engine's copy is idempotent and deliberately
+/// preserves that original owner.
+async fn authorize_relay_availability<T: DatabaseImpl>(
     registry: &ReplicaRegistry<T>,
     ctx: &AuthContext,
     availability: &runinator_comm::ReplicaAvailability,
+    expected_kind: ReplicaKind,
 ) -> Result<(), runinator_broker::tcp::types::TcpResponse> {
     use runinator_broker::tcp::types::TcpResponse;
 
     match availability {
         runinator_comm::ReplicaAvailability::Available { registration, .. } => {
-            if registration.replica_type != ReplicaKind::Worker || registration.replica_id.is_none()
-            {
+            if registration.replica_type != expected_kind || registration.replica_id.is_none() {
                 return Err(TcpResponse::Error {
                     message: crate::errors::RELAY_OPERATION_REFUSED
                         .error("publish_replica_availability")
                         .to_string(),
                 });
             }
-            match registry
-                .agent_owns_runtime_registration(ctx, registration)
-                .await
-            {
+            match relay_owns_runtime_registration(registry, ctx, registration).await {
                 Ok(true) => {}
                 Ok(false) => {
                     return Err(TcpResponse::Error {
@@ -661,7 +850,7 @@ async fn authorize_desktop_availability<T: DatabaseImpl>(
             replica_id,
             runtime_id,
         } => {
-            match registry.agent_owns_replica(ctx, *replica_id).await {
+            match relay_owns_replica(registry, ctx, *replica_id).await {
                 Ok(true) => {}
                 Ok(false) => {
                     return Err(TcpResponse::Error {
@@ -715,6 +904,33 @@ async fn refuse_unowned_replica<T: DatabaseImpl>(
     }
 }
 
+/// Relay credentials are principal-bound, regardless of their system role. The registry's older
+/// agent helper intentionally leaves non-agent roles to its caller; the relay is that caller, so
+/// it must not let a waker, engine, or archiver overwrite or retire another credential's replica.
+async fn relay_owns_runtime_registration<T: DatabaseImpl>(
+    registry: &ReplicaRegistry<T>,
+    ctx: &AuthContext,
+    request: &runinator_models::replicas::ReplicaRegistrationRequest,
+) -> Result<bool, runinator_models::errors::SendableError> {
+    Ok(!matches!(
+        registry
+            .fetch_by_runtime(request.instance_id.clone(), request.runtime_id.clone())
+            .await?,
+        Some(replica) if replica.registered_by_principal_id != ctx.principal_id
+    ))
+}
+
+async fn relay_owns_replica<T: DatabaseImpl>(
+    registry: &ReplicaRegistry<T>,
+    ctx: &AuthContext,
+    replica_id: Uuid,
+) -> Result<bool, runinator_models::errors::SendableError> {
+    Ok(matches!(
+        registry.fetch(replica_id).await?,
+        Some(replica) if replica.registered_by_principal_id == ctx.principal_id
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -725,6 +941,37 @@ mod tests {
         rbac::SystemRole,
         replicas::{ReplicaRegistrationRequest, ReplicaStatus},
     };
+
+    fn relay_context(role: SystemRole, principal_id: Uuid) -> AuthContext {
+        AuthContext {
+            principal_id: Some(principal_id),
+            session_id: None,
+            kind: PrincipalKind::Service,
+            platform_role: None,
+            assignments: Vec::new(),
+            system_role: Some(role),
+            action_ceiling: Vec::new(),
+            org_id: None,
+        }
+    }
+
+    fn availability(kind: ReplicaKind, replica_id: Uuid, instance_id: &str) -> ReplicaAvailability {
+        ReplicaAvailability::Available {
+            registration: ReplicaRegistrationRequest {
+                replica_id: Some(replica_id),
+                replica_type: kind,
+                instance_id: instance_id.to_string(),
+                runtime_id: replica_id.to_string(),
+                display_name: Some(instance_id.to_string()),
+                host: None,
+                port: None,
+                base_path: None,
+                version: None,
+                attributes: runinator_models::json!({}),
+            },
+            providers: Vec::new(),
+        }
+    }
 
     async fn test_db() -> (Arc<SqliteDb>, std::path::PathBuf) {
         let path =
@@ -744,33 +991,10 @@ mod tests {
         let registry = ReplicaRegistry::new(db);
         let owner = Uuid::now_v7();
         let replica_id = Uuid::now_v7();
-        let context = AuthContext {
-            principal_id: Some(owner),
-            session_id: None,
-            kind: PrincipalKind::Service,
-            platform_role: None,
-            assignments: Vec::new(),
-            system_role: Some(SystemRole::Agent),
-            action_ceiling: Vec::new(),
-            org_id: None,
-        };
-        let availability = ReplicaAvailability::Available {
-            registration: ReplicaRegistrationRequest {
-                replica_id: Some(replica_id),
-                replica_type: ReplicaKind::Worker,
-                instance_id: "desktop-test".to_string(),
-                runtime_id: replica_id.to_string(),
-                display_name: Some("Desktop test".to_string()),
-                host: None,
-                port: None,
-                base_path: None,
-                version: None,
-                attributes: runinator_models::json!({"exclusive": true}),
-            },
-            providers: Vec::new(),
-        };
+        let context = relay_context(SystemRole::Agent, owner);
+        let availability = availability(ReplicaKind::Worker, replica_id, "desktop-test");
 
-        authorize_desktop_availability(&registry, &context, &availability)
+        authorize_relay_availability(&registry, &context, &availability, ReplicaKind::Worker)
             .await
             .expect("desktop worker availability is accepted");
 
@@ -781,6 +1005,83 @@ mod tests {
             .expect("desktop replica was registered");
         assert_eq!(replica.registered_by_principal_id, Some(owner));
         assert_eq!(replica.status, ReplicaStatus::Live);
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn waker_relay_accepts_only_waker_lifecycle_and_wake_operations() {
+        let (db, path) = test_db().await;
+        let broker = runinator_broker::in_memory::InMemoryBroker::new();
+        let context = relay_context(SystemRole::Waker, Uuid::now_v7());
+        let replica_id = Uuid::now_v7();
+        let command = runinator_comm::WsIngressCommand::replica_available(
+            match availability(ReplicaKind::Waker, replica_id, "outside-waker") {
+                ReplicaAvailability::Available { registration, .. } => registration,
+                ReplicaAvailability::Offline { .. } => unreachable!(),
+            },
+            Vec::new(),
+        );
+
+        let accepted = handle_broker_relay_request(
+            db.clone(),
+            &broker,
+            &context,
+            RelayRole::Waker,
+            TcpRequest::PublishIngress {
+                message: runinator_broker::IngressMessage {
+                    dedupe_key: Some(command.dedupe_key()),
+                    command,
+                    enqueued_at: chrono::Utc::now(),
+                },
+            },
+        )
+        .await;
+        assert!(matches!(accepted, TcpResponse::Ok));
+
+        let refused = handle_broker_relay_request(
+            db,
+            &broker,
+            &context,
+            RelayRole::Waker,
+            TcpRequest::ReceiveIngress {
+                consumer: "not-a-waker-operation".to_string(),
+            },
+        )
+        .await;
+        assert!(matches!(refused, TcpResponse::Error { .. }));
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn archiver_relay_cannot_register_as_a_different_replica_kind() {
+        let (db, path) = test_db().await;
+        let broker = runinator_broker::in_memory::InMemoryBroker::new();
+        let context = relay_context(SystemRole::Replica, Uuid::now_v7());
+        let command = runinator_comm::WsIngressCommand::replica_available(
+            match availability(ReplicaKind::Waker, Uuid::now_v7(), "wrong-kind") {
+                ReplicaAvailability::Available { registration, .. } => registration,
+                ReplicaAvailability::Offline { .. } => unreachable!(),
+            },
+            Vec::new(),
+        );
+
+        let response = handle_broker_relay_request(
+            db,
+            &broker,
+            &context,
+            RelayRole::Archiver,
+            TcpRequest::PublishIngress {
+                message: runinator_broker::IngressMessage {
+                    dedupe_key: Some(command.dedupe_key()),
+                    command,
+                    enqueued_at: chrono::Utc::now(),
+                },
+            },
+        )
+        .await;
+        assert!(matches!(response, TcpResponse::Error { .. }));
 
         let _ = std::fs::remove_file(path);
     }
@@ -801,6 +1102,10 @@ pub(crate) fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
             get(ws_run_stream::<T>).layer(Extension(pool.clone())),
         )
         .route(
+            "/ws/broker",
+            get(ws_broker_relay::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
             "/ws/desktop-worker",
             get(ws_desktop_worker::<T>).layer(Extension(pool.clone())),
         )
@@ -808,6 +1113,25 @@ pub(crate) fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
 
 /// the openapi entries for the routes above.
 pub(crate) const DOCS: &[EndpointDoc] = &[
+    endpoint_with_policy(
+        "get",
+        "/ws/broker",
+        "WebSockets",
+        "Relay broker calls for an external cluster runtime",
+        "Upgrades to the authenticated broker relay. The connecting system role selects its allowed broker operations.",
+        EndpointPolicy::SystemRole(&[
+            SystemRole::Agent,
+            SystemRole::Worker,
+            SystemRole::Waker,
+            SystemRole::Engine,
+            SystemRole::Replica,
+        ]),
+        None,
+        &[],
+        101,
+        "websocket upgrade accepted",
+        Example::None,
+    ),
     endpoint_with_policy(
         "get",
         "/ws/events",

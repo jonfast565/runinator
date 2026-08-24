@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use clap::Parser;
+use runinator_broker::DEFAULT_BROKER_RELAY_PATH;
 use runinator_db_cli::DatabaseBackend;
 
 /// Command-line configuration for the standalone engine worker.
@@ -36,6 +37,27 @@ pub(crate) struct CliArgs {
         default_value = "127.0.0.1:7070"
     )]
     pub broker_endpoint: String,
+
+    /// How this process reaches the broker: `direct` (the configured backend) or `relay`
+    /// (through the authenticated web-service WebSocket endpoint).
+    #[arg(long, env = "RUNINATOR_BROKER_MODE", default_value = "direct")]
+    pub broker_mode: String,
+
+    /// Web-service base URL used only with `--broker-mode relay`.
+    #[arg(long, env = "RUNINATOR_SERVICE_URL")]
+    pub service_url: Option<String>,
+
+    /// Bearer credential for the web-service broker relay, used only with `--broker-mode relay`.
+    #[arg(long, env = "RUNINATOR_API_KEY")]
+    pub api_key: Option<String>,
+
+    /// Relay path relative to `--service-url`; override during a staged endpoint migration.
+    #[arg(
+        long,
+        env = "RUNINATOR_BROKER_RELAY_PATH",
+        default_value = DEFAULT_BROKER_RELAY_PATH
+    )]
+    pub broker_relay_path: String,
 
     /// Kafka effect topic or RabbitMQ effect queue used by direct broker backends
     #[arg(long, default_value = "runinator.effects")]

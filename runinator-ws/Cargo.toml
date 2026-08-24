@@ -58,7 +58,7 @@ runinator-pack = { path = "../runinator-pack" }
 runinator-provider-catalog = { path = "../runinator-provider-catalog" }
 
 [features]
-default = ["sqlite", "http", "tcp"]
+default = ["sqlite", "http", "tcp", "ws"]
 sqlite = ["runinator-database/sqlite", "runinator-db-cli/sqlite", "runinator-service-bootstrap/sqlite", "runinator-ws-authoring/db-sqlite"]
 postgres = ["runinator-database/postgres", "runinator-db-cli/postgres", "runinator-service-bootstrap/postgres", "runinator-ws-authoring/db-postgres"]
 mysql = ["runinator-database/mysql", "runinator-db-cli/mysql", "runinator-service-bootstrap/mysql", "runinator-ws-authoring/db-mysql"]
@@ -67,7 +67,7 @@ http = ["runinator-broker/http", "runinator-service-bootstrap/http", "dep:reqwes
 tcp = ["runinator-broker/tcp", "runinator-service-bootstrap/tcp"]
 kafka = ["runinator-broker/kafka", "runinator-service-bootstrap/kafka"]
 rabbitmq = ["runinator-broker/rabbitmq", "runinator-service-bootstrap/rabbitmq"]
-# enables the real `WsBroker` client, needed to test the /ws/desktop-worker relay end to end.
+# enables the real `WsBroker` client for the authenticated broker relay.
 ws = ["runinator-broker/ws", "runinator-service-bootstrap/ws"]
 # cloud builds: enable the kube-rs node provisioner backend.
 kubernetes = ["runinator-provisioner/kubernetes"]

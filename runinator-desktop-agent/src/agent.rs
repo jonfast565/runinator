@@ -64,7 +64,7 @@ pub struct AgentStatus {
     pub running: bool,
     pub replica_id: Option<Uuid>,
     pub root: Option<String>,
-    /// e.g. "relay via wss://.../ws/desktop-worker" or "direct TCP @ host:port".
+    /// e.g. "relay via wss://.../ws/broker" or "direct TCP @ host:port".
     pub broker_connection: Option<String>,
 }
 

@@ -6,44 +6,17 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use runinator_broker::{BrokerClientConfig, select_broker_connection};
 use runinator_models::errors::SendableError;
 use runinator_models::value::Value;
 
-use crate::agent::relay::derive_relay_url;
 use crate::broker::BrokerConfig;
 use crate::provider_repository::ProviderFactory;
 
 /// how the agent reaches the broker. orthogonal to what kind of worker it is: a cloud worker with no
 /// direct path to the broker can relay, and a desktop machine on the trusted network can connect
 /// straight to a backend.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum BrokerMode {
-    /// relay through the web service's `/ws/desktop-worker` endpoint, derived from the service URL.
-    /// the safe default for a machine that cannot (or should not) reach the broker directly.
-    #[default]
-    Relay,
-    /// connect straight to a broker backend.
-    Direct,
-}
-
-impl BrokerMode {
-    /// the lowercase name, both the serde form and the CLI value.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            BrokerMode::Relay => "relay",
-            BrokerMode::Direct => "direct",
-        }
-    }
-
-    /// parse a CLI/env spelling; `None` when unrecognized so a caller can fall back rather than fail.
-    pub fn parse(raw: &str) -> Option<Self> {
-        match raw.trim().to_ascii_lowercase().as_str() {
-            "relay" => Some(BrokerMode::Relay),
-            "direct" => Some(BrokerMode::Direct),
-            _ => None,
-        }
-    }
-}
+pub use runinator_broker::BrokerConnectionMode as BrokerMode;
 
 /// how the service endpoint is chosen before registration. discovery is intentionally explicit;
 /// a discovered service is selected automatically only when an enrollment token binds its cluster
@@ -55,8 +28,9 @@ pub enum LocatorMode {
     Discover,
 }
 
-/// the inputs that decide which broker a host connects to. resolved into a [`BrokerConfig`] plus a
-/// human description of the path taken, which is what both hosts display.
+/// the inputs that decide which broker connection strategy a host uses. resolved through
+/// [`runinator_broker::BrokerConnection`] into a [`BrokerConfig`] plus a human description, which
+/// is what both hosts display.
 #[derive(Debug, Clone)]
 pub struct BrokerSelection {
     pub mode: BrokerMode,
@@ -79,37 +53,41 @@ pub struct BrokerSelection {
 
 impl BrokerSelection {
     /// resolve to the broker config to build, and a description such as
-    /// `relay via wss://host/ws/desktop-worker` or `direct tcp @ 10.0.0.4:7070`.
+    /// `relay via wss://host/ws/broker` or `direct tcp @ 10.0.0.4:7070`.
     pub fn resolve(self) -> Result<(BrokerConfig, String), SendableError> {
-        let (backend, endpoint, description) = match self.mode {
-            BrokerMode::Relay => {
-                let relay_url = derive_relay_url(&self.service_url)?;
-                let description = format!("relay via {relay_url}");
-                ("ws".to_string(), relay_url, description)
-            }
-            BrokerMode::Direct => {
-                let description =
-                    format!("direct {} @ {}", self.direct_backend, self.direct_endpoint);
-                (
-                    self.direct_backend.clone(),
-                    self.direct_endpoint.clone(),
-                    description,
-                )
-            }
-        };
+        let connection = select_broker_connection(
+            self.mode,
+            BrokerClientConfig {
+                backend: self.direct_backend,
+                endpoint: self.direct_endpoint,
+                control_topic: self.control_topic,
+                agent_topic: Some(self.agent_topic),
+                effect_topic: self.effect_topic,
+                infrastructure_effect_topic: self.infrastructure_effect_topic,
+                effect_result_topic: self.effect_result_topic,
+                client_id: self.client_id,
+                relay_credential: self.api_key,
+                wake_topic: None,
+                ingress_topic: Some(self.ingress_topic),
+            },
+            self.service_url,
+            None,
+        );
+        let client = connection.client_config()?;
+        let description = connection.description()?;
 
         Ok((
             BrokerConfig {
-                broker_backend: backend,
-                broker_endpoint: endpoint,
-                broker_effect_topic: self.effect_topic,
-                broker_infrastructure_effect_topic: self.infrastructure_effect_topic,
-                broker_control_topic: self.control_topic,
-                broker_agent_topic: self.agent_topic,
-                broker_effect_result_topic: self.effect_result_topic,
-                broker_ingress_topic: self.ingress_topic,
-                broker_client_id: self.client_id,
-                api_key: self.api_key,
+                broker_backend: client.backend,
+                broker_endpoint: client.endpoint,
+                broker_effect_topic: client.effect_topic,
+                broker_infrastructure_effect_topic: client.infrastructure_effect_topic,
+                broker_control_topic: client.control_topic,
+                broker_agent_topic: client.agent_topic.unwrap_or_default(),
+                broker_effect_result_topic: client.effect_result_topic,
+                broker_ingress_topic: client.ingress_topic.unwrap_or_default(),
+                broker_client_id: client.client_id,
+                api_key: client.relay_credential,
             },
             description,
         ))

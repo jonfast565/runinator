@@ -12,6 +12,7 @@ fn config_parser_uses_local_development_defaults() {
     assert_eq!(config.max_wake_sleep_seconds, 20);
     assert_eq!(config.broker_backend, "tcp");
     assert_eq!(config.broker_endpoint, "127.0.0.1:7070");
+    assert_eq!(config.broker_mode, "direct");
     assert_eq!(config.broker_wake_topic, "runinator.wake");
     assert_eq!(config.broker_ingress_topic, "runinator.ingress");
     assert_eq!(config.broker_heartbeat_seconds, 10);
@@ -33,6 +34,12 @@ fn config_parser_accepts_waker_and_broker_overrides() {
         "127.0.0.1:9090",
         "--broker-client-id",
         "relay-1",
+        "--broker-mode",
+        "relay",
+        "--service-url",
+        "https://runinator.example.test/",
+        "--api-key",
+        "relay-key",
         "--broker-heartbeat-seconds",
         "5",
     ])
@@ -44,12 +51,18 @@ fn config_parser_accepts_waker_and_broker_overrides() {
     assert_eq!(config.broker_backend, "http");
     assert_eq!(config.broker_endpoint, "127.0.0.1:9090");
     assert_eq!(config.broker_client_id, "relay-1");
+    assert_eq!(config.broker_mode, "relay");
+    assert_eq!(
+        config.service_url.as_deref(),
+        Some("https://runinator.example.test/")
+    );
+    assert_eq!(config.api_key.as_deref(), Some("relay-key"));
     assert_eq!(config.broker_heartbeat_seconds, 5);
 }
 
 #[test]
 fn config_parser_rejects_control_plane_options() {
-    for option in ["--api-base-url", "--api-key"] {
+    for option in ["--api-base-url"] {
         assert!(
             Config::try_parse_from(["runinator-waker", option, "unused"]).is_err(),
             "{option} must not be accepted by the broker-only waker"

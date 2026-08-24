@@ -10,6 +10,7 @@
 //! `runinator-broker-core` directly instead.
 
 pub mod adapters;
+pub mod connection;
 pub mod dispatch;
 mod factory;
 #[cfg(feature = "http")]
@@ -17,6 +18,10 @@ pub mod http;
 pub mod tcp;
 pub mod ws;
 
+pub use connection::{
+    derive_websocket_relay_url, select_broker_connection, BrokerConnection, BrokerConnectionMode,
+    DirectBrokerConnection, WebSocketRelayConnection, DEFAULT_BROKER_RELAY_PATH,
+};
 pub use factory::{
     build_broker_client, build_kafka_broker, build_rabbitmq_broker, BrokerBuildError,
     BrokerClientConfig, BrokerConsumerProfile,

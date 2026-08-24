@@ -4,7 +4,7 @@
 use runinator_models::errors::SendableError;
 
 /// the web service's broker relay endpoint, relative to the service base URL.
-pub const RELAY_PATH: &str = "ws/desktop-worker";
+pub const RELAY_PATH: &str = runinator_broker::DEFAULT_BROKER_RELAY_PATH;
 
 /// Derive the WS broker relay URL from the service URL.
 /// Change `http` to `ws` and `https` to `wss`, then resolve [`RELAY_PATH`].
@@ -19,23 +19,8 @@ pub fn derive_relay_url_with_path(
     service_url: &str,
     relay_path: &str,
 ) -> Result<String, SendableError> {
-    let mut url = reqwest::Url::parse(service_url)
-        .map_err(|err| crate::errors::RELAY_URL.error(format!("{service_url}: {err}")))?;
-    let scheme = match url.scheme() {
-        "http" => "ws",
-        "https" => "wss",
-        other => {
-            return Err(
-                crate::errors::RELAY_URL.error(format!("unsupported service URL scheme '{other}'"))
-            );
-        }
-    };
-    url.set_scheme(scheme).map_err(|_| {
-        crate::errors::RELAY_URL.error(format!("cannot set scheme on {service_url}"))
-    })?;
-    url.join(relay_path.trim_start_matches('/'))
-        .map(|url| url.to_string())
-        .map_err(|err| crate::errors::RELAY_URL.error(format!("{service_url}: {err}")))
+    runinator_broker::derive_websocket_relay_url(service_url, relay_path)
+        .map_err(|err| crate::errors::RELAY_URL.error(err.to_string()))
 }
 
 #[cfg(test)]

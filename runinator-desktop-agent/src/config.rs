@@ -12,7 +12,7 @@ const CONFIG_FILE_NAME: &str = "desktop-agent.json";
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum BrokerMode {
-    /// relay through `runinator-ws`'s `/ws/desktop-worker` endpoint (derived from `service_url`).
+    /// relay through `runinator-ws`'s `/ws/broker` endpoint (derived from `service_url`).
     /// the safe default for a machine that shouldn't (or can't) reach the broker directly.
     #[default]
     Relay,
@@ -97,7 +97,7 @@ pub enum WindowCloseAction {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentConfig {
     /// also used to derive the WS broker relay URL in `BrokerMode::Relay` (scheme swapped,
-    /// `/ws/desktop-worker` appended) — see `agent::derive_relay_url`.
+    /// `/ws/broker` appended) — see `agent::derive_relay_url`.
     pub service_url: String,
     #[serde(default)]
     pub discover: bool,

@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use clap::Parser;
+use runinator_broker::DEFAULT_BROKER_RELAY_PATH;
 use runinator_db_cli::DatabaseBackend;
 
 #[derive(Debug, Parser)]
@@ -59,7 +60,7 @@ pub(crate) struct CliArgs {
     #[arg(
         long,
         env = "RUNINATOR_ANNOUNCE_RELAY_PATH",
-        default_value = "/ws/desktop-worker"
+        default_value = "/ws/broker"
     )]
     pub announce_relay_path: String,
 
@@ -83,6 +84,27 @@ pub(crate) struct CliArgs {
     /// Broker endpoint used for workflow control messages
     #[arg(long, default_value = "127.0.0.1:7070")]
     pub broker_endpoint: String,
+
+    /// How this replica reaches the broker: `direct` (the configured backend) or `relay`
+    /// (through another web service's authenticated WebSocket endpoint).
+    #[arg(long, env = "RUNINATOR_BROKER_MODE", default_value = "direct")]
+    pub broker_mode: String,
+
+    /// Web-service base URL used only with `--broker-mode relay`.
+    #[arg(long, env = "RUNINATOR_SERVICE_URL")]
+    pub service_url: Option<String>,
+
+    /// Bearer credential for the upstream WebSocket relay, used only with `--broker-mode relay`.
+    #[arg(long, env = "RUNINATOR_API_KEY")]
+    pub api_key: Option<String>,
+
+    /// Upstream relay path relative to `--service-url`; override during a staged endpoint migration.
+    #[arg(
+        long,
+        env = "RUNINATOR_BROKER_RELAY_PATH",
+        default_value = DEFAULT_BROKER_RELAY_PATH
+    )]
+    pub broker_relay_path: String,
 
     /// Kafka effect topic or RabbitMQ effect queue used by direct broker backends
     #[arg(long, default_value = "runinator.effects")]

@@ -68,7 +68,7 @@ pub struct AgentStatus {
     pub running: bool,
     pub replica_id: Option<Uuid>,
     pub connection: AgentConnection,
-    /// how this agent reaches the broker, e.g. `relay via wss://host/ws/desktop-worker`.
+    /// how this agent reaches the broker, e.g. `relay via wss://host/ws/broker`.
     pub broker_connection: Option<String>,
     pub metrics: AgentMetrics,
     pub last_error: Option<String>,

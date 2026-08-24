@@ -6,11 +6,11 @@ use super::*;
 fn http_becomes_ws_and_https_becomes_wss() {
     assert_eq!(
         derive_relay_url("http://127.0.0.1:8080/").unwrap(),
-        "ws://127.0.0.1:8080/ws/desktop-worker"
+        "ws://127.0.0.1:8080/ws/broker"
     );
     assert_eq!(
         derive_relay_url("https://runinator.example.com/").unwrap(),
-        "wss://runinator.example.com/ws/desktop-worker"
+        "wss://runinator.example.com/ws/broker"
     );
 }
 
@@ -18,7 +18,7 @@ fn http_becomes_ws_and_https_becomes_wss() {
 fn a_service_url_without_a_trailing_slash_still_resolves() {
     assert_eq!(
         derive_relay_url("https://runinator.example.com").unwrap(),
-        "wss://runinator.example.com/ws/desktop-worker"
+        "wss://runinator.example.com/ws/broker"
     );
 }
 
@@ -29,7 +29,7 @@ fn a_service_url_without_a_trailing_slash_still_resolves() {
 fn a_path_prefixed_service_keeps_its_prefix() {
     assert_eq!(
         derive_relay_url("https://example.com/runinator/").unwrap(),
-        "wss://example.com/runinator/ws/desktop-worker"
+        "wss://example.com/runinator/ws/broker"
     );
 }
 

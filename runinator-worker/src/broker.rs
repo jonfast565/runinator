@@ -11,10 +11,8 @@ use crate::config;
 /// the subset of worker config that selects and builds a `Broker`, factored out of the full CLI
 /// [`config::Config`] so any caller (the standalone `runinator-worker` binary, or an embedded host
 /// like `runinator-desktop-agent`) can pick a backend without needing to construct the rest of a
-/// worker's CLI-oriented config. "which broker transport" and "what kind of worker this is" are
-/// orthogonal: any worker — cloud or desktop — can connect directly to a broker backend
-/// (tcp/rabbitmq/kafka/http/in-memory) or relay through `runinator-ws`'s `/ws/desktop-worker`
-/// endpoint (`"ws"`) depending on the available network path.
+/// worker's CLI-oriented config. The shared `BrokerConnection` strategy chooses direct or relay
+/// topology before this concrete client config reaches the backend factory.
 #[derive(Debug, Clone)]
 pub struct BrokerConfig {
     pub broker_backend: String,

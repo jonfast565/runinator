@@ -115,6 +115,17 @@ pub(crate) const MINIMAL_ENDPOINTS: &[(&str, &str, docs::EndpointPolicy)] = &[
     ),
     (
         "get",
+        "/ws/broker",
+        docs::EndpointPolicy::SystemRole(&[
+            runinator_models::rbac::SystemRole::Agent,
+            runinator_models::rbac::SystemRole::Worker,
+            runinator_models::rbac::SystemRole::Waker,
+            runinator_models::rbac::SystemRole::Engine,
+            runinator_models::rbac::SystemRole::Replica,
+        ]),
+    ),
+    (
+        "get",
         "/ws/desktop-worker",
         docs::EndpointPolicy::SystemRole(&[
             runinator_models::rbac::SystemRole::Agent,

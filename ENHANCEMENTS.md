@@ -8,7 +8,7 @@ Item IDs are **stable** — an item keeps the number it was first filed under (5
 
 The guiding constraint from `AGENTS.md`: keep dependency direction services→shared-contracts, keep changes scoped to the crate that owns the behavior, and thread any shared-contract change through every broker backend, mapper, and config file.
 
-**Last reprioritized:** 2026-08-22, after the architecture boundary survey (8.1–8.6).
+**Last reprioritized:** 2026-08-24, after the product-expansion survey (9.1–9.8).
 
 ---
 
@@ -20,15 +20,23 @@ The guiding constraint from `AGENTS.md`: keep dependency direction services→sh
 | 8.2 | Application-service boundary for HTTP | **shipped 2026-08-22** | engine, ws-* |
 | 8.3 | Restore broker-only waker | **shipped 2026-08-22** | waker, service-bootstrap |
 | 6.8 | Secret expiry warnings | **P1** | engine, utilities |
+| 9.1 | Replay safety planner | **P1** | engine, ws-runtime, command-center |
+| 9.2 | Approval routing and escalation | **P1** | models, runtime, engine, REXRAP, command-center |
+| 9.3 | Published workflow I/O contracts | **P1** | models, store/database, REXRAP, pack, ws-authoring |
 | 8.4 | Decouple UI event publication from engine | **shipped 2026-08-22** | comm, broker-core, engine, ws-core |
 | ~~8.5~~ | ~~Separate provider metadata from executors~~ | **declined 2026-08-22** | provider-catalog, pack, lsp, ctl, worker |
 | 5.3 | Inbound webhook triggers | **P2** | ws, models |
 | 6.5 | Cross-run analytics | **P2** | database, ws, command-center |
 | 6.9 | Shareable run forms | **P2** | ws, command-center |
+| 9.4 | Durable outbound event subscriptions | **P2** | models, engine, ws-runtime, command-center |
+| 9.5 | Dead-letter remediation | **P2** | store/database, engine, ws-runtime, command-center |
+| 9.6 | Editor-first workflow tests | **P2** | workflows, REXRAP, ctl, command-center |
 | 8.6 | Split the utilities catch-all | **shipped 2026-08-22** | observability, secrets, platform, pack-wire, data-export |
 | 5.6 | AI cost & token accounting | **P3** | provider-ai, comm/models, database |
 | 5.2 | AI-assisted REXRAP authoring | **P3** | command-center, provider-ai |
 | 5.7 | Pack environments + promotion | **P3** | ctl, ws, settings store |
+| 9.7 | Pack provenance and signing | **P3** | pack, pack-wire, ctl, ws-authoring, database |
+| 9.8 | End-to-end trace propagation | **P3** | observability, comm, engine, worker, ws |
 | 7.1–7.8 | Loop / iteration semantics | **shipped 2026-08-13** | models, reducer, workflows, REXRAP, command-center |
 | 6.6 | Action priority / fairness | **P4** | comm, broker (all backends), engine, worker |
 | 6.7 | Retention & redaction policy | **P4** | archiver, database, models |
@@ -71,6 +79,24 @@ The guiding constraint from `AGENTS.md`: keep dependency direction services→sh
 - **Approach:** Optional expiry metadata on settings-store secrets and a scan that raises a notification ahead of expiry.
 - Delivered through the shipped notification-policy layer (**6.1**, Appendix B); it is the cheapest proof that layer generalizes beyond run failures.
 
+### 9.1 Replay safety planner
+- **Owning crates:** `runinator-engine` (debug/run operations), `runinator-ws-runtime`, `runinator-command-center`.
+- **Problem:** A replay is deliberately capable of re-running external effects. The engine already refuses a restart point whose ancestry crosses stateful control flow, but the operator sees only a generic confirmation and cannot tell which prior outputs will be seeded, which actions will execute again, or whether their idempotency keys make that safe.
+- **Approach:** Add a read-only replay-plan endpoint that returns the frozen definition, selected restart point, seeded ancestor receipts, actions that will execute, each action's declared/resolved idempotency posture, and a `safe` / `review` / `blocked` verdict. The command center presents this plan and requires an explicit unsafe acknowledgement where appropriate; the existing replay command remains the sole mutating path.
+- **Boundary note:** The classification belongs beside `repository::debug`, not in the UI. Model it as a typed `ReplayPlan` and derive it only from the frozen run snapshot and durable receipts, never from the workflow's current definition.
+
+### 9.2 Approval routing and escalation
+- **Owning crates:** `runinator-models`, `runinator-runtime`, `runinator-engine`, `runinator-rexrap-*`, `runinator-command-center`.
+- **Problem:** The current approval node has a prompt/type and waits for one approve-or-reject decision. Real operational approvals need a named assignee or role, delegation, a quorum, reminder cadence, an escalation target, and a durable record of why a human acted.
+- **Approach:** Introduce a typed approval policy with recipients (users, teams, or role scopes), quorum/any-one rules, expiry behavior, reminders, escalation stages, delegation, and optional decision comments. Freeze the resolved policy with the approval effect; arm reminders/escalations as engine-owned wakes, then deliver them through the existing notification-policy machinery.
+- **Boundary note:** Authorization and recipient resolution must occur in the engine/service layer, with every decision audited. Do not implement escalation as command-center timers or direct provider calls; it must survive a week-long parked run and replica failover.
+
+### 9.3 Published workflow I/O contracts
+- **Owning crates:** `runinator-models`, `runinator-store`/`runinator-database`, `runinator-rexrap-sema`, `runinator-rexrap-codegen`, `runinator-pack`, `runinator-ws-authoring`, `runinator-command-center`.
+- **Problem:** REXRAP can declare a workflow return shape, but stored definitions only persist input schema; when the authoring service builds signatures for existing workflows it assigns the output `Any`. Published subflows consequently lose a type boundary, and revision history cannot explain whether a change is breaking.
+- **Approach:** Persist a declared/inferred output contract with each workflow revision, use it for subflow typing, and classify input/output changes as compatible or breaking. Add an impact view for direct subflow/pipeline dependents and require an intentional semver bump or override before importing a breaking revision.
+- **Boundary note:** This is a shared model and pack-wire migration. Runtime runs continue to use their frozen module snapshot; compatibility checks govern publication and import, never a run already in flight.
+
 ---
 
 ## P2 — extend reach and clarify cross-process contracts
@@ -104,6 +130,24 @@ The guiding constraint from `AGENTS.md`: keep dependency direction services→sh
 - **Approach:** A signed, scoped "run this workflow" URL that renders the workflow's `input_schema` as a form for non-authors. Opens the platform beyond its authors.
 - **Boundary note:** a public-ish surface — reuse the existing capability/resource-grant model (`docs/permissions.md`) rather than adding a bypass path.
 
+### 9.4 Durable outbound event subscriptions
+- **Owning crates:** `runinator-models`, `runinator-store`/`runinator-database`, `runinator-engine`, `runinator-ws-runtime`, `runinator-command-center`.
+- **Problem:** Run and automation events are retained and the command center receives them over an internal fan-out channel, but external systems have no durable subscription surface. Integrators must poll resources or build provider-specific side effects into every workflow.
+- **Approach:** Let an org create a scoped subscription selecting run, approval, artifact, and audit milestones; send signed CloudEvents-shaped payloads to an HTTPS endpoint through a durable delivery record with retry, backoff, observability, and dead-letter handling. Support selectors, payload projections, secret-backed signing keys, and a test delivery.
+- **Boundary note:** This is deliberately outbound and distinct from **5.3**'s inbound webhook trigger. Reuse delivery semantics, but do not expose the broker's internal `events` channel as a public API or let an unscoped subscription bypass resource grants/redaction.
+
+### 9.5 Dead-letter remediation
+- **Owning crates:** `runinator-store`/`runinator-database`, `runinator-engine`, `runinator-ws-runtime`, `runinator-command-center`, `runinator-ctl`.
+- **Problem:** Dead letters are persisted and visible to admins, but the store/API only lists them. An operator must manually reconstruct a failed delivery, which loses correlation and invites an unsafe raw republish.
+- **Approach:** Add typed inspection plus retry, discard, and narrowly-scoped repair operations. Retry only recognized, version-compatible envelopes after validating their original target, expiry, and authorization; record a remediation audit event linking the new attempt to its dead letter. The UI should show why an entry cannot be replayed and never offer a generic "publish this JSON" button.
+- **Boundary note:** Keep parsing and replay policy in the engine, one adapter per message family. Add a dedicated capability such as `deadletters:manage`; a platform-wide reader must not automatically gain the power to reissue work.
+
+### 9.6 Editor-first workflow tests
+- **Owning crates:** `runinator-workflows`, `runinator-rexrap`, `runinator-ctl`, `runinator-command-center`.
+- **Problem:** The simulation testkit already runs offline and is soundly side-effect-free, but suites are JSON bodies embedded in `tests { ... }` and are mainly exercised from `runinatorctl workflows test`. That makes fixtures and branch expectations harder to discover, review, and maintain than workflow code.
+- **Approach:** Add a readable REXRAP test DSL and an editor panel for cases, input/config fixtures, mocked action/park outcomes, branch/output expectations, failures, and coverage-by-node. Let CI request JUnit/JSON output and let pack policy require a green suite before import; retain the existing JSON syntax as a compatibility input.
+- **Boundary note:** Tests must remain atop `SimulationEnv` and may never publish provider effects, acquire credentials, or reach a live worker. Unsupported concurrency constructs should remain explicit failures until the simulator can model them faithfully.
+
 ---
 
 ## P3 — AI, lifecycle, and dependency cleanup
@@ -131,6 +175,18 @@ The guiding constraint from `AGENTS.md`: keep dependency direction services→sh
 - **Problem:** `semver.rs` exists but there is no dev→staging→prod lifecycle; a pack imports with one fixed set of config/secret bindings.
 - **Approach:** Environment-scoped pack deployment with a diff/promote flow (`runinatorctl workflows promote <pack> staging→prod`) and per-environment config/secret binding, so the same compiled pack runs against different settings-store values per environment.
 - **Unblocked** by 6.3 (shipped 2026-08-05) — `workflow_revisions` is the thing a promotion diffs against and rolls back to.
+
+### 9.7 Pack provenance and signing
+- **Owning crates:** `runinator-pack`, `runinator-pack-wire`, `runinator-ctl`, `runinator-ws-authoring`, `runinator-store`/`runinator-database`, `runinator-command-center`.
+- **Problem:** Function archives are deterministic and content-addressed, but a compiled workflow pack has no recorded signer, trust policy, software bill of materials, or verification result. A digest proves byte identity, not who authorized those bytes for an organization.
+- **Approach:** Add a signed pack manifest containing pack/workflow digests, function-package pins, provider requirements, and optional SBOM/provenance material. Manage trusted organization keys, verify signatures at import, persist the verification result with the created revisions, and expose provenance/diff data in the command center. Start with a single well-supported asymmetric signing scheme and explicit unsigned-pack policy rather than a generic plugin system.
+- **Boundary note:** Signing and manifest verification belong at the pack-wire boundary shared by writers and the web-service reader. The web service verifies; it must not compile source or silently trust a client-supplied verification flag.
+
+### 9.8 End-to-end trace propagation
+- **Owning crates:** `runinator-observability`, `runinator-comm`, `runinator-engine`, `runinator-worker`, `runinator-waker`, `runinator-ws`, `runinator-command-center`.
+- **Problem:** The effect command already carries a W3C trace-context map and workers re-parent their work to it, but engine-created effects initialize that carrier empty. This breaks the useful trace from an HTTP request through engine dispatch, broker delivery, worker/provider execution, result settlement, and timed wakes.
+- **Approach:** Capture the active trace context when creating an effect, preserve it across retry/result/wake paths, and re-parent consumer spans in the engine and waker. Persist a safe trace identifier on run/effect records and let the command center link to a configured trace explorer. Add process-level tests spanning engine → broker → worker and engine → wake → ingress.
+- **Boundary note:** Keep the carrier to standard trace propagation fields and treat it as observability metadata, never a place for credentials, arbitrary baggage, or tenant data. Every broker backend must round-trip it unchanged.
 
 ---
 

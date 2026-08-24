@@ -1473,14 +1473,19 @@ broker connection, routing labels, and startup behavior. Closing the window
 hides it in the tray; use "Exit" from the tray menu to actually quit.
 
 By default the agent relays broker traffic through the web service's
-`/ws/desktop-worker` endpoint rather than dialing the broker directly, so a
-machine behind NAT needs only outbound access to the web service — no inbound
-ports and no route to RabbitMQ. The relay URL is derived from the service URL
-(`https://` becomes `wss://`), so pointing the agent at a TLS ingress works as-is.
-Use direct broker mode only for a machine actually on the broker's network.
-The relay also authenticates the desktop agent's replica availability announcements before
-forwarding them to engine ingress, preserving the same lifecycle contract without exposing the
-cluster broker to the desktop.
+`/ws/broker` endpoint rather than dialing the broker directly, so a machine
+behind NAT needs only outbound access to the web service — no inbound ports and
+no route to RabbitMQ. The relay URL is derived from the service URL (`https://`
+becomes `wss://`), so pointing the agent at a TLS ingress works as-is. Use direct
+broker mode only for a machine actually on the broker's network.
+
+The same `--broker-mode direct|relay`, `--service-url`, `--api-key`, and
+`--broker-relay-path` connection choice is available to the standalone worker,
+waker, engine worker, and archiver. Relay credentials are restricted by their
+system role: workers receive their work/control/directive subset, wakers only
+receive wakes and settle them, archivers only report lifecycle, and engines can
+coordinate all workflow channels. This preserves the normal broker contract
+without exposing an unrestricted cluster broker to an outside process.
 
 ## Package macOS Runtime Apps
 

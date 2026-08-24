@@ -30,9 +30,9 @@ pub const BROKER_KAFKA: ErrorDescriptor =
 pub const BROKER_RABBITMQ: ErrorDescriptor =
     ErrorDescriptor::new("RUNI176", "ws.broker.rabbitmq", "RabbitMQ broker error");
 
-// the `/ws/desktop-worker` relay's refusals. these previously answered with bare prose, which meant
-// a misconfigured or misbehaving agent hot-looping against the relay was indistinguishable from a
-// healthy one in anything but a log grep. an agent surfaces these to its operator verbatim.
+// the `/ws/broker` relay's refusals. these previously answered with bare prose, which meant a
+// misconfigured or misbehaving runtime hot-looping against the relay was indistinguishable from a
+// healthy one in anything but a log grep. relay clients surface these to their operator verbatim.
 pub const RELAY_NOT_EXCLUSIVE: ErrorDescriptor = ErrorDescriptor::new(
     "RUNI177",
     "ws.relay.not_exclusive",

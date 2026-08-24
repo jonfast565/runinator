@@ -215,7 +215,7 @@ fn legacy_web_service_announcements_get_safe_defaults() {
     );
     let decoded: WebServiceAnnouncement = serde_json::from_str(&raw).unwrap();
     assert_eq!(decoded.scheme, "http");
-    assert_eq!(decoded.relay_path, "/ws/desktop-worker");
+    assert_eq!(decoded.relay_path, "/ws/broker");
     assert_eq!(decoded.cluster_id, Uuid::nil());
     assert!(!decoded.enrollment_enabled);
 }

@@ -8,7 +8,7 @@ fn service_url_includes_base_path_and_trailing_slash() {
         port: 8080,
         base_path: "api".into(),
         scheme: "https".into(),
-        relay_path: "/ws/desktop-worker".into(),
+        relay_path: "/ws/broker".into(),
         cluster_id: None,
         enrollment_enabled: true,
         spki_pin: None,

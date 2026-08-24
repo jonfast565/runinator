@@ -33,7 +33,7 @@ runinator-service-bootstrap = { path = "../runinator-service-bootstrap", default
 runinator-provider-catalog = { path = "../runinator-provider-catalog", default-features = false }
 
 [features]
-default = ["http", "tcp", "db-sqlite", "db-postgres", "db-mysql", "db-mongo"]
+default = ["http", "tcp", "ws", "db-sqlite", "db-postgres", "db-mysql", "db-mongo"]
 http = ["runinator-broker/http"]
 tcp = ["runinator-broker/tcp"]
 db-sqlite = ["runinator-provider-catalog/db-sqlite"]
@@ -42,9 +42,8 @@ db-mysql = ["runinator-provider-catalog/db-mysql"]
 db-mongo = ["runinator-provider-catalog/db-mongo"]
 kafka = ["runinator-broker/kafka"]
 rabbitmq = ["runinator-broker/rabbitmq"]
-# enables `--broker-backend ws`, relaying through runinator-ws's /ws/desktop-worker endpoint instead
-# of connecting to the broker directly — for a worker that only has network access to the web
-# service (e.g. running outside the cluster's trusted network).
+# enables the WebSocket relay used by `--broker-mode relay` for a worker that only has network
+# access to the web service (e.g. running outside the cluster's trusted network).
 ws = ["runinator-broker/ws"]
 
 [dev-dependencies]

@@ -20,7 +20,8 @@ use chrono::{Duration as ChronoDuration, Utc};
 use clap::Parser;
 use flate2::{Compression, write::GzEncoder};
 use runinator_broker::{
-    Broker, BrokerClientConfig, BrokerConsumerProfile, IngressMessage, build_broker_client,
+    Broker, BrokerClientConfig, BrokerConnectionMode, BrokerConsumerProfile, IngressMessage,
+    select_broker_connection,
 };
 use runinator_comm::WsIngressCommand;
 use runinator_database::{
@@ -72,8 +73,11 @@ async fn run_process() -> ExitCode {
 
 async fn run() -> Result<(), SendableError> {
     let config = Config::from_cli(Cli::parse())?;
-    let broker = build_broker_client(
-        &BrokerClientConfig {
+    let broker_mode = BrokerConnectionMode::parse(&config.broker_mode)
+        .ok_or_else(|| format!("unknown --broker-mode '{}'", config.broker_mode))?;
+    let connection = select_broker_connection(
+        broker_mode,
+        BrokerClientConfig {
             backend: config.broker_backend.clone(),
             endpoint: config.broker_endpoint.clone(),
             effect_topic: config.broker_effect_topic.clone(),
@@ -82,20 +86,34 @@ async fn run() -> Result<(), SendableError> {
             agent_topic: None,
             effect_result_topic: config.broker_effect_result_topic.clone(),
             client_id: config.broker_client_id.clone(),
-            relay_credential: None,
+            relay_credential: config.api_key.clone(),
             // Direct broker adapters initialize the ingress topology only when both orchestration
             // names are supplied. The archiver publishes ingress only and never consumes wakes.
             wake_topic: Some(config.broker_wake_topic.clone()),
             ingress_topic: Some(config.broker_ingress_topic.clone()),
         },
-        BrokerConsumerProfile::IngressPublisher,
-    )
-    .await?;
+        config.service_url.clone().unwrap_or_default(),
+        Some(&config.broker_relay_path),
+    );
+    let broker_connection = connection.description()?;
+    let broker_backend = connection.client_config()?.backend;
+    let broker = connection
+        .connect(BrokerConsumerProfile::IngressPublisher)
+        .await?;
     dispatch_database!(
         config.database,
         sqlite: config.database_url.clone(),
         url: config.database_url.clone(),
-        |db| { run_loop(db, broker.clone(), config).await }
+        |db| {
+            run_loop(
+                db,
+                broker.clone(),
+                config,
+                broker_backend,
+                broker_connection,
+            )
+            .await
+        }
     )
 }
 
@@ -103,6 +121,8 @@ async fn run_loop<T: ArchiveStore>(
     db: Arc<T>,
     broker: Arc<dyn Broker>,
     config: Config,
+    broker_backend: String,
+    broker_connection: String,
 ) -> Result<(), SendableError> {
     fs::create_dir_all(&config.archive_dir)?;
     let archiver_id = format!("runinator-archiver-{}", Uuid::new_v4());
@@ -113,7 +133,8 @@ async fn run_loop<T: ArchiveStore>(
     let runtime_id = replica_id.to_string();
     let base_attributes = attributes_with_host_metadata(&runinator_models::json!({
         "archive_dir": config.archive_dir.display().to_string(),
-        "broker_backend": config.broker_backend.clone(),
+        "broker_backend": broker_backend,
+        "broker_connection": broker_connection,
         "broker_client_id": config.broker_client_id.clone(),
     }));
     publish_replica_availability(

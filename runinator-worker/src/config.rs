@@ -52,7 +52,7 @@ struct CliArgs {
     dll_paths: Vec<String>,
 
     /// how to reach the broker: `direct` (the default — connect to `--broker-backend` at
-    /// `--broker-endpoint`) or `relay` (tunnel through the web service's `/ws/desktop-worker`
+    /// `--broker-endpoint`) or `relay` (tunnel through the web service's `/ws/broker`
     /// endpoint, derived from the service URL). use `relay` for a worker outside the cluster's
     /// trusted network, which only needs outbound access to the web service.
     #[arg(long, env = "RUNINATOR_BROKER_MODE", default_value = "direct")]

@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use clap::Parser;
 use log::info;
-use runinator_broker::{Broker, IngressMessage};
+use runinator_broker::{Broker, BrokerConnectionMode, IngressMessage, select_broker_connection};
 use runinator_comm::WsIngressCommand;
 use runinator_database::interfaces::DatabaseImpl;
 use runinator_engine::{EngineConfig, EventSender, run_background_engine};
@@ -51,6 +51,10 @@ async fn run_process() -> Result<(), SendableError> {
         database_url,
         broker_backend,
         broker_endpoint,
+        broker_mode,
+        service_url,
+        api_key,
+        broker_relay_path,
         broker_effect_topic,
         broker_infrastructure_effect_topic,
         broker_control_topic,
@@ -71,28 +75,35 @@ async fn run_process() -> Result<(), SendableError> {
         })
         .unwrap_or_else(|| format!("runinator-engine-worker-{}", Uuid::new_v4()));
 
-    // kept for the advertised attributes since the broker configs consume the original below.
+    let broker_mode = BrokerConnectionMode::parse(&broker_mode)
+        .ok_or_else(|| format!("unknown --broker-mode '{broker_mode}'"))?;
     let broker_client_id_display = broker_client_id.clone();
+    let connection = select_broker_connection(
+        broker_mode,
+        BrokerClientConfig {
+            backend: broker_backend,
+            endpoint: broker_endpoint,
+            effect_topic: broker_effect_topic,
+            infrastructure_effect_topic: broker_infrastructure_effect_topic,
+            control_topic: broker_control_topic,
+            agent_topic: Some(broker_agent_topic),
+            effect_result_topic: broker_effect_result_topic,
+            client_id: broker_client_id,
+            relay_credential: api_key,
+            // the engine arms timer wakes and consumes ingress, so it opts into both
+            // orchestration channels rather than leaving them at the backend defaults.
+            wake_topic: Some(broker_wake_topic),
+            ingress_topic: Some(broker_ingress_topic),
+        },
+        service_url.unwrap_or_default(),
+        Some(&broker_relay_path),
+    );
+    let broker_connection = connection.description()?;
+    let broker_config = connection.client_config()?;
+    let broker_backend_display = broker_config.backend.clone();
 
     let resources = ServerResources::builder("Runinator Engine Worker")
-        .broker(
-            BrokerClientConfig {
-                backend: broker_backend.clone(),
-                endpoint: broker_endpoint,
-                effect_topic: broker_effect_topic,
-                infrastructure_effect_topic: broker_infrastructure_effect_topic,
-                control_topic: broker_control_topic,
-                agent_topic: Some(broker_agent_topic),
-                effect_result_topic: broker_effect_result_topic,
-                client_id: broker_client_id,
-                relay_credential: None,
-                // the engine arms timer wakes and consumes ingress, so it opts into both
-                // orchestration channels rather than leaving them at the backend defaults.
-                wake_topic: Some(broker_wake_topic),
-                ingress_topic: Some(broker_ingress_topic),
-            },
-            BrokerConsumerProfile::WorkflowRuntime,
-        )
+        .broker(broker_config, BrokerConsumerProfile::WorkflowRuntime)
         .database(DatabaseRequest {
             backend: database,
             sqlite_path,
@@ -112,7 +123,8 @@ async fn run_process() -> Result<(), SendableError> {
     let database_backend = database.backend().label();
     // Advertise it so this worker's replica record matches the WS, worker, and waker records.
     let attributes = runinator_models::json!({
-        "broker_backend": broker_backend,
+        "broker_backend": broker_backend_display,
+        "broker_connection": broker_connection,
         "broker_client_id": broker_client_id_display,
         "database_backend": database_backend,
     });

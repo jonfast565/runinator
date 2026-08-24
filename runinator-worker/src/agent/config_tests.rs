@@ -25,7 +25,7 @@ fn relay_mode_targets_the_web_service_and_ignores_the_direct_endpoint() {
     assert_eq!(config.broker_backend, "ws");
     assert_eq!(
         config.broker_endpoint,
-        "wss://runinator.example.com/ws/desktop-worker"
+        "wss://runinator.example.com/ws/broker"
     );
     assert_eq!(config.api_key.as_deref(), Some("secret"));
     assert!(description.starts_with("relay via wss://"), "{description}");

@@ -21,7 +21,7 @@ runinator-observability = { path = "../runinator-observability" }
 runinator-platform = { path = "../runinator-platform" }
 
 [features]
-default = ["sqlite", "http", "tcp"]
+default = ["sqlite", "http", "tcp", "ws"]
 sqlite = ["runinator-database/sqlite", "runinator-db-cli/sqlite"]
 postgres = ["runinator-database/postgres", "runinator-db-cli/postgres"]
 mysql = ["runinator-database/mysql", "runinator-db-cli/mysql"]
@@ -29,3 +29,4 @@ http = ["runinator-broker/http"]
 tcp = ["runinator-broker/tcp"]
 kafka = ["runinator-broker/kafka"]
 rabbitmq = ["runinator-broker/rabbitmq"]
+ws = ["runinator-broker/ws"]

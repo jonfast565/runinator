@@ -9,9 +9,7 @@ use chrono::Utc;
 use runinator_broker::{Broker, IngressMessage, WsIngressCommand};
 use runinator_models::errors::error_code_or_unknown;
 use runinator_models::replicas::{ReplicaKind, ReplicaRegistrationRequest};
-use runinator_observability::resource_telemetry::{
-    TelemetryCollector, attributes_with_host_metadata, attributes_with_telemetry,
-};
+use runinator_observability::resource_telemetry::{TelemetryCollector, attributes_with_telemetry};
 use tokio::sync::{Notify, Semaphore};
 use tokio::task::JoinSet;
 use tracing::{Instrument, error, info};
@@ -110,13 +108,9 @@ pub fn spawn_replica_heartbeat(
     config: Config,
     replica_id: uuid::Uuid,
     runtime_id: String,
+    base_attributes: runinator_models::value::Value,
     shutdown: Arc<Notify>,
 ) -> tokio::task::JoinHandle<()> {
-    let base_attributes = attributes_with_host_metadata(&runinator_models::json!({
-        "broker_backend": config.broker_backend.clone(),
-        "broker_client_id": config.broker_client_id.clone(),
-        "consumer_group": config.waker_consumer_group.clone(),
-    }));
     let telemetry = TelemetryCollector::new();
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(Duration::from_secs(10));

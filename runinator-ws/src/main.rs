@@ -2,6 +2,7 @@ mod config;
 mod service;
 use clap::Parser;
 use log::info;
+use runinator_broker::{BrokerConnectionMode, select_broker_connection};
 use runinator_models::errors::SendableError;
 use runinator_service_bootstrap::{
     BlobRequest, BrokerClientConfig, BrokerConsumerProfile, DatabaseRequest, ServerBootstrapError,
@@ -49,6 +50,10 @@ async fn run_process() -> Result<(), SendableError> {
         gossip_interval_seconds,
         broker_backend,
         broker_endpoint,
+        broker_mode,
+        service_url,
+        api_key,
+        broker_relay_path,
         broker_effect_topic,
         broker_infrastructure_effect_topic,
         broker_control_topic,
@@ -98,6 +103,33 @@ async fn run_process() -> Result<(), SendableError> {
         let trimmed = advertise_host.trim();
         (!trimmed.is_empty()).then(|| trimmed.to_string())
     };
+    let broker_mode = BrokerConnectionMode::parse(&broker_mode)
+        .ok_or_else(|| format!("unknown --broker-mode '{broker_mode}'"))?;
+    let broker_client_id_display = broker_client_id.clone();
+    let connection = select_broker_connection(
+        broker_mode,
+        BrokerClientConfig {
+            backend: broker_backend,
+            endpoint: broker_endpoint,
+            effect_topic: broker_effect_topic,
+            infrastructure_effect_topic: broker_infrastructure_effect_topic,
+            control_topic: broker_control_topic,
+            agent_topic: Some(broker_agent_topic),
+            effect_result_topic: broker_effect_result_topic,
+            client_id: broker_client_id,
+            relay_credential: api_key,
+            // the engine arms timer wakes and consumes ingress, so it opts into both
+            // orchestration channels rather than leaving them at the backend defaults.
+            wake_topic: Some(broker_wake_topic),
+            ingress_topic: Some(broker_ingress_topic),
+        },
+        service_url.unwrap_or_default(),
+        Some(&broker_relay_path),
+    );
+    let broker_connection = connection.description()?;
+    let broker_config = connection.client_config()?;
+    let broker_backend_display = broker_config.backend.clone();
+
     // advertise the backends this replica runs on so the replica list has parity with worker/waker.
     let database_backend = database.label();
     let advertisement = ReplicaAdvertisement {
@@ -107,30 +139,14 @@ async fn run_process() -> Result<(), SendableError> {
             (!trimmed.is_empty()).then(|| trimmed.to_string())
         }),
         attributes: runinator_models::json!({
-            "broker_backend": broker_backend.clone(),
-            "broker_client_id": broker_client_id.clone(),
+            "broker_backend": broker_backend_display,
+            "broker_connection": broker_connection,
+            "broker_client_id": broker_client_id_display,
             "database_backend": database_backend,
         }),
     };
     let resources = ServerResources::builder("Runinator Web Service")
-        .broker(
-            BrokerClientConfig {
-                backend: broker_backend.clone(),
-                endpoint: broker_endpoint,
-                effect_topic: broker_effect_topic,
-                infrastructure_effect_topic: broker_infrastructure_effect_topic,
-                control_topic: broker_control_topic,
-                agent_topic: Some(broker_agent_topic),
-                effect_result_topic: broker_effect_result_topic,
-                client_id: broker_client_id,
-                relay_credential: None,
-                // the engine arms timer wakes and consumes ingress, so it opts into both
-                // orchestration channels rather than leaving them at the backend defaults.
-                wake_topic: Some(broker_wake_topic),
-                ingress_topic: Some(broker_ingress_topic),
-            },
-            BrokerConsumerProfile::WorkflowRuntime,
-        )
+        .broker(broker_config, BrokerConsumerProfile::WorkflowRuntime)
         .blobs(BlobRequest {
             ensure_buckets: true,
         })
