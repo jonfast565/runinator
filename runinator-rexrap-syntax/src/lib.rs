@@ -18,6 +18,6 @@ pub use errors::{RexRapError, Span};
 pub use format::format_document;
 pub use includes::included_file_paths;
 pub use parser::{
-    parse_condition_fragment, parse_do_fragment, parse_document, parse_expression_fragment,
-    parse_pipeline_document, parse_secrets_document,
+    ConsoleModule, parse_condition_fragment, parse_console_module, parse_do_fragment,
+    parse_document, parse_expression_fragment, parse_pipeline_document, parse_secrets_document,
 };

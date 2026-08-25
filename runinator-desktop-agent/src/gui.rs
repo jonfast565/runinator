@@ -17,7 +17,7 @@ use runinator_worker::ActionOutcome;
 
 // presets offered by the label type-ahead. not exhaustive — any `key=value` text the operator types
 // is accepted; this just surfaces labels a pack in this repo is already known to route on.
-const LABEL_SUGGESTIONS: &[&str] = &["runner=creds-sync", "pool=desktop"];
+const LABEL_SUGGESTIONS: &[&str] = &["runner=desktop", "pool=desktop"];
 
 /// a per-frame copy of the shared agent state the GUI renders from, taken under one short lock.
 struct Snapshot {

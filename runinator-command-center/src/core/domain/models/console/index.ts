@@ -14,7 +14,7 @@ export interface ConsoleSession {
 
 // The kind chosen by the backend classifier. Store it so the UI can
 // say why a cell did or did not start a run without re-classifying source that may have changed.
-export type ConsoleCellKind = "expression" | "do" | "workflow";
+export type ConsoleCellKind = "expression" | "do" | "library" | "workflow";
 
 export type ConsoleCellStatus = "idle" | "running" | "succeeded" | "failed";
 
@@ -45,9 +45,21 @@ export interface ConsoleBinding {
   updated_at: string;
 }
 
+export interface ConsoleFunction {
+  id: string;
+  session_id: string;
+  cell_id: string;
+  name: string;
+  is_task: boolean;
+  source: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface ConsoleSessionDetail extends ConsoleSession {
   cells?: ConsoleCell[];
   bindings?: ConsoleBinding[];
+  functions?: ConsoleFunction[];
 }
 
 export interface NewConsoleCell {

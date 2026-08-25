@@ -22,8 +22,8 @@ use runinator_models::{
     },
     billing::{OrgQuota, OrgResourceGroup, UsageSample},
     console::{
-        ConsoleBinding, ConsoleCell, ConsoleCellKind, ConsoleCellStatus, ConsoleSession,
-        NewConsoleCell,
+        ConsoleBinding, ConsoleCell, ConsoleCellKind, ConsoleCellStatus, ConsoleFunction,
+        ConsoleSession, NewConsoleCell, NewConsoleFunction,
     },
     errors::SendableError,
     functions::{

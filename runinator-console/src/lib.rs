@@ -19,7 +19,10 @@ mod classify;
 mod errors;
 mod session;
 
-pub use classify::{CellKind, Classification, classify, workflow_source};
+pub use classify::{
+    CellKind, Classification, classify, classify_with_functions, workflow_source,
+    workflow_source_with_functions,
+};
 pub use errors::{ConsoleError, DICTIONARY, Result};
 pub use session::{
     CELL_SCOPE, CONTEXT_ROOT, ConsoleContext, cell_binding_name, scratch_workflow_name,

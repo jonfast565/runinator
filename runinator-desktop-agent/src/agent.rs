@@ -6,8 +6,8 @@
 //! [`AgentObserver`] for the in-app console, status header, and native toasts.
 //!
 //! The agent stays `exclusive`. It takes only work pinned to its replica ID or matching one of its
-//! labels. Besides `pool=desktop`, operators can add labels such as `runner=creds-sync` and use
-//! a matching `.runner("...")` in a workflow.
+//! labels. Besides `pool=desktop`, the default configuration adds `runner=desktop`; operators can
+//! add more labels and use a matching `.runner("...")` in a workflow.
 //!
 //! how it reaches the broker ([`crate::config::BrokerMode`]) is orthogonal to being a desktop worker:
 //! by default it relays through `runinator-ws` (safe when this machine shouldn't reach the broker

@@ -76,6 +76,12 @@ pub(crate) const META_COMMANDS: &[MetaCommand] = &[
         "",
     ),
     meta(
+        &["functions"],
+        "functions",
+        "show the active REXRAP function library for this session",
+        "",
+    ),
+    meta(
         &["cancel"],
         "cancel [cell-id]",
         "cancel the durable run behind an effectful cell",

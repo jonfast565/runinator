@@ -124,7 +124,7 @@ pub struct AgentConfig {
     /// accept, joined with commas before parsing), so any future workflow that needs to pin work to a
     /// desktop instance just needs a matching `.runner("...")`/label requirement, with no new agent
     /// code or GUI control required.
-    #[serde(default)]
+    #[serde(default = "default_extra_labels")]
     pub extra_labels: Vec<String>,
     #[serde(default)]
     pub broker_mode: BrokerMode,
@@ -182,6 +182,10 @@ fn default_direct_broker_backend() -> String {
     "tcp".to_string()
 }
 
+fn default_extra_labels() -> Vec<String> {
+    vec!["runner=desktop".to_string()]
+}
+
 fn default_gossip_bind() -> String {
     "0.0.0.0".to_string()
 }
@@ -214,7 +218,7 @@ impl Default for AgentConfig {
             allow_write: false,
             api_key: None,
             enrollment_token: None,
-            extra_labels: Vec::new(),
+            extra_labels: default_extra_labels(),
             broker_mode: BrokerMode::default(),
             direct_broker_backend: default_direct_broker_backend(),
             direct_broker_endpoint: String::new(),
@@ -250,5 +254,26 @@ pub fn save(config: &AgentConfig) {
     }
     if let Ok(raw) = serde_json::to_string_pretty(config) {
         let _ = std::fs::write(path, raw);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AgentConfig;
+
+    #[test]
+    fn defaults_to_the_desktop_runner_label() {
+        assert_eq!(AgentConfig::default().extra_labels, ["runner=desktop"]);
+    }
+
+    #[test]
+    fn missing_labels_receive_the_desktop_runner_label() {
+        let config: AgentConfig = serde_json::from_value(serde_json::json!({
+            "service_url": "http://127.0.0.1:8080/",
+            "sandbox_root": ""
+        }))
+        .unwrap();
+
+        assert_eq!(config.extra_labels, ["runner=desktop"]);
     }
 }

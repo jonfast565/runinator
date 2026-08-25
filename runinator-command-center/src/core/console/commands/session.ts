@@ -119,6 +119,38 @@ export const sessionCommands: ConsoleCommand[] = [
       );
     },
   },
+  {
+    path: ["functions"],
+    usage: "functions",
+    summary: "show the active REXRAP function library for this session",
+    run: ({ session, json: raw, print }) => {
+      const functions = session.current()?.functions ?? [];
+
+      if (raw) {
+        print(json(functions));
+        return;
+      }
+
+      if (functions.length === 0) {
+        print(text("empty function library", "muted"));
+        return;
+      }
+
+      print(
+        table(
+          ["name", "kind", "cell", "source"],
+          [...functions]
+            .sort((left, right) => left.name.localeCompare(right.name))
+            .map((entry) => [
+              entry.name,
+              entry.is_task ? "task fn" : "fn",
+              truncate(entry.cell_id, 14),
+              truncate(entry.source.split(/\s+/).join(" "), 56),
+            ]),
+        ),
+      );
+    },
+  },
   cellCommand(
     "cancel",
     "cancel the durable run behind an effectful cell",

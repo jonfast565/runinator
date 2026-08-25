@@ -99,9 +99,9 @@ engine has no per-job flag, so scoping is done by passing one of these with
 scoped spec — no workflow change needed.
 
 The `packs/creds-sync` pack schedules this engine from runinator itself: two
-hourly workflows whose `console.run` node (pinned with `.runner("creds-sync")`)
+hourly workflows whose `console.run` node (pinned with `.runner("desktop")`)
 invokes `scripts/sync-secrets.sh --config <scoped spec> --once`. That node only
-runs on a worker started with `RUNINATOR_WORKER_LABELS=runner=creds-sync` on the
+runs on a worker started with `RUNINATOR_WORKER_LABELS=runner=desktop` on the
 operator's workstation (local logins + kubeconfig); if none is connected the run
 parks then fails. See `packs/creds-sync/README.md`.
 

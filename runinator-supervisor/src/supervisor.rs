@@ -16,6 +16,7 @@ use crate::{
     display::{clear_screen, render_snapshot},
     os::{is_process_running, send_kill, send_terminate},
     snapshot::{ProcessSnapshot, StateSnapshot, write_snapshot},
+    tui::{DashboardAction, DashboardMode, SupervisorTui},
     types::DynError,
 };
 
@@ -141,6 +142,15 @@ pub fn run_supervisor(
 
     fs::write(&paths.pid_file, format!("{}\n", std::process::id()))?;
 
+    // Foreground mode owns the terminal, so it can show the same dashboard as `status --watch`.
+    // A non-interactive foreground invocation keeps the previous plain refresh behaviour.
+    let mut dashboard = if foreground {
+        SupervisorTui::open(DashboardMode::ForegroundSupervisor)?
+    } else {
+        None
+    };
+    let plain_foreground = foreground && dashboard.is_none();
+
     let mut processes = build_processes(config, paths)?;
     let started_at = Utc::now();
     let restart_delay = Duration::from_millis(config.restart_delay_ms);
@@ -170,7 +180,15 @@ pub fn run_supervisor(
         let snapshot = build_snapshot(paths, started_at, &processes);
         write_snapshot(&paths.state_file, &snapshot)?;
 
-        if foreground {
+        let mut stop_from_dashboard = false;
+        if let Some(dashboard) = dashboard.as_mut() {
+            dashboard.observe(&snapshot);
+            dashboard.draw(Some(&snapshot), None)?;
+            stop_from_dashboard = matches!(
+                dashboard.poll_input(Duration::from_millis(1))?,
+                DashboardAction::StopSupervisor
+            );
+        } else if plain_foreground {
             clear_screen();
             render_snapshot(&snapshot);
             println!();
@@ -180,7 +198,7 @@ pub fn run_supervisor(
             );
         }
 
-        if paths.stop_file.exists() {
+        if paths.stop_file.exists() || stop_from_dashboard {
             break;
         }
 

@@ -1230,7 +1230,9 @@ async fn assert_unreferenced_artifacts<T: DatabaseImpl>(db: &T) {
 }
 
 async fn assert_console_lifecycle<T: DatabaseImpl>(db: &T) {
-    use runinator_models::console::{ConsoleCellKind, ConsoleCellStatus, NewConsoleCell};
+    use runinator_models::console::{
+        ConsoleCellKind, ConsoleCellStatus, NewConsoleCell, NewConsoleFunction,
+    };
 
     let session = db
         .create_console_session(None, "scratch", None)
@@ -1304,6 +1306,32 @@ async fn assert_console_lifecycle<T: DatabaseImpl>(db: &T) {
     assert_eq!(bindings.len(), 1, "a name must bind once per session");
     assert_eq!(bindings[0].value, runinator_models::json!(4));
 
+    // The active function library is latest-successful by name. Changing a non-owner must not
+    // disturb the latest definition, while editing or deleting its owner removes it outright.
+    let definition = |source: &str| NewConsoleFunction {
+        name: "double".into(),
+        is_task: false,
+        source: source.into(),
+    };
+    db.replace_console_functions(
+        session.id,
+        first.id,
+        &[definition("fn double(x: integer) = x * 2")],
+    )
+    .await
+    .unwrap();
+    db.replace_console_functions(
+        session.id,
+        second.id,
+        &[definition("fn double(x: integer) = x * 3")],
+    )
+    .await
+    .unwrap();
+    let active = db.fetch_console_functions(session.id).await.unwrap();
+    assert_eq!(active.len(), 1);
+    assert_eq!(active[0].cell_id, second.id);
+    assert!(active[0].source.contains("* 3"));
+
     // editing a cell clears its outcome: a result beside changed source is a stale answer shown as
     // a current one.
     let edited = db
@@ -1321,8 +1349,96 @@ async fn assert_console_lifecycle<T: DatabaseImpl>(db: &T) {
     assert_eq!(edited.status, ConsoleCellStatus::Idle);
     assert!(edited.result.is_none());
     assert!(edited.kind.is_none());
+    assert_eq!(
+        db.fetch_console_functions(session.id)
+            .await
+            .unwrap()
+            .first()
+            .map(|function| function.cell_id),
+        Some(second.id),
+        "editing an older owner must not revive or remove the newer definition"
+    );
 
-    // a scratch run is found from its run id, which is how a settled run is attributed back.
+    db.upsert_console_cell(
+        session.id,
+        Some(second.id),
+        &NewConsoleCell {
+            source: "console.run(command: \"new\")".into(),
+            label: None,
+            position: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(
+        db.fetch_console_functions(session.id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    db.replace_console_functions(
+        session.id,
+        first.id,
+        &[definition("fn double(x: integer) = x * 4")],
+    )
+    .await
+    .unwrap();
+
+    // A stale completion must not overwrite an edit or republish the function source that ran
+    // before it. Editing clears the run id; the conditional terminal transition observes that.
+    let stale_run_id = Uuid::new_v4();
+    db.record_console_cell_outcome(
+        second.id,
+        Some(ConsoleCellKind::Workflow),
+        ConsoleCellStatus::Running,
+        None,
+        None,
+        Some(stale_run_id),
+    )
+    .await
+    .unwrap();
+    db.upsert_console_cell(
+        session.id,
+        Some(second.id),
+        &NewConsoleCell {
+            source: "console.run(command: \"edited\")".into(),
+            label: None,
+            position: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(
+        db.settle_console_workflow_succeeded(
+            second.id,
+            stale_run_id,
+            "cell_1",
+            &runinator_models::json!("stale"),
+            &[definition("fn double(x: integer) = x * 999")],
+        )
+        .await
+        .unwrap()
+        .is_none(),
+        "a completion that no longer owns the cell is ignored"
+    );
+    assert_eq!(
+        db.fetch_console_cell(second.id)
+            .await
+            .unwrap()
+            .map(|cell| cell.status),
+        Some(ConsoleCellStatus::Idle)
+    );
+    assert!(
+        db.fetch_console_functions(session.id)
+            .await
+            .unwrap()
+            .iter()
+            .any(|function| function.source.contains("* 4")),
+        "the stale source did not replace the active definition"
+    );
+
+    // A current completion moves the result binding, terminal state, and declarations together.
     let run_id = Uuid::new_v4();
     db.record_console_cell_outcome(
         second.id,
@@ -1334,6 +1450,19 @@ async fn assert_console_lifecycle<T: DatabaseImpl>(db: &T) {
     )
     .await
     .unwrap();
+    let settled = db
+        .settle_console_workflow_succeeded(
+            second.id,
+            run_id,
+            "cell_1",
+            &runinator_models::json!("done"),
+            &[definition("fn double(x: integer) = x * 5")],
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(settled.status, ConsoleCellStatus::Succeeded);
+    assert_eq!(settled.result, Some(runinator_models::json!("done")));
     assert_eq!(
         db.fetch_console_cell_for_run(run_id)
             .await
@@ -1341,11 +1470,147 @@ async fn assert_console_lifecycle<T: DatabaseImpl>(db: &T) {
             .map(|cell| cell.id),
         Some(second.id)
     );
+    assert_eq!(
+        db.fetch_console_bindings(session.id)
+            .await
+            .unwrap()
+            .iter()
+            .find(|binding| binding.name == "cell_1")
+            .map(|binding| binding.value.clone()),
+        Some(runinator_models::json!("done"))
+    );
+    assert_eq!(
+        db.fetch_console_functions(session.id)
+            .await
+            .unwrap()
+            .first()
+            .map(|function| function.cell_id),
+        Some(second.id)
+    );
+
+    // A later failed replay only clears the result binding it owned. It neither republishes nor
+    // removes the definition from the last successful execution.
+    let failed_run_id = Uuid::new_v4();
+    db.record_console_cell_outcome(
+        second.id,
+        Some(ConsoleCellKind::Workflow),
+        ConsoleCellStatus::Running,
+        None,
+        None,
+        Some(failed_run_id),
+    )
+    .await
+    .unwrap();
+    let failed = db
+        .settle_console_workflow_failed(second.id, failed_run_id, "cell_1", "provider failed")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(failed.status, ConsoleCellStatus::Failed);
+    assert!(failed.result.is_none());
+    assert!(
+        db.fetch_console_bindings(session.id)
+            .await
+            .unwrap()
+            .iter()
+            .all(|binding| binding.name != "cell_1")
+    );
+    assert!(
+        db.fetch_console_functions(session.id)
+            .await
+            .unwrap()
+            .iter()
+            .any(|function| function.source.contains("* 5")),
+        "a failed replay does not alter the last successful publication"
+    );
 
     // deleting a cell takes its binding with it.
     assert!(db.delete_console_cell(first.id).await.unwrap());
     assert!(
         db.fetch_console_bindings(session.id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(db.delete_console_cell(second.id).await.unwrap());
+    assert!(
+        db.fetch_console_bindings(session.id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        db.fetch_console_functions(session.id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    // Function-only cells publish their terminal outcome and library entries together, and the
+    // source compare prevents validation that began before an edit from reviving removed entries.
+    let library_source = "fn triple(x: integer) = x * 3";
+    let library = db
+        .upsert_console_cell(
+            session.id,
+            None,
+            &NewConsoleCell {
+                source: library_source.into(),
+                label: None,
+                position: None,
+            },
+        )
+        .await
+        .unwrap();
+    let published = db
+        .publish_console_library_cell(
+            library.id,
+            library_source,
+            &[NewConsoleFunction {
+                name: "triple".into(),
+                is_task: false,
+                source: library_source.into(),
+            }],
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(published.kind, Some(ConsoleCellKind::Library));
+    assert_eq!(published.status, ConsoleCellStatus::Succeeded);
+    assert_eq!(
+        db.fetch_console_functions(session.id)
+            .await
+            .unwrap()
+            .first()
+            .map(|function| function.name.as_str()),
+        Some("triple")
+    );
+    db.upsert_console_cell(
+        session.id,
+        Some(library.id),
+        &NewConsoleCell {
+            source: "fn triple(x: integer) = x * 30".into(),
+            label: None,
+            position: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(
+        db.publish_console_library_cell(
+            library.id,
+            library_source,
+            &[NewConsoleFunction {
+                name: "triple".into(),
+                is_task: false,
+                source: library_source.into(),
+            }],
+        )
+        .await
+        .unwrap()
+        .is_none()
+    );
+    assert!(
+        db.fetch_console_functions(session.id)
             .await
             .unwrap()
             .is_empty()

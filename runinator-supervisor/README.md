@@ -14,6 +14,14 @@ runinator-supervisor --config runinator-supervisor.json status --watch
 runinator-supervisor --config runinator-supervisor.json stop
 ```
 
+`status --watch` opens the interactive supervisor dashboard when run from a terminal. It shows
+every managed process in a selectable table, with `running` in green, transitional states such as
+`starting` and `backoff` in yellow, failures in red, and intentionally inactive processes in gray.
+The two rolling one-minute graphs show the healthy-process percentage and restart events observed
+since the dashboard opened. Use `↑`/`↓` (or `j`/`k`) to inspect a process, and `q`/`Esc` to close
+the monitor. `start --foreground` uses the same dashboard; there `q`/`Esc` gracefully stops the
+supervisor and its children. Piped output keeps the existing plain table refresh.
+
 ### Dynamic processes
 
 A running supervisor can add, start, stop, and remove processes on the fly. These commands
@@ -81,7 +89,7 @@ once per pack on startup to import the workflow packs. The checked-in supervisor
 config imports all three pack directories under `packs/` — `packs/sdlc`,
 `packs/hello-world`, and `packs/creds-sync` — compiling their unified `.rrx`
 sources during import. The `creds-sync` runs park
-then fail locally without a `runner=creds-sync` worker. It also passes `--advertise-host 127.0.0.1` to the web service,
+then fail locally without a `runner=desktop` worker. It also passes `--advertise-host 127.0.0.1` to the web service,
 waker, and worker, plus stable local instance ids for the waker and worker, so
 the replicas view shows host/IP/version data instead of blank fields after a
 restart. The local web-service command runs `runinator-bootstrap` first, then

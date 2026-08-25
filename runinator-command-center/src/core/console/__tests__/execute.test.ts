@@ -157,6 +157,42 @@ describe("executeCommand", () => {
     expect(output.kind === "table" && output.rows[0]).toEqual(["secret", "aws", "key"]);
   });
 
+  it("lists the active session function library", async () => {
+    const outputs: ConsoleOutput[] = [];
+    await executeCommand("functions", {
+      session: {
+        ...session,
+        current: () => ({
+          id: "session-1",
+          name: "scratch",
+          created_at: "2026-08-25T00:00:00Z",
+          updated_at: "2026-08-25T00:00:00Z",
+          functions: [
+            {
+              id: "function-1",
+              session_id: "session-1",
+              cell_id: "cell-1",
+              name: "double",
+              is_task: false,
+              source: "fn double(x: integer) = x * 2",
+              created_at: "2026-08-25T00:00:00Z",
+              updated_at: "2026-08-25T00:00:00Z",
+            },
+          ],
+        }),
+      },
+      terminal: { clear: () => undefined },
+      signal: new AbortController().signal,
+      print: (output) => outputs.push(output),
+    });
+
+    expect(outputs[0]).toMatchObject({
+      kind: "table",
+      columns: ["name", "kind", "cell", "source"],
+    });
+    expect(outputs[0].kind === "table" && outputs[0].rows[0]).toContain("double");
+  });
+
   it("splits package.export on the last dot and passes the selector", async () => {
     vi.mocked(invokeFunction).mockResolvedValue({ ok: true });
 

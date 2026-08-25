@@ -84,7 +84,7 @@ bash scripts/run-local.sh stop
 bash scripts/run-local.sh restart
 ```
 
-The supervisor runs `runinatorctl workflows apply` once per pack configured in `runinator-supervisor.json`, so those workflow packs are pushed into the API after the web service starts. The checked-in local config imports all three packs under `packs/` — `packs/sdlc/sdlc.rrx`, `packs/hello-world/hello-world.rrx`, and the `packs/creds-sync` directory — compiling the referenced `.rrx` files before sending each bundle to the API. The `creds-sync` workflows require a `runner=creds-sync` worker, so on the local stack their scheduled runs park then fail unless you start such a worker (see `packs/creds-sync/README.md`). It also advertises `127.0.0.1` for the web service, waker, and worker, and gives the waker and worker stable local instance ids so the replicas list shows host/IP/version data instead of blank fields on restart. Built-in provider metadata is seeded by the web service from the provider catalog on startup. If the stack is already running and you want another sync, run:
+The supervisor runs `runinatorctl workflows apply` once per pack configured in `runinator-supervisor.json`, so those workflow packs are pushed into the API after the web service starts. The checked-in local config imports all three packs under `packs/` — `packs/sdlc/sdlc.rrx`, `packs/hello-world/hello-world.rrx`, and the `packs/creds-sync` directory — compiling the referenced `.rrx` files before sending each bundle to the API. The `creds-sync` workflows require a `runner=desktop` worker. The desktop agent advertises that label by default, so its scheduled runs use the local desktop agent; without a matching connected worker, they park then fail (see `packs/creds-sync/README.md`). It also advertises `127.0.0.1` for the web service, waker, and worker, and gives the waker and worker stable local instance ids so the replicas list shows host/IP/version data instead of blank fields on restart. Built-in provider metadata is seeded by the web service from the provider catalog on startup. If the stack is already running and you want another sync, run:
 
 ```bash
 bash scripts/run-local.sh sync
@@ -1444,7 +1444,7 @@ cargo run -p runinator-desktop-agent -- \
   --service-url https://runinator.example/ \
   --api-key "$RUNINATOR_API_KEY" \
   --sandbox-root /srv/runinator-agent \
-  --labels zone=home \
+  --labels runner=desktop,zone=home \
   --liveness-file /tmp/runinator-desktop-agent-liveness
 ```
 

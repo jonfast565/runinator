@@ -96,7 +96,8 @@ fn a_cell_is_wrapped_into_a_workflow_unless_it_declares_one() {
     assert!(wrapped.contains("    console.run(command: \"go\")"));
 
     // an author who wrote their own workflow block meant it; wrapping again would nest one.
-    let authored = "workflow \"Mine\" v1 {\n    console.run(command: \"go\")\n}";
+    let authored =
+        "workflow \"Mine\" v1 {\n    do {\n        console.run(command: \"go\")\n    }\n}";
     assert_eq!(workflow_source(authored, "console.abc"), authored);
 }
 
@@ -109,4 +110,42 @@ fn a_commented_out_workflow_keyword_does_not_look_like_a_declaration() {
         wrapped.starts_with("workflow \"console.abc\" v1 {"),
         "{wrapped}"
     );
+}
+
+#[test]
+fn console_accepts_function_library_modules_and_full_documents() {
+    assert_eq!(
+        kind("fn double(x: integer) -> integer = x * 2"),
+        CellKind::Library
+    );
+    assert_eq!(
+        kind("fn double(x: integer) -> integer = x * 2\ndo {\n    console.run(command: \"go\")\n}"),
+        CellKind::Workflow
+    );
+    assert_eq!(
+        kind(
+            "workflow \"Mine\" v1 {\n    do {\n        console.run(command: \"go\")\n    }\n}\nfn double(x: integer) -> integer = x * 2"
+        ),
+        CellKind::Workflow
+    );
+    assert!(matches!(
+        classify(
+            "workflow \"One\" v1 { do {} }\nworkflow \"Two\" v1 { do {} }",
+            &options()
+        ),
+        Err(ConsoleError::Uncompilable(_))
+    ));
+}
+
+#[test]
+fn bare_runtime_do_is_wrapped_once_and_compute_keyword_is_pure() {
+    let source = "do {\n    console.run(command: \"go\")\n}";
+    assert_eq!(kind(source), CellKind::Workflow);
+    let wrapped = workflow_source(source, "console.abc");
+    assert!(
+        wrapped.contains("workflow \"console.abc\" v1 {\n    do {"),
+        "{wrapped}"
+    );
+    assert!(!wrapped.contains("do {\n        do {"), "{wrapped}");
+    assert_eq!(kind("compute { return 1 + 2 }"), CellKind::Do);
 }

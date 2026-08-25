@@ -8,7 +8,10 @@ use runinator_models::{
         LocalCredential, Permission, PrincipalKind, PrincipalType, ResourceType, Team, User,
     },
     billing::{OrgQuota, OrgResourceGroup, UsageSample},
-    console::{ConsoleBinding, ConsoleCell, ConsoleCellKind, ConsoleCellStatus, ConsoleSession},
+    console::{
+        ConsoleBinding, ConsoleCell, ConsoleCellKind, ConsoleCellStatus, ConsoleFunction,
+        ConsoleSession,
+    },
     errors::SendableError,
     functions::{
         FunctionAdapterWorkflow, FunctionAlias, FunctionArtifact, FunctionCatalogEntry,

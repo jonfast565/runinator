@@ -489,6 +489,13 @@ async fn handle_command(
     if first == "quit" {
         tokens[0].text = "exit".to_string();
     }
+    // `:functions` is the session library, while the process's `functions` command still has
+    // subcommands such as `functions publish`. The console-local bare verb must not shadow that
+    // clap surface; command lines with an additional word keep their normal dispatch path.
+    if first == "functions" && tokens.len() > 1 {
+        let words: Vec<String> = tokens.into_iter().map(|token| token.text).collect();
+        return command_line(client, &words, api_base_url).await;
+    }
     if let Some(matched) = repl::match_meta(&tokens) {
         return meta_command(client, session, &matched, current_cell, no_follow).await;
     }
@@ -563,6 +570,25 @@ async fn meta_command(
                 })
                 .collect::<Result<Vec<_>>>()?;
             print!("{}", output::table(&["name", "value"], &rows));
+        }
+        ["functions"] => {
+            let detail = client.console_session(session.id).await?;
+            let rows = detail
+                .functions
+                .iter()
+                .map(|function| {
+                    vec![
+                        function.name.clone(),
+                        if function.is_task { "task fn" } else { "fn" }.to_string(),
+                        output::truncate(&function.cell_id.to_string(), 14),
+                        one_line(&function.source),
+                    ]
+                })
+                .collect::<Vec<_>>();
+            print!(
+                "{}",
+                output::table(&["name", "kind", "cell", "source"], &rows)
+            );
         }
         ["cancel"] => {
             let cell_id = cell_reference(arguments, current_cell, "cancel")?;

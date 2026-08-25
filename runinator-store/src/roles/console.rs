@@ -13,8 +13,8 @@ use uuid::Uuid;
 
 use runinator_models::{
     console::{
-        ConsoleBinding, ConsoleCell, ConsoleCellKind, ConsoleCellStatus, ConsoleSession,
-        NewConsoleCell,
+        ConsoleBinding, ConsoleCell, ConsoleCellKind, ConsoleCellStatus, ConsoleFunction,
+        ConsoleSession, NewConsoleCell, NewConsoleFunction,
     },
     errors::SendableError,
     value::Value,
@@ -117,6 +117,54 @@ pub trait ConsoleStore: Send + Sync + 'static {
         session_id: Uuid,
         name: &str,
     ) -> impl Future<Output = Result<bool, SendableError>> + Send;
+
+    /// Fetch the active function library for a session, keyed by its latest successful
+    /// publication of each name.
+    fn fetch_console_functions(
+        &self,
+        session_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<ConsoleFunction>, SendableError>> + Send;
+
+    /// Replace every definition currently owned by `cell_id`, then publish these candidates. A
+    /// published name replaces the session's former owner, implementing latest-successful wins.
+    fn replace_console_functions(
+        &self,
+        session_id: Uuid,
+        cell_id: Uuid,
+        functions: &[NewConsoleFunction],
+    ) -> impl Future<Output = Result<Vec<ConsoleFunction>, SendableError>> + Send;
+
+    /// Mark a function-only cell as successful and publish its definitions as one state
+    /// transition. `source` is the text that was validated; if the cell changed while validation
+    /// was in flight, nothing is published.
+    fn publish_console_library_cell(
+        &self,
+        cell_id: Uuid,
+        source: &str,
+        functions: &[NewConsoleFunction],
+    ) -> impl Future<Output = Result<Option<ConsoleCell>, SendableError>> + Send;
+
+    /// Atomically settle the scratch run currently owned by a cell, bind its result, and publish
+    /// any definitions the completed source declared. A cell edited or replayed onto another run
+    /// no longer owns `workflow_run_id`, so it is deliberately left untouched.
+    fn settle_console_workflow_succeeded(
+        &self,
+        cell_id: Uuid,
+        workflow_run_id: Uuid,
+        binding_name: &str,
+        value: &Value,
+        functions: &[NewConsoleFunction],
+    ) -> impl Future<Output = Result<Option<ConsoleCell>, SendableError>> + Send;
+
+    /// Atomically mark the scratch run currently owned by a cell as failed and clear its binding.
+    /// As with success, a stale run is ignored rather than overwriting an edited or replayed cell.
+    fn settle_console_workflow_failed(
+        &self,
+        cell_id: Uuid,
+        workflow_run_id: Uuid,
+        binding_name: &str,
+        error: &str,
+    ) -> impl Future<Output = Result<Option<ConsoleCell>, SendableError>> + Send;
 
     /// Find the cell waiting on a scratch workflow run, so a settled run can be attributed back.
     fn fetch_console_cell_for_run(

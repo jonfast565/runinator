@@ -11,6 +11,58 @@ const CONSOLE_CELL_COLUMNS: &str = "id, session_id, position, label, source, kin
                                     error, workflow_run_id, created_at, updated_at";
 const CONSOLE_BINDING_COLUMNS: &str =
     "id, session_id, name, cell_id, value, created_at, updated_at";
+const CONSOLE_FUNCTION_COLUMNS: &str =
+    "id, session_id, cell_id, name, is_task, source, created_at, updated_at";
+
+/// Replace a cell's published definitions while another console transition already owns the
+/// transaction. Keeping this beside the role implementation makes library publication and scratch
+/// completion use the exact same ownership semantics.
+async fn replace_console_functions_in_transaction<B>(
+    store: &SqlStore<B>,
+    tx: &mut sqlx::Transaction<'_, B::Db>,
+    session_id: Uuid,
+    cell_id: Uuid,
+    functions: &[NewConsoleFunction],
+    now: i64,
+) -> Result<(), SendableError>
+where
+    B: SqlBackend,
+    for<'q> i64: Encode<'q, B::Db> + Type<B::Db>,
+    for<'q> bool: Encode<'q, B::Db> + Type<B::Db>,
+    for<'q> &'q str: Encode<'q, B::Db> + Type<B::Db>,
+    for<'q> Uuid: Encode<'q, B::Db> + Type<B::Db>,
+    for<'q> <B::Db as Database>::Arguments<'q>: IntoArguments<'q, B::Db>,
+    for<'c> &'c mut <B::Db as Database>::Connection: Executor<'c, Database = B::Db>,
+{
+    sqlx::query(&store.render("DELETE FROM console_functions WHERE cell_id = ?"))
+        .bind(cell_id)
+        .execute(&mut **tx)
+        .await?;
+
+    let mut functions = functions.iter().collect::<Vec<_>>();
+    functions.sort_by(|left, right| left.name.cmp(&right.name));
+    let conflict = store.dialect().on_conflict_update(
+        "session_id, name",
+        &["cell_id", "is_task", "source", "updated_at"],
+    );
+    for function in functions {
+        sqlx::query(&store.render(&format!(
+            "INSERT INTO console_functions ({CONSOLE_FUNCTION_COLUMNS}) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?) {conflict}"
+        )))
+        .bind(Uuid::new_v4())
+        .bind(session_id)
+        .bind(cell_id)
+        .bind(function.name.as_str())
+        .bind(function.is_task)
+        .bind(function.source.as_str())
+        .bind(now)
+        .bind(now)
+        .execute(&mut **tx)
+        .await?;
+    }
+    Ok(())
+}
 
 impl<B> ConsoleStore for SqlStore<B>
 where
@@ -108,7 +160,22 @@ where
         // but mysql 8 silently discards an inline `REFERENCES` clause, so relying on the cascade
         // would orphan rows on one engine and not the other.
         let mut tx = self.pool().begin().await?;
+        // Take cell locks before their bindings/functions. A concurrent settlement takes this
+        // same order, so deleting a session either follows a completed run or makes that run's
+        // compare-and-set miss after deletion; it cannot interleave a partial library update.
+        sqlx::query(
+            &self.render(
+                "UPDATE console_cells SET updated_at = updated_at + 1 WHERE session_id = ?",
+            ),
+        )
+        .bind(session_id)
+        .execute(&mut *tx)
+        .await?;
         sqlx::query(&self.render("DELETE FROM console_bindings WHERE session_id = ?"))
+            .bind(session_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(&self.render("DELETE FROM console_functions WHERE session_id = ?"))
             .bind(session_id)
             .execute(&mut *tx)
             .await?;
@@ -133,7 +200,9 @@ where
         let now = Utc::now().timestamp();
         if let Some(cell_id) = cell_id {
             // editing a cell clears its previous outcome: a result left beside changed source is a
-            // stale answer presented as a current one.
+            // stale answer presented as a current one. It also removes definitions in the same
+            // transaction, so readers never see an edited owner beside its old library entries.
+            let mut tx = self.pool().begin().await?;
             sqlx::query(&self.render(
                 "UPDATE console_cells SET source = ?, label = ?, kind = NULL, status = ?, \
                  result = NULL, error = NULL, workflow_run_id = NULL, updated_at = ? WHERE id = ?",
@@ -143,8 +212,15 @@ where
             .bind(ConsoleCellStatus::Idle.as_str())
             .bind(now)
             .bind(cell_id)
-            .execute(self.pool())
+            .execute(&mut *tx)
             .await?;
+            // Completion takes the same lock order (cell, then functions). Keeping every
+            // transition in that order avoids a two-row deadlock when an edit meets a settle.
+            sqlx::query(&self.render("DELETE FROM console_functions WHERE cell_id = ?"))
+                .bind(cell_id)
+                .execute(&mut *tx)
+                .await?;
+            tx.commit().await?;
             return self
                 .fetch_console_cell(cell_id)
                 .await?
@@ -243,9 +319,24 @@ where
 
     async fn delete_console_cell(&self, cell_id: Uuid) -> Result<bool, SendableError> {
         let mut tx = self.pool().begin().await?;
+        // Lock the cell before child rows. This matches edit and completion, preventing a delete
+        // from deadlocking with a workflow that is simultaneously settling its result/library.
+        let locked = sqlx::query(
+            &self.render("UPDATE console_cells SET updated_at = updated_at + 1 WHERE id = ?"),
+        )
+        .bind(cell_id)
+        .execute(&mut *tx)
+        .await?;
+        if locked.affected() == 0 {
+            return Ok(false);
+        }
         // the binding goes with it: a name resolving to a deleted cell's result is a scope entry
         // nothing can explain or reproduce.
         sqlx::query(&self.render("DELETE FROM console_bindings WHERE cell_id = ?"))
+            .bind(cell_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(&self.render("DELETE FROM console_functions WHERE cell_id = ?"))
             .bind(cell_id)
             .execute(&mut *tx)
             .await?;
@@ -340,6 +431,179 @@ where
         .execute(self.pool())
         .await?;
         Ok(result.affected() > 0)
+    }
+
+    async fn fetch_console_functions(
+        &self,
+        session_id: Uuid,
+    ) -> Result<Vec<ConsoleFunction>, SendableError> {
+        let rows = sqlx::query(&self.render(&format!(
+            "SELECT {CONSOLE_FUNCTION_COLUMNS} FROM console_functions \
+             WHERE session_id = ? ORDER BY name ASC"
+        )))
+        .bind(session_id)
+        .fetch_all(self.pool())
+        .await?;
+        Ok(rows.iter().map(mappers::row_to_console_function).collect())
+    }
+
+    async fn replace_console_functions(
+        &self,
+        session_id: Uuid,
+        cell_id: Uuid,
+        functions: &[NewConsoleFunction],
+    ) -> Result<Vec<ConsoleFunction>, SendableError> {
+        let now = Utc::now().timestamp();
+        let mut tx = self.pool().begin().await?;
+        // A re-run replaces all names this cell formerly owned. Definitions it no longer contains
+        // do not resurrect an older owner; deleting is the documented lifecycle rule.
+        replace_console_functions_in_transaction(
+            self, &mut tx, session_id, cell_id, functions, now,
+        )
+        .await?;
+        tx.commit().await?;
+        self.fetch_console_functions(session_id).await
+    }
+
+    async fn publish_console_library_cell(
+        &self,
+        cell_id: Uuid,
+        source: &str,
+        functions: &[NewConsoleFunction],
+    ) -> Result<Option<ConsoleCell>, SendableError> {
+        let now = Utc::now().timestamp();
+        let mut tx = self.pool().begin().await?;
+        // The source check is the library-cell equivalent of matching a workflow run id below.
+        // If an editor saved new text while semantic validation was in flight, that validation
+        // must not publish definitions for the old text.
+        let updated = sqlx::query(&self.render(
+            "UPDATE console_cells SET kind = ?, status = ?, result = NULL, error = NULL, \
+             workflow_run_id = NULL, updated_at = ? WHERE id = ? AND source = ?",
+        ))
+        .bind(ConsoleCellKind::Library.as_str())
+        .bind(ConsoleCellStatus::Succeeded.as_str())
+        .bind(now)
+        .bind(cell_id)
+        .bind(source)
+        .execute(&mut *tx)
+        .await?;
+        if updated.affected() == 0 {
+            return Ok(None);
+        }
+        let (session_id,): (Uuid,) =
+            sqlx::query_as(&self.render("SELECT session_id FROM console_cells WHERE id = ?"))
+                .bind(cell_id)
+                .fetch_one(&mut *tx)
+                .await?;
+        replace_console_functions_in_transaction(
+            self, &mut tx, session_id, cell_id, functions, now,
+        )
+        .await?;
+        tx.commit().await?;
+        self.fetch_console_cell(cell_id).await
+    }
+
+    async fn settle_console_workflow_succeeded(
+        &self,
+        cell_id: Uuid,
+        workflow_run_id: Uuid,
+        binding_name: &str,
+        value: &Value,
+        functions: &[NewConsoleFunction],
+    ) -> Result<Option<ConsoleCell>, SendableError> {
+        let now = Utc::now().timestamp();
+        let encoded = serde_json::to_string(value)?;
+        let mut tx = self.pool().begin().await?;
+        // This must be first: it acts as the compare-and-set that establishes this completion is
+        // still current, while also locking the cell row until the binding and function library
+        // move with it.
+        let updated = sqlx::query(&self.render(
+            "UPDATE console_cells SET kind = ?, status = ?, result = ?, error = NULL, \
+             workflow_run_id = ?, updated_at = ? WHERE id = ? AND workflow_run_id = ? AND status = ?",
+        ))
+        .bind(ConsoleCellKind::Workflow.as_str())
+        .bind(ConsoleCellStatus::Succeeded.as_str())
+        .bind(encoded.as_str())
+        .bind(workflow_run_id)
+        .bind(now)
+        .bind(cell_id)
+        .bind(workflow_run_id)
+        .bind(ConsoleCellStatus::Running.as_str())
+        .execute(&mut *tx)
+        .await?;
+        if updated.affected() == 0 {
+            return Ok(None);
+        }
+        let (session_id,): (Uuid,) =
+            sqlx::query_as(&self.render("SELECT session_id FROM console_cells WHERE id = ?"))
+                .bind(cell_id)
+                .fetch_one(&mut *tx)
+                .await?;
+        let binding_conflict = self
+            .dialect()
+            .on_conflict_update("session_id, name", &["cell_id", "value", "updated_at"]);
+        sqlx::query(&self.render(&format!(
+            "INSERT INTO console_bindings ({CONSOLE_BINDING_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?) {binding_conflict}"
+        )))
+        .bind(Uuid::new_v4())
+        .bind(session_id)
+        .bind(binding_name)
+        .bind(cell_id)
+        .bind(encoded.as_str())
+        .bind(now)
+        .bind(now)
+        .execute(&mut *tx)
+        .await?;
+        replace_console_functions_in_transaction(
+            self, &mut tx, session_id, cell_id, functions, now,
+        )
+        .await?;
+        tx.commit().await?;
+        self.fetch_console_cell(cell_id).await
+    }
+
+    async fn settle_console_workflow_failed(
+        &self,
+        cell_id: Uuid,
+        workflow_run_id: Uuid,
+        binding_name: &str,
+        error: &str,
+    ) -> Result<Option<ConsoleCell>, SendableError> {
+        let now = Utc::now().timestamp();
+        let mut tx = self.pool().begin().await?;
+        let updated = sqlx::query(&self.render(
+            "UPDATE console_cells SET kind = ?, status = ?, result = NULL, error = ?, \
+             workflow_run_id = ?, updated_at = ? WHERE id = ? AND workflow_run_id = ? AND status = ?",
+        ))
+        .bind(ConsoleCellKind::Workflow.as_str())
+        .bind(ConsoleCellStatus::Failed.as_str())
+        .bind(error)
+        .bind(workflow_run_id)
+        .bind(now)
+        .bind(cell_id)
+        .bind(workflow_run_id)
+        .bind(ConsoleCellStatus::Running.as_str())
+        .execute(&mut *tx)
+        .await?;
+        if updated.affected() == 0 {
+            return Ok(None);
+        }
+        let (session_id,): (Uuid,) =
+            sqlx::query_as(&self.render("SELECT session_id FROM console_cells WHERE id = ?"))
+                .bind(cell_id)
+                .fetch_one(&mut *tx)
+                .await?;
+        // A later cell may now own this name. Only clear the binding this cell itself created.
+        sqlx::query(&self.render(
+            "DELETE FROM console_bindings WHERE session_id = ? AND name = ? AND cell_id = ?",
+        ))
+        .bind(session_id)
+        .bind(binding_name)
+        .bind(cell_id)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        self.fetch_console_cell(cell_id).await
     }
 
     async fn fetch_console_cell_for_run(

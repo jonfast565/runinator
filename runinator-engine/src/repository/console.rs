@@ -12,7 +12,7 @@
 use runinator_console::{CellKind, ConsoleContext, cell_binding_name, scratch_workflow_name};
 use runinator_models::console::{
     CONSOLE_MANAGED_BY, ConsoleBinding, ConsoleCell, ConsoleCellKind, ConsoleCellStatus,
-    ConsoleSession, ConsoleSessionDetail, NewConsoleCell,
+    ConsoleFunction, ConsoleSession, ConsoleSessionDetail, NewConsoleCell, NewConsoleFunction,
 };
 use runinator_models::errors::SendableError;
 use runinator_models::replicas::{TriggerActorType, TriggerSourceKind, WorkflowRunProvenance};
@@ -63,6 +63,7 @@ pub async fn fetch_session_detail<T: ConsoleStore>(
         session,
         cells: db.fetch_console_cells(session_id).await?,
         bindings: db.fetch_console_bindings(session_id).await?,
+        functions: db.fetch_console_functions(session_id).await?,
     }))
 }
 
@@ -145,10 +146,12 @@ pub async fn run_cell<
         ..runinator_rexrap::CompileOptions::default()
     };
 
-    let classification = match runinator_console::classify(&cell.source, &options) {
-        Ok(classification) => classification,
-        Err(err) => return settle_failed(db, &cell, None, &err.to_string()).await,
-    };
+    let functions = db.fetch_console_functions(cell.session_id).await?;
+    let classification =
+        match runinator_console::classify_with_functions(&cell.source, &options, &functions) {
+            Ok(classification) => classification,
+            Err(err) => return settle_failed(db, &cell, None, &err.to_string()).await,
+        };
     let context = session_context(db, cell.session_id).await?;
 
     match classification.kind {
@@ -160,20 +163,38 @@ pub async fn run_cell<
             let Some(fragment_kind) = classification.fragment_kind() else {
                 return settle_failed(db, &cell, Some(kind), "cell has no evaluable form").await;
             };
+            let Some(fragment_source) = classification.pure_source.as_deref() else {
+                return settle_failed(db, &cell, Some(kind), "cell has no pure source").await;
+            };
             // evaluated through the same fragment evaluator `/rexrap/evaluate` uses. no second
             // evaluator: a console that computed `1 + 2` differently from an expression editor
             // would be a second language wearing the same syntax.
-            match runinator_rexrap::evaluate_fragment(
-                &cell.source,
-                fragment_kind,
-                &context.as_value(),
-                &options,
-            ) {
+            let evaluated = if classification.uses_function_module {
+                runinator_rexrap::evaluate_fragment_with_functions(
+                    fragment_source,
+                    fragment_kind,
+                    &context.as_value(),
+                    &functions
+                        .iter()
+                        .map(|function| function.source.clone())
+                        .collect::<Vec<_>>(),
+                    &options,
+                )
+            } else {
+                runinator_rexrap::evaluate_fragment(
+                    fragment_source,
+                    fragment_kind,
+                    &context.as_value(),
+                    &options,
+                )
+            };
+            match evaluated {
                 Ok(value) => settle_succeeded(db, &cell, kind, value, None).await,
                 Err(err) => settle_failed(db, &cell, Some(kind), &err.to_string()).await,
             }
         }
-        CellKind::Workflow => run_scratch_workflow(db, &cell, &options, &context).await,
+        CellKind::Library => run_library_cell(db, &cell, &options, &functions).await,
+        CellKind::Workflow => run_scratch_workflow(db, &cell, &options, &context, &functions).await,
     }
 }
 
@@ -213,23 +234,29 @@ pub async fn settle_cell_for_run<T: ConsoleStore + RuntimeStore + WorkflowVmStor
         .unwrap_or(Value::Null);
 
     if run.status == runinator_models::workflows::WorkflowStatus::Succeeded {
-        let outcome =
-            settle_succeeded(db, &cell, ConsoleCellKind::Workflow, output, Some(run.id)).await?;
-        return Ok(Some(outcome.cell));
+        let functions = local_function_candidates(&cell.source)
+            .map_err(|message| -> SendableError { message.into() })?;
+        return db
+            .settle_console_workflow_succeeded(
+                cell.id,
+                run.id,
+                &cell_binding_name(cell.label.as_deref(), cell.position),
+                &output,
+                &functions,
+            )
+            .await;
     }
     let message = run
         .message
         .clone()
         .unwrap_or_else(|| format!("run finished {}", run.status.as_str()));
-    let outcome = settle_failed_with_run(
-        db,
-        &cell,
-        Some(ConsoleCellKind::Workflow),
+    db.settle_console_workflow_failed(
+        cell.id,
+        run.id,
+        &cell_binding_name(cell.label.as_deref(), cell.position),
         &message,
-        Some(run.id),
     )
-    .await?;
-    Ok(Some(outcome.cell))
+    .await
 }
 
 // compile the cell into a scratch workflow and start a run of it.
@@ -246,9 +273,10 @@ async fn run_scratch_workflow<
     cell: &ConsoleCell,
     options: &runinator_rexrap::CompileOptions,
     context: &ConsoleContext,
+    functions: &[ConsoleFunction],
 ) -> Result<CellOutcome, SendableError> {
     let name = scratch_workflow_name(cell.session_id, cell.id);
-    let source = runinator_console::workflow_source(&cell.source, &name);
+    let source = runinator_console::workflow_source_with_functions(&cell.source, &name, functions);
     let mut definition = match runinator_rexrap::compile_str(&source, options) {
         Ok(definition) => definition,
         Err(err) => {
@@ -332,6 +360,71 @@ async fn run_scratch_workflow<
         cell,
         run: Some(run),
     })
+}
+
+// Validate and publish a function-only cell. It deliberately has no result binding: declarations
+// change the callable library, not `params.<cell-name>`.
+async fn run_library_cell<T: ConsoleStore>(
+    db: &T,
+    cell: &ConsoleCell,
+    options: &runinator_rexrap::CompileOptions,
+    active: &[ConsoleFunction],
+) -> Result<CellOutcome, SendableError> {
+    let local = match local_function_candidates(&cell.source) {
+        Ok(functions) => functions,
+        Err(message) => {
+            return settle_failed(db, cell, Some(ConsoleCellKind::Library), &message).await;
+        }
+    };
+    let source = library_validation_source(active, &local);
+    if let Err(error) = runinator_rexrap::compile_str(&source, options) {
+        return settle_failed(db, cell, Some(ConsoleCellKind::Library), &error.to_string()).await;
+    }
+    let settled = db
+        .publish_console_library_cell(cell.id, &cell.source, &local)
+        .await?
+        .or(db.fetch_console_cell(cell.id).await?)
+        .unwrap_or_else(|| cell.clone());
+    Ok(CellOutcome {
+        cell: settled,
+        run: None,
+    })
+}
+
+/// The local declarations in a cell, normalized to the persistence contract.
+fn local_function_candidates(source: &str) -> Result<Vec<NewConsoleFunction>, String> {
+    runinator_rexrap::function_definitions(source)
+        .map(|functions| {
+            functions
+                .into_iter()
+                .map(|function| NewConsoleFunction {
+                    name: function.name,
+                    is_task: function.is_task,
+                    source: function.source,
+                })
+                .collect()
+        })
+        .map_err(|error| error.to_string())
+}
+
+/// Build a syntactically ordinary one-workflow document to validate library declarations through
+/// the exact same semantic and lowering passes a workflow uses. Local candidates shadow the active
+/// name for this cell; they are only written after the cell has succeeded.
+fn library_validation_source(active: &[ConsoleFunction], local: &[NewConsoleFunction]) -> String {
+    let local_names = local
+        .iter()
+        .map(|function| function.name.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    let mut sources = active
+        .iter()
+        .filter(|function| !local_names.contains(function.name.as_str()))
+        .map(|function| function.source.as_str())
+        .collect::<Vec<_>>();
+    sources.extend(local.iter().map(|function| function.source.as_str()));
+    format!(
+        "{}\nworkflow \"__console_library__\" v1 {{\n    do {{\n        compute {{ return null }}\n    }}\n}}\n",
+        sources.join("\n\n")
+    )
 }
 
 // record a success and bind the result into the session's scope.

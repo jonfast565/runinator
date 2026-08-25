@@ -43,6 +43,7 @@ export type {
   ConsoleCell,
   ConsoleCellKind,
   ConsoleCellStatus,
+  ConsoleFunction,
   ConsoleSession,
   ConsoleSessionDetail,
   NewConsoleCell,

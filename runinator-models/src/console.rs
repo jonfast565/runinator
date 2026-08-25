@@ -34,6 +34,8 @@ pub struct ConsoleSession {
 pub enum ConsoleCellKind {
     Expression,
     Do,
+    /// A function-only cell that updates the session library without binding a value.
+    Library,
     Workflow,
 }
 
@@ -42,6 +44,7 @@ impl ConsoleCellKind {
         match self {
             Self::Expression => "expression",
             Self::Do => "do",
+            Self::Library => "library",
             Self::Workflow => "workflow",
         }
     }
@@ -54,6 +57,7 @@ impl TryFrom<&str> for ConsoleCellKind {
         match value {
             "expression" => Ok(Self::Expression),
             "do" => Ok(Self::Do),
+            "library" => Ok(Self::Library),
             "workflow" => Ok(Self::Workflow),
             other => Err(format!("Unknown console cell kind '{other}'")),
         }
@@ -139,6 +143,31 @@ pub struct ConsoleBinding {
     pub updated_at: DateTime<Utc>,
 }
 
+/// One active top-level REXRAP definition in a console session.
+///
+/// Source is stored per declaration rather than reconstructing it from a notebook cell: the active
+/// library has latest-successful semantics, and a cell may define several names independently.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConsoleFunction {
+    pub id: Uuid,
+    pub session_id: Uuid,
+    /// The cell whose successful execution most recently published this definition.
+    pub cell_id: Uuid,
+    pub name: String,
+    pub is_task: bool,
+    pub source: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// A definition candidate published by a successful console cell.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NewConsoleFunction {
+    pub name: String,
+    pub is_task: bool,
+    pub source: String,
+}
+
 /// a session with everything under it, as the API and UI read it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ConsoleSessionDetail {
@@ -148,6 +177,8 @@ pub struct ConsoleSessionDetail {
     pub cells: Vec<ConsoleCell>,
     #[serde(default)]
     pub bindings: Vec<ConsoleBinding>,
+    #[serde(default)]
+    pub functions: Vec<ConsoleFunction>,
 }
 
 /// what a caller sends to create or replace a cell.

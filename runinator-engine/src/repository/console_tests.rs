@@ -7,6 +7,16 @@
 use super::*;
 
 use runinator_console::{CELL_SCOPE, CONTEXT_ROOT, ConsoleContext, cell_binding_name};
+use runinator_database::sqlite::SqliteDb;
+use runinator_models::console::{
+    ConsoleCellKind, ConsoleCellStatus, ConsoleFunction, NewConsoleCell,
+};
+use runinator_models::providers::{
+    ActionMetadata, ParameterMetadata, ProviderMetadata, ProviderRuntimeMetadata, RuninatorType,
+};
+use runinator_models::workflows::WorkflowNodeKind;
+use runinator_store::{DatabaseImpl, roles::DefinitionStore};
+use uuid::Uuid;
 
 #[test]
 fn a_later_cell_sees_an_earlier_ones_result() {
@@ -74,4 +84,125 @@ fn a_console_scratch_workflow_is_recognisable_as_managed() {
             .and_then(Value::as_str),
         Some("console")
     );
+}
+
+#[test]
+fn a_session_task_function_call_compiles_to_the_normal_provider_action() {
+    // Session declarations are spliced into the same scratch document a provider call already
+    // uses; their bodies must lower to graph actions, never an evaluator-side shortcut.
+    let function = ConsoleFunction {
+        id: Uuid::new_v4(),
+        session_id: Uuid::new_v4(),
+        cell_id: Uuid::new_v4(),
+        name: "deploy".into(),
+        is_task: true,
+        source: "task fn deploy(command: string) do {\n    let output = console.run(command: command)\n}".into(),
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+    };
+    let options = runinator_rexrap::CompileOptions {
+        enabled: true,
+        ..runinator_rexrap::CompileOptions::default()
+    };
+
+    let classification = runinator_console::classify_with_functions(
+        "deploy(command: \"release\")",
+        &options,
+        std::slice::from_ref(&function),
+    )
+    .expect("task function call classifies");
+    assert_eq!(classification.kind, runinator_console::CellKind::Workflow);
+
+    let source = runinator_console::workflow_source_with_functions(
+        "deploy(command: \"release\")",
+        "console.task-function",
+        &[function],
+    );
+    let definition = runinator_rexrap::compile_str(&source, &options)
+        .expect("session task function scratch workflow compiles");
+    assert!(definition.definition.nodes.iter().any(|node| {
+        node.kind == WorkflowNodeKind::Action
+            && node
+                .action
+                .as_ref()
+                .is_some_and(|action| action.provider == "console" && action.function == "run")
+    }));
+}
+
+#[tokio::test]
+async fn a_session_task_function_starts_a_durable_scratch_run() {
+    let path =
+        std::env::temp_dir().join(format!("runinator-console-task-fn-{}.db", Uuid::now_v7()));
+    let db = SqliteDb::new(path.to_str().expect("temporary database path"))
+        .await
+        .expect("opens sqlite database");
+    db.run_init_scripts(&Vec::new())
+        .await
+        .expect("applies migrations");
+
+    let session = create_session(&db, None, "task function", None)
+        .await
+        .expect("creates console session");
+    let library = upsert_cell(
+        &db,
+        session.id,
+        None,
+        &NewConsoleCell {
+            source: "task fn deploy(command: string) do {\n    let output = console.run(command: command)\n}".into(),
+            label: None,
+            position: None,
+        },
+    )
+    .await
+    .expect("stores library cell");
+    let published = run_cell(&db, library.id, Vec::new(), Vec::new())
+        .await
+        .expect("publishes task function");
+    assert_eq!(published.cell.kind, Some(ConsoleCellKind::Library));
+    assert_eq!(published.cell.status, ConsoleCellStatus::Succeeded);
+
+    let invocation = upsert_cell(
+        &db,
+        session.id,
+        None,
+        &NewConsoleCell {
+            source: "deploy(command: \"release\")".into(),
+            label: None,
+            position: None,
+        },
+    )
+    .await
+    .expect("stores invocation cell");
+    let console_provider = ProviderMetadata {
+        name: "console".into(),
+        actions: vec![ActionMetadata::new("run", "run").with_parameters(vec![
+            ParameterMetadata::required("command", RuninatorType::Any),
+        ])],
+        metadata: ProviderRuntimeMetadata::default(),
+    };
+    db.upsert_catalog_item(crate::repository::provider_catalog_item(&console_provider))
+        .await
+        .expect("registers provider metadata for durable definition validation");
+    let outcome = run_cell(&db, invocation.id, vec![console_provider], Vec::new())
+        .await
+        .expect("starts scratch workflow");
+    assert_eq!(
+        outcome.cell.status,
+        ConsoleCellStatus::Running,
+        "scratch compilation failed: {:?}",
+        outcome.cell.error
+    );
+    let run = outcome.run.expect("task function invocation becomes a run");
+    assert!(run.workflow_snapshot.is_some_and(|definition| {
+        definition.definition.nodes.iter().any(|node| {
+            node.kind == WorkflowNodeKind::Action
+                && node
+                    .action
+                    .as_ref()
+                    .is_some_and(|action| action.provider == "console" && action.function == "run")
+        })
+    }));
+
+    drop(db);
+    let _ = std::fs::remove_file(path);
 }

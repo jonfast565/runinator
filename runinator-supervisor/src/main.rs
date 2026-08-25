@@ -6,6 +6,7 @@ mod os;
 mod service;
 mod snapshot;
 mod supervisor;
+mod tui;
 mod types;
 
 use std::collections::BTreeMap;

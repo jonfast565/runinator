@@ -36,9 +36,9 @@ pub enum Commands {
         #[arg(long, default_value_t = false)]
         foreground: bool,
     },
-    /// Show a table of managed process state.
+    /// Show managed process state.
     Status {
-        /// Refresh continuously.
+        /// Open the live dashboard (or continuously refresh plain output when piped).
         #[arg(long, default_value_t = false)]
         watch: bool,
     },

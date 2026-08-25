@@ -67,3 +67,22 @@ macro_rules! console_binding_from_row {
 }
 
 row_mapper!(row_to_console_binding(row) -> ConsoleBinding { console_binding_from_row!(row) });
+
+macro_rules! console_function_from_row {
+    ($row:expr) => {{
+        ConsoleFunction {
+            id: $row.get("id"),
+            session_id: $row.get("session_id"),
+            cell_id: $row.get("cell_id"),
+            name: $row.get("name"),
+            is_task: $row.get("is_task"),
+            source: $row.get("source"),
+            created_at: DateTime::<Utc>::from_timestamp($row.get("created_at"), 0)
+                .unwrap_or_else(Utc::now),
+            updated_at: DateTime::<Utc>::from_timestamp($row.get("updated_at"), 0)
+                .unwrap_or_else(Utc::now),
+        }
+    }};
+}
+
+row_mapper!(row_to_console_function(row) -> ConsoleFunction { console_function_from_row!(row) });

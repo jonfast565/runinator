@@ -202,6 +202,58 @@ pub fn parse_document(src: &str) -> Result<Document, RexRapError> {
     Ok(document)
 }
 
+/// A console-only top-level module: zero or more function declarations and an optional bare
+/// runtime `do { ... }` block.  This is intentionally not accepted by [`parse_document`], whose
+/// contract remains that an authored document contains a workflow.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConsoleModule {
+    pub language_header: bool,
+    pub functions: Vec<FunctionDef>,
+    /// The byte span of the bare runtime block, when this is an executable module rather than a
+    /// function-only library cell.
+    pub run_block_span: Option<Span>,
+}
+
+pub fn parse_console_module(src: &str) -> Result<ConsoleModule, RexRapError> {
+    let mut pairs = RexRapParser::parse(Rule::console_module_document, src)
+        .map_err(|err| RexRapError::Parse(err.to_string()))?;
+    let module = pairs
+        .next()
+        .ok_or_else(|| RexRapError::Parse("empty input".into()))?;
+    let mut language_header = false;
+    let mut functions = Vec::new();
+    let mut run_block_span = None;
+    for item in module.into_inner() {
+        match item.as_rule() {
+            Rule::language_decl => language_header = true,
+            Rule::func_def => functions.push(parse_func_def(item)?),
+            Rule::run_block => {
+                let span = span_of(&item);
+                // Parse the block even though the console lowerer will re-use its source: this
+                // validates its statements and the no-join module restriction up front.
+                let (_, joins) = parse_run_block(item)?;
+                if !joins.is_empty() {
+                    return Err(RexRapError::syntax(
+                        span,
+                        "a bare console `do` block cannot declare `join` continuations",
+                    ));
+                }
+                run_block_span = Some(span);
+            }
+            Rule::EOI => {}
+            _ => {}
+        }
+    }
+    if functions.is_empty() && run_block_span.is_none() {
+        return Err(RexRapError::Parse("missing console module content".into()));
+    }
+    Ok(ConsoleModule {
+        language_header,
+        functions,
+        run_block_span,
+    })
+}
+
 /// parse a standalone REXRAP expression fragment.
 pub fn parse_expression_fragment(src: &str) -> Result<Expr, RexRapError> {
     let pair = parse_fragment_rule(src, Rule::expr_document)?;

@@ -33,7 +33,8 @@ pub use pipeline::{parse_pipeline_str, pipeline_to_rexrapp};
 pub use rrx::{RrxBlocks, parse_rrx_blocks};
 pub use runinator_rexrap_syntax::included_file_paths;
 pub use runinator_rexrap_syntax::{
-    parse_condition_fragment, parse_do_fragment, parse_document, parse_expression_fragment,
+    ConsoleModule, parse_condition_fragment, parse_console_module, parse_do_fragment,
+    parse_document, parse_expression_fragment,
 };
 pub use secrets::{parse_secrets_str, secrets_to_rexraps};
 pub use sema::{Diagnostic, Severity};
@@ -48,6 +49,39 @@ pub enum RexRapFragmentKind {
     Expression,
     Condition,
     Do,
+}
+
+/// One top-level REXRAP declaration, retained as standalone source so a console session can carry
+/// it into a later cell without inventing a second function representation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RexRapFunctionDefinition {
+    pub name: String,
+    pub is_task: bool,
+    pub source: String,
+}
+
+/// Read the top-level function declarations from either a complete document or a console module.
+/// The snippets deliberately exclude neighbouring workflow text and are therefore safe to prepend
+/// to a later scratch document.
+pub fn function_definitions(src: &str) -> Result<Vec<RexRapFunctionDefinition>, RexRapError> {
+    let functions = match parse_document(src) {
+        Ok(document) => document.functions,
+        Err(_) => parse_console_module(src)?.functions,
+    };
+    functions
+        .into_iter()
+        .map(|function| {
+            let source = src
+                .get(function.span.start..function.span.end)
+                .ok_or_else(|| RexRapError::lower("function span falls outside its source"))?
+                .to_string();
+            Ok(RexRapFunctionDefinition {
+                name: function.name,
+                is_task: function.is_task,
+                source,
+            })
+        })
+        .collect()
 }
 
 /// compile rexrap source into a validated WorkflowDefinition. semantic errors block the
@@ -276,6 +310,163 @@ pub fn evaluate_fragment(
             )))
         }
     }
+}
+
+/// Validate and evaluate a pure console fragment with definitions supplied by the session library.
+///
+/// Fragment lowering normally has no document-level callable registry, which is correct for the
+/// editor's isolated preview but insufficient for a notebook.  Build a tiny ordinary workflow
+/// instead: it exercises the normal namespace, semantic, lowering, and invocation-module paths,
+/// then runs that module in the same pure VM used by the regular fragment evaluator.  A `task fn`
+/// call is consequently rejected by semantic purity analysis and the console classifier routes it
+/// to a durable scratch workflow instead.
+pub fn evaluate_fragment_with_functions(
+    src: &str,
+    kind: RexRapFragmentKind,
+    context: &Value,
+    function_sources: &[String],
+    options: &CompileOptions,
+) -> Result<Value, RexRapError> {
+    let definition = compile_console_fragment(src, kind, function_sources, options)?;
+    let graph = definition.definition.as_value();
+    let module_value = graph
+        .get("nodes")
+        .and_then(Value::as_array)
+        .and_then(|nodes| {
+            nodes.iter().find_map(|node| {
+                (node.get("kind").and_then(Value::as_str) == Some("invocation"))
+                    .then(|| {
+                        node.get("parameters")
+                            .and_then(|parameters| parameters.get("module"))
+                    })
+                    .flatten()
+            })
+        })
+        .ok_or_else(|| RexRapError::lower("console fragment has no invocation module"))?;
+    let module = module_value.decode().map_err(|err| {
+        RexRapError::lower(format!(
+            "console fragment invocation module is invalid: {err}"
+        ))
+    })?;
+    let catalog = runinator_workflows::CallableCatalog::builtin();
+    let step = runinator_workflows::start(
+        &module,
+        &runinator_workflows::VmEnv::pure(context, &catalog),
+    );
+    match kind {
+        RexRapFragmentKind::Expression => match step {
+            runinator_models::invocation::InvocationStep::Complete { value } => Ok(value),
+            runinator_models::invocation::InvocationStep::Failed { message } => {
+                Err(RexRapError::Validation(message))
+            }
+            runinator_models::invocation::InvocationStep::Yield { effect, .. } => {
+                Err(RexRapError::Validation(format!(
+                    "'{}' cannot be called in a pure console expression",
+                    effect.target.display_name()
+                )))
+            }
+            runinator_models::invocation::InvocationStep::Goto { target } => Err(
+                RexRapError::Validation(format!("console expression continued to '{target}'")),
+            ),
+        },
+        RexRapFragmentKind::Condition => match step {
+            runinator_models::invocation::InvocationStep::Complete {
+                value: Value::Bool(value),
+            } => Ok(Value::Bool(value)),
+            runinator_models::invocation::InvocationStep::Complete { .. } => Err(
+                RexRapError::Validation("console condition did not return a boolean".into()),
+            ),
+            runinator_models::invocation::InvocationStep::Failed { message } => {
+                Err(RexRapError::Validation(message))
+            }
+            runinator_models::invocation::InvocationStep::Yield { effect, .. } => {
+                Err(RexRapError::Validation(format!(
+                    "'{}' cannot be called in a pure console condition",
+                    effect.target.display_name()
+                )))
+            }
+            runinator_models::invocation::InvocationStep::Goto { target } => Err(
+                RexRapError::Validation(format!("console condition continued to '{target}'")),
+            ),
+        },
+        RexRapFragmentKind::Do => Ok(compute_step_value(step)),
+    }
+}
+
+/// Validate the same function-aware console fragment without executing it.  The classifier uses
+/// this as its proof that an expression can remain in-process.
+pub fn validate_fragment_with_functions(
+    src: &str,
+    kind: RexRapFragmentKind,
+    function_sources: &[String],
+    options: &CompileOptions,
+) -> Result<(), RexRapError> {
+    compile_console_fragment(src, kind, function_sources, options).map(|_| ())
+}
+
+fn compile_console_fragment(
+    src: &str,
+    kind: RexRapFragmentKind,
+    function_sources: &[String],
+    options: &CompileOptions,
+) -> Result<WorkflowDefinition, RexRapError> {
+    if let Some(name) = task_function_called_by(src, function_sources) {
+        return Err(RexRapError::Validation(format!(
+            "task function '{name}' cannot be called in a pure console fragment"
+        )));
+    }
+    let declarations = function_sources.join("\n\n");
+    let compute = match kind {
+        RexRapFragmentKind::Expression | RexRapFragmentKind::Condition => {
+            format!("compute {{ return ({src}) }}")
+        }
+        RexRapFragmentKind::Do => format!("compute {src}"),
+    };
+    let source = format!(
+        "{declarations}\nworkflow \"__console_fragment__\" v1 {{\n    do {{\n        {compute}\n    }}\n}}\n"
+    );
+    compile_str(&source, options)
+}
+
+// `task fn`s lower by inlining into a workflow graph rather than entering the pure function
+// table. This guard sits at the standalone-fragment boundary, before the synthetic workflow could
+// hide that distinction inside a compute node. A conservative textual match is intentional: a
+// false positive merely chooses the durable workflow route, whereas a false negative could try to
+// execute an effectful region in process.
+fn task_function_called_by(src: &str, function_sources: &[String]) -> Option<String> {
+    function_sources.iter().find_map(|source| {
+        function_definitions(source)
+            .ok()
+            .into_iter()
+            .flatten()
+            .find(|function| function.is_task && contains_call(src, &function.name))
+            .map(|function| function.name)
+    })
+}
+
+fn contains_call(src: &str, name: &str) -> bool {
+    let mut start = 0;
+    while let Some(offset) = src[start..].find(name) {
+        let at = start + offset;
+        let before = src[..at].chars().next_back();
+        let after = src[at + name.len()..].chars().next();
+        let left_boundary = before.is_none_or(|character| !is_identifier_character(character));
+        if left_boundary {
+            let remainder = &src[at + name.len()..];
+            if remainder.trim_start().starts_with('(') {
+                return true;
+            }
+        }
+        if after.is_none() {
+            break;
+        }
+        start = at + name.len();
+    }
+    false
+}
+
+fn is_identifier_character(character: char) -> bool {
+    character.is_ascii_alphanumeric() || character == '_'
 }
 
 fn validate_lowered_fragment(value: &Value, kind: RexRapFragmentKind) -> Result<(), RexRapError> {

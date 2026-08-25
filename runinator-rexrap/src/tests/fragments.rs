@@ -53,3 +53,30 @@ fn fragment_validation_rejects_wrong_surface() {
 
     assert!(err.to_string().contains("expected"), "{err}");
 }
+
+#[test]
+fn evaluates_a_fragment_with_session_function_definitions() {
+    let value = evaluate_fragment_with_functions(
+        "double(21)",
+        RexRapFragmentKind::Expression,
+        &Value::Null,
+        &["fn double(x: integer) -> integer = x * 2".to_string()],
+        &CompileOptions::default(),
+    )
+    .expect("evaluate session function");
+
+    assert_eq!(value, Value::from(42));
+}
+
+#[test]
+fn task_function_cannot_enter_the_pure_fragment_evaluator() {
+    let error = validate_fragment_with_functions(
+        "tick()",
+        RexRapFragmentKind::Expression,
+        &["task fn tick() do { compute { return 1 } }".to_string()],
+        &CompileOptions::default(),
+    )
+    .expect_err("task function must be routed to a workflow");
+
+    assert!(error.to_string().contains("task function"), "{error}");
+}

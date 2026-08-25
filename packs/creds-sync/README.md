@@ -13,13 +13,13 @@ credential files — add a new job, no workflow change.
 
 ## How it runs on the right machine
 
-Each node uses `@runner("creds-sync")`. The reducer routes a node with a required label to a live
+Each node uses `@runner("desktop")`. The reducer routes a node with a required label to a live
 worker advertising that label, and **parks then fails** (on the node `timeout`) when none is
 connected. So these workflows only ever execute on a worker you start on the operator's workstation,
 either a standalone worker:
 
 ```bash
-RUNINATOR_WORKER_LABELS=runner=creds-sync \
+RUNINATOR_WORKER_LABELS=runner=desktop \
 RUNINATOR_CONSOLE_ALLOW_INTERACTIVE=1 \
   cargo run -p runinator-worker -- --advertise-host <host>
 ```
@@ -28,10 +28,10 @@ RUNINATOR_CONSOLE_ALLOW_INTERACTIVE=1 \
 commands; without it the console provider rejects them (the cloud-worker default — see the interactive
 note below). The `runinator-desktop-agent` tray app sets it for you.
 
-or `runinator-desktop-agent` (the tray app) with `runner=creds-sync` added to its "Extra labels"
-field — it registers the full built-in provider catalog (including `console`, `aws`) unconditionally
-and marks itself interactive-capable, so either workflow can route there once the label matches; it
-just stays `exclusive`, so it never picks up unrelated general-pool work in the meantime.
+or `runinator-desktop-agent` (the tray app), which advertises `runner=desktop` by default. It
+registers the full built-in provider catalog (including `console`, `aws`) unconditionally and marks
+itself interactive-capable, so either workflow can route there; it just stays `exclusive`, so it
+never picks up unrelated general-pool work in the meantime.
 
 Either surface's "which broker transport" is a separate choice from "what kind of worker this is" —
 by default both relay through `runinator-ws` (`--broker-backend ws` for the standalone binary, or
@@ -49,7 +49,7 @@ That worker must have:
 Both nodes run `console.run(..., interactive: true)`, so the command is attached to the operator's
 **desktop session** rather than run headless: a lapsed AWS SSO session can complete `aws sso login`
 in a browser, and `keychain-export` can satisfy the macOS Keychain access dialog. Run the
-`creds-sync` worker in that interactive session (a foreground terminal, or the
+`desktop` worker in that interactive session (a foreground terminal, or the
 `runinator-desktop-agent` tray app) — a fully headless/daemon worker cannot answer those prompts and
 the run fails on the node `timeout`. In `interactive` mode the command's stdout/stderr are not
 captured or streamed to the UI.
@@ -58,14 +58,14 @@ captured or streamed to the UI.
 sets `RUNINATOR_CONSOLE_ALLOW_INTERACTIVE=1`, so the console provider permits it there. A headless
 cloud worker never sets that flag, so an interactive console command routed to one is rejected up
 front with `CONSOLE008 - Interactive console is only available on a desktop worker agent` instead of
-hanging with no terminal. Together with `@runner("creds-sync")`, this keeps these jobs on the
+hanging with no terminal. Together with `@runner("desktop")`, this keeps these jobs on the
 operator's machine.
 
 If that worker is offline when a scheduled run fires, the run fails — by design.
 
 ## Working directory
 
-Both nodes run `scripts/sync-secrets.sh` with a **relative** path, so the `creds-sync` worker must run
+Both nodes run `scripts/sync-secrets.sh` with a **relative** path, so the `desktop` worker must run
 console commands from a checkout of this repository. Point it there:
 
 - **`runinator-desktop-agent`** — set the "Working directory" field to the repo checkout (e.g.

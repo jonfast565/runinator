@@ -9,6 +9,11 @@ COMMENT    = _{ ("//" ~ (!"\n" ~ ANY)*) | ("/*" ~ (!"*/" ~ ANY)* ~ "*/") }
 // version metadata. It is optional while authoring a single buffer, but pack writers emit it and
 // formatters preserve it when present.
 document = { SOI ~ language_decl? ~ document_item* ~ EOI }
+// The console accepts a small top-level module form as well as a complete document: definitions
+// may be followed by one bare runtime `do` block.  It is deliberately separate from `document`:
+// a normal document still requires a workflow, while the console needs a useful function-only
+// cell to publish its session library.
+console_module_document = { SOI ~ language_decl? ~ func_def* ~ run_block? ~ EOI }
 language_decl = { "language" ~ "rexrap-1" }
 expr_document = { SOI ~ expr ~ EOI }
 cond_document = { SOI ~ cond ~ EOI }
