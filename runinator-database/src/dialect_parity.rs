@@ -385,50 +385,72 @@ async fn assert_workflow_vm_mutex_lifecycle<T: DatabaseImpl + WorkflowVmStore>(
     let waiter = start_run(db, workflow_id).await;
     let key = format!("parity-mutex-{}", Uuid::now_v7());
     let now = Utc::now().timestamp();
+    let holder_continuation = Uuid::now_v7();
+    let waiter_continuation = Uuid::now_v7();
 
     assert!(
-        db.claim_workflow_vm_mutex(key.clone(), holder, Uuid::now_v7(), now)
+        db.claim_workflow_vm_mutex(key.clone(), holder, holder_continuation, now)
             .await
             .unwrap()
     );
     // re-entrant for the holder, refused for anyone else.
     assert!(
-        db.claim_workflow_vm_mutex(key.clone(), holder, Uuid::now_v7(), now)
+        db.claim_workflow_vm_mutex(key.clone(), holder, holder_continuation, now)
             .await
             .unwrap()
     );
     assert!(
-        !db.claim_workflow_vm_mutex(key.clone(), waiter, Uuid::now_v7(), now)
+        !db.claim_workflow_vm_mutex(key.clone(), waiter, waiter_continuation, now)
             .await
             .unwrap()
+    );
+
+    // A bracketed mutex releases before the enclosing run finishes. Without this path the
+    // generated `mutex release` node behaves like a second acquire and blocks every waiter until
+    // the entire workflow exits.
+    db.release_workflow_vm_mutex(key.clone(), holder, holder_continuation, now)
+        .await
+        .unwrap();
+    assert!(
+        db.claim_workflow_vm_mutex(key.clone(), waiter, waiter_continuation, now)
+            .await
+            .unwrap(),
+        "an explicit release must admit the waiter before the holder run settles"
     );
 
     db.settle_workflow_vm_run(holder, WorkflowStatus::Succeeded, None)
         .await
         .unwrap();
+
+    // The implicit release at terminal run settlement remains the backstop for acquire-only
+    // mutexes, which have no matching release node.
+    let terminal_successor = start_run(db, workflow_id).await;
+    db.settle_workflow_vm_run(waiter, WorkflowStatus::Succeeded, None)
+        .await
+        .unwrap();
     assert!(
-        db.claim_workflow_vm_mutex(key.clone(), waiter, Uuid::now_v7(), now)
+        db.claim_workflow_vm_mutex(key.clone(), terminal_successor, Uuid::now_v7(), now)
             .await
             .unwrap(),
         "settling the holder must release the key"
     );
 
-    // and a holder that reached a terminal without releasing — a crash between the two writes —
+    // And a holder that reached a terminal without releasing — a crash between the two writes —
     // is treated as stale rather than deadlocking the key.
-    let successor = start_run(db, workflow_id).await;
-    db.update_workflow_run_status(waiter, WorkflowStatus::Failed, None, None, None)
+    let recovery = start_run(db, workflow_id).await;
+    db.update_workflow_run_status(terminal_successor, WorkflowStatus::Failed, None, None, None)
         .await
         .unwrap();
     assert!(
-        db.claim_workflow_vm_mutex(key.clone(), successor, Uuid::now_v7(), now)
+        db.claim_workflow_vm_mutex(key.clone(), recovery, Uuid::now_v7(), now)
             .await
             .unwrap(),
         "a terminal holder must not hold the key forever"
     );
-    db.cancel_workflow_vm_run(successor, "parity teardown".into())
+    db.cancel_workflow_vm_run(recovery, "parity teardown".into())
         .await
         .unwrap();
-    for run in [holder, waiter, successor] {
+    for run in [holder, waiter, terminal_successor, recovery] {
         db.delete_workflow_run(run).await.unwrap();
     }
 }

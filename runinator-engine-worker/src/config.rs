@@ -9,6 +9,10 @@ use runinator_db_cli::DatabaseBackend;
 #[derive(Debug, Parser)]
 #[command(author, version, about, long_about = None)]
 pub(crate) struct CliArgs {
+    /// Show a local full-screen runtime dashboard instead of streaming logs to stdout.
+    #[arg(long, env = "RUNINATOR_TUI", default_value_t = false)]
+    pub tui: bool,
+
     /// Database backend to use. Also reads RUNINATOR_DATABASE.
     #[arg(
         long,

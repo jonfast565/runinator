@@ -10,6 +10,10 @@ use runinator_models::errors::SendableError;
 /// authenticated WebSocket relay instead.
 #[derive(Parser, Debug, Clone)]
 pub struct Config {
+    /// Show a local full-screen runtime dashboard instead of streaming logs to stdout.
+    #[arg(long, env = "RUNINATOR_TUI", default_value_t = false)]
+    pub tui: bool,
+
     /// Stable process identity shown in the replica list. A generated value is sufficient when the
     /// host has no durable identity; orchestrators should pass the pod or service instance name.
     #[arg(long, default_value = "")]

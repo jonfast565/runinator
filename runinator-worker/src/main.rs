@@ -22,8 +22,29 @@ fn run_process() -> Result<(), SendableError> {
         .build()
         .map_err(|err| errors::RUNTIME_BUILD.error(err))?;
     runtime.block_on(async move {
-        let process = ProcessResources::start("Runinator Worker")?;
         let config = parse_config()?;
+        let tui = runinator_observability::tui::prepare(config.tui);
+        let process = ProcessResources::start("Runinator Worker")?;
+        if tui {
+            let dashboard = runinator_observability::tui::install();
+            runinator_observability::tui::register(
+                "worker",
+                [
+                    format!(
+                        "broker {} via {:?}",
+                        config.broker_backend, config.broker_mode
+                    ),
+                    format!("max actions {}", config.max_concurrent_actions),
+                ],
+            );
+            let dashboard_shutdown = process.shutdown().clone();
+            let dashboard_stop = dashboard_shutdown.clone();
+            runinator_observability::tui::spawn(
+                dashboard,
+                move || dashboard_shutdown.is_cancelled(),
+                move || dashboard_stop.trigger(),
+            );
+        }
         configure_provider_service_url(&config);
         run(config, process.shutdown().clone()).await
     })
@@ -38,6 +59,7 @@ async fn run(config: Config, shutdown: Shutdown) -> Result<(), SendableError> {
         labels = ?config.labels,
         "worker starting"
     );
+    runinator_observability::tui::activity("worker", "connecting to broker", None);
 
     // the shared agent lifecycle owns registration retry, heartbeat, and restarting the action loop
     // after a failure; tracing already reports loop activity here, so no observer is needed.

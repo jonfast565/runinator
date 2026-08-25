@@ -75,6 +75,33 @@ pub fn init_headless(initial: LogLevel) {
         .try_init();
 }
 
+/// Install tracing for the terminal dashboard. Normal stdout is reserved for ratatui's alternate
+/// screen, so formatted events go to the shared three-line dashboard pane and the persistent
+/// desktop-agent log file instead. This is intentionally separate from [`init_headless`]: a
+/// non-interactive host must keep streaming ordinary logs to stderr/stdout for its supervisor.
+pub fn init_tui(initial: LogLevel) {
+    let file_layer = open_log_file().map(|file| {
+        tracing_subscriber::fmt::layer()
+            .with_ansi(false)
+            .with_target(true)
+            .with_level(true)
+            .with_writer(FileMakeWriter { file })
+            .with_filter(file_filter(initial))
+    });
+    let dashboard_layer = tracing_subscriber::fmt::layer()
+        .with_ansi(false)
+        .with_target(true)
+        .with_level(true)
+        .without_time()
+        .with_writer(runinator_observability::tui::LogMakeWriter);
+
+    let _ = tracing_subscriber::registry()
+        .with(initial_filter(initial))
+        .with(dashboard_layer)
+        .with(file_layer)
+        .try_init();
+}
+
 /// change the live log level from the GUI; a no-op until [`init`] has run.
 pub fn set_level(level: LogLevel) {
     if let Some(apply) = SET_LEVEL.get() {

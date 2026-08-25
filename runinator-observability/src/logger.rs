@@ -6,6 +6,7 @@ use std::{env, fs, fs::File, path::PathBuf, sync::Mutex};
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 use crate::telemetry::{self, TelemetryGuard};
+use crate::tui;
 
 // ensures the global subscriber is installed at most once per process. plugins loaded into a
 // service process (e.g. console plugin) call back in via a ctor; the second call becomes a no-op
@@ -32,11 +33,30 @@ pub fn setup_logger(
         .or_else(|_| EnvFilter::try_new("info"))
         .map_err(|err| -> SendableError { Box::new(err) })?;
 
-    let stdout_layer = fmt::layer().with_target(true).with_writer(std::io::stdout);
+    let stdout_layer = fmt::layer().with_target(true).with_writer(|| {
+        // A full-screen dashboard owns stdout while it is active. Keeping normal tracing on the
+        // file layer prevents log lines from tearing through the dashboard; the same log remains
+        // available through the usual local log path.
+        if std::env::var_os("RUNINATOR_TUI").is_some() {
+            Box::new(std::io::sink()) as Box<dyn std::io::Write + Send>
+        } else {
+            Box::new(std::io::stdout()) as Box<dyn std::io::Write + Send>
+        }
+    });
     let file_layer = fmt::layer()
         .with_ansi(false)
         .with_target(true)
         .with_writer(Mutex::new(log_file));
+    // Keep the terminal dashboard self-contained: normal stdout is suppressed while it owns the
+    // alternate screen, and this second formatting sink preserves the most recent three events in
+    // its bottom pane. Outside TUI mode the optional layer is absent, avoiding an extra formatter
+    // on every production log record.
+    let tui_layer = tui::is_active().then(|| {
+        fmt::layer()
+            .with_ansi(false)
+            .with_target(true)
+            .with_writer(tui::LogMakeWriter)
+    });
 
     let telemetry = telemetry::init(service_name)?;
     // the otel layers are `Option`s, which are themselves no-op `Layer`s when `None`, so the same
@@ -54,6 +74,7 @@ pub fn setup_logger(
         .with(filter)
         .with(stdout_layer)
         .with(file_layer)
+        .with(tui_layer)
         .with(otel_trace_layer)
         .with(otel_log_layer)
         .try_init()

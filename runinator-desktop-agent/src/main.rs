@@ -21,6 +21,7 @@ mod notify;
 mod service;
 mod single_instance;
 mod tray;
+mod tui;
 
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
@@ -34,13 +35,17 @@ fn main() -> ExitCode {
     let args = CliArgs::parse();
     // Precedence is CLI > env > saved JSON > defaults; see `CliArgs::apply`.
     let config = args.apply(config::load());
+    // Prepare before this process installs its tracing subscriber so terminal mode can reserve
+    // stdout for the alternate-screen dashboard. A non-interactive `--tui` falls back to headless
+    // operation with ordinary logs, matching the other runtime binaries.
+    let terminal_tui = runinator_observability::tui::prepare(args.tui);
 
     // ensure only one agent runs at a time: two copies would both register the exclusive `desktop`
     // replica and contend for the same pinned/labeled work.
     let _instance = match single_instance::acquire() {
         Ok(Some(guard)) => Some(guard),
         Ok(None) => {
-            single_instance::warn_already_running(args.headless);
+            single_instance::warn_already_running(args.headless || args.tui);
             return ExitCode::SUCCESS;
         }
         // an unexpected bind failure must not lock the operator out of their own agent; note it and
@@ -51,7 +56,17 @@ fn main() -> ExitCode {
         }
     };
 
-    if args.headless {
+    if args.tui && terminal_tui {
+        return match tui::run(&args, config) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(err) => {
+                eprintln!("desktop agent failed: {err}");
+                ExitCode::FAILURE
+            }
+        };
+    }
+
+    if args.headless || args.tui {
         return match headless::run(&args, config) {
             Ok(()) => ExitCode::SUCCESS,
             Err(err) => {

@@ -225,6 +225,11 @@ async fn handle_wake(
     let now = Utc::now();
     metrics::wake_received((delivery.command.due_at - now).num_milliseconds() as f64);
     let remaining = (delivery.command.due_at - now).to_std().unwrap_or_default();
+    runinator_observability::tui::activity(
+        "waker",
+        format!("wake {}", delivery.command.effect_id()),
+        (!remaining.is_zero()).then_some(remaining),
+    );
 
     if remaining.is_zero() {
         settle(broker, group, &delivery).await;
@@ -264,6 +269,11 @@ async fn handle_wake(
 /// infrastructure effect host that armed this timer, so the waker never needs to know what kind of
 /// effect it is settling.
 async fn settle(broker: &dyn Broker, group: &str, delivery: &runinator_broker::WakeDelivery) {
+    runinator_observability::tui::activity(
+        "waker",
+        format!("settling wake {}", delivery.command.effect_id()),
+        None,
+    );
     metrics::wake_due_lag(
         (Utc::now() - delivery.command.due_at)
             .num_milliseconds()

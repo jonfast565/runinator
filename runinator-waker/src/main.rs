@@ -19,6 +19,7 @@ async fn main() -> Result<(), SendableError> {
 async fn run_process() -> Result<(), SendableError> {
     info!("parsing waker config");
     let config = parse_config()?;
+    let tui = runinator_observability::tui::prepare(config.tui);
     info!(
         broker_mode = %config.broker_mode,
         broker_client_id = %config.broker_client_id,
@@ -52,6 +53,31 @@ async fn run_process() -> Result<(), SendableError> {
     let broker = connection.connect(BrokerConsumerProfile::Waker).await?;
     let shutdown = process.shutdown();
     let notify = shutdown.notifier();
+    if tui {
+        let dashboard = runinator_observability::tui::install();
+        runinator_observability::tui::register(
+            "waker",
+            [
+                format!(
+                    "broker {} via {}",
+                    config.broker_backend, config.broker_mode
+                ),
+                format!("wake group {}", config.waker_consumer_group),
+            ],
+        );
+        runinator_observability::tui::gauge(
+            "waker",
+            "wake capacity",
+            config.max_concurrent_wakes as i64,
+        );
+        let dashboard_shutdown = shutdown.clone();
+        let dashboard_stop = dashboard_shutdown.clone();
+        runinator_observability::tui::spawn(
+            dashboard,
+            move || dashboard_shutdown.is_cancelled(),
+            move || dashboard_stop.trigger(),
+        );
+    }
     let replica_id = Uuid::now_v7();
     let runtime_id = replica_id.to_string();
     let attributes = runinator_observability::resource_telemetry::attributes_with_host_metadata(
@@ -70,6 +96,7 @@ async fn run_process() -> Result<(), SendableError> {
         attributes.clone(),
     )
     .await?;
+    runinator_observability::tui::activity("waker", "waiting for timer wakes", None);
 
     runinator_waker::spawn_liveness(&config, notify.clone());
     let heartbeat =

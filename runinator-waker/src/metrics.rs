@@ -57,36 +57,43 @@ fn metrics() -> &'static WakerMetrics {
 /// a wake was pulled off the wake channel. `lead_ms` is how far in the future its `due_at` is at
 /// receipt (negative when already overdue), recorded so scheduling lead/lag is observable.
 pub(crate) fn wake_received(lead_ms: f64) {
+    runinator_observability::tui::counter("waker", "wakes received", 1);
     metrics().wakes_received.add(1, &[]);
     metrics().wake_lead_ms.record(lead_ms, &[]);
 }
 
 pub(crate) fn wake_due_lag(lag_ms: f64) {
+    runinator_observability::tui::gauge("waker", "due lag (ms)", lag_ms.max(0.0) as i64);
     metrics().wake_due_lag_ms.record(lag_ms.max(0.0), &[]);
 }
 
 /// a due wake was relayed to the ingress channel as an effect settle (or was already in flight).
 /// the exported metric name predates the settle payload and is kept as a stable contract.
 pub(crate) fn wake_driven() {
+    runinator_observability::tui::counter("waker", "wakes settled", 1);
     metrics().wakes_driven.add(1, &[]);
 }
 
 /// a not-yet-due wake was returned to the broker for later redelivery.
 pub(crate) fn wake_requeued() {
+    runinator_observability::tui::counter("waker", "wakes requeued", 1);
     metrics().wakes_requeued.add(1, &[]);
 }
 
 /// publishing the settle for a due wake failed; it was returned to the broker to retry.
 pub(crate) fn drive_failed() {
+    runinator_observability::tui::counter("waker", "settle failures", 1);
     metrics().drive_failures.add(1, &[]);
 }
 
 /// the relay completed a broker transport heartbeat while idle or active.
 pub(crate) fn broker_heartbeat() {
+    runinator_observability::tui::counter("waker", "broker heartbeats", 1);
     metrics().broker_heartbeats.add(1, &[]);
 }
 
 /// the broker transport did not answer a heartbeat. The relay keeps retrying its normal receive.
 pub(crate) fn broker_heartbeat_failed() {
+    runinator_observability::tui::counter("waker", "heartbeat failures", 1);
     metrics().broker_heartbeat_failures.add(1, &[]);
 }

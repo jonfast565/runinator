@@ -8019,6 +8019,7 @@ dependencies = [
  "runinator-console",
  "runinator-database",
  "runinator-models",
+ "runinator-observability",
  "runinator-rexrap",
  "runinator-runtime",
  "runinator-secrets",
@@ -8084,6 +8085,7 @@ version = "0.2.368"
 dependencies = [
  "chrono",
  "http 1.4.0",
+ "libc",
  "log",
  "nvml-wrapper",
  "opentelemetry",
@@ -8092,12 +8094,14 @@ dependencies = [
  "opentelemetry-otlp",
  "opentelemetry-semantic-conventions",
  "opentelemetry_sdk",
+ "ratatui",
  "runinator-models",
  "serde_json",
  "sysinfo",
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]

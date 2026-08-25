@@ -161,10 +161,12 @@ pub struct StabilityCounters {
 pub fn result_event_applied(applied: bool) {
     if applied {
         RESULT_EVENTS_APPLIED.fetch_add(1, Ordering::Relaxed);
+        runinator_observability::tui::counter("engine", "results applied", 1);
         metrics::counter!(METRIC_RESULT_APPLIED).increment(1);
         otel_counters().result_applied.add(1, &[]);
     } else {
         RESULT_EVENTS_DUPLICATE.fetch_add(1, Ordering::Relaxed);
+        runinator_observability::tui::counter("engine", "duplicate results", 1);
         metrics::counter!(METRIC_RESULT_DUPLICATE).increment(1);
         otel_counters().result_duplicate.add(1, &[]);
     }
@@ -172,18 +174,21 @@ pub fn result_event_applied(applied: bool) {
 
 pub fn result_event_retried() {
     RESULT_EVENTS_RETRIED.fetch_add(1, Ordering::Relaxed);
+    runinator_observability::tui::counter("engine", "results retried", 1);
     metrics::counter!(METRIC_RESULT_RETRIED).increment(1);
     otel_counters().result_retried.add(1, &[]);
 }
 
 pub fn result_event_dead_lettered() {
     RESULT_EVENTS_DEAD_LETTERED.fetch_add(1, Ordering::Relaxed);
+    runinator_observability::tui::counter("engine", "results dead-lettered", 1);
     metrics::counter!(METRIC_RESULT_DEAD_LETTERED).increment(1);
     otel_counters().result_dead_lettered.add(1, &[]);
 }
 
 pub fn result_receive_error() {
     RESULT_RECEIVE_ERRORS.fetch_add(1, Ordering::Relaxed);
+    runinator_observability::tui::counter("engine", "result receive errors", 1);
     metrics::counter!(METRIC_RESULT_RECEIVE_ERRORS).increment(1);
     otel_counters().result_receive_errors.add(1, &[]);
 }
@@ -205,12 +210,14 @@ pub fn record_background_loop_failure() {
 
 /// an ingress message (a waker drive or worker control request) was applied and acked.
 pub fn ingress_applied() {
+    runinator_observability::tui::counter("engine", "ingress applied", 1);
     metrics::counter!(METRIC_INGRESS_APPLIED).increment(1);
     otel_counters().ingress_applied.add(1, &[]);
 }
 
 /// an ingress message failed and was returned to the broker for another attempt.
 pub fn ingress_retried() {
+    runinator_observability::tui::counter("engine", "ingress retried", 1);
     metrics::counter!(METRIC_INGRESS_RETRIED).increment(1);
     otel_counters().ingress_retried.add(1, &[]);
 }
@@ -218,6 +225,7 @@ pub fn ingress_retried() {
 /// an ingress message exhausted its attempts and was dead-lettered. a nonzero rate points at a
 /// persistently failing VM drive or control request.
 pub fn ingress_dead_lettered() {
+    runinator_observability::tui::counter("engine", "ingress dead-lettered", 1);
     metrics::counter!(METRIC_INGRESS_DEAD_LETTERED).increment(1);
     otel_counters().ingress_dead_lettered.add(1, &[]);
 }
@@ -227,6 +235,7 @@ pub fn triggers_fired(count: u64) {
     if count == 0 {
         return;
     }
+    runinator_observability::tui::counter("engine", "triggers fired", count);
     metrics::counter!(METRIC_TRIGGERS_FIRED).increment(count);
     otel_counters().triggers_fired.add(count, &[]);
 }
@@ -241,6 +250,8 @@ pub fn record_vm_drive_ms(millis: f64) {
 /// Record one continuation the durable VM drove. `outcome` is a fixed VM result, never a
 /// workflow, cursor, or provider identifier, so dashboard cardinality remains bounded.
 pub fn vm_continuation_driven(outcome: &'static str) {
+    runinator_observability::tui::counter("engine", "continuations", 1);
+    runinator_observability::tui::activity("engine", format!("VM continuation {outcome}"), None);
     metrics::counter!(METRIC_VM_CONTINUATIONS_DRIVEN, "outcome" => outcome).increment(1);
     otel_counters()
         .vm_continuations_driven
@@ -258,6 +269,7 @@ pub fn record_vm_drive_duration_ms(millis: f64) {
 /// A VM drive batch could not be claimed or advanced. Pipeline reconciliation failures are
 /// intentionally excluded: they are follow-up orchestration, not interpreter failures.
 pub fn vm_driver_failure() {
+    runinator_observability::tui::counter("engine", "VM failures", 1);
     metrics::counter!(METRIC_VM_DRIVER_FAILURES).increment(1);
     otel_counters().vm_driver_failures.add(1, &[]);
 }
@@ -271,6 +283,11 @@ pub fn loop_iteration(loop_name: &'static str, succeeded: bool, elapsed: std::ti
         KeyValue::new("outcome", outcome),
     ];
     let millis = elapsed.as_secs_f64() * 1000.0;
+    runinator_observability::tui::activity(
+        "engine",
+        format!("{loop_name} pass ({millis:.0} ms, {outcome})"),
+        None,
+    );
     metrics::counter!(METRIC_LOOP_ITERATIONS, "loop" => loop_name, "outcome" => outcome)
         .increment(1);
     metrics::histogram!(METRIC_LOOP_DURATION_MS, "loop" => loop_name).record(millis);
@@ -297,6 +314,13 @@ pub fn cleanup(job: &'static str, succeeded: bool, count: u64) {
 }
 
 pub fn queue_snapshot(queue: &'static str, depth: u64, claimed: u64, oldest_age_seconds: u64) {
+    runinator_observability::tui::gauge("engine", "queue depth", depth as i64);
+    runinator_observability::tui::gauge("engine", "queue claimed", claimed as i64);
+    runinator_observability::tui::gauge(
+        "engine",
+        "oldest queue age (s)",
+        oldest_age_seconds as i64,
+    );
     let attrs = [KeyValue::new("queue", queue)];
     metrics::gauge!(METRIC_QUEUE_DEPTH, "queue" => queue).set(depth as f64);
     metrics::gauge!(METRIC_QUEUE_CLAIMED, "queue" => queue).set(claimed as f64);

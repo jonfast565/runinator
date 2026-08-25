@@ -1,6 +1,29 @@
 //! command-line override precedence and normalization.
 
 use super::*;
+use clap::Parser;
+
+#[test]
+fn execution_modes_are_mutually_exclusive() {
+    for modes in [
+        ["--headless", "--tui"],
+        ["--headless", "--gui"],
+        ["--tui", "--gui"],
+    ] {
+        assert!(CliArgs::try_parse_from(["desktop-agent", modes[0], modes[1]]).is_err());
+    }
+}
+
+#[test]
+fn gui_is_the_default_mode_and_can_be_selected_explicitly() {
+    let default_args = CliArgs::try_parse_from(["desktop-agent"]).unwrap();
+    assert!(!default_args.headless);
+    assert!(!default_args.tui);
+    assert!(!default_args.gui);
+
+    let explicit_gui = CliArgs::try_parse_from(["desktop-agent", "--gui"]).unwrap();
+    assert!(explicit_gui.gui);
+}
 
 #[test]
 fn overrides_only_explicit_values() {

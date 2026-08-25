@@ -251,6 +251,16 @@ pub trait WorkflowVmStore: Send + Sync + 'static {
         now: i64,
     ) -> impl Future<Output = Result<bool, SendableError>> + Send;
 
+    /// Release a named mutex when this continuation owns it. A release that was already applied
+    /// is a no-op, which keeps a redelivered infrastructure effect safe.
+    fn release_workflow_vm_mutex(
+        &self,
+        name: String,
+        workflow_run_id: Uuid,
+        continuation_id: Uuid,
+        now: i64,
+    ) -> impl Future<Output = Result<(), SendableError>> + Send;
+
     /// Lease runnable continuations for a machine drive.
     fn claim_runnable_workflow_continuations(
         &self,

@@ -94,6 +94,13 @@ impl Shutdown {
         }
     }
 
+    /// Whether graceful shutdown has been requested. Long-running optional UI helpers use this to
+    /// restore their terminal state promptly after Ctrl-C/SIGTERM without becoming another owner
+    /// of process shutdown.
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Acquire)
+    }
+
     pub fn notifier(&self) -> Arc<Notify> {
         Arc::clone(&self.notify)
     }

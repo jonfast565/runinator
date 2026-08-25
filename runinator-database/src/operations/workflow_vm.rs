@@ -34,7 +34,7 @@ where
     for<'c> &'c mut <B::Db as Database>::Connection: Executor<'c, Database = B::Db>,
 {
     sqlx::query(&store.render(
-        "UPDATE workflow_mutexes SET holder_run_id = NULL, holder_continuation_id = NULL, acquired_at = NULL, updated_at = ? WHERE holder_run_id = ?",
+        "UPDATE workflow_mutexes SET holder_run_id = NULL, holder_continuation_id = NULL, acquired_at = NULL, hold_deadline = NULL, overdue_at = NULL, updated_at = ? WHERE holder_run_id = ?",
     ))
     .bind(now)
     .bind(workflow_run_id)
@@ -1574,6 +1574,28 @@ where
         }
         tx.commit().await?;
         Ok(acquired)
+    }
+
+    async fn release_workflow_vm_mutex(
+        &self,
+        name: String,
+        workflow_run_id: Uuid,
+        continuation_id: Uuid,
+        now: i64,
+    ) -> Result<(), SendableError> {
+        // Releasing is intentionally idempotent. The host can be redelivered after it made this
+        // database write but before it published the effect result; turning that retry into a
+        // failure would leave the continuation parked even though the key is already free.
+        sqlx::query(&self.render(
+            "UPDATE workflow_mutexes SET holder_run_id = NULL, holder_continuation_id = NULL, acquired_at = NULL, hold_deadline = NULL, overdue_at = NULL, updated_at = ? WHERE name = ? AND holder_run_id = ? AND holder_continuation_id = ?",
+        ))
+        .bind(now)
+        .bind(name)
+        .bind(workflow_run_id)
+        .bind(continuation_id)
+        .execute(self.pool())
+        .await?;
+        Ok(())
     }
 
     async fn claim_runnable_workflow_continuations(

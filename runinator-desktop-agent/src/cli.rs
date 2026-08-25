@@ -3,17 +3,32 @@
 //! Precedence is **CLI > env > JSON file > defaults**. Each override is optional, so an operator
 //! can set one command-line value without repeating the rest of the saved configuration.
 
-use clap::Parser;
+use clap::{ArgGroup, Parser};
 
 use crate::config::{AgentConfig, BrokerMode, LogLevel};
 
 #[derive(Parser, Debug, Default)]
-#[command(author, version, about = "Runinator Desktop Agent", long_about = None)]
+#[command(
+    author,
+    version,
+    about = "Runinator Desktop Agent",
+    long_about = None,
+    group(ArgGroup::new("run_mode").args(["headless", "tui", "gui"]).multiple(false))
+)]
 pub struct CliArgs {
     /// Run without the tray or window UI. Use this when the machine joins the cluster at boot and
     /// is managed remotely.
     #[arg(long, env = "RUNINATOR_AGENT_HEADLESS")]
     pub headless: bool,
+
+    /// Show a local full-screen runtime dashboard instead of the tray/window UI. `q`, Escape, or
+    /// Ctrl-C gracefully stops the desktop agent.
+    #[arg(long, env = "RUNINATOR_TUI")]
+    pub tui: bool,
+
+    /// Show the tray/window control surface. This is the default when no run mode is selected.
+    #[arg(long, env = "RUNINATOR_AGENT_GUI")]
+    pub gui: bool,
 
     /// web service URL this agent registers with, and (in relay mode) tunnels the broker through.
     #[arg(long, env = "RUNINATOR_SERVICE_URL")]

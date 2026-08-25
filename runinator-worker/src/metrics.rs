@@ -54,14 +54,18 @@ fn metrics() -> &'static WorkerMetrics {
 
 /// A VM provider effect was accepted for processing.
 pub(crate) fn effect_received() {
+    runinator_observability::tui::counter("worker", "effects received", 1);
     metrics().effects_received.add(1, &[]);
 }
 
 pub(crate) fn capacity(value: usize) {
+    runinator_observability::tui::gauge("worker", "action capacity", value as i64);
     metrics().capacity.record(value as u64, &[]);
 }
 
 pub(crate) fn result_publish(outcome: &'static str) {
+    runinator_observability::tui::counter("worker", "results published", 1);
+    runinator_observability::tui::activity("worker", format!("result publish {outcome}"), None);
     metrics()
         .result_publish
         .add(1, &[KeyValue::new("outcome", outcome)]);
@@ -70,6 +74,12 @@ pub(crate) fn result_publish(outcome: &'static str) {
 /// A provider effect finished executing. `outcome` is one of succeeded/failed/timed_out/canceled; the same
 /// label is applied to the duration histogram so latency can be split by result.
 pub(crate) fn effect_completed(outcome: &'static str, duration_ms: f64) {
+    runinator_observability::tui::counter("worker", "effects completed", 1);
+    runinator_observability::tui::activity(
+        "worker",
+        format!("effect {outcome} ({duration_ms:.0} ms)"),
+        None,
+    );
     let attrs = [KeyValue::new("outcome", outcome)];
     metrics().effects_completed.add(1, &attrs);
     metrics().effect_duration_ms.record(duration_ms, &attrs);
@@ -77,11 +87,14 @@ pub(crate) fn effect_completed(outcome: &'static str, duration_ms: f64) {
 
 /// Resolving `secret://` references for an effect failed, so it was reported failed without running.
 pub(crate) fn secret_resolution_failure() {
+    runinator_observability::tui::counter("worker", "secret failures", 1);
     metrics().secret_resolution_failures.add(1, &[]);
 }
 
 /// a control command was received on the control channel. `kind` is cancel/pause/resume.
 pub(crate) fn control_command(kind: &'static str) {
+    runinator_observability::tui::counter("worker", "control commands", 1);
+    runinator_observability::tui::activity("worker", format!("control {kind}"), None);
     metrics()
         .control_commands
         .add(1, &[KeyValue::new("kind", kind)]);
@@ -90,6 +103,7 @@ pub(crate) fn control_command(kind: &'static str) {
 /// Raise the in-flight gauge for the lifetime of one executing effect, lowering it on drop so every
 /// exit path (including error returns) is accounted for.
 pub(crate) fn in_flight_guard() -> InFlightGuard {
+    runinator_observability::tui::gauge_increment("worker", "effects in flight", 1);
     metrics().effects_in_flight.add(1, &[]);
     InFlightGuard
 }
@@ -98,6 +112,7 @@ pub(crate) struct InFlightGuard;
 
 impl Drop for InFlightGuard {
     fn drop(&mut self) {
+        runinator_observability::tui::gauge_increment("worker", "effects in flight", -1);
         metrics().effects_in_flight.add(-1, &[]);
     }
 }

@@ -604,7 +604,18 @@ fn lower_node(
         }
         WorkflowNodeKind::Audit => durable(node, "audit", parameters(), output, next()),
         WorkflowNodeKind::Checkpoint => durable(node, "checkpoint", parameters(), output, next()),
-        WorkflowNodeKind::Mutex => durable(node, "mutex", parameters(), output, next()),
+        WorkflowNodeKind::Mutex => {
+            // The standard node timeout is the wait-to-acquire budget for a mutex. Coordination
+            // effects otherwise carry only their resolved parameters, so freeze this graph-level
+            // policy in the durable request explicitly.
+            let mut input = parameters();
+            if let (Some(timeout_seconds), Value::Object(parameters)) =
+                (node.timeout_seconds, &mut input)
+            {
+                parameters.insert("timeout_seconds".into(), Value::from(timeout_seconds));
+            }
+            durable(node, "mutex", input, output, next())
+        }
         WorkflowNodeKind::Throttle => durable(node, "throttle", parameters(), output, next()),
         WorkflowNodeKind::Cooldown => durable(node, "cooldown", parameters(), output, next()),
         WorkflowNodeKind::AwaitRun => {
@@ -1406,6 +1417,7 @@ mod tests {
         let mut mutex = node("mutex", WorkflowNodeKind::Mutex, Some("end"));
         mutex.parameters =
             serde_json::from_value(serde_json::json!({ "name": "sdlc-development" })).unwrap();
+        mutex.timeout_seconds = Some(600);
 
         let mut instructions = Vec::new();
         lower_node(&mutex, &mut instructions).unwrap();
@@ -1419,7 +1431,7 @@ mod tests {
         assert_eq!(kind, "mutex");
         assert_eq!(
             input,
-            &runinator_models::json!({ "name": "sdlc-development" })
+            &runinator_models::json!({ "name": "sdlc-development", "timeout_seconds": 600 })
         );
         assert!(input.get("transitions").is_none());
     }

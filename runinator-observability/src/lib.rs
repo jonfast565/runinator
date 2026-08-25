@@ -3,3 +3,4 @@
 pub mod logger;
 pub mod resource_telemetry;
 pub mod telemetry;
+pub mod tui;

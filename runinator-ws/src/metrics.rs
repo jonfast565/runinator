@@ -76,6 +76,7 @@ fn rejection_reason(status: axum::http::StatusCode) -> Option<&'static str> {
 }
 
 pub(crate) fn request_started() -> RequestGuard {
+    runinator_observability::tui::gauge_increment("web service", "HTTP in flight", 1);
     metrics::gauge!(HTTP_IN_FLIGHT).increment(1.0);
     handles().in_flight.add(1, &[]);
     RequestGuard
@@ -85,6 +86,7 @@ pub(crate) struct RequestGuard;
 
 impl Drop for RequestGuard {
     fn drop(&mut self) {
+        runinator_observability::tui::gauge_increment("web service", "HTTP in flight", -1);
         metrics::gauge!(HTTP_IN_FLIGHT).decrement(1.0);
         handles().in_flight.add(-1, &[]);
     }
@@ -98,6 +100,12 @@ pub(crate) fn request_completed(
 ) {
     let class = status_class(status);
     let duration_ms = elapsed.as_secs_f64() * 1000.0;
+    runinator_observability::tui::counter("web service", "HTTP requests", 1);
+    runinator_observability::tui::activity(
+        "web service",
+        format!("{method} {route} → {class} ({duration_ms:.0} ms)"),
+        None,
+    );
     let attrs = [
         KeyValue::new("method", method),
         KeyValue::new("route", route.to_string()),
@@ -109,6 +117,7 @@ pub(crate) fn request_completed(
     handles().requests.add(1, &attrs);
     handles().duration_ms.record(duration_ms, &attrs[..2]);
     if let Some(reason) = rejection_reason(status) {
+        runinator_observability::tui::counter("web service", "HTTP rejections", 1);
         metrics::counter!(HTTP_REJECTIONS, "reason" => reason).increment(1);
         handles()
             .rejections
@@ -117,6 +126,13 @@ pub(crate) fn request_completed(
 }
 
 pub(crate) fn websocket_connected(kind: &'static str) -> WebSocketGuard {
+    runinator_observability::tui::gauge_increment("web service", "WebSockets", 1);
+    runinator_observability::tui::counter("web service", "WebSockets opened", 1);
+    runinator_observability::tui::activity(
+        "web service",
+        format!("WebSocket {kind} connected"),
+        None,
+    );
     let attrs = [KeyValue::new("kind", kind)];
     metrics::gauge!(WS_CONNECTIONS, "kind" => kind).increment(1.0);
     metrics::counter!(WS_CONNECTIONS_TOTAL, "kind" => kind, "outcome" => "opened").increment(1);
@@ -137,6 +153,7 @@ pub(crate) struct WebSocketGuard {
 
 impl Drop for WebSocketGuard {
     fn drop(&mut self) {
+        runinator_observability::tui::gauge_increment("web service", "WebSockets", -1);
         metrics::gauge!(WS_CONNECTIONS, "kind" => self.kind).decrement(1.0);
         metrics::counter!(WS_CONNECTIONS_TOTAL, "kind" => self.kind, "outcome" => "closed")
             .increment(1);

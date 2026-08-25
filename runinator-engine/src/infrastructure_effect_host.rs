@@ -289,7 +289,7 @@ async fn execute<T: RuntimeStore + WorkflowVmStore>(db: &T, delivery: &EffectDel
             "provider action reached infrastructure host",
         )),
         WorkflowEffectRequest::MutexAcquire { key } => {
-            Outcome::Settle(execute_mutex(db, command, key).await)
+            Outcome::Settle(execute_mutex(db, command, key, Duration::from_millis(250), None).await)
         }
         WorkflowEffectRequest::Coordination { kind, input } => {
             execute_coordination(db, delivery, kind, input).await
@@ -302,8 +302,18 @@ async fn execute_mutex<T: RuntimeStore + WorkflowVmStore>(
     db: &T,
     command: &runinator_comm::EffectCommand,
     key: &str,
+    poll_interval: Duration,
+    deadline: Option<DateTime<Utc>>,
 ) -> EffectResult {
     loop {
+        if deadline.is_some_and(|deadline| Utc::now() >= deadline) {
+            return EffectResult::status(
+                command,
+                WorkflowEffectStatus::TimedOut,
+                None,
+                Some(format!("mutex '{key}' was not acquired before its timeout")),
+            );
+        }
         match db
             .claim_workflow_vm_mutex(
                 key.to_string(),
@@ -321,7 +331,7 @@ async fn execute_mutex<T: RuntimeStore + WorkflowVmStore>(
                     None,
                 );
             }
-            Ok(false) => tokio::time::sleep(Duration::from_millis(250)).await,
+            Ok(false) => tokio::time::sleep(poll_interval).await,
             Err(error) => return failed(command, error.to_string()),
         }
     }
@@ -362,7 +372,43 @@ async fn execute_coordination<T: RuntimeStore + WorkflowVmStore>(
                 .get("name")
                 .and_then(runinator_models::value::Value::as_str)
                 .unwrap_or("default");
-            return Outcome::Settle(execute_mutex(db, command, key).await);
+            if input
+                .get("release")
+                .and_then(runinator_models::value::Value::as_bool)
+                .unwrap_or(false)
+            {
+                return Outcome::Settle(
+                    match db
+                        .release_workflow_vm_mutex(
+                            key.to_string(),
+                            command.workflow_run_id,
+                            command.continuation_id,
+                            chrono::Utc::now().timestamp(),
+                        )
+                        .await
+                    {
+                        Ok(()) => EffectResult::status(
+                            command,
+                            WorkflowEffectStatus::Succeeded,
+                            Some(runinator_models::json!({ "key": key, "released": true })),
+                            None,
+                        ),
+                        Err(error) => failed(command, error.to_string()),
+                    },
+                );
+            }
+            let poll_interval = input
+                .get("poll_interval_seconds")
+                .and_then(runinator_models::value::Value::as_i64)
+                .filter(|seconds| *seconds > 0)
+                .map(|seconds| Duration::from_secs(seconds as u64))
+                .unwrap_or_else(|| Duration::from_millis(250));
+            let deadline = input
+                .get("timeout_seconds")
+                .and_then(runinator_models::value::Value::as_i64)
+                .filter(|seconds| *seconds > 0)
+                .map(|seconds| delivery.enqueued_at + chrono::Duration::seconds(seconds));
+            return Outcome::Settle(execute_mutex(db, command, key, poll_interval, deadline).await);
         }
         "debounce" => {
             let seconds = input
@@ -964,6 +1010,37 @@ mod tests {
 
         shutdown.notify_waiters();
         host.await.unwrap();
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn an_expired_mutex_wait_returns_timed_out() {
+        let path =
+            std::env::temp_dir().join(format!("runinator-infra-effect-{}.db", Uuid::now_v7()));
+        let db = runinator_database::sqlite::SqliteDb::new(
+            path.to_str().expect("temporary database path"),
+        )
+        .await
+        .unwrap();
+        let command = command(WorkflowEffectRequest::MutexAcquire {
+            key: "creds-sync".into(),
+        });
+
+        let result = execute_mutex(
+            &db,
+            &command,
+            "creds-sync",
+            Duration::from_secs(10),
+            Some(Utc::now() - chrono::Duration::seconds(1)),
+        )
+        .await;
+        assert!(matches!(
+            result.kind,
+            runinator_comm::EffectResultKind::Status {
+                status: WorkflowEffectStatus::TimedOut,
+                ..
+            }
+        ));
         let _ = std::fs::remove_file(path);
     }
 

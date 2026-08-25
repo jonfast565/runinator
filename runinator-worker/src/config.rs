@@ -13,6 +13,7 @@ use crate::provider_repository::default_provider_factory;
 
 #[derive(Debug, Clone)]
 pub struct Config {
+    pub tui: bool,
     pub dll_paths: Vec<String>,
     /// how this worker reaches the broker. `Direct` uses `broker_backend`/`broker_endpoint` as
     /// given; `Relay` ignores both and tunnels through the web service instead.
@@ -48,6 +49,10 @@ pub struct Config {
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct CliArgs {
+    /// Show a local full-screen runtime dashboard instead of streaming logs to stdout.
+    #[arg(long, env = "RUNINATOR_TUI", default_value_t = false)]
+    tui: bool,
+
     #[arg(long = "dll-path")]
     dll_paths: Vec<String>,
 
@@ -181,6 +186,7 @@ pub fn parse_config() -> Result<Config, SendableError> {
         .unwrap_or(args.api_base_url);
 
     Ok(Config {
+        tui: args.tui,
         dll_paths: plugin_search_paths(args.dll_paths),
         broker_mode,
         broker_backend: args.broker_backend,

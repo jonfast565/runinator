@@ -315,6 +315,31 @@ cargo run -p runinator-supervisor -- logs --process web-service --lines 100
 cargo run -p runinator-supervisor -- logs --watch --lines 40
 ```
 
+### Per-runtime debugging dashboard
+
+The web service, standalone engine worker, worker, waker, and desktop agent each accept `--tui`
+for a small full-screen local dashboard. It shows current work and its age/deadline, process and
+host CPU/RAM, network and disk throughput, the component's existing low-cardinality
+work/transport metrics, and the three most recent log lines at the bottom. The web-service
+dashboard also includes the embedded engine whenever `--run-engine` is enabled (the default).
+
+```bash
+# Direct local transports
+target/debug/runinator-ws --tui
+target/debug/runinator-engine-worker --tui
+target/debug/runinator-worker --tui
+target/debug/runinator-waker --tui
+target/debug/runinator-desktop-agent --tui
+
+# A worker reaching a broker only through an already-exposed web-service relay
+RUNINATOR_API_KEY='…' target/debug/runinator-worker --tui \
+  --broker-mode relay --api-base-url http://localhost:8081/
+```
+
+The dashboard needs an interactive terminal; a piped or supervisor-daemon invocation falls back to
+normal logs. While it is open, stdout logging is kept in the normal log file so it cannot corrupt
+the display. Press `q`, `Esc`, or `Ctrl-C` to request the process's usual graceful shutdown.
+
 ## Cross-platform Local Run (xtask)
 
 `xtask` is a plain Rust binary (`cargo run -p xtask -- <subcommand>`) that builds the
