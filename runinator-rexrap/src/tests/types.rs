@@ -35,7 +35,9 @@ fn round_trips_named_type_decls() {
     );
     // a struct type renders each field on its own indented line, not collapsed inline.
     assert!(
-        rexrap.contains("type Cart {\n        subtotal: number\n        tax: number\n    }"),
+        rexrap.contains(
+            "type Cart {\n            subtotal: number\n            tax: number\n        }"
+        ),
         "struct decl not rendered multiline:\n{rexrap}"
     );
 }
@@ -273,11 +275,8 @@ fn strict_subflow_requires_signature_and_types_state() {
             }
         }
     "#;
-    let err = compile_str(parent, &CompileOptions::default()).unwrap_err();
-    assert!(
-        err.to_string().contains("unknown subflow target 'Child'"),
-        "{err}"
-    );
+    compile_str(parent, &CompileOptions::default())
+        .expect("a typed workflow import can be resolved by the pack importer");
 
     let child = r#"
         workflow "Child" v1 returns { url: string } {

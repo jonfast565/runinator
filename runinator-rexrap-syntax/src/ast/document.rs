@@ -78,8 +78,8 @@ pub struct FnParam {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Workflow {
     pub name: String,
-    /// Stable logical key, independent of display name and namespace. `None` is accepted only for
-    /// pre-migration source and lowers with a temporary name fallback.
+    /// Stable logical key, independent of display name and namespace. Parsing retains `None` so
+    /// semantic analysis can report a precise missing-key diagnostic; lowering rejects it.
     pub key: Option<String>,
     pub version: Option<SemVer>,
     /// top-level workflow parameters, surfaced in source as `params { ... }`.
@@ -89,8 +89,8 @@ pub struct Workflow {
     /// header `alias <name> = { ... }` declarations; reusable argument groups expanded into
     /// action calls by `...name` spreads during desugaring.
     pub aliases: Vec<Alias>,
-    /// optional header `namespace <path>` declaration: the namespace this workflow's identity lives
-    /// in. when `None` the importer stamps the pack name.
+    /// namespace this workflow's identity lives in, supplied by a declaration or enclosing block.
+    /// Parsing retains `None` so semantic analysis can report it; lowering rejects it.
     pub namespace: Option<String>,
     /// header `import <path> (as <alias>)?` declarations opening namespaces into local scope.
     pub imports: Vec<Import>,
@@ -364,8 +364,7 @@ pub struct InterruptDecl {
     pub body: Block,
 }
 
-/// The artifact family opened by a typed import. An absent kind is the legacy namespace import
-/// used by `std`; strict namespaced packs use one of these explicit kinds.
+/// The artifact family opened by a typed import. An absent kind is reserved for `std` imports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImportKind {
     Workflow,

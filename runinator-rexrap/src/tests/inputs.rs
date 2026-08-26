@@ -49,16 +49,13 @@ fn input_default_expression_round_trips() {
     "#;
     let def = compile(src);
     let rexrap = decompile(&def).expect("decompile");
+    assert!(rexrap.contains("base: string = api.base_url"), "{rexrap}");
     assert!(
-        rexrap.contains("base: string = config.api.base_url"),
+        rexrap.contains("token: string = api.secret.token"),
         "{rexrap}"
     );
     assert!(
-        rexrap.contains("token: string = secret.api.token"),
-        "{rexrap}"
-    );
-    assert!(
-        rexrap.contains(r#"full: string = config.api.base_url ++ "/v1""#),
+        rexrap.contains(r#"full: string = api.base_url ++ "/v1""#),
         "{rexrap}"
     );
     let second = compile_str(&rexrap, &CompileOptions::default()).expect("recompile");
@@ -158,10 +155,10 @@ fn apply_input_defaults_synthesizes_input_when_absent() {
 }
 #[test]
 fn format_renders_input_defaults() {
-    let src = "workflow \"D\" v1 {\nparams {\ncount: integer = 5\nbase: string = config.x\n}\n\n    do {\n    console.run(command: params.base)\n    }\n}\n";
+    let src = "workflow \"D\" v1 {\nparams {\ncount: integer = 5\nbase: string = app.x\n}\nimport settings app as app\n\n    do {\n    console.run(command: params.base)\n    }\n}\n";
     let formatted = format_str(src).expect("format");
     assert!(formatted.contains("count: integer = 5"), "{formatted}");
-    assert!(formatted.contains("base: string = config.x"), "{formatted}");
+    assert!(formatted.contains("base: string = app.x"), "{formatted}");
     // formatted source still compiles to the same parameter type.
     let a = compile(src);
     let b = compile_str(&formatted, &CompileOptions::default()).expect("compile formatted");

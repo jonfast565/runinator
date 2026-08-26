@@ -64,19 +64,21 @@ fn comparison_round_trips_through_formatter() {
 #[test]
 fn secret_reference_requires_scope_and_name() {
     let src = r#"
+        namespace runinator.tests
         workflow "BadSecret" v1 {
+            key bad_secret
 
             do {
                 let go = console.run(command: "x", token: secret.github)
             }
         }
     "#;
-    match compile_str(src, &CompileOptions::default()) {
-        Err(RexRapError::Lower(message)) => {
-            assert!(message.contains("secret"), "{message}")
-        }
-        other => panic!("expected lower error, got {other:?}"),
-    }
+    let error = crate::compile_str(src, &CompileOptions::default())
+        .expect_err("unimported settings namespace must be rejected");
+    assert!(
+        error.to_string().contains("typed `import settings"),
+        "{error}"
+    );
 }
 #[test]
 fn round_trips_fanin_error_handlers_and_convergence() {

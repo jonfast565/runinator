@@ -999,7 +999,7 @@ fn parse_import_decl(pair: Pair<Rule>) -> Result<Import, RexRapError> {
                     _ => return Err(RexRapError::lower("unknown import kind")),
                 });
             }
-            Rule::ns_path => path = inner.as_str().to_string(),
+            Rule::import_path => path = inner.as_str().to_string(),
             Rule::revision_selector => {
                 let revision_number = inner
                     .into_inner()
@@ -2161,6 +2161,7 @@ fn attach_step_modifiers(
 
 fn parse_subflow(pair: Pair<Rule>) -> Result<SubflowStmt, RexRapError> {
     let mut workflow_name = String::new();
+    let mut imported = false;
     let mut detached = false;
     let mut reuse = false;
     let mut run_name = None;
@@ -2174,7 +2175,10 @@ fn parse_subflow(pair: Pair<Rule>) -> Result<SubflowStmt, RexRapError> {
                     .ok_or_else(|| RexRapError::lower("subflow target missing"))?;
                 workflow_name = match target.as_rule() {
                     Rule::string => plain_string(target)?,
-                    Rule::ns_path => target.as_str().to_string(),
+                    Rule::ns_path => {
+                        imported = true;
+                        target.as_str().to_string()
+                    }
                     _ => return Err(RexRapError::lower("invalid subflow target")),
                 };
             }
@@ -2217,7 +2221,7 @@ fn parse_subflow(pair: Pair<Rule>) -> Result<SubflowStmt, RexRapError> {
     Ok(SubflowStmt {
         workflow_name,
         revision: None,
-        imported: false,
+        imported,
         detached,
         reuse,
         run_name,

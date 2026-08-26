@@ -26,7 +26,37 @@ fn options(_kind: &WorkflowNodeKind) -> CompileOptions {
 }
 
 fn compile(kind: &WorkflowNodeKind, src: &str) -> Result<WorkflowDefinition, RexRapError> {
-    compile_str(src, &options(kind))
+    let mut source = src.to_string();
+    let document = crate::parse_document(src)?;
+    if document
+        .workflows
+        .iter()
+        .any(|workflow| workflow.key.is_none())
+    {
+        let do_offset = src
+            .match_indices("do")
+            .find_map(|(offset, _)| {
+                let before = src[..offset].chars().next_back();
+                let after = src[offset + 2..].chars().next();
+                let boundary = |ch: Option<char>| {
+                    ch.is_none_or(|ch| !(ch.is_ascii_alphanumeric() || ch == '_'))
+                };
+                (boundary(before)
+                    && boundary(after)
+                    && src[offset + 2..].trim_start().starts_with('{'))
+                .then_some(offset)
+            })
+            .expect("conformance workflow has a do block");
+        source.insert_str(do_offset, "key conformance\n");
+    }
+    if document
+        .workflows
+        .iter()
+        .any(|workflow| workflow.namespace.is_none())
+    {
+        source.insert_str(0, "namespace runinator.tests\n");
+    }
+    compile_str(&source, &options(kind))
 }
 
 /// kinds with no author-facing rexrap syntax, each with the reason it has none.
@@ -251,9 +281,10 @@ fn fixtures() -> Vec<(WorkflowNodeKind, &'static str)> {
             r#"
             workflow "Conf Subflow" v1 {
                 params { id: string }
+                import workflow Child as Child
 
                 do {
-                    subflow("Child", params: { id: params.id })
+                    subflow(Child, params: { id: params.id })
                 }
             }"#,
         ),

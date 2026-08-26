@@ -44,6 +44,8 @@ pub(super) struct Decompiler<'a> {
     input_types: HashMap<String, String>,
     // header alias declarations recovered from graph metadata, in declaration order.
     alias_decls: Vec<(String, Vec<Value>)>,
+    // typed durable-resource imports retained in the authoring sidecar.
+    resource_imports: Vec<ResourceImport>,
     // per-node `...alias` spread recipes (node id -> recipe segments) recovered from metadata.
     spreads: HashMap<String, Vec<Value>>,
     // control-block ids explicitly authored in REXRAP, recovered from metadata.
@@ -88,6 +90,7 @@ pub fn decompile_definition(
     let declared_types = metadata.declared_types();
     let input_types = metadata.input_types();
     let alias_decls = metadata.alias_declarations();
+    let resource_imports = metadata.resource_imports();
     let spreads = metadata.spreads();
     let control_ids = metadata.control_ids();
     let control_vars = metadata.control_vars();
@@ -102,6 +105,7 @@ pub fn decompile_definition(
         declared_types,
         input_types,
         alias_decls,
+        resource_imports,
         spreads,
         control_ids,
         control_vars,
@@ -132,11 +136,12 @@ pub fn decompile_definition(
         returns
     ));
     decompiler.indent += 1;
+    decompiler.emit_params(&definition.input_type)?;
     if let Some(key) = &definition.key {
         decompiler.line(&format!("key {key}"));
         decompiler.out.push('\n');
     }
-    decompiler.emit_params(&definition.input_type)?;
+    decompiler.emit_resource_imports();
     decompiler.emit_triggers(metadata.triggers())?;
     decompiler.emit_notifications(metadata.notifications())?;
     decompiler.emit_concurrency(metadata.concurrency())?;
@@ -238,6 +243,7 @@ pub fn render_expression(value: &Value) -> Result<String, RexRapError> {
         declared_types: HashMap::new(),
         input_types: HashMap::new(),
         alias_decls: Vec::new(),
+        resource_imports: Vec::new(),
         spreads: HashMap::new(),
         control_ids: HashSet::new(),
         control_vars: HashMap::new(),
@@ -302,6 +308,30 @@ fn decompile_retry(retry: &WorkflowRetry, explicit: bool) -> Option<String> {
 }
 
 impl<'a> Decompiler<'a> {
+    fn emit_resource_imports(&mut self) {
+        if self.resource_imports.is_empty() {
+            return;
+        }
+        for import in self.resource_imports.clone() {
+            let revision = import
+                .revision
+                .map(|revision| format!(" @revision({revision})"))
+                .unwrap_or_default();
+            self.line(&format!(
+                "import {} {}{} as {}",
+                import.kind, import.path, revision, import.alias
+            ));
+        }
+        self.out.push('\n');
+    }
+
+    fn resource_alias(&self, kind: &str, path: &str) -> Option<&str> {
+        self.resource_imports
+            .iter()
+            .find(|import| import.kind == kind && (import.path == path || import.alias == path))
+            .map(|import| import.alias.as_str())
+    }
+
     fn loop_var(&self, node_id: &str) -> Option<String> {
         self.loop_vars
             .iter()
@@ -1262,7 +1292,15 @@ impl<'a> Decompiler<'a> {
         // differently depending on what the catalog currently holds — including not at all, once
         // the package is deleted. the binding is part of the definition, so it always answers.
         let (call_provider, call_function) = match &action.function_binding {
-            Some(binding) => (binding.provider_name(), binding.export_name.clone()),
+            Some(binding) => {
+                let provider = binding.provider_name();
+                let path = provider.strip_prefix("functions.").unwrap_or(&provider);
+                let provider = self
+                    .resource_alias("functions", path)
+                    .unwrap_or(&provider)
+                    .to_string();
+                (provider, binding.export_name.clone())
+            }
             None => (action.provider.clone(), action.function.clone()),
         };
         // action nodes carry args in `configuration`, but the reducer merges node-level
@@ -1383,8 +1421,31 @@ impl<'a> Decompiler<'a> {
         action: &runinator_models::workflows::WorkflowAction,
         base: usize,
     ) -> Result<String, RexRapError> {
+        let (provider, function, configuration) = match &action.function_binding {
+            Some(binding) => {
+                let bound_provider = binding.provider_name();
+                let path = bound_provider
+                    .strip_prefix("functions.")
+                    .unwrap_or(&bound_provider);
+                let provider = self
+                    .resource_alias("functions", path)
+                    .unwrap_or(&bound_provider)
+                    .to_string();
+                let configuration = action
+                    .configuration
+                    .get("input")
+                    .cloned()
+                    .unwrap_or(Value::Object(Map::new()));
+                (provider, binding.export_name.clone(), configuration)
+            }
+            None => (
+                action.provider.clone(),
+                action.function.clone(),
+                action.configuration.as_value().clone(),
+            ),
+        };
         let mut args = Vec::new();
-        if let Value::Object(config) = action.configuration.as_value() {
+        if let Value::Object(config) = &configuration {
             for (name, value) in config {
                 args.push(format!("{name}: {}", self.expr_multiline(value, base + 1)?));
             }
@@ -1397,8 +1458,8 @@ impl<'a> Decompiler<'a> {
         Ok(format!(
             "{}{}.{}{}",
             self.modifier_prefix(&modifiers),
-            action.provider,
-            action.function,
+            provider,
+            function,
             self.call_args(&args, base),
         ))
     }
@@ -1406,7 +1467,8 @@ impl<'a> Decompiler<'a> {
     fn subflow_text(&self, node: &WorkflowNode) -> Result<String, RexRapError> {
         let subflow = &node.subflow;
         let name = subflow.workflow_name.clone().unwrap_or_default();
-        let mut args = vec![quote(&name)];
+        let imported = self.resource_alias("workflow", &name);
+        let mut args = vec![imported.map(str::to_string).unwrap_or_else(|| quote(&name))];
         let base = self.indent;
         if subflow.reuse_open_run {
             args.push("reuse: true".to_string());

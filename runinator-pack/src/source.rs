@@ -354,7 +354,6 @@ fn compile_rexrap_with_signatures(
         default_version,
         source_dir: path.parent().map(Path::to_path_buf),
         providers: compile_providers(&catalog.providers),
-        strict_namespaces: true,
         functions: catalog.functions.clone(),
         workflow_signatures: workflow_signatures.to_vec(),
         ..runinator_rexrap::CompileOptions::default()
@@ -390,7 +389,6 @@ fn compile_rexrap_all_with_signatures(
         default_version,
         source_dir: path.parent().map(Path::to_path_buf),
         providers: compile_providers(&catalog.providers),
-        strict_namespaces: true,
         functions: catalog.functions.clone(),
         workflow_signatures: workflow_signatures.to_vec(),
         ..runinator_rexrap::CompileOptions::default()

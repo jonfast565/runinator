@@ -21,9 +21,6 @@ pub struct CompileOptions {
     pub providers: Vec<ProviderMetadata>,
     /// strictness for author-time type diagnostics.
     pub type_policy: TypePolicy,
-    /// Require durable resources to be reached through typed imports and require explicit
-    /// workflow namespace/key identity. Pack compilation enables this unconditionally.
-    pub strict_namespaces: bool,
     /// pack-local or caller-supplied workflow signatures used to type subflow calls.
     pub workflow_signatures: Vec<WorkflowSignature>,
     /// published packaged-function exports a `functions.<pkg>.<export>(...)` call may name.
@@ -55,7 +52,6 @@ impl Default for CompileOptions {
             source_dir: None,
             providers: Vec::new(),
             type_policy: TypePolicy::Strict,
-            strict_namespaces: false,
             workflow_signatures: Vec::new(),
             functions: Vec::new(),
         }

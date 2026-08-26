@@ -14,7 +14,7 @@ impl Decompiler<'_> {
             Value::Null => Ok("null".to_string()),
             Value::Bool(b) => Ok(b.to_string()),
             Value::Number(_) => Ok(value.to_string()),
-            Value::String(text) => Ok(secret_path(text).unwrap_or_else(|| quote(text))),
+            Value::String(text) => Ok(self.secret_path(text).unwrap_or_else(|| quote(text))),
             Value::Array(items) => {
                 let parts = items
                     .iter()
@@ -339,6 +339,12 @@ impl Decompiler<'_> {
             return Ok(self.dotted("interrupt", path));
         }
         if let Some(path) = object.get("config") {
+            if let Some(path) = path.as_array()
+                && let Some(scope) = path.first().and_then(Value::as_str)
+                && let Some(alias) = self.resource_alias("settings", scope)
+            {
+                return Ok(self.append_path(alias, &path[1..]));
+            }
             return Ok(self.dotted("config", path));
         }
         // a compute local: the path array's first element is the local name, the rest are fields.
@@ -394,6 +400,19 @@ impl Decompiler<'_> {
             }
         }
         out
+    }
+
+    fn secret_path(&self, text: &str) -> Option<String> {
+        let (scope, names) = secret_parts(text)?;
+        if let Some(alias) = self.resource_alias("settings", scope) {
+            let mut out = format!("{alias}.secret");
+            for name in names {
+                out.push('.');
+                out.push_str(name);
+            }
+            return Some(out);
+        }
+        None
     }
 
     pub(super) fn cond(&self, value: &Value) -> Result<String, RexRapError> {
@@ -564,10 +583,9 @@ fn render_type_value(value: &runinator_models::value::Value) -> String {
     }
 }
 
-/// recognize a path- or UUID-backed secret literal and render it as `secret.<scope>.<name…>`.
-/// returns None (so the caller quotes it as a plain string) unless every segment is a bare
-/// ident, keeping the result a clean round-trip with the lowering.
-fn secret_path(text: &str) -> Option<String> {
+/// split a path- or UUID-backed secret literal into its durable scope and name segments. The caller
+/// only renders it as source when a retained typed settings import supplies a strict alias.
+fn secret_parts(text: &str) -> Option<(&str, Vec<&str>)> {
     let rest = if let Some(rest) = text.strip_prefix("secret+uuid://") {
         let (id, path) = rest.split_once('/')?;
         uuid::Uuid::parse_str(id).ok()?;
@@ -579,15 +597,13 @@ fn secret_path(text: &str) -> Option<String> {
     if scope.is_empty() || name.is_empty() {
         return None;
     }
-    let mut out = String::from("secret");
-    for seg in std::iter::once(scope).chain(name.split('/')) {
+    let names = name.split('/').collect::<Vec<_>>();
+    for seg in std::iter::once(scope).chain(names.iter().copied()) {
         if !is_ident(seg) {
             return None;
         }
-        out.push('.');
-        out.push_str(seg);
     }
-    Some(out)
+    Some((scope, names))
 }
 
 fn is_ident(seg: &str) -> bool {

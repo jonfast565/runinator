@@ -111,17 +111,15 @@ fn typed_settings_import_resolves_config_and_secret_aliases() {
 }
 
 #[test]
-fn strict_pack_compilation_rejects_legacy_artifact_authoring() {
-    let strict = CompileOptions {
-        strict_namespaces: true,
-        ..default_test_options()
-    };
+fn compilation_rejects_legacy_artifact_authoring() {
+    let options = default_test_options();
     let missing_identity = r#"
         workflow "Legacy" v1 {
             do { return }
         }
     "#;
-    let error = compile_str(missing_identity, &strict).expect_err("stable identity is required");
+    let error =
+        crate::compile_str(missing_identity, &options).expect_err("stable identity is required");
     assert!(error.to_string().contains("stable `key`"));
 
     let bare_setting = r#"
@@ -132,7 +130,8 @@ fn strict_pack_compilation_rejects_legacy_artifact_authoring() {
             }
         }
     "#;
-    let error = compile_str(bare_setting, &strict).expect_err("typed settings import is required");
+    let error =
+        crate::compile_str(bare_setting, &options).expect_err("typed settings import is required");
     assert!(error.to_string().contains("typed `import settings"));
 }
 #[test]

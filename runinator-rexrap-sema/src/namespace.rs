@@ -53,7 +53,6 @@ struct Scope {
     module_aliases: HashMap<String, HashMap<String, String>>,
     /// bare calls rewritten while preparing one module's private function namespace.
     function_renames: HashMap<String, String>,
-    strict_resources: bool,
 }
 
 #[derive(Clone)]
@@ -74,7 +73,6 @@ impl Scope {
             settings_aliases: HashMap::new(),
             module_aliases: HashMap::new(),
             function_renames: HashMap::new(),
-            strict_resources: false,
         }
     }
 }
@@ -96,16 +94,6 @@ pub fn resolve_compute_fragment(body: &mut [ComputeLine]) -> Result<(), RexRapEr
 
 /// resolve every namespaced call in the document to its bare runtime form, in place.
 pub fn resolve(document: &mut Document) -> Result<(), RexRapError> {
-    resolve_with_policy(document, false)
-}
-
-/// Resolve a pack source under the namespaced-artifact contract. Durable references must use a
-/// typed import and every workflow must declare its stable key and namespace.
-pub fn resolve_strict(document: &mut Document) -> Result<(), RexRapError> {
-    resolve_with_policy(document, true)
-}
-
-fn resolve_with_policy(document: &mut Document, strict_resources: bool) -> Result<(), RexRapError> {
     let modules = prepare_source_modules(document)?;
     let function_scope = build_function_scope(document);
     for function in document.functions.iter_mut() {
@@ -131,19 +119,19 @@ fn resolve_with_policy(document: &mut Document, strict_resources: bool) -> Resul
         .map(|function| function.name.clone())
         .collect::<HashSet<_>>();
     for workflow in document.workflows.iter_mut() {
-        if strict_resources && workflow.key.is_none() {
+        if workflow.key.is_none() {
             return Err(RexRapError::semantic(
                 workflow.span,
                 format!("workflow '{}' must declare a stable `key`", workflow.name),
             ));
         }
-        if strict_resources && workflow.namespace.is_none() {
+        if workflow.namespace.is_none() {
             return Err(RexRapError::semantic(
                 workflow.span,
                 format!("workflow '{}' must declare a `namespace`", workflow.name),
             ));
         }
-        let scope = build_scope(workflow, user_fns.clone(), &modules, strict_resources)?;
+        let scope = build_scope(workflow, user_fns.clone(), &modules)?;
         for alias in workflow.aliases.iter_mut() {
             for (_, value) in alias.entries.iter_mut() {
                 resolve_expr(value, &scope)?;
@@ -227,7 +215,6 @@ fn prepare_source_modules(document: &mut Document) -> Result<ModuleRegistry, Rex
             settings_aliases: HashMap::new(),
             module_aliases: HashMap::new(),
             function_renames: exports.clone(),
-            strict_resources: false,
         };
         for mut function in module.functions.clone() {
             for param in &mut function.params {
@@ -273,7 +260,6 @@ fn build_function_scope(document: &Document) -> Scope {
         settings_aliases: HashMap::new(),
         module_aliases: HashMap::new(),
         function_renames: HashMap::new(),
-        strict_resources: false,
     }
 }
 
@@ -281,7 +267,6 @@ fn build_scope(
     workflow: &Workflow,
     user_fns: HashSet<String>,
     modules: &ModuleRegistry,
-    strict_resources: bool,
 ) -> Result<Scope, RexRapError> {
     let mut aliases = HashMap::new();
     let mut bare_intrinsics = HashSet::new();
@@ -389,7 +374,7 @@ fn build_scope(
             continue;
         }
         let segments: Vec<&str> = import.path.split('.').collect();
-        if strict_resources && segments.first() != Some(&STD_NAMESPACE) {
+        if segments.first() != Some(&STD_NAMESPACE) {
             return Err(RexRapError::semantic(
                 import.span,
                 format!(
@@ -468,7 +453,6 @@ fn build_scope(
         settings_aliases,
         module_aliases,
         function_renames: HashMap::new(),
-        strict_resources,
     })
 }
 
@@ -506,12 +490,15 @@ fn resolve_stmt(stmt: &mut Stmt, scope: &Scope) -> Result<(), RexRapError> {
         StmtKind::Return(None) | StmtKind::Detach(_) => {}
         StmtKind::Compute(compute) => resolve_compute_block(&mut compute.body, scope)?,
         StmtKind::Subflow(subflow) => {
+            // `imported` also records the parser's bare-alias surface for formatting. Namespace
+            // resolution proves that spelling against the actual typed-import table each time.
+            subflow.imported = false;
             if let Some(import) = scope.workflow_aliases.get(&subflow.workflow_name) {
                 subflow.workflow_name = import.path.clone();
                 subflow.revision = import.revision;
                 subflow.imported = true;
             }
-            if scope.strict_resources && !subflow.imported {
+            if !subflow.imported {
                 return Err(RexRapError::semantic(
                     stmt.span,
                     format!(
@@ -682,7 +669,7 @@ fn resolve_stmt(stmt: &mut Stmt, scope: &Scope) -> Result<(), RexRapError> {
 }
 
 fn resolve_action(action: &mut ActionStmt, scope: &Scope, span: Span) -> Result<(), RexRapError> {
-    if scope.strict_resources && action.provider.starts_with("functions.") {
+    if action.provider.starts_with("functions.") {
         return Err(RexRapError::semantic(
             span,
             "packaged functions must be referenced through a typed `import functions ... as ...` alias",
@@ -858,8 +845,7 @@ fn resolve_expr(expr: &mut Expr, scope: &Scope) -> Result<(), RexRapError> {
         // a namespace used as a value (not called) is an error; a genuine value path is fine.
         ExprKind::Path(segs) => {
             let settings_alias = resolve_settings_path(segs, scope, span)?;
-            if scope.strict_resources
-                && !settings_alias
+            if !settings_alias
                 && matches!(segs.first().and_then(path_key), Some("config" | "secret"))
             {
                 return Err(RexRapError::semantic(

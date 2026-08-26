@@ -193,7 +193,7 @@ fn round_trips_through_decompile_without_a_catalog() {
     // the binding carries the authored names, so rendering needs no catalog at all — which is what
     // keeps a definition decompiling the same way after its package is deleted.
     assert!(
-        rexrap.contains("functions.image_tools.resize("),
+        rexrap.contains("image_tools.resize("),
         "expected the authored call back, got:\n{rexrap}"
     );
     assert!(rexrap.contains("source: \"a.png\""), "{rexrap}");
@@ -276,6 +276,14 @@ workflow "Resize" {
         compensation.function_binding.map(|binding| binding.version),
         Some(2)
     );
+
+    let rexrap = decompile(&definition).expect("decompile compensation");
+    assert!(
+        rexrap.contains("compensate image_tools.resize("),
+        "{rexrap}"
+    );
+    compile_str(&rexrap, &function_options(vec![catalog_entry(2)]))
+        .expect("strict decompiled compensation recompiles");
 }
 
 #[test]

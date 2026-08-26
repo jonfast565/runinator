@@ -809,7 +809,11 @@ impl Formatter {
     }
 
     fn subflow(&self, subflow: &SubflowStmt) -> String {
-        let mut args = vec![quote(&subflow.workflow_name)];
+        let mut args = vec![if subflow.imported {
+            subflow.workflow_name.clone()
+        } else {
+            quote(&subflow.workflow_name)
+        }];
         if !subflow.params.is_empty() {
             args.push(format!(
                 "params: {}",

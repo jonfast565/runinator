@@ -37,9 +37,11 @@ mod validation;
 
 use crate::{
     CompileOptions, DecompileOptions, RexRapError, RexRapFragmentKind, WorkflowSignature,
-    analyze_source, compile_all_str, compile_str, compile_str_with_diagnostics, decompile,
-    decompile_with, decompile_with_spans, evaluate_fragment, evaluate_fragment_with_functions,
-    format_str, parse_document, validate_fragment, validate_fragment_with_functions,
+    analyze_source as analyze_source_strict, compile_all_str as compile_all_strict,
+    compile_str as compile_str_strict,
+    compile_str_with_diagnostics as compile_str_with_diagnostics_strict, decompile, decompile_with,
+    decompile_with_spans, evaluate_fragment, evaluate_fragment_with_functions, format_str,
+    parse_document, validate_fragment, validate_fragment_with_functions,
     workflow_signature_from_source,
 };
 use runinator_models::providers::{
@@ -48,6 +50,196 @@ use runinator_models::providers::{
 };
 use runinator_models::value::Value;
 use std::{fs, time::SystemTime};
+
+/// Most language tests predate mandatory artifact identity and focus on a different surface. Give
+/// those fixtures a stable identity before they enter the real compiler; namespace-specific tests
+/// call the crate API directly when absence itself is the behavior under test.
+fn strict_test_source(src: &str) -> String {
+    let Ok(document) = parse_document(src) else {
+        return src.to_string();
+    };
+    let needs_namespace = document
+        .workflows
+        .iter()
+        .any(|workflow| workflow.namespace.is_none());
+    let mut insertions = document
+        .workflows
+        .iter()
+        .filter(|workflow| workflow.key.is_none())
+        .filter_map(|workflow| {
+            let tail = src.get(workflow.span.start..workflow.span.end)?;
+            let relative = tail.match_indices("do").find_map(|(offset, _)| {
+                let before = tail[..offset].chars().next_back();
+                let after = tail[offset + 2..].chars().next();
+                let boundary = |ch: Option<char>| {
+                    ch.is_none_or(|ch| !(ch.is_ascii_alphanumeric() || ch == '_'))
+                };
+                let opens_block = tail[offset + 2..].trim_start().starts_with('{');
+                (boundary(before) && boundary(after) && opens_block).then_some(offset)
+            })?;
+            Some((
+                workflow.span.start + relative,
+                "key runinator_test\n".to_string(),
+            ))
+        })
+        .collect::<Vec<_>>();
+    insertions.sort_by_key(|(offset, _)| std::cmp::Reverse(*offset));
+    let mut strict = src.to_string();
+    for (offset, identity) in insertions {
+        strict.insert_str(offset, &identity);
+    }
+    if needs_namespace {
+        let offset = strict
+            .strip_prefix("language rexrap-1")
+            .and_then(|tail| {
+                tail.find('\n')
+                    .map(|line| "language rexrap-1".len() + line + 1)
+            })
+            .unwrap_or(0);
+        strict.insert_str(offset, "namespace runinator.tests\n");
+    }
+    strict_test_resources(strict)
+}
+
+fn strict_test_resources(mut source: String) -> String {
+    let mut imports = std::collections::BTreeSet::new();
+
+    for root in ["config", "secret"] {
+        let mut scopes = std::collections::BTreeSet::new();
+        let needle = format!("{root}.");
+        let mut offset = 0;
+        while let Some(found) = source[offset..].find(&needle) {
+            let start = offset + found + needle.len();
+            let scope = source[start..]
+                .chars()
+                .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
+                .collect::<String>();
+            let has_field = source[start + scope.len()..].starts_with('.');
+            if !scope.is_empty() && has_field {
+                scopes.insert(scope);
+            }
+            offset = start.max(offset + 1);
+        }
+        for scope in scopes {
+            imports.insert(format!("import settings {scope} as {scope}"));
+            let authored = format!("{root}.{scope}.");
+            let alias = if root == "secret" {
+                format!("{scope}.secret.")
+            } else {
+                format!("{scope}.")
+            };
+            source = source.replace(&authored, &alias);
+        }
+    }
+
+    while let Some(start) = source.find("subflow(\"") {
+        let name_start = start + "subflow(\"".len();
+        let Some(end) = source[name_start..].find('\"').map(|end| name_start + end) else {
+            break;
+        };
+        let path = source[name_start..end].to_string();
+        let durable_path = if path == "Ticket Work" {
+            "core_sdlc.ticket_work".to_string()
+        } else {
+            path.clone()
+        };
+        let alias = durable_path
+            .rsplit('.')
+            .next()
+            .unwrap_or("workflow")
+            .replace('-', "_");
+        imports.insert(format!("import workflow {durable_path} as {alias}"));
+        source.replace_range(start..=end, &format!("subflow({alias}"));
+    }
+
+    let mut search_from = 0;
+    while let Some(found) = source[search_from..].find("functions.") {
+        let start = search_from + found;
+        let Some(open) = source[start..].find('(').map(|open| start + open) else {
+            break;
+        };
+        let call = source[start..open].to_string();
+        if !call
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.'))
+        {
+            search_from = start + "functions.".len();
+            continue;
+        }
+        let Some((package, export)) = call
+            .strip_prefix("functions.")
+            .and_then(|call| call.rsplit_once('.'))
+        else {
+            search_from = open + 1;
+            continue;
+        };
+        let alias = package
+            .rsplit('.')
+            .next()
+            .unwrap_or("package")
+            .replace('-', "_");
+        imports.insert(format!("import functions {package} as {alias}"));
+        source.replace_range(start..open, &format!("{alias}.{export}"));
+        search_from = start + alias.len() + export.len() + 2;
+    }
+
+    if imports.is_empty() {
+        return source;
+    }
+    let import_text = format!("{}\n", imports.into_iter().collect::<Vec<_>>().join("\n"));
+    let Ok(document) = parse_document(&source) else {
+        return source;
+    };
+    let mut offsets = document
+        .workflows
+        .iter()
+        .filter_map(|workflow| {
+            let tail = source.get(workflow.span.start..workflow.span.end)?;
+            tail.match_indices("do").find_map(|(offset, _)| {
+                tail[offset + 2..]
+                    .trim_start()
+                    .starts_with('{')
+                    .then_some(workflow.span.start + offset)
+            })
+        })
+        .collect::<Vec<_>>();
+    offsets.sort_by_key(|offset| std::cmp::Reverse(*offset));
+    for offset in offsets {
+        source.insert_str(offset, &import_text);
+    }
+    source
+}
+
+fn compile_str(
+    src: &str,
+    options: &CompileOptions,
+) -> Result<runinator_models::workflows::WorkflowDefinition, RexRapError> {
+    compile_str_strict(&strict_test_source(src), options)
+}
+
+fn compile_all_str(
+    src: &str,
+    options: &CompileOptions,
+) -> Result<Vec<runinator_models::workflows::WorkflowDefinition>, RexRapError> {
+    compile_all_strict(&strict_test_source(src), options)
+}
+
+fn compile_str_with_diagnostics(
+    src: &str,
+    options: &CompileOptions,
+) -> Result<
+    (
+        runinator_models::workflows::WorkflowDefinition,
+        Vec<crate::Diagnostic>,
+    ),
+    RexRapError,
+> {
+    compile_str_with_diagnostics_strict(&strict_test_source(src), options)
+}
+
+fn analyze_source(src: &str) -> Result<Vec<crate::Diagnostic>, RexRapError> {
+    analyze_source_strict(&strict_test_source(src))
+}
 
 /// compile and return the `Semantic` error's span and message, failing otherwise.
 fn expect_semantic(src: &str) -> (crate::Span, String) {

@@ -117,9 +117,9 @@ workflow = { "workflow" ~ string ~ version? ~ returns_decl? ~ "{" ~ params_block
 workflow_item = _{ key_decl | import_decl | trigger_decl | notify_decl | concurrency_decl | watch_decl | interrupt_decl | correlate_decl | type_decl | alias_decl | start_decl | run_block | join_decl }
 returns_decl = { "returns" ~ type_expr }
 
-// the namespace this workflow's identity lives in. a dotted path qualifying the workflow name so
-// subflow targets resolve unambiguously across packs; falls back to the pack name on import when
-// absent. render-only surface that rides in metadata.
+// the required namespace this workflow's identity lives in. a dotted path qualifying the workflow
+// name so subflow targets resolve unambiguously across packs. render-only surface that rides in
+// metadata.
 namespace_decl = { "namespace" ~ ns_path }
 // Stable logical key. Unlike the namespace and display name it does not change when the artifact
 // is reorganized or renamed, so pack re-apply can recover the existing UUID.
@@ -129,9 +129,11 @@ key_decl = { "key" ~ ns_path }
 // `upper(x)` callable bare; `import std.strings as s` binds `s.upper(x)`; `import some_pack` brings
 // another pack's workflows into subflow scope. pure surface sugar carried in metadata; the compiled
 // graph only ever holds fully-resolved names.
-import_decl = { "import" ~ import_kind? ~ ns_path ~ revision_selector? ~ ("as" ~ ident)? }
+import_decl = { "import" ~ import_kind? ~ import_path ~ revision_selector? ~ ("as" ~ ident)? }
 import_kind = { "workflow" | "functions" | "settings" | "module" }
 revision_selector = { "@revision" ~ "(" ~ integer ~ ")" }
+import_path = @{ import_segment ~ ("." ~ import_segment)* }
+import_segment = { ident ~ ("-" ~ ident)* }
 
 // a dotted namespace path (`std.strings`, `some_pack.helpers`). atomic so it is captured whole and
 // split by the parser.

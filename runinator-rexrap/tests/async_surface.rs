@@ -3,13 +3,49 @@
 //! the property these all defend is that asyncness is a property of the *call site*, never of the
 //! callee — one definition serves both schedulings, so nothing is ever written twice.
 
-use runinator_rexrap::{CompileOptions, compile_str, decompile, format_str};
+use runinator_rexrap::{
+    CompileOptions, RexRapError, compile_str as compile_strict, decompile, format_str,
+    parse_document,
+};
 
 fn options() -> CompileOptions {
     CompileOptions {
         enabled: true,
         ..CompileOptions::default()
     }
+}
+
+fn compile_str(
+    src: &str,
+    options: &CompileOptions,
+) -> Result<runinator_models::workflows::WorkflowDefinition, RexRapError> {
+    let document = parse_document(src)?;
+    let mut source = src.to_string();
+    if let Some(workflow) = document
+        .workflows
+        .iter()
+        .find(|workflow| workflow.key.is_none())
+    {
+        let workflow_source = &source[workflow.span.start..workflow.span.end];
+        let offset = workflow_source
+            .match_indices("do")
+            .find_map(|(offset, _)| {
+                workflow_source[offset + 2..]
+                    .trim_start()
+                    .starts_with('{')
+                    .then_some(workflow.span.start + offset)
+            })
+            .expect("test workflow has a do block");
+        source.insert_str(offset, "key async_test\n");
+    }
+    if document
+        .workflows
+        .iter()
+        .any(|workflow| workflow.namespace.is_none())
+    {
+        source.insert_str(0, "namespace runinator.tests\n");
+    }
+    compile_strict(&source, options)
 }
 
 fn compile(src: &str) -> runinator_models::workflows::WorkflowDefinition {

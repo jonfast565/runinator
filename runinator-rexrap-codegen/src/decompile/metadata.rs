@@ -14,6 +14,14 @@ pub(super) struct ParallelSurface {
     pub stops: Vec<String>,
 }
 
+#[derive(Debug, Clone)]
+pub(super) struct ResourceImport {
+    pub kind: String,
+    pub path: String,
+    pub alias: String,
+    pub revision: Option<i64>,
+}
+
 pub(super) struct MetadataReader<'a> {
     metadata: &'a Value,
 }
@@ -99,6 +107,20 @@ impl<'a> MetadataReader<'a> {
                     entry.get("name").and_then(Value::as_str)?.to_string(),
                     entry.get("segs").and_then(Value::as_array)?.clone(),
                 ))
+            })
+            .collect()
+    }
+
+    pub(super) fn resource_imports(&self) -> Vec<ResourceImport> {
+        self.array("/rexrap/imports")
+            .iter()
+            .filter_map(|entry| {
+                Some(ResourceImport {
+                    kind: entry.get("kind")?.as_str()?.to_string(),
+                    path: entry.get("path")?.as_str()?.to_string(),
+                    alias: entry.get("alias")?.as_str()?.to_string(),
+                    revision: entry.get("revision").and_then(Value::as_i64),
+                })
             })
             .collect()
     }

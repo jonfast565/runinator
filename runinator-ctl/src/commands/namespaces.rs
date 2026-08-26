@@ -152,11 +152,12 @@ async fn apply(client: &Client, file: &Path, json_output: bool) -> Result<()> {
         if entry.key.trim().is_empty() {
             return Err(err(format!("{} has an empty stable key", entry.id)));
         }
+        let namespace = strict_namespace(entry)?;
         match entry.kind {
             ArtifactKind::Workflow => {
                 let mut workflow = client.fetch_workflow(entry.id).await?;
                 workflow.key = Some(entry.key.clone());
-                workflow.namespace = clean_namespace(entry.namespace.clone());
+                workflow.namespace = Some(namespace.clone());
                 workflow.name = entry.display_name.clone();
                 client.upsert_workflow(&workflow).await?;
                 workflows_updated += 1;
@@ -164,7 +165,7 @@ async fn apply(client: &Client, file: &Path, json_output: bool) -> Result<()> {
             ArtifactKind::Pipeline => {
                 let mut pipeline = client.fetch_pipeline(entry.id).await?;
                 pipeline.key = Some(entry.key.clone());
-                pipeline.namespace = clean_namespace(entry.namespace.clone());
+                pipeline.namespace = Some(namespace.clone());
                 pipeline.name = entry.display_name.clone();
                 client.upsert_pipeline(&pipeline).await?;
                 pipelines_updated += 1;
@@ -172,25 +173,22 @@ async fn apply(client: &Client, file: &Path, json_output: bool) -> Result<()> {
             // These resources already have durable UUIDs. Their current APIs do not expose an
             // identity-move operation, so an edited move is rejected instead of silently ignored.
             ArtifactKind::Setting => {
-                let requested = qualified(entry.namespace.as_deref(), &entry.key);
+                let requested = qualified(Some(&namespace), &entry.key);
                 if requested != entry.current_path {
                     let kind = entry
                         .setting_kind
                         .ok_or_else(|| err(format!("setting {} has no setting_kind", entry.id)))?;
-                    let scope = entry.namespace.as_deref().ok_or_else(|| {
-                        err(format!("setting {} requires a namespace/scope", entry.id))
-                    })?;
                     client
-                        .move_setting(entry.id, kind, scope, &entry.key)
+                        .move_setting(entry.id, kind, &namespace, &entry.key)
                         .await?;
                     settings_moved += 1;
                 }
             }
             ArtifactKind::FunctionPackage => {
-                let requested = qualified(entry.namespace.as_deref(), &entry.key);
+                let requested = qualified(Some(&namespace), &entry.key);
                 if requested != entry.current_path {
                     client
-                        .move_function_package(entry.id, entry.namespace.as_deref(), &entry.key)
+                        .move_function_package(entry.id, Some(&namespace), &entry.key)
                         .await?;
                     function_packages_moved += 1;
                 }
@@ -202,7 +200,7 @@ async fn apply(client: &Client, file: &Path, json_output: bool) -> Result<()> {
         "pipelines_updated": pipelines_updated,
         "settings_moved": settings_moved,
         "function_packages_moved": function_packages_moved,
-        "strict_namespace_mode": false,
+        "strict_namespace_mode": true,
     });
     if json_output {
         return output::json(&result);
@@ -210,7 +208,7 @@ async fn apply(client: &Client, file: &Path, json_output: bool) -> Result<()> {
     println!(
         "updated {workflows_updated} workflow(s) and {pipelines_updated} pipeline(s); moved {settings_moved} setting(s) and {function_packages_moved} function package(s); UUID references were revalidated"
     );
-    println!("strict namespace enforcement remains disabled until the server exposes that switch");
+    println!("strict namespace enforcement is active");
     Ok(())
 }
 
@@ -234,12 +232,35 @@ async fn ensure_runs_drained(client: &Client) -> Result<()> {
 fn ensure_unique_paths(plan: &NamespaceMigrationPlan) -> Result<()> {
     let mut seen = std::collections::HashSet::new();
     for entry in &plan.artifacts {
-        let path = qualified(entry.namespace.as_deref(), &entry.key);
+        let namespace = strict_namespace(entry)?;
+        let path = qualified(Some(&namespace), &entry.key);
         if !seen.insert((entry.kind, entry.setting_kind, path.clone())) {
             return Err(err(format!("duplicate {:?} path '{path}'", entry.kind)));
         }
     }
     Ok(())
+}
+
+fn strict_namespace(entry: &NamespaceMigrationEntry) -> Result<String> {
+    let namespace = entry
+        .namespace
+        .as_deref()
+        .map(str::trim)
+        .filter(|namespace| {
+            !namespace.is_empty()
+                && namespace.split('.').all(|segment| {
+                    let mut chars = segment.chars();
+                    matches!(chars.next(), Some(ch) if ch.is_ascii_alphabetic() || ch == '_')
+                        && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+                })
+        })
+        .ok_or_else(|| {
+            err(format!(
+                "{:?} '{}' must declare an explicit namespace before strict apply",
+                entry.kind, entry.display_name
+            ))
+        })?;
+    Ok(namespace.to_string())
 }
 
 fn ambiguous_reference_diagnostics(
@@ -287,13 +308,6 @@ fn ambiguous_reference_diagnostics(
         }
     }
     diagnostics
-}
-
-fn clean_namespace(namespace: Option<String>) -> Option<String> {
-    namespace.and_then(|value| {
-        let value = value.trim().trim_matches('.').to_string();
-        (!value.is_empty()).then_some(value)
-    })
 }
 
 fn qualified(namespace: Option<&str>, key: &str) -> String {

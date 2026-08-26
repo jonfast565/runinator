@@ -6,8 +6,10 @@ use super::*;
 #[test]
 fn semantic_error_span_points_at_subexpression() {
     let src = r#"
+        namespace runinator.tests
         workflow "Bad" v1 {
             params { a: string }
+            key bad
 
             do {
                 console.run(command: params.b)
@@ -22,8 +24,10 @@ fn semantic_error_span_points_at_subexpression() {
 #[test]
 fn unorderable_comparison_blames_the_operand() {
     let src = r#"
+        namespace runinator.tests
         workflow "Bad" v1 {
             params { flag: boolean }
+            key bad
 
             do {
                 if params.flag > 0 { console.run(command: "y") }
@@ -38,7 +42,9 @@ fn unorderable_comparison_blames_the_operand() {
 #[test]
 fn unknown_reference_blames_the_path() {
     let src = r#"
+        namespace runinator.tests
         workflow "Bad" v1 {
+            key bad
 
             do {
                 console.run(command: ghost.value)
@@ -52,8 +58,10 @@ fn unknown_reference_blames_the_path() {
 #[test]
 fn renders_semantic_error_with_caret() {
     let src = r#"
+        namespace runinator.tests
         workflow "Bad" v1 {
             params { a: string }
+            key bad
 
             do {
                 console.run(command: params.b)
@@ -64,8 +72,8 @@ fn renders_semantic_error_with_caret() {
     let rendered = err.render(src);
     assert!(rendered.contains("error:"), "{rendered}");
     assert!(rendered.contains("^"), "{rendered}");
-    // `params.b` sits on the sixth line of the raw string literal.
-    assert!(rendered.contains("line 6"), "{rendered}");
+    // `params.b` sits on the eighth line of the raw string literal.
+    assert!(rendered.contains("line 8"), "{rendered}");
 }
 #[test]
 fn analyze_source_reports_all_diagnostics() {
@@ -110,6 +118,8 @@ fn accepts_document_level_and_namespace_block_workflows() {
 
         params { id: string }
 
+        key first
+
         do {
             let one = console.run(command: params.id)
         }
@@ -117,6 +127,7 @@ fn accepts_document_level_and_namespace_block_workflows() {
         namespace core.more {
             workflow "Second" v1 {
 
+                key second
                 do {
                     let two = compute {
                         return "ok"

@@ -145,6 +145,18 @@ fn lower_workflow(
     workflow: &Workflow,
     options: &CompileOptions,
 ) -> Result<(WorkflowDefinition, Vec<NodeSpan>), RexRapError> {
+    let key = workflow.key.as_ref().ok_or_else(|| {
+        RexRapError::semantic(
+            workflow.span,
+            format!("workflow '{}' must declare a stable `key`", workflow.name),
+        )
+    })?;
+    let namespace = workflow.namespace.as_ref().ok_or_else(|| {
+        RexRapError::semantic(
+            workflow.span,
+            format!("workflow '{}' must declare a `namespace`", workflow.name),
+        )
+    })?;
     let mut lowerer = Lowerer::new();
     let functions = functions_for_workflow(document, workflow);
     lowerer.source_dir = options.source_dir.clone();
@@ -270,6 +282,28 @@ fn lower_workflow(
     }
     if !alias_meta.is_empty() {
         rexrap.insert("aliases".into(), Value::Array(alias_meta));
+    }
+    let imports = workflow
+        .imports
+        .iter()
+        .filter_map(|import| {
+            let kind = import.kind?;
+            if kind == ImportKind::Module {
+                return None;
+            }
+            let alias = import.alias.as_ref()?;
+            let mut entry = Map::new();
+            entry.insert("kind".into(), Value::String(kind.keyword().into()));
+            entry.insert("path".into(), Value::String(import.path.clone()));
+            entry.insert("alias".into(), Value::String(alias.clone()));
+            if let Some(revision) = import.revision {
+                entry.insert("revision".into(), Value::from(revision));
+            }
+            Some(Value::Object(entry))
+        })
+        .collect::<Vec<_>>();
+    if !imports.is_empty() {
+        rexrap.insert("imports".into(), Value::Array(imports));
     }
     if !lowerer.spreads.is_empty() {
         rexrap.insert("spreads".into(), Value::Object(lowerer.spreads.clone()));
@@ -402,8 +436,8 @@ fn lower_workflow(
         WorkflowDefinition {
             id: None,
             name: workflow.name.clone(),
-            key: workflow.key.clone(),
-            namespace: workflow.namespace.clone(),
+            key: Some(key.clone()),
+            namespace: Some(namespace.clone()),
             // org is assigned by the web service at import time, not during compilation.
             org_id: None,
             version: workflow.version.unwrap_or(options.default_version),
