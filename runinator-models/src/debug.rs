@@ -38,8 +38,8 @@ pub fn should_break_at(config: &DebugConfig, runtime: &DebugRuntime, key: &str) 
 
 /// a unit of execution that can be paused, inspected, and advanced under debugger control.
 ///
-/// implement this for each new debuggable target (workflow runs today; standalone task runs,
-/// subflows, or provider calls later). the default [`Debuggable::should_break_at`] gives every
+/// implement this for each new debuggable target (workflow runs today; subflows or provider calls
+/// later). the default [`Debuggable::should_break_at`] gives every
 /// target step/breakpoint/one-shot semantics for free; targets only describe how to read their
 /// debug frame and how to key a cursor.
 pub trait Debuggable {
@@ -70,7 +70,7 @@ pub trait Debuggable {
     }
 }
 
-/// parse the `debug` object out of a run/node `state` blob, if present.
+/// Parse the `debug` object out of a node state snapshot, if present.
 pub fn parse_frame(state: &Value) -> Option<DebugFrame> {
     let debug = state.get("debug")?;
     serde_json::from_value(debug.clone().into()).ok()

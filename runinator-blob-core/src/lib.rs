@@ -47,7 +47,7 @@ pub fn blob_uri(bucket: &str, key: &ObjectKey) -> String {
 }
 
 /// Split a `blob://<bucket>/<key>` URI into its parts.
-/// Return `None` for other shapes, including legacy local paths.
+/// Return `None` for any other shape.
 pub fn parse_blob_uri(uri: &str) -> Option<(String, ObjectKey)> {
     let rest = uri.strip_prefix(&format!("{BLOB_URI_SCHEME}://"))?;
     let (bucket, key) = rest.split_once('/')?;

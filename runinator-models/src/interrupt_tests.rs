@@ -3,7 +3,7 @@
 use super::*;
 use crate::cursor::RunCursor;
 use crate::json;
-use crate::workflow_state::{DebugRuntime, WorkflowRunState};
+use crate::workflow_state::{DebugRuntime, WorkflowExecutionState};
 
 fn frame(interrupted: Uuid) -> InterruptFrame {
     InterruptFrame {
@@ -103,7 +103,7 @@ fn only_the_out_of_band_sources_are_requested() {
 fn a_pending_request_is_taken_oldest_first_by_its_target() {
     let mine = Uuid::now_v7();
     let other = Uuid::now_v7();
-    let mut state = WorkflowRunState::default();
+    let mut state = WorkflowExecutionState::default();
     let mut newer = PendingInterrupt::new(InterruptSource::External, json!({ "n": 2 }), None);
     newer.requested_at = Utc::now();
     let mut older = PendingInterrupt::new(InterruptSource::External, json!({ "n": 1 }), None);
@@ -135,7 +135,7 @@ fn a_pending_request_is_taken_oldest_first_by_its_target() {
 
 #[test]
 fn a_run_with_no_pending_interrupts_serializes_exactly_as_before() {
-    let encoded = serde_json::to_value(WorkflowRunState::default()).unwrap();
+    let encoded = serde_json::to_value(WorkflowExecutionState::default()).unwrap();
     assert!(
         !encoded
             .as_object()
@@ -172,7 +172,7 @@ fn a_disabled_interrupt_link_round_trips_explicitly() {
     );
 }
 
-/// the frame is made structurally incapable of failing to parse: `WorkflowRunState::from_state`
+/// The frame is made structurally incapable of failing to parse: `WorkflowExecutionState::from_state`
 /// falls back to `unwrap_or_default`, so a strict frame would discard every cursor in the run.
 #[test]
 fn a_truncated_interrupt_frame_still_parses() {
@@ -200,7 +200,7 @@ fn a_state_blob_without_the_interrupt_keys_still_loads() {
     let legacy = json!({
         "cursors": [{ "id": Uuid::now_v7().to_string(), "node_id": "poll" }]
     });
-    let state = WorkflowRunState::from_state(&legacy);
+    let state = WorkflowExecutionState::from_state(&legacy);
     let cursor = state.primary_cursor().expect("the legacy cursor survives");
     assert!(!cursor.is_suspended());
     assert!(!cursor.is_interrupt_handler());
@@ -223,7 +223,7 @@ fn moving_a_cursor_forgets_which_interrupts_fired_there() {
 
 #[test]
 fn retiring_a_cursor_also_retires_its_handler() {
-    let mut state = WorkflowRunState::default();
+    let mut state = WorkflowExecutionState::default();
     let interrupted = state.ensure_cursor("poll");
     let handler = RunCursor::interrupt_handler("refresh", frame(interrupted));
     let handler_id = handler.id;
@@ -241,7 +241,7 @@ fn retiring_a_cursor_also_retires_its_handler() {
 
 #[test]
 fn a_handler_is_not_a_joinable_sibling_but_does_keep_the_run_alive() {
-    let mut state = WorkflowRunState::default();
+    let mut state = WorkflowExecutionState::default();
     let interrupted = state.ensure_cursor("poll");
     state
         .cursors
@@ -261,7 +261,7 @@ fn a_handler_is_not_a_joinable_sibling_but_does_keep_the_run_alive() {
 
 #[test]
 fn a_suspended_cursor_does_not_hold_the_debugger_out_of_paused() {
-    let mut state = WorkflowRunState::default();
+    let mut state = WorkflowExecutionState::default();
     let interrupted = state.ensure_cursor("poll");
     let handler = RunCursor::interrupt_handler("refresh", frame(interrupted));
     let handler_id = handler.id;

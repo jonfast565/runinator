@@ -7,9 +7,7 @@ keep every runtime growth path bounded.
 
 | Data | Default | Eligibility |
 | --- | ---: | --- |
-| task runs and artifacts | 90 days | terminal runs; children are archived before their parent |
-| task and workflow logs | 30 days | age-based, including logs from unusually long-lived runs |
-| workflow runs, node runs, artifacts, orchestration/result/firing history | 90 days | terminal workflow; dependency rows are archived leaf-first |
+| workflow runs, continuations, effects, journal/output/firing history | 90 days | terminal workflow; dependency rows are archived leaf-first |
 | completed ready nodes | 30 days | completed, or stranded under a terminal workflow |
 | action dispatch outbox | 7 days | published, or attempted with a persisted error |
 | pipeline runs and trigger firings | 90 days | terminal pipeline; member workflows age out first |

@@ -227,7 +227,7 @@ fn secret_expiry(
         return None;
     }
     let plaintext = cipher.try_decrypt(&record.value)?;
-    crate::settings::decode_secret(&plaintext).expires_at
+    crate::settings::decode_secret(&plaintext).ok()?.expires_at
 }
 
 fn secret_expiry_context(

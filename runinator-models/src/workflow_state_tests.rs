@@ -1,16 +1,16 @@
-//! covers [`WorkflowRunState`] as the run's consolidated state object: the cursors it carries, the
-//! frames that used to be probed out of `extra`, the dynamic `event_source_<node_id>` keys, and the
-//! tolerance that keeps one malformed frame from discarding a run's whole state.
+//! Covers [`WorkflowExecutionState`] as the run's consolidated state object: the cursors it carries,
+//! its typed frames, and the tolerance that keeps one malformed frame from discarding a run's whole
+//! state.
 
 use super::*;
 
-fn state(json: serde_json::Value) -> WorkflowRunState {
-    WorkflowRunState::from_state(&Value::from(json))
+fn state(json: serde_json::Value) -> WorkflowExecutionState {
+    WorkflowExecutionState::from_state(&Value::from(json))
 }
 
 #[test]
 fn a_run_with_no_cursors_is_seeded_once() {
-    let mut parsed = WorkflowRunState::default();
+    let mut parsed = WorkflowExecutionState::default();
     assert!(parsed.primary_cursor().is_none());
 
     let first = parsed.ensure_cursor("start");
@@ -26,7 +26,7 @@ fn a_run_with_no_cursors_is_seeded_once() {
 
 #[test]
 fn forked_cursors_are_addressable_by_id_and_by_origin() {
-    let mut parsed = WorkflowRunState::default();
+    let mut parsed = WorkflowExecutionState::default();
     let root = parsed.ensure_cursor("fanout");
     let left = parsed.fork_cursor(root, "branch_a", "fanout");
     let right = parsed.fork_cursor(root, "branch_b", "fanout");
@@ -41,7 +41,7 @@ fn forked_cursors_are_addressable_by_id_and_by_origin() {
 
 #[test]
 fn retiring_a_cursor_reports_whether_it_was_still_live() {
-    let mut parsed = WorkflowRunState::default();
+    let mut parsed = WorkflowExecutionState::default();
     let root = parsed.ensure_cursor("fanout");
     let branch = parsed.fork_cursor(root, "branch_a", "fanout");
 
@@ -87,11 +87,11 @@ fn resetting_a_cursors_frames_preserves_run_scoped_state() {
 
 #[test]
 fn cursors_round_trip_through_the_state_blob() {
-    let mut parsed = WorkflowRunState::default();
+    let mut parsed = WorkflowExecutionState::default();
     let root = parsed.ensure_cursor("fanout");
     parsed.fork_cursor(root, "branch_a", "fanout");
 
-    let reparsed = WorkflowRunState::from_state(&parsed.to_state());
+    let reparsed = WorkflowExecutionState::from_state(&parsed.to_state());
 
     assert_eq!(reparsed.cursors, parsed.cursors);
 }
@@ -100,7 +100,7 @@ fn cursors_round_trip_through_the_state_blob() {
 // counting arrivals, a race deciding whether it has fanned out.
 #[test]
 fn speculative_cursors_are_excluded_from_fan_out_accounting() {
-    let mut parsed = WorkflowRunState::default();
+    let mut parsed = WorkflowExecutionState::default();
     let root = parsed.ensure_cursor("fanout");
     parsed.fork_cursor(root, "branch_a", "fanout");
     let spec = parsed
@@ -126,7 +126,7 @@ fn speculative_cursors_are_excluded_from_fan_out_accounting() {
 // an abandoned fork must drain as a unit, or retiring the root strands its children forever.
 #[test]
 fn a_speculative_subtree_collects_nested_forks() {
-    let mut parsed = WorkflowRunState::default();
+    let mut parsed = WorkflowExecutionState::default();
     let root = parsed.ensure_cursor("start");
     let child = parsed
         .fork_speculative(root, "start", None, Value::Null)
@@ -151,7 +151,7 @@ fn a_speculative_subtree_collects_nested_forks() {
 // round would either hide a fork's own history from it, or show it a path it never took.
 #[test]
 fn ancestry_and_subtree_walk_opposite_directions() {
-    let mut parsed = WorkflowRunState::default();
+    let mut parsed = WorkflowExecutionState::default();
     let root = parsed.ensure_cursor("start");
     let child = parsed
         .fork_speculative(root, "start", None, Value::Null)
@@ -183,7 +183,7 @@ fn ancestry_and_subtree_walk_opposite_directions() {
 
 #[test]
 fn forking_a_retired_cursor_reports_failure() {
-    let mut parsed = WorkflowRunState::default();
+    let mut parsed = WorkflowExecutionState::default();
     let root = parsed.ensure_cursor("start");
     parsed.retire_cursor(root);
 
@@ -196,7 +196,7 @@ fn forking_a_retired_cursor_reports_failure() {
 // the whole point of per-cursor runtime: stepping one branch must not step its siblings.
 #[test]
 fn each_cursor_carries_its_own_debugger_runtime() {
-    let mut parsed = WorkflowRunState {
+    let mut parsed = WorkflowExecutionState {
         debug: Some(DebugFrame::default()),
         ..Default::default()
     };
@@ -232,7 +232,7 @@ fn each_cursor_carries_its_own_debugger_runtime() {
 // the flat frame is the wire contract single-position clients read, so it has to follow the primary.
 #[test]
 fn the_flat_frame_mirrors_the_primary_cursor() {
-    let mut parsed = WorkflowRunState {
+    let mut parsed = WorkflowExecutionState {
         debug: Some(DebugFrame::default()),
         ..Default::default()
     };
@@ -287,7 +287,7 @@ fn a_cursor_without_a_runtime_falls_back_to_the_run_frame() {
 
 #[test]
 fn all_cursors_paused_is_false_for_a_run_with_no_cursors() {
-    assert!(!WorkflowRunState::default().all_cursors_paused());
+    assert!(!WorkflowExecutionState::default().all_cursors_paused());
 }
 
 #[test]
@@ -324,47 +324,12 @@ fn either_child_marker_makes_a_run_a_child() {
     );
 }
 
-// runs already in flight carry one top-level `event_source_<node_id>` key per subscribed node.
-// reading must fold them into `event_sources` so both shapes drive the same code.
-#[test]
-fn legacy_event_source_keys_fold_into_the_consolidated_map() {
-    let parsed = state(serde_json::json!({
-        "event_source_watcher": { "pending_event": { "type": "deploy" } },
-    }));
-
-    let slot = parsed.event_source("watcher").expect("watcher slot");
-    assert_eq!(
-        slot.pending_event
-            .as_ref()
-            .and_then(|event| event.get("type")),
-        Some(&Value::from("deploy"))
-    );
-    assert!(!parsed.extra.contains_key("event_source_watcher"));
-}
-
-// a run mid-migration can carry both shapes; the consolidated entry is the newer one and wins.
-#[test]
-fn a_consolidated_entry_wins_over_a_legacy_key_for_the_same_node() {
-    let parsed = state(serde_json::json!({
-        "event_sources": { "watcher": { "pending_event": { "type": "new" } } },
-        "event_source_watcher": { "pending_event": { "type": "old" } },
-    }));
-
-    let slot = parsed.event_source("watcher").expect("watcher slot");
-    assert_eq!(
-        slot.pending_event
-            .as_ref()
-            .and_then(|event| event.get("type")),
-        Some(&Value::from("new"))
-    );
-}
-
 #[test]
 fn a_delivered_event_round_trips_through_the_state_blob() {
-    let mut parsed = WorkflowRunState::default();
+    let mut parsed = WorkflowExecutionState::default();
     parsed.deliver_event("watcher", serde_json::json!({ "type": "deploy" }).into());
 
-    let reparsed = WorkflowRunState::from_state(&parsed.to_state());
+    let reparsed = WorkflowExecutionState::from_state(&parsed.to_state());
     assert_eq!(
         reparsed
             .event_source("watcher")
@@ -400,7 +365,7 @@ fn a_malformed_frame_does_not_discard_the_rest_of_the_state() {
 #[test]
 fn unmodeled_keys_survive_a_round_trip() {
     let parsed = state(serde_json::json!({ "wait_snapshot": { "deadline_unix": 42 } }));
-    let reparsed = WorkflowRunState::from_state(&parsed.to_state());
+    let reparsed = WorkflowExecutionState::from_state(&parsed.to_state());
     assert_eq!(
         reparsed
             .extra

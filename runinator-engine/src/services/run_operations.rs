@@ -11,7 +11,6 @@ use runinator_models::{
     errors::SendableError,
     interrupt::InterruptSource,
     replicas::WorkflowRunProvenance,
-    runs::{NewRunChunk, RunChunk, RunStatus, RunSummary},
     value::Value,
     web::TaskResponse,
     workflow_state::WorkflowExecutionState,
@@ -19,7 +18,7 @@ use runinator_models::{
 };
 use runinator_store::{
     RuntimeStore,
-    roles::{RunStore, ScheduleStore, TaskRunStore, WorkflowVmStore},
+    roles::{RunStore, ScheduleStore, WorkflowVmStore},
 };
 use uuid::Uuid;
 
@@ -57,7 +56,7 @@ impl<T> RunOperations<T> {
     }
 }
 
-impl<T: RuntimeStore + WorkflowVmStore + RunStore + ScheduleStore + TaskRunStore> RunOperations<T> {
+impl<T: RuntimeStore + WorkflowVmStore + RunStore + ScheduleStore> RunOperations<T> {
     /// Start a run from a workflow definition and publish its invalidation after it is durable.
     pub async fn create(
         &self,
@@ -299,59 +298,6 @@ impl<T: RuntimeStore + WorkflowVmStore + RunStore + ScheduleStore + TaskRunStore
         limit: i64,
     ) -> Result<Vec<WorkflowRun>, SendableError> {
         repository::fetch_recent_workflow_runs(self.store.as_ref(), limit).await
-    }
-
-    pub async fn list_task_by_status(
-        &self,
-        status: RunStatus,
-    ) -> Result<Vec<RunSummary>, SendableError> {
-        repository::fetch_runs_by_status(self.store.as_ref(), status).await
-    }
-
-    pub async fn task_chunks(
-        &self,
-        run_id: Uuid,
-        cursor: Option<i64>,
-        limit: i64,
-    ) -> Result<Vec<RunChunk>, SendableError> {
-        repository::fetch_run_chunks(self.store.as_ref(), run_id, cursor, limit).await
-    }
-
-    pub async fn update_task_status(
-        &self,
-        run_id: Uuid,
-        status: RunStatus,
-        output_json: Option<Value>,
-        message: Option<String>,
-        org_id: Option<Uuid>,
-    ) -> Result<TaskResponse, SendableError> {
-        let response = repository::update_run_status(
-            self.store.as_ref(),
-            run_id,
-            status,
-            output_json,
-            message,
-        )
-        .await?;
-        runinator_broker_core::emit_task_run(&self.events, run_id, status, org_id);
-        Ok(response)
-    }
-
-    pub async fn append_task_chunk(
-        &self,
-        run_id: Uuid,
-        chunk: &NewRunChunk,
-        org_id: Option<Uuid>,
-    ) -> Result<RunChunk, SendableError> {
-        let chunk = repository::append_run_chunk(self.store.as_ref(), run_id, chunk).await?;
-        runinator_broker_core::emit(
-            &self.events,
-            runinator_broker_core::AppEvent::new(
-                org_id,
-                runinator_broker_core::AppEventKind::RunChunkAdded { run_id },
-            ),
-        );
-        Ok(chunk)
     }
 
     async fn publish_run_changed(&self, workflow_run_id: Uuid) {

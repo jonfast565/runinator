@@ -1309,7 +1309,6 @@ pub fn routes<T: AuthStore + RbacStore + RuntimeStore + SettingStore>(
             "/auth/settings",
             get(auth_settings::<T>)
                 .put(update_auth_settings::<T>)
-                .post(update_auth_settings::<T>)
                 .layer(Extension(pool.clone())),
         )
         .route(
@@ -1429,19 +1428,6 @@ pub const DOCS: &[EndpointDoc] = &[
         "Auth",
         "Update refresh policy",
         "Sets the platform-wide cap for active refresh sessions per user.",
-        false,
-        json_body("Refresh policy settings.", Example::None),
-        &[],
-        200,
-        "saved refresh policy",
-        Example::AuthConfig,
-    ),
-    endpoint(
-        "post",
-        "/auth/settings",
-        "Auth",
-        "Update refresh policy",
-        "Compatibility alias that sets the platform-wide refresh-session cap.",
         false,
         json_body("Refresh policy settings.", Example::None),
         &[],

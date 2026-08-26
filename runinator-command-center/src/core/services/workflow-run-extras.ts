@@ -4,13 +4,10 @@ import {
   fetchWorkflowRunArtifacts,
   settleWorkflowEffect,
 } from "../api/commandCenterApi";
-import { getPlatformAdapter } from "../platform";
 import type { JsonValue, RunArtifact, WorkflowRunArtifact } from "../domain/models";
 import type { AppService } from "./app";
 
 export function createWorkflowRunExtrasService(app: AppService) {
-  const artifacts = () => getPlatformAdapter().artifacts;
-
   return {
     fetchNodeRunArtifacts(effectId: string) {
       return app
@@ -48,16 +45,6 @@ export function createWorkflowRunExtrasService(app: AppService) {
             created_at: new Date(event.created_at * 1000).toISOString(),
           })),
       );
-    },
-    async downloadArtifact(artifactId: string, name: string) {
-      await app.runOperation(`Downloading ${name}`, async () => {
-        if (artifacts().isDesktop()) {
-          return artifacts().downloadToPath(artifactId, name);
-        }
-
-        await artifacts().downloadInBrowser(artifactId, name);
-        return { saved_to: null };
-      });
     },
     deliverSignal(workflowRunId: string, name: string, payload: unknown = {}) {
       return app.runOperation(`Sending signal '${name}'`, () =>

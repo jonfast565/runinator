@@ -16,11 +16,11 @@ use runinator_broker::{
     tcp::types::{TcpRequest, TcpResponse},
     ws::types::{WsRequestFrame, WsResponseFrame},
 };
-use runinator_database::interfaces::DatabaseImpl;
 use runinator_engine::services::ReplicaRegistry;
 use runinator_models::auth::{AuthContext, Permission, ResourceType};
 use runinator_models::rbac::{Action, ScopeKind, ScopeRef, SystemRole};
 use runinator_models::replicas::ReplicaKind;
+use runinator_store::DatabaseImpl;
 use serde::Serialize;
 use std::sync::Arc;
 use tokio::sync::broadcast;
@@ -49,23 +49,6 @@ pub(crate) async fn send_json<T: Serialize>(
 ) -> Result<(), ()> {
     let payload = serde_json::to_string(value).map_err(|_| ())?;
     tx.send(Message::Text(payload.into())).await.map_err(|_| ())
-}
-
-pub(crate) async fn send_run_chunks<T: DatabaseImpl>(
-    db: &T,
-    tx: &mut futures::stream::SplitSink<axum::extract::ws::WebSocket, Message>,
-    run_id: Uuid,
-    cursor: &mut Option<i64>,
-    limit: i64,
-) -> Result<(), ()> {
-    let chunks = repository::fetch_run_chunks(db, run_id, *cursor, limit)
-        .await
-        .map_err(|_| ())?;
-    for chunk in &chunks {
-        send_json(tx, chunk).await?;
-        *cursor = Some(chunk.sequence);
-    }
-    Ok(())
 }
 
 pub(crate) async fn send_workflow_run<T: DatabaseImpl>(
@@ -221,83 +204,6 @@ pub(crate) async fn ws_workflow_run<T: DatabaseImpl>(
     })
 }
 
-pub(crate) async fn ws_run_stream<T: DatabaseImpl>(
-    Extension(db): Extension<Arc<T>>,
-    Extension(events): Extension<EventSender>,
-    Extension(ctx): Extension<AuthContext>,
-    Path(run_id): Path<Uuid>,
-    ws: WebSocketUpgrade,
-) -> Response {
-    if let Err(reply) = AuthzChecker::new(db.as_ref(), &ctx)
-        .require_run_workflow(run_id, Permission::View)
-        .await
-    {
-        return reply.into_response();
-    }
-    log::info!("WebSocket upgrade request for /ws/run-stream/{}", run_id);
-    ws.on_upgrade(move |socket| async move {
-        let _connection = crate::metrics::websocket_connected("run_stream");
-        log::info!("WebSocket connection established for /ws/run-stream/{}", run_id);
-        let (mut tx, mut rx_ws) = socket.split();
-        let mut cursor: Option<i64> = None;
-        if send_run_chunks(db.as_ref(), &mut tx, run_id, &mut cursor, 500)
-            .await
-            .is_err()
-        {
-            return;
-        }
-        let mut event_rx = events.subscribe();
-        let mut poll_interval = tokio::time::interval(Duration::from_millis(500));
-        loop {
-            tokio::select! {
-                event = event_rx.recv() => {
-                    match event {
-                        Ok(event) => {
-                            if !event_scope_visible(&ctx, event.org_id) {
-                                continue;
-                            }
-                            let is_chunk = matches!(
-                                &event.kind,
-                                AppEventKind::RunChunkAdded { run_id: id } if *id == run_id
-                            );
-                            let is_done = matches!(
-                                &event.kind,
-                                AppEventKind::RunStatusChanged { run_id: id, terminal: true } if *id == run_id
-                            );
-                            if is_chunk || is_done {
-                                if send_run_chunks(db.as_ref(), &mut tx, run_id, &mut cursor, 100).await.is_err() {
-                                    break;
-                                }
-                                if is_done {
-                                    break;
-                                }
-                            }
-                        }
-                        Err(broadcast::error::RecvError::Lagged(_)) => {
-                            if send_run_chunks(db.as_ref(), &mut tx, run_id, &mut cursor, 500).await.is_err() {
-                                break;
-                            }
-                        }
-                        Err(broadcast::error::RecvError::Closed) => break,
-                    }
-                }
-                _ = poll_interval.tick() => {
-                    if send_run_chunks(db.as_ref(), &mut tx, run_id, &mut cursor, 100).await.is_err() {
-                        break;
-                    }
-                }
-                msg = rx_ws.next() => {
-                    match msg {
-                        Some(Ok(Message::Close(_))) | None => break,
-                        _ => {}
-                    }
-                }
-            }
-        }
-        log::info!("WebSocket connection closed for /ws/run-stream/{}", run_id);
-    })
-}
-
 /// relays broker traffic for a cluster runtime that cannot reach the broker network directly, but
 /// can reach this already-authenticated, already-exposed endpoint. It dispatches against the exact
 /// same `Arc<dyn Broker>` every other part of this service uses, so direct and relay-connected
@@ -323,21 +229,6 @@ pub(crate) async fn ws_broker_relay<T: DatabaseImpl>(
     }
     let relay_role = RelayRole::for_context(&ctx);
     upgrade_broker_relay(db, broker, ctx, ws, relay_role)
-}
-
-/// Compatibility endpoint for older desktop agents. It remains deliberately worker-shaped; new
-/// cluster applications use `/ws/broker`, where their system role selects the least-privileged
-/// broker operation set.
-pub(crate) async fn ws_desktop_worker<T: DatabaseImpl>(
-    Extension(db): Extension<Arc<T>>,
-    Extension(broker): Extension<Arc<dyn Broker>>,
-    Extension(ctx): Extension<AuthContext>,
-    ws: WebSocketUpgrade,
-) -> Response {
-    if let Err(reply) = ctx.require_system_role(&[SystemRole::Agent, SystemRole::Worker]) {
-        return reply.into_response();
-    }
-    upgrade_broker_relay(db, broker, ctx, ws, RelayRole::Worker)
 }
 
 /// Access policy selected from the credential's system role. A relay is intentionally not a raw
@@ -1098,16 +989,8 @@ pub(crate) fn routes<T: DatabaseImpl>(pool: std::sync::Arc<T>) -> axum::Router {
             get(ws_workflow_run::<T>).layer(Extension(pool.clone())),
         )
         .route(
-            "/ws/run-stream/{id}",
-            get(ws_run_stream::<T>).layer(Extension(pool.clone())),
-        )
-        .route(
             "/ws/broker",
             get(ws_broker_relay::<T>).layer(Extension(pool.clone())),
-        )
-        .route(
-            "/ws/desktop-worker",
-            get(ws_desktop_worker::<T>).layer(Extension(pool.clone())),
         )
 }
 
@@ -1151,19 +1034,6 @@ pub(crate) const DOCS: &[EndpointDoc] = &[
         "WebSockets",
         "Subscribe to one workflow run",
         "Upgrades to a websocket stream for workflow-run changes and node activity for one run.",
-        EndpointPolicy::ResourceAction(ResourceType::Workflow, Action::View),
-        None,
-        &[],
-        101,
-        "websocket upgrade accepted",
-        Example::None,
-    ),
-    endpoint_with_policy(
-        "get",
-        "/ws/run-stream/{id}",
-        "WebSockets",
-        "Subscribe to task run output",
-        "Upgrades to a websocket stream for chunks emitted by one low-level task run.",
         EndpointPolicy::ResourceAction(ResourceType::Workflow, Action::View),
         None,
         &[],

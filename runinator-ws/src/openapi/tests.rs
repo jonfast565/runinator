@@ -26,7 +26,6 @@ fn annotated_paths_are_present() {
         "/auth/me",
         "/packs/import",
         "/workflows",
-        "/workflows/import",
         "/workflow_effects/{id}/settle",
         "/workflow_runs/{id}/cancel",
         "/workflow_runs/{id}/pause",
@@ -48,6 +47,30 @@ fn annotated_paths_are_present() {
         json["paths"]["/health"]["get"]["security"],
         serde_json::json!([])
     );
+
+    for retired in [
+        "/credentials/import",
+        "/workflows/import",
+        "/ws/desktop-worker",
+        "/ws/run-stream/{id}",
+        "/runs",
+        "/runs/{id}",
+        "/runs/{id}/chunks",
+        "/runs/{id}/artifacts",
+        "/artifacts",
+        "/artifacts/upload",
+        "/artifacts/{id}",
+        "/artifacts/{id}/download",
+    ] {
+        assert!(
+            !paths.contains_key(retired),
+            "retired compatibility path {retired} remains documented"
+        );
+    }
+
+    let pack_content = &json["paths"]["/packs/import"]["post"]["requestBody"]["content"];
+    assert!(pack_content.get("application/zip").is_some());
+    assert!(pack_content.get("application/json").is_none());
 }
 
 #[test]
@@ -92,20 +115,17 @@ fn auth_and_control_routes_expose_expected_schemas() {
 }
 
 #[test]
-fn pack_import_docs_cover_zip_and_json_inputs() {
+fn pack_import_docs_cover_zip_only() {
     let json = openapi_document();
     let post = &json["paths"]["/packs/import"]["post"];
 
     assert!(post["requestBody"]["content"]["application/zip"].is_object());
-    assert!(post["requestBody"]["content"]["application/json"].is_object());
+    assert!(post["requestBody"]["content"]["application/json"].is_null());
     assert_eq!(
         post["parameters"][0]["name"], "overwrite",
         "pack import keeps the overwrite query parameter documented"
     );
-    assert_eq!(
-        post["parameters"][1]["name"],
-        "x-runinator-json-workflow-risk"
-    );
+    assert_eq!(post["parameters"].as_array().map(Vec::len), Some(1));
 }
 
 #[test]

@@ -7,49 +7,35 @@ use axum::{
     http::{HeaderMap, StatusCode},
 };
 use runinator_models::replicas::{TriggerActorType, TriggerSourceKind, WorkflowRunProvenance};
-use runinator_models::runs::NewRunChunk;
 use runinator_store::{
     RuntimeStore,
-    roles::{RunStore, ScheduleStore, TaskRunStore, WorkflowVmStore},
+    roles::{RunStore, ScheduleStore, WorkflowVmStore},
 };
-use serde::Deserialize;
 
 use runinator_engine::services::RunOperations;
 use runinator_ws_core::models::{
-    self, ApiResponse, RunStatusQuery, RunStatusRequest, SchedulerRunClaimReleaseRequest,
-    SchedulerRunClaimRenewRequest, SchedulerRunClaimRequest, TaskResponseSchema,
-    WorkflowRunRequest, WorkflowRunStatusQuery, WorkflowRunStatusRequest,
-    WorkflowTriggerRunRequest,
+    self, ApiResponse, SchedulerRunClaimReleaseRequest, SchedulerRunClaimRenewRequest,
+    SchedulerRunClaimRequest, TaskResponseSchema, WorkflowRunRequest, WorkflowRunStatusQuery,
+    WorkflowRunStatusRequest, WorkflowTriggerRunRequest,
 };
 use runinator_ws_core::openapi::docs::{
-    CURSOR, EndpointDoc, Example, RUN_FILTERS, WORKFLOW_RUN_FILTERS, endpoint, json_body,
+    EndpointDoc, Example, WORKFLOW_RUN_FILTERS, endpoint, json_body,
 };
 use runinator_ws_core::responses::{api_error, bad_request, not_found};
 use runinator_ws_middleware::authz::AuthContextExt;
 use runinator_ws_middleware::authz::{AuthorizationStore, AuthzChecker};
 
-/// Persistence the workflow/task-run HTTP surface coordinates. It excludes authoring, settings,
+/// Persistence the workflow-run HTTP surface coordinates. It excludes authoring, settings,
 /// notifications, functions, and replica management while keeping the cross-domain run commands
 /// atomic at the handler boundary.
 pub trait RunOperationsStore:
-    AuthorizationStore + RuntimeStore + WorkflowVmStore + RunStore + ScheduleStore + TaskRunStore
+    AuthorizationStore + RuntimeStore + WorkflowVmStore + RunStore + ScheduleStore
 {
 }
 
 impl<T> RunOperationsStore for T where
-    T: AuthorizationStore
-        + RuntimeStore
-        + WorkflowVmStore
-        + RunStore
-        + ScheduleStore
-        + TaskRunStore
+    T: AuthorizationStore + RuntimeStore + WorkflowVmStore + RunStore + ScheduleStore
 {
-}
-
-#[derive(Debug, Default, Deserialize)]
-pub struct ChunkQuery {
-    pub cursor: Option<i64>,
-    pub limit: Option<i64>,
 }
 
 pub async fn create_workflow_trigger_run<T: RunOperationsStore>(
@@ -589,102 +575,6 @@ const DEFAULT_RECENT_RUN_LIMIT: i64 = 200;
 /// hard ceiling on `?limit=`, so a client can't ask for an unbounded dump.
 const MAX_RECENT_RUN_LIMIT: i64 = 1000;
 
-pub async fn get_runs<T: RunOperationsStore>(
-    Extension(operations): Extension<Arc<RunOperations<T>>>,
-    Extension(ctx): Extension<runinator_models::auth::AuthContext>,
-    Query(query): Query<RunStatusQuery>,
-) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_system_role(&[
-        runinator_models::rbac::SystemRole::Engine,
-        runinator_models::rbac::SystemRole::Worker,
-        runinator_models::rbac::SystemRole::Agent,
-    ]) {
-        return reply;
-    }
-    let Some(status) = query.status else {
-        return bad_request("run status query is required");
-    };
-    match operations.list_task_by_status(status).await {
-        Ok(runs) => (StatusCode::OK, Json(ApiResponse::RunList(runs))),
-        Err(err) => api_error(err.to_string()),
-    }
-}
-
-pub async fn update_run<T: RunOperationsStore>(
-    Extension(operations): Extension<Arc<RunOperations<T>>>,
-    Extension(ctx): Extension<runinator_models::auth::AuthContext>,
-    Path(run_id): Path<Uuid>,
-    Json(request): Json<RunStatusRequest>,
-) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_system_role(&[
-        runinator_models::rbac::SystemRole::Engine,
-        runinator_models::rbac::SystemRole::Worker,
-        runinator_models::rbac::SystemRole::Agent,
-    ]) {
-        return reply;
-    }
-    match operations
-        .update_task_status(
-            run_id,
-            request.status,
-            request.output_json,
-            request.message,
-            ctx.org_id,
-        )
-        .await
-    {
-        Ok(resp) => (StatusCode::OK, Json(ApiResponse::TaskResponse(resp))),
-        Err(err) => api_error(err.to_string()),
-    }
-}
-
-pub async fn get_run_chunks<T: RunOperationsStore>(
-    Extension(operations): Extension<Arc<RunOperations<T>>>,
-    Extension(ctx): Extension<runinator_models::auth::AuthContext>,
-    Path(run_id): Path<Uuid>,
-    Query(query): Query<ChunkQuery>,
-) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_system_role(&[
-        runinator_models::rbac::SystemRole::Engine,
-        runinator_models::rbac::SystemRole::Worker,
-        runinator_models::rbac::SystemRole::Agent,
-    ]) {
-        return reply;
-    }
-    match operations
-        .task_chunks(run_id, query.cursor, query.limit.unwrap_or(100))
-        .await
-    {
-        Ok(chunks) => (StatusCode::OK, Json(ApiResponse::RunChunks(chunks))),
-        Err(err) => api_error(err.to_string()),
-    }
-}
-
-pub async fn append_run_chunk<T: RunOperationsStore>(
-    Extension(operations): Extension<Arc<RunOperations<T>>>,
-    Extension(ctx): Extension<runinator_models::auth::AuthContext>,
-    Path(run_id): Path<Uuid>,
-    Json(chunk): Json<NewRunChunk>,
-) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_system_role(&[
-        runinator_models::rbac::SystemRole::Engine,
-        runinator_models::rbac::SystemRole::Worker,
-        runinator_models::rbac::SystemRole::Agent,
-    ]) {
-        return reply;
-    }
-    match operations
-        .append_task_chunk(run_id, &chunk, ctx.org_id)
-        .await
-    {
-        Ok(chunk) => (
-            StatusCode::ACCEPTED,
-            Json(ApiResponse::RunChunks(vec![chunk])),
-        ),
-        Err(err) => api_error(err.to_string()),
-    }
-}
-
 pub async fn update_workflow_run<T: RunOperationsStore>(
     Extension(operations): Extension<Arc<RunOperations<T>>>,
     Extension(ctx): Extension<runinator_models::auth::AuthContext>,
@@ -778,7 +668,7 @@ fn filter_runs(
 /// the `runs` endpoints.
 pub fn routes<T: RunOperationsStore>(pool: std::sync::Arc<T>) -> axum::Router {
     use axum::Extension;
-    use axum::routing::{get, patch, post};
+    use axum::routing::{get, post};
     axum::Router::new()
         .route(
             "/workflow_triggers/{id}/runs",
@@ -791,20 +681,6 @@ pub fn routes<T: RunOperationsStore>(pool: std::sync::Arc<T>) -> axum::Router {
         .route(
             runinator_models::api_routes::API_SCHEDULER_WORKFLOW_RUNS_CLAIM,
             post(claim_workflow_runs_for_scheduler::<T>).layer(Extension(pool.clone())),
-        )
-        .route(
-            runinator_models::api_routes::API_RUNS,
-            get(get_runs::<T>).layer(Extension(pool.clone())),
-        )
-        .route(
-            "/runs/{id}",
-            patch(update_run::<T>).layer(Extension(pool.clone())),
-        )
-        .route(
-            "/runs/{id}/chunks",
-            get(get_run_chunks::<T>)
-                .post(append_run_chunk::<T>)
-                .layer(Extension(pool.clone())),
         )
         .route(
             "/workflows/{id}/runs",
@@ -902,58 +778,6 @@ pub const DOCS: &[EndpointDoc] = &[
         200,
         "claimed workflow runs",
         Example::WorkflowRunList,
-    ),
-    endpoint(
-        "get",
-        "/runs",
-        "Runs",
-        "List task runs by status",
-        "Service-control endpoint that lists low-level task runs for a required status.",
-        false,
-        None,
-        RUN_FILTERS,
-        200,
-        "task runs",
-        Example::RunList,
-    ),
-    endpoint(
-        "patch",
-        "/runs/{id}",
-        "Runs",
-        "Update a task run",
-        "Service-control endpoint used by workers to update low-level task-run status and output.",
-        false,
-        json_body("Task run status update.", Example::RunStatus),
-        &[],
-        200,
-        "task run updated",
-        Example::TaskResponse,
-    ),
-    endpoint(
-        "get",
-        "/runs/{id}/chunks",
-        "Runs",
-        "List task run chunks",
-        "Service-control endpoint that returns streamed chunks for a low-level task run.",
-        false,
-        None,
-        CURSOR,
-        200,
-        "task run chunks",
-        Example::RunChunk,
-    ),
-    endpoint(
-        "post",
-        "/runs/{id}/chunks",
-        "Runs",
-        "Append a task run chunk",
-        "Service-control endpoint used by workers to append stdout, stderr, log, or structured chunks.",
-        false,
-        json_body("Run chunk to append.", Example::RunChunk),
-        &[],
-        202,
-        "task run chunk appended",
-        Example::RunChunk,
     ),
     endpoint(
         "post",

@@ -12,7 +12,6 @@ pub mod errors;
 pub mod events;
 pub mod notifications;
 pub mod repository;
-pub mod repository_runs;
 pub mod services;
 pub mod settings;
 pub mod simulate;

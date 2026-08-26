@@ -20,10 +20,6 @@ use runinator_models::{
     telemetry::ReplicaSample,
 };
 
-// re-exported here so callers that reach for the contract at its historical path
-// (`runinator_database::interfaces::*`) can import both halves from one place.
-pub use crate::runtime_store::RuntimeStore;
-
 /// Core persistence operations for Runinator.
 /// The fleet: replica registration, heartbeats, reaping, telemetry samples, and provider registrations.
 pub trait ReplicaStore: Send + Sync + 'static {

@@ -16,7 +16,6 @@ export interface EventStreamRouterDeps {
   refreshWorkflowsIfClean: () => void;
   refreshRecentRunsIfActive: () => void;
   refreshWorkflowRunIfSelected: (runId: string) => void;
-  refreshArtifactsIfActive: () => void;
   refreshNotifications: () => void;
   refreshSchedulesIfActive: () => void;
   refreshPipelineRunsIfActive: () => void;
@@ -29,17 +28,8 @@ export function createEventStreamRouter(deps: () => EventStreamRouterDeps): Even
       const context = deps();
 
       switch (event.type) {
-        case "run_status_changed":
-          if (context.selectedWorkflowRunId) {
-            context.refreshWorkflowRunIfSelected(context.selectedWorkflowRunId);
-          }
-
-          context.refreshResourcesIfActive();
-          break;
         case "resync":
           context.refreshActiveState();
-          break;
-        case "tasks_changed":
           break;
         case "workflows_changed":
           context.refreshWorkflowsIfClean();
@@ -69,10 +59,6 @@ export function createEventStreamRouter(deps: () => EventStreamRouterDeps): Even
           break;
         case "replicas_changed":
           context.refreshActiveState();
-          break;
-        case "artifact_created":
-        case "artifacts_changed":
-          context.refreshArtifactsIfActive();
           break;
         case "notification_created":
         case "notifications_changed":

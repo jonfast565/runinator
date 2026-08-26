@@ -11,7 +11,6 @@ vi.mock("../../api/commandCenterApi", () => ({
   approveApproval: vi.fn(),
   rejectApproval: vi.fn(),
   fetchProviders: vi.fn(),
-  fetchAllArtifacts: vi.fn(),
   fetchWorkflowEffectOutput: vi.fn(),
   createWorkflowRun: vi.fn(),
   duplicateWorkflow: vi.fn(),

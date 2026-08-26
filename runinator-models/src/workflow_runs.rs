@@ -19,11 +19,8 @@ pub struct WorkflowRun {
     /// normalized execution state assembled from the workflow state tables.
     #[serde(skip)]
     pub execution_state: WorkflowExecutionState,
-    /// legacy migration carrier. new writes clear this column and never treat it as authoritative.
-    #[serde(skip_serializing, default)]
-    pub state: Value,
-    /// optimistic-concurrency guard for `state`. bumped by every write that touches the blob;
-    /// a compare-and-swap writer passes the value it read and retries when the row has moved on.
+    /// Optimistic-concurrency guard for normalized execution state. A compare-and-swap writer
+    /// passes the value it read and retries when another writer moved the run first.
     #[serde(default)]
     pub state_version: i64,
     pub created_at: DateTime<Utc>,

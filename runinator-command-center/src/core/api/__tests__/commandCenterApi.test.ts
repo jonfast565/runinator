@@ -14,6 +14,7 @@ import {
   listTeamMembers,
   requestRunInterrupt,
   rotateApiKey,
+  saveWorkflowBundle,
   updateApiKey,
   updateTeam,
 } from "../commandCenterApi";
@@ -335,6 +336,41 @@ describe("command center permissions API in web mode", () => {
     );
   });
 
+  it("wraps a workflow bundle in a compiled pack zip", async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: vi.fn().mockResolvedValue({
+          workflows: { workflows: [{ id: "workflow-1" }], triggers: [] },
+          secrets: { secrets: [] },
+          pipelines: [],
+        }),
+      } as unknown as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: vi.fn().mockResolvedValue({ workflows: [{ id: "workflow-1" }], triggers: [] }),
+      } as unknown as Response);
+
+    await saveWorkflowBundle({ workflows: [], triggers: [] });
+
+    expect(fetch).toHaveBeenNthCalledWith(
+      1,
+      "/api/packs/import?overwrite=true",
+      expect.objectContaining({
+        method: "POST",
+        body: expect.any(Blob),
+        headers: expect.objectContaining({ "content-type": "application/zip" }),
+      }),
+    );
+    expect(fetch).toHaveBeenNthCalledWith(
+      2,
+      "/api/workflows/workflow-1/export",
+      expect.objectContaining({ headers: {} }),
+    );
+  });
+
   it("maps team rename and membership endpoints", async () => {
     await updateTeam("00000000-0000-0000-0000-000000000001", "platform");
     await addTeamMember(
@@ -451,7 +487,7 @@ describe("run side-channel endpoints in web mode", () => {
         body: JSON.stringify({
           source: "external",
           payload: { why: "manual" },
-          cursor_id: "00000000-0000-0000-0000-000000000081",
+          continuation_id: "00000000-0000-0000-0000-000000000081",
         }),
       }),
     );

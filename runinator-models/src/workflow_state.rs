@@ -19,10 +19,6 @@ pub use crate::workflow_frames::*;
 pub use crate::workflow_node_states::*;
 pub use crate::workflow_outputs::*;
 
-/// the top-level key prefix older runs used for a per-node event_source delivery slot, before those
-/// slots were consolidated under [`WorkflowRunState::event_sources`].
-const LEGACY_EVENT_SOURCE_PREFIX: &str = "event_source_";
-
 // deserialize a frame tolerantly: a malformed payload becomes `None` rather than failing the parse
 // of the whole state blob. these frames were previously read out of the untyped bag with
 // `from_wire_value(..).ok()`, and that tolerance is what stops one bad frame from discarding a
@@ -66,8 +62,7 @@ pub struct WorkflowExecutionState {
         skip_serializing_if = "Option::is_none"
     )]
     pub map_child: Option<MapChildState>,
-    /// per-node event_source delivery slots, keyed by node id. older runs carried these as dynamic
-    /// top-level `event_source_<node_id>` keys; [`WorkflowRunState::from_state`] folds that shape in.
+    /// Per-node event-source delivery slots, keyed by node id.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub event_sources: BTreeMap<String, EventSourceEntry>,
     /// dynamic per-run metadata bag accumulated by config nodes.
@@ -88,9 +83,7 @@ pub struct WorkflowExecutionState {
 impl WorkflowExecutionState {
     /// parse a run's `state` blob into the typed container. malformed state collapses to empty.
     pub fn from_state(value: &Value) -> Self {
-        let mut parsed: Self = serde_json::from_value(value.clone().into()).unwrap_or_default();
-        parsed.absorb_legacy_event_sources();
-        parsed
+        serde_json::from_value(value.clone().into()).unwrap_or_default()
     }
 
     /// the cursor with this id, if the run still holds it.
@@ -372,40 +365,13 @@ impl WorkflowExecutionState {
             .pending_event = Some(event);
     }
 
-    // fold the older top-level `event_source_<node_id>` keys into `event_sources` on read, so both
-    // shapes drive the same code and the next write persists only the consolidated form. an
-    // already-consolidated entry wins, since it is the newer of the two.
-    fn absorb_legacy_event_sources(&mut self) {
-        let legacy = self
-            .extra
-            .keys()
-            .filter(|key| key.starts_with(LEGACY_EVENT_SOURCE_PREFIX))
-            .cloned()
-            .collect::<Vec<_>>();
-        for key in legacy {
-            let Some(raw) = self.extra.remove(&key) else {
-                continue;
-            };
-            let Some(node_id) = key.strip_prefix(LEGACY_EVENT_SOURCE_PREFIX) else {
-                continue;
-            };
-            let entry = serde_json::from_value::<EventSourceEntry>(raw.into()).unwrap_or_default();
-            self.event_sources
-                .entry(node_id.to_string())
-                .or_insert(entry);
-        }
-    }
-
-    /// serialize the typed aggregate for compatibility and JSON transport snapshots.
+    /// Serialize the typed aggregate for JSON transport snapshots.
     pub fn to_state(&self) -> Value {
         serde_json::to_value(self)
             .map(Value::from)
             .unwrap_or(Value::Null)
     }
 }
-
-/// compatibility name for code that predates normalized execution-state persistence.
-pub type WorkflowRunState = WorkflowExecutionState;
 
 #[cfg(test)]
 #[path = "workflow_state_tests.rs"]

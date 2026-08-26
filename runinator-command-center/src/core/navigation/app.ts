@@ -12,7 +12,6 @@ export type AppTab =
   | "Console"
   | "Replicas"
   | "Approvals"
-  | "Artifacts"
   | "Notifications"
   | "Events"
   | "ExternalItems"

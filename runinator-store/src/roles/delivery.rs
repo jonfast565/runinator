@@ -12,10 +12,6 @@ use uuid::Uuid;
 use runinator_models::value::Value;
 use runinator_models::{errors::SendableError, orchestration::IdempotencyClaim};
 
-// re-exported here so callers that reach for the contract at its historical path
-// (`runinator_database::interfaces::*`) can import both halves from one place.
-pub use crate::runtime_store::RuntimeStore;
-
 /// Core persistence operations for Runinator.
 /// At-least-once delivery plumbing: the action-dispatch outbox, idempotency claims, and dead letters.
 pub trait DeliveryStore: Send + Sync + 'static {

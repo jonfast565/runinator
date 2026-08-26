@@ -13,10 +13,6 @@ use runinator_models::{
     orgs::{OrgMembership, OrgRole, Organization},
 };
 
-// re-exported here so callers that reach for the contract at its historical path
-// (`runinator_database::interfaces::*`) can import both halves from one place.
-pub use crate::runtime_store::RuntimeStore;
-
 /// Core persistence operations for Runinator.
 /// Organizations, membership, quotas, usage samples, and resource groups.
 pub trait OrgStore: Send + Sync + 'static {

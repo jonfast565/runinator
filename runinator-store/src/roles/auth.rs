@@ -17,10 +17,6 @@ use runinator_models::{
     rbac::PlatformRole,
 };
 
-// re-exported here so callers that reach for the contract at its historical path
-// (`runinator_database::interfaces::*`) can import both halves from one place.
-pub use crate::runtime_store::RuntimeStore;
-
 /// Core persistence operations for Runinator.
 /// Identity and access: users, credentials, API keys, sessions, teams, and resource grants.
 pub trait AuthStore: Send + Sync + 'static {

@@ -123,7 +123,6 @@ pub enum WorkflowNodeKind {
     Try,
     Map,
     Race,
-    #[serde(rename = "output", alias = "deliverable")]
     Output,
     Input,
     Subflow,

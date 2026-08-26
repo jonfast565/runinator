@@ -60,7 +60,7 @@ pub async fn save_auth_settings(
     state: State<'_, CommandCenterState>,
     max_refreshes: i64,
 ) -> CommandResult<Value> {
-    post_json(
+    put_json(
         &state,
         "auth/settings",
         &json!({ "max_refreshes": max_refreshes }),

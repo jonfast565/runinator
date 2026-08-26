@@ -14,7 +14,7 @@ fn round_trips_a_blob_uri() {
 
 #[test]
 fn rejects_non_blob_uris() {
-    // A legacy artifact row holds an absolute local path, not a blob URI.
+    // Other URI schemes and plain paths are not object references.
     assert!(parse_blob_uri("/var/lib/runinator/artifacts/run/report.txt").is_none());
     assert!(parse_blob_uri("https://example.com/a").is_none());
     assert!(parse_blob_uri("blob://bucket").is_none());

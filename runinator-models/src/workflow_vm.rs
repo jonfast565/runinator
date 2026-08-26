@@ -281,11 +281,6 @@ pub enum WorkflowInstruction {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         default: Option<usize>,
     },
-    /// A host-free graph operation whose entire input is frozen in the module.
-    PureNode {
-        kind: WorkflowNodeKind,
-        configuration: Value,
-    },
     /// Allocate a durable loop frame from a frozen item collection. `body` is entered for each
     /// item; `exit` is entered after the final item or the iteration limit.
     BeginLoop {

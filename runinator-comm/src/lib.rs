@@ -704,13 +704,6 @@ impl UiEvent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum UiEventKind {
-    RunStatusChanged {
-        run_id: Uuid,
-        terminal: bool,
-    },
-    RunChunkAdded {
-        run_id: Uuid,
-    },
     WorkflowsChanged,
     WorkflowRunChanged {
         run_id: Uuid,
@@ -720,11 +713,6 @@ pub enum UiEventKind {
         run_id: Uuid,
     },
     PipelineRunActivity,
-    TasksChanged,
-    ArtifactCreated {
-        artifact_id: Uuid,
-        run_id: Uuid,
-    },
     NotificationCreated {
         notification_id: Uuid,
     },

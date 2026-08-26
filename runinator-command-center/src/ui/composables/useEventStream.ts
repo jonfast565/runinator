@@ -1,6 +1,5 @@
 import { onBeforeUnmount, watch } from "vue";
 import { endpointForTab, isResourceTab, useAppStore } from "../../ui/adapters/pinia/app";
-import { useArtifactsStore } from "../../ui/adapters/pinia/artifacts";
 import { useAuthStore } from "../../ui/adapters/pinia/auth";
 import { useNotificationsStore } from "../../ui/adapters/pinia/notifications";
 import { useSchedulesStore } from "../../ui/adapters/pinia/schedules";
@@ -14,7 +13,6 @@ export function useEventStream() {
   const app = useAppStore();
   const workflows = useWorkflowsStore();
   const resources = useResourcesStore();
-  const artifacts = useArtifactsStore();
   const notifications = useNotificationsStore();
   const schedules = useSchedulesStore();
   const pipelineRuns = usePipelineRunsStore();
@@ -43,10 +41,6 @@ export function useEventStream() {
 
     if (workflows.selectedWorkflowRunId) {
       void workflows.fetchWorkflowRunDetail(workflows.selectedWorkflowRunId, true);
-    }
-
-    if (app.activeTab === "Artifacts") {
-      void artifacts.refreshArtifacts();
     }
 
     if (app.activeTab === "Notifications") {
@@ -80,11 +74,6 @@ export function useEventStream() {
     refreshWorkflowRunIfSelected: (runId: string) => {
       // coalesce drive/worker/chunk event bursts into one trailing detail refetch.
       workflows.scheduleWorkflowRunDetailRefresh(runId);
-    },
-    refreshArtifactsIfActive: () => {
-      if (app.activeTab === "Artifacts") {
-        void artifacts.refreshArtifacts();
-      }
     },
     refreshNotifications: () => {
       void notifications.refreshNotifications();

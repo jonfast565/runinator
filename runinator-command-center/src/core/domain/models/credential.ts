@@ -9,5 +9,4 @@ export interface CredentialSummary {
 
 export interface CredentialDetail extends CredentialSummary {
   value?: JsonValue;
-  secret?: JsonValue;
 }

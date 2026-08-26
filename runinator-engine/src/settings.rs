@@ -8,12 +8,15 @@
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
-use runinator_models::settings::SettingKind;
 use runinator_models::types::RuninatorType;
 use runinator_models::value::Value;
+use runinator_models::{
+    bundles::{SecretBundle, SecretBundleEntry},
+    settings::SettingKind,
+};
 use runinator_secrets::secret_cipher::SecretCipher;
 use runinator_secrets::stored_secret::StoredSecret;
-use runinator_store::RuntimeStore;
+use runinator_store::{RuntimeStore, roles::SettingStore};
 
 use serde::{Deserialize, Serialize};
 
@@ -118,8 +121,8 @@ pub fn validate_and_encode_with_expiry(
     }
 }
 
-/// decode a stored secret payload, including optional expiry metadata and legacy raw strings.
-pub fn decode_secret(bytes: &[u8]) -> StoredSecret {
+/// Decode a stored versioned secret envelope and its optional expiry metadata.
+pub fn decode_secret(bytes: &[u8]) -> Result<StoredSecret, String> {
     StoredSecret::decode(bytes)
 }
 
@@ -139,6 +142,93 @@ fn value_type(value: &Value) -> &'static str {
 // only the web service and engine hold the keys.
 fn settings_cipher() -> SecretCipher {
     SecretCipher::from_env()
+}
+
+/// A setting bundle failed either validation (safe to report as a bad request) or persistence.
+#[derive(Debug)]
+pub struct SettingBundleImportError {
+    pub bad_request: bool,
+    pub message: String,
+}
+
+/// Import settings through the supplied store, preserving the reconciliation semantics used by
+/// both the credentials endpoint and compiled packs. Passing a transactional store makes these
+/// writes part of the caller's larger operation.
+pub async fn import_setting_bundle_with<T: SettingStore + RuntimeStore>(
+    db: &T,
+    bundle: &SecretBundle,
+    overwrite: bool,
+) -> Result<Vec<SecretBundleEntry>, SettingBundleImportError> {
+    let cipher = settings_cipher();
+    let mut imported = Vec::with_capacity(bundle.secrets.len());
+    for setting in &bundle.secrets {
+        let incoming_ts = setting.updated_at.map(|updated_at| updated_at.timestamp());
+        let stored = db
+            .fetch_setting(setting.kind, setting.scope.clone(), setting.name.clone())
+            .await
+            .map_err(|error| SettingBundleImportError {
+                bad_request: false,
+                message: error.to_string(),
+            })?;
+        if let Some(stored) = &stored {
+            let is_newer = incoming_ts
+                .map(|timestamp| timestamp > stored.updated_at)
+                .unwrap_or(false);
+            if !overwrite && !is_newer {
+                log::info!(
+                    "Skipping import of {} {}/{}: stored copy is up to date",
+                    setting.kind.as_str(),
+                    setting.scope,
+                    setting.name
+                );
+                imported.push(redacted_entry(setting));
+                continue;
+            }
+        }
+        let stored_schema = stored
+            .as_ref()
+            .and_then(|record| cipher.try_decrypt(&record.value))
+            .and_then(|bytes| decode_config_schema(&bytes));
+        let bytes = validate_and_encode_with_expiry(
+            setting.kind,
+            &setting.scope,
+            &setting.name,
+            &setting.value,
+            setting.schema.as_ref(),
+            stored_schema.as_ref(),
+            setting.expires_at,
+        )
+        .map_err(|message| SettingBundleImportError {
+            bad_request: true,
+            message,
+        })?;
+        db.upsert_setting(
+            setting.kind,
+            setting.scope.clone(),
+            setting.name.clone(),
+            cipher.encrypt(&bytes),
+            incoming_ts.unwrap_or_else(|| Utc::now().timestamp()),
+        )
+        .await
+        .map_err(|error| SettingBundleImportError {
+            bad_request: false,
+            message: error.to_string(),
+        })?;
+        imported.push(redacted_entry(setting));
+    }
+    Ok(imported)
+}
+
+fn redacted_entry(setting: &SecretBundleEntry) -> SecretBundleEntry {
+    SecretBundleEntry {
+        scope: setting.scope.clone(),
+        name: setting.name.clone(),
+        value: Value::Null,
+        schema: None,
+        kind: setting.kind,
+        updated_at: setting.updated_at,
+        expires_at: setting.expires_at,
+    }
 }
 
 /// the config type tree `{ <scope>: { <name>: <type> } }` used to type-check `config.*` references

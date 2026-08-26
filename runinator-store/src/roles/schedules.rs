@@ -26,10 +26,6 @@ pub struct ScheduledWorkflowVm {
     pub module: WorkflowModule,
 }
 
-// re-exported here so callers that reach for the contract at its historical path
-// (`runinator_database::interfaces::*`) can import both halves from one place.
-pub use crate::runtime_store::RuntimeStore;
-
 /// Core persistence operations for Runinator.
 /// When work fires: workflow and pipeline triggers, firing claims, freeze windows, and backfill.
 pub trait ScheduleStore: Send + Sync + 'static {

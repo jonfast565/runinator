@@ -114,6 +114,10 @@ pub trait SqlBackend: Send + Sync + 'static {
     /// the pool generic operations execute against.
     fn pool(&self) -> &Pool<Self::Db>;
 
+    /// Rebuild this backend around an already-connected pool. Pack imports use this to create an
+    /// isolated single-connection pool whose connection remains inside one outer transaction.
+    fn from_pool(pool: Pool<Self::Db>) -> Self;
+
     /// the sql dialect used to render queries.
     fn dialect(&self) -> SqlDialect;
 
@@ -159,6 +163,10 @@ impl<B: SqlBackend> SqlBackend for SqlStore<B> {
 
     fn pool(&self) -> &Pool<Self::Db> {
         self.backend.pool()
+    }
+
+    fn from_pool(pool: Pool<Self::Db>) -> Self {
+        SqlStore::from_backend(B::from_pool(pool))
     }
 
     fn dialect(&self) -> SqlDialect {

@@ -50,7 +50,7 @@ impl EngineConfig {
 ///
 /// This is a use-case boundary, not a catch-all repository: it names the durable queues and
 /// records the long-running orchestration loops coordinate. Authentication, function packages,
-/// task-run history, and schema initialization deliberately stay outside it.
+/// workflow history, artifacts, and schema initialization deliberately stay outside it.
 pub trait BackgroundEngineStore:
     RuntimeStore
     + WorkflowVmStore

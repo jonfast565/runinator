@@ -39,21 +39,15 @@ fn supervisor_backend_from_env() -> Option<SupervisorBackendConfig> {
         .map(|parent| parent.join("control"))
         .unwrap_or_else(|| PathBuf::from("supervisor/control"));
 
-    // read a spawn template per kind: RUNINATOR_PROVISIONER_SUPERVISOR_<KIND> (webservice also
-    // accepts the legacy _WS name). iterating the canonical kind list means a new kind gets an env
-    // slot automatically.
+    // Read a spawn template per kind: RUNINATOR_PROVISIONER_SUPERVISOR_<KIND>. Iterating the
+    // canonical kind list means a new kind gets an env slot automatically.
     let mut templates = BTreeMap::new();
     for &kind in ReplicaKind::ALL {
         let key = format!(
             "RUNINATOR_PROVISIONER_SUPERVISOR_{}",
             supervisor_suffix(kind)
         );
-        let template = template_from_env(&key).or_else(|| {
-            (kind == ReplicaKind::Webservice)
-                .then(|| template_from_env("RUNINATOR_PROVISIONER_SUPERVISOR_WS"))
-                .flatten()
-        });
-        if let Some(template) = template {
+        if let Some(template) = template_from_env(&key) {
             templates.insert(kind, template);
         }
     }
@@ -85,9 +79,9 @@ fn kubernetes_backend_from_env() -> Option<KubernetesBackendConfig> {
     if !env_enabled("RUNINATOR_PROVISIONER_K8S_ENABLED") {
         return None;
     }
-    // map a deployment per kind: RUNINATOR_PROVISIONER_K8S_<KIND>_DEPLOYMENT (webservice uses the
-    // legacy _WS name). worker/waker/webservice keep their default names so existing deployments
-    // stay manageable out of the box; other kinds are opt-in via their env var.
+    // Map a deployment per kind: RUNINATOR_PROVISIONER_K8S_<KIND>_DEPLOYMENT. Worker, waker, and
+    // webservice keep their default names so existing deployments stay manageable out of the box;
+    // other kinds are opt-in via their env var.
     let mut deployments = BTreeMap::new();
     for &kind in ReplicaKind::ALL {
         if kind == ReplicaKind::Postgres {
@@ -121,10 +115,7 @@ fn kubernetes_backend_from_env() -> Option<KubernetesBackendConfig> {
 // the deployment name backing a kind: an explicit env override, else the default name for the
 // original three kinds. other kinds are unmapped (ghost rows) until an env var is set.
 fn k8s_deployment(kind: ReplicaKind) -> Option<String> {
-    let infix = match kind {
-        ReplicaKind::Webservice => "WS".to_string(), // legacy env name.
-        other => other.as_str().to_uppercase(),
-    };
+    let infix = kind.as_str().to_uppercase();
     let key = format!("RUNINATOR_PROVISIONER_K8S_{infix}_DEPLOYMENT");
     if let Some(name) = std::env::var(&key)
         .ok()

@@ -6,8 +6,6 @@ use uuid::Uuid;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum ArchiveTable {
-    Runs,
-    RunArtifacts,
     WorkflowRuns,
     WorkflowVmModules,
     WorkflowContinuations,
@@ -16,7 +14,6 @@ pub enum ArchiveTable {
     WorkflowEffectDispatches,
     WorkflowJournalEntries,
     WorkflowTriggerFirings,
-    RunChunks,
     PipelineRuns,
     PipelineTriggerFirings,
     Notifications,
@@ -32,10 +29,7 @@ pub enum ArchiveTable {
 }
 
 impl ArchiveTable {
-    pub const ALL: [ArchiveTable; 23] = [
-        ArchiveTable::RunArtifacts,
-        ArchiveTable::RunChunks,
-        ArchiveTable::Runs,
+    pub const ALL: [ArchiveTable; 20] = [
         ArchiveTable::WorkflowEffectOutputEvents,
         ArchiveTable::WorkflowEffectDispatches,
         ArchiveTable::WorkflowEffects,
@@ -60,8 +54,6 @@ impl ArchiveTable {
 
     pub fn as_str(self) -> &'static str {
         match self {
-            ArchiveTable::Runs => "runs",
-            ArchiveTable::RunArtifacts => "run_artifacts",
             ArchiveTable::WorkflowRuns => "workflow_runs",
             ArchiveTable::WorkflowVmModules => "workflow_vm_modules",
             ArchiveTable::WorkflowContinuations => "workflow_continuations",
@@ -70,7 +62,6 @@ impl ArchiveTable {
             ArchiveTable::WorkflowEffectDispatches => "workflow_effect_dispatches",
             ArchiveTable::WorkflowJournalEntries => "workflow_journal_entries",
             ArchiveTable::WorkflowTriggerFirings => "workflow_trigger_firings",
-            ArchiveTable::RunChunks => "run_chunks",
             ArchiveTable::PipelineRuns => "pipeline_runs",
             ArchiveTable::PipelineTriggerFirings => "pipeline_trigger_firings",
             ArchiveTable::Notifications => "notifications",
@@ -106,8 +97,6 @@ impl FromStr for ArchiveTable {
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
-            "runs" => Ok(ArchiveTable::Runs),
-            "run_artifacts" => Ok(ArchiveTable::RunArtifacts),
             "workflow_vm_modules" => Ok(ArchiveTable::WorkflowVmModules),
             "workflow_continuations" => Ok(ArchiveTable::WorkflowContinuations),
             "workflow_effects" => Ok(ArchiveTable::WorkflowEffects),
@@ -116,7 +105,6 @@ impl FromStr for ArchiveTable {
             "workflow_journal_entries" => Ok(ArchiveTable::WorkflowJournalEntries),
             "workflow_runs" => Ok(ArchiveTable::WorkflowRuns),
             "workflow_trigger_firings" => Ok(ArchiveTable::WorkflowTriggerFirings),
-            "run_chunks" => Ok(ArchiveTable::RunChunks),
             "pipeline_runs" => Ok(ArchiveTable::PipelineRuns),
             "pipeline_trigger_firings" => Ok(ArchiveTable::PipelineTriggerFirings),
             "notifications" => Ok(ArchiveTable::Notifications),

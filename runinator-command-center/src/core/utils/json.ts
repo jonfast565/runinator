@@ -1,5 +1,5 @@
 import type { JsonRecord, JsonValue } from "../domain/json";
-import { asJsonRecord, isJsonObject } from "../domain/json";
+import { isJsonObject } from "../domain/json";
 
 export function parseObject(text: string, fallback: JsonRecord): JsonRecord {
   try {
@@ -37,10 +37,3 @@ export function parseRequiredJson(text: string): JsonValue | null {
 export function cloneJson<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
-
-// legacy alias used by a few call sites.
-export function parseObjectRecord(text: string, fallback: JsonRecord): JsonRecord {
-  return parseObject(text, fallback);
-}
-
-export { asJsonRecord as asJsonObject };

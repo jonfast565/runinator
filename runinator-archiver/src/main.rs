@@ -24,15 +24,15 @@ use runinator_broker::{
     select_broker_connection,
 };
 use runinator_comm::WsIngressCommand;
-use runinator_database::{
-    archive::{ArchiveRow, ArchiveTable},
-    interfaces::ArchiveStore,
-};
 use runinator_db_cli::dispatch_database;
 use runinator_models::errors::SendableError;
 use runinator_models::replicas::{ReplicaKind, ReplicaRegistrationRequest};
 use runinator_observability::resource_telemetry::{
     TelemetryCollector, attributes_with_host_metadata, attributes_with_telemetry,
+};
+use runinator_store::{
+    archive::{ArchiveRow, ArchiveTable},
+    roles::ArchiveStore,
 };
 use serde_json::json;
 use tracing::{error, info, warn};
@@ -324,9 +324,6 @@ async fn archive_one_batch<T: ArchiveStore>(
 
 async fn mark_all<T: ArchiveStore>(db: &T, config: &Config) -> Result<u64, SendableError> {
     let policies = [
-        (ArchiveTable::RunArtifacts, config.task_run_retention),
-        (ArchiveTable::RunChunks, config.node_log_retention),
-        (ArchiveTable::Runs, config.task_run_retention),
         (
             ArchiveTable::WorkflowEffectOutputEvents,
             config.workflow_run_retention,

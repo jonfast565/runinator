@@ -2,7 +2,6 @@
 
 import {
   approveApproval,
-  fetchAllArtifacts,
   fetchApprovals,
   fetchWorkflowEffectOutput,
   fetchProviders,
@@ -161,16 +160,17 @@ export const operationCommands: ConsoleCommand[] = [
   {
     path: ["artifacts", "list"],
     usage: "artifacts list [--effect ID]",
-    summary: "list artifacts, all of them or one workflow effect's",
+    summary: "list artifacts from one workflow effect",
     run: async ({ flags, json: raw, print }) => {
       const effect = flag(flags, "effect");
-      const artifacts = effect
-        ? (await fetchWorkflowEffectOutput(effect))
-            .filter((event) => event.output.type === "artifact")
-            .map((event) =>
-              event.output.type === "artifact" ? (event.output.artifact as JsonRecord) : {},
-            )
-        : await fetchAllArtifacts();
+      if (!effect) {
+        throw new Error("artifacts list requires --effect ID");
+      }
+      const artifacts = (await fetchWorkflowEffectOutput(effect))
+        .filter((event) => event.output.type === "artifact")
+        .map((event) =>
+          event.output.type === "artifact" ? (event.output.artifact as JsonRecord) : {},
+        );
 
       if (raw) {
         print(json(artifacts));

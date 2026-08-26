@@ -211,7 +211,7 @@ export type {
   RunCursor,
   SpeculativeFrame,
   TryFrame,
-  WorkflowRunState,
+  WorkflowExecutionState,
 } from "./workflow-state";
 export {
   buildCursorMarkers,
@@ -225,7 +225,7 @@ export {
   coerceRaceFrame,
   coerceRunCursors,
   coerceTryFrame,
-  coerceWorkflowRunState,
+  coerceWorkflowExecutionState,
   cursorColor,
   cursorDebug,
   cursorLabel,

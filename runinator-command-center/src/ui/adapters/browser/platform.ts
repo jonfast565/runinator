@@ -1,5 +1,4 @@
 import { wsBaseUrl } from "../../../core/api/httpRuntime";
-import { uploadArtifactFromPath, downloadArtifactToPath } from "../../../core/api/commandCenterApi";
 import type {
   AuthStorage,
   PlatformAdapter,
@@ -7,7 +6,7 @@ import type {
   ServiceDiscovery,
 } from "../../../core/platform/types";
 import { browserCommandRuntime } from "./runtime";
-import { downloadArtifactInBrowser, pickFileFromBrowser, uploadArtifactFromBrowser } from "./files";
+import { pickFileFromBrowser } from "./files";
 
 const localStorageAuth: AuthStorage = {
   get(key) {
@@ -56,14 +55,6 @@ export function createBrowserPlatformAdapter(): PlatformAdapter {
     runtime: browserCommandRuntime,
     authStorage: localStorageAuth,
     dialogs: browserDialogs,
-    artifacts: {
-      isDesktop: () => false,
-      pickFile: pickFileFromBrowser,
-      uploadFromPath: uploadArtifactFromPath,
-      uploadFromBrowser: uploadArtifactFromBrowser,
-      downloadInBrowser: downloadArtifactInBrowser,
-      downloadToPath: downloadArtifactToPath,
-    },
     serviceDiscovery: browserServiceDiscovery,
     filePicker: { pickFile: pickFileFromBrowser },
   };

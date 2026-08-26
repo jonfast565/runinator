@@ -1,5 +1,3 @@
-import type { RunArtifact } from "../domain/models";
-import type { ArtifactUploadRequest } from "../api/commandCenterApi";
 import type { CommandRuntime } from "../api/runtime";
 
 export interface AuthStorage {
@@ -10,19 +8,6 @@ export interface AuthStorage {
 
 export interface FilePicker {
   pickFile(): Promise<File | null>;
-}
-
-export interface ArtifactDownloadResult {
-  saved_to: string | null;
-}
-
-export interface ArtifactTransport {
-  isDesktop(): boolean;
-  pickFile(): Promise<File | null>;
-  uploadFromPath(request: ArtifactUploadRequest): Promise<RunArtifact>;
-  uploadFromBrowser(request: ArtifactUploadRequest, file: File): Promise<RunArtifact>;
-  downloadInBrowser(artifactId: string, name: string): Promise<void>;
-  downloadToPath(artifactId: string, name: string): Promise<ArtifactDownloadResult>;
 }
 
 export interface PlatformDialogs {
@@ -47,7 +32,6 @@ export interface PlatformAdapter {
   runtime: CommandRuntime;
   authStorage: AuthStorage;
   dialogs: PlatformDialogs;
-  artifacts: ArtifactTransport;
   serviceDiscovery: ServiceDiscovery;
   filePicker?: FilePicker;
 }

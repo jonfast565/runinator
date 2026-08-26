@@ -33,8 +33,8 @@ pub use types::{
     IngressMessage, WakeDelivery, WakeMessage,
 };
 pub use ui_events::{
-    emit, emit_pipeline_run, emit_task_run, emit_workflow_run, emit_workflows_changed,
-    is_terminal_run_status, AppEvent, AppEventKind, EmbeddedEngineSignals, UiEventPublisher,
+    emit, emit_pipeline_run, emit_workflow_run, emit_workflows_changed, AppEvent, AppEventKind,
+    EmbeddedEngineSignals, UiEventPublisher,
 };
 
 use async_trait::async_trait;

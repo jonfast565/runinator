@@ -46,24 +46,10 @@ pub struct Cli {
 
     #[arg(
         long,
-        env = "RUNINATOR_ARCHIVER_TASK_RUN_RETENTION",
-        default_value = "90d"
-    )]
-    pub task_run_retention: String,
-
-    #[arg(
-        long,
         env = "RUNINATOR_ARCHIVER_PIPELINE_RUN_RETENTION",
         default_value = "90d"
     )]
     pub pipeline_run_retention: String,
-
-    #[arg(
-        long,
-        env = "RUNINATOR_ARCHIVER_NODE_LOG_RETENTION",
-        default_value = "30d"
-    )]
-    pub node_log_retention: String,
 
     #[arg(
         long,
@@ -226,9 +212,7 @@ pub struct Config {
     pub batch_size: i64,
     pub dry_run: bool,
     pub workflow_run_retention: Option<Duration>,
-    pub task_run_retention: Option<Duration>,
     pub pipeline_run_retention: Option<Duration>,
-    pub node_log_retention: Option<Duration>,
     pub effect_dispatch_retention: Option<Duration>,
     pub read_notification_retention: Option<Duration>,
     pub dead_letter_retention: Option<Duration>,
@@ -276,9 +260,7 @@ impl Config {
             batch_size: cli.batch_size.max(1),
             dry_run: cli.dry_run,
             workflow_run_retention: parse_optional_duration(&cli.workflow_run_retention)?,
-            task_run_retention: parse_optional_duration(&cli.task_run_retention)?,
             pipeline_run_retention: parse_optional_duration(&cli.pipeline_run_retention)?,
-            node_log_retention: parse_optional_duration(&cli.node_log_retention)?,
             effect_dispatch_retention: parse_optional_duration(&cli.effect_dispatch_retention)?,
             read_notification_retention: parse_optional_duration(&cli.read_notification_retention)?,
             dead_letter_retention: parse_optional_duration(&cli.dead_letter_retention)?,

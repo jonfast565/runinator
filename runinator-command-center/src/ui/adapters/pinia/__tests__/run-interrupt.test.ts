@@ -70,16 +70,16 @@ afterEach(() => {
 });
 
 describe("requesting an interrupt", () => {
-  it("posts the source, payload, and cursor", async () => {
+  it("posts the source, payload, and continuation", async () => {
     const workflows = await selectRun();
 
-    await workflows.requestSelectedRunInterrupt("external", { why: "manual" }, "cursor-1");
+    await workflows.requestSelectedRunInterrupt("external", { why: "manual" }, "continuation-1");
 
     expect(requestRunInterrupt).toHaveBeenCalledWith(
       RUN_ID,
       "external",
       { why: "manual" },
-      "cursor-1",
+      "continuation-1",
     );
   });
 

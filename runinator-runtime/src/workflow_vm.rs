@@ -309,10 +309,6 @@ pub fn step(module: &WorkflowModule, mut continuation: WorkflowContinuation) -> 
                 }
                 Err(message) => return handle_failure(module, continuation, message),
             },
-            // PureNode remains a compatibility opcode for modules compiled before dedicated
-            // instructions existed.  The only such graph operation is Resume; it becomes a
-            // no-op outside an interrupt handler and is otherwise handled by ResumeInterrupt.
-            WorkflowInstruction::PureNode { .. } => continuation.instruction_pointer += 1,
             WorkflowInstruction::NextLoop { loop_key } => {
                 let Some(position) = continuation.frames.iter().rposition(|frame| {
                     matches!(frame, WorkflowFrame::Loop(frame) if frame.loop_key == *loop_key)

@@ -1,8 +1,8 @@
-//! covers both artifact storage shapes: `blob://` uris and the pre-blob local paths that still
-//! have to be readable.
+//! covers the `blob://` artifact storage contract.
 
 use super::*;
 use runinator_blob_core::FsBlobStore;
+use std::path::PathBuf;
 use tokio::io::AsyncReadExt;
 
 /// a store rooted in a fresh temporary directory, plus the directory guard that removes it.
@@ -110,25 +110,7 @@ async fn a_hostile_filename_cannot_escape_its_run_prefix() {
 }
 
 #[tokio::test]
-async fn still_reads_a_pre_blob_local_path() {
-    let fixture = fixture().await;
-    let legacy = fixture.root.join("legacy-artifact.txt");
-    tokio::fs::write(&legacy, b"written before the object store")
-        .await
-        .unwrap();
-    let uri = legacy.display().to_string();
-
-    let content = open_artifact(&fixture.store, &uri, None).await.unwrap();
-    assert_eq!(content.size_bytes, 31);
-    assert_eq!(read_all(content).await, b"written before the object store");
-
-    // and deleting such a row still unlinks the file it points at.
-    delete_artifact_bytes(&fixture.store, &uri).await;
-    assert!(!legacy.exists());
-}
-
-#[tokio::test]
-async fn deleting_is_idempotent_in_both_shapes() {
+async fn deleting_is_idempotent() {
     let fixture = fixture().await;
     let uri = put_artifact(
         &fixture.store,
@@ -142,6 +124,5 @@ async fn deleting_is_idempotent_in_both_shapes() {
     delete_artifact_bytes(&fixture.store, &uri).await;
     // a second delete must not panic or block the row delete that follows it.
     delete_artifact_bytes(&fixture.store, &uri).await;
-    delete_artifact_bytes(&fixture.store, "/no/such/path").await;
     assert!(open_artifact(&fixture.store, &uri, None).await.is_err());
 }

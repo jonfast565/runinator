@@ -8,6 +8,7 @@
 // server proxy (default) or honor VITE_RUNINATOR_WS_URL for direct override.
 
 import { displayValue } from "../utils/values";
+import { createZip } from "../utils/zip";
 
 type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
@@ -24,9 +25,6 @@ interface HttpDescriptor {
   transform?: (raw: unknown) => unknown;
   accept404?: boolean;
 }
-
-const WORKFLOW_JSON_IMPORT_RISK_HEADER = "x-runinator-json-workflow-risk";
-const WORKFLOW_JSON_IMPORT_RISK_ACK = "system-breakage-possible";
 
 // access token presented as `Authorization: Bearer …` in web mode; also appended to WS urls.
 let authToken: string | null = null;
@@ -248,9 +246,13 @@ const REGISTRY: Record<string, HttpDescriptor> = {
   },
   save_workflow_bundle: {
     method: "POST",
-    path: () => "workflows/import",
-    body: (args) => arg(args, "request"),
-    headers: () => ({ [WORKFLOW_JSON_IMPORT_RISK_HEADER]: WORKFLOW_JSON_IMPORT_RISK_ACK }),
+    path: () => "packs/import?overwrite=true",
+    rawBody: (args) => ({
+      body: createZip([
+        { name: "workflows.json", content: JSON.stringify(arg(args, "request")) },
+      ]),
+      contentType: "application/zip",
+    }),
   },
   save_workflow_rexrap: {
     method: "POST",
@@ -389,18 +391,6 @@ const REGISTRY: Record<string, HttpDescriptor> = {
       message: argOpt(args, "message") ?? null,
     }),
   },
-  fetch_run_chunks: {
-    method: "GET",
-    path: (args) => `runs/${escape(arg(args, "runId"))}/chunks?limit=500`,
-  },
-  fetch_run_artifacts: {
-    method: "GET",
-    path: (args) => `runs/${escape(arg(args, "runId"))}/artifacts`,
-  },
-  fetch_workflow_run_artifacts: {
-    method: "GET",
-    path: (args) => `workflow_runs/${escape(arg(args, "workflowRunId"))}/artifacts`,
-  },
   fetch_workflow_continuations: {
     method: "GET",
     path: (args) => `workflow_runs/${escape(arg(args, "workflowRunId"))}/continuations`,
@@ -461,7 +451,7 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     body: (args) => ({
       source: argOpt(args, "source") ?? null,
       payload: argOpt(args, "payload") ?? null,
-      cursor_id: argOpt(args, "cursorId") ?? null,
+      continuation_id: argOpt(args, "continuationId") ?? null,
     }),
   },
   // signals had a tauri command but no http descriptor, so delivering one from the web build threw
@@ -711,7 +701,6 @@ const REGISTRY: Record<string, HttpDescriptor> = {
         : `approvals?workflow_run_id=${escape(workflowRunId)}`;
     },
   },
-  fetch_all_artifacts: { method: "GET", path: () => "artifacts" },
   fetch_notifications: {
     method: "GET",
     path: (args) => {
@@ -976,12 +965,6 @@ export async function invokeViaHttp<T>(name: string, args?: Record<string, unkno
     return undefined as unknown as T;
   }
 
-  if (name === "upload_artifact" || name === "download_artifact") {
-    throw new Error(
-      `${name} is not available in web mode; use uploadArtifactBlob/downloadArtifactBlob instead`,
-    );
-  }
-
   if (!(name in REGISTRY)) {
     throw new Error(`Unknown command in web mode: ${name}`);
   }
@@ -1034,7 +1017,10 @@ export async function invokeViaHttp<T>(name: string, args?: Record<string, unkno
   // workflow imports: after import, re-export the first saved workflow to
   // hydrate the bundle with server-assigned ids — mirrors the Tauri command.
   if (name === "save_workflow_bundle" || name === "save_workflow_rexrap") {
-    const saved = raw as { workflows?: { id?: string | null }[] };
+    const saved =
+      (name === "save_workflow_bundle"
+        ? (raw as { workflows?: { workflows?: { id?: string | null }[] } }).workflows
+        : (raw as { workflows?: { id?: string | null }[] })) ?? {};
     const id = saved.workflows?.[0]?.id;
 
     if (id == null) {

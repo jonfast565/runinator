@@ -1,28 +1,18 @@
 use std::sync::Arc;
 
-use axum::{
-    Extension, Json,
-    body::Bytes,
-    extract::Query,
-    http::{HeaderMap, StatusCode, header},
-};
-use runinator_models::workflows::WorkflowBundle;
+use axum::{Extension, Json, body::Bytes, extract::Query, http::StatusCode};
 use runinator_models::{
     auth::AuthContext,
-    bundles::{PackImportResult, SecretBundle},
     rbac::{Action, ScopeKind, ScopeRef},
+    workflows::WorkflowBundle,
 };
 use runinator_store::{
-    RuntimeStore,
+    PackTransactionStore, RuntimeStore,
     roles::{DefinitionStore, FunctionStore, NotificationStore, ScheduleStore, SettingStore},
 };
 use serde::Deserialize;
 use utoipa::IntoParams;
 
-use crate::handlers::credentials::import_secret_entries_with;
-use crate::handlers::workflows::{
-    json_workflow_import_risk_acknowledged, json_workflow_import_risk_required,
-};
 use runinator_engine::services::PackOperations;
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::openapi::docs::{
@@ -41,46 +31,34 @@ pub struct PackImportParams {
     overwrite: bool,
 }
 
-// import a compiled pack zip, or a raw workflow bundle json when risk is acknowledged.
+// import a compiled pack zip.
 #[utoipa::path(
     post,
     path = "/packs/import",
     tag = "Packs",
-    params(
-        PackImportParams,
-        (
-            "x-runinator-json-workflow-risk",
-            Header,
-            description = "Required only for raw JSON workflow bundle imports posted as application/json.",
-            example = "system-breakage-possible"
-        )
-    ),
+    params(PackImportParams),
     request_body(
-        description = "A compiled pack zip produced by `runinatorctl workflows apply`, or a raw JSON workflow bundle when the risk-acknowledgment header is present.",
-        content(
-            ("application/zip"),
-            ("application/json")
-        )
+        description = "A compiled pack zip produced by `runinatorctl workflows apply`.",
+        content(("application/zip"))
     ),
     responses(
-        (status = 200, description = "pack or workflow bundle imported", body = serde_json::Value),
-        (status = 400, description = "invalid zip, invalid json, or missing risk acknowledgment", body = runinator_ws_core::models::ApiError),
+        (status = 200, description = "pack imported", body = serde_json::Value),
+        (status = 400, description = "invalid pack zip", body = runinator_ws_core::models::ApiError),
         (status = 401, description = "request is missing or has an invalid credential", body = runinator_ws_core::models::ApiError),
     ),
 )]
 pub async fn import_pack<
     T: DefinitionStore
         + RuntimeStore
+        + PackTransactionStore
         + FunctionStore
         + NotificationStore
         + ScheduleStore
         + SettingStore,
 >(
-    Extension(db): Extension<Arc<T>>,
     Extension(packs): Extension<Arc<PackOperations<T>>>,
     Extension(ctx): Extension<AuthContext>,
     Query(params): Query<PackImportParams>,
-    headers: HeaderMap,
     body: Bytes,
 ) -> (StatusCode, Json<ApiResponse>) {
     // a platform admin imports globally; an org admin imports into their active org. imported
@@ -93,35 +71,6 @@ pub async fn import_pack<
         return reply;
     }
     let overwrite = params.overwrite;
-    if is_json_content_type(&headers) {
-        if !json_workflow_import_risk_acknowledged(&headers) {
-            return json_workflow_import_risk_required();
-        }
-        let mut bundle: WorkflowBundle = match serde_json::from_slice(&body) {
-            Ok(bundle) => bundle,
-            Err(err) => return bad_request(format!("invalid workflow bundle json: {err}")),
-        };
-        stamp_bundle_org(&mut bundle, import_org);
-        log::info!(
-            "Importing json workflow bundle through pack endpoint: {} workflows, {} triggers (overwrite={overwrite})",
-            bundle.workflows.len(),
-            bundle.triggers.len()
-        );
-        let workflows = match packs.import_workflows(bundle, overwrite).await {
-            Ok(bundle) => bundle,
-            Err(err) => return api_error(err.to_string()),
-        };
-        packs.workflows_changed(import_org);
-        return (
-            StatusCode::OK,
-            Json(ApiResponse::PackImport(PackImportResult {
-                workflows,
-                secrets: SecretBundle::default(),
-                pipelines: Vec::new(),
-            })),
-        );
-    }
-
     let contents = match runinator_pack_wire::pack::read_pack_zip(&body) {
         Ok(parsed) => parsed,
         Err(err) => return bad_request(format!("invalid pack zip: {err}")),
@@ -146,77 +95,35 @@ pub async fn import_pack<
     // artifacts first, then the publishes that reference them — a publish naming bytes the server
     // does not hold is refused, which is what keeps a half-imported pack from leaving versions
     // nothing can run.
+    let mut artifacts = Vec::with_capacity(contents.function_artifacts.len());
     for (digest, bytes) in &contents.function_artifacts {
-        if let Err(err) = packs
-            .put_function_artifact_if_absent(digest, bytes.clone())
-            .await
-        {
-            return api_error(format!("pack artifact {digest} could not be stored: {err}"));
-        }
-    }
-    let mut published = Vec::with_capacity(contents.functions.len());
-    for request in &contents.functions {
-        let mut request = request.clone();
-        // the owning org is the importer's, never the pack's: a pack that named one would be
-        // publishing into a tenant it may not belong to.
-        request.package.org_id = import_org;
-
-        match packs.publish_function(&request).await {
-            Ok(version) => published.push(version),
-            Err(err) => {
+        match packs.stage_function_artifact(digest, bytes.clone()).await {
+            Ok(artifact) => artifacts.push(artifact),
+            Err(error) => {
                 return api_error(format!(
-                    "pack function '{}' could not be published: {err}",
-                    request.package.name
+                    "pack artifact {digest} could not be stored: {error}"
                 ));
             }
         }
     }
-    if !published.is_empty() {
-        log::info!("Imported {} function versions from pack", published.len());
-    }
-    if let Err(err) = packs
-        .resolve_provisional_function_bindings(&mut workflow_bundle, &published)
+    let result = match packs
+        .import_compiled_pack(
+            workflow_bundle,
+            secret_bundle.as_ref(),
+            pipeline_bundle.as_ref(),
+            &contents.functions,
+            &artifacts,
+            import_org,
+            overwrite,
+        )
         .await
     {
-        return api_error(format!(
-            "pack function bindings could not be resolved after publish: {err}"
-        ));
-    }
-
-    // apply config/secrets before workflows so a pack's own `config.*` values are present in the
-    // store when its workflows are type-checked on import.
-    let secrets = match &secret_bundle {
-        Some(bundle) => match import_secret_entries_with(db.as_ref(), bundle, overwrite).await {
-            Ok(imported) => SecretBundle { secrets: imported },
-            Err(error) => return error.into_response(),
-        },
-        None => SecretBundle::default(),
+        Ok(result) => result,
+        Err(error) if error.bad_request => return bad_request(error.message),
+        Err(error) => return api_error(error.message),
     };
-    let workflows = match packs.import_workflows(workflow_bundle, overwrite).await {
-        Ok(bundle) => bundle,
-        Err(err) => return api_error(err.to_string()),
-    };
-    // import pipelines after workflows so member names resolve to freshly-imported ids, and their
-    // links materialize as managed chained triggers stamped with the pipeline id.
-    let pipelines = match &pipeline_bundle {
-        Some(bundle) => match packs.import_pipelines(bundle, import_org).await {
-            Ok(imported) => imported,
-            Err(err) => return api_error(err.to_string()),
-        },
-        None => Vec::new(),
-    };
-    if let Some(bundle) = &pipeline_bundle {
-        log::info!("Imported {} pipelines from pack", bundle.pipelines.len());
-    }
     packs.workflows_changed(import_org);
-    (
-        StatusCode::OK,
-        Json(ApiResponse::PackImport(PackImportResult {
-            workflows,
-            secrets,
-            pipelines,
-        })),
-    )
+    (StatusCode::OK, Json(ApiResponse::PackImport(result)))
 }
 
 // stamp every workflow in an imported bundle with the target org so it lands in the caller's tenant.
@@ -226,34 +133,22 @@ fn stamp_bundle_org(bundle: &mut WorkflowBundle, org_id: Option<uuid::Uuid>) {
     }
 }
 
-fn is_json_content_type(headers: &HeaderMap) -> bool {
-    headers
-        .get(header::CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| {
-            value
-                .split(';')
-                .next()
-                .is_some_and(|kind| kind.trim() == "application/json")
-        })
-}
-
 /// the `packs` endpoints.
 pub fn routes<
     T: DefinitionStore
         + RuntimeStore
+        + PackTransactionStore
         + FunctionStore
         + NotificationStore
         + ScheduleStore
         + SettingStore,
 >(
-    pool: std::sync::Arc<T>,
+    _pool: std::sync::Arc<T>,
 ) -> axum::Router {
-    use axum::Extension;
     use axum::routing::post;
     axum::Router::new().route(
         runinator_models::api_routes::API_PACKS_IMPORT,
-        post(import_pack::<T>).layer(Extension(pool.clone())),
+        post(import_pack::<T>),
     )
 }
 
@@ -266,7 +161,7 @@ pub const DOCS: &[EndpointDoc] = &[endpoint(
     "Imports a compiled `.rexrapm`/pack zip containing `workflows.json` and optional `secrets.json`. The backend reads compiled JSON only; it does not compile REXRAP.",
     false,
     Some(RequestDoc {
-        description: "Compiled pack zip, or JSON in compatibility mode.",
+        description: "Compiled pack zip.",
         example: Example::WorkflowBundle,
         content_type: "application/zip",
     }),

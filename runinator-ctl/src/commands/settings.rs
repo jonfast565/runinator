@@ -78,13 +78,15 @@ pub(super) async fn settings(
                     e.render(&source)
                 ))
             })?;
-            let imported = client.import_secret_bundle(&bundle).await?;
+            let imported = client
+                .import_pack(&WorkflowBundle::default(), Some(&bundle), None, false)
+                .await?;
             if json_output {
-                return output::json(&imported);
+                return output::json(&imported.secrets);
             }
             println!(
                 "imported {} setting(s) from {}",
-                imported.secrets.len(),
+                imported.secrets.secrets.len(),
                 file.display()
             );
         }

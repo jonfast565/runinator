@@ -4,16 +4,12 @@ use uuid::Uuid;
 use axum::{
     Extension, Json,
     extract::{Path, Query},
-    http::{HeaderMap, StatusCode},
+    http::StatusCode,
 };
 use runinator_models::{
-    api_routes::{WORKFLOW_JSON_IMPORT_RISK_ACK, WORKFLOW_JSON_IMPORT_RISK_HEADER},
     auth::{AuthContext, Permission},
-    errors::error_code_or_unknown,
     value::Value,
-    workflows::{
-        WorkflowBundle, WorkflowDefinition, WorkflowDuplicateRequest, WorkflowSimulateRequest,
-    },
+    workflows::{WorkflowDefinition, WorkflowDuplicateRequest, WorkflowSimulateRequest},
 };
 use runinator_store::{
     RuntimeStore,
@@ -24,7 +20,7 @@ use serde::Deserialize;
 use runinator_engine::services::WorkflowAuthoring;
 use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::openapi::docs::{
-    EndpointDoc, Example, WORKFLOW_FILTERS, WORKFLOW_IMPORT_HEADERS, endpoint, json_body,
+    EndpointDoc, Example, WORKFLOW_FILTERS, endpoint, json_body,
 };
 use runinator_ws_core::responses::{api_error, bad_request, not_found, validation_error};
 use runinator_ws_middleware::authz::AuthContextExt;
@@ -205,100 +201,6 @@ pub async fn get_workflows<
         }
         Err(err) => api_error(err.to_string()),
     }
-}
-
-#[utoipa::path(
-    post,
-    path = "/workflows/import",
-    tag = "Packs",
-    params(
-        (
-            "x-runinator-json-workflow-risk",
-            Header,
-            description = "Required to acknowledge the risk of importing a raw JSON workflow bundle.",
-            example = "system-breakage-possible"
-        )
-    ),
-    request_body(
-        description = "A raw workflow bundle JSON payload. This path is the legacy non-zip import flow.",
-        content(("application/json"))
-    ),
-    responses(
-        (status = 200, description = "workflow bundle imported", body = serde_json::Value),
-        (status = 400, description = "invalid bundle or missing risk acknowledgment", body = runinator_ws_core::models::ApiError),
-        (status = 401, description = "request is missing or has an invalid credential", body = runinator_ws_core::models::ApiError),
-    ),
-)]
-pub async fn import_workflow_bundle<
-    T: AuthorizationStore
-        + DefinitionStore
-        + RuntimeStore
-        + FunctionStore
-        + NotificationStore
-        + ScheduleStore
-        + WorkflowVmStore,
->(
-    Extension(authoring): Extension<Arc<WorkflowAuthoring<T>>>,
-    Extension(ctx): Extension<AuthContext>,
-    headers: HeaderMap,
-    Json(bundle): Json<WorkflowBundle>,
-) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) =
-        ctx.require_scope_action(runinator_models::rbac::Action::Edit, ctx.selected_scope())
-    {
-        return reply;
-    }
-    if !json_workflow_import_risk_acknowledged(&headers) {
-        return json_workflow_import_risk_required();
-    }
-    import_acknowledged_workflow_bundle(authoring, ctx.org_id, bundle).await
-}
-
-pub async fn import_acknowledged_workflow_bundle<
-    T: AuthorizationStore
-        + DefinitionStore
-        + RuntimeStore
-        + FunctionStore
-        + NotificationStore
-        + ScheduleStore
-        + WorkflowVmStore,
->(
-    authoring: Arc<WorkflowAuthoring<T>>,
-    org_id: Option<Uuid>,
-    bundle: WorkflowBundle,
-) -> (StatusCode, Json<ApiResponse>) {
-    log::info!(
-        "Importing workflow bundle: {} workflows, {} triggers",
-        bundle.workflows.len(),
-        bundle.triggers.len()
-    );
-    match authoring.import(bundle, false, org_id).await {
-        Ok(bundle) => {
-            log::info!("Imported workflow bundle successfully");
-            (StatusCode::OK, Json(ApiResponse::WorkflowBundle(bundle)))
-        }
-        Err(err) => {
-            log::error!(
-                "Failed to import workflow bundle ({}): {}",
-                error_code_or_unknown(err.as_ref()),
-                err
-            );
-            api_error(err.to_string())
-        }
-    }
-}
-
-pub fn json_workflow_import_risk_acknowledged(headers: &HeaderMap) -> bool {
-    headers
-        .get(WORKFLOW_JSON_IMPORT_RISK_HEADER)
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| value.eq_ignore_ascii_case(WORKFLOW_JSON_IMPORT_RISK_ACK))
-}
-
-pub fn json_workflow_import_risk_required() -> (StatusCode, Json<ApiResponse>) {
-    bad_request(format!(
-        "raw JSON workflow imports can break system behavior; set header {WORKFLOW_JSON_IMPORT_RISK_HEADER}: {WORKFLOW_JSON_IMPORT_RISK_ACK} to acknowledge the risk"
-    ))
 }
 
 pub async fn export_workflow_bundle<
@@ -633,10 +535,6 @@ pub fn routes<
             post(simulate_workflow::<T>).layer(Extension(pool.clone())),
         )
         .route(
-            runinator_models::api_routes::API_WORKFLOWS_IMPORT,
-            post(import_workflow_bundle::<T>).layer(Extension(pool.clone())),
-        )
-        .route(
             runinator_models::api_routes::API_WORKFLOWS_EXPORT,
             get(export_workflow_bundle::<T>).layer(Extension(pool.clone())),
         )
@@ -712,19 +610,6 @@ pub const DOCS: &[EndpointDoc] = &[
         200,
         "validated workflow definition",
         Example::Workflow,
-    ),
-    endpoint(
-        "post",
-        "/workflows/import",
-        "Packs",
-        "Import a raw workflow bundle",
-        "Legacy JSON bundle import. This is intentionally guarded because raw JSON can bypass REXRAP well-formedness constraints.",
-        false,
-        json_body("Raw workflow bundle JSON.", Example::WorkflowBundle),
-        WORKFLOW_IMPORT_HEADERS,
-        200,
-        "imported workflow bundle",
-        Example::WorkflowBundle,
     ),
     endpoint(
         "get",

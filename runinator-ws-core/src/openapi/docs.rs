@@ -116,35 +116,12 @@ pub const WORKFLOW_RUN_FILTERS: &[ParamDoc] = &[
         example: "true",
     },
 ];
-pub const RUN_FILTERS: &[ParamDoc] = &[ParamDoc {
-    name: "status",
+pub const PACK_IMPORT_PARAMS: &[ParamDoc] = &[ParamDoc {
+    name: "overwrite",
     location: "query",
-    description: "Required low-level task run status filter.",
-    required: true,
-    example: "running",
-}];
-pub const PACK_IMPORT_PARAMS: &[ParamDoc] = &[
-    ParamDoc {
-        name: "overwrite",
-        location: "query",
-        description: "Replace existing workflows and settings from the pack when true.",
-        required: false,
-        example: "true",
-    },
-    ParamDoc {
-        name: "x-runinator-json-workflow-risk",
-        location: "header",
-        description: "Required only when posting raw JSON to the pack import endpoint.",
-        required: false,
-        example: "system-breakage-possible",
-    },
-];
-pub const WORKFLOW_IMPORT_HEADERS: &[ParamDoc] = &[ParamDoc {
-    name: "x-runinator-json-workflow-risk",
-    location: "header",
-    description: "Required acknowledgement for importing raw JSON workflow bundles.",
-    required: true,
-    example: "system-breakage-possible",
+    description: "Replace existing workflows and settings from the pack when true.",
+    required: false,
+    example: "true",
 }];
 pub const WORKFLOW_TRIGGER_FILTERS: &[ParamDoc] = &[ParamDoc {
     name: "status",

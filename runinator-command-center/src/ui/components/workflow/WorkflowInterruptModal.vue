@@ -30,7 +30,7 @@
 
     <label
       >Target thread
-      <select v-model="cursorId">
+      <select v-model="continuationId">
         <option value="">(any thread)</option>
         <option v-for="marker in targetableCursors" :key="marker.id" :value="marker.id">
           {{ marker.label }} — {{ marker.nodeId }}
@@ -74,7 +74,7 @@ const allSources = computed(() => catalogMetadata.enumOptions("interrupt_source"
 const declaredSources = computed(() => workflows.requestableInterruptSources);
 
 const source = ref(declaredSources.value.includes("external") ? "external" : (declaredSources.value.at(0) ?? ""));
-const cursorId = ref("");
+const continuationId = ref("");
 const payloadJson = ref("{}");
 const payloadError = ref("");
 
@@ -103,7 +103,7 @@ async function submit() {
   }
 
   payloadError.value = "";
-  await workflows.requestSelectedRunInterrupt(source.value, payload, cursorId.value || null);
+  await workflows.requestSelectedRunInterrupt(source.value, payload, continuationId.value || null);
   emit("close");
 }
 </script>

@@ -97,7 +97,7 @@ spec:
               value: "runinator-worker"
             - name: RUNINATOR_PROVISIONER_K8S_WAKER_DEPLOYMENT
               value: "runinator-waker"
-            - name: RUNINATOR_PROVISIONER_K8S_WS_DEPLOYMENT
+            - name: RUNINATOR_PROVISIONER_K8S_WEBSERVICE_DEPLOYMENT
               value: "runinator-ws"
             # Other node kinds are opt-in via RUNINATOR_PROVISIONER_K8S_<KIND>_DEPLOYMENT; until set
             # they show as non-manageable rows in the Node Pools panel.

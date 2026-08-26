@@ -1,34 +1,6 @@
 use super::*;
 
 #[tauri::command]
-pub async fn fetch_run_chunks(
-    state: State<'_, CommandCenterState>,
-    run_id: Uuid,
-) -> CommandResult<Vec<RunChunk>> {
-    get_json(&state, &format!("runs/{run_id}/chunks?limit=500")).await
-}
-
-#[tauri::command]
-pub async fn fetch_run_artifacts(
-    state: State<'_, CommandCenterState>,
-    run_id: Uuid,
-) -> CommandResult<Vec<RunArtifact>> {
-    get_json(&state, &format!("runs/{run_id}/artifacts")).await
-}
-
-#[tauri::command]
-pub async fn fetch_workflow_run_artifacts(
-    state: State<'_, CommandCenterState>,
-    workflow_run_id: Uuid,
-) -> CommandResult<Vec<WorkflowRunArtifact>> {
-    get_json(
-        &state,
-        &format!("workflow_runs/{workflow_run_id}/artifacts"),
-    )
-    .await
-}
-
-#[tauri::command]
 pub async fn fetch_workflow_continuations(
     state: State<'_, CommandCenterState>,
     workflow_run_id: Uuid,

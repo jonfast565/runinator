@@ -272,20 +272,10 @@ async fn apply_workflow_source(
 
     let value = params::load_json_file(file)?;
     if value.get("workflows").is_some() {
-        // raw json bundles require the client to acknowledge that system breakage is possible.
-        let bundle: WorkflowBundle = serde_json::from_value(value.into())?;
-        let bundle = client.import_workflow_bundle(&bundle).await?;
-        let summary = WorkflowApplySummary {
-            message: format!(
-                "imported {} workflows and {} triggers",
-                bundle.workflows.len(),
-                bundle.triggers.len()
-            ),
-        };
-        if json_output {
-            output::json(&bundle)?;
-        }
-        return Ok(summary);
+        return Err(
+            "raw workflow bundles are no longer accepted; apply a .rrx source or compiled pack instead"
+                .into(),
+        );
     }
 
     let workflow: WorkflowDefinition = serde_json::from_value(value.into())?;

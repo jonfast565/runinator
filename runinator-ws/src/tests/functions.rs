@@ -32,6 +32,9 @@ const MANIFEST: &str = r#"{
   ]
 }"#;
 
+const PACKAGE_NAMESPACE: &str = "runinator.examples";
+const PACKAGE_PATH: &str = "runinator.examples.image-tools";
+
 fn admin_ctx() -> AuthContext {
     AuthContext {
         principal_id: Some(Uuid::new_v4()),
@@ -156,7 +159,7 @@ async fn publishing_uploads_by_digest_and_republishing_stores_nothing_new() {
         Extension(db.clone()),
         function_packages(&db, &blobs),
         Extension(admin_ctx()),
-        Path("image-tools".to_string()),
+        Path(PACKAGE_PATH.to_string()),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -254,7 +257,7 @@ async fn moving_an_alias_leaves_earlier_versions_where_they_are() {
     }
 
     let package = db
-        .fetch_function_package(None, None, "image-tools")
+        .fetch_function_package(None, Some(PACKAGE_NAMESPACE), "image-tools")
         .await
         .unwrap()
         .expect("package");
@@ -356,7 +359,7 @@ async fn publishing_generates_a_hidden_adapter_workflow_per_export() {
 
     // one adapter per export, each recorded so the invocation path can find it.
     let package = db
-        .fetch_function_package(None, None, "image-tools")
+        .fetch_function_package(None, Some(PACKAGE_NAMESPACE), "image-tools")
         .await
         .unwrap()
         .expect("package");
@@ -461,12 +464,12 @@ async fn deleting_a_package_archives_it_and_restore_reactivates_it() {
         Extension(db.clone()),
         function_packages(&db, &blobs),
         Extension(admin_ctx()),
-        Path("image-tools".to_string()),
+        Path(PACKAGE_PATH.to_string()),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
     let package = db
-        .fetch_function_package(None, None, "image-tools")
+        .fetch_function_package(None, Some(PACKAGE_NAMESPACE), "image-tools")
         .await
         .unwrap()
         .expect("archived package remains");
@@ -476,7 +479,7 @@ async fn deleting_a_package_archives_it_and_restore_reactivates_it() {
         Extension(db.clone()),
         function_packages(&db, &blobs),
         Extension(admin_ctx()),
-        Path("image-tools".to_string()),
+        Path(PACKAGE_PATH.to_string()),
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
@@ -485,7 +488,7 @@ async fn deleting_a_package_archives_it_and_restore_reactivates_it() {
         Extension(db.clone()),
         function_packages(&db, &blobs),
         Extension(admin_ctx()),
-        Path("image-tools".to_string()),
+        Path(PACKAGE_PATH.to_string()),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -534,7 +537,7 @@ async fn published(
     assert_eq!(status, StatusCode::OK);
 
     let package = db
-        .fetch_function_package(None, None, "image-tools")
+        .fetch_function_package(None, Some(PACKAGE_NAMESPACE), "image-tools")
         .await
         .unwrap()
         .expect("package");
@@ -568,7 +571,7 @@ async fn an_http_invocation_starts_a_run_of_the_adapter_workflow() {
                 axum::http::HeaderName::from_static("prefer"),
                 axum::http::HeaderValue::from_static("respond-async"),
             )]),
-            Path(("image-tools".to_string(), "resize".to_string())),
+            Path((PACKAGE_PATH.to_string(), "resize".to_string())),
             axum::extract::Query(Default::default()),
             Json(json!({ "source": "a.png", "width": 320 })),
         )
@@ -616,7 +619,7 @@ async fn an_idempotency_key_replays_the_run_it_already_started() {
             function_invocations(&db, &events),
             Extension(admin_ctx()),
             headers,
-            Path(("image-tools".to_string(), "resize".to_string())),
+            Path((PACKAGE_PATH.to_string(), "resize".to_string())),
             axum::extract::Query(Default::default()),
             Json(json!({ "source": "a.png" })),
         )
@@ -661,7 +664,7 @@ async fn invoking_an_unknown_export_is_not_found() {
             function_invocations(&db, &events),
             Extension(admin_ctx()),
             axum::http::HeaderMap::new(),
-            Path(("image-tools".to_string(), "crop".to_string())),
+            Path((PACKAGE_PATH.to_string(), "crop".to_string())),
             axum::extract::Query(Default::default()),
             Json(json!({})),
         )
@@ -723,7 +726,7 @@ async fn invoking_is_gated_separately_from_publishing() {
             function_invocations(&db, &test_event_bus()),
             Extension(member),
             axum::http::HeaderMap::new(),
-            Path(("image-tools".to_string(), "resize".to_string())),
+            Path((PACKAGE_PATH.to_string(), "resize".to_string())),
             axum::extract::Query(Default::default()),
             Json(json!({ "source": "a.png" })),
         )

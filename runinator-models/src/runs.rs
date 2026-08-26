@@ -1,5 +1,4 @@
 use crate::value::Value;
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -41,59 +40,6 @@ impl TryFrom<&str> for RunStatus {
             other => Err(format!("Unknown run status '{other}'")),
         }
     }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RunRequest {
-    #[serde(default)]
-    pub parameters: Value,
-    #[serde(default = "default_trigger")]
-    pub trigger: String,
-    #[serde(default)]
-    pub workflow_run_id: Option<Uuid>,
-    #[serde(default)]
-    pub workflow_node_id: Option<String>,
-}
-
-fn default_trigger() -> String {
-    "api".into()
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RunSummary {
-    pub id: Uuid,
-    pub status: RunStatus,
-    pub parameters: Value,
-    pub output_json: Option<Value>,
-    pub message: Option<String>,
-    pub trigger: String,
-    pub started_at: Option<DateTime<Utc>>,
-    pub finished_at: Option<DateTime<Utc>>,
-    pub created_at: DateTime<Utc>,
-    pub workflow_run_id: Option<Uuid>,
-    pub workflow_node_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RunChunk {
-    pub id: Uuid,
-    pub run_id: Uuid,
-    pub sequence: i64,
-    pub stream: String,
-    pub content: String,
-    pub created_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RunArtifact {
-    pub id: Uuid,
-    pub run_id: Uuid,
-    pub name: String,
-    pub mime_type: String,
-    pub size_bytes: i64,
-    pub uri: String,
-    pub metadata: Value,
-    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

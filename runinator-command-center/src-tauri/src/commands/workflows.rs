@@ -1,4 +1,5 @@
 use super::*;
+use runinator_models::{api_routes::API_PACKS_IMPORT, bundles::PackImportResult};
 
 #[tauri::command]
 pub async fn fetch_workflows(
@@ -30,30 +31,19 @@ pub async fn save_workflow_bundle(
     state: State<'_, CommandCenterState>,
     request: WorkflowBundle,
 ) -> CommandResult<WorkflowBundle> {
-    let url = build_state_url(&state, API_WORKFLOWS_IMPORT).await?;
-    println!(
-        "Sending save_workflow_bundle to {}, workflow count: {}",
-        url,
-        request.workflows.len()
-    );
-    let response = state
-        .client
-        .read()
-        .await
-        .post(url.clone())
-        .header(
-            WORKFLOW_JSON_IMPORT_RISK_HEADER,
-            WORKFLOW_JSON_IMPORT_RISK_ACK,
+    let pack = runinator_pack_wire::pack::build_pack_zip(&request, None, None)
+        .map_err(|error| CommandError::Unexpected(error.to_string()))?;
+    let imported: PackImportResult = serde_json::from_value(
+        post_bytes(
+            &state,
+            &format!("{API_PACKS_IMPORT}?overwrite=true"),
+            "application/zip",
+            pack,
         )
-        .json(&request)
-        .send()
-        .await
-        .map_err(|err| {
-            eprintln!("Error sending request to {}: {}", url, err);
-            err
-        })?;
-    let response = handle_response(url, response).await?;
-    let result = response.json::<WorkflowBundle>().await?;
+        .await?,
+    )
+    .map_err(|error| CommandError::Unexpected(error.to_string()))?;
+    let result = imported.workflows;
     let Some(workflow_id) = result.workflows.first().and_then(|workflow| workflow.id) else {
         return Ok(result);
     };

@@ -81,7 +81,11 @@ pub async fn get_credential<T: SettingStore + RuntimeStore>(
                             let expires_at = (entry.kind == SettingKind::Secret)
                                 .then(|| cipher.try_decrypt(&entry.value))
                                 .flatten()
-                                .and_then(|bytes| decode_secret(&bytes).expires_at);
+                                .and_then(|bytes| {
+                                    decode_secret(&bytes)
+                                        .ok()
+                                        .and_then(|secret| secret.expires_at)
+                                });
                             runinator_models::json!({
                                 "id": entry.id,
                                 "scope": entry.scope,
@@ -115,7 +119,12 @@ pub async fn get_credential<T: SettingStore + RuntimeStore>(
             let (value, expires_at) = match query.kind {
                 SettingKind::Config => (decode_config_value(&bytes), None),
                 SettingKind::Secret => {
-                    let secret = decode_secret(&bytes);
+                    let secret = match decode_secret(&bytes) {
+                        Ok(secret) => secret,
+                        Err(_) => {
+                            return api_error("stored credential has an invalid secret envelope");
+                        }
+                    };
                     (Value::String(secret.value), secret.expires_at)
                 }
             };
@@ -125,10 +134,8 @@ pub async fn get_credential<T: SettingStore + RuntimeStore>(
                     "scope": scope,
                     "name": name,
                     "kind": query.kind.as_str(),
-                    "value": value.clone(),
+                    "value": value,
                     "expires_at": expires_at,
-                    // back-compat alias for existing secret consumers (e.g. the worker).
-                    "secret": value,
                 }))),
             )
         }
@@ -169,7 +176,10 @@ pub async fn get_credential_by_id<T: SettingStore + RuntimeStore>(
             "stored credential could not be decrypted; the encryption key may be unavailable",
         );
     };
-    let secret = decode_secret(&bytes);
+    let secret = match decode_secret(&bytes) {
+        Ok(secret) => secret,
+        Err(_) => return api_error("stored credential has an invalid secret envelope"),
+    };
     (
         StatusCode::OK,
         Json(ApiResponse::JsonValue(runinator_models::json!({
@@ -178,7 +188,7 @@ pub async fn get_credential_by_id<T: SettingStore + RuntimeStore>(
             "name": record.name,
             "kind": record.kind.as_str(),
             "expires_at": secret.expires_at,
-            "secret": secret.value,
+            "value": secret.value,
         }))),
     )
 }
@@ -245,9 +255,9 @@ pub async fn put_credential<T: SettingStore + RuntimeStore>(
     }
 }
 
-/// re-encrypt every stored setting with the current primary key. used to complete a credential-key
-/// rotation: run it while the old key is still configured as a secondary, then the old key can be
-/// retired. idempotent — values already tagged with the primary key are left untouched.
+/// Re-encrypt stored settings sealed by a secondary key with the current primary key. Run it while
+/// the old key is still configured as a secondary, then retire that key. Values already sealed by
+/// the primary key are left untouched.
 pub async fn reencrypt_settings<T: SettingStore + RuntimeStore>(
     Extension(db): Extension<Arc<T>>,
     Extension(ctx): Extension<AuthContext>,
@@ -298,28 +308,6 @@ pub async fn reencrypt_settings<T: SettingStore + RuntimeStore>(
     )
 }
 
-pub async fn import_secret_bundle<T: SettingStore + RuntimeStore>(
-    Extension(db): Extension<Arc<T>>,
-    Extension(ctx): Extension<AuthContext>,
-    Json(bundle): Json<SecretBundle>,
-) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_scope_action(
-        runinator_models::rbac::Action::SecretsWrite,
-        ctx.selected_scope(),
-    ) {
-        return reply;
-    }
-    match import_secret_entries(db.as_ref(), &bundle).await {
-        Ok(imported) => (
-            StatusCode::OK,
-            Json(ApiResponse::SecretBundle(SecretBundle {
-                secrets: imported,
-            })),
-        ),
-        Err(error) => error.into_response(),
-    }
-}
-
 /// a secret-import failure tagged with whether it is a client (bad request) or server error.
 pub struct SecretImportError {
     bad_request: bool,
@@ -336,9 +324,8 @@ impl SecretImportError {
     }
 }
 
-/// import every entry in a secret bundle into the settings store, reconciling by modification time,
-/// and return the redacted echo. shared by the json `/credentials/import` endpoint and the compiled
-/// pack import at `/packs/import`.
+/// Import every entry in a secret bundle into the settings store, reconciling by modification time,
+/// and return the redacted echo. Used by the compiled pack import at `/packs/import`.
 pub async fn import_secret_entries<T: SettingStore + RuntimeStore>(
     db: &T,
     bundle: &SecretBundle,
@@ -353,70 +340,12 @@ pub async fn import_secret_entries_with<T: SettingStore + RuntimeStore>(
     bundle: &SecretBundle,
     overwrite: bool,
 ) -> Result<Vec<SecretBundleEntry>, SecretImportError> {
-    let cipher = settings_cipher();
-    let mut imported = Vec::with_capacity(bundle.secrets.len());
-    for secret in &bundle.secrets {
-        let incoming_ts = secret.updated_at.map(|updated_at| updated_at.timestamp());
-        // load the stored record once: it gates reconciliation and pins the config schema.
-        let stored = db
-            .fetch_setting(secret.kind, secret.scope.clone(), secret.name.clone())
-            .await
-            .map_err(|err| SecretImportError {
-                bad_request: false,
-                message: err.to_string(),
-            })?;
-        // overwrite an existing entry only on an explicit overwrite or when the incoming entry is
-        // strictly newer.
-        if let Some(stored) = &stored {
-            let is_newer = incoming_ts
-                .map(|ts| ts > stored.updated_at)
-                .unwrap_or(false);
-            if !overwrite && !is_newer {
-                log::info!(
-                    "Skipping import of {} {}/{}: stored copy is up to date",
-                    secret.kind.as_str(),
-                    secret.scope,
-                    secret.name
-                );
-                imported.push(redacted_entry(secret));
-                continue;
-            }
-        }
-        // validate against the declared (or previously stored) schema before persisting.
-        let stored_schema = stored
-            .as_ref()
-            .and_then(|record| decode_config_schema(&cipher.decrypt(&record.value)));
-        let bytes = validate_and_encode_with_expiry(
-            secret.kind,
-            &secret.scope,
-            &secret.name,
-            &secret.value,
-            secret.schema.as_ref(),
-            stored_schema.as_ref(),
-            secret.expires_at,
-        )
-        .map_err(|message| SecretImportError {
-            bad_request: true,
-            message,
-        })?;
-        // persist the incoming modification time so later imports reconcile against it.
-        let updated_at = incoming_ts.unwrap_or_else(now_unix);
-        let ciphertext = cipher.encrypt(&bytes);
-        db.upsert_setting(
-            secret.kind,
-            secret.scope.clone(),
-            secret.name.clone(),
-            ciphertext,
-            updated_at,
-        )
+    runinator_engine::settings::import_setting_bundle_with(db, bundle, overwrite)
         .await
-        .map_err(|err| SecretImportError {
-            bad_request: false,
-            message: err.to_string(),
-        })?;
-        imported.push(redacted_entry(secret));
-    }
-    Ok(imported)
+        .map_err(|error| SecretImportError {
+            bad_request: error.bad_request,
+            message: error.message,
+        })
 }
 
 // the schema pinned in a config slot's previously-stored bytes, if any. secrets carry no schema.
@@ -437,19 +366,6 @@ async fn config_stored_schema<T: SettingStore + RuntimeStore>(
     Ok(record
         .and_then(|record| cipher.try_decrypt(&record.value))
         .and_then(|bytes| decode_config_schema(&bytes)))
-}
-
-// echo an imported entry without its value, preserving kind and modification time.
-fn redacted_entry(secret: &SecretBundleEntry) -> SecretBundleEntry {
-    SecretBundleEntry {
-        scope: secret.scope.clone(),
-        name: secret.name.clone(),
-        value: Value::Null,
-        schema: None,
-        kind: secret.kind,
-        updated_at: secret.updated_at,
-        expires_at: secret.expires_at,
-    }
 }
 
 pub async fn delete_credential<T: DefinitionStore + SettingStore + RuntimeStore>(
@@ -579,10 +495,6 @@ pub fn routes<T: DefinitionStore + SettingStore + RuntimeStore>(
                 .layer(Extension(pool.clone())),
         )
         .route(
-            "/credentials/import",
-            post(import_secret_bundle::<T>).layer(Extension(pool.clone())),
-        )
-        .route(
             "/credentials/reencrypt",
             post(reencrypt_settings::<T>).layer(Extension(pool.clone())),
         )
@@ -628,19 +540,6 @@ pub const DOCS: &[EndpointDoc] = &[
         200,
         "credential deleted",
         Example::TaskResponse,
-    ),
-    endpoint(
-        "post",
-        "/credentials/import",
-        "Credentials",
-        "Import a secret bundle",
-        "Imports secret/config entries from a compiled pack secret bundle.",
-        false,
-        json_body("Secret bundle to import.", Example::SecretBundle),
-        &[],
-        200,
-        "secret bundle imported",
-        Example::SecretBundle,
     ),
     endpoint(
         "post",

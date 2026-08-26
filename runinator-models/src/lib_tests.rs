@@ -6,7 +6,7 @@ use crate::{
     },
     types::{RuninatorField, RuninatorType},
     value::Value,
-    workflow_state::{DebugFrame, DebugMode, WorkflowRunState},
+    workflow_state::{DebugFrame, DebugMode, WorkflowExecutionState},
     workflows::*,
 };
 use serde_json::json;
@@ -52,7 +52,7 @@ fn debug_frame_flattens_to_flat_object() {
     })
     .into();
 
-    let parsed = WorkflowRunState::from_state(&blob);
+    let parsed = WorkflowExecutionState::from_state(&blob);
     let debug = parsed.debug.clone().expect("debug frame present");
     assert!(debug.config.enabled);
     assert_eq!(debug.config.mode, Some(DebugMode::Breakpoints));
@@ -270,29 +270,6 @@ fn workflow_node_kind_accepts_rich_control_flow_nodes() {
         .unwrap();
         assert_eq!(node.kind, expected);
     }
-    // "deliverable" is a legacy alias for "output" (backward compat for stored workflow JSON).
-    let node: WorkflowNode = serde_json::from_value(json!({
-        "id": "legacy",
-        "kind": "deliverable",
-        "parameters": {}
-    }))
-    .unwrap();
-    assert_eq!(node.kind, WorkflowNodeKind::Output);
-}
-
-#[test]
-fn provider_metadata_accepts_catalog_provider_name() {
-    let metadata: ProviderMetadata = serde_json::from_value(json!({
-        "provider_name": "git",
-        "actions": [
-            { "function_name": "diff", "description": "Get diff" }
-        ]
-    }))
-    .unwrap();
-
-    assert_eq!(metadata.name, "git");
-    assert_eq!(metadata.actions[0].function_name, "diff");
-    assert!(metadata.metadata.credential_scopes.is_empty());
 }
 
 #[test]
@@ -757,7 +734,7 @@ fn workflow_bundle_uses_importer_shape() {
             {
                 "id": wf_id,
                 "name": "dev workflow",
-                "version": 1,
+                "version": "1.0.0",
                 "enabled": true,
                 "input_type": {},
                 "definition": {}

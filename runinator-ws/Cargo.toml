@@ -39,6 +39,7 @@ runinator-comm = { path = "../runinator-comm" }
 runinator-observability = { path = "../runinator-observability" }
 runinator-platform = { path = "../runinator-platform" }
 runinator-secrets = { path = "../runinator-secrets" }
+runinator-store = { path = "../runinator-store" }
 runinator-workflows = { path = "../runinator-workflows" }
 runinator-provisioner = { path = "../runinator-provisioner" }
 runinator-rexrap = { path = "../runinator-rexrap" }

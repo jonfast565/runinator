@@ -12,7 +12,6 @@ fn run(active_node_id: Option<&str>) -> WorkflowRun {
         "status": "running",
         "active_node_id": active_node_id,
         "parameters": {},
-        "state": {},
         "created_at": "2026-01-01T00:00:00Z",
         "started_at": null,
         "finished_at": null,

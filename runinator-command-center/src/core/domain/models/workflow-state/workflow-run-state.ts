@@ -11,7 +11,7 @@ import type { TryFrame } from "./try-frame";
 /**
  * typed execution state assembled from normalized persistence tables.
  */
-export interface WorkflowRunState {
+export interface WorkflowExecutionState {
   /**
    * where the run is on its track. one entry for a linear run; `parallel`/`race` fan out more, and
    * the debugger can add speculative branches.

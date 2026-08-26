@@ -8,7 +8,6 @@
 use std::sync::Arc;
 
 use runinator_comm::{UiEvent, UiEventKind};
-use runinator_models::runs::RunStatus;
 use tokio::sync::Notify;
 use uuid::Uuid;
 
@@ -97,35 +96,8 @@ pub fn emit_pipeline_run(events: &UiEventPublisher, run_id: Uuid, org_id: Option
     );
 }
 
-pub fn emit_task_run(
-    events: &UiEventPublisher,
-    run_id: Uuid,
-    status: RunStatus,
-    org_id: Option<Uuid>,
-) {
-    emit(
-        events,
-        AppEvent::new(
-            org_id,
-            AppEventKind::RunStatusChanged {
-                run_id,
-                terminal: is_terminal_run_status(status),
-            },
-        ),
-    );
-    // Tasks are a platform/ops surface, so their coarse list invalidation stays global.
-    emit(events, AppEvent::global(AppEventKind::TasksChanged));
-}
-
 pub fn emit_workflows_changed(events: &UiEventPublisher, org_id: Option<Uuid>) {
     emit(events, AppEvent::new(org_id, UiEventKind::WorkflowsChanged));
-}
-
-pub fn is_terminal_run_status(status: RunStatus) -> bool {
-    matches!(
-        status,
-        RunStatus::Succeeded | RunStatus::Failed | RunStatus::TimedOut | RunStatus::Canceled
-    )
 }
 
 #[cfg(test)]

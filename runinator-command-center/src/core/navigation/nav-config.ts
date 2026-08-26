@@ -60,13 +60,6 @@ export const navSections: NavSection[] = [
     label: "Data",
     items: [
       {
-        tab: "Artifacts",
-        label: "Artifacts",
-        icon: "box",
-        endpoint: "artifacts",
-        searchPlaceholder: "Search artifacts",
-      },
-      {
         tab: "ExternalItems",
         label: "External Items",
         icon: "tag",
@@ -156,7 +149,7 @@ export function isResourceTab(tab: AppTab): boolean {
     return false;
   }
 
-  return endpoint !== "artifacts" && endpoint !== "notifications";
+  return endpoint !== "notifications";
 }
 
 export function visibleNavSections(options: {

@@ -5,14 +5,15 @@ use std::sync::Arc;
 use runinator_blob_core::BlobStore;
 use runinator_broker_core::{UiEventPublisher, emit_workflows_changed};
 use runinator_models::{
+    bundles::{PackImportResult, SecretBundle},
     errors::SendableError,
     functions::{FunctionArtifact, FunctionVersion, NewFunctionVersion},
     pipelines::{Pipeline, PipelineBundle},
     workflows::WorkflowBundle,
 };
 use runinator_store::{
-    RuntimeStore,
-    roles::{DefinitionStore, FunctionStore, NotificationStore, ScheduleStore},
+    PackTransactionStore, RuntimeStore,
+    roles::{DefinitionStore, FunctionStore, NotificationStore, ScheduleStore, SettingStore},
 };
 use uuid::Uuid;
 
@@ -32,6 +33,16 @@ impl<T> PackOperations<T> {
             store,
             blobs,
             events,
+        }
+    }
+
+    /// Rebind the service to an isolated transactional store while retaining the immutable blob
+    /// backend and event publisher. Events are emitted only by the caller after commit.
+    fn with_store(&self, store: Arc<T>) -> Self {
+        Self {
+            store,
+            blobs: self.blobs.clone(),
+            events: self.events.clone(),
         }
     }
 }
@@ -59,6 +70,16 @@ impl<T: DefinitionStore + RuntimeStore + FunctionStore + NotificationStore + Sch
             bytes,
         )
         .await
+    }
+
+    /// Upload immutable bytes before a compiled pack opens its database transaction. The returned
+    /// descriptor is persisted by `import_compiled_pack` inside that transaction.
+    pub async fn stage_function_artifact(
+        &self,
+        digest: &str,
+        bytes: Vec<u8>,
+    ) -> Result<FunctionArtifact, SendableError> {
+        repository::functions::stage_artifact(&self.blobs, digest, bytes).await
     }
 
     pub async fn publish_function(
@@ -151,5 +172,151 @@ impl<T: DefinitionStore + RuntimeStore + FunctionStore + NotificationStore + Sch
 
     pub fn workflows_changed(&self, org_id: Option<Uuid>) {
         emit_workflows_changed(&self.events, org_id);
+    }
+}
+
+/// Error classification retained across the engine/HTTP boundary for malformed setting entries.
+#[derive(Debug)]
+pub struct PackImportError {
+    pub bad_request: bool,
+    pub message: String,
+}
+
+impl PackImportError {
+    fn internal(message: impl Into<String>) -> Self {
+        Self {
+            bad_request: false,
+            message: message.into(),
+        }
+    }
+}
+
+impl<
+    T: DefinitionStore
+        + RuntimeStore
+        + PackTransactionStore
+        + FunctionStore
+        + NotificationStore
+        + ScheduleStore
+        + SettingStore,
+> PackOperations<T>
+{
+    /// Apply every mutable part of a compiled pack under one database transaction. Existing role
+    /// methods that open transactions execute as savepoints on the transaction store's sole
+    /// connection. Blob bytes are deliberately staged by the caller before entering this method.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn import_compiled_pack(
+        &self,
+        mut workflows: WorkflowBundle,
+        settings: Option<&SecretBundle>,
+        pipelines: Option<&PipelineBundle>,
+        functions: &[NewFunctionVersion],
+        artifacts: &[FunctionArtifact],
+        import_org: Option<Uuid>,
+        overwrite: bool,
+    ) -> Result<PackImportResult, PackImportError> {
+        let transaction = Arc::new(self.store.begin_pack_transaction().await.map_err(|error| {
+            PackImportError::internal(format!("could not begin pack transaction: {error}"))
+        })?);
+        let transactional = self.with_store(transaction.clone());
+
+        let applied: Result<PackImportResult, PackImportError> = async {
+            for artifact in artifacts {
+                transaction
+                    .upsert_function_artifact(artifact)
+                    .await
+                    .map_err(|error| {
+                        PackImportError::internal(format!(
+                            "pack artifact '{}' could not be recorded: {error}",
+                            artifact.digest
+                        ))
+                    })?;
+            }
+
+            let mut published = Vec::with_capacity(functions.len());
+            for request in functions {
+                let mut request = request.clone();
+                request.package.org_id = import_org;
+                let version = transactional
+                    .publish_function(&request)
+                    .await
+                    .map_err(|error| {
+                        PackImportError::internal(format!(
+                            "pack function '{}' could not be published: {error}",
+                            request.package.name
+                        ))
+                    })?;
+                published.push(version);
+            }
+            if !published.is_empty() {
+                log::info!("Imported {} function versions from pack", published.len());
+            }
+            transactional
+                .resolve_provisional_function_bindings(&mut workflows, &published)
+                .await
+                .map_err(|error| {
+                    PackImportError::internal(format!(
+                        "pack function bindings could not be resolved after publish: {error}"
+                    ))
+                })?;
+
+            let settings = match settings {
+                Some(bundle) => SecretBundle {
+                    secrets: crate::settings::import_setting_bundle_with(
+                        transaction.as_ref(),
+                        bundle,
+                        overwrite,
+                    )
+                    .await
+                    .map_err(|error| PackImportError {
+                        bad_request: error.bad_request,
+                        message: error.message,
+                    })?,
+                },
+                None => SecretBundle::default(),
+            };
+            let workflows = transactional
+                .import_workflows(workflows, overwrite)
+                .await
+                .map_err(|error| PackImportError::internal(error.to_string()))?;
+            let pipelines = match pipelines {
+                Some(bundle) => transactional
+                    .import_pipelines(bundle, import_org)
+                    .await
+                    .map_err(|error| PackImportError::internal(error.to_string()))?,
+                None => Vec::new(),
+            };
+
+            Ok(PackImportResult {
+                workflows,
+                secrets: settings,
+                pipelines,
+            })
+        }
+        .await;
+
+        match applied {
+            Ok(result) => {
+                if let Err(error) = transaction.commit_pack_transaction().await {
+                    let rollback = transaction.rollback_pack_transaction().await;
+                    let message = match rollback {
+                        Ok(()) => format!("could not commit pack transaction: {error}"),
+                        Err(rollback_error) => format!(
+                            "could not commit pack transaction: {error}; rollback also failed: {rollback_error}"
+                        ),
+                    };
+                    return Err(PackImportError::internal(message));
+                }
+                Ok(result)
+            }
+            Err(error) => {
+                if let Err(rollback_error) = transaction.rollback_pack_transaction().await {
+                    return Err(PackImportError::internal(format!(
+                        "pack import failed and its transaction could not be rolled back: {rollback_error}"
+                    )));
+                }
+                Err(error)
+            }
+        }
     }
 }

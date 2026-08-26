@@ -70,7 +70,6 @@ pub struct CredentialSummary {
 pub struct CredentialPutRequest {
     pub scope: String,
     pub name: String,
-    #[serde(alias = "secret")]
     pub value: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schema: Option<Value>,

@@ -16,7 +16,7 @@ import type { ParallelFrame } from "./parallel-frame";
 import type { RaceFrame } from "./race-frame";
 import type { RunCursor } from "./run-cursor";
 import type { TryFrame } from "./try-frame";
-import type { WorkflowRunState } from "./workflow-run-state";
+import type { WorkflowExecutionState } from "./workflow-run-state";
 
 function stringArray(value: JsonValue | undefined): string[] | undefined {
   if (!Array.isArray(value)) {
@@ -266,7 +266,7 @@ export function coerceMapFrame(value: unknown): MapFrame | undefined {
 }
 
 /** parse a run `state` blob into typed frames; returns null when value is not an object. */
-export function coerceWorkflowRunState(value: unknown): WorkflowRunState | null {
+export function coerceWorkflowExecutionState(value: unknown): WorkflowExecutionState | null {
   if (!isJsonRecord(value)) {
     return null;
   }

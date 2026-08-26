@@ -142,12 +142,11 @@
                           <th>Size</th>
                           <th>URI</th>
                           <th>Created</th>
-                          <th></th>
                         </tr>
                       </thead>
                       <tbody>
                         <tr v-if="!artifacts.length" class="muted">
-                          <td colspan="6">No artifacts available.</td>
+                          <td colspan="5">No artifacts available.</td>
                         </tr>
                         <tr v-for="artifact in artifacts" :key="artifact.id">
                           <td>{{ artifact.name }}</td>
@@ -155,11 +154,6 @@
                           <td>{{ artifact.size_bytes }}</td>
                           <td>{{ artifact.uri }}</td>
                           <td>{{ formatDate(artifact.created_at) }}</td>
-                          <td>
-                            <button class="btn" @click="download(artifact.id, artifact.name)">
-                              Download
-                            </button>
-                          </td>
                         </tr>
                       </tbody>
                     </table>
@@ -183,12 +177,11 @@
                           <th>MIME</th>
                           <th>Size</th>
                           <th>Created</th>
-                          <th></th>
                         </tr>
                       </thead>
                       <tbody>
                         <tr v-if="!runArtifacts.length" class="muted">
-                          <td colspan="6">No artifacts available.</td>
+                          <td colspan="5">No artifacts available.</td>
                         </tr>
                         <tr v-for="artifact in runArtifacts" :key="artifact.id">
                           <td>{{ artifact.name }}</td>
@@ -196,16 +189,6 @@
                           <td>{{ artifact.mime_type }}</td>
                           <td>{{ artifact.size_bytes }}</td>
                           <td>{{ formatDate(artifact.created_at) }}</td>
-                          <td>
-                            <button
-                              v-if="artifact.artifact_id"
-                              class="btn"
-                              @click="download(artifact.artifact_id, artifact.name)"
-                            >
-                              Download
-                            </button>
-                            <span v-else class="text-xs text-fg-muted">Effect output</span>
-                          </td>
                         </tr>
                       </tbody>
                     </table>
@@ -239,11 +222,10 @@ import WorkflowRunDetail from "../components/workflow/WorkflowRunDetail.vue";
 import WorkflowRunGraph from "../components/workflow/WorkflowRunGraph.vue";
 import { useBulkSelection } from "../composables/useBulkSelection";
 import { useWorkflowRunStream } from "../composables/useWorkflowRunStream";
-import { useWorkflowNodeRunLogStream } from "../composables/useWorkflowNodeRunLogStream";
 import { useOperationLoading } from "../composables/useOperationLoading";
 import { useAppStore } from "../../ui/adapters/pinia/app";
 import { useWorkflowsStore } from "../../ui/adapters/pinia/workflows";
-import type { RunArtifact, WorkflowRunArtifact } from "../../core/domain/models";
+import type { RunArtifact, RunChunk, WorkflowRunArtifact } from "../../core/domain/models";
 import { formatDate, pretty } from "../../core/utils/format";
 import { countActiveRuns, isActiveRunStatus } from "../../core/utils/status";
 
@@ -253,15 +235,10 @@ const { isLoading: loadingRuns, loadingMessage: loadingRunsMessage } =
   useOperationLoading("Loading workflow runs");
 const artifacts = ref<RunArtifact[]>([]);
 const runArtifacts = ref<WorkflowRunArtifact[]>([]);
-
-async function download(artifactId: string, name: string) {
-  await workflowRunExtrasService.downloadArtifact(artifactId, name).catch((error: unknown) => {
-    app.setError(String(error));
-  });
-}
+const logChunks = ref<RunChunk[]>([]);
+const lastLogChunkAt = ref(0);
 
 const selectedOutput = computed(() => pretty(workflows.workflowRunDetail?.run.output_json ?? {}));
-const selectedNodeRunIdRef = ref(workflows.selectedWorkflowNodeRunId);
 const workflowNames = computed(() =>
   Object.fromEntries(
     workflows.workflows.flatMap((workflow) =>
@@ -334,15 +311,16 @@ useWorkflowRunStream();
 
 watch(
   () => workflows.selectedWorkflowNodeRunId,
-  (id) => {
-    selectedNodeRunIdRef.value = id;
-  },
-  { immediate: true },
-);
-watch(
-  () => workflows.selectedWorkflowNodeRunId,
   async (id) => {
-    artifacts.value = id ? await workflowRunExtrasService.fetchNodeRunArtifacts(id) : [];
+    const [nextArtifacts, nextChunks] = id
+      ? await Promise.all([
+          workflowRunExtrasService.fetchNodeRunArtifacts(id),
+          workflowRunExtrasService.fetchNodeRunChunks(id),
+        ])
+      : [[], []];
+    artifacts.value = nextArtifacts;
+    logChunks.value = nextChunks;
+    lastLogChunkAt.value = nextChunks.length ? Date.now() : 0;
   },
   { immediate: true },
 );
@@ -354,6 +332,4 @@ watch(
   { immediate: true },
 );
 
-const { chunks: logChunks, lastChunkAt: lastLogChunkAt } =
-  useWorkflowNodeRunLogStream(selectedNodeRunIdRef);
 </script>

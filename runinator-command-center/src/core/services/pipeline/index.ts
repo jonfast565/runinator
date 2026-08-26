@@ -38,11 +38,6 @@ export interface PipelineData {
   triggersByWorkflowId: Record<string, WorkflowTrigger[]>;
 }
 
-/** the `on` selector a new link inherits from the pipeline's failure policy. */
-export function defaultChainEvent(pipeline: Pipeline): ChainEvent {
-  return pipeline.defaults.on_step_failure === "continue" ? "complete" : "success";
-}
-
 /** load the full workflow list (for the picker + name resolution) and triggers for the members. */
 export async function loadPipelineData(memberIds: string[]): Promise<PipelineData> {
   const workflows = await fetchWorkflows();
@@ -148,37 +143,6 @@ export async function resolvePipelineRun(
   message?: string | null,
 ): Promise<PipelineRun> {
   return resolvePipelineRunApi(pipelineRunId, decision, null, message ?? null);
-}
-
-/** Compatibility helper for ordinary workflow-to-workflow chaining; pipeline links do not use it. */
-export async function createChainLink(
-  sourceWorkflowId: string,
-  targetName: string,
-  pipeline: Pipeline,
-): Promise<WorkflowTrigger> {
-  const configuration: JsonRecord = {
-    on: defaultChainEvent(pipeline),
-    target_workflow: targetName,
-    parameters: pipeline.defaults.default_parameters,
-    pipeline_id: pipeline.id,
-  };
-
-  if (pipeline.defaults.max_chain_depth != null) {
-    configuration.max_chain_depth = pipeline.defaults.max_chain_depth;
-  }
-
-  const trigger: WorkflowTrigger = {
-    id: null,
-    workflow_id: sourceWorkflowId,
-    kind: "chained",
-    enabled: pipeline.defaults.links_enabled_by_default,
-    configuration,
-    next_execution: null,
-    blackout_start: null,
-    blackout_end: null,
-    metadata: {},
-  };
-  return saveWorkflowTrigger(trigger, true);
 }
 
 /** persist selector/enabled edits to an existing chained trigger (pipeline tag preserved). */

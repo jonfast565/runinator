@@ -1,8 +1,7 @@
 // authenticated cipher for settings values at rest. each value is sealed with ChaCha20-Poly1305 and
 // tagged with `MAGIC || key_id || nonce`, so a rotated key set decrypts with the matching key: new
 // writes use the primary key, and `secondaries` keep pre-rotation values readable during the overlap
-// window. values written before authenticated encryption (bare repeating-key xor, no header) are
-// still readable through the legacy path.
+// window.
 
 use chacha20poly1305::aead::{Aead, OsRng};
 use chacha20poly1305::{AeadCore, ChaCha20Poly1305, Key, KeyInit, Nonce};
@@ -20,8 +19,8 @@ const DEV_KEY: &str = "runinator-local-development-key";
 const ENC_DOMAIN: &[u8] = b"runinator/cred/enc\0";
 const ID_DOMAIN: &[u8] = b"runinator/cred/id\0";
 
-/// one keyset entry: the raw key material (for the legacy xor path), the derived 32-byte aead key, and
-/// a short stable id used to tag/recognize this key's ciphertext.
+/// one keyset entry: the raw key material (to identify identity mode), the derived 32-byte aead
+/// key, and a short stable id used to tag/recognize this key's ciphertext.
 #[derive(Clone)]
 struct CipherKey {
     raw: Vec<u8>,
@@ -116,13 +115,11 @@ impl SecretCipher {
         out
     }
 
-    /// open stored ciphertext, returning `None` only when an authenticated value cannot be opened by
-    /// any configured key (a wrong, missing, or retired key, or tampering). legacy headerless values
-    /// are recovered with the primary key and always return `Some`.
+    /// Open a current stored ciphertext. Headerless values are accepted only in identity mode;
+    /// otherwise they are not a supported persisted-secret format.
     pub fn try_decrypt(&self, value: &[u8]) -> Option<Vec<u8>> {
         let Some((id, nonce, body)) = parse_sealed(value) else {
-            // legacy value written before authenticated encryption: bare xor with the primary key.
-            return Some(self.legacy_decrypt(value));
+            return self.primary.is_empty().then(|| value.to_vec());
         };
         let nonce = Nonce::from_slice(nonce);
         // prefer the key named by the tag, then fall back to the rest; the auth tag gates correctness.
@@ -142,24 +139,16 @@ impl SecretCipher {
         self.try_decrypt(value).unwrap_or_default()
     }
 
-    /// whether a stored value should be re-sealed with the current primary key: true for legacy
-    /// headerless values and for values sealed by a non-primary key. always false in identity mode.
+    /// Whether a sealed value should be re-sealed with the current primary key. Always false in
+    /// identity mode and for unsupported headerless values.
     pub fn needs_reencrypt(&self, value: &[u8]) -> bool {
         if self.primary.is_empty() {
             return false;
         }
         match parse_sealed(value) {
             Some((id, _, _)) => id != self.primary.id,
-            None => true,
+            None => false,
         }
-    }
-
-    // bare repeating-key xor with the primary key, preserving identity for an empty key.
-    fn legacy_decrypt(&self, input: &[u8]) -> Vec<u8> {
-        if self.primary.is_empty() {
-            return input.to_vec();
-        }
-        xor(input, &self.primary.raw)
     }
 
     fn keys(&self) -> impl Iterator<Item = &CipherKey> {
@@ -170,9 +159,7 @@ impl SecretCipher {
         self.keys().find(|key| !key.is_empty() && key.id == id)
     }
 
-    /// whether `value` carries the authenticated-encryption header, i.e. was sealed by this cipher
-    /// family. callers that store values both encrypted and (for legacy reasons) in the clear use
-    /// this to avoid feeding a true plaintext through the legacy xor decrypt path.
+    /// Whether `value` carries this cipher family's authenticated-encryption header.
     pub fn is_sealed(value: &[u8]) -> bool {
         parse_sealed(value).is_some()
     }
@@ -187,7 +174,7 @@ impl std::fmt::Debug for SecretCipher {
     }
 }
 
-// split a sealed value into its key id, nonce, and ciphertext+tag body, or None when headerless.
+// split a sealed value into its key id, nonce, and ciphertext+tag body.
 fn parse_sealed(value: &[u8]) -> Option<([u8; KEY_ID_LEN], &[u8], &[u8])> {
     if value.len() < HEADER_LEN || value[..MAGIC.len()] != MAGIC {
         return None;
@@ -205,15 +192,6 @@ fn derive(domain: &[u8], raw: &[u8]) -> [u8; 32] {
     hasher.update(domain);
     hasher.update(raw);
     hasher.finalize().into()
-}
-
-// repeating-key xor, used only to read legacy pre-aead values.
-fn xor(input: &[u8], key: &[u8]) -> Vec<u8> {
-    input
-        .iter()
-        .enumerate()
-        .map(|(index, byte)| byte ^ key[index % key.len()])
-        .collect()
 }
 
 #[cfg(test)]

@@ -224,7 +224,7 @@ pub(crate) fn route_success_terminals_to_end(nodes: &mut [Value], end_id: &str) 
 /// moment `resume` arrived: a resume carries no success transition, so the literal form gave it a
 /// `next` into `end` and dragged a node that is not `handler_safe` into every interrupt region.
 fn kind_is_terminal(kind: &str) -> bool {
-    // through serde so the `deliverable` alias resolves the same way node parsing does.
+    // Decode through serde so terminal classification matches normal node parsing.
     Value::String(kind.to_string())
         .decode::<WorkflowNodeKind>()
         .is_ok_and(|kind| crate::node_kinds::graph_role(&kind).terminal)

@@ -49,7 +49,8 @@ fn secret_must_be_a_non_empty_string() {
         None,
     )
     .unwrap();
-    assert_eq!(bytes, b"tok");
+    assert!(bytes.starts_with(b"runinator-secret:v1:"));
+    assert_eq!(decode_secret(&bytes).unwrap().value, "tok");
 }
 
 #[test]
@@ -65,7 +66,7 @@ fn secret_expiry_is_stored_with_the_value() {
         Some(expires_at),
     )
     .unwrap();
-    let stored = decode_secret(&bytes);
+    let stored = decode_secret(&bytes).unwrap();
     assert_eq!(stored.value, "tok");
     assert_eq!(stored.expires_at, Some(expires_at));
 }

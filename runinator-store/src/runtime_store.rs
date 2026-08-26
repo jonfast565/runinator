@@ -144,11 +144,6 @@ pub trait RuntimeStore: Send + Sync + 'static {
         message: Option<String>,
     ) -> impl Future<Output = Result<bool, SendableError>> + Send;
 
-    /// Normalize every legacy `workflow_runs.state` value and clear it after a successful write.
-    fn migrate_workflow_execution_states(
-        &self,
-    ) -> impl Future<Output = Result<(), SendableError>> + Send;
-
     /// Set or clear the user-facing display name of a workflow run.
     fn set_workflow_run_name(
         &self,

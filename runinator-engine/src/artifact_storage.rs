@@ -1,11 +1,7 @@
 //! where artifact bytes live.
 //!
-//! Artifacts predate the object store, so `run_artifacts.uri` has two forms:
-//! a `blob://` URI for new rows, or an absolute path from the replica that handled an old upload.
-//! The old form could return 404 from another WS replica. Both forms are readable here; only the
-//! first is written.
+//! Artifact URIs are always `blob://` URIs, so bytes are available to every replica.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use runinator_blob_core::{
@@ -56,55 +52,36 @@ pub async fn put_artifact(
     Ok(blob_uri(RUN_ARTIFACT_BUCKET, &key))
 }
 
-/// open an artifact's bytes for streaming, from the object store or from the legacy local path.
+/// open an artifact's bytes for streaming from the object store.
 pub async fn open_artifact(
     store: &Arc<dyn BlobStore>,
     uri: &str,
     range: Option<ByteRange>,
 ) -> Result<ArtifactContent, SendableError> {
-    if let Some((bucket, key)) = parse_blob_uri(uri) {
-        let reader = store
-            .open(&bucket, &key, range)
-            .await
-            .map_err(|err| ARTIFACT_UNREADABLE.error(err))?;
-        return Ok(ArtifactContent {
-            size_bytes: reader.len(),
-            body: reader.body,
-        });
-    }
-    // pre-blob row: a path on the replica that served the upload. readable only from that replica,
-    // which is the bug the object store exists to remove — but existing rows still have to work.
-    let path = PathBuf::from(uri);
-    let file = tokio::fs::File::open(&path)
+    let (bucket, key) = parse_blob_uri(uri)
+        .ok_or_else(|| ARTIFACT_UNREADABLE.error(format!("invalid artifact URI {uri}")))?;
+    let reader = store
+        .open(&bucket, &key, range)
         .await
-        .map_err(|err| ARTIFACT_UNREADABLE.error(format!("{}: {err}", path.display())))?;
-    let size_bytes = file
-        .metadata()
-        .await
-        .map(|meta| meta.len())
-        .map_err(|err| ARTIFACT_UNREADABLE.error(format!("{}: {err}", path.display())))?;
+        .map_err(|err| ARTIFACT_UNREADABLE.error(err))?;
     Ok(ArtifactContent {
-        size_bytes,
-        body: Box::new(file),
+        size_bytes: reader.len(),
+        body: reader.body,
     })
 }
 
-/// remove an artifact's bytes. best effort in both storage shapes: a missing object must not block
-/// deleting the row that points at it, or the row becomes undeletable.
+/// remove an artifact's bytes. a missing object must not block deleting the row that points at it,
+/// or the row becomes undeletable.
 pub async fn delete_artifact_bytes(store: &Arc<dyn BlobStore>, uri: &str) {
-    if let Some((bucket, key)) = parse_blob_uri(uri) {
-        if let Err(err) = store.delete(&bucket, &key).await {
-            match err {
-                BlobError::NotFound(_) | BlobError::NoSuchBucket(_) => {}
-                other => log::warn!("failed to delete artifact object {uri}: {other}"),
-            }
-        }
+    let Some((bucket, key)) = parse_blob_uri(uri) else {
+        log::warn!("cannot delete artifact with invalid blob URI {uri}");
         return;
-    }
-    if let Err(err) = tokio::fs::remove_file(uri).await
-        && err.kind() != std::io::ErrorKind::NotFound
-    {
-        log::warn!("failed to unlink artifact file {uri}: {err}");
+    };
+    if let Err(err) = store.delete(&bucket, &key).await {
+        match err {
+            BlobError::NotFound(_) | BlobError::NoSuchBucket(_) => {}
+            other => log::warn!("failed to delete artifact object {uri}: {other}"),
+        }
     }
 }
 

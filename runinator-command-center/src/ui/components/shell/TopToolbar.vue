@@ -127,8 +127,6 @@ const activeSubtitle = computed(() => {
       return `${String(app.liveReplicaCount)}/${String(app.replicas.length)} healthy across ${String(app.replicaCounts.webservices)} ws, ${String(app.replicaCounts.workers)} workers, ${String(app.replicaCounts.wakers)} wakers`;
     case "Secrets":
       return `${String(secrets.secrets.length)} secrets`;
-    case "Artifacts":
-      return "File artifacts attached to runs";
     case "Notifications":
       return "In-app and email notifications";
     default:

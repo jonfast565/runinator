@@ -1,17 +1,8 @@
-import {
-  getServiceStatus,
-  startServiceDiscovery,
-  uploadArtifactFromPath,
-  downloadArtifactToPath,
-} from "../../../core/api/commandCenterApi";
+import { getServiceStatus, startServiceDiscovery } from "../../../core/api/commandCenterApi";
 import type { PlatformAdapter } from "../../../core/platform/types";
 import { tauriCommandRuntime } from "./command-runtime";
 import { isTauriRuntime, listenTauri } from "./runtime";
-import {
-  downloadArtifactInBrowser,
-  pickFileFromBrowser,
-  uploadArtifactFromBrowser,
-} from "../browser/files";
+import { pickFileFromBrowser } from "../browser/files";
 
 const localStorageAuth = {
   get(key: string) {
@@ -50,14 +41,6 @@ export function createTauriPlatformAdapter(): PlatformAdapter {
       prompt(message) {
         return typeof prompt === "function" ? prompt(message) : null;
       },
-    },
-    artifacts: {
-      isDesktop: () => desktop,
-      pickFile: pickFileFromBrowser,
-      uploadFromPath: uploadArtifactFromPath,
-      uploadFromBrowser: uploadArtifactFromBrowser,
-      downloadInBrowser: downloadArtifactInBrowser,
-      downloadToPath: downloadArtifactToPath,
     },
     serviceDiscovery: {
       isDesktop: () => desktop,

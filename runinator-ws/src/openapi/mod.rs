@@ -159,19 +159,6 @@ pub(crate) const MINIMAL_ENDPOINTS: &[(&str, &str, docs::EndpointPolicy)] = &[
         ]),
     ),
     (
-        "get",
-        "/ws/desktop-worker",
-        docs::EndpointPolicy::SystemRole(&[
-            runinator_models::rbac::SystemRole::Agent,
-            runinator_models::rbac::SystemRole::Worker,
-        ]),
-    ),
-    (
-        "delete",
-        "/artifacts/{id}",
-        docs::EndpointPolicy::Authenticated,
-    ),
-    (
         "delete",
         "/automation_events/{id}",
         docs::EndpointPolicy::Authenticated,
@@ -441,7 +428,6 @@ fn endpoint_docs() -> impl Iterator<Item = &'static EndpointDoc> {
         (name = "Functions", description = "Packaged functions: publishing, promotion, and artifacts."),
         (name = "Console", description = "The REXRAP console: notebook sessions and their cells."),
         (name = "Replicas", description = "Service replica registry."),
-        (name = "Runs", description = "Low-level task run records."),
         (name = "Supervisor", description = "Local supervisor status."),
         (name = "Webhooks", description = "External webhook ingress."),
         (name = "REXRAP", description = "REXRAP language tooling."),
@@ -461,7 +447,6 @@ fn endpoint_docs() -> impl Iterator<Item = &'static EndpointDoc> {
         crate::handlers::workflows::get_workflow_revisions,
         crate::handlers::workflows::get_workflow_revision,
         crate::handlers::workflows::restore_workflow_revision,
-        crate::handlers::workflows::import_workflow_bundle,
         crate::handlers::runs::cancel_workflow_run,
         crate::handlers::runs::pause_workflow_run,
         crate::handlers::runs::resume_workflow_run,

@@ -30,9 +30,6 @@ pub enum Example {
     WorkflowRunStatus,
     WorkflowRunReplay,
     WorkflowRunRename,
-    RunList,
-    RunStatus,
-    RunChunk,
     Artifact,
     RexRapSource,
     RexRapCompile,
@@ -43,7 +40,6 @@ pub enum Example {
     RexRapEvaluate,
     Trigger,
     TriggerList,
-    TriggerClaim,
     SchedulerRunClaim,
     SchedulerReadyNodeClaim,
     SchedulerRunLease,
@@ -62,7 +58,6 @@ pub enum Example {
     ApprovalResolution,
     Idempotency,
     Credential,
-    SecretBundle,
     Provider,
     ProviderList,
     ProviderBundle,
@@ -132,11 +127,6 @@ pub fn example_value(example: Example) -> Option<Value> {
         }
         Example::WorkflowRunReplay => json!({ "from_step_id": "deploy" }),
         Example::WorkflowRunRename => json!({ "name": "nightly deploy" }),
-        Example::RunList => json!([{ "id": UUID_EXAMPLE, "status": "running", "provider": "std" }]),
-        Example::RunStatus => {
-            json!({ "status": "succeeded", "output_json": { "ok": true }, "message": "completed" })
-        }
-        Example::RunChunk => json!([{ "cursor": 1, "stream": "stdout", "content": "hello\n" }]),
         Example::Artifact => {
             json!({ "id": UUID_EXAMPLE, "name": "report.json", "content_type": "application/json", "size": 42 })
         }
@@ -161,7 +151,6 @@ pub fn example_value(example: Example) -> Option<Value> {
         }
         Example::Trigger => trigger_example(),
         Example::TriggerList => json!([trigger_example()]),
-        Example::TriggerClaim => json!({ "scheduler_id": "scheduler-1", "limit": 25 }),
         Example::SchedulerRunClaim => {
             json!({ "scheduler_id": "scheduler-1", "lease_until": "2026-06-18T13:00:00Z", "statuses": ["queued", "running"], "limit": 50 })
         }
@@ -213,9 +202,6 @@ pub fn example_value(example: Example) -> Option<Value> {
         }
         Example::Credential => {
             json!({ "scope": "slack", "name": "bot_token", "kind": "secret", "value": "xoxb-..." })
-        }
-        Example::SecretBundle => {
-            json!({ "secrets": [{ "scope": "slack", "name": "bot_token", "value": "xoxb-...", "kind": "secret" }] })
         }
         Example::Provider => provider_example(),
         Example::ProviderList => json!([provider_example()]),
@@ -358,7 +344,7 @@ fn workflow_example() -> Value {
         "namespace": "default",
         "version": "1.0.0",
         "enabled": true,
-        "input_schema": { "type": "object", "properties": { "environment": { "type": "string" } } },
+        "input_type": { "type": "object", "properties": { "environment": { "type": "string" } } },
         "definition": { "nodes": [], "edges": [] },
     })
 }

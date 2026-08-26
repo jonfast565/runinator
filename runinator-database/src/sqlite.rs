@@ -88,6 +88,10 @@ impl SqlBackend for SqliteBackend {
         &self.pool
     }
 
+    fn from_pool(pool: SqlitePool) -> Self {
+        Self { pool }
+    }
+
     fn dialect(&self) -> SqlDialect {
         SqlDialect::Sqlite
     }

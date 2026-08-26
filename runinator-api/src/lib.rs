@@ -10,7 +10,4 @@ pub use blocking_client::BlockingApiClient;
 pub use error::{ApiError, Result};
 pub use locator::{BlockingServiceLocator, ServiceLocator, StaticLocator};
 pub use replicas::{ReplicaClient, ReplicaServiceConfig, ReplicaSession};
-pub use types::{
-    ArtifactContentResponse, RunArtifactPayload, RunChunkPayload, RunStatusPayload,
-    WorkflowNodeRunStatusPayload,
-};
+pub use types::ArtifactContentResponse;

@@ -83,6 +83,10 @@ impl SqlBackend for MySqlBackend {
         &self.pool
     }
 
+    fn from_pool(pool: MySqlPool) -> Self {
+        Self { pool }
+    }
+
     fn dialect(&self) -> SqlDialect {
         SqlDialect::MySql
     }

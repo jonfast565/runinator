@@ -19,7 +19,7 @@ export {
   isSpeculative,
 } from "./run-cursor";
 export type { TryFrame } from "./try-frame";
-export type { WorkflowRunState } from "./workflow-run-state";
+export type { WorkflowExecutionState } from "./workflow-run-state";
 export {
   coerceCompensationFrame,
   coerceControlFrame,
@@ -31,5 +31,5 @@ export {
   coerceRaceFrame,
   coerceRunCursors,
   coerceTryFrame,
-  coerceWorkflowRunState,
+  coerceWorkflowExecutionState,
 } from "./coerce";

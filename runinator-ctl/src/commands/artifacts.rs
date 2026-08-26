@@ -23,17 +23,6 @@ pub(super) async fn artifacts(
                 }
             }
         }
-        ArtifactCommands::Download { id, out } => {
-            let bytes = client.download_artifact(*id).await?;
-            let path = out.clone().unwrap_or_else(|| PathBuf::from(id.to_string()));
-            fs::write(&path, &bytes)?;
-            if json_output {
-                return output::json(
-                    &json!({ "path": path.display().to_string(), "bytes": bytes.len() }),
-                );
-            }
-            println!("wrote {} bytes to {}", bytes.len(), path.display());
-        }
     }
     Ok(())
 }

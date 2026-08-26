@@ -84,6 +84,10 @@ impl SqlBackend for PostgresBackend {
         &self.pool
     }
 
+    fn from_pool(pool: PgPool) -> Self {
+        Self { pool }
+    }
+
     fn dialect(&self) -> SqlDialect {
         SqlDialect::Postgres
     }

@@ -4,12 +4,13 @@ use std::{
 };
 
 use runinator_broker::{Broker, EmbeddedEngineSignals, UiEventPublisher};
-use runinator_database::{interfaces::DatabaseImpl, load_jwt_secret, load_jwt_secret_previous};
+use runinator_database::{load_jwt_secret, load_jwt_secret_previous};
 use runinator_models::auth::AuthContext;
 use runinator_models::errors::SendableError;
 use runinator_models::replicas::{
     ReplicaHeartbeatRequest, ReplicaKind, ReplicaRegistrationRequest,
 };
+use runinator_store::DatabaseImpl;
 use tokio::{
     net::TcpListener,
     sync::{Notify, broadcast},

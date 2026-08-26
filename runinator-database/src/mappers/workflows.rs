@@ -1,39 +1,5 @@
 use super::*;
 
-macro_rules! run_chunk_from_row {
-    ($row:expr) => {{
-        RunChunk {
-            id: $row.get("id"),
-            run_id: $row.get("run_id"),
-            sequence: $row.get("sequence"),
-            stream: $row.get("stream"),
-            content: $row.get("content"),
-            created_at: DateTime::<Utc>::from_timestamp($row.get("created_at"), 0)
-                .unwrap_or_else(Utc::now),
-        }
-    }};
-}
-
-row_mapper!(row_to_run_chunk(row) -> RunChunk { run_chunk_from_row!(row) });
-
-macro_rules! run_artifact_from_row {
-    ($row:expr) => {{
-        RunArtifact {
-            id: $row.get("id"),
-            run_id: $row.get("run_id"),
-            name: $row.get("name"),
-            mime_type: $row.get("mime_type"),
-            size_bytes: $row.get("size_bytes"),
-            uri: $row.get("uri"),
-            metadata: parse_json($row.get::<String, _>("metadata")),
-            created_at: DateTime::<Utc>::from_timestamp($row.get("created_at"), 0)
-                .unwrap_or_else(Utc::now),
-        }
-    }};
-}
-
-row_mapper!(row_to_run_artifact(row) -> RunArtifact { run_artifact_from_row!(row) });
-
 macro_rules! workflow_from_row {
     ($row:expr) => {{
         WorkflowDefinition {
@@ -172,10 +138,7 @@ macro_rules! workflow_run_from_row {
                 .unwrap_or(WorkflowStatus::Failed),
             active_node_id: $row.get("active_node_id"),
             parameters: parse_json($row.get::<String, _>("parameters")),
-            execution_state: WorkflowExecutionState::from_state(&parse_json(
-                $row.get::<String, _>("state"),
-            )),
-            state: parse_json($row.get::<String, _>("state")),
+            execution_state: WorkflowExecutionState::default(),
             state_version: $row.try_get("state_version").unwrap_or(0),
             created_at: DateTime::<Utc>::from_timestamp($row.get("created_at"), 0)
                 .unwrap_or_else(Utc::now),

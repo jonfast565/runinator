@@ -5,8 +5,8 @@ use std::{
 
 use chrono::{TimeZone, Utc};
 use flate2::read::GzDecoder;
-use runinator_database::archive::{ArchiveRow, ArchiveTable};
 use runinator_models::json;
+use runinator_store::archive::{ArchiveRow, ArchiveTable};
 use serde_json::Value;
 use uuid::Uuid;
 

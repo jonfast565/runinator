@@ -594,7 +594,7 @@ async fn function_artifact_visible<
 // `namespace.name` or a bare `name`. names cannot contain dots (the manifest rejects them), so this
 // split is unambiguous and the dotted call path stays parseable in the same way everywhere.
 fn split_qualified(package: &str) -> (Option<String>, String) {
-    match package.split_once('.') {
+    match package.rsplit_once('.') {
         Some((namespace, name)) => (Some(namespace.to_string()), name.to_string()),
         None => (None, package.to_string()),
     }

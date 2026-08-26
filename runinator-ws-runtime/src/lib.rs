@@ -1,4 +1,4 @@
-//! the runtime http surface: workflow and task runs, VM continuations and effects, artifacts,
+//! the runtime http surface: workflow runs, VM continuations and effects, artifact-byte upload,
 //! triggers and schedules, automation records, notifications, the debugger,
 //! replicas and node provisioning, webhook ingress, observability, and the health probes.
 //!

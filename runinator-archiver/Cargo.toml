@@ -19,6 +19,7 @@ runinator-db-cli = { path = "../runinator-db-cli", default-features = false }
 runinator-models = { path = "../runinator-models" }
 runinator-observability = { path = "../runinator-observability" }
 runinator-platform = { path = "../runinator-platform" }
+runinator-store = { path = "../runinator-store" }
 
 [features]
 default = ["sqlite", "http", "tcp", "ws"]

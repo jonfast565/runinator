@@ -358,7 +358,7 @@ fn idempotency_scope(org_id: Option<Uuid>, package: &str, export: &str) -> Strin
 
 // `namespace.name` or a bare `name`; names cannot contain dots, so this split is unambiguous.
 fn split_qualified(package: &str) -> (Option<String>, String) {
-    match package.split_once('.') {
+    match package.rsplit_once('.') {
         Some((namespace, name)) => (Some(namespace.to_string()), name.to_string()),
         None => (None, package.to_string()),
     }

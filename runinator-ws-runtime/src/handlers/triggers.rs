@@ -12,7 +12,7 @@ use runinator_store::{
 };
 
 use runinator_engine::services::SchedulingOperations;
-use runinator_ws_core::models::{ApiResponse, SchedulerTriggerClaimRequest};
+use runinator_ws_core::models::ApiResponse;
 use runinator_ws_core::openapi::docs::{
     EndpointDoc, Example, WORKFLOW_TRIGGER_FILTERS, endpoint, json_body,
 };
@@ -130,34 +130,6 @@ pub async fn get_due_workflow_triggers<
     }
 }
 
-pub async fn claim_due_workflow_trigger_firings<
-    T: AuthorizationStore + RuntimeStore + DefinitionStore + ScheduleStore,
->(
-    Extension(_db): Extension<Arc<T>>,
-    Extension(scheduling): Extension<Arc<SchedulingOperations<T>>>,
-    Extension(ctx): Extension<AuthContext>,
-    Json(request): Json<SchedulerTriggerClaimRequest>,
-) -> (StatusCode, Json<ApiResponse>) {
-    if let Err(reply) = ctx.require_system_role(&[
-        runinator_models::rbac::SystemRole::Engine,
-        runinator_models::rbac::SystemRole::Waker,
-    ]) {
-        return reply;
-    }
-    match scheduling
-        .claim_due_workflow_trigger_firings(request.scheduler_id, request.limit.unwrap_or(50))
-        .await
-    {
-        // the compatibility endpoint reports only the runs created; slots the schedule policy
-        // declined are engine-side bookkeeping and have no run to report.
-        Ok(batch) => (
-            StatusCode::OK,
-            Json(ApiResponse::WorkflowRunList(batch.runs)),
-        ),
-        Err(err) => api_error(err.to_string()),
-    }
-}
-
 pub async fn delete_workflow_trigger<
     T: AuthorizationStore + RuntimeStore + DefinitionStore + ScheduleStore,
 >(
@@ -186,7 +158,7 @@ pub fn routes<T: AuthorizationStore + RuntimeStore + DefinitionStore + ScheduleS
     pool: std::sync::Arc<T>,
 ) -> axum::Router {
     use axum::Extension;
-    use axum::routing::{get, post};
+    use axum::routing::get;
     axum::Router::new()
         .route(
             "/workflows/{id}/triggers",
@@ -197,10 +169,6 @@ pub fn routes<T: AuthorizationStore + RuntimeStore + DefinitionStore + ScheduleS
         .route(
             runinator_models::api_routes::API_WORKFLOW_TRIGGERS_DUE,
             get(get_due_workflow_triggers::<T>).layer(Extension(pool.clone())),
-        )
-        .route(
-            runinator_models::api_routes::API_SCHEDULER_WORKFLOW_TRIGGER_FIRINGS_CLAIM,
-            post(claim_due_workflow_trigger_firings::<T>).layer(Extension(pool.clone())),
         )
         .route(
             "/workflow_triggers/{id}",
@@ -250,19 +218,6 @@ pub const DOCS: &[EndpointDoc] = &[
         WORKFLOW_TRIGGER_FILTERS,
         200,
         "due workflow triggers",
-        Example::TriggerList,
-    ),
-    endpoint(
-        "post",
-        "/scheduler/workflow_trigger_firings/claim",
-        "Control Plane",
-        "Claim due trigger firings",
-        "Service-control endpoint used by schedulers to claim due workflow-trigger firings with a lease.",
-        false,
-        json_body("Scheduler id and claim limit.", Example::TriggerClaim),
-        &[],
-        200,
-        "claimed trigger firings",
         Example::TriggerList,
     ),
     endpoint(

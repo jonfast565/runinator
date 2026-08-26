@@ -325,14 +325,6 @@ export async function startServiceDiscovery() {
   return command("start_service_discovery");
 }
 
-export async function fetchRunChunks(runId: string) {
-  return command<RunChunk[]>("fetch_run_chunks", { runId });
-}
-
-export async function fetchRunArtifacts(runId: string) {
-  return command<RunArtifact[]>("fetch_run_artifacts", { runId });
-}
-
 export async function fetchWorkflowRunArtifacts(workflowRunId: string) {
   // Workflow VM output is the sole source of artifact history after the VM cutover. The former
   // `/workflow_runs/{id}/artifacts` endpoint read the removed workflow_run_artifacts table.
@@ -897,27 +889,6 @@ export async function renameWorkflowRun(workflowRunId: string, name: string | nu
   return command<TaskResponse>("rename_workflow_run", { workflowRunId, name });
 }
 
-export interface ArtifactUploadRequest {
-  run_id: string;
-  workflow_node_run_id?: string | null;
-}
-
-export interface ArtifactDownloadResult {
-  saved_to: string | null;
-}
-
-export async function fetchAllArtifacts() {
-  return command<RunArtifact[]>("fetch_all_artifacts");
-}
-
-export async function uploadArtifactFromPath(request: ArtifactUploadRequest) {
-  return command<RunArtifact>("upload_artifact", { request });
-}
-
-export async function downloadArtifactToPath(artifactId: string, defaultName: string) {
-  return command<ArtifactDownloadResult>("download_artifact", { artifactId, defaultName });
-}
-
 export interface NotificationListOptions {
   unreadOnly?: boolean;
   limit?: number;
@@ -1401,13 +1372,13 @@ export async function requestRunInterrupt(
   workflowRunId: string,
   source: string,
   payload: unknown = null,
-  cursorId: string | null = null,
+  continuationId: string | null = null,
 ) {
   return command<TaskResponse>("request_run_interrupt", {
     workflowRunId,
     source,
     payload,
-    cursorId,
+    continuationId,
   });
 }
 

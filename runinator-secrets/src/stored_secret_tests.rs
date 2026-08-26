@@ -1,17 +1,14 @@
-//! settings-secret payload compatibility and expiry metadata round trips.
+//! settings-secret payload and expiry metadata round trips.
 
 use super::*;
 
 #[test]
-fn legacy_payloads_decode_without_expiry() {
-    assert_eq!(
-        StoredSecret::decode(b"token"),
-        StoredSecret::new("token".into(), None)
-    );
-    assert_eq!(
-        StoredSecret::new("token".into(), None).encode().unwrap(),
-        b"token"
-    );
+fn secrets_without_expiry_round_trip_in_a_versioned_envelope() {
+    let secret = StoredSecret::new("token".into(), None);
+    let encoded = secret.encode().unwrap();
+
+    assert!(encoded.starts_with(b"runinator-secret:v1:"));
+    assert_eq!(StoredSecret::decode(&encoded).unwrap(), secret);
 }
 
 #[test]
@@ -21,16 +18,13 @@ fn expiry_metadata_round_trips_in_a_versioned_envelope() {
     let encoded = secret.encode().unwrap();
 
     assert_ne!(encoded, b"token");
-    assert_eq!(StoredSecret::decode(&encoded), secret);
+    assert_eq!(StoredSecret::decode(&encoded).unwrap(), secret);
 }
 
 #[test]
-fn malformed_envelopes_remain_readable_as_legacy_values() {
-    let malformed = b"runinator-secret:v1:not-json";
-    assert_eq!(
-        StoredSecret::decode(malformed),
-        StoredSecret::new(String::from_utf8_lossy(malformed).into_owned(), None)
-    );
+fn non_envelope_and_malformed_values_are_rejected() {
+    assert!(StoredSecret::decode(b"token").is_err());
+    assert!(StoredSecret::decode(b"runinator-secret:v1:not-json").is_err());
 }
 
 #[test]

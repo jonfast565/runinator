@@ -126,7 +126,7 @@ export function isArmedHere(cursor: RunCursor): boolean {
  * falls back to the run-scoped frame only while *no* cursor carries one of its own -- a run
  * persisted before per-cursor debug state. once any cursor has been written the flat frame is the
  * primary's mirror, so a sibling without one is simply not under the debugger. this mirrors
- * `WorkflowRunState::cursor_debug` exactly. If they disagree, the UI may show branches as
+ * `WorkflowExecutionState::cursor_debug` exactly. If they disagree, the UI may show branches as
  * paused that the reducer will happily keep running.
  */
 export function cursorDebug(

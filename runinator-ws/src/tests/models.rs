@@ -1,5 +1,5 @@
-//! request/response shapes the API promises: run-stream framing and the defaults a run request
-//! falls back to when a field is omitted.
+//! request/response shapes the API promises and the defaults a run request falls back to when a
+//! field is omitted.
 
 use super::*;
 
@@ -14,7 +14,6 @@ fn workflow_run_stream_terminal_status_stays_snapshot_message() {
             active_node_id: None,
             parameters: json!({}),
             execution_state: Default::default(),
-            state: json!({}),
             state_version: 0,
             created_at: chrono::Utc::now(),
             started_at: None,

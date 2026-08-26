@@ -68,7 +68,6 @@ const SERVICE_BACKED_HANDLERS: &[(&str, &str)] = &[
     ("runinator-ws-authoring/providers.rs", "CatalogOperations"),
     ("runinator-ws-authoring/rexrap.rs", "WorkflowAuthoring"),
     ("runinator-ws-runtime/automation.rs", "AutomationOperations"),
-    ("runinator-ws-runtime/artifacts.rs", "ArtifactOperations"),
     ("runinator-ws-runtime/debug.rs", "DebugOperations"),
     (
         "runinator-ws-runtime/function_invocations.rs",
@@ -181,9 +180,6 @@ fn store_access_allowlist_has_no_stale_entries() {
 /// shapes it must tell apart: handing the store to a repository function versus calling it.
 #[test]
 fn detector_separates_delegation_from_direct_calls() {
-    assert!(!calls_store_directly(
-        "    match repository::fetch_run_artifacts(db.as_ref(), run_id).await {"
-    ));
     assert!(!calls_store_directly(
         "    repository::claim_pending_action_dispatches(\n        db.as_ref(),"
     ));

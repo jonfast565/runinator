@@ -413,7 +413,7 @@ Kept as a record of what the roadmap no longer covers. Item IDs stay stable, so 
   `a_parallel_inside_a_loop_body_keeps_the_loop_position`
   (`runinator-runtime/src/orchestration/control_flow_tests.rs`) with a different symptom.
   1. **Branch cursors inherit their parent's frames.** `RunCursor::forked_from` replaces
-     `RunCursor::forked` on the fan-out path, and `WorkflowRunState::fork_cursor` now takes the
+     `RunCursor::forked` on the fan-out path, and `WorkflowExecutionState::fork_cursor` now takes the
      parent cursor id. The fan-out happens *inside* whatever loop or try region the parent stood in,
      and the forking cursor retires immediately, so that is the only moment its position can be
      carried. `speculative_from` had always done this; the real fan-out path had not. Reverting it:

@@ -16,7 +16,7 @@ fn decode<T: serde::de::DeserializeOwned>(raw: &str) -> Option<T> {
 pub(super) async fn load<B>(
     store: &B,
     workflow_run_id: Uuid,
-) -> Result<Option<WorkflowExecutionState>, SendableError>
+) -> Result<WorkflowExecutionState, SendableError>
 where
     B: SqlBackend,
     for<'q> Uuid: Encode<'q, B::Db> + Type<B::Db>,
@@ -40,8 +40,10 @@ where
     .fetch_optional(&mut *tx)
     .await?;
     let Some(base) = base else {
-        tx.commit().await?;
-        return Ok(None);
+        tx.rollback().await?;
+        return Err(Box::new(std::io::Error::other(format!(
+            "workflow run {workflow_run_id} has no normalized execution state"
+        ))) as SendableError);
     };
 
     let mut state = WorkflowExecutionState {
@@ -164,7 +166,7 @@ where
         });
     }
     tx.commit().await?;
-    Ok(Some(state))
+    Ok(state)
 }
 
 pub(super) async fn write<B>(

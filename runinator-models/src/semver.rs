@@ -2,10 +2,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 use std::str::FromStr;
 
-use crate::value::Value;
-
-/// a semantic version (major.minor.patch) for workflow definitions. serializes as a
-/// dotted string and tolerates legacy integer/short forms on the wire and from storage.
+/// A semantic version (major.minor.patch) for workflow definitions. It serializes and deserializes
+/// as a dotted string; the source parser separately accepts its `v1` shorthand.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SemVer {
     pub major: u64,
@@ -67,8 +65,7 @@ impl fmt::Display for SemVer {
 impl FromStr for SemVer {
     type Err = String;
 
-    /// parse `major.minor.patch`; missing trailing components default to zero, so `1` and
-    /// `1.2` lower to `1.0.0` and `1.2.0` for back-compat with the older integer version.
+    /// Parse `major.minor.patch`; source-level shorthand may omit trailing components.
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         let value = value.trim();
         if value.is_empty() {
@@ -108,20 +105,9 @@ impl<'de> Deserialize<'de> for SemVer {
     where
         D: Deserializer<'de>,
     {
-        // accept a dotted string, or a bare integer carried by legacy payloads/storage.
-        let value = Value::deserialize(deserializer)?;
-        match value {
-            Value::String(text) => text.parse().map_err(serde::de::Error::custom),
-            Value::Number(number) => number
-                .as_u64()
-                .map(|major| SemVer::new(major, 0, 0))
-                .ok_or_else(|| {
-                    serde::de::Error::custom("version number must be a non-negative integer")
-                }),
-            other => Err(serde::de::Error::custom(format!(
-                "version must be a string or integer, got {other}"
-            ))),
-        }
+        String::deserialize(deserializer)?
+            .parse()
+            .map_err(serde::de::Error::custom)
     }
 }
 

@@ -23,7 +23,7 @@ pub struct WorkflowDefinition {
     #[serde(default)]
     pub enabled: bool,
     #[serde(default)]
-    #[serde(alias = "input_schema", deserialize_with = "deserialize_workflow_type")]
+    #[serde(deserialize_with = "deserialize_workflow_type")]
     pub input_type: RuninatorType,
     #[serde(default)]
     pub definition: WorkflowGraph,

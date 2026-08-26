@@ -65,7 +65,7 @@ pub async fn put_artifact_if_absent<T: FunctionStore>(
     digest: &str,
     bytes: Vec<u8>,
 ) -> Result<FunctionArtifact, SendableError> {
-    let key = artifact_key(digest)?;
+    artifact_key(digest)?;
     let actual = digest_from_hex(&sha256_hex(&bytes));
     if actual != digest {
         return Err(FUNCTION_DIGEST_MISMATCH
@@ -78,8 +78,27 @@ pub async fn put_artifact_if_absent<T: FunctionStore>(
         return Ok(existing);
     }
 
+    let artifact = stage_artifact(blobs, digest, bytes).await?;
+    db.upsert_function_artifact(&artifact).await
+}
+
+/// Pre-stage immutable package bytes without creating their database row. Compiled-pack imports do
+/// this before opening the database transaction, then insert the returned descriptor inside that
+/// transaction. An unreachable blob after a failed import is safe and can be reused on reapply.
+pub async fn stage_artifact(
+    blobs: &Arc<dyn BlobStore>,
+    digest: &str,
+    bytes: Vec<u8>,
+) -> Result<FunctionArtifact, SendableError> {
+    let key = artifact_key(digest)?;
+    let actual = digest_from_hex(&sha256_hex(&bytes));
+    if actual != digest {
+        return Err(FUNCTION_DIGEST_MISMATCH
+            .error(format!("uploaded bytes hash to {actual}, not {digest}")));
+    }
+
     let size_bytes = bytes.len() as i64;
-    blobs
+    match blobs
         .put(
             FUNCTION_ARTIFACT_BUCKET,
             &key,
@@ -90,16 +109,18 @@ pub async fn put_artifact_if_absent<T: FunctionStore>(
             },
         )
         .await
-        .map_err(|err| FUNCTION_ARTIFACT_STORAGE.error(err))?;
+    {
+        Ok(_) | Err(BlobError::AlreadyExists(_)) => {}
+        Err(error) => return Err(FUNCTION_ARTIFACT_STORAGE.error(error)),
+    }
 
-    let artifact = FunctionArtifact {
+    Ok(FunctionArtifact {
         digest: digest.to_string(),
         size_bytes,
         uri: blob_uri(FUNCTION_ARTIFACT_BUCKET, &key),
         media_type: ARTIFACT_MEDIA_TYPE.to_string(),
         created_at: chrono::Utc::now(),
-    };
-    db.upsert_function_artifact(&artifact).await
+    })
 }
 
 /// fetch an artifact record by digest.

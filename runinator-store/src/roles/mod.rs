@@ -30,7 +30,6 @@ pub mod replicas;
 pub mod runs;
 pub mod schedules;
 pub mod settings;
-pub mod task_runs;
 pub mod workflow_vm;
 
 pub use archive::ArchiveStore;
@@ -47,5 +46,4 @@ pub use replicas::ReplicaStore;
 pub use runs::RunStore;
 pub use schedules::{ScheduleStore, ScheduledWorkflowVm};
 pub use settings::SettingStore;
-pub use task_runs::TaskRunStore;
 pub use workflow_vm::{NewWorkflowVmRun, WorkflowVmStore};

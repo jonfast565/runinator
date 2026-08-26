@@ -6,8 +6,7 @@ use tokio::sync::broadcast;
 // The UI event contract crosses the broker fan-out channel, while this module owns only the local
 // WebSocket broadcast bridge for one web-service replica.
 pub use runinator_broker_core::{
-    AppEvent, AppEventKind, emit, emit_pipeline_run, emit_task_run, emit_workflow_run,
-    emit_workflows_changed,
+    AppEvent, AppEventKind, emit, emit_pipeline_run, emit_workflow_run, emit_workflows_changed,
 };
 
 /// Fan-out bus for UI events in one web-service replica.

@@ -24,8 +24,8 @@ use std::sync::Arc;
 use axum::{Extension, Json, extract::Path, http::StatusCode};
 use runinator_broker::in_memory::InMemoryBroker;
 use runinator_database::{
-    BootstrapOptions, bootstrap_database, interfaces::prelude::*, load_jwt_secret,
-    seed_bootstrap_admin, seed_bootstrap_service_api_key, sqlite::SqliteDb,
+    BootstrapOptions, bootstrap_database, load_jwt_secret, seed_bootstrap_admin,
+    seed_bootstrap_service_api_key, sqlite::SqliteDb,
 };
 use runinator_models::json;
 use runinator_models::value::Value;
@@ -44,6 +44,7 @@ use runinator_models::{
     },
 };
 use runinator_rexrap::RexRapFragmentKind;
+use runinator_store::{DatabaseImpl, prelude::*};
 use runinator_workflows::{WorkflowTypeDiagnostic, WorkflowValidationError};
 use runinator_ws_middleware::authz::{AuthContextExt, AuthzChecker};
 use uuid::Uuid;
@@ -60,7 +61,7 @@ async fn test_db() -> (SqliteDb, std::path::PathBuf) {
 
 /// save a workflow the way a test wants to: attributed to the platform rather than to a caller.
 /// the revision-recording path still runs, so tests exercise it without restating an author.
-async fn save_workflow<T: runinator_database::interfaces::DatabaseImpl>(
+async fn save_workflow<T: DatabaseImpl>(
     db: &T,
     workflow: &WorkflowDefinition,
 ) -> Result<WorkflowDefinition, runinator_models::errors::SendableError> {

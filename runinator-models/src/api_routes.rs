@@ -9,14 +9,9 @@ pub const API_WORKFLOWS: &str = "/workflows";
 pub const API_WORKFLOWS_VALIDATE: &str = "/workflows/validate";
 /// server-side dry-run / branch preview (no actions published).
 pub const API_WORKFLOWS_SIMULATE: &str = "/workflows/simulate";
-pub const API_WORKFLOWS_IMPORT: &str = "/workflows/import";
 pub const API_WORKFLOWS_EXPORT: &str = "/workflows/export";
 /// compiled pack zip import (workflows + optional secrets).
 pub const API_PACKS_IMPORT: &str = "/packs/import";
-/// header required before raw json workflow bundle imports are accepted.
-pub const WORKFLOW_JSON_IMPORT_RISK_HEADER: &str = "x-runinator-json-workflow-risk";
-/// header value acknowledging that raw json workflow imports can break the system.
-pub const WORKFLOW_JSON_IMPORT_RISK_ACK: &str = "system-breakage-possible";
 pub const API_REXRAP_COMPLETE: &str = "/rexrap/complete";
 pub const API_REXRAP_HOVER: &str = "/rexrap/hover";
 pub const API_REXRAP_COMPILE: &str = "/rexrap/compile";
@@ -27,8 +22,6 @@ pub const API_REXRAP_DECOMPILE_SPANS: &str = "/rexrap/decompile/spans";
 pub const API_REXRAP_EVALUATE: &str = "/rexrap/evaluate";
 pub const API_REXRAP_IMPORT: &str = "/rexrap/import";
 pub const API_WORKFLOW_TRIGGERS_DUE: &str = "/workflow_triggers/due";
-pub const API_SCHEDULER_WORKFLOW_TRIGGER_FIRINGS_CLAIM: &str =
-    "/scheduler/workflow_trigger_firings/claim";
 pub const API_FREEZE_WINDOWS: &str = "/freeze_windows";
 pub const API_PIPELINES: &str = "/pipelines";
 /// packaged function packages: list and publish.
@@ -44,8 +37,6 @@ pub const API_WORKFLOW_RUNS: &str = "/workflow_runs";
 pub const API_WORKFLOW_CONTINUATIONS: &str = "/workflow_continuations";
 pub const API_WORKFLOW_EFFECTS: &str = "/workflow_effects";
 pub const API_SCHEDULER_WORKFLOW_RUNS_CLAIM: &str = "/scheduler/workflow_runs/claim";
-pub const API_RUNS: &str = "/runs";
-pub const API_ARTIFACTS: &str = "/artifacts";
 /// Store artifact bytes and return the URI to record.
 /// This creates no row; the caller already accounted for the artifact.
 pub const API_ARTIFACTS_CONTENT: &str = "/artifacts/content";
@@ -169,22 +160,6 @@ pub fn api_scheduler_workflow_run_claim_renew(workflow_run_id: Uuid) -> String {
 
 pub fn api_scheduler_workflow_run_claim_release(workflow_run_id: Uuid) -> String {
     format!("/scheduler/workflow_runs/{workflow_run_id}/claim/release")
-}
-
-pub fn api_run(run_id: Uuid) -> String {
-    format!("{API_RUNS}/{run_id}")
-}
-
-pub fn api_run_chunks(run_id: Uuid) -> String {
-    format!("{API_RUNS}/{run_id}/chunks")
-}
-
-pub fn api_run_artifacts(run_id: Uuid) -> String {
-    format!("{API_RUNS}/{run_id}/artifacts")
-}
-
-pub fn api_artifact_download(artifact_id: Uuid) -> String {
-    format!("{API_ARTIFACTS}/{artifact_id}/download")
 }
 
 pub fn api_replica(replica_id: Uuid) -> String {

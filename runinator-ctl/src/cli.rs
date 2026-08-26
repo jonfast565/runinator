@@ -222,7 +222,7 @@ pub enum Commands {
         #[command(subcommand)]
         command: ProviderCommands,
     },
-    /// List and download run artifacts.
+    /// List artifacts produced by workflow effects.
     Artifacts {
         #[command(subcommand)]
         command: ArtifactCommands,
@@ -387,7 +387,7 @@ pub enum AgentCommands {
         #[arg(long, default_value = "15m")]
         ttl: String,
         /// Routing label as KEY=VALUE; repeat for multiple labels.
-        #[arg(long = "label", visible_alias = "labels")]
+        #[arg(long = "label")]
         labels: Vec<String>,
         /// Organization assigned to the agent credential.
         #[arg(long)]
@@ -723,13 +723,6 @@ pub enum ArtifactCommands {
         #[arg(long = "effect")]
         effect_id: Uuid,
     },
-    /// Download an artifact by id to a file (defaults to its name in the cwd).
-    Download {
-        id: Uuid,
-        /// Write the bytes here instead of to the artifact's name in the cwd.
-        #[arg(short, long)]
-        out: Option<PathBuf>,
-    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -747,9 +740,6 @@ pub enum ApprovalCommands {
     Approve {
         /// Durable approval effect id.
         id: Uuid,
-        /// Who is deciding, retained for command compatibility.
-        #[arg(long)]
-        by: Option<String>,
         /// Note recorded with the decision.
         #[arg(long)]
         message: Option<String>,
@@ -761,9 +751,6 @@ pub enum ApprovalCommands {
     Reject {
         /// Durable approval effect id.
         id: Uuid,
-        /// Who is deciding, retained for command compatibility.
-        #[arg(long)]
-        by: Option<String>,
         /// Note recorded with the decision.
         #[arg(long)]
         message: Option<String>,

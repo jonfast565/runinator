@@ -4,18 +4,21 @@ use runinator_blob_core::{BlobStore, FUNCTION_ARTIFACT_BUCKET, FsBlobStore, sha2
 use runinator_broker_core::{UiEventPublisher, in_memory::InMemoryBroker};
 use runinator_database::sqlite::SqliteDb;
 use runinator_models::{
+    bundles::{SecretBundle, SecretBundleEntry},
     functions::{
         FunctionBinding, FunctionRuntimeSpec, NewFunctionExport, NewFunctionPackage,
         NewFunctionVersion, PROVISIONAL_FUNCTION_VERSION, digest_from_hex,
     },
     json,
+    pipelines::{PipelineBundle, PipelineSpec},
     semver::SemVer,
+    settings::SettingKind,
     types::RuninatorType,
     value::Value,
     workflows::{WorkflowBundle, WorkflowDefinition, WorkflowGraph},
 };
 use runinator_store::{
-    DatabaseImpl,
+    DatabaseImpl, RuntimeStore,
     roles::{DefinitionStore, FunctionStore},
 };
 use uuid::Uuid;
@@ -28,6 +31,136 @@ async fn test_db() -> (Arc<SqliteDb>, PathBuf) {
     let db = SqliteDb::new(path.to_str().unwrap()).await.unwrap();
     db.run_init_scripts(&Vec::new()).await.unwrap();
     (Arc::new(db), path)
+}
+
+#[tokio::test]
+async fn late_pipeline_failure_rolls_back_settings_and_workflows() {
+    let (db, db_path) = test_db().await;
+    let blob_root = std::env::temp_dir().join(format!("runinator-pack-blobs-{}", Uuid::now_v7()));
+    let blobs = Arc::new(FsBlobStore::open(&blob_root).await.unwrap());
+    blobs.create_bucket(FUNCTION_ARTIFACT_BUCKET).await.unwrap();
+    let service = PackOperations::new(
+        db.clone(),
+        blobs,
+        UiEventPublisher::new(Arc::new(InMemoryBroker::new())),
+    );
+    let function_bytes = b"rollback package".to_vec();
+    let function_digest = digest_from_hex(&sha256_hex(&function_bytes));
+    let artifact = service
+        .stage_function_artifact(&function_digest, function_bytes)
+        .await
+        .unwrap();
+    let functions = vec![NewFunctionVersion {
+        package: NewFunctionPackage {
+            name: "pdf".into(),
+            namespace: Some("acme.shared".into()),
+            description: None,
+            org_id: None,
+        },
+        artifact_digest: function_digest.clone(),
+        manifest: Value::Null,
+        runtime: FunctionRuntimeSpec::new("python3.13"),
+        exports: vec![NewFunctionExport {
+            name: "render".into(),
+            handler: "render".into(),
+            description: None,
+            input: Vec::new(),
+            output: Vec::new(),
+            limits: Default::default(),
+        }],
+        alias: Some("latest".into()),
+    }];
+    let workflows = WorkflowBundle {
+        workflows: vec![WorkflowDefinition {
+            id: None,
+            name: "Reconcile invoices".into(),
+            key: Some("reconcile".into()),
+            namespace: Some("acme.billing".into()),
+            org_id: None,
+            version: SemVer::new(1, 0, 0),
+            enabled: true,
+            input_type: RuninatorType::Any,
+            definition: WorkflowGraph::from_value(json!({
+                "start": "start",
+                "nodes": [
+                    { "id": "start", "kind": "start", "transitions": { "next": { "$node": "done" } } },
+                    { "id": "done", "kind": "end" }
+                ]
+            }))
+            .unwrap(),
+            created_at: None,
+            updated_at: None,
+        }],
+        triggers: Vec::new(),
+    };
+    let settings = SecretBundle {
+        secrets: vec![SecretBundleEntry {
+            scope: "acme.shared".into(),
+            name: "api_token".into(),
+            value: Value::String("secret".into()),
+            schema: None,
+            kind: SettingKind::Secret,
+            updated_at: None,
+            expires_at: None,
+        }],
+    };
+    let pipelines = PipelineBundle {
+        pipelines: vec![PipelineSpec {
+            name: "Broken release".into(),
+            key: Some("broken_release".into()),
+            namespace: Some("acme.delivery".into()),
+            description: None,
+            defaults: Default::default(),
+            members: vec!["acme.billing.missing".into()],
+            links: Vec::new(),
+            joins: Vec::new(),
+            concurrency: Default::default(),
+            triggers: Vec::new(),
+        }],
+    };
+
+    let result = service
+        .import_compiled_pack(
+            workflows,
+            Some(&settings),
+            Some(&pipelines),
+            &functions,
+            &[artifact],
+            None,
+            true,
+        )
+        .await;
+
+    assert!(result.is_err(), "the unresolved pipeline member must fail");
+    assert!(db.fetch_workflows().await.unwrap().is_empty());
+    assert!(
+        db.fetch_function_package(None, Some("acme.shared"), "pdf")
+            .await
+            .unwrap()
+            .is_none(),
+        "a function published before the pipeline failure must roll back"
+    );
+    assert!(
+        db.fetch_function_artifact(&function_digest)
+            .await
+            .unwrap()
+            .is_none(),
+        "the staged blob's database descriptor must roll back with the pack"
+    );
+    assert!(
+        db.fetch_setting(
+            SettingKind::Secret,
+            "acme.shared".into(),
+            "api_token".into(),
+        )
+        .await
+        .unwrap()
+        .is_none(),
+        "a setting written before the pipeline failure must roll back"
+    );
+
+    let _ = std::fs::remove_file(db_path);
+    let _ = std::fs::remove_dir_all(blob_root);
 }
 
 fn workflow_with_binding(binding: FunctionBinding) -> WorkflowDefinition {

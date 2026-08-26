@@ -69,7 +69,7 @@ fn encryption_is_randomized_per_call() {
 }
 
 #[test]
-fn needs_reencrypt_flags_legacy_and_foreign_keys() {
+fn needs_reencrypt_flags_foreign_keys() {
     let primary = SecretCipher::with_secondaries("new-key", ["old-key"]);
     // sealed by the old (secondary) key -> must be re-sealed with the primary.
     let old_sealed = SecretCipher::new("old-key").encrypt(b"value");
@@ -77,23 +77,15 @@ fn needs_reencrypt_flags_legacy_and_foreign_keys() {
     // already sealed by the primary key -> left untouched.
     let fresh = primary.encrypt(b"value");
     assert!(!primary.needs_reencrypt(&fresh));
-    // a legacy headerless value -> must be re-sealed.
-    assert!(primary.needs_reencrypt(b"\x01\x02\x03plain-ish"));
+    // unsupported headerless values are never read or rewritten.
+    assert!(!primary.needs_reencrypt(b"\x01\x02\x03plain-ish"));
 }
 
 #[test]
-fn legacy_headerless_value_decrypts_with_primary() {
-    let plaintext = b"legacy-secret";
-    let key = b"runinator-key";
-    // simulate a value written by the pre-rotation cipher: bare repeating-key xor, no header.
-    let legacy: Vec<u8> = plaintext
-        .iter()
-        .enumerate()
-        .map(|(index, byte)| byte ^ key[index % key.len()])
-        .collect();
-
-    let cipher = SecretCipher::new(key);
-    assert_eq!(cipher.decrypt(&legacy), plaintext);
+fn headerless_values_are_rejected_outside_identity_mode() {
+    let cipher = SecretCipher::new("runinator-key");
+    assert_eq!(cipher.try_decrypt(b"headerless-secret"), None);
+    assert!(cipher.decrypt(b"headerless-secret").is_empty());
 }
 
 #[test]

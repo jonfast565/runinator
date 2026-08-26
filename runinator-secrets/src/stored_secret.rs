@@ -14,7 +14,7 @@ pub struct StoredSecret {
 #[derive(Debug, Serialize, Deserialize)]
 struct StoredSecretEnvelope {
     value: String,
-    expires_at: DateTime<Utc>,
+    expires_at: Option<DateTime<Utc>>,
 }
 
 impl StoredSecret {
@@ -22,30 +22,25 @@ impl StoredSecret {
         Self { value, expires_at }
     }
 
-    /// encode a secret for encryption and persistence. secrets without metadata retain the legacy
-    /// raw-string representation so existing stores and consumers remain compatible.
+    /// Encode a secret for encryption and persistence in the versioned envelope format.
     pub fn encode(&self) -> Result<Vec<u8>, serde_json::Error> {
-        let Some(expires_at) = self.expires_at else {
-            return Ok(self.value.as_bytes().to_vec());
-        };
         let envelope = StoredSecretEnvelope {
             value: self.value.clone(),
-            expires_at,
+            expires_at: self.expires_at,
         };
         let mut encoded = ENVELOPE_PREFIX.to_vec();
         encoded.extend(serde_json::to_vec(&envelope)?);
         Ok(encoded)
     }
 
-    /// decode an opened settings payload, treating legacy or malformed envelopes as raw secrets.
-    pub fn decode(bytes: &[u8]) -> Self {
-        let Some(payload) = bytes.strip_prefix(ENVELOPE_PREFIX) else {
-            return Self::new(String::from_utf8_lossy(bytes).into_owned(), None);
-        };
-        match serde_json::from_slice::<StoredSecretEnvelope>(payload) {
-            Ok(envelope) => Self::new(envelope.value, Some(envelope.expires_at)),
-            Err(_) => Self::new(String::from_utf8_lossy(bytes).into_owned(), None),
-        }
+    /// Decode an opened versioned settings-secret envelope.
+    pub fn decode(bytes: &[u8]) -> Result<Self, String> {
+        let payload = bytes
+            .strip_prefix(ENVELOPE_PREFIX)
+            .ok_or_else(|| "stored secret is not a versioned envelope".to_owned())?;
+        let envelope = serde_json::from_slice::<StoredSecretEnvelope>(payload)
+            .map_err(|error| format!("stored secret envelope is invalid: {error}"))?;
+        Ok(Self::new(envelope.value, envelope.expires_at))
     }
 }
 

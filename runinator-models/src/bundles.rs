@@ -33,10 +33,7 @@ pub struct SecretBundle {
 pub struct SecretBundleEntry {
     pub scope: String,
     pub name: String,
-    // the typed payload: a JSON string for secrets, or arbitrary JSON for config.
-    // a bare string still deserializes into `Value::String`, and `secret` is accepted
-    // as an alias so back-compat bundles keep working.
-    #[serde(alias = "secret")]
+    // The typed payload: a JSON string for secrets, or arbitrary JSON for config.
     pub value: Value,
     // optional declared json-schema for a config value; when omitted the web service infers one
     // from the first value and pins it per (scope, name). secrets are implicitly string-typed.
@@ -54,10 +51,6 @@ pub struct SecretBundleEntry {
     // reject this metadata.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<DateTime<Utc>>,
-}
-
-impl Bundle for SecretBundle {
-    const RESOURCE: &'static str = "/credentials/import";
 }
 
 /// the result of importing a compiled pack zip at `/packs/import`: the imported workflow bundle,

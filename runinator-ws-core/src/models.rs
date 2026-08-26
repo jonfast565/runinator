@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use runinator_comm::{AgentDirectiveKind, AgentDirectiveRecord};
 use runinator_models::value::Value;
 use runinator_models::{
-    bundles::{PackImportResult, ProviderBundle, SecretBundle},
+    bundles::{PackImportResult, ProviderBundle},
     console::{ConsoleCell, ConsoleSession, ConsoleSessionDetail},
     functions::{
         FunctionAlias, FunctionArtifact, FunctionCatalogEntry, FunctionInvocationTarget,
@@ -14,7 +14,6 @@ use runinator_models::{
     provisioning::{NodeBackendsResponse, ProvisionedGroup},
     replicas::{ReplicaListResponse, ReplicaProviderRegistration, ReplicaRecord, ReplicaStatus},
     revisions::{PipelineRevision, WorkflowRevision},
-    runs::{RunArtifact, RunChunk, RunStatus, RunSummary},
     schedules::{BackfillResponse, FreezeWindow},
     settings::SettingKind,
     telemetry::ReplicaSampleSeries,
@@ -100,9 +99,6 @@ pub struct TaskResponseSchema {
 pub enum ApiResponse {
     TaskResponse(TaskResponse),
     ApiError(ApiError),
-    RunList(Vec<RunSummary>),
-    RunChunks(Vec<RunChunk>),
-    RunArtifacts(Vec<RunArtifact>),
     Workflow(WorkflowDefinition),
     WorkflowBundle(WorkflowBundle),
     WorkflowList(Vec<WorkflowDefinition>),
@@ -148,7 +144,6 @@ pub enum ApiResponse {
     NodeBackends(NodeBackendsResponse),
     NodeGroup(ProvisionedGroup),
     NodeGroupList(Vec<ProvisionedGroup>),
-    SecretBundle(SecretBundle),
     PackImport(PackImportResult),
     JsonValue(Value),
     JsonList(Vec<Value>),
@@ -257,33 +252,12 @@ pub struct WorkflowRunStatusQuery {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct RunStatusQuery {
-    pub status: Option<RunStatus>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct RunStatusRequest {
-    pub status: RunStatus,
-    #[serde(default)]
-    pub output_json: Option<Value>,
-    #[serde(default)]
-    pub message: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
 pub struct WorkflowRunStatusRequest {
     pub status: WorkflowStatus,
     #[serde(default)]
     pub active_node_id: Option<String>,
     #[serde(default)]
     pub message: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct SchedulerTriggerClaimRequest {
-    pub scheduler_id: String,
-    #[serde(default)]
-    pub limit: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -322,16 +296,16 @@ pub struct SignalDeliveryRequest {
 
 /// an interrupt asked for from outside the run. `source` defaults to `external`, which is the one
 /// a caller normally has any business raising; the field exists so an operator can also drive the
-/// other sources by hand. `cursor_id` names one thread of control in a fanned-out run, and is
-/// omitted to let whichever real thread drives next take it.
+/// other sources by hand. `continuation_id` names one thread of control in a fanned-out run, and
+/// is omitted to let whichever real thread drives next take it.
 #[derive(Debug, Deserialize)]
 pub struct InterruptRequest {
     #[serde(default)]
     pub source: Option<String>,
     #[serde(default)]
     pub payload: Value,
-    /// The thread to interrupt. `cursor_id` is accepted as the pre-VM spelling of the same field.
-    #[serde(default, alias = "cursor_id")]
+    /// The thread to interrupt.
+    #[serde(default)]
     pub continuation_id: Option<Uuid>,
 }
 
@@ -467,7 +441,6 @@ pub struct ReplicaSampleQuery {
 pub struct CredentialPutRequest {
     pub scope: String,
     pub name: String,
-    #[serde(alias = "secret")]
     pub value: Value,
     // declared json-schema, required once per config slot; ignored for secrets.
     #[serde(default)]

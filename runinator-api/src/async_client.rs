@@ -11,8 +11,7 @@ use runinator_models::pipelines::{Pipeline, PipelineBundle, PipelineRun, Pipelin
 use runinator_models::value::Value;
 use runinator_models::{
     api_routes::{
-        api_artifact_download, api_freeze_window, api_replica_heartbeat, api_replica_offline,
-        api_replica_providers, api_run, api_run_artifacts, api_run_chunks,
+        api_freeze_window, api_replica_heartbeat, api_replica_offline, api_replica_providers,
         api_scheduler_workflow_run_claim_release, api_scheduler_workflow_run_claim_renew,
         api_workflow, api_workflow_continuation, api_workflow_duplicate, api_workflow_effect,
         api_workflow_effect_output, api_workflow_revision, api_workflow_revision_restore,
@@ -24,11 +23,9 @@ use runinator_models::{
         API_APPROVALS, API_ARTIFACTS_CONTENT, API_CREDENTIALS, API_FREEZE_WINDOWS, API_FUNCTIONS,
         API_FUNCTIONS_CATALOG, API_FUNCTION_ARTIFACTS, API_FUNCTION_EXPORTS, API_IDEMPOTENCY_KEYS,
         API_IDEMPOTENCY_KEYS_CLAIM, API_IDEMPOTENCY_KEYS_COMPLETE, API_IDEMPOTENCY_KEYS_RELEASE,
-        API_PACKS_IMPORT, API_PROVIDERS, API_REPLICAS, API_RUNS, API_SCHEDULER_WORKFLOW_RUNS_CLAIM,
-        API_SCHEDULER_WORKFLOW_TRIGGER_FIRINGS_CLAIM, API_SUPERVISOR_STATUS, API_WORKFLOWS,
-        API_WORKFLOWS_EXPORT, API_WORKFLOWS_IMPORT, API_WORKFLOWS_SIMULATE, API_WORKFLOWS_VALIDATE,
-        API_WORKFLOW_EFFECTS, API_WORKFLOW_RUNS, API_WORKFLOW_TRIGGERS_DUE,
-        WORKFLOW_JSON_IMPORT_RISK_ACK, WORKFLOW_JSON_IMPORT_RISK_HEADER,
+        API_PACKS_IMPORT, API_PROVIDERS, API_REPLICAS, API_SCHEDULER_WORKFLOW_RUNS_CLAIM,
+        API_SUPERVISOR_STATUS, API_WORKFLOWS, API_WORKFLOWS_EXPORT, API_WORKFLOWS_SIMULATE,
+        API_WORKFLOWS_VALIDATE, API_WORKFLOW_EFFECTS, API_WORKFLOW_RUNS, API_WORKFLOW_TRIGGERS_DUE,
     },
     auth::{
         AgentEnrollmentToken, CreateAgentEnrollmentTokenRequest,
@@ -54,7 +51,6 @@ use runinator_models::{
         ReplicaRegistrationRequest, ReplicaStatus,
     },
     revisions::{PipelineRevision, WorkflowRevision},
-    runs::{RunStatus, RunSummary},
     schedules::{BackfillRequest, BackfillResponse, FreezeWindow, NewFreezeWindow},
     telemetry::ReplicaSampleSeries,
     web::TaskResponse,
@@ -72,7 +68,7 @@ use uuid::Uuid;
 use crate::{
     error::{ApiError, Result},
     locator::ServiceLocator,
-    types::{ArtifactContentResponse, RunArtifactPayload, RunChunkPayload, RunStatusPayload},
+    types::ArtifactContentResponse,
 };
 
 /// Default cap on a single request's total wall-clock time. Bounds a hung or slow web service so a
@@ -736,55 +732,6 @@ where
         Ok(response.json::<Value>().await?)
     }
 
-    pub async fn fetch_run(&self, run_id: Uuid) -> Result<RunSummary> {
-        let url = self.build_url(&api_run(run_id)).await?;
-        let response = self.http_get(url.clone()).send().await?;
-        let response = Self::handle_response(url, response).await?;
-        Ok(response.json::<RunSummary>().await?)
-    }
-
-    pub async fn fetch_runs_by_status(&self, status: RunStatus) -> Result<Vec<RunSummary>> {
-        let url = self
-            .build_url(&format!("{API_RUNS}?status={}", status.as_str()))
-            .await?;
-        let response = self.http_get(url.clone()).send().await?;
-        let response = Self::handle_response(url, response).await?;
-        Ok(response.json::<Vec<RunSummary>>().await?)
-    }
-
-    pub async fn update_run(
-        &self,
-        run_id: Uuid,
-        payload: &RunStatusPayload,
-    ) -> Result<TaskResponse> {
-        let url = self.build_url(&api_run(run_id)).await?;
-        let response = self.http_patch(url.clone()).json(payload).send().await?;
-        let response = Self::handle_response(url, response).await?;
-        Ok(response.json::<TaskResponse>().await?)
-    }
-
-    pub async fn append_run_chunk(
-        &self,
-        run_id: Uuid,
-        payload: &RunChunkPayload,
-    ) -> Result<TaskResponse> {
-        let url = self.build_url(&api_run_chunks(run_id)).await?;
-        let response = self.http_post(url.clone()).json(payload).send().await?;
-        let response = Self::handle_response(url, response).await?;
-        Ok(response.json::<TaskResponse>().await?)
-    }
-
-    pub async fn add_run_artifact(
-        &self,
-        run_id: Uuid,
-        payload: &RunArtifactPayload,
-    ) -> Result<TaskResponse> {
-        let url = self.build_url(&api_run_artifacts(run_id)).await?;
-        let response = self.http_post(url.clone()).json(payload).send().await?;
-        let response = Self::handle_response(url, response).await?;
-        Ok(response.json::<TaskResponse>().await?)
-    }
-
     pub async fn fetch_workflow(&self, workflow_id: Uuid) -> Result<WorkflowDefinition> {
         let url = self.build_url(&api_workflow(workflow_id)).await?;
         let response = self.http_get(url.clone()).send().await?;
@@ -910,22 +857,6 @@ where
         let response = self.http_post(url.clone()).json(bundle).send().await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<B>().await?)
-    }
-
-    /// POST a raw JSON workflow bundle after acknowledging that system breakage is possible.
-    pub async fn import_workflow_bundle(&self, bundle: &WorkflowBundle) -> Result<WorkflowBundle> {
-        let url = self.build_url(API_WORKFLOWS_IMPORT).await?;
-        let response = self
-            .http_post(url.clone())
-            .header(
-                WORKFLOW_JSON_IMPORT_RISK_HEADER,
-                WORKFLOW_JSON_IMPORT_RISK_ACK,
-            )
-            .json(bundle)
-            .send()
-            .await?;
-        let response = Self::handle_response(url, response).await?;
-        Ok(response.json::<WorkflowBundle>().await?)
     }
 
     /// Build a compiled pack zip (workflows + optional secrets + pipelines) and POST it to
@@ -1193,10 +1124,6 @@ where
         self.import_bundle(bundle).await
     }
 
-    pub async fn import_secret_bundle(&self, bundle: &SecretBundle) -> Result<SecretBundle> {
-        self.import_bundle(bundle).await
-    }
-
     pub async fn export_workflow_bundle(
         &self,
         workflow_id: Option<Uuid>,
@@ -1281,23 +1208,6 @@ where
         let response = self.http_delete(url.clone()).send().await?;
         let response = Self::handle_response(url, response).await?;
         Ok(response.json::<TaskResponse>().await?)
-    }
-
-    pub async fn claim_due_workflow_trigger_firings(
-        &self,
-        scheduler_id: &str,
-        limit: i64,
-    ) -> Result<Vec<WorkflowRun>> {
-        let url = self
-            .build_url(API_SCHEDULER_WORKFLOW_TRIGGER_FIRINGS_CLAIM)
-            .await?;
-        let response = self
-            .http_post(url.clone())
-            .json(&json!({ "scheduler_id": scheduler_id, "limit": limit }))
-            .send()
-            .await?;
-        let response = Self::handle_response(url, response).await?;
-        Ok(response.json::<Vec<WorkflowRun>>().await?)
     }
 
     pub async fn fetch_workflow_trigger(&self, trigger_id: Uuid) -> Result<WorkflowTrigger> {
@@ -1723,14 +1633,6 @@ where
             .await?)
     }
 
-    /// download an artifact's raw bytes from the streaming download endpoint.
-    pub async fn download_artifact(&self, artifact_id: Uuid) -> Result<Vec<u8>> {
-        let url = self.build_url(&api_artifact_download(artifact_id)).await?;
-        let response = self.http_get(url.clone()).send().await?;
-        let response = Self::handle_response(url, response).await?;
-        Ok(response.bytes().await?.to_vec())
-    }
-
     pub async fn fetch_supervisor_status(&self) -> Result<Value> {
         let url = self.build_url(API_SUPERVISOR_STATUS).await?;
         let response = self.http_get(url.clone()).send().await?;
@@ -1753,7 +1655,6 @@ where
         &self,
         effect_id: Uuid,
         approved: bool,
-        _resolved_by: Option<String>,
         message: Option<String>,
         output_json: Option<Value>,
     ) -> Result<Value> {
@@ -1882,7 +1783,7 @@ where
         let response = self.http_get(url.clone()).send().await?;
         let response = Self::handle_response(url, response).await?;
         let body = response.json::<Value>().await?;
-        body.get("secret")
+        body.get("value")
             .and_then(Value::as_str)
             .map(str::to_owned)
             .ok_or_else(|| ApiError::UnexpectedResponse("missing credential secret".into()))
@@ -1895,15 +1796,10 @@ where
         let response = self.http_get(url.clone()).send().await?;
         let response = Self::handle_response(url, response).await?;
         let body = response.json::<Value>().await?;
-        body.get("secret")
+        body.get("value")
             .and_then(Value::as_str)
             .map(str::to_owned)
             .ok_or_else(|| ApiError::UnexpectedResponse("missing credential secret".into()))
-    }
-
-    /// Record execution metadata for a scheduled task run.
-    pub async fn log_task_run(&self) -> Result<TaskResponse> {
-        Err(ApiError::UnexpectedResponse("deprecated".into()))
     }
 
     async fn build_url(&self, path: &str) -> Result<Url> {

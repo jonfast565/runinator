@@ -271,7 +271,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
   async function requestSelectedRunInterrupt(
     source: string,
     payload: unknown = null,
-    cursorId: string | null = null,
+    continuationId: string | null = null,
   ) {
     if (!host.state.workflowRunDetail || !host.canRequestRunInterrupt()) {
       return;
@@ -280,7 +280,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
     const runId = host.state.workflowRunDetail.run.id;
     const response = await host.ctx.runOperation(
       `Requesting ${source} interrupt for workflow run ${runId}`,
-      () => requestRunInterrupt(runId, source, payload, cursorId),
+      () => requestRunInterrupt(runId, source, payload, continuationId),
     );
 
     if (!response.success) {

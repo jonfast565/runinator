@@ -18,10 +18,6 @@ use runinator_models::{
     },
 };
 
-// re-exported here so callers that reach for the contract at its historical path
-// (`runinator_database::interfaces::*`) can import both halves from one place.
-pub use crate::runtime_store::RuntimeStore;
-
 /// Core persistence operations for Runinator.
 /// Notifications, the policies that raise them, and per-channel delivery attempts.
 pub trait NotificationStore: Send + Sync + 'static {

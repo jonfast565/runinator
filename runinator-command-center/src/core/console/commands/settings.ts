@@ -48,7 +48,7 @@ export const settingsCommands: ConsoleCommand[] = [
         requiredArg(args, 1, "name"),
         settingKind(flags),
       );
-      const value = detail.value ?? detail.secret ?? null;
+      const value = detail.value ?? null;
       print(typeof value === "string" ? text(value) : json(value));
     },
   },

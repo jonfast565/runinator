@@ -6,7 +6,6 @@ use crate::value::{Map, Value};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ProviderMetadata {
-    #[serde(alias = "provider_name")]
     pub name: String,
     #[serde(default)]
     pub actions: Vec<ActionMetadata>,
@@ -116,14 +115,10 @@ impl ActionMetadata {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ParameterMetadata {
     pub name: String,
-    // `type` is accepted as well as `ty`/`value_type`: these schemas are hand-written in function
+    // `type` is accepted as well as `ty`: these schemas are hand-written in function
     // manifests, and `ty` is a rust field name rather than something an author would reach for.
     // serialization still emits `ty`, so nothing downstream sees a second spelling.
-    #[serde(
-        alias = "value_type",
-        alias = "type",
-        deserialize_with = "deserialize_type"
-    )]
+    #[serde(alias = "type", deserialize_with = "deserialize_type")]
     pub ty: RuninatorType,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
@@ -225,14 +220,10 @@ fn validate_action_metadata(
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ResultMetadata {
     pub name: String,
-    // `type` is accepted as well as `ty`/`value_type`: these schemas are hand-written in function
+    // `type` is accepted as well as `ty`: these schemas are hand-written in function
     // manifests, and `ty` is a rust field name rather than something an author would reach for.
     // serialization still emits `ty`, so nothing downstream sees a second spelling.
-    #[serde(
-        alias = "value_type",
-        alias = "type",
-        deserialize_with = "deserialize_type"
-    )]
+    #[serde(alias = "type", deserialize_with = "deserialize_type")]
     pub ty: RuninatorType,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,

@@ -2,10 +2,14 @@ use super::*;
 
 #[test]
 fn command_url_preserves_query() {
-    let url = build_url("http://localhost:3000/api/", "runs/7/chunks?limit=500").unwrap();
+    let url = build_url(
+        "http://localhost:3000/api/",
+        "workflow_runs/7/effects?limit=500",
+    )
+    .unwrap();
     assert_eq!(
         url.as_str(),
-        "http://localhost:3000/api/runs/7/chunks?limit=500"
+        "http://localhost:3000/api/workflow_runs/7/effects?limit=500"
     );
 }
 

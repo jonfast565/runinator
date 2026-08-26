@@ -11,13 +11,13 @@ use axum::response::IntoResponse;
 use axum::{Extension, Router, extract::DefaultBodyLimit, middleware::from_fn_with_state};
 use runinator_blob::BlobStore;
 use runinator_broker::Broker;
-use runinator_database::interfaces::DatabaseImpl;
 use runinator_engine::services::{
-    ArtifactOperations, AutomationOperations, CatalogOperations, ConsoleOperations,
-    DebugOperations, FunctionInvocations, FunctionPackages, NotificationOperations, PackOperations,
+    AutomationOperations, CatalogOperations, ConsoleOperations, DebugOperations,
+    FunctionInvocations, FunctionPackages, NotificationOperations, PackOperations,
     PipelineOperations, RunOperations, SchedulingOperations, WorkflowAuthoring,
 };
 use runinator_provisioner::ProvisionerRegistry;
+use runinator_store::DatabaseImpl;
 use tower_http::catch_panic::CatchPanicLayer;
 use tower_http::cors::{Any, CorsLayer};
 
@@ -78,11 +78,6 @@ pub fn build_router<T: DatabaseImpl>(
         events.embedded_engine_signals(),
     ));
     let catalog_operations = Arc::new(CatalogOperations::new(pool.clone()));
-    let artifact_operations = Arc::new(ArtifactOperations::new(
-        pool.clone(),
-        blobs.clone(),
-        events.publisher(),
-    ));
     let debug_operations = Arc::new(DebugOperations::new(
         pool.clone(),
         events.publisher(),
@@ -118,7 +113,7 @@ pub fn build_router<T: DatabaseImpl>(
         .merge(replicas::routes(pool.clone()))
         .merge(agents::routes(pool.clone()))
         .merge(provisioning::routes())
-        .merge(artifacts::routes(pool.clone()))
+        .merge(artifacts::routes())
         .merge(notifications::routes(pool.clone()))
         .merge(schedules::routes(pool.clone()))
         .merge(debug::routes(pool.clone()))
@@ -141,7 +136,6 @@ pub fn build_router<T: DatabaseImpl>(
         .layer(Extension(pack_operations))
         .layer(Extension(console_operations))
         .layer(Extension(debug_operations))
-        .layer(Extension(artifact_operations))
         .layer(Extension(catalog_operations))
         .layer(Extension(function_invocations))
         .layer(Extension(notification_operations))

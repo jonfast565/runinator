@@ -11,9 +11,6 @@
 //! engine when their URL is set. Running it on SQLite keeps it from rotting in a workspace
 //! where nobody has docker up.
 
-use std::collections::BTreeMap;
-use std::future::Future;
-
 use chrono::{Duration, Utc};
 use runinator_comm::{
     AgentDirectiveKind, AgentDirectiveResult, AgentDirectiveState, AgentDirectiveStatus,
@@ -23,7 +20,6 @@ use runinator_models::{
     auth::{AgentEnrollmentToken, AgentEnrollmentTokenRecord, ApiKey, ApiKeyRecord, PrincipalKind},
     json,
     revisions::{RevisionSource, WorkflowRevision},
-    runs::RunStatus,
     settings::SettingKind,
     types::RuninatorType,
     value::Value,
@@ -36,61 +32,13 @@ use runinator_models::{
         WorkflowDefinition, WorkflowGraph, WorkflowStatus, WorkflowTrigger, WorkflowTriggerKind,
     },
 };
+use std::collections::BTreeMap;
 use uuid::Uuid;
 
 // `DatabaseImpl` composes every role trait, so bounding on it brings all of their methods into
 // scope without importing the roles one by one.
-use crate::backend::{SqlBackend, SqlStore};
-use crate::interfaces::DatabaseImpl;
-use runinator_models::errors::SendableError;
+use runinator_store::DatabaseImpl;
 use runinator_store::roles::WorkflowVmStore;
-use sqlx::{Database, Encode, Executor, IntoArguments, Type};
-
-pub(crate) trait ExecutionStateParityDb: DatabaseImpl + WorkflowVmStore {
-    fn stage_legacy_execution_state(
-        &self,
-        workflow_run_id: Uuid,
-        state: WorkflowExecutionState,
-    ) -> impl Future<Output = Result<(), SendableError>> + Send;
-}
-
-impl<B> ExecutionStateParityDb for SqlStore<B>
-where
-    B: SqlBackend,
-    SqlStore<B>: DatabaseImpl + WorkflowVmStore,
-    for<'q> &'q str: Encode<'q, B::Db> + Type<B::Db>,
-    for<'q> String: Encode<'q, B::Db> + Type<B::Db>,
-    for<'q> Uuid: Encode<'q, B::Db> + Type<B::Db>,
-    for<'q> <B::Db as Database>::Arguments<'q>: IntoArguments<'q, B::Db>,
-    for<'c> &'c mut <B::Db as Database>::Connection: Executor<'c, Database = B::Db>,
-{
-    async fn stage_legacy_execution_state(
-        &self,
-        workflow_run_id: Uuid,
-        state: WorkflowExecutionState,
-    ) -> Result<(), SendableError> {
-        let mut tx = self.pool().begin().await?;
-        for table in [
-            "workflow_run_pending_interrupts",
-            "workflow_run_event_sources",
-            "workflow_run_cursors",
-            "workflow_run_frames",
-            "workflow_run_execution_states",
-        ] {
-            sqlx::query(&self.render(&format!("DELETE FROM {table} WHERE workflow_run_id = ?")))
-                .bind(workflow_run_id)
-                .execute(&mut *tx)
-                .await?;
-        }
-        sqlx::query(&self.render("UPDATE workflow_runs SET state = ? WHERE id = ?"))
-            .bind(state.to_state().to_string())
-            .bind(workflow_run_id)
-            .execute(&mut *tx)
-            .await?;
-        tx.commit().await?;
-        Ok(())
-    }
-}
 
 fn sample_workflow(name: &str) -> WorkflowDefinition {
     WorkflowDefinition {
@@ -128,7 +76,7 @@ fn sample_trigger(workflow_id: Uuid) -> WorkflowTrigger {
 ///
 /// the store must be exclusive to this call: several assertions count rows or depend on a claim
 /// finding nothing else outstanding.
-pub(crate) async fn assert_dialect_parity<T: ExecutionStateParityDb>(db: &T) {
+pub(crate) async fn assert_dialect_parity<T: DatabaseImpl + WorkflowVmStore>(db: &T) {
     assert_workflow_upsert(db).await;
     let after = db.fetch_workflows().await.unwrap().remove(0);
     let id = after.id.expect("the upserted workflow has an id");
@@ -150,15 +98,6 @@ pub(crate) async fn assert_dialect_parity<T: ExecutionStateParityDb>(db: &T) {
     assert_workflow_vm_mutex_lifecycle(db, &after).await;
     assert_workflow_effect_retry_lifecycle(db, &after).await;
     assert_unreferenced_artifacts(db).await;
-
-    // the legacy run mapper reads a column named `trigger`, which is reserved in mysql and has to
-    // be quoted per dialect; an unquoted build fails here rather than in production.
-    assert!(
-        db.fetch_runs_by_status(RunStatus::Running)
-            .await
-            .unwrap()
-            .is_empty()
-    );
 }
 
 async fn assert_workflow_vm_readback<T: DatabaseImpl + WorkflowVmStore>(
@@ -895,7 +834,7 @@ fn complex_execution_state(revision: i64) -> WorkflowExecutionState {
     }))
 }
 
-async fn assert_normalized_execution_state_lifecycle<T: ExecutionStateParityDb>(
+async fn assert_normalized_execution_state_lifecycle<T: DatabaseImpl + WorkflowVmStore>(
     db: &T,
     workflow: &WorkflowDefinition,
 ) {
@@ -940,40 +879,6 @@ async fn assert_normalized_execution_state_lifecycle<T: ExecutionStateParityDb>(
         .expect("updated run");
     assert_eq!(fetched.state_version, created.state_version + 1);
     assert_eq!(fetched.execution_state.to_state(), updated.to_state());
-    assert_eq!(fetched.state, json!({}), "the legacy blob stays cleared");
-
-    let legacy = complex_execution_state(3);
-    let legacy_run = db
-        .create_workflow_run(
-            workflow.id.expect("workflow id"),
-            workflow.clone(),
-            json!({ "source": "legacy-parity" }),
-            json!({}),
-            Some("legacy execution state parity".into()),
-            Default::default(),
-        )
-        .await
-        .unwrap();
-    db.stage_legacy_execution_state(legacy_run.id, legacy.clone())
-        .await
-        .unwrap();
-    let (left, right) = tokio::join!(
-        db.migrate_workflow_execution_states(),
-        db.migrate_workflow_execution_states(),
-    );
-    left.unwrap();
-    right.unwrap();
-    let backfilled = db
-        .fetch_workflow_run(legacy_run.id)
-        .await
-        .unwrap()
-        .expect("backfilled run");
-    assert_eq!(backfilled.execution_state.to_state(), legacy.to_state());
-    assert_eq!(
-        backfilled.state,
-        json!({}),
-        "backfill clears the legacy blob"
-    );
 }
 
 // the cooldown gate admits exactly one caller per window, decided by an UPDATE's affected-row

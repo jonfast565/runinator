@@ -170,7 +170,7 @@ pub struct ResumePoint {
 /// marks a cursor as an interrupt handler rather than an ordinary thread of control.
 ///
 /// every field defaults. a frame that silently degraded to `None` would un-suspend a cursor
-/// mid-handler, but failing the parse is worse: `WorkflowRunState::from_state` falls back to
+/// mid-handler, but failing the parse is worse: `WorkflowExecutionState::from_state` falls back to
 /// `unwrap_or_default`, which would discard every cursor in the run. so the frame is made
 /// structurally incapable of failing to parse instead.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

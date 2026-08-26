@@ -7,7 +7,7 @@
 
 use super::*;
 use crate::dialect_parity::assert_dialect_parity;
-use crate::interfaces::DatabaseImpl;
+use runinator_store::DatabaseImpl;
 use sqlx::{Connection, MySqlConnection};
 use uuid::Uuid;
 

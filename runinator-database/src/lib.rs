@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
 use chrono::Utc;
-use interfaces::DatabaseImpl;
 use log::{info, warn};
 use runinator_models::auth::{ApiKey, ApiKeyRecord, PrincipalKind};
 use runinator_models::errors::SendableError;
 use runinator_models::rbac::{PlatformRole, Role, ScopeRef};
 use runinator_models::settings::SettingKind;
 use runinator_secrets::secret_cipher::SecretCipher;
+use runinator_store::DatabaseImpl;
 use uuid::Uuid;
 
 pub mod backend;
@@ -22,11 +22,6 @@ mod mappers;
 #[path = "migration_parity_tests.rs"]
 mod migration_parity;
 
-// the persistence contract now lives in `runinator-store`, which has no sqlx dependency. these
-// re-exports keep `runinator_database::interfaces::*` and `runinator_database::archive::*` working
-// for the callers that already use those paths.
-pub use runinator_store::workflow_mutex;
-pub use runinator_store::{archive, interfaces, roles};
 #[cfg(feature = "mysql")]
 pub mod mysql;
 mod operations;
@@ -88,14 +83,8 @@ fn auth_cipher() -> SecretCipher {
     SecretCipher::from_env()
 }
 
-// open a persisted auth secret. values written by the current scheme carry the authenticated-
-// encryption header and are aead-opened; legacy values written before encryption was applied are
-// headerless plaintext and returned as-is (never fed through the legacy xor path, which would
-// corrupt a true plaintext).
+// Open a persisted auth secret sealed by the configured credential key.
 fn open_auth_secret(cipher: &SecretCipher, value: Vec<u8>) -> Result<Vec<u8>, SendableError> {
-    if !SecretCipher::is_sealed(&value) {
-        return Ok(value);
-    }
     cipher.try_decrypt(&value).ok_or_else(|| {
         Box::new(std::io::Error::other(
             "could not decrypt the persisted jwt secret; the credential key may be missing or wrong",
@@ -125,19 +114,7 @@ pub async fn ensure_jwt_secret<T: DatabaseImpl>(
         .await?
         && !record.value.is_empty()
     {
-        let was_sealed = SecretCipher::is_sealed(&record.value);
         let plaintext = open_auth_secret(&cipher, record.value)?;
-        // migrate a legacy plaintext secret to the encrypted-at-rest scheme on first bootstrap.
-        if !was_sealed {
-            db.upsert_setting(
-                SettingKind::Secret,
-                SECRET_SCOPE.into(),
-                SECRET_NAME.into(),
-                cipher.encrypt(&plaintext),
-                Utc::now().timestamp(),
-            )
-            .await?;
-        }
         return Ok(plaintext);
     }
     let generated = runinator_auth::random_secret(48);

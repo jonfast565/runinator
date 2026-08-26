@@ -8,7 +8,7 @@ import type {
   WorkflowJournalRecord,
   WorkflowVmCursor,
 } from "./vm";
-import type { WorkflowRunState } from "../workflow-state";
+import type { WorkflowExecutionState } from "../workflow-state";
 
 export interface WorkflowRunDetail {
   run: RunSummary & {
@@ -21,7 +21,7 @@ export interface WorkflowRunDetail {
   effects?: WorkflowEffect[];
   journal?: WorkflowJournalRecord[];
   vm_cursors?: WorkflowVmCursor[];
-  execution_state?: WorkflowRunState;
+  execution_state?: WorkflowExecutionState;
 }
 
 /** snapshot attached to a run detail, when the backend included the workflow definition. */

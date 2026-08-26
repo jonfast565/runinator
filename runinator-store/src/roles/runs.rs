@@ -13,10 +13,6 @@ use runinator_models::{
     workflows::{WorkflowRun, WorkflowStatus},
 };
 
-// re-exported here so callers that reach for the contract at its historical path
-// (`runinator_database::interfaces::*`) can import both halves from one place.
-pub use crate::runtime_store::RuntimeStore;
-
 /// Core persistence operations for Runinator.
 /// The durable record of execution: run/node-run claims, chunks, artifacts, orchestration events, and the ready-node queue.
 pub trait RunStore: Send + Sync + 'static {

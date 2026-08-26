@@ -34,8 +34,6 @@ export function getTextEditorHostFactory(): import("./text-editor").TextEditorHo
 }
 
 export type {
-  ArtifactDownloadResult,
-  ArtifactTransport,
   AuthStorage,
   FilePicker,
   PlatformAdapter,

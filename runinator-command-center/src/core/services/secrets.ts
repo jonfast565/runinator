@@ -152,7 +152,7 @@ export function createSecretsService(app: AppService) {
         ...state,
         configValues: {
           ...state.configValues,
-          [key]: formatConfigValue(detail.value ?? detail.secret),
+          [key]: formatConfigValue(detail.value),
         },
       }));
     },

@@ -16,7 +16,6 @@ use clap::Parser;
 use log::info;
 use runinator_broker::{Broker, BrokerConnectionMode, IngressMessage, select_broker_connection};
 use runinator_comm::WsIngressCommand;
-use runinator_database::interfaces::DatabaseImpl;
 use runinator_engine::{EngineConfig, EventSender, run_background_engine};
 use runinator_models::errors::SendableError;
 use runinator_models::replicas::{ReplicaKind, ReplicaRegistrationRequest};
@@ -25,6 +24,7 @@ use runinator_service_bootstrap::{
     BrokerClientConfig, BrokerConsumerProfile, DatabaseRequest, ServerResources,
     dispatch_server_database,
 };
+use runinator_store::DatabaseImpl;
 use tokio::sync::Notify;
 use uuid::Uuid;
 

@@ -63,11 +63,9 @@ export function createProvidersService() {
 
 export type ProvidersService = ReturnType<typeof createProvidersService>;
 
-function normalizeProvider(
-  provider: ProviderMetadata & { provider_name?: string },
-): ProviderMetadata {
+function normalizeProvider(provider: ProviderMetadata): ProviderMetadata {
   return {
-    name: provider.name || (provider.provider_name ?? ""),
+    name: provider.name,
     actions: [...provider.actions]
       .map((action) => ({
         ...action,

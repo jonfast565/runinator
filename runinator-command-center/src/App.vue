@@ -15,7 +15,6 @@
     <ProvidersView v-if="app.activeTab === 'Providers'" />
     <ReplicasView v-if="app.activeTab === 'Replicas'" />
     <ApprovalsView v-if="app.activeTab === 'Approvals'" />
-    <ArtifactsView v-if="app.activeTab === 'Artifacts'" />
     <NotificationsView v-if="app.activeTab === 'Notifications'" />
     <EventsView v-if="app.activeTab === 'Events'" />
     <ExternalItemsView v-if="app.activeTab === 'ExternalItems'" />
@@ -45,7 +44,6 @@ import { useUrlSync } from "./ui/composables/useUrlSync";
 import { endpointForTab, isResourceTab, useAppStore } from "./ui/adapters/pinia/app";
 import { useAuthStore } from "./ui/adapters/pinia/auth";
 import LoginView from "./ui/views/LoginView.vue";
-import { useArtifactsStore } from "./ui/adapters/pinia/artifacts";
 import { useNotificationsStore } from "./ui/adapters/pinia/notifications";
 import { useResourcesStore } from "./ui/adapters/pinia/resources";
 import { useOrgsStore } from "./ui/adapters/pinia/orgs";
@@ -68,7 +66,6 @@ const WorkflowsView = defineAsyncComponent(() => import("./ui/views/WorkflowsVie
 const PipelinesView = defineAsyncComponent(() => import("./ui/views/PipelinesView.vue"));
 const PipelineRunsView = defineAsyncComponent(() => import("./ui/views/PipelineRunsView.vue"));
 const ApprovalsView = defineAsyncComponent(() => import("./ui/views/ApprovalsView.vue"));
-const ArtifactsView = defineAsyncComponent(() => import("./ui/views/ArtifactsView.vue"));
 const NotificationsView = defineAsyncComponent(() => import("./ui/views/NotificationsView.vue"));
 const SchedulesView = defineAsyncComponent(() => import("./ui/views/SchedulesView.vue"));
 const EventsView = defineAsyncComponent(() => import("./ui/views/EventsView.vue"));
@@ -92,7 +89,6 @@ const isDesktop = discovery.isDesktop();
 const workflows = useWorkflowsStore();
 const resources = useResourcesStore();
 const orgs = useOrgsStore();
-const artifacts = useArtifactsStore();
 const notifications = useNotificationsStore();
 const secrets = useSecretsStore();
 const providers = useProvidersStore();
@@ -253,10 +249,6 @@ watch(
       void adminSettings.refresh();
     }
 
-    if (tab === "Artifacts") {
-      void artifacts.refreshArtifacts();
-    }
-
     if (tab === "Notifications") {
       void notifications.refreshNotifications();
     }
@@ -316,7 +308,6 @@ async function handleServiceUrlChanged(serviceUrl: string | null) {
 function clearBackendState() {
   workflows.clearServiceState();
   resources.clearResources();
-  artifacts.clearArtifacts();
   notifications.clearNotifications();
   secrets.clearSecrets();
   gates.clearGates();
@@ -332,7 +323,6 @@ function clearBackendState() {
 function clearTenantScopedState() {
   workflows.clearServiceState({ discardDraft: true });
   resources.clearResources();
-  artifacts.clearArtifacts();
   notifications.clearNotifications();
   secrets.clearSecrets();
   permissions.clearPermissions();
@@ -350,7 +340,6 @@ async function refreshTenantScopedState() {
     workflows.refreshWorkflows().catch(() => undefined),
     workflows.fetchRecentWorkflowRuns().catch(() => undefined),
     resources.refreshResources().catch(() => undefined),
-    artifacts.refreshArtifacts().catch(() => undefined),
     notifications.refreshNotifications().catch(() => undefined),
     secrets.refreshSecrets().catch(() => undefined),
     permissions.refreshAll().catch(() => undefined),

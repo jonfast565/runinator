@@ -9,6 +9,7 @@ mod audit;
 mod auth;
 mod definitions;
 mod notifications;
+mod pack_transaction;
 mod parity;
 mod revisions;
 mod schema;
@@ -16,7 +17,6 @@ mod settings;
 mod workflow_vm;
 
 use super::*;
-use crate::archive::ArchiveTable;
 use chrono::{Duration, Utc};
 use runinator_models::value::Value;
 use runinator_models::{
@@ -28,6 +28,7 @@ use runinator_models::{
     settings::SettingKind,
     workflows::{WorkflowDefinition, WorkflowGraph, WorkflowStatus},
 };
+use runinator_store::archive::ArchiveTable;
 use runinator_store::prelude::*;
 use uuid::Uuid;
 

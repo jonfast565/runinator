@@ -29,11 +29,10 @@ fn orders_numerically_not_lexically() {
 }
 
 #[test]
-fn serializes_as_string_and_accepts_legacy_integer() {
+fn serializes_and_deserializes_as_a_string() {
     let version = SemVer::new(1, 2, 0);
     assert_eq!(serde_json::to_string(&version).unwrap(), "\"1.2.0\"");
     let from_string: SemVer = serde_json::from_str("\"3.1.4\"").unwrap();
     assert_eq!(from_string, SemVer::new(3, 1, 4));
-    let from_legacy_int: SemVer = serde_json::from_str("5").unwrap();
-    assert_eq!(from_legacy_int, SemVer::new(5, 0, 0));
+    assert!(serde_json::from_str::<SemVer>("5").is_err());
 }

@@ -1654,10 +1654,6 @@ mod tests {
                     WorkflowInstruction::Evaluate { .. }
                 ))
             ));
-            assert!(!instructions.iter().any(|instruction| matches!(
-                instruction,
-                PendingInstruction::Instruction(WorkflowInstruction::PureNode { .. })
-            )));
         }
 
         let mut instructions = Vec::new();

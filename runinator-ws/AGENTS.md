@@ -24,7 +24,7 @@ crate a new endpoint belongs in.
 - The two source lints over the merged surface: `src/openapi/route_parity.rs` and
   `src/store_access_tests.rs`; both read `HANDLER_CRATES` in `src/lib.rs`.
 - Workflow definitions/import/export: `../runinator-engine/src/repository/definitions.rs`.
-- VM driving, effect dispatch, wake publishing, and run queries: `../runinator-engine/src/` (start from `engine.rs`, `effect_consumer.rs`, and `repository_runs.rs`).
+- VM driving, effect dispatch, wake publishing, and run queries: `../runinator-engine/src/` (start from `engine.rs`, `effect_consumer.rs`, and `repository/`).
 - Debug and pause/resume/cancel behavior: `../runinator-engine/src/repository/debug.rs`.
 - Broker result application and effect artifacts/logs: `../runinator-engine/src/effect_consumer.rs` and `../runinator-engine/src/repository/`.
 

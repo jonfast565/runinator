@@ -143,8 +143,8 @@ impl TryFrom<&str> for NotificationSeverity {
     fn try_from(value: &str) -> Result<Self, Self::Error> {
         match value {
             "info" => Ok(NotificationSeverity::Info),
-            "warning" | "warn" => Ok(NotificationSeverity::Warning),
-            "critical" | "error" => Ok(NotificationSeverity::Critical),
+            "warning" => Ok(NotificationSeverity::Warning),
+            "critical" => Ok(NotificationSeverity::Critical),
             other => Err(format!("unknown notification severity '{other}'")),
         }
     }

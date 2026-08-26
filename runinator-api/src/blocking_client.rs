@@ -7,8 +7,7 @@ use runinator_models::pipelines::PipelineBundle;
 use runinator_models::{
     api_routes::{
         api_workflow, api_workflow_duplicate, api_workflow_run_command, API_PACKS_IMPORT,
-        API_PROVIDERS, API_WORKFLOWS_IMPORT, API_WORKFLOWS_SIMULATE, API_WORKFLOWS_VALIDATE,
-        WORKFLOW_JSON_IMPORT_RISK_ACK, WORKFLOW_JSON_IMPORT_RISK_HEADER,
+        API_PROVIDERS, API_WORKFLOWS_SIMULATE, API_WORKFLOWS_VALIDATE,
     },
     bundles::{Bundle, PackImportResult, ProviderBundle, SecretBundle},
     providers::ProviderMetadata,
@@ -136,21 +135,6 @@ where
         Ok(response.json::<B>()?)
     }
 
-    /// POST a raw JSON workflow bundle after acknowledging that system breakage is possible.
-    pub fn import_workflow_bundle(&self, bundle: &WorkflowBundle) -> Result<WorkflowBundle> {
-        let url = self.build_url(API_WORKFLOWS_IMPORT)?;
-        let response = self
-            .http_post(url.clone())
-            .header(
-                WORKFLOW_JSON_IMPORT_RISK_HEADER,
-                WORKFLOW_JSON_IMPORT_RISK_ACK,
-            )
-            .json(bundle)
-            .send()?;
-        let response = Self::handle_response(url, response)?;
-        Ok(response.json::<WorkflowBundle>()?)
-    }
-
     /// Build a compiled pack zip (workflows + optional secrets + pipelines) and POST it to
     /// `/packs/import`.
     pub fn import_pack(
@@ -176,10 +160,6 @@ where
     }
 
     pub fn import_provider_bundle(&self, bundle: &ProviderBundle) -> Result<ProviderBundle> {
-        self.import_bundle(bundle)
-    }
-
-    pub fn import_secret_bundle(&self, bundle: &SecretBundle) -> Result<SecretBundle> {
         self.import_bundle(bundle)
     }
 
