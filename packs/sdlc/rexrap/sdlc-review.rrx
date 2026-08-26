@@ -13,17 +13,17 @@ workflow "SDLC: Review" v1 {
 
     import std
     import settings jira as jira
-    import settings github as github_settings
+    import settings github as gh
     import settings slack as slack
     import settings claude as claude
     import settings selection as selection
-    import settings review as review_settings
+    import settings review as review
     import settings branch as branch
-    import settings git as git_settings
+    import settings git as git_cfg
     import settings transitions as transitions
 
     alias jira_conn = { base_url: jira.base_url, email: jira.email, token: jira.secret.token }
-    alias github_conn = { token: github_settings.secret.token, owner: github_settings.owner, repo: github_settings.repo }
+    alias gh_conn = { token: gh.secret.token, owner: gh.owner, repo: gh.repo }
     alias slack_conn = { token: slack.secret.token, channel: slack.channel }
     alias claude_cfg = {
         binary: claude.binary,
@@ -54,16 +54,16 @@ workflow "SDLC: Review" v1 {
             @timeout(120s)
             @retry(2, backoff: 5s, max: 30s, jitter: true, on: failure)
             let workspace = git.worktree(
-                repo: git_settings.repo,
+                repo: git_cfg.repo,
                 branch: branch.prefix ++ ticket.key,
-                path: git_settings.worktree_root ++ "/" ++ ticket.key
+                path: git_cfg.worktree_root ++ "/" ++ ticket.key
             )
 
             // create-or-update returns the existing open PR for this branch (no duplicate is opened).
             @timeout(60s)
             let pr = github.create_pr(
-                ...github_conn,
-                base: github_settings.base_branch,
+                ...gh_conn,
+                base: gh.base_branch,
                 head: branch.prefix ++ ticket.key,
                 title: ticket.key ++ ": " ++ ticket.fields.summary,
                 body: "Automated implementation for " ++ ticket.key ++ "."
@@ -71,15 +71,15 @@ workflow "SDLC: Review" v1 {
 
             @timeout(30s)
             let add_reviewers = github.request_reviewers(
-                ...github_conn,
+                ...gh_conn,
                 pull_number: string(pr.number),
-                reviewers: review_settings.reviewers
+                reviewers: review.reviewers
             )
             @timeout(30s)
             let add_assignee = github.add_assignees(
-                ...github_conn,
+                ...gh_conn,
                 issue_number: string(pr.number),
-                assignees: review_settings.assignees
+                assignees: review.assignees
             )
 
             // one claude pass addresses whatever Copilot/review feedback is open on the PR; commit and
@@ -91,7 +91,7 @@ workflow "SDLC: Review" v1 {
                 working_dir: workspace.workspace,
                 prompt: claude.review_fix_prompt
                     ++ " PR #" ++ string(pr.number)
-                    ++ " in " ++ github_settings.owner ++ "/" ++ github_settings.repo
+                    ++ " in " ++ gh.owner ++ "/" ++ gh.repo
             )
             @runner("sdlc")
             @timeout(30s)
@@ -109,7 +109,7 @@ workflow "SDLC: Review" v1 {
                 @retry(3, backoff: 5s, max: 45s, jitter: true, on: failure)
                 let push_fix = git.push(
                     workspace: workspace.workspace,
-                    remote: git_settings.remote,
+                    remote: git_cfg.remote,
                     branch: branch.prefix ++ ticket.key
                 )
             }
@@ -118,10 +118,10 @@ workflow "SDLC: Review" v1 {
             // change requests. anything short leaves the ticket In Review for the next pass.
             @timeout(30s)
             @retry(4, backoff: 5s, max: 60s, jitter: true, on: any)
-            let ci = github.checks_summary(...github_conn, ref: pr.head.sha)
+            let ci = github.checks_summary(...gh_conn, ref: pr.head.sha)
             @timeout(30s)
             @retry(4, backoff: 5s, max: 60s, jitter: true, on: any)
-            let reviews: any = github.reviews(...github_conn, pull_number: string(pr.number))
+            let reviews: any = github.reviews(...gh_conn, pull_number: string(pr.number))
             let review_state: { approved: integer, changes_requested: integer, two_plus: boolean, ready: boolean } = compute {
                 let approved = len(filter(reviews, r => r.state == "APPROVED"))
                 let changes = len(filter(reviews, r => r.state == "CHANGES_REQUESTED"))
@@ -136,7 +136,7 @@ workflow "SDLC: Review" v1 {
             if and(ci.status == "passed", review_state.ready) {
                 @timeout(60s)
                 let merge_pr = github.merge_pr(
-                    ...github_conn,
+                    ...gh_conn,
                     pull_number: string(pr.number),
                     merge_method: "squash"
                 )

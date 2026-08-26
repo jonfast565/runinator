@@ -12,15 +12,15 @@ workflow "SDLC: Development" v1 {
 
     import std
     import settings jira as jira
-    import settings github as github_settings
+    import settings github as gh
     import settings claude as claude
     import settings selection as selection
     import settings transitions as transitions
-    import settings git as git_settings
+    import settings git as git_cfg
     import settings branch as branch
 
     alias jira_conn = { base_url: jira.base_url, email: jira.email, token: jira.secret.token }
-    alias github_conn = { token: github_settings.secret.token, owner: github_settings.owner, repo: github_settings.repo }
+    alias gh_conn = { token: gh.secret.token, owner: gh.owner, repo: gh.repo }
     alias claude_cfg = {
         binary: claude.binary,
         model: claude.model,
@@ -75,9 +75,9 @@ workflow "SDLC: Development" v1 {
             @timeout(120s)
             @retry(2, backoff: 5s, max: 30s, jitter: true, on: failure)
             let create_workspace = git.worktree(
-                repo: git_settings.repo,
+                repo: git_cfg.repo,
                 branch: branch.prefix ++ ticket.key,
-                path: git_settings.worktree_root ++ "/" ++ ticket.key
+                path: git_cfg.worktree_root ++ "/" ++ ticket.key
             )
 
             // push the empty branch first so github integrations have a ref to attach to.
@@ -86,7 +86,7 @@ workflow "SDLC: Development" v1 {
             @retry(3, backoff: 5s, max: 45s, jitter: true, on: failure)
             let push_branch = git.push(
                 workspace: create_workspace.workspace,
-                remote: git_settings.remote,
+                remote: git_cfg.remote,
                 branch: branch.prefix ++ ticket.key
             )
 
@@ -130,13 +130,13 @@ workflow "SDLC: Development" v1 {
                 @retry(3, backoff: 5s, max: 45s, jitter: true, on: failure)
                 let push_work = git.push(
                     workspace: create_workspace.workspace,
-                    remote: git_settings.remote,
+                    remote: git_cfg.remote,
                     branch: branch.prefix ++ ticket.key
                 )
                 @timeout(60s)
                 let create_pr = github.create_pr(
-                    ...github_conn,
-                    base: github_settings.base_branch,
+                    ...gh_conn,
+                    base: gh.base_branch,
                     head: branch.prefix ++ ticket.key,
                     title: ticket.key ++ ": " ++ ticket.fields.summary,
                     body: "Automated implementation for " ++ ticket.key ++ "."

@@ -16,7 +16,7 @@ workflow "SDLC: QA" v1 {
     import settings slack as slack
     import settings selection as selection
     import settings status as status
-    import settings git as git_settings
+    import settings git as git_cfg
 
     alias jira_conn = { base_url: jira.base_url, email: jira.email, token: jira.secret.token }
     alias slack_conn = { token: slack.secret.token, channel: slack.channel }
@@ -52,8 +52,8 @@ workflow "SDLC: QA" v1 {
                 @timeout(60s)
                 @retry(2, backoff: 5s, max: 30s, jitter: true, on: failure)
                 let cleanup_done = git.cleanup(
-                    repo: git_settings.repo,
-                    path: git_settings.worktree_root ++ "/" ++ ticket.key
+                    repo: git_cfg.repo,
+                    path: git_cfg.worktree_root ++ "/" ++ ticket.key
                 )
             }
             if qa.fields.status.name == status.ready_for_dev {
@@ -75,8 +75,8 @@ workflow "SDLC: QA" v1 {
                 @timeout(60s)
                 @retry(2, backoff: 5s, max: 30s, jitter: true, on: failure)
                 let cleanup_terminal = git.cleanup(
-                    repo: git_settings.repo,
-                    path: git_settings.worktree_root ++ "/" ++ ticket.key
+                    repo: git_cfg.repo,
+                    path: git_cfg.worktree_root ++ "/" ++ ticket.key
                 )
             }
         }

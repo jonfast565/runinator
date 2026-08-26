@@ -13,16 +13,16 @@ workflow "SDLC: Deploy" v1 {
 
     import std
     import settings jira as jira
-    import settings github as github_settings
+    import settings github as gh
     import settings selection as selection
-    import settings git as git_settings
+    import settings git as git_cfg
     import settings branch as branch
     import settings deploy as deploy
     import settings waits as waits
     import settings transitions as transitions
 
     alias jira_conn = { base_url: jira.base_url, email: jira.email, token: jira.secret.token }
-    alias github_conn = { token: github_settings.secret.token, owner: github_settings.owner, repo: github_settings.repo }
+    alias gh_conn = { token: gh.secret.token, owner: gh.owner, repo: gh.repo }
 
     do {
         // cooldown: collapse a near-simultaneous cron + chained fire into one pass per 5 minutes so a
@@ -43,9 +43,9 @@ workflow "SDLC: Deploy" v1 {
             @timeout(120s)
             @retry(2, backoff: 5s, max: 30s, jitter: true, on: failure)
             let workspace = git.worktree(
-                repo: git_settings.repo,
+                repo: git_cfg.repo,
                 branch: branch.prefix ++ ticket.key,
-                path: git_settings.worktree_root ++ "/" ++ ticket.key
+                path: git_cfg.worktree_root ++ "/" ++ ticket.key
             )
 
             @runner("sdlc")
@@ -67,9 +67,9 @@ workflow "SDLC: Deploy" v1 {
                     if impact.api {
                         @timeout(60s)
                         let deploy_api = github.dispatch(
-                            ...github_conn,
+                            ...gh_conn,
                             workflow_id: deploy.api_workflow,
-                            ref: github_settings.base_branch
+                            ref: gh.base_branch
                         )
                     }
                 }
@@ -77,9 +77,9 @@ workflow "SDLC: Deploy" v1 {
                     if impact.dashboards {
                         @timeout(60s)
                         let deploy_dash = github.dispatch(
-                            ...github_conn,
+                            ...gh_conn,
                             workflow_id: deploy.dashboard_workflow,
-                            ref: github_settings.base_branch
+                            ref: gh.base_branch
                         )
                     }
                 }
@@ -87,9 +87,9 @@ workflow "SDLC: Deploy" v1 {
                     for lambda_path in impact.lambdas limit none {
                         @timeout(60s)
                         let deploy_lambda = github.dispatch(
-                            ...github_conn,
+                            ...gh_conn,
                             workflow_id: deploy.lambda_workflow,
-                            ref: github_settings.base_branch,
+                            ref: gh.base_branch,
                             inputs: { path: lambda_path }
                         )
                     }
@@ -102,8 +102,8 @@ workflow "SDLC: Deploy" v1 {
             @timeout(30s)
             @retry(4, backoff: 5s, max: 60s, jitter: true, on: any)
             let deploy_runs: any = github.workflow_runs(
-                ...github_conn,
-                branch: github_settings.base_branch
+                ...gh_conn,
+                branch: gh.base_branch
             )
             let deploy_state: { failed: integer } = compute {
                 let runs = deploy_runs.workflow_runs
