@@ -43,4 +43,5 @@ pub use runinator_blob_core::{
     store, BlobCredential, BlobError, BlobStore, ByteRange, CredentialStore, FsBlobStore,
     ListRequest, ListResponse, ObjectBytes, ObjectKey, ObjectMeta, ObjectReader, ObjectSummary,
     PutOptions, ResolvedRange, BLOB_URI_SCHEME, FUNCTION_ARTIFACT_BUCKET, RUN_ARTIFACT_BUCKET,
+    WORKFLOW_FILE_BUCKET,
 };

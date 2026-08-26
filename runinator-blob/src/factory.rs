@@ -37,6 +37,7 @@ pub async fn ensure_buckets(store: &Arc<dyn BlobStore>) -> Result<(), BlobError>
     for bucket in [
         runinator_blob_core::FUNCTION_ARTIFACT_BUCKET,
         runinator_blob_core::RUN_ARTIFACT_BUCKET,
+        runinator_blob_core::WORKFLOW_FILE_BUCKET,
     ] {
         store.create_bucket(bucket).await?;
     }

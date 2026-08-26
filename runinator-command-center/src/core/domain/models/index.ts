@@ -144,6 +144,7 @@ export type { RunChunk } from "./run/run-chunk";
 
 export type { RunArtifact } from "./artifact/run-artifact";
 export type { WorkflowRunArtifact } from "./artifact/workflow-run-artifact";
+export type { FileDescriptor, WorkflowFile, WorkflowFileScope } from "./file";
 
 export type { GateKind } from "./gate/gate-kind";
 export type { GateRecord } from "./gate/gate-record";

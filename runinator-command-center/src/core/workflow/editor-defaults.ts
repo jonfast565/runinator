@@ -418,6 +418,12 @@ export function validateJsonValueType(
     return "";
   }
 
+  if (ty.type === "file") {
+    return isJsonRecord(value) && typeof value.id === "string" && typeof value.path === "string"
+      ? ""
+      : `${label} must be a file descriptor`;
+  }
+
   return ty.variants.some((variant) => !validateJsonValueType(value, variant, label))
     ? ""
     : `${label} must match one of ${ty.variants.map((variant) => variant.type).join(", ")}`;

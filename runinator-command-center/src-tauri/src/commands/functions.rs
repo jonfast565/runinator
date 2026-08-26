@@ -46,6 +46,82 @@ pub async fn upload_function_artifact(
     .await
 }
 
+// ---- VM-native workflow input files ----
+
+#[tauri::command]
+pub async fn list_workflow_files(state: State<'_, CommandCenterState>) -> CommandResult<Value> {
+    get_json(&state, "workflow_files").await
+}
+
+#[tauri::command]
+pub async fn upload_workflow_file(
+    state: State<'_, CommandCenterState>,
+    path: String,
+    mime_type: String,
+    base64: String,
+) -> CommandResult<Value> {
+    let bytes = decode_base64(&base64)?;
+    crate::client::post_bytes(
+        &state,
+        &format!(
+            "workflow_files?path={}&mime_type={}",
+            percent_encode(&path),
+            percent_encode(&mime_type)
+        ),
+        &mime_type,
+        bytes,
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn stage_workflow_file(
+    state: State<'_, CommandCenterState>,
+    path: String,
+    mime_type: String,
+    base64: String,
+) -> CommandResult<Value> {
+    let bytes = decode_base64(&base64)?;
+    crate::client::post_bytes(
+        &state,
+        &format!(
+            "workflow_files/stage?path={}&mime_type={}",
+            percent_encode(&path),
+            percent_encode(&mime_type)
+        ),
+        &mime_type,
+        bytes,
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn archive_workflow_file(
+    state: State<'_, CommandCenterState>,
+    file_id: String,
+) -> CommandResult<Value> {
+    crate::client::delete(&state, &format!("workflow_files/{file_id}")).await
+}
+
+#[tauri::command]
+pub async fn download_workflow_file(
+    state: State<'_, CommandCenterState>,
+    file_id: String,
+) -> CommandResult<Vec<u8>> {
+    crate::client::get_bytes(&state, &format!("workflow_files/{file_id}/content")).await
+}
+
+fn percent_encode(text: &str) -> String {
+    text.bytes()
+        .map(|byte| match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (byte as char).to_string()
+            }
+            other => format!("%{other:02X}"),
+        })
+        .collect()
+}
+
 #[tauri::command]
 pub async fn publish_function_version(
     state: State<'_, CommandCenterState>,

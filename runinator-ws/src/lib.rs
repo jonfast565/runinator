@@ -37,8 +37,8 @@ pub(crate) mod handlers {
     };
     pub(crate) use runinator_ws_identity::handlers::{auth, authz, billing, orgs};
     pub(crate) use runinator_ws_runtime::handlers::{
-        agents, artifacts, automation, catalog_metadata, debug, function_invocations, health,
-        notifications, observability, provisioning, replicas, runs, schedules, supervisor,
+        agents, artifacts, automation, catalog_metadata, debug, files, function_invocations,
+        health, notifications, observability, provisioning, replicas, runs, schedules, supervisor,
         triggers, workflow_vm,
     };
 }

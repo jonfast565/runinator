@@ -142,11 +142,12 @@
                           <th>Size</th>
                           <th>URI</th>
                           <th>Created</th>
+                          <th></th>
                         </tr>
                       </thead>
                       <tbody>
                         <tr v-if="!artifacts.length" class="muted">
-                          <td colspan="5">No artifacts available.</td>
+                          <td colspan="6">No artifacts available.</td>
                         </tr>
                         <tr v-for="artifact in artifacts" :key="artifact.id">
                           <td>{{ artifact.name }}</td>
@@ -154,6 +155,11 @@
                           <td>{{ artifact.size_bytes }}</td>
                           <td>{{ artifact.uri }}</td>
                           <td>{{ formatDate(artifact.created_at) }}</td>
+                          <td>
+                            <button class="btn btn-sm" type="button" @click="downloadArtifact(artifact.workflow_node_run_id ?? workflows.selectedWorkflowNodeRunId ?? '', artifact.id, artifact.name)">
+                              Download
+                            </button>
+                          </td>
                         </tr>
                       </tbody>
                     </table>
@@ -177,11 +183,12 @@
                           <th>MIME</th>
                           <th>Size</th>
                           <th>Created</th>
+                          <th></th>
                         </tr>
                       </thead>
                       <tbody>
                         <tr v-if="!runArtifacts.length" class="muted">
-                          <td colspan="5">No artifacts available.</td>
+                          <td colspan="6">No artifacts available.</td>
                         </tr>
                         <tr v-for="artifact in runArtifacts" :key="artifact.id">
                           <td>{{ artifact.name }}</td>
@@ -189,6 +196,11 @@
                           <td>{{ artifact.mime_type }}</td>
                           <td>{{ artifact.size_bytes }}</td>
                           <td>{{ formatDate(artifact.created_at) }}</td>
+                          <td>
+                            <button class="btn btn-sm" type="button" @click="downloadArtifact(artifact.node_id, artifact.id, artifact.name)">
+                              Download
+                            </button>
+                          </td>
                         </tr>
                       </tbody>
                     </table>
@@ -206,6 +218,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { workflowRunExtrasService } from "../../core/services";
+import { downloadWorkflowEffectArtifact } from "../../core/api/commandCenterApi";
+import { downloadBlob } from "../adapters/browser/files";
 import BulkActionBar, { type BulkAction } from "../components/shared/BulkActionBar.vue";
 import EmptyState from "../components/shared/EmptyState.vue";
 import Icon from "../components/shared/Icon.vue";
@@ -263,6 +277,15 @@ async function deleteRun(run: (typeof recentRuns.value)[number]): Promise<void> 
 const recentRuns = computed(() => workflows.recentWorkflowRuns);
 const selection = useBulkSelection(recentRuns, (run) => run.id);
 const bulkBusy = ref("");
+
+async function downloadArtifact(effectId: string, eventId: string, name: string) {
+  if (!effectId || !eventId) {
+    return;
+  }
+
+  const blob = await downloadWorkflowEffectArtifact(effectId, eventId);
+  downloadBlob(name || "artifact", blob);
+}
 
 const bulkActions = computed<BulkAction[]>(() => [
   {

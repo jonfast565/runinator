@@ -19,6 +19,7 @@
     <EventsView v-if="app.activeTab === 'Events'" />
     <ExternalItemsView v-if="app.activeTab === 'ExternalItems'" />
     <FunctionsView v-if="app.activeTab === 'Functions'" />
+    <FilesView v-if="app.activeTab === 'Files'" />
     <ConsoleView v-if="app.activeTab === 'Console'" />
     <GatesView v-if="app.activeTab === 'Gates'" />
     <SchedulesView v-if="app.activeTab === 'Schedules'" />
@@ -71,6 +72,7 @@ const SchedulesView = defineAsyncComponent(() => import("./ui/views/SchedulesVie
 const EventsView = defineAsyncComponent(() => import("./ui/views/EventsView.vue"));
 const ExternalItemsView = defineAsyncComponent(() => import("./ui/views/ExternalItemsView.vue"));
 const FunctionsView = defineAsyncComponent(() => import("./ui/views/FunctionsView.vue"));
+const FilesView = defineAsyncComponent(() => import("./ui/views/FilesView.vue"));
 const ConsoleView = defineAsyncComponent(() => import("./ui/views/ConsoleView.vue"));
 const GatesView = defineAsyncComponent(() => import("./ui/views/GatesView.vue"));
 const SecretsView = defineAsyncComponent(() => import("./ui/views/SecretsView.vue"));

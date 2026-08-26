@@ -9,7 +9,7 @@ use axum::{
 use runinator_models::replicas::{TriggerActorType, TriggerSourceKind, WorkflowRunProvenance};
 use runinator_store::{
     RuntimeStore,
-    roles::{RunStore, ScheduleStore, WorkflowVmStore},
+    roles::{FileStore, RunStore, ScheduleStore, WorkflowVmStore},
 };
 
 use runinator_engine::services::RunOperations;
@@ -29,12 +29,12 @@ use runinator_ws_middleware::authz::{AuthorizationStore, AuthzChecker};
 /// notifications, functions, and replica management while keeping the cross-domain run commands
 /// atomic at the handler boundary.
 pub trait RunOperationsStore:
-    AuthorizationStore + RuntimeStore + WorkflowVmStore + RunStore + ScheduleStore
+    AuthorizationStore + RuntimeStore + WorkflowVmStore + RunStore + ScheduleStore + FileStore
 {
 }
 
 impl<T> RunOperationsStore for T where
-    T: AuthorizationStore + RuntimeStore + WorkflowVmStore + RunStore + ScheduleStore
+    T: AuthorizationStore + RuntimeStore + WorkflowVmStore + RunStore + ScheduleStore + FileStore
 {
 }
 
@@ -101,6 +101,9 @@ pub async fn create_workflow_run<T: RunOperationsStore>(
                 connect,
                 runinator_models::json!({}),
             ),
+            request.file_ids,
+            ctx.org_id,
+            ctx.principal_id,
         )
         .await
     {

@@ -84,6 +84,7 @@ fn is_primitive_type_name(name: &str) -> bool {
             | "boolean"
             | "bool"
             | "duration"
+            | "file"
             | "null"
             | "any"
             | "json"
@@ -162,6 +163,7 @@ fn named_type(name: &str, named: &NamedTypes) -> RuninatorType {
         "integer" | "int" => RuninatorType::Integer,
         "number" | "float" => RuninatorType::Number,
         "duration" => RuninatorType::Duration,
+        "file" => RuninatorType::File,
         "boolean" | "bool" => RuninatorType::Boolean,
         "null" => RuninatorType::Null,
         "any" | "json" => RuninatorType::Any,

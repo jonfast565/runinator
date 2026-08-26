@@ -9,6 +9,7 @@ pub mod core;
 pub mod cursor;
 pub mod debug;
 pub mod errors;
+pub mod files;
 pub mod functions;
 pub mod interrupt;
 pub mod invocation;

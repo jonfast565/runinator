@@ -26,6 +26,7 @@ use runinator_models::{
         ConsoleSession, NewConsoleCell, NewConsoleFunction,
     },
     errors::SendableError,
+    files::{FileScope, StoredFile},
     functions::{
         FunctionAdapterWorkflow, FunctionAlias, FunctionArtifact, FunctionCatalogEntry,
         FunctionExport, FunctionPackage, FunctionVersion, NewFunctionVersion,
@@ -1030,6 +1031,7 @@ mod database_impl;
 mod definitions;
 mod delivery;
 mod execution_state_sql;
+mod files;
 mod functions;
 mod notifications;
 mod orgs;

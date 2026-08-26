@@ -39,6 +39,41 @@ const RECENT_RUNS_REFRESH_DEBOUNCE_MS = 300;
 // latest node status without stampeding /workflow_runs/:id on every broker result.
 const WORKFLOW_RUN_DETAIL_REFRESH_DEBOUNCE_MS = 75;
 
+/** Pick typed file descriptors out of nested form data without mistaking ordinary JSON for files. */
+function collectFileIds(value: unknown): string[] {
+  const ids = new Set<string>();
+
+  const visit = (candidate: unknown) => {
+    if (Array.isArray(candidate)) {
+      candidate.forEach(visit);
+      return;
+    }
+
+    if (!candidate || typeof candidate !== "object") {
+      return;
+    }
+
+    const record = candidate as Record<string, unknown>;
+
+    if (
+      typeof record.id === "string" &&
+      typeof record.name === "string" &&
+      typeof record.path === "string" &&
+      typeof record.mime_type === "string" &&
+      typeof record.size_bytes === "number" &&
+      typeof record.sha256 === "string"
+    ) {
+      ids.add(record.id);
+      return;
+    }
+
+    Object.values(record).forEach(visit);
+  };
+
+  visit(value);
+  return [...ids];
+}
+
 export function createWorkflowRunService(host: WorkflowServiceHost) {
   const { internal } = host;
   const watchService = createWorkflowRunWatchService(host);
@@ -116,7 +151,7 @@ export function createWorkflowRunService(host: WorkflowServiceHost) {
       debug
         ? `Running workflow ${workflow.name} in debug mode`
         : `Running workflow ${workflow.name}`,
-      () => createWorkflowRun(workflowId, { debug, parameters }),
+      () => createWorkflowRun(workflowId, { debug, parameters, fileIds: collectFileIds(parameters) }),
     );
     host.state.selectedWorkflowRunId = response.id;
     host.ctx.setStatus(`${debug ? "Debug workflow run" : "Workflow run"} queued: ${response.id}`);

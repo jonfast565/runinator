@@ -10,6 +10,7 @@ mod effect_worker;
 pub mod errors;
 pub mod events;
 pub mod executor;
+mod file_inputs;
 pub mod function_cache;
 pub mod metrics;
 pub mod provider_repository;

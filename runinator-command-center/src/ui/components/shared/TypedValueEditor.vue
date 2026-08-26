@@ -73,6 +73,11 @@
       :placeholder="placeholder"
       @input="emitValue(($event.target as HTMLInputElement).value)"
     />
+    <WorkflowFileInput
+      v-else-if="typeKind === 'file'"
+      :model-value="fileValue"
+      @update:model-value="emitValue($event)"
+    />
     <input
       v-else-if="typeKind === 'integer' || typeKind === 'number'"
       type="number"
@@ -91,6 +96,12 @@
       :value="stringArrayText"
       placeholder="one value per line"
       @input="emitValue(splitLines(($event.target as HTMLTextAreaElement).value))"
+    />
+    <WorkflowFileInput
+      v-else-if="isFileArray"
+      :model-value="fileArrayValue"
+      multiple
+      @update:model-value="emitValue($event)"
     />
     <div v-else-if="typeKind === 'array' && arrayItemType" class="array-editor">
       <div
@@ -209,6 +220,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import type {
+  FileDescriptor,
   JsonRecord,
   JsonValue,
   RuninatorField,
@@ -218,6 +230,7 @@ import { pretty } from "../../../core/utils/format";
 import type { WorkflowExpressionEditorContext } from "../../../ui/adapters/codemirror/workflow-expression-completion";
 import { isWorkflowExpressionValue } from "../../../ui/adapters/codemirror/workflow-expression-completion";
 import ExpressionJsonEditor from "./ExpressionJsonEditor.vue";
+import WorkflowFileInput from "./WorkflowFileInput.vue";
 import {
   defaultExpressionForType,
   defaultAnyValue,
@@ -319,6 +332,18 @@ const unionValue = computed(() =>
     : defaultValueForType(selectedUnionVariant.value),
 );
 const isStringArray = computed(() => props.ty.type === "array" && props.ty.items.type === "string");
+const isFileArray = computed(() => props.ty.type === "array" && props.ty.items.type === "file");
+const fileValue = computed<FileDescriptor | null>(
+  () =>
+    (matchesType(props.modelValue, { type: "file" })
+      ? props.modelValue
+      : null) as FileDescriptor | null,
+);
+const fileArrayValue = computed<FileDescriptor[]>(() =>
+  Array.isArray(props.modelValue)
+    ? props.modelValue.filter((value): value is FileDescriptor => matchesType(value, { type: "file" }))
+    : [],
+);
 const stringArrayText = computed(() => arrayValue.value.join("\n"));
 const jsonText = computed(() => pretty(props.modelValue ?? defaultValueForType(props.ty)));
 const expressionsAllowed = computed(() => props.allowExpressions);

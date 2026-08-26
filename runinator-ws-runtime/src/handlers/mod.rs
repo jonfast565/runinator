@@ -3,6 +3,7 @@ pub mod artifacts;
 pub mod automation;
 pub mod catalog_metadata;
 pub mod debug;
+pub mod files;
 pub mod function_invocations;
 pub mod health;
 pub mod notifications;

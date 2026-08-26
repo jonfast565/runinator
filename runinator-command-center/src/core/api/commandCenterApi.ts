@@ -1,5 +1,5 @@
 import { command, isTauriRuntime } from "./runtime";
-import { setHttpAuthToken } from "./httpRuntime";
+import { apiBaseUrl, httpAuthToken, setHttpAuthToken } from "./httpRuntime";
 import { asJsonRecord } from "../domain/json";
 import type {
   JsonRecord,
@@ -63,6 +63,7 @@ import type {
   WorkflowRevision,
   WorkflowRunCreated,
   WorkflowRunArtifact,
+  WorkflowFile,
   WorkflowRunDetail,
   WorkflowNodeRun,
   WorkflowContinuation,
@@ -625,12 +626,13 @@ export async function resolvePipelineRun(
 
 export async function createWorkflowRun(
   workflowId: string,
-  options: { debug?: boolean; parameters?: unknown } = {},
+  options: { debug?: boolean; parameters?: unknown; fileIds?: string[] } = {},
 ) {
   return command<WorkflowRunCreated>("create_workflow_run", {
     workflowId,
     debug: Boolean(options.debug),
     parameters: options.parameters ?? {},
+    fileIds: options.fileIds ?? [],
   });
 }
 
@@ -1393,6 +1395,69 @@ export async function importPackArchive(bytes: ArrayBuffer, overwrite = false) {
   return command<PackImportResult>(
     "import_pack_archive",
     isTauriRuntime() ? { base64: base64Encode(bytes), overwrite } : { bytes, overwrite },
+  );
+}
+
+// ---- VM-native workflow files ----
+
+export async function fetchWorkflowFiles() {
+  return command<WorkflowFile[]>("list_workflow_files", {});
+}
+
+export async function uploadWorkflowFile(path: string, file: File, staged = false) {
+  const bytes = await file.arrayBuffer();
+
+  if (isTauriRuntime()) {
+    return command<WorkflowFile>(staged ? "stage_workflow_file" : "upload_workflow_file", {
+      path,
+      mimeType: file.type || "application/octet-stream",
+      base64: base64Encode(bytes),
+    });
+  }
+
+  return command<WorkflowFile>(staged ? "stage_workflow_file" : "upload_workflow_file", {
+    path,
+    mimeType: file.type || "application/octet-stream",
+    bytes,
+  });
+}
+
+export async function archiveWorkflowFile(fileId: string) {
+  return command<{ success: boolean }>("archive_workflow_file", { fileId });
+}
+
+async function downloadBinary(path: string): Promise<Blob> {
+  const token = httpAuthToken();
+  const response = await fetch(`${apiBaseUrl()}/${path.replace(/^\/+/, "")}`, {
+    headers: token ? { authorization: `Bearer ${token}` } : undefined,
+  });
+
+  if (!response.ok) {
+    throw new Error(`Download failed (${String(response.status)})`);
+  }
+
+  return response.blob();
+}
+
+export function downloadWorkflowFileContent(fileId: string) {
+  if (isTauriRuntime()) {
+    return command<number[]>("download_workflow_file", { fileId }).then(
+      (bytes) => new Blob([new Uint8Array(bytes)]),
+    );
+  }
+
+  return downloadBinary(`workflow_files/${encodeURIComponent(fileId)}/content`);
+}
+
+export function downloadWorkflowEffectArtifact(effectId: string, eventId: string) {
+  if (isTauriRuntime()) {
+    return command<number[]>("download_workflow_effect_artifact", { effectId, eventId }).then(
+      (bytes) => new Blob([new Uint8Array(bytes)]),
+    );
+  }
+
+  return downloadBinary(
+    `workflow_effects/${encodeURIComponent(effectId)}/output/${encodeURIComponent(eventId)}/artifact`,
   );
 }
 

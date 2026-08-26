@@ -4,6 +4,7 @@ use runinator_models::value::Value;
 use runinator_models::{
     bundles::{PackImportResult, ProviderBundle},
     console::{ConsoleCell, ConsoleSession, ConsoleSessionDetail},
+    files::StoredFile,
     functions::{
         FunctionAlias, FunctionArtifact, FunctionCatalogEntry, FunctionInvocationTarget,
         FunctionPackage, FunctionPackageDetail, FunctionVersion,
@@ -129,6 +130,8 @@ pub enum ApiResponse {
     WorkflowEffectOutput(Vec<WorkflowEffectOutputEvent>),
     WorkflowJournal(Vec<WorkflowJournalRecord>),
     WorkflowVmCursors(Vec<WorkflowVmCursor>),
+    WorkflowFile(StoredFile),
+    WorkflowFileList(Vec<StoredFile>),
     NodeTransitions(Vec<runinator_models::orchestration::NodeTransition>),
     NodeTransitionStats(Vec<runinator_models::orchestration::NodeTransitionStat>),
     Provider(ProviderMetadata),
@@ -191,6 +194,10 @@ pub struct WorkflowRunRequest {
     pub debug: bool,
     #[serde(default)]
     pub name: Option<String>,
+    /// File ids referenced by typed input parameters. Staged inputs are claimed for this run and
+    /// library revisions are validated immediately before the VM is nudged.
+    #[serde(default)]
+    pub file_ids: Vec<Uuid>,
 }
 
 #[derive(Debug, Deserialize)]

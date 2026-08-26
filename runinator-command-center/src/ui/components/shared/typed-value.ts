@@ -58,6 +58,18 @@ export function matchesType(value: unknown, ty: RuninatorType): boolean {
     return typeof value === "string";
   }
 
+  if (ty.type === "file") {
+    return (
+      isPlainRecord(value) &&
+      typeof value.id === "string" &&
+      typeof value.name === "string" &&
+      typeof value.path === "string" &&
+      typeof value.mime_type === "string" &&
+      typeof value.size_bytes === "number" &&
+      typeof value.sha256 === "string"
+    );
+  }
+
   if (ty.type === "boolean") {
     return typeof value === "boolean";
   }
@@ -100,6 +112,10 @@ export function matchesType(value: unknown, ty: RuninatorType): boolean {
 export function defaultValueForType(ty: RuninatorType): unknown {
   if (ty.type === "string") {
     return "";
+  }
+
+  if (ty.type === "file") {
+    return null;
   }
 
   if (ty.type === "boolean") {

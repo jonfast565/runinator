@@ -529,6 +529,7 @@ pub(super) fn render_type(ty: &RuninatorType) -> String {
         RuninatorType::Number => "number".into(),
         RuninatorType::Duration => "duration".into(),
         RuninatorType::String => "string".into(),
+        RuninatorType::File => "file".into(),
         RuninatorType::Enum(values) => format!(
             "enum[{}]",
             values

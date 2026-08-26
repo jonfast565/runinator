@@ -51,6 +51,13 @@ pub async fn post_bytes(
     Ok(response.json::<Value>().await?)
 }
 
+pub async fn get_bytes(state: &CommandCenterState, path: &str) -> CommandResult<Vec<u8>> {
+    let url = build_state_url(state, path).await?;
+    let response = state.client.read().await.get(url.clone()).send().await?;
+    let response = handle_response(url, response).await?;
+    Ok(response.bytes().await?.to_vec())
+}
+
 pub async fn post_json(
     state: &CommandCenterState,
     path: &str,

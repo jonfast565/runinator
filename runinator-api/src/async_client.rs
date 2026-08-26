@@ -25,7 +25,8 @@ use runinator_models::{
         API_IDEMPOTENCY_KEYS_CLAIM, API_IDEMPOTENCY_KEYS_COMPLETE, API_IDEMPOTENCY_KEYS_RELEASE,
         API_PACKS_IMPORT, API_PROVIDERS, API_REPLICAS, API_SCHEDULER_WORKFLOW_RUNS_CLAIM,
         API_SUPERVISOR_STATUS, API_WORKFLOWS, API_WORKFLOWS_EXPORT, API_WORKFLOWS_SIMULATE,
-        API_WORKFLOWS_VALIDATE, API_WORKFLOW_EFFECTS, API_WORKFLOW_RUNS, API_WORKFLOW_TRIGGERS_DUE,
+        API_WORKFLOWS_VALIDATE, API_WORKFLOW_EFFECTS, API_WORKFLOW_FILES, API_WORKFLOW_RUNS,
+        API_WORKFLOW_TRIGGERS_DUE,
     },
     auth::{
         AgentEnrollmentToken, CreateAgentEnrollmentTokenRequest,
@@ -1114,6 +1115,16 @@ where
     pub async fn download_function_artifact(&self, digest: &str) -> Result<Vec<u8>> {
         let url = self
             .build_url(&format!("{API_FUNCTION_ARTIFACTS}/{digest}/content"))
+            .await?;
+        let response = self.http_get(url.clone()).send().await?;
+        let response = Self::handle_response(url, response).await?;
+        Ok(response.bytes().await?.to_vec())
+    }
+
+    /// Download one VM-native user file for worker-side materialization.
+    pub async fn download_workflow_file(&self, file_id: Uuid) -> Result<Vec<u8>> {
+        let url = self
+            .build_url(&format!("{API_WORKFLOW_FILES}/{file_id}/content"))
             .await?;
         let response = self.http_get(url.clone()).send().await?;
         let response = Self::handle_response(url, response).await?;

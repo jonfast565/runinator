@@ -109,6 +109,10 @@ const ROUTER_SOURCES: &[(&str, &str)] = &[
         include_str!("../../../runinator-ws-runtime/src/handlers/debug.rs"),
     ),
     (
+        "runinator-ws-runtime/handlers/files",
+        include_str!("../../../runinator-ws-runtime/src/handlers/files.rs"),
+    ),
+    (
         "runinator-ws-runtime/handlers/function_invocations",
         include_str!("../../../runinator-ws-runtime/src/handlers/function_invocations.rs"),
     ),

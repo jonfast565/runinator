@@ -150,6 +150,12 @@ pub enum RuninatorType {
     Number,
     Duration,
     String,
+    /// An immutable, broker-safe descriptor for bytes owned by the Runinator file store.
+    ///
+    /// A file value deliberately contains metadata and an opaque id, never an object-store URI or
+    /// a workstation path. The worker resolves it into an effect-local path immediately before a
+    /// provider is invoked.
+    File,
     Enum(Vec<Value>),
     Range {
         base: Box<RuninatorType>,
@@ -333,6 +339,7 @@ impl RuninatorType {
             Some("integer") => Self::Integer,
             Some("number") => Self::Number,
             Some("string") => Self::String,
+            Some("file") => Self::File,
             Some("array") => Self::array(
                 object
                     .get("items")
@@ -373,6 +380,11 @@ impl RuninatorType {
             Self::Number => crate::json!({ "type": "number" }),
             Self::Duration => crate::json!({ "type": "integer", "format": "duration-seconds" }),
             Self::String => crate::json!({ "type": "string" }),
+            Self::File => crate::json!({
+                "type": "object",
+                "format": "runinator-file",
+                "required": ["id", "name", "path", "mime_type", "size_bytes", "sha256"],
+            }),
             Self::Enum(values) => crate::json!({ "enum": values }),
             Self::Range { base, min, max } => {
                 let mut object = base.to_json_schema();
@@ -432,6 +444,7 @@ impl RuninatorType {
             Self::Number => "number",
             Self::Duration => "duration",
             Self::String => "string",
+            Self::File => "file",
             Self::Enum(_) => "enum",
             Self::Range { .. } => "range",
             Self::Array(_) => "array",
@@ -486,6 +499,7 @@ impl RuninatorType {
             Self::Number if value.is_number() => Ok(()),
             Self::Duration if value.as_i64().is_some() || value.as_u64().is_some() => Ok(()),
             Self::String if value.is_string() => Ok(()),
+            Self::File if crate::files::FileDescriptor::from_value(value).is_ok() => Ok(()),
             Self::Enum(values) if values.contains(value) => Ok(()),
             Self::Range { base, min, max } => {
                 base.validate_value_at(value, path)?;
@@ -1025,7 +1039,8 @@ impl RuninatorType {
             return Ok(Self::from_json_schema(&Value::Object(object.clone())));
         };
         match type_name {
-            "null" | "boolean" | "integer" | "number" | "duration" | "string" | "any" | "json" => {
+            "null" | "boolean" | "integer" | "number" | "duration" | "string" | "file" | "any"
+            | "json" => {
                 Self::from_type_name(type_name).ok_or_else(|| format!("unknown type '{type_name}'"))
             }
             "enum" => {
@@ -1142,6 +1157,7 @@ impl RuninatorType {
             "number" => Some(Self::Number),
             "duration" => Some(Self::Duration),
             "string" => Some(Self::String),
+            "file" => Some(Self::File),
             "any" | "json" => Some(Self::Any),
             _ => None,
         }
@@ -1175,6 +1191,7 @@ impl RuninatorType {
             Self::Number => crate::json!({ "type": "number" }),
             Self::Duration => crate::json!({ "type": "duration" }),
             Self::String => crate::json!({ "type": "string" }),
+            Self::File => crate::json!({ "type": "file" }),
             Self::Enum(values) => crate::json!({
                 "type": "enum",
                 "values": values,

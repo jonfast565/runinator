@@ -29,6 +29,19 @@ pub async fn fetch_workflow_effect_output(
 }
 
 #[tauri::command]
+pub async fn download_workflow_effect_artifact(
+    state: State<'_, CommandCenterState>,
+    effect_id: Uuid,
+    event_id: Uuid,
+) -> CommandResult<Vec<u8>> {
+    crate::client::get_bytes(
+        &state,
+        &format!("workflow_effects/{effect_id}/output/{event_id}/artifact"),
+    )
+    .await
+}
+
+#[tauri::command]
 pub async fn settle_workflow_effect(
     state: State<'_, CommandCenterState>,
     effect_id: Uuid,
@@ -124,6 +137,7 @@ pub async fn create_workflow_run(
     workflow_id: Uuid,
     debug: Option<bool>,
     parameters: Option<Value>,
+    file_ids: Option<Vec<Uuid>>,
 ) -> CommandResult<WorkflowRunCreated> {
     let url = build_state_url(&state, &format!("workflows/{workflow_id}/runs")).await?;
     let response = state
@@ -133,7 +147,8 @@ pub async fn create_workflow_run(
         .post(url.clone())
         .json(&json!({
             "debug": debug.unwrap_or(false),
-            "parameters": parameters.unwrap_or_else(|| json!({}))
+            "parameters": parameters.unwrap_or_else(|| json!({})),
+            "file_ids": file_ids.unwrap_or_default(),
         }))
         .send()
         .await?;

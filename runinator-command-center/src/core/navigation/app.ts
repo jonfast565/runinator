@@ -9,6 +9,7 @@ export type AppTab =
   | "Runs"
   | "Providers"
   | "Functions"
+  | "Files"
   | "Console"
   | "Replicas"
   | "Approvals"

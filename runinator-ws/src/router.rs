@@ -14,7 +14,7 @@ use runinator_broker::Broker;
 use runinator_engine::services::{
     AutomationOperations, CatalogOperations, ConsoleOperations, DebugOperations,
     FunctionInvocations, FunctionPackages, NotificationOperations, PackOperations,
-    PipelineOperations, RunOperations, SchedulingOperations, WorkflowAuthoring,
+    PipelineOperations, RunOperations, SchedulingOperations, WorkflowAuthoring, WorkflowFiles,
 };
 use runinator_provisioner::ProvisionerRegistry;
 use runinator_store::DatabaseImpl;
@@ -25,9 +25,9 @@ use crate::auth::{AuthConfig, AuthState, auth_middleware};
 use crate::events::EventSender;
 use crate::handlers::{
     agents, artifacts, auth, authz, automation, billing, catalog, catalog_metadata, console,
-    credentials, debug, function_invocations, functions, health, notifications, observability,
-    orgs, packs, pipelines, providers, provisioning, replicas, rexrap, runs, schedules, supervisor,
-    triggers, workflow_vm, workflows,
+    credentials, debug, files, function_invocations, functions, health, notifications,
+    observability, orgs, packs, pipelines, providers, provisioning, replicas, rexrap, runs,
+    schedules, supervisor, triggers, workflow_vm, workflows,
 };
 use crate::models::{ApiError, ApiResponse};
 use crate::overload::{OverloadConfig, apply_overload_protection};
@@ -61,6 +61,7 @@ pub fn build_router<T: DatabaseImpl>(
         events.embedded_engine_signals(),
     ));
     let function_packages = Arc::new(FunctionPackages::new(pool.clone(), blobs.clone()));
+    let workflow_files = Arc::new(WorkflowFiles::new(pool.clone(), blobs.clone()));
     let automation_operations = Arc::new(AutomationOperations::new(pool.clone()));
     let scheduling_operations = Arc::new(SchedulingOperations::new(
         pool.clone(),
@@ -114,6 +115,7 @@ pub fn build_router<T: DatabaseImpl>(
         .merge(agents::routes(pool.clone()))
         .merge(provisioning::routes())
         .merge(artifacts::routes())
+        .merge(files::routes::<T>())
         .merge(notifications::routes(pool.clone()))
         .merge(schedules::routes(pool.clone()))
         .merge(debug::routes(pool.clone()))
@@ -142,6 +144,7 @@ pub fn build_router<T: DatabaseImpl>(
         .layer(Extension(scheduling_operations))
         .layer(Extension(automation_operations))
         .layer(Extension(function_packages))
+        .layer(Extension(workflow_files))
         .layer(Extension(pipeline_operations))
         .layer(Extension(run_operations))
         .layer(Extension(workflow_authoring))

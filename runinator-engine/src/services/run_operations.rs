@@ -4,11 +4,13 @@
 //! command, its broker side effect, and the broker-backed UI notification so those three actions
 //! cannot drift between transports.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use runinator_broker_core::{Broker, EmbeddedEngineSignals, UiEventPublisher, emit_workflow_run};
 use runinator_models::{
     errors::SendableError,
+    files::referenced_file_ids,
     interrupt::InterruptSource,
     replicas::WorkflowRunProvenance,
     value::Value,
@@ -18,7 +20,7 @@ use runinator_models::{
 };
 use runinator_store::{
     RuntimeStore,
-    roles::{RunStore, ScheduleStore, WorkflowVmStore},
+    roles::{FileStore, RunStore, ScheduleStore, WorkflowVmStore},
 };
 use uuid::Uuid;
 
@@ -56,7 +58,7 @@ impl<T> RunOperations<T> {
     }
 }
 
-impl<T: RuntimeStore + WorkflowVmStore + RunStore + ScheduleStore> RunOperations<T> {
+impl<T: RuntimeStore + WorkflowVmStore + RunStore + ScheduleStore + FileStore> RunOperations<T> {
     /// Start a run from a workflow definition and publish its invalidation after it is durable.
     pub async fn create(
         &self,
@@ -65,7 +67,20 @@ impl<T: RuntimeStore + WorkflowVmStore + RunStore + ScheduleStore> RunOperations
         debug: bool,
         name: Option<String>,
         provenance: WorkflowRunProvenance,
+        file_ids: Vec<Uuid>,
+        org_id: Option<Uuid>,
+        principal_id: Option<Uuid>,
     ) -> Result<WorkflowRun, SendableError> {
+        let supplied_file_ids = file_ids.into_iter().collect::<BTreeSet<_>>();
+        let referenced_ids = referenced_file_ids(&parameters)
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        if supplied_file_ids != referenced_ids {
+            return Err(Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "file_ids must exactly match file descriptors in workflow parameters",
+            )));
+        }
         let run = repository::create_workflow_run(
             self.store.as_ref(),
             workflow_id,
@@ -75,6 +90,16 @@ impl<T: RuntimeStore + WorkflowVmStore + RunStore + ScheduleStore> RunOperations
             provenance,
         )
         .await?;
+        if !supplied_file_ids.is_empty() {
+            self.store
+                .claim_staged_files(
+                    &supplied_file_ids.into_iter().collect::<Vec<_>>(),
+                    org_id,
+                    principal_id,
+                    run.id,
+                )
+                .await?;
+        }
         self.publish_run_changed(run.id).await;
         self.nudge_workflow_vm();
         Ok(run)

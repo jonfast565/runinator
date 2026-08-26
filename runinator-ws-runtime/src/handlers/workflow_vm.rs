@@ -5,7 +5,14 @@
 
 use std::sync::Arc;
 
-use axum::{Extension, Json, extract::Path, http::StatusCode};
+use axum::{
+    Extension, Json,
+    body::Body,
+    extract::Path,
+    http::{StatusCode, header},
+    response::{IntoResponse, Response},
+};
+use runinator_blob_core::BlobStore;
 use runinator_models::{
     auth::{AuthContext, Permission},
     value::Value,
@@ -158,6 +165,70 @@ pub async fn list_effect_output<T: AuthorizationStore + RuntimeStore + WorkflowV
         ),
         Err(err) => api_error(err.to_string()),
     }
+}
+
+/// Stream an artifact owned by one durable VM effect-output event. This deliberately addresses the
+/// event rather than a legacy run_artifacts row: the journal output is the authoritative history.
+pub async fn download_effect_artifact<T: AuthorizationStore + RuntimeStore + WorkflowVmStore>(
+    Extension(db): Extension<Arc<T>>,
+    Extension(blobs): Extension<Arc<dyn BlobStore>>,
+    Extension(ctx): Extension<AuthContext>,
+    Path((effect_id, event_id)): Path<(Uuid, Uuid)>,
+) -> Response {
+    let effect = match db.fetch_workflow_effect(effect_id).await {
+        Ok(Some(effect)) => effect,
+        Ok(None) => return (StatusCode::NOT_FOUND, "workflow effect not found").into_response(),
+        Err(error) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response();
+        }
+    };
+    if let Err(reply) = authorize_run(db.as_ref(), &ctx, effect.workflow_run_id).await {
+        return reply.into_response();
+    }
+    let output = match db.fetch_workflow_effect_output(effect_id).await {
+        Ok(events) => events.into_iter().find(|event| event.event_id == event_id),
+        Err(error) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response();
+        }
+    };
+    let Some(output) = output else {
+        return (StatusCode::NOT_FOUND, "artifact output event not found").into_response();
+    };
+    let runinator_models::workflow_vm::WorkflowEffectOutput::Artifact { artifact } = output.output
+    else {
+        return (StatusCode::NOT_FOUND, "effect output is not an artifact").into_response();
+    };
+    let artifact = match artifact.decode::<runinator_models::runs::NewRunArtifact>() {
+        Ok(artifact) => artifact,
+        Err(_) => return (StatusCode::NOT_FOUND, "artifact metadata is invalid").into_response(),
+    };
+    let content = match runinator_engine::artifact_storage::open_artifact(
+        &blobs,
+        &artifact.uri,
+        None,
+    )
+    .await
+    {
+        Ok(content) => content,
+        Err(error) => return (StatusCode::NOT_FOUND, error.to_string()).into_response(),
+    };
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, artifact.mime_type)
+        .header(header::CONTENT_LENGTH, content.size_bytes)
+        .header(
+            header::CONTENT_DISPOSITION,
+            format!(
+                "attachment; filename=\"{}\"",
+                artifact.name.replace('"', "_")
+            ),
+        )
+        .body(Body::from_stream(tokio_util::io::ReaderStream::new(
+            content.body,
+        )))
+        .unwrap_or_else(|_| {
+            (StatusCode::INTERNAL_SERVER_ERROR, "response build failed").into_response()
+        })
 }
 
 #[derive(Debug, Deserialize)]
@@ -339,6 +410,10 @@ pub fn routes<T: AuthorizationStore + RuntimeStore + WorkflowVmStore>(
             get(list_effect_output::<T>).layer(Extension(pool.clone())),
         )
         .route(
+            "/workflow_effects/{id}/output/{event_id}/artifact",
+            get(download_effect_artifact::<T>).layer(Extension(pool.clone())),
+        )
+        .route(
             "/workflow_effects/{id}/settle",
             post(settle_effect::<T>).layer(Extension(pool)),
         )
@@ -435,6 +510,19 @@ pub const DOCS: &[EndpointDoc] = &[
         200,
         "effect output events",
         Example::WorkflowRun,
+    ),
+    endpoint(
+        "get",
+        "/workflow_effects/{id}/output/{event_id}/artifact",
+        "Workflow VM",
+        "Download effect artifact",
+        "Streams an artifact recorded in a VM effect output event after authorizing access to its workflow run.",
+        false,
+        None,
+        &[],
+        200,
+        "artifact bytes",
+        Example::Artifact,
     ),
     endpoint(
         "post",

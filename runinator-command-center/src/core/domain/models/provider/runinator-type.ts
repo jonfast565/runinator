@@ -35,6 +35,7 @@ export type RuninatorType =
   | { type: "number" }
   | { type: "duration" }
   | { type: "string" }
+  | { type: "file" }
   | { type: "enum"; values: JsonValue[] }
   | RuninatorTypeRange
   | RuninatorTypeArray

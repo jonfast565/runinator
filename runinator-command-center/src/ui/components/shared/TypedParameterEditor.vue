@@ -423,6 +423,12 @@ function validateValueType(value: unknown, ty: RuninatorType | undefined, label:
     return "";
   }
 
+  if (ty.type === "file") {
+    return isPlainRecord(value) && typeof value.id === "string" && typeof value.path === "string"
+      ? ""
+      : `${label} must be a file descriptor`;
+  }
+
   return ty.variants.some((variant) => !validateValueType(value, variant, label))
     ? ""
     : `${label} must match ${describeType(ty)}`;

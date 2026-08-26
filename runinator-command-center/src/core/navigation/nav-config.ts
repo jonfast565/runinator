@@ -27,6 +27,7 @@ export const navSections: NavSection[] = [
         icon: "box",
         searchPlaceholder: "Search function packages",
       },
+      { tab: "Files", label: "Files", icon: "folder", searchPlaceholder: "Search files" },
       {
         // gated: a console cell can start a workflow run, so this is a privilege rather than a view.
         tab: "Console",

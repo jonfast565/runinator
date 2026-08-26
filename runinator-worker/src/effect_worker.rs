@@ -249,6 +249,7 @@ async fn process_provider_effect(
     } else {
         input
     };
+    let input = crate::file_inputs::materialize(&api_client, command.effect_id, input).await?;
     let configuration = WorkflowObject::from_value(input.clone()).map_err(|message| {
         Box::new(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,

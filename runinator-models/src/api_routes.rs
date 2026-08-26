@@ -40,6 +40,8 @@ pub const API_SCHEDULER_WORKFLOW_RUNS_CLAIM: &str = "/scheduler/workflow_runs/cl
 /// Store artifact bytes and return the URI to record.
 /// This creates no row; the caller already accounted for the artifact.
 pub const API_ARTIFACTS_CONTENT: &str = "/artifacts/content";
+/// VM-native user-uploaded workflow inputs and reusable library revisions.
+pub const API_WORKFLOW_FILES: &str = "/workflow_files";
 pub const API_SUPERVISOR_STATUS: &str = "/supervisor/status";
 pub const API_APPROVALS: &str = "/approvals";
 pub const API_IDEMPOTENCY_KEYS: &str = "/idempotency_keys";

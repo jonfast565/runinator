@@ -435,6 +435,7 @@ const REGISTRY: Record<string, HttpDescriptor> = {
     body: (args) => ({
       debug: argOpt(args, "debug") ?? false,
       parameters: argOpt(args, "parameters") ?? {},
+      file_ids: argOpt(args, "fileIds") ?? [],
     }),
     transform: extractWorkflowRunId,
   },
@@ -795,6 +796,53 @@ const REGISTRY: Record<string, HttpDescriptor> = {
       body: arg(args, "bytes") as ArrayBuffer,
       contentType: "application/zip",
     }),
+  },
+  list_workflow_files: { method: "GET", path: () => "workflow_files" },
+  upload_workflow_file: {
+    method: "POST",
+    path: (args) => {
+      const query = new URLSearchParams({ path: String(arg(args, "path")) });
+      const mimeType = argOpt(args, "mimeType");
+
+      if (typeof mimeType === "string" && mimeType) {
+        query.set("mime_type", mimeType);
+      }
+
+      return `workflow_files?${query.toString()}`;
+    },
+    rawBody: (args) => {
+      const mimeType = argOpt(args, "mimeType");
+
+      return {
+        body: arg(args, "bytes") as ArrayBuffer,
+        contentType: typeof mimeType === "string" ? mimeType : "application/octet-stream",
+      };
+    },
+  },
+  stage_workflow_file: {
+    method: "POST",
+    path: (args) => {
+      const query = new URLSearchParams({ path: String(arg(args, "path")) });
+      const mimeType = argOpt(args, "mimeType");
+
+      if (typeof mimeType === "string" && mimeType) {
+        query.set("mime_type", mimeType);
+      }
+
+      return `workflow_files/stage?${query.toString()}`;
+    },
+    rawBody: (args) => {
+      const mimeType = argOpt(args, "mimeType");
+
+      return {
+        body: arg(args, "bytes") as ArrayBuffer,
+        contentType: typeof mimeType === "string" ? mimeType : "application/octet-stream",
+      };
+    },
+  },
+  archive_workflow_file: {
+    method: "DELETE",
+    path: (args) => `workflow_files/${escape(arg(args, "fileId"))}`,
   },
   // packaged function archives: bytes under their own digest, stored only if absent.
   upload_function_artifact: {

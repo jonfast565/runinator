@@ -75,6 +75,9 @@ async fn create_persists_and_nudges_the_embedded_engine() {
             false,
             None,
             WorkflowRunProvenance::default(),
+            Vec::new(),
+            None,
+            None,
         )
         .await
         .unwrap();

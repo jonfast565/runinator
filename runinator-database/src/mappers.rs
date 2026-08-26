@@ -13,6 +13,7 @@ use runinator_models::{
         ConsoleSession,
     },
     errors::SendableError,
+    files::{FileDescriptor, FileScope, StoredFile},
     functions::{
         FunctionAdapterWorkflow, FunctionAlias, FunctionArtifact, FunctionCatalogEntry,
         FunctionExport, FunctionPackage, FunctionRuntimeSpec, FunctionVersion,
@@ -100,7 +101,9 @@ mod core;
 pub use core::*;
 mod console;
 pub use console::*;
+mod files;
 mod functions;
+pub use files::*;
 pub use functions::*;
 mod workflow_vm;
 pub use workflow_vm::*;

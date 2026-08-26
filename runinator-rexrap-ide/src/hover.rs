@@ -558,6 +558,7 @@ fn primitive_type(name: &str) -> Option<RuninatorType> {
         "integer" | "int" => Some(RuninatorType::Integer),
         "number" | "float" => Some(RuninatorType::Number),
         "duration" => Some(RuninatorType::Duration),
+        "file" => Some(RuninatorType::File),
         "boolean" | "bool" => Some(RuninatorType::Boolean),
         "null" => Some(RuninatorType::Null),
         "any" | "json" => Some(RuninatorType::Any),
@@ -580,6 +581,7 @@ fn render_type_with_depth(ty: &RuninatorType, depth: usize) -> String {
         | RuninatorType::Number
         | RuninatorType::Duration
         | RuninatorType::String
+        | RuninatorType::File
         | RuninatorType::Any => ty.describe().into(),
         RuninatorType::Enum(values) => format!(
             "enum[{}]",
